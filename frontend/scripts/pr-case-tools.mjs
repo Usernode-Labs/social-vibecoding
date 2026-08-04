@@ -8,8 +8,8 @@ import { fileURLToPath } from "node:url"
 import { collectContextBudgetMeasurement } from "./check-context-budget.mjs"
 import { collectProgressiveContext } from "./check-progressive-context.mjs"
 
-export const PR_CASE_BASE_REVISION = "92b1fb50d5265af56db86c7ba74867629a45091f"
-export const PR_CASE_BRANCH_REVISION = "51c95ab2e45b99259b947205762a78e5dab7f6e8"
+export const PR_CASE_BASE_REVISION = "472de79151060300df68fc6e98e242351d76eef0"
+export const PR_CASE_BRANCH_REVISION = "2f8605304ba9812474b2a8d8a8a0ff3fc3a83bf9"
 
 const frontendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const repoRoot = path.resolve(frontendRoot, "..")

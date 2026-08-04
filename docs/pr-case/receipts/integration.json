@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
-  "receiptId": "main-integration-2026-08-04",
-  "originReceiptEventId": "fcad73b4c3c9735cddc8939374162ea101f0dffbadf7454fc85a87baf656755d",
+  "receiptId": "main-reintegration-2026-08-04",
+  "originReceiptEventId": "105480f52e75eabd8e4aef69f5e7213c8860da3bee7560ed78413939d7b1424b",
   "revisions": {
-    "base": "92b1fb50d5265af56db86c7ba74867629a45091f",
-    "merge": "1a3ac7692ecfabd673182e8f255f982481cf6db3",
-    "verified": "51c95ab2e45b99259b947205762a78e5dab7f6e8"
+    "base": "472de79151060300df68fc6e98e242351d76eef0",
+    "merge": "2f8605304ba9812474b2a8d8a8a0ff3fc3a83bf9",
+    "verified": "2f8605304ba9812474b2a8d8a8a0ff3fc3a83bf9"
   },
   "source": {
-    "start": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
-    "end": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+    "start": "2f8605304ba9812474b2a8d8a8a0ff3fc3a83bf9",
+    "end": "2f8605304ba9812474b2a8d8a8a0ff3fc3a83bf9",
     "stable": true,
     "cleanStart": true,
     "cleanEnd": true
@@ -22,8 +22,8 @@
     "receiptGrade": true
   },
   "verification": {
-    "serverTestFiles": 402,
-    "serverTestsPassed": 5492,
+    "serverTestFiles": 403,
+    "serverTestsPassed": 5503,
     "browserTestsPassed": 812,
     "browserDeclaredSkips": 60
   },
@@ -57,7 +57,7 @@
     "storybook-tests",
     "storybook-build"
   ],
-  "artifactSha256": "b403c125784b79b885bb8c2a49ac70135c803069b461924ff595d7cc2c643810",
+  "artifactSha256": "b2e9363058d165180cd4d52f66693ea902da41b343357545ca0e8ac13007c13d",
   "contextCorrection": {
     "regressedAlwaysLoadedBytes": 22445,
     "alwaysLoadedRatchetBytes": 17427,

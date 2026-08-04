@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "revisions": {
-    "base": "92b1fb50d5265af56db86c7ba74867629a45091f",
-    "branch": "51c95ab2e45b99259b947205762a78e5dab7f6e8"
+    "base": "472de79151060300df68fc6e98e242351d76eef0",
+    "branch": "2f8605304ba9812474b2a8d8a8a0ff3fc3a83bf9"
   },
   "viewport": {
     "width": 1280,
@@ -112,7 +112,7 @@
       "nextBefore": null
     },
     "version": {
-      "sha": "51c95ab2e45b99259b947205762a78e5dab7f6e8"
+      "sha": "2f8605304ba9812474b2a8d8a8a0ff3fc3a83bf9"
     },
     "nodeStatus": {
       "status": "synced"
@@ -152,7 +152,7 @@
       "status": "ok"
     }
   },
-  "fixtureSha256": "9d860983e9a9fbc136bbfa1326180c16a138ea398863470de0d0d51383c41205",
+  "fixtureSha256": "287584518d281a9f31d7ac72a638aecc888ba3041562aeb20c0da2f825445b9b",
   "tailwindPlaySha256": "176e894661aa9cdc9a5cba6c720044cbbf7b8bd80d1c9a142a7c24b1b6c50d15",
   "tailwindPlayGzipSha256": "82fecbacf66585efc059055066962ef8f9869111bb92d0e6dfd90b7efab8d16c",
   "captures": [
