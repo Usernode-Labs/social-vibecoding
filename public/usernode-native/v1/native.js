@@ -50,7 +50,7 @@
  *                                        tap / Escape dismiss. NOT
  *                                        draggable by design — a nav
  *                                        drawer is not a bottom sheet
- *   unNative.actionSheet(opts)        — iOS action sheet, Promise-based
+ *   unNative.actionSheet(opts)        — platform-adaptive action sheet, Promise-based
  *   unNative.alert(opts)              — iOS alert dialog, Promise-based
  *   unNative.popover(opts)            — anchored popover / dropdown menu
  *                                        ({ anchorEl | anchorRect, items |
@@ -2611,8 +2611,9 @@
   }
 
   /* ────────────────────────────────────────────────────────────────────
-   * Action sheet — iOS stack of actions + separate Cancel card. Resolves
-   * with the chosen action object, or null on cancel/backdrop.
+   * Action sheet — shared action/cancel markup. CSS renders the iOS stack
+   * on iOS and a Material-style bottom sheet on Android. Resolves with the
+   * chosen action object, or null on cancel/backdrop.
    * ──────────────────────────────────────────────────────────────────── */
 
   // actionSheet({ title?, actions: [{ label, destructive?, handler? }],

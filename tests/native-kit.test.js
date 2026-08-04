@@ -309,6 +309,30 @@ test('native.css: .un-sheet does not clip its overscroll filler', () => {
     'overflow:hidden on .un-sheet would clip the overscroll filler away (issue #789)');
 });
 
+test('native.css: Android action sheets use a cohesive Material-style surface', () => {
+  const sheet = cssBlock('html.un-android .un-action-sheet');
+  assert.match(sheet, /padding:\s*0\s+16px/,
+    'Android action sheets need material side insets rather than the iOS card gutter');
+
+  const firstCard = cssBlock('html.un-android .un-action-card:first-child');
+  assert.match(firstCard, /border-radius:\s*28px\s+28px\s+0\s+0/,
+    'the leading Android section must carry the Material top corners');
+  const trailingCard = cssBlock('html.un-android .un-action-card + .un-action-card');
+  assert.match(trailingCard, /margin-top:\s*0/,
+    'Android action/cancel sections must be contiguous rather than iOS-separated cards');
+  assert.match(trailingCard, /border-radius:\s*0\s+0\s+28px\s+28px/,
+    'the trailing Android section must carry the Material bottom corners');
+
+  const title = cssBlock('html.un-android .un-action-title');
+  const action = cssBlock('html.un-android .un-action-btn');
+  assert.match(title, /text-align:\s*left/,
+    'Material action-sheet titles are left aligned');
+  assert.match(action, /min-height:\s*48px/,
+    'Android action rows must retain a touch-sized target');
+  assert.match(action, /text-align:\s*left/,
+    'Material action-sheet rows are left aligned');
+});
+
 // ── Side panel contract ────────────────────────────────────────────────
 // The drawer's overshoot fix and its inset handling live in CSS, so the
 // guards read the shipped stylesheet — same stance as the sheet's ::after

@@ -704,8 +704,10 @@ html.un-kb .un-panel-body {
 }
 
 /* ── Action sheet ──────────────────────────────────────────────────────
-   unNative.actionSheet(): main card of hairline-separated actions plus a
-   separate Cancel card. translateY is JS-owned (spring up/down). */
+   unNative.actionSheet(): iOS uses a main card of hairline-separated
+   actions plus a separate Cancel card. Android reuses the same markup but
+   turns it into one Material-style bottom-sheet surface below. translateY
+   is JS-owned (spring up/down). */
 
 .un-action-sheet {
   position: fixed;
@@ -758,6 +760,47 @@ html.un-kb .un-action-sheet {
 }
 .un-action-btn.un-action-cancel {
   font-weight: 600;
+}
+
+/* Material action-sheet skin. Keep the markup and behavior shared with
+   iOS: the two cards become contiguous sections of one large-radius sheet,
+   with left-aligned, touch-sized rows and a trailing text-style Cancel.
+   This is deliberately scoped to Android so the existing iOS action-sheet
+   idiom remains intact. */
+html.un-android .un-action-sheet {
+  padding: 0 16px calc(8px + env(safe-area-inset-bottom, 0px));
+}
+html.un-android .un-action-card {
+  border-radius: 0;
+  background: var(--un-sheet-bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+html.un-android .un-action-card:first-child {
+  border-radius: 28px 28px 0 0;
+}
+html.un-android .un-action-card + .un-action-card {
+  margin-top: 0;
+  border-top: 1px solid var(--un-hairline);
+  border-radius: 0 0 28px 28px;
+}
+html.un-android .un-action-title {
+  padding: 24px 24px 8px;
+  text-align: left;
+  font-size: 1.375rem;
+  font-weight: 400;
+}
+html.un-android .un-action-btn {
+  min-height: 48px;
+  padding: 12px 24px;
+  text-align: left;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: inherit;
+}
+html.un-android .un-action-btn.un-action-cancel {
+  text-align: right;
+  color: var(--un-accent);
 }
 
 /* ── Anchored popover / dropdown menu ──────────────────────────────────
