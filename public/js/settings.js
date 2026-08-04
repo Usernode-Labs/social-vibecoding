@@ -730,13 +730,28 @@
       const esc = (s) => String(s == null ? '' : s)
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-      list.innerHTML = registry.map((p) => `
-        <label class="flex items-center gap-2 cursor-pointer select-none">
+      // `removable: false` (Discover) renders as a fixed-on, disabled switch
+      // with the reason beside it, rather than being hidden from the list:
+      // a widget that is silently absent from its own settings row reads as
+      // a bug, where a locked one reads as a decision. The server refuses
+      // the write too, so this is presentation, not the enforcement.
+      //
+      // Every other row is offered to EVERY account — notably "Create app",
+      // which appears whether or not the viewer currently has app quota,
+      // because the widget is on their home screen either way.
+      list.innerHTML = registry.map((p) => {
+        const fixed = p.removable === false;
+        return `
+        <label class="flex items-center gap-2 select-none ${fixed ? 'cursor-default' : 'cursor-pointer'}">
           <input type="checkbox" class="un-switch settings-home-panel-toggle"
-                 data-panel-key="${esc(p.key)}" ${hidden.includes(p.key) ? '' : 'checked'} />
+                 data-panel-key="${esc(p.key)}" ${hidden.includes(p.key) ? '' : 'checked'}
+                 ${fixed ? 'disabled' : ''} />
           <span class="text-sm text-zinc-800 dark:text-zinc-200">${esc(p.title || p.key)}</span>
-        </label>`).join('');
+          ${fixed ? '<span class="text-xs text-zinc-500 dark:text-zinc-400">— how you find new apps</span>' : ''}
+        </label>`;
+      }).join('');
       list.querySelectorAll('.settings-home-panel-toggle').forEach((el) => {
+        if (el.disabled) return;
         el.addEventListener('change', () => {
           Settings._saveHomePanelVisibility(el.dataset.panelKey, !el.checked, el);
         });

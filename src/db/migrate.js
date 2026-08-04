@@ -61,6 +61,9 @@ async function migrate(config) {
   // Must run AFTER seedStagingYourApps — it features that fixture's apps.
   await seedStagingFeaturedApps(pool);
   await seedStagingAppQuotaUsers(pool);
+  // Must run AFTER seedStagingYourApps (it references those demo apps) and
+  // AFTER seedStagingAppQuotaUsers (it seeds the zero-quota fixture's grid).
+  await seedStagingHomeLayout(pool, config);
   await seedStagingViewOnlyAdmin(pool);
   await seedStagingWalletUsers(pool);
   await seedStagingPublicApiContributors(pool);
@@ -3703,6 +3706,95 @@ async function seedStagingYourApps(pool, config) {
     log.info('db', 'Staging your-apps fixtures seeded', { viewers: viewerRows.length });
   } catch (err) {
     log.warn('db', 'Staging your-apps seeding failed', { message: err.message });
+  }
+}
+
+// Free-form home-screen layouts. `user_home_layout` is created by this
+// change, so it does NOT exist in the production database a staging clone
+// starts from — every PR preview would render the DERIVED default, which is
+// byte-for-byte today's flow arrangement, and the whole feature would be
+// invisible to a reviewer.
+//
+// The seeded layouts are deliberately HOLE-BEARING: gaps in row 0 and row 3
+// at both widths. Those gaps ARE the feature — an arrangement no ordering
+// can express — so a before/after screenshot that doesn't show one has
+// nothing to say. Chess Arena sits alone in the top-left with empty cells
+// beside it and Pixel Racer alone at the far end of the same row.
+//
+// The `create` widget is seeded for every identity UNCONDITIONALLY, matching
+// the rule that it is on every home screen regardless of app quota. That
+// includes staging-demo-quota-zero (900021, seeded by
+// seedStagingAppQuotaUsers), whose home screen shows the DISABLED variant —
+// though nobody can sign in as it (sentinel password), so the reviewable
+// path for that state is the ?shot=create-disabled deep link, not this row.
+//
+// Idempotent: skipped per user when they already have any layout row, so a
+// reviewer's own drags survive the container rebuild on the next push.
+async function seedStagingHomeLayout(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  // slug → cell, per column count. Widgets are `widget:<key>`.
+  const LAYOUT_5 = [
+    ['app:staging-demo-chess-arena', 0, 0],
+    ['app:staging-demo-pixel-racer', 4, 0],
+    ['widget:discover', 0, 1],
+    ['widget:challenges', 3, 1],
+    ['app:staging-demo-puzzle-chain', 0, 3],
+    ['app:staging-demo-word-garden', 3, 3],
+    ['widget:create', 4, 4],
+  ];
+  const LAYOUT_4 = [
+    ['app:staging-demo-chess-arena', 0, 0],
+    ['app:staging-demo-pixel-racer', 3, 0],
+    ['widget:discover', 0, 1],
+    ['app:staging-demo-puzzle-chain', 0, 3],
+    ['app:staging-demo-word-garden', 3, 3],
+    ['widget:challenges', 0, 4],
+    ['widget:create', 3, 6],
+  ];
+
+  try {
+    const { rows: viewerRows } = await pool.query(
+      'SELECT id FROM users WHERE username = ANY($1::text[])',
+      [[config.adminUsername, 'usernode-capture', 'usernode-capture-admin',
+        'staging-demo-quota-zero']]
+    );
+    let seeded = 0;
+    for (const { id: viewerId } of viewerRows) {
+      const { rows: existing } = await pool.query(
+        'SELECT 1 FROM user_home_layout WHERE user_id = $1 LIMIT 1',
+        [viewerId]
+      );
+      if (existing.length) continue; // a tester already arranged this one
+
+      for (const [cols, layout] of [[5, LAYOUT_5], [4, LAYOUT_4]]) {
+        for (const [id, col, row] of layout) {
+          if (id.startsWith('widget:')) {
+            await pool.query(
+              `INSERT INTO user_home_layout
+                 (user_id, cols, item_type, widget_key, grid_col, grid_row)
+               VALUES ($1, $2, 'widget', $3, $4, $5)
+               ON CONFLICT DO NOTHING`,
+              [viewerId, cols, id.slice(7), col, row]
+            );
+          } else {
+            // Sourced from the apps table so a missing fixture skips the row
+            // rather than failing the FK and aborting the whole seed.
+            await pool.query(
+              `INSERT INTO user_home_layout
+                 (user_id, cols, item_type, app_id, grid_col, grid_row)
+               SELECT $1, $2, 'app', id, $4, $5 FROM apps WHERE slug = $3
+               ON CONFLICT DO NOTHING`,
+              [viewerId, cols, id.slice(4), col, row]
+            );
+          }
+        }
+      }
+      seeded += 1;
+    }
+    log.info('db', 'Staging home layouts seeded', { viewers: seeded });
+  } catch (err) {
+    log.warn('db', 'Staging home-layout seeding failed', { message: err.message });
   }
 }
 

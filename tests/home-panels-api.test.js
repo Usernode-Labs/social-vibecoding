@@ -48,19 +48,10 @@ function makeMockPool(state) {
       const sql = collapse(rawSql);
       calls.push({ sql, params });
 
-      if (sql.includes('SELECT home_panels_hidden, home_panel_positions FROM users')) {
-        return {
-          rows: [{
-            home_panels_hidden: state.hidden ?? [],
-            home_panel_positions: state.positions ?? {},
-          }],
-        };
-      }
-      if (sql.startsWith('UPDATE users SET home_panel_positions')
-          || sql.includes('jsonb_set(COALESCE(home_panel_positions')) {
-        const [, key, index] = params;
-        state.positions = { ...(state.positions || {}), [key]: index };
-        return { rows: [{ home_panel_positions: state.positions }] };
+      // Placement moved to user_home_layout (src/routes/home-layout.js);
+      // this route reads only the per-user hidden set now.
+      if (sql.includes('SELECT home_panels_hidden FROM users')) {
+        return { rows: [{ home_panels_hidden: state.hidden ?? [] }] };
       }
       if (sql.startsWith('UPDATE users SET home_panels_hidden')) {
         const key = params[1];
@@ -275,11 +266,15 @@ test('GET /api/home-panels: no live season -> an empty panel, not an error', asy
   const { app } = makeApp({ season: null, rows: [] }, { user: USER });
   const { status, body } = await get(app, '/api/home-panels');
   assert.equal(status, 200);
-  assert.deepEqual(body.registry, [{ key: 'challenges', title: 'Challenges' }]);
-  assert.equal(body.panels.length, 1);
-  assert.equal(body.panels[0].total, 0);
-  assert.equal(body.panels[0].season, null);
-  assert.deepEqual(body.panels[0].challenges, []);
+  assert.deepEqual(body.registry.map((r) => r.key), ['challenges', 'discover', 'create']);
+  // Three built entries: the challenges payload plus the two MARKER widgets
+  // (discover / create), which build nothing but still ride the response so
+  // the client can find every renderable in one place.
+  assert.deepEqual(body.panels.map((p) => p.key), ['challenges', 'discover', 'create']);
+  const ch = body.panels.find((p) => p.key === 'challenges');
+  assert.equal(ch.total, 0);
+  assert.equal(ch.season, null);
+  assert.deepEqual(ch.challenges, []);
 });
 
 test('GET /api/home-panels: the open-challenge filter is in the SQL, both queries', async () => {
@@ -454,9 +449,10 @@ test('GET /api/home-panels: a hidden panel is dropped from panels but still desc
     { user: USER }
   );
   const { body } = await get(app, '/api/home-panels');
-  assert.deepEqual(body.panels, []);
+  // Only the hidden one drops out; the rest still build.
+  assert.deepEqual(body.panels.map((p) => p.key), ['discover', 'create']);
   assert.deepEqual(body.hidden, ['challenges']);
-  assert.deepEqual(body.registry, [{ key: 'challenges', title: 'Challenges' }]);
+  assert.deepEqual(body.registry.map((r) => r.key), ['challenges', 'discover', 'create']);
 });
 
 test('GET /api/home-panels: unknown keys in the column are filtered out', async () => {
@@ -590,61 +586,67 @@ test('GET ?expand names ONE panel — an unknown name expands nothing', async ()
 
 // ─── Drag position ────────────────────────────────────────────────────
 
-test('GET /api/home-panels returns the viewer\'s panel positions', async () => {
-  const { app } = makeApp(
-    { season: SEASON, rows: [row()], positions: { challenges: 4 } },
-    { user: USER }
-  );
+// The registry is what Settings renders its checkboxes from and what the
+// grid places, so it has to describe EVERY widget — including the two
+// marker widgets that build no payload at all.
+test('the registry describes every widget, with its footprint and removability', async () => {
+  const { app } = makeApp({ season: SEASON, rows: [row()] }, { user: USER });
   const { body } = await get(app, '/api/home-panels');
-  assert.deepEqual(body.positions, { challenges: 4 });
+  const byKey = Object.fromEntries(body.registry.map((r) => [r.key, r]));
+  assert.deepEqual(Object.keys(byKey), ['challenges', 'discover', 'create']);
+  // Footprints are per column count and live server-side, so the layout
+  // route's overlap check and the client lay out against the same numbers.
+  assert.deepEqual(byKey.challenges.sizes, { 4: [4, 2], 5: [2, 2] });
+  assert.deepEqual(byKey.discover.sizes, { 4: [4, 2], 5: [2, 2] });
+  assert.deepEqual(byKey.create.sizes, { 4: [1, 1], 5: [1, 1] });
+  // Discover is the shell's only door to the app directory.
+  assert.equal(byKey.discover.removable, false);
+  assert.equal(byKey.challenges.removable, true);
+  assert.equal(byKey.create.removable, true);
+  // Placement is no longer this route's business.
+  assert.equal(body.positions, undefined);
 });
 
-test('positions are filtered to the registry and to sane integers', async () => {
-  const { app } = makeApp(
-    {
-      season: SEASON, rows: [row()],
-      positions: { challenges: 2, 'retired-panel': 9, bogus: 'x' },
-    },
-    { user: USER }
-  );
-  const { body } = await get(app, '/api/home-panels');
-  assert.deepEqual(body.positions, { challenges: 2 },
-    'a retired key or junk value never reaches the client');
-
-  for (const bad of [{ challenges: -1 }, { challenges: 1.5 }, { challenges: 99999 }]) {
-    const { app: a } = makeApp({ season: SEASON, rows: [row()], positions: bad }, { user: USER });
-    const { body: b } = await get(a, '/api/home-panels');
-    assert.deepEqual(b.positions, {}, JSON.stringify(bad));
-  }
+test('POST …/visibility refuses to hide a non-removable widget', async () => {
+  const { app, state } = makeApp({ season: SEASON, rows: [], hidden: [] }, { user: USER });
+  const res = await post(app, '/api/home-panels/discover/visibility', { hidden: true });
+  assert.equal(res.status, 400);
+  assert.deepEqual(state.hidden, [], 'nothing was written');
+  // Un-hiding it is harmless and still allowed (it is already visible).
+  const show = await post(app, '/api/home-panels/discover/visibility', { hidden: false });
+  assert.equal(show.status, 200);
 });
 
-test('POST …/position persists the index and validates it', async () => {
-  const { app, state } = makeApp({ season: SEASON, rows: [], positions: {} }, { user: USER });
-  const ok = await post(app, '/api/home-panels/challenges/position', { index: 4 });
-  assert.equal(ok.status, 200);
-  assert.deepEqual(ok.body.positions, { challenges: 4 });
-  assert.equal(state.positions.challenges, 4);
-
-  for (const bad of [{ index: -1 }, { index: 1.5 }, { index: 'x' }, { index: 99999 }, {}]) {
-    const res = await post(app, '/api/home-panels/challenges/position', bad);
-    assert.equal(res.status, 400, JSON.stringify(bad));
-  }
-  // Unknown key → 400, so the JSONB column can't accumulate junk.
-  const unknown = await post(app, '/api/home-panels/nope/position', { index: 1 });
-  assert.equal(unknown.status, 400);
-});
-
-test('POST …/position is 401 unauthenticated', async () => {
-  const { app } = makeApp({ season: SEASON, rows: [] });
-  const { status } = await post(app, '/api/home-panels/challenges/position', { index: 1 });
-  assert.equal(status, 401);
-});
-
-test('the position write is rate limited like the visibility write', () => {
+// The create widget is on every home screen regardless of app quota, so
+// hiding it must be equally available to everyone — the route must not
+// consult canCreateApps or app_quota on any path.
+test('the create widget hides for any account, quota or not', async () => {
+  const { app, state } = makeApp({ season: SEASON, rows: [], hidden: [] }, { user: USER });
+  const res = await post(app, '/api/home-panels/create/visibility', { hidden: true });
+  assert.equal(res.status, 200);
+  assert.deepEqual(state.hidden, ['create']);
   const route = read('src/routes/home-panels.js');
-  assert.match(route, /position', homePanelPrefLimiter/);
+  assert.doesNotMatch(route.replace(/^\s*\/\/.*$/gm, ''), /canCreateApps|app_quota/,
+    'no quota check anywhere in the registry or its routes');
+});
+
+// The placement endpoint is gone: a widget's home is a real (column, row)
+// cell now, written for the whole grid at once by PUT /api/home-layout.
+test('the card-count position endpoint is retired', async () => {
+  const { app } = makeApp({ season: SEASON, rows: [] }, { user: USER });
+  const res = await post(app, '/api/home-panels/challenges/position', { index: 4 });
+  assert.equal(res.status, 404);
+  const route = read('src/routes/home-panels.js');
+  assert.doesNotMatch(route, /router\.post\('\/api\/home-panels\/:key\/position'/);
+  assert.doesNotMatch(route, /MAX_PANEL_POSITION =/);
+  // The column survives (this schema file is append-only) but nothing reads
+  // it — a stale reader would silently resurrect the old placement model.
   const schema = read('src/db/schema.sql');
   assert.match(schema, /home_panel_positions JSONB NOT NULL DEFAULT '\{\}'/);
+  assert.match(schema, /RETIRED — superseded by the `user_home_layout` table/);
+  // Matched against code, not comments — the one remaining mention is the
+  // note in readPrefs explaining why it is gone.
+  assert.doesNotMatch(route.replace(/^\s*\/\/.*$/gm, ''), /home_panel_positions/);
 });
 
 // ─── Source pins ──────────────────────────────────────────────────────

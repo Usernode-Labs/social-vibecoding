@@ -1609,6 +1609,27 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   swipe actions first, then reorder on the container — the items are
   the `.un-swipe` wrappers) and with pull-to-refresh via the gesture
   arbiter. Returns `{ detach() }`; never throws on bad input.
+- **Free-form grid placement (the homescreen model).**
+  `unNative.attachGridPlacement(listEl, { cellFromPoint, itemSelector?,
+  handle?, longPressMs?, canPlace?, onLift?, onHover?, onPlace?,
+  onSettle? })`. Reach for this instead of `attachReorder` when your grid
+  is a CANVAS rather than a list — when a tile should be droppable in any
+  cell, gaps included, and nothing should re-pack behind it. Same physics
+  as reorder's grid mode (long-press lift on touch, drag past the slop on
+  desktop, a fixed ghost tracking the finger on both axes, edge
+  auto-scroll, haptics, spring settle, gesture arbiter), but the real item
+  holds its cell as a dashed slot and siblings never move. **The kit owns
+  the gesture; you own the geometry**: it never computes a cell, it calls
+  your `cellFromPoint(x, y)` (returning `{ col, row }` or `null`), asks
+  `canPlace(item, cell)` on each cell change, calls `onHover(item, cell,
+  ok)` so you can paint the target highlight, and finally
+  `onPlace(item, cell)` on a committed drop. `onLift` / `onSettle` carry
+  the same deferral contract as `attachReorder` (hold a re-render flag in
+  the first, flush it in the second — it fires on drops, cancels and
+  detach alike). Rendering the grid as real cell elements while dragging
+  makes `cellFromPoint` a one-line `elementFromPoint(...).closest(...)`
+  and gives the user the drop target for free. Returns `{ detach() }`;
+  never throws on bad input.
 - **Bottom sheet.** `unNative.presentSheet({ content | contentEl,
   onDismiss })` — grabber, spring presentation, 1:1 drag-to-dismiss
   with momentum commit (a touch mid-spring inherits position and

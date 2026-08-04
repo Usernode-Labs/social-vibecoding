@@ -564,93 +564,71 @@
     <!-- .home-body-fill (app.css) makes this a min-height:100% flex column:
          the min-height guarantees the scroller can always be scrolled by at
          least the search bar's height, even with an empty "Your apps" — a
-         short page would otherwise leave the bar permanently on screen — and
-         the flex column lets the trailing sections carry
-         .home-bottom-anchor (margin-top:auto) so they sit at the BOTTOM of
-         the visible page when the feed is shorter than the viewport, and
-         flow normally right after "Your apps" when it isn't. -->
+         short page would otherwise leave the bar permanently on screen.
+         (It used to do double duty as the flex context for
+         .home-bottom-anchor on the two trailing sections; those are widgets
+         in the grid now, so nothing below the grid is anchored any more.) -->
     <div id="home-body" class="home-column home-body-fill">
-      <div id="app-list" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 p-3 pt-2"></div>
+      <!-- iOS in-app only: the "Usernode widget" editing strip, mirroring
+           the pinned grid the homescreen widget renders. It lives ABOVE the
+           launcher grid rather than inside it — a full-width flow item
+           cannot coexist with the explicit cell placement #app-list now
+           uses. Filled + wired by Home.renderWidgetSection /
+           _wireWidgetStrip; empty everywhere but the iOS app. -->
+      <section id="home-widget-strip-section" class="hidden px-3 pt-2"></section>
 
-      <!-- Home-screen panels (#911): cards that sit between the launcher
-           grid and "Featured apps". One panel today — "Challenges", the
-           season's open challenges with the viewer's own progress. Owned
-           by public/js/home-panels.js (HomePanels.render fills this
-           section wholesale and hides it when there is nothing to show).
+      <!-- THE LAUNCHER GRID. Every child is placed at an explicit
+           (column, row) cell by Home.render() — app tiles and widgets
+           alike — so a viewer's arrangement can have holes in it, exactly
+           like a phone home screen. Nothing here flows.
+
+           4 columns on a phone, 5 from `sm` (640px) up, and never more:
+           the canvas is capped at 5 x 8. That 640px boundary is mirrored
+           in HomeLayout.BREAKPOINT_PX (public/js/home-layout.js) — the JS
+           has to lay out against the same column count the CSS renders,
+           and tests/home-layout-model.test.js pins the pair.
+
+           Tighter gutters and gaps below `sm` than the old 2-column grid
+           had: four 56px icons only read as a home screen at phone
+           density. `grid-auto-rows` and `position: relative` (needed by
+           the drag-time grid overlay) live in app.css. -->
+      <div id="app-list" class="grid grid-cols-4 sm:grid-cols-5 gap-1.5 sm:gap-2 p-2 pt-1.5 sm:p-3 sm:pt-2"></div>
+
+      <!-- Home-screen widgets (#911) — the FALLBACK host.
+
+           Widgets normally live IN the launcher grid above, each at its own
+           (column, row) cell: home.js plants a `[data-panel-slot]` host per
+           widget for HomePanels.render() to paint into. This section is
+           where they go when there is no grid to ride in — an active search
+           (a transient view with no layout to place against), and the moment
+           before the first grid paint. Without it a widget would vanish
+           whenever the grid did.
 
            Deliberately OUTSIDE #app-list, like the search bar above: the
            grid's innerHTML is replaced on every WS app event and every
            search keystroke, which would otherwise destroy these blocks and
            their listeners.
 
-           HomePanels fills this with a STACK of sibling bordered
+           HomePanels fills it with a STACK of sibling bordered
            <article class="home-panel"> blocks — one per widget, each
-           carrying its own title bar and ⋮ menu — so a second widget
-           lands as its own distinct box rather than another row in a
-           shared card.
-           The blocks are plain FULL-WIDTH children: .home-column on
-           #home-body bounds and centres the feed, so don't wrap them in a
-           per-box width bound (see app.css .home-column). Each block is
-           height-capped at two app-grid rows by --home-panel-max-h — the
-           derivation lives with that constant in app.css.
+           carrying its own title bar and ⋮ menu. The blocks are plain
+           FULL-WIDTH children: .home-column on #home-body bounds and centres
+           the feed, so don't wrap them in a per-box width bound (see
+           app.css .home-column).
 
-           NOTE "panel" ≠ the "Usernode widget" strip home.js renders
-           INSIDE the grid (that's the iOS home-screen widget). -->
+           NOTE "panel" ≠ the "Usernode widget" strip above the grid — that
+           is the iOS home-screen widget's pinned app list. -->
       <section id="home-panels" class="hidden px-3 pb-3"></section>
 
-      <!-- Find more apps: admin-curated featured tiles + the way into the
-           #apps browse screen. Populated by Home.renderFindMore(). -->
-      <!-- Featured apps: same section shape as "Your apps" above and
-           "Create an app" below — a .home-section-header, then the
-           content — so the three read as one consistent stack. The
-           heading sits OUTSIDE the card for that reason.
-
-           The card is a plain FULL-WIDTH child of the section: the whole
-           feed is already capped and centred by .home-column on
-           #home-body, so the card spans the column's gutters and lines up
-           with the "Your apps" grid's own edges.
-
-           .home-bottom-anchor pushes this section — and "Create an app"
-           after it — to the bottom of the visible page whenever the whole
-           feed is shorter than the viewport. It is a plain
-           `margin-top:auto` inside #home-body's flex column, so a feed
-           that fills or overflows the screen has no free space to absorb
-           and the section flows normally right below the grid. -->
-      <section id="home-find-more" class="home-bottom-anchor px-3 pb-3">
-        <div class="home-section-header">Featured apps</div>
-        <!-- ONE contained card: the featured tiles and the browse action
-             sit on the same rounded surface, with the browse row as the
-             card's footer — separated by a hairline rather than a gap, so
-             it stays visibly attached (and is the whole reason the footer
-             is a full-width row rather than a floating pill). -->
-        <div class="home-find-more-card rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/50 overflow-hidden">
-          <div class="px-3 pt-3">
-            <div id="home-featured-list" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 pb-3"></div>
-            <!-- Shown in place of the tiles when nothing is left to feature,
-                 so the card never collapses to a bare footer. -->
-            <p id="home-featured-empty" class="hidden pb-3 text-sm text-zinc-500 dark:text-zinc-400">
-              Nothing featured right now — browse the full directory to find apps to add.
-            </p>
-          </div>
-          <button type="button" id="home-browse-btn" class="w-full flex items-center justify-between gap-2 px-3 py-3 border-t border-zinc-200 dark:border-zinc-800 text-sm font-medium text-violet-600 dark:text-violet-400 hover:bg-violet-500/[0.06] dark:hover:bg-violet-500/10 transition-colors">
-            <span class="flex items-center gap-2">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-              Browse all apps
-            </span>
-            <svg class="w-4 h-4 shrink-0 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-          </button>
-        </div>
-      </section>
-
-      <!-- Create an app: the former in-grid create tile ("Build your own
-           app"), now its own trailing section. Home.renderCreateSection()
-           fills it with either that tile or the "ask an admin" hint.
-           Same heading-outside / full-width-box shape as the featured
-           section above. -->
-      <section id="home-create-section" class="px-3 pb-4">
-        <div class="home-section-header">Create an app</div>
-        <div id="home-create-body"></div>
-      </section>
+      <!-- NOTE: #home-find-more ("Featured apps" + its "Browse all apps"
+           footer) and #home-create-section ("Create an app") used to sit
+           here as fixed, unmovable trailing sections below the grid. Both
+           are WIDGETS in the grid above now — `discover` and `create` — so
+           they can be placed anywhere the viewer likes, alongside their app
+           tiles, instead of being pinned under everything. See
+           PANEL_REGISTRY in src/routes/home-panels.js and the renderers
+           (renderDiscoverPanel / renderCreatePanel) in
+           public/js/home-panels.js. -->
     </div>
   </main>
 
@@ -2581,6 +2559,9 @@
   <!-- Home-screen panels (#911): the Challenges card between the launcher
        grid and "Featured apps". Loaded BEFORE home.js, whose load() /
        render() call into HomePanels. -->
+  <!-- Grid geometry (pure functions over the layout model) before the two
+       modules that lay out against it. -->
+  <script src="/js/home-layout.js"></script>
   <script src="/js/home-panels.js"></script>
   <script src="/js/home.js"></script>
   <!-- Browse-all-apps screen (#apps). After home.js: it reuses

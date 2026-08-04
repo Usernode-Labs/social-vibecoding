@@ -13,7 +13,8 @@
 //
 // Surface:
 //   GET  /api/home-panels
-//        → { registry: [{ key, title }], hidden: [key…], panels: [ … ] }
+//        → { registry: [{ key, title, removable, sizes }], hidden: [key…],
+//            panels: [ … ] }
 //        `registry` + `hidden` always describe every panel this platform
 //        has (so Settings can render its checkboxes from the same
 //        response); `panels` carries the BUILT payload for the visible
@@ -21,15 +22,21 @@
 //   POST /api/home-panels/:key/visibility  body { hidden: boolean }
 //        → { hidden: [key…] }
 //
-// Placement model: `users.home_panels_hidden` is a TEXT[] of keys the
-// viewer has dismissed. ABSENCE MEANS VISIBLE — that's what makes the
-// challenges panel default-on for every existing and future account
-// with no backfill. Keys are validated against PANEL_REGISTRY on write
-// so the column can never accumulate junk.
+// Visibility model: `users.home_panels_hidden` is a TEXT[] of keys the
+// viewer has dismissed. ABSENCE MEANS VISIBLE — that's what makes every
+// widget default-on for every existing and future account with no
+// backfill. Keys are validated against PANEL_REGISTRY on write so the
+// column can never accumulate junk.
 //
-// Only ONE panel exists today (`challenges`). The registry indirection is
-// deliberate: adding a second panel is a new entry + a builder, not a
-// refactor of the route or the client.
+// PLACEMENT lives elsewhere now: src/routes/home-layout.js owns the
+// free-form (column, row) cell each widget and app tile occupies, in the
+// same table and the same write as the app tiles. This file is the widget
+// REGISTRY plus per-widget CONTENT; it no longer stores a position.
+//
+// Three widgets today: `challenges` (the only one with a real builder),
+// `discover` (featured apps + the way into the app directory) and `create`
+// (the create-an-app tile). The registry indirection is deliberate: adding
+// a fourth is a new entry + a builder, not a refactor of route or client.
 
 'use strict';
 
@@ -454,49 +461,99 @@ function demoChallengesPanel(opts) {
 
 // ─── Registry ────────────────────────────────────────────────────────
 //
-// key → { title, build(pool, user), demo() }. Order here IS the order the
-// panels render in on the home screen.
+// key → { title, removable, sizes, build(pool, user), demo() }. Order here
+// IS the default placement order on the home screen (HomeLayout.deriveDefault
+// walks it), and it is also the order Settings renders its checkboxes in.
+//
+// `sizes` is the widget's FOOTPRINT in grid cells, per column count:
+// { 4: [w, h], 5: [w, h] }. It lives here — not in the stored layout — so a
+// widget can be resized in code without migrating anyone's saved cells; the
+// client's HomeLayout.repair() nudges anything a size change made overlap.
+// 2x2 at five columns is ~397px inside the 1024px .home-column, under the
+// --home-panel-max-w 32rem cap, so the cap never binds in the grid.
+//
+// `removable: false` means the ⋮ menu and Settings must refuse to hide it.
+// Only `discover` carries it, because #home-browse-btn (now that widget's
+// footer) is the ONLY navigation into the #apps directory in the whole
+// shell — hiding it would strand the viewer with no way to find apps.
+//
+// THE REGISTRY TAKES NO VIEWER ARGUMENT, AND MUST NOT GROW ONE. Every entry
+// is unconditional: `create` is in the registry, in `panels`, in Settings and
+// in the layout for EVERY account, including one with no app quota. Whether
+// the create widget is tappable is decided client-side from the derived
+// `canCreateApps` boolean (/api/auth/me), which is quota-derived and can flip
+// mid-session — a per-viewer registry would turn each of those flips into a
+// layout mutation that re-packs the user's grid.
+//
+// `discover` and `create` are MARKER entries: they build no payload at all.
+// Discover's featured tiles are already served per-viewer by GET /api/apps
+// (`featured` / `featured_order`, derived client-side by Home.featuredApps),
+// and the create widget has nothing to fetch — so neither costs a query.
 const PANEL_REGISTRY = [
   {
     key: 'challenges',
     title: 'Challenges',
+    removable: true,
+    sizes: { 4: [4, 2], 5: [2, 2] },
     build: buildChallengesPanel,
     demo: demoChallengesPanel,
+  },
+  {
+    key: 'discover',
+    title: 'Discover',
+    removable: false,
+    sizes: { 4: [4, 2], 5: [2, 2] },
+    build: async () => ({}),
+    demo: () => ({ demo: true }),
+  },
+  {
+    key: 'create',
+    title: 'Create app',
+    removable: true,
+    sizes: { 4: [1, 1], 5: [1, 1] },
+    build: async () => ({}),
+    demo: () => ({ demo: true }),
   },
 ];
 
 const PANEL_KEYS = new Set(PANEL_REGISTRY.map((p) => p.key));
 
-// Upper bound on a stored drag position (cards above the panel). Nobody has
-// a thousand apps pinned to their home screen; the cap exists so a hostile
-// or buggy client can't park a panel at index 1e9 and so the value stays
-// obviously reasonable in the column.
-const MAX_PANEL_POSITION = 500;
+// The registry as the layout route and the client need it — keys, titles,
+// removability and footprints, with no builders. Exported so
+// src/routes/home-layout.js validates footprints against the SAME numbers
+// the client lays out with.
+function panelRegistryPublic() {
+  return PANEL_REGISTRY.map((p) => ({
+    key: p.key,
+    title: p.title,
+    removable: p.removable !== false,
+    sizes: { 4: [...p.sizes[4]], 5: [...p.sizes[5]] },
+  }));
+}
+
+// Footprint of one widget at one column count, or null for an unknown key.
+// The layout route's overlap check runs on these, so a buggy or hostile
+// client can never persist a self-overlapping arrangement.
+function widgetSize(key, cols) {
+  const entry = PANEL_REGISTRY.find((p) => p.key === key);
+  if (!entry) return null;
+  const size = entry.sizes[cols] || entry.sizes[5];
+  return [size[0], size[1]];
+}
 
 // The viewer's dismissed keys, filtered to the live registry so a key
 // retired from the code stops affecting anything without a migration.
+// `home_panel_positions` is NOT read any more — free-form placement lives in
+// user_home_layout (see the retired-column comment in schema.sql).
 async function readPrefs(pool, userId) {
   const { rows } = await pool.query(
-    'SELECT home_panels_hidden, home_panel_positions FROM users WHERE id = $1',
+    'SELECT home_panels_hidden FROM users WHERE id = $1',
     [userId]
   );
   const rawHidden = rows[0]?.home_panels_hidden;
   const hidden = Array.isArray(rawHidden)
     ? rawHidden.filter((k) => PANEL_KEYS.has(k)) : [];
-
-  // Positions: { key: cardsAbove }. Filtered to the live registry and to
-  // sane integers, so neither a retired key nor a junk value can reach the
-  // client. An absent key means "the default slot, under the whole grid".
-  const rawPos = rows[0]?.home_panel_positions;
-  const positions = {};
-  if (rawPos && typeof rawPos === 'object' && !Array.isArray(rawPos)) {
-    for (const [key, value] of Object.entries(rawPos)) {
-      if (!PANEL_KEYS.has(key)) continue;
-      const n = Number(value);
-      if (Number.isInteger(n) && n >= 0 && n <= MAX_PANEL_POSITION) positions[key] = n;
-    }
-  }
-  return { hidden, positions };
+  return { hidden };
 }
 
 function homePanelRoutes() {
@@ -505,9 +562,9 @@ function homePanelRoutes() {
 
   router.get('/api/home-panels', async (req, res) => {
     if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
-    const registry = PANEL_REGISTRY.map((p) => ({ key: p.key, title: p.title }));
+    const registry = panelRegistryPublic();
     try {
-      const { hidden, positions } = await readPrefs(pool, req.user.id);
+      const { hidden } = await readPrefs(pool, req.user.id);
       const demo = IS_STAGING && req.query.demo === '1';
       // ?expand=<key> asks one panel for its expanded list (finished
       // challenges included, row cap lifted). Per-visit UI state, so it
@@ -530,7 +587,7 @@ function homePanelRoutes() {
           });
         }
       }
-      return res.json({ registry, hidden, positions, panels });
+      return res.json({ registry, hidden, panels });
     } catch (err) {
       log.error('home-panels', 'GET /api/home-panels failed', {
         userId: req.user.id, message: err.message,
@@ -539,10 +596,20 @@ function homePanelRoutes() {
     }
   });
 
+  // Show / hide one widget. Deliberately NOT gated on anything about the
+  // viewer beyond being signed in: hiding `create` must work for an account
+  // with no app quota exactly as it does for a creator, since the widget is
+  // on every home screen either way.
   router.post('/api/home-panels/:key/visibility', homePanelPrefLimiter, async (req, res) => {
     if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
     const key = String(req.params.key || '');
     if (!PANEL_KEYS.has(key)) return res.status(400).json({ error: 'Unknown panel' });
+    const entry = PANEL_REGISTRY.find((p) => p.key === key);
+    // Discover is the shell's only door to the app directory — refuse to
+    // hide it rather than leaving someone with no way to find apps.
+    if (entry && entry.removable === false && req.body && req.body.hidden === true) {
+      return res.status(400).json({ error: 'This widget cannot be hidden' });
+    }
     const { hidden } = req.body || {};
     if (typeof hidden !== 'boolean') {
       return res.status(400).json({ error: 'hidden must be a boolean' });
@@ -575,51 +642,24 @@ function homePanelRoutes() {
     }
   });
 
-  // Where the panel sits among the app-grid rows, after an iOS-style drag.
-  // `index` counts APP CARDS above the block (see the schema comment on
-  // home_panel_positions for why cards and not rows). jsonb_set with the
-  // create-missing flag keeps this a single statement whether or not the
-  // key is already there.
-  router.post('/api/home-panels/:key/position', homePanelPrefLimiter, async (req, res) => {
-    if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
-    const key = String(req.params.key || '');
-    if (!PANEL_KEYS.has(key)) return res.status(400).json({ error: 'Unknown panel' });
-    const { index } = req.body || {};
-    const n = Number(index);
-    if (!Number.isInteger(n) || n < 0 || n > MAX_PANEL_POSITION) {
-      return res.status(400).json({ error: 'index must be an integer within range' });
-    }
-    try {
-      const { rows } = await pool.query(
-        `UPDATE users
-            SET home_panel_positions =
-                  jsonb_set(COALESCE(home_panel_positions, '{}'::jsonb),
-                            ARRAY[$2::text], to_jsonb($3::int), TRUE)
-          WHERE id = $1
-          RETURNING home_panel_positions`,
-        [req.user.id, key, n]
-      );
-      const raw = rows[0]?.home_panel_positions || {};
-      const positions = {};
-      for (const [k, v] of Object.entries(raw)) {
-        if (PANEL_KEYS.has(k)) positions[k] = Number(v);
-      }
-      return res.json({ positions });
-    } catch (err) {
-      log.error('home-panels', 'position write failed', {
-        userId: req.user.id, key, message: err.message,
-      });
-      return res.status(500).json({ error: 'Internal server error' });
-    }
-  });
+  // NOTE: POST /api/home-panels/:key/position is GONE. A widget's place on
+  // the home screen is a real (column, row) cell now, written through
+  // PUT /api/home-layout (src/routes/home-layout.js) alongside the app
+  // tiles — one write for the whole arrangement instead of a card-count
+  // per widget.
 
   return router;
 }
 
 module.exports = {
   homePanelRoutes,
-  // Exported for tests / future panels.
+  // Exported for tests / future panels, and for src/routes/home-layout.js —
+  // which validates footprints against the SAME registry the client lays
+  // out with, so the two can't disagree about how big a widget is.
   PANEL_REGISTRY,
+  PANEL_KEYS,
+  panelRegistryPublic,
+  widgetSize,
   parseRewardPoints,
   resolveProgress,
   buildChallengeRow,

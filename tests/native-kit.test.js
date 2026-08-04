@@ -824,6 +824,62 @@ test('gridDropSide: the ~90% width threshold separates the two regimes', () => {
   assert.equal(gridDropSide(wide, 1000, 300, 90), 'after', 'bottom y wins despite left x');
 });
 
+// ── attachGridPlacement (free-form placement) ──────────────────────────
+//
+// A SIBLING of attachReorder's grid mode, not a flag on it. attachReorder
+// speaks in a dense index space (onReorder(from, to, item) over a list where
+// every position is occupied) and enforces that by moving the real item
+// through the DOM live while siblings FLIP aside. Free placement has no such
+// index — a layout with holes is not an ordering — and must leave every
+// other item exactly where it is.
+
+test('attachGridPlacement is exported and documented beside attachReorder', () => {
+  assert.match(NATIVE_JS, /attachGridPlacement: attachGridPlacement,/);
+  assert.match(NATIVE_JS, /\*\s+unNative\.attachGridPlacement\(listEl, opts\)/,
+    'the header surface list names it');
+  // Nothing about the drop is decided by the kit: the host answers "which
+  // cell is this point in", which keeps the kit free of any assumption about
+  // row heights, gaps or grid-template-columns.
+  const fn = NATIVE_JS.slice(
+    NATIVE_JS.indexOf('function attachGridPlacement(listEl, options) {'),
+    NATIVE_JS.indexOf('/* ────────────────────────────────────────────────────────────────────\n   * Page transitions'));
+  assert.ok(fn.length > 1000, 'located attachGridPlacement');
+  assert.match(fn, /opts\.cellFromPoint\(drag\.lastX, drag\.lastY\)/);
+  assert.match(fn, /opts\.canPlace\(drag\.item, cell\)/);
+  assert.match(fn, /opts\.onPlace\(item, cell\)/);
+  // The real item never moves during the drag — that is the whole
+  // difference from displacement mode.
+  assert.doesNotMatch(fn, /insertBefore|gridFlip/);
+  // The ghost must not occlude the host's own elementFromPoint hit-test.
+  assert.match(fn, /ghost\.style\.pointerEvents = 'none'/);
+});
+
+test('attachGridPlacement never throws on bad input', () => {
+  // Same contract attachReorder carries: a bad call logs a warning and
+  // returns a no-op handle, so a host that wires it defensively is never the
+  // reason a page dies.
+  const fn = NATIVE_JS.slice(
+    NATIVE_JS.indexOf('function attachGridPlacement(listEl, options) {'),
+    NATIVE_JS.indexOf('/* ────────────────────────────────────────────────────────────────────\n   * Page transitions'));
+  assert.match(fn, /var noop = \{ detach: function \(\) \{\} \};/);
+  assert.match(fn, /if \(!listEl \|\| listEl\.nodeType !== 1\) \{[\s\S]*?console\.warn[\s\S]*?return noop;/);
+  // cellFromPoint is the one REQUIRED option — without it the kit has no way
+  // to resolve a drop at all, so it disables itself rather than guessing.
+  assert.match(fn, /typeof opts\.cellFromPoint !== 'function'[\s\S]*?console\.warn[\s\S]*?return noop;/);
+});
+
+test('attachGridPlacement fires onSettle on every teardown path', () => {
+  // A mid-lift detach never reaches release(), so onSettle has to fire from
+  // detach() too — otherwise a host deferral flag set in onLift (the guard
+  // that stops a WS event replacing the grid) gets stuck on forever.
+  const fn = NATIVE_JS.slice(
+    NATIVE_JS.indexOf('function attachGridPlacement(listEl, options) {'),
+    NATIVE_JS.indexOf('/* ────────────────────────────────────────────────────────────────────\n   * Page transitions'));
+  const detach = fn.slice(fn.indexOf('detach: function () {'));
+  assert.match(detach, /if \(wasLifted && opts\.onSettle\)/);
+  assert.match(detach, /pendingFinish/, 'a ghost settle stopped mid-spring still owes its callbacks');
+});
+
 // ── Reorder edge auto-scroll ───────────────────────────────────────────
 
 test('autoScrollVelocity: zero outside the edge band, ramps to ±max at the edge', () => {

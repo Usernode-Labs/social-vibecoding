@@ -232,15 +232,25 @@ test('card: Retry pins to the card corner on errored cards, outside the hamburge
   assert.doesNotMatch(Home.renderAppCard(baseApp({ created_by: ME })), /retry-btn/);
 });
 
-test('card: active users render as a compact badge beside the title', () => {
+// A launcher tile is an icon and a label. The active-users badge and the
+// status dot that used to flank the name are both gone from the tile face:
+// the count still shows in the Browse-all DIRECTORY (a ranked list, where
+// popularity is the point), and every non-running status still says so in
+// words right below the name.
+test('card: the tile carries no users badge and no status dot', () => {
   const Home = makeHome({ id: ME });
-  const html = Home.renderAppCard(baseApp({ active_users: '12' }));
-  assert.match(html, /users-badge[^>]*title="12 active users"[\s\S]*?>12</, 'count + tooltip');
-  assert.doesNotMatch(html, /active user(s)?</, 'no spelled-out footer line');
-  // Uniform signal: the badge renders at zero too.
-  const zero = Home.renderAppCard(baseApp({ active_users: '0' }));
-  assert.match(zero, /users-badge[^>]*title="0 active users"/);
-  assert.doesNotMatch(zero, /No active users yet/, 'old empty-state line gone');
+  for (const users of ['12', '0']) {
+    const html = Home.renderAppCard(baseApp({ active_users: users }));
+    assert.doesNotMatch(html, /users-badge/, `users=${users}`);
+    assert.doesNotMatch(html, /status-dot/, `users=${users}`);
+    assert.doesNotMatch(html, /active user/, `users=${users}`);
+  }
+  // The word-form status signal survives — that is what makes dropping the
+  // dot safe for every state except an in-flight redeploy of a RUNNING app,
+  // which now shows only in the "…" menu's version pill.
+  assert.match(Home.renderAppCard(baseApp({ status: 'creating' })), /Spinning up/);
+  assert.match(Home.renderAppCard(baseApp({ status: 'awaiting_secrets' })), /Awaiting secrets/);
+  assert.match(Home.renderAppCard(baseApp({ status: 'error' })), /Error/);
 });
 
 test('card: no pills/chips of any kind on the card face', () => {

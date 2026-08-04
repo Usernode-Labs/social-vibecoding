@@ -258,6 +258,20 @@ const homePanelPrefLimiter = makeLimiter({
   message: 'Too many changes — slow down for a minute.',
 });
 
+// Free-form home-grid placement: one PUT per completed drag, and a drag is a
+// deliberate gesture rather than a keystroke. The ceiling is much higher than
+// the panel-pref limiter above because rearranging a home screen is genuinely
+// bursty — someone tidying their grid can easily land twenty drops in a
+// minute, and each also has to survive a breakpoint switch re-persisting.
+// Per-user keyed; the layout is per-user by definition.
+const homeLayoutLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 120,
+  name: 'home-layout',
+  keyByUser: true,
+  message: 'Too many layout changes — slow down for a minute.',
+});
+
 // Platform database export tickets: 3 / 24h / full admin. Each ticket
 // authorizes ONE full, unredacted pg_dump of the platform database — every
 // password hash, every live session token, every app credential — so the
@@ -317,4 +331,4 @@ const waitlistJoinLimiter = makeLimiter({
   message: 'Too many signups from this address — try again in a few minutes.',
 });
 
-module.exports = { dbExportLimiter, authLimiter, homePanelPrefLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, topochainMobileAuthLimiter, waitlistJoinLimiter };
+module.exports = { dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, topochainMobileAuthLimiter, waitlistJoinLimiter };

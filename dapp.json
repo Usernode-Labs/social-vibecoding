@@ -292,41 +292,43 @@
       "expectText": "staging-demo-lead"
     },
     {
-      "name": "Home ends with the \"Create an app\" section (create tile out of the grid)",
-      "path": "/",
-      "expectSelector": "#home-create-section #home-create-body .home-create-btn",
-      "expectText": "Build your own app"
-    },
-    {
-      "name": "The featured row renders admin-curated tiles (staging seed + ?demo=1)",
-      "path": "/?demo=1",
-      "expectSelector": "#home-featured-list .app-card"
-    },
-    {
       "name": "Challenges widget: metered rows, expand toggle and the leaderboard link (#911)",
       "path": "/?demo=1",
       "expectSelector": "#home-body.home-column article.home-panel .home-panel-rows--metered .home-panel-row .home-panel-bar-track[role=progressbar] .home-panel-bar-fill",
       "expectText": "Go to leaderboard"
     },
     {
-      "name": "Home feed sits in the 1024px centred column, featured card full width in it",
+      "name": "The Create app widget sits in the grid and opens the create flow",
       "path": "/?demo=1",
-      "expectSelector": "#home-body.home-column #home-find-more > .home-find-more-card"
+      "expectSelector": "#app-list [data-panel-slot=\"create\"][data-create-enabled=\"true\"] .home-create-btn",
+      "expectText": "Create app"
     },
     {
-      "name": "Create-an-app box is a full-width child of its section in that column",
-      "path": "/?demo=1",
-      "expectSelector": "#home-body.home-column #home-create-section > #home-create-body .home-create-btn"
+      "name": "The Create app widget is present but locked without app quota",
+      "path": "/?demo=1&shot=create-disabled",
+      "expectSelector": "#app-list [data-panel-slot=\"create\"][data-create-enabled=\"false\"] .home-create-btn[aria-disabled=\"true\"]",
+      "expectText": "Create app"
     },
     {
-      "name": "Trailing sections bottom-anchor in the full-height feed column",
+      "name": "The Discover widget renders curated tiles + the way into the directory",
       "path": "/?demo=1",
-      "expectSelector": "#home-body.home-body-fill > #home-find-more.home-bottom-anchor"
+      "expectSelector": "#app-list [data-panel-slot=\"discover\"] .home-panel .home-discover-tiles .app-card",
+      "expectText": "Browse all apps"
     },
     {
-      "name": "Create-an-app rides down with the anchor (no second anchor of its own)",
+      "name": "App tiles are placed at explicit grid cells, with holes allowed",
       "path": "/?demo=1",
-      "expectSelector": "#home-body.home-body-fill > #home-create-section:not(.home-bottom-anchor)"
+      "expectSelector": "#app-list .app-card[data-yours=\"true\"][style*=\"grid-row\"]"
+    },
+    {
+      "name": "The grid appears under a dragged tile (?shot=home-grid)",
+      "path": "/?demo=1&shot=home-grid",
+      "expectSelector": "#app-list #home-grid-overlay .home-grid-cell[data-cell=\"0,0\"].home-grid-cell--on"
+    },
+    {
+      "name": "App tiles carry no user count and no status dot",
+      "path": "/?demo=1",
+      "expectSelector": "#app-list .app-card:not(:has(.users-badge)):not(:has(.status-dot))"
     },
     {
       "name": "Platform variables panel renders on the platform app (#826 folded into app secrets)",
