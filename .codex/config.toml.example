@@ -4,6 +4,10 @@
 # From a trusted, reviewed checkout, run:
 #   node ./tools/social-vibecoding codex setup
 
+# Keep approval prompts with the person running Codex. In particular,
+# proposal_promote below is never delegated to Auto-review.
+approvals_reviewer = "user"
+
 [mcp_servers.social_vibecoding]
 command = "/absolute/path/to/node"
 args = [
@@ -25,3 +29,46 @@ enabled_tools = [
   "social_vibecoding.proposal_status",
   "social_vibecoding.proposal_promote",
 ]
+
+[mcp_servers.social_vibecoding.tools."social_vibecoding.proposal_promote"]
+approval_mode = "prompt"
+
+# codex setup writes the canonical Node and hook paths in all handlers.
+# The guard denies the direct generic-API and literal-shell promotion paths,
+# then authorizes one exact credential-safe host fallback after approval.
+[[hooks.UserPromptSubmit]]
+
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "<same generated pinned-hook runner>"
+command_windows = "<same generated Windows pinned-hook runner>"
+timeout = 5
+additionalContextLimit = 256
+
+[[hooks.PreToolUse]]
+matcher = "(^Bash$|api_write$)"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "<generated Node -e runner that verifies the hook SHA-256 before loading it>"
+command_windows = "<generated Windows Node -e runner with the same integrity check>"
+timeout = 5
+statusMessage = "Checking proposal promotion approval"
+
+[[hooks.PermissionRequest]]
+matcher = "^Bash$"
+
+[[hooks.PermissionRequest.hooks]]
+type = "command"
+command = "<same generated pinned-hook runner>"
+command_windows = "<same generated Windows pinned-hook runner>"
+timeout = 5
+
+[[hooks.PostToolUse]]
+matcher = "proposal_promote$"
+
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = "<same generated pinned-hook runner>"
+command_windows = "<same generated Windows pinned-hook runner>"
+timeout = 5

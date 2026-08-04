@@ -10,6 +10,17 @@ same-origin JSON API tools. Resolve the appropriate user-facing platform route
 from `src/routes/` instead of adding a tool-specific endpoint or calling GitHub
 directly.
 
+## Codex promotion-hook readiness
+
+When running in Codex, expect a separate hook-injected developer context on
+each user prompt reporting that the Usernode promotion-guard health check
+passed. If that separate context is absent, tell the user once that the project
+promotion guard is not active and ask them to open `/hooks`, review and
+enable or trust the Usernode project hook, then send another message. Safe
+non-promotion work may continue, but do not promote a proposal until a later
+prompt carries the passing hook context. This check is Codex-only; Claude Code
+does not use Codex's `/hooks` trust interface.
+
 ## Local proposal lifecycle
 
 For a feature or proposal authored from a local Codex or Claude session, keep
@@ -43,8 +54,12 @@ locally:
    history, and structured local test results. Usernode verifies ancestry and
    runs the normal staging and proposal-check pipeline.
 6. Poll `proposal_status` until it reports `ready` or `failed`. Fix and submit a
-   later fast-forwarding commit when needed. Once ready, call `proposal_promote`
-   when the user wants the proposal opened for voting.
+   later fast-forwarding commit when needed. Once ready, call only
+   `proposal_promote` when the user wants the proposal opened for voting; never
+   substitute `api_write` or a hand-written `/promote` request. Codex requires
+   manual approval for that dedicated tool. If it returns
+   `host_execution_required`, run only its exact returned `argv`: the Codex
+   promotion hook binds that fallback to the approved tool call and turn.
 
 The returned `webPath` opens this same native session in the web Dev page, so
 work can optionally continue there. Opening it is never required: the local

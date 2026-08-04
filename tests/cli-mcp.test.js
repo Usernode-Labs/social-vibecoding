@@ -264,6 +264,16 @@ test('sandboxed MCP native-store failures return an exact host API vector withou
       await assert.rejects(fs.readFile(lookupCount, 'utf8'), { code: 'ENOENT' },
         'platforms without secret-tool classify the native marker without spawning it');
     }
+
+    const promote = await client.callTool({
+      name: 'social_vibecoding.proposal_promote',
+      arguments: { session_id: 41 },
+    });
+    assert.equal(promote.structuredContent.code, 'host_execution_required');
+    assert.deepEqual(promote.structuredContent.argv, [
+      realNode, realLauncher, 'api', 'POST', '/api/sessions/41/promote',
+      '--profile', 'production', '--data', '{}',
+    ]);
   } finally {
     await client.close().catch(() => {});
     await fs.rm(home, { recursive: true, force: true });

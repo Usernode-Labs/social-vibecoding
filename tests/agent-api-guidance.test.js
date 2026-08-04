@@ -33,6 +33,9 @@ test('Claude imports the shared API-agent router and its routed guidance', () =>
   assert.match(guidance, /Browser approval/);
   assert.match(guidance, /still-valid legacy credential lacks the API/);
   assert.match(guidance, /social-vibecoding logout --profile/);
+  assert.match(guidance, /promotion-hook readiness/);
+  assert.match(guidance, /open `\/hooks`/);
+  assert.match(guidance, /Codex-only/);
 });
 
 test('machine-local agent setup artifacts are ignored', () => {
