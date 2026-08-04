@@ -2104,6 +2104,10 @@
     <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl">
       <h2 class="text-lg font-bold mb-1">Import a PR as a proposal</h2>
       <p class="text-xs text-zinc-500 mb-2">Pick an open pull request to turn into a proposal people can vote on. It goes straight into voting, just like a native proposal.</p>
+      <div class="text-xs text-zinc-500 mb-3 rounded-lg bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 p-3 space-y-1.5">
+        <p><strong class="text-zinc-700 dark:text-zinc-300">Contributors can work outside Usernode.</strong> Open a GitHub PR from your own fork, then import it here — you do not need Write access to this app's <code class="font-mono">usernode-bot</code> repository.</p>
+        <p>Write access is needed only to push a branch directly to that repository. Giving <code class="font-mono">usernode-bot</code> Write/Maintain access is a separate requirement when registering an existing repository as a Usernode app; it does not give contributors access to the repository.</p>
+      </div>
       <!-- #866: two expectations worth setting before the import, both of
            which used to surprise people. (1) The staging preview is built
            from the PR's head commit and takes a few minutes, so there's no
