@@ -612,6 +612,342 @@ async function createBranch(owner, repo, branchName, fromBranch = 'main') {
   log.info('github', 'Branch created', { repo: `${owner}/${repo}`, branch: branchName, from: fromBranch });
 }
 
+// Create a platform-managed branch at an exact commit supplied by a native
+// CLI handoff. Unlike createBranch(), this does not infer `main`: the local
+// agent and Usernode agree on one audited base SHA. Retrying after a DB
+// failure is safe when the orphaned ref still points at that SHA; a different
+// ref is a hard conflict rather than something we silently overwrite.
+async function ensureBranchAtSha(owner, repo, branchName, sha) {
+  const octokit = await getOctokit(owner);
+  await octokit.request('GET /repos/{owner}/{repo}/git/commits/{commit_sha}', {
+    owner, repo, commit_sha: sha,
+  });
+
+  try {
+    const { data: ref } = await octokit.request(
+      'GET /repos/{owner}/{repo}/git/ref/{+ref}',
+      { owner, repo, ref: `heads/${branchName}` }
+    );
+    if (String(ref.object.sha).toLowerCase() !== String(sha).toLowerCase()) {
+      const err = new Error('The CLI handoff branch already exists at a different commit');
+      err.code = 'branch_conflict';
+      throw err;
+    }
+    return { sha: ref.object.sha, created: false };
+  } catch (err) {
+    if (err.code === 'branch_conflict') throw err;
+    if (err.status !== 404) throw err;
+  }
+
+  try {
+    await octokit.request('POST /repos/{owner}/{repo}/git/refs', {
+      owner, repo, ref: `refs/heads/${branchName}`, sha,
+    });
+  } catch (createErr) {
+    // Two retries of the same proposal_start can both observe the ref as
+    // absent. GitHub lets one POST win and returns 422 to the other. Re-read
+    // on that exact race: the matching ref is the idempotent success case; a
+    // different ref remains a hard conflict. If no ref appeared, preserve the
+    // original validation error instead of disguising it.
+    if (createErr.status !== 422) throw createErr;
+    try {
+      const { data: racedRef } = await octokit.request(
+        'GET /repos/{owner}/{repo}/git/ref/{+ref}',
+        { owner, repo, ref: `heads/${branchName}` }
+      );
+      if (String(racedRef.object.sha).toLowerCase() === String(sha).toLowerCase()) {
+        return { sha: racedRef.object.sha, created: false };
+      }
+      const conflict = new Error('The CLI handoff branch already exists at a different commit');
+      conflict.code = 'branch_conflict';
+      throw conflict;
+    } catch (readErr) {
+      if (readErr.code === 'branch_conflict') throw readErr;
+      throw createErr;
+    }
+  }
+  log.info('github', 'Branch created at exact SHA', {
+    repo: `${owner}/${repo}`, branch: branchName, sha,
+  });
+  return { sha, created: true };
+}
+
+// Prove `headSha` is the same commit as, or a descendant of, `baseSha`.
+// The compare endpoint also proves both objects belong to this repository.
+// Callers use this for both the immutable handoff base and the branch's
+// current head, preventing history rewrites on a later submission.
+async function compareCommitAncestry(owner, repo, baseSha, headSha) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.request(
+    'GET /repos/{owner}/{repo}/compare/{basehead}',
+    { owner, repo, basehead: `${baseSha}...${headSha}`, per_page: 1 }
+  );
+  return {
+    status: data.status,
+    aheadBy: Number(data.ahead_by || 0),
+    behindBy: Number(data.behind_by || 0),
+    mergeBaseSha: data.merge_base_commit?.sha || null,
+  };
+}
+
+async function getBranchSha(owner, repo, branchName) {
+  const octokit = await getOctokit(owner);
+  const { data: ref } = await octokit.request(
+    'GET /repos/{owner}/{repo}/git/ref/{+ref}',
+    { owner, repo, ref: `heads/${branchName}` }
+  );
+  return ref.object.sha;
+}
+
+// Fast-forward a CLI handoff's platform branch to an exact pushed commit.
+// `force:false` is intentional even though callers preflight ancestry: it
+// closes the race if another writer moves the ref between compare + update.
+async function advanceBranchToSha(owner, repo, branchName, sha) {
+  const octokit = await getOctokit(owner);
+  const { data: ref } = await octokit.request(
+    'GET /repos/{owner}/{repo}/git/ref/{+ref}',
+    { owner, repo, ref: `heads/${branchName}` }
+  );
+  const currentSha = ref.object.sha;
+  if (String(currentSha).toLowerCase() === String(sha).toLowerCase()) {
+    return { previousSha: currentSha, sha: currentSha, updated: false };
+  }
+  const ancestry = await compareCommitAncestry(owner, repo, currentSha, sha);
+  if (ancestry.status !== 'ahead' || ancestry.aheadBy < 1) {
+    const err = new Error('Submitted commit does not fast-forward the CLI handoff branch');
+    err.code = 'non_fast_forward';
+    throw err;
+  }
+  const { data: updated } = await octokit.request(
+    'PATCH /repos/{owner}/{repo}/git/refs/{+ref}',
+    { owner, repo, ref: `heads/${branchName}`, sha, force: false }
+  );
+  log.info('github', 'CLI handoff branch advanced', {
+    repo: `${owner}/${repo}`, branch: branchName, from: currentSha, to: updated.object.sha,
+  });
+  return { previousSha: currentSha, sha: updated.object.sha, updated: true };
+}
+
+function proposalCommitMessage(message, localCommitSha) {
+  const body = safeMention(String(message || 'Local proposal update').trim())
+    || 'Local proposal update';
+  return `${body}\n\nUsernode-Local-Commit: ${localCommitSha}`;
+}
+
+async function createProposalCommit(owner, repo, {
+  branchName,
+  expectedRemoteParentSha,
+  localParentSha,
+  localParentTreeSha,
+  expectedTreeSha,
+  localCommitSha,
+  message,
+  authoredAt,
+  committedAt,
+  files,
+}) {
+  const octokit = await getOctokit(owner);
+  const readCommit = async (sha) => {
+    const { data } = await octokit.request(
+      'GET /repos/{owner}/{repo}/git/commits/{commit_sha}',
+      { owner, repo, commit_sha: sha }
+    );
+    return data;
+  };
+  const readHead = async () => {
+    const { data } = await octokit.request(
+      'GET /repos/{owner}/{repo}/git/ref/{+ref}',
+      { owner, repo, ref: `heads/${branchName}` }
+    );
+    return data.object.sha;
+  };
+  const fullMessage = proposalCommitMessage(message, localCommitSha);
+  const currentSha = String(await readHead()).toLowerCase();
+  const current = await readCommit(currentSha);
+  // A retry can arrive before or after the database records the new head.
+  // Before persistence, expectedRemoteParentSha is this commit's parent;
+  // afterward it is the commit itself. Require one of those exact shapes as
+  // well as the complete generated message and tree. A copied trailer on an
+  // unrelated branch movement must never be mistaken for our lost response.
+  const currentParentSha = String(current.parents?.[0]?.sha || '').toLowerCase();
+  const isRetry = (currentSha === expectedRemoteParentSha
+      || currentParentSha === expectedRemoteParentSha)
+    && String(current.message || '').trimEnd() === fullMessage.trimEnd()
+    && String(current.tree?.sha || '').toLowerCase() === expectedTreeSha;
+  if (isRetry) {
+    return {
+      sha: currentSha,
+      treeSha: expectedTreeSha,
+      previousSha: currentParentSha || null,
+      localParentSha,
+      created: false,
+    };
+  }
+  if (currentSha !== expectedRemoteParentSha) {
+    const err = new Error('The proposal branch moved before the local commit was uploaded');
+    err.code = 'branch_moved';
+    err.currentSha = currentSha;
+    throw err;
+  }
+  if (String(current.tree?.sha || '').toLowerCase() !== localParentTreeSha) {
+    const err = new Error('The local parent tree does not match the proposal branch tree');
+    err.code = 'parent_tree_mismatch';
+    err.remoteTreeSha = current.tree?.sha;
+    err.localParentTreeSha = localParentTreeSha;
+    throw err;
+  }
+  const treeEntries = new Array(files.length);
+  let next = 0;
+  const uploadOne = async () => {
+    while (next < files.length) {
+      const index = next++;
+      const file = files[index];
+      if (file.delete) {
+        treeEntries[index] = {
+          path: file.path, mode: '100644', type: 'blob', sha: null,
+        };
+        continue;
+      }
+      const { data: blob } = await octokit.request(
+        'POST /repos/{owner}/{repo}/git/blobs',
+        {
+          owner,
+          repo,
+          content: file.contentBase64,
+          encoding: 'base64',
+        }
+      );
+      treeEntries[index] = {
+        path: file.path,
+        mode: file.mode,
+        type: 'blob',
+        sha: blob.sha,
+      };
+    }
+  };
+  await Promise.all(Array.from(
+    { length: Math.min(8, Math.max(1, files.length)) },
+    () => uploadOne()
+  ));
+
+  const deletions = treeEntries.filter((entry) => entry.sha === null);
+  const writes = treeEntries.filter((entry) => entry.sha !== null);
+  const hasParentChildConflict = deletions.some((deletion) => writes.some((write) => (
+    write.path.startsWith(`${deletion.path}/`)
+      || deletion.path.startsWith(`${write.path}/`)
+  )));
+  let tree;
+  if (hasParentChildConflict) {
+    // Git cannot contain a blob and children below that blob at the same time.
+    // File<->directory commits therefore carry paths such as a deletion of
+    // `config` plus an addition of `config/index.js` (or the reverse). Apply
+    // deletions first, then build the writes on the intermediate tree. The
+    // final SHA check below still proves byte-for-byte tree equality.
+    const { data: deletedTree } = await octokit.request(
+      'POST /repos/{owner}/{repo}/git/trees',
+      {
+        owner,
+        repo,
+        base_tree: current.tree.sha,
+        tree: deletions,
+      }
+    );
+    const result = await octokit.request(
+      'POST /repos/{owner}/{repo}/git/trees',
+      {
+        owner,
+        repo,
+        base_tree: deletedTree.sha,
+        tree: writes,
+      }
+    );
+    tree = result.data;
+  } else {
+    const result = await octokit.request(
+      'POST /repos/{owner}/{repo}/git/trees',
+      {
+        owner,
+        repo,
+        base_tree: current.tree.sha,
+        tree: treeEntries,
+      }
+    );
+    tree = result.data;
+  }
+  if (String(tree.sha).toLowerCase() !== expectedTreeSha) {
+    const err = new Error('The uploaded GitHub tree does not match the tested local tree');
+    err.code = 'tree_mismatch';
+    err.actualTreeSha = tree.sha;
+    throw err;
+  }
+
+  const identity = {
+    name: 'Usernode CLI',
+    email: 'cli@usernodelabs.org',
+  };
+  const { data: commit } = await octokit.request(
+    'POST /repos/{owner}/{repo}/git/commits',
+    {
+      owner,
+      repo,
+      message: fullMessage,
+      tree: tree.sha,
+      parents: [currentSha],
+      author: { ...identity, date: authoredAt },
+      committer: { ...identity, date: committedAt },
+    }
+  );
+  const createdSha = String(commit.sha || '').toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(createdSha)) {
+    throw new Error('GitHub returned an invalid proposal commit SHA');
+  }
+  try {
+    await octokit.request(
+      'PATCH /repos/{owner}/{repo}/git/refs/{+ref}',
+      {
+        owner,
+        repo,
+        ref: `heads/${branchName}`,
+        sha: createdSha,
+        force: false,
+      }
+    );
+  } catch (err) {
+    // The update response can be lost after GitHub commits the ref. Confirm
+    // the live tip before classifying any transport/API error so a safe retry
+    // does not report a false branch conflict.
+    let observedSha = null;
+    try { observedSha = String(await readHead()).toLowerCase(); } catch {}
+    if (observedSha === createdSha) {
+      log.warn('github', 'Confirmed proposal ref update after an ambiguous response', {
+        repo: `${owner}/${repo}`, branch: branchName, to: createdSha,
+      });
+    } else {
+      if (![409, 422].includes(err.status)) throw err;
+      const moved = new Error('The proposal branch moved while the local commit was uploaded');
+      moved.code = 'branch_moved';
+      moved.currentSha = observedSha;
+      throw moved;
+    }
+  }
+  log.info('github', 'Created bot-owned proposal commit from local tree', {
+    repo: `${owner}/${repo}`,
+    branch: branchName,
+    from: currentSha,
+    to: createdSha,
+    localCommitSha,
+    localParentSha,
+    fileCount: files.length,
+  });
+  return {
+    sha: createdSha,
+    treeSha: expectedTreeSha,
+    previousSha: currentSha,
+    localParentSha,
+    created: true,
+  };
+}
+
 // Log-safe description of a GitHub/Octokit error. Octokit's
 // RequestError.message is EMPTY when GitHub answers with an empty or
 // non-JSON body (the 2026-07-24 create-PR outage logged `{"err":""}` for
@@ -771,12 +1107,11 @@ async function reopenPR(owner, repo, prNumber) {
   return data;
 }
 
-// #687 Slice 4: distinct "head moved" outcome. When a `sha` is passed to
-// mergePR (imported PRs pin the exact reviewed commit) GitHub returns 409
-// if the PR head has moved since — someone pushed between the vote and the
-// merge. checkAndMerge treats this NOT as a proposal error but as "wait for
-// the sync poller to pick up the new head (reset votes/checks) and retry on
-// the next qualifying vote". `err.headMoved === true` is the sentinel.
+// Distinct "head moved" outcome. Proposal callers pin the exact reviewed
+// commit, so GitHub returns 409 if someone pushes between the vote and merge.
+// Imported proposals defer to their sync poller; native proposals (including
+// CLI handoffs) reconcile their live reviewed head immediately.
+// `err.headMoved === true` is the shared sentinel.
 class HeadMovedError extends Error {
   constructor(message) {
     super(message || 'PR head moved since the reviewed commit');
@@ -788,8 +1123,8 @@ class HeadMovedError extends Error {
 // Merge a PR (squash). `sha`, when provided, is forwarded to GitHub's merge
 // API as the expected head commit: GitHub refuses (409) if the current head
 // differs, guaranteeing we merge EXACTLY the reviewed commit and never
-// something newer that pushed in after the vote. Native callers pass no
-// `sha` and keep the prior unconditional-squash behaviour byte-for-byte.
+// something newer that pushed in after the vote. Native and imported proposal
+// callers both pass their revision-specific reviewed SHA.
 // A 409 raised specifically by the sha mismatch is re-thrown as a
 // HeadMovedError so the caller can distinguish it from other merge failures.
 async function mergePR(owner, repo, prNumber, sha = null) {
@@ -807,8 +1142,8 @@ async function mergePR(owner, repo, prNumber, sha = null) {
   } catch (err) {
     // GitHub returns 409 both for "head changed" (our sha no longer matches)
     // and for "not mergeable" (base moved / conflicts). When we pinned a sha
-    // and hit a 409, surface it as the head-moved sentinel so imported merges
-    // defer to the sync poller instead of erroring the proposal.
+    // and hit a 409, surface it as the head-moved sentinel so proposal callers
+    // can refresh the live revision instead of erroring the proposal.
     if (sha && err && err.status === 409) {
       log.info('github', 'PR merge refused — head moved since reviewed commit', {
         repo: `${owner}/${repo}`, pr: prNumber, pinnedSha: sha,
@@ -1645,6 +1980,11 @@ module.exports = {
   pushFiles,
   getFileContent,
   createBranch,
+  ensureBranchAtSha,
+  compareCommitAncestry,
+  getBranchSha,
+  advanceBranchToSha,
+  createProposalCommit,
   createPR,
   describeGithubError,
   _setCreatePrRetryDelaysForTests,

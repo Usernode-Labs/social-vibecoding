@@ -96,6 +96,14 @@ const EVENT_TYPES = Object.freeze({
   // durable "a leak happened here" record — a non-zero count of these means
   // the host is failing to remove containers, not that previews are lost.
   STAGING_TEARDOWN_LEAKED: 'staging_teardown_leaked',
+
+  // A mobile shell asked POST /api/v4/app-version/check whether it must
+  // update. Recorded so the Topochain → App version admin screen can show
+  // whether the release gate is doing anything at all: with no
+  // app_version_configs row the endpoint answers `upgrade: 0` to every
+  // build, which is indistinguishable from "no app is calling" unless the
+  // calls themselves are counted. metadata: { os, upgrade }.
+  APP_VERSION_CHECKED: 'app_version_checked',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise

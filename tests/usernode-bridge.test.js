@@ -80,6 +80,20 @@ test('hosted bridge relay is deny-by-default for child iframes', () => {
   );
 });
 
+// Native chrome actions are authorized with a top-frame capability. The
+// parent relay must deny both the private bootstrap and every privileged
+// method so an embedded app cannot borrow the shell's authority.
+test('hosted bridge relay refuses privileged calls from iframes', () => {
+  const bridge = readBridge(versionedBridgePath);
+  assert.match(bridge, /getPrivilegedBridgeCapability/);
+  assert.match(bridge, /isPrivilegedNativeMethod\(data\.method\)/);
+  assert.match(bridge, /refusing privileged relay/);
+  assert.match(
+    bridge,
+    /Privileged Usernode methods are only available to the top-level page/
+  );
+});
+
 test('hosted bridge forwards the versioned app identity shortcut contract', () => {
   const bridge = readBridge(versionedBridgePath);
   assert.match(bridge, /var id = String\(Date\.now\(\)\) \+ "-" \+ Math\.random\(\)\.toString\(16\)\.slice\(2\)/);

@@ -43,6 +43,10 @@ const debugAccess = require('../services/debug-access');
 // stub gather().
 const statusSvc = require('../services/status');
 const { announceIssueCreated } = require('../services/issue-announce');
+const {
+  reviewedHeadForSession,
+  currentVotePredicateSql,
+} = require('../services/pr-vote-revision');
 const notifications = require('../services/notifications');
 // runSyncMain + persistBehindMain now live in services/sync-main.js so
 // the conflict-resolver can drive a sync turn without a route-requires-
@@ -51,13 +55,35 @@ const notifications = require('../services/notifications');
 // monkey-patch individual functions, mirroring how worker.isInFlight
 // is stubbed in the route suites.
 const syncMainSvc = require('../services/sync-main');
-const { runSyncMain, persistBehindMain } = syncMainSvc;
+const { runSyncMain, persistBehindMain, advanceSharedReviewAfterSync } = syncMainSvc;
 
 // Track sessions with active Claude Code workers. The Set lives in a
 // shared module so services/sync-main.js writes to the same instance
 // the chat handler and server.js's drain logic read.
-const { activeWorkers, getActiveWorkerCount } = require('../services/active-workers');
+const {
+  activeWorkers,
+  beginSessionOperation,
+  getActiveWorkerCount,
+  isSessionBusy,
+} = require('../services/active-workers');
 const turnWatchdog = require('../services/turn-watchdog');
+const estimateGuard = require('../services/estimate-guard');
+// #892: what an unearned "nearly done" phrase is replaced with. Mirrors the
+// user-facing wording of ccPhaseLabel() in public/js/cc-progress-summary.js
+// but phrased as an ongoing activity, since it sits where the model's own
+// phrase would have. Keyed by the head word of the `[phase]` marker.
+const NEUTRAL_PHASE_TEXT = {
+  claude: 'still working through the changes',
+  sync: 'syncing with main',
+  refresh: 'syncing the branch',
+  'inloop-db': 'still working through the changes',
+};
+const { isCliCredentialManagementSession } = require('../services/cli-api-policy');
+// #894: the deterministic pill sets a turn falls back to when the Mayor
+// omits suggest_replies (or the turn ends on a path with no wrap-up).
+const { turnFallbackQuickReplies } = require('../services/recovery-pills');
+
+const CLI_CREDENTIAL_MANAGEMENT_ERROR = 'credential_management_not_available_via_cli';
 
 // Per-session stop handles, populated while a chat turn is in flight.
 // Shape: { abort: AbortController, workerName: string|null, phase: 'mayor1'|'cc'|'mayor2', stopped: boolean, stoppedBy: string|null }
@@ -341,7 +367,8 @@ const { stripSpecWrapperFence } = require('../services/spec-format');
 // preview card with the returned version, so clicking an OLDER card
 // opens exactly the content it represented — instead of always falling
 // back to the latest spec. Since #69 retired the manual "Save version"
-// route, this is the SOLE writer of new rows in chat_session_specs;
+// route, this and the native CLI proposal-handoff route are the only writers
+// of new rows in chat_session_specs;
 // it uses MAX(version)+1. Best-effort: returns null on failure so the
 // card falls back to the latest spec rather than blocking the edit.
 async function snapshotSessionSpec(pool, sessionId, content) {
@@ -432,7 +459,7 @@ function sessionRoutes(config) {
       );
       const sessions = rows.map((s) => ({
         ...s,
-        busy: activeWorkers.has(s.id) || worker.isInFlight(s.id),
+        busy: isSessionBusy(s.id),
       }));
       const totals = sessions.reduce(
         (acc, s) => {
@@ -560,8 +587,14 @@ function sessionRoutes(config) {
       if (!app) return res.status(404).json({ error: 'App not found' });
       const appRows = [app];
 
+      // has_spec (#894): a boolean, never the spec body — the dev chat's
+      // quick-reply fallback picks between the post-build and post-spec
+      // pill sets from it, and this list is where DevChat.currentSession
+      // comes from. Shipping spec_md itself would put every session's full
+      // markdown in a list payload for one bit of information.
       const { rows } = await pool.query(
-        `SELECT id, branch_name, pr_number, pr_url, pr_title, session_title, staging_url, status, linked_issues, behind_main, shared_at, transcript_shared_at, created_at
+        `SELECT id, branch_name, pr_number, pr_url, pr_title, session_title, staging_url, status, linked_issues, behind_main, shared_at, transcript_shared_at, created_at,
+                (spec_md IS NOT NULL AND spec_md <> '') AS has_spec
          FROM chat_sessions
          WHERE app_id = $1 AND user_id = $2 AND is_headless = FALSE
          ORDER BY created_at DESC`,
@@ -584,7 +617,7 @@ function sessionRoutes(config) {
           pr_url: null, pr_title: null,
           session_title: '[Mock] Archived session',
           staging_url: null, status: 'archived', linked_issues: [],
-          behind_main: false, shared_at: null,
+          behind_main: false, shared_at: null, has_spec: false,
           created_at: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
           warm: false,
         });
@@ -660,7 +693,7 @@ function sessionRoutes(config) {
       );
       const sessions = rows.map((s) => ({
         ...s,
-        busy: activeWorkers.has(s.id) || worker.isInFlight(s.id),
+        busy: isSessionBusy(s.id),
       }));
 
       // Staging-only demo rows (?demo=1): read-only visual states a boot
@@ -1177,8 +1210,12 @@ function sessionRoutes(config) {
     try {
       const { rows } = await pool.query(
         `SELECT cs.*, a.slug as app_slug, a.name as app_name,
-                (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') AS yes_count,
-                (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'no') AS no_count
+                (SELECT COUNT(*)::int FROM pr_votes pv
+                  WHERE pv.session_id = cs.id AND pv.vote = 'yes'
+                    AND ${currentVotePredicateSql('pv', 'cs')}) AS yes_count,
+                (SELECT COUNT(*)::int FROM pr_votes pv
+                  WHERE pv.session_id = cs.id AND pv.vote = 'no'
+                    AND ${currentVotePredicateSql('pv', 'cs')}) AS no_count
          FROM chat_sessions cs
          JOIN apps a ON cs.app_id = a.id
          WHERE cs.id = $1 AND cs.user_id = $2`,
@@ -1210,7 +1247,10 @@ function sessionRoutes(config) {
           const gov = await governanceSvc.getGovernance(pool, rows[0].app_id);
           const electorate = await governanceSvc.getElectorate(pool, rows[0].app_id, gov);
           const q = electorate.approverIds
-            ? await governanceSvc.qualifiedCounts(pool, 'pr', rows[0].id, electorate.approverIds)
+            ? await governanceSvc.qualifiedCounts(
+              pool, 'pr', rows[0].id, electorate.approverIds,
+              reviewedHeadForSession(rows[0])
+            )
             : { yes: rows[0].yes_count, no: rows[0].no_count };
           const gate = governanceSvc.computeGate(
             gov, electorate.active, q.yes, q.no, rows[0].promoted_at || rows[0].created_at
@@ -1485,6 +1525,19 @@ function sessionRoutes(config) {
     try {
       const sessionId = parseInt(req.params.id, 10);
 
+      // Archiving a declaration proposal discards its held encrypted value.
+      // Look up only the caller's own row so this check creates no session-id
+      // oracle; the lifecycle service retains its authoritative owner check.
+      if (req.cliAuthenticated) {
+        const { rows } = await pool.query(
+          'SELECT branch_name FROM chat_sessions WHERE id = $1 AND user_id = $2',
+          [sessionId, req.user.id]
+        );
+        if (isCliCredentialManagementSession(req, rows[0])) {
+          return res.status(403).json({ error: CLI_CREDENTIAL_MANAGEMENT_ERROR });
+        }
+      }
+
       // Release any in-flight bookkeeping first (archiving mid-turn).
       if (activeWorkers.has(sessionId)) {
         activeWorkers.delete(sessionId);
@@ -1511,6 +1564,15 @@ function sessionRoutes(config) {
   router.post('/api/sessions/:id/unarchive', async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
+      if (req.cliAuthenticated) {
+        const { rows } = await pool.query(
+          'SELECT branch_name FROM chat_sessions WHERE id = $1 AND user_id = $2',
+          [sessionId, req.user.id]
+        );
+        if (isCliCredentialManagementSession(req, rows[0])) {
+          return res.status(403).json({ error: CLI_CREDENTIAL_MANAGEMENT_ERROR });
+        }
+      }
       const { unarchived, ccPurged, prReopened } = await sessionLifecycle.unarchiveSession({
         pool, sessionId, userId: req.user.id,
       });
@@ -2040,7 +2102,7 @@ function sessionRoutes(config) {
         );
         let freed = false;
         for (const victim of lruRows) {
-          if (worker.isInFlight(victim.id)) continue;
+          if (isSessionBusy(victim.id)) continue;
           const { paused } = await sessionLifecycle.pauseSession({
             pool, sessionId: victim.id, userId: req.user.id, reason: 'lru',
           });
@@ -2138,7 +2200,7 @@ function sessionRoutes(config) {
       // instead. When the in-flight turn IS a sync, fall through:
       // runSyncMain coalesces and this caller joins the running sync.
       if (!syncMainSvc.getSyncState(sessionId)
-          && (activeWorkers.has(sessionId) || worker.isInFlight(sessionId))) {
+          && isSessionBusy(sessionId)) {
         return res.status(409).json({
           error: 'Claude is still working in this session — wait for the turn to finish before syncing.',
           busy: true,
@@ -2358,7 +2420,6 @@ function sessionRoutes(config) {
           [userMsgRows[0].id, attIds]
         );
       }
-
       // Mark the session as freshly active so the auto-pause sweeper
       // leaves it alone (see server.js session sweeper + schema
       // last_activity_at). A chat turn is the strongest activity signal.
@@ -2451,6 +2512,7 @@ function sessionRoutes(config) {
       // were implicit globals which leaked across concurrent requests.
       let ccLog = null;
       let stagingUrl = null;
+      let releaseDispatchOperation = null;
 
       // Register a stop handle for this turn so POST /stop can cancel the
       // in-flight Mayor stream and/or running Claude Code worker. We reuse
@@ -2468,6 +2530,12 @@ function sessionRoutes(config) {
         phase: 'mayor1',
         stopped: false,
         stoppedBy: null,
+        // #889: POST /stop lives in another request and has no access to
+        // this turn's `send` closure, but it needs to announce the stop on
+        // every channel the moment the click lands (rather than ~20s later
+        // when the turn actually unwinds). Handing it the closure keeps the
+        // _seq numbering consistent with the rest of the turn's events.
+        send,
       };
       const prior = stopRegistry.get(session.id);
       if (prior && prior !== stopHandle) {
@@ -2493,6 +2561,25 @@ function sessionRoutes(config) {
           [session.id, text, JSON.stringify(metadata || {})]
         ).catch(() => {});
       };
+
+      // #894: guaranteed quick-reply pills. The Mayor's suggest_replies
+      // tool is optional and it frequently skips it, and several turn-end
+      // paths (worker-busy, stop-during-run, refusal, provider error) never
+      // reach a model wrap-up at all — either way the pill bar goes empty
+      // and stays empty until the user types something themselves. Every
+      // such path now falls back to a deterministic, state-derived set.
+      //
+      // Declared out here (not beside currentSpec inside the try) so the
+      // catch-block's turn-error status can use it too. `hasSpec` is
+      // refreshed whenever the spec is (re)loaded; `session.pr_number` is
+      // mutated in place by applyPrMetadata, so reading it at CALL time is
+      // what makes a just-opened PR count.
+      let turnHasSpec = false;
+      const turnPills = (outcome) => turnFallbackQuickReplies({
+        outcome,
+        hasPr: session.pr_number != null,
+        hasSpec: turnHasSpec,
+      });
 
       // #249: first-message naming — a brand-new session (no title yet,
       // no PR) gets a readable display name from its opening ask, long
@@ -2602,12 +2689,13 @@ function sessionRoutes(config) {
         // alive". Treating warm-idle as busy here would falsely lock
         // the Mayor out of dispatch_scout / dispatch_claude_code for
         // the entire idle-eviction window of a previous turn.
-        const isWorkerBusy = activeWorkers.has(session.id) || worker.isInFlight(session.id);
+        const isWorkerBusy = isSessionBusy(session.id);
         // Inject the live spec_md into the Mayor's system prompt every
         // turn so revisions anchor against real content instead of
         // regenerating from scratch. Re-read before phase-2 below in
         // case the tool we're about to run mutated it.
         let currentSpec = await loadSessionSpec(pool, session.id);
+        turnHasSpec = !!(currentSpec || '').trim();
         const prContext = session.pr_number
           ? { prNumber: session.pr_number, prTitle: session.pr_title, status: session.status }
           : null;
@@ -2823,7 +2911,9 @@ function sessionRoutes(config) {
             // tears down the streaming UI, and persist a system message
             // so the timeline reflects the stop on refresh.
             const byStr = stopHandle.stoppedBy ? ` by @${stopHandle.stoppedBy}` : '';
-            await sendStatus(`Stopped${byStr}.`);
+            // #894: a stop during the Mayor turn ends everything here —
+            // this status row is the only place pills can live.
+            await sendStatus(`Stopped${byStr}.`, { quickReplies: turnPills('stopped') });
             send('stopped', { phase: 'mayor1', by: stopHandle.stoppedBy });
             send('done', {});
             res.end();
@@ -2858,6 +2948,9 @@ function sessionRoutes(config) {
           });
           await sendStatus(modelFallback.refusalText(selectedModel, refusalCategory), {
             modelRefusal: { requested: selectedModel, category: refusalCategory },
+            // #894: a refused turn ends here with no assistant row, so this
+            // status line is the only thing left to hang pills off.
+            quickReplies: turnPills('failed'),
           });
           mayor1.toolUses = [];
         }
@@ -2965,7 +3058,8 @@ function sessionRoutes(config) {
           } catch (err) {
             if (stopHandle.stopped) {
               const byStr = stopHandle.stoppedBy ? ` by @${stopHandle.stoppedBy}` : '';
-              await sendStatus(`Stopped${byStr}.`);
+              // #894: same as the phase-1 stop above.
+              await sendStatus(`Stopped${byStr}.`, { quickReplies: turnPills('stopped') });
               send('stopped', { phase: 'mayor1', by: stopHandle.stoppedBy });
               send('done', {});
               res.end();
@@ -3032,16 +3126,21 @@ function sessionRoutes(config) {
         // persisted, and displayed as the model that actually answered.
         const servedModel1 = mayor1.servedModel || selectedModel;
         const costCents1 = mayor1.usage ? llm.estimateCostCents(mayor1.usage, servedModel1) : 0;
+        // #894: guarantee pills on a plain chat reply — see
+        // shouldFallbackQuickReplies for which turns opt out and why.
+        const quickReplies1 = shouldFallbackQuickReplies(quickReplies, suggestions, mayor1.toolUses)
+          ? turnPills('chat')
+          : quickReplies;
         if (mayorText1.trim()) {
           send('mayor_reasoning', { text: mayorText1 });
           await pool.query(
             `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
              VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
             [session.id, mayorText1, servedModel1, mayor1.usage.input_tokens + mayor1.usage.output_tokens, costCents1,
-             JSON.stringify({ ...(suggestions ? { suggestions } : {}), ...(quickReplies ? { quickReplies } : {}) })]
+             JSON.stringify({ ...(suggestions ? { suggestions } : {}), ...(quickReplies1 ? { quickReplies: quickReplies1 } : {}) })]
           );
           if (suggestions) send('suggestions', { suggestions });
-          if (quickReplies) send('quick_replies', { replies: quickReplies });
+          if (quickReplies1) send('quick_replies', { replies: quickReplies1 });
         }
         // BYOK users pay Anthropic directly, so their spend lands in
         // the display-only byok_cost_cents bucket (#119) — only
@@ -3081,12 +3180,21 @@ function sessionRoutes(config) {
         // gating on container-status would reject every scout/build
         // for ~10 min after the first dispatch finishes (warm idle is
         // not busy).
-        if (activeWorkers.has(session.id) || worker.isInFlight(session.id)) {
-          await sendStatus('Claude Code is already running for this session. Please wait for it to finish.');
+        if (isSessionBusy(session.id)) {
+          // #894: this status line IS the turn — no assistant row follows,
+          // so it carries the pills (the run in flight is the only useful
+          // thing to ask about next).
+          await sendStatus('Claude Code is already running for this session. Please wait for it to finish.',
+            { quickReplies: turnPills('worker_busy') });
           send('done', {});
           res.end();
           return;
         }
+        // Claim the session before any async dispatch preparation. Local MCP
+        // proposal submissions use the same registry, so neither surface can
+        // pass a point-in-time busy check and then mutate the branch while the
+        // other is awaiting DB/GitHub work.
+        releaseDispatchOperation = beginSessionOperation(session.id);
 
         // Seal the phase-1 assistant bubble so the phase-2 wrap-up
         // lands in a fresh bubble below the CC status/progress events.
@@ -3329,6 +3437,7 @@ function sessionRoutes(config) {
         // have just mutated it, and the wrap-up turn should describe
         // the doc as it is now (not as it was at the start of phase-1).
         currentSpec = await loadSessionSpec(pool, session.id);
+        turnHasSpec = !!(currentSpec || '').trim();
         // Recompute PR context: a dispatch this turn may have just opened
         // a PR (applyPrMetadata mutates session.pr_number in place).
         const prContext2 = session.pr_number
@@ -3357,6 +3466,14 @@ function sessionRoutes(config) {
         // state, so this is where dispatch turns get their pills. The
         // tool_use is terminal (end of turn) — no tool_result round-trip.
         const quickReplies2 = resolveQuickReplies(mayor2.toolUses);
+        // #894: the wrap-up is a dispatch turn's ONLY pill source (phase-1
+        // deliberately dropped its own), so a wrap-up that skipped the tool
+        // — a plain `end_turn`, which production logs show is common — used
+        // to leave the bar empty right after a build. Fall back to the
+        // outcome the dispatch actually had.
+        const wrapUpPills = quickReplies2 || turnPills(
+          toolResult.isError ? 'failed' : (toolKind === 'scout' ? 'spec_done' : 'build_done')
+        );
 
         let mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
         log.info('sessions', 'Mayor phase-2 response', {
@@ -3404,9 +3521,16 @@ function sessionRoutes(config) {
           `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
            VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
           [session.id, mayorText2, servedModel2, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2,
-           JSON.stringify(quickReplies2 ? { quickReplies: quickReplies2 } : {})]
+           JSON.stringify(wrapUpPills ? { quickReplies: wrapUpPills } : {})]
         );
-        if (quickReplies2) send('quick_replies', { replies: quickReplies2 });
+        if (wrapUpPills) send('quick_replies', { replies: wrapUpPills });
+        // Tail milestone: the wrap-up the recovery path would otherwise
+        // re-issue is on the transcript. A NO-OP in the common case — the
+        // dispatch tool's `finally` already released the record, and
+        // noteTailMilestone is guarded on `active_turn IS NOT NULL` — but
+        // it lands for any future caller that holds the record across
+        // phase 2, and costs one cheap UPDATE either way.
+        await worker.noteTailMilestone(session.id, { wrapUpPosted: true });
         await limits.recordSpend(pool, req.user.id, costCents2, { byok: !!userApiKey });
         send('usage', { costCents: costCents2, model: servedModel2, byok: !!userApiKey });
       } catch (err) {
@@ -3424,10 +3548,13 @@ function sessionRoutes(config) {
           const friendly = describeTurnError(err);
           await sendStatus(
             `This turn failed: ${friendly}${/[.!?]$/.test(friendly) ? '' : '.'} Send your message again to retry.`,
-            { turnError: true }
+            // #894: a failed turn is exactly when the user most wants a
+            // one-tap retry, and it never reaches a pill-bearing persist.
+            { turnError: true, quickReplies: turnPills('failed') }
           );
         }
       } finally {
+        if (releaseDispatchOperation) releaseDispatchOperation();
         // Clear the stop handle for this session only if it's still the
         // one we registered (another turn may have replaced it if the
         // client somehow fired a second POST before this one finished).
@@ -3741,6 +3868,35 @@ function sessionRoutes(config) {
     }
   });
 
+  // #906: the side-slot staging fixtures (seedStagingCcCohortRuns in
+  // src/db/migrate.js) seed active coding-run rows at 5 and 12 minutes
+  // elapsed so a reviewer can see the empty slot and the ten-minute long-run
+  // note without waiting out a real run. But the dev-chat client applies its
+  // `_active` flag — which is what makes the row render as a LIVE run with a
+  // ticking elapsed timer and a side slot at all — only when /status reports
+  // `busy`, and `busy` is derived purely from the in-memory worker
+  // registries below. No DB seed can reach those, so without this the
+  // fixtures render as finished rows and demonstrate nothing.
+  //
+  // This is DATA/STATE gating, not feature gating: the code path, the payload
+  // shape and the whole client are identical, only the seeded rows' state
+  // differs, and it is a strict no-op outside staging. The id set is resolved
+  // once and cached, so the 3s status poll costs nothing.
+  let stagingCohortFixtureIds = null;
+  async function stagingCohortFixtureSessions() {
+    if (process.env.USERNODE_ENV !== 'staging') return null;
+    if (stagingCohortFixtureIds) return stagingCohortFixtureIds;
+    try {
+      const { rows } = await pool.query(
+        `SELECT id FROM chat_sessions WHERE branch_name LIKE 'staging-fixture/cc-cohort-%'`
+      );
+      stagingCohortFixtureIds = new Set(rows.map((r) => r.id));
+    } catch {
+      stagingCohortFixtureIds = new Set();
+    }
+    return stagingCohortFixtureIds;
+  }
+
   // Check if a session has an active worker + get latest progress
   router.get('/api/sessions/:id/status', async (req, res) => {
     const sessionId = parseInt(req.params.id);
@@ -3762,7 +3918,12 @@ function sessionRoutes(config) {
     // actual `docker exec`) — redundant in normal flow, but a useful
     // safety net for adopted workers and the brief period between
     // adding to activeWorkers and registering with the warm registry.
-    const busy = activeWorkers.has(sessionId) || worker.isInFlight(sessionId);
+    let busy = isSessionBusy(sessionId);
+    // #906 staging fixtures — see stagingCohortFixtureSessions above.
+    if (!busy) {
+      const fixtures = await stagingCohortFixtureSessions();
+      if (fixtures && fixtures.has(sessionId)) busy = true;
+    }
 
     let progress = [];
     try {
@@ -3782,9 +3943,20 @@ function sessionRoutes(config) {
     // without guessing from container status alone.
     const phase = stopRegistry.get(sessionId)?.phase || null;
 
+    // #889: a stop has been requested for this turn but it hasn't unwound
+    // yet. Lets a reloading client (and the 3s poll fallback) repaint the
+    // "Stopping…" button instead of a live red Stop for a turn that is
+    // already being killed.
+    const stopping = !!stopRegistry.get(sessionId)?.stopped;
+
     // Experimental AI progress estimate: latest in-memory Haiku guess for
     // the run, so the 3s polling fallback carries it when SSE/WS drop.
-    // Null whenever the per-user toggle is off or no estimate exists yet.
+    // Null whenever the per-user toggle is off or no estimate exists yet —
+    // and, since #891, from the coding run's terminal marker onward
+    // (workerProgress.clearEstimate), so the poll stops re-serving a stale
+    // guess through PR creation, the staging build and the Mayor wrap-up.
+    // Carries `estimatedAt` so the client anchors its count-down absolutely
+    // instead of restarting it on every 3s poll.
     const estimate = workerProgress.get(sessionId)?.estimate || null;
 
     // #239: whether the auto-conflict-resolver currently has a resolve
@@ -3793,16 +3965,33 @@ function sessionRoutes(config) {
     // missed-WS-event safety net.
     const { isResolving } = require('../services/conflict-resolver');
 
+    // Merge lifecycle status ('promoted' | 'merging' | 'merged' | …).
+    // The self-app "Platform updating…" banner's restore path verifies
+    // against this that the merge behind a restored banner is still in
+    // flight — a banner re-armed from sessionStorage after the merge
+    // aborted (head moved, revision unverifiable) has no SHA flip coming
+    // and would otherwise hold the tab read-only until the stuck timer.
+    let mergeStatus = null;
+    try {
+      const { rows } = await pool.query(
+        `SELECT status FROM chat_sessions WHERE id = $1`,
+        [sessionId]
+      );
+      mergeStatus = rows[0]?.status || null;
+    } catch {}
+
     // #252: in-flight sync-with-main state ({ phase, startedAt } |
     // null) — the dev-chat sync banner's reload recovery and poll
     // fallback read this the same way the resolving banner reads
     // `resolving`.
-    // Keys: busy, progress, phase, estimate (+ resolving, sync). `estimate`
-    // is { text, remainingSeconds } | null — see workerProgress.setEstimate.
+    // Keys: busy, progress, phase, stopping, estimate (+ resolving, sync,
+    // status). `estimate` is { text, remainingSeconds, estimatedAt } |
+    // null — see workerProgress.setEstimate / clearEstimate.
     res.json({
-      busy, progress, phase, estimate,
+      busy, progress, phase, stopping, estimate,
       resolving: isResolving(sessionId),
       sync: syncMainSvc.getSyncState(sessionId),
+      status: mergeStatus,
     });
   });
 
@@ -3839,13 +4028,6 @@ function sessionRoutes(config) {
 
     handle.stopped = true;
     handle.stoppedBy = req.user.username;
-    // #161: clicking stop proves presence — disarm notify_on_done BEFORE
-    // aborting so the turn's resulting send('done') doesn't create a
-    // spurious "your session finished" notification.
-    await pool.query(
-      `UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1`,
-      [sessionId]
-    ).catch((err) => log.warn('sessions', 'stop disarm failed', { sessionId, err: err.message }));
     log.info('sessions', 'Stop requested', {
       sessionId,
       phase: handle.phase,
@@ -3854,13 +4036,34 @@ function sessionRoutes(config) {
       hasWorker: !!handle.workerName,
     });
 
+    // #889: announce the stop on every channel BEFORE any of the work
+    // below. The turn's own `send` fans this out to the live POST SSE, the
+    // global WS broadcast and the session bus, so every tab watching this
+    // session (not just the one that clicked) flips to the "stopping…"
+    // state immediately instead of waiting for the turn to unwind. It's a
+    // synchronous write + broadcast, so nothing here waits on it.
+    try { handle.send?.('stopping', { by: req.user.username, phase: handle.phase }); } catch {}
+
+    // #161: clicking stop proves presence — disarm notify_on_done BEFORE
+    // aborting so the turn's resulting send('done') doesn't create a
+    // spurious "your session finished" notification. This stays awaited and
+    // stays ahead of the abort: the abort can unwind the Mayor stream into
+    // send('done') within milliseconds, and notifySessionDone re-reads this
+    // column. It is a single indexed UPDATE (~1ms) and was never where the
+    // stop latency lived — see the journal-marker fix in worker.stopTurn.
+    await pool.query(
+      `UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1`,
+      [sessionId]
+    ).catch((err) => log.warn('sessions', 'stop disarm failed', { sessionId, err: err.message }));
+
     if (handle.phase === 'cc') {
       // Detached-turn path: the CC turn runs as a detached exec with no
       // host-side child to signal, so kill run-cc.sh + claude inside
       // the container directly. The warm wrapper (sleep infinity)
-      // survives, keeping the next dispatch fast. The journal consumer
-      // notices the process is gone via its liveness watchdog and
-      // resolves, letting runClaudeCodeTool's early-return branch fire.
+      // survives, keeping the next dispatch fast. stopTurn also appends
+      // the journal's exit marker (#889), so the consumer resolves right
+      // away and runClaudeCodeTool's early-return branch fires in ~1s
+      // rather than on the liveness watchdog's 10s cadence.
       worker.stopTurn(sessionId)
         .catch((err) => log.warn('sessions', 'stopTurn failed', { err: err.message }));
     } else if (handle.workerName) {
@@ -3899,7 +4102,10 @@ function sessionRoutes(config) {
         [sessionId]
       );
       if (!rows.length) return res.status(404).end();
-      if (!req.user?.is_admin && rows[0].user_id !== req.user?.id) {
+      // Same camelCase fix as the recheck route below: `is_admin` never
+      // existed on req.user, so admins were silently scoped like regular
+      // users here. Read-only access — plain isAdmin is the right gate.
+      if (!req.user?.isAdmin && rows[0].user_id !== req.user?.id) {
         return res.status(403).end();
       }
     } catch {
@@ -4024,10 +4230,9 @@ function sessionRoutes(config) {
             `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
             [result.containerId, result.stagingUrl, session.id]
           );
-          // Warm the cert only after staging_url is persisted (Caddy's `ask`
-          // gate keys off it); otherwise the warm is refused and the first
-          // click hits a cold hostname.
-          await staging.warmStagingCert(session, result.hostname, result.stagingUrl);
+          // Verify the edge only after staging_url is persisted — that is
+          // the point at which the hostname is a referenceable preview.
+          await staging.verifyStagingEdge(session, result.hostname, result.stagingUrl);
           // #461: run the proposal checks against the fresh build, matching
           // every other staging-deploy path. Before this, a preview built
           // via this button left check_state NULL — the promote path then
@@ -4095,7 +4300,38 @@ function sessionRoutes(config) {
       // platform env? Open it as-is. A stale-env preview (#851) falls through
       // to the rebuild below instead of opening the app's login screen.
       if (!(await stagingRecovery.stagingNeedsRebuild(session, { config }))) {
-        return res.json({ status: 'ready', url: session.staging_url });
+        // #816: liveness says the CONTAINER is running; it does not say the
+        // app inside it is answering. One bounded in-container healthcheck
+        // upgrades the answer from "should work" to "answered just now",
+        // which is what lets the client point the iframe straight at the
+        // preview instead of re-deriving readiness with its own poll.
+        //
+        // A failed probe is NOT an error and NOT a rebuild trigger — the
+        // preview may simply be busy under the post-build checks run. We
+        // still answer `ready`, just without the verification, and the
+        // client falls back to polling.
+        //
+        // probeHealthOnce swallows its own failures; the .catch is belt and
+        // braces so a docker-layer surprise can never turn "open the
+        // preview" into a 500.
+        const verified = await docker.probeHealthOnce(
+          `usernode-staging-${session.app_slug}--${sessionId}`, 3000, '/health',
+          { timeoutMs: 3000 }
+        ).catch(() => false);
+        if (!verified) {
+          log.warn('sessions', 'ensure-staging: preview is live but did not answer its healthcheck', {
+            sessionId, appSlug: session.app_slug,
+          });
+        }
+        return res.json({
+          status: 'ready',
+          url: session.staging_url,
+          verified,
+          // Drives one honest line of loader copy: the screenshot + checks
+          // pass runs against this same container for 1-3 minutes after a
+          // build, so the first load can legitimately be slower.
+          checksRunning: session.check_state === 'pending',
+        });
       }
 
       // Dedup concurrent clicks: at most one rebuild per session in flight.
@@ -4165,8 +4401,14 @@ function sessionRoutes(config) {
 
       // Owner or admin only — re-running checks costs a staging build +
       // headless run, so it's not opened to every collaborator (deferred).
+      // NB: req.user is the camelCase shape from middleware/auth.js —
+      // `is_admin` doesn't exist on it, and checking it meant admins were
+      // 403'd on every proposal they didn't own (surfaced by the campaign
+      // dashboard, whose sessions belong to usernode-platform). Rechecks
+      // mutate check state and cost a build, so gate on canAdminWrite
+      // (excludes read-only admins), matching the dashboard's CAN_WRITE.
       const isOwner = session.user_id === req.user.id;
-      if (!isOwner && !req.user?.is_admin) {
+      if (!isOwner && !req.user?.canAdminWrite) {
         return res.status(403).json({ error: 'Not allowed' });
       }
 
@@ -4180,6 +4422,16 @@ function sessionRoutes(config) {
       if (recheckInFlight.has(sessionId)) {
         return res.json({ status: 'running' });
       }
+      // A local proposal submission holds a non-worker session operation
+      // through staging + capture. Starting a manual recheck inside that
+      // window would queue a second capture that can outlive the operation
+      // claim and overlap the next web coding turn. Treat every existing
+      // session-owned pipeline as the run the user is trying to request.
+      if (isSessionBusy(sessionId)
+          || staging.hasInFlightBuild(sessionId)
+          || visuals.hasInFlightCapture(sessionId)) {
+        return res.json({ status: 'running' });
+      }
       recheckInFlight.add(sessionId);
 
       // #607: stamp 'pending' + broadcast BEFORE responding so the client's
@@ -4187,11 +4439,11 @@ function sessionRoutes(config) {
       // fire-and-forget below re-stamps idempotently — same commit sha, so
       // the failure-streak bookkeeping is preserved).
       const visualsService = require('../services/visuals');
-      await visualsService.setChecksPending(pool, sessionId, session.checks_commit_sha || null)
+      await visualsService.setChecksPending(pool, sessionId, session.checks_commit_sha || null, 'building')
         .catch((err) => log.warn('sessions', 'recheck setChecksPending failed (non-fatal)', {
           sessionId, err: err.message,
         }));
-      visualsService.notifyChecksPending(sessionId, session.checks_commit_sha || null);
+      visualsService.notifyChecksPending(sessionId, session.checks_commit_sha || null, 'building');
 
       res.json({ status: 'running', checkState: 'pending' });
 
@@ -4579,9 +4831,10 @@ async function runHeadlessSession({
       );
     }
     await setHeadlessStep(pool, session.id, 'planning');
-    await sendStatus(resume
-      ? 'Auto session: resuming after a platform restart...'
-      : 'Auto session: thinking about the issue...');
+    // #896: one label either way. This row is copied verbatim into any dev
+    // chat cloned from this auto session, where "after a platform restart"
+    // is platform plumbing the reader can do nothing with.
+    await sendStatus('Auto session: thinking about the issue...');
 
     const headlessAddendum = buildHeadlessAddendum(issueNumber);
     const mayorPrompt = getMayorSystemPrompt(session.app_name, false, '', !!session.app_self_hosted, null) + headlessAddendum;
@@ -5057,6 +5310,191 @@ async function runHeadlessSession({
   }
 }
 
+// The Mayor wrap-up for an INTERACTIVE dev-chat turn recovered after a
+// platform restart (#896). Called from server.js's resumeDetachedTurnInner.
+//
+// Why this exists: on a dispatch turn the closing message AND the
+// quick-reply pills come only from the phase-2 wrap-up in the chat
+// handler above, which needs a live request (req.user, the SSE stream,
+// the tool_use → tool_result round-trip). A restart kills all three, so a
+// recovered turn used to end on a "Coding turn recovered after a platform
+// restart." breadcrumb with no Mayor reply at all — visibly a different,
+// half-broken kind of turn. This re-issues the same call off the boot
+// path, exactly as resumeOneHeadlessRunInner already does for auto
+// sessions: rebuild the transcript from the DB, hand the model the
+// dispatch outcome as a synthetic note, persist a normal assistant row.
+//
+//   outcome          — 'code' | 'spec' | 'push_failed' | 'no_changes',
+//                      used only to pick the fallback text.
+//   dispatchSummary  — what finalizeRecoveredTurn (or the scout branch)
+//                      actually did; the same narrative the live path
+//                      feeds back as its tool_result.
+//   fallbackPillKind — recovery-pills kind used when the model declines
+//                      to call suggest_replies, so the pill bar is never
+//                      left empty.
+//   turnModel        — active_turn.model, the model the dispatched turn
+//                      itself ran under; falls back to the session's most
+//                      recent assistant row, then the platform default.
+//   emit             — session-event emitter (global WS) so an open tab
+//                      paints the bubble and pills without a reload.
+//
+// NEVER throws and never blocks recovery: any failure degrades to a short
+// static closing line carrying the deterministic pills.
+async function runRecoveredWrapUp({
+  pool, config, session, sessionId, outcome, dispatchSummary,
+  fallbackPillKind, turnModel, emit = () => {},
+}) {
+  const recoveryPills = require('../services/recovery-pills');
+  const fallbackPills = recoveryPills.buildRecoveryQuickReplies(fallbackPillKind);
+
+  // The static closing line used when the model call can't be made or
+  // fails — mirrors the live wrap-up's empty-text guards, so a degraded
+  // recovery still ends on a normal-looking assistant bubble.
+  const fallbackText = outcome === 'push_failed'
+    ? "_The coding agent didn't complete successfully — see the status messages above._"
+    : outcome === 'spec'
+      ? "_Spec updated — it's in the spec viewer. Tell me to build it whenever you're ready and I'll dispatch the coding agent._"
+      : outcome === 'no_changes'
+        ? '_The coding agent finished without changing anything — see the status messages above._'
+        : '_Done._';
+
+  // Persist the wrap-up as an ordinary assistant row: same columns the
+  // live phase-2 writes, plus metadata.recovered for the audit trail.
+  const persistWrapUp = async (text, quickReplies, { model, usage, costCents } = {}) => {
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
+       VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
+      [
+        sessionId, text, model || null,
+        usage ? (usage.input_tokens || 0) + (usage.output_tokens || 0) : null,
+        costCents || null,
+        JSON.stringify({
+          ...(quickReplies ? { quickReplies } : {}),
+          recovered: true,
+        }),
+      ]
+    ).catch((err) => log.warn('sessions', 'Recovered wrap-up persist failed', {
+      sessionId, err: err.message,
+    }));
+    // mayor_reasoning opens/reconciles the assistant bubble; quick_replies
+    // then attaches to it (same emit order as the live phase-2). No 'done'
+    // — a concurrent user turn could be streaming, and 'done' would tear
+    // its client-side streaming state down.
+    emit('mayor_reasoning', { text });
+    if (quickReplies) emit('quick_replies', { replies: quickReplies });
+  };
+
+  if (!llm.isEnabled()) {
+    log.warn('sessions', 'Recovered wrap-up skipped: LLM not configured', { sessionId });
+    await persistWrapUp(fallbackText, fallbackPills);
+    return { ok: false, reason: 'llm_disabled' };
+  }
+
+  try {
+    // Limit-first billing, same posture as the headless resume: spend the
+    // daily allowance while it lasts, then the owner's own key. An
+    // { error } (no headroom, no key) proceeds platform-billed — the
+    // proxy enforces the cap per call.
+    let userApiKey = null;
+    try {
+      const billing = await limits.resolveBillingPath(pool, config.dataEncryptionKey, session.user_id);
+      if (!billing.error) userApiKey = billing.apiKey;
+    } catch (err) {
+      log.warn('sessions', 'Recovered wrap-up billing resolve failed (continuing platform-billed)', {
+        sessionId, err: err.message,
+      });
+    }
+
+    let selectedModel = models.resolve(turnModel);
+    if (!turnModel) {
+      const { rows: modelRows } = await pool.query(
+        `SELECT model FROM chat_session_messages
+         WHERE session_id = $1 AND role = 'assistant' AND model IS NOT NULL
+         ORDER BY id DESC LIMIT 1`,
+        [sessionId]
+      );
+      selectedModel = models.resolve(modelRows[0]?.model);
+    }
+
+    // Same history shape the live turn builds its context from: user +
+    // assistant rows plus the coding agent's own summaries (ccOutput
+    // system rows). finalizeRecoveredTurn now persists that completion
+    // row before calling us, so the agent's description of the change is
+    // already folded in under the [CODING AGENT COMPLETED] marker.
+    const { rows: history } = await pool.query(
+      `SELECT id, role, content, metadata FROM chat_session_messages
+       WHERE session_id = $1
+         AND (role IN ('user', 'assistant')
+              OR (role = 'system' AND metadata->>'ccOutput' IS NOT NULL))
+       ORDER BY id ASC`,
+      [sessionId]
+    );
+    const messages = buildMayorMessages(history);
+
+    // The original tool_use blocks died with the pre-restart process, so
+    // the dispatch outcome arrives as a plain user note instead (the API
+    // accepts consecutive same-role messages). The instruction to not
+    // mention the restart is the whole point of #896: the user asked why
+    // it can't "just work exactly like normal".
+    messages.push({
+      role: 'user',
+      content: `[SYSTEM NOTE — not the human] The coding agent you dispatched has finished. `
+        + `Result:\n\n${dispatchSummary || '(no details available)'}\n\n`
+        + 'Write your wrap-up reply to the user now: say what changed and what they can do '
+        + 'next (preview it, propose it to the group, or ask for a tweak). Write it exactly as '
+        + 'you would for any other finished build — do NOT mention platform restarts, recovery, '
+        + 'interruptions, delays, or this note itself. Call suggest_replies with 2-3 next steps.',
+    });
+
+    const currentSpec = await loadSessionSpec(pool, sessionId);
+    const prContext = session.pr_number
+      ? { prNumber: session.pr_number, prTitle: session.pr_title, status: session.status }
+      : null;
+    const systemPrompt = getMayorSystemPrompt(
+      session.app_name, false, currentSpec, !!session.app_self_hosted, prContext
+    );
+
+    const mayor = await llm.streamChat({
+      messages,
+      systemPrompt,
+      model: selectedModel,
+      // Only the pills tool, exactly like phase-2: the wrap-up may suggest
+      // next steps but must not be able to dispatch again.
+      tools: [SUGGEST_REPLIES_TOOL],
+      toolChoice: { type: 'auto' },
+      apiKey: userApiKey,
+    });
+
+    const quickReplies = resolveQuickReplies(mayor.toolUses) || fallbackPills;
+    const text = stripFakeCompletionMarker((mayor.text || '').trim(), { sessionId })
+      || fallbackText;
+    const servedModel = mayor.servedModel || selectedModel;
+    const costCents = mayor.usage ? llm.estimateCostCents(mayor.usage, servedModel) : 0;
+
+    await persistWrapUp(text, quickReplies, {
+      model: servedModel, usage: mayor.usage, costCents,
+    });
+    if (costCents) {
+      await limits.recordSpend(pool, session.user_id, costCents, { byok: !!userApiKey })
+        .catch((err) => log.warn('sessions', 'Recovered wrap-up spend record failed', {
+          sessionId, err: err.message,
+        }));
+    }
+    log.info('sessions', 'Recovered turn wrap-up posted', {
+      sessionId, outcome, model: servedModel, textLen: text.length,
+    });
+    return { ok: true, text, quickReplies };
+  } catch (err) {
+    // A failed wrap-up must never cost the user the recovery itself —
+    // the commit, PR and preview already landed.
+    log.warn('sessions', 'Recovered wrap-up failed — falling back to static close', {
+      sessionId, outcome, err: err.message,
+    });
+    await persistWrapUp(fallbackText, fallbackPills);
+    return { ok: false, reason: 'llm_failed' };
+  }
+}
+
 // Boot hook: resume headless auto sessions that were 'generating' when
 // the platform went down, instead of blanket-failing them (the old
 // failOrphanedHeadlessRuns behavior — now narrowed in migrate.js to
@@ -5097,7 +5535,7 @@ async function resumeHeadlessRuns(config) {
       log.error('sessions', 'Headless resume failed — marking run failed', {
         sessionId: session.id, err: err.message, stack: err.stack,
       });
-      await failHeadlessRun(pool, session, `Auto session could not be resumed after restart: ${String(err.message || err).substring(0, 200)}`);
+      await failHeadlessRun(pool, session, `Auto session could not be completed: ${String(err.message || err).substring(0, 200)}`);
     });
   }
 }
@@ -5145,7 +5583,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
   const user = { id: session.user_id, username: session.username };
   const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
   if (!repoOwner || !repoName) {
-    return failHeadlessRun(pool, session, 'Auto session failed after restart: no GitHub repo configured.');
+    return failHeadlessRun(pool, session, 'Auto session failed: no GitHub repo configured.');
   }
 
   // Limit-first (#212): the resumed run's NEW calls (re-driven phases,
@@ -5192,7 +5630,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
   if (step === 'cc_running') {
     const activeTurn = session.active_turn || null;
     if (!activeTurn || !activeTurn.journal) {
-      return failHeadlessRun(pool, session, 'Auto session failed after restart: its coding turn left no resumable record.');
+      return failHeadlessRun(pool, session, 'Auto session failed: its coding turn left no resumable record.');
     }
     // Replay/follow the detached turn's journal. Progress lines are
     // rebuilt WHOLESALE onto the latest progress row (replay re-feeds
@@ -5242,7 +5680,10 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
       broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'cc_progress', text: headlessTerminal });
     }
     flushProgress();
-    await worker.clearActiveTurn(session.id);
+    // Release the record AND the journal it points at (the resume above
+    // consumed it, and holdTurnRecord callers no longer delete it in
+    // execInWorker's finally).
+    await worker.finishTurn(session.id, { journal: activeTurn.journal });
 
     // #174: the journal replay rebuilt the turn's self-reported cost —
     // debit it before the recovery check below, because the Anthropic
@@ -5263,7 +5704,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
     const producedAnything = result.execExitSeen || result.resultSeen
       || !!(result.lastResultText || '').trim();
     if (!producedAnything) {
-      return failHeadlessRun(pool, session, 'Auto session failed after restart: its coding turn could not be recovered.');
+      return failHeadlessRun(pool, session, "Auto session failed: its coding turn didn't finish.");
     }
 
     // Persist the CC session id for later cloned sessions' --resume.
@@ -5341,7 +5782,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
         // #461: pend the checks for the NEW commit before the build, so the
         // previous commit's verdict (e.g. a stale 'passing') can't satisfy
         // the merge gate while this build runs — or after it fails.
-        await visuals.setChecksPending(pool, session.id, result.sha)
+        await visuals.setChecksPending(pool, session.id, result.sha, 'building')
           .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
         try {
           stagingResult = await staging.buildAndDeployStaging(config, session, app, result.sha);
@@ -5353,7 +5794,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
             'UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3',
             [stagingResult.containerId, stagingResult.stagingUrl, session.id]
           ).catch(() => {});
-          await staging.warmStagingCert(session, stagingResult.hostname, stagingResult.stagingUrl).catch(() => {});
+          await staging.verifyStagingEdge(session, stagingResult.hostname, stagingResult.stagingUrl).catch(() => {});
           await pool.query(
             `INSERT INTO chat_session_messages (session_id, role, content, metadata)
              VALUES ($1, 'system', $2, $3)`,
@@ -5871,6 +6312,31 @@ function resolveQuickReplies(toolUses) {
   return sanitizeQuickReplies(repliesCall.input);
 }
 
+// Should a phase-1 turn get the deterministic fallback pills (#894)?
+//
+// suggest_replies is an optional tool and the Mayor skips it often, which
+// left the pill bar empty after an ordinary chat reply. The fallback fills
+// that gap — but only where pills actually belong, so three cases opt out:
+//
+//   - the model produced its own set: always wins, it's tailored;
+//   - suggest_answers came back: the inline answer chips are that turn's
+//     affordance and the above-box row stays empty (the same precedence
+//     resolveQuickReplies and classifyMissingPills already enforce);
+//   - a dispatch is about to run: the phase-2 wrap-up owns that turn's
+//     pills because it reflects the FINAL state. Substituting here would
+//     show a set that goes stale the moment the build lands.
+//
+// Pure over the turn's resolved values so the rule is unit-testable.
+// Exported for tests.
+function shouldFallbackQuickReplies(quickReplies, suggestions, toolUses) {
+  if (Array.isArray(quickReplies) && quickReplies.length) return false;
+  if (Array.isArray(suggestions) && suggestions.length) return false;
+  const calls = Array.isArray(toolUses) ? toolUses : [];
+  const hasDispatch = calls.some((t) =>
+    t && (t.name === 'dispatch_claude_code' || t.name === 'dispatch_scout'));
+  return !hasDispatch;
+}
+
 // Silent-turn salvage (session 2383): when the Mayor's reply is a lone
 // suggest_answers/suggest_replies tool_use with NO text block, the
 // content used to be dropped entirely (the persist path is text-gated)
@@ -6222,7 +6688,17 @@ function buildMayorMessages(history, attachmentsByMessageId = new Map()) {
           : CODING_AGENT_COMPLETED_MARKER;
       pushAssistant(`${label}:\n${summary}`);
     } else if (row.role === 'assistant') {
-      pushAssistant(row.content);
+      if (row.metadata?.handoffSummary) {
+        // A native CLI handoff summary was authored by the local coding
+        // agent, not by this Mayor. Label it in model context (while keeping
+        // the stored/web-visible transcript clean) so a later web Dev turn
+        // understands which local phase already happened and does not mistake
+        // the summary for its own conversational reply.
+        const phase = row.metadata.phase ? ` — ${String(row.metadata.phase).slice(0, 64)}` : '';
+        pushAssistant(`[LOCAL AGENT HANDOFF${phase}]\n${row.content}`);
+      } else {
+        pushAssistant(row.content);
+      }
     } else if (row.role === 'user') {
       // #450: rows with attachments become content-block arrays (image
       // blocks + one text block); plain rows stay strings. Assistant-row
@@ -6422,6 +6898,11 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         branchName: session.branch_name,
         anthropicApiKey: userApiKey || null,
         prodDebug,
+        // Hold the durable turn record through this tool's own tail
+        // (spec persist + frozen version + Mayor wrap-up). Short, but the
+        // same restart shape loses it — see the "Post-agent TAIL" note in
+        // services/worker.js. Released by finishTurn in the finally below.
+        holdTurnRecord: true,
         onProgress: (text) => {
           send('cc_progress', { text });
           workerProgress.set(session.id, text, { model: selectedModel });
@@ -6463,7 +6944,14 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
     if (stopHandle && stopHandle.stopped) {
       isError = true;
       const byStr = stopHandle.stoppedBy ? ` by @${stopHandle.stoppedBy}` : '';
-      await sendStatus(`Scout stopped${byStr}.`, { durationMs: Date.now() - turnStartedMs });
+      // #894: the caller skips the phase-2 wrap-up after a stop (nothing
+      // coherent to summarize) and phase-1's pills were already dropped
+      // because a dispatch co-occurred — so this row carries them. The
+      // 'stopped' outcome is state-independent, hence no hasPr/hasSpec.
+      await sendStatus(`Scout stopped${byStr}.`, {
+        durationMs: Date.now() - turnStartedMs,
+        quickReplies: turnFallbackQuickReplies({ outcome: 'stopped' }),
+      });
       summaryParts.push(`The scout was stopped${byStr} before it finished. The spec doc was not updated.`);
       return { toolResultText: summaryParts.join('\n\n') || 'Stopped.', isError: true };
     }
@@ -6531,6 +7019,11 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
   } finally {
     activeWorkers.delete(session.id);
     workerProgress.clear(session.id);
+    // The scout tail is over (spec persisted or not): release the held
+    // turn record + its journal. Must run for EVERY exit path out of this
+    // tool — a held record with nobody to consume it is what the stale
+    // active_turn watchdog exists to reap, and reaping narrates.
+    await worker.finishTurn(session.id).catch(() => {});
     // Turn completion counts as activity: a fresh idle window so the
     // auto-pause sweeper can't pause the session moments after a long
     // scout finishes (its last_activity_at is otherwise still the user
@@ -6957,10 +7450,46 @@ path: /another/changed/view
     // first guess fires even before any progress line lands, and the
     // remaining-time countdown is re-asked on a wall-clock cadence so it
     // never freezes during a long quiet phase (one slow command/edit).
+    //
+    // Terminal-state teardown (#891): the estimator MUST stop the moment
+    // the coding run reaches a terminal phase marker, not when the whole
+    // turn (PR + staging + Mayor wrap-up) is done. See stopEstimator below.
     const estimatorEnabled = !headless && !!req?.user?.aiProgressEstimate
       && (llm.isEnabled() || !!userApiKey);
     const liveProgressLines = [];
+    // Most recent `[phase]` marker seen on this run's progress stream
+    // (#892). Two consumers: the estimator prompt (a [commit]/[push] marker
+    // means seconds remain, which is the single strongest late signal in the
+    // dataset — median 1s remaining once [push] lands), and the
+    // completion-claim gate (a "nearly done" phrase is only truthful once
+    // the run has actually reached commit/push/done).
+    let lastPhase = null;
     let estimator = null;
+    // Set by stopEstimator; read by the interval body AND by the in-flight
+    // call's .then so a Haiku response that lands after teardown can't
+    // re-emit a guess (or INSERT an accuracy row the backfill already
+    // ran past, which would strand it with actual_total_ms IS NULL).
+    let estimatorDone = false;
+    // Idempotent teardown for the experimental estimator (#891). Every
+    // exit path funnels through here so there is exactly one place that
+    // knows how to make the guess go away:
+    //   - clear the interval (no further ticks),
+    //   - drop the in-memory estimate so GET /api/sessions/:id/status
+    //     stops serving it to the 3s poll for the rest of the turn,
+    //   - emit a cleared cc_estimate so live clients blank the span
+    //     immediately instead of waiting for the next full re-render.
+    const stopEstimator = (reason) => {
+      if (estimatorDone) return;
+      estimatorDone = true;
+      if (estimator) {
+        clearInterval(estimator);
+        estimator = null;
+      }
+      if (!estimatorEnabled) return;
+      workerProgress.clearEstimate(session.id);
+      send('cc_estimate', { text: null, remainingSeconds: null, cleared: true });
+      log.info('chat', 'AI progress estimator stopped', { sessionId: session.id, reason });
+    };
     // Diagnose the silent-disable case: toggle ON + live turn but no LLM
     // key path means the user sees nothing with no obvious reason (#323).
     if (!headless && !!req?.user?.aiProgressEstimate && !estimatorEnabled) {
@@ -6977,6 +7506,13 @@ path: /another/changed/view
       let estimateSuccesses = 0;     // counted only for the runaway backstop
       let lastEstimateAtMs = null;   // wall-clock of the last successful emit
       let ceilingLogged = false;
+      // Monotonicity-guard state (#892). `projectedFinishAt` is the finish
+      // time currently being displayed; the guard holds it steady between
+      // refreshes and only moves it later for a stated cause. It always
+      // yields a positive number of seconds — there is no overrun state.
+      let projectedFinishAt = null;
+      let previousRemainingSeconds = null;
+      let phaseAtLastEstimate = null;
       // Runaway backstop only — with the widening cadence below this is
       // reached around the ~2h mark, never by a normal long run.
       const MAX_ESTIMATES = 60;
@@ -6987,6 +7523,8 @@ path: /another/changed/view
       const IDLE_REFRESH_MS = 180_000;   // re-ask even with no new lines so ~X left moves
       const CC_ACTION_RE = /^(Reading |Writing |Editing |\$ |Using )/;
       estimator = setInterval(() => {
+        // Torn down (terminal marker / turn end / stop) — never tick again.
+        if (estimatorDone) return;
         // One call in flight at a time.
         if (estimateInFlight) return;
         // Runaway backstop: stop for good only on a pathological multi-hour
@@ -6998,7 +7536,7 @@ path: /another/changed/view
               sessionId: session.id, estimates: estimateSuccesses,
             });
           }
-          clearInterval(estimator);
+          stopEstimator('emit_ceiling');
           return;
         }
         // Backoff after failures: wait out the skip window, then retry. The
@@ -7012,15 +7550,26 @@ path: /another/changed/view
         const sinceLastMs = lastEstimateAtMs == null ? Infinity : now - lastEstimateAtMs;
         const minSpacingMs = elapsedMs >= WIDEN_AFTER_MS ? WIDE_SPACING_MS : 0;
 
+        // #892: the displayed projection has run out while the run keeps
+        // going. The guard floors the readout at 30s so it never sticks at
+        // zero, but that floor is only honest for as long as it takes to get
+        // a fresh guess — so an expired projection overrides the widened
+        // late-run spacing (which would otherwise hold the floor for 2.5
+        // minutes). Still subject to estimateInFlight, the failure backoff
+        // and MAX_ESTIMATES, all checked above.
+        const projectionExpired = projectedFinishAt != null && now >= projectedFinishAt;
+
         // Decide whether to run this tick:
         //  - first estimate ever: always (even with zero lines — the prompt
         //    renders "(no output yet)" and answers "still early …");
+        //  - projection expired: always, ignoring the widened spacing;
         //  - too soon under the widened late-run cadence: skip;
         //  - new progress since last estimate: run;
         //  - otherwise idle-refresh once enough wall-clock passed so the
         //    remaining-time guess doesn't freeze during a quiet phase.
         let shouldRun;
         if (lastEstimateAtMs == null) shouldRun = true;
+        else if (projectionExpired) shouldRun = true;
         else if (sinceLastMs < minSpacingMs) shouldRun = false;
         else if (hasNewLines) shouldRun = true;
         else shouldRun = sinceLastMs >= IDLE_REFRESH_MS;
@@ -7028,24 +7577,87 @@ path: /another/changed/view
 
         estimateInFlight = true;
         const linesAtStart = liveProgressLines.length;
+        const phaseAtStart = lastPhase;
+        // Distinct files the run has touched so far — one of the two new
+        // prompt inputs. Derived from the same lines the caller already
+        // accumulates, so it costs nothing.
+        const distinctFiles = new Set(
+          liveProgressLines
+            .filter((l) => /^(Reading|Writing|Editing) /.test(String(l)))
+            .map((l) => String(l).split(' ')[1])
+        ).size;
         llm.estimateRunProgress({
           userRequest: userMessage,
           progressTail: liveProgressLines,
           elapsedMs,
           steps: liveProgressLines.filter((l) => CC_ACTION_RE.test(l)).length,
           apiKey: userApiKey || undefined,
-        }).then(async ({ text, remainingSeconds, usage, model: estModel }) => {
+          lastPhase: phaseAtStart,
+          distinctFiles,
+          previousGuess: previousRemainingSeconds == null ? null : {
+            remainingSeconds: previousRemainingSeconds,
+            elapsedMs: lastEstimateAtMs == null ? 0 : lastEstimateAtMs - turnStartedMs,
+          },
+        }).then(async ({ text, remainingSeconds, usage, model: estModel, promptVersion }) => {
           consecutiveFailures = 0;
           ticksToSkip = 0;
           estimateSuccesses++;
           linesAtLastEstimate = linesAtStart;
           lastEstimateAtMs = Date.now();
           const elapsedAtEstimate = lastEstimateAtMs - turnStartedMs;
-          // A call resolving after the user hit stop is dropped — the
-          // running line is already deactivated client-side.
-          if (!(stopHandle && stopHandle.stopped)) {
-            send('cc_estimate', { text, remainingSeconds, elapsedMs: elapsedAtEstimate });
-            workerProgress.setEstimate(session.id, { text, remainingSeconds });
+          // A call resolving after the user hit stop — or after the coding
+          // run reached its terminal marker (#891) — is dropped entirely:
+          // no emit (the run is over, so the guess would land on the
+          // wrap-up), no in-memory stash (the /status poll would re-serve
+          // it for minutes), and no accuracy row (the backfill UPDATE has
+          // already run, so the row would be stranded unresolved forever).
+          // The spend debit below still happens: those tokens were spent.
+          if (!estimatorDone && !(stopHandle && stopHandle.stopped)) {
+            // #892 monotonicity guard. Chooses between the held projection
+            // and this guess, and floors the result at 30s so the countdown
+            // ALWAYS shows a positive time — no overrun flag, no bail-out.
+            // It never scales or blends: `remainingSeconds` below stays the
+            // raw model value all the way into the accuracy dataset.
+            const guard = estimateGuard.applyMonotonicityGuard({
+              projectedFinishAt,
+              previousRemainingSeconds,
+              remainingSeconds,
+              estimatedAt: lastEstimateAtMs,
+              now: lastEstimateAtMs,
+              newPhaseSinceLast: phaseAtStart !== phaseAtLastEstimate,
+            });
+            projectedFinishAt = guard.projectedFinishAt;
+            previousRemainingSeconds = remainingSeconds == null
+              ? previousRemainingSeconds : remainingSeconds;
+            phaseAtLastEstimate = phaseAtStart;
+
+            // Completion-claim gate. "Nearly done" is only shown once the
+            // run has genuinely reached commit/push/done — measured, that
+            // phrase family fired with 5+ minutes still to run a third of
+            // the time. Suppression rewrites the PHRASE only; the countdown
+            // number is untouched, and the raw model text is still what
+            // lands in estimate_text.
+            const phaseHead = String(phaseAtStart || '').split(/[\s(]/)[0];
+            const claimEarned = ['commit', 'push', 'done', 'push_failed'].includes(phaseHead);
+            const suppressed = llm.isCompletionClaim(text) && !claimEarned;
+            // Fall back to the neutral stage label — the deterministic thing
+            // the platform actually knows. With no phase seen yet there is
+            // nothing honest to say, so the phrase is dropped entirely.
+            const shownText = suppressed
+              ? (NEUTRAL_PHASE_TEXT[phaseHead] || (phaseAtStart ? 'still working' : ''))
+              : text;
+
+            send('cc_estimate', {
+              text: shownText, remainingSeconds, elapsedMs: elapsedAtEstimate,
+              estimatedAt: lastEstimateAtMs,
+              displayedRemainingSeconds: guard.displayedRemainingSeconds,
+              slipReason: guard.slipReason,
+            });
+            workerProgress.setEstimate(session.id, {
+              text: shownText, remainingSeconds, estimatedAt: lastEstimateAtMs,
+              displayedRemainingSeconds: guard.displayedRemainingSeconds,
+              slipReason: guard.slipReason,
+            });
             // Persist this tick to the accuracy dataset (#50 follow-up).
             // Fire-and-forget: persistence must never fail or block a turn,
             // matching the progressLog UPDATE posture below. The turn's
@@ -7054,14 +7666,25 @@ path: /another/changed/view
               `INSERT INTO progress_estimates
                  (session_id, progress_message_id, user_id, model,
                   elapsed_ms, step_count, progress_lines,
-                  estimate_text, predicted_remaining_seconds)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+                  estimate_text, predicted_remaining_seconds,
+                  prompt_version, displayed_remaining_seconds,
+                  clamped, slip_reason, estimate_text_shown, suppressed,
+                  last_phase, distinct_files)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+                       $10, $11, $12, $13, $14, $15, $16, $17)`,
               [
                 session.id, progressMsgId, req.user.id, estModel,
                 elapsedAtEstimate,
                 liveProgressLines.filter((l) => CC_ACTION_RE.test(l)).length,
                 liveProgressLines.length,
+                // RAW model output — never the suppressed or guarded value.
                 text, remainingSeconds,
+                promptVersion || llm.PROMPT_VERSION,
+                guard.displayedRemainingSeconds,
+                guard.clamped, guard.slipReason,
+                shownText || null, suppressed,
+                phaseAtStart ? String(phaseAtStart).slice(0, 24) : null,
+                distinctFiles,
               ]
             ).catch(() => {});
           }
@@ -7095,10 +7718,40 @@ path: /another/changed/view
         branchName: session.branch_name,
         anthropicApiKey: userApiKey || null,
         prodDebug,
+        // Hold the durable turn record through the tail below (push heal →
+        // PR → staging build → visuals → completion card → Mayor wrap-up).
+        // That stretch is minutes long — a self-app staging build alone
+        // spends ~4:45 cloning the platform DB — and used to run with
+        // active_turn already cleared, so a restart inside it left the chat
+        // frozen on "Building staging preview..." with no way back (session
+        // 2954). Released by finishTurn in the finally at the end of this
+        // function; every tail step stamps its milestone so a resumed tail
+        // redoes none of them.
+        holdTurnRecord: true,
         onProgress: (text) => {
           send('cc_progress', { text });
           workerProgress.set(session.id, text, { model: selectedModel });
-          if (estimatorEnabled) liveProgressLines.push(text);
+          // #892: track the newest `[phase]` marker for the estimator prompt
+          // and the completion-claim gate. Outside the estimatorEnabled
+          // branch on purpose — it is cheap, and keeping it unconditional
+          // means the value is never subtly stale for a run whose toggle
+          // state changed.
+          {
+            const phaseMatch = String(text).trim().match(/^\[([^\]]+)\]$/);
+            if (phaseMatch) lastPhase = phaseMatch[1];
+          }
+          if (estimatorEnabled) {
+            liveProgressLines.push(text);
+            // #891: the earliest honest "coding is finished" signal. run-cc.sh
+            // emits [done] / [push_failed] as its last line and the recovery
+            // paths append [interrupted], so this fires while the worker is
+            // still flushing — ahead of PR creation, the staging build and the
+            // Mayor wrap-up, which is exactly the window where the stale
+            // "nearly done, just wrapping up" guess used to live on.
+            if (turnWatchdog.TERMINAL_PROGRESS_LINES.includes(String(text).trim())) {
+              stopEstimator('terminal_marker');
+            }
+          }
           pool.query(
             `UPDATE chat_session_messages SET metadata = jsonb_set(
               metadata, '{progressLog}',
@@ -7119,7 +7772,12 @@ path: /another/changed/view
       }
     } finally {
       clearInterval(heartbeat);
-      if (estimator) clearInterval(estimator);
+      // Belt-and-braces (#891): a markerless turn (fatal error, container
+      // death, a journal that never emitted [done]) never hit the
+      // terminal-marker teardown above, so guarantee it here. Idempotent,
+      // and it runs BEFORE the backfill so no late tick can slip a row in
+      // behind the UPDATE.
+      stopEstimator('turn_end');
       // Backfill the actual outcome onto this turn's estimate rows (#50
       // follow-up). Single choke point: the turn's wall clock is known
       // here and the interval is being torn down. Per-tick ground-truth
@@ -7162,8 +7820,18 @@ path: /another/changed/view
     // tears down the worker + clears activeWorkers.
     if (stopHandle && stopHandle.stopped) {
       isError = true;
+      // #891: explicit on the stop path too. The dispatch `finally` above
+      // has already run it, but a stopped run must never leave a guess
+      // hanging next to "Claude Code stopped." — idempotent, so this is
+      // a no-op when teardown already happened.
+      stopEstimator('stopped');
       const byStr = stopHandle.stoppedBy ? ` by @${stopHandle.stoppedBy}` : '';
-      await sendStatus(`Claude Code stopped${byStr}.`, { durationMs: Date.now() - turnStartedMs });
+      // #894: same as the scout stop path — no phase-2 wrap-up follows a
+      // stop, so this status row is the turn's only pill carrier.
+      await sendStatus(`Claude Code stopped${byStr}.`, {
+        durationMs: Date.now() - turnStartedMs,
+        quickReplies: turnFallbackQuickReplies({ outcome: 'stopped' }),
+      });
       summaryParts.push(`Claude Code was stopped${byStr} before it finished. No commit was pushed.`);
       return {
         toolResultText: summaryParts.join('\n\n') || 'Stopped.',
@@ -7301,7 +7969,7 @@ path: /another/changed/view
       // #461: pend the checks for the NEW commit before the build starts, so
       // the previous commit's verdict (e.g. a stale 'passing') can't satisfy
       // the merge gate while this build runs — or after it fails.
-      await visuals.setChecksPending(pool, session.id, commitHash)
+      await visuals.setChecksPending(pool, session.id, commitHash, 'building')
         .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
       try {
         stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
@@ -7314,10 +7982,10 @@ path: /another/changed/view
           `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
           [stagingResult.containerId, stagingResult.stagingUrl, session.id]
         );
-        // Same cert pre-warm as the interactive tail: persist staging_url
-        // first (Caddy's `ask` gate keys off it), warm before revealing
-        // the preview anywhere.
-        await staging.warmStagingCert(session, stagingResult.hostname, stagingResult.stagingUrl);
+        // Same edge verification as the interactive tail: persist
+        // staging_url first, then make the first real request through the
+        // edge before revealing the preview anywhere.
+        await staging.verifyStagingEdge(session, stagingResult.hostname, stagingResult.stagingUrl);
         stagingUrl = stagingResult.stagingUrl;
         // The stagingUrl metadata is what makes this row render as the
         // "Changes ready" staging card (Preview / Test / Propose buttons)
@@ -7444,6 +8112,11 @@ path: /another/changed/view
           sessionId: session.id,
           metadata: { prNumber: prResult.prNumber },
         });
+        // Tail milestone: a resume must not open a second PR-opened event
+        // (applyPrMetadata itself is update-safe once pr_number is set).
+        await worker.noteTailMilestone(session.id, {
+          prNumber: prResult.prNumber, prOpenedEventRecorded: true,
+        });
       } else if (session.pr_number && !wasNewPR) {
         summaryParts.push(`Pushed to existing PR #${session.pr_number}.`);
       }
@@ -7474,7 +8147,7 @@ path: /another/changed/view
       // #461: pend the checks for the NEW commit before the build starts, so
       // the previous commit's verdict (e.g. a stale 'passing') can't satisfy
       // the merge gate while this build runs — or after it fails.
-      await visuals.setChecksPending(pool, session.id, commitHash)
+      await visuals.setChecksPending(pool, session.id, commitHash, 'building')
         .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
       try {
         stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
@@ -7487,13 +8160,22 @@ path: /another/changed/view
           `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
           [stagingResult.containerId, stagingResult.stagingUrl, session.id]
         );
+        // Tail milestone: the preview for THIS commit exists. A resumed
+        // tail re-checks its liveness before deciding to rebuild, so a
+        // healthy container is left alone rather than rebuilt for another
+        // ~5 minutes.
+        await worker.noteTailMilestone(session.id, {
+          stagingUrl: stagingResult.stagingUrl,
+        });
 
-        // Pre-warm the TLS cert now that staging_url is persisted (so Caddy's
-        // on-demand `ask` gate will approve the host) and BEFORE emitting
-        // `staging_ready` (which reveals the preview button). Otherwise the
-        // first click pays the ~60-90s ZeroSSL cold-start. Bounded; never
-        // blocks the deploy.
-        await staging.warmStagingCert(session, stagingResult.hostname, stagingResult.stagingUrl);
+        // Make one real end-to-end request through the edge now that
+        // staging_url is persisted and BEFORE emitting `staging_ready`
+        // (which reveals the preview button), so the reviewer's click
+        // doesn't pay the container's cold first request — and so a preview
+        // the edge can't actually route to is visible in the platform log
+        // rather than only to whoever clicks it. Bounded; never blocks the
+        // deploy.
+        await staging.verifyStagingEdge(session, stagingResult.hostname, stagingResult.stagingUrl);
 
         stagingUrl = stagingResult.stagingUrl;
         // `changesReady: true` is now what drives the "Changes ready" card
@@ -7528,6 +8210,14 @@ path: /another/changed/view
           }));
 
         if (session.status === 'promoted') {
+          // Tail milestone BEFORE the work, not after: the vote reset is
+          // the one tail step that is destructive and not idempotent (it
+          // DELETEs votes and announces it). A resumed tail must not
+          // re-announce a reset for a commit whose votes are already gone,
+          // so claim it up front — a crash between the stamp and the
+          // delete leaves at worst an unannounced reset, which the next
+          // push redoes anyway.
+          await worker.noteTailMilestone(session.id, { votesResetFor: commitHash });
           // #788: the new commit may have added or removed a name in
           // dapp.json's `admins` block, so re-classify alongside the
           // vote reset. Best-effort (swallows GitHub failures) and
@@ -7667,6 +8357,10 @@ path: /another/changed/view
           ? 'Claude Code made no changes'
           : 'Claude Code did not complete';
       await sendStatus(statusText, { ccOutput: ccText, ccOutcome, durationMs: Date.now() - turnStartedMs });
+      // Tail milestone: the agent's own summary card is on the transcript.
+      // A resumed tail must not post a second one (finalizeRecoveredTurn's
+      // persistCompletionRow is otherwise unconditional).
+      await worker.noteTailMilestone(session.id, { completionRowPosted: true });
       // Prepend CC's own description so the Mayor leads with what was
       // actually built, with our outcome bullets as supplementary context.
       summaryParts.unshift(`What the agent did:\n${ccText}`);
@@ -7674,6 +8368,18 @@ path: /another/changed/view
   } finally {
     activeWorkers.delete(session.id);
     workerProgress.clear(session.id);
+    // The tail is over — release the held turn record and its journal.
+    // Deliberately in the `finally`: every exit path out of this tool
+    // (stop, staging failure, a throw in the PR block) must release it,
+    // or the stale-active_turn watchdog reaps the row 5 minutes later and
+    // narrates an interruption that didn't happen.
+    //
+    // NOTE the ordering with the Mayor wrap-up: phase 2 runs in the chat
+    // handler AFTER this tool returns, so a restart in that last window
+    // is covered by the resume's own `wrapUpPosted` check rather than by
+    // this record. The window is seconds, and re-issuing a wrap-up is the
+    // benign direction to fail in.
+    await worker.finishTurn(session.id).catch(() => {});
     // Turn completion counts as activity: a fresh idle window so the
     // auto-pause sweeper can't pause the session moments after a long
     // build finishes (its last_activity_at is otherwise still the user
@@ -7803,15 +8509,16 @@ GENERAL RULES (apply to all tools):
   * asking for something that looks like a brand-new, standalone app unrelated to "${appName}" (e.g. they're chatting here but describe building a totally different product). In that case, DO NOT dispatch — instead, gently point them to the home page to create a new app, e.g. "That sounds like a separate app from ${appName}. You can head back to the home screen and spin up a new app for it." Only dispatch if they confirm they want it added to this app.
 - If the request fails the CLARITY GATE above, ask clarifying questions (per its rules) INSTEAD of calling any dispatch tool — the one tool that belongs WITH questions is suggest_answers. Never dispatch while also asking for clarification.
 - At most ONE tool call per user message (suggest_answers accompanying your clarifying questions does not count toward this limit).
+- ALWAYS call suggest_replies alongside your reply unless this is a clarifying-question turn (see SUGGESTED QUICK REPLIES below). It does not count toward the one-tool limit either.
 - Never call dispatch_scout and dispatch_claude_code in the same turn. The user dispatches the build themselves.
 
-SUGGESTED QUICK REPLIES (suggest_replies):
-On a normal reply and on the post-build/post-spec wrap-up, ALSO call the suggest_replies tool with 2-3 short, first-person messages the user is likely to want to send next — they render as tappable pills above the message box and PREFILL the box when tapped (the user can edit before sending), so each must read as a complete message the user could send verbatim. Tailor them to the current state:
+SUGGESTED QUICK REPLIES (suggest_replies) — REQUIRED on every reply that isn't a clarifying-question turn:
+Every message you send MUST call the suggest_replies tool, with the single exception of a clarifying-question turn (which uses suggest_answers instead) — that includes normal chat replies, dispatch preambles, and post-build/post-spec wrap-ups. Call it with 2-3 short, first-person messages the user is likely to want to send next — they render as tappable pills above the message box and PREFILL the box when tapped (the user can edit before sending), so each must read as a complete message the user could send verbatim. Tailor them to the current state:
 - After a build (dispatch_claude_code): e.g. "Preview the change", "Propose it to the group", "Make another tweak".
 - After a spec (dispatch_scout): e.g. "Build it", "Revise the spec", "What will this change?".
 - A build is still running: e.g. "How's it going?", "Stop this build".
 - A normal chat reply: the couple of likeliest next things to ask for.
-suggest_replies is for NEXT-STEP shortcuts only — it is NOT for clarifying questions (those use suggest_answers). Never emit suggest_answers and suggest_replies in the same turn. Like suggest_answers, it does NOT count against the one-tool-per-message limit and may accompany a normal reply or wrap-up.
+suggest_replies is for NEXT-STEP shortcuts only — it is NOT for clarifying questions (those use suggest_answers). Never emit suggest_answers and suggest_replies in the same turn. Like suggest_answers, it does NOT count against the one-tool-per-message limit and may accompany a normal reply or wrap-up. Omitting it leaves the user with a bare text box, so treat it as part of writing the reply, not an optional extra.
 
 AFTER A TOOL RETURNS:
 You'll get a short summary of what happened. Write a 1-3 sentence reply to the user in plain English, referencing the spec doc / staging URL / PR if present. For dispatch_scout: tell them the spec was drafted (or revised) and is available in the spec viewer. For dispatch_claude_code: summarize what was built. If anything failed, explain briefly and suggest next steps.
@@ -7969,12 +8676,12 @@ CMD ["node", "server.js"]
     ? `http://localhost:${hostPort}`
     : `https://${hostname}`;
 
-  // TLS pre-warm happens in the caller (staging.warmStagingCert) AFTER the
-  // session's staging_url is persisted — Caddy's on-demand `ask` gate keys
-  // off that row, so warming here would be refused. See staging.js for the
-  // full ordering rationale.
+  // Edge verification happens in the caller (staging.verifyStagingEdge)
+  // AFTER the session's staging_url is persisted — that persist is what
+  // makes the hostname a referenceable preview. See staging.js for the full
+  // ordering rationale.
 
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, GET_PROD_STATUS_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, advanceSharedReviewAfterSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, GET_PROD_STATUS_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine };

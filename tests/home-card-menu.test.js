@@ -36,6 +36,35 @@ function makeHome(user) {
   return makeHomeEnv(user).Home;
 }
 
+// Fake 2D context for _widgetIconDataUrl — the vm sandbox has no real
+// DOM. It draws a rounded-rect tile (face + hairline) before the glyph,
+// so the stub has to answer the path/stroke calls too, not just
+// fillRect/fillText.
+//
+// `paints` records the colour assigned at each fill()/stroke() call, so
+// tests can assert WHICH palette was used without a real canvas: the
+// tile face is the first fill, the hairline the first stroke, the glyph
+// a later fill (emoji leave fillStyle at the face colour — they carry
+// their own colour glyphs and are never recoloured).
+function fakeCtx(paints) {
+  const rec = (kind) => () => {
+    if (paints) {
+      paints.push({
+        op: kind,
+        color: kind === 'stroke' ? ctx.strokeStyle : ctx.fillStyle,
+      });
+    }
+  };
+  const ctx = {
+    fillStyle: null,
+    strokeStyle: null,
+    beginPath() {}, closePath() {}, moveTo() {}, arcTo() {}, roundRect() {},
+    fill: rec('fill'), stroke: rec('stroke'),
+    fillRect: rec('fill'), fillText: rec('fill'),
+  };
+  return ctx;
+}
+
 // Like makeHome, but also hands back the vm sandbox (=== window inside
 // the script) so tests can stub `window.usernode` for bridge-call flows.
 function makeHomeEnv(user) {
@@ -164,7 +193,7 @@ test('card layout: icon first with the hamburger badged on its corner, title bel
   // The hamburger badge lives inside the icon wrapper, overlapping its
   // top-right corner — so in markup order: icon initial → menu button
   // → title name.
-  const iconIdx = html.indexOf('bg-violet-600/20');
+  const iconIdx = html.indexOf('app-icon-tile');
   const menuIdx = html.indexOf('card-menu-btn');
   const nameIdx = html.indexOf('Demo App');
   assert.ok(iconIdx !== -1 && iconIdx < menuIdx && menuIdx < nameIdx,
@@ -346,17 +375,18 @@ test('card: Retry renders inline only on errored cards, creator or full admin', 
 // Array.prototype, which deepStrictEqual rejects.
 const keys = (items) => Array.from(items, (i) => i.key);
 
-test('menu: plain user on a non-member app gets exactly the favorite toggle', () => {
+test('menu: plain user on a non-member app gets App details + the favorite toggle', () => {
   const Home = makeHome({ id: ME });
   const items = Home.menuItemsFor(baseApp());
-  assert.deepEqual(keys(items), ['favorite'], 'nothing admin-gated leaks');
-  assert.equal(items[0].label, 'Add to Your apps');
+  assert.deepEqual(keys(items), ['app-details', 'favorite'], 'nothing admin-gated leaks');
+  assert.equal(items[1].label, 'Add to Your apps');
 });
 
 test('menu: favorited app flips the label to Remove', () => {
   const Home = makeHome({ id: ME });
-  const items = Home.menuItemsFor(baseApp({ is_favorited: true }));
-  assert.equal(items[0].label, 'Remove from Your apps');
+  const fav = Home.menuItemsFor(baseApp({ is_favorited: true }))
+    .find((i) => i.key === 'favorite');
+  assert.equal(fav.label, 'Remove from Your apps');
 });
 
 test('menu: member apps get a WORKING Remove from Your apps item (#618)', () => {
@@ -403,6 +433,62 @@ test('menu: member toggle sends the explicit desired value, not !is_favorited (#
   );
 });
 
+// ── App details ───────────────────────────────────────────────────
+//
+// The menu's way to the app's own page — the SAME destination a row in
+// the browse-all-apps list opens (#apps/<slug>), so the two entry points
+// share one screen. Browse.DETAIL_EXCLUDED_KEYS drops it again on that
+// page (pinned in tests/browse-screen.test.js) so it can't link to
+// itself.
+
+test('menu: App details leads the list, on every app and for every viewer', () => {
+  for (const user of [
+    { id: ME },
+    { id: ME, isAdmin: true, canAdminWrite: false },
+    { id: ME, canAdminWrite: true },
+  ]) {
+    const Home = makeHome(user);
+    for (const over of [
+      {},
+      { is_collaborator: true },
+      { is_favorited: true },
+      { status: 'error', created_by: ME },
+      { self_hosted: true },
+      { locked: true },
+    ]) {
+      const items = Home.menuItemsFor(baseApp(over));
+      assert.equal(items[0].key, 'app-details',
+        `first for ${JSON.stringify(over)} / ${JSON.stringify(user)}`);
+      assert.equal(items[0].label, 'App details');
+    }
+  }
+});
+
+test('menu: App details routes through the hash, like a browse row tap', () => {
+  // Assigning location.hash (rather than calling a navigate helper) is
+  // what keeps the browser/OS back gesture working.
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  Home.menuItemsFor(baseApp({ slug: 'chess-arena' }))
+    .find((i) => i.key === 'app-details').run();
+  assert.equal(sandbox.location.hash, '#apps/chess-arena');
+});
+
+test('menu: App details escapes the slug into the hash', () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  Home.menuItemsFor(baseApp({ slug: 'a b&c' }))
+    .find((i) => i.key === 'app-details').run();
+  assert.equal(sandbox.location.hash, `#apps/${encodeURIComponent('a b&c')}`);
+});
+
+test('menu: the inert ?demo=1 tiles get no App details row', () => {
+  // Their slugs 404 on GET /api/apps/:slug, so the page would open on an
+  // inline "not available" state — same reason a demo row doesn't drill in.
+  const Home = makeHome({ id: ME });
+  assert.ok(!keys(Home.menuItemsFor(baseApp({ demo: true }))).includes('app-details'));
+  // …and a slugless row can't be addressed at all.
+  assert.ok(!keys(Home.menuItemsFor(baseApp({ slug: null }))).includes('app-details'));
+});
+
 test('menu: every app carries a favorite entry — no card menu omits it', () => {
   const Home = makeHome({ id: ME, canAdminWrite: true });
   for (const over of [
@@ -413,14 +499,15 @@ test('menu: every app carries a favorite entry — no card menu omits it', () =>
     { self_hosted: true },
   ]) {
     const items = Home.menuItemsFor(baseApp(over));
-    assert.equal(items[0].key, 'favorite', `favorite entry first for ${JSON.stringify(over)}`);
+    assert.ok(keys(items).includes('favorite'),
+      `favorite entry present for ${JSON.stringify(over)}`);
   }
 });
 
 test('menu: full admin on a running repo app gets check-updates, lock and delete', () => {
   const Home = makeHome({ id: ME, canAdminWrite: true });
   const items = Home.menuItemsFor(baseApp());
-  assert.deepEqual(keys(items), ['favorite', 'check-updates', 'lock', 'delete']);
+  assert.deepEqual(keys(items), ['app-details', 'favorite', 'check-updates', 'lock', 'delete']);
   assert.equal(items.find((i) => i.key === 'lock').label, 'Lock app');
   assert.equal(items.find((i) => i.key === 'delete').danger, true);
 });
@@ -444,13 +531,15 @@ test('menu: check-updates hidden without repo / when not running / when self-hos
 test('menu: view-only admins (no canAdminWrite) get no mutating items (#311)', () => {
   const Home = makeHome({ id: ME, isAdmin: true, canAdminWrite: false });
   const items = Home.menuItemsFor(baseApp({ status: 'error' }));
-  assert.deepEqual(keys(items), ['favorite'], 'no retry/check/lock/delete');
+  // App details is navigation, not a mutation, so it survives the gate.
+  assert.deepEqual(keys(items), ['app-details', 'favorite'],
+    'no retry/check/lock/delete');
 });
 
 test('menu: errored app adds Retry + View build log for the creator (#416)', () => {
   const Home = makeHome({ id: ME });
   const items = Home.menuItemsFor(baseApp({ status: 'error', created_by: ME }));
-  assert.deepEqual(keys(items), ['favorite', 'retry', 'build-log']);
+  assert.deepEqual(keys(items), ['app-details', 'favorite', 'retry', 'build-log']);
 });
 
 // ── "View build log" gating (#416) ────────────────────────────────
@@ -516,7 +605,7 @@ test('menu: shortcut item renders when the bridge reports support', () => {
   Home._shortcutSupport = { mechanism: 'pinned-shortcut' };
   // "Your apps" only — favorited (or collaborator) apps get the item.
   const items = Home.menuItemsFor(baseApp({ is_favorited: true }));
-  assert.deepEqual(keys(items), ['favorite', 'add-to-homescreen']);
+  assert.deepEqual(keys(items), ['app-details', 'favorite', 'add-to-homescreen']);
   assert.equal(
     items.find((i) => i.key === 'add-to-homescreen').label,
     'Add to phone home screen'
@@ -669,7 +758,9 @@ test('widget section: tiles in registry order, each with a remove button', () =>
   const empty = Home.renderWidgetSection();
   assert.match(empty, /id="widget-strip"/);
   assert.doesNotMatch(empty, /widget-tile /);
-  assert.match(empty, /Drag an app card here/);
+  // The hint names "Your apps" as the drag source now: the home grid holds
+  // that one section (every other app moved to the #apps browse screen).
+  assert.match(empty, /Drag a card from Your apps here/);
 });
 
 test('widget section: help icon toggles the add-widget instructions', () => {
@@ -690,7 +781,7 @@ test('shortcut icons: emoji/letter apps get a canvas data URI, image apps a URL'
   const { Home, sandbox } = makeHomeEnv({ id: ME });
   // Fake 2D canvas — the vm sandbox has no real DOM.
   sandbox.document.createElement = () => ({
-    getContext: () => ({ fillRect() {}, fillText() {} }),
+    getContext: () => fakeCtx(),
     toDataURL: () => 'data:image/png;base64,FAKE',
   });
   const added = [];
@@ -709,7 +800,7 @@ test('shortcut icons: emoji/letter apps get a canvas data URI, image apps a URL'
 test('icon heal: has_icon:false entries are silently re-added once', async () => {
   const { Home, sandbox } = makeHomeEnv({ id: ME });
   sandbox.document.createElement = () => ({
-    getContext: () => ({ fillRect() {}, fillText() {} }),
+    getContext: () => fakeCtx(),
     toDataURL: () => 'data:image/png;base64,FAKE',
   });
   const added = [];
@@ -751,7 +842,7 @@ test('icon heal: has_icon:false entries are silently re-added once', async () =>
 test('icon heal: retries entries skipped while apps were still loading', async () => {
   const { Home, sandbox } = makeHomeEnv({ id: ME });
   sandbox.document.createElement = () => ({
-    getContext: () => ({ fillRect() {}, fillText() {} }),
+    getContext: () => fakeCtx(),
     toDataURL: () => 'data:image/png;base64,FAKE',
   });
   const added = [];
@@ -776,7 +867,7 @@ test('icon heal: retries entries skipped while apps were still loading', async (
 test('icon heal: unknown last-sent source re-sends once, then settles', async () => {
   const { Home, sandbox } = makeHomeEnv({ id: ME });
   sandbox.document.createElement = () => ({
-    getContext: () => ({ fillRect() {}, fillText() {} }),
+    getContext: () => fakeCtx(),
     toDataURL: () => 'data:image/png;base64,FAKE',
   });
   const added = [];
@@ -800,7 +891,11 @@ test('icon heal: unknown last-sent source re-sends once, then settles', async ()
   await Home._refreshWidgetItems();
   assert.equal(added.length, 2, 'both entries refreshed when sources are unknown');
   const srcMap = JSON.parse(sandbox.localStorage.getItem('sv:widget_icon_src'));
-  assert.equal(srcMap.w1, `tile:${Home.WIDGET_ICON_GEN}:`, 'canvas tile source recorded');
+  assert.equal(
+    srcMap.w1,
+    `tile:${Home.WIDGET_ICON_GEN}:${Home._widgetScheme()}:`,
+    'canvas tile source recorded, keyed by generation + colour scheme'
+  );
   assert.equal(srcMap.w2, 'https://sv.test/icons/x.png', 'image icon source recorded');
   // Sources now recorded → later refreshes send nothing.
   Home._iconHealTried = null; // even across a fresh page load
@@ -811,7 +906,7 @@ test('icon heal: unknown last-sent source re-sends once, then settles', async ()
 test('icon heal: app gaining an icon after pinning re-sends the new icon', async () => {
   const { Home, sandbox } = makeHomeEnv({ id: ME });
   sandbox.document.createElement = () => ({
-    getContext: () => ({ fillRect() {}, fillText() {} }),
+    getContext: () => fakeCtx(),
     toDataURL: () => 'data:image/png;base64,FAKE',
   });
   const added = [];
@@ -830,7 +925,7 @@ test('icon heal: app gaining an icon after pinning re-sends the new icon', async
   Home._apps = [baseApp()];
   sandbox.localStorage.setItem(
     'sv:widget_icon_src',
-    JSON.stringify({ w1: `tile:${Home.WIDGET_ICON_GEN}:` })
+    JSON.stringify({ w1: `tile:${Home.WIDGET_ICON_GEN}:${Home._widgetScheme()}:` })
   );
   await Home._refreshWidgetItems();
   assert.equal(added.length, 0, 'up-to-date tile is left alone');
@@ -844,6 +939,192 @@ test('icon heal: app gaining an icon after pinning re-sends the new icon', async
   assert.equal(added[0].silent, true);
   const srcMap = JSON.parse(sandbox.localStorage.getItem('sv:widget_icon_src'));
   assert.equal(srcMap.w1, 'https://sv.test/icons/new.png', 'new source recorded');
+});
+
+// ── Widget tile palette follows the system appearance ────────────────
+//
+// The widget PNG is baked once and can't restyle itself on the
+// homescreen, so the palette is picked at render time from
+// prefers-color-scheme and the scheme rides in the source marker. A
+// light↔dark flip therefore has to (a) paint the other palette and
+// (b) actually re-send every pinned canvas tile.
+
+// Installs a settable prefers-color-scheme query on the sandbox and
+// returns a setter that fires the registered change listeners, so a
+// test can flip the system appearance the way the OS would.
+function stubScheme(sandbox, initialDark) {
+  let dark = !!initialDark;
+  const listeners = [];
+  sandbox.matchMedia = (media) => ({
+    media,
+    get matches() { return dark; },
+    addEventListener: (_type, fn) => listeners.push(fn),
+    removeEventListener: () => {},
+  });
+  return (next) => {
+    dark = !!next;
+    listeners.forEach((fn) => fn({ matches: dark }));
+  };
+}
+
+test('widget tile PNG paints the light palette in light appearance', () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  stubScheme(sandbox, false);
+  const paints = [];
+  sandbox.document.createElement = () => ({
+    getContext: () => fakeCtx(paints),
+    toDataURL: () => 'data:image/png;base64,FAKE',
+  });
+  Home._widgetIconDataUrl(baseApp());
+  const face = paints.find((p) => p.op === 'fill');
+  const hairline = paints.find((p) => p.op === 'stroke');
+  const glyph = paints.filter((p) => p.op === 'fill').pop();
+  assert.equal(face.color, '#ffffff', 'white face');
+  assert.equal(hairline.color, '#e4e4e7', 'faint light-grey hairline');
+  assert.equal(glyph.color, '#a1a1aa', 'faint grey letter (--text-faint)');
+});
+
+test('widget tile PNG paints the dark palette in dark appearance', () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  stubScheme(sandbox, true);
+  const paints = [];
+  sandbox.document.createElement = () => ({
+    getContext: () => fakeCtx(paints),
+    toDataURL: () => 'data:image/png;base64,FAKE',
+  });
+  Home._widgetIconDataUrl(baseApp());
+  const face = paints.find((p) => p.op === 'fill');
+  const hairline = paints.find((p) => p.op === 'stroke');
+  const glyph = paints.filter((p) => p.op === 'fill').pop();
+  assert.equal(face.color, '#1a1a30', 'dark face (--bg-secondary)');
+  assert.equal(hairline.color, '#2e2e50', 'hairline kept, stepped to --border');
+  assert.equal(glyph.color, '#9898b0', 'faint letter (--text-faint, dark)');
+  // The hairline is what keeps the tile legible against iOS's own dark
+  // widget material — a dark face with no ring would vanish.
+  assert.notEqual(hairline.color, face.color);
+});
+
+test('widget tile PNG never recolours an emoji glyph', () => {
+  for (const dark of [false, true]) {
+    const { Home, sandbox } = makeHomeEnv({ id: ME });
+    stubScheme(sandbox, dark);
+    const paints = [];
+    sandbox.document.createElement = () => ({
+      getContext: () => fakeCtx(paints),
+      toDataURL: () => 'data:image/png;base64,FAKE',
+    });
+    Home._widgetIconDataUrl(baseApp({ icon_emoji: '\u{1F3AF}' }));
+    const palette = Home.WIDGET_TILE_PALETTE[dark ? 'dark' : 'light'];
+    const glyph = paints.filter((p) => p.op === 'fill').pop();
+    assert.notEqual(glyph.color, palette.letter, 'emoji keep their own colours');
+  }
+});
+
+test('icon heal: a system light→dark flip re-sends every canvas tile once', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  const setDark = stubScheme(sandbox, false);
+  sandbox.document.createElement = () => ({
+    getContext: () => fakeCtx(),
+    toDataURL: () => 'data:image/png;base64,FAKE',
+  });
+  const added = [];
+  sandbox.usernode = {
+    isNative: true,
+    addHomeScreenShortcut: async (opts) => { added.push(opts); return { added: true }; },
+    getHomeScreenShortcuts: async () => ({
+      items: [
+        { id: 'w1', name: 'Demo App', url: 'https://sv.test/#app/demo-app', has_icon: true },
+        { id: 'w2', name: 'Iconed', url: 'https://sv.test/#app/iconed', has_icon: true },
+      ],
+    }),
+  };
+  Home._shortcutSupport = { mechanism: 'widget' };
+  Home._apps = [
+    baseApp(),
+    baseApp({ slug: 'iconed', name: 'Iconed', icon_url: '/icons/x.png' }),
+  ];
+  // Both already pinned with current sources → the first pass is quiet.
+  sandbox.localStorage.setItem('sv:widget_icon_src', JSON.stringify({
+    w1: `tile:${Home.WIDGET_ICON_GEN}:light:`,
+    w2: 'https://sv.test/icons/x.png',
+  }));
+  Home._watchWidgetScheme();
+  await Home._refreshWidgetItems();
+  assert.equal(added.length, 0, 'nothing to do while the scheme is unchanged');
+
+  // The phone switches to dark appearance.
+  setDark(true);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(added.length, 1, 'exactly the canvas tile re-sends');
+  assert.match(added[0].url, /#app\/demo-app/);
+  assert.equal(added[0].silent, true, 're-send stays silent — no walkthrough');
+  const srcMap = JSON.parse(sandbox.localStorage.getItem('sv:widget_icon_src'));
+  assert.equal(srcMap.w1, `tile:${Home.WIDGET_ICON_GEN}:dark:`, 'dark source recorded');
+  assert.equal(srcMap.w2, 'https://sv.test/icons/x.png', 'image tile untouched');
+
+  // A second event at the SAME scheme must not re-send anything: the
+  // equality guard is what stops a spurious media event from replaying
+  // the whole grid.
+  setDark(true);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(added.length, 1, 'no re-send when the scheme did not move');
+
+  // …and flipping back re-sends once more, in the light palette.
+  setDark(false);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(added.length, 2, 'flipping back re-sends once');
+  const back = JSON.parse(sandbox.localStorage.getItem('sv:widget_icon_src'));
+  assert.equal(back.w1, `tile:${Home.WIDGET_ICON_GEN}:light:`);
+});
+
+// _iconHealTried caps sends to one attempt per shortcut id per page
+// load. A scheme flip marks every canvas tile stale, so without
+// clearing that Set the flip would find the work and then skip it —
+// the re-send would silently never happen.
+test('icon heal: a scheme flip clears the per-load heal-tried set', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  const setDark = stubScheme(sandbox, false);
+  sandbox.document.createElement = () => ({
+    getContext: () => fakeCtx(),
+    toDataURL: () => 'data:image/png;base64,FAKE',
+  });
+  const added = [];
+  sandbox.usernode = {
+    isNative: true,
+    addHomeScreenShortcut: async (opts) => { added.push(opts); return { added: true }; },
+    getHomeScreenShortcuts: async () => ({
+      items: [
+        { id: 'w1', name: 'Demo App', url: 'https://sv.test/#app/demo-app', has_icon: false },
+      ],
+    }),
+  };
+  Home._shortcutSupport = { mechanism: 'widget' };
+  Home._apps = [baseApp()];
+  Home._watchWidgetScheme();
+  await Home._refreshWidgetItems();
+  assert.equal(added.length, 1, 'healed once on load');
+  assert.ok(Home._iconHealTried && Home._iconHealTried.has('w1'), 'id marked tried');
+
+  setDark(true);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(added.length, 2, 'the flip re-sends despite the earlier attempt');
+});
+
+test('scheme watching is inert without the widget mechanism', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  const setDark = stubScheme(sandbox, false);
+  const added = [];
+  sandbox.usernode = {
+    isNative: false,
+    addHomeScreenShortcut: async (opts) => { added.push(opts); return { added: true }; },
+  };
+  // Plain browser / Android: the probe never reports the widget grid.
+  Home._shortcutSupport = null;
+  Home._apps = [baseApp()];
+  Home._watchWidgetScheme();
+  setDark(true);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(added.length, 0, 'no bridge traffic off the widget path');
 });
 
 test('icon heal: unpinned shortcut records are pruned from the source map', async () => {

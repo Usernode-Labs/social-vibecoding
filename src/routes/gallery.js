@@ -4,12 +4,22 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const visuals = require('../services/visuals');
+const galleryDemo = require('../services/gallery-demo');
 
-// Admin /gallery API — read-only, behind an isAdmin guard (any admin, full
+// Admin gallery API — read-only, behind an isAdmin guard (any admin, full
 // or view-only; this is diagnostics, so no requireAdminWrite gate). Backs
-// the /gallery page: merged proposals newest-first with their stored
-// before/after capture groups, keyset-paged, filterable by app and by
-// capture-problem class, plus a stats strip for the current filter.
+// the #admin/gallery console section (the standalone /gallery page it used
+// to back is a redirect stub since #860): merged proposals newest-first
+// with their stored before/after capture groups, keyset-paged, filterable
+// by app and by capture-problem class, plus a stats strip for the current
+// filter.
+//
+// Staging mock data: chat_sessions + session_visuals are both
+// `staging:private`, so a prod-cloned staging DB has nothing to show here.
+// Under IS_STAGING + ?demo=1 all three endpoints below inject the
+// obviously-fake rows from services/gallery-demo.js (read-path only,
+// nothing written; no-op in prod) so a reviewer can exercise the tiles, the
+// fell-back caption and the no-artifacts branch.
 //
 // The image BYTES are not served from here — tiles point at the existing
 // public GET /visuals/:id (src/routes/visuals.js), which is deliberately
@@ -200,9 +210,16 @@ function galleryRoutes(config) {
         };
       });
 
+      // Staging demo rows (?demo=1) — first page only, prepended, so paging
+      // through real rows afterwards still behaves. Same shape/stance as
+      // routes/debug.js's stagingMockMergeRuns.
+      const demo = galleryDemo.IS_STAGING && req.query.demo === '1' && !cursor
+        ? galleryDemo.demoProposals()
+        : [];
+
       const last = rows[rows.length - 1];
       res.json({
-        proposals,
+        proposals: demo.concat(proposals),
         hasMore,
         nextCursor: hasMore && last ? { before: last.merged_at, before_id: last.id } : null,
       });
@@ -213,7 +230,7 @@ function galleryRoutes(config) {
   });
 
   // Distinct apps with gallery-eligible proposals — for the filter dropdown.
-  router.get('/api/gallery/apps', async (_req, res) => {
+  router.get('/api/gallery/apps', async (req, res) => {
     try {
       const { rows } = await pool.query(
         `SELECT a.id, a.slug, a.name, COUNT(DISTINCT cs.id)::int AS proposal_count
@@ -224,7 +241,13 @@ function galleryRoutes(config) {
           GROUP BY a.id, a.slug, a.name
           ORDER BY a.name ASC`
       );
-      res.json({ apps: rows });
+      // Staging demo (?demo=1): surface the synthetic app so the filter
+      // dropdown isn't empty next to the injected rows.
+      const demoApps = galleryDemo.IS_STAGING && req.query.demo === '1'
+        && !rows.some((r) => r.slug === galleryDemo.DEMO_APP.slug)
+        ? [galleryDemo.DEMO_APP]
+        : [];
+      res.json({ apps: demoApps.concat(rows) });
     } catch (err) {
       log.error('gallery', 'List gallery apps failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -252,6 +275,17 @@ function galleryRoutes(config) {
           WHERE ${whereSql}`,
         params
       );
+      // Staging demo (?demo=1): the injected list rows aren't in the DB, so
+      // add their counts on top of the real ones.
+      if (galleryDemo.IS_STAGING && req.query.demo === '1') {
+        const real = rows[0] || {};
+        const demo = galleryDemo.demoStats();
+        const merged = { ...real };
+        for (const [k, v] of Object.entries(demo)) {
+          merged[k] = (Number(real[k]) || 0) + v;
+        }
+        return res.json({ stats: merged, demo: true });
+      }
       res.json({ stats: rows[0] || {} });
     } catch (err) {
       log.error('gallery', 'Gallery stats failed', { message: err.message });

@@ -87,7 +87,7 @@ function makeStaging() {
       calls.push(args);
       return { containerId: 'c', stagingUrl: 'https://x.example', hostname: 'x.example' };
     },
-    warmStagingCert: async () => {},
+    verifyStagingEdge: async () => {},
   };
 }
 
@@ -175,16 +175,23 @@ test('finalizeRecoveredTurn still runs the tail for non-headless sessions (guard
 
   // No changes pushed → the early no-changes return; proves the function
   // proceeds past the headless guard for ordinary sessions.
-  await finalizeRecoveredTurn({
+  const ret = await finalizeRecoveredTurn({
     config: {}, pool, staging,
     session: { ...HEADLESS_SESSION, is_headless: false },
     sessionId: 42,
-    result: { ahead: 0, sha: null },
+    result: { ahead: 0, sha: null, lastResultText: 'Nothing needed changing.' },
     repoOwner: 'owner', repoName: 'repo',
     emit: (event, data) => emits.push({ event, data }),
     containerName: 'usernode-worker-42',
     keepWorker: true,
   });
 
-  assert.deepEqual(emits, [{ event: 'status', data: { text: 'Recovered session produced no changes.' } }]);
+  // #896: the no-changes case now persists the live path's outcome-aware
+  // completion row instead of an emit-only "Recovered session produced no
+  // changes." that vanished on reload.
+  assert.equal(emits.length, 1);
+  assert.equal(emits[0].event, 'status');
+  assert.equal(emits[0].data.text, 'Claude Code made no changes');
+  assert.equal(emits[0].data.ccOutcome, 'no_changes');
+  assert.match(ret.summary, /finished without committing any changes/);
 });

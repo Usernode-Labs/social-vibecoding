@@ -424,6 +424,7 @@ async function gatherFull(config) {
     isAdmin: true, // overridden in redact() based on requester
     deployProgress: deployStatus.read(),
     node: nodeStatus.get(),
+    explorer: nodeStatus.getExplorer(),
     limits: {
       stagingGlobal: globalCap,
       stagingPerUser: config.maxUserSessions || MAX_STAGING_PER_USER,
@@ -465,6 +466,7 @@ function redact(full, { isAdmin }) {
       // line in the dashboard stays honest even when the rest of the
       // payload is served from cache.
       node: nodeStatus.get(),
+      explorer: nodeStatus.getExplorer(),
     };
   }
   // Non-admin: strip live Claude Code progress text, model name, and
@@ -489,6 +491,7 @@ function redact(full, { isAdmin }) {
     isAdmin: false,
     now: new Date().toISOString(),
     node: nodeStatus.get(),
+    explorer: nodeStatus.getExplorer(),
     summary: publicSummary,
     limits: publicLimits,
     apps: (apps || []).map((a) => ({

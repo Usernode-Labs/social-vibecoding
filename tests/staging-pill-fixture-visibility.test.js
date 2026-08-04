@@ -95,23 +95,102 @@ test('both fixture sessions are seeded shared, not owner-only', () => {
   }
 });
 
+// Every fixture this seed owns. The first two are the #786 pill shapes
+// (auto-id, asserted via their Dev-board card title); the last three are
+// the tail-recovery shapes, which carry FIXED ids so a dapp.json check can
+// open the transcript itself rather than only its card.
+const FIXTURE_BRANCHES = [
+  // #896: -v2 so the reworded transcripts actually re-seed — the guard is an
+  // existence check on the branch name, so reusing the old name would leave
+  // staging showing the pre-#896 rows forever.
+  'staging-fixture/restart-recovered-pills-v2',
+  'staging-fixture/restart-unanswered-pills-v2',
+  'staging-fixture/restart-recovered-tail',
+  'staging-fixture/staging-rebuild-running',
+  'staging-fixture/restart-code-landed',
+];
+
 test('the fixture titles are obviously fake and prefixed', () => {
   const titles = [...BODY.matchAll(/'(\[staging fixture\][^']*)'/g)].map((m) => m[1]);
-  assert.equal(titles.length, 2, 'both fixtures carry the [staging fixture] prefix');
+  assert.equal(titles.length, FIXTURE_BRANCHES.length,
+    'every fixture carries the [staging fixture] prefix');
   for (const t of titles) {
     assert.match(t, /Staging demo/, `"${t}" reads as demo content, not a real session`);
   }
 });
 
 test('the seed is idempotent via its branch-name existence checks', () => {
-  for (const branch of ['staging-fixture/restart-recovered-pills',
-    'staging-fixture/restart-unanswered-pills']) {
+  for (const branch of FIXTURE_BRANCHES) {
     assert.ok(BODY.includes(branch), `seeds ${branch}`);
   }
   const checks = BODY.match(
     /SELECT id FROM chat_sessions WHERE app_id = \$1 AND branch_name = \$2 LIMIT 1/g
   );
-  assert.equal(checks && checks.length, 2, 'each fixture guards on its own branch name');
+  assert.equal(checks && checks.length, FIXTURE_BRANCHES.length,
+    'each fixture guards on its own branch name');
+});
+
+test('the tail-recovery fixtures are shared, active and fixed-id', () => {
+  // These use explicit ids instead of RETURNING (the 9008xx convention), so
+  // they need their own shape check — the sessionInserts() helper above only
+  // sees the RETURNING form.
+  const inserts = [...BODY.matchAll(
+    /INSERT INTO chat_sessions\s*\(\s*(id,[\s\S]*?)\)\s*VALUES/g
+  )].map((m) => m[1].split(',').map((c) => c.trim()));
+  assert.equal(inserts.length, 3, 'three fixed-id tail fixtures');
+  for (const columns of inserts) {
+    assert.ok(columns.includes('id'), 'a fixed id, so dapp.json can deep-link it');
+    // Same rationale as the two shared fixtures above: the dapp.json checks
+    // run as the view-only capture identity, and an unshared row is
+    // invisible to anyone but its owner.
+    assert.ok(columns.includes('shared_at'), 'shared, or the checks cannot see it');
+    assert.ok(columns.includes('is_headless'), 'explicitly non-headless');
+  }
+  // Ids must match what dapp.json deep-links, or the checks 404 into the
+  // home feed and silently assert nothing.
+  for (const id of [900820, 900821, 900822]) {
+    assert.ok(BODY.includes(String(id)), `seeds session ${id}`);
+    assert.ok((DAPP.tests || []).some((t) => (t.path || '').includes(`/sessions/${id}`)),
+      `a dapp.json check opens session ${id}`);
+  }
+});
+
+test('the tail-recovery checks assert text the fixtures actually render', () => {
+  const byPath = (id) => (DAPP.tests || []).filter((t) => (t.path || '').endsWith(`/sessions/${id}`));
+
+  // 900820 — the resumed tail's own rows.
+  const recovered = byPath(900820);
+  assert.ok(recovered.length >= 2, 'the tail-recovered transcript is checked');
+  assert.ok(recovered.some((t) => t.expectText === 'Staging deployed!'),
+    'the card the interrupted tail owed the user is asserted');
+  assert.ok(BODY.includes("'Staging deployed!'"), 'and the fixture actually seeds it');
+
+  // 900821 — the in-progress rebuild row must be the LAST row, or the
+  // client will not spin it (see _activateTrailingStagingBuild).
+  const rebuilding = byPath(900821);
+  assert.ok(rebuilding.some((t) => /dc-status-spinner-arc/.test(t.expectSelector || '')),
+    'the spinner is what this fixture exists to pin');
+  const rebuildIdx = BODY.indexOf("'staging-fixture/staging-rebuild-running'");
+  const rebuildBlock = BODY.slice(rebuildIdx, BODY.indexOf('Fixture 5', rebuildIdx));
+  const lastRow = rebuildBlock.lastIndexOf("['system', 'Building staging preview...'");
+  assert.ok(lastRow > 0, 'seeds the in-progress row');
+  assert.ok(!/\['(system|assistant|user)',/.test(rebuildBlock.slice(lastRow + 40)),
+    'and it is the final row — a row after it would (correctly) stop the spinner');
+
+  // 900822 — the honest wording, kept in sync with recovery-pills.js.
+  const landed = byPath(900822);
+  const wording = landed.find((t) => /committed and pushed/.test(t.expectText || ''));
+  assert.ok(wording, 'the code-landed wording is asserted');
+  const seeded = BODY.match(/'(Your changes are committed and pushed to [^']*)'/);
+  assert.ok(seeded, 'the fixture seeds that row');
+  assert.ok(seeded[1].includes(wording.expectText),
+    `dapp.json expects "${wording.expectText}" but the seeded row reads "${seeded[1]}"`);
+  // The one thing this row must NEVER say.
+  assert.ok(!/send your request again/i.test(seeded[1]),
+    'landed work must not be reported as something to redo');
+  const { isCodeLandedBreadcrumb } = require('../src/services/recovery-pills');
+  assert.ok(isCodeLandedBreadcrumb(seeded[1]),
+    'the seeded row is a real buildCodeLandedBreadcrumb output — keep both sides in sync');
 });
 
 // ── dapp.json ↔ seed contract ───────────────────────────────────────────

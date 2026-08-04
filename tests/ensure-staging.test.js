@@ -170,20 +170,33 @@ function makePool(sessionRow) {
 // pool MUST be stubbed before sessions.js is required (its `getPool` binding
 // is captured at load). The in-flight dedup Set is module-level, so a fresh
 // require per load resets it.
-function loadSessions({ pool, needsRebuild, rebuild }) {
+// #816: `probeHealth` stubs docker.probeHealthOnce — the ready branch's
+// "did this preview answer just now?" check. `throws` models a docker
+// daemon hiccup; the helper itself never throws in production, but the
+// route must survive it either way.
+function loadSessions({ pool, needsRebuild, rebuild, probeHealth = async () => true }) {
   const paths = {
     pool: require.resolve('../src/db/pool'),
     ws: require.resolve('../src/services/ws'),
     appAccess: require.resolve('../src/services/app-access'),
     stagingRecovery: require.resolve('../src/services/staging-recovery'),
+    docker: require.resolve('../src/services/docker'),
     sessions: require.resolve('../src/routes/sessions'),
   };
 
   const broadcasts = [];
+  const healthProbes = [];
   let rebuildCalls = 0;
 
   const originals = [
     [paths.pool, stubModule(paths.pool, { getPool: () => pool })],
+    [paths.docker, stubModule(paths.docker, {
+      ...require('../src/services/docker'),
+      probeHealthOnce: async (name, port, path_, opts) => {
+        healthProbes.push({ name, port, path: path_, opts });
+        return probeHealth();
+      },
+    })],
     [paths.ws, stubModule(paths.ws, {
       broadcastGlobal: (m) => broadcasts.push(m),
       pushSessionUpdate: () => {},
@@ -208,7 +221,7 @@ function loadSessions({ pool, needsRebuild, rebuild }) {
     }
     delete require.cache[paths.sessions];
   };
-  return { subject, broadcasts, getRebuildCalls: () => rebuildCalls, restore };
+  return { subject, broadcasts, healthProbes, getRebuildCalls: () => rebuildCalls, restore };
 }
 
 async function startServer(loaded, user = { id: 1, username: 'alice' }) {
@@ -243,8 +256,99 @@ test('ensure-staging returns {ready,url} when the preview is live', async () => 
     const res = await fetch(`${srv.baseUrl}/api/sessions/42/ensure-staging`, { method: 'POST' });
     assert.equal(res.status, 200);
     const body = await res.json();
-    assert.deepEqual(body, { status: 'ready', url: 'https://stg.example' });
+    assert.deepEqual(body, {
+      status: 'ready', url: 'https://stg.example', verified: true, checksRunning: false,
+    });
     assert.equal(loaded.getRebuildCalls(), 0, 'no rebuild when already live');
+  } finally { await srv.close(); loaded.restore(); }
+});
+
+// ── #816: the ready branch carries server-verified readiness ─────────────
+//
+// Liveness ("the container is running") is not the same claim as "the app
+// inside it is answering". The client can only skip its own readiness poll
+// on the stronger claim, so the route makes it explicitly.
+
+test('#816 ready probes the preview container by name and reports {verified}', async () => {
+  const loaded = loadSessions({ pool: makePool(OWNED_ACTIVE), needsRebuild: false, rebuild: async () => 'built' });
+  const srv = await startServer(loaded);
+  try {
+    const body = await (await fetch(`${srv.baseUrl}/api/sessions/42/ensure-staging`, { method: 'POST' })).json();
+    assert.equal(body.verified, true);
+    assert.equal(loaded.healthProbes.length, 1, 'exactly one probe — no retry loop on the request path');
+    const probe = loaded.healthProbes[0];
+    assert.equal(probe.name, 'usernode-staging-my-app--42', 'the deterministic preview container name');
+    assert.equal(probe.port, 3000);
+    assert.equal(probe.path, '/health');
+    assert.ok(probe.opts.timeoutMs <= 3000, 'bounded so the POST stays fast');
+  } finally { await srv.close(); loaded.restore(); }
+});
+
+test('#816 a failed probe still answers {ready} — just unverified, never a rebuild', async () => {
+  const loaded = loadSessions({
+    pool: makePool(OWNED_ACTIVE), needsRebuild: false, rebuild: async () => 'built',
+    probeHealth: async () => false,
+  });
+  const srv = await startServer(loaded);
+  try {
+    const res = await fetch(`${srv.baseUrl}/api/sessions/42/ensure-staging`, { method: 'POST' });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    // A preview busy under the post-build checks run can miss a 3s probe.
+    // Answering anything but `ready` here would turn that into a needless
+    // rebuild — the exact churn the liveness check exists to avoid.
+    assert.equal(body.status, 'ready');
+    assert.equal(body.url, 'https://stg.example');
+    assert.equal(body.verified, false, 'the client falls back to its own poll');
+    assert.equal(loaded.getRebuildCalls(), 0, 'an unverified preview is NOT rebuilt');
+  } finally { await srv.close(); loaded.restore(); }
+});
+
+test('#816 a throwing probe degrades to unverified rather than 500ing', async () => {
+  const loaded = loadSessions({
+    pool: makePool(OWNED_ACTIVE), needsRebuild: false, rebuild: async () => 'built',
+    probeHealth: async () => { throw new Error('docker daemon unreachable'); },
+  });
+  const srv = await startServer(loaded);
+  try {
+    const res = await fetch(`${srv.baseUrl}/api/sessions/42/ensure-staging`, { method: 'POST' });
+    assert.equal(res.status, 200, 'a docker hiccup must not break opening a preview');
+    const body = await res.json();
+    assert.equal(body.status, 'ready');
+    assert.equal(body.verified, false);
+  } finally { await srv.close(); loaded.restore(); }
+});
+
+test('#816 checksRunning mirrors a pending checks verdict', async () => {
+  const pending = { ...OWNED_ACTIVE, check_state: 'pending' };
+  const loaded = loadSessions({ pool: makePool(pending), needsRebuild: false, rebuild: async () => 'built' });
+  const srv = await startServer(loaded);
+  try {
+    const body = await (await fetch(`${srv.baseUrl}/api/sessions/42/ensure-staging`, { method: 'POST' })).json();
+    assert.equal(body.checksRunning, true,
+      'the post-build capture is still hitting this container — the one honest reason a live preview loads slowly');
+  } finally { await srv.close(); loaded.restore(); }
+
+  const passing = { ...OWNED_ACTIVE, check_state: 'passing' };
+  const done = loadSessions({ pool: makePool(passing), needsRebuild: false, rebuild: async () => 'built' });
+  const srv2 = await startServer(done);
+  try {
+    const body = await (await fetch(`${srv2.baseUrl}/api/sessions/42/ensure-staging`, { method: 'POST' })).json();
+    assert.equal(body.checksRunning, false);
+  } finally { await srv2.close(); done.restore(); }
+});
+
+test('#816 the rebuilding branch never probes (there is nothing live to probe)', async () => {
+  const loaded = loadSessions({
+    pool: makePool({ ...OWNED_ACTIVE, staging_url: null, staging_container_id: null }),
+    needsRebuild: true,
+    rebuild: async () => 'built',
+  });
+  const srv = await startServer(loaded);
+  try {
+    const body = await (await fetch(`${srv.baseUrl}/api/sessions/42/ensure-staging`, { method: 'POST' })).json();
+    assert.equal(body.status, 'rebuilding');
+    assert.equal(loaded.healthProbes.length, 0);
   } finally { await srv.close(); loaded.restore(); }
 });
 

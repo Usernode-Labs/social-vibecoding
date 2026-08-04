@@ -237,10 +237,11 @@ test('a capture arriving while one is in flight is re-queued, not dropped', () =
     require('node:path').join(__dirname, '..', 'src', 'services', 'visuals.js'), 'utf8'
   );
   // Parked in a Map keyed by session (depth 1 — latest wins) …
-  assert.match(src, /_queued\.set\(session\.id/);
+  assert.match(src, /const key = captureKey\(session\.id\)/);
+  assert.match(src, /_queued\.set\(key/);
   // … and drained from the finally block of the run that blocked it.
-  assert.match(src, /_queued\.get\(session\.id\)/);
-  assert.match(src, /_queued\.delete\(session\.id\)/);
+  assert.match(src, /_queued\.get\(key\)/);
+  assert.match(src, /_queued\.delete\(key\)/);
   assert.doesNotMatch(src, /Capture already in flight — skipping/);
 });
 

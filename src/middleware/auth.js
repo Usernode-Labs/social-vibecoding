@@ -4,8 +4,17 @@ const log = require('../services/logger');
 const platformJwt = require('../services/platform-jwt');
 
 const PUBLIC_PATHS = [
+  // Legacy standalone auth pages, now tiny redirect stubs into the SPA's
+  // hash routes (#landing/#login/#signup/#register/#waiting) so old
+  // bookmarks, share links, and SW-cached copies keep working. The SPA
+  // shell itself ('/') is NOT listed here — it must flow through the
+  // middleware (staging iframe-JWT minting rides on '/?token=…'); an
+  // anonymous '/' is served by redirectOrReject falling through to
+  // static instead of redirecting.
   '/login.html',
   '/register.html',
+  '/landing.html',
+  '/waiting.html',
   '/api/auth/login',
   '/api/auth/register',
   '/api/auth/wallet-check',
@@ -24,6 +33,10 @@ const PUBLIC_PATHS = [
   // apps and who built them without an account; view-private apps and the
   // self-app are never surfaced. Same privacy tier as the leaderboard.
   '/api/public/',
+  // Waitlist social-connect OAuth round-trip (two-stage waitlist
+  // survey). Pre-login by definition — waitlist signers have no account;
+  // the unguessable more_token in the OAuth state is the capability.
+  '/waitlist/connect/',
   '/health',
   '/css/',
   '/js/',
@@ -42,6 +55,54 @@ const PUBLIC_PATHS = [
   '/manifest.webmanifest',
   '/icons/',
 ];
+
+// ── Platform-access gate (onboarding flow alignment) ─────────────────────
+// A session is no longer the whole story: `users.has_platform_access`
+// gates the SV platform surfaces (SPA home / social / build). Accounts
+// without it (new signups that haven't been released off the waitlist)
+// keep a small allowlist and get the waiting room instead of the SPA.
+//
+// What deliberately stays OPEN to a no-access session:
+//   - the SPA shell ('/' + '/index.html') — the waiting room is an
+//     in-SPA screen now (auth-screens.js); the client routes a gated
+//     session to #waiting and the API 403 below remains the actual
+//     security boundary. (/css/, /js/, icons etc. are PUBLIC_PATHS and
+//     never reach this gate.)
+//   - /api/auth/ — me / logout / change-password: account basics.
+//   - /api/iframe-token — login-required CHILD APPS are usable by any
+//     account per the onboarding doc's ladder ("uses login-required
+//     apps" is a member ability, platform access is not required); app
+//     subdomain traffic doesn't pass through this middleware at all
+//     (Caddy forward_auth → src/routes/internal.js).
+//   - /challenges-api/* and the v4 mobile API are mounted BEFORE this
+//     middleware in server.js, so terms review/consent and the mobile
+//     bearer-token surface are unaffected by the gate.
+// Admins always bypass (belt-and-braces — they're also grandfathered).
+const GATE_OPEN_PATHS = [
+  // ('/waiting.html' is a PUBLIC_PATHS redirect stub now and never
+  // reaches this gate.)
+  '/api/auth/',
+  '/api/iframe-token',
+];
+
+// Returns true when it handled the response (caller must return).
+function enforcePlatformAccessGate(req, res, user) {
+  if (user.hasPlatformAccess || user.isAdmin) return false;
+  if (GATE_OPEN_PATHS.some((p) => req.path.startsWith(p))) return false;
+  if (req.path.startsWith('/api/')) {
+    res.status(403).json({
+      error: 'Your account does not have platform access yet.',
+      code: 'platform_access_required',
+    });
+    return true;
+  }
+  // The SPA shell serves for a gated session; app.js routes it to the
+  // in-SPA waiting room (#waiting). Any other navigation bounces to the
+  // shell for the same client-side routing.
+  if (req.path === '/' || req.path === '/index.html') return false;
+  res.redirect('/');
+  return true;
+}
 
 // SELF-HOSTING.md "Self-staging — iframe-auth login flow":
 // In a staging container spawned for the self-app (USERNODE_ENV === 'staging'),
@@ -78,6 +139,7 @@ function authMiddleware(config) {
   const pool = getPool(config);
 
   return async (req, res, next) => {
+    if (req.cliAuthenticated && req.user) return next();
     if (PUBLIC_PATHS.some((p) => req.path.startsWith(p))) {
       return next();
     }
@@ -88,7 +150,7 @@ function authMiddleware(config) {
     if (cookieToken) {
       try {
         const { rows } = await pool.query(
-          `SELECT s.user_id, s.expires_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.locale
+          `SELECT s.user_id, s.expires_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.locale, u.has_platform_access
            FROM sessions s JOIN users u ON s.user_id = u.id
            WHERE s.token = $1`,
           [cookieToken]
@@ -129,6 +191,7 @@ function authMiddleware(config) {
                   log.debug('auth', 'Staging iframe-JWT switched session identity', {
                     from: rows[0].user_id, to: minted.id,
                   });
+                  if (enforcePlatformAccessGate(req, res, req.user)) return;
                   return next();
                 }
                 // Mint failed (user missing in the clone, etc.) — fall
@@ -158,8 +221,12 @@ function authMiddleware(config) {
             // Platform-level language preference (issue #757): a BCP-47
             // tag or null when unset. Surfaced via /api/auth/me.
             locale: rows[0].locale || null,
+            // Platform-access gate (onboarding flow alignment): FALSE for
+            // new signups until an admin releases them off the waitlist.
+            hasPlatformAccess: !!rows[0].has_platform_access,
           };
           log.debug('auth', 'Session validated', { userId: req.user.id });
+          if (enforcePlatformAccessGate(req, res, req.user)) return;
           return next();
         }
 
@@ -186,12 +253,13 @@ function authMiddleware(config) {
         if (minted) {
           req.user = minted;
           log.debug('auth', 'Staging iframe-JWT auth succeeded', { userId: minted.id });
+          if (enforcePlatformAccessGate(req, res, req.user)) return;
           return next();
         }
       }
     }
 
-    return redirectOrReject(req, res);
+    return redirectOrReject(req, res, next);
   };
 }
 
@@ -227,7 +295,7 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
   let userRow;
   try {
     const { rows } = await pool.query(
-      'SELECT id, username, is_admin, admin_readonly, app_quota, ai_progress_estimate, locale FROM users WHERE id = $1',
+      'SELECT id, username, is_admin, admin_readonly, app_quota, ai_progress_estimate, locale, has_platform_access FROM users WHERE id = $1',
       [payload.id]
     );
     userRow = rows[0];
@@ -281,14 +349,24 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
     appQuota: userRow.app_quota ?? 0,
     aiProgressEstimate: !!userRow.ai_progress_estimate,
     locale: userRow.locale || null,
+    hasPlatformAccess: !!userRow.has_platform_access,
   };
 }
 
-function redirectOrReject(req, res) {
+function redirectOrReject(req, res, next) {
   if (req.path.startsWith('/api/')) {
     return res.status(401).json({ error: 'Not authenticated' });
   }
-  return res.redirect('/login.html');
+  // Anonymous SPA boot (fold-auth-pages-into-SPA): the shell serves
+  // without a session and boots into the in-SPA landing/login screens
+  // (auth-screens.js); every data read stays behind the /api/* 401
+  // above. Deeper paths bounce to the shell — the URL fragment survives
+  // the redirect, so a shared deep link (e.g. /#app/<slug>/full) still
+  // reaches the login screen with the destination preserved.
+  if (req.path === '/' || req.path === '/index.html') {
+    return next();
+  }
+  return res.redirect('/');
 }
 
 module.exports = { authMiddleware };

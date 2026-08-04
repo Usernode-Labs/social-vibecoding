@@ -12,6 +12,7 @@
 const log = require('./logger');
 const staging = require('./staging');
 const worker = require('./worker');
+const { isSessionBusy } = require('./active-workers');
 const workerProgress = require('./worker-progress');
 const github = require('./github');
 
@@ -139,8 +140,10 @@ async function freeGlobalSlot({ pool, graceMs, excludeSessionId = null }) {
   );
 
   for (const row of rows) {
-    // Never evict a session with a CC turn in flight.
-    if (worker.isInFlight(row.id)) continue;
+    // Never evict a session with any turn/pipeline in flight. Native CLI
+    // proposal staging has no worker exec, but it owns the same session and
+    // must be allowed to finish just like a web coding turn.
+    if (isSessionBusy(row.id)) continue;
     const { paused } = await pauseSession({ pool, sessionId: row.id, reason: 'pressure' });
     if (paused) {
       log.info('session-lifecycle', 'Freed global slot under pressure', { sessionId: row.id });

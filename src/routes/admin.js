@@ -4,14 +4,20 @@ const bcrypt = require('bcrypt');
 const { getPool } = require('../db/pool');
 const { adminMiddleware, requireAdminWrite } = require('../middleware/admin');
 const { dbExportLimiter } = require('../middleware/rate-limits');
+const { clientIp } = require('../services/client-ip');
 const { drainGuard } = require('../services/lifecycle');
 const log = require('../services/logger');
 const limits = require('../services/limits');
+const anthropicCredits = require('../services/anthropic-credits');
 const dbExport = require('../services/db-export');
 const events = require('../services/events');
 const appRollover = require('../services/app-rollover');
 const stagingReap = require('../services/staging-reap');
 const stagingEnv = require('../services/staging-env');
+const {
+  accountRecovery,
+  withTransaction,
+} = require('../services/cli-auth');
 
 // Fixed app-wide key for pg_advisory_xact_lock, dedicated to admin-status
 // mutations (revoke-admin and delete-user). Any code path that could drop
@@ -21,6 +27,12 @@ const stagingEnv = require('../services/staging-env');
 // and race to zero. Now shared with the platform-variable writes in
 // routes/apps.js, which is why the number lives in one module.
 const { ADMIN_MUTATION_LOCK } = require('../services/advisory-locks');
+
+// Staging mock data (#555): ANTHROPIC_ADMIN_KEY is unset in staging and
+// the credit balance is a platform_settings row nobody will have recorded
+// there, so the "Anthropic credits" row would read "Not set up" in every
+// preview. See the ?demo=1 branch on GET /api/admin/anthropic-credits.
+const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
 function adminRoutes(config) {
   const router = Router();
@@ -501,18 +513,21 @@ function adminRoutes(config) {
       const tempPassword = crypto.randomBytes(9).toString('base64url');
       const hash = await bcrypt.hash(tempPassword, 12);
 
-      const { rows } = await pool.query(
-        'UPDATE users SET password = $1 WHERE id = $2 RETURNING id, username',
-        [hash, userId]
-      );
-      if (!rows.length) return res.status(404).json({ error: 'User not found' });
-
-      await pool.query('DELETE FROM sessions WHERE user_id = $1', [userId]);
+      const recovery = await withTransaction(pool, (client) => accountRecovery(client, {
+        userId,
+        actorUserId: req.user.id,
+        updatePassword: (tx) => tx.query(
+          `UPDATE users SET password = $1 WHERE id = $2
+           RETURNING id, username, is_admin, admin_readonly`,
+          [hash, userId]
+        ),
+      }));
+      if (!recovery.found) return res.status(404).json({ error: 'User not found' });
 
       log.info('admin', 'Password reset issued', {
-        id: rows[0].id, username: rows[0].username, by: req.user.username,
+        id: recovery.user.id, username: recovery.user.username, by: req.user.username,
       });
-      res.json({ ok: true, username: rows[0].username, tempPassword });
+      res.json({ ok: true, username: recovery.user.username, tempPassword });
     } catch (err) {
       log.error('admin', 'Password reset failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -642,6 +657,221 @@ function adminRoutes(config) {
       });
     } catch (err) {
       log.error('admin', 'Update limits failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Featured apps ──────────────────────────────────────────
+  //
+  // The admin-curated row under "Find more apps" on every user's home
+  // screen. One global ordered list (no per-user targeting); the
+  // `featured_apps` table is read by the LEFT JOIN in GET /api/apps, so
+  // per-viewer visibility filtering is inherited for free — featuring a
+  // view-private app shows it only to people who could already see it.
+  //
+  // The self-hosted platform row is excluded on both sides: it is hidden
+  // from non-admin listings anyway (see GET /api/apps), so featuring it
+  // would be a no-op for everyone the row is meant for.
+  const FEATURED_MAX = 12;
+
+  // Pure read — router-level adminMiddleware only, NO requireAdminWrite,
+  // so view-only admins can inspect the list (same stance as /limits and
+  // /overview above). Returns the current list in display order plus
+  // every app still available to add, so the section renders from one
+  // round trip.
+  router.get('/api/admin/featured-apps', async (_req, res) => {
+    try {
+      const { rows: featured } = await pool.query(
+        `SELECT a.slug, a.name, a.status, a.icon_emoji, a.icon_image_id, fa.sort_order
+           FROM featured_apps fa
+           JOIN apps a ON a.id = fa.app_id
+          WHERE NOT a.self_hosted
+          ORDER BY fa.sort_order ASC, a.name ASC`
+      );
+      const { rows: available } = await pool.query(
+        `SELECT a.slug, a.name, a.status, a.icon_emoji, a.icon_image_id
+           FROM apps a
+          WHERE NOT a.self_hosted
+            AND NOT EXISTS (SELECT 1 FROM featured_apps f WHERE f.app_id = a.id)
+          ORDER BY LOWER(a.name) ASC`
+      );
+      // Server-built icon URL so the client never assembles ids into
+      // paths (same rule as the /api/apps serializer).
+      const shape = (r) => ({
+        slug: r.slug,
+        name: r.name,
+        status: r.status,
+        icon_emoji: r.icon_emoji || null,
+        icon_url: r.icon_image_id ? `/app-icons/${r.icon_image_id}` : null,
+        sort_order: r.sort_order ?? null,
+      });
+      res.json({ featured: featured.map(shape), available: available.map(shape) });
+    } catch (err) {
+      log.error('admin', 'Read featured apps failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Full rewrite of the list from an ordered slug array — the same idiom
+  // as PUT /api/favorites/order in routes/apps.js. A full rewrite (rather
+  // than add/remove deltas) is what makes the client's reorder controls
+  // trivially correct: the array IS the display order.
+  router.put('/api/admin/featured-apps', requireAdminWrite, async (req, res) => {
+    const { slugs } = req.body || {};
+    if (!Array.isArray(slugs)) {
+      return res.status(400).json({ error: 'slugs must be an array' });
+    }
+    if (slugs.length > FEATURED_MAX) {
+      return res.status(400).json({ error: `At most ${FEATURED_MAX} featured apps` });
+    }
+    if (slugs.some((s) => typeof s !== 'string' || !s.trim())) {
+      return res.status(400).json({ error: 'slugs must be non-empty strings' });
+    }
+    const seen = new Set();
+    for (const s of slugs) {
+      if (seen.has(s)) return res.status(400).json({ error: `Duplicate slug: ${s}` });
+      seen.add(s);
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      // Resolve every slug up front so an unknown / self-hosted one is a
+      // 400 naming the offender rather than a silently shorter list.
+      const ids = [];
+      for (const slug of slugs) {
+        const { rows } = await client.query(
+          'SELECT id, self_hosted FROM apps WHERE slug = $1',
+          [slug]
+        );
+        if (!rows.length) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: `Unknown app: ${slug}` });
+        }
+        if (rows[0].self_hosted) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: `The platform app cannot be featured: ${slug}` });
+        }
+        ids.push(rows[0].id);
+      }
+      await client.query('DELETE FROM featured_apps');
+      for (let i = 0; i < ids.length; i += 1) {
+        await client.query(
+          `INSERT INTO featured_apps (app_id, sort_order, created_by)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (app_id) DO UPDATE
+             SET sort_order = EXCLUDED.sort_order, created_by = EXCLUDED.created_by`,
+          [ids[i], i, req.user.id]
+        );
+      }
+      await client.query('COMMIT');
+      log.info('admin', 'Featured apps updated', {
+        by: req.user.username,
+        count: slugs.length,
+      });
+      res.json({ ok: true, slugs });
+    } catch (err) {
+      try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
+      log.error('admin', 'Update featured apps failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    } finally {
+      client.release();
+    }
+  });
+
+  // ── Anthropic credits (#555) ───────────────────────────────
+  //
+  // The organisation's remaining Anthropic credit, for the drawer's
+  // status pane. Anthropic publishes billed spend, never a balance, so
+  // the figure is derived from a balance an admin records here minus
+  // cost_report spend since that date — see services/anthropic-credits.js
+  // for the whole story. The two settings keys are intentionally absent
+  // until someone records them; absence is the "not configured" state.
+
+  // Router-level adminMiddleware only — NO requireAdminWrite. This is a
+  // pure read, and view-only admins are squarely part of its audience
+  // (same reasoning as /overview, /users, /codes, /limits above).
+  router.get('/api/admin/anthropic-credits', async (req, res) => {
+    // Staging mock data: read-only, obviously fake, no writes, strict
+    // no-op in production. Admin-gated already by the router.
+    if (IS_STAGING && req.query.demo === '1') {
+      return res.json({
+        configured: true,
+        balanceCents: 500000,
+        asOf: '2026-07-01',
+        spentCents: 371550,
+        remainingCents: 128450,
+        source: 'anthropic',
+        fetchedAt: new Date().toISOString(),
+        partial: false,
+        demo: true,
+      });
+    }
+    try {
+      res.json(await anthropicCredits.getCredits(pool, config));
+    } catch (err) {
+      // getCredits swallows its own failures, so reaching here means
+      // something unexpected — still don't 500 a status-pane read.
+      log.error('admin', 'Read anthropic credits failed', { message: err.message });
+      res.json({ configured: true, error: 'Internal server error' });
+    }
+  });
+
+  // Record the balance + the date it was correct. Full admins only —
+  // this is a mutation, so it chains requireAdminWrite like PUT /limits.
+  router.put('/api/admin/anthropic-credits', requireAdminWrite, async (req, res) => {
+    const { balanceCents, balanceDollars, asOf } = req.body || {};
+
+    let cents;
+    if (balanceCents !== undefined) {
+      cents = Number(balanceCents);
+    } else if (balanceDollars !== undefined) {
+      const d = Number(balanceDollars);
+      cents = Number.isFinite(d) ? Math.round(d * 100) : NaN;
+    } else {
+      return res.status(400).json({ error: 'balanceCents or balanceDollars is required' });
+    }
+    if (!Number.isFinite(cents) || cents < 0) {
+      return res.status(400).json({ error: 'Credit balance must be a non-negative amount' });
+    }
+    cents = Math.round(cents);
+
+    const day = String(asOf || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+      return res.status(400).json({ error: 'asOf must be a date in YYYY-MM-DD form' });
+    }
+    const parsed = new Date(`${day}T00:00:00Z`);
+    if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== day) {
+      return res.status(400).json({ error: 'asOf is not a real calendar date' });
+    }
+    // A future as-of date would subtract spend from a window that hasn't
+    // happened yet and read as "full balance" forever.
+    if (parsed.getTime() > Date.now()) {
+      return res.status(400).json({ error: 'asOf cannot be in the future' });
+    }
+
+    try {
+      for (const [key, value] of [
+        [anthropicCredits.KEY_BALANCE, String(cents)],
+        [anthropicCredits.KEY_AS_OF, day],
+      ]) {
+        await pool.query(
+          `INSERT INTO platform_settings (key, value, updated_at, updated_by)
+           VALUES ($1, $2, NOW(), $3)
+           ON CONFLICT (key) DO UPDATE
+             SET value = EXCLUDED.value, updated_at = NOW(), updated_by = EXCLUDED.updated_by`,
+          [key, value, req.user.id]
+        );
+      }
+      // Drop the cached arithmetic so the recomputed figure below (and
+      // every drawer that opens next) reflects the new balance at once.
+      anthropicCredits.invalidate();
+      log.info('admin', 'Anthropic credit balance recorded', {
+        by: req.user.username, balanceCents: cents, asOf: day,
+      });
+      res.json(await anthropicCredits.getCredits(pool, config));
+    } catch (err) {
+      log.error('admin', 'Update anthropic credits failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -933,8 +1163,8 @@ function adminRoutes(config) {
 
   const DB_EXPORT_HISTORY_MAX = 200;
 
-  function clientIp(req) {
-    return String(req.ip || req.socket?.remoteAddress || '').slice(0, 64) || null;
+  function auditClientIp(req) {
+    return String(clientIp(req)).slice(0, 64) || null;
   }
 
   // Insert the audit row. Deliberately NOT fire-and-forget: callers await
@@ -954,7 +1184,7 @@ function adminRoutes(config) {
           dbName || '(unresolved)',
           status,
           deniedReason,
-          clientIp(req),
+          auditClientIp(req),
           String(req.get('user-agent') || '').slice(0, 512) || null,
         ]
       );

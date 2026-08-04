@@ -30,6 +30,12 @@
       "description": "Platform-wide fallback Claude key. Users can override with their own via BYOK; if neither is set, Mayor-driven flows are unavailable. Already optional, so no staging fallback needed — staging just inherits the unset state."
     },
     {
+      "key": "ANTHROPIC_ADMIN_KEY",
+      "required": false,
+      "private": true,
+      "description": "Anthropic ADMIN API key (`sk-ant-admin…`) — NOT the same credential as ANTHROPIC_API_KEY above, and not interchangeable with it. Used read-only for GET /v1/organizations/cost_report, which backs the \"Anthropic credits\" row in the hamburger status area (#555). Optional: with it unset, that row falls back to an estimate derived from the platform's own spend ledgers and says so. No staging_default — staging inherits the unset state, which is exactly the fallback path a reviewer should see."
+    },
+    {
       "key": "ADMIN_USERNAME",
       "required": true,
       "default": "admin",
@@ -235,6 +241,22 @@
       "description": "Base URL of the external zkPassport bridge service that verifies proofs for POST /api/v4/mobile/zkpassport/complete (src/services/topochain/zk-bridge.js). Unset doesn't block boot — every zkpassport/complete call returns 500 'The zkPassport bridge is not configured.' until it is set. Not secret, so it stays visible in the console for is-it-pointed-at-the-right-host checks."
     },
     {
+      "key": "TOPOCHAIN_MAIL_API_URL",
+      "group": "Topochain mail",
+      "description": "HTTPS send endpoint of the mail provider (Resend: https://api.resend.com/emails). POSTed as JSON with a bearer token; body shape lives in src/services/topochain/mail-transport.js. All three TOPOCHAIN_MAIL_* keys must be set together — a partial config sends nothing. Unset never blocks boot: both mail flows still report success while delivering nothing. See Admin → Topochain → Settings."
+    },
+    {
+      "key": "TOPOCHAIN_MAIL_API_KEY",
+      "group": "Topochain mail",
+      "private": true,
+      "description": "Bearer credential for TOPOCHAIN_MAIL_API_URL. Private: it can send mail as your domain, so it is encrypted at rest and never returned by any API. Unset means mobile email-login codes and onboarding waitlist confirmations are generated and dropped."
+    },
+    {
+      "key": "TOPOCHAIN_MAIL_FROM",
+      "group": "Topochain mail",
+      "description": "Envelope From address for platform mail, e.g. 'Usernode <no-reply@usernodelabs.org>'. Must be a sender the provider has verified for your domain or every send is rejected upstream. Not secret."
+    },
+    {
       "key": "USERNODE_DOMAIN",
       "group": "Managed by the deploy",
       "description": "Apex domain the platform and every app subdomain live under. Set from a GitHub repo variable by the deploy and listed here for documentation only — changing it needs the DNS and certificate change to land in the same breath, so it is deliberately not editable in the console."
@@ -255,6 +277,71 @@
       "name": "Platform variables panel renders on the platform app (#826 folded into app secrets)",
       "path": "/?shot=secrets#app/usernode-2d5619/dev",
       "expectSelector": "#app-secrets-list code"
+    },
+    {
+      "name": "Tapping an app shows its icon and name while it loads, not a blank window (#931)",
+      "path": "/?shot=app-launching",
+      "expectSelector": "#app-launch-cover .app-icon-tile",
+      "expectText": "Opening…"
+    },
+    {
+      "name": "The app detail page opens from a browse row (?shot=browse-detail)",
+      "path": "/?shot=browse-detail#apps",
+      "expectText": "Fork this app",
+      "expectSelector": "#browse-detail #browse-detail-open"
+    },
+    {
+      "name": "App details shows the ranked Contributors section (?demo=1)",
+      "path": "/?demo=1&shot=browse-detail#apps",
+      "expectSelector": "#browse-detail-contributors .browse-contrib-row",
+      "expectText": "staging-demo-lead"
+    },
+    {
+      "name": "Home ends with the \"Create an app\" section (create tile out of the grid)",
+      "path": "/",
+      "expectSelector": "#home-create-section #home-create-body .home-create-btn",
+      "expectText": "Build your own app"
+    },
+    {
+      "name": "The featured row renders admin-curated tiles (staging seed + ?demo=1)",
+      "path": "/?demo=1",
+      "expectSelector": "#home-featured-list .app-card"
+    },
+    {
+      "name": "Home feed sits in the 1024px centred column, featured card full width in it",
+      "path": "/?demo=1",
+      "expectSelector": "#home-body.home-column #home-find-more > .home-find-more-card"
+    },
+    {
+      "name": "Create-an-app box is a full-width child of its section in that column",
+      "path": "/?demo=1",
+      "expectSelector": "#home-body.home-column #home-create-section > #home-create-body .home-create-btn"
+    },
+    {
+      "name": "Trailing sections bottom-anchor in the full-height feed column",
+      "path": "/?demo=1",
+      "expectSelector": "#home-body.home-body-fill > #home-find-more.home-bottom-anchor"
+    },
+    {
+      "name": "Create-an-app rides down with the anchor (no second anchor of its own)",
+      "path": "/?demo=1",
+      "expectSelector": "#home-body.home-body-fill > #home-create-section:not(.home-bottom-anchor)"
+    },
+    {
+      "name": "The hidden search bar is revealed by a pull (?shot=home-search)",
+      "path": "/?shot=home-search",
+      "expectSelector": "#home-search-bar[data-revealed=\"true\"] #home-search-input"
+    },
+    {
+      "name": "Browse renders app-store rows with an Add button (no \"…\" menu)",
+      "path": "/#apps",
+      "expectSelector": "#browse-list .browse-row .browse-add-btn",
+      "expectText": "All apps"
+    },
+    {
+      "name": "Admins get a Featured apps console section",
+      "path": "/admin/featured-apps",
+      "expectText": "Featured apps"
     },
     {
       "name": "Platform variables panel is titled for the platform, not \"App secrets\"",
@@ -322,6 +409,65 @@
       "name": "Interrupted-reply pill fixture is seeded (#786)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectText": "Staging demo: pills after an interrupted reply"
+    },
+    {
+      "name": "A pill-less reply still shows quick-reply pills (#894 fallback)",
+      "path": "/#app/usernode-2d5619/dev/sessions/900803",
+      "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
+      "expectText": "What issues are open right now?"
+    },
+    {
+      "name": "A post-build reply with no pills falls back to the build set (#894)",
+      "path": "/#app/usernode-2d5619/dev/sessions/900801",
+      "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
+      "expectText": "Propose it to the group"
+    },
+    {
+      "name": "A post-spec reply with no pills falls back to the spec set (#894)",
+      "path": "/#app/usernode-2d5619/dev/sessions/900802",
+      "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
+      "expectText": "Revise the spec"
+    },
+    {
+      "name": "An interrupted turn's tail finishes itself: Changes-ready card lands",
+      "path": "/#app/usernode-2d5619/dev/sessions/900820",
+      "expectSelector": "#dc-pr-card .dc-pr-card-actions .dc-pr-btn-promote",
+      "expectText": "Staging deployed!"
+    },
+    {
+      "name": "A tail-recovered turn still gets its wrap-up pills",
+      "path": "/#app/usernode-2d5619/dev/sessions/900820",
+      "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
+      "expectText": "Propose it to the group"
+    },
+    {
+      "name": "A background preview rebuild shows a spinning in-progress row",
+      "path": "/#app/usernode-2d5619/dev/sessions/900821",
+      "expectSelector": ".dc-status-line .dc-status-spinner-arc",
+      "expectText": "Building staging preview"
+    },
+    {
+      "name": "An unresumable turn whose code landed says so instead of asking for a resend",
+      "path": "/#app/usernode-2d5619/dev/sessions/900822",
+      "expectText": "committed and pushed to PR #36"
+    },
+    {
+      "name": "The code-landed breadcrumb offers Propose, not \"Try that again\"",
+      "path": "/#app/usernode-2d5619/dev/sessions/900822",
+      "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
+      "expectText": "Propose it to the group"
+    },
+    {
+      "name": "Estimator-off run under 10 min shows NO side text (#906)",
+      "path": "/#app/usernode-2d5619/dev/sessions/900810",
+      "expectSelector": ".dc-cc-attached-summary .dc-cc-cohort",
+      "expectText": "Claude is working"
+    },
+    {
+      "name": "Estimator-off run past 10 min still shows the long-run note (#906)",
+      "path": "/#app/usernode-2d5619/dev/sessions/900811",
+      "expectSelector": ".dc-cc-attached-summary .dc-cc-cohort",
+      "expectText": "running longer than most"
     },
     {
       "name": "Visible own session card offers the \"Share chat\" opt-in",
@@ -404,43 +550,106 @@
       "expectSelector": ".un-popover[data-surface=\"opaque\"]"
     },
     {
-      "name": "Leaderboard Top-users tab renders",
+      "name": "Home card actions menu opens as an action sheet on touch (#929)",
+      "path": "/?demo=1&shot=card-menu&un-platform=ios",
+      "expectSelector": ".un-action-sheet .un-action-card .un-action-btn"
+    },
+    {
+      "name": "Dev \"+\" menu opens as an action sheet on touch (#929)",
+      "path": "/?shot=plus-menu&un-platform=ios#app/usernode-2d5619/dev",
+      "expectSelector": ".un-action-sheet .un-action-card .un-action-btn"
+    },
+    {
+      "name": "Dev \"+\" menu still opens the anchored dropdown on desktop (#929)",
+      "path": "/?shot=plus-menu#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-plus-menu:not(.hidden) button[data-plus=\"proposal\"]"
+    },
+    {
+      "name": "Waitlist survey lives on its own #waitlist screen",
+      "path": "/?shot=anon#waitlist",
+      "expectSelector": "#auth-waitlist-screen #waitlist-form #waitlist-email",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Landing CTA area is a compact link, not the survey",
+      "path": "/?shot=anon#landing",
+      "expectSelector": "#landing-waitlist a[href=\"#waitlist\"]",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist joined state renders the stage-2 offer",
+      "path": "/?shot=waitlist-joined",
+      "expectText": "Want in sooner?",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Leaderboard screen renders with the Kudos Top-users tab",
       "path": "/leaderboard",
       "expectText": "Top users"
     },
     {
       "name": "Admin Users list renders",
-      "path": "/admin",
+      "path": "/#admin/users",
       "expectText": "Users"
     },
     {
-      "name": "Dashboard spend distribution chart renders",
-      "path": "/dashboard",
+      "name": "Analytics spend distribution chart renders",
+      "path": "/#admin/analytics",
       "expectSelector": "#spend-distribution"
     },
     {
-      "name": "Dashboard General-users section renders",
-      "path": "/dashboard",
+      "name": "Analytics General-users section renders",
+      "path": "/#admin/analytics",
       "expectSelector": "#gu-mau"
     },
     {
-      "name": "Dashboard Power-users section renders",
-      "path": "/dashboard",
+      "name": "Analytics Power-users section renders",
+      "path": "/#admin/analytics",
       "expectSelector": "#pu-l4"
     },
     {
-      "name": "Merge debug view renders",
-      "path": "/debug?demo=1",
+      "name": "Estimator accuracy section renders",
+      "path": "/?demo=1#admin/estimator",
+      "expectSelector": "#admin-estimator-root #admin-estimator-card"
+    },
+    {
+      "name": "Estimator card compares prompt generations rather than pooling them (#892)",
+      "path": "/?demo=1#admin/estimator",
+      "expectText": "Prompt generation"
+    },
+    {
+      "name": "Estimator card states the baselines the estimate has to beat (#892)",
+      "path": "/?demo=1#admin/estimator",
+      "expectText": "Elapsed-only oracle"
+    },
+    {
+      "name": "Estimator card flags when the run-length figures given to the model are stale (#892)",
+      "path": "/?demo=1#admin/estimator",
+      "expectText": "Run-length figures given to the model"
+    },
+    {
+      "name": "Estimator accuracy states the leave-experimental verdict",
+      "path": "/?demo=1#admin/estimator",
+      "expectText": "Stays experimental"
+    },
+    {
+      "name": "Merge debug section renders",
+      "path": "/?demo=1#admin/merges",
       "expectText": "Merge debug"
     },
     {
       "name": "Merge debug pr_closed badge renders on the demo run",
-      "path": "/debug?demo=1",
+      "path": "/?demo=1#admin/merges",
       "expectText": "PR closed"
     },
     {
-      "name": "Submitted features page renders",
-      "path": "/admin-features?demo=1",
+      "name": "Merge debug offers the Checks kind filter for the timing traces",
+      "path": "/?demo=1#admin/merges",
+      "expectText": "Checks (timings)"
+    },
+    {
+      "name": "Submitted features section renders",
+      "path": "/?demo=1#admin/features",
       "expectText": "Submitted features"
     },
     {
@@ -507,6 +716,22 @@
       "expectText": "Staging demo admin roster"
     },
     {
+      "name": "Header App/Dev switch marks App active on an app's App view",
+      "path": "/app/staging-demo-admins",
+      "expectSelector": "#app-mode-switch [data-tab='app'][aria-checked='true']",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Header App/Dev switch marks Dev active on an app's Dev view",
+      "path": "/app/staging-demo-admins/dev",
+      "expectSelector": "#app-mode-switch [data-tab='dev'][aria-checked='true']"
+    },
+    {
+      "name": "The self-hosted platform row keeps its DEV caption (no header switch)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-plus-btn"
+    },
+    {
       "name": "Kanban filter bar renders above the board",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban-search"
@@ -567,6 +792,18 @@
       "path": "/?shot=busy-drafts#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": "#dc-form #dc-save-draft-btn:not([hidden])",
       "expectText": "sending unlocks when Claude finishes"
+    },
+    {
+      "name": "Mid-turn shortcut hint says Ctrl+Enter saves a draft (#920)",
+      "path": "/?shot=busy-drafts#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-shortcut-hint",
+      "expectText": "to save as draft"
+    },
+    {
+      "name": "Stopped composer's shortcut hint still says Ctrl+Enter sends (#920)",
+      "path": "/#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-shortcut-hint",
+      "expectText": "to send"
     },
     {
       "name": "Model selector caption shows what the model is for, not $/MTok (#800)",
@@ -665,6 +902,16 @@
       "expectText": "Checks starting"
     },
     {
+      "name": "Checks card names the preview-preparation stage on a building run",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000022",
+      "expectText": "Preparing the staging preview"
+    },
+    {
+      "name": "Checks card names the test stage on a testing run",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000023",
+      "expectText": "Running the automated tests"
+    },
+    {
       "name": "Imported PR proposal card shows the Imported PR badge (#687)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectText": "Imported PR"
@@ -706,9 +953,49 @@
       "expectSelector": "#work-drawer-btn #notifications-badge-ai"
     },
     {
-      "name": "Admin/moderation icon renders right after the bell for admins (#588)",
+      "name": "Admin/moderation row renders in the drawer for admins (#588)",
       "path": "/",
-      "expectSelector": "#notifications-btn + #admin-dashboard-btn:not(.hidden)"
+      "expectSelector": "#drawer-row-admin:not(.hidden)"
+    },
+    {
+      "name": "Drawer footer renders the platform build as plain text, not a pill",
+      "path": "/?shot=menu",
+      "expectSelector": "#drawer-footer #drawer-row-platform-version #platform-version-pill-slot .drawer-ver"
+    },
+    {
+      "name": "Drawer status pane renders the kudos budget as inline text",
+      "path": "/",
+      "expectSelector": "#drawer-row-kudos #kudos-budget-slot a[href=\"#leaderboard\"].drawer-meter"
+    },
+    {
+      "name": "Theme selector ships its 3-segment track and caret",
+      "path": "/",
+      "expectSelector": "#drawer-row-theme #drawer-theme-track[role=\"radiogroup\"] [data-theme-mode=\"system\"] ~ #drawer-theme-caret-track #drawer-theme-caret"
+    },
+    {
+      "name": "Theme selector is the first thing in the menu, above the status pane",
+      "path": "/",
+      "expectSelector": "#drawer-main-rows > #drawer-row-theme:first-child + #drawer-status-pane"
+    },
+    {
+      "name": "Footer version rows are labelled \"Platform version\" / \"App version\"",
+      "path": "/?shot=menu",
+      "expectText": "Platform version"
+    },
+    {
+      "name": "Drawer footer is bottom-anchored and holds GitHub + Share as its last two items",
+      "path": "/?shot=menu",
+      "expectSelector": "#header-menu-rows > #drawer-footer.mt-auto > #drawer-row-share:last-child"
+    },
+    {
+      "name": "Main nav order is Profile, Leaderboard, Settings, Admin & moderation",
+      "path": "/?shot=menu",
+      "expectSelector": "#drawer-row-profile + #drawer-row-leaderboard + #drawer-row-settings + #drawer-row-admin"
+    },
+    {
+      "name": "Leaderboard drawer row replaces the header trophy",
+      "path": "/",
+      "expectSelector": "#drawer-row-leaderboard[href=\"#leaderboard\"]"
     },
     {
       "name": "Admin & moderation console page renders at #admin (#818)",
@@ -719,6 +1006,46 @@
       "name": "Admin console deep-links the Activation codes section (#818)",
       "path": "/#admin/codes",
       "expectSelector": "#admin-code-list"
+    },
+    {
+      "name": "Admin console renders the Health & status section (#860)",
+      "path": "/?demo=1#admin/status",
+      "expectSelector": "#admin-status-root #admin-status-summary"
+    },
+    {
+      "name": "Health & status renders the node and explorer cards (#860)",
+      "path": "/?demo=1#admin/status",
+      "expectText": "Block explorer"
+    },
+    {
+      "name": "Admin console renders the Node & chain section (#860)",
+      "path": "/#admin/node",
+      "expectSelector": "#admin-node-root #admin-node-services-body"
+    },
+    {
+      "name": "Admin console renders the Screenshot gallery section (#860)",
+      "path": "/?demo=1#admin/gallery",
+      "expectSelector": "#admin-gallery-root #admin-gallery-proposals"
+    },
+    {
+      "name": "Screenshot gallery shows the seeded staging demo capture (#860)",
+      "path": "/?demo=1#admin/gallery",
+      "expectText": "Staging demo capture"
+    },
+    {
+      "name": "Admin console renders the Maintenance campaigns section (#860)",
+      "path": "/#admin/campaigns",
+      "expectSelector": "#admin-campaigns-root #admin-campaign-list"
+    },
+    {
+      "name": "Admin console groups its section menu under headings (#860)",
+      "path": "/#admin",
+      "expectText": "Operations"
+    },
+    {
+      "name": "Admin console deep-links Overview by its explicit segment",
+      "path": "/#admin/overview",
+      "expectSelector": "#admin-section-content #admin-overview-stuck"
     },
     {
       "name": "Admin console renders the Database export section",
@@ -736,6 +1063,61 @@
       "expectText": "gunzip -c"
     },
     {
+      "name": "Settings renders as its own screen at #settings",
+      "path": "/#settings",
+      "expectSelector": "#settings-screen:not(.hidden) #settings-section-content"
+    },
+    {
+      "name": "Settings groups its section menu under headings",
+      "path": "/#settings",
+      "expectText": "AI & agents"
+    },
+    {
+      "name": "Bare #settings lands on the Anthropic API key section",
+      "path": "/#settings",
+      "expectSelector": "#settings-section-content [data-settings-section=\"api-key\"]:not(.hidden) #settings-api-key"
+    },
+    {
+      "name": "Settings offers Log out outside the section list",
+      "path": "/#settings",
+      "expectSelector": "#settings-footer #settings-logout"
+    },
+    {
+      "name": "Settings deep-links the Password section",
+      "path": "/#settings/password",
+      "expectSelector": "[data-settings-section=\"password\"]:not(.hidden) #cp-save"
+    },
+    {
+      "name": "Settings deep-links App AI permissions with the seeded demo grants",
+      "path": "/?demo=1#settings/app-ai",
+      "expectText": "Staging demo app A"
+    },
+    {
+      "name": "Settings deep-links Agent instructions & skills with the seeded demo files",
+      "path": "/?demo=1#settings/agent-files",
+      "expectSelector": "[data-settings-section=\"agent-files\"]:not(.hidden) #agent-files-instructions-list [data-agent-file]"
+    },
+    {
+      "name": "Settings deep-links CLI & coding-agent access with the seeded demo credentials",
+      "path": "/?demo=1#settings/cli",
+      "expectText": "svc_staging-demo"
+    },
+    {
+      "name": "Settings deep-links the Language section",
+      "path": "/#settings/language",
+      "expectSelector": "[data-settings-section=\"language\"]:not(.hidden) #settings-locale"
+    },
+    {
+      "name": "Settings shows Admin preview to a real admin",
+      "path": "/#settings/admin-preview",
+      "expectSelector": "[data-settings-section=\"admin-preview\"]:not(.hidden) #view-as-non-admin"
+    },
+    {
+      "name": "An unavailable Settings section falls back to the default, not an empty page",
+      "path": "/#settings/wallet",
+      "expectSelector": "#settings-section-content [data-settings-section]:not(.hidden)"
+    },
+    {
       "name": "Home 'Your apps' section renders for the seeded admin",
       "path": "/",
       "expectSelector": ".app-card[data-yours='true']"
@@ -746,14 +1128,25 @@
       "expectSelector": ".app-card [data-icon='emoji']"
     },
     {
+      "name": "Icon tiles use the white/hairline .app-icon-tile treatment (not the violet tint)",
+      "path": "/?demo=1",
+      "expectSelector": ".app-card .app-icon-tile[data-icon='letter']"
+    },
+    {
       "name": "Home fork-lineage tag renders on forked tiles",
       "path": "/",
       "expectSelector": ".fork-tag"
     },
     {
-      "name": "App-view header shows the Forked-from label",
+      "name": "Menu status pane shows the Forked-from label",
       "path": "/app/staging-demo-fork",
       "expectText": "Forked from",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Menu status pane reveals the fork row for a forked app",
+      "path": "/app/staging-demo-fork",
+      "expectSelector": "#drawer-row-app-fork:not(.hidden) #app-fork-badge-slot",
       "allowConsoleErrors": true
     },
     {
@@ -842,14 +1235,146 @@
       "expectText": "closed by vote"
     },
     {
-      "name": "Topochain leaderboard screen renders at #topochain/leaderboard (Task 14)",
+      "name": "Legacy #topochain/leaderboard lands on the Leaderboard screen's Topochain tab",
       "path": "/#topochain/leaderboard",
-      "expectSelector": "#topochain-leaderboard-screen:not(.hidden) #tc-lb-body"
+      "expectSelector": "#leaderboard-screen:not(.hidden) #topochain-leaderboard-root:not(.hidden) #tc-lb-body"
     },
     {
-      "name": "Topochain seasons screen renders at #topochain/seasons (Task 14)",
+      "name": "Leaderboard renders all three tabs at #leaderboard",
+      "path": "/#leaderboard",
+      "expectSelector": "#standings-tabs [data-standings-tab=\"challenges\"]"
+    },
+    {
+      "name": "Legacy #topochain/seasons lands on the Leaderboard screen's Challenges tab",
       "path": "/#topochain/seasons",
-      "expectSelector": "#topochain-seasons-screen:not(.hidden) #tc-se-grid"
+      "expectSelector": "#leaderboard-screen:not(.hidden) #challenges-root:not(.hidden) #tc-se-grid"
+    },
+    {
+      "name": "Challenges tab renders at its canonical #leaderboard/challenges route",
+      "path": "/#leaderboard/challenges",
+      "expectSelector": "#leaderboard-screen:not(.hidden) #challenges-root:not(.hidden) #tc-se-grid"
+    },
+    {
+      "name": "Legacy #challenges lands on the Leaderboard screen's Challenges tab",
+      "path": "/#challenges",
+      "expectSelector": "#leaderboard-screen:not(.hidden) #challenges-root:not(.hidden) #tc-se-grid"
+    },
+    {
+      "name": "The shared event picker renders above the Topochain tab",
+      "path": "/#leaderboard/topochain",
+      "expectSelector": "#leaderboard-event-bar:not(.hidden) #tc-ev-select"
+    },
+    {
+      "name": "Challenge detail overlay is reachable by deep link (?shot=challenge-detail)",
+      "path": "/?shot=challenge-detail#leaderboard/challenges",
+      "expectSelector": "#tc-se-detail-overlay:not(.hidden) #tc-se-detail-panel"
+    },
+    {
+      "name": "Imported proposal mid-build shows the Preview building pill (#866)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "Preview building"
+    },
+    {
+      "name": "Imported proposal whose preview failed shows the unavailable chip (#866)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "Preview unavailable"
+    },
+    {
+      "name": "A failed imported preview offers Retry preview (#866)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "Retry preview"
+    },
+    {
+      "name": "Profile screen is reachable on the web (no bridge gate) and renders",
+      "path": "/#profile",
+      "expectSelector": "#profile-screen:not(.hidden) #profile-root"
+    },
+    {
+      "name": "Profile drawer row is visible without the native bridge",
+      "path": "/",
+      "expectSelector": "#drawer-row-profile:not(.hidden)"
+    },
+    {
+      "name": "Topochain leaderboard shows standings, not a red error, between events",
+      "path": "/#leaderboard/topochain",
+      "expectSelector": "#leaderboard-screen:not(.hidden) #tc-lb-body table"
+    },
+    {
+      "name": "Admin App version screen warns when an OS has no active rule",
+      "path": "/#admin/topochain/app-version",
+      "expectText": "No active version rule"
+    },
+    {
+      "name": "Admin Topochain settings reports the outbound-mail state",
+      "path": "/#admin/topochain/settings",
+      "expectSelector": "#admin-topo-mail-status"
+    },
+    {
+      "name": "Native kit: pull-to-refresh builds its clipped puck layer (the puck hangs below the header, never over it)",
+      "path": "/usernode-native/v1/demo.html?un-platform=ios",
+      "expectSelector": ".un-ptr-layer > .un-ptr-puck"
+    },
+    {
+      "name": "Native kit: side panel presents from the right edge with a scrollable body",
+      "path": "/usernode-native/v1/demo.html?un-platform=ios&un-demo=panel",
+      "expectSelector": ".un-panel[data-un-side=\"right\"] > .un-panel-body"
+    },
+    {
+      "name": "Native kit: the touch action sheet actually presents (#929 regression lock)",
+      "path": "/usernode-native/v1/demo.html?un-platform=ios&un-demo=action-sheet",
+      "expectSelector": ".un-action-sheet > .un-action-card > .un-action-btn"
+    },
+    {
+      "name": "Native kit: unNative.menu picks the action sheet on touch (#929)",
+      "path": "/usernode-native/v1/demo.html?un-platform=ios&un-demo=adaptive-menu",
+      "expectSelector": ".un-action-sheet .un-action-btn.un-destructive"
+    },
+    {
+      "name": "Hamburger menu opens as a right-side panel on touch, not a bottom sheet",
+      "path": "/?shot=menu&un-platform=ios",
+      "expectSelector": ".un-panel[data-un-side=\"right\"] #header-menu-panel.platform-panel-adopted #header-menu-rows"
+    },
+    {
+      "name": "The drawer footer is reachable without scrolling in the panel",
+      "path": "/?shot=menu&un-platform=ios",
+      "expectSelector": ".un-panel #header-menu-rows > #drawer-footer.mt-auto > #drawer-row-share:last-child"
+    },
+    {
+      "name": "Hamburger status area shows the viewer's own AI credit (#555)",
+      "path": "/?shot=menu&demo=1",
+      "expectSelector": "#drawer-row-ai-budget .ai-budget-meter"
+    },
+    {
+      "name": "AI credit reads like the dev chat: limit $spent/$limit, no pill",
+      "path": "/?shot=menu&demo=1",
+      "expectText": "limit $"
+    },
+    {
+      "name": "AI credit value is right-aligned to the panel edge, wrapped or not",
+      "path": "/?shot=menu&demo=1",
+      "expectSelector": "#drawer-row-ai-budget #ai-budget-slot.grow.text-right"
+    },
+    {
+      "name": "The admin console's Limits section offers the Anthropic credit balance fields (#555)",
+      "path": "/#admin/limits",
+      "expectSelector": "#admin-credit-balance"
+    },
+    {
+      "name": "Preview overlay opens on a neutral loading state, not a 20-60s rebuild promise (#816)",
+      "path": "/?shot=preview-loading#app/usernode-2d5619/dev",
+      "expectSelector": "#staging-overlay:not(.hidden) #staging-loader:not(.hidden) #staging-loader-title",
+      "expectText": "Loading the preview…"
+    },
+    {
+      "name": "A live preview's loader explains a slower first load without inventing a duration (#816)",
+      "path": "/?shot=preview-loading#app/usernode-2d5619/dev",
+      "expectText": "Automated checks are running against this preview"
+    },
+    {
+      "name": "The 20-60 second estimate is still shown when a rebuild really is running (#816)",
+      "path": "/?shot=preview-rebuilding#app/usernode-2d5619/dev",
+      "expectSelector": "#staging-overlay:not(.hidden) #staging-loader-title",
+      "expectText": "Spinning the preview back up…"
     }
   ],
   "governance": {

@@ -8,6 +8,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
+const { SW_VERSION } = require('../public/sw.js');
 
 const ORIGIN = 'https://social-vibecoding.example';
 
@@ -146,6 +147,6 @@ test('a delayed authenticated response cannot cross a logout epoch', async () =>
     false,
     'the old-session response must not be written after logout',
   );
-  const api = await runtime.caches.open('usernode-api-v1');
+  const api = await runtime.caches.open(`usernode-api-${SW_VERSION}`);
   assert.equal(await api.match(request), undefined);
 });

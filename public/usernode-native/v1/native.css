@@ -58,6 +58,14 @@
      override (same pattern as --un-zoom-bg above). */
   --un-popover-bg: var(--un-sheet-bg);
 
+  /* Side panel / drawer (unNative.presentPanel). Surface defaults to the
+     sheet's — same "overlay chrome" family — and inherits dark mode
+     through it, but is a separate token so an app can split the two.
+     The width is the drawer's own geometry knob: apps override the
+     variable (or pass opts.width) rather than fighting the selector. */
+  --un-panel-bg: var(--un-sheet-bg);
+  --un-panel-width: min(20rem, 86vw);
+
   /* Zoom transition overlay surface ('zoom-in'/'zoom-out'): the moving
      screen gets this opaque background for the animation's duration so
      the grid beneath can't bleed through a transparent screen mid-zoom.
@@ -341,13 +349,41 @@ html.un-android .un-switch:checked:active::before {
 
 /* ── Pull-to-refresh ───────────────────────────────────────────────────
    Puck injected by unNative.attachPullToRefresh(); scale/opacity/rotation
-   are driven per-frame by pull progress (never popping at a threshold). */
+   are driven per-frame by pull progress (never popping at a threshold).
+
+   The puck lives inside .un-ptr-layer, an inert clip box whose TOP EDGE is
+   the anchor line — the app header's bottom (opts.topEl / opts.top), or by
+   default the scroller's own top edge (element mode) / the safe-area inset
+   (window mode). Two things keep the header clean: the layer's overflow
+   clip hides the retracted puck (which parks at -40px) instead of letting
+   it ride up over the header, and the layer sits BENEATH the header in
+   stacking order — level 0 and first in tree order in element mode, below
+   .un-navbar's z-index:100 in window mode. So the puck is revealed by the
+   content sliding away rather than painted on top of the chrome. */
+
+.un-ptr-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+/* Window-scroller mode: nothing in flow to anchor to, so pin to the
+   viewport at the safe-area inset unless the caller anchors it lower.
+   z-index stays under .un-navbar (100) — the puck goes behind a fixed
+   header, never over it. */
+.un-ptr-layer.un-ptr-layer-fixed {
+  position: fixed;
+  top: env(safe-area-inset-top, 0px);
+  z-index: 90;
+}
 
 .un-ptr-puck {
   position: absolute;
   top: 0;
   left: 50%;
-  z-index: 2;
   width: 34px;
   height: 34px;
   display: flex;
@@ -370,11 +406,6 @@ html.un-android .un-switch:checked:active::before {
 }
 .un-ptr-puck.un-refreshing svg {
   animation: un-ptr-spin 800ms linear infinite;
-}
-/* Window-scroller mode: no positioned parent to anchor to. */
-.un-ptr-puck.un-ptr-puck-fixed {
-  position: fixed;
-  z-index: 9980;
 }
 @keyframes un-ptr-spin {
   to { transform: rotate(360deg); }
@@ -586,6 +617,90 @@ html.un-kb .un-sheet {
 }
 .un-sheet-body {
   padding: 4px 16px 20px;
+}
+
+/* ── Side panel / drawer ───────────────────────────────────────────────
+   Presented by unNative.presentPanel(). translateX is JS-owned (spring in,
+   spring out) — no CSS transition on transform, same rule as .un-sheet.
+
+   NOT a gesture surface: unlike the sheet there is no drag-to-dismiss and
+   no grabber, so this block deliberately sets NO `touch-action` and NO
+   `user-select` — scrolling and text selection inside the drawer are
+   whatever the page normally does. Adding `touch-action` here would only
+   take capability away.
+
+   The keyboard is absorbed as body padding rather than by moving the box
+   (as the sheet does with `bottom`): a full-height panel has nowhere to
+   ride up to. */
+
+.un-panel {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  z-index: 9991;
+  display: flex;
+  flex-direction: column;
+  width: var(--un-panel-width);
+  max-width: 100vw;
+  background: var(--un-panel-bg);
+  padding-top: env(safe-area-inset-top, 0px);
+  will-change: transform;
+}
+.un-panel[data-un-side="right"] {
+  right: 0;
+  /* Landscape notch on the trailing edge must not clip the rows. */
+  padding-right: env(safe-area-inset-right, 0px);
+  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.22);
+  transform: translateX(100%);
+}
+.un-panel[data-un-side="left"] {
+  left: 0;
+  padding-left: env(safe-area-inset-left, 0px);
+  box-shadow: 8px 0 32px rgba(0, 0, 0, 0.22);
+  transform: translateX(-100%);
+}
+/* Overshoot surface extension, the .un-sheet::after story on the x axis
+   (issue #789). Still needed with no drag gesture: the `sheet` preset is
+   underdamped, so the ENTRANCE spring crosses the rest position before
+   settling — the panel's displacement goes slightly negative on every
+   open, lifting it off its screen edge and exposing the dimmed backdrop
+   over the page below. This pseudo-element continues the surface outward
+   so whatever the bounce uncovers is more panel. ABSOLUTELY POSITIONED on
+   purpose: out of flow, so it can never perturb panel.offsetWidth — the
+   value that seeds the entrance spring, the backdrop opacity denominator
+   and the exit travel, and that watchSize's ResizeObserver watches. Which
+   is also why `.un-panel` must never gain `overflow: hidden`.
+   pointer-events: none keeps taps outside the panel landing on the
+   backdrop. */
+.un-panel::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 100vw;
+  background: var(--un-panel-bg);
+  pointer-events: none;
+}
+.un-panel[data-un-side="right"]::after {
+  left: 100%;
+}
+.un-panel[data-un-side="left"]::after {
+  right: 100%;
+}
+/* The scroller. Deliberately no horizontal padding: full-bleed rows are
+   the drawer idiom, and content that wants insets brings its own. */
+.un-panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--un-kb-inset, 0px));
+}
+/* Keyboard up: the home-indicator safe area sits behind the keyboard —
+   don't stack its padding on top of the inset. */
+html.un-kb .un-panel-body {
+  padding-bottom: var(--un-kb-inset, 0px);
 }
 
 /* ── Action sheet ──────────────────────────────────────────────────────
@@ -918,7 +1033,8 @@ html.un-android .un-toast.un-in {
   }
   /* Keyboard-inset moves still apply, just without animation. */
   .un-sheet,
-  .un-action-sheet {
+  .un-action-sheet,
+  .un-panel {
     transition: none;
   }
 }

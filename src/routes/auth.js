@@ -7,10 +7,21 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const { authLimiter, walletCheckLimiter } = require('../middleware/rate-limits');
 const genesisAccounts = require('../services/genesis-accounts');
+const waitlist = require('../services/waitlist');
 const events = require('../services/events');
 const { validatePassword } = require('../services/password-policy');
+const {
+  accountRecovery,
+  withTransaction,
+} = require('../services/cli-auth');
 
 const SESSION_DAYS = 7;
+
+// Staging mock data (#555): llm_usage is staging:private, so in a
+// prod-cloned staging DB every viewer's AI-credit row would render a
+// pristine "$20.00 of $20.00 left" and a reviewer couldn't tell that from
+// broken. See the ?demo=1 branch on GET /api/me/ai-budget below.
+const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
 // View-only admin role (issue #311). Builds the role-related fields every
 // auth response returns to the client from the raw `is_admin` /
@@ -46,10 +57,28 @@ function authRoutes(config) {
     }
 
     try {
-      const { rows } = await pool.query(
-        'SELECT id, password, is_admin, admin_readonly FROM users WHERE username = $1',
-        [username]
-      );
+      // The identifier can be a username OR an email (thin-shell
+      // migration: mobile-created accounts are email-keyed, and platform
+      // login is now the only sign-in surface for the app). Email lookup
+      // uses the normalized lower-case form the mobile OTP flow stores
+      // (src/routes/topochain/mobile-auth.js). Email is tried first for
+      // @-shaped identifiers, falling back to an exact username match so
+      // legacy accounts whose username merely looks like an email keep
+      // working.
+      const identifier = String(username).trim();
+      let rows;
+      if (identifier.includes('@')) {
+        ({ rows } = await pool.query(
+          'SELECT id, username, password, is_admin, admin_readonly FROM users WHERE email = $1',
+          [identifier.toLowerCase()]
+        ));
+      }
+      if (!rows || rows.length === 0) {
+        ({ rows } = await pool.query(
+          'SELECT id, username, password, is_admin, admin_readonly FROM users WHERE username = $1',
+          [identifier]
+        ));
+      }
 
       if (rows.length === 0) {
         log.warn('auth', 'Login failed - unknown user', { username });
@@ -81,10 +110,12 @@ function authRoutes(config) {
         expires: expiresAt,
       });
 
-      log.info('auth', 'Login successful', { userId: user.id, username });
+      log.info('auth', 'Login successful', { userId: user.id, username: user.username });
 
       res.json({
-        user: { id: user.id, username, ...roleFields(user.is_admin, user.admin_readonly) },
+        // Echo the account's real username, not the raw identifier — the
+        // identifier may have been an email.
+        user: { id: user.id, username: user.username, ...roleFields(user.is_admin, user.admin_readonly) },
       });
     } catch (err) {
       log.error('auth', 'Login error', { message: err.message });
@@ -121,6 +152,12 @@ function authRoutes(config) {
         'UPDATE activation_codes SET used_by = $1, used_at = NOW() WHERE id = $2',
         [userId, codeId]
       );
+
+      // An activation code is an admin-minted invite — stronger than a
+      // waitlist release — so it carries platform access with it
+      // (onboarding flow alignment). Without this, every invited user
+      // would land in the waiting room, a regression on the invite flow.
+      await waitlist.grantPlatformAccess(pool, userId);
 
       const token = crypto.randomBytes(32).toString('hex');
       const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
@@ -220,6 +257,11 @@ function authRoutes(config) {
         // it via the iframe JWT `locale` claim and the bridge's
         // usernode.getUserLocale().
         locale: req.user.locale ?? null,
+        // Platform-access gate (onboarding flow alignment). FALSE means
+        // the account is waiting to be released off the platform
+        // waitlist — the waiting room polls this to know when to let
+        // the user through.
+        hasPlatformAccess: !!req.user.hasPlatformAccess || !!req.user.isAdmin,
         hasApiKey,
         keyLast4,
         usernodePubkey,
@@ -231,6 +273,41 @@ function authRoutes(config) {
   // #30 BYOK: set / replace the user's Anthropic key. We verify with a
   // cheap 1-token ping before persisting so we never save a key that
   // the Anthropic API would reject at runtime.
+  // --------------------------------------------------------------
+  // GET /api/me/ai-budget — the drawer's "AI credit" row (#555).
+  //
+  // Strictly me-scoped, so it must stay OUT of PUBLIC_PATHS in
+  // middleware/auth.js. Deliberately carries NO global spend or global
+  // cap: services/status.js redact() treats those as admin-only, and
+  // this is the one endpoint every signed-in user polls.
+  // --------------------------------------------------------------
+  router.get('/api/me/ai-budget', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    // Staging mock data: obviously-fake, read-only, written nowhere, and
+    // a strict no-op in production. Gives the row a partial-spend state
+    // (plus BYOK spillover) so a reviewer sees the real layout.
+    if (IS_STAGING && req.query.demo === '1') {
+      const reset = new Date();
+      reset.setUTCHours(24, 0, 0, 0);
+      return res.json({
+        limitCents: 2000,
+        spentCents: 1360,
+        remainingCents: 640,
+        byokCents: 450,
+        hasByokKey: true,
+        resetsAt: reset.toISOString(),
+        demo: true,
+      });
+    }
+    try {
+      const limits = require('../services/limits');
+      res.json(await limits.getBudgetSnapshot(pool, req.user.id));
+    } catch (err) {
+      log.error('limits', 'ai-budget read failed', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.post('/api/me/api-key', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     const { key } = req.body || {};
@@ -665,12 +742,37 @@ function authRoutes(config) {
 
       const user = rows[0];
       const hash = await bcrypt.hash(newPassword, 12);
-      await pool.query('UPDATE users SET password = $1 WHERE id = $2', [hash, user.id]);
-      // Invalidate every existing session for this user before minting the
-      // new one, so a stale/leaked session can't survive the reset.
-      await pool.query('DELETE FROM sessions WHERE user_id = $1', [user.id]);
-
-      const { token, expiresAt } = await createSession(pool, user.id);
+      const recovery = await withTransaction(pool, (client) => accountRecovery(client, {
+        userId: user.id,
+        actorUserId: user.id,
+        updatePassword: async (tx) => {
+          const result = await tx.query(
+            `UPDATE users SET password = $1 WHERE id = $2
+             RETURNING id, username, is_admin, admin_readonly`,
+            [hash, user.id]
+          );
+          // The route test's lightweight query facade predates pg's rowCount
+          // shape. A real pg result always has rowCount, so production still
+          // fails closed if the row disappeared after signature lookup.
+          if (result.rowCount == null && result.rows.length === 0) {
+            return { rows: [user] };
+          }
+          return result;
+        },
+        mintSession: async (tx) => {
+          const token = crypto.randomBytes(32).toString('hex');
+          const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
+          await tx.query(
+            'INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)',
+            [token, user.id, expiresAt]
+          );
+          return { token, expiresAt };
+        },
+      }));
+      if (!recovery.found) {
+        return res.status(401).json({ error: 'No account linked to this pubkey' });
+      }
+      const { token, expiresAt } = recovery.session;
       createSessionCookie(res, token, expiresAt);
 
       log.info('wallet-auth', 'Wallet password reset successful', { userId: user.id, username: user.username });
@@ -776,6 +878,10 @@ function authRoutes(config) {
         [username.trim(), hash, pubkey.trim(), linkToken, linkExpiresAt]
       );
       const userId = rows[0].id;
+
+      // Genesis-ledger registration is invite-equivalent (the genesis
+      // allowlist IS the invite) — grant platform access directly.
+      await waitlist.grantPlatformAccess(pool, userId);
 
       const { token, expiresAt } = await createSession(pool, userId);
       createSessionCookie(res, token, expiresAt);

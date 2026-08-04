@@ -27,7 +27,12 @@ const {
   appendTerminalLine,
 } = require('../src/services/turn-watchdog');
 
-const { activeWorkers, isSessionBusy } = require('../src/services/active-workers');
+const {
+  activeWorkers,
+  beginSessionOperation,
+  getActiveWorkerCount,
+  isSessionBusy,
+} = require('../src/services/active-workers');
 const worker = require('../src/services/worker');
 
 // ── 1a. classifyStaleTurn policy ────────────────────────────────────────
@@ -140,6 +145,18 @@ test('isSessionBusy: activeWorkers membership alone means busy (wrap-up window)'
   assert.equal(isSessionBusy(sessionId), false);
 });
 
+test('isSessionBusy: a non-worker session operation blocks turns until its idempotent release', () => {
+  const sessionId = 990778;
+  const before = getActiveWorkerCount();
+  const release = beginSessionOperation(sessionId);
+  assert.equal(isSessionBusy(sessionId), true);
+  assert.equal(getActiveWorkerCount(), before + 1);
+  release();
+  release();
+  assert.equal(isSessionBusy(sessionId), false);
+  assert.equal(getActiveWorkerCount(), before);
+});
+
 // ── 3. Source guards ────────────────────────────────────────────────────
 
 const serverSrc = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
@@ -150,6 +167,12 @@ test('server.js sweepers use the shared busy predicate, not bare isInFlight', ()
   // Pass 1 (auto-pause) and Pass 2 (staging GC) both gate on it.
   const uses = serverSrc.match(/activeWorkersSvc\.isSessionBusy\(row\.id\)/g) || [];
   assert.ok(uses.length >= 2, `expected >=2 isSessionBusy(row.id) gates, found ${uses.length}`);
+  assert.match(serverSrc,
+    /stagingReap\.sweepStale\(config, \{ isInFlight: \(id\) => activeWorkersSvc\.isSessionBusy\(id\) \}\)/,
+    'stale-preview cleanup also respects non-worker session operations');
+  assert.match(serverSrc,
+    /if \(activeWorkersSvc\.isSessionBusy\(row\.id\)\) continue;[\s\S]{0,300}archiveSession/,
+    'stale proposal archival cannot race a session-owned sync/pipeline tail');
   // The auto-pause SQL must exclude sessions with a live detached-turn record.
   assert.ok(
     /status = 'active'\s*\n\s*AND active_turn IS NULL/.test(serverSrc),
@@ -171,9 +194,25 @@ test('server.js recovery flow registers in activeWorkers and bumps last_activity
 test('server.js has the stale active_turn watchdog pass', () => {
   assert.ok(/Reaping orphaned active_turn/.test(serverSrc), 'watchdog reap log line missing');
   assert.ok(/classifyStaleTurn/.test(serverSrc), 'watchdog must use the pure policy helper');
+  // #896: the reaped-turn message is the shared TURN_UNFINISHED_BREADCRUMB
+  // now — one wording for every unresumable shape, with the shape kept in
+  // metadata.recoveredReason instead of in the text the user reads.
+  //
+  // ...with ONE exception: a reaped TAIL row (the agent finished, the
+  // platform-side wrap-up didn't) knows the commit is already pushed, so
+  // asking for a resend would send the user to redo landed work. It gets
+  // the code-landed wording instead.
   assert.ok(
-    /This coding turn was interrupted and could not be recovered/.test(serverSrc),
-    'watchdog must post the retry system message'
+    /: recoveryPills\.TURN_UNFINISHED_BREADCRUMB/.test(serverSrc),
+    'watchdog must post the retry system message for an unresumable exec'
+  );
+  assert.ok(
+    /recoveryPills\.buildCodeLandedBreadcrumb\(/.test(serverSrc),
+    'a reaped tail whose commit landed must not ask for a resend'
+  );
+  assert.ok(
+    /recoveredReason: reapCodeLanded \? 'watchdog_reap_tail' : 'watchdog_reap'/.test(serverSrc),
+    'the reap is still distinguishable from other recoveries in SQL'
   );
 });
 

@@ -85,6 +85,11 @@ function loadSessions(mockPool, overrides = {}) {
     execInWorker: async () => ({ lastResultText: '' }),
     resumeTurnFromJournal: async () => ({}),
     clearActiveTurn: async () => {},
+    // Tail lifecycle (the dispatch tools hold the durable turn record
+    // across their post-agent tail and release it in a finally).
+    finishTurn: async () => {},
+    markTurnTail: async () => {},
+    noteTailMilestone: async () => {},
     stopTurn: async () => false,
     ...(overrides.worker || {}),
   };
@@ -96,7 +101,7 @@ function loadSessions(mockPool, overrides = {}) {
       stagingCalls.push({ sessionId: session.id, commitHash });
       return { containerId: 'stg-container-1', stagingUrl: 'https://stg-test.example', hostname: 'stg-test.example' };
     },
-    warmStagingCert: async () => {},
+    verifyStagingEdge: async () => {},
     ...(overrides.staging || {}),
   };
 
@@ -425,7 +430,7 @@ function loadVotes(mockPool, overrides = {}) {
       stagingCalls.push({ sessionId: session.id });
       return { containerId: 'stg-c', stagingUrl: 'https://clone-stg.example', hostname: 'clone-stg.example' };
     },
-    warmStagingCert: async () => {},
+    verifyStagingEdge: async () => {},
     ...(overrides.staging || {}),
   };
   const prMetadataStub = {
@@ -509,7 +514,7 @@ function makePromotePool(sessionRow) {
     if (/SELECT content FROM chat_session_messages/i.test(s)) {
       return { rows: [{ content: 'please ship the bot change' }] };
     }
-    if (/UPDATE chat_sessions SET status = 'promoted'/i.test(s)) {
+    if (/UPDATE chat_sessions[\s\S]*SET status = 'promoted'/i.test(s)) {
       state.promoted = true;
       return { rows: [], rowCount: 1 };
     }

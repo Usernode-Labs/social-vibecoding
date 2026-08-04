@@ -1,7 +1,8 @@
 // Topochain admin console screens (Task 15, migration plan Global
 // Constraint #8: "Admin screens are ONE AdminConsole section 'topochain'
 // that renders its own sub-navigation from public/js/admin-topochain.js").
-// Mounted by AdminConsole.renderTopochainSection (public/js/admin-console.js)
+// Mounted by AdminConsole._renderSection via SECTION_MODULES (#860;
+// public/js/admin-console.js)
 // into the section's #admin-section-content host, exactly like every other
 // renderXSection — the only difference is this module owns a SECOND hash
 // level of its own (#admin/topochain/<sub>) that AdminConsole never learns
@@ -13,7 +14,7 @@
 //
 // SECURITY (a previous task shipped an XSS here — non-negotiable): every
 // interpolated value goes through esc() below, including attribute values
-// (esc() escapes quotes too, ported verbatim from topochain-seasons.js /
+// (esc() escapes quotes too, ported verbatim from topochain-challenges.js /
 // topochain-leaderboard.js's hardened version — plain &/</> escaping is
 // not enough for a double-quoted attribute value). Any URL this module
 // would ever render into an href goes through safeHref() first (http(s)
@@ -78,6 +79,7 @@ const AdminTopochain = {
     { key: 'seasons', label: 'Seasons' },
     { key: 'season-events', label: 'Season events' },
     { key: 'users', label: 'Users' },
+    { key: 'waitlist', label: 'Waitlist' },
     { key: 'onchain-accounts', label: 'Onchain accounts' },
     { key: 'user-activities', label: 'User activities' },
     { key: 'challenge-templates', label: 'Challenge templates' },
@@ -92,7 +94,7 @@ const AdminTopochain = {
   // Escapes every character dangerous in EITHER a text-node OR a
   // double-quoted attribute-value context (this module interpolates into
   // both, e.g. inside data-* attributes) — ported verbatim from
-  // topochain-seasons.js's hardened esc(), NOT the older &/</>-only
+  // topochain-challenges.js's hardened esc(), NOT the older &/</>-only
   // version in admin-console.js.
   esc(s) {
     return String(s == null ? '' : s)
@@ -112,7 +114,7 @@ const AdminTopochain = {
   async _confirm(opts) { return window.AdminConsole ? AdminConsole._confirm(opts) : window.confirm(opts.message); },
 
   // Safe fetch+parse, never throws — same contract as
-  // AdminConsole.fetchJson/TopochainSeasons.fetchJson, extended with an
+  // AdminConsole.fetchJson/TopochainChallenges.fetchJson, extended with an
   // options bag so this module can also POST/PUT/PATCH/DELETE (the other
   // two only ever GET).
   async fetchJson(url, opts) {
@@ -249,15 +251,24 @@ const AdminTopochain = {
 
   // ── Shell / sub-nav ──────────────────────────────────────────────────
 
-  // Entry point, called by AdminConsole.renderTopochainSection every time
-  // the top-level "Topochain" nav item is (re)selected. `sub` is read
-  // straight from location.hash (not passed down by admin-console.js —
-  // see the file-header comment) so a hand-typed/deep-linked
+  // Entry point, called by AdminConsole._renderSection every time the
+  // top-level "Topochain" nav item is (re)selected. `sub` is read straight
+  // from location.hash (not passed down by admin-console.js — see the
+  // file-header comment) so a hand-typed/deep-linked
   // #admin/topochain/<sub> lands on the right tab on first paint.
   render(host) {
     AdminTopochain._host = host;
     const sub = AdminTopochain._subFromHash() || AdminTopochain._sub || 'seasons';
     AdminTopochain.setSub(sub);
+  },
+
+  // Half of the render/destroy contract every console section module
+  // implements (#860). Nothing to tear down here: this module holds no
+  // timers and binds every listener on elements inside the section host,
+  // which AdminConsole replaces wholesale on the next section. Dropping
+  // the host reference keeps a detached tree from being retained.
+  destroy() {
+    AdminTopochain._host = null;
   },
 
   _subFromHash() {
@@ -310,6 +321,7 @@ const AdminTopochain = {
     switch (AdminTopochain._sub) {
       case 'season-events': return AdminTopochain.renderSeasonEvents(c);
       case 'users': return AdminTopochain.renderUsers(c);
+      case 'waitlist': return AdminTopochain.renderWaitlist(c);
       case 'onchain-accounts': return AdminTopochain.renderOnchainAccounts(c);
       case 'user-activities': return AdminTopochain.renderUserActivities(c);
       case 'challenge-templates': return AdminTopochain.renderChallengeTemplates(c);
@@ -1090,6 +1102,236 @@ const AdminTopochain = {
   },
 
   // ══════════════════════════════════════════════════════════════════
+  // Waitlist — the platform waitlist (email-keyed queue with release)
+  // and the block-producer queue (users who asked to produce blocks),
+  // stacked on one tab. Onboarding flow alignment: "release" on the
+  // platform list grants access now (if an account exists) or at
+  // account creation; "release" on the BP list is the manual key
+  // release that lets the mobile node enable block production.
+  // ══════════════════════════════════════════════════════════════════
+
+  _waitlist: { page: 1, perPage: 50, status: 'pending', items: [], meta: null },
+  _bpq: { page: 1, perPage: 50, status: 'pending', items: [], meta: null },
+
+  renderWaitlist(host) {
+    const esc = AdminTopochain.esc;
+    const statusSelect = (id, current) => `
+      <select id="${esc(id)}"
+        class="rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1.5 text-sm">
+        ${['pending', 'released', 'all'].map((v) =>
+          `<option value="${v}"${v === current ? ' selected' : ''}>${v[0].toUpperCase()}${v.slice(1)}</option>`).join('')}
+      </select>`;
+    host.innerHTML = `
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <h2 class="text-lg font-semibold">Platform waitlist</h2>
+        ${statusSelect('admin-topo-wl-status', AdminTopochain._waitlist.status)}
+      </div>
+      <div id="admin-topo-wl-table"><p class="text-sm text-zinc-500">Loading&hellip;</p></div>
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-3 mt-8">
+        <h2 class="text-lg font-semibold">Block-producer queue</h2>
+        ${statusSelect('admin-topo-bpq-status', AdminTopochain._bpq.status)}
+      </div>
+      <div id="admin-topo-bpq-table"><p class="text-sm text-zinc-500">Loading&hellip;</p></div>`;
+    document.getElementById('admin-topo-wl-status').addEventListener('change', (e) => {
+      AdminTopochain._waitlist.status = e.target.value;
+      AdminTopochain._waitlist.page = 1;
+      AdminTopochain._loadWaitlist();
+    });
+    document.getElementById('admin-topo-bpq-status').addEventListener('change', (e) => {
+      AdminTopochain._bpq.status = e.target.value;
+      AdminTopochain._bpq.page = 1;
+      AdminTopochain._loadBpQueue();
+    });
+    AdminTopochain._loadWaitlist();
+    AdminTopochain._loadBpQueue();
+  },
+
+  async _loadWaitlist() {
+    const s = AdminTopochain._waitlist;
+    const params = new URLSearchParams({ page: String(s.page), per_page: String(s.perPage) });
+    if (s.status !== 'all') params.set('status', s.status);
+    const { ok, data } = await AdminTopochain.fetchJson(`/api/v4/admin/waitlist?${params}`);
+    if (AdminTopochain._sub !== 'waitlist') return;
+    if (ok && data?.success) { s.items = data.data; s.meta = data.meta; }
+    else { s.items = []; s.meta = null; }
+    AdminTopochain._renderWaitlistTable();
+  },
+
+  _renderWaitlistTable() {
+    const table = document.getElementById('admin-topo-wl-table');
+    if (!table) return;
+    const esc = AdminTopochain.esc;
+    const canWrite = AdminTopochain.canWrite();
+    const s = AdminTopochain._waitlist;
+    if (!s.items.length) {
+      table.innerHTML = '<p class="text-sm text-zinc-500 py-4">No waitlist entries.</p>';
+      return;
+    }
+    const rows = s.items.map((w) => `
+      <tr class="border-t border-zinc-200 dark:border-zinc-800">
+        <td class="px-3 py-2 text-sm font-mono">${esc(w.email)}</td>
+        <td class="px-3 py-2 text-xs text-zinc-500">${esc(AdminTopochain._fmt(w.submitted_at))}</td>
+        <td class="px-3 py-2 text-sm">${w.linked_username
+          ? `${esc(w.linked_username)}${w.has_platform_access ? ' <span class="text-emerald-600 dark:text-emerald-400 text-xs">(has access)</span>' : ''}`
+          : '<span class="text-zinc-400">no account yet</span>'}</td>
+        <td class="px-3 py-2 text-sm">${w.released_at
+          ? `<span class="text-emerald-600 dark:text-emerald-400 text-xs">Released ${esc(AdminTopochain._fmt(w.released_at))}</span>`
+          : '<span class="text-amber-600 dark:text-amber-400 text-xs">pending</span>'}</td>
+        <td class="px-3 py-2 text-right whitespace-nowrap">
+          ${canWrite && !w.released_at
+            ? `<button data-release-wl="${w.id}" data-email="${esc(w.email)}"
+                 class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1 text-xs font-medium text-white">Release</button>`
+            : ''}
+        </td>
+      </tr>
+      ${w.answers ? `
+      <tr><td colspan="5" class="px-3 pb-2 pt-0">
+        <details class="text-xs">
+          <summary class="cursor-pointer text-zinc-500 select-none py-0.5">Survey answers</summary>
+          <div class="mt-1 space-y-0.5 text-zinc-600 dark:text-zinc-300">${AdminTopochain._wlAnswersHtml(w.answers)}</div>
+        </details>
+      </td></tr>` : ''}`).join('');
+    table.innerHTML = `
+      <div class="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+        <table class="w-full">
+          <thead class="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500">
+            <tr><th class="px-3 py-2 text-left">Email</th><th class="px-3 py-2 text-left">Joined</th>
+              <th class="px-3 py-2 text-left">Account</th><th class="px-3 py-2 text-left">Status</th><th class="px-3 py-2"></th></tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      ${AdminTopochain._pagerHtml(s.meta, 'admin-topo-wl-pg')}`;
+    table.querySelectorAll('[data-release-wl]').forEach((b) => b.addEventListener('click', () =>
+      AdminTopochain._releaseWaitlist(parseInt(b.dataset.releaseWl, 10), b.dataset.email)));
+    if (s.meta) AdminTopochain._wirePager(s.meta, 'admin-topo-wl-pg', (page) => { s.page = page; AdminTopochain._loadWaitlist(); });
+  },
+
+  // Human-readable rendering of a signup's two-stage survey answers
+  // (waitlist_signups.answers — stage 1 at join, stage 2 merged in
+  // later). Only known keys are surfaced; everything is escaped.
+  _wlAnswersHtml(a) {
+    const esc = AdminTopochain.esc;
+    const lines = [];
+    const line = (label, value) => {
+      if (value) lines.push(`<div><span class="text-zinc-400">${esc(label)}:</span> ${value}</div>`);
+    };
+    if (a.made_url) {
+      // Escaped text, not an anchor — this module never renders
+      // API-supplied URLs as clickable hrefs (esc() alone wouldn't stop a
+      // javascript: scheme). Admins can copy the URL out.
+      line('Made', `<span class="select-all break-all">${esc(a.made_url)}</span>${a.made_note ? ` — ${esc(a.made_note)}` : ''}`);
+    }
+    if (a.country || a.city) line('Where', esc([a.city, a.country].filter(Boolean).join(', ')));
+    if (a.discovery && a.discovery.source) {
+      line('Found us', esc(a.discovery.source) + (a.discovery.detail ? ` — ${esc(a.discovery.detail)}` : ''));
+    }
+    if (a.referrer_handle) line('Referred by', esc(a.referrer_handle));
+    if (a.group && Object.keys(a.group).length) {
+      const g = a.group;
+      line('Group', esc([g.name, g.size, g.role, (g.tools || []).join('/')].filter(Boolean).join(' · ')));
+      if (g.need) line('Group need', esc(g.need));
+    }
+    if (a.loss && Object.keys(a.loss).length) {
+      const l = a.loss;
+      line('Lost a tool', esc([l.had, l.product, (l.kind || []).join('/')].filter(Boolean).join(' · ')));
+      if (l.story) line('Loss story', esc(l.story));
+    }
+    if (a.verified && Object.keys(a.verified).length) {
+      line('Verified', Object.entries(a.verified)
+        .map(([p, h]) => `<span class="text-emerald-600 dark:text-emerald-400">✓ ${esc(p)} · ${esc(h)}</span>`)
+        .join('  '));
+    }
+    if (a.handles && Object.keys(a.handles).length) {
+      line('Handles', esc(Object.entries(a.handles).map(([p, h]) => `${p}: ${h}`).join(' · ')));
+    }
+    if (Array.isArray(a.invites) && a.invites.length) {
+      line('Invites', esc(a.invites.join(', ')) + (a.admit_together ? ' <span class="text-zinc-400">(only together)</span>' : ''));
+    } else if (a.admit_together) {
+      line('Invites', '<span class="text-zinc-400">only together</span>');
+    }
+    return lines.join('') || '<div class="text-zinc-400">No survey answers.</div>';
+  },
+
+  async _releaseWaitlist(id, email) {
+    if (!AdminTopochain.canWrite()) return;
+    const okd = await AdminTopochain._confirm({
+      title: 'Release off the waitlist?',
+      message: `${email} gets platform access — immediately if they already have an account, otherwise the moment they create one. They'll be emailed a link to sign in or create their account.`,
+      confirmLabel: 'Release',
+    });
+    if (!okd) return;
+    const { ok, data } = await AdminTopochain.send('POST', `/api/v4/admin/waitlist/${id}/release`);
+    if (!ok || !data?.success) { AdminTopochain._alert(data?.error || 'Release failed.'); return; }
+    AdminTopochain._loadWaitlist();
+  },
+
+  async _loadBpQueue() {
+    const s = AdminTopochain._bpq;
+    const params = new URLSearchParams({ page: String(s.page), per_page: String(s.perPage) });
+    if (s.status !== 'all') params.set('status', s.status);
+    const { ok, data } = await AdminTopochain.fetchJson(`/api/v4/admin/bp-queue?${params}`);
+    if (AdminTopochain._sub !== 'waitlist') return;
+    if (ok && data?.success) { s.items = data.data; s.meta = data.meta; }
+    else { s.items = []; s.meta = null; }
+    AdminTopochain._renderBpQueueTable();
+  },
+
+  _renderBpQueueTable() {
+    const table = document.getElementById('admin-topo-bpq-table');
+    if (!table) return;
+    const esc = AdminTopochain.esc;
+    const canWrite = AdminTopochain.canWrite();
+    const s = AdminTopochain._bpq;
+    if (!s.items.length) {
+      table.innerHTML = '<p class="text-sm text-zinc-500 py-4">No block-production requests.</p>';
+      return;
+    }
+    const rows = s.items.map((u) => `
+      <tr class="border-t border-zinc-200 dark:border-zinc-800">
+        <td class="px-3 py-2 text-sm">${esc(u.display_name || u.username || `user #${u.id}`)}</td>
+        <td class="px-3 py-2 text-xs text-zinc-500 font-mono">${esc(u.email || '—')}</td>
+        <td class="px-3 py-2 text-xs text-zinc-500">${esc(AdminTopochain._fmt(u.bp_requested_at))}</td>
+        <td class="px-3 py-2 text-sm">${u.bp_released_at
+          ? `<span class="text-emerald-600 dark:text-emerald-400 text-xs">Released ${esc(AdminTopochain._fmt(u.bp_released_at))}</span>`
+          : '<span class="text-amber-600 dark:text-amber-400 text-xs">pending</span>'}</td>
+        <td class="px-3 py-2 text-right whitespace-nowrap">
+          ${canWrite && !u.bp_released_at
+            ? `<button data-release-bp="${u.id}" data-identifier="${esc(u.display_name || u.username || u.email || `user #${u.id}`)}"
+                 class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1 text-xs font-medium text-white">Release keys</button>`
+            : ''}
+        </td>
+      </tr>`).join('');
+    table.innerHTML = `
+      <div class="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+        <table class="w-full">
+          <thead class="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500">
+            <tr><th class="px-3 py-2 text-left">User</th><th class="px-3 py-2 text-left">Email</th>
+              <th class="px-3 py-2 text-left">Requested</th><th class="px-3 py-2 text-left">Status</th><th class="px-3 py-2"></th></tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      ${AdminTopochain._pagerHtml(s.meta, 'admin-topo-bpq-pg')}`;
+    table.querySelectorAll('[data-release-bp]').forEach((b) => b.addEventListener('click', () =>
+      AdminTopochain._releaseBp(parseInt(b.dataset.releaseBp, 10), b.dataset.identifier)));
+    if (s.meta) AdminTopochain._wirePager(s.meta, 'admin-topo-bpq-pg', (page) => { s.page = page; AdminTopochain._loadBpQueue(); });
+  },
+
+  async _releaseBp(id, identifier) {
+    if (!AdminTopochain.canWrite()) return;
+    const okd = await AdminTopochain._confirm({
+      title: 'Release block production?',
+      message: `${identifier}'s phone will start producing blocks the next time the app syncs its profile.`,
+      confirmLabel: 'Release keys',
+    });
+    if (!okd) return;
+    const { ok, data } = await AdminTopochain.send('POST', `/api/v4/admin/users/${id}/release-bp`);
+    if (!ok || !data?.success) { AdminTopochain._alert(data?.error || 'Release failed.'); return; }
+    AdminTopochain._loadBpQueue();
+  },
+
+  // ══════════════════════════════════════════════════════════════════
   // Onchain accounts — index/show/import/:id/reset (no create/edit/
   // delete singular routes exist per the API surface — nothing invented
   // here beyond what's documented).
@@ -1707,11 +1949,52 @@ const AdminTopochain = {
           ${canWrite ? '<button id="admin-topo-set-reset" class="rounded-lg border border-amber-400 dark:border-amber-700 text-amber-700 dark:text-amber-300 px-3 py-1.5 text-sm font-medium">Reset to defaults&hellip;</button>' : ''}
         </div>
       </div>
+      <div id="admin-topo-mail-status" class="mb-4"></div>
       <div id="admin-topo-set-form"></div>
       <div id="admin-topo-set-table"><p class="text-sm text-zinc-500">Loading&hellip;</p></div>`;
     document.getElementById('admin-topo-set-new')?.addEventListener('click', () => AdminTopochain._openSettingForm(null));
     document.getElementById('admin-topo-set-reset')?.addEventListener('click', () => AdminTopochain._resetSettings());
     AdminTopochain._loadSettings();
+    AdminTopochain._loadMailStatus();
+  },
+
+  // Outbound-mail readiness. Read-only and deliberately value-free: the
+  // endpoint returns presence only, never the provider URL or credential.
+  // This row exists because both mail flows are always-200 by contract, so
+  // "no transport configured" is otherwise completely invisible.
+  async _loadMailStatus() {
+    const { ok, data } = await AdminTopochain.fetchJson('/api/v4/admin/settings/mail-status');
+    if (AdminTopochain._sub !== 'settings') return;
+    const host = document.getElementById('admin-topo-mail-status');
+    if (!host) return;
+    const esc = AdminTopochain.esc;
+    if (!ok || !data?.success) { host.innerHTML = ''; return; }
+
+    const m = data.data || {};
+    const flows = (m.affectedFlows || []).map((f) => `<li>${esc(f)}</li>`).join('');
+
+    if (m.configured) {
+      host.innerHTML = `
+        <div class="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 px-4 py-3 text-sm">
+          <span class="font-semibold text-emerald-600 dark:text-emerald-400">Email is configured</span>
+          <span class="text-zinc-500"> — login codes and waitlist confirmations are being sent.</span>
+        </div>`;
+      return;
+    }
+    host.innerHTML = `
+      <div class="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-sm">
+        <div class="font-semibold text-amber-800 dark:text-amber-300">
+          Email is not deliverable — no mail sender configured
+        </div>
+        <p class="text-amber-800/80 dark:text-amber-300/80 mt-1">
+          These flows still report success to the user but deliver nothing:
+        </p>
+        <ul class="list-disc ml-5 mt-1 text-amber-800/80 dark:text-amber-300/80">${flows}</ul>
+        <p class="text-amber-800/80 dark:text-amber-300/80 mt-2">
+          Set ${(m.missing || []).map((k) => `<code class="font-mono text-xs">${esc(k)}</code>`).join(', ')}
+          in the platform&rsquo;s Platform variables panel, then redeploy.
+        </p>
+      </div>`;
   },
 
   async _loadSettings() {
@@ -1840,10 +2123,13 @@ const AdminTopochain = {
         <h2 class="text-lg font-semibold">App version</h2>
         ${canWrite ? '<button id="admin-topo-av-new" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1.5 text-sm font-medium text-white">New config</button>' : ''}
       </div>
+      <div id="admin-topo-av-gate"></div>
       <div id="admin-topo-av-form"></div>
-      <div id="admin-topo-av-table"><p class="text-sm text-zinc-500">Loading&hellip;</p></div>`;
+      <div id="admin-topo-av-table"><p class="text-sm text-zinc-500">Loading&hellip;</p></div>
+      <div id="admin-topo-av-activity"></div>`;
     document.getElementById('admin-topo-av-new')?.addEventListener('click', () => AdminTopochain._openAppVersionForm(null));
     AdminTopochain._loadAppVersions();
+    AdminTopochain._loadAppVersionActivity();
   },
 
   async _loadAppVersions() {
@@ -1851,6 +2137,83 @@ const AdminTopochain = {
     if (AdminTopochain._sub !== 'app-version') return;
     AdminTopochain._appver.items = (ok && data?.success) ? data.data : [];
     AdminTopochain._renderAppVersionsTable();
+    AdminTopochain._renderAppVersionGate();
+  },
+
+  // Per-OS "no rule configured" warning. Without a row (or with the row
+  // inactive) POST /app-version/check answers `upgrade: 0` to EVERY build,
+  // including ones that should be forced to update — the gate is off, and
+  // nothing else on this screen says so.
+  _renderAppVersionGate() {
+    const host = document.getElementById('admin-topo-av-gate');
+    if (!host) return;
+    const esc = AdminTopochain.esc;
+    const items = AdminTopochain._appver.items || [];
+    const missing = ['ios', 'android'].filter(
+      (os) => !items.some((c) => c.os === os && c.is_active)
+    );
+    if (!missing.length) { host.innerHTML = ''; return; }
+    const label = { ios: 'iOS', android: 'Android' };
+    host.innerHTML = missing.map((os) => `
+      <div class="mb-3 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-sm">
+        <span class="font-semibold text-amber-800 dark:text-amber-300">
+          No active version rule for ${esc(label[os])}
+        </span>
+        <span class="text-amber-800/80 dark:text-amber-300/80">
+          — every ${esc(label[os])} build is told it is up to date, including
+          old ones. Add an active config for ${esc(os)} to turn the update
+          gate on.
+        </span>
+      </div>`).join('');
+  },
+
+  // Last 7 days of version checks. Answers "is the gate doing anything?" —
+  // an all-zero table with traffic means the rule is permissive; no traffic
+  // at all means no shell is calling.
+  async _loadAppVersionActivity() {
+    const { ok, data } = await AdminTopochain.fetchJson(
+      '/api/v4/admin/app-version-configs/check-activity');
+    if (AdminTopochain._sub !== 'app-version') return;
+    const host = document.getElementById('admin-topo-av-activity');
+    if (!host) return;
+    const esc = AdminTopochain.esc;
+    if (!ok || !data?.success) { host.innerHTML = ''; return; }
+
+    const a = data.data || {};
+    const UPGRADE_LABEL = {
+      0: 'up to date',
+      1: 'suggested update',
+      2: 'forced update',
+    };
+    if (!a.total) {
+      host.innerHTML = `
+        <p class="text-xs text-zinc-500 mt-4">
+          No version checks in the last ${esc(a.window_days ?? 7)} days — no app
+          build has asked this platform whether it needs to update.
+        </p>`;
+      return;
+    }
+    const rows = (a.by_os || []).map((r) => `
+      <tr class="border-t border-zinc-200 dark:border-zinc-800">
+        <td class="px-3 py-1.5 text-sm">${esc(r.os || '—')}</td>
+        <td class="px-3 py-1.5 text-sm">${esc(UPGRADE_LABEL[r.upgrade] || r.upgrade)}</td>
+        <td class="px-3 py-1.5 text-sm font-mono text-right">${esc(r.count)}</td>
+      </tr>`).join('');
+    host.innerHTML = `
+      <h3 class="text-sm font-semibold mt-6 mb-2">
+        Version checks &middot; last ${esc(a.window_days ?? 7)} days
+        <span class="font-normal text-zinc-500">(${esc(a.total)} total)</span>
+      </h3>
+      <div class="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+        <table class="w-full">
+          <thead class="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500">
+            <tr><th class="px-3 py-2 text-left">OS</th>
+              <th class="px-3 py-2 text-left">Told</th>
+              <th class="px-3 py-2 text-right">Checks</th></tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
   },
 
   _renderAppVersionsTable() {
@@ -1910,10 +2273,14 @@ const AdminTopochain = {
         <h3 class="text-sm font-semibold mb-3">${id == null ? 'New app version config' : `Edit ${AdminTopochain.esc(existing?.os)}`}</h3>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           ${field('OS *', sel('admin-topo-av-f-os', ['ios', 'android'], existing?.os || 'ios', { disabled: id != null }))}
-          ${field('Min build number *', f('admin-topo-av-f-min_build_number', { type: 'number', min: 1, value: existing?.min_build_number }))}
-          ${field('Recommended build number', f('admin-topo-av-f-recommended_build_number', { type: 'number', min: 1, value: existing?.recommended_build_number }))}
-          ${field('Current version', f('admin-topo-av-f-current_version', { value: existing?.current_version }))}
-          ${field('Update URL', f('admin-topo-av-f-update_url', { value: existing?.update_url }), 'Must be http(s) — validated before saving.')}
+          ${field('Min build number *', f('admin-topo-av-f-min_build_number', { type: 'number', min: 1, value: existing?.min_build_number }),
+            'FORCED update: builds below this are blocked until the user updates.')}
+          ${field('Recommended build number', f('admin-topo-av-f-recommended_build_number', { type: 'number', min: 1, value: existing?.recommended_build_number }),
+            'SUGGESTED update: builds below this get a dismissible prompt. Leave blank for none.')}
+          ${field('Current version', f('admin-topo-av-f-current_version', { value: existing?.current_version }),
+            'Display only — the gate compares build numbers, not this string.')}
+          ${field('Update URL', f('admin-topo-av-f-update_url', { value: existing?.update_url }),
+            'Must be http(s). Only sent when an update is required or suggested — leave it blank and a forced update gives the user nowhere to go.')}
         </div>
         <label class="flex items-center gap-2 text-sm mt-2">${f('admin-topo-av-f-is_active', { type: 'checkbox', value: existing ? existing.is_active : true })} Active</label>
         <div class="grid grid-cols-1 gap-3 mt-2">

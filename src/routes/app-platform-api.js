@@ -6,6 +6,7 @@ const { appPlatformAuth } = require('../middleware/app-llm-auth');
 const { getPool } = require('../db/pool');
 const governance = require('../services/governance');
 const log = require('../services/logger');
+const { currentVotePredicateSql } = require('../services/pr-vote-revision');
 
 // App-facing read-only platform API (issue #744). First endpoint:
 //
@@ -125,8 +126,12 @@ function appPlatformApiRoutes(config) {
                 cs.promoted_at, cs.created_at, cs.merged_at, cs.votes_required,
                 u.username AS author,
                 ${activityExpr} AS activity_at,
-                (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') AS yes_count,
-                (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'no')  AS no_count
+                (SELECT COUNT(*)::int FROM pr_votes pv
+                  WHERE pv.session_id = cs.id AND pv.vote = 'yes'
+                    AND ${currentVotePredicateSql('pv', 'cs')}) AS yes_count,
+                (SELECT COUNT(*)::int FROM pr_votes pv
+                  WHERE pv.session_id = cs.id AND pv.vote = 'no'
+                    AND ${currentVotePredicateSql('pv', 'cs')}) AS no_count
            FROM chat_sessions cs
            LEFT JOIN users u ON u.id = cs.user_id
           WHERE cs.app_id = $1 AND cs.status = ANY($2::text[])

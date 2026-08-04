@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const platformJwt = require('./services/platform-jwt');
+const { PRODUCTION_ORIGIN } = require('./services/cli-auth-constants');
 
 const REQUIRED = [
   'DATABASE_URL',
@@ -79,6 +80,30 @@ function mask(val) {
   return val.slice(0, 4) + '...' + val.slice(-4);
 }
 
+function canonicalCliOrigin(value, { allowLoopbackHttp = false } = {}) {
+  if (typeof value !== 'string' || !value) return null;
+  try {
+    const url = new URL(value);
+    if (url.username || url.password || url.search || url.hash) return null;
+    if (url.pathname !== '' && url.pathname !== '/') return null;
+    const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+    if (url.protocol !== 'https:' && !(allowLoopbackHttp && loopback && url.protocol === 'http:')) {
+      return null;
+    }
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function isLoopbackOrigin(value) {
+  try {
+    return ['localhost', '127.0.0.1', '[::1]'].includes(new URL(value).hostname);
+  } catch {
+    return false;
+  }
+}
+
 function load() {
   const staging = IS_STAGING();
 
@@ -121,6 +146,24 @@ function load() {
     }
   }
 
+  const cliLocalMode = !staging && process.env.USERNODE_LOCAL_DEV === '1';
+  let cliAuthOrigin = null;
+  let cliAuthEnabled = !staging;
+  if (cliAuthEnabled && cliLocalMode) {
+    cliAuthOrigin = canonicalCliOrigin(
+      process.env.CLI_CANONICAL_ORIGIN || `http://localhost:${process.env.PORT || '3000'}`,
+      { allowLoopbackHttp: true }
+    );
+    if (cliAuthOrigin && !isLoopbackOrigin(cliAuthOrigin)) cliAuthOrigin = null;
+  } else if (cliAuthEnabled) {
+    cliAuthOrigin = canonicalCliOrigin(process.env.CLI_CANONICAL_ORIGIN);
+    if (cliAuthOrigin !== PRODUCTION_ORIGIN) cliAuthOrigin = null;
+  }
+  if (cliAuthEnabled && !cliAuthOrigin) {
+    console.error('[config] CLI authentication requires a valid CLI_CANONICAL_ORIGIN; production must use the compiled production origin');
+    process.exit(1);
+  }
+
   const config = {
     // Deployment environment tag (plan Global Constraints #6, topochain
     // mailer): drives ONE behavior today — src/services/topochain/
@@ -131,6 +174,17 @@ function load() {
     port: parseInt(process.env.PORT || '3000', 10),
     databaseUrl: process.env.DATABASE_URL,
     sessionSecret: process.env.SESSION_SECRET,
+    cliAuthEnabled,
+    cliAuthOrigin,
+    cliAuthLocalMode: cliLocalMode,
+    cliDeviceCreateRatePerMinute: parseInt(process.env.CLI_DEVICE_CREATE_RATE_PER_MINUTE || '10', 10),
+    cliDeviceCreateBurst: parseInt(process.env.CLI_DEVICE_CREATE_BURST || '20', 10),
+    cliDeviceLivePerIp: parseInt(process.env.CLI_DEVICE_LIVE_PER_IP || '10', 10),
+    cliDeviceLiveGlobal: parseInt(process.env.CLI_DEVICE_LIVE_GLOBAL || '10000', 10),
+    // Only this resolved Docker peer may supply the client address used by
+    // security gates and rate limits. Local development connects directly.
+    trustedProxyHost: process.env.TRUSTED_PROXY_HOST
+      || (!cliLocalMode && !staging ? 'caddy' : ''),
     adminUsername: process.env.ADMIN_USERNAME,
     adminPassword: process.env.ADMIN_PASSWORD,
     // KDF input for services/secrets.js (AES-256-GCM at rest). Never
@@ -151,6 +205,25 @@ function load() {
     githubAppId: process.env.GITHUB_APP_ID || '',
     githubPrivateKey: (process.env.GITHUB_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
     anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
+    // #555: Anthropic ADMIN API key (`sk-ant-admin…`) — a different
+    // credential from the message key above, and used for exactly one
+    // read: GET /v1/organizations/cost_report, which backs the drawer's
+    // "Anthropic credits" row. Optional; unset degrades that row to an
+    // estimate derived from the platform's own spend ledgers. Never
+    // returned by any endpoint — see services/anthropic-credits.js.
+    anthropicAdminKey: process.env.ANTHROPIC_ADMIN_KEY || '',
+    // Waitlist social-connect OAuth apps (two-stage waitlist survey).
+    // Plain OAuth apps — unrelated to the GitHub App above (which is the
+    // repo-hosting integration). Optional: without credentials the
+    // connect buttons for that provider degrade to plain text inputs on
+    // the stage-2 form (src/routes/waitlist-connect.js).
+    waitlistGithubClientId: process.env.WAITLIST_GITHUB_CLIENT_ID || '',
+    waitlistGithubClientSecret: process.env.WAITLIST_GITHUB_CLIENT_SECRET || '',
+    waitlistXClientId: process.env.WAITLIST_X_CLIENT_ID || '',
+    waitlistXClientSecret: process.env.WAITLIST_X_CLIENT_SECRET || '',
+    // Overrides the OAuth redirect_uri origin (staging); defaults to the
+    // production origin in production, localhost in dev.
+    waitlistOauthOrigin: process.env.WAITLIST_OAUTH_ORIGIN || '',
     logLevel: process.env.LOG_LEVEL || 'INFO',
     // Hard cap on non-errored apps per server. Protects against runaway
     // container / DB creation chewing through host resources. Admins bypass
@@ -327,6 +400,19 @@ function load() {
     // error table row for this exact condition) until an operator sets
     // TOPOCHAIN_ZK_BRIDGE_URL. See src/services/topochain/zk-bridge.js.
     topochainZkBridgeUrl: process.env.TOPOCHAIN_ZK_BRIDGE_URL || '',
+    // Topochain outbound mail. `mailer.js` has always had a transport hook
+    // (`config.topochainMailTransport`) and nothing ever filled it, so BOTH
+    // its callers — the shell's email login codes and the onboarding
+    // waitlist confirmation — generated a message and dropped it while
+    // still reporting success to the user. This wires the one transport
+    // (src/services/topochain/mail-transport.js) behind that same hook.
+    //
+    // Null when unconfigured, which preserves mailer.js's existing
+    // "no transport configured" branch (loud error in production, code
+    // printed to the log in dev/staging). OPTIONAL and NOT in REQUIRED,
+    // like the three keys above: unset must not block boot.
+    topochainMailTransport: require('./services/topochain/mail-transport')
+      .create(process.env),
   };
 
   console.log('[config] Loaded:');
@@ -363,7 +449,9 @@ function load() {
   }
   console.log(`  GITHUB_APP_ID=${config.githubAppId || '(not set)'}`);
   console.log(`  ANTHROPIC_API_KEY=${mask(config.anthropicApiKey)}`);
+  console.log(`  ANTHROPIC_ADMIN_KEY=${mask(config.anthropicAdminKey)}`);
   console.log(`  LOG_LEVEL=${config.logLevel}`);
+  console.log(`  CLI_AUTH=${config.cliAuthEnabled ? config.cliAuthOrigin : '(disabled in staging)'}`);
   console.log(`  MAX_APPS=${config.maxApps}`);
   console.log(`  MAX_GLOBAL_SESSIONS=${config.maxGlobalSessions}`);
   console.log(`  MAX_USER_SESSIONS=${config.maxUserSessions}`);
@@ -399,6 +487,9 @@ function load() {
   console.log(`  TOPOCHAIN_PARTNER_API_KEY=${config.topochainPartnerApiKey ? mask(config.topochainPartnerApiKey) : '(not set — partner API returns 500)'}`);
   console.log(`  TOPOCHAIN_INGEST_API_KEY=${config.topochainIngestApiKey ? mask(config.topochainIngestApiKey) : '(not set — ingest writes return 500)'}`);
   console.log(`  TOPOCHAIN_ZK_BRIDGE_URL=${config.topochainZkBridgeUrl || '(not set — zkpassport/complete returns 500)'}`);
+  console.log(`  TOPOCHAIN_MAIL=${config.topochainMailTransport
+    ? 'configured'
+    : '(not set — OTP login codes and waitlist confirmations are NOT delivered)'}`);
 
   return config;
 }
@@ -417,4 +508,9 @@ function usesMockGithubForImports() {
   return process.env.USERNODE_ENV === 'staging';
 }
 
-module.exports = { load, usesMockGithubForImports };
+module.exports = {
+  load,
+  usesMockGithubForImports,
+  canonicalCliOrigin,
+  isLoopbackOrigin,
+};

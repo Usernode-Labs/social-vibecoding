@@ -36,7 +36,7 @@ const fakeVisuals = fakeModule('../src/services/visuals', {
 });
 fakeModule('../src/services/staging', {
   buildAndDeployStaging: async () => ({ containerId: 'c', stagingUrl: 'u', hostname: 'h' }),
-  warmStagingCert: async () => {},
+  verifyStagingEdge: async () => {},
 });
 fakeModule('../src/services/sync-main', {
   persistBehindMain: async () => {},
@@ -206,4 +206,33 @@ test('pr-import-sync: mock is NOT used outside staging (real github, disabled â†
   } finally {
     if (prev === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = prev;
   }
+});
+
+// #866 â€” the mock fleet needs a fork-headed PR in it. Fork imports are the
+// case the SHA-pinned clone exists for, and the import picker's "from a fork"
+// label is derived by comparing head.repo.full_name with base.repo.full_name;
+// without a candidate where those differ, neither is reviewable on staging.
+test('mock candidates include a fork-headed PR, and same-repo PRs stay same-repo', async () => {
+  githubMock._resetForTests();
+  const pulls = await githubMock.listOpenPulls('acme', 'widget');
+
+  const fork = pulls.find((p) => p.number === 9403);
+  assert.ok(fork, 'a fork-headed candidate is seeded');
+  assert.equal(fork.base.repo.full_name, 'acme/widget');
+  assert.equal(fork.head.repo.full_name, 'octo-forker/usernode-mock-fork');
+  assert.notEqual(fork.head.repo.full_name, fork.base.repo.full_name,
+    'this is exactly the comparison the fork label and the PR-ref clone key off');
+  assert.equal(fork.head.repo.fork, true);
+
+  for (const n of [9401, 9402]) {
+    const p = pulls.find((x) => x.number === n);
+    assert.ok(p, `candidate ${n} still listed`);
+    assert.equal(p.head.repo.full_name, p.base.repo.full_name,
+      'a same-repo candidate must not be mislabelled as a fork');
+  }
+
+  // getPR (the path the preview route and the poller use) agrees.
+  const one = await githubMock.getPR('acme', 'widget', 9403);
+  assert.equal(one.head.repo.full_name, 'octo-forker/usernode-mock-fork');
+  assert.equal(one.base.repo.full_name, 'acme/widget');
 });

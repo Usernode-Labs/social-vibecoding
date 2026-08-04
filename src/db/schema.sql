@@ -93,6 +93,359 @@ CREATE TABLE IF NOT EXISTS sessions (
   expires_at TIMESTAMPTZ NOT NULL
 );
 
+-- Global CLI device authorization and opaque access tokens. These are
+-- deliberately independent from browser sessions and iframe/app identity.
+CREATE TABLE IF NOT EXISTS cli_device_authorizations (
+  id BIGSERIAL PRIMARY KEY,
+  device_code_hash TEXT NOT NULL UNIQUE
+    CHECK (device_code_hash ~ '^[0-9a-f]{64}$'),
+  user_code TEXT NOT NULL UNIQUE
+    CHECK (
+      user_code = UPPER(user_code)
+      AND user_code ~ '^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}-[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}$'
+    ),
+  client_id TEXT NOT NULL DEFAULT 'social-vibecoding-cli'
+    CHECK (client_id = 'social-vibecoding-cli'),
+  scopes TEXT[] NOT NULL
+    CONSTRAINT cli_device_authorizations_scopes_check
+    CHECK (
+      scopes = ARRAY['rpc:identity:read']::TEXT[]
+      OR scopes = ARRAY['rpc:identity:read', 'api:access']::TEXT[]
+    ),
+  request_ip INET NOT NULL,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'approved', 'rejected', 'cancelled', 'consumed')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL
+    CHECK (expires_at = created_at + INTERVAL '10 minutes'),
+  approved_at TIMESTAMPTZ,
+  rejected_at TIMESTAMPTZ,
+  cancelled_at TIMESTAMPTZ,
+  consumed_at TIMESTAMPTZ,
+  last_polled_at TIMESTAMPTZ,
+  poll_count INTEGER NOT NULL DEFAULT 0 CHECK (poll_count >= 0),
+  CHECK (
+    (status = 'pending' AND user_id IS NULL
+      AND approved_at IS NULL AND rejected_at IS NULL
+      AND cancelled_at IS NULL AND consumed_at IS NULL)
+    OR
+    (status = 'approved' AND user_id IS NOT NULL
+      AND approved_at IS NOT NULL AND rejected_at IS NULL
+      AND cancelled_at IS NULL AND consumed_at IS NULL)
+    OR
+    (status = 'rejected' AND user_id IS NOT NULL
+      AND approved_at IS NULL AND rejected_at IS NOT NULL
+      AND cancelled_at IS NULL AND consumed_at IS NULL)
+    OR
+    (status = 'cancelled' AND user_id IS NOT NULL
+      AND approved_at IS NOT NULL AND rejected_at IS NULL
+      AND cancelled_at IS NOT NULL AND consumed_at IS NULL)
+    OR
+    (status = 'consumed' AND user_id IS NOT NULL
+      AND approved_at IS NOT NULL AND rejected_at IS NULL
+      AND cancelled_at IS NULL AND consumed_at IS NOT NULL)
+  ),
+  CHECK (approved_at IS NULL OR approved_at >= created_at),
+  CHECK (rejected_at IS NULL OR rejected_at >= created_at),
+  CHECK (cancelled_at IS NULL OR cancelled_at >= approved_at),
+  CHECK (consumed_at IS NULL OR consumed_at >= approved_at),
+  CHECK (approved_at IS NULL OR approved_at < expires_at),
+  CHECK (rejected_at IS NULL OR rejected_at < expires_at),
+  CHECK (cancelled_at IS NULL OR cancelled_at < expires_at),
+  CHECK (consumed_at IS NULL OR consumed_at < expires_at),
+  CHECK (
+    (last_polled_at IS NULL AND poll_count = 0)
+    OR
+    (last_polled_at IS NOT NULL
+      AND last_polled_at >= created_at
+      AND poll_count > 0)
+  )
+);
+
+CREATE TABLE IF NOT EXISTS cli_access_tokens (
+  id BIGSERIAL PRIMARY KEY,
+  token_hash TEXT NOT NULL UNIQUE
+    CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+  token_hint TEXT NOT NULL
+    CHECK (token_hint ~ '^svcli_…[A-Za-z0-9_-]{4}$'),
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  client_id TEXT NOT NULL DEFAULT 'social-vibecoding-cli'
+    CHECK (client_id = 'social-vibecoding-cli'),
+  scopes TEXT[] NOT NULL
+    CONSTRAINT cli_access_tokens_scopes_check
+    CHECK (
+      cardinality(scopes) <= 2
+      AND scopes <@ ARRAY['rpc:identity:read', 'api:access']::TEXT[]
+    ),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_used_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ NOT NULL,
+  revoked_at TIMESTAMPTZ,
+  CHECK (expires_at = created_at + INTERVAL '30 days'),
+  CHECK (last_used_at IS NULL OR last_used_at >= created_at),
+  CHECK (revoked_at IS NULL OR revoked_at >= created_at)
+);
+
+CREATE TABLE IF NOT EXISTS cli_auth_audit_events (
+  id BIGSERIAL PRIMARY KEY,
+  event_type TEXT NOT NULL
+    CHECK (event_type IN (
+      'authorization_started', 'authorization_approved',
+      'authorization_rejected', 'authorization_cancelled',
+      'token_issued', 'token_used', 'token_revoked'
+    )),
+  occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  device_authorization_id BIGINT,
+  access_token_id BIGINT,
+  client_id TEXT NOT NULL DEFAULT 'social-vibecoding-cli'
+    CHECK (client_id = 'social-vibecoding-cli'),
+  scopes TEXT[] NOT NULL
+    CONSTRAINT cli_auth_audit_events_scopes_check
+    CHECK (
+      (event_type IN ('token_used', 'token_revoked')
+       AND cardinality(scopes) <= 2
+       AND scopes <@ ARRAY['rpc:identity:read', 'api:access']::TEXT[])
+      OR
+      (event_type NOT IN ('token_used', 'token_revoked')
+       AND (
+         scopes = ARRAY['rpc:identity:read']::TEXT[]
+         OR scopes = ARRAY['rpc:identity:read', 'api:access']::TEXT[]
+       ))
+    ),
+  outcome TEXT NOT NULL DEFAULT 'success'
+    CHECK (
+      (event_type = 'token_used'
+       AND outcome IN ('scope_authorized', 'insufficient_scope'))
+      OR (event_type <> 'token_used' AND outcome = 'success')
+    ),
+  metadata JSONB NOT NULL DEFAULT '{}'
+    CONSTRAINT cli_auth_audit_events_metadata_object_check
+    CHECK (jsonb_typeof(metadata) = 'object'),
+  CONSTRAINT cli_auth_audit_events_metadata_allowlist_check
+    CHECK (
+      (
+        event_type = 'token_used'
+        AND metadata ? 'method'
+        AND metadata ? 'route'
+        AND metadata - ARRAY['method', 'route']::TEXT[] = '{}'::JSONB
+        AND jsonb_typeof(metadata->'method') = 'string'
+        AND metadata->>'method' IN ('GET', 'POST', 'PUT', 'PATCH', 'DELETE')
+        AND jsonb_typeof(metadata->'route') = 'string'
+        AND char_length(metadata->>'route') BETWEEN 1 AND 2048
+        AND metadata->>'route' LIKE '/api/%'
+      )
+      OR (
+        event_type = 'authorization_cancelled'
+        AND metadata = '{"reason":"account_recovery"}'::JSONB
+      )
+      OR (
+        event_type = 'token_revoked'
+        AND metadata ? 'reason'
+        AND jsonb_typeof(metadata->'reason') = 'string'
+        AND metadata->>'reason' IN ('self', 'settings', 'account_recovery')
+        AND metadata - 'reason' = '{}'::JSONB
+      )
+      OR (
+        event_type NOT IN (
+          'token_used', 'authorization_cancelled', 'token_revoked'
+        )
+        AND metadata = '{}'::JSONB
+      )
+    ),
+  CHECK (
+    (event_type IN (
+      'authorization_started', 'authorization_approved',
+      'authorization_rejected', 'authorization_cancelled'
+    ) AND device_authorization_id IS NOT NULL)
+    OR
+    (event_type = 'token_issued'
+      AND device_authorization_id IS NOT NULL
+      AND access_token_id IS NOT NULL)
+    OR
+    (event_type IN ('token_used', 'token_revoked')
+      AND access_token_id IS NOT NULL)
+  )
+);
+
+-- Expand the CLI grant from identity-only to the authenticated user-facing
+-- JSON API.
+-- Existing identity-only rows remain valid until they expire or are revoked;
+-- all newly-created device grants request the exact two-scope set.
+DO $$
+DECLARE
+  constraint_name TEXT;
+  constraint_def TEXT;
+BEGIN
+  SELECT pg_get_constraintdef(oid) INTO constraint_def
+    FROM pg_constraint
+   WHERE conrelid = 'cli_device_authorizations'::regclass
+     AND conname = 'cli_device_authorizations_scopes_check';
+  IF constraint_def IS NOT NULL
+      AND position('api:access' IN constraint_def) = 0 THEN
+    ALTER TABLE cli_device_authorizations
+      DROP CONSTRAINT cli_device_authorizations_scopes_check;
+    ALTER TABLE cli_device_authorizations
+      ADD CONSTRAINT cli_device_authorizations_scopes_check CHECK (
+        scopes = ARRAY['rpc:identity:read']::TEXT[]
+        OR scopes = ARRAY['rpc:identity:read', 'api:access']::TEXT[]
+      );
+  END IF;
+
+  SELECT pg_get_constraintdef(oid) INTO constraint_def
+    FROM pg_constraint
+   WHERE conrelid = 'cli_access_tokens'::regclass
+     AND conname = 'cli_access_tokens_scopes_check';
+  IF constraint_def IS NOT NULL
+      AND position('api:access' IN constraint_def) = 0 THEN
+    ALTER TABLE cli_access_tokens
+      DROP CONSTRAINT cli_access_tokens_scopes_check;
+    ALTER TABLE cli_access_tokens
+      ADD CONSTRAINT cli_access_tokens_scopes_check CHECK (
+        cardinality(scopes) <= 2
+        AND scopes <@ ARRAY['rpc:identity:read', 'api:access']::TEXT[]
+      );
+  END IF;
+
+  -- This table's original multi-column inline CHECK was auto-named
+  -- cli_auth_audit_events_check rather than ..._scopes_check. Discover it
+  -- by the protected column so deployed databases migrate regardless of
+  -- PostgreSQL's generated name; new databases use the explicit name above.
+  SELECT conname, pg_get_constraintdef(oid)
+    INTO constraint_name, constraint_def
+    FROM pg_constraint
+   WHERE conrelid = 'cli_auth_audit_events'::regclass
+     AND contype = 'c'
+     AND position('scopes' IN pg_get_constraintdef(oid)) > 0
+   ORDER BY oid
+   LIMIT 1;
+  IF constraint_def IS NOT NULL
+      AND position('api:access' IN constraint_def) = 0 THEN
+    EXECUTE format(
+      'ALTER TABLE cli_auth_audit_events DROP CONSTRAINT %I',
+      constraint_name
+    );
+    ALTER TABLE cli_auth_audit_events
+      ADD CONSTRAINT cli_auth_audit_events_scopes_check CHECK (
+        (event_type IN ('token_used', 'token_revoked')
+         AND cardinality(scopes) <= 2
+         AND scopes <@ ARRAY['rpc:identity:read', 'api:access']::TEXT[])
+        OR
+        (event_type NOT IN ('token_used', 'token_revoked')
+         AND (
+           scopes = ARRAY['rpc:identity:read']::TEXT[]
+           OR scopes = ARRAY['rpc:identity:read', 'api:access']::TEXT[]
+         ))
+      );
+  END IF;
+END $$;
+
+-- CREATE TABLE does not add new constraints to an existing deployment.
+-- Install the exact audit-metadata allowlist when upgrading an older schema.
+DO $$
+DECLARE
+  constraint_def TEXT;
+BEGIN
+  SELECT pg_get_constraintdef(oid)
+    INTO constraint_def
+      FROM pg_constraint
+     WHERE conrelid = 'cli_auth_audit_events'::regclass
+       AND conname = 'cli_auth_audit_events_metadata_allowlist_check';
+  IF constraint_def IS NOT NULL
+      AND (
+        position('metadata ? ''reason''' IN constraint_def) = 0
+        OR position('''POST''' IN constraint_def) = 0
+        OR position('''PUT''' IN constraint_def) = 0
+        OR position('''PATCH''' IN constraint_def) = 0
+        OR position('''DELETE''' IN constraint_def) = 0
+        OR position('''/api/%''' IN constraint_def) = 0
+      ) THEN
+    ALTER TABLE cli_auth_audit_events
+      DROP CONSTRAINT cli_auth_audit_events_metadata_allowlist_check;
+    constraint_def := NULL;
+  END IF;
+  IF constraint_def IS NULL THEN
+    ALTER TABLE cli_auth_audit_events
+      ADD CONSTRAINT cli_auth_audit_events_metadata_allowlist_check
+      CHECK (
+        (
+          event_type = 'token_used'
+          AND metadata ? 'method'
+          AND metadata ? 'route'
+          AND metadata - ARRAY['method', 'route']::TEXT[] = '{}'::JSONB
+          AND jsonb_typeof(metadata->'method') = 'string'
+          AND metadata->>'method' IN ('GET', 'POST', 'PUT', 'PATCH', 'DELETE')
+          AND jsonb_typeof(metadata->'route') = 'string'
+          AND char_length(metadata->>'route') BETWEEN 1 AND 2048
+          AND metadata->>'route' LIKE '/api/%'
+        )
+        OR (
+          event_type = 'authorization_cancelled'
+          AND metadata = '{"reason":"account_recovery"}'::JSONB
+        )
+        OR (
+          event_type = 'token_revoked'
+          AND metadata ? 'reason'
+          AND jsonb_typeof(metadata->'reason') = 'string'
+          AND metadata->>'reason' IN ('self', 'settings', 'account_recovery')
+          AND metadata - 'reason' = '{}'::JSONB
+        )
+        OR (
+          event_type NOT IN (
+            'token_used', 'authorization_cancelled', 'token_revoked'
+          )
+          AND metadata = '{}'::JSONB
+        )
+      );
+  END IF;
+END $$;
+
+-- Shared token-bucket state. Keys are fixed SHA-256 digests of a
+-- namespace and subject, never raw credentials or addresses.
+CREATE TABLE IF NOT EXISTS cli_auth_rate_limits (
+  bucket_key TEXT PRIMARY KEY CHECK (bucket_key ~ '^[0-9a-f]{64}$'),
+  tokens DOUBLE PRECISION NOT NULL CHECK (tokens >= 0),
+  updated_at TIMESTAMPTZ NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS cli_device_authorizations_expiry_idx
+  ON cli_device_authorizations (expires_at);
+CREATE INDEX IF NOT EXISTS cli_device_authorizations_ip_state_idx
+  ON cli_device_authorizations (request_ip, status, expires_at);
+CREATE INDEX IF NOT EXISTS cli_device_authorizations_state_expiry_idx
+  ON cli_device_authorizations (status, expires_at);
+CREATE INDEX IF NOT EXISTS cli_access_tokens_user_idx
+  ON cli_access_tokens (user_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS cli_access_tokens_expiry_idx
+  ON cli_access_tokens (expires_at);
+CREATE INDEX IF NOT EXISTS cli_access_tokens_revoked_idx
+  ON cli_access_tokens (revoked_at) WHERE revoked_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS cli_auth_audit_events_time_idx
+  ON cli_auth_audit_events (occurred_at DESC);
+CREATE INDEX IF NOT EXISTS cli_auth_audit_events_user_idx
+  ON cli_auth_audit_events (user_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS cli_auth_audit_events_actor_idx
+  ON cli_auth_audit_events (actor_user_id, occurred_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS cli_auth_audit_device_transition_uidx
+  ON cli_auth_audit_events (event_type, device_authorization_id)
+  WHERE event_type IN (
+    'authorization_started', 'authorization_approved',
+    'authorization_rejected', 'authorization_cancelled'
+  );
+CREATE UNIQUE INDEX IF NOT EXISTS cli_auth_audit_token_transition_uidx
+  ON cli_auth_audit_events (event_type, access_token_id)
+  WHERE event_type IN ('token_issued', 'token_revoked');
+CREATE INDEX IF NOT EXISTS cli_auth_rate_limits_expiry_idx
+  ON cli_auth_rate_limits (expires_at);
+
+COMMENT ON TABLE cli_device_authorizations IS 'staging:private';
+COMMENT ON TABLE cli_access_tokens IS 'staging:private';
+COMMENT ON TABLE cli_auth_audit_events IS 'staging:private';
+COMMENT ON TABLE cli_auth_rate_limits IS 'staging:private';
+
 CREATE TABLE IF NOT EXISTS activation_codes (
   id         SERIAL PRIMARY KEY,
   code       VARCHAR(32) UNIQUE NOT NULL,
@@ -422,6 +775,22 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS first_check_failure_
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS last_check_failure_at TIMESTAMPTZ;
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_next_retry_at TIMESTAMPTZ;
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_error_notified_at TIMESTAMPTZ;
+-- Which STAGE a 'pending' check run is in, so the proposal card can say
+-- "Preparing the staging preview…" vs "Running the automated tests…"
+-- instead of one opaque "Checks are still running…" for the whole run.
+-- A run has two very differently-sized halves and both used to look
+-- identical, which made a mid-flight build indistinguishable from a wedged
+-- one. Values:
+--   'building' — the branch is being built and the preview's database
+--                clone is being made (set by the callers that stamp
+--                'pending' BEFORE buildAndDeployStaging).
+--   'testing'  — the preview is healthy and the headless suite is running
+--                against it (set by visuals.captureForSession's own
+--                setChecksPending at capture start).
+-- NULL on legacy rows and after any terminal verdict; the card falls back
+-- to its previous wording for NULL, so nothing regresses on old proposals.
+-- Advisory/display only — the merge gate reads check_state, never this.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_phase VARCHAR(24);
 -- #11: vote-to-undo a merged PR. When the undo majority is reached we
 -- open a `git revert <merge_commit_sha>` PR and insert a new
 -- chat_sessions row pointing back here via revert_of_session_id.
@@ -538,7 +907,9 @@ CREATE INDEX IF NOT EXISTS chat_sessions_created_from_issue_idx
 -- the vote flow rather than opened by the group's AI dev-chat. Append-only:
 -- existing rows read as native (source NULL/'native').
 --   source               = 'native' (implicit for every existing row; a
---                          NULL value is treated as native) vs 'imported'.
+--                          NULL value is treated as native), 'imported', or
+--                          one of the native workflow provenance markers
+--                          documented below (`cli_handoff`, `maintenance`).
 --                          Drives the "Imported PR" source badge + GitHub
 --                          link and the read-only dev surface for imported
 --                          proposals.
@@ -556,6 +927,51 @@ CREATE INDEX IF NOT EXISTS chat_sessions_created_from_issue_idx
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS source               TEXT;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS imported_pr_head_sha VARCHAR(40);
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS imported_pr_author   VARCHAR(255);
+-- Exact revision approved for a native proposal. Imported proposals keep
+-- imported_pr_head_sha as their existing source of truth; native votes,
+-- checks, and merges are bound to this live GitHub PR head instead.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS reviewed_head_sha     VARCHAR(40);
+-- Native CLI handoff sessions. A local Codex/Claude agent can author the
+-- spec and code in the user's checkout, then attach that durable context and
+-- an exact-tree bot-owned commit to an ordinary platform-owned dev session. The row
+-- remains a native session (not an imported PR), so the same chat can be
+-- opened and continued from the web Dev page and uses the normal
+-- staging/checks/promotion pipeline.
+--
+-- handoff_request_id is a caller-generated idempotency key scoped to the
+-- owner. base is the immutable audit anchor, uploaded is the latest bot-owned
+-- commit reconstructed from a local tree, and head is the latest uploaded
+-- revision explicitly submitted to staging/checks. A web Dev turn may advance
+-- the shared branch/checks_commit_sha without overwriting those local audit
+-- values. local_commit is the corresponding commit identity in the user's
+-- checkout; it may differ from uploaded while their trees are identical.
+-- Later local uploads must still continue from the current branch tree.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS handoff_request_id VARCHAR(64);
+-- Immutable digest of proposal_start's normalized app/base/title/spec/history/
+-- issue payload. Live session fields legitimately change after local or web
+-- continuation, so they cannot serve as the idempotency comparison.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS handoff_request_fingerprint VARCHAR(64);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS handoff_base_sha   VARCHAR(40);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS handoff_head_sha   VARCHAR(40);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS handoff_uploaded_sha VARCHAR(40);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS handoff_local_commit_sha VARCHAR(40);
+-- Snapshot of checks_commit_sha immediately before handoff_uploaded_sha was
+-- written. Equality means the upload is still awaiting submission; a later
+-- web turn naturally changes checks_commit_sha and supersedes that upload
+-- without needing to know about CLI-specific state.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS handoff_upload_checked_sha VARCHAR(40);
+-- Deliberately scoped independently of source: a delayed proposal_start retry
+-- must always resolve to the same cross-surface session.
+CREATE UNIQUE INDEX IF NOT EXISTS chat_sessions_handoff_request_idx
+  ON chat_sessions(user_id, handoff_request_id)
+  WHERE handoff_request_id IS NOT NULL;
+
+-- Each local transcript item carries a stable handoffEventId in metadata.
+-- This partial expression index makes append/retry idempotent without
+-- constraining ordinary web-chat rows, whose metadata has no such key.
+CREATE UNIQUE INDEX IF NOT EXISTS chat_session_messages_handoff_event_idx
+  ON chat_session_messages(session_id, (metadata->>'handoffEventId'))
+  WHERE metadata ? 'handoffEventId';
 -- source = 'maintenance' marks proposals opened by a fleet maintenance
 -- campaign (services/fleet-maintenance.js): platform-authored PRs fanned
 -- out to child apps after a maintenance_campaign governance vote passes.
@@ -572,6 +988,33 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS imported_pr_author   VARCHAR(
 --                   journal file (in the CC volume) instead of killing the
 --                   still-running in-container claude. NULL = no turn in
 --                   flight.
+--
+--                   Two further keys cover the POST-AGENT TAIL — the
+--                   minutes-long platform-side stretch after the agent
+--                   exits (push heal → PR → staging build → cards →
+--                   Mayor wrap-up). A `holdTurnRecord` caller keeps the
+--                   record alive across it instead of clearing it at exec
+--                   end, so a restart mid-tail is resumable rather than
+--                   silently dropped (the incident: a turn's chat froze on
+--                   "Building staging preview..." forever because a
+--                   self-app deploy replaced the process mid-build):
+--                     phase — 'tail' once the exec is over and the tail
+--                             owns the record. Absent means the exec may
+--                             still be running. server.js's adoption
+--                             branches read it to log which shape they
+--                             resumed; both go down the same resume path.
+--                     tail  — milestone map of what the tail ALREADY did,
+--                             so a resumed tail repeats none of the steps
+--                             that aren't idempotent:
+--                             { sha, pushOk, prNumber,
+--                               prOpenedEventRecorded, stagingUrl,
+--                               votesResetFor, completionRowPosted,
+--                               wrapUpPosted }.
+--                             finalizeRecoveredTurn takes it as
+--                             `alreadyDone`. Written with jsonb_set
+--                             merges guarded on `active_turn IS NOT NULL`,
+--                             so a late stamp can never resurrect a
+--                             released record.
 --   headless_step = where the headless auto-session loop last checkpointed:
 --                   'planning' (Mayor phase-1) | 'cc_running' (CC turn
 --                   dispatched) | 'wrapping' (Mayor phase-2). Lets
@@ -916,13 +1359,11 @@ CREATE TABLE IF NOT EXISTS pr_votes (
 -- User-first scan for the "My history" view (GET /api/me/history).
 CREATE INDEX IF NOT EXISTS idx_pr_votes_user ON pr_votes (user_id, created_at DESC);
 
--- #687 Slice 3: revision-scoped approvals for IMPORTED PR proposals. A
--- vote cast on an imported proposal is stamped with the PR head commit it
--- was cast against (imported_pr_head_sha at the time), so a later push that
--- moves the head can re-open approval and the merge gate counts only the
--- approvals matching the CURRENT head. NULL for native proposals (whose
--- branch the platform owns) — the gate applies no head filter there, so
--- their counting is byte-for-byte unchanged. Append-only; safe on re-boot.
+-- Revision-scoped approvals for every GitHub PR proposal. Imported proposals
+-- use imported_pr_head_sha; native proposals use reviewed_head_sha. A later
+-- push re-opens approval and the merge gate counts only votes cast against
+-- the current reviewed revision. NULL remains valid for historical rows until
+-- their next promote, vote, or merge reconciliation. Append-only; safe on boot.
 ALTER TABLE pr_votes ADD COLUMN IF NOT EXISTS head_sha VARCHAR(40);
 
 -- Community-voted "priority" + "assigned person" on issues and PR
@@ -1366,6 +1807,30 @@ ALTER TABLE app_favorites ADD COLUMN IF NOT EXISTS sort_order INTEGER;
 -- src/routes/apps.js).
 ALTER TABLE app_favorites ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- Admin-curated "Find more apps" row on the home screen. Global (one
+-- ordered list for everyone — no per-user targeting), display-only, and
+-- zero effect on access: the row is derived client-side from the
+-- `featured` / `featured_order` flags GET /api/apps already serializes
+-- per viewer, so a featured VIEW-PRIVATE app is simply absent for
+-- someone who can't see it — the visibility filter in that query is the
+-- only gate needed.
+--
+-- A table rather than a platform_settings blob so app deletion cascades
+-- and the admin console can join names/icons directly.
+-- Deliberately NOT staging:private: curation is public information (the
+-- row is on every user's home screen). Rows don't exist in prod yet, so
+-- a staging clone starts empty — src/db/migrate.js seeds a few under
+-- IS_STAGING so PR previews can review the row at all.
+-- Written only by PUT /api/admin/featured-apps (full-rewrite, admin
+-- only); read by the LEFT JOIN in GET /api/apps.
+CREATE TABLE IF NOT EXISTS featured_apps (
+  app_id      INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_featured_apps_order ON featured_apps(sort_order);
+
 -- Append-only product-analytics event log. The long-term source of truth
 -- behind the admin /dashboard (growth, retention, and the dapp-usage /
 -- PR-promotion funnels). Rows are written fire-and-forget at action sites
@@ -1425,6 +1890,18 @@ BEGIN
       CHECK (NOT (collab_visibility = 'public' AND view_visibility = 'private'));
   END IF;
 END $$;
+
+-- Anonymous-shell probe result (landing-page app directory).
+--   anon_shell: whether the app's own HTML shell serves without a
+--     platform session. 'public' = anonymous GET / returns 2xx (echo /
+--     lastwin style), 'gated' = it 401s or bounces to the platform (the
+--     scaffold default), 'unknown' = never probed or unclassifiable.
+--     Written ONLY by services/shell-probe.js; consumed by
+--     GET /api/public/apps as `requires_login` (anything not 'public').
+--     'unknown' renders as account-required — the safe default, matching
+--     the scaffold's gated-by-default behavior.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS anon_shell VARCHAR(10) NOT NULL DEFAULT 'unknown';
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS anon_shell_checked_at TIMESTAMPTZ;
 
 -- Per-app proposal-approval governance (issue #646).
 --   approver_policy:    who can approve proposals. 'anyone' = every
@@ -1752,6 +2229,51 @@ CREATE INDEX IF NOT EXISTS idx_progress_estimates_session ON progress_estimates(
 -- no value in a staging clone, so it ships schema-only + empty there.
 COMMENT ON TABLE progress_estimates IS 'staging:private';
 
+-- #892 recalibration columns. The v1 estimator's numeric guess failed every
+-- graduation bar (median error 181s vs a 90s bar, 31% within half-to-double
+-- vs 60%, -110s bias vs +/-60s), but the failure was a SCALE error inherited
+-- from its own prompt, not an absence of signal — within an elapsed bucket
+-- its ranking correlated 0.40-0.56 with the truth. v2 feeds the measured
+-- run-length distribution in as prompt INPUT (llm.js RUN_LENGTH_PRIORS) and
+-- adds a display-side monotonicity guard. These columns are what make the
+-- before/after judgeable and the guard auditable.
+--
+-- `prompt_version` is the important one: without it v1 and v2 pool into a
+-- single average that hides whether the change worked. Existing rows are v1
+-- by definition, hence the DEFAULT 1.
+--
+-- `predicted_remaining_seconds` remains the RAW model output in every path
+-- (clamped, floored and suppressed alike) — the accuracy metrics score the
+-- model, never the guard. `displayed_remaining_seconds` is the post-guard,
+-- post-floor value the user actually saw; on v2 rows it is always positive
+-- (a fixed 30s floor, so the countdown can never stick at zero). The share
+-- of ticks where that floor bound is derived as
+-- `displayed_remaining_seconds <= 30` rather than stored separately.
+ALTER TABLE progress_estimates ADD COLUMN IF NOT EXISTS prompt_version SMALLINT NOT NULL DEFAULT 1;
+ALTER TABLE progress_estimates ADD COLUMN IF NOT EXISTS displayed_remaining_seconds INTEGER;
+-- Guard telemetry. `clamped` = the guard held the previous projection
+-- because an extension had no cause. `slip_reason` names the cause when one
+-- WAS accepted: 'expired' (the projection ran out and the run continues),
+-- 'new_phase' (a new stage marker landed), 'revision' (the model at least
+-- doubled its own previous guess). NULL when no extension happened.
+ALTER TABLE progress_estimates ADD COLUMN IF NOT EXISTS clamped BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE progress_estimates ADD COLUMN IF NOT EXISTS slip_reason VARCHAR(24);
+-- Completion-claim suppression telemetry. `estimate_text` keeps the
+-- UNMODIFIED model phrase (so the dataset still measures the model);
+-- `estimate_text_shown` is what was actually rendered, and `suppressed`
+-- marks the ticks where a "nearly done" claim was replaced because the run
+-- had not yet reached a commit/push/done marker.
+ALTER TABLE progress_estimates ADD COLUMN IF NOT EXISTS estimate_text_shown VARCHAR(120);
+ALTER TABLE progress_estimates ADD COLUMN IF NOT EXISTS suppressed BOOLEAN NOT NULL DEFAULT FALSE;
+-- The two new prompt inputs, recorded so a future offline analysis has them
+-- without re-deriving from chat_session_messages.metadata->'progressLog'.
+ALTER TABLE progress_estimates ADD COLUMN IF NOT EXISTS last_phase VARCHAR(24);
+ALTER TABLE progress_estimates ADD COLUMN IF NOT EXISTS distinct_files INTEGER;
+-- Outcome vocabulary: 'committed' | 'noop' | 'stopped' | 'error' set by the
+-- live backfill at the turn's choke point, plus 'unknown' set by the
+-- estimate-backfill sweeper for rows orphaned by a server restart mid-run
+-- (services/estimate-backfill.js).
+
 -- #297: per-user, read-only "Ask AI" advisor conversations scoped to a
 -- single proposal — the "Mayor in advisor mode" surface. Each row is one
 -- turn the conversation OWNER (user_id) sent or the advisor replied with,
@@ -1796,12 +2318,22 @@ CREATE TABLE IF NOT EXISTS merge_debug_runs (
   app_id      INTEGER REFERENCES apps(id) ON DELETE SET NULL,
   session_id  INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL,
   pr_number   INTEGER,
-  -- 'merge' | 'conflict_resolution'
+  -- 'merge' | 'conflict_resolution' | 'checks'
+  --
+  -- 'checks' reuses this tracer for the proposal-checks pipeline
+  -- (services/visuals.js captureForSession) rather than a merge attempt: one
+  -- run per checks run, with a step per phase (image_build, clone,
+  -- staging_health, capture, tests) carrying detail.durationMs. Added because
+  -- nothing persisted how long a checks run took, so a ~8x slowdown in it
+  -- could only be diagnosed from a container log tail before rotation.
   kind        VARCHAR(32) NOT NULL DEFAULT 'merge',
   -- 'vote' | 'force' | 'post_merge_sweep' | 'drift' | 'behind_main' | 'merge_conflict'
+  --   | 'capture' (kind='checks')
   trigger     VARCHAR(48),
   -- running | merged | blocked | conflict_resolving | conflict_failed
-  --   | awaiting_github | noop | error
+  --   | awaiting_github | noop | error | pr_closed
+  -- A kind='checks' run instead ends on its suite's verdict — passing |
+  -- failing | skipped | error — mirroring chat_sessions.check_state.
   status      VARCHAR(32) NOT NULL DEFAULT 'running',
   summary     TEXT,
   started_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -3016,3 +3548,78 @@ COMMENT ON COLUMN onchain_accounts.registration_code IS 'staging:private';
 -- no-op for every pre-existing account; only the OTP-created path (and,
 -- until it completes set-password, that path alone) ever sets it FALSE.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_set BOOLEAN NOT NULL DEFAULT TRUE;
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- Onboarding flow alignment — email-only platform waitlist, enforced
+-- platform-access gate, block-producer queue (user-onboarding-flows doc).
+-- ═══════════════════════════════════════════════════════════════════════
+
+-- Platform waitlist entries are keyed by EMAIL, not by user: joining
+-- requires no account (`POST /api/public/waitlist`), and admins can
+-- release an email before its owner ever registers. `released_at` is the
+-- release marker; when a `users` row with a matching email is created
+-- (OTP verify or classic register), the linkage step points
+-- `linked_user_id` here and — if already released — grants
+-- `has_platform_access` on the spot. Emails are stored lowercased.
+CREATE TABLE IF NOT EXISTS waitlist_signups (
+  id             BIGSERIAL PRIMARY KEY,
+  email          VARCHAR(255) NOT NULL UNIQUE,
+  submitted_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ip             VARCHAR(45),
+  answers        JSONB,
+  released_at    TIMESTAMPTZ,
+  linked_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_waitlist_signups_released ON waitlist_signups (released_at);
+CREATE INDEX IF NOT EXISTS idx_waitlist_signups_linked_user ON waitlist_signups (linked_user_id);
+COMMENT ON COLUMN waitlist_signups.ip IS 'staging:private';
+
+-- Two-stage waitlist survey (ported from the original topochain
+-- waitlist). `more_token` is the capability for the optional stage-2
+-- "Want in sooner?" form — shown once after joining and carried in the
+-- join email, it lets the signer re-open and merge answers (and verify
+-- GitHub / X handles via OAuth) without an account. NULL for rows that
+-- predate the survey.
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS more_token VARCHAR(64);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_waitlist_signups_more_token
+  ON waitlist_signups (more_token) WHERE more_token IS NOT NULL;
+COMMENT ON COLUMN waitlist_signups.more_token IS 'staging:private';
+
+-- Access + block-production state on the user. `has_platform_access`
+-- gates the SV platform surfaces (home/social/build) — NOT login-required
+-- child apps, which any account may use (see src/middleware/auth.js).
+-- `bp_requested_at`/`bp_released_at` are the block-producer queue: any
+-- user with platform access may ask to produce blocks; an admin releases
+-- them manually, which is what lets the mobile node enable its block
+-- producer (surfaced via GET /api/v4/mobile/me).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS has_platform_access        BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS platform_access_granted_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS bp_requested_at            TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS bp_released_at             TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_users_has_platform_access ON users (has_platform_access);
+
+-- One-time grandfather + legacy-waitlist backfill, guarded by a
+-- platform_settings marker key because this whole file re-runs on every
+-- boot. First boot after deploy: every pre-existing account keeps full
+-- access (the gate only bites signups created after this ships), and the
+-- migrated topochain waitlist columns on `users` are copied into
+-- `waitlist_signups` (those legacy columns stay read-only thereafter).
+-- Later boots: the marker exists, both statements are no-ops.
+UPDATE users
+  SET has_platform_access = TRUE, platform_access_granted_at = NOW()
+  WHERE NOT EXISTS
+    (SELECT 1 FROM platform_settings WHERE key = 'onboarding_gate_grandfathered');
+
+INSERT INTO waitlist_signups (email, submitted_at, ip, answers, linked_user_id)
+  SELECT LOWER(u.email), COALESCE(u.waitlist_submitted_at, NOW()),
+         u.waitlist_ip, u.waitlist_answers, u.id
+  FROM users u
+  WHERE u.is_in_waitlist = TRUE AND u.email IS NOT NULL
+    AND NOT EXISTS
+      (SELECT 1 FROM platform_settings WHERE key = 'onboarding_gate_grandfathered')
+ON CONFLICT (email) DO NOTHING;
+
+INSERT INTO platform_settings (key, value, description) VALUES
+  ('onboarding_gate_grandfathered', 'true',
+    'Marker: the one-time platform-access grandfather + waitlist backfill has run. Do not delete — deleting re-grants access to every account on next boot.')
+ON CONFLICT (key) DO NOTHING;

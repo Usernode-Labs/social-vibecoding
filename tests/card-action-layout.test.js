@@ -238,3 +238,27 @@ test('voteButtonsHtml: full set concatenates Preview/Yes/No/Admin (group-chat ro
   assert.match(html, /castVote\(7, 'no'\)/, 'No');
   assert.match(html, /castAdminMerge\(7\)/, 'Admin merge');
 });
+
+test('native vote controls and request carry the exact rendered revision', async () => {
+  const AppView = makeAppView(ME);
+  const head = 'a'.repeat(40);
+  const html = AppView.voteButtonsHtml(baseProposal({ reviewed_head_sha: head }));
+  assert.match(html, new RegExp(`castVote\\(7, 'yes', '${head}'\\)`));
+  assert.match(html, new RegExp(`castVote\\(7, 'no', '${head}'\\)`));
+  const importedHtml = AppView.voteButtonsHtml(baseProposal({
+    source: 'imported', reviewed_head_sha: head, imported_pr_head_sha: 'b'.repeat(40),
+  }));
+  assert.doesNotMatch(importedHtml, new RegExp(head),
+    'imported proposals keep their established imported-head vote flow');
+
+  let request = null;
+  AppView.__sandbox.fetch = async (url, options) => {
+    request = { url, options };
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  };
+  await AppView.castVote(7, 'yes', head);
+  assert.equal(request.url, '/api/sessions/7/vote');
+  assert.deepEqual(JSON.parse(request.options.body), {
+    vote: 'yes', expectedHeadSha: head,
+  });
+});

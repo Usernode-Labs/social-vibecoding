@@ -39,6 +39,7 @@ function makeRelaySandbox() {
   const nativeMessages = [];
   const timers = new Map();
   let nextTimerId = 1;
+  let sessionWalletRelayAdmitted = true;
   const child = makeChild();
   const outsider = makeChild();
   const fakeWindow = {
@@ -58,6 +59,43 @@ function makeRelaySandbox() {
     _hasNativeChannel: true,
     _BRIDGE_TAG: '[bridge relay test]',
     _RELAY_TIMEOUT_MS: 15000,
+    _sessionWalletRelayAdmitted: true,
+    _PRIVILEGED_CAPABILITY_METHOD: 'getPrivilegedBridgeCapability',
+    isPrivilegedNativeMethod(method) {
+      return [
+        'addHomeScreenShortcut',
+        'getHomeScreenShortcuts',
+        'removeHomeScreenShortcut',
+        'reorderHomeScreenShortcuts',
+        'openNativeScreen',
+        'getProfileInfo',
+        'getSettingsState',
+        'setNodeSleepEnabled',
+        'setDebugMode',
+        'setFacematchStrict',
+        'resetZkChallenge',
+        'requestPermissions',
+        'openBatterySettings',
+        'setIosKeepAlive',
+        'logout',
+        'beginSessionHandoff',
+        'enterAnonymousSession',
+        'completeLogin',
+        'startNode',
+        'stopNode',
+        'getAuthStatus',
+      ].includes(method);
+    },
+    isSessionWalletMethod(method) {
+      return [
+        'getNodeAddress',
+        'getWalletState',
+        'sendTransaction',
+        'signMessage',
+        'txObserved',
+        'getTransactionRecords',
+      ].includes(method);
+    },
     console: {
       log() {},
       warn() {},
@@ -79,6 +117,10 @@ function makeRelaySandbox() {
     listeners,
     nativeMessages,
     outsider,
+    setSessionAdmission(admitted) {
+      sessionWalletRelayAdmitted = admitted === true;
+      sandbox._sessionWalletRelayAdmitted = sessionWalletRelayAdmitted;
+    },
     runTimers() {
       const callbacks = [...timers.values()];
       timers.clear();
@@ -157,6 +199,38 @@ test('relay dispatches every explicitly permitted child method', async (t) => {
   }
 });
 
+test('closed session handoff blocks child wallet methods but preserves safe reads', () => {
+  const ctx = makeRelaySandbox();
+  discover(ctx);
+  ctx.child.posts.length = 0;
+  ctx.setSessionAdmission(false);
+
+  for (const method of [
+    'getNodeAddress',
+    'getWalletState',
+    'sendTransaction',
+    'signMessage',
+  ]) {
+    request(ctx, method, `blocked-${method}`);
+  }
+  request(ctx, 'getBridgeInfo', 'safe-bridge-info');
+  request(ctx, 'getNodeStatus', 'safe-node-status');
+
+  assert.deepEqual(
+    ctx.nativeMessages.map(({ method }) => method),
+    ['getBridgeInfo', 'getNodeStatus']
+  );
+  assert.deepEqual(
+    ctx.child.posts.map(({ message }) => message.error),
+    [
+      'Native wallet handoff is in progress',
+      'Native wallet handoff is in progress',
+      'Native wallet handoff is in progress',
+      'Native wallet handoff is in progress',
+    ]
+  );
+});
+
 test('relay ignores discovery from a window that is not a direct child frame', () => {
   const ctx = makeRelaySandbox();
   dispatch(ctx, ctx.outsider, 'https://attacker.example', {
@@ -193,6 +267,7 @@ test('relay requires a matching discovery source and origin before native dispat
 
 test('relay rejects privileged and unknown child methods before native dispatch', async (t) => {
   const forbidden = [
+    'getPrivilegedBridgeCapability',
     'getProfileInfo',
     'getSettingsState',
     'getTransactionRecords',
@@ -210,8 +285,38 @@ test('relay rejects privileged and unknown child methods before native dispatch'
     'getHomeScreenShortcuts',
     'removeHomeScreenShortcut',
     'reorderHomeScreenShortcuts',
+    'beginSessionHandoff',
+    'enterAnonymousSession',
+    'completeLogin',
+    'startNode',
+    'stopNode',
+    'getAuthStatus',
     'futurePrivilegedMethod',
   ];
+  const explicitlyPrivileged = new Set([
+    'getPrivilegedBridgeCapability',
+    'getProfileInfo',
+    'getSettingsState',
+    'openNativeScreen',
+    'setNodeSleepEnabled',
+    'setDebugMode',
+    'setFacematchStrict',
+    'setIosKeepAlive',
+    'requestPermissions',
+    'resetZkChallenge',
+    'openBatterySettings',
+    'logout',
+    'addHomeScreenShortcut',
+    'getHomeScreenShortcuts',
+    'removeHomeScreenShortcut',
+    'reorderHomeScreenShortcuts',
+    'beginSessionHandoff',
+    'enterAnonymousSession',
+    'completeLogin',
+    'startNode',
+    'stopNode',
+    'getAuthStatus',
+  ]);
 
   for (const method of forbidden) {
     await t.test(method, () => {
@@ -225,7 +330,9 @@ test('relay rejects privileged and unknown child methods before native dispatch'
       assert.equal(ctx.child.posts.length, 1);
       assert.equal(
         ctx.child.posts[0].message.error,
-        'Native capability is not available to embedded child apps'
+        explicitlyPrivileged.has(method)
+          ? 'Privileged Usernode methods are only available to the top-level page'
+          : 'Native capability is not available to embedded child apps'
       );
     });
   }

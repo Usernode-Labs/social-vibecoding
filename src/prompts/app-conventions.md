@@ -421,14 +421,22 @@ slash:
 
 - `path: /app/<self-slug>/dev/proposals/<id>`
 - `path: /leaderboard`
+- `path: /admin/analytics`
 
 The platform recognises these self-app routes and moves them into the
 fragment when capturing and when previewing, so the shot shows the
-changed screen instead of the homepage. Standalone server-rendered pages
-(`/dashboard`, `/admin`, `/status`, `/node-status`) stay as plain
-pathnames. **Always point a deep `path:` at the specific changed
-self-app screen** — omitting it defaults to `/` (the home feed), which
-no capture fix can rescue.
+changed screen instead of the homepage. **The admin surfaces are in-app
+hash routes too**: the former standalone pages (`/dashboard`, `/admin`,
+`/status`, `/node-status`, `/debug`, `/gallery`, `/admin-features`) are
+now sections of the single `#admin` console — write them as
+`/admin/analytics`, `/admin/estimator`, `/admin/status`, `/admin/node`,
+`/admin/merges`, `/admin/gallery`, `/admin/features`. Their old pathnames still resolve
+(they serve client-side redirect stubs into the matching section), but
+pointing `path:` straight at the hash route saves a hop. The only
+genuinely standalone server page left is `/cli/authorize`. **Always
+point a deep `path:` at the specific changed self-app screen** —
+omitting it defaults to `/` (the home feed), which no capture fix can
+rescue.
 
 ## Proposal tests — "CI for proposals"
 
@@ -1507,10 +1515,10 @@ Expected app behavior:
 An **opt-in** CSS + JS kit that makes an app's mobile UI feel native on
 iOS and Android: platform-adaptive switches, native pressed states,
 swipe-to-act list rows, drag-to-reorder lists, pull-to-refresh (inner
-containers or the whole page), bottom sheets, centered modals, action
-sheets, alert dialogs, toasts, blurred nav bars with collapsing large
-titles, inset-grouped list styling, and animated push/pop screen
-transitions — all in vanilla JS + CSS, no build step,
+containers or the whole page), bottom sheets, side drawers, centered
+modals, action sheets, alert dialogs, toasts, blurred nav bars with
+collapsing large titles, inset-grouped list styling, and animated
+push/pop screen transitions — all in vanilla JS + CSS, no build step,
 attaching to the app's existing DOM. It is **available and recommended for mobile-facing
 UI**; adopting it is each app's choice (typically driven from dev chat),
 not a requirement.
@@ -1568,8 +1576,17 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   `opts.content` — default `document.body.firstElementChild` (the
   `#app`-style root); pass it explicitly if your `<body>` has several
   top-level children — and the spinner puck is fixed-positioned.
-  `onRefresh()` returns a Promise and the spinner holds until it
-  settles. For element containers, give them
+  `onRefresh()` returns a Promise; the spinner holds until it settles,
+  then lingers ~500ms before retracting so a fast refresh still reads as
+  one. **The puck never paints over the app's header**: it lives in an
+  overflow-clipped layer stacked underneath the header, anchored by
+  default at the scroller's own top edge (element mode) or the safe-area
+  inset (window mode, which also tucks it under `.un-navbar`). For a
+  custom **fixed** header in window mode, pass `opts.topEl` (the header
+  element — re-measured on resize and at each pull, so a collapsing bar
+  stays correct) or `opts.top` (a px offset); a header that lives
+  *inside* the translated content rides down with the pull and needs no
+  anchor. For element containers, give them
   `overscroll-behavior-y: contain` (the kit also sets it defensively).
   No-op on desktop. Never throws: invalid input logs a console warning
   and returns a no-op `{ detach() }`.
@@ -1613,6 +1630,27 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   idiom. Keyboard avoidance is built in (see below): with the
   on-screen keyboard up, the card re-centers in the visible strip
   above it and shrinks to fit. Returns `{ dismiss(), el }`.
+- **Side panel / drawer.** `unNative.presentPanel({ side?, content |
+  contentEl, width?, onDismiss? })` — a full-height surface that springs
+  in from the **right** edge (`side: 'left'` for the other one) over the
+  same dimmed backdrop, which dims in step with the slide. The
+  navigation-drawer idiom (a hamburger menu, a filter rail): backdrop
+  tap and Escape dismiss, and the drawer's own content supplies the
+  close button / rows. **Deliberately not draggable, and no grabber
+  pill** — swipe-to-dismiss and its affordance are the *bottom sheet's*
+  idiom, for transient trays you flick away; platform nav drawers are
+  opened by a control and closed by choosing something. Consequently
+  scrolling inside the panel is plain native scrolling with nothing to
+  contend with. Safe areas (status bar, home indicator, landscape
+  notch) and the on-screen keyboard are handled: content gets keyboard
+  clearance as padding rather than the box moving, since a full-height
+  panel has nowhere to ride up to. Content is laid out **full-bleed**
+  (no horizontal padding of the kit's own) — a `min-h-full` column flex
+  with `mt-auto` on the last block bottom-anchors a footer with no
+  measurement. `width` accepts any CSS length for this one instance;
+  otherwise it is `--un-panel-width`. Returns `{ dismiss(), el }`.
+  Prefer this to a bottom sheet for persistent navigation, and a bottom
+  sheet for transient trays.
 - **Action sheet.** `unNative.actionSheet({ title?, actions: [{ label,
   destructive?, handler? }], cancelLabel? })` — iOS-style stack with a
   red destructive action and a separate Cancel card; backdrop cancels.
@@ -1784,6 +1822,10 @@ out-specificity-ing kit selectors or copying the stylesheet:
 - `--un-group-bg`, `--un-sheet-bg`, `--un-navbar-bg`, `--un-backdrop`
   — grouped-list cards, sheet/modal/alert surfaces, nav-bar backing,
   overlay dim
+- `--un-panel-bg`, `--un-panel-width` — the side drawer's surface
+  (defaults to `--un-sheet-bg`) and its width (defaults to
+  `min(20rem, 86vw)`). The width is the one piece of drawer geometry
+  that IS themeable — the physics around it are not
 - `--un-popover-bg` — the anchored popover / dropdown-menu surface
   (defaults to `--un-sheet-bg`). **Keep it fully opaque:** a popover has
   no backdrop behind it, so a translucent value lets the page read

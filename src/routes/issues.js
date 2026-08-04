@@ -499,6 +499,14 @@ function issueRoutes(config) {
       return res.status(400).json({ error: `Invalid kind; must be one of ${VALID_KINDS.join(', ')}` });
     }
 
+    // api:access is intentionally not a credential-management capability.
+    // This route multiplexes ordinary issues and secret-change proposals, so
+    // the path policy alone cannot distinguish them. Enforce the boundary at
+    // the kind dispatch before reading, validating, or encrypting a value.
+    if (req.cliAuthenticated && kind === 'secret_change') {
+      return res.status(403).json({ error: 'credential_management_not_available_via_cli' });
+    }
+
     try {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab');
       if (!app) return res.status(404).json({ error: 'App not found' });
@@ -698,28 +706,45 @@ function issueRoutes(config) {
         payload = typeof payload === 'object' && payload ? payload : {};
       }
 
-      // GitHub twin — skipped for secret_change proposals (see
-      // shouldCreateGithubTwin): env-var proposals are in-app governance,
-      // not repo issues (#132). githubIssueNumber stays null for them,
-      // which the INSERT, chat message, and vote-apply path all handle.
+      // GitHub twin — skipped only for platform-governance kinds. A general
+      // issue is represented by its GitHub issue throughout the board, so
+      // never claim success by inserting a local-only row the UI cannot
+      // render. Configuration and upstream failures return before any local
+      // issue/chat state is written.
       let githubIssueNumber = null;
-      if (github.isEnabled() && app.repo_url && shouldCreateGithubTwin(kind)) {
+      if (shouldCreateGithubTwin(kind)) {
+        const parsed = parseOwnerRepo(app.repo_url);
+        if (!github.isEnabled() || !parsed) {
+          return res.status(422).json({
+            error: 'GitHub is not configured for this app; no issue was created.',
+          });
+        }
         try {
-          const [, owner, repo] = app.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-          if (owner && repo) {
-            const ghIssue = await github.createIssue(owner, repo, {
-              title,
-              body: description || '',
+          const ghIssue = await github.createIssue(parsed.owner, parsed.repo, {
+            title,
+            body: description || '',
+          });
+          if (!Number.isInteger(ghIssue?.number) || ghIssue.number <= 0) {
+            throw new Error('GitHub returned an invalid issue number');
+          }
+          githubIssueNumber = ghIssue.number;
+          // #125: seed the open-issues cache so the panel refresh the
+          // pushIssueUpdate below triggers (loadVotePanel → GET
+          // /github-issues) shows this issue immediately instead of
+          // waiting out the cache TTL. Cache bookkeeping is non-authoritative
+          // and must not turn a completed remote create into a retry/duplicate.
+          try {
+            github.noteIssueCreated(parsed.owner, parsed.repo, ghIssue);
+          } catch (cacheErr) {
+            log.warn('issues', 'Created GitHub issue but could not seed cache', {
+              err: cacheErr.message,
             });
-            githubIssueNumber = ghIssue.number;
-            // #125: seed the open-issues cache so the panel refresh the
-            // pushIssueUpdate below triggers (loadVotePanel → GET
-            // /github-issues) shows this issue immediately instead of
-            // waiting out the cache TTL.
-            github.noteIssueCreated(owner, repo, ghIssue);
           }
         } catch (err) {
           log.warn('issues', 'GitHub issue creation failed', { err: err.message });
+          return res.status(503).json({
+            error: 'GitHub issue creation failed; no local issue was created.',
+          });
         }
       }
 
@@ -791,6 +816,13 @@ function issueRoutes(config) {
       );
       if (!issueRows.length) return res.status(404).json({ error: 'Issue not found' });
       const issue = issueRows[0];
+
+      // A vote can be the transition that decrypts and applies a proposed
+      // secret value. api:access deliberately excludes credential management,
+      // so enforce the issue kind after lookup and before touching votes.
+      if (req.cliAuthenticated && issue.kind === 'secret_change') {
+        return res.status(403).json({ error: 'credential_management_not_available_via_cli' });
+      }
 
       if (issue.status !== 'open') {
         return res.status(409).json({ error: 'Issue is not open' });
@@ -1802,6 +1834,13 @@ function issueRoutes(config) {
       }
       const issue = issueRows[0];
 
+      // This multiplexed route force-applies several governance kinds. Keep
+      // the non-secret kinds available to the CLI, but never let api:access
+      // become authority to apply a stored credential value.
+      if (req.cliAuthenticated && issue.kind === 'secret_change') {
+        return res.status(403).json({ error: 'credential_management_not_available_via_cli' });
+      }
+
       // #788: the issue-side counterpart of the force-merge widening —
       // an app's own declared admins may force-apply that app's
       // governance proposals. Issue proposals never carry the
@@ -1865,6 +1904,13 @@ function issueRoutes(config) {
       );
       if (!issueRows.length) return res.status(404).json({ error: 'Issue not found' });
       const issue = issueRows[0];
+
+      // Withdrawing a secret proposal changes credential state just as voting
+      // or force-applying it does. Keep this multiplexed close route usable for
+      // ordinary governance proposals, but not through a CLI bearer grant.
+      if (req.cliAuthenticated && issue.kind === 'secret_change') {
+        return res.status(403).json({ error: 'credential_management_not_available_via_cli' });
+      }
 
       // Creator-only. (Admins already have other paths — admin merge / direct
       // GitHub close — so the gate stays creator-scoped per the spec.)

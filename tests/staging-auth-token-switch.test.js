@@ -55,8 +55,12 @@ function makePool(handlers) {
 
 // Cookie session belongs to the NON-admin capture user (id 2); the token
 // user is the view-only admin (id 3) — the exact checks-runner shape.
-const COOKIE_USER = { user_id: 2, username: 'usernode-capture', is_admin: false, admin_readonly: false, app_quota: 0, ai_progress_estimate: false, expires_at: new Date(Date.now() + 3600_000).toISOString() };
-const TOKEN_USER = { id: 3, username: 'usernode-capture-admin', is_admin: true, admin_readonly: true, app_quota: 0, ai_progress_estimate: false };
+// Both carry has_platform_access: staging users are cloned from prod,
+// where every pre-gate account was grandfathered (onboarding flow
+// alignment) — without the flag the access gate would bounce them to the
+// waiting room before the token-switch logic under test even runs.
+const COOKIE_USER = { user_id: 2, username: 'usernode-capture', is_admin: false, admin_readonly: false, app_quota: 0, ai_progress_estimate: false, has_platform_access: true, expires_at: new Date(Date.now() + 3600_000).toISOString() };
+const TOKEN_USER = { id: 3, username: 'usernode-capture-admin', is_admin: true, admin_readonly: true, app_quota: 0, ai_progress_estimate: false, has_platform_access: true };
 
 function loadMiddleware(pool) {
   const ids = {

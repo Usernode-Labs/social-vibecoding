@@ -3,10 +3,9 @@
 // Covers (spec "Tests"):
 //   - github.mergePR forwards an optional `sha` to octokit.rest.pulls.merge,
 //     and surfaces GitHub's 409 (only when a sha was pinned) as a distinct
-//     HeadMovedError; native calls (no sha) keep the raw error.
-//   - checkAndMerge passes imported_pr_head_sha for source='imported' rows,
-//     leaves the row recoverable ('promoted') on a head-moved 409, and does
-//     NOT error the proposal.
+//     HeadMovedError; generic calls without a sha keep the raw error.
+//   - checkAndMerge pins imported rows to imported_pr_head_sha and native rows
+//     to reviewed_head_sha; imported head-moved recovery stays unchanged.
 //   - finalizeMerge runs byte-for-byte identically for native and imported
 //     merges (same deploy/stamp/teardown/announce tail).
 //
@@ -74,7 +73,7 @@ test('mergePR: forwards sha to octokit and returns the merge data', async () => 
   }
 });
 
-test('mergePR: omits sha entirely when none is passed (native path unchanged)', async () => {
+test('mergePR: omits sha entirely when a generic caller passes none', async () => {
   const github = require('../src/services/github');
   let seenParams = null;
   github._setOctokitFactoryForTests(() => ({
@@ -108,7 +107,7 @@ test('mergePR: a 409 with a pinned sha becomes a HeadMovedError', async () => {
   }
 });
 
-test('mergePR: a 409 WITHOUT a pinned sha is NOT reinterpreted (native)', async () => {
+test('mergePR: a 409 WITHOUT a pinned sha is NOT reinterpreted', async () => {
   const github = require('../src/services/github');
   github._setOctokitFactoryForTests(() => ({
     rest: { pulls: { merge: async () => { const e = new Error('not mergeable'); e.status = 409; throw e; } } },
@@ -224,12 +223,21 @@ const nativeSession = {
   id: 11, app_id: 5, app_slug: 'demo', app_self_hosted: false,
   repo_url: 'https://github.com/acme/demo', pr_number: 30,
   pr_title: 'Native change', user_id: 3, behind_main: 0, source: 'native',
+  reviewed_head_sha: 'b'.repeat(40),
 };
 const importedSession = {
   id: 12, app_id: 5, app_slug: 'demo', app_self_hosted: false,
   repo_url: 'https://github.com/acme/demo', pr_number: 31,
   pr_title: 'Imported change', user_id: 4, behind_main: 0,
   source: 'imported', imported_pr_head_sha: 'reviewedhead',
+};
+const cliSession = {
+  id: 13, app_id: 5, app_slug: 'demo', app_self_hosted: false,
+  repo_url: 'https://github.com/acme/demo', pr_number: 32,
+  pr_title: 'CLI handoff change', user_id: 5, behind_main: 0,
+  source: 'cli_handoff', handoff_head_sha: 'lastlocalhead',
+  checks_commit_sha: 'sharedreviewedhead',
+  reviewed_head_sha: 'sharedreviewedhead',
 };
 
 function mergeReadyPool() {
@@ -240,18 +248,24 @@ function mergeReadyPool() {
   ]);
 }
 
-test('checkAndMerge: imported merge pins imported_pr_head_sha; native passes no sha', async () => {
+test('checkAndMerge: imported, native, and CLI handoff merges pin their reviewed head SHA', async () => {
   const { subject, mergeCalls, restore } = loadVotes({
     mergeImpl: () => ({ sha: 'squashsha', merged: true }),
   });
   try {
     await subject.checkAndMerge({ jwtSecret: 's' }, mergeReadyPool(), { ...importedSession }, { force: true });
+    await subject.checkAndMerge({ jwtSecret: 's' }, mergeReadyPool(), { ...cliSession }, { force: true });
     await subject.checkAndMerge({ jwtSecret: 's' }, mergeReadyPool(), { ...nativeSession }, { force: true });
 
     const imported = mergeCalls.find((c) => c.prNumber === 31);
+    const cli = mergeCalls.find((c) => c.prNumber === 32);
     const native = mergeCalls.find((c) => c.prNumber === 30);
     assert.equal(imported.sha, 'reviewedhead', 'imported merge pins the reviewed head sha');
-    assert.ok(native.sha == null, 'native merge passes no sha');
+    assert.equal(cli.sha, cliSession.reviewed_head_sha,
+      'CLI handoff merge pins its reviewed head sha');
+    assert.equal(native.sha, nativeSession.reviewed_head_sha,
+      'native merge pins its reviewed head sha');
+    assert.equal(subject.reviewedHeadForSession(cliSession), cliSession.reviewed_head_sha);
   } finally {
     restore();
   }

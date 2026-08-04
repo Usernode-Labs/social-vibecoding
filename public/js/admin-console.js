@@ -6,14 +6,37 @@
 // (public/js/app.js), the same shape as the Challenges / Profile screens.
 //
 // It reorganizes the standalone /admin page's sections (public/admin.html:
-// Operations overview, LLM spend limits, Activation codes, Users) plus the
-// /admin-features viewer (public/js/admin-features.js) into one page with
-// a navigation menu — a fixed sidebar on md+ viewports, a horizontally
-// scrollable tab strip below md (the Dev board's mobile kanban-tabs
-// pattern, #814). Every data endpoint is an EXISTING /api/admin/* route,
-// enforced server-side by adminMiddleware (reads) and requireAdminWrite
-// (mutations) — this module adds no new capabilities and no new endpoints;
-// the legacy standalone pages keep working unchanged.
+// Operations overview, Maintenance campaigns, LLM spend limits, Activation
+// codes, Users) plus the /admin-features viewer into one page with a
+// navigation menu — a fixed sidebar on md+ viewports. Every data endpoint
+// is an EXISTING route, enforced server-side by adminMiddleware (reads)
+// and requireAdminWrite (mutations) — this module adds no new capabilities
+// and no new endpoints.
+//
+// MOBILE HIERARCHY: below md the sidebar has no room, and the horizontally
+// scrolling tab strip that used to stand in for it (the Dev board's
+// kanban-tabs pattern, #814) made sixteen ungrouped sections a thumb-swipe
+// scavenger hunt. Phones now get a real two-level nav instead:
+//
+//   level 1 (#admin)        the grouped section menu, one tappable row per
+//                           section under the same Operations / People /
+//                           Insights / Platform headings as the sidebar;
+//   level 2 (#admin/<key>)  that one section, full width, with the platform
+//                           header's back button flipped to an arrow and
+//                           its title set to the section label.
+//
+// The hash stays the single source of truth for WHICH section shows; the
+// level is derived from it (bare #admin on mobile = the menu). A menu tap
+// is a REAL hash navigation, so it pushes a history entry and the device /
+// WebView back gesture pops back to the menu through exactly the same code
+// path as the on-screen arrow (see _openSection / handleBack / route).
+// Desktop is untouched: same sidebar, same instant switching, same URLs.
+//
+// #860 completed the consolidation: /status, /node-status, /dashboard,
+// /debug and /gallery are sections here too, and all seven old URLs are
+// now client-side redirect stubs into the matching #admin/<key>. Nothing
+// in the admin experience opens a new browser tab any more, which is why
+// the old TOOLS external-link block is gone.
 //
 // Permissions: the page itself is reachable for anyone with
 // App.user.isAdmin (full AND view-only admins — the navigation gate lives
@@ -23,62 +46,318 @@
 // "View as non-admin" preview masks both flags before this module can read
 // them (see the boot masking in app.js), so no extra handling is needed
 // here. Never gated on USERNODE_ENV — identical in staging and production.
+//
+// PUBLIC MODE (#860): the two sections carrying a `public: true` flag —
+// Health & status and Node & chain — were publicly reachable as /status
+// and /node-status before the fold, so they stay reachable for a
+// signed-in NON-admin who follows an old link. app.js mounts the console
+// in public mode for those, and _publicMode() below filters the menu down
+// to just them and suppresses the view-only banner. The DATA boundary is
+// entirely server-side: GET /api/status runs the payload through
+// src/services/status.js redact(), which withholds worker progress, model
+// names, spend, host load, stuck sessions and the event log from
+// non-admins.
 
 const AdminConsole = {
   _open: false,
   _section: 'overview',
   _menusWired: false,
+  // Set by app.js when the console is mounted for a non-admin who
+  // deep-linked one of the `public` sections. Never true for an admin.
+  _public: false,
+  // The section module (if any) currently rendered — used to call its
+  // destroy() before swapping in the next one. See _renderSection.
+  _activeModule: null,
 
-  // In-SPA sections. Keys are the #admin/<key> hash segments.
+  // ── Mobile two-level state ───────────────────────────────────────────
+  // Which level the phone layout is showing: 1 = the section menu,
+  // 2 = one section. Kept in sync on desktop too (it is ignored there)
+  // so a viewport crossing resolves without guessing.
+  _level: 1,
+  // True while the level-2 entry we're sitting on was PUSHED by a menu
+  // tap during this mount — the only case where history.back() is
+  // guaranteed to land on our own menu entry. A deep link (bookmark, one
+  // of the retired-page redirect stubs) leaves it false, and back
+  // replaces the entry instead of creating a forward one. Per-mount
+  // state: open() resets it, because the stack below the console stops
+  // being ours to reason about the moment we leave.
+  _pushedFromMenu: false,
+  // #admin-screen scrollTop saved on drill-in, restored on the way back.
+  _menuScrollTop: 0,
+  _mediaBound: false,
+
+  // The single source of truth in JS for where the sidebar layout starts.
+  // Must stay in step with the `md:` classes in _renderShell (Tailwind's
+  // md breakpoint IS 768px) — same discipline as AppView's
+  // KANBAN_MULTICOL_MEDIA / _STAGING_DOCK_MEDIA.
+  DESKTOP_MEDIA: '(min-width: 768px)',
+
+  // In-SPA sections. Keys are the #admin/<key> hash segments; `group` is
+  // the heading they sit under — in the desktop sidebar AND in the mobile
+  // level-1 menu, which share _groupedSections(). Order here IS menu order.
   SECTIONS: [
-    { key: 'overview', label: 'Overview' },
-    { key: 'users', label: 'Users' },
-    { key: 'codes', label: 'Activation codes' },
-    { key: 'limits', label: 'Spend limits' },
-    { key: 'features', label: 'Submitted features' },
-    { key: 'rollover', label: 'Container rollover' },
-    { key: 'staging-reap', label: 'Stale previews' },
-    { key: 'db-export', label: 'Database export' },
+    { key: 'overview', label: 'Overview', group: 'Operations' },
+    // Health & status and Node & chain are the two `public` sections —
+    // see the PUBLIC MODE note above.
+    { key: 'status', label: 'Health & status', group: 'Operations', public: true },
+    { key: 'node', label: 'Node & chain', group: 'Operations', public: true },
+    { key: 'merges', label: 'Merge debug', group: 'Operations' },
+    { key: 'rollover', label: 'Container rollover', group: 'Operations' },
+    { key: 'staging-reap', label: 'Stale previews', group: 'Operations' },
+
+    { key: 'users', label: 'Users', group: 'People' },
+    { key: 'codes', label: 'Activation codes', group: 'People' },
+    { key: 'limits', label: 'Spend limits', group: 'People' },
+
+    { key: 'analytics', label: 'Analytics', group: 'Insights' },
+    // Estimator accuracy (#898): platform analytics, split out of the
+    // Analytics section, which is otherwise entirely USER analytics.
+    { key: 'estimator', label: 'Estimator accuracy', group: 'Insights' },
+    { key: 'gallery', label: 'Screenshot gallery', group: 'Insights' },
+    { key: 'features', label: 'Submitted features', group: 'Insights' },
+
+    { key: 'campaigns', label: 'Maintenance campaigns', group: 'Platform' },
+    // The home screen's "Featured apps" row. NOT the `features` key
+    // above — that one is "Submitted features" (user feature requests).
+    { key: 'featured-apps', label: 'Featured apps', group: 'Platform' },
+    { key: 'db-export', label: 'Database export', group: 'Platform' },
     // Topochain (Task 15, migration plan Global Constraint #8): ONE
     // section, its own sub-nav under #admin/topochain/<sub> — see
-    // renderTopochainSection below and public/js/admin-topochain.js,
+    // SECTION_MODULES below and public/js/admin-topochain.js,
     // which owns that second hash level entirely on its own (mirrors
     // leaderboard.js's _setSub/_syncHash pattern) rather than teaching
-    // this file general multi-level routing.
-    { key: 'topochain', label: 'Topochain' },
-  ],
-
-  // Heavier admin surfaces that stay standalone full-browser pages for
-  // now (each is its own sizable app — see the spec's deferred work).
-  // Rendered as external links at the bottom of the menu.
-  TOOLS: [
-    { href: '/dashboard', label: 'Analytics dashboard' },
-    { href: '/debug', label: 'Merge debug' },
-    { href: '/gallery', label: 'Gallery' },
-    { href: '/status', label: 'Platform status' },
+    // this file general multi-level routing. Maintenance campaigns does
+    // the same for #admin/campaigns/<id>.
+    { key: 'topochain', label: 'Topochain', group: 'Platform' },
   ],
 
   isOpen() { return AdminConsole._open; },
+
+  // Below the sidebar breakpoint — i.e. the two-level layout is live.
+  // Anything that can't answer (no matchMedia) is treated as desktop, so
+  // a browser without it keeps today's behaviour rather than a phone
+  // layout it never asked for.
+  _isMobile() {
+    try { return !window.matchMedia(AdminConsole.DESKTOP_MEDIA).matches; }
+    catch { return false; }
+  },
+
+  // One-time viewport listener: crossing the breakpoint re-resolves the
+  // layout in place. Crossing UP renders the active section in the
+  // sidebar shell; crossing DOWN keeps that section as level 2 (no menu
+  // flash) and writes its explicit hash so the address matches what's on
+  // screen. Lazy-bound like AppView._ensureStagingDockListeners.
+  _ensureMediaListener() {
+    if (AdminConsole._mediaBound || !window.matchMedia) return;
+    try {
+      const mql = window.matchMedia(AdminConsole.DESKTOP_MEDIA);
+      const onChange = () => {
+        if (!AdminConsole._open) return;
+        // A real section is showing (or was, on desktop) → keep it as
+        // level 2 on the way down. Only a menu-level mobile view, or a
+        // desktop view sitting on the bare #admin overview, lands on 1.
+        if (!mql.matches && AdminConsole._level !== 1) {
+          AdminConsole._writeHash(AdminConsole._section);
+        }
+        AdminConsole._renderShell();
+        AdminConsole._renderContent();
+        AdminConsole._syncChrome();
+      };
+      if (mql.addEventListener) mql.addEventListener('change', onChange);
+      else if (mql.addListener) mql.addListener(onChange);
+      AdminConsole._mediaBound = true;
+    } catch { /* no matchMedia — desktop path stands */ }
+  },
+
+  // True while the console is mounted for a non-admin on a `public`
+  // section. Belt-and-braces: also require the absence of isAdmin, so a
+  // stale flag can never narrow an admin's own menu.
+  _publicMode() {
+    return !!AdminConsole._public && !(window.App && App.user && App.user.isAdmin);
+  },
+
+  // The sections the current viewer may navigate to.
+  _visibleSections() {
+    return AdminConsole._publicMode()
+      ? AdminConsole.SECTIONS.filter((s) => s.public)
+      : AdminConsole.SECTIONS;
+  },
 
   // Single write gate for every mutating control on the page. View-only
   // admins (is_admin && admin_readonly) carry isAdmin but not
   // canAdminWrite — they see everything read-only.
   canWrite() { return !!(window.App && App.user && App.user.canAdminWrite); },
 
-  open(section) {
+  // `opts.public` is set by app.js when a non-admin deep-linked one of the
+  // `public` sections; it must be resolved BEFORE the first _renderShell so
+  // the menu is filtered on the very first paint.
+  open(section, opts) {
     AdminConsole._open = true;
-    const valid = AdminConsole.SECTIONS.some((s) => s.key === section);
+    AdminConsole._public = !!(opts && opts.public);
+    AdminConsole._pushedFromMenu = false;
+    AdminConsole._menuScrollTop = 0;
+    AdminConsole._ensureMediaListener();
+    const visible = AdminConsole._visibleSections();
+    const valid = visible.some((s) => s.key === section);
+    // In public mode, fall back to the first PUBLIC section rather than
+    // Overview (which the viewer can't see) — and never resurrect a
+    // last-visited admin section from an earlier admin login in this tab.
+    const fallback = AdminConsole._publicMode()
+      ? (visible.some((s) => s.key === AdminConsole._section) ? AdminConsole._section : visible[0]?.key)
+      : (AdminConsole._section || 'overview');
+    // On mobile, a bare #admin means the MENU — never a last-visited
+    // section resurrected from earlier in this tab. On desktop it keeps
+    // meaning Overview (or the last section), exactly as before.
+    if (AdminConsole._isMobile() && !valid) {
+      AdminConsole._level = 1;
+      AdminConsole._section = fallback;
+      AdminConsole._renderShell();
+      AdminConsole._renderContent();
+      AdminConsole._syncChrome();
+      return;
+    }
+    AdminConsole._level = 2;
     AdminConsole._renderShell();
     // Deep-linked section wins; otherwise keep the last-visited section
     // (instant repaint on re-entry), defaulting to Overview.
-    AdminConsole.setSection(
-      valid ? section : (AdminConsole._section || 'overview'),
-      { writeHash: false }
-    );
+    AdminConsole.setSection(valid ? section : fallback, { writeHash: false });
+    // Runs after app.js's own setHeaderTitle, so on a mobile deep link the
+    // header ends up showing the section's name rather than the console's.
+    AdminConsole._syncChrome();
   },
 
   close() {
     AdminConsole._open = false;
+    AdminConsole._public = false;
+    AdminConsole._pushedFromMenu = false;
+    // Tear the active section's timers/listeners down: leaving the console
+    // must not leave a 5s /api/status or 2s /api/node-status poll running
+    // for the life of the tab (see _teardownActiveSection).
+    AdminConsole._teardownActiveSection();
+  },
+
+  // Re-entry while the console is ALREADY mounted (app.js routes here
+  // instead of re-running the whole screen swap — see
+  // navigateToAdminConsole). Resolves the target level from the requested
+  // section, picks the transition direction by comparing it to the level
+  // we're on, and repaints. On desktop this is just setSection.
+  route(section, opts) {
+    if (opts && typeof opts.public === 'boolean') AdminConsole._public = !!opts.public;
+    const visible = AdminConsole._visibleSections();
+    const valid = !!section && visible.some((s) => s.key === section);
+    if (!AdminConsole._isMobile()) {
+      // Desktop: bare #admin is Overview, as it has always been.
+      AdminConsole.setSection(
+        valid ? section : (AdminConsole._publicMode() ? (visible[0]?.key || 'status') : 'overview'),
+        { writeHash: false },
+      );
+      AdminConsole._level = 2;
+      AdminConsole._syncChrome();
+      return;
+    }
+    const targetLevel = valid ? 2 : 1;
+    // 1→2 push, 2→1 pop, same level (section→section deep link) instant:
+    // the kit's fidelity rule is no animation on same-level repaints.
+    const type = targetLevel === AdminConsole._level
+      ? 'none'
+      : (targetLevel === 2 ? 'push' : 'pop');
+    if (targetLevel === 2) {
+      AdminConsole._menuScrollTop = AdminConsole._level === 1
+        ? AdminConsole._scrollTop()
+        : AdminConsole._menuScrollTop;
+      AdminConsole._section = section;
+    } else {
+      AdminConsole._pushedFromMenu = false;
+    }
+    AdminConsole._level = targetLevel;
+    AdminConsole._transition(() => {
+      AdminConsole._renderShell();
+      AdminConsole._renderContent();
+      AdminConsole._syncChrome();
+      AdminConsole._restoreScroll();
+    }, type);
+  },
+
+  // The on-screen back arrow AND the platform header's back button both
+  // land here (app.js:back-btn). Returns true when the press was consumed
+  // — i.e. mobile, inside a section — so the header falls through to
+  // navigateHome() everywhere else (all of desktop included).
+  handleBack() {
+    if (!AdminConsole._open) return false;
+    if (!AdminConsole._isMobile() || AdminConsole._level !== 2) return false;
+    if (AdminConsole._pushedFromMenu) {
+      // We pushed that entry ourselves, so the one below it IS our menu:
+      // popping routes back through popstate → restoreFromHash → route(),
+      // the same path the device back gesture takes.
+      history.back();
+      return true;
+    }
+    // Deep link / redirect stub: nothing of ours below. REPLACE the entry
+    // with the menu rather than pushing one, so back can't bounce the
+    // viewer between the section and the menu forever.
+    try { history.replaceState(null, '', '#admin'); } catch { /* non-fatal */ }
+    AdminConsole._level = 1;
+    AdminConsole._transition(() => {
+      AdminConsole._renderShell();
+      AdminConsole._renderContent();
+      AdminConsole._syncChrome();
+      AdminConsole._restoreScroll();
+    }, 'pop');
+    return true;
+  },
+
+  // Drill-in from a level-1 menu row. A REAL hash navigation (the
+  // leaderboard profile drill-in precedent) so the pushed entry makes the
+  // browser / WebView back gesture work for free; restoreFromHash routes
+  // it back into route() a tick later. Assigning location.hash preserves
+  // the query string, so ?demo=1 survives the drill-in.
+  _openSection(key) {
+    AdminConsole._menuScrollTop = AdminConsole._scrollTop();
+    AdminConsole._pushedFromMenu = true;
+    const target = `#admin/${key}`;
+    if (location.hash === target) {
+      // Same-value assignment fires no hashchange — route by hand.
+      AdminConsole.route(key);
+      return;
+    }
+    location.hash = target;
+  },
+
+  _transition(fn, type) {
+    if (window.PlatformUI?.transition) PlatformUI.transition(fn, { type: type || 'none' });
+    else fn();
+  },
+
+  _scrollTop() {
+    const el = document.getElementById('admin-screen');
+    return el ? el.scrollTop : 0;
+  },
+
+  // A pushed screen starts at the top; a pop restores where the menu was.
+  _restoreScroll() {
+    const el = document.getElementById('admin-screen');
+    if (!el) return;
+    el.scrollTop = (AdminConsole._isMobile() && AdminConsole._level === 1)
+      ? AdminConsole._menuScrollTop
+      : 0;
+  },
+
+  // Platform-header chrome for the current level: inside a mobile section
+  // the header becomes that section's nav bar (arrow + section name),
+  // everywhere else it stays the console's own title and the home icon.
+  // setHeaderTitle mirrors into document.title, so the native shell's
+  // AppBar picks the section name up too.
+  _syncChrome() {
+    if (!window.App) return;
+    const inSection = AdminConsole._isMobile() && AdminConsole._level === 2;
+    if (App.setBackIcon) App.setBackIcon(inSection ? 'arrow' : 'home');
+    if (!App.setHeaderTitle) return;
+    if (inSection) {
+      const s = AdminConsole._visibleSections().find((x) => x.key === AdminConsole._section);
+      App.setHeaderTitle(s ? s.label : 'Admin & moderation');
+    } else {
+      App.setHeaderTitle(AdminConsole._publicMode() ? 'Platform status' : 'Admin & moderation');
+    }
   },
 
   esc(s) {
@@ -139,61 +418,87 @@ const AdminConsole = {
     } catch { return false; }
   },
 
-  // ── Shell: menu (sidebar / tab strip) + content host ──────────────────
+  // ── Shell: menu (sidebar / mobile list) + content host ────────────────
 
-  _navItemsHtml(mode) {
-    // mode 'side' → vertical sidebar rows; mode 'tabs' → the mobile strip.
+  // The visible sections bucketed by `group`, in first-appearance order.
+  // Shared by the desktop sidebar and the mobile level-1 menu so the two
+  // can never drift into different groupings.
+  _groupedSections() {
+    const groups = [];
+    for (const s of AdminConsole._visibleSections()) {
+      const name = s.group || 'Other';
+      let g = groups.find((x) => x.name === name);
+      if (!g) { g = { name, items: [] }; groups.push(g); }
+      g.items.push(s);
+    }
+    return groups;
+  },
+
+  // Desktop sidebar rows, grouped under headings. Sixteen flat rows is a
+  // lot to scan; the headings are the mitigation (and stay cheap — no
+  // second level of nav state).
+  _navItemsHtml() {
     const active = AdminConsole._section;
-    const items = AdminConsole.SECTIONS.map((s) => {
+    const itemHtml = (s) => {
       const isActive = s.key === active;
-      const cls = mode === 'side'
-        ? 'admin-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm font-medium transition-colors '
-          + (isActive
-            ? 'bg-violet-600/10 text-violet-600 dark:text-violet-400'
-            : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800')
-        : 'admin-nav-item shrink-0 px-3 py-2 text-sm font-medium border-b-2 whitespace-nowrap transition-colors '
-          + (isActive
-            ? 'border-violet-500 text-violet-600 dark:text-violet-400'
-            : 'border-transparent text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300');
+      const cls = 'admin-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm font-medium transition-colors '
+        + (isActive
+          ? 'bg-violet-600/10 text-violet-600 dark:text-violet-400'
+          : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800');
       return `<button type="button" role="tab" aria-selected="${isActive ? 'true' : 'false'}"
         data-admin-section="${s.key}" class="${cls}">${AdminConsole.esc(s.label)}</button>`;
-    }).join('');
-    const toolCls = mode === 'side'
-      ? 'flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-zinc-500 hover:text-violet-500 dark:hover:text-violet-400 hover:bg-zinc-100 dark:hover:bg-zinc-800'
-      : 'shrink-0 flex items-center gap-1 px-3 py-2 text-sm text-zinc-500 hover:text-violet-500 whitespace-nowrap border-b-2 border-transparent';
-    const tools = AdminConsole.TOOLS.map((t) =>
-      `<a href="${t.href}" target="_blank" rel="noopener" class="${toolCls}">
-        <span>${AdminConsole.esc(t.label)}</span>
-        <svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
-      </a>`).join('');
-    if (mode === 'side') {
-      return `${items}
-        <div class="mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800">
-          <div class="px-3 pb-1 text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500">More tools</div>
-          ${tools}
-        </div>`;
-    }
-    return items + tools;
+    };
+    return AdminConsole._groupedSections().map((g, i) => `
+      <div class="${i === 0 ? '' : 'mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800'}">
+        <div class="px-3 pb-1 text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500">${AdminConsole.esc(g.name)}</div>
+        ${g.items.map(itemHtml).join('')}
+      </div>`).join('');
+  },
+
+  // Mobile level 1: the section menu. A list, not a tab set — so plain
+  // buttons in a <nav>, no role="tab"/aria-selected, and the drawer-row
+  // idiom from index.html (44px minimum, hairline between rows, chevron
+  // on the right) rather than the kit's inset-grouped card, which would
+  // read as a foreign surface next to the rest of the platform.
+  _mobileMenuHtml() {
+    const chevron = `<svg class="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>`;
+    const rowHtml = (s) => `
+      <button type="button" data-admin-section="${s.key}"
+              class="admin-menu-row flex items-center gap-3 w-full text-left min-h-[44px] px-4 py-2
+                     border-b border-zinc-100 dark:border-zinc-800
+                     text-zinc-700 dark:text-zinc-200
+                     hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors">
+        <span class="flex-1 min-w-0 text-sm font-medium truncate">${AdminConsole.esc(s.label)}</span>
+        ${chevron}
+      </button>`;
+    const groups = AdminConsole._groupedSections().map((g) => `
+      <div class="mb-5">
+        <div class="px-4 pb-1.5 text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500">${AdminConsole.esc(g.name)}</div>
+        <div class="rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900
+                    [&>button:last-child]:border-b-0">
+          ${g.items.map(rowHtml).join('')}
+        </div>
+      </div>`).join('');
+    return `<nav id="admin-mobile-menu" aria-label="Admin sections" class="-mx-4">${groups}</nav>`;
   },
 
   _renderShell() {
     const root = document.getElementById('admin-root');
     if (!root) return;
-    const viewOnly = !AdminConsole.canWrite();
+    // In public mode the viewer isn't an admin at all, so the view-only
+    // ADMIN banner would be nonsense — suppress it rather than showing an
+    // amber "you can't make changes" strip to a regular member.
+    const viewOnly = !AdminConsole.canWrite() && !AdminConsole._publicMode();
     root.innerHTML = `
       <div class="md:flex md:items-start md:gap-6">
-        <!-- Desktop sidebar menu -->
+        <!-- Desktop sidebar menu. Below md there is no nav here at all:
+             phones get the two-level hierarchy instead (the level-1 menu
+             renders INTO #admin-section-content). -->
         <nav id="admin-nav-desktop" aria-label="Admin sections"
              class="hidden md:block md:w-56 shrink-0 space-y-1">
-          ${AdminConsole._navItemsHtml('side')}
+          ${AdminConsole._navItemsHtml()}
         </nav>
         <div class="flex-1 min-w-0">
-          <!-- Mobile tab strip (the Dev board kanban-tabs pattern, #814):
-               only the strip itself scrolls sideways. -->
-          <nav id="admin-nav-mobile" role="tablist" aria-label="Admin sections"
-               class="md:hidden flex items-stretch gap-1 mb-3 -mx-4 px-4 overflow-x-auto border-b border-zinc-200 dark:border-zinc-800">
-            ${AdminConsole._navItemsHtml('tabs')}
-          </nav>
           <!-- View-only admin banner (issue #311), same copy as /admin. -->
           <div id="admin-view-only-banner" class="${viewOnly ? '' : 'hidden '}bg-amber-100 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-200 rounded-lg px-4 py-3 mb-4 text-sm">
             <span class="font-semibold">View-only — read access only.</span>
@@ -208,7 +513,7 @@ const AdminConsole = {
         <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl border border-zinc-200 dark:border-zinc-800">
           <h2 class="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">Temporary password</h2>
           <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
-            Give this to <span id="admin-temp-pw-username" class="font-medium text-zinc-800 dark:text-zinc-200"></span> out-of-band (chat, in person). They use it as their password to log in, then set their own from Settings → Change password. It signs them out everywhere and <span class="font-medium">won't be shown again</span>.
+            Give this to <span id="admin-temp-pw-username" class="font-medium text-zinc-800 dark:text-zinc-200"></span> out-of-band (chat, in person). They use it as their password to log in, then set their own from <a href="#settings/password" class="text-violet-500 hover:text-violet-400 underline">Settings → Change password</a>. It signs them out everywhere and <span class="font-medium">won't be shown again</span>.
           </p>
           <div class="flex gap-2">
             <code id="admin-temp-pw-value" class="flex-1 min-w-0 break-all rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-900 dark:text-zinc-100"></code>
@@ -218,26 +523,37 @@ const AdminConsole = {
         </div>
       </div>`;
 
+    AdminConsole._wireSectionButtons(root);
+  },
+
+  // Every [data-admin-section] control routes through here. On mobile a
+  // press is a DRILL-IN (a real hash navigation that pushes history); on
+  // desktop it's the same in-place sidebar switch it has always been.
+  _wireSectionButtons(root) {
+    if (!root) return;
     root.querySelectorAll('[data-admin-section]').forEach((btn) => {
-      btn.addEventListener('click', () => AdminConsole.setSection(btn.dataset.adminSection));
+      btn.addEventListener('click', () => {
+        const key = btn.dataset.adminSection;
+        if (AdminConsole._isMobile()) AdminConsole._openSection(key);
+        else AdminConsole.setSection(key);
+      });
     });
   },
 
   setSection(key, opts) {
-    if (!AdminConsole.SECTIONS.some((s) => s.key === key)) key = 'overview';
+    const visible = AdminConsole._visibleSections();
+    if (!visible.some((s) => s.key === key)) {
+      key = AdminConsole._publicMode() ? (visible[0]?.key || 'status') : 'overview';
+    }
     AdminConsole._section = key;
-    // Repaint the active state in both menus without rebuilding the shell.
+    // Repaint the sidebar's active state without rebuilding the shell.
     const root = document.getElementById('admin-root');
     if (!root || !document.getElementById('admin-section-content')) {
       AdminConsole._renderShell();
     } else {
       const sideHost = document.getElementById('admin-nav-desktop');
-      const tabHost = document.getElementById('admin-nav-mobile');
-      if (sideHost) sideHost.innerHTML = AdminConsole._navItemsHtml('side');
-      if (tabHost) tabHost.innerHTML = AdminConsole._navItemsHtml('tabs');
-      root.querySelectorAll('[data-admin-section]').forEach((btn) => {
-        btn.addEventListener('click', () => AdminConsole.setSection(btn.dataset.adminSection));
-      });
+      if (sideHost) sideHost.innerHTML = AdminConsole._navItemsHtml();
+      AdminConsole._wireSectionButtons(root);
     }
     if (!opts || opts.writeHash !== false) AdminConsole._writeHash(key);
     AdminConsole._renderSection();
@@ -247,43 +563,322 @@ const AdminConsole = {
   // replaceState, and only while we're actually on the #admin route (the
   // Leaderboard._setSub pattern). Entering/leaving the page still gets a
   // real history entry via normal hash navigation.
+  //
+  // Sections that own a second hash level (topochain, campaigns) are left
+  // alone once we're already inside them, so their own replaceState isn't
+  // fought over on every repaint.
+  //
+  // Mobile writes #admin/overview rather than bare #admin: down here a
+  // bare #admin means the MENU, so Overview needs an explicit segment to
+  // stay distinguishable (and deep-linkable) from level 1. Desktop keeps
+  // the historical overview → #admin mapping.
   _writeHash(key) {
-    const target = key === 'overview' ? '#admin' : `#admin/${key}`;
+    const target = (key === 'overview' && !AdminConsole._isMobile())
+      ? '#admin'
+      : `#admin/${key}`;
+    if (location.hash.startsWith(`${target}/`)) return;
     if (location.hash.startsWith('#admin') && location.hash !== target) {
       history.replaceState(null, '', target);
     }
   },
 
+  // Sections whose content is owned by a separate module (#860). Each
+  // exposes render(host) / destroy(); destroy() is what stops their
+  // polling when you navigate away. Resolved lazily by name so a module
+  // that failed to load degrades to a message instead of a crash.
+  SECTION_MODULES: {
+    status: 'AdminStatus',
+    node: 'AdminNode',
+    analytics: 'AdminAnalytics',
+    estimator: 'AdminEstimator',
+    merges: 'AdminMerges',
+    gallery: 'AdminGallery',
+    campaigns: 'AdminCampaigns',
+    topochain: 'AdminTopochain',
+  },
+
+  // Stop the outgoing section's background work before its DOM is replaced.
+  // Without this, Health & status keeps polling /api/status every 5s (which
+  // shells out to `docker stats` server-side) and Node & chain keeps polling
+  // every 2s, for the rest of the tab's life.
+  _teardownActiveSection() {
+    const mod = AdminConsole._activeModule;
+    AdminConsole._activeModule = null;
+    if (mod && typeof mod.destroy === 'function') {
+      try { mod.destroy(); } catch (err) { console.error('admin section destroy failed', err); }
+    }
+  },
+
+  // The single dispatcher for what goes in the content host: the mobile
+  // level-1 menu, or a section. Everything that changes level goes through
+  // here so the teardown below can't be skipped.
+  _renderContent() {
+    if (AdminConsole._isMobile() && AdminConsole._level === 1) {
+      const host = document.getElementById('admin-section-content');
+      if (!host) return;
+      // Leaving a section for the menu MUST tear it down: otherwise a back
+      // press out of Health & status leaves its 5s /api/status poll (which
+      // shells out to `docker stats` server-side) running for the life of
+      // the tab — exactly the leak #860's lifecycle work fixed.
+      AdminConsole._teardownActiveSection();
+      AdminConsole._renderMobileMenu(host);
+      return;
+    }
+    AdminConsole._renderSection();
+  },
+
+  _renderMobileMenu(host) {
+    host.innerHTML = AdminConsole._mobileMenuHtml();
+    AdminConsole._wireSectionButtons(host);
+  },
+
   _renderSection() {
     const host = document.getElementById('admin-section-content');
     if (!host) return;
-    switch (AdminConsole._section) {
+    // Always tear the previous section down first — this is the single
+    // choke point every section switch passes through.
+    AdminConsole._teardownActiveSection();
+
+    const key = AdminConsole._section;
+    const modName = AdminConsole.SECTION_MODULES[key];
+    if (modName) {
+      const mod = window[modName];
+      if (!mod || typeof mod.render !== 'function') {
+        host.innerHTML = `<p class="p-4 text-sm text-zinc-500">The ${AdminConsole.esc(key)} console module failed to load.</p>`;
+        return;
+      }
+      AdminConsole._activeModule = mod;
+      mod.render(host);
+      return;
+    }
+    switch (key) {
       case 'users': return AdminConsole.renderUsersSection(host);
       case 'codes': return AdminConsole.renderCodesSection(host);
       case 'limits': return AdminConsole.renderLimitsSection(host);
       case 'features': return AdminConsole.renderFeaturesSection(host);
+      case 'featured-apps': return AdminConsole.renderFeaturedAppsSection(host);
       case 'rollover': return AdminConsole.renderRolloverSection(host);
       case 'staging-reap': return AdminConsole.renderStalePreviewsSection(host);
       case 'db-export': return AdminConsole.renderDbExportSection(host);
-      case 'topochain': return AdminConsole.renderTopochainSection(host);
       default: return AdminConsole.renderOverviewSection(host);
     }
   },
 
-  // ── Topochain (Task 15) ─────────────────────────────────────────────
+  // ── Delegated sections ──────────────────────────────────────────────
   //
-  // Delegates entirely to AdminTopochain (public/js/admin-topochain.js).
-  // That module owns its own sub-nav under #admin/topochain/<sub> — it
-  // reads location.hash directly for the deep-linked sub-key and writes
-  // it back itself (replaceState, guarded on '#admin/topochain'), the
-  // same pattern leaderboard.js uses for its own tab state. Nothing here
-  // needs to know the sub-nav's keys or track them across re-renders.
-  renderTopochainSection(host) {
-    if (!window.AdminTopochain || typeof AdminTopochain.render !== 'function') {
-      host.innerHTML = '<p class="p-4 text-sm text-zinc-500">Topochain console module failed to load.</p>';
-      return;
+  // Topochain (Task 15), Health & status / Node & chain / Analytics /
+  // Merge debug / Screenshot gallery / Maintenance campaigns (#860) and
+  // Estimator accuracy (#898) all
+  // live in their own modules, dispatched by SECTION_MODULES above rather
+  // than by a render*Section method here. Two of them own a second hash
+  // level entirely on their own — AdminTopochain under
+  // #admin/topochain/<sub> and AdminCampaigns under
+  // #admin/campaigns/<id> — reading location.hash directly and writing it
+  // back with replaceState, the same pattern leaderboard.js uses for its
+  // own tab state, so this file never needs general multi-level routing.
+
+  // ── Featured apps ─────────────────────────────────────────────────────
+  //
+  // The admin-curated row under "Featured apps" on every user's home
+  // screen (public/js/home.js renderFindMore). One global ordered list:
+  // GET /api/admin/featured-apps returns it plus everything still
+  // available to add, and PUT rewrites it wholesale from an ordered slug
+  // array — so the ↑/↓/Remove controls only ever reorder a local array
+  // and Save persists it in one request.
+  //
+  // Featuring a view-private app is safe: the home row is derived from
+  // GET /api/apps, which is visibility-filtered per viewer, so people who
+  // can't see the app simply don't get the tile.
+  //
+  // View-only admins get the list read-only (the controls are omitted);
+  // requireAdminWrite on the PUT is the real boundary.
+  _featured: null,   // ordered slugs pending save
+  _featuredMeta: {}, // slug -> { name, status, icon_emoji, icon_url }
+  _featuredAvailable: [],
+  _featuredDirty: false,
+  FEATURED_MAX: 12,
+
+  renderFeaturedAppsSection(host) {
+    const canWrite = AdminConsole.canWrite();
+    host.innerHTML = `
+      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-lg font-semibold">Featured apps</h2>
+          <button id="admin-featured-refresh" class="text-xs text-zinc-400 hover:text-violet-400">Refresh</button>
+        </div>
+        <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
+          These apps appear in the &ldquo;Featured apps&rdquo; row on everyone&rsquo;s
+          home screen, in this order. Apps a user has already added are left
+          out of their row, and an app someone can&rsquo;t see never shows up
+          for them. Up to ${AdminConsole.FEATURED_MAX} apps.
+        </p>
+        <div id="admin-featured-list" class="space-y-2 mb-3">
+          <p class="text-sm text-zinc-500">Loading&hellip;</p>
+        </div>
+        ${canWrite ? `
+        <div class="flex flex-wrap items-center gap-2 pt-3 border-t border-zinc-200 dark:border-zinc-800">
+          <select id="admin-featured-picker" class="rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2 py-1.5 text-sm max-w-[16rem]">
+            <option value="">Add an app…</option>
+          </select>
+          <button id="admin-featured-add" class="px-3 py-1.5 rounded-md bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-sm">Add</button>
+          <span class="flex-1"></span>
+          <button id="admin-featured-save" class="px-3 py-1.5 rounded-md bg-violet-600 hover:bg-violet-500 text-white text-sm disabled:opacity-50" disabled>Save</button>
+        </div>
+        <p id="admin-featured-status" class="mt-2 text-xs text-zinc-500"></p>
+        ` : `
+        <p class="pt-3 border-t border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500">
+          View-only admin — the list is read-only here.
+        </p>`}
+      </div>`;
+
+    host.querySelector('#admin-featured-refresh')
+      ?.addEventListener('click', () => AdminConsole._loadFeaturedApps());
+    host.querySelector('#admin-featured-add')
+      ?.addEventListener('click', () => {
+        const sel = document.getElementById('admin-featured-picker');
+        const slug = sel && sel.value;
+        if (!slug) return;
+        if (AdminConsole._featured.length >= AdminConsole.FEATURED_MAX) {
+          AdminConsole._setFeaturedStatus(`At most ${AdminConsole.FEATURED_MAX} apps.`);
+          return;
+        }
+        AdminConsole._featured.push(slug);
+        AdminConsole._featuredDirty = true;
+        AdminConsole._renderFeaturedList();
+      });
+    host.querySelector('#admin-featured-save')
+      ?.addEventListener('click', () => AdminConsole._saveFeaturedApps());
+
+    AdminConsole._loadFeaturedApps();
+  },
+
+  async _loadFeaturedApps() {
+    const listEl = document.getElementById('admin-featured-list');
+    try {
+      const res = await fetch('/api/admin/featured-apps');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      AdminConsole._featured = (data.featured || []).map((a) => a.slug);
+      AdminConsole._featuredAvailable = data.available || [];
+      AdminConsole._featuredMeta = {};
+      for (const a of [...(data.featured || []), ...(data.available || [])]) {
+        AdminConsole._featuredMeta[a.slug] = a;
+      }
+      AdminConsole._featuredDirty = false;
+      AdminConsole._renderFeaturedList();
+    } catch (err) {
+      if (listEl) {
+        listEl.innerHTML = `<p class="text-sm text-red-400">Failed to load featured apps (${AdminConsole.esc(err.message)})</p>`;
+      }
     }
-    AdminTopochain.render(host);
+  },
+
+  // Tiny icon preview so a row is recognisable at a glance: the same
+  // priority as the home tile (custom image > emoji > first letter).
+  _featuredIconHtml(meta) {
+    if (meta && meta.icon_url) {
+      return `<img src="${AdminConsole.esc(meta.icon_url)}" alt="" class="w-7 h-7 rounded-md object-cover shrink-0">`;
+    }
+    if (meta && meta.icon_emoji) {
+      return `<span class="w-7 h-7 rounded-md bg-violet-500/10 flex items-center justify-center text-base shrink-0" aria-hidden="true">${AdminConsole.esc(meta.icon_emoji)}</span>`;
+    }
+    const letter = ((meta && meta.name) || '?').charAt(0).toUpperCase();
+    return `<span class="w-7 h-7 rounded-md bg-violet-500/10 flex items-center justify-center text-xs font-bold shrink-0">${AdminConsole.esc(letter)}</span>`;
+  },
+
+  _renderFeaturedList() {
+    const listEl = document.getElementById('admin-featured-list');
+    if (!listEl) return;
+    const canWrite = AdminConsole.canWrite();
+    const slugs = AdminConsole._featured || [];
+    if (!slugs.length) {
+      listEl.innerHTML = '<p class="text-sm text-zinc-500">No featured apps — the home row is hidden for everyone.</p>';
+    } else {
+      listEl.innerHTML = slugs.map((slug, i) => {
+        const meta = AdminConsole._featuredMeta[slug] || { name: slug };
+        return `
+        <div class="flex items-center gap-2 rounded-md bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 px-2 py-1.5" data-featured-row="${AdminConsole.esc(slug)}">
+          <span class="w-5 text-xs text-zinc-400 tabular-nums">${i + 1}</span>
+          ${AdminConsole._featuredIconHtml(meta)}
+          <span class="min-w-0 flex-1">
+            <span class="block text-sm font-medium truncate">${AdminConsole.esc(meta.name || slug)}</span>
+            <span class="block text-[11px] text-zinc-400 truncate">${AdminConsole.esc(slug)}</span>
+          </span>
+          ${canWrite ? `
+          <button data-featured-up="${AdminConsole.esc(slug)}" class="px-1.5 py-0.5 text-xs rounded text-zinc-500 hover:text-violet-400 disabled:opacity-30" title="Move up" aria-label="Move ${AdminConsole.esc(meta.name || slug)} up"${i === 0 ? ' disabled' : ''}>&uarr;</button>
+          <button data-featured-down="${AdminConsole.esc(slug)}" class="px-1.5 py-0.5 text-xs rounded text-zinc-500 hover:text-violet-400 disabled:opacity-30" title="Move down" aria-label="Move ${AdminConsole.esc(meta.name || slug)} down"${i === slugs.length - 1 ? ' disabled' : ''}>&darr;</button>
+          <button data-featured-remove="${AdminConsole.esc(slug)}" class="px-1.5 py-0.5 text-xs rounded text-zinc-500 hover:text-red-400" title="Remove" aria-label="Remove ${AdminConsole.esc(meta.name || slug)}">&times;</button>
+          ` : ''}
+        </div>`;
+      }).join('');
+    }
+
+    if (canWrite) {
+      listEl.querySelectorAll('[data-featured-up]').forEach((b) => {
+        b.addEventListener('click', () => AdminConsole._moveFeatured(b.dataset.featuredUp, -1));
+      });
+      listEl.querySelectorAll('[data-featured-down]').forEach((b) => {
+        b.addEventListener('click', () => AdminConsole._moveFeatured(b.dataset.featuredDown, 1));
+      });
+      listEl.querySelectorAll('[data-featured-remove]').forEach((b) => {
+        b.addEventListener('click', () => {
+          AdminConsole._featured = AdminConsole._featured.filter((s) => s !== b.dataset.featuredRemove);
+          AdminConsole._featuredDirty = true;
+          AdminConsole._renderFeaturedList();
+        });
+      });
+      // Picker holds everything not currently in the list — including
+      // rows the admin just removed but hasn't saved yet, so an
+      // accidental removal is undoable without a reload.
+      const picker = document.getElementById('admin-featured-picker');
+      if (picker) {
+        const chosen = new Set(slugs);
+        const pool = Object.values(AdminConsole._featuredMeta)
+          .filter((a) => !chosen.has(a.slug))
+          .sort((x, y) => String(x.name || x.slug).toLowerCase()
+            .localeCompare(String(y.name || y.slug).toLowerCase()));
+        picker.innerHTML = '<option value="">Add an app…</option>'
+          + pool.map((a) => `<option value="${AdminConsole.esc(a.slug)}">${AdminConsole.esc(a.name || a.slug)}</option>`).join('');
+      }
+      const save = document.getElementById('admin-featured-save');
+      if (save) save.disabled = !AdminConsole._featuredDirty;
+    }
+  },
+
+  _moveFeatured(slug, delta) {
+    const arr = AdminConsole._featured || [];
+    const i = arr.indexOf(slug);
+    const j = i + delta;
+    if (i < 0 || j < 0 || j >= arr.length) return;
+    arr.splice(j, 0, arr.splice(i, 1)[0]);
+    AdminConsole._featuredDirty = true;
+    AdminConsole._renderFeaturedList();
+  },
+
+  _setFeaturedStatus(msg) {
+    const el = document.getElementById('admin-featured-status');
+    if (el) el.textContent = msg || '';
+  },
+
+  async _saveFeaturedApps() {
+    const btn = document.getElementById('admin-featured-save');
+    if (btn) btn.disabled = true;
+    AdminConsole._setFeaturedStatus('Saving…');
+    try {
+      const res = await fetch('/api/admin/featured-apps', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slugs: AdminConsole._featured || [] }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      AdminConsole._featuredDirty = false;
+      AdminConsole._setFeaturedStatus('Saved — live on every home screen.');
+      AdminConsole._loadFeaturedApps();
+    } catch (err) {
+      AdminConsole._setFeaturedStatus(`Save failed: ${err.message}`);
+      if (btn) btn.disabled = false;
+    }
   },
 
   // ── Container rollover ────────────────────────────────────────────────
@@ -949,10 +1544,123 @@ const AdminConsole = {
           ${canWrite ? '<button id="admin-save-limits-btn" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Save</button>' : ''}
         </div>
         <p id="admin-limits-status" class="text-xs mt-2 hidden"></p>
+      </div>
+
+      <!-- Anthropic credits (#555). Anthropic's API publishes billed
+           spend, never a balance, so the remaining figure is derived:
+           the balance recorded here minus cost_report spend since the
+           as-of date. Re-record both after every top-up. View-only
+           admins see the values, disabled.
+
+           This is the ONLY surface for the figure — the drawer's status
+           pane carried a matching row until it was removed for reading
+           "Not set up" indefinitely. -->
+      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800 mt-4">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-lg font-semibold">Anthropic credits</h2>
+        </div>
+        <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
+          Anthropic doesn’t publish a remaining-credit figure, only what it has
+          billed. Record the balance and the date it was correct, and the platform
+          subtracts billed spend since then. Re-record both after every top-up.
+        </p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+          <label class="block">
+            <span class="text-xs uppercase tracking-wide text-zinc-500">Credit balance</span>
+            <div class="relative mt-1">
+              <span class="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500 pointer-events-none">$</span>
+              <input id="admin-credit-balance" type="number" min="0" step="0.01" inputmode="decimal" ${dis}
+                class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 pl-6 pr-3 py-2 text-sm font-mono disabled:opacity-60"
+                placeholder="5000.00">
+            </div>
+          </label>
+          <label class="block">
+            <span class="text-xs uppercase tracking-wide text-zinc-500" title="The date that balance was correct">As of</span>
+            <input id="admin-credit-as-of" type="date" ${dis}
+              class="mt-1 w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-3 py-2 text-sm font-mono disabled:opacity-60">
+          </label>
+        </div>
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <p id="admin-credit-derived" class="text-xs text-zinc-500"></p>
+          ${canWrite ? '<button id="admin-save-credits-btn" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Save</button>' : ''}
+        </div>
+        <p id="admin-credits-status" class="text-xs mt-2 hidden"></p>
       </div>`;
     document.getElementById('admin-save-limits-btn')
       ?.addEventListener('click', () => AdminConsole.saveLimits());
+    document.getElementById('admin-save-credits-btn')
+      ?.addEventListener('click', () => AdminConsole.saveAnthropicCredits());
     AdminConsole.loadLimits();
+    AdminConsole.loadAnthropicCredits();
+  },
+
+  async loadAnthropicCredits() {
+    const { data } = await AdminConsole.fetchJson('/api/admin/anthropic-credits');
+    if (!data || typeof data !== 'object') return;
+    AdminConsole._fillAnthropicCredits(data);
+  },
+
+  _fillAnthropicCredits(data) {
+    const bal = document.getElementById('admin-credit-balance');
+    const asOf = document.getElementById('admin-credit-as-of');
+    const derived = document.getElementById('admin-credit-derived');
+    if (!bal) return;
+    if (data.configured) {
+      bal.value = AdminConsole.centsToDollars(data.balanceCents);
+      asOf.value = data.asOf || '';
+    }
+    if (!derived) return;
+    // Echo the derived figure back here, so an admin can confirm the
+    // admin key is actually working. This is the only place it shows.
+    if (!data.configured) {
+      derived.textContent = 'Nothing recorded yet — no remaining-credit figure is being tracked.';
+    } else if (typeof data.remainingCents !== 'number') {
+      derived.textContent = 'Couldn’t reach Anthropic to compute the remaining credit'
+        + (data.error ? ` (${data.error})` : '') + '.';
+    } else {
+      const src = data.source === 'anthropic'
+        ? 'from Anthropic’s billed cost report'
+        : 'estimated from platform spend records (no ANTHROPIC_ADMIN_KEY configured)';
+      derived.textContent = `$${AdminConsole.centsToDollars(data.remainingCents)} remaining — `
+        + `$${AdminConsole.centsToDollars(data.spentCents)} spent since ${data.asOf}, ${src}.`
+        + (data.stale ? ' Showing a cached figure; the last refresh failed.' : '');
+    }
+  },
+
+  async saveAnthropicCredits() {
+    const status = document.getElementById('admin-credits-status');
+    status.classList.add('hidden');
+    let body;
+    try {
+      const cents = AdminConsole.parseDollarsToCents('Credit balance',
+        document.getElementById('admin-credit-balance').value.trim());
+      const asOf = document.getElementById('admin-credit-as-of').value.trim();
+      if (cents === null) throw new Error('Enter the credit balance.');
+      if (!asOf) throw new Error('Enter the date that balance was correct.');
+      body = { balanceCents: cents, asOf };
+    } catch (err) {
+      status.textContent = err.message;
+      status.className = 'text-xs mt-2 text-red-400';
+      status.classList.remove('hidden');
+      return;
+    }
+    try {
+      const res = await fetch('/api/admin/anthropic-credits', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Save failed (${res.status})`);
+      AdminConsole._fillAnthropicCredits(data);
+      status.textContent = 'Saved.';
+      status.className = 'text-xs mt-2 text-emerald-400';
+      status.classList.remove('hidden');
+    } catch (err) {
+      status.textContent = err.message;
+      status.className = 'text-xs mt-2 text-red-400';
+      status.classList.remove('hidden');
+    }
   },
 
   async loadLimits() {
@@ -1088,7 +1796,9 @@ const AdminConsole = {
     });
     list.querySelectorAll('.admin-share-code-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
-        const url = `${location.origin}/register.html?code=${encodeURIComponent(btn.dataset.code)}`;
+        // In-SPA register route (fold-auth-pages-into-SPA); the old
+        // /register.html?code=… form still works via the redirect stub.
+        const url = `${location.origin}/#register/${encodeURIComponent(btn.dataset.code)}`;
         navigator.clipboard.writeText(url);
         btn.textContent = 'Link copied!';
         setTimeout(() => { btn.textContent = 'Share link'; }, 1500);

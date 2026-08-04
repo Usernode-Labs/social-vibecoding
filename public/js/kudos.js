@@ -389,7 +389,7 @@ const Kudos = {
   },
 
   // ----------------------------------------------------------------
-  // Header budget badge — polls /api/me/kudos-budget on first load
+  // Kudos budget badge — polls /api/me/kudos-budget on first load
   // and re-fetches after every successful give() or any kudos_update
   // that names us as the giver. Cheap enough to also poll once an
   // hour as a safety net against the Monday-UTC rollover happening
@@ -429,20 +429,25 @@ const Kudos = {
       }
       const remaining = s.remaining;
       const limit = s.limit;
-      // Click navigates to the leaderboard. Tooltip explains the
-      // weekly cap + reset boundary.
+      // Click navigates to the Leaderboard screen (Kudos tab). Tooltip
+      // explains the weekly cap + reset boundary.
       const tip = `${remaining} of ${limit} kudos left this week. Resets Monday 00:00 UTC.`;
       const tone = remaining === 0
-        ? 'border-zinc-300 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400'
-        : 'border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-900/30';
+        ? 'text-zinc-500 dark:text-zinc-400'
+        : 'text-violet-600 dark:text-violet-400';
+      // Plain inline text, NOT a pill: the row already labels itself
+      // "Kudos", so the badge chrome was framing a number that needed no
+      // frame — and it read as a tappable chip competing with the nav
+      // rows around it. Mono digits (via .drawer-meter) so the figure
+      // doesn't jitter as it's spent; still a real anchor to the
+      // Leaderboard, which underlines on hover.
+      //
+      // No HeaderLayout.refresh() either: the header's centred title no
+      // longer has to account for this slot's width.
       slot.innerHTML = `
-        <a href="#leaderboard" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs font-medium ${tone}" title="${escapeAttr(tip)}">
-          <span aria-hidden="true">\u{1F44F}</span>
-          <span>${remaining}</span>
+        <a href="#leaderboard" class="drawer-meter ${tone}" title="${escapeAttr(tip)}">
+          <span class="drawer-meter-part"><span class="drawer-meter-strong">${remaining}</span><span class="drawer-meter-dim"> of ${limit} left</span></span>
         </a>`;
-      // Header layout watches for slot size changes so the centered
-      // title knows about the new width.
-      if (window.HeaderLayout?.refresh) window.HeaderLayout.refresh();
     },
   },
 };

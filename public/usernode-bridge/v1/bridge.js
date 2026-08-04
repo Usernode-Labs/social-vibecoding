@@ -75,6 +75,69 @@
   var _useIframeRelay = false;
   window.usernode.isNative = _hasNativeChannel;
 
+  // Privileged chrome methods use a native-issued, per-navigation capability.
+  // The token is kept in this top-frame closure: child frames cannot read it,
+  // and the relay below refuses both the bootstrap method and privileged
+  // calls. Old app builds do not advertise the capability and keep using the
+  // legacy wire shape, so the web half can deploy first.
+  var _PRIVILEGED_CAPABILITY_METHOD = "getPrivilegedBridgeCapability";
+  var _PRIVILEGED_NATIVE_METHODS = {
+    addHomeScreenShortcut: true,
+    getHomeScreenShortcuts: true,
+    removeHomeScreenShortcut: true,
+    reorderHomeScreenShortcuts: true,
+    openNativeScreen: true,
+    getProfileInfo: true,
+    getSettingsState: true,
+    setNodeSleepEnabled: true,
+    setDebugMode: true,
+    setFacematchStrict: true,
+    resetZkChallenge: true,
+    requestPermissions: true,
+    openBatterySettings: true,
+    // Removed in bridge v4, but old v3 iOS builds still accept it. Keep the
+    // legacy action fenced so an embedded app cannot borrow the top frame's
+    // trusted origin through the relay.
+    setIosKeepAlive: true,
+    logout: true,
+    beginSessionHandoff: true,
+    enterAnonymousSession: true,
+    completeLogin: true,
+    startNode: true,
+    stopNode: true,
+    getAuthStatus: true,
+  };
+  var _SESSION_WALLET_METHODS = {
+    getNodeAddress: true,
+    sendTransaction: true,
+    signMessage: true,
+    txObserved: true,
+    getWalletState: true,
+    getTransactionRecords: true,
+  };
+  var _privilegedCapability = null;
+  var _privilegedCapabilityPromise = null;
+  var _privilegedCapabilitySupported = null;
+  var _sessionWalletRelayAdmitted = true;
+
+  function isPrivilegedNativeMethod(method) {
+    return _PRIVILEGED_NATIVE_METHODS[method] === true;
+  }
+
+  function isSessionWalletMethod(method) {
+    return _SESSION_WALLET_METHODS[method] === true;
+  }
+
+  // NativeChrome closes this synchronously when `sv:session` announces a
+  // login or account change, then reopens it only after that participant's
+  // native handoff succeeds. The iframe's own bridge cannot change the
+  // parent closure; same-origin top-frame code is already trusted.
+  window.usernode._setSessionWalletRelayAdmission = function (admitted) {
+    if (_inIframe) return false;
+    _sessionWalletRelayAdmitted = admitted === true;
+    return _sessionWalletRelayAdmitted;
+  };
+
   // ── Configuration for QR/desktop mode ─────────────────────────────────
   // Apps call window.usernode.configure({ address: "ut1..." }) to set the
   // user's public key for getNodeAddress() in non-native environments.
@@ -139,11 +202,14 @@
   // request — surface it as an actual error instead of an infinite hang.
   var _RELAY_TIMEOUT_MS = 15000;
 
-  function callNative(method, args) {
+  function postNative(method, args, privilegedCapability) {
     var id = String(Date.now()) + "-" + Math.random().toString(16).slice(2);
     return new Promise(function (resolve, reject) {
       window.__usernodeBridge.pending[id] = { resolve: resolve, reject: reject };
       var payload = { method: method, id: id, args: args || {} };
+      if (privilegedCapability) {
+        payload.privilegedCapability = privilegedCapability;
+      }
       console.log(_BRIDGE_TAG, "callNative", method, "id", id,
         "useIframeRelay=" + _useIframeRelay,
         "hasNativeChannel=" + _hasNativeChannel);
@@ -192,6 +258,70 @@
         "(useIframeRelay=false, hasNativeChannel=false) — rejecting");
       delete window.__usernodeBridge.pending[id];
       reject(new Error("Usernode native bridge not available"));
+    });
+  }
+
+  function ensurePrivilegedCapability() {
+    if (_inIframe) {
+      return Promise.reject(new Error(
+        "Privileged Usernode methods are only available to the top-level page"
+      ));
+    }
+    if (_privilegedCapability) {
+      return Promise.resolve(_privilegedCapability);
+    }
+    if (_privilegedCapabilitySupported === false) {
+      return Promise.resolve(null);
+    }
+    if (_privilegedCapabilityPromise) return _privilegedCapabilityPromise;
+
+    var attempt = window.usernode.getBridgeInfo().then(function (info) {
+      var capabilities = info && info.capabilities;
+      var supported = Array.isArray(capabilities) &&
+        capabilities.indexOf("privilegedBridgeCapability") !== -1;
+      _privilegedCapabilitySupported = supported;
+      if (!supported) return null;
+      return postNative(_PRIVILEGED_CAPABILITY_METHOD, {}).then(function (token) {
+        if (typeof token !== "string" || !token) {
+          throw new Error("Native bridge returned an invalid privileged capability");
+        }
+        _privilegedCapability = token;
+        return token;
+      });
+    });
+
+    _privilegedCapabilityPromise = attempt.then(
+      function (token) {
+        _privilegedCapabilityPromise = null;
+        return token;
+      },
+      function (err) {
+        _privilegedCapabilityPromise = null;
+        throw err;
+      }
+    );
+    return _privilegedCapabilityPromise;
+  }
+
+  function callNative(method, args) {
+    if (isSessionWalletMethod(method) && !_sessionWalletRelayAdmitted) {
+      return Promise.reject(new Error(
+        "Native wallet handoff is in progress"
+      ));
+    }
+    if (!isPrivilegedNativeMethod(method)) {
+      return postNative(method, args);
+    }
+    return ensurePrivilegedCapability().then(function (capability) {
+      return postNative(method, args, capability).catch(function (err) {
+        // A full navigation replaces this JS realm. This path covers a
+        // blocked/revoked navigation that leaves the old document alive:
+        // discard its stale token so a later action can bootstrap again.
+        if (capability && _privilegedCapability === capability) {
+          _privilegedCapability = null;
+        }
+        throw err;
+      });
     });
   }
 
@@ -389,11 +519,31 @@
         reply(null, "Malformed child native relay request");
         return;
       }
+      // The native capability is delivered only into this top-frame JS
+      // realm. Never let a child bootstrap it or ask the parent to exercise
+      // a privileged method on its behalf. The allowlist above remains the
+      // primary deny-by-default boundary; this explicit fence keeps the
+      // capability contract reviewable and independently testable.
+      if (data.method === _PRIVILEGED_CAPABILITY_METHOD ||
+          isPrivilegedNativeMethod(data.method)) {
+        console.warn(_BRIDGE_TAG, "refusing privileged relay", data.method,
+          "from child iframe", origin);
+        reply(null,
+          "Privileged Usernode methods are only available to the top-level page");
+        return;
+      }
       if (_CHILD_NATIVE_RELAY_METHODS[data.method] !== true) {
         console.warn(_BRIDGE_TAG, "refusing to relay", data.method,
           "for child iframe", origin);
         reply(null,
           "Native capability is not available to embedded child apps");
+        return;
+      }
+      if (isSessionWalletMethod(data.method) &&
+          !_sessionWalletRelayAdmitted) {
+        console.warn(_BRIDGE_TAG, "refusing wallet relay during handoff",
+          data.method, "from child iframe", origin);
+        reply(null, "Native wallet handoff is in progress");
         return;
       }
       var relayCaller = discoveredChildRelayCaller(source, origin);
@@ -562,6 +712,7 @@
     if (typeof txId !== "string") return;
     var trimmed = txId.trim();
     if (!trimmed) return;
+    if (!_sessionWalletRelayAdmitted) return;
     if (_observedTxIds[trimmed]) return;
     _observedTxIds[trimmed] = true;
 
@@ -3883,6 +4034,10 @@
   // Shortcut-registry management (widget grid on iOS). Same old-build
   // hazard as the support probe: app builds that predate a method silently
   // drop it, so each call races a timeout instead of hanging forever.
+  // Privileged calls first spend up to one probe budget discovering whether
+  // capability envelopes are supported, so leave a second budget for the
+  // legacy management request itself.
+  var _SHORTCUT_MGMT_TIMEOUT_MS = _SHORTCUT_PROBE_TIMEOUT_MS * 2;
   //
   //   getHomeScreenShortcuts()        → { mechanism, items: [{id, name,
   //                                       url, pinnedAtMs}] } or null when
@@ -3901,7 +4056,7 @@
         done = true;
         console.warn(_BRIDGE_TAG, method, "timed out (old app build?)");
         onTimeout(resolve, reject);
-      }, _SHORTCUT_PROBE_TIMEOUT_MS);
+      }, _SHORTCUT_MGMT_TIMEOUT_MS);
       callNative(method, args).then(
         function (v) {
           if (done) return;
@@ -4256,10 +4411,100 @@
     );
   };
 
-  // logout() → true. Confirm web-side; the post-logout auth flow stays
-  // native chrome (same category as onboarding).
+  // logout() → true. The caller clears the web session and per-user caches
+  // first, then invokes this terminal native hard stop/drain and credential
+  // cleanup operation. Successful native logout replaces the WebView.
   window.usernode.logout = function () {
     return callNativeChromeAction("logout", {}, _SETTINGS_STATE_TIMEOUT_MS);
+  };
+
+  // =====================================================================
+  //  Public API: platform login + node lifecycle (bridge v4)
+  //  (usernode.beginSessionHandoff / completeLogin / startNode / stopNode)
+  // =====================================================================
+  //
+  // Thin-shell migration: the platform (SV) is the ONLY sign-in surface
+  // and the node lifecycle is platform-controlled. After a web login, SV
+  // exchanges its session cookie for a mobile bearer token
+  // (POST /api/v4/mobile/auth/from-session) and hands it to the native
+  // app here; the app provisions/imports the custodial wallet and reports
+  // identity progress via `usernode:auth-status` CustomEvents on window
+  // (detail: { phase, address, participantId?, epoch? } — same convention as
+  // `usernode:node-status`). Node start/stop is then requested explicitly
+  // by SV chrome (public/js/native-chrome.js owns the orchestration).
+  //
+  // These methods reject on old builds / outside the app / from non-SV
+  // origins. Contract: NATIVE-BRIDGE.md (bridge v4).
+
+  // beginSessionHandoff() → { blocked: true }. New app builds close their
+  // native wallet-dispatch latch before the web session exchange, including
+  // raw Android child-frame channel messages that cannot be stopped by this
+  // JavaScript wrapper alone.
+  window.usernode.beginSessionHandoff = function () {
+    return callNativeChromeAction(
+      "beginSessionHandoff", {}, _CHROME_PROBE_TIMEOUT_MS
+    );
+  };
+
+  // enterAnonymousSession() → { admitted: true }. The trusted shell calls
+  // this only after it has confirmed that no web participant is signed in.
+  window.usernode.enterAnonymousSession = function () {
+    return callNativeChromeAction(
+      "enterAnonymousSession", {}, _CHROME_PROBE_TIMEOUT_MS
+    );
+  };
+
+  // completeLogin({ token, user }) → identity snapshot
+  //   { phase, address, participantId?, epoch? }, or { restarting: true }
+  //   for a cross-participant hard restart. `token` is the v4
+  //   mobile bearer from /from-session; `user` is that response's user
+  //   object. Generous timeout: provisioning round-trips the leaderboard
+  //   API and may import a wallet.
+  var _COMPLETE_LOGIN_TIMEOUT_MS = 120000;
+  window.usernode.completeLogin = function (payload) {
+    payload = payload || {};
+    return callNativeChromeAction(
+      "completeLogin",
+      { token: payload.token, user: payload.user || null },
+      _COMPLETE_LOGIN_TIMEOUT_MS
+    );
+  };
+
+  // startNode({ address, participantId?, epoch? }) → { started, nodeStatus }
+  // (or rejects when the requested identity does not match the current
+  // native participant/epoch). The extra binding fields are additive and
+  // ignored by bridge v4 builds.
+  var _NODE_LIFECYCLE_TIMEOUT_MS = 60000;
+  window.usernode.startNode = function (payload) {
+    payload = payload || {};
+    return callNativeChromeAction(
+      "startNode", {
+        address: payload.address || null,
+        participantId: payload.participantId == null
+          ? null : payload.participantId,
+        epoch: payload.epoch == null ? null : payload.epoch,
+      },
+      _NODE_LIFECYCLE_TIMEOUT_MS
+    );
+  };
+
+  // stopNode() → { stopped }. Idempotent — resolves true-shaped even
+  // when the node wasn't running.
+  window.usernode.stopNode = function () {
+    return callNativeChromeAction(
+      "stopNode", {}, _NODE_LIFECYCLE_TIMEOUT_MS
+    );
+  };
+
+  // getAuthStatus() → { phase, address, participantId?, epoch? } or null
+  // (old build / outside the app). Poll-style twin of the
+  // `usernode:auth-status` event for
+  // boot-time orchestration.
+  window.usernode.getAuthStatus = function () {
+    if (!window.usernode.isNative) return Promise.resolve(null);
+    return callNativeChromeRead(
+      "getAuthStatus", {}, _CHROME_PROBE_TIMEOUT_MS, null
+    );
   };
 
   // =====================================================================

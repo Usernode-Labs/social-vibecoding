@@ -309,6 +309,164 @@ test('native.css: .un-sheet does not clip its overscroll filler', () => {
     'overflow:hidden on .un-sheet would clip the overscroll filler away (issue #789)');
 });
 
+// ── Side panel contract ────────────────────────────────────────────────
+// The drawer's overshoot fix and its inset handling live in CSS, so the
+// guards read the shipped stylesheet — same stance as the sheet's ::after
+// above. Its NON-draggability is a deliberate design decision (a nav
+// drawer is not a bottom sheet), so that is pinned too: an earlier
+// revision shipped drag-to-dismiss plus a grabber pill and both were
+// removed as un-native.
+
+test('native.css: .un-panel::after extends the panel surface past its edge', () => {
+  const block = cssBlock('.un-panel::after');
+  assert.match(block, /content:/, 'a pseudo-element without content never renders');
+  assert.match(block, /position:\s*absolute/,
+    'must be out of flow — in-flow would change panel.offsetWidth, which seeds the spring, the backdrop denominator and the dismissal travel');
+  assert.match(block, /width:\s*\d+vw/,
+    'the filler must be viewport-wide so no bounce depth uncovers the dimmed page');
+  assert.match(block, /background:\s*var\(--un-panel-bg\)/,
+    'the filler must be theme-aware — a literal color breaks dark mode');
+  assert.match(block, /pointer-events:\s*none/,
+    'taps outside the panel must keep reaching the backdrop (which dismisses)');
+  // Anchored outward from the panel's own edge, per side.
+  assert.match(cssBlock('.un-panel[data-un-side="right"]::after'), /left:\s*100%/,
+    'a right drawer continues its surface to the RIGHT of the screen edge');
+  assert.match(cssBlock('.un-panel[data-un-side="left"]::after'), /right:\s*100%/,
+    'a left drawer continues its surface to the LEFT of the screen edge');
+});
+
+test('native.css: .un-panel does not clip its filler or restrict input', () => {
+  const block = cssBlock('.un-panel');
+  assert.ok(!/overflow:\s*hidden/.test(block),
+    'overflow:hidden on .un-panel would clip the overshoot filler away (cf. .un-sheet)');
+  assert.match(block, /padding-top:\s*env\(safe-area-inset-top/,
+    'rows must clear the status bar / notch');
+  assert.ok(!/transition:\s*[^;]*transform/.test(block),
+    'translateX is JS-owned (entrance/exit springs) — a CSS transition on transform would fight it');
+  // With no drag gesture there is nothing to take capability away for:
+  // both of these only ever existed to serve the removed pointer handling.
+  assert.ok(!/touch-action/.test(block),
+    'a non-draggable drawer must not narrow touch-action — scrolling inside it is plain native scrolling');
+  assert.ok(!/user-select/.test(block),
+    'user-select:none existed only to keep a drag from selecting text; without the drag it just breaks selection');
+});
+
+test('native.css: the drawer ships no grabber affordance', () => {
+  assert.ok(!/un-panel-grabber/.test(NATIVE_CSS),
+    'the grabber pill promises a drag gesture the panel does not have — it belongs to .un-sheet only');
+  // The sheet's own grabber must survive: it DOES drag.
+  assert.ok(/\.un-sheet-grabber\s*\{/.test(NATIVE_CSS),
+    'removing the panel grabber must not take the bottom sheet\'s with it');
+});
+
+test('native.css: the panel body absorbs the keyboard without stacking the safe area', () => {
+  const body = cssBlock('.un-panel-body');
+  assert.match(body, /overflow-y:\s*auto/, 'the body is the drawer scroller');
+  assert.match(body, /env\(safe-area-inset-bottom/,
+    'the last row must clear the home indicator');
+  assert.match(body, /var\(--un-kb-inset/,
+    'a full-height panel cannot ride above the keyboard — it pads for it instead');
+  const kb = cssBlock('html.un-kb .un-panel-body');
+  assert.match(kb, /padding-bottom:\s*var\(--un-kb-inset, 0px\)/,
+    'keyboard up: the safe area sits BEHIND the keyboard, so the two insets must not stack');
+});
+
+test('native.css: the drawer ships both theming tokens with a sheet-derived surface', () => {
+  const root = cssBlock(':root');
+  assert.match(root, /--un-panel-bg:\s*var\(--un-sheet-bg\)/,
+    'deriving from --un-sheet-bg is what gives the panel dark mode for free');
+  assert.match(root, /--un-panel-width:\s*min\(/,
+    'the default width must be viewport-bounded so a narrow phone never gets a full-bleed drawer');
+});
+
+test('native.js: presentPanel reaches the public surface', () => {
+  assert.match(NATIVE_JS, /function presentPanel\(/, 'the component exists');
+  assert.match(NATIVE_JS, /presentPanel:\s*presentPanel/,
+    'a component that never lands on global.unNative is unreachable by apps');
+});
+
+test('native.js: the drawer carries no drag machinery at all', () => {
+  const at = NATIVE_JS.indexOf('function presentPanel(');
+  // The function body, up to the next top-level component.
+  const fn = NATIVE_JS.slice(at, NATIVE_JS.indexOf('\n  function ', at + 30));
+  for (const [pattern, why] of [
+    [/pointerdown|pointermove|pointerup|pointercancel/, 'pointer handling'],
+    [/lockIntent/, 'an axis intent lock'],
+    [/rubberband/, 'elastic over-drag'],
+    [/gestures\.claim/, 'a gesture-arbiter claim'],
+    [/estimateVelocity|projectDisplacement/, 'release-velocity projection'],
+    [/setPointerCapture/, 'pointer capture'],
+    [/stopPropagation/, 'a click swallow'],
+    [/grabber/, 'a grabber affordance'],
+  ]) {
+    assert.ok(!pattern.test(fn),
+      `presentPanel must not reintroduce ${why} — a nav drawer is closed by the backdrop / Escape / a row, not by swiping`);
+  }
+  // What it DOES keep: springs both ways, and the backdrop riding along.
+  assert.match(fn, /springTo\(0\)/, 'the entrance spring');
+  assert.match(fn, /springTo\(width, teardown\)/, 'the exit spring, then teardown');
+  assert.match(fn, /backdrop\.style\.opacity/, 'the dim rides the slide as one motion');
+  assert.match(fn, /modalStack\.push/, 'Escape dismissal via the shared modal stack');
+});
+
+// ── Pull-to-refresh puck sits BELOW the app header ─────────────────────
+// The puck used to be anchored to the top of the scroller's PARENT — i.e.
+// the top of the whole shell, header included — at z-index 2, so it was
+// painted on top of the fixed header on the way down. It now lives in
+// .un-ptr-layer, an overflow-clipped box anchored at the header's bottom
+// edge and stacked underneath it. Both halves are load-bearing (the clip
+// covers a translucent header, the stacking covers an opaque one), so
+// guard both in the shipped stylesheet.
+
+test('native.css: .un-ptr-layer clips the puck to below its anchor line', () => {
+  const block = cssBlock('.un-ptr-layer');
+  assert.match(block, /overflow:\s*hidden/,
+    'without the clip the retracted puck (parked at -40px) rides up over the header');
+  assert.match(block, /pointer-events:\s*none/,
+    'the layer spans content — it must never swallow taps');
+  assert.match(block, /z-index:\s*0/,
+    'stack level 0 + first-in-tree-order keeps the layer under the header and the scroller');
+  assert.match(block, /position:\s*absolute/);
+});
+
+test('native.css: window-mode puck layer stacks under .un-navbar', () => {
+  const layer = cssBlock('.un-ptr-layer.un-ptr-layer-fixed');
+  assert.match(layer, /position:\s*fixed/);
+  assert.match(layer, /top:\s*env\(safe-area-inset-top/,
+    'with no anchor element the puck emerges from under the status bar, not the viewport top');
+  const layerZ = Number(/z-index:\s*(\d+)/.exec(layer)[1]);
+  const navZ = Number(/z-index:\s*(\d+)/.exec(cssBlock('.un-navbar'))[1]);
+  assert.ok(layerZ < navZ,
+    `puck layer z-index ${layerZ} must stay under .un-navbar's ${navZ} — a fixed nav bar is never overlapped`);
+});
+
+test('native.css: the puck itself carries no stacking of its own', () => {
+  const block = cssBlock('.un-ptr-puck');
+  assert.ok(!/z-index/.test(block),
+    'the old z-index:2 on the puck is what lifted it over the header — layering belongs to .un-ptr-layer now');
+  assert.match(block, /position:\s*absolute/,
+    'the puck positions inside the layer, even in window mode (the LAYER is the fixed one)');
+});
+
+const NATIVE_JS = fs.readFileSync(
+  path.join(__dirname, '..', 'public', 'usernode-native', 'v1', 'native.js'),
+  'utf8'
+);
+
+test('native.js: the spinner lingers after onRefresh settles before retracting', () => {
+  const hold = Number(/PTR_SETTLE_HOLD_MS\s*=\s*(\d+)/.exec(NATIVE_JS)[1]);
+  assert.ok(hold >= 400 && hold <= 600,
+    `post-refresh linger ${hold}ms is outside the 400-600ms band — the spinner must not vanish the instant the fetch resolves`);
+  // The linger runs AFTER the work/min-hold race, not alongside it.
+  assert.match(
+    NATIVE_JS,
+    /Promise\.all\(\[work, minHold\]\)\.then\([\s\S]{0,600}?setTimeout\([\s\S]{0,400}?PTR_SETTLE_HOLD_MS\)/,
+    'the linger must be chained off the settled refresh, not raced against it'
+  );
+  assert.match(NATIVE_JS, /clearTimeout\(settleTimer\)/,
+    'detach() during the linger must not retract a removed puck');
+});
+
 // ── Keyboard occlusion (issue #719) ────────────────────────────────────
 
 test('keyboardInset: iOS overlay keyboard returns the occluded height', () => {
@@ -973,4 +1131,86 @@ test('zoomRectUsable accepts partially visible rects and rejects off-screen ones
   // bottom is derived from top+height when absent (plain-object rects).
   assert.equal(zoomRectUsable({ left: 0, top: -50, width: 10, height: 100 }, vh), true);
   assert.equal(zoomRectUsable({ left: 0, top: -200, width: 10, height: 100 }, vh), false);
+});
+
+// ── Undefined-helper scope check (issue #929) ──────────────────────────
+//
+// The kit's DOM half is not unit-testable in Node (it needs a real
+// document), so a *stale internal call* in it is invisible to this file
+// and, because a browser only evaluates it when the surface is actually
+// presented, invisible to `node --check` and to any page load that
+// doesn't open that surface. That is exactly how #929 shipped: #915
+// renamed `watchHeight(el, cb)` to `watchSize(el, prop, cb)` and updated
+// the bottom sheet but not the action sheet, so EVERY touch action sheet
+// (the home app-card menu, the dev screen's "+" menu) threw
+// "watchHeight is not defined" on present — mounting an invisible
+// full-screen backdrop and never showing a menu.
+//
+// So check it statically instead: every identifier the file CALLS must be
+// declared somewhere in the file, or be one of the browser/JS globals
+// listed below. Cheap, no parser dependency, and it fails on the next
+// rename miss anywhere in the kit — including in the presenters this test
+// file can't otherwise reach.
+test('every helper native.js calls is declared in it (no stale renames)', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'usernode-native', 'v1', 'native.js'),
+    'utf8'
+  );
+  // Blank out comments and string/template literals so their contents
+  // can't look like code. Order matters: comments first.
+  const code = src
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+    .replace(/'(?:\\.|[^'\\])*'/g, "''")
+    .replace(/"(?:\\.|[^"\\])*"/g, '""')
+    .replace(/`(?:\\.|[^`\\])*`/g, '``');
+
+  const declared = new Set();
+  const addName = (raw) => {
+    const n = String(raw).trim().replace(/[=:].*$/, '').trim();
+    if (/^[A-Za-z_$][\w$]*$/.test(n)) declared.add(n);
+  };
+  // Function declarations/expressions + their parameter lists.
+  for (const m of code.matchAll(/\bfunction\s*\*?\s*([A-Za-z_$][\w$]*)?\s*\(([^)]*)\)/g)) {
+    if (m[1]) declared.add(m[1]);
+    m[2].split(',').forEach(addName);
+  }
+  // var/let/const declarators, catch bindings, arrow parameters.
+  for (const m of code.matchAll(/\b(?:var|let|const)\s+([^;\n=]+)/g)) m[1].split(',').forEach(addName);
+  for (const m of code.matchAll(/\bcatch\s*\(\s*([A-Za-z_$][\w$]*)/g)) declared.add(m[1]);
+  for (const m of code.matchAll(/\(([^()]*)\)\s*=>/g)) m[1].split(',').forEach(addName);
+  for (const m of code.matchAll(/\b([A-Za-z_$][\w$]*)\s*=>/g)) declared.add(m[1]);
+
+  // Statement keywords that are followed by "(" and so read as calls.
+  const KEYWORDS = new Set([
+    'if', 'for', 'while', 'switch', 'catch', 'function', 'return', 'typeof',
+    'new', 'delete', 'void', 'in', 'of', 'do', 'else', 'try', 'case',
+    'instanceof', 'throw', 'await', 'yield', 'super', 'this',
+  ]);
+  // Globals the kit is allowed to call. Deliberately a short, explicit
+  // list: a NEW name showing up here should be a conscious decision, and
+  // anything else is a typo or a stale internal helper.
+  const GLOBALS = new Set([
+    'String', 'Number', 'Boolean', 'Object', 'Array', 'Promise', 'Error',
+    'Math', 'JSON', 'Date', 'parseInt', 'parseFloat', 'isNaN', 'isFinite',
+    'requestAnimationFrame', 'cancelAnimationFrame', 'setTimeout',
+    'clearTimeout', 'setInterval', 'clearInterval', 'getComputedStyle',
+    'ResizeObserver', 'MutationObserver', 'IntersectionObserver',
+    'CustomEvent', 'URLSearchParams', 'matchMedia', 'require',
+  ]);
+
+  const unknown = [];
+  code.split('\n').forEach((line, i) => {
+    for (const m of line.matchAll(/(^|[^.\w$'"`])([A-Za-z_$][\w$]*)\s*\(/g)) {
+      const name = m[2];
+      if (KEYWORDS.has(name) || GLOBALS.has(name) || declared.has(name)) continue;
+      unknown.push(`${name}() at native.js:${i + 1}`);
+    }
+  });
+  assert.deepEqual(
+    unknown,
+    [],
+    'native.js calls something it never declares (stale rename, or a new global '
+      + 'that belongs in this test\'s GLOBALS list):\n  ' + unknown.join('\n  ')
+  );
 });

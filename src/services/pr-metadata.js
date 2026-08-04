@@ -319,7 +319,9 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary) {
       const { rows } = await pool.query(
         `SELECT role, content, metadata FROM chat_session_messages
            WHERE session_id = $1
-             AND (role = 'user' OR (role = 'system' AND metadata->>'ccOutput' IS NOT NULL))
+             AND (role = 'user'
+                  OR (role = 'system' AND metadata->>'ccOutput' IS NOT NULL)
+                  OR (role = 'assistant' AND metadata->>'handoffSummary' = 'true'))
            ORDER BY id ASC`,
         [sessionId]
       );
@@ -328,6 +330,12 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary) {
           ctx.requests.push(row.content);
         } else if (row.role === 'system' && row.metadata && row.metadata.ccOutput) {
           ctx.summaries.push(String(row.metadata.ccOutput));
+        } else if (row.role === 'assistant' && row.metadata && row.metadata.handoffSummary && row.content) {
+          // Native CLI handoffs upload durable, user-visible summaries —
+          // never hidden reasoning or raw tool logs. Treat them exactly like
+          // the coding-agent summaries produced by a web Dev session so lazy
+          // PR creation has the full cross-surface implementation history.
+          ctx.summaries.push(String(row.content));
         }
       }
     } catch (err) {

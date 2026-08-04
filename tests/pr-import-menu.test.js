@@ -200,6 +200,43 @@ test('openImportPrModal lists one row per candidate and escapes titles', async (
   assert.equal((list.match(/name="import-pr-choice"/g) || []).length, 2, 'one radio per candidate');
 });
 
+// #866: fork provenance. A fork-headed PR's branch lives in someone else's
+// repo — the preview is built from refs/pull/<N>/head and the code is an
+// outside contributor's — so the picker says so BEFORE the import, not after.
+test('openImportPrModal labels fork-headed candidates and leaves same-repo ones bare', async () => {
+  const forked = {
+    number: 9403, title: '[Mock] add a keyboard shortcut', author: 'octo-forker',
+    headBranch: 'mock/fork-shortcut', baseBranch: 'main',
+    htmlUrl: 'https://github.com/o/r/pull/9403',
+    fromFork: true, headRepo: 'octo-forker/usernode-mock-fork',
+  };
+  const { AppView, els } = makeHarness({
+    fetchImpl: async () => ({ ok: true, json: async () => ({ candidates: [...CANDIDATES, forked] }) }),
+  });
+  await AppView.openImportPrModal();
+  const list = els['import-pr-list'].innerHTML;
+  assert.equal((list.match(/from a fork/g) || []).length, 1,
+    'exactly the one fork-headed row is labelled');
+  assert.ok(list.includes('octo-forker/usernode-mock-fork'), 'names the fork it comes from');
+  // The label sits inside the fork row, after its own PR number.
+  assert.ok(list.indexOf('#9403') < list.indexOf('from a fork'),
+    'the label belongs to #9403, not to a row above it');
+  assert.ok(list.includes('#9401') && list.includes('#9402'), 'same-repo rows still listed');
+});
+
+test('a fork label with no repo name still renders (never blank)', async () => {
+  const { AppView, els } = makeHarness({
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({ candidates: [{ ...CANDIDATES[0], fromFork: true, headRepo: null }] }),
+    }),
+  });
+  await AppView.openImportPrModal();
+  const list = els['import-pr-list'].innerHTML;
+  assert.ok(list.includes('from a fork'), 'the caution is the point, the repo name is detail');
+  assert.ok(list.includes('unknown fork'), 'missing metadata reads as unknown, not empty');
+});
+
 test('openImportPrModal shows the empty message when no candidates', async () => {
   const { AppView, els } = makeHarness({
     fetchImpl: async () => ({ ok: true, json: async () => ({ candidates: [] }) }),

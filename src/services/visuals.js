@@ -163,12 +163,27 @@ function withToken(url, token) {
 // routes off: if its first segment is one of the SPA hash routes, move
 // the whole path into the URL fragment (pathname stays '/'). Anything
 // else — the bare '/', a path already written as a fragment ('/#...'),
-// or a standalone server-rendered page (/dashboard, /admin, /status,
-// /node-status, /login, /register) — is left exactly as-is so those
-// real routes still resolve. Only applied for the self-app; child apps
-// are genuinely path-routed and pass through untouched.
+// or a genuinely standalone server page (/cli/authorize) — is left
+// exactly as-is so those real routes still resolve. Only applied for the
+// self-app; child apps are genuinely path-routed and pass through
+// untouched.
+//
+// #860 added 'admin': the seven former standalone admin pages
+// (/dashboard, /admin, /status, /node-status, /debug, /gallery,
+// /admin-features) are sections of the #admin console now, so
+// `path: /admin/analytics` normalises straight into the fragment. Their
+// OLD pathnames still work too — they fall through untouched and hit the
+// client-side redirect stubs — just with one extra hop.
+//
+// 'apps' (plural) is the browse-all-apps screen and its per-app detail
+// page (`#apps`, `#apps/<slug>`). There is no server page at that
+// pathname, so before it was listed here a `path: /apps` silently loaded
+// index.html with an empty hash and captured the home screen — the exact
+// failure mode this whole function exists to prevent. It is distinct from
+// the singular 'app' (the app-view route) and must be its own entry: the
+// first path segment is matched exactly, not by prefix.
 const SELF_APP_HASH_ROUTES = new Set([
-  'app', 'leaderboard', 'group-chat', 'individual-chat', 'create',
+  'app', 'apps', 'leaderboard', 'group-chat', 'individual-chat', 'create', 'admin',
 ]);
 function selfAppHashPath(p) {
   const path = typeof p === 'string' ? p : '/';
@@ -330,13 +345,16 @@ function classifyConsole(frames) {
 }
 
 // Latest-only snapshot on the session, mirroring the merge-conflict trio.
-async function storeConsoleCheck(pool, sessionId, result) {
-  await pool.query(
+async function storeConsoleCheck(pool, sessionId, result, expectedCommitSha) {
+  const write = await pool.query(
     `UPDATE chat_sessions
        SET console_check_state = $1, console_errors = $2, console_checked_at = NOW()
-     WHERE id = $3`,
-    [result.state, JSON.stringify(result.errors || []), sessionId]
+     WHERE id = $3
+       AND status IN ('active', 'paused', 'promoted', 'merging')
+       AND checks_commit_sha IS NOT DISTINCT FROM $4::text`,
+    [result.state, JSON.stringify(result.errors || []), sessionId, expectedCommitSha || null]
   );
+  return write.rowCount !== 0;
 }
 
 // ── Test suite (#47, "CI for proposals") ─────────────────────────────────
@@ -421,38 +439,45 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
     // failure count (so the first failure waits ~2m). `errorDetail` is the
     // concise reason (see summarizeBootFailure) — kept across retries via
     // COALESCE so a later retry that fails to collect logs doesn't blank it.
-    await pool.query(
+    const write = await pool.query(
       `UPDATE chat_sessions
           SET check_state = $1,
               test_results = $2,
-              checks_commit_sha = $3,
+              checks_commit_sha = $3::text,
               checks_checked_at = NOW(),
+              check_phase = NULL,
               check_error_detail = COALESCE($5, check_error_detail),
               consecutive_check_failures = consecutive_check_failures + 1,
               first_check_failure_at = COALESCE(first_check_failure_at, NOW()),
               last_check_failure_at = NOW(),
               check_next_retry_at = NOW() + make_interval(
                 secs => LEAST(120 * power(2, consecutive_check_failures), 1800)::double precision)
-        WHERE id = $4`,
+        WHERE id = $4
+          AND status IN ('active', 'paused', 'promoted', 'merging')
+          AND checks_commit_sha IS NOT DISTINCT FROM $3::text`,
       [result.state, JSON.stringify(result.results || []), commitSha || null, sessionId, errorDetail]
     );
-    return;
+    return write.rowCount !== 0;
   }
   // A real verdict ('passing' / 'failing'): clear the failure streak so a
   // later transient error starts its backoff fresh, and drop the now-stale
   // error detail / retry schedule / notify stamp.
-  await pool.query(
+  const write = await pool.query(
     `UPDATE chat_sessions
-       SET check_state = $1, test_results = $2, checks_commit_sha = $3, checks_checked_at = NOW(),
+       SET check_state = $1, test_results = $2, checks_commit_sha = $3::text, checks_checked_at = NOW(),
+           check_phase = NULL,
            check_error_detail = NULL,
            consecutive_check_failures = 0,
            first_check_failure_at = NULL,
            last_check_failure_at = NULL,
            check_next_retry_at = NULL,
            check_error_notified_at = NULL
-     WHERE id = $4`,
+     WHERE id = $4
+       AND status IN ('active', 'paused', 'promoted', 'merging')
+       AND checks_commit_sha IS NOT DISTINCT FROM $3::text`,
     [result.state, JSON.stringify(result.results || []), commitSha || null, sessionId]
   );
+  return write.rowCount !== 0;
 }
 
 // #461: record an explicit terminal 'skipped' verdict for a proposal whose
@@ -463,20 +488,30 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
 // running its tests" forever. `reason` lands in check_error_detail (the same
 // column the badge tooltip / gate message already surface). Clears the
 // failure-streak bookkeeping exactly like a real passing/failing verdict.
-async function storeChecksSkipped(pool, sessionId, commitSha, reason) {
-  await pool.query(
+// `expectedCommitSha` is normally the same SHA, but recovery may discover
+// that a branch has no commits beyond a newer main commit. In that case it
+// atomically replaces the prior pin with the compared base SHA without
+// allowing a concurrent newer build to be overwritten.
+async function storeChecksSkipped(
+  pool, sessionId, commitSha, reason, expectedCommitSha = commitSha
+) {
+  const write = await pool.query(
     `UPDATE chat_sessions
-       SET check_state = 'skipped', test_results = '[]', checks_commit_sha = $1,
+       SET check_state = 'skipped', test_results = '[]', checks_commit_sha = $1::text,
            checks_checked_at = NOW(),
+           check_phase = NULL,
            check_error_detail = $2,
            consecutive_check_failures = 0,
            first_check_failure_at = NULL,
            last_check_failure_at = NULL,
            check_next_retry_at = NULL,
            check_error_notified_at = NULL
-     WHERE id = $3`,
-    [commitSha || null, reason || null, sessionId]
+     WHERE id = $3
+       AND status IN ('active', 'paused', 'promoted', 'merging')
+       AND checks_commit_sha IS NOT DISTINCT FROM $4::text`,
+    [commitSha || null, reason || null, sessionId, expectedCommitSha || null]
   );
+  return write.rowCount !== 0;
 }
 
 // Set 'pending' the instant a (re)check starts so a stale 'passing' can't
@@ -487,7 +522,13 @@ async function storeChecksSkipped(pool, sessionId, commitSha, reason) {
 // captureForSession calls setChecksPending), and zeroing the counter on those
 // would defeat the escalation + crash-loop short-circuit — so the streak is
 // preserved when checks_commit_sha is unchanged.
-async function setChecksPending(pool, sessionId, commitSha) {
+//
+// `phase` ('building' | 'testing') records WHICH half of the run is in
+// flight so the card can name it; anything else is stored as NULL, which is
+// the legacy display. It is deliberately a plain assignment rather than
+// another CASE arm — the phase describes the run happening right now, not
+// the commit, so a backoff retry of the same commit still updates it.
+async function setChecksPending(pool, sessionId, commitSha, phase = null) {
   // $2 is spliced into both an assignment to checks_commit_sha (varchar) and
   // IS DISTINCT FROM comparisons (inferred text). Without the explicit ::text
   // casts postgres refuses to prepare the statement — "inconsistent types
@@ -495,9 +536,12 @@ async function setChecksPending(pool, sessionId, commitSha) {
   // this UPDATE silently no-op (it's .catch'd non-fatal at every call site)
   // from the day the CASE clauses landed. Stale 'passing'/'error' verdicts
   // then survived into the merge gate while a rebuild was in flight.
-  await pool.query(
+  // $3 needs the same explicit ::text treatment as $2 for the same reason —
+  // an uncast parameter in this statement is how it silently no-op'd before.
+  const write = await pool.query(
     `UPDATE chat_sessions
        SET check_state = 'pending', checks_commit_sha = $2::text, checks_checked_at = NOW(),
+           check_phase = $3::text,
            check_next_retry_at = NULL,
            consecutive_check_failures = CASE WHEN checks_commit_sha IS DISTINCT FROM $2::text
                                              THEN 0 ELSE consecutive_check_failures END,
@@ -507,9 +551,19 @@ async function setChecksPending(pool, sessionId, commitSha) {
                                           THEN NULL ELSE check_error_detail END,
            check_error_notified_at = CASE WHEN checks_commit_sha IS DISTINCT FROM $2::text
                                           THEN NULL ELSE check_error_notified_at END
-     WHERE id = $1`,
-    [sessionId, commitSha || null]
+     WHERE id = $1
+       AND status IN ('active', 'paused', 'promoted', 'merging')`,
+    [sessionId, commitSha || null, normalizeCheckPhase(phase)]
   );
+  return write.rowCount !== 0;
+}
+
+// The two stages a 'pending' run can be in. Anything else (undefined, a
+// typo, a value from a newer writer) collapses to NULL — the card's legacy
+// wording — rather than rendering an unknown caption.
+const CHECK_PHASES = new Set(['building', 'testing']);
+function normalizeCheckPhase(phase) {
+  return CHECK_PHASES.has(phase) ? phase : null;
 }
 
 // ── Capture-outcome snapshot (screenshot-reliability spec) ──────────────
@@ -531,19 +585,36 @@ async function storeCaptureOutcome(pool, sessionId, state, detail) {
   );
 }
 
-// Expand the deduped capture-path list into the ordered capture-target
-// frames: EVERY path is shot in BOTH the desktop frame (full media —
-// png/webm/gif) and a phone-sized frame (PNG still only, to keep the
-// doubled list inside the run's 240s budget). Desktop and mobile land on
+// Expand the deduped capture-path list into the ordered capture targets:
+// EVERY path is shot in BOTH the desktop frame (full media — png/webm/gif)
+// and a phone-sized frame (PNG still only). Desktop and mobile land on
 // adjacent capture indexes (i*2 / i*2+1) so the rendered rows pair up.
 // This supersedes the per-path `@mobile` opt-in (#768): the annotation is
 // still parsed and validated, but every route now gets the phone frame
 // automatically. Pure so it's unit-testable without the pipeline.
+//
+// One entry per path, carrying the phone frame as a `companion`. It used to
+// emit TWO sibling entries per path, which the container turned into two
+// full navigations per side — a two-route proposal loaded 8 pages instead
+// of 4 and paid a cold page + networkidle2 wait for each, the single
+// biggest cost inside the capture run.
 function expandCapturePaths(paths) {
   const out = [];
   (Array.isArray(paths) ? paths : []).forEach((path, i) => {
-    out.push({ index: i * 2, path, viewport: null, still: false });
-    out.push({ index: i * 2 + 1, path, viewport: VIEWPORT_MOBILE, still: true });
+    out.push({
+      index: i * 2,
+      path,
+      viewport: null,
+      still: false,
+      // The phone frame is a COMPANION of this target, not a target of its
+      // own: the container shoots it by reloading the page it already has
+      // open (see shootCompanion in capture/capture.js) instead of opening
+      // a second one. Same capture indexes as before — i*2 desktop,
+      // i*2+1 mobile — so every renderer, the PR-body block and
+      // session_visuals.captured_viewport are untouched; only the number
+      // of page loads changes (4 per two-route proposal, not 8).
+      companion: { index: i * 2 + 1, viewport: VIEWPORT_MOBILE },
+    });
   });
   return out;
 }
@@ -779,6 +850,19 @@ async function patchPrBody(pool, session, repoOwner, repoName, block) {
 const _inFlight = new Set();
 const _queued = new Map();
 
+function captureKey(sessionId) {
+  return String(sessionId);
+}
+
+// Shared local/web proposal submission uses this to avoid adopting a new
+// commit while an older revision can still write screenshots or checks.
+// Include the depth-one queue: after a newer web build supersedes an active
+// capture, that queued run is still part of the current proposal pipeline.
+function hasInFlightCapture(sessionId) {
+  const key = captureKey(sessionId);
+  return _inFlight.has(key) || _queued.has(key);
+}
+
 // Main entry point. Fire-and-forget from the staging-success sites
 // (routes/sessions.js interactive + headless tails, routes/votes.js
 // post-promote clone build) — always AFTER staging_ready is sent so the
@@ -830,41 +914,99 @@ function maybeAutoMergeAfterChecks(config, pool, session, state) {
   });
 }
 
+// #866: which git ref identifies this session's code in the app's OWN repo.
+// Ordinary native rows push their work to a platform-owned branch, so the
+// branch name resolves. Two sources require an immutable commit instead:
+// imported PRs may be fork-headed (their branch name need not exist in the
+// base repo), and native CLI handoffs allow the local checkout to push the
+// managed branch directly while an older capture is running. Pin both to the
+// recorded/build SHA so changed-file detection and dapp.json test discovery
+// describe the same code as the staging container and terminal verdict.
+function sessionGitRef(session, commitHash) {
+  if (session && session.source === 'imported') {
+    return session.imported_pr_head_sha || commitHash || null;
+  }
+  if (session && session.source === 'cli_handoff') {
+    return commitHash || session.checks_commit_sha || session.handoff_head_sha || null;
+  }
+  return (session && session.branch_name) || null;
+}
+
 async function captureForSession(config, session, app, commitHash, stagingResult, { send } = {}) {
-  if (_inFlight.has(session.id)) {
+  const key = captureKey(session.id);
+  if (_inFlight.has(key)) {
     // Re-queue instead of dropping: park the NEWER run's arguments (latest
     // wins, depth 1) for the in-flight run's finally block to re-drive.
     // `send` is deliberately NOT carried over — by the time the queued run
     // fires, the requesting turn's SSE stream is long closed, so the queued
     // run publishes via the session bus + global WS instead.
-    _queued.set(session.id, { config, session, app, commitHash, stagingResult });
+    _queued.set(key, { config, session, app, commitHash, stagingResult });
     log.info('visuals', 'Capture already in flight — re-queued for after it finishes', {
       sessionId: session.id, commitHash: commitHash || null,
     });
     return;
   }
-  _inFlight.add(session.id);
+  _inFlight.add(key);
   const pool = getPool(config);
+  // Per-run timing trace (kind='checks'). Nothing recorded how long a checks
+  // run took, so diagnosing the slowdown that motivated this meant reading a
+  // few hundred lines of container log before they rotated away. This is the
+  // one chokepoint every verdict flows through, so the run is opened here and
+  // the build half's phases are replayed from stagingResult.timings (absent
+  // when the caller reused a live preview — then the trace is capture-only).
+  // Best-effort throughout: merge-debug's helpers no-op on a null runId and
+  // never throw, so tracing can't fail a capture.
+  const runStartedAt = Date.now();
+  const mergeDebug = require('./merge-debug');
+  const debugRunId = await mergeDebug.startRun(pool, {
+    appId: app.id, sessionId: session.id, prNumber: session.pr_number || null,
+    kind: 'checks', trigger: 'capture',
+  });
+  const traceStep = (phase, message, detail) =>
+    mergeDebug.step(pool, debugRunId, { phase, message, detail });
+  // Verdict the trace closes on. A checks run ends on its suite's outcome
+  // ('passing' | 'failing' | 'skipped' | 'error') rather than a merge
+  // outcome; 'error' is the default so a run that throws before reaching a
+  // verdict is not left reading 'running' forever.
+  let traceStatus = 'error';
   try {
+    const buildTimings = (stagingResult && stagingResult.timings) || null;
+    if (buildTimings) {
+      if (buildTimings.imageBuildMs != null) {
+        traceStep('image_build', 'Staging image built', { durationMs: buildTimings.imageBuildMs });
+      }
+      if (buildTimings.cloneMs != null) {
+        // Historically the single largest phase of the whole run: a full
+        // logical dump/restore of the app's database. See
+        // db-manager.privateDataExclusions for what shrank it.
+        traceStep('clone', 'Preview database cloned', { durationMs: buildTimings.cloneMs });
+      }
+      if (buildTimings.healthMs != null) {
+        traceStep('staging_health', 'Preview answered its healthcheck', { durationMs: buildTimings.healthMs });
+      }
+    }
     const [, repoOwner, repoName] = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
 
     // #47: mark the checks 'pending' for this commit the moment the run
     // starts, so the merge gate (votes.checkAndMerge) can't act on a stale
     // 'passing' while the fresh build is being tested. Best-effort.
-    await setChecksPending(pool, session.id, commitHash).catch((err) => {
+    // Phase 'testing': the staging preview is already up by the time capture
+    // starts, so everything from here is the suite running against it.
+    await setChecksPending(pool, session.id, commitHash, 'testing').catch((err) => {
       log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message });
     });
     // #607: flip open clients' badges to "Checks running…" right away —
     // the terminal notifyChecks below can be minutes out.
-    notifyChecksPending(session.id, commitHash);
+    notifyChecksPending(session.id, commitHash, 'testing');
 
     // Heuristic gate. If the compare call fails, default to capturing —
     // staging exists, and a wasted screenshot is cheaper than a missed one.
     let uiAffecting = true;
-    if (github.isEnabled() && repoOwner && repoName && session.branch_name) {
+    const gitRef = sessionGitRef(session, commitHash);
+    if (github.isEnabled() && repoOwner && repoName && gitRef) {
       try {
         const files = await github.listChangedFiles(
-          repoOwner, repoName, `main...${session.branch_name}`
+          repoOwner, repoName, `main...${gitRef}`
         );
         uiAffecting = isUiAffecting(files);
       } catch (err) {
@@ -882,7 +1024,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     const media = uiAffecting;
     if (!media) {
       log.info('visuals', 'No frontend files in commit range — console-only check', {
-        sessionId: session.id, branch: session.branch_name,
+        sessionId: session.id, ref: gitRef,
       });
     }
 
@@ -1009,9 +1151,10 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       }
     }
 
-    // One desktop + one mobile capture target per path (expandCapturePaths):
-    // the desktop frame carries the full media set, the phone frame a PNG
-    // still only. The "after" (staging) target always exists; the "before"
+    // One capture target per path (expandCapturePaths), each carrying the
+    // phone frame as a companion still: the desktop frame gets the full
+    // media set, the phone frame a PNG shot from the same reloaded page.
+    // The "after" (staging) target always exists; the "before"
     // (prod) target only when prod is running. A newly-added deep page 404s
     // on prod, so each before-target falls back to '/' (capture.js retries
     // and tags the frames fellback=1) — "before" shows the prior root state
@@ -1045,6 +1188,12 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         still: entry.still,
         viewport: mobile ? VIEWPORT_MOBILE : null,
         viewportPixels: mobile ? MOBILE_VIEWPORT : null,
+        // The phone-frame still shot from this target's own page. Same
+        // capture index the sibling target used to carry, so the stored
+        // artifact lands in exactly the same rendered row.
+        companion: entry.companion
+          ? { index: entry.companion.index, viewportPixels: MOBILE_VIEWPORT }
+          : null,
         beforeCookie: (beforeUrl && isSelfApp) ? beforeCookie : '',
         // Plumbed for symmetry; unused today (the after side always
         // authenticates via the query token).
@@ -1077,7 +1226,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // errors" test per capture path — so every proposal gets at least the
     // #381 coverage. Each test's route is resolved to the same staging
     // origin + token (and self-app hash normalisation) as the after target.
-    const declaredTests = await resolveDeclaredTests(repoOwner, repoName, session.branch_name);
+    const declaredTests = await resolveDeclaredTests(repoOwner, repoName, gitRef);
     const tests = (declaredTests.length
       ? declaredTests
       : capturePaths.map((p) => ({ name: `Loads ${p}`, path: p, expectSelector: '', expectText: '', allowConsoleErrors: false }))
@@ -1105,6 +1254,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     let stdout;
     let runPartial = false;
     let runPartialReason = '';
+    const captureStartedAt = Date.now();
     try {
       let res;
       ({ stdout, ...res } = await docker.runOneShot(`usernode-capture-${session.id}`, {
@@ -1129,6 +1279,13 @@ async function captureForSession(config, session, app, commitHash, stagingResult
             // capture image ignores the field and records anyway —
             // graceful rolling deploy, same stance as `viewport`.
             still: t.still || undefined,
+            // The phone-frame still this target shoots from its own page.
+            // An older capture image ignores the field, which costs the run
+            // its mobile stills for one rolling deploy but breaks nothing —
+            // same stance as `viewport` / `still` above.
+            companion: t.companion
+              ? { index: t.companion.index, viewport: t.companion.viewportPixels }
+              : undefined,
           }))),
           // Scalar single-target fallback (first target) so an older
           // capture image still works during a rolling platform deploy.
@@ -1172,6 +1329,14 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       }
     }
 
+    const captureMs = Date.now() - captureStartedAt;
+    traceStep('capture', 'Capture container finished', {
+      durationMs: captureMs,
+      targets: targets.length, tests: tests.length, media,
+      partial: runPartial || undefined,
+      partialReason: runPartialReason || undefined,
+    });
+
     const { shots, failures } = parseShots(stdout);
     for (const f of failures) {
       log.warn('visuals', 'Capture frame failed', { sessionId: session.id, ...f });
@@ -1184,15 +1349,34 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // The advisory console_* columns are dual-written from the same run for
     // one release so a rolling deploy's old readers stay coherent.
     const checksResult = classifyTests(parseTests(stdout), tests.length);
+    const failingCount = checksResult.results.filter((r) => r.status !== 'pass').length;
+    traceStatus = checksResult.state;
+    traceStep('tests', `Suite verdict: ${checksResult.state}`, {
+      state: checksResult.state,
+      tests: checksResult.results.length,
+      failing: failingCount,
+      // The suite runs inside the same container invocation as the shots, so
+      // this is the whole run's wall clock rather than a tests-only slice.
+      durationMs: Date.now() - runStartedAt,
+    });
     try {
-      await storeChecks(pool, session.id, commitHash, checksResult);
-      await storeConsoleCheck(pool, session.id, consoleSnapshotFromTests(checksResult));
-      log.info('visuals', 'Checks stored', {
-        sessionId: session.id, state: checksResult.state,
-        tests: checksResult.results.length,
-        failing: checksResult.results.filter((r) => r.status !== 'pass').length,
-      });
-      notifyChecks(session.id, checksResult, commitHash, send);
+      const stored = await storeChecks(pool, session.id, commitHash, checksResult);
+      if (stored) {
+        await storeConsoleCheck(
+          pool, session.id, consoleSnapshotFromTests(checksResult), commitHash
+        );
+        log.info('visuals', 'Checks stored', {
+          sessionId: session.id, state: checksResult.state,
+          tests: checksResult.results.length,
+          failing: failingCount,
+          durationMs: Date.now() - runStartedAt,
+        });
+        notifyChecks(session.id, checksResult, commitHash, send);
+      } else {
+        log.info('visuals', 'Discarded stale checks result', {
+          sessionId: session.id, commitHash: commitHash || null,
+        });
+      }
     } catch (err) {
       log.warn('visuals', 'Checks store failed (non-fatal)', {
         sessionId: session.id, err: err.message,
@@ -1214,7 +1398,11 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       );
       if (appRows[0]?.self_hosted) {
         const verdict = await platformEnvCheck.refreshPlatformEnvCheck({
-          pool, app: appRows[0], session,
+          pool,
+          app: appRows[0],
+          session: session.source === 'cli_handoff'
+            ? { ...session, checks_commit_sha: commitHash || null }
+            : session,
         });
         if (verdict) {
           log.info('visuals', 'Platform-env check stored', {
@@ -1301,8 +1489,10 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     log.info('visuals', 'Capture complete', {
       sessionId: session.id,
       artifacts: shots.map((s) => `${s.kind}.${s.media}`).join(','),
+      durationMs: Date.now() - runStartedAt,
     });
   } catch (err) {
+    traceStep('capture_error', 'Checks run threw', { error: err.message, level: 'error' });
     log.warn('visuals', 'Capture failed (non-fatal)', { sessionId: session.id, err: err.message });
     // The run broke before an outcome could be computed (container build,
     // docker timeout, DB error mid-pipeline) — record a 'failed' capture
@@ -1315,48 +1505,59 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // 'error' so the gate blocks fail-closed with a visible "couldn't run"
     // rather than an indefinite spinner. Best-effort.
     try {
-      await storeChecks(pool, session.id, commitHash, { state: 'error', results: [] });
-      notifyChecks(session.id, { state: 'error', results: [] }, commitHash, send);
+      const stored = await storeChecks(pool, session.id, commitHash, { state: 'error', results: [] });
+      if (stored) notifyChecks(session.id, { state: 'error', results: [] }, commitHash, send);
     } catch { /* nothing more we can do */ }
   } finally {
-    _inFlight.delete(session.id);
+    // Close the timing trace whatever happened, so a run never sits at
+    // 'running' in the admin view. The total is the figure this exists for:
+    // it is what "the checks step got slower" is measured in.
+    const totalMs = Date.now() - runStartedAt;
+    mergeDebug.endRun(pool, debugRunId, {
+      status: traceStatus,
+      summary: `checks ${traceStatus} in ${Math.round(totalMs / 1000)}s`,
+    });
+    _inFlight.delete(key);
     // Improvement 5: drain a re-queued capture (a rebuild that arrived while
     // this run was shooting). Dispatched detached — awaiting it here would
     // hold this call open for the queued run's whole duration, and every
     // caller is fire-and-forget. The recursive call re-enters the _inFlight
     // guard normally, so a request that lands during the queued run parks
     // itself in turn (still depth 1 — latest wins).
-    const next = _queued.get(session.id);
+    const next = _queued.get(key);
     if (next) {
-      _queued.delete(session.id);
+      _queued.delete(key);
       log.info('visuals', 'Draining re-queued capture', {
         sessionId: session.id, commitHash: next.commitHash || null,
       });
-      setImmediate(() => {
-        captureForSession(next.config, next.session, next.app, next.commitHash, next.stagingResult)
-          .catch((err) => log.warn('visuals', 'Re-queued capture failed (non-fatal)', {
-            sessionId: session.id, err: err.message,
-          }));
-      });
+      // Calling the async function directly claims _inFlight synchronously
+      // before its first await. This avoids a one-tick gap where another
+      // surface could observe neither an active nor queued capture.
+      captureForSession(next.config, next.session, next.app, next.commitHash, next.stagingResult)
+        .catch((err) => log.warn('visuals', 'Re-queued capture failed (non-fatal)', {
+          sessionId: session.id, err: err.message,
+        }));
     }
   }
 }
 
-// #47: fetch the proposal branch's declared dapp.json `tests` from GitHub
-// (the staging clone is gone by now) and normalise via the manifest
-// reader. Returns [] when GitHub is disabled, the file is absent, or
-// anything goes wrong — the caller then synthesizes the baseline suite.
-async function resolveDeclaredTests(repoOwner, repoName, branch) {
-  if (!github.isEnabled() || !repoOwner || !repoName || !branch) return [];
+// #47: fetch the proposal's declared dapp.json `tests` from GitHub (the
+// staging clone is gone by now) and normalise via the manifest reader.
+// `ref` is anything getFileContent accepts — a branch for native rows, a
+// head SHA for imported (possibly fork-headed) ones, see sessionGitRef.
+// Returns [] when GitHub is disabled, the file is absent, or anything goes
+// wrong — the caller then synthesizes the baseline suite.
+async function resolveDeclaredTests(repoOwner, repoName, ref) {
+  if (!github.isEnabled() || !repoOwner || !repoName || !ref) return [];
   try {
-    const raw = await github.getFileContent(repoOwner, repoName, appManifest.MANIFEST_FILENAME, branch);
+    const raw = await github.getFileContent(repoOwner, repoName, appManifest.MANIFEST_FILENAME, ref);
     if (!raw) return [];
     let parsed;
     try { parsed = JSON.parse(raw); } catch { return []; }
     return appManifest.readTests(parsed);
   } catch (err) {
     log.warn('visuals', 'Declared-test fetch failed — using baseline', {
-      repo: `${repoOwner}/${repoName}`, branch, err: err.message,
+      repo: `${repoOwner}/${repoName}`, ref, err: err.message,
     });
     return [];
   }
@@ -1395,7 +1596,10 @@ function notifyVisualsReady(sessionId, visuals, send) {
 // transition matters to every open vote panel / home strip, not just the
 // focused dev chat, and app.js's existing `checks_ready` handler already
 // refreshes both on any state.
-function notifyChecksPending(sessionId, commitSha) {
+//
+// `phase` rides along so a card that re-renders from the event alone shows
+// the right stage caption without waiting for its next fetch.
+function notifyChecksPending(sessionId, commitSha, phase = null) {
   try {
     const event = {
       type: 'checks_ready',
@@ -1404,6 +1608,7 @@ function notifyChecksPending(sessionId, commitSha) {
       checkState: 'pending',
       failingCount: 0,
       commitSha: commitSha || null,
+      checkPhase: normalizeCheckPhase(phase),
     };
     sessionBus.publish(sessionId, event);
     const { broadcastGlobal } = require('./ws');
@@ -1439,6 +1644,7 @@ function notifyChecks(sessionId, result, commitSha, send) {
 
 module.exports = {
   captureForSession,
+  hasInFlightCapture,
   storeArtifacts,
   getForSession,
   shapeAgg,
@@ -1461,6 +1667,7 @@ module.exports = {
   maybeAutoMergeAfterChecks,
   consoleSnapshotFromTests,
   resolveDeclaredTests,
+  sessionGitRef,
   isFrontendFile,
   isUiAffecting,
   parseShots,

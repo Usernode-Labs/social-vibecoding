@@ -18,7 +18,11 @@
  *   unNative.attachSwipeActions(row, {actions}) — swipe-to-act list rows
  *   unNative.attachPullToRefresh(scrollEl, onRefresh, opts?) — pull-to-refresh
  *                                        (element container OR the window
- *                                        scroller; never throws on bad input)
+ *                                        scroller; the puck hangs BELOW the
+ *                                        app header — opts.topEl / opts.top
+ *                                        anchor it under a fixed one — and
+ *                                        lingers briefly once onRefresh
+ *                                        settles; never throws on bad input)
  *   unNative.attachReorder(listEl, opts) — drag-to-reorder lists (long-press
  *                                        lift on touch, handle/pointer drag on
  *                                        desktop, overlay drop indicator,
@@ -38,6 +42,14 @@
  *                                        re-measured and the entrance
  *                                        spring retargeted — no pop-in)
  *   unNative.presentModal(opts)       — centered modal card, arbitrary content
+ *   unNative.presentPanel(opts)       — side drawer / panel sliding in from
+ *                                        the right (or left) edge
+ *                                        ({ side?, content | contentEl,
+ *                                        width?, onDismiss? }): full-height
+ *                                        surface, spring in/out, backdrop
+ *                                        tap / Escape dismiss. NOT
+ *                                        draggable by design — a nav
+ *                                        drawer is not a bottom sheet
  *   unNative.actionSheet(opts)        — iOS action sheet, Promise-based
  *   unNative.alert(opts)              — iOS alert dialog, Promise-based
  *   unNative.popover(opts)            — anchored popover / dropdown menu
@@ -1004,6 +1016,17 @@
   var PTR_LIMIT = 150; // rubber-band asymptote
   var PTR_COEFF = 0.8; // initial resistance slope (~dy/1.25)
   var PTR_MIN_HOLD_MS = 500; // spinner floor so instant refreshes still read
+  var PTR_SETTLE_HOLD_MS = 500; // linger AFTER onRefresh settles, then retract
+  var PTR_LAYER_H = 240; // clip window the puck travels inside
+
+  // First element child that is the app's own, skipping kit chrome.
+  function firstContentChild(parent) {
+    var el = parent.firstElementChild;
+    while (el && el.classList && el.classList.contains('un-ptr-layer')) {
+      el = el.nextElementSibling;
+    }
+    return el;
+  }
 
   // attachPullToRefresh(scrollEl, onRefresh, opts?) — scrollEl is either a
   // scrollable list container (needs `overscroll-behavior-y: contain`; the
@@ -1011,9 +1034,24 @@
   // (window / document / document.scrollingElement / <html> / <body>). In
   // window mode the rubberband translate is applied to opts.content
   // (default: document.body.firstElementChild — the #app-style root — or
-  // document.body) and the puck is fixed-positioned. onRefresh() returns a
-  // Promise; the spinner holds until it settles. No-op on desktop. Invalid
-  // input NEVER throws: it warns once and returns a no-op { detach() }.
+  // document.body) and the puck's clip layer is fixed-positioned.
+  // onRefresh() returns a Promise; the spinner holds until it settles, then
+  // lingers PTR_SETTLE_HOLD_MS before retracting so a fast refresh still
+  // reads as one. No-op on desktop. Invalid input NEVER throws: it warns
+  // once and returns a no-op { detach() }.
+  //
+  // The puck NEVER paints over the app's header. It lives in a clip layer
+  // whose top edge is the anchor, and it is stacked BENEATH the header:
+  //
+  //   opts.topEl  — an Element (typically the fixed/sticky app header)
+  //                 whose bottom edge the puck hangs from. Re-measured on
+  //                 resize and at the start of every pull, so a collapsing
+  //                 or conditionally-rendered header stays correct.
+  //   opts.top    — a fixed anchor offset in px, when there is no element
+  //                 to measure.
+  //   (default)   — element mode: the scroller's own top edge within its
+  //                 parent (i.e. below whatever chrome sits above it);
+  //                 window mode: the safe-area top inset.
   function attachPullToRefresh(scrollEl, onRefresh, opts) {
     var noop = { detach: function () {} };
     if (platform === 'desktop') return noop;
@@ -1027,7 +1065,11 @@
     var puckHome; // where the puck is inserted
 
     if (windowMode) {
-      content = (opts && opts.content) || document.body.firstElementChild || document.body;
+      // The default content root is the first REAL top-level element:
+      // an element-mode PTR on a body-level scroller parks its clip layer
+      // at body.firstChild, and translating that instead of the app root
+      // would move the puck with the pull.
+      content = (opts && opts.content) || firstContentChild(document.body) || document.body;
       if (!content || content.nodeType !== 1) {
         console.warn('[unNative] attachPullToRefresh: opts.content must be an Element — pull-to-refresh disabled.');
         return noop;
@@ -1050,18 +1092,67 @@
       scrollEl.style.overscrollBehaviorY = 'contain';
     }
 
+    var anchorEl = opts && opts.topEl && opts.topEl.nodeType === 1 ? opts.topEl : null;
+    var anchorPx = opts && typeof opts.top === 'number' && isFinite(opts.top)
+      ? opts.top : null;
+
+    // The clip layer: an inert box hanging off the anchor. Its overflow
+    // clip is what keeps the retracted puck (which sits at -40px) from
+    // showing above the anchor line at all — belt to the stacking-order
+    // braces below, and the part that holds even when the header above is
+    // translucent or has no background of its own.
+    var layer = document.createElement('div');
+    layer.className = 'un-ptr-layer' + (windowMode ? ' un-ptr-layer-fixed' : '');
+    layer.style.height = PTR_LAYER_H + 'px';
+
     var puck = document.createElement('div');
-    puck.className = 'un-ptr-puck' + (windowMode ? ' un-ptr-puck-fixed' : '');
+    puck.className = 'un-ptr-puck';
     puck.innerHTML =
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" ' +
       'stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9" /></svg>';
-    if (windowMode) puckHome.appendChild(puck);
-    else puckHome.insertBefore(puck, scrollEl);
+    layer.appendChild(puck);
+    // FIRST child in element mode: with the layer on stack level 0, tree
+    // order puts every later positioned sibling — the header, the
+    // scroller — above it. The puck is revealed by the content sliding
+    // away, exactly as it is on iOS, and can never overlap the header.
+    if (windowMode) puckHome.appendChild(layer);
+    else puckHome.insertBefore(layer, puckHome.firstChild);
+
+    // Anchor the layer's top edge. Cheap enough to redo per pull, so a
+    // header that collapses / appears mid-session never strands the puck.
+    function measureAnchor() {
+      var top = null;
+      // A header INSIDE the translated content rides down with the pull,
+      // so the strip it uncovers is at the very top of the viewport, not
+      // below the header's resting line — anchoring under it would park
+      // the puck on top of the descending bar. Only a header outside the
+      // content (a truly fixed one) is a real anchor.
+      var el = anchorEl && !(windowMode && content.contains(anchorEl)) ? anchorEl : null;
+      if (anchorPx != null) {
+        top = anchorPx;
+      } else if (el) {
+        var r = el.getBoundingClientRect();
+        top = windowMode ? r.bottom : r.bottom - puckHome.getBoundingClientRect().top;
+      } else if (!windowMode) {
+        var sr = scrollEl.getBoundingClientRect();
+        // A hidden scroller measures 0 — keep the last good anchor rather
+        // than snapping the puck to the top of the shell. Re-measured at
+        // touchstart, so the first pull after a screen shows is correct.
+        if (sr.height || sr.width) top = sr.top - puckHome.getBoundingClientRect().top;
+      }
+      // Window mode with no anchor keeps the stylesheet's safe-area top;
+      // the layer's z-index (90) already tucks the puck under .un-navbar.
+      if (top != null) layer.style.top = Math.max(0, Math.round(top)) + 'px';
+    }
+    measureAnchor();
+    window.addEventListener('resize', measureAnchor);
+    window.addEventListener('orientationchange', measureAnchor);
 
     var ptrToken = { ptr: true }; // arbiter owner token for this instance
     var display = 0; // current displayed pull (px)
     var refreshing = false;
     var activeSpring = null;
+    var settleTimer = null; // post-refresh linger before the puck retracts
     var drag = null; // { startY, startX, baseRaw, locked, samples }
     var armed = false;
 
@@ -1107,14 +1198,23 @@
         .then(function () { return onRefresh(); })
         .catch(function () { /* refresh failures still settle the UI */ });
       Promise.all([work, minHold]).then(function () {
-        refreshing = false;
-        puck.classList.remove('un-refreshing');
-        springTo(0, 0);
+        // Linger at the hold position after the work settles before
+        // retracting. Without it the puck vanishes on the same frame the
+        // list repaints, which reads as a glitch rather than a finished
+        // refresh — the spinner needs a beat at rest to be seen as one.
+        if (settleTimer) clearTimeout(settleTimer);
+        settleTimer = setTimeout(function () {
+          settleTimer = null;
+          refreshing = false;
+          puck.classList.remove('un-refreshing');
+          springTo(0, 0);
+        }, PTR_SETTLE_HOLD_MS);
       });
     }
 
     function onTouchStart(e) {
       if (refreshing || e.touches.length !== 1) return;
+      measureAnchor();
       if (scrollTop() > 0 && !activeSpring && display === 0) return;
       var baseRaw = 0;
       if (activeSpring) {
@@ -1189,8 +1289,11 @@
         listenEl.removeEventListener('touchmove', onTouchMove);
         listenEl.removeEventListener('touchend', onTouchEnd);
         listenEl.removeEventListener('touchcancel', onTouchEnd);
+        window.removeEventListener('resize', measureAnchor);
+        window.removeEventListener('orientationchange', measureAnchor);
+        if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
         if (activeSpring) activeSpring.stop();
-        if (puck.parentNode) puck.parentNode.removeChild(puck);
+        if (layer.parentNode) layer.parentNode.removeChild(layer);
         content.style.transform = '';
       },
     };
@@ -2112,20 +2215,22 @@
    * halves together: don't clamp y here, and don't drop that rule.
    * ──────────────────────────────────────────────────────────────────── */
 
-  // Watch an overlay's border-box height while it is presented (issue
-  // #742): content rendered AFTER present (fill from state, async fetch)
-  // changes the height the entrance spring and backdrop math were seeded
-  // with. Calls onChange(newHeight, oldHeight) on material (≥1px) changes.
+  // Watch one border-box dimension of an overlay while it is presented
+  // (issue #742): content rendered AFTER present (fill from state, async
+  // fetch) changes the height the entrance spring and backdrop math were
+  // seeded with, and a rotation changes a side panel's width. `prop` is
+  // 'offsetHeight' (bottom sheet) or 'offsetWidth' (side panel). Calls
+  // onChange(newValue, oldValue) on material (≥1px) changes.
   // ResizeObserver fires after layout and BEFORE paint, so the common
   // present-then-render-synchronously pattern retargets before a frame at
   // the wrong offset is ever painted; transforms don't affect layout, so
-  // the per-frame translateY writes can't re-trigger it. Where RO is
+  // the per-frame translate writes can't re-trigger it. Where RO is
   // missing, a single first-rAF re-measure covers the same pattern.
   // Returns a disconnect function.
-  function watchHeight(el, onChange) {
-    var last = el.offsetHeight || 1;
+  function watchSize(el, prop, onChange) {
+    var last = el[prop] || 1;
     function check() {
-      var h = el.offsetHeight || 1;
+      var h = el[prop] || 1;
       if (Math.abs(h - last) < 1) return;
       var prev = last;
       last = h;
@@ -2265,7 +2370,7 @@
     // so refreshing it keeps them all consistent; the offset shift keeps
     // the top edge visually continuous so growth springs up (a full
     // slide-up on the first-open repro) instead of popping in.
-    var unwatch = watchHeight(sheet, function (newHeight, oldHeight) {
+    var unwatch = watchSize(sheet, 'offsetHeight', function (newHeight, oldHeight) {
       height = newHeight;
       if (drag && drag.locked) return; // the finger owns the position 1:1
       var v = activeSpring ? activeSpring.current().v : 0;
@@ -2381,6 +2486,131 @@
   }
 
   /* ────────────────────────────────────────────────────────────────────
+   * Side panel / drawer — a full-height surface that springs in from the
+   * right (default) or left edge, over the shared dimmed backdrop.
+   *
+   * DELIBERATELY NOT DRAGGABLE. The platform navigation drawers this
+   * mirrors are not swipe-dismissed surfaces with a grabber affordance —
+   * that idiom belongs to the bottom sheet, where the tray is a transient
+   * thing you flick away. A drawer is opened by a control and closed by
+   * the backdrop, the ✕, Escape, or picking a row. So there is no pointer
+   * handling here at all, which also means: no gesture-arbiter claim to
+   * contend with, no click-swallow to get wrong, and vertical scrolling
+   * inside the panel is plain native scrolling (no `touch-action`
+   * narrowing in native.css). An earlier revision of this component did
+   * ship drag-to-dismiss plus a grabber pill; both were removed as
+   * un-native. Don't reintroduce them without the idiom actually changing.
+   *
+   * What remains is the sheet's PRESENTATION contract rotated 90°: JS owns
+   * translateX (spring in, spring out — no CSS transition on transform)
+   * and the backdrop opacity rides the position, so the dim and the slide
+   * are one motion.
+   *
+   * x is signed by side: `dir` is +1 for a right panel (leaving = moving
+   * right, positive translateX) and -1 for a left one, so everything below
+   * is written once in "displacement toward my own edge" terms and only
+   * render() touches the sign. x still goes slightly NEGATIVE (past the
+   * rest position, into the page) because the `sheet` preset is
+   * underdamped and its entrance overshoots — which lifts the panel off
+   * its screen edge, and is what `.un-panel::after` covers by continuing
+   * the surface outward. Keep those two halves together.
+   * ──────────────────────────────────────────────────────────────────── */
+
+  // presentPanel({ side?, content | contentEl, width?, onDismiss? })
+  // — side is 'right' (default) or 'left'; content is an HTML string,
+  // contentEl an Element to adopt; width is any CSS length (sets
+  // --un-panel-width for this instance). Returns { dismiss(), el }.
+  function presentPanel(options) {
+    var opts = options || {};
+    var side = opts.side === 'left' ? 'left' : 'right';
+    var dir = side === 'right' ? 1 : -1;
+
+    var backdrop = document.createElement('div');
+    backdrop.className = 'un-backdrop';
+    var panel = document.createElement('div');
+    panel.className = 'un-panel';
+    panel.setAttribute('data-un-side', side);
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-modal', 'true');
+    panel.tabIndex = -1;
+    if (opts.width) panel.style.setProperty('--un-panel-width', String(opts.width));
+    var body = document.createElement('div');
+    body.className = 'un-panel-body';
+    if (opts.contentEl) body.appendChild(opts.contentEl);
+    else if (opts.content != null) body.innerHTML = opts.content;
+    panel.appendChild(body);
+    document.body.appendChild(backdrop);
+    document.body.appendChild(panel);
+
+    var width = panel.offsetWidth || 1;
+    var x = width; // displacement toward the panel's edge: 0 = presented
+    var activeSpring = null;
+    var closed = false;
+    var prevFocus = document.activeElement;
+    var entry = { dismissible: true, dismiss: function () { dismiss(); } };
+    modalStack.push(entry);
+
+    function render(val) {
+      x = val;
+      panel.style.transform = 'translateX(' + (val * dir) + 'px)';
+      backdrop.style.opacity = String(Math.max(0, Math.min(1, 1 - val / width)));
+    }
+
+    function springTo(to, onRest) {
+      if (activeSpring) activeSpring.stop();
+      if (prefersReducedMotion) {
+        render(to);
+        if (onRest) onRest();
+        return;
+      }
+      activeSpring = spring(function (v) { render(v); }, {
+        from: x, to: to, preset: 'sheet',
+        onRest: function () { activeSpring = null; if (onRest) onRest(); },
+      });
+    }
+
+    function teardown() {
+      if (unwatch) unwatch();
+      if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
+      if (panel.parentNode) panel.parentNode.removeChild(panel);
+      if (prevFocus && typeof prevFocus.focus === 'function') {
+        try { prevFocus.focus(); } catch (e) { /* ignore */ }
+      }
+      if (opts.onDismiss) opts.onDismiss();
+    }
+
+    function dismiss() {
+      if (closed) return;
+      closed = true;
+      var i = modalStack.indexOf(entry);
+      if (i >= 0) modalStack.splice(i, 1);
+      springTo(width, teardown);
+    }
+
+    backdrop.addEventListener('click', function () { dismiss(); });
+
+    // Rotation / viewport resize changes --un-panel-width, which feeds the
+    // backdrop denominator and the exit travel.
+    var unwatch = watchSize(panel, 'offsetWidth', function (newWidth) {
+      width = newWidth;
+      // An exit spring was aiming at the old width — retarget so the panel
+      // fully leaves the screen before teardown.
+      if (closed) springTo(width, teardown);
+      else springTo(0);
+    });
+
+    render(width);
+    springTo(0);
+    var auto = body.querySelector('[autofocus]');
+    try { (auto || panel).focus({ preventScroll: true }); } catch (e) { /* ignore */ }
+
+    return {
+      el: panel,
+      dismiss: dismiss,
+    };
+  }
+
+  /* ────────────────────────────────────────────────────────────────────
    * Action sheet — iOS stack of actions + separate Cancel card. Resolves
    * with the chosen action object, or null on cancel/backdrop.
    * ──────────────────────────────────────────────────────────────────── */
@@ -2467,7 +2697,11 @@
       // Same present-time height assumption as the bottom sheet (issue
       // #742). The API can't receive late content, but a re-measure (e.g.
       // a web-font reflow of labels) still retargets cleanly.
-      var unwatch = watchHeight(wrap, function (newHeight, oldHeight) {
+      // watchSize's `prop` argument is not optional — see the scope test
+      // in tests/native-kit.test.js, which exists because this call site
+      // was left on the pre-#915 `watchHeight(el, cb)` signature and
+      // threw here, wedging every touch action sheet (issue #929).
+      var unwatch = watchSize(wrap, 'offsetHeight', function (newHeight, oldHeight) {
         height = newHeight;
         var v = activeSpring ? activeSpring.current().v : 0;
         if (settled) { springTo(height, v, finishSettle); return; }
@@ -3361,6 +3595,7 @@
     transition: transition,
     presentSheet: presentSheet,
     presentModal: presentModal,
+    presentPanel: presentPanel,
     actionSheet: actionSheet,
     popover: popover,
     menu: menu,

@@ -242,7 +242,10 @@ test("real web logout clears legacy user caches while preserving unrelated cache
     const response = (label: string) => new Response(JSON.stringify({ label }), {
       headers: { "Content-Type": "application/json" },
     })
-    await (await caches.open("usernode-api-v1")).put(request("/api/auth/me"), response("current user"))
+    const workerSource = await fetch("/sw.js", { cache: "no-store" }).then((result) => result.text())
+    const version = workerSource.match(/const SW_VERSION = ['"]([^'"]+)['"];/)?.[1]
+    if (!version) throw new Error("Unable to resolve the legacy service-worker version")
+    await (await caches.open(`usernode-api-${version}`)).put(request("/api/auth/me"), response("current user"))
     await (await caches.open("usernode-api-v0")).put(request("/api/me/history"), response("old user"))
     await (await caches.open(reactCacheName)).put(request("/react/logout-sentinel.js"), response("shell"))
     await (await caches.open("unrelated-app-cache")).put(request("/unrelated"), response("keep"))

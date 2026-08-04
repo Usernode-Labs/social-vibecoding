@@ -54,6 +54,10 @@ const DENIED_TABLES = new Set([
   'pending_secret_declarations', // values held for a declaration PR (AES blobs)
   'mobile_otp_codes',   // topochain: one-time login codes (SPEC §6)
   'mobile_auth_tokens', // topochain: bearer session/set-password tokens (plan Global Constraints #4)
+  'cli_device_authorizations', // global CLI device codes and request IPs
+  'cli_access_tokens',   // global CLI bearer hashes and hints
+  'cli_auth_audit_events', // security audit trail for CLI credentials
+  'cli_auth_rate_limits', // shared security limiter state
 ]);
 
 const DENIED_COLUMNS = {
@@ -77,6 +81,10 @@ const DENIED_COLUMNS = {
   onchain_accounts: [
     'secret_key',        // topochain: on-chain account private key (SPEC §6)
     'registration_code', // topochain: single-use account claim code (SPEC §6)
+  ],
+  waitlist_signups: [
+    'ip',         // submitter IP — same treatment as users.waitlist_ip
+    'more_token', // stage-2 survey capability — editing rights over the signup's answers
   ],
 };
 
@@ -144,76 +152,122 @@ function buildGrantStatements(tables) {
   return stmts;
 }
 
+// #891: bounded retry around the whole bootstrap. Granting to this role
+// rewrites the same catalog rows (pg_authid for the ALTER ROLEs, every
+// table's pg_class ACL for the REVOKE/GRANT sweep) that the topochain
+// console role's near-identical bootstrap rewrites, so two of them running
+// concurrently makes Postgres raise `tuple concurrently updated` and the
+// loser's capability is dead for the whole process lifetime (nothing
+// re-invokes ensureRole — see the module header note below). server.js now
+// awaits the two in sequence, which removes the in-process collision; this
+// retry covers what ordering cannot — an overlapping deploy, where the old
+// container's boot sweep is still running as the new one starts.
+//
+// Retrying the ENTIRE sequence rather than just the grant loop is
+// deliberate: the contention can surface on any of the ALTER ROLE / REVOKE
+// / GRANT statements, and the sequence is fully idempotent (create-if-
+// missing, then unconditional ALTER/REVOKE/GRANT), so re-running from the
+// top is always safe.
+const BOOTSTRAP_ATTEMPTS = 3;
+const BOOTSTRAP_RETRY_MS = 250;
+
+// NOT unref'd, deliberately: this backoff is awaited during boot, before
+// the HTTP listener exists. An unref'd timer lets Node consider the loop
+// idle and exit, abandoning the retry (and the rest of startup) entirely.
+const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+
 // Boot-time ensure (called from server.js after migrate()): create/reset
 // the role with a fresh random password, lock it down, and refresh grants
 // so tables added by this deploy's migrations are covered. Any failure
 // leaves the capability cleanly unavailable (endpoints 503) without
 // affecting the rest of boot.
+//
+// NOTE: this runs exactly once per boot and `_available` is latched by it,
+// so a permanent failure here disables prod-debug until the next deploy.
+// That is why the retry above exists.
 async function ensureRole(config) {
-  try {
-    const pool = getPool(config);
-    // 48 hex chars — no SQL/URL-special characters, safe to inline.
-    _roPassword = crypto.randomBytes(24).toString('hex');
-
-    await pool.query(`DO $$ BEGIN
-      IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${ROLE}') THEN
-        CREATE ROLE ${ROLE} LOGIN PASSWORD '${_roPassword}';
-      ELSE
-        ALTER ROLE ${ROLE} WITH LOGIN PASSWORD '${_roPassword}';
-      END IF;
-    END $$;`);
-    await pool.query(
-      `ALTER ROLE ${ROLE} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS`
-    );
-    // Role-level read-only: even a COMMIT-smuggling or multi-statement
-    // query starts read-only, and the role has no write grants anyway.
-    await pool.query(`ALTER ROLE ${ROLE} SET default_transaction_read_only = on`);
-    await pool.query(`ALTER ROLE ${ROLE} SET statement_timeout = '${QUERY_TIMEOUT_MS}ms'`);
-
-    const { rows: dbRows } = await pool.query('SELECT current_database() AS db');
-    const dbName = dbRows[0].db;
-    if (!SAFE_IDENT.test(dbName)) throw new Error(`unsafe database name ${dbName}`);
-    // CONNECT only — no TEMP (temp tables are a write surface).
-    await pool.query(`REVOKE ALL ON DATABASE ${quoteIdent(dbName)} FROM ${ROLE}`);
-    await pool.query(`GRANT CONNECT ON DATABASE ${quoteIdent(dbName)} TO ${ROLE}`);
-    await pool.query(`REVOKE CREATE ON SCHEMA public FROM ${ROLE}`);
-    await pool.query(`GRANT USAGE ON SCHEMA public TO ${ROLE}`);
-
-    // Reset then re-grant so deny-list additions take effect on the next
-    // boot without manual REVOKEs.
-    await pool.query(`REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM ${ROLE}`);
-    const { rows: tableRows } = await pool.query(
-      `SELECT c.table_name AS table, array_agg(c.column_name::text ORDER BY c.ordinal_position) AS columns
-         FROM information_schema.columns c
-         JOIN information_schema.tables t
-           ON t.table_schema = c.table_schema AND t.table_name = c.table_name
-        WHERE c.table_schema = 'public' AND t.table_type = 'BASE TABLE'
-        GROUP BY c.table_name`
-    );
-    const grants = buildGrantStatements(tableRows);
-    for (const stmt of grants) {
-      await pool.query(stmt);
+  for (let attempt = 1; attempt <= BOOTSTRAP_ATTEMPTS; attempt++) {
+    try {
+      await bootstrapRole(config);
+      return;
+    } catch (err) {
+      if (attempt < BOOTSTRAP_ATTEMPTS) {
+        log.warn('prod-debug', 'Role bootstrap attempt failed — retrying', {
+          err: err.message, attempt, attempts: BOOTSTRAP_ATTEMPTS,
+        });
+        // Linear backoff: 250ms, then 500ms. Long enough to outlast a
+        // concurrent sweep, short enough to stay invisible in boot time.
+        await sleep(BOOTSTRAP_RETRY_MS * attempt);
+        continue;
+      }
+      _available = false;
+      _unavailableReason = `prod-debug role bootstrap failed: ${err.message}`;
+      _roPassword = null;
+      log.warn('prod-debug', 'Role bootstrap failed — capability disabled', {
+        err: err.message, attempts: BOOTSTRAP_ATTEMPTS,
+      });
     }
-
-    // Rebuild the RO pool so it picks up the fresh password.
-    if (_roPool) {
-      _roPool.end().catch(() => {});
-      _roPool = null;
-    }
-    _available = true;
-    _unavailableReason = null;
-    log.info('prod-debug', 'Read-only debug role ensured', {
-      role: ROLE, db: dbName, grantedTables: grants.length,
-      deniedTables: DENIED_TABLES.size,
-    });
-  } catch (err) {
-    _available = false;
-    _unavailableReason = `prod-debug role bootstrap failed: ${err.message}`;
-    _roPassword = null;
-    log.warn('prod-debug', 'Role bootstrap failed — capability disabled', {
-      err: err.message,
-    });
   }
+}
+
+// One bootstrap attempt. Throws on any failure so ensureRole can retry;
+// sets `_available` only on the success path.
+async function bootstrapRole(config) {
+  const pool = getPool(config);
+  // 48 hex chars — no SQL/URL-special characters, safe to inline.
+  _roPassword = crypto.randomBytes(24).toString('hex');
+
+  await pool.query(`DO $$ BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${ROLE}') THEN
+      CREATE ROLE ${ROLE} LOGIN PASSWORD '${_roPassword}';
+    ELSE
+      ALTER ROLE ${ROLE} WITH LOGIN PASSWORD '${_roPassword}';
+    END IF;
+  END $$;`);
+  await pool.query(
+    `ALTER ROLE ${ROLE} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS`
+  );
+  // Role-level read-only: even a COMMIT-smuggling or multi-statement
+  // query starts read-only, and the role has no write grants anyway.
+  await pool.query(`ALTER ROLE ${ROLE} SET default_transaction_read_only = on`);
+  await pool.query(`ALTER ROLE ${ROLE} SET statement_timeout = '${QUERY_TIMEOUT_MS}ms'`);
+
+  const { rows: dbRows } = await pool.query('SELECT current_database() AS db');
+  const dbName = dbRows[0].db;
+  if (!SAFE_IDENT.test(dbName)) throw new Error(`unsafe database name ${dbName}`);
+  // CONNECT only — no TEMP (temp tables are a write surface).
+  await pool.query(`REVOKE ALL ON DATABASE ${quoteIdent(dbName)} FROM ${ROLE}`);
+  await pool.query(`GRANT CONNECT ON DATABASE ${quoteIdent(dbName)} TO ${ROLE}`);
+  await pool.query(`REVOKE CREATE ON SCHEMA public FROM ${ROLE}`);
+  await pool.query(`GRANT USAGE ON SCHEMA public TO ${ROLE}`);
+
+  // Reset then re-grant so deny-list additions take effect on the next
+  // boot without manual REVOKEs.
+  await pool.query(`REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM ${ROLE}`);
+  const { rows: tableRows } = await pool.query(
+    `SELECT c.table_name AS table, array_agg(c.column_name::text ORDER BY c.ordinal_position) AS columns
+       FROM information_schema.columns c
+       JOIN information_schema.tables t
+         ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+      WHERE c.table_schema = 'public' AND t.table_type = 'BASE TABLE'
+      GROUP BY c.table_name`
+  );
+  const grants = buildGrantStatements(tableRows);
+  for (const stmt of grants) {
+    await pool.query(stmt);
+  }
+
+  // Rebuild the RO pool so it picks up the fresh password.
+  if (_roPool) {
+    _roPool.end().catch(() => {});
+    _roPool = null;
+  }
+  _available = true;
+  _unavailableReason = null;
+  log.info('prod-debug', 'Read-only debug role ensured', {
+    role: ROLE, db: dbName, grantedTables: grants.length,
+    deniedTables: DENIED_TABLES.size,
+  });
 }
 
 function isAvailable() {
@@ -352,7 +406,7 @@ This session qualifies for read-only production debugging: the session owner is 
 
 - Any scout or coding agent you dispatch gets a read-only \`usernode-debug\` CLI against the LIVE PRODUCTION deployment: \`sql\` (read-only queries on the production platform database), \`containers\` (container list with memory/CPU), \`logs <container>\` (recent log lines), and \`status\` (health snapshot plus recent platform log events). When the user reports a production problem — a stuck session, a failed merge, a broken app, resource issues — your dispatch prompt SHOULD explicitly direct the agent to inspect live production state FIRST instead of guessing from source, naming the relevant starting points: \`chat_sessions\` (incl. \`active_turn\`), \`merge_debug_runs\` / \`merge_debug_steps\` (step-by-step traces of every merge attempt), \`events\`, \`llm_usage\`, container logs.
 - YOU have a \`get_prod_status\` data tool: a quick, inline production health snapshot (stuck sessions, warm workers, staging, budgets, recent platform log events). Call it to answer questions like "is anything stuck right now?" or "how's the platform doing?" directly in chat. For anything deeper — SQL queries, container logs — dispatch the scout with a prod-debug-directed prompt rather than guessing, and say that's what you're doing.
-- Admin pages worth pointing the user at when they fit the question: /debug (step-by-step merge traces), /status (the health dashboard; admins see the full view), /admin (users, limits, codes).
+- Admin surfaces worth pointing the user at when they fit the question — all sections of the one admin console behind the header shield icon (#860): #admin/merges (step-by-step merge traces), #admin/status (the health dashboard; admins see the full view), #admin/node (node, explorer and chain services), #admin/analytics (user analytics: growth, retention and spend), #admin/estimator (progress-estimator accuracy), #admin/gallery (before/after capture screenshots), #admin/users, #admin/limits, #admin/codes.
 
 Everything here is strictly READ-ONLY and audit-logged; credential-bearing data (passwords, API keys, tokens, app secrets) is structurally unreadable. Never present these capabilities as available to non-admins or on other apps.
 

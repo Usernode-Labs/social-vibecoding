@@ -41,6 +41,7 @@
 // never make its own merge gate unreachable.
 
 const log = require('./logger');
+const { currentVotePredicateSql } = require('./pr-vote-revision');
 
 // Lazy accessor rather than a top-level destructure: tests stub
 // services/active-users via require.cache, and this module may be
@@ -196,11 +197,10 @@ function computeGate(gov, active, yesCount, noCount, openedAt, now, opts = {}) {
 // every vote (policy 'anyone'); an array restricts to those users.
 //
 // #687 Slice 3: `headSha` (optional, PR kind only) scopes the count to
-// votes cast against that exact PR head commit — imported proposals stamp
-// pr_votes.head_sha at vote time, so a head change re-opens approval and
-// the gate counts only approvals matching the current head. NULL/undefined
-// (native proposals + every issue vote) applies no head filter, so their
-// counting is byte-for-byte unchanged.
+// votes cast against that exact PR head commit. Imported proposals use
+// imported_pr_head_sha and native proposals use reviewed_head_sha; a head
+// change therefore re-opens approval. NULL/undefined (legacy rows + every
+// issue vote) applies no head filter.
 async function qualifiedCounts(pool, kind, id, approverIds, headSha = null) {
   const table = kind === 'issue' ? 'issue_votes' : 'pr_votes';
   const keyCol = kind === 'issue' ? 'issue_id' : 'session_id';
@@ -251,20 +251,26 @@ async function qualifiedCounts(pool, kind, id, approverIds, headSha = null) {
 async function qualifiedCountsBatch(pool, kind, ids, approverIds) {
   const out = new Map();
   if (!ids.length) return out;
-  const table = kind === 'issue' ? 'issue_votes' : 'pr_votes';
-  const keyCol = kind === 'issue' ? 'issue_id' : 'session_id';
   const yesVal = kind === 'issue' ? 'up' : 'yes';
   const noVal = kind === 'issue' ? 'down' : 'no';
-  const { rows } = await pool.query(
-    `SELECT ${keyCol} AS id,
-       COUNT(*) FILTER (WHERE vote = '${yesVal}') AS yes,
-       COUNT(*) FILTER (WHERE vote = '${noVal}') AS no
-     FROM ${table}
-     WHERE ${keyCol} = ANY($1::int[])
-       AND user_id = ANY($2::int[])
-     GROUP BY ${keyCol}`,
-    [ids, approverIds]
-  );
+  const sql = kind === 'issue'
+    ? `SELECT issue_id AS id,
+         COUNT(*) FILTER (WHERE vote = '${yesVal}') AS yes,
+         COUNT(*) FILTER (WHERE vote = '${noVal}') AS no
+       FROM issue_votes
+       WHERE issue_id = ANY($1::int[])
+         AND user_id = ANY($2::int[])
+       GROUP BY issue_id`
+    : `SELECT pv.session_id AS id,
+         COUNT(*) FILTER (WHERE pv.vote = '${yesVal}') AS yes,
+         COUNT(*) FILTER (WHERE pv.vote = '${noVal}') AS no
+       FROM pr_votes pv
+       JOIN chat_sessions cs ON cs.id = pv.session_id
+       WHERE pv.session_id = ANY($1::int[])
+         AND pv.user_id = ANY($2::int[])
+         AND ${currentVotePredicateSql('pv', 'cs')}
+       GROUP BY pv.session_id`;
+  const { rows } = await pool.query(sql, [ids, approverIds]);
   for (const r of rows) out.set(r.id, { yes: parseInt(r.yes, 10) || 0, no: parseInt(r.no, 10) || 0 });
   return out;
 }
@@ -293,8 +299,9 @@ async function governedGate(pool, appId, { kind = 'pr', id, openedAt, now, headS
   const gov = await getGovernance(pool, appId);
   const electorate = await getElectorate(pool, appId, gov);
   // #687 Slice 3: for an imported proposal the caller passes the current
-  // imported_pr_head_sha so only approvals cast against that revision count
-  // (a head change re-opens approval). Native/issue callers pass no headSha.
+  // imported_pr_head_sha so only approvals cast against that revision count;
+  // native callers pass reviewed_head_sha for the same protection. Issue
+  // callers pass no headSha because issue votes have no Git revision.
   const { yes, no } = await qualifiedCounts(pool, kind, id, electorate.approverIds, headSha);
   // #788: the no-timer modifier rides on top of whatever regime the app
   // configured — see applyNoTimerMerge.

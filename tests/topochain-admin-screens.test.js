@@ -29,19 +29,27 @@ const GAP_SUBS = ['challenge-kinds', 'terms-versions', 'token-allocation', 'mobi
 // ─── admin-console.js: the one SECTIONS entry + delegation ────────────────
 
 test("AdminConsole.SECTIONS carries exactly one 'topochain' entry", () => {
-  assert.match(consoleJs, /\{ key: 'topochain', label: 'Topochain' \}/,
+  // #860 added a `group` field to every SECTIONS entry (the sidebar
+  // headings); the decision-#8 shape — ONE top-level entry, its own sub-nav
+  // — is unchanged.
+  assert.match(consoleJs, /\{ key: 'topochain', label: 'Topochain', group: '[^']+' \}/,
     "SECTIONS has the single topochain entry the plan's decision #8 calls for");
   const matches = consoleJs.match(/key: 'topochain'/g) || [];
   assert.equal(matches.length, 1, 'topochain appears exactly once in SECTIONS (one section, own sub-nav)');
 });
 
-test('_renderSection dispatches the topochain case to renderTopochainSection', () => {
-  assert.match(consoleJs, /case 'topochain': return AdminConsole\.renderTopochainSection\(host\);/,
-    'the section switch has a topochain branch');
-  const fn = consoleJs.slice(consoleJs.indexOf('  renderTopochainSection(host) {'));
-  assert.ok(fn.length > 0, 'renderTopochainSection is defined');
-  assert.match(fn.slice(0, 400), /AdminTopochain\.render\(host\)/,
-    'renderTopochainSection delegates to AdminTopochain.render(host)');
+test('_renderSection dispatches topochain to AdminTopochain via SECTION_MODULES', () => {
+  // #860 replaced the per-section render*Section methods for delegated
+  // sections with the SECTION_MODULES map, so every module-backed section
+  // (topochain included) goes through one render/destroy code path.
+  assert.match(consoleJs, /SECTION_MODULES: \{/, 'the module map exists');
+  assert.match(consoleJs, /topochain: 'AdminTopochain'/,
+    "SECTION_MODULES maps 'topochain' to the AdminTopochain global");
+  const fn = consoleJs.slice(consoleJs.indexOf('  _renderSection() {'));
+  assert.match(fn.slice(0, 1200), /mod\.render\(host\)/,
+    'the dispatcher calls render(host) on the mapped module');
+  assert.match(consoleJs, /_teardownActiveSection\(\)/,
+    'and tears the outgoing section down first');
 });
 
 test('admin-console.js needed no changes to its single-level hash handling', () => {
@@ -148,7 +156,7 @@ test('render() reads the deep-linked sub-key from the hash rather than a passed 
 
 // ─── Security: esc()/safeHref() discipline ─────────────────────────────────
 
-test('esc() mirrors the hardened topochain-seasons.js/topochain-leaderboard.js version, not the older admin-console.js one', () => {
+test('esc() mirrors the hardened topochain-challenges.js/topochain-leaderboard.js version, not the older admin-console.js one', () => {
   const fn = topoJs.slice(topoJs.indexOf('esc(s) {'), topoJs.indexOf('esc(s) {') + 300);
   assert.ok(fn.includes(".replace(/&/g, '&amp;')"), 'esc() escapes &');
   assert.ok(fn.includes(".replace(/</g, '&lt;')"), 'esc() escapes <');
@@ -168,7 +176,7 @@ test('no admin/API-supplied URL is ever interpolated into a raw href attribute',
   // etc. as clickable anchors (they're shown as escaped text in form
   // fields instead) — so there should be no interpolated href="${...}" at
   // all. If a future change adds one, it must go through safeHref() like
-  // topochain-seasons.js's _ctaHtml does.
+  // topochain-challenges.js's _ctaHtml does.
   const hrefSites = (topoJs.match(/href="\$\{/g) || []).length;
   assert.equal(hrefSites, 0, 'no interpolated href exists in admin-topochain.js');
 });

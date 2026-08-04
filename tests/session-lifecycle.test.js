@@ -39,6 +39,7 @@ function loadWithStubs() {
     logger: require.resolve('../src/services/logger'),
     staging: require.resolve('../src/services/staging'),
     worker: require.resolve('../src/services/worker'),
+    activeWorkers: require.resolve('../src/services/active-workers'),
     workerProgress: require.resolve('../src/services/worker-progress'),
     github: require.resolve('../src/services/github'),
     ws: require.resolve('../src/services/ws'),
@@ -61,6 +62,7 @@ function loadWithStubs() {
     pushSessionUpdate: [],
     sendSystemMessage: [],
     sendSystemMessageShouldThrow: false,
+    busySessionIds: new Set(),
   };
 
   const stub = (id, exports) => {
@@ -76,6 +78,9 @@ function loadWithStubs() {
     destroyWorker: async (name) => { spies.destroyWorker.push(name); },
     destroyCcVolume: async (sessionId) => { spies.destroyCcVolume.push(sessionId); },
     isInFlight: () => false,
+  });
+  stub(ids.activeWorkers, {
+    isSessionBusy: (sessionId) => spies.busySessionIds.has(Number(sessionId)),
   });
   stub(ids.workerProgress, {
     clear: (sessionId) => { spies.workerProgressClear.push(sessionId); },
@@ -481,6 +486,25 @@ test('pauseSession: only targets status=active rows (promoted are refused)', asy
   } finally {
     restore();
   }
+});
+
+test('freeGlobalSlot skips non-worker proposal pipelines that own the session', async () => {
+  const { subject, spies, restore } = loadWithStubs();
+  try {
+    spies.busySessionIds.add(7);
+    const pool = makePool([
+      [/SELECT id FROM chat_sessions/, [{ id: 7 }, { id: 8 }]],
+      [/SET status = 'paused'\s+WHERE/, (params) => [{ id: params[0] }]],
+      [/SELECT cs\.\*/, (params) => [{ id: params[0], app_slug: 'widget' }]],
+    ]);
+
+    const result = await subject.freeGlobalSlot({ pool, graceMs: 1000 });
+
+    assert.deepEqual(result, { freed: true, sessionId: 8 });
+    const pause = pool.calls.find((call) => /SET status = 'paused'/.test(call.sql));
+    assert.equal(pause.params[0], 8,
+      'capacity eviction leaves the in-flight CLI staging/check pipeline alone');
+  } finally { restore(); }
 });
 
 test('purgeArchivedCc: destroys the volume and flips cc_purged', async () => {

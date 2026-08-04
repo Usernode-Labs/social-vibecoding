@@ -1,0 +1,17 @@
+#!/usr/bin/env node
+'use strict';
+
+const path = require('path');
+const { main } = require('../src/cli/main');
+
+main(process.argv.slice(2), {
+  launcherPath: path.resolve(__filename),
+}).then((code) => {
+  if (typeof code === 'number') process.exitCode = code;
+}).catch((err) => {
+  // main() already redacts handled errors. Keep this last-resort rejection
+  // path generic so an unexpected dependency error cannot echo a credential.
+  void err;
+  process.stderr.write('Error: CLI failed unexpectedly.\n');
+  process.exitCode = 1;
+});

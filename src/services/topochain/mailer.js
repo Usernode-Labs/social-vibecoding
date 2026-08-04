@@ -17,13 +17,16 @@
 'use strict';
 
 const log = require('../logger');
+const { PRODUCTION_ORIGIN } = require('../cli-auth-constants');
 
 async function sendOtpMail(config, email, code) {
   const transport = config && config.topochainMailTransport;
 
   if (transport) {
     try {
-      await transport.send({ to: email, code });
+      // `kind` is explicit so a transport branches on one field rather than
+      // inferring the message type from the presence of `code`.
+      await transport.send({ to: email, kind: 'otp', code });
       return;
     } catch (err) {
       log.error('topochain-mailer', 'OTP mail transport failed to send', { email, message: err.message });
@@ -47,4 +50,63 @@ async function sendOtpMail(config, email, code) {
   log.info('topochain-mailer', 'OTP code (no mail transport configured)', { email, code });
 }
 
-module.exports = { sendOtpMail };
+// Waitlist-join confirmation (onboarding flow alignment). Same
+// degrade-silently contract as sendOtpMail: never throws, never makes
+// the join endpoint's response depend on delivery. Transports that only
+// understand the OTP shape simply won't receive a `code` key — a real
+// transport should branch on `kind`.
+//
+// `moreToken` (two-stage waitlist survey) turns into the stage-2 "Want
+// in sooner?" link carried in the mail, so a signer who skipped the
+// optional questions at join time can come back to them from their
+// inbox — the email is the durable home of the capability link.
+async function sendWaitlistJoinMail(config, email, { moreToken = null } = {}) {
+  const transport = config && config.topochainMailTransport;
+  const moreUrl = moreToken ? `${PRODUCTION_ORIGIN}/#more/${moreToken}` : null;
+
+  if (transport) {
+    try {
+      await transport.send({ to: email, kind: 'waitlist_joined', url: moreUrl });
+      return;
+    } catch (err) {
+      log.error('topochain-mailer', 'Waitlist mail transport failed to send', { email, message: err.message });
+      return;
+    }
+  }
+
+  if (config && config.env === 'production') {
+    log.error('topochain-mailer', 'No mail transport configured — waitlist confirmation NOT delivered', { email });
+    return;
+  }
+
+  log.info('topochain-mailer', 'Waitlist join confirmation (no mail transport configured)', { email, moreUrl });
+}
+
+// Waitlist-release notification (the "you're in" mail). Sent by the
+// admin release route exactly once per signup (releaseWaitlistSignup's
+// newly_released flag). The link branches on whether the email already
+// has an account: sign in vs create one. Same degrade-silently contract
+// as the other senders: never throws, never makes the release fail.
+async function sendWaitlistReleaseMail(config, email, { hasAccount = false } = {}) {
+  const transport = config && config.topochainMailTransport;
+  const url = `${PRODUCTION_ORIGIN}/#${hasAccount ? 'login' : 'signup'}`;
+
+  if (transport) {
+    try {
+      await transport.send({ to: email, kind: 'waitlist_released', url, hasAccount });
+      return;
+    } catch (err) {
+      log.error('topochain-mailer', 'Waitlist release mail transport failed to send', { email, message: err.message });
+      return;
+    }
+  }
+
+  if (config && config.env === 'production') {
+    log.error('topochain-mailer', 'No mail transport configured — waitlist release notification NOT delivered', { email });
+    return;
+  }
+
+  log.info('topochain-mailer', 'Waitlist release notification (no mail transport configured)', { email, url });
+}
+
+module.exports = { sendOtpMail, sendWaitlistJoinMail, sendWaitlistReleaseMail };

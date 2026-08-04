@@ -114,12 +114,33 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   const { Octokit } = await import('@octokit/rest');
   const ok = new Octokit({ auth: pat });
 
-  // Only build when the branch actually carries work — a branch level with
+  // #866: what identifies this session's code in the app's own repo.
+  //
+  // Native rows own their branch there, so `branch_name` compares and
+  // clones fine. An imported PR's branch_name is the PR's HEAD REF, which
+  // for a fork-headed PR doesn't exist in the base repo at all — the
+  // compare below 404s and the whole heal turns into a permanent 'error'
+  // verdict ("could not compare <branch> with main"), which is exactly the
+  // dead end an imported proposal used to reach the first time its preview
+  // was GC'd. The head SHA is always reachable (refs/pull/<N>/head), so
+  // pin to it and let staging.js's PR-ref clone fetch it.
+  const imported = session.source === 'imported';
+  const importedHead = imported ? (session.imported_pr_head_sha || null) : null;
+  if (imported && !importedHead) {
+    await recordChecksSkipped({
+      config, pool, session, commitSha: session.checks_commit_sha || null,
+      reason: 'imported PR has no recorded head commit — nothing to preview',
+    });
+    return 'skipped';
+  }
+  const compareHead = importedHead || session.branch_name;
+
+  // Only build when the head actually carries work — a head level with
   // (or behind) main has nothing to preview.
   let compare;
   try {
     const { data } = await ok.rest.repos.compareCommits({
-      owner, repo, base: 'main', head: session.branch_name,
+      owner, repo, base: 'main', head: compareHead,
     });
     compare = data;
   } catch (err) {
@@ -131,7 +152,7 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
     await visuals.storeChecks(
       pool, session.id, session.checks_commit_sha || null,
       { state: 'error', results: [] },
-      `could not compare ${session.branch_name} with main: ${err.message}`.slice(0, 280)
+      `could not compare ${compareHead} with main: ${err.message}`.slice(0, 280)
     ).catch((e) => log.warn('staging-recovery', 'compare-failure verdict write failed', {
       sessionId: session.id, err: e.message,
     }));
@@ -142,18 +163,43 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
     await recordChecksSkipped({
       config, pool, session,
       commitSha: compare.base_commit?.sha || session.checks_commit_sha || null,
-      reason: 'branch has no commits beyond main — nothing to test',
+      expectedCommitSha: session.checks_commit_sha || null,
+      reason: imported
+        ? 'imported PR has no commits beyond main — nothing to test'
+        : 'branch has no commits beyond main — nothing to test',
     });
     return 'skipped';
   }
 
   log.info('staging-recovery', 'Rebuilding staging preview', {
     sessionId: session.id, status: session.status, branch: session.branch_name,
-    aheadBy: compare.ahead_by, reason,
+    imported, head: compareHead, aheadBy: compare.ahead_by, reason,
   });
 
-  const commitHash = compare.commits[compare.commits.length - 1]?.sha || 'latest';
+  // #866: for an imported row the commit to build is the RECORDED head —
+  // the SHA the votes and checks describe — not the compare's tip. They're
+  // usually the same commit, but "usually" is how a preview ends up
+  // showing code nobody voted on: a push that lands between the sweep
+  // reading the row and this compare running moves the tip while
+  // imported_pr_head_sha (and every vote cast against it) still points at
+  // the older commit. The head-change sweep is what advances that SHA, and
+  // it clears the tally when it does; this path must not front-run it.
+  const commitHash = importedHead
+    || compare.commits[compare.commits.length - 1]?.sha
+    || 'latest';
   const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
+  const visuals = require('./visuals');
+
+  // Recovery can discover a newer native branch tip than the verdict stored
+  // on the row. Claim that exact commit before the build so a boot failure is
+  // allowed through storeChecks' latest-head CAS instead of being discarded
+  // as stale and leaving the old commit permanently pending. Imported rows
+  // remain pinned to importedHead above.
+  await visuals.setChecksPending(pool, session.id, commitHash).catch((err) =>
+    log.warn('staging-recovery', 'rebuild setChecksPending failed (non-fatal)', {
+      sessionId: session.id, err: err.message,
+    }));
+  visuals.notifyChecksPending(session.id, commitHash);
 
   // Create PR if missing (active-session recovery only). Route through
   // applyPrMetadata — NOT a bare createPR — so the PR gets a real
@@ -162,7 +208,13 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   // with pr_title left NULL; the promote path then trusted pr_number's
   // presence and skipped its own metadata pass, so the throwaway title
   // stuck (the UI then renders its own "Change by <user>" NULL-fallback).
-  if (!session.pr_number) {
+  //
+  // #866: never for an imported row. It already HAS a PR (that's what it
+  // tracks), and the platform doesn't own its branch — a missing pr_number
+  // on an imported session is a broken row, not an invitation to open a
+  // second PR from someone else's fork. The `imported` guard makes that
+  // explicit rather than relying on pr_number always being set.
+  if (!session.pr_number && !imported) {
     try {
       // username + latest user message give applyPrMetadata the same
       // signals the live dev-turn path has; without the username the
@@ -196,6 +248,21 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
     }
   }
 
+  // Announce the rebuild BEFORE it starts. Building a preview takes
+  // minutes — cloning the self-app's own database alone runs ~4:45 — and
+  // until now this path posted nothing until it succeeded. Session 2954 is
+  // what that costs: the owner watched a chat sitting on an unfinished
+  // "Building staging preview..." for five minutes with no sign the
+  // platform was already fixing it, sent "continue" to force progress, and
+  // got a second full build turn for work that was already committed.
+  //
+  // Same wording as the live dev-turn path's sendStatus (routes/sessions.js)
+  // so the client's existing status-row rendering and the `stagingBuild`
+  // metadata apply unchanged. `active: true` on the broadcast asks open
+  // tabs to spin this row (there's no in-flight turn for /status to report
+  // when the heal sweep or a preview click drives the rebuild).
+  await announceRebuildStarted({ pool, session, imported });
+
   let stagingResult;
   try {
     stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
@@ -218,15 +285,40 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
     [stagingResult.containerId, stagingResult.stagingUrl, session.id]
   );
 
-  await pool.query(
-    `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-     VALUES ($1, 'system', $2, $3)`,
-    [
-      session.id,
-      reason === 'startup' ? 'Staging recovered after restart' : 'Staging preview rebuilt',
-      JSON.stringify({ stagingUrl: stagingResult.stagingUrl }),
-    ]
-  );
+  // Breadcrumb. Native rows get it in the dev-chat transcript; an imported
+  // proposal has no dev chat, so a chat_session_messages row there would be
+  // written to a surface nobody can open (#866). Its equivalent is the group
+  // discussion thread the proposal card links to.
+  if (imported) {
+    const { sendSystemMessage } = require('./ws');
+    const label = session.pr_title
+      ? `PR #${session.pr_number} — ${session.pr_title}`
+      : `PR #${session.pr_number}`;
+    await sendSystemMessage(
+      pool, session.app_id,
+      // #896: one wording for every rebuild reason. Why the preview went
+      // away (a restart, the idle GC, a lost container) is operator
+      // detail; the reader only needs to know the button works again.
+      // `reason` still rides the log line at the end of this function.
+      `The staging preview for ${label} was rebuilt — the Preview button works again.`,
+      'system',
+      { stagingBuild: 'ready', prNumber: session.pr_number || null, stagingUrl: stagingResult.stagingUrl },
+      { type: 'session', ref: session.id }
+    ).catch((err) => log.warn('staging-recovery', 'imported rebuild note failed (non-fatal)', {
+      sessionId: session.id, err: err.message,
+    }));
+  } else {
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+       VALUES ($1, 'system', $2, $3)`,
+      [
+        session.id,
+        // #896: same single wording as the imported-proposal note above.
+        'Staging preview rebuilt',
+        JSON.stringify({ stagingUrl: stagingResult.stagingUrl }),
+      ]
+    );
+  }
 
   broadcastGlobal({
     type: 'session_event', sessionId: session.id,
@@ -247,7 +339,6 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   // Fire-and-forget with the same failure-swallowing as the dev-turn
   // callers; captureForSession is itself _inFlight-guarded so a concurrent
   // live capture isn't duplicated.
-  const visuals = require('./visuals');
   visuals.captureForSession(config, session, app, commitHash, stagingResult, { send: () => {} })
     .catch((err) => log.warn('staging-recovery', 'Post-rebuild checks capture failed (non-fatal)', {
       sessionId: session.id, err: err.message,
@@ -257,15 +348,88 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   return 'built';
 }
 
+// The in-progress half of a background preview rebuild — the row the user
+// sees while the ~5-minute build runs. Its success counterpart is the
+// 'Staging preview rebuilt' row in rebuildSessionStaging; its failure
+// counterpart is recordStagingBootFailure's explanatory row. Every path
+// out of the build therefore lands a row AFTER this one, so it can never
+// be left as the transcript's last word.
+//
+// Best-effort throughout: narration must never be why a rebuild fails.
+const STAGING_REBUILD_IN_PROGRESS = 'Building staging preview...';
+
+async function announceRebuildStarted({ pool, session, imported }) {
+  const { broadcastGlobal, pushSessionUpdate, sendSystemMessage } = require('./ws');
+  const metadata = {
+    stagingBuild: 'running',
+    recovered: true,
+    ...(session.pr_number ? { prNumber: session.pr_number } : {}),
+  };
+  try {
+    if (imported) {
+      // An imported proposal has no dev chat, so the equivalent surface is
+      // the group discussion thread its card links to (#866) — same split
+      // the success note below makes.
+      const label = session.pr_title
+        ? `PR #${session.pr_number} — ${session.pr_title}`
+        : `PR #${session.pr_number}`;
+      await sendSystemMessage(
+        pool, session.app_id,
+        `Rebuilding the staging preview for ${label}...`,
+        'system', metadata, { type: 'session', ref: session.id }
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+         VALUES ($1, 'system', $2, $3)`,
+        [session.id, STAGING_REBUILD_IN_PROGRESS, JSON.stringify(metadata)]
+      );
+    }
+  } catch (err) {
+    log.warn('staging-recovery', 'rebuild-started note failed (non-fatal)', {
+      sessionId: session.id, err: err.message,
+    });
+  }
+  try {
+    broadcastGlobal({
+      type: 'session_event', sessionId: session.id, event: 'status',
+      text: imported
+        ? `Rebuilding the staging preview for PR #${session.pr_number}...`
+        : STAGING_REBUILD_IN_PROGRESS,
+      stagingBuild: 'running',
+      // Client-side hint: render this row with the live arc spinner even
+      // though no turn is in flight (public/js/dev-chat.js).
+      active: true,
+    });
+    pushSessionUpdate({
+      action: 'staging_building', sessionId: session.id, appSlug: session.app_slug,
+    });
+  } catch (err) {
+    log.warn('staging-recovery', 'rebuild-started broadcast failed (non-fatal)', {
+      sessionId: session.id, err: err.message,
+    });
+  }
+}
+
 // #461: record a terminal, gate-passing 'skipped' checks verdict (with its
 // reason) for a session whose checks genuinely cannot / need not run, then
 // tell open clients and re-drive the auto-merge drain — a proposal whose vote
 // already passed should merge the moment its checks resolve to 'skipped',
 // exactly as it would on 'passing'. Best-effort: never throws.
-async function recordChecksSkipped({ config, pool, session, commitSha, reason }) {
+async function recordChecksSkipped({
+  config, pool, session, commitSha, expectedCommitSha = commitSha, reason,
+}) {
   const visuals = require('./visuals');
   try {
-    await visuals.storeChecksSkipped(pool, session.id, commitSha, reason);
+    const stored = await visuals.storeChecksSkipped(
+      pool, session.id, commitSha, reason, expectedCommitSha
+    );
+    if (stored === false) {
+      log.info('staging-recovery', 'Discarded stale skipped-checks result', {
+        sessionId: session.id, commitSha: commitSha || null,
+      });
+      return;
+    }
   } catch (err) {
     log.warn('staging-recovery', 'skipped-verdict write failed', {
       sessionId: session.id, err: err.message,
@@ -294,7 +458,15 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
   const visuals = require('./visuals');
   const detail = visuals.summarizeBootFailure(err);
 
-  await visuals.storeChecks(pool, session.id, commitHash, { state: 'error', results: [] }, detail);
+  const stored = await visuals.storeChecks(
+    pool, session.id, commitHash, { state: 'error', results: [] }, detail
+  );
+  if (stored === false) {
+    log.info('staging-recovery', 'Discarded stale staging failure', {
+      sessionId: session.id, commitHash: commitHash || null,
+    });
+    return;
+  }
 
   // Read back the streak bookkeeping to decide whether this is the first
   // failure of the streak (→ notify + post) or a quiet backoff retry.
@@ -326,16 +498,31 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
   ).catch(() => {});
 
   // Visible-in-thread record of why the preview won't come up.
+  //
+  // #866: "visible" depends on the kind of proposal. A native session shows
+  // chat_session_messages in its dev chat. An imported PR has no dev chat at
+  // all, so the same row lands on a surface nobody can open — the reason for
+  // the blocked merge existed only in the pill tooltip. Imported rows get the
+  // note in the group discussion thread the proposal card links to instead.
+  // Still exactly one post per failure streak, either way: setChecksPending
+  // clears check_error_notified_at when a new commit arrives, so a fresh
+  // build failure always narrates, and quiet backoff retries never do.
+  const body = `⚠️ Staging preview failed to start, so automated checks can't run and this proposal can't merge yet. Reason: ${detail}`;
   try {
-    await pool.query(
-      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-       VALUES ($1, 'system', $2, $3)`,
-      [
-        session.id,
-        `⚠️ Staging preview failed to start, so automated checks can't run and this proposal can't merge yet. Reason: ${detail}`,
-        JSON.stringify({ checkError: true, detail }),
-      ]
-    );
+    if (session.source === 'imported') {
+      const { sendSystemMessage } = require('./ws');
+      await sendSystemMessage(
+        pool, row.app_id || session.app_id, body, 'system',
+        { checkError: true, detail, prNumber: row.pr_number || session.pr_number || null },
+        { type: 'session', ref: session.id }
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+         VALUES ($1, 'system', $2, $3)`,
+        [session.id, body, JSON.stringify({ checkError: true, detail })]
+      );
+    }
   } catch (e) {
     log.warn('staging-recovery', 'boot-failure thread post failed', { sessionId: session.id, err: e.message });
   }
@@ -370,11 +557,11 @@ async function recheckSessionChecks({ config, pool, session, reason }) {
   // re-stamps idempotently (same commit sha → failure streak preserved).
   {
     const visuals = require('./visuals');
-    await visuals.setChecksPending(pool, session.id, session.checks_commit_sha || null)
+    await visuals.setChecksPending(pool, session.id, session.checks_commit_sha || null, 'building')
       .catch((err) => log.warn('staging-recovery', 'recheck setChecksPending failed (non-fatal)', {
         sessionId: session.id, err: err.message,
       }));
-    visuals.notifyChecksPending(session.id, session.checks_commit_sha || null);
+    visuals.notifyChecksPending(session.id, session.checks_commit_sha || null, 'building');
   }
   if (await stagingNeedsRebuild(session, { config })) {
     // rebuildSessionStaging owns the capture (see above) and the no-op
@@ -398,6 +585,9 @@ module.exports = {
   stagingNeedsRebuild,
   rebuildSessionStaging,
   recheckSessionChecks,
+  // Exported for tests + so the client-facing wording has one owner.
+  STAGING_REBUILD_IN_PROGRESS,
+  announceRebuildStarted,
   // #461: exported so the dev-turn tails (routes/sessions.js) and the
   // post-promote build catch (routes/votes.js) can record an 'error'
   // verdict when their staging build fails, instead of leaving the

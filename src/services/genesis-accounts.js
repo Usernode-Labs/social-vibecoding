@@ -7,6 +7,36 @@ const EXPLORER_UPSTREAM_BASE = process.env.EXPLORER_UPSTREAM_BASE || '/api';
 
 let genesisAddresses = new Set();
 let loaded = false;
+// Failure-streak state, mirroring chain-poller's: the same explorer is
+// upstream for both, so an outage should read the same way on the status
+// pages and cost the same one log line rather than one per retry.
+let consecutiveFailures = 0;
+let downSince = null;
+let lastError = null;
+let retryHandle = null;
+
+const RETRY_BASE_MS = 30_000;
+const RETRY_MAX_MS = 300_000;
+
+function retryMs() {
+  if (consecutiveFailures <= 0) return RETRY_BASE_MS;
+  return Math.min(RETRY_BASE_MS * Math.pow(2, consecutiveFailures - 1), RETRY_MAX_MS);
+}
+
+function noteFailure(message) {
+  lastError = message;
+  consecutiveFailures += 1;
+  if (consecutiveFailures === 1) {
+    downSince = Date.now();
+    log.warn('genesis', 'Fetch failed — retrying with backoff', {
+      err: message, nextRetryMs: retryMs(),
+    });
+  } else {
+    log.debug('genesis', `Fetch failed (failure #${consecutiveFailures})`, {
+      err: message, nextRetryMs: retryMs(),
+    });
+  }
+}
 
 function httpJson(method, urlStr, body) {
   return new Promise((resolve, reject) => {
@@ -50,10 +80,11 @@ async function fetchGenesisAccounts() {
     const data = await httpJson('GET', `${explorerBase()}/active_chain`);
     chainId = data && data.chain_id;
   } catch (e) {
-    log.warn('genesis', 'Could not discover chain', { err: e.message });
-    return;
+    // Rethrow so start()'s retry loop owns the streak accounting — this
+    // used to swallow the error and silently never retry.
+    throw new Error(`Could not discover chain: ${e.message}`);
   }
-  if (!chainId) return;
+  if (!chainId) throw new Error('Explorer returned no chain_id');
 
   const base = `${explorerBase()}/${chainId}`;
   const accounts = new Set();
@@ -79,14 +110,49 @@ async function fetchGenesisAccounts() {
 
   genesisAddresses = accounts;
   loaded = true;
+  if (consecutiveFailures > 0) {
+    const downMs = downSince ? Date.now() - downSince : 0;
+    log.warn('genesis', 'explorer recovered', {
+      afterFailures: consecutiveFailures,
+      downSeconds: Math.round(downMs / 1000),
+    });
+  }
+  consecutiveFailures = 0;
+  downSince = null;
+  lastError = null;
   log.info('genesis', `Loaded ${accounts.size} genesis account(s)`);
 }
 
 function start() {
-  fetchGenesisAccounts().catch(e => {
-    log.warn('genesis', 'Initial fetch failed — will retry in 30s', { err: e.message });
-    setTimeout(() => fetchGenesisAccounts().catch(() => {}), 30_000);
-  });
+  // Keep retrying with backoff instead of the old one-shot 30s retry: with
+  // the explorer down for hours, a single retry meant the genesis set never
+  // loaded at all and nothing said so.
+  const attempt = () => {
+    fetchGenesisAccounts().catch((e) => {
+      noteFailure(e.message);
+      retryHandle = setTimeout(attempt, retryMs());
+      retryHandle.unref?.();
+    });
+  };
+  attempt();
+}
+
+function stop() {
+  if (retryHandle) {
+    clearTimeout(retryHandle);
+    retryHandle = null;
+  }
+}
+
+// Outage shape for /status and /node-status, same keys as chain-poller's.
+function getStatus() {
+  return {
+    loaded,
+    count: genesisAddresses.size,
+    consecutiveFailures,
+    downSince,
+    lastError,
+  };
 }
 
 function isGenesisAddress(address) {
@@ -97,4 +163,4 @@ function isGenesisAddress(address) {
 function isLoaded() { return loaded; }
 function count() { return genesisAddresses.size; }
 
-module.exports = { start, isGenesisAddress, isLoaded, count };
+module.exports = { start, stop, isGenesisAddress, isLoaded, count, getStatus };

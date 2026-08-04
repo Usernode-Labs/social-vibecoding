@@ -1,11 +1,26 @@
-// Topochain public leaderboard screen (Task 14, public screens). Full-page
-// SPA screen hosted at hash route #topochain/leaderboard, hosted in
-// #topochain-leaderboard-screen / #topochain-leaderboard-root
-// (public/index.html) and mounted/unmounted by
-// App.navigateToTopochainLeaderboard / App._exitTopochainLeaderboard
-// (public/js/app.js) — the same shape as the admin console
-// (public/js/admin-console.js), minus the isAdmin gate: this is a public
-// read, reachable by anyone, signed in or not.
+// Topochain public standings (Task 14, public screens). Was a screen of
+// its own (#topochain-leaderboard-screen) until the header slim-down made
+// it the SECOND TAB of the Leaderboard screen: it renders into
+// #topochain-leaderboard-root inside #leaderboard-screen, and open() /
+// close() are called by the Leaderboard module (public/js/leaderboard.js)
+// when its section flips, not by a navigate* pair in app.js. The legacy
+// #topochain/leaderboard hash still lands here — the router aliases it to
+// #leaderboard/topochain.
+//
+// The event picker and the event hero this module used to own moved UP into
+// the screen-level bar owned by public/js/topochain-event-context.js when the
+// challenges tab joined the screen — one selection, shared with that tab, so
+// the standings and the challenge list can never describe different weeks.
+// This module subscribes to it and keeps only what is genuinely
+// standings-specific: the disclaimer line, the table, pagination and the
+// per-row drill-down. (`disclaimer` / `status` / `has_ended` live on the
+// `event` object inside GET /api/v4/leaderboard, NOT on /season-events/:id,
+// which is why the disclaimer stays here rather than in the shared hero.)
+//
+// No isAdmin gate: this is a public read, reachable by anyone, signed in
+// or not. Everything below _renderShell is unchanged by the merge — the
+// module still owns #tc-lb-body / #tc-lb-drill and its own event/page
+// state (deliberately NOT routed through Leaderboard._cache).
 //
 // Every fetch here hits the public /api/v4 group (src/routes/topochain/
 // public.js), which is optionally-authenticated but never 401s.
@@ -38,11 +53,8 @@
 const TopochainLeaderboard = {
   _open: false,
 
-  // Full events list (GET /season-events?include_past=1), for the picker.
-  _events: [],
-  // Selected season_event_id. null until the first /leaderboard fetch
-  // resolves "current" and we learn which event that was.
-  _eventId: null,
+  // Unsubscribe handle from TopochainEventContext.onChange.
+  _unsub: null,
   _page: 1,
   _perPage: 25,
 
@@ -51,6 +63,9 @@ const TopochainLeaderboard = {
   _meta: null,
   _loading: false,
   _error: null,
+  // Neutral "there is nothing here" copy, distinct from _error (which
+  // paints red). Set when the server has no public events at all.
+  _empty: null,
 
   // Drill-down panel state. `_drillRow` is the clicked row (or null); the
   // three sections load independently so one failing/being unavailable
@@ -97,12 +112,30 @@ const TopochainLeaderboard = {
   open() {
     TopochainLeaderboard._open = true;
     TopochainLeaderboard._renderShell();
-    TopochainLeaderboard.loadEvents();
+    // The event bar owns the selection; reload whenever it changes.
+    if (window.TopochainEventContext?.onChange) {
+      TopochainLeaderboard._unsub = TopochainEventContext.onChange(() => {
+        if (!TopochainLeaderboard._open) return;
+        TopochainLeaderboard._page = 1;
+        TopochainLeaderboard._drillRow = null;
+        TopochainLeaderboard.loadLeaderboard();
+      });
+    }
+    TopochainLeaderboard.loadLeaderboard();
   },
 
   close() {
     TopochainLeaderboard._open = false;
     TopochainLeaderboard._drillRow = null;
+    if (TopochainLeaderboard._unsub) {
+      TopochainLeaderboard._unsub();
+      TopochainLeaderboard._unsub = null;
+    }
+  },
+
+  _eventId() {
+    return window.TopochainEventContext
+      ? TopochainEventContext.eventId : null;
   },
 
   // ── Shell ────────────────────────────────────────────────────────────
@@ -110,73 +143,28 @@ const TopochainLeaderboard = {
   _renderShell() {
     const root = document.getElementById('topochain-leaderboard-root');
     if (!root) return;
+    // No title and no event picker of our own: the Leaderboard screen shell
+    // titles the page, the section tab above says "Topochain", and the
+    // shared event bar (TopochainEventContext) owns the picker + hero.
     root.innerHTML = `
-      <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
-        <h1 class="text-xl font-bold text-zinc-900 dark:text-zinc-100">Topochain leaderboard</h1>
-        <label class="flex items-center gap-2 text-sm">
-          <span class="text-zinc-500 dark:text-zinc-400">Event</span>
-          <select id="tc-lb-event-select"
-            class="rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1.5 text-sm max-w-[16rem]">
-            <option value="">Loading…</option>
-          </select>
-        </label>
-      </div>
       <div id="tc-lb-body">
         <p class="text-sm text-zinc-500">Loading…</p>
       </div>
       <div id="tc-lb-drill" class="hidden mt-4"></div>`;
-
-    document.getElementById('tc-lb-event-select').addEventListener('change', (e) => {
-      const id = parseInt(e.target.value, 10);
-      TopochainLeaderboard._eventId = Number.isInteger(id) ? id : null;
-      TopochainLeaderboard._page = 1;
-      TopochainLeaderboard._drillRow = null;
-      TopochainLeaderboard.loadLeaderboard();
-    });
   },
 
   // ── Data loading ─────────────────────────────────────────────────────
 
-  async loadEvents() {
-    const { ok, data } = await TopochainLeaderboard.fetchJson(
-      '/api/v4/season-events?include_past=1'
-    );
-    if (!TopochainLeaderboard._open) return;
-    if (ok && data?.success && Array.isArray(data.data)) {
-      TopochainLeaderboard._events = data.data;
-      TopochainLeaderboard._renderEventOptions();
-    }
-    // The picker is a nice-to-have; the leaderboard fetch below still
-    // works (against the server's own "current event" default) even if
-    // this list failed to load.
-    TopochainLeaderboard.loadLeaderboard();
-  },
-
-  _renderEventOptions() {
-    const sel = document.getElementById('tc-lb-event-select');
-    if (!sel) return;
-    const esc = TopochainLeaderboard.esc;
-    const current = TopochainLeaderboard._eventId;
-    const options = ['<option value="">Current event</option>']
-      .concat(TopochainLeaderboard._events.map((ev) => {
-        const selected = current === ev.id ? ' selected' : '';
-        const tag = ev.is_current ? ' (current)' : (ev.is_active ? '' : ' (past)');
-        return `<option value="${esc(ev.id)}"${selected}>${esc(ev.name)}${esc(tag)}</option>`;
-      }));
-    sel.innerHTML = options.join('');
-    // Reflect a server-resolved "current" event id back into the select
-    // once we know it, so the picker doesn't just sit on the placeholder.
-    if (current != null) sel.value = String(current);
-  },
-
   async loadLeaderboard() {
     TopochainLeaderboard._loading = true;
     TopochainLeaderboard._error = null;
+    TopochainLeaderboard._empty = null;
     TopochainLeaderboard._renderBody();
 
     const params = new URLSearchParams();
-    if (TopochainLeaderboard._eventId != null) {
-      params.set('season_event_id', String(TopochainLeaderboard._eventId));
+    const eventId = TopochainLeaderboard._eventId();
+    if (eventId != null) {
+      params.set('season_event_id', String(eventId));
     }
     params.set('page', String(TopochainLeaderboard._page));
     params.set('per_page', String(TopochainLeaderboard._perPage));
@@ -191,17 +179,28 @@ const TopochainLeaderboard = {
       TopochainLeaderboard._data = data.data;
       TopochainLeaderboard._meta = data.meta || null;
       // Learn the server-resolved event id (relevant the first time, when
-      // no season_event_id was requested) so the picker highlights it and
-      // pagination/drill-downs stay pinned to the same event.
-      if (data.data?.event?.id != null) {
-        TopochainLeaderboard._eventId = data.data.event.id;
-        TopochainLeaderboard._renderEventOptions();
+      // no season_event_id was requested) so the shared picker highlights
+      // it and pagination/drill-downs stay pinned to the same event. Fed
+      // back silently — a server resolution is not a user choice, so it
+      // must not clear the event bar's "nothing is running" caption nor
+      // re-notify us (and the challenges pane) into a reload loop.
+      if (data.data?.event?.id != null && window.TopochainEventContext?.select) {
+        TopochainEventContext.select(data.data.event.id, { silent: true });
       }
     } else {
       TopochainLeaderboard._data = null;
       TopochainLeaderboard._meta = null;
-      TopochainLeaderboard._error = (data && data.error)
-        || (status === 404 ? 'No event found.' : 'Failed to load the leaderboard.');
+      if (status === 404) {
+        // Only reachable now when there are no public events at all (the
+        // event bar's default pick covers "none is currently running").
+        // That's an empty world, not a failure — render it neutrally.
+        TopochainLeaderboard._error = null;
+        TopochainLeaderboard._empty = 'No events have been published yet.';
+      } else {
+        TopochainLeaderboard._empty = null;
+        TopochainLeaderboard._error = (data && data.error)
+          || 'Failed to load the leaderboard.';
+      }
     }
     TopochainLeaderboard._renderBody();
   },
@@ -224,6 +223,13 @@ const TopochainLeaderboard = {
         </div>`;
       return;
     }
+    if (TopochainLeaderboard._empty) {
+      host.innerHTML = `
+        <p class="text-sm text-zinc-500 py-8 text-center">
+          ${esc(TopochainLeaderboard._empty)}
+        </p>`;
+      return;
+    }
     const payload = TopochainLeaderboard._data;
     if (!payload) {
       host.innerHTML = '<p class="text-sm text-zinc-500">No data.</p>';
@@ -231,23 +237,16 @@ const TopochainLeaderboard = {
     }
     const { event, leaderboard } = payload;
 
-    const statusBadge = {
-      active: 'bg-green-500/20 text-green-600 dark:text-green-300',
-      upcoming: 'bg-amber-500/20 text-amber-600 dark:text-amber-300',
-      ended: 'bg-zinc-500/20 text-zinc-500 dark:text-zinc-400',
-    }[event.status] || 'bg-zinc-500/20 text-zinc-500';
-
-    const hero = `
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 mb-4">
-        <div class="flex flex-wrap items-center gap-2">
-          <h2 class="text-lg font-semibold text-zinc-900 dark:text-zinc-100">${esc(event.name)}</h2>
-          <span class="text-xs px-2 py-0.5 rounded-full font-medium ${statusBadge}">${esc(event.status)}</span>
-        </div>
-        ${event.disclaimer ? `<p class="text-xs text-zinc-500 mt-1">${esc(event.disclaimer)}</p>` : ''}
-      </div>`;
+    // The event name / status / dates / "nothing is running" caption all
+    // render once, in the shared event bar above. The only header this pane
+    // keeps is the disclaimer, which is standings-specific copy and only
+    // exists on THIS endpoint's event object.
+    const disclaimer = event.disclaimer
+      ? `<p id="tc-lb-disclaimer" class="text-xs text-zinc-500 mb-3">${esc(event.disclaimer)}</p>`
+      : '';
 
     if (!event.display_leaderboard) {
-      host.innerHTML = `${hero}
+      host.innerHTML = `${disclaimer}
         <p class="text-sm text-zinc-500 py-8 text-center">
           The leaderboard for this event isn't public yet.
         </p>`;
@@ -255,7 +254,7 @@ const TopochainLeaderboard = {
     }
 
     if (!leaderboard.length) {
-      host.innerHTML = `${hero}
+      host.innerHTML = `${disclaimer}
         <p class="text-sm text-zinc-500 py-8 text-center">No leaderboard entries yet.</p>`;
       return;
     }
@@ -287,7 +286,7 @@ const TopochainLeaderboard = {
         </div>
       </div>` : '';
 
-    host.innerHTML = `${hero}
+    host.innerHTML = `${disclaimer}
       <div class="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
         <table class="w-full">
           <thead class="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500">
@@ -331,7 +330,7 @@ const TopochainLeaderboard = {
     TopochainLeaderboard._drillProfile = { loading: false, error: null, data: null };
     TopochainLeaderboard._renderDrill();
 
-    const eventId = TopochainLeaderboard._eventId;
+    const eventId = TopochainLeaderboard._eventId();
     const identifier = row.bech32m || row.discord || null;
 
     if (identifier && eventId != null) {

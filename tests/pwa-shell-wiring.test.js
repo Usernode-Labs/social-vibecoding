@@ -2,14 +2,16 @@
 // offline boot complete and the manifest installable.
 //
 //  1. Precache-list sync — every local script/stylesheet (and CDN script)
-//     referenced by index.html / login.html appears in sw.js's
-//     SHELL_ASSETS / CDN_ASSETS, so a newly-added <script> can't silently
-//     break offline boot.
+//     referenced by index.html appears in sw.js's SHELL_ASSETS /
+//     CDN_ASSETS, so a newly-added <script> can't silently break offline
+//     boot. (index.html is the single shell document now — the old
+//     standalone auth pages are redirect stubs into the SPA's hash
+//     routes; fold-auth-pages-into-SPA.)
 //  2. Every SHELL_ASSETS entry maps to a real file under public/ (no
 //     dead precache entries, which would 404 during install).
 //  3. manifest.webmanifest is valid and its icon files exist.
-//  4. index.html / login.html carry the manifest link, theme-color, the
-//     offline banner element, and load offline.js (which registers the SW).
+//  4. index.html carries the manifest link, theme-color, the offline
+//     banner element, and loads offline.js (which registers the SW).
 //  5. static-cache treats sw.js and the manifest as revalidate-every-load
 //     shell assets.
 //
@@ -41,27 +43,30 @@ function cdnAssets(html) {
   return [...out];
 }
 
-test('sw.js precaches every local asset index.html and login.html load', () => {
-  for (const page of ['index.html', 'login.html']) {
-    const html = readPublic(page);
-    for (const asset of localAssets(html)) {
-      assert.ok(
-        sw.SHELL_ASSETS.includes(asset),
-        `${page} loads ${asset} but sw.js SHELL_ASSETS doesn't precache it`
-      );
-    }
-    for (const url of cdnAssets(html)) {
-      assert.ok(
-        sw.CDN_ASSETS.includes(url),
-        `${page} loads ${url} but sw.js CDN_ASSETS doesn't list it`
-      );
-    }
+test('sw.js precaches every local asset index.html loads', () => {
+  const html = readPublic('index.html');
+  for (const asset of localAssets(html)) {
+    assert.ok(
+      sw.SHELL_ASSETS.includes(asset),
+      `index.html loads ${asset} but sw.js SHELL_ASSETS doesn't precache it`
+    );
+  }
+  for (const url of cdnAssets(html)) {
+    assert.ok(
+      sw.CDN_ASSETS.includes(url),
+      `index.html loads ${url} but sw.js CDN_ASSETS doesn't list it`
+    );
   }
 });
 
-test('sw.js precaches the shell pages themselves and the manifest', () => {
-  for (const must of ['/index.html', '/login.html', '/manifest.webmanifest']) {
+test('sw.js precaches the shell page itself and the manifest, not the stubs', () => {
+  for (const must of ['/index.html', '/manifest.webmanifest']) {
     assert.ok(sw.SHELL_ASSETS.includes(must), `SHELL_ASSETS missing ${must}`);
+  }
+  // The old standalone pages are redirect stubs — precaching them would
+  // waste install work and could pin a stale redirect.
+  for (const stub of ['/login.html', '/landing.html', '/register.html', '/waiting.html']) {
+    assert.ok(!sw.SHELL_ASSETS.includes(stub), `SHELL_ASSETS still precaches stub ${stub}`);
   }
 });
 
@@ -100,11 +105,13 @@ test('index.html wires up the manifest, banner, and offline.js', () => {
   assert.match(html, /<script src="\/js\/offline\.js"><\/script>/);
 });
 
-test('login.html wires up the manifest, banner, and offline.js', () => {
+test('login.html is a redirect stub with no shell wiring of its own', () => {
   const html = readPublic('login.html');
-  assert.match(html, /<link rel="manifest" href="\/manifest\.webmanifest">/);
-  assert.match(html, /id="offline-banner"/);
-  assert.match(html, /<script src="\/js\/offline\.js"><\/script>/);
+  assert.match(html, /location\.replace\(/);
+  // A stub must not register the SW or load app modules — the SPA it
+  // redirects into owns all of that.
+  assert.doesNotMatch(html, /offline\.js/);
+  assert.doesNotMatch(html, /manifest\.webmanifest/);
 });
 
 test('offline.js registers the service worker at root scope', () => {

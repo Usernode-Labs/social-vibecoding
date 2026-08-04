@@ -30,13 +30,32 @@ test('parseShots reads fellback=1 into fellBack, defaulting to false', () => {
 
 // ── expandCapturePaths: both frames per path ───────────────────────────
 
-test('expandCapturePaths emits a desktop + mobile pair per path on adjacent indexes', () => {
+// One target per path now, carrying the phone frame as a companion the
+// container shoots from the SAME page — the indexes must stay exactly what
+// the two-sibling-target shape produced (i*2 desktop, i*2+1 mobile), since
+// they are what attributes each stored artifact to its rendered row.
+test('expandCapturePaths emits one target per path, phone frame as a companion on the odd index', () => {
   const t = visuals.expandCapturePaths(['/', '/board']);
-  assert.equal(t.length, 4);
-  assert.deepEqual(t[0], { index: 0, path: '/', viewport: null, still: false });
-  assert.deepEqual(t[1], { index: 1, path: '/', viewport: 'mobile', still: true });
-  assert.deepEqual(t[2], { index: 2, path: '/board', viewport: null, still: false });
-  assert.deepEqual(t[3], { index: 3, path: '/board', viewport: 'mobile', still: true });
+  assert.equal(t.length, 2);
+  assert.deepEqual(t[0], {
+    index: 0, path: '/', viewport: null, still: false,
+    companion: { index: 1, viewport: 'mobile' },
+  });
+  assert.deepEqual(t[1], {
+    index: 2, path: '/board', viewport: null, still: false,
+    companion: { index: 3, viewport: 'mobile' },
+  });
+});
+
+test('expandCapturePaths halves the page loads it asks for (one navigation per side per path)', () => {
+  // The regression this guards: emitting a sibling mobile TARGET made the
+  // container navigate twice per side, which is what took a two-route
+  // proposal from 4 page loads to 8.
+  const t = visuals.expandCapturePaths(['/', '/board', '/x']);
+  assert.equal(t.length, 3);
+  assert.ok(t.every((e) => e.still === false), 'no target is still-only any more');
+  assert.deepEqual(t.map((e) => e.index), [0, 2, 4]);
+  assert.deepEqual(t.map((e) => e.companion.index), [1, 3, 5]);
 });
 
 test('expandCapturePaths tolerates a non-array', () => {
@@ -61,6 +80,59 @@ test('resolveTargets carries still through, defaulting to false', () => {
 test('the legacy scalar-env fallback is never still-only', () => {
   const t = resolveTargets({ AFTER_URL: 'http://a/' });
   assert.equal(t[0].still, false);
+  assert.equal(t[0].companion, null);
+});
+
+// ── capture.js resolveTargets / parseCompanion: the companion frame ─────
+
+test('resolveTargets parses a companion frame with its own capture index', () => {
+  const env = {
+    TARGETS: JSON.stringify([
+      { index: 0, afterUrl: 'http://a/', companion: { index: 1, viewport: { width: 390, height: 844 } } },
+    ]),
+  };
+  const t = resolveTargets(env);
+  assert.deepEqual(t[0].companion, { index: 1, viewport: { width: 390, height: 844 } });
+  // The target itself stays the full-media desktop frame.
+  assert.equal(t[0].still, false);
+  assert.equal(t[0].viewport, null);
+});
+
+test('a malformed companion degrades to none rather than costing the target its shots', () => {
+  const cases = [
+    undefined,
+    null,
+    'mobile',
+    { index: 1 },                                        // no viewport
+    { viewport: { width: 390, height: 844 } },           // no index
+    { index: -1, viewport: { width: 390, height: 844 } }, // negative index
+    { index: 1, viewport: { width: 0, height: 844 } },    // out-of-bounds frame
+    { index: 1, viewport: { width: 'x', height: 'y' } },  // non-numeric frame
+  ];
+  for (const companion of cases) {
+    const t = resolveTargets({ TARGETS: JSON.stringify([{ index: 0, afterUrl: 'http://a/', companion }]) });
+    assert.equal(t.length, 1, `target survives companion ${JSON.stringify(companion)}`);
+    assert.equal(t[0].companion, null, `companion rejected: ${JSON.stringify(companion)}`);
+    assert.equal(t[0].afterUrl, 'http://a/');
+  }
+});
+
+test('an old orchestrator\'s sibling still-only target still resolves (rolling deploy)', () => {
+  // The previous TARGETS shape: two entries per path, the odd one
+  // `still: true`. A capture image carrying the companion support must keep
+  // honouring it, because a rolling deploy pairs a new image with the old
+  // orchestrator for one release.
+  const env = {
+    TARGETS: JSON.stringify([
+      { index: 0, afterUrl: 'http://a/' },
+      { index: 1, afterUrl: 'http://a/', still: true, viewport: { width: 390, height: 844 } },
+    ]),
+  };
+  const t = resolveTargets(env);
+  assert.equal(t.length, 2);
+  assert.equal(t[1].still, true);
+  assert.equal(t[1].companion, null);
+  assert.deepEqual(t[1].viewport, { width: 390, height: 844 });
 });
 
 // ── storeArtifacts: shot_status, before_fell_back, over-cap collector ──

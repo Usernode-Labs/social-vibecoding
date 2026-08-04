@@ -129,6 +129,13 @@ function handleQuery(rawSql, params = []) {
     return { rows: [] };
   }
 
+  // Block-producer release lookup (onboarding flow alignment): provision
+  // reports bp_released alongside the wallet so the app can gate producer
+  // setup. No fixture user is released.
+  if (sql.startsWith('SELECT bp_released_at FROM users WHERE id = $1')) {
+    return { rows: [{ bp_released_at: null }] };
+  }
+
   // Enrollment check + insert.
   if (sql.startsWith('SELECT id FROM user_enrollments WHERE user_id = $1 AND season_id = $2')) {
     const row = enrollments.find((e) => e.user_id === params[0] && e.season_id === params[1]);
@@ -227,6 +234,9 @@ test('fresh user is allocated an unused pool account and enrolled season-wide', 
     assert.equal(body.data.season_id, 10);
     assert.equal(body.data.season_event_id, null);
     assert.equal(body.data.newly_allocated, true);
+    // Onboarding flow alignment: provision reports the block-producer
+    // release state (false until an admin releases keys).
+    assert.equal(body.data.bp_released, false);
 
     const claimed = accounts.find((a) => a.id === 100);
     assert.equal(claimed.user_id, 1);

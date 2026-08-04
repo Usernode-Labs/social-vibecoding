@@ -53,7 +53,18 @@ const DevChat = {
   // where sending is impossible), so the busy copy points at it again.
   COMPOSER_PLACEHOLDER_BUSY:
     'Claude is working — type your next note and tap 💾 to save it for later.',
-  SAVE_DRAFT_TITLE: 'Save this text as a draft — it stays here until you send it',
+  SAVE_DRAFT_TITLE:
+    'Save this text as a draft (Ctrl+Enter) — it stays here until you send it',
+  // #920: the hint under the composer names whatever Ctrl/Cmd+Enter does
+  // RIGHT NOW. While a turn runs sending is impossible and the keystroke
+  // parks the text as a draft instead, so the copy follows the action.
+  // Both carry the same <kbd> markup the template ships inline; the idle
+  // variant IS the template's default, so a fresh render never flashes
+  // the wrong one. _syncShortcutHint swaps them.
+  SHORTCUT_HINT_SEND:
+    '<kbd class="dc-kbd">Ctrl</kbd>+<kbd class="dc-kbd">Enter</kbd> to send',
+  SHORTCUT_HINT_SAVE:
+    '<kbd class="dc-kbd">Ctrl</kbd>+<kbd class="dc-kbd">Enter</kbd> to save as draft',
   // Floppy-disk glyph, same inline-SVG style as the attach button.
   _SAVE_ICON_SVG:
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>',
@@ -457,7 +468,10 @@ const DevChat = {
     const btn = document.getElementById('dc-credits-add-key');
     if (!btn) return;
     btn.addEventListener('click', () => {
-      if (window.Settings) Settings.open({ focusApiKey: true });
+      // #463: deep-link straight at the API-key section of the Settings
+      // screen. A real hash navigation, so the browser / device back
+      // gesture returns the user to this chat.
+      location.hash = '#settings/api-key';
     });
   },
 
@@ -943,6 +957,12 @@ const DevChat = {
       // Q/A chip selection is per-question-turn — never carry one across
       // a session switch / reload.
       DevChat._qaSelection = {};
+      // #891: the AI-guess state is per-run. Carrying it across a session
+      // switch would let another session's stale guess drain onto this
+      // timeline, and a stale `_lastEstimateAt` would suppress this
+      // session's first real estimate as "not newer".
+      DevChat._pendingEstimate = null;
+      DevChat._lastEstimateAt = null;
       DevChat.messages = messages.map((m) => {
         if (m.metadata) {
           if (m.metadata.stagingUrl) m.stagingUrl = m.metadata.stagingUrl;
@@ -979,10 +999,16 @@ const DevChat = {
             m._estimateRemaining = m.metadata.estimate.remainingSeconds == null
               ? null
               : m.metadata.estimate.remainingSeconds;
-            // #359: re-anchor the count-down from load time. metadata.estimate
-            // carries no "estimated-at" stamp, so this reads slightly high; the
-            // next live cc_estimate corrects it within ~a minute.
-            m._countdownTo = DevChat._countdownTarget(m._estimateRemaining);
+            // #359/#891: anchor from the persisted `estimatedAt` when the
+            // snapshot carries one; otherwise fall back to load time (reads
+            // slightly high, and the next live cc_estimate corrects it).
+            // #892: prefer the persisted post-guard value when present.
+            m._countdownTo = DevChat._countdownTarget(
+              m.metadata.estimate.displayedRemainingSeconds != null
+                ? m.metadata.estimate.displayedRemainingSeconds
+                : m._estimateRemaining,
+              m.metadata.estimate.estimatedAt
+            );
           }
           // Spec preview cards: scout dispatches persist these on the
           // status row so a refresh re-renders the same inline card the
@@ -1015,12 +1041,26 @@ const DevChat = {
           if (m.metadata.platformIssueDraft) {
             m.platformIssueDraft = { ...m.metadata.platformIssueDraft, msgId: m.id };
           }
+          // A background preview rebuild marks its in-progress row
+          // `stagingBuild: 'running'`. Carried onto the message so the
+          // spinner pass below can find it after a reload — the /status
+          // check can't help here, because a heal-sweep or preview-click
+          // rebuild has no turn in flight to report.
+          if (m.metadata.stagingBuild) m.stagingBuild = m.metadata.stagingBuild;
         }
         return m;
       });
       // #647: flag the rows this session inherited from an auto session so
       // their Claude Code disclosures render collapsed by default.
       DevChat._markInheritedMessages(DevChat.messages, session);
+      // Spin a still-running background rebuild's row on load. Rebuilds take
+      // minutes (the self-app's DB clone alone is ~4:45), so a reload lands
+      // mid-build often enough to matter, and a static gear next to
+      // "Building staging preview..." reads as "stuck" — which is exactly
+      // the misread that cost session 2954 a duplicate build turn. Every
+      // outcome (rebuilt / failed) appends a row after it, so the flag can
+      // only stick while the build genuinely is the last word.
+      DevChat._activateTrailingStagingBuild();
 
       // #252: sync state is keyed per session — drop a stale indicator
       // (in-flight or terminal feedback) when switching to a different
@@ -1036,7 +1076,7 @@ const DevChat = {
       try {
         const statusRes = await fetch(`/api/sessions/${sessionId}/status`);
         if (statusRes.ok) {
-          const { busy, progress, phase, sync } = await statusRes.json();
+          const { busy, progress, phase, sync, stopping } = await statusRes.json();
           // #252: reload recovery for the sync banner. A MODE=sync turn
           // also flips `busy` (it holds the worker), so check it first
           // and don't arm the chat-turn streaming UI for a sync.
@@ -1055,6 +1095,12 @@ const DevChat = {
           }
           if (busy && !(sync && sync.phase)) {
             DevChat.isStreaming = true;
+            // #889: a stop is already in flight for this turn — repaint the
+            // "Stopping…" button rather than a live red Stop for a turn
+            // that's being killed. The transient transcript row is NOT
+            // resurrected (it's client-only by design); the persisted
+            // "…stopped by @user." row lands normally when the stop does.
+            DevChat._stopping = !!stopping;
             DevChat._setStreamingUI(true, phase || null);
             // Reuse the most recent persisted progress message as the live
             // append target so the polling fallback updates IT instead of
@@ -1114,6 +1160,11 @@ const DevChat = {
     }
     const model = DevChat.selectedModel;
     DevChat.isStreaming = true;
+    // #889: defensive — a fresh turn must never paint the previous turn's
+    // "Stopping…" button. Every teardown path already clears this, but the
+    // reload-recovery path sets the flag without a transcript row to hang
+    // it on, so reset before arming the new turn's UI.
+    DevChat._clearStoppingState();
     DevChat._setStreamingUI(true);
     DevChat._seenSeqs = new Set();
     // Any Q/A chip selection belonged to the question turn we're now
@@ -1303,6 +1354,11 @@ const DevChat = {
               case 'phase':
                 DevChat._setStreamingUI(true, data.phase);
                 break;
+              case 'stopping':
+                // #889: a stop was requested for this session — by this tab
+                // (echoed back) or by another viewer. Idempotent.
+                DevChat._enterStoppingState({ by: data.by });
+                break;
               case 'stopped':
                 DevChat._flushStreamingFinal();
                 DevChat._removeSpinner();
@@ -1337,7 +1393,7 @@ const DevChat = {
                 // #786: quickReplies ride the status event so a
                 // restart-recovery breadcrumb repaints the pill bar live
                 // (the server persists them on the same system row).
-                DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, quickReplies: data.quickReplies, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
+                DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
                 DevChat.renderMessages();
                 DevChat.scrollToBottom();
                 break;
@@ -1488,7 +1544,13 @@ const DevChat = {
               }
               case 'cc_estimate':
                 // Experimental AI progress estimate (opt-in, server-gated).
-                DevChat._applyEstimate(data.text, data.remainingSeconds);
+                // `cleared: true` (#891) is the server's terminal-marker
+                // teardown telling us to blank the guess right now.
+                DevChat._applyEstimate(data.text, data.remainingSeconds, {
+                  estimatedAt: data.estimatedAt, cleared: data.cleared,
+                  displayedRemainingSeconds: data.displayedRemainingSeconds,
+                  slipReason: data.slipReason,
+                });
                 break;
               case 'cc_log':
                 DevChat.messages.push({ role: 'system', ccLog: data.log, content: 'Claude Code log', created_at: new Date().toISOString() });
@@ -1556,6 +1618,10 @@ const DevChat = {
     // Flush any throttled streaming render to the bubble's exact final
     // content before the full renderMessages() below rebuilds the list.
     DevChat._flushStreamingFinal();
+    // #891: the turn is over — an undrained AI guess must not survive to be
+    // applied to the first status row of the NEXT turn.
+    DevChat._pendingEstimate = null;
+    DevChat._lastEstimateAt = null;
     DevChat.isStreaming = false;
     DevChat._abortController = null;
     DevChat._stopProgressPolling();
@@ -1762,6 +1828,12 @@ const DevChat = {
         // idempotent — it just swaps the button glyph.
         DevChat._setStreamingUI(true, data.phase);
         break;
+      case 'stopping':
+        // #889: mirrors the primary POST-SSE handler. Replayed off the
+        // resumable channel this is how a tab that reconnected mid-stop
+        // learns the turn is being killed.
+        DevChat._enterStoppingState({ by: data.by });
+        break;
       case 'stopped': {
         DevChat._removeSpinner();
         DevChat._deactivateLastStatus();
@@ -1790,7 +1862,7 @@ const DevChat = {
         const sealMsg = lastAssistantMsg();
         if (sealMsg) sealMsg._finalized = true;
         // #786: carry quickReplies (see the POST-SSE status handler).
-        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, quickReplies: data.quickReplies, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8), _active: true });
+        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8), _active: true });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         break;
@@ -1879,7 +1951,12 @@ const DevChat = {
         break;
       case 'cc_estimate':
         // Experimental AI progress estimate (opt-in, server-gated).
-        DevChat._applyEstimate(data.text, data.remainingSeconds);
+        // `cleared: true` (#891) blanks the guess at the coding run's end.
+        DevChat._applyEstimate(data.text, data.remainingSeconds, {
+          estimatedAt: data.estimatedAt, cleared: data.cleared,
+          displayedRemainingSeconds: data.displayedRemainingSeconds,
+          slipReason: data.slipReason,
+        });
         break;
       case 'cc_log':
         DevChat.messages.push({ role: 'system', ccLog: data.log, content: 'Claude Code log', created_at: new Date().toISOString() });
@@ -2036,6 +2113,14 @@ const DevChat = {
     if (streaming) DevChat._streamingPhase = phase;
     else DevChat._streamingPhase = null;
 
+    // #889: the turn is over (stopped, finished, or torn down by a failed
+    // send / session switch), so any pending "stopping…" state is stale.
+    // Clearing here rather than in _finishStreaming covers every exit —
+    // _finishStreaming calls this BEFORE its renderMessages(), and the
+    // /status poll fallback calls it directly without going through
+    // _finishStreaming at all.
+    if (!streaming) DevChat._clearStoppingState();
+
     // Every streaming state transition funnels through here (send,
     // reconnect, phase change, finish, stop), so this is the one hook
     // needed for the live-status indicator: streaming → "thinking";
@@ -2053,9 +2138,22 @@ const DevChat = {
     const btn = document.getElementById('dc-send-btn');
     if (btn && streaming) {
       const isWrapUp = phase === 'mayor2';
-      if (isWrapUp) {
+      // #889: a requested-but-not-yet-landed stop outranks both of the
+      // states below — the turn is still streaming (so we can't paint
+      // Send), but the red Stop square is a lie: pressing it again does
+      // nothing. Muted spinner + "Stopping…" instead.
+      if (DevChat._stopping) {
         btn.disabled = true;
         btn.classList.remove('dc-btn-stop');
+        btn.classList.remove('dc-btn-streaming');
+        btn.classList.add('dc-btn-stopping');
+        btn.setAttribute('aria-label', 'Stopping');
+        btn.title = 'Stopping…';
+        btn.innerHTML = '<span class="dc-send-spinner"></span><span class="dc-btn-stopping-label">Stopping…</span>';
+      } else if (isWrapUp) {
+        btn.disabled = true;
+        btn.classList.remove('dc-btn-stop');
+        btn.classList.remove('dc-btn-stopping');
         btn.classList.add('dc-btn-streaming');
         btn.setAttribute('aria-label', 'Finishing up');
         btn.title = 'Finishing up…';
@@ -2063,6 +2161,7 @@ const DevChat = {
       } else {
         btn.disabled = false;
         btn.classList.remove('dc-btn-streaming');
+        btn.classList.remove('dc-btn-stopping');
         btn.classList.add('dc-btn-stop');
         btn.setAttribute('aria-label', 'Stop');
         btn.title = 'Stop';
@@ -2072,6 +2171,7 @@ const DevChat = {
       btn.disabled = false;
       btn.classList.remove('dc-btn-streaming');
       btn.classList.remove('dc-btn-stop');
+      btn.classList.remove('dc-btn-stopping');
       btn.setAttribute('aria-label', 'Send');
       btn.title = 'Send';
       btn.textContent = 'Send';
@@ -2105,6 +2205,90 @@ const DevChat = {
     DevChat._renderQuickReplies();
   },
 
+  // #889: a stop takes a moment to land (the worker has to be killed and
+  // the turn unwound server-side). Until this change nothing in the UI
+  // acknowledged the click at all — the red Stop button stayed red, the
+  // running status line kept spinning. These two helpers own the interim
+  // state: a `_stopping` flag the button paints from, plus one client-only
+  // transcript row so the chat says what is happening.
+  //
+  // The row is deliberately NOT persisted: it lives for a second or two and
+  // the server writes the authoritative "…stopped by @user." row when the
+  // stop actually lands. Persisting both would double up on refresh.
+  _stopping: false,
+  _stoppingSlowTimer: null,
+
+  // How long a stop may take before the transcript row admits something is
+  // wrong. With the server-side fix a stop lands in ~1-2s, so crossing this
+  // means a genuinely stuck worker, not a slow one.
+  STOPPING_SLOW_MS: 30000,
+
+  _stoppingRow() {
+    return DevChat.messages.find((m) => m && m._stopping) || null;
+  },
+
+  // Enter (or re-enter) the stopping state. Idempotent by design: the tab
+  // that clicked Stop calls this directly AND receives the server's echoed
+  // `stopping` event, possibly twice over (POST SSE + WS + a bus replay).
+  // All of those must collapse into one row.
+  _enterStoppingState({ by = null } = {}) {
+    if (!DevChat.isStreaming) return;
+    if (DevChat._stoppingRow()) {
+      // Already showing. Repaint the button in case this arrived before
+      // the flag was set (a `stopping` event from another tab).
+      DevChat._stopping = true;
+      DevChat._setStreamingUI(true, DevChat._streamingPhase);
+      return;
+    }
+
+    // Freeze whatever was spinning ("Claude Code is running…") so exactly
+    // one line in the transcript reads as live.
+    DevChat._deactivateLastStatus();
+
+    // `_active` earns the arc spinner and the live elapsed ticker that
+    // every other in-progress status line uses — see renderMessages.
+    const mine = !by || by === window.App?.user?.username;
+    DevChat.messages.push({
+      role: 'system',
+      content: mine ? 'Stopping the agent…' : `@${by} is stopping the agent…`,
+      created_at: new Date().toISOString(),
+      _slug: Math.random().toString(36).slice(2, 8),
+      _active: true,
+      _stopping: true,
+    });
+    DevChat._stopping = true;
+
+    if (DevChat._stoppingSlowTimer) clearTimeout(DevChat._stoppingSlowTimer);
+    DevChat._stoppingSlowTimer = setTimeout(() => {
+      const row = DevChat._stoppingRow();
+      if (!row) return;
+      row.content = `${row.content.replace(/ \(taking longer than usual\)$/, '')} (taking longer than usual)`;
+      DevChat.renderMessages();
+    }, DevChat.STOPPING_SLOW_MS);
+
+    DevChat._setStreamingUI(true, DevChat._streamingPhase);
+    DevChat.renderMessages();
+    DevChat.scrollToBottom();
+  },
+
+  // Leave the stopping state, dropping the transient row. Called from
+  // _setStreamingUI's not-streaming branch (so every turn-teardown path
+  // gets it) and from _stopCurrentTurn's can't-stop branches.
+  //
+  // Does NOT re-render: callers either re-render right after (the
+  // not-streaming branch is followed by _finishStreaming's renderMessages)
+  // or paint something else in its place.
+  _clearStoppingState() {
+    DevChat._stopping = false;
+    if (DevChat._stoppingSlowTimer) {
+      clearTimeout(DevChat._stoppingSlowTimer);
+      DevChat._stoppingSlowTimer = null;
+    }
+    const before = DevChat.messages.length;
+    DevChat.messages = DevChat.messages.filter((m) => !(m && m._stopping));
+    return DevChat.messages.length !== before;
+  },
+
   async _stopCurrentTurn() {
     if (!DevChat.isStreaming || !DevChat.currentSession) return;
     if (DevChat._streamingPhase === 'mayor2') return;
@@ -2127,18 +2311,75 @@ const DevChat = {
       }
     } catch {}
 
-    // Optimistically disable the stop button so double-clicks don't
-    // fire two POSTs. Keep isStreaming true until the server emits
-    // `stopped` — we want the status bubble to show up before the UI
-    // unwinds.
-    const btn = document.getElementById('dc-send-btn');
-    if (btn) btn.disabled = true;
+    // Optimistic feedback (#889). This also disables the button, so
+    // double-clicks can't fire two POSTs. isStreaming stays true until the
+    // server emits `stopped` — we want the authoritative status row to show
+    // up before the UI unwinds.
+    DevChat._enterStoppingState();
+
+    let res;
     try {
-      await fetch(`/api/sessions/${sessionId}/stop`, { method: 'POST' });
+      res = await fetch(`/api/sessions/${sessionId}/stop`, { method: 'POST' });
     } catch (err) {
       console.warn('[dc] stop request failed', err);
-      if (btn) btn.disabled = false;
+      return DevChat._stopRequestFailed();
     }
+    // A session switch mid-request: this answer belongs to the chat we left.
+    if (Number(sessionId) !== Number(DevChat.currentSession?.id)) return;
+    if (!res.ok) {
+      console.warn('[dc] stop request rejected', res.status);
+      return DevChat._stopRequestFailed();
+    }
+
+    let body = {};
+    try { body = await res.json(); } catch {}
+    if (Number(sessionId) !== Number(DevChat.currentSession?.id)) return;
+    // The happy path: the server accepted the stop and will emit `stopped`
+    // (plus the persisted status row) when the turn actually unwinds.
+    if (body.stopped) return;
+
+    // The server declined. Both reasons mean "no stop is coming", so the
+    // stopping row must not be left spinning forever.
+    DevChat._clearStoppingState();
+    if (body.reason === 'wrap-up cannot be stopped') {
+      // The turn crossed into phase-2 between the render and the click. The
+      // work is already committed; only the summary is still being written.
+      DevChat.messages.push({
+        role: 'system',
+        content: 'Almost done — the wrap-up can’t be interrupted.',
+        created_at: new Date().toISOString(),
+        _slug: Math.random().toString(36).slice(2, 8),
+      });
+      DevChat._setStreamingUI(true, 'mayor2');
+      DevChat.renderMessages();
+      DevChat.scrollToBottom();
+      return;
+    }
+    // 'no active turn' (or anything unexpected): the turn already ended and
+    // no `stopped`/`done` will ever arrive for it. Tear the streaming UI
+    // down ourselves, then reload from the DB so anything that rode the
+    // dead stream still shows. _finishStreaming FIRST is required, not just
+    // tidy: _reconcileAfterFallbackDone bails while isStreaming is true
+    // (it reads that as "a newer turn owns the timeline"). Same order as
+    // the resumable channel's 'done' handler.
+    DevChat._finishStreaming();
+    DevChat._reconcileAfterFallbackDone(sessionId);
+  },
+
+  // Shared failure tail for _stopCurrentTurn: swap the stopping row for an
+  // explicit failure line and hand the live Stop button back so the user can
+  // retry. The turn itself is untouched — it's still running.
+  _stopRequestFailed() {
+    DevChat._clearStoppingState();
+    DevChat.messages.push({
+      role: 'system',
+      content: 'Couldn’t stop the agent — please try again.',
+      created_at: new Date().toISOString(),
+      _slug: Math.random().toString(36).slice(2, 8),
+    });
+    DevChat._setStreamingUI(true, DevChat._streamingPhase);
+    DevChat.renderMessages();
+    DevChat.scrollToBottom();
   },
 
   _showSpinner() {
@@ -2172,22 +2413,41 @@ const DevChat = {
       try {
         const res = await fetch(`/api/sessions/${sessionId}/status`);
         if (!res.ok) return;
-        const { busy, progress, estimate } = await res.json();
+        const { busy, progress, estimate, stopping } = await res.json();
 
         if (progress?.length) {
           DevChat._replaceProgressLog(progress);
         }
 
+        // #889: missed-event safety net. If the `stopping` broadcast never
+        // reached this tab (WS down, SSE dropped), the 3s poll still flips
+        // the button within one tick.
+        if (busy && stopping && !DevChat._stopping) {
+          DevChat._enterStoppingState();
+        }
+
         // Experimental AI progress estimate: the /status fallback carries
         // the latest in-memory guess so an SSE/WS drop doesn't lose it.
-        // `estimate` is now { text, remainingSeconds }; tolerate a legacy
-        // bare-string shape from an older server.
-        if (estimate) {
-          if (typeof estimate === 'string') {
-            DevChat._applyEstimate(estimate);
-          } else {
-            DevChat._applyEstimate(estimate.text, estimate.remainingSeconds);
-          }
+        // `estimate` is now { text, remainingSeconds, estimatedAt };
+        // tolerate a legacy bare-string shape from an older server.
+        //
+        // #891: a NULL estimate is forwarded too, not skipped — the server
+        // drops its in-memory guess the moment the coding run hits its
+        // terminal marker, and that null is how the poll learns to blank
+        // the span instead of re-painting a stale "nearly done" for the
+        // rest of the turn.
+        if (typeof estimate === 'string') {
+          DevChat._applyEstimate(estimate);
+        } else {
+          DevChat._applyEstimate(
+            estimate ? estimate.text : null,
+            estimate ? estimate.remainingSeconds : null,
+            {
+              estimatedAt: estimate ? estimate.estimatedAt : null,
+              displayedRemainingSeconds: estimate ? estimate.displayedRemainingSeconds : null,
+              slipReason: estimate ? estimate.slipReason : null,
+            }
+          );
         }
 
         if (!busy) {
@@ -2316,6 +2576,9 @@ const DevChat = {
     if (cur) cur.textContent = summ.currentLabel ? `— ${summ.currentLabel}` : '';
     const steps = details.querySelector('.dc-cc-steps');
     if (steps) steps.textContent = summ.steps ? `· ${summ.steps} steps` : '';
+    // #892: the deterministic stage label moves as phase markers land.
+    const phase = details.querySelector('.dc-cc-phase');
+    if (phase) phase.textContent = summ.phaseLabel ? `· ${summ.phaseLabel}` : '';
   },
 
   // Experimental AI progress estimate (opt-in, server-gated). Stores the
@@ -2328,11 +2591,27 @@ const DevChat = {
   // end-timestamp the shared 1s ticker can count down from. Returns null
   // when the model declined a number (remainingSeconds == null/invalid) so
   // the phrase renders alone, exactly as before #50's "phrase only" path.
-  _countdownTarget(remainingSeconds) {
+  //
+  // #891: anchored on the server's `estimatedAt` (when the guess was
+  // actually made) rather than "now". The same guess is delivered twice —
+  // once over SSE/WS and again on every 3s /status poll — and anchoring on
+  // arrival re-based the target each time, so the count-down sat frozen at
+  // a constant "~X left" and never ran down at all. `estimatedAt` falls
+  // back to now for callers that have no stamp (legacy servers, the
+  // persisted-metadata hydrate path).
+  //
+  // #892: prefers the server's POST-GUARD `displayedRemainingSeconds` when
+  // present (monotonic, floored at 30s so it can never render as zero) and
+  // falls back to the raw model value for a legacy server that doesn't send
+  // one. formatCountdown floors again on the client, so even a stale target
+  // renders a time rather than the retired at-zero freeze.
+  _countdownTarget(remainingSeconds, estimatedAt) {
     if (remainingSeconds == null) return null;
     const n = Number(remainingSeconds);
     if (!Number.isFinite(n) || n < 0) return null;
-    return Date.now() + n * 1000;
+    const at = Number(estimatedAt);
+    const base = Number.isFinite(at) && at > 0 ? at : Date.now();
+    return base + n * 1000;
   },
 
   // The trailing live count-down span (#359, replacing the static "· ~X
@@ -2347,39 +2626,96 @@ const DevChat = {
     return `<span class="dc-cc-countdown" data-countdown-to="${countdownTo}">${initial}</span>`;
   },
 
-  _applyEstimate(text, remainingSeconds) {
+  // Wipe every trace of an AI guess from the timeline (#891). Called on an
+  // explicit cleared cc_estimate, when /status stops carrying one (the
+  // coding run reached its terminal marker), and when no live coding run
+  // exists to own the guess. Blanks the spans directly rather than waiting
+  // for a full re-render, since the wrap-up can run for minutes without one.
+  _clearEstimate() {
+    DevChat._pendingEstimate = null;
+    DevChat._lastEstimateAt = null;
+    for (let i = 0; i < DevChat.messages.length; i++) {
+      const m = DevChat.messages[i];
+      delete m._estimate;
+      delete m._estimateRemaining;
+      delete m._countdownTo;
+    }
+    const spans = document.querySelectorAll('#dc-messages .dc-cc-estimate');
+    for (let i = 0; i < spans.length; i++) spans[i].innerHTML = '';
+  },
+
+  // Is this message the row of a coding run that is CURRENTLY running?
+  // The estimate span only exists on a CC run row (renderMessages pairs a
+  // status line with its attached progress log), so this is the only kind
+  // of row a guess may ever attach to (#891). A plain wrap-up status
+  // ("Building staging preview…", "PR #12 created") is not one.
+  _isLiveCcRun(m) {
+    if (!m || m.role !== 'system' || !m._active) return false;
+    if (m.progressLog) return true;
+    return /^(Claude Code is (running|making changes)|Scout reading the codebase|Syncing with main)/i
+      .test(String(m.content || ''));
+  },
+
+  _applyEstimate(text, remainingSeconds, opts) {
+    const o = opts || {};
     const clean = (text || '').toString().trim();
-    if (!clean) return;
+    // Explicit clear: the server tore the estimator down (terminal marker,
+    // turn end, stop), or the /status poll no longer carries a guess.
+    if (!clean || o.cleared) { DevChat._clearEstimate(); return; }
     const remaining = remainingSeconds == null ? null : remainingSeconds;
+    const at = Number(o.estimatedAt);
+    const estimatedAt = Number.isFinite(at) && at > 0 ? at : null;
+    // Ignore a re-delivery of a guess we've already applied — the SAME
+    // estimate arrives over SSE/WS and again on every 3s /status poll, and
+    // re-applying it used to re-anchor the count-down so it never moved.
+    if (estimatedAt != null && DevChat._lastEstimateAt != null
+        && estimatedAt <= DevChat._lastEstimateAt) {
+      return;
+    }
     let target = null;
     for (let i = DevChat.messages.length - 1; i >= 0; i--) {
-      const m = DevChat.messages[i];
-      if (m.role === 'system' && m._active) { target = m; break; }
+      if (DevChat._isLiveCcRun(DevChat.messages[i])) { target = DevChat.messages[i]; break; }
     }
     if (!target) {
-      // No active running line yet (the estimate beat the first status
-      // render, or we just reconnected). Stash it so the next render/poll
-      // applies it instead of dropping it silently (#323).
-      DevChat._pendingEstimate = { text: clean, remainingSeconds: remaining };
+      // Is a status row active at all? If one is but it isn't a coding run,
+      // the run is over (we're in the PR / staging / wrap-up tail) and the
+      // guess must be dropped, NOT stashed — stashing is what let a stale
+      // "nearly done, just wrapping up" reappear later, even on the next
+      // turn. Only stash when nothing is active yet: the estimate legitimately
+      // beat the first status render, or we just reconnected (#323).
+      const anyActive = DevChat.messages.some((m) => m.role === 'system' && m._active);
+      if (anyActive) { DevChat._clearEstimate(); return; }
+      DevChat._pendingEstimate = { text: clean, remainingSeconds: remaining, estimatedAt };
       return;
     }
     DevChat._pendingEstimate = null;
+    DevChat._lastEstimateAt = estimatedAt;
     target._estimate = clean;
     target._estimateRemaining = remaining;
-    // #359: re-anchor the count-down to this fresh guess (or clear it when
-    // the model declined a number) so the next tick counts from here.
-    target._countdownTo = DevChat._countdownTarget(remaining);
+    // #359/#891: anchor the count-down on when the guess was MADE, so the
+    // shared 1s ticker walks it down instead of restarting on every
+    // re-delivery.
+    let nextTarget = DevChat._countdownTarget(
+      o.displayedRemainingSeconds != null ? o.displayedRemainingSeconds : remaining,
+      estimatedAt
+    );
+    // #892 belt-and-braces mirror of the server-side monotonicity guard: a
+    // target LATER than the one currently rendered is ignored unless the
+    // server said why it moved (slipReason). Without this a reordered
+    // SSE/poll delivery could visibly push the finish out — the exact
+    // treadmill the guard exists to stop. Moving earlier is always accepted.
+    if (nextTarget != null && target._countdownTo != null
+        && nextTarget > target._countdownTo && !o.slipReason) {
+      nextTarget = target._countdownTo;
+    }
+    target._countdownTo = nextTarget;
     // Patch in place within THIS run's own DOM node (keyed by persist-id)
     // rather than the last estimate span on the page, so a prior collapsed
-    // run's span can't be mis-targeted (#323).
+    // run's span can't be mis-targeted (#323). There is deliberately NO
+    // "last span on the page" fallback (#891): that fallback is what
+    // painted the guess onto an already-finished Claude Code card.
     const pid = DevChat._detailsId(target, 'ccrun');
-    let span = document.querySelector(`#dc-messages [data-persist-id="${pid}"] .dc-cc-estimate`);
-    if (!span) {
-      // Fallback: before the progress log attaches the run may render via a
-      // different path — patch the last estimate span as the old code did.
-      const spans = document.querySelectorAll('#dc-messages .dc-cc-estimate');
-      span = spans.length ? spans[spans.length - 1] : null;
-    }
+    const span = document.querySelector(`#dc-messages [data-persist-id="${pid}"] .dc-cc-estimate`);
     // innerHTML (not textContent): the count-down lives in a child span the
     // ticker patches in place. The phrase is escaped because it's model output.
     if (span) span.innerHTML = `· ✦ AI guess: ${escapeHtml(clean)}${DevChat._countdownSpanHtml(target._countdownTo)}`;
@@ -2394,10 +2730,19 @@ const DevChat = {
   // textContent only, never re-rendering the message list.
   _elapsedTimer: null,
 
+  // Experimental AI progress estimate state (#323/#891).
+  //   _pendingEstimate — a guess that arrived before its coding-run row
+  //     existed, drained by the next renderMessages.
+  //   _lastEstimateAt  — server `estimatedAt` of the guess currently shown,
+  //     so the same guess re-delivered by the 3s /status poll is ignored
+  //     instead of re-anchoring (and freezing) the count-down.
+  _pendingEstimate: null,
+  _lastEstimateAt: null,
+
   _syncElapsedTicker() {
     // #359: the same 1s heartbeat now also drives the AI-estimate
     // count-down span, so the predicate matches either kind of ticking span.
-    const any = document.querySelector('#dc-messages [data-elapsed-since], #dc-messages [data-countdown-to]');
+    const any = document.querySelector('#dc-messages [data-elapsed-since], #dc-messages [data-countdown-to], #dc-messages [data-cohort-since]');
     if (any && !DevChat._elapsedTimer) {
       DevChat._elapsedTimer = setInterval(() => DevChat._tickElapsed(), 1000);
     } else if (!any && DevChat._elapsedTimer) {
@@ -2411,10 +2756,13 @@ const DevChat = {
   _tickElapsed() {
     const els = document.querySelectorAll('#dc-messages [data-elapsed-since]');
     // #359: count-down spans share this loop — anchored to an absolute
-    // target end-timestamp and clamped at "due now" (formatCountdown), so a
+    // target end-timestamp and floored at 30s (formatCountdown), so a
     // late-firing tick under tab throttling still shows the right value.
     const downs = document.querySelectorAll('#dc-messages [data-countdown-to]');
-    if (!els.length && !downs.length) {
+    // #892: the population-context line crosses its 10 min / 30 min
+    // thresholds mid-run, so it ticks on the same heartbeat.
+    const cohorts = document.querySelectorAll('#dc-messages [data-cohort-since]');
+    if (!els.length && !downs.length && !cohorts.length) {
       if (DevChat._elapsedTimer) {
         clearInterval(DevChat._elapsedTimer);
         DevChat._elapsedTimer = null;
@@ -2434,6 +2782,24 @@ const DevChat = {
         const to = parseInt(el.dataset.countdownTo, 10);
         if (!Number.isFinite(to)) return;
         el.textContent = formatCountdown(to, now);
+      });
+    }
+    if (typeof runCohortHint === 'function') {
+      cohorts.forEach((el) => {
+        const since = parseInt(el.dataset.cohortSince, 10);
+        if (!Number.isFinite(since)) return;
+        const elapsed = Math.max(0, now - since);
+        // #906: resolved HERE, on every tick, from live state only. The
+        // retired `data-cohort-gated` flag was the second input to this
+        // decision and the frozen one — stamped at render from msg._estimate
+        // and never refreshed — which is why the range blurb kept rendering
+        // beside a live AI countdown for the rest of the run. Elapsed is the
+        // only input left, and runCohortHint owns the whole rule: '' below
+        // ten minutes (so the slot stays empty unless a real estimate fills
+        // it), long-run context above. An empty hint writes an empty span,
+        // never a dangling separator.
+        const hint = runCohortHint(elapsed);
+        el.textContent = hint ? ' \u00b7 ' + hint : '';
       });
     }
   },
@@ -2461,6 +2827,27 @@ const DevChat = {
     return '';
   },
 
+  // Re-apply the arc spinner to a trailing `stagingBuild: 'running'` row
+  // after a history load. Only when it IS trailing: a rebuild that has
+  // since finished (or failed) has a row after it, and re-spinning a
+  // superseded row would claim work that is over.
+  //
+  // Separate from the /status-driven `_active` pass because the two answer
+  // different questions — that one asks "is a TURN running?", this one asks
+  // "is a background rebuild still going?", and a heal-sweep rebuild has no
+  // turn at all.
+  _activateTrailingStagingBuild() {
+    const msgs = DevChat.messages;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (m.role === 'user' || m.role === 'assistant') return;
+      if (m.role !== 'system') continue;
+      // A terminal artefact below the build row means it's done.
+      if (m.ccOutput || m.stagingUrl || m.changesReady || m.stagingFailed) return;
+      if (m.stagingBuild === 'running') { m._active = true; return; }
+    }
+  },
+
   _deactivateLastStatus() {
     for (let i = DevChat.messages.length - 1; i >= 0; i--) {
       if (DevChat.messages[i]._active) {
@@ -2478,9 +2865,14 @@ const DevChat = {
         }
         // Experimental AI estimate: a finished/stopped step never shows a
         // guess — the real duration replaces it. Clear the count-down anchor
-        // too (#359) so a stale target can't be re-rendered.
+        // too (#359) so a stale target can't be re-rendered, and the
+        // remaining-seconds + pending stash (#891) so nothing can drain a
+        // dead guess back onto a later row (even one in the NEXT turn).
         delete m._estimate;
+        delete m._estimateRemaining;
         delete m._countdownTo;
+        DevChat._pendingEstimate = null;
+        DevChat._lastEstimateAt = null;
         break;
       }
     }
@@ -2686,14 +3078,22 @@ const DevChat = {
     // before the active running line exists in DevChat.messages (estimate
     // beat the first status render, or a reconnect). Apply it now so the
     // guess survives onto the line instead of being silently dropped.
+    // #891: drains onto a LIVE coding run only. A pending guess must never
+    // land on a wrap-up status row ("Building staging preview…") — that row
+    // renders no estimate span, and the old fallback then painted the guess
+    // onto the already-finished Claude Code card above it.
     if (DevChat._pendingEstimate) {
       for (let i = DevChat.messages.length - 1; i >= 0; i--) {
         const m = DevChat.messages[i];
-        if (m.role === 'system' && m._active) {
+        if (DevChat._isLiveCcRun(m)) {
           m._estimate = DevChat._pendingEstimate.text;
           m._estimateRemaining = DevChat._pendingEstimate.remainingSeconds;
-          // #359: anchor the count-down for the drained pending estimate too.
-          m._countdownTo = DevChat._countdownTarget(m._estimateRemaining);
+          // #359: anchor the count-down for the drained pending estimate too,
+          // from when the guess was made rather than from this render.
+          m._countdownTo = DevChat._countdownTarget(
+            m._estimateRemaining, DevChat._pendingEstimate.estimatedAt
+          );
+          DevChat._lastEstimateAt = DevChat._pendingEstimate.estimatedAt || null;
           DevChat._pendingEstimate = null;
           break;
         }
@@ -3036,6 +3436,31 @@ const DevChat = {
             : { currentLabel: '', steps: 0 };
           const currentSpan = `<span class="dc-cc-current">${summ.currentLabel ? `— ${escapeHtml(summ.currentLabel)}` : ''}</span>`;
           const stepsSpan = `<span class="dc-cc-steps">${summ.steps ? `· ${summ.steps} steps` : ''}</span>`;
+          // #892: the DETERMINISTIC stage readout, derived from the phase
+          // markers the run genuinely emits (Syncing with main / Claude is
+          // working / Committing / Pushing / Finished). Unlike the AI guess
+          // beside it, this cannot be wrong — it is what the user has to
+          // look at when the estimate is uncertain.
+          const phaseSpan = `<span class="dc-cc-phase">${summ.phaseLabel ? `· ${escapeHtml(summ.phaseLabel)}` : ''}</span>`;
+          // #892: long-run context, from the measured distribution of 880
+          // real runs — a statement about the population, not a prediction
+          // about this one, so it can never be individually wrong.
+          //
+          // #906: NO VISIBILITY FLAG. This span used to carry
+          // `data-cohort-gated`, computed once here from msg._estimate to
+          // mean "an AI countdown owns the slot, stay quiet until 10 min".
+          // msg._estimate is necessarily falsy at first render — the first
+          // guess is a full 60s estimator tick away — and neither
+          // _applyEstimate nor _patchProgressSummary ever refreshed the
+          // attribute, so every run rendered gated="0" and the range blurb
+          // sat beside the live countdown for the whole run. The rule now
+          // lives entirely in runCohortHint, evaluated fresh on every tick
+          // from the one input that is actually live: elapsed time.
+          const cohortSince = msg._active && msg.created_at
+            ? new Date(msg.created_at).getTime() : NaN;
+          const cohortSpan = Number.isFinite(cohortSince)
+            ? `<span class="dc-cc-cohort" data-cohort-since="${Math.min(cohortSince, Date.now())}"></span>`
+            : '';
           // Experimental AI progress estimate: rendered unconditionally
           // (even empty) so _applyEstimate can patch it in place; only
           // populated while the server emits cc_estimate for this run.
@@ -3047,7 +3472,7 @@ const DevChat = {
           // supplies the ccrun persist-id), not the attached progress row.
           // After the clone marker both carry the flag; keying off `msg`
           // keeps the default aligned with the persisted state's key.
-          return `<details class="dc-cc-attached" data-persist-id="${outerPid}" ${DevChat._ccOpenAttrs(msg)}><summary class="${sumClass}">${iconHtml} ${msg.content}${currentSpan}${stepsSpan}${estimateSpan}${elapsedHtml}${chevron}${tsSpan}</summary><pre class="dc-cc-attached-log" data-persist-id="${innerPid}">${logText}</pre></details>`;
+          return `<details class="dc-cc-attached" data-persist-id="${outerPid}" ${DevChat._ccOpenAttrs(msg)}><summary class="${sumClass}">${iconHtml} ${msg.content}${currentSpan}${stepsSpan}${phaseSpan}${elapsedHtml}${estimateSpan}${cohortSpan}${chevron}${tsSpan}</summary><pre class="dc-cc-attached-log" data-persist-id="${innerPid}">${logText}</pre></details>`;
         }
 
         // Post-turn ccOutput (the markdown summary that the worker
@@ -3264,6 +3689,43 @@ const DevChat = {
     'Fix something that\'s broken',
   ],
 
+  // #894: last-resort defaults for a session whose newest reply carries no
+  // pills. The server now guarantees pills on every turn-end path, so this
+  // only fires for rows that PREDATE that guarantee (an old chat reopened)
+  // or any path it somehow misses — but it's what makes "there is always
+  // something to tap" true rather than nearly true.
+  //
+  // The strings mirror RECOVERY_PILLS in src/services/recovery-pills.js
+  // (code_done / spec_done / chat_generic). The client can't require that
+  // module, so tests/quick-reply-fallback.test.js asserts the two copies
+  // stay identical.
+  FALLBACK_QUICK_REPLIES: {
+    code_done: ['Propose it to the group', 'Make a tweak', 'What did it change?'],
+    spec_done: ['Build it', 'Revise the spec', 'What will this change?'],
+    chat_generic: ['Make a change', 'What issues are open right now?', "What's the current state?"],
+  },
+
+  // Same state-derived choice the server's fallbackKindForTurn makes for a
+  // 'chat' outcome: a PR means a build landed, else a spec means scout work
+  // landed, else nothing has happened yet.
+  //
+  // hasSpec reads session.has_spec — a boolean the session list computes
+  // from the same spec_md column the server's turnPills reads, so it's
+  // right on first paint. draftContent only exists once the spec viewer
+  // has been opened, and specVersion only appears on a scout turn's own
+  // status row, so both are fallbacks behind it rather than the primary
+  // signal (a session whose spec was written in an earlier turn, or one
+  // reopened from the list, has neither).
+  _fallbackQuickReplies() {
+    const session = DevChat.currentSession;
+    if (session && session.pr_number != null) return DevChat.FALLBACK_QUICK_REPLIES.code_done;
+    const hasSpec = !!(session && (session.has_spec || (session.spec_md || '').trim()))
+      || !!(DevChat.draftContent || '').trim()
+      || DevChat.messages.some((m) => m && m.specVersion != null);
+    if (hasSpec) return DevChat.FALLBACK_QUICK_REPLIES.spec_done;
+    return DevChat.FALLBACK_QUICK_REPLIES.chat_generic;
+  },
+
   // Resolve the pills to show: the newest message carrying quickReplies,
   // the starter set on a fresh session, or null (hide the bar) otherwise.
   // Hidden entirely while a turn is streaming so the user never taps a
@@ -3277,6 +3739,20 @@ const DevChat = {
   // first user/assistant row) while letting a restart-recovery breadcrumb
   // — which is a `system` row, since no Mayor wrap-up runs after a
   // recovery — be the pill source.
+  //
+  // #894: an ASSISTANT reply that carries no pills no longer means an empty
+  // bar — it falls back to a state-derived default set, so a reply that
+  // predates the server-side guarantee (or slips past it) still leaves the
+  // user something to tap. Two cases deliberately keep returning null:
+  //
+  //   - the newest row is the user's own message: pills clear the moment
+  //     you send, exactly as before (#786). A turn that then dies without
+  //     replying is healed server-side by the recovery breadcrumb, which
+  //     carries its own pills.
+  //   - the newest reply carries #32 answer chips: those are that turn's
+  //     affordance and the above-box row stays empty on purpose (the same
+  //     precedence resolveQuickReplies and classifyMissingPills enforce
+  //     server-side).
   _currentQuickReplies() {
     const session = DevChat.currentSession;
     if (!session) return null;
@@ -3284,15 +3760,18 @@ const DevChat = {
     const interactive = session.status === 'active' || session.status === 'promoted';
     if (!interactive) return null;
     let sawNonSystem = false;
+    let lastConvoRow = null;
     for (let i = DevChat.messages.length - 1; i >= 0; i--) {
       const m = DevChat.messages[i];
       if (Array.isArray(m.quickReplies) && m.quickReplies.length) return m.quickReplies;
-      if (m.role === 'user' || m.role === 'assistant') { sawNonSystem = true; break; }
+      if (m.role === 'user' || m.role === 'assistant') { sawNonSystem = true; lastConvoRow = m; break; }
     }
     // A brand-new session (nothing but status rows, if anything) keeps the
     // generic starters so the affordance is present from the first screen.
     if (!sawNonSystem) return DevChat.STARTER_QUICK_REPLIES;
-    return null;
+    if (!lastConvoRow || lastConvoRow.role !== 'assistant') return null;
+    if (Array.isArray(lastConvoRow.suggestions) && lastConvoRow.suggestions.length) return null;
+    return DevChat._fallbackQuickReplies();
   },
 
   _renderQuickReplies() {
@@ -4495,9 +4974,12 @@ const DevChat = {
                 Send
               </button>
             </form>
-            <div class="text-xs text-zinc-600 mt-1 text-right" id="dc-shortcut-hint">
-              <kbd class="dc-kbd">Ctrl</kbd>+<kbd class="dc-kbd">Enter</kbd> to send
-            </div>
+            <!-- #920: the idle copy is the render-time default; the
+                 running variant ("…to save as draft") is swapped in by
+                 _syncShortcutHint, which every _syncSaveDraftBtn call
+                 site reaches. Sourced from the constant so the two can
+                 never drift apart. -->
+            <div class="text-xs text-zinc-600 mt-1 text-right" id="dc-shortcut-hint">${DevChat.SHORTCUT_HINT_SEND}</div>
           </div>
         </div>
         <div id="dc-spec-resizer" class="dc-spec-resizer ${viewerOpen ? 'dc-spec-resizer-open' : ''}" role="separator" aria-orientation="vertical" aria-label="Resize spec viewer"></div>
@@ -4624,6 +5106,30 @@ const DevChat = {
     if (typeof AppView !== 'undefined' && AppView.rebindStagingDock) {
       AppView.rebindStagingDock();
     }
+  },
+
+  // #920: Ctrl/Cmd+Enter routes to whichever composer action is actually
+  // offered. While a turn runs the send button is a Stop square and the
+  // only thing to do with typed text is park it as a draft (the save
+  // icon), so the keystroke does that instead of nothing at all.
+  //
+  // Gated on the REAL isStreaming — not _chatBusyForPaint — so the
+  // shortcut agrees with the guards inside the two actions it delegates
+  // to. Every "is save available?" sub-condition (streaming, non-empty
+  // text, the MAX_SAVED_DRAFTS cap) already lives inside
+  // _saveComposerDraft; this router deliberately re-implements none of
+  // them, which is also why a lost race (the turn ending between the
+  // keypress and here) refuses silently and leaves the text in the box
+  // rather than falling through to a send the user never asked for.
+  //
+  // It never presses Stop: stopping discards in-flight work and stays a
+  // deliberate click.
+  _onComposerShortcut() {
+    if (DevChat.isStreaming) {
+      DevChat._saveComposerDraft();
+      return;
+    }
+    DevChat._submitFromInput();
   },
 
   _submitFromInput() {
@@ -5017,6 +5523,20 @@ const DevChat = {
     if (window.PlatformUI && typeof PlatformUI.toast === 'function') PlatformUI.toast(msg);
   },
 
+  // #920: keep the hint under the box naming what Ctrl/Cmd+Enter actually
+  // does in the current state — "to send" while stopped, "to save as
+  // draft" while a turn runs, since that is what _onComposerShortcut
+  // routes to. Driven off the PAINT predicate (like the save icon it sits
+  // under) so the `?shot=busy-drafts` capture shows the running copy;
+  // the keystroke's real routing reads the honest isStreaming flag.
+  _syncShortcutHint() {
+    const hint = document.getElementById('dc-shortcut-hint');
+    if (!hint) return;
+    hint.innerHTML = DevChat._chatBusyForPaint()
+      ? DevChat.SHORTCUT_HINT_SAVE
+      : DevChat.SHORTCUT_HINT_SEND;
+  },
+
   // Show the save icon only while a TURN IS RUNNING (#810 — the inverse of
   // the #801 rule it replaces), and — when shown — enable it only if there
   // is non-whitespace text to save.
@@ -5038,6 +5558,11 @@ const DevChat = {
   // its click listener is bound once per render behind `_sdWired`, so a
   // removed-and-recreated button would come back unwired.
   _syncSaveDraftBtn() {
+    // Piggy-backs on this function's call sites (every streaming
+    // transition, every keystroke in the box, every render) rather than
+    // adding listeners of its own — the hint flips on exactly the same
+    // events the save icon does.
+    DevChat._syncShortcutHint();
     const btn = document.getElementById('dc-save-draft-btn');
     if (!btn) return;
     const busy = DevChat._chatBusyForPaint();
@@ -5290,8 +5815,11 @@ const DevChat = {
 
     textarea.addEventListener('keydown', (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        // preventDefault is unconditional for the combination, including
+        // the nothing-to-do case (#920) — the keystroke must never leave
+        // a stray newline in the box as its only visible effect.
         e.preventDefault();
-        DevChat._submitFromInput();
+        DevChat._onComposerShortcut();
       }
     });
   },

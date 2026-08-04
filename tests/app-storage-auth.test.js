@@ -45,7 +45,7 @@ function makeReq({ ip = '10.0.0.5', appToken = APP_TOKEN, userToken } = {}) {
   const headers = {};
   if (appToken != null) headers['x-usernode-app-token'] = appToken;
   if (userToken != null) headers['x-usernode-user-token'] = userToken;
-  return { ip, headers, socket: {}, path: '/api/app-storage/files' };
+  return { clientIp: ip, headers, socket: {}, path: '/api/app-storage/files' };
 }
 
 // A real platform-minted user identity for THIS app.

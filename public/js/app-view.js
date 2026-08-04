@@ -349,33 +349,40 @@ const AppView = {
   TOKEN_REFRESH_MS: 45 * 60 * 1000,
 
   async open(slug) {
+    // #931: the token mint runs ALONGSIDE the detail fetch, not after it.
+    // These used to be strictly sequential, which cost a full extra round
+    // trip before the app iframe could even be built — the thing that made
+    // a tapped app animate in as an empty window. The mint needs nothing
+    // but the slug (and enforces its own access gate server-side), and it
+    // is single-flight, so on the eager-launch path this call just joins
+    // the mint the launch already started.
+    const tokenReady = AppView.refreshToken(slug);
     const res = await fetch(`/api/apps/${slug}`);
-    if (!res.ok) return;
+    if (!res.ok) {
+      // The server won't confirm this app, but a launch surface may already
+      // be mounted and pointing at it (beginLaunch runs off the cached list
+      // record). Drop both, so the switchTab that follows lands on
+      // renderAppTab's "App not available" branch instead of leaving an
+      // orphan frame under a cover that would never reveal.
+      await tokenReady;
+      if (AppView.appData && AppView.appData.slug === slug) AppView.appData = null;
+      AppView._teardownLaunch();
+      return;
+    }
     const { app: appData } = await res.json();
     AppView.appData = appData;
 
-    // The App tab is an iframe of `appData.url` (the per-slug subdomain).
-    // The self-app row maps to a slug-derived hostname that doesn't exist —
-    // the platform itself lives at the root domain, not a subdomain — so
-    // the tab would render a TLS error. Hide it for self-hosted apps; the
-    // default-tab logic in App.navigateToApp/switchTab routes to Dev → Chat
-    // instead. Show it again for non-self-hosted (mounting AppView is per-
-    // app, so a previous self-app open could have left the button hidden).
-    const appTabBtn = document.querySelector('.app-tab[data-tab="app"]');
-    if (appTabBtn) {
-      appTabBtn.classList.toggle('hidden', !!appData.self_hosted);
-    }
+    // Mode visibility (App tab hidden for self-hosted apps, whose
+    // appData.url maps to a slug-derived subdomain that doesn't resolve;
+    // Dev visible to everyone who can see the app per #621, read-only for
+    // non-collaborators via AppView.readOnly) used to be two per-button
+    // `hidden` toggles on the bottom tab bar's cells. The bar is now the
+    // header's #app-mode-switch, whose whole-control visibility is owned
+    // by App.DrawerStatus.setAppOpen() — called from navigateToApp right
+    // after this fetch resolves, on the same lifecycle as the drawer's
+    // app-scoped rows. Nothing to toggle here any more.
 
-    // #621: the Dev mode (Chat / Issues / Proposals / Sessions) is now
-    // visible to EVERYONE who can see the app. Non-collaborators of an
-    // invite-only app get it read-only (AppView.readOnly below): all
-    // write controls are hidden client-side and every API behind them
-    // enforces the same gate server-side. Un-hide explicitly — a
-    // previous mount could have left the button hidden.
-    const devTabBtn = document.querySelector('.app-tab[data-tab="dev"]');
-    if (devTabBtn) devTabBtn.classList.remove('hidden');
-
-    await AppView.refreshToken(slug);
+    await tokenReady;
     AppView.startActivityTracking(slug);
     AppView.startTokenRefresh();
     if (window.DevConsole) DevConsole.setCurrentApp(slug);
@@ -425,13 +432,80 @@ const AppView = {
           }
         }, 300);
       }
+      // #816: the preview loader is the screen this change is about, and it
+      // only exists mid-click on a Preview button — no URL reaches it, so
+      // the before/after captures would show the dev board instead. These
+      // links paint each loader state directly. Pure UI state (no fetch, no
+      // write, no container), so they render identically in every
+      // environment and the "before" side of a capture works too.
+      // #929: the dev screen's "+" menu is the other surface that broke on
+      // mobile, and it was untestable for the same reason as the secrets
+      // modal — it only exists after a tap. This link taps the button
+      // itself, so whichever idiom the platform picks (kit action sheet on
+      // touch, the anchored #dev-plus-menu dropdown on desktop) is the one
+      // a check sees. Pure UI state, no writes, not env-gated.
+      if (shot === 'plus-menu') {
+        setTimeout(() => {
+          if (!String(location.hash || '').includes(`app/${slug}`)) return;
+          document.getElementById('dev-plus-btn')?.click();
+        }, 300);
+      }
+      if (shot === 'preview-loading' || shot === 'preview-rebuilding') {
+        setTimeout(() => {
+          // Gate on the ROUTE, not on appData: the dev tab clears appData
+          // as it mounts, so an appData check here would race the render.
+          // A fast navigate-away must not pop the overlay onto whatever
+          // screen the user actually landed on.
+          if (String(location.hash || '').includes(`app/${slug}`)) {
+            AppView.showPreviewLoaderShot(shot);
+          }
+        }, 300);
+      }
     } catch { /* malformed query string — nothing to open */ }
+  },
+
+  // #816: paint one staging-preview loader state with no preview behind it.
+  // Screenshot-state deep link only (see the `?shot=` block above) — never
+  // reached by a real Preview click, which goes through ensureStaging.
+  showPreviewLoaderShot(shot) {
+    const overlay = document.getElementById('staging-overlay');
+    if (!overlay) return;
+    // Take a load id so the Back button's teardown (and any later real
+    // preview) supersedes this exactly as it would a genuine open.
+    AppView._stagingLoadId += 1;
+    AppView._stagingDockable = false;
+    AppView._setStagingMode('fullscreen');
+    const iframe = document.getElementById('staging-iframe');
+    if (iframe) iframe.src = '';
+    const label = document.getElementById('staging-url-label');
+    if (label) label.textContent = 'https://staging-demo-preview.example';
+    overlay.classList.remove('hidden');
+    const back = document.getElementById('staging-back');
+    if (back) back.onclick = () => AppView.closeStagingOverlay();
+    if (shot === 'preview-rebuilding') {
+      // The ONE state that still promises 20–60 seconds: a real rebuild.
+      AppView._setStagingLoader(true, {
+        title: 'Spinning the preview back up…',
+        sub: 'The preview was paused after a while of inactivity. Rebuilding it '
+          + 'from the session’s latest changes — this usually takes 20–60 seconds.',
+      });
+      return;
+    }
+    // The common post-build path: the server verified the preview, so this
+    // is a plain "the page is rendering" spinner with no invented duration.
+    AppView._setStagingLoader(true, {
+      title: 'Loading the preview…',
+      sub: 'Automated checks are running against this preview, so the first load may be a little slower.',
+    });
   },
 
   close() {
     AppView.stopActivityTracking();
     AppView.stopTokenRefresh();
     AppView._issueStateSource = null;
+    // #931: retire any in-flight eager launch (generation bump + timers), so
+    // a frame we're about to unmount can't reveal itself over the next screen.
+    AppView._teardownLaunch();
     GroupChat.disconnect();
     // Detach kit scroll/keyboard handles for every app-scoped screen.
     ['dev-chat', 'group-chat', 'gc-thread', 'dev-feed'].forEach((k) => PlatformUI.detachScreenFx(k));
@@ -449,10 +523,14 @@ const AppView = {
     }
     if (window.Secrets) Secrets.hide();
     AppView.pendingInnerPath = null;
+    // Both slots live in the drawer's bottom-anchored footer now (same
+    // ids, new parent). Blank them AND hide their rows, or the previous
+    // app's build/fork lines linger in the menu on the home feed.
     const slot = document.getElementById('app-version-pill-slot');
     if (slot) slot.innerHTML = '';
     const forkSlot = document.getElementById('app-fork-badge-slot');
     if (forkSlot) forkSlot.innerHTML = '';
+    if (window.App?.DrawerStatus) App.DrawerStatus.setAppOpen(false);
   },
 
   // Iframe tokens are APP-SCOPED since the RSA cutover: each one carries
@@ -463,6 +541,63 @@ const AppView = {
   // opened app is never sent to a different app's iframe (it would fail
   // that app's audience check anyway; omitting it keeps the failure mode
   // "no token" rather than "rejected token").
+  //
+  // #931: minting goes through a small single-flight + short-freshness
+  // layer, because the launch path now asks for a token up to three times
+  // for the same app within a few hundred milliseconds (prewarm on
+  // pointerdown, beginLaunch on the tap, open() alongside the detail
+  // fetch). Without it those would be three mints and — worse — the eager
+  // iframe src could differ from the one renderAppTab rebuilds, which is
+  // what makes the double-load-free adoption in renderAppTab possible.
+  //
+  // 60s is deliberately short. Tokens live an hour and the long-session
+  // refresh below runs at 45min, so this window only ever covers
+  // "pointerdown → click → open" and expires long before anything that
+  // would need cache invalidation (logout, user switch) could matter.
+  TOKEN_FRESH_MS: 60 * 1000,
+  _tokenInflight: {},
+  _tokenFresh: null,
+
+  // Resolves the token string for `slug`, or null on any failure. Never
+  // rejects, and never touches iframeToken/iframeTokenSlug — a prewarm for
+  // an app the user hasn't opened must not repoint the held token away from
+  // the app that IS open (that would make its next iframe render tokenless).
+  _mintToken(slug) {
+    if (!slug) return Promise.resolve(null);
+    const fresh = AppView._tokenFresh;
+    if (fresh && fresh.slug === slug
+        && (Date.now() - fresh.at) < AppView.TOKEN_FRESH_MS) {
+      return Promise.resolve(fresh.token);
+    }
+    const inflight = AppView._tokenInflight[slug];
+    if (inflight) return inflight;
+    const p = (async () => {
+      try {
+        const res = await fetch(`/api/iframe-token?app=${encodeURIComponent(slug)}`);
+        if (!res.ok) return null;
+        const { token } = await res.json();
+        if (!token) return null;
+        AppView._tokenFresh = { slug, token, at: Date.now() };
+        return token;
+      } catch {
+        return null;
+      } finally {
+        delete AppView._tokenInflight[slug];
+      }
+    })();
+    AppView._tokenInflight[slug] = p;
+    return p;
+  },
+
+  // True when a token for `slug` is already in hand, i.e. beginLaunch can
+  // assign the iframe src synchronously on the tap instead of waiting a
+  // round trip for the mint.
+  hasFreshToken(slug) {
+    const fresh = AppView._tokenFresh;
+    return !!(slug && fresh && fresh.slug === slug
+      && (Date.now() - fresh.at) < AppView.TOKEN_FRESH_MS);
+  },
+
   async refreshToken(slug) {
     const target = slug || (AppView.appData && AppView.appData.slug) || null;
     if (!target) {
@@ -470,19 +605,16 @@ const AppView = {
       AppView.iframeTokenSlug = null;
       return;
     }
-    try {
-      const res = await fetch(`/api/iframe-token?app=${encodeURIComponent(target)}`);
-      if (res.ok) {
-        const { token } = await res.json();
-        AppView.iframeToken = token;
-        AppView.iframeTokenSlug = target;
-      } else {
-        // 404 (unknown app / no view access) or 400 — drop any stale token
-        // rather than keeping one that no longer matches the open app.
-        AppView.iframeToken = null;
-        AppView.iframeTokenSlug = null;
-      }
-    } catch {}
+    const token = await AppView._mintToken(target);
+    if (token) {
+      AppView.iframeToken = token;
+      AppView.iframeTokenSlug = target;
+    } else {
+      // 404 (unknown app / no view access) or 400 — drop any stale token
+      // rather than keeping one that no longer matches the open app.
+      AppView.iframeToken = null;
+      AppView.iframeTokenSlug = null;
+    }
   },
 
   // The token to attach for `slug`, or null when the held token was minted
@@ -536,6 +668,357 @@ const AppView = {
     }
   },
 
+  // ==========================================================================
+  // #931: eager app launch.
+  //
+  // The old sequence was: tap → zoom-in animates an EMPTY #app-view (opaque
+  // --un-zoom-bg) → the animation finishes → open() fetches the detail →
+  // then mints a token → only THEN is the iframe created. So the app's first
+  // byte wasn't even requested until after the 380ms zoom, and the app
+  // "popped in" over a white window.
+  //
+  // Now the iframe is mounted and pointed at the app INSIDE the transition's
+  // reveal callback, off the cached list record (which already carries `url`),
+  // so it loads during the animation. A cover — the app's own icon and name
+  // on the theme background, so it reads as the app opening rather than as a
+  // blank frame — sits on top and cross-fades out the moment the frame
+  // reports load. When open() later resolves and switchTab renders the App
+  // tab, renderAppTab ADOPTS this frame instead of rebuilding it, so there
+  // is exactly one document load.
+  // ==========================================================================
+
+  // Reveal ladder (all relative to the src assignment):
+  //   0ms      cover up, iframe at opacity 0, loading.
+  //   500ms    add a small spinner to the cover — enough of a wait that a
+  //            still frame would start to read as stuck.
+  //   on load  cross-fade: iframe → 1, cover → 0, cover removed after the
+  //            fade. This is the normal exit and usually lands mid-zoom.
+  //   2000ms   reveal anyway. A `load` event can be arbitrarily late (or
+  //            never fire, e.g. a download-disposition response); holding
+  //            the cover past two seconds hides an app that is very likely
+  //            already painting.
+  //   20000ms  swap the cover note to a "taking longer" line. Only reachable
+  //            when the cap was skipped because the mint hadn't settled.
+  LAUNCH_SPINNER_MS: 500,
+  LAUNCH_REVEAL_CAP_MS: 2000,
+  LAUNCH_SLOW_MS: 20000,
+  // Keep in sync with `.app-launch-cover` / `#app-iframe` transition
+  // durations in public/css/app.css.
+  LAUNCH_FADE_MS: 160,
+
+  // Generation counter. Every launch, teardown and close bumps it; every
+  // async callback (load, error, each timer, the post-mint src assignment)
+  // re-checks it, so a superseded launch can never touch the DOM of the one
+  // that replaced it.
+  _launchId: 0,
+  _launchTimers: [],
+  // Set by beginLaunch to the exact (launchId, slug, src) it mounted, read
+  // ONCE by renderAppTab to decide adopt-vs-rebuild.
+  _launchAdopt: null,
+
+  _reduceMotion() {
+    try {
+      return !!(window.matchMedia
+        && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    } catch { return false; }
+  },
+
+  // Cleared IN PLACE, not reassigned: watchSurfaceLoad captures the array
+  // it pushes into, so swapping in a fresh one would leave a re-armed
+  // ladder pushing timers nobody can cancel.
+  _clearLaunchTimers() {
+    AppView._launchTimers.forEach((t) => clearTimeout(t));
+    AppView._launchTimers.length = 0;
+  },
+
+  // Abandon any in-flight launch: bump the generation (so pending callbacks
+  // go inert), drop the adoption offer, stop the timers. Does NOT touch the
+  // DOM — callers either replace #app-content wholesale or are hiding it.
+  _teardownLaunch() {
+    AppView._launchId += 1;
+    AppView._launchAdopt = null;
+    AppView._clearLaunchTimers();
+  },
+
+  // home.js is a classic script: its `const Home = {…}` is a top-level
+  // LEXICAL binding, reachable as a bareword from other classic scripts but
+  // NOT a property of window (the same trap the `window.AppView = AppView`
+  // note at the bottom of this file documents — home.js never made that
+  // assignment). Gating on `window.Home` here would be permanently false in
+  // a real browser and would silently disable the whole eager launch.
+  _home() {
+    try {
+      if (typeof Home !== 'undefined' && Home) return Home;
+    } catch { /* not defined in this context */ }
+    return (typeof window !== 'undefined' && window.Home) || null;
+  },
+
+  // The cached list record for `slug`, from whichever surface the user
+  // tapped. Both caches hold the /api/apps payload, which carries `url`,
+  // `status` and the icon fields — everything the launch surface needs.
+  launchRecordFor(slug) {
+    if (!slug) return null;
+    const home = AppView._home();
+    const fromHome = home && Array.isArray(home._apps)
+      ? home._apps.find((a) => a && a.slug === slug) : null;
+    if (fromHome) return fromHome;
+    const fromBrowse = window.Browse && typeof Browse.appBySlug === 'function'
+      ? Browse.appBySlug(slug) : null;
+    return fromBrowse || null;
+  },
+
+  // Only launch eagerly when the frame we'd mount is the same frame
+  // renderAppTab would build. Anything else (a self-hosted app, whose
+  // default tab is Dev; a demo card, which has no real origin; an explicit
+  // non-app tab; offline) falls back to the old path untouched.
+  canEagerLaunch(slug, tab) {
+    if (tab && tab !== 'app') return false;
+    if (window.Offline && Offline.isOffline()) return false;
+    const rec = AppView.launchRecordFor(slug);
+    if (!rec) return false;
+    if (rec.demo) return false;
+    if (rec.self_hosted) return false;
+    if (rec.status !== 'running' || !rec.url) return false;
+    return true;
+  },
+
+  // The one place the sandboxed-iframe attribute contract is written.
+  // NOTE: when `src` is null the attribute is OMITTED entirely — `src=""`
+  // resolves against the parent document, which would load the platform
+  // shell inside its own app frame.
+  _appIframeHtml({ src = null, hidden = false } = {}) {
+    const srcAttr = src ? `\n        src="${src}"` : '';
+    const styleAttr = hidden ? '\n        style="opacity:0"' : '';
+    return `
+      <iframe
+        id="app-iframe"${srcAttr}${styleAttr}
+        class="w-full h-full border-0"
+        sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock"
+        allow="clipboard-write; pointer-lock"
+      ></iframe>`;
+  },
+
+  // The cover: app icon + name on the theme background. `pinned` marks a
+  // cover that must never be revealed away (the screenshot state).
+  _launchCoverHtml(record, { id = 'app-launch-cover', pinned = false } = {}) {
+    const home = AppView._home();
+    const tile = home && typeof home.iconTileFor === 'function'
+      ? home.iconTileFor(record || {})
+      : { kind: 'letter', html: escapeHtml(((record && record.name) || '?').charAt(0).toUpperCase()) };
+    const name = escapeHtml((record && record.name) || '');
+    return `
+      <div id="${id}" class="app-launch-cover"${pinned ? ' data-pinned="true"' : ''} aria-hidden="true">
+        <div class="app-icon-tile app-launch-cover-icon" data-icon="${tile.kind}">${tile.html}</div>
+        <p class="app-launch-cover-name">${name}</p>
+        <p class="app-launch-cover-note" id="${id}-note">Opening…</p>
+        <div class="dc-status-spinner-arc app-launch-cover-spinner hidden" id="${id}-spinner"></div>
+      </div>`;
+  },
+
+  // Mount the launch surface and start the app loading. Called from inside
+  // PlatformUI.transition's reveal callback in App.navigateToApp, so the
+  // frame exists before the zoom's first frame paints. Returns true when it
+  // took over; false leaves the old (empty-then-render) path in place.
+  beginLaunch(slug, tab) {
+    if (!AppView.canEagerLaunch(slug, tab)) return false;
+    const content = document.getElementById('app-content');
+    if (!content) return false;
+    const rec = AppView.launchRecordFor(slug);
+
+    AppView._launchId += 1;
+    const launchId = AppView._launchId;
+    AppView._clearLaunchTimers();
+    AppView._launchAdopt = null;
+    // #685: a new frame invalidates any prior issue-state announcement,
+    // same reason renderAppTab clears it.
+    AppView._issueStateSource = null;
+
+    // Stand appData up from the list record so buildAppIframeSrc (and any
+    // status-driven re-render that arrives mid-launch) has something
+    // consistent to read. open() replaces it with the full detail payload.
+    AppView.appData = rec;
+
+    content.innerHTML = `
+      <div class="app-launch-host w-full h-full">
+        ${AppView._appIframeHtml({ hidden: true })}
+        ${AppView._launchCoverHtml(rec)}
+      </div>`;
+
+    const iframe = document.getElementById('app-iframe');
+    if (!iframe) return false;
+
+    const proceed = (src) => {
+      if (launchId !== AppView._launchId) return;
+      if (!src || !iframe.isConnected) return;
+      // Record the exact src so renderAppTab can prove the frame it finds
+      // is the frame it would have built — a mismatch (deep link, token
+      // refresh, different app) rebuilds instead of adopting.
+      AppView._launchAdopt = { launchId, slug, src };
+      AppView._watchLaunchLoad(iframe, launchId);
+      iframe.src = src;
+    };
+
+    if (AppView.hasFreshToken(slug)) {
+      // Prewarm landed: no await, so the document request goes out in the
+      // same tick as the tap.
+      AppView.iframeToken = AppView._tokenFresh.token;
+      AppView.iframeTokenSlug = slug;
+      proceed(AppView.buildAppIframeSrc());
+    } else {
+      // Wait for the mint to SETTLE (not just resolve successfully) before
+      // assigning src, so the eager src is byte-identical to the one
+      // renderAppTab builds — including the no-token case.
+      AppView.refreshToken(slug).then(() => {
+        if (launchId !== AppView._launchId) return;
+        if (!AppView.appData || AppView.appData.slug !== slug) return;
+        proceed(AppView.buildAppIframeSrc());
+      });
+      // A mint that never settles would leave a src-less frame under the
+      // cover; the spinner and slow-note rungs still run, and the reveal
+      // cap deliberately does not (see _watchLaunchLoad).
+      AppView._watchLaunchLoad(iframe, launchId);
+    }
+    return true;
+  },
+
+  // The reveal ladder, over any (iframe, cover) pair. Two callers: the App
+  // tab's launch (below) and the anonymous landing viewer, which mounts the
+  // same cover over #app-viewer-frame. `isCurrent` is the caller's
+  // "still the surface on screen" predicate — every async branch re-checks
+  // it, so a superseded surface can never touch the DOM. Timers are pushed
+  // into the caller's own array so it can cancel them on teardown.
+  watchSurfaceLoad(iframe, { iframeId, coverId, isCurrent, timers }) {
+    const current = () => !!isCurrent() && iframe.isConnected;
+    const reveal = () => AppView._revealLaunch({ iframeId, coverId, timers });
+
+    iframe.onload = () => {
+      // A src-less mount navigates to about:blank, which fires `load`.
+      // Ignore it — revealing here would show an empty frame.
+      if (!iframe.getAttribute('src')) return;
+      if (!current()) return;
+      if (iframeId === 'app-iframe') AppView.iframeFocused = true;
+      reveal();
+    };
+    iframe.onerror = () => {
+      if (!iframe.getAttribute('src')) return;
+      if (!current()) return;
+      // Nothing better to show than the app's own frame: it will render
+      // whatever the origin returned (its own error page, usually).
+      reveal();
+    };
+
+    const at = (ms, fn) => timers.push(setTimeout(() => {
+      if (!current()) return;
+      fn();
+    }, ms));
+
+    at(AppView.LAUNCH_SPINNER_MS, () => {
+      document.getElementById(`${coverId}-spinner`)?.classList.remove('hidden');
+    });
+    at(AppView.LAUNCH_REVEAL_CAP_MS, () => {
+      // Never strip the cover off a frame that has no src yet (a stalled
+      // mint) — that would reveal a blank white iframe, the exact bug this
+      // whole change removes.
+      if (!iframe.getAttribute('src')) return;
+      reveal();
+    });
+    at(AppView.LAUNCH_SLOW_MS, () => {
+      const note = document.getElementById(`${coverId}-note`);
+      if (note) note.textContent = 'This is taking longer than expected…';
+    });
+  },
+
+  // Arm the ladder for the App tab's launch. Idempotent per generation:
+  // called once when the src is known synchronously, or once up-front plus
+  // once more after the mint settles — re-arming resets the same handlers,
+  // and clearing first re-bases every rung on the src assignment.
+  _watchLaunchLoad(iframe, launchId) {
+    if (launchId !== AppView._launchId) return;
+    AppView._clearLaunchTimers();
+    AppView.watchSurfaceLoad(iframe, {
+      iframeId: 'app-iframe',
+      coverId: 'app-launch-cover',
+      isCurrent: () => launchId === AppView._launchId,
+      timers: AppView._launchTimers,
+    });
+  },
+
+  // Cross-fade the app in and the cover out. Safe to call more than once.
+  _revealLaunch(opts = {}) {
+    const iframeId = opts.iframeId || 'app-iframe';
+    const coverId = opts.coverId || 'app-launch-cover';
+    // Once revealed, the remaining rungs (spinner, cap, slow note) are moot.
+    const timers = opts.timers || AppView._launchTimers;
+    timers.forEach((t) => clearTimeout(t));
+    timers.length = 0;
+    const iframe = document.getElementById(iframeId);
+    if (iframe) iframe.style.opacity = '1';
+    const cover = document.getElementById(coverId);
+    if (!cover) return;
+    // The screenshot state pins its cover: it is the subject of the shot.
+    if (cover.dataset.pinned === 'true') return;
+    if (AppView._reduceMotion()) {
+      cover.remove();
+      return;
+    }
+    cover.classList.add('app-launch-cover--out');
+    setTimeout(() => cover.remove(), AppView.LAUNCH_FADE_MS + 40);
+  },
+
+  // #931: the anonymous landing viewer's launch surface. Its iframe is a
+  // fixed element in index.html rather than markup this module writes, so
+  // instead of replacing a container the cover is APPENDED to the viewer
+  // host (which the CSS makes a positioning context) and the frame is faded
+  // in underneath. Same cover markup and same ladder as the App tab; the
+  // caller owns the generation counter and the timer array, and removes the
+  // cover on close. No token is involved — landing apps are public.
+  mountViewerCover(host, iframe, record, { timers, isCurrent }) {
+    if (!host || !iframe) return;
+    host.classList.add('app-launch-host');
+    const coverId = 'app-viewer-cover';
+    document.getElementById(coverId)?.remove();
+    iframe.style.opacity = '0';
+    // insertAdjacentHTML, not innerHTML: the frame is a long-lived element
+    // in the document — replacing the host's children would destroy it.
+    host.insertAdjacentHTML('beforeend', AppView._launchCoverHtml(record, { id: coverId }));
+    AppView.watchSurfaceLoad(iframe, {
+      iframeId: iframe.id,
+      coverId,
+      isCurrent,
+      timers,
+    });
+  },
+
+  // #931: paint the launch surface with NO app behind it, spinner showing.
+  // Screenshot-state deep link only (`?shot=app-launching`) — a real launch
+  // always goes through beginLaunch. The record falls back to a self-
+  // contained stub so this renders against a fresh, empty database.
+  showLaunchCoverShot() {
+    const content = document.getElementById('app-content');
+    if (!content) return;
+    const home = AppView._home();
+    const apps = (home && Array.isArray(home._apps)) ? home._apps : [];
+    // Prefer an app a tap could really open (so the shot shows a real icon),
+    // then any app at all, then a self-contained stub — the fallback is what
+    // makes this link work against a fresh, empty checks database.
+    const rec = apps.find((a) => a && a.status === 'running' && a.url && !a.demo)
+      || apps[0]
+      || { slug: 'staging-demo-launch', name: 'Staging demo app', icon_emoji: '🚀' };
+    AppView._launchId += 1;
+    AppView._clearLaunchTimers();
+    AppView._launchAdopt = null;
+    // Pinned: nothing may reveal this away, and no iframe is mounted at all
+    // (the shot is the cover, and a frame would try to load a real origin).
+    content.innerHTML = `
+      <div class="app-launch-host w-full h-full">
+        ${AppView._launchCoverHtml(rec, { pinned: true })}
+      </div>`;
+    document.getElementById('app-launch-cover-spinner')?.classList.remove('hidden');
+    document.getElementById('home-screen')?.classList.add('hidden');
+    document.getElementById('app-view')?.classList.remove('hidden');
+    document.getElementById('back-btn')?.classList.remove('hidden');
+  },
+
   renderAppTab() {
     const content = document.getElementById('app-content');
     const appData = AppView.appData;
@@ -547,6 +1030,10 @@ const AppView = {
     AppView._issueStateSource = null;
 
     if (!appData || appData.status !== 'running' || !appData.url) {
+      // #931: this branch replaces #app-content, so any launch surface under
+      // it is gone — retire the generation so its pending callbacks and the
+      // adoption offer can't outlive the frame they belong to.
+      AppView._teardownLaunch();
       let inner;
       if (appData?.status === 'creating') {
         inner = '<div class="status-dot creating"></div><p class="text-sm">App is spinning up...</p>';
@@ -615,6 +1102,7 @@ const AppView = {
     // offline the iframe would render a broken frame. Show a placeholder
     // instead and re-render automatically once connectivity returns.
     if (window.Offline && Offline.isOffline()) {
+      AppView._teardownLaunch();
       content.innerHTML = `
         <div class="flex flex-col items-center justify-center h-full text-zinc-500 dark:text-zinc-400 gap-2 p-4 text-center">
           <p class="text-sm">This app needs a connection — reconnect to open it.</p>
@@ -631,14 +1119,26 @@ const AppView = {
 
     const iframeSrc = AppView.buildAppIframeSrc();
 
-    content.innerHTML = `
-      <iframe
-        id="app-iframe"
-        src="${iframeSrc}"
-        class="w-full h-full border-0"
-        sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock"
-        allow="clipboard-write; pointer-lock"
-      ></iframe>`;
+    // #931: one-shot adoption. beginLaunch may already have mounted this
+    // exact frame during the open animation; read the offer and null it in
+    // the same breath, so only the FIRST render after a launch can adopt.
+    // Every later render (WS status flip, swapToProduction, the offline
+    // retry, a post-merge reload) rebuilds as it always did.
+    const adopt = AppView._launchAdopt;
+    AppView._launchAdopt = null;
+    if (adopt
+        && adopt.launchId === AppView._launchId
+        && adopt.slug === appData.slug
+        && adopt.src === iframeSrc
+        && document.getElementById('app-iframe')) {
+      // Same app, same URL, frame already loading (or loaded) — touching
+      // the DOM here would restart the document load and undo the whole
+      // point of the eager launch.
+      return;
+    }
+    AppView._teardownLaunch();
+
+    content.innerHTML = AppView._appIframeHtml({ src: iframeSrc });
 
     const iframe = document.getElementById('app-iframe');
     iframe.addEventListener('load', () => {
@@ -662,11 +1162,16 @@ const AppView = {
         slug: AppView.appData.slug,
         version: info.sha ? info : null,
         deployProgress: info.deployProgress || null,
-        // Header pill gets the richer PR-context tooltip (title +
-        // author + merge time). The home-screen card uses the same
-        // helper without this and gets the plain commit-hash tip.
+        // The drawer footer's line gets the richer PR-context tooltip
+        // (title + author + merge time). The home-screen card uses the
+        // same helper without this and gets the plain commit-hash tip.
         includePrContext: true,
+        // Text form, not a pill — the footer line is labelled "App".
+        plain: true,
       });
+      // Mirror the deploying state onto the hamburger — the pill itself
+      // is only visible with the drawer open.
+      if (window.App?.DrawerStatus) App.DrawerStatus.refreshDeployDot();
     } catch {
       // Non-critical; if the fetch fails the pill just doesn't render.
     }
@@ -689,7 +1194,9 @@ const AppView = {
       version: null, // hidden during deploy; the next refresh fills it in
       deployProgress,
       includePrContext: true,
+      plain: true,
     });
+    if (window.App?.DrawerStatus) App.DrawerStatus.refreshDeployDot();
   },
 
   // Single source of truth for the per-app version pill. Used by both
@@ -706,6 +1213,14 @@ const AppView = {
     const version = opts && opts.version;
     const deployProgress = opts && opts.deployProgress;
     const includePrContext = !!(opts && opts.includePrContext);
+    // `plain` callers want the drawer footer's TEXT form instead of a
+    // pill: a bare mono version beside the row's own "App" label, no
+    // border, no slug, no status dot. Same states, same tooltips — only
+    // the chrome differs, so the two surfaces can't drift apart.
+    const plain = !!(opts && opts.plain);
+    const cls = plain
+      ? { base: 'drawer-ver', deploying: 'drawer-ver--deploying', dev: 'drawer-ver--dev', spinner: 'drawer-ver-spinner' }
+      : { base: 'app-version-pill', deploying: 'app-version-pill--deploying', dev: '', spinner: 'app-version-pill-spinner' };
     // `quiet` callers want a border-only chip with no state modifiers
     // even when a deploy is in flight — the home-tile pills use it so
     // the tile's status dot is the single visual signal for "this app
@@ -735,6 +1250,12 @@ const AppView = {
       if (deployProgress.fromSha) tipParts.push(`from ${String(deployProgress.fromSha).slice(0, 7)}`);
       if (elapsed != null) tipParts.push(`${elapsed}s elapsed`);
       const tip = tipParts.join(' · ');
+      if (plain) {
+        return `
+          <span class="${cls.base} ${cls.deploying}" title="${escapeAttr(tip)}">
+            <span class="${cls.spinner}" aria-hidden="true"></span>deploying
+          </span>`;
+      }
       return `
         <span class="app-version-pill app-version-pill--deploying" title="${escapeAttr(tip)}">
           <span class="app-version-pill-spinner" aria-hidden="true"></span>
@@ -753,6 +1274,10 @@ const AppView = {
       // that haven't been backfilled yet. The leading status dot is
       // dropped in quiet mode (home tiles) — the tile already has its
       // own status dot at the top.
+      if (plain) {
+        return `
+          <span class="${cls.base} ${cls.dev}" title="No deployed version recorded yet">dev</span>`;
+      }
       return `
         <span class="app-version-pill" title="No deployed version recorded yet">
           ${quiet ? '' : '<span class="app-version-pill-dot" style="background:#71717a;box-shadow:none"></span>'}
@@ -777,6 +1302,10 @@ const AppView = {
     // status dot already covers "this app's lifecycle state", and the
     // user doesn't need a second tiny dot duplicating it inside the
     // commit chip.
+    if (plain) {
+      return `
+        <a href="${href}" target="_blank" rel="noopener" class="${cls.base}" title="${escapeAttr(tip)}">${escapeHtml(sha)}</a>`;
+    }
     return `
       <a href="${href}" target="_blank" rel="noopener" class="app-version-pill" title="${escapeAttr(tip)}">
         ${quiet ? '' : '<span class="app-version-pill-dot"></span>'}
@@ -851,9 +1380,17 @@ const AppView = {
 
     content.innerHTML = `
       <div class="flex flex-col h-full min-h-0">
-        <!-- Header bar: title + view-mode toggle + the "+" menu (top right). -->
+        <!-- Header bar: caption + view-mode toggle + the "+" menu (top
+             right). The "DEV" caption renders ONLY when the header's
+             #app-mode-switch is hidden — i.e. on the self-hosted platform
+             row. Everywhere else the header now says "Dev" a few pixels
+             above this row, and printing it twice reads as a bug. The
+             flex-1 spacer keeps the toggle and "+" right-aligned either
+             way. -->
         <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
-          <span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider flex-1">Dev</span>
+          ${AppView.appData?.self_hosted
+            ? '<span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider flex-1">Dev</span>'
+            : '<span class="flex-1"></span>'}
           ${AppView._renderViewToggle()}
           <div class="relative ${AppView.readOnly && AppView.appData?.self_hosted ? 'hidden' : ''}">
             <button id="dev-plus-btn" aria-haspopup="true" aria-expanded="false"
@@ -4752,6 +5289,15 @@ const AppView = {
     const importedNote = imported
       ? `<div class="text-xs text-amber-600 dark:text-amber-400 mt-1">Imported pull request${pr.imported_pr_author ? ` — authored by <span class="font-medium">${escapeHtml(pr.imported_pr_author)}</span>` : ''}. The code is maintained on GitHub; there's no in-app dev session for it. Voting and checks work the same as any proposal.</div>`
       : '';
+    // #866: say in prose what the Preview slot says in a pill, so the
+    // detail view explains why there's no Preview button yet (or why there
+    // won't be one) instead of leaving a reviewer to guess.
+    let previewNote = '';
+    if (!pr.staging_url && pr.staging_building) {
+      previewNote = '<div class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">A staging preview is being built for this proposal — it usually takes a few minutes, and a Preview button appears as soon as it\'s ready. Automated checks run against that preview, so they\'ll still be pending until then.</div>';
+    } else if (!pr.staging_url && pr.staging_error) {
+      previewNote = `<div class="text-xs text-amber-600 dark:text-amber-400 mt-1">The staging preview couldn't be built, so there's nothing to preview and the automated checks can't run: ${escapeHtml(String(pr.staging_error).slice(0, 300))}</div>`;
+    }
     const lockedNote = (ctx.locked && pr.status !== 'merged')
       ? '<div class="text-xs text-amber-500 mt-1">App is locked — this also needs at least one admin yes before it merges.</div>'
       : '';
@@ -4791,6 +5337,7 @@ const AppView = {
       <div class="text-xs text-zinc-500 dark:text-zinc-400 mt-2 px-1">
         <div>${details.join(' · ')}${helpBtn}</div>
         ${importedNote}
+        ${previewNote}
         ${chips ? `<div class="mt-1 flex flex-wrap gap-1 items-center"><span>Linked issues:</span> ${chips}</div>` : ''}
         ${AppView._mergeConflictDetailHtml(pr)}
         ${AppView._checksDetailHtml(pr)}
@@ -5089,10 +5636,17 @@ const AppView = {
       const started = pr.checks_checked_at
         ? `<div class="mt-0.5 opacity-80">Started ${escapeHtml(relTime(pr.checks_checked_at))}.</div>`
         : '';
+      // Name the STAGE the run is actually in. A checks run is two very
+      // differently-sized halves — build the branch + clone the app's data,
+      // then run the suite against the live preview — and one opaque message
+      // for both made a mid-flight build look identical to a wedged one. An
+      // unrecognised / absent phase (legacy rows, a proposal checked before
+      // this shipped) keeps the previous wording verbatim.
+      const phase = AppView._checksPhaseCopy(pr.check_phase);
       return `
         <div class="mt-2 rounded border border-zinc-300/40 dark:border-zinc-700/60 bg-zinc-500/5 px-2 py-1.5 text-zinc-600 dark:text-zinc-400">
-          <div class="font-medium"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks are still running…</div>
-          <div class="mt-0.5 opacity-90">The staging build is being tested. Merge is blocked until all tests pass.</div>
+          <div class="font-medium"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>${escapeHtml(phase.title)}</div>
+          <div class="mt-0.5 opacity-90">${escapeHtml(phase.detail)} Merge is blocked until all tests pass.</div>
           ${started}
           ${stale ? '<div class="mt-1 opacity-80">If this has been running for a while, the platform re-runs the checks automatically — or re-run them now.</div>' : ''}
           ${stale ? AppView._recheckBtnHtml(pr) : ''}
@@ -5247,6 +5801,31 @@ const AppView = {
     if (!ts) return true;
     const t = new Date(ts).getTime();
     return !Number.isFinite(t) || (Date.now() - t) > AppView.CHECKS_STALE_CLIENT_MS;
+  },
+
+  // Copy for the two stages a 'pending' checks run can be in
+  // (chat_sessions.check_phase). The build half is where the long wait
+  // actually lives — the platform's own preview has to clone its database —
+  // so saying which half is running is the difference between "this is
+  // progressing" and "this looks stuck". Anything unrecognised, including
+  // NULL on rows checked before the column existed, falls back to the
+  // wording this block had before, so no legacy proposal changes.
+  CHECKS_PHASE_COPY: {
+    building: {
+      title: 'Preparing the staging preview…',
+      detail: 'The change is being built and a preview copy of the app’s data is being made.',
+    },
+    testing: {
+      title: 'Running the automated tests…',
+      detail: 'The preview is up and the automated tests are running against it.',
+    },
+  },
+
+  _checksPhaseCopy(phase) {
+    return AppView.CHECKS_PHASE_COPY[phase] || {
+      title: 'Checks are still running…',
+      detail: 'The staging build is being tested.',
+    };
   },
 
   // #447: the "Re-run checks" action. Renders for the proposal's owner or an
@@ -8153,12 +8732,15 @@ const AppView = {
     } else {
       delete AppView._sessionTesting[pr.id];
     }
-    const preview = pr.staging_url
-      ? `<button class="gc-vote-btn gc-vote-btn-preview" onclick="AppView.swapToStagingForSession(${pr.id}, '${pr.staging_url}')">Preview</button>`
-      : '';
+    const preview = AppView._previewAffordanceHtml(pr);
     // #621: read-only viewers keep the Preview affordance but get no
     // vote controls — the tally pill on the card already shows counts.
+    // #866: they also get no "Retry preview" (the ensure POST is
+    // collab-gated), so the unavailable chip renders bare for them.
     if (AppView.readOnly) return preview;
+    const retryPreview = (!pr.staging_url && pr.staging_error)
+      ? `<button class="gc-vote-btn" title="Try building this proposal's staging preview again" onclick="AppView.swapToStagingForSession(${pr.id}, '')">Retry preview</button>`
+      : '';
     // #788: force-merge is available to platform admins AND to the app's
     // own declared admins (ctx.canManage covers creator + app admins,
     // but only app admins / platform admins get force-merge — the
@@ -8172,11 +8754,54 @@ const AppView = {
     const adminMerge = canForceMerge
       ? `<button class="gc-vote-btn gc-vote-btn-admin" title="${pr.requires_explicit_approval ? 'Admin: merge this admins-changing PR right now, bypassing the vote' : 'Admin: merge this PR right now, bypassing the vote majority'}" onclick="AppView.castAdminMerge(${pr.id})">Admin merge</button>`
       : '';
+    // Native votes carry the exact revision rendered with this card. If the
+    // PR moves before the click reaches the server, the server rejects the
+    // stale action and asks for a refresh instead of applying it to unseen
+    // code. Imported proposals retain their existing vote flow.
+    const nativeHead = pr.source !== 'imported'
+      && typeof pr.reviewed_head_sha === 'string'
+      && /^[0-9a-f]{40}$/i.test(pr.reviewed_head_sha)
+      ? pr.reviewed_head_sha.toLowerCase()
+      : null;
+    const revisionArg = nativeHead ? `, '${nativeHead}'` : '';
     const yesT = AppView._voteBtnTally(pr.qualified_yes_count, pr.yes_count, pr.approval_policy, 'Yes');
     const noT = AppView._voteBtnTally(pr.qualified_no_count, pr.no_count, pr.approval_policy, 'No');
-    const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}"${yesT.title} onclick="AppView.castVote(${pr.id}, 'yes')">Yes (${yesT.label})</button>`;
-    const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}"${noT.title} onclick="AppView.castVote(${pr.id}, 'no')">No (${noT.label})</button>`;
-    return preview + yesBtn + noBtn + adminMerge;
+    const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}"${yesT.title} onclick="AppView.castVote(${pr.id}, 'yes'${revisionArg})">Yes (${yesT.label})</button>`;
+    const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}"${noT.title} onclick="AppView.castVote(${pr.id}, 'no'${revisionArg})">No (${noT.label})</button>`;
+    return preview + retryPreview + yesBtn + noBtn + adminMerge;
+  },
+
+  // #866: the Preview slot has three states, not two.
+  //
+  // Native proposals are promoted only after their preview is already up, so
+  // "has staging_url" was a fine proxy for "previewable". An imported PR is
+  // promoted the instant it's imported and its preview is built afterwards,
+  // which leaves the card in a state the old two-way branch rendered as
+  // nothing at all — indistinguishable from a permanent failure, and read by
+  // reviewers as a broken card. So:
+  //   staging_url        → the Preview button (unchanged).
+  //   staging_building   → a non-interactive "Preview building…" pill. Not a
+  //                        button: clicking through to ensure-staging while
+  //                        the first build is still running would only ever
+  //                        return 'rebuilding' and park a loader.
+  //   staging_error      → "Preview unavailable" with the captured reason in
+  //                        the tooltip; voteButtonsHtml adds "Retry preview"
+  //                        beside it for viewers who can trigger a rebuild.
+  // Neither flag (a plain GC'd or not-yet-built native row) keeps today's
+  // empty slot.
+  _previewAffordanceHtml(pr) {
+    if (!pr) return '';
+    if (pr.staging_url) {
+      return `<button class="gc-vote-btn gc-vote-btn-preview" onclick="AppView.swapToStagingForSession(${pr.id}, '${pr.staging_url}')">Preview</button>`;
+    }
+    if (pr.staging_building) {
+      return '<span class="gc-checks-running-badge" title="The staging preview for this proposal is being built — this usually takes a few minutes. A Preview button appears here as soon as it&#39;s ready.">'
+        + '<span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Preview building…</span>';
+    }
+    if (pr.staging_error) {
+      return `<span class="gc-conflict-badge" title="${escapeAttr(String(pr.staging_error).slice(0, 300))}">Preview unavailable</span>`;
+    }
+    return '';
   },
 
   // #695: the Yes/No button tally. On invited-approver apps (row carries
@@ -8236,7 +8861,7 @@ const AppView = {
 
 
   _voteInFlight: new Set(),
-  async castVote(sessionId, vote) {
+  async castVote(sessionId, vote, expectedHeadSha = null) {
     // Guard against double-click / mashing: one in-flight vote per session.
     // The server is now idempotent on an unchanged vote (won't re-post
     // to chat or re-enter checkAndMerge), but blocking here still avoids
@@ -8248,13 +8873,18 @@ const AppView = {
       const res = await fetch(`/api/sessions/${sessionId}/vote`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vote }),
+        body: JSON.stringify({ vote, expectedHeadSha }),
       });
+      const data = await res.json().catch(() => ({}));
       AppView.refreshDevData('vote');
+      if (!res.ok) {
+        PlatformUI.toast(data.error || `Vote failed (HTTP ${res.status}).`);
+        return;
+      }
       // Only refresh notifications once the backend confirms the vote — the
       // server clears this PR's nudge as a side effect, so re-pull to drop it
       // from the unread badge. Never optimistic: skip on a non-ok response.
-      if (res.ok) window.Notifications?.refresh?.();
+      window.Notifications?.refresh?.();
     } catch {}
     finally {
       AppView._voteInFlight.delete(key);
@@ -8304,29 +8934,38 @@ const AppView = {
     if (err) { err.classList.add('hidden'); err.textContent = ''; }
   },
 
-  // Amber "⑂ Forked from <name>" lineage label in the shared header's
-  // right-hand action group. `forked_from` is resolved server-side to
-  // { appId, slug, name, linkable }; when linkable the pill links to the
+  // Amber "⑂ Forked from <name>" lineage label. Lived in the header's
+  // right-hand action group until the header slim-down moved it under
+  // the "App" build line, now in the drawer's footer
+  // (#drawer-row-app-fork, whose visibility this function drives — the
+  // slot id is unchanged). `forked_from` is resolved server-side to
+  // { appId, slug, name, linkable }; when linkable the label links to the
   // source app, otherwise (source deleted → name "<deleted>") it renders
   // as inert text. No-op for non-forks.
   renderForkBadge() {
     const slot = document.getElementById('app-fork-badge-slot');
     if (!slot) return;
+    const setRow = (visible) => {
+      if (window.App?.DrawerStatus) App.DrawerStatus.setForkVisible(visible);
+    };
     const ref = AppView.appData && AppView.appData.forked_from;
-    if (!ref || typeof ref !== 'object') { slot.innerHTML = ''; return; }
+    if (!ref || typeof ref !== 'object') { slot.innerHTML = ''; setRow(false); return; }
     const name = ref.name || '<deleted>';
-    const cls = 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium '
-      + 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 '
-      + 'max-w-[40vw] truncate';
+    // Text form, not a pill: this line sits in the drawer footer directly
+    // under the "App" version line, and a filled amber pill between two
+    // quiet mono version lines shouted louder than a lineage note needs
+    // to. Amber is retained as the lineage colour.
+    const cls = 'drawer-ver drawer-ver--fork max-w-full truncate';
     const label = `⑂ Forked from ${escapeHtml(name)}`;
     if (ref.linkable && ref.slug) {
       slot.innerHTML = `<a href="#app/${encodeURIComponent(ref.slug)}" `
-        + `class="${cls} hover:bg-amber-500/25 transition-colors" `
+        + `class="${cls}" `
         + `title="Forked from ${escapeAttr(name)} — open the original">${label}</a>`;
     } else {
       slot.innerHTML = `<span class="${cls} opacity-90" `
         + `title="The original app no longer exists">${label}</span>`;
     }
+    setRow(true);
   },
 
   // Source of the fork being composed: { slug, name }. Set by promptFork
@@ -8476,12 +9115,20 @@ const AppView = {
       const head = escapeHtml(String(c.headBranch || ''));
       const base = escapeHtml(String(c.baseBranch || ''));
       const url = escapeAttr(String(c.htmlUrl || ''));
+      // #866: fork provenance. A fork-headed PR's branch lives in someone
+      // else's repo — the preview is built from the PR head ref instead, and
+      // the code is an outside contributor's. Say so on the row so the choice
+      // is informed rather than discovered after importing.
+      const fork = c.fromFork
+        ? `<span class="block text-xs text-amber-600 dark:text-amber-400 mt-0.5" title="This branch lives in a fork, not in this app's own repository. The preview is built from the pull request's head commit. Review the changes on GitHub before importing.">from a fork — <span class="font-mono">${escapeHtml(String(c.headRepo || 'unknown fork'))}</span></span>`
+        : '';
       return `
         <label class="flex items-start gap-3 p-3 rounded-lg border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 cursor-pointer transition-colors">
           <input type="radio" name="import-pr-choice" value="${num}" class="mt-1 accent-violet-600">
           <span class="flex-1 min-w-0">
             <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">#${num} · ${title}</span>
             <span class="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">${author} — <span class="font-mono">${head} → ${base}</span></span>
+            ${fork}
             ${url ? `<a href="${url}" target="_blank" rel="noopener" class="inline-block text-xs text-violet-500 hover:underline mt-1" onclick="event.stopPropagation()">View on GitHub ↗</a>` : ''}
           </span>
         </label>`;
@@ -8608,8 +9255,11 @@ const AppView = {
       await AppView.openTopic('proposal', sessionId);
     } catch (_) {
       // The proposal exists regardless; say so rather than swallowing it.
+      // #866: set the expectation that the Preview button isn't there yet —
+      // the staging build takes minutes, and until it lands the proposal
+      // shows "Preview building…" with checks pending.
       if (typeof PlatformUI !== 'undefined' && PlatformUI.toast) {
-        PlatformUI.toast(`PR #${pr} was imported — find it in the Dev proposals list.`);
+        PlatformUI.toast(`PR #${pr} was imported — its preview is being built now. Find it in the Dev proposals list.`);
       }
     }
     AppView.closeImportPrModal();
@@ -8958,13 +9608,15 @@ const AppView = {
   },
 
   // #353: the self-app is a hash-routed SPA — its internal screens live in
-  // location.hash (`#app/...`, `#leaderboard`, ...), so a testing path
-  // joined as a server pathname just loads the home feed. Mirror the
+  // location.hash (`#app/...`, `#leaderboard`, `#admin/...`), so a testing
+  // path joined as a server pathname just loads the home feed. Mirror the
   // server-side normalisation (src/services/visuals.js selfAppHashPath):
   // when the path's first segment is one of the SPA hash routes, move it
   // into the fragment; leave the bare '/', an already-'/#...' path, and
-  // standalone server pages (/dashboard, /admin, ...) untouched.
-  _SELF_APP_HASH_ROUTES: ['app', 'leaderboard', 'group-chat', 'individual-chat'],
+  // genuinely standalone server pages (/cli/authorize) untouched. 'admin'
+  // joined the list in #860, when the seven standalone admin pages became
+  // #admin console sections.
+  _SELF_APP_HASH_ROUTES: ['app', 'leaderboard', 'group-chat', 'individual-chat', 'admin'],
   _selfAppHashPath(p) {
     const path = typeof p === 'string' ? p : null;
     if (!path || !path.startsWith('/') || path.startsWith('/#')) return path;
@@ -9020,11 +9672,13 @@ const AppView = {
     const loadId = ++AppView._stagingLoadId;
     document.getElementById('staging-iframe').src = '';
     AppView._pendingStagingPreview = null;
-    AppView._setStagingLoader(true, {
-      title: 'Spinning the preview back up…',
-      sub: 'The preview was paused after a while of inactivity. Rebuilding it '
-        + 'from the session’s latest changes — this usually takes 20–60 seconds.',
-    });
+    // #816: a NEUTRAL opening state. This used to assert "the preview was
+    // paused… this usually takes 20–60 seconds" before the server had even
+    // been asked whether a rebuild was needed — so the overwhelmingly common
+    // case (a preview that is live and answers in well under a second) was
+    // fronted by a screen promising a minute's wait. The rebuild copy now
+    // lives in the `rebuilding` branch below, where it is actually true.
+    AppView._setStagingLoader(true, { title: 'Opening preview…', sub: '' });
     document.getElementById('staging-back').onclick = () => AppView.closeStagingOverlay();
 
     let data;
@@ -9043,7 +9697,17 @@ const AppView = {
     if (loadId !== AppView._stagingLoadId) return;
 
     if (data.status === 'ready') {
-      AppView.swapToStaging(data.url || fallbackUrl, testing, { jump });
+      // #816: `verified` means the server just watched the container answer
+      // its own healthcheck, so the client can point the iframe straight at
+      // it instead of re-deriving readiness with a poll of its own.
+      // `checksRunning` says the post-build screenshot/checks pass is still
+      // hitting the same container, which is the one honest reason a live
+      // preview's first load can be slow.
+      AppView.swapToStaging(data.url || fallbackUrl, testing, {
+        jump,
+        verified: !!data.verified,
+        checksRunning: !!data.checksRunning,
+      });
       return;
     }
     if (data.status === 'unavailable') {
@@ -9055,10 +9719,17 @@ const AppView = {
       );
       return;
     }
-    // status === 'rebuilding' — park a marker the staging_ready /
-    // staging_failed WS handlers match against, then keep the loader up.
-    // A client-side give-up keeps the loader honest if the event never
-    // lands (the server rebuild is still allowed to finish on its own).
+    // status === 'rebuilding' — the ONE case where a real rebuild is
+    // running and the 20–60s estimate is true. Park a marker the
+    // staging_ready / staging_failed WS handlers match against, then keep
+    // the loader up. A client-side give-up keeps the loader honest if the
+    // event never lands (the server rebuild is still allowed to finish on
+    // its own).
+    AppView._setStagingLoader(true, {
+      title: 'Spinning the preview back up…',
+      sub: 'The preview was paused after a while of inactivity. Rebuilding it '
+        + 'from the session’s latest changes — this usually takes 20–60 seconds.',
+    });
     AppView._pendingStagingPreview = { sessionId, jump, testing, dock, loadId };
     if (AppView._stagingRebuildTimer) clearTimeout(AppView._stagingRebuildTimer);
     AppView._stagingRebuildTimer = setTimeout(() => {
@@ -9117,6 +9788,12 @@ const AppView = {
   // resolution path (onStagingRebuildResult) relies on this so a mid-wait
   // fullscreen/dock toggle wins over the mode the click originally asked
   // for.
+  //
+  // #816: `opts.verified` means the server confirmed the container answered
+  // its healthcheck moments ago, so the readiness poll is skipped entirely
+  // and the iframe is pointed at the preview immediately.
+  // `opts.checksRunning` adds one line explaining a legitimately slower
+  // first load while the post-build checks pass runs.
   swapToStaging(stagingUrl, testing, opts) {
     const overlay = document.getElementById('staging-overlay');
     const iframe = document.getElementById('staging-iframe');
@@ -9177,22 +9854,94 @@ const AppView = {
       AppView.closeStagingOverlay();
     };
 
-    // Don't point the iframe at the host until it actually answers. A fresh
-    // preview's on-demand TLS cert can take a minute (occasionally a few) to
-    // issue; loading the iframe during that window shows a black void with no
-    // feedback. Probe the host first and only swap in the real src once the
-    // TLS handshake succeeds. Each probe also nudges Caddy's on-demand
-    // issuance along, so polling actively warms the cert too. (The probe
-    // always targets the origin root, not the deep link — readiness is a
-    // host/TLS property, and the deep path may be app-routed or auth-gated.)
     iframe.src = '';
     const loadId = ++AppView._stagingLoadId;
-    AppView._waitForStagingReady(resolved, loadId).then((ready) => {
+    const checksRunning = !!(opts && opts.checksRunning);
+
+    // #816: FAST PATH. The server verified this container answered its
+    // healthcheck moments ago, so there is nothing left to wait for —
+    // point the iframe at the preview now. The loader stays up (rather
+    // than being hidden before the src is even assigned, as it used to be)
+    // so the page render has a spinner instead of a black rectangle, and
+    // _watchStagingIframeLoad takes it down the instant the page paints.
+    if (opts && opts.verified) {
+      AppView._setStagingLoader(true, {
+        title: 'Loading the preview…',
+        sub: checksRunning
+          ? 'Automated checks are running against this preview, so the first load may be a little slower.'
+          : '',
+      });
+      AppView._watchStagingIframeLoad(iframe, loadId);
+      iframe.src = pending.src;
+      return;
+    }
+
+    // FALLBACK. No server verification (a read-only viewer opening a
+    // last-known URL, a preview that didn't answer its healthcheck, or a
+    // rebuild we're opening straight off the WS event): confirm the host
+    // answers before pointing the iframe at it, so a dead preview shows a
+    // spinner rather than a browser error page. (The probe always targets
+    // the origin root, not the deep link — readiness is a host property,
+    // and the deep path may be app-routed or auth-gated.)
+    AppView._waitForStagingReady(resolved, loadId, { checksRunning }).then((ready) => {
       // A newer swap (or a close) superseded this one — drop the result.
       if (loadId !== AppView._stagingLoadId) return;
-      AppView._setStagingLoader(false);
-      if (ready) iframe.src = pending.src;
+      if (!ready) return;
+      // Keep the spinner up across the render, same as the fast path.
+      AppView._setStagingLoader(true, { title: 'Loading the preview…', sub: '' });
+      AppView._watchStagingIframeLoad(iframe, loadId);
+      iframe.src = pending.src;
     });
+  },
+
+  // #816: the last leg — the iframe's own page load — used to be
+  // unobserved: the loader was hidden before `src` was assigned, so the
+  // user watched a black rectangle with no spinner and no timeout while the
+  // preview rendered. Hide the loader on the real signal (`load`), surface
+  // a failed navigation (`error`), and keep a safety timeout so an app that
+  // hangs on first byte can't spin forever.
+  //
+  // Every path re-checks `_stagingLoadId`: closing the overlay or opening a
+  // different preview bumps it, and a late event from the superseded load
+  // must not touch the loader.
+  _stagingIframeTimer: null,
+  _watchStagingIframeLoad(iframe, loadId) {
+    if (!iframe) return;
+    if (AppView._stagingIframeTimer) {
+      clearTimeout(AppView._stagingIframeTimer);
+      AppView._stagingIframeTimer = null;
+    }
+    const settle = () => {
+      iframe.onload = null;
+      iframe.onerror = null;
+      if (AppView._stagingIframeTimer) {
+        clearTimeout(AppView._stagingIframeTimer);
+        AppView._stagingIframeTimer = null;
+      }
+    };
+    iframe.onload = () => {
+      settle();
+      if (loadId !== AppView._stagingLoadId) return;
+      AppView._setStagingLoader(false);
+    };
+    iframe.onerror = () => {
+      settle();
+      if (loadId !== AppView._stagingLoadId) return;
+      AppView._setStagingLoader(true, {
+        title: 'This is taking longer than expected',
+        sub: 'The preview didn’t finish loading. Close this and click Preview '
+          + 'again in a moment.',
+      });
+    };
+    AppView._stagingIframeTimer = setTimeout(() => {
+      AppView._stagingIframeTimer = null;
+      if (loadId !== AppView._stagingLoadId) return;
+      AppView._setStagingLoader(true, {
+        title: 'This is taking longer than expected',
+        sub: 'The preview is still loading. Close this and click Preview '
+          + 'again in a moment.',
+      });
+    }, AppView.STAGING_IFRAME_LOAD_TIMEOUT_MS);
   },
 
   // #127: Preview entry point for vote-panel / group-chat rows — looks up
@@ -9446,57 +10195,95 @@ const AppView = {
   // iframe.
   _stagingLoadId: 0,
 
+  // #816: an EXPLICIT empty string clears the line; only `undefined` leaves
+  // it alone. The old truthiness check made '' a no-op, which would leave a
+  // previous state's sub-line (the rebuild estimate, the checks note)
+  // stranded under a title that no longer matches it.
   _setStagingLoader(visible, { title, sub } = {}) {
     const loader = document.getElementById('staging-loader');
     if (!loader) return;
     loader.classList.toggle('hidden', !visible);
-    if (title) {
+    if (title !== undefined) {
       const t = document.getElementById('staging-loader-title');
       if (t) t.textContent = title;
     }
-    if (sub) {
+    if (sub !== undefined) {
       const s = document.getElementById('staging-loader-sub');
       if (s) s.textContent = sub;
     }
   },
 
-  // Poll the staging host until its TLS handshake + HTTP response succeed.
-  // Uses a no-cors GET: it resolves for any reply (even opaque/redirect/4xx),
-  // and rejects on the network/TLS failure we get while the cert is still
-  // issuing — exactly the readiness signal we want. Resolves true when ready,
-  // false only if the user backed out (stale loadId).
-  async _waitForStagingReady(resolved, loadId) {
+  // #816: retry schedule for the fallback readiness poll below.
+  //
+  // This used to be a flat 2500ms sleep with an 8000ms per-attempt abort —
+  // granularity sized for the on-demand-TLS era, when a first load really
+  // could block for a minute on certificate issuance. That era is gone (one
+  // pre-existing wildcard cert covers every preview), and a live preview
+  // answers in tens to low hundreds of milliseconds, so a single unlucky
+  // first attempt was costing 2.5-10.5s of pure waiting against something
+  // that was already serving. Start tight and escalate to the same 2s
+  // ceiling, and cut each attempt off at 5s.
+  STAGING_POLL_BACKOFF_MS: [300, 600, 1200],
+  STAGING_POLL_BACKOFF_MAX_MS: 2000,
+  STAGING_POLL_ATTEMPT_TIMEOUT_MS: 5000,
+  // Safety net for the iframe's own page load (see _watchStagingIframeLoad).
+  STAGING_IFRAME_LOAD_TIMEOUT_MS: 20000,
+
+  _stagingPollBackoffMs(attemptIndex) {
+    const table = AppView.STAGING_POLL_BACKOFF_MS;
+    return attemptIndex < table.length
+      ? table[attemptIndex]
+      : AppView.STAGING_POLL_BACKOFF_MAX_MS;
+  },
+
+  // Poll the staging host until it answers. Uses a no-cors GET: it resolves
+  // for any reply (even opaque/redirect/4xx) and rejects on a network-level
+  // failure — exactly the readiness signal we want. Resolves true when the
+  // host answers, false only if the user backed out (stale loadId).
+  //
+  // #816: this is now the FALLBACK only. When the server verified the
+  // preview in the ensure-staging response, swapToStaging skips straight to
+  // the iframe. The copy makes no claim about WHY a preview isn't answering
+  // yet — the old wording blamed a certificate authority that is no longer
+  // in the path.
+  async _waitForStagingReady(resolved, loadId, opts) {
+    const checksRunning = !!(opts && opts.checksRunning);
     AppView._setStagingLoader(true, {
-      title: 'Provisioning secure preview…',
-      sub: 'Issuing a TLS certificate for this preview. First load can take a minute.',
+      title: 'Waiting for the preview to respond…',
+      sub: checksRunning
+        ? 'Automated checks are running against this preview, so the first load may be a little slower.'
+        : '',
     });
     const startedAt = Date.now();
     let attempt = 0;
     while (loadId === AppView._stagingLoadId) {
-      attempt += 1;
       const controller = new AbortController();
-      const to = setTimeout(() => controller.abort(), 8000);
+      const to = setTimeout(
+        () => controller.abort(), AppView.STAGING_POLL_ATTEMPT_TIMEOUT_MS
+      );
       try {
         await fetch(resolved, { mode: 'no-cors', cache: 'no-store', signal: controller.signal });
         clearTimeout(to);
-        return true; // handshake + response succeeded → cert is live
+        return true; // the host answered
       } catch {
         clearTimeout(to);
         if (loadId !== AppView._stagingLoadId) return false;
         const elapsed = Math.round((Date.now() - startedAt) / 1000);
         // Escalate the copy so a longer-than-usual wait doesn't look hung.
-        if (elapsed >= 90) {
+        // No cause is asserted — we genuinely don't know one here.
+        if (elapsed >= 60) {
           AppView._setStagingLoader(true, {
-            title: 'Still provisioning…',
-            sub: `The certificate authority is taking longer than usual (${elapsed}s). Hang tight — this keeps retrying automatically.`,
+            title: 'Still waiting on the preview',
+            sub: `The preview hasn’t responded yet (${elapsed}s). Hang tight — this keeps retrying automatically.`,
           });
-        } else if (elapsed >= 30) {
+        } else if (elapsed >= 20) {
           AppView._setStagingLoader(true, {
-            title: 'Provisioning secure preview…',
-            sub: `Almost there — waiting on the TLS certificate (${elapsed}s).`,
+            title: 'Waiting for the preview to respond…',
+            sub: `Taking a little longer than usual (${elapsed}s).`,
           });
         }
-        await new Promise((r) => setTimeout(r, 2500));
+        await new Promise((r) => setTimeout(r, AppView._stagingPollBackoffMs(attempt)));
+        attempt += 1;
       }
     }
     return false; // superseded/closed
@@ -9525,6 +10312,10 @@ const AppView = {
     // a late staging_ready can't reopen the overlay after the user left.
     AppView._pendingStagingPreview = null;
     if (AppView._stagingRebuildTimer) { clearTimeout(AppView._stagingRebuildTimer); AppView._stagingRebuildTimer = null; }
+    // #816: drop the iframe-load watch + its safety timeout so a late load
+    // event from the preview being torn down here can't re-touch the loader.
+    if (AppView._stagingIframeTimer) { clearTimeout(AppView._stagingIframeTimer); AppView._stagingIframeTimer = null; }
+    if (iframe) { iframe.onload = null; iframe.onerror = null; }
     AppView._setStagingLoader(false);
     if (overlay) overlay.classList.add('hidden');
     if (iframe) iframe.src = '';

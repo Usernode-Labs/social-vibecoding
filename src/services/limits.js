@@ -135,6 +135,53 @@ async function checkBudget(pool, userId) {
   };
 }
 
+// #555: read-only view of "where does this user stand today?", for the
+// drawer's AI-credit row. Deliberately NOT checkBudget(): that one is a
+// gate and collapses to `{ error }` the moment the cap is hit — which is
+// exactly the state the UI most needs numbers for ("$0.00 of $20.00
+// left" is the interesting render, not a blank). So this always returns
+// the full figures and never decides anything.
+//
+// byokCents is reported but is NOT subtracted from the allowance: that
+// spend went to the user's own key and no cap has ever counted it (#119).
+async function getBudgetSnapshot(pool, userId) {
+  const limitCents = await getEffectiveUserLimitCents(pool, userId);
+  let spentCents = 0;
+  let byokCents = 0;
+  let hasByokKey = false;
+  try {
+    const { rows } = await pool.query(
+      `SELECT COALESCE(lu.total_cost_cents, 0) AS total_cost_cents,
+              COALESCE(lu.byok_cost_cents, 0)  AS byok_cost_cents,
+              (u.anthropic_key_enc IS NOT NULL) AS has_byok_key
+         FROM users u
+         LEFT JOIN llm_usage lu ON lu.user_id = u.id AND lu.date = CURRENT_DATE
+        WHERE u.id = $1`,
+      [userId]
+    );
+    if (rows[0]) {
+      spentCents = parseFloat(rows[0].total_cost_cents || 0);
+      byokCents = parseFloat(rows[0].byok_cost_cents || 0);
+      hasByokKey = !!rows[0].has_byok_key;
+    }
+  } catch (err) {
+    // A display read must never 500 the drawer. Fall back to "nothing
+    // spent" — the limit itself is still accurate.
+    log.warn('limits', 'budget snapshot read failed', { userId, err: err.message });
+  }
+  // Midnight UTC, matching the boundary checkBudget's message promises.
+  const reset = new Date();
+  reset.setUTCHours(24, 0, 0, 0);
+  return {
+    limitCents,
+    spentCents,
+    remainingCents: Math.max(0, limitCents - spentCents),
+    byokCents,
+    hasByokKey,
+    resetsAt: reset.toISOString(),
+  };
+}
+
 // Shared BYOK key lookup + decrypt (#30/#212). Previously duplicated in
 // routes/sessions.js (loadUserApiKey + an inline copy in the chat route)
 // and services/sync-main.js — now the single home, used by
@@ -294,6 +341,7 @@ module.exports = {
   checkSystemBudget,
   recordSystemSpend,
   getEffectiveUserLimitCents,
+  getBudgetSnapshot,
   checkBudget,
   loadUserApiKey,
   resolveBillingPath,

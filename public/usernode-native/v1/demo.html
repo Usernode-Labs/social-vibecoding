@@ -17,7 +17,7 @@
 
   <!-- Screen A (the demo itself) -->
   <div id="screen-a">
-    <header class="un-safe-top-extend sticky top-0 z-10 flex items-center gap-3 px-4 py-3 bg-white/90 dark:bg-zinc-950/90 backdrop-blur border-b border-zinc-200 dark:border-zinc-800">
+    <header id="demo-header" class="un-safe-top-extend sticky top-0 z-10 flex items-center gap-3 px-4 py-3 bg-white/90 dark:bg-zinc-950/90 backdrop-blur border-b border-zinc-200 dark:border-zinc-800">
       <h1 class="text-base font-semibold flex-1">usernode-native v1</h1>
       <span id="platform-pill" class="text-xs px-2 py-0.5 rounded-full bg-violet-100 dark:bg-violet-950 text-violet-700 dark:text-violet-300"></span>
       <button id="theme-toggle" class="un-touch-target text-sm text-zinc-500" aria-label="Toggle dark mode">◐</button>
@@ -134,7 +134,18 @@
           <button id="alert-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Alert</button>
           <button id="modal-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Modal</button>
         </div>
-        <p id="dialog-result" class="text-xs text-zinc-500 mt-2">Sheet: drag it down (or flick) to dismiss — catch it mid-spring. On a phone, tap the sheet's text field: the sheet (and the modal/alert) rides above the on-screen keyboard. Action sheet &amp; alert resolve a Promise with your choice. Modal: centered card, backdrop tap or Escape dismisses.</p>
+        <p id="dialog-result" class="text-xs text-zinc-500 mt-2">Sheet: drag it down (or flick) to dismiss — catch it mid-spring. On a phone, tap the sheet's text field: the sheet (and the modal/alert) rides above the on-screen keyboard. Action sheet &amp; alert resolve a Promise with your choice. Modal: centered card, backdrop tap or Escape dismisses. <code>?un-demo=action-sheet</code> (and <code>?un-demo=adaptive-menu</code>) opens the touch menu idiom at load.</p>
+      </section>
+
+      <!-- Side panels / drawers -->
+      <section>
+        <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Side panels</h2>
+        <div class="flex flex-wrap items-center gap-3">
+          <button id="panel-right-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium text-white" style="background:var(--un-accent)">Right panel</button>
+          <button id="panel-left-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Left panel</button>
+          <button id="panel-long-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Long content</button>
+        </div>
+        <p id="panel-result" class="text-xs text-zinc-500 mt-2">The nav-drawer idiom: full height, springs in from the edge over the dimmed page. Deliberately NOT draggable — a drawer is opened by a control and closed by the backdrop, Escape, or picking a row; drag-to-dismiss and its grabber pill belong to the bottom sheet. "Long content" scrolls normally inside the panel. Tap the text field: the content lifts clear of the on-screen keyboard. <code>?un-demo=panel</code> opens the right panel at load.</p>
       </section>
 
       <!-- Popover / dropdown menu -->
@@ -585,6 +596,80 @@
         });
       });
 
+      // ── Side panels / drawers ──────────────────────────────────────
+      // Full-bleed rows: .un-panel-body ships no horizontal padding on
+      // purpose, so drawer content brings its own per-row insets.
+      var panelResult = document.getElementById('panel-result');
+
+      function panelRows(n, label) {
+        var html = '';
+        for (var i = 1; i <= n; i++) {
+          html += '<a href="#" data-panel-row="' + i + '" class="flex items-center gap-3 px-4 py-3 text-sm ' +
+            'border-b border-zinc-200 dark:border-zinc-800">' + label + ' ' + i + '</a>';
+        }
+        return html;
+      }
+
+      function openPanel(side, rowCount) {
+        var content = document.createElement('div');
+        content.className = 'flex flex-col min-h-full';
+        content.innerHTML =
+          '<div class="px-4 py-3 text-base font-semibold border-b border-zinc-200 dark:border-zinc-800">' +
+          (side === 'left' ? 'Left' : 'Right') + ' panel</div>' +
+          panelRows(rowCount, 'Row') +
+          // mt-auto in a min-h-full column flex: the footer hugs the panel
+          // bottom when the rows are short and falls to the end of the
+          // scroll when they overflow. No measurement.
+          '<div class="mt-auto px-4 py-3 border-t border-zinc-200 dark:border-zinc-800">' +
+          '<label class="block text-xs font-medium text-zinc-500 mb-1" for="panel-demo-field">Search</label>' +
+          '<input id="panel-demo-field" type="text" placeholder="Tap to type" ' +
+          'class="w-full px-3 py-2 text-sm rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent">' +
+          '</div>';
+        var handle = unNative.presentPanel({
+          side: side,
+          contentEl: content,
+          onDismiss: function () {
+            panelResult.textContent = (side === 'left' ? 'Left' : 'Right') + ' panel dismissed.';
+          },
+        });
+        // Rows behave like nav rows: a tap closes the drawer.
+        content.addEventListener('click', function (e) {
+          var row = e.target.closest('[data-panel-row]');
+          if (!row) return;
+          e.preventDefault();
+          handle.dismiss();
+          unNative.toast('Row ' + row.getAttribute('data-panel-row') + ' tapped');
+        });
+        return handle;
+      }
+
+      document.getElementById('panel-right-btn').addEventListener('click', function () {
+        openPanel('right', 5);
+      });
+      document.getElementById('panel-left-btn').addEventListener('click', function () {
+        openPanel('left', 5);
+      });
+      document.getElementById('panel-long-btn').addEventListener('click', function () {
+        openPanel('right', 30);
+      });
+
+      // Screenshot-state deep links: ?un-demo=<surface> presents one
+      // overlay at load, so the surface is reachable by plain navigation
+      // (capture frames and dapp.json checks can only navigate, never
+      // tap). Pure UI state — no writes, no env gate.
+      //
+      // `action-sheet` / `adaptive-menu` cover the touch menu idiom, which
+      // had no navigable route until issue #929: the kit's action sheet
+      // threw on present for two releases and nothing caught it, because
+      // every kit check here navigated to a surface that happened not to
+      // use it. Both simply click the section's own button.
+      try {
+        var unDemo = new URLSearchParams(window.location.search).get('un-demo');
+        if (unDemo === 'panel') openPanel('right', 5);
+        else if (unDemo === 'action-sheet') document.getElementById('action-sheet-btn').click();
+        else if (unDemo === 'adaptive-menu') document.getElementById('adaptive-menu-btn').click();
+      } catch (e) { /* no URL API — nothing to open */ }
+
       // ── Toasts ─────────────────────────────────────────────────────
       var toastCount = 0;
       document.getElementById('toast-btn').addEventListener('click', function () {
@@ -639,6 +724,11 @@
       });
 
       // Window-scroller PTR: pull the whole page down from the very top.
+      // No topEl here on purpose — #demo-header is sticky INSIDE the
+      // translated content, so it rides down with the pull and the puck
+      // belongs in the strip it uncovers (the safe-area default). Pass
+      // topEl only for a header that stays put, i.e. one outside the
+      // translated content.
       unNative.attachPullToRefresh(window, function () {
         return new Promise(function (resolve) {
           setTimeout(function () { addPtrRow('Page refresh ✨'); resolve(); }, 1000);

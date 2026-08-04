@@ -476,7 +476,7 @@ function loadFleet({ llmScript = [], files = {}, gh = {}, checkAndMerge } = {}) 
   });
   stub(ids.staging, {
     buildAndDeployStaging: async () => ({ containerId: 'c1', stagingUrl: 'https://s', hostname: 'h' }),
-    warmStagingCert: async () => {},
+    verifyStagingEdge: async () => {},
   });
   stub(ids.stagingRecovery, { recordStagingBootFailure: async () => {} });
   stub(ids.votes, {
@@ -604,6 +604,92 @@ test('runAppChange: edit_file rejects a non-unique old_string with a retryable t
   try {
     const out = await subject.runAppChange({ campaign: CAMPAIGN, app: CHILD_APP });
     assert.equal(out.skipped, true);
+  } finally { restore(); }
+});
+
+test('runAppChange: search_file returns line-numbered matches, sees staged edits, and reports no matches', async () => {
+  const { subject, spies, restore } = loadFleet({
+    files: { 'server.js': 'const a = process.env.JWT_SECRET;\nstart();\nverify(process.env.JWT_SECRET);\n' },
+    llmScript: [
+      { toolUses: [{ id: 't1', name: 'search_file', input: { path: 'server.js', query: 'JWT_SECRET' } }] },
+      { toolUses: [{ id: 't2', name: 'edit_file', input: {
+        path: 'server.js',
+        old_string: 'const a = process.env.JWT_SECRET;',
+        new_string: 'const a = process.env.USERNODE_JWT_PUBLIC_KEY;',
+      } }] },
+      { toolUses: [{ id: 't3', name: 'search_file', input: { path: 'server.js', query: 'USERNODE_JWT_PUBLIC_KEY' } }] },
+      { toolUses: [{ id: 't4', name: 'search_file', input: { path: 'server.js', query: 'no_such_token' } }] },
+      { toolUses: [{ id: 't5', name: 'finish', input: { summary: 'done' } }] },
+    ],
+  });
+  try {
+    await subject.runAppChange({ campaign: CAMPAIGN, app: CHILD_APP });
+    // The engine mutates ONE messages array across calls, so read results
+    // from the final state by tool_use_id rather than per-call position.
+    const finalMessages = spies.llmCalls.at(-1).messages;
+    const resultFor = (id) => finalMessages
+      .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
+      .find((c) => c.type === 'tool_result' && c.tool_use_id === id).content;
+    const first = resultFor('t1');
+    assert.match(first, /2 match\(es\):/);
+    assert.match(first, /line 1: const a = process\.env\.JWT_SECRET;/);
+    assert.match(first, /line 3: verify\(process\.env\.JWT_SECRET\);/);
+    // Search runs against staged content, so the edit is visible.
+    assert.match(resultFor('t3'), /line 1: const a = process\.env\.USERNODE_JWT_PUBLIC_KEY;/);
+    assert.equal(resultFor('t4'), 'No matches.');
+  } finally { restore(); }
+});
+
+test('runAppChange: read_file pages through a >100KB file via offset', async () => {
+  // Marker beyond the 100 KB window — invisible to a plain read, the
+  // exact shape that stranded puzzlechain/block-game in campaign #1.
+  const filler = 'x'.repeat(110 * 1024);
+  const content = `${filler}\nconst NEEDLE = process.env.JWT_SECRET;\n`;
+  const { subject, spies, restore } = loadFleet({
+    files: { 'big.js': content },
+    llmScript: [
+      { toolUses: [{ id: 't1', name: 'read_file', input: { path: 'big.js' } }] },
+      { toolUses: [{ id: 't2', name: 'read_file', input: { path: 'big.js', offset: 100 * 1024 } }] },
+      { toolUses: [{ id: 't3', name: 'skip_app', input: { reason: 'n/a' } }] },
+    ],
+  });
+  try {
+    await subject.runAppChange({ campaign: CAMPAIGN, app: CHILD_APP });
+    const finalMessages = spies.llmCalls.at(-1).messages;
+    const resultFor = (id) => finalMessages
+      .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
+      .find((c) => c.type === 'tool_result' && c.tool_use_id === id).content;
+    const first = resultFor('t1');
+    assert.match(first, /showing chars 0–102400/);
+    assert.match(first, /offset=102400/, 'truncation note tells the model how to continue');
+    assert.ok(!first.includes('NEEDLE'), 'marker is beyond the first window');
+    const second = resultFor('t2');
+    assert.ok(second.includes('NEEDLE'), 'offset read reaches the tail');
+  } finally { restore(); }
+});
+
+test('runAppChange: budget exhaustion error carries the tool-call trace', async () => {
+  const { subject, restore } = loadFleet({
+    files: { 'server.js': 'start();\n' },
+    llmScript: Array.from({ length: 30 }, (_, i) => ({
+      toolUses: [{
+        id: `t${i}`,
+        name: i % 2 ? 'search_file' : 'read_file',
+        input: i % 2 ? { path: 'server.js', query: 'JWT' } : { path: 'server.js', offset: i * 100 },
+      }],
+    })),
+  });
+  try {
+    await assert.rejects(
+      subject.runAppChange({ campaign: CAMPAIGN, app: CHILD_APP }),
+      (err) => {
+        assert.match(err.message, /Tool-call budget exhausted \(20 iterations\)/);
+        assert.match(err.message, /Tool trace: read_file\(server\.js\)/);
+        assert.match(err.message, /search_file\(server\.js "JWT"\)/);
+        assert.match(err.message, /read_file\(server\.js@200\)/, 'offsets visible in the trace');
+        return true;
+      }
+    );
   } finally { restore(); }
 });
 

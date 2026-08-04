@@ -83,6 +83,32 @@ function hasInFlightBuild(sessionId) {
   return _stagingBuilds.has(Number(sessionId));
 }
 
+// #866 — display-only preview state for a proposal row, derived on read.
+//
+// An imported PR is promoted the instant it's imported, so its card exists
+// for minutes before its preview does. With nothing but `staging_url` to go
+// on the client can't tell "still building" from "will never build", and a
+// row with no Preview button reads as a bug either way. These two derived
+// fields close that gap WITHOUT a persisted staging_state column: the
+// building flag is the in-memory build map above, the error is the reason
+// the checks pass already captured in check_error_detail.
+//
+// Deliberate limitation of the in-memory flag: a platform restart mid-build
+// loses it, so the card falls back to "unavailable" until the staging-heal
+// sweep (server.js Pass 3) re-arms a build and the next refresh flips it
+// back to building. Sub-optimal for a few minutes after a restart, versus a
+// schema change plus a write path that has to be correct on every crash —
+// the trade the spec picks on purpose.
+function previewDisplayState(row) {
+  const missing = !row.staging_url;
+  return {
+    staging_building: !!(missing && hasInFlightBuild(row.id)),
+    staging_error: (missing && row.check_state === 'error' && row.check_error_detail)
+      ? row.check_error_detail
+      : null,
+  };
+}
+
 async function buildAndDeployStaging(config, session, app, commitHash) {
   const key = session.id;
   const current = _stagingBuilds.get(key);
@@ -119,6 +145,12 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
 
   log.info('staging', 'Building staging', { sessionId: session.id, app: app.slug });
 
+  // Per-phase wall-clock for the build half of a checks run. Nothing
+  // persisted how long any of this took, which is why diagnosing the
+  // proposal-checks slowdown meant reading a container log tail.
+  const buildStartedAt = Date.now();
+  const timings = {};
+
   try {
     // 1. Clone the PR branch
     const [, owner, repo] = app.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
@@ -138,6 +170,20 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     // pushing (#687). Pinning the checkout closes that gap.
     const pinnedSha = commitHash && commitHash !== 'latest' ? commitHash : null;
 
+    // #866: a PR opened FROM A FORK has a head ref that doesn't exist in this
+    // app's repo, so `git clone --branch <head ref>` fails outright and the
+    // preview never builds (the reviewer just sees "Checks couldn't run").
+    // GitHub publishes every PR's head commit — fork or not — under
+    // refs/pull/<N>/head in the BASE repo, so when the caller pinned a
+    // concrete commit and the session carries a PR number we clone the repo's
+    // default branch and fetch that ref instead of the head branch. One path
+    // covers both same-repo and fork imports.
+    //
+    // Native sessions (branches the platform itself owns and pushed) keep the
+    // historical branch clone untouched — same behaviour, same timings.
+    const prNumber = Number(session.pr_number) || null;
+    const viaPullRef = !!(pinnedSha && prNumber);
+
     await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
     // --recurse-submodules + --shallow-submodules so dapps that vendor
     // upstream sources via submodules (e.g. falling-sands → sandspiel)
@@ -146,32 +192,51 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     await docker.execFileAsync('git', [
       'clone', '--depth', '1',
       '--recurse-submodules', '--shallow-submodules',
-      '--branch', session.branch_name, cloneUrl, cloneDir,
+      ...(viaPullRef ? [] : ['--branch', session.branch_name]),
+      cloneUrl, cloneDir,
     ], { timeout: 120000 });
 
     // Exact-SHA pin (#687): when a concrete commit was requested, check out
-    // exactly that commit. The shallow branch clone above only carries the
-    // branch tip, so if the branch has advanced past the pinned SHA the
-    // plain checkout fails and we fetch just that commit first (GitHub
-    // permits fetching a reachable SHA), then check it out. Detaches HEAD at
-    // the pinned commit; a no-op detach when the tip already IS that SHA.
-    // Submodules are re-synced to the checked-out commit afterwards (a no-op
-    // for dapps without any). Scoped strictly to this checkout step — the
-    // rest of the build (secrets gating, DB clone, container run, teardown)
-    // is unchanged.
+    // exactly that commit. The shallow clone above only carries one tip, so
+    // the commit usually isn't present yet: fetch it first (via the PR head
+    // ref when we have a PR number — the only way to reach a fork's commit
+    // through the base repo — else the bare SHA, which GitHub permits for a
+    // reachable commit), then check it out. Detaches HEAD at the pinned
+    // commit; a no-op detach when the tip already IS that SHA. Submodules are
+    // re-synced to the checked-out commit afterwards (a no-op for dapps
+    // without any). Scoped strictly to this checkout step — the rest of the
+    // build (secrets gating, DB clone, container run, teardown) is unchanged.
     if (pinnedSha) {
-      try {
-        await docker.execFileAsync('git', [
-          '-C', cloneDir, 'checkout', '--detach', pinnedSha,
-        ], { timeout: 30000 });
-      } catch {
-        await docker.execFileAsync('git', [
-          '-C', cloneDir, 'fetch', '--depth', '1', 'origin', pinnedSha,
-        ], { timeout: 120000 });
-        await docker.execFileAsync('git', [
-          '-C', cloneDir, 'checkout', '--detach', pinnedSha,
-        ], { timeout: 30000 });
+      const detach = () => docker.execFileAsync('git', [
+        '-C', cloneDir, 'checkout', '--detach', pinnedSha,
+      ], { timeout: 30000 });
+      const fetchRefs = [
+        ...(viaPullRef ? [`refs/pull/${prNumber}/head`] : []),
+        pinnedSha,
+      ];
+      let checkedOut = false;
+      // A plain detach only works when the pinned commit is already in the
+      // shallow clone (same-repo import whose branch tip IS the pinned SHA).
+      // Skip it for the pull-ref path: we cloned the default branch there, so
+      // it can only ever fail.
+      if (!viaPullRef) {
+        try {
+          await detach();
+          checkedOut = true;
+        } catch { /* fall through to the fetch attempts below */ }
       }
+      let lastErr = null;
+      for (const ref of fetchRefs) {
+        if (checkedOut) break;
+        try {
+          await docker.execFileAsync('git', [
+            '-C', cloneDir, 'fetch', '--depth', '1', 'origin', ref,
+          ], { timeout: 120000 });
+          await detach();
+          checkedOut = true;
+        } catch (err) { lastErr = err; }
+      }
+      if (!checkedOut) throw lastErr || new Error(`Could not check out ${pinnedSha}`);
       await docker.execFileAsync('git', [
         '-C', cloneDir, 'submodule', 'update', '--init', '--recursive', '--depth', '1',
       ], { timeout: 120000 }).catch(() => {});
@@ -237,7 +302,9 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     }
 
     // 3. Build Docker image
+    const imageBuildStartedAt = Date.now();
     await docker.buildImage(cloneDir, imageName);
+    timings.imageBuildMs = Date.now() - imageBuildStartedAt;
     await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
 
     // 3. Clone the production database. cloneDatabase creates a fresh
@@ -248,7 +315,9 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     // teardown drops the role with the clone DB.
     const prodDbName = dbManager.appDbName(app.slug);
     const stagingDbNameStr = dbManager.stagingDbName(app.slug, `s${session.id}`, commitHash);
+    const cloneStartedAt = Date.now();
     const { password: stagingDbPassword } = await dbManager.cloneDatabase(prodDbName, stagingDbNameStr);
+    timings.cloneMs = Date.now() - cloneStartedAt;
     const stagingDbUrl = dbManager.connectionUrl(stagingDbNameStr, stagingDbPassword);
 
     // 4. Stop existing staging container if any. Short grace: a preview
@@ -313,13 +382,20 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
         ...stagingMerge.env,
       },
       port: 3000,
+      // #816: state the preview's resourcing rather than inheriting the
+      // production-app defaults by omission. See docker.STAGING_CPUS for
+      // why a preview needs more than half a core.
+      memory: docker.STAGING_MEMORY,
+      cpus: docker.STAGING_CPUS,
       labels: {
         [stagingEnv.LABEL_ENV_FP]: stagingEnv.envFingerprint(platformEnv),
       },
     });
 
     // 6. Wait for health
+    const healthStartedAt = Date.now();
     await docker.waitForHealthy(containerName, 3000, '/health');
+    timings.healthMs = Date.now() - healthStartedAt;
 
     // 7. Determine accessible URL. No Caddy route to register: the
     // wildcard site in the Caddyfile maps this hostname straight to the
@@ -335,18 +411,22 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
       if (hostPort) stagingUrl = `http://localhost:${hostPort}`;
     }
 
-    // NOTE: TLS pre-warm intentionally does NOT happen here. Caddy's
-    // on-demand `ask` gate (routes/internal.js isKnownHost) only approves a
-    // staging host once chat_sessions.staging_url already equals it — and
-    // that row is persisted by the *caller*, after this function returns.
-    // Warming here would race ahead of the persist, get refused by `ask`,
-    // and fail the handshake in milliseconds (leaving the cold-start it was
-    // meant to prevent). The caller pre-warms via warmStagingCert() right
-    // after persisting staging_url and before revealing the preview button.
+    // NOTE: the edge verification intentionally does NOT happen here. The
+    // caller persists staging_url after this function returns, and that is
+    // the point at which the URL becomes referenceable at all — so the
+    // caller runs verifyStagingEdge() right after the persist and before
+    // revealing the preview button.
 
-    log.info('staging', 'Staging deployed', { sessionId: session.id, url: stagingUrl });
+    timings.totalMs = Date.now() - buildStartedAt;
+    log.info('staging', 'Staging deployed', {
+      sessionId: session.id, url: stagingUrl, ...timings,
+    });
 
-    return { containerId, stagingUrl, hostname };
+    // `timings` is threaded out so the checks tracer can attribute the wait
+    // to a phase (visuals.captureForSession opens the kind='checks' run and
+    // records these as its build-half steps). Purely diagnostic — no caller
+    // branches on it, and it is absent on paths that reuse a live preview.
+    return { containerId, stagingUrl, hostname, timings };
   } catch (err) {
     log.error('staging', 'Staging build failed', { sessionId: session.id, err: err.message });
     // Cleanup on failure — short grace, this container is being discarded.
@@ -365,30 +445,46 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
   }
 }
 
-// Pre-warm the on-demand TLS cert for a freshly-deployed staging host so a
-// real user never lands on a cold hostname (first hit otherwise hangs ~60-90s
-// on ZeroSSL validation, showing a blank/black page).
+// Make ONE real end-to-end request to a freshly-deployed staging host,
+// before its preview button is revealed (#816).
 //
-// CRITICAL ordering contract: call this only AFTER the session's staging_url
-// has been persisted to chat_sessions. Caddy's on-demand `ask` gate
-// (routes/internal.js isKnownHost) approves a staging host iff
-// chat_sessions.staging_url already equals it. If warmed before the persist,
-// `ask` refuses (404), Caddy aborts the TLS handshake, and warmCert fails in
-// milliseconds — leaving exactly the cold-start this is meant to prevent.
+// This used to be `warmStagingCert`, a handshake-only probe sized for the
+// on-demand-TLS era. That era is gone: every preview is served by the single
+// pre-existing wildcard cert (see Caddyfile + services/caddy.js), so there is
+// no certificate to warm and the handshake alone proves almost nothing.
 //
-// Bounded by warmCert's internal timeout and always resolves, so a slow/failed
-// warm never blocks or fails a deploy (the cert still issues lazily on first
-// hit, the old behavior). No-op for local-dev http URLs.
-async function warmStagingCert(session, hostname, stagingUrl) {
+// What DOES still cost the first visitor is everything past the handshake:
+// Caddy resolving the upstream container name, the forward_auth gate round
+// trip, and the app's own lazy first-request work. `handshakeOnly: false`
+// makes the PLATFORM pay that once, at reveal time, instead of the reviewer
+// paying it on the click — and it is the only signal that proves the edge can
+// actually route to the new container rather than merely terminate TLS.
+//
+// Ordering contract: call this only AFTER the session's staging_url has been
+// persisted to chat_sessions. That persist is what makes the hostname a
+// referenceable preview; probing before it just measures a URL nothing points
+// at yet.
+//
+// Bounded by probeEdge's internal timeout and always resolves, so a slow or
+// failed probe never blocks or fails a deploy. No-op for local-dev http URLs.
+async function verifyStagingEdge(session, hostname, stagingUrl) {
   if (!hostname || !stagingUrl || !stagingUrl.startsWith('https://')) return;
-  log.info('staging', 'Pre-warming TLS cert before exposing preview', { sessionId: session.id, hostname });
-  const warm = await caddy.warmCert(hostname);
-  if (warm.ok) {
-    log.info('staging', 'Cert pre-warmed', { sessionId: session.id, hostname, code: warm.code });
+  log.info('staging', 'Verifying edge before exposing preview', { sessionId: session.id, hostname });
+  const probe = await caddy.probeEdge(hostname, { handshakeOnly: false });
+  if (probe.ok) {
+    log.info('staging', 'Edge verified', {
+      sessionId: session.id, hostname, code: probe.code,
+      ttfbMs: probe.timings ? probe.timings.ttfbMs : null,
+    });
   } else {
-    log.warn('staging', 'Cert pre-warm did not complete; preview may be slow on first hit', { sessionId: session.id, hostname, err: warm.error?.message });
+    log.warn('staging', 'Edge verification did not complete; preview may be slow on first hit', { sessionId: session.id, hostname, err: probe.error?.message });
   }
 }
+
+// Deprecated alias (#816). Kept so any caller still on the old name keeps
+// working; new code calls verifyStagingEdge. Remove once no references
+// remain.
+const warmStagingCert = verifyStagingEdge;
 
 // Tear down a session's staging preview: stop+remove the container, drop the
 // cloned staging database, and stop vouching for the hostname. The single
@@ -733,6 +829,8 @@ async function rebuildProductionInner(config, app) {
 module.exports = {
   buildAndDeployStaging,
   hasInFlightBuild,
+  previewDisplayState,
+  verifyStagingEdge,
   warmStagingCert,
   teardownStaging,
   rebuildProduction,

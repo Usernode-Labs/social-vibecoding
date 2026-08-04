@@ -12,7 +12,12 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { classifyRequest, isStaleLegacyCache, NO_FALLBACK_PAGES } = require('../public/sw.js');
+const {
+  classifyRequest,
+  isStaleLegacyCache,
+  NO_FALLBACK_PAGES,
+  SW_VERSION,
+} = require('../public/sw.js');
 
 const ORIGIN = 'https://social-vibecoding.example';
 const classify = (method, path, accept = null, mode = 'no-cors') =>
@@ -38,6 +43,10 @@ test('credential and auth endpoints are bypassed — except /api/auth/me', () =>
   assert.equal(classify('GET', '/api/auth/logout'), 'bypass');
   assert.equal(classify('GET', '/api/auth/wallet-challenge'), 'bypass');
   assert.equal(classify('GET', '/api/auth/me'), 'api');
+  assert.equal(classify('GET', '/api/cli/token/status'), 'bypass');
+  assert.equal(classify('GET', '/api/cli/device/approval?user_code=ABCD-EFGH'), 'bypass');
+  assert.equal(classify('GET', '/api/me/cli-tokens'), 'bypass');
+  assert.equal(classify('GET', '/api/me/cli-tokens/42?x=1'), 'bypass');
 });
 
 test('the mock namespace and the /health probe hit the network directly', () => {
@@ -83,15 +92,44 @@ test('known CDN scripts classify as cdn; other cross-origin is bypassed', () => 
 
 test('SPA navigations may fall back to the cached shell', () => {
   assert.equal(classify('GET', '/', 'text/html', 'navigate'), 'navigate');
+  // The old standalone auth pages are redirect stubs into the SPA's hash
+  // routes (fold-auth-pages-into-SPA), so falling back to the cached
+  // shell offline is correct for them too.
   assert.equal(classify('GET', '/login.html', 'text/html', 'navigate'), 'navigate');
+  assert.equal(classify('GET', '/register.html', 'text/html', 'navigate'), 'navigate');
+  assert.equal(classify('GET', '/landing.html', 'text/html', 'navigate'), 'navigate');
+  assert.equal(classify('GET', '/waiting.html', 'text/html', 'navigate'), 'navigate');
   assert.equal(classify('GET', '/some/spa/route', 'text/html', 'navigate'), 'navigate');
 });
 
-test('standalone server pages never fall back to the SPA shell', () => {
-  for (const page of ['/admin', '/admin-features', '/dashboard', '/debug', '/node-status', '/status', '/register.html']) {
-    assert.ok(NO_FALLBACK_PAGES.includes(page), `${page} missing from NO_FALLBACK_PAGES`);
-    assert.equal(classify('GET', page, 'text/html', 'navigate'), 'bypass');
+// #860: the seven standalone admin pages became #admin console sections and
+// their old URLs are redirect stubs into the SPA — exactly the shape the
+// auth pages already had, so the cached shell is the right offline
+// fallback for them now. This is the regression that matters: leaving them
+// in NO_FALLBACK_PAGES would make every old bookmark a hard failure offline
+// rather than a stub that resolves from cache.
+test('the folded-in admin pages fall back to the cached shell', () => {
+  const folded = [
+    '/admin', '/admin.html',
+    '/admin-features', '/admin-features.html',
+    '/dashboard', '/dashboard.html',
+    '/debug', '/debug.html',
+    '/gallery', '/gallery.html',
+    '/status', '/status.html',
+    '/node-status', '/node-status.html',
+  ];
+  for (const page of folded) {
+    assert.ok(!NO_FALLBACK_PAGES.includes(page),
+      `${page} is a redirect stub into the SPA now — it must NOT be in NO_FALLBACK_PAGES`);
+    assert.equal(classify('GET', page, 'text/html', 'navigate'), 'navigate');
   }
+});
+
+test('standalone server pages never fall back to the SPA shell', () => {
+  // /cli/authorize is the last genuine standalone server page: a pre-auth
+  // device-authorisation flow deliberately outside the app shell.
+  assert.deepEqual(NO_FALLBACK_PAGES, ['/cli/authorize']);
+  assert.equal(classify('GET', '/cli/authorize', 'text/html', 'navigate'), 'bypass');
 });
 
 test('unparseable URLs are bypassed', () => {
@@ -101,7 +139,7 @@ test('unparseable URLs are bypassed', () => {
 test('legacy cleanup retires only legacy-owned cache families', () => {
   assert.equal(isStaleLegacyCache('usernode-api-v0'), true);
   assert.equal(isStaleLegacyCache('usernode-shell-v0'), true);
-  assert.equal(isStaleLegacyCache('usernode-api-v1'), false);
+  assert.equal(isStaleLegacyCache(`usernode-api-${SW_VERSION}`), false);
   assert.equal(isStaleLegacyCache('usernode-react-shell-v1'), false);
   assert.equal(isStaleLegacyCache('usernode-unrelated-v1'), false);
 });

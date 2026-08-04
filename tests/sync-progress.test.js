@@ -570,3 +570,39 @@ test('GET /status: exposes the in-flight sync state, and null when idle', async 
     server.close();
   }
 });
+
+test('GET /status: exposes the merge lifecycle status for banner restore verification', async () => {
+  // The self-app "Platform updating…" banner restores itself from
+  // sessionStorage on reload and verifies against this field that the
+  // merge behind it is still in flight (an aborted merge has no SHA
+  // flip coming — see PlatformUpdating.verifyMergeStillInFlight).
+  poolQueryHandler = async (sql) => {
+    if (/SELECT status FROM chat_sessions/.test(sql)) {
+      return { rows: [{ status: 'promoted' }] };
+    }
+    return { rows: [] };
+  };
+  activeWorkers.clear();
+  const realIsInFlight = worker.isInFlight;
+  worker.isInFlight = () => false;
+  const realGetSyncState = syncMainSvc.getSyncState;
+  syncMainSvc.getSyncState = () => null;
+
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await fetch(`http://127.0.0.1:${port}/api/sessions/45/status`);
+    const body = await res.json();
+    assert.equal(res.status, 200);
+    assert.equal(body.status, 'promoted');
+
+    // Missing row → null (fail-safe: the client keeps its banner up).
+    poolQueryHandler = async () => ({ rows: [] });
+    const res2 = await fetch(`http://127.0.0.1:${port}/api/sessions/46/status`);
+    assert.equal((await res2.json()).status, null);
+  } finally {
+    syncMainSvc.getSyncState = realGetSyncState;
+    worker.isInFlight = realIsInFlight;
+    server.close();
+  }
+});

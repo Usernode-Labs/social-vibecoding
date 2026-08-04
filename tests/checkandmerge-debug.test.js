@@ -38,7 +38,7 @@ stub('../src/services/staging', {
   rebuildProduction: async () => ({ sha: 'def5678ab', containerId: 'c1' }),
   teardownStaging: async () => {},
   buildAndDeployStaging: async () => ({ containerId: 'c2', stagingUrl: 'u', hostname: 'h' }),
-  warmStagingCert: async () => {},
+  verifyStagingEdge: async () => {},
 });
 stub('../src/services/docker', {});
 stub('../src/services/conflict-resolver', {
@@ -123,6 +123,7 @@ function session(extra = {}) {
   return {
     id: 100, app_id: 5, app_slug: 'app', pr_number: 7, pr_title: 'T',
     repo_url: 'https://github.com/o/r', behind_main: 0, user_id: 9,
+    reviewed_head_sha: 'a'.repeat(40),
     linked_issues: [], app_self_hosted: false, ...extra,
   };
 }

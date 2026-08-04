@@ -72,7 +72,12 @@ const WorkDrawer = {
       WorkDrawer.hide();
     });
 
-    WorkDrawer.refresh();
+    // Anonymous SPA boot (fold-auth-pages-into-SPA): the initial fetch
+    // waits for the authed boot stage instead of firing a guaranteed 401
+    // on a sessionless document. `sv:authed` fires at most once.
+    if (window.App && App.user) WorkDrawer.refresh();
+    else document.addEventListener('sv:authed',
+      () => WorkDrawer.refresh(), { once: true });
   },
 
   // ?demo=1 forwarding (preserved on the page URL) so the staging demo

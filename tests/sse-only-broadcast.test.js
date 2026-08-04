@@ -111,9 +111,88 @@ test('broadcastGlobal payload stays typed session_event with event + _seq + data
 });
 
 test('broadcastGlobal payload keeps type=session_event for status/done/spec_updated too (#437)', () => {
-  for (const t of ['status', 'done', 'spec_updated', 'cc_progress', 'phase', 'stopped']) {
+  for (const t of ['status', 'done', 'spec_updated', 'cc_progress', 'phase', 'stopped', 'stopping']) {
     const payload = buildBroadcastPayload(t, { text: 'x' }, `s-${t}`, 42);
     assert.equal(payload.type, 'session_event', `${t} envelope typed session_event`);
     assert.equal(payload.event, t, `${t} carried in event field`);
   }
+});
+
+// ── The `stopping` announcement (#889) ──────────────────────────────────
+//
+// POST /stop runs in a different request from the turn, so it has no access
+// to the turn's `send` closure. The handle carries it, which is what lets a
+// click announce itself on every channel immediately instead of ~19s later
+// when the turn finally unwinds — and what makes OTHER tabs (and the phone
+// app) show the stopping state at all.
+
+test('stopping is NOT SSE-only, so every tab watching the session sees it', () => {
+  const sseOnly = extractSseOnly();
+  assert.equal(sseOnly.has('stopping'), false,
+    'stopping must ride the global WS — otherwise only the clicking tab learns a stop is in flight');
+});
+
+test('the turn hands its send() closure to the stop handle', () => {
+  // The registration literal must carry `send`, or handle.send?.() below is
+  // a silent no-op and the whole cross-tab half of #889 disappears.
+  const m = SRC.match(/const\s+stopHandle\s*=\s*\{[\s\S]*?\n\s{6}\};/);
+  assert.ok(m, 'found the stopHandle registration literal');
+  assert.match(m[0], /(^|\n)\s*send,/, 'stopHandle carries the turn send() closure');
+});
+
+test('POST /stop emits stopping with the requesting user, before the kill', () => {
+  const route = SRC.slice(SRC.indexOf("router.post('/api/sessions/:id/stop'"));
+  const emit = route.search(/handle\.send\?\.\(\s*'stopping'/);
+  assert.ok(emit >= 0, 'the stop route emits a stopping event');
+  assert.match(route.slice(emit, emit + 200), /by:\s*req\.user\.username/,
+    'carries who requested it, so other viewers can name them');
+
+  // Ordering: the announcement is a synchronous write + broadcast, so it
+  // must sit ahead of every await in the handler. Being immediate is the
+  // entire point — anything in front of it is dead air for the user.
+  const kill = route.indexOf('worker.stopTurn(');
+  assert.ok(kill > emit, 'stopping is announced before the worker kill is dispatched');
+  const disarm = route.indexOf('notify_on_done = FALSE');
+  assert.ok(disarm > emit, 'stopping is announced before the notify_on_done write');
+});
+
+test('the notify_on_done disarm still lands before the abort (#161)', () => {
+  // #161's ordering constraint outlives #889 and is easy to lose while
+  // shaving latency off this handler: abort() can unwind the Mayor stream
+  // into send('done') within milliseconds, and notifySessionDone re-reads
+  // this column — so the write must be awaited AND ahead of the abort, or
+  // stopping a turn fires a spurious "your session finished" notification.
+  const route = SRC.slice(
+    SRC.indexOf("router.post('/api/sessions/:id/stop'"),
+    SRC.indexOf("router.get('/api/sessions/:id/events'")
+  );
+  const disarmIdx = route.indexOf('notify_on_done = FALSE');
+  assert.ok(disarmIdx > 0, 'found the disarm write');
+  const abortIdx = route.indexOf('handle.abort.abort()');
+  assert.ok(abortIdx > disarmIdx, 'disarm is dispatched before the abort');
+
+  const stmt = route.slice(Math.max(0, disarmIdx - 120), disarmIdx);
+  assert.ok(stmt.includes('await pool.query('),
+    'the disarm is awaited, so the abort cannot race the write');
+});
+
+test('the stop route still answers with a stopped flag the client can branch on', () => {
+  const route = SRC.slice(
+    SRC.indexOf("router.post('/api/sessions/:id/stop'"),
+    SRC.indexOf("router.get('/api/sessions/:id/events'")
+  );
+  // The client reads all three of these: `stopped` decides whether a
+  // `stopped` event is coming at all, and the two reasons drive the
+  // wrap-up / already-ended branches.
+  assert.match(route, /stopped:\s*false,\s*reason:\s*'no active turn'/);
+  assert.match(route, /stopped:\s*false,\s*reason:\s*'wrap-up cannot be stopped'/);
+  assert.match(route, /res\.json\(\{\s*ok:\s*true,\s*stopped:\s*true,\s*phase:\s*handle\.phase\s*\}\)/);
+});
+
+test('/status exposes stopping so a reload repaints the Stopping button', () => {
+  assert.match(SRC, /const\s+stopping\s*=\s*!!stopRegistry\.get\(sessionId\)\?\.stopped;/,
+    '/status derives stopping from the live stop registry');
+  const payload = SRC.match(/res\.json\(\{\s*\n?\s*busy,[\s\S]{0,200}?\}\);/);
+  assert.ok(payload, 'found the /status res.json payload');
+  assert.match(payload[0], /\bstopping\b/, 'stopping is included in the /status payload');
 });

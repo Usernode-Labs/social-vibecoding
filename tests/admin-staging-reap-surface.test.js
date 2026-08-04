@@ -122,7 +122,7 @@ test('the shell routes the aggregate event into the console', () => {
 });
 
 test('the console section exists, is admin-visible, and its button is write-gated', () => {
-  assert.match(consoleJs, /\{ key: 'staging-reap', label: 'Stale previews' \}/,
+  assert.match(consoleJs, /\{ key: 'staging-reap', label: 'Stale previews', group: '[^']+' \}/,
     'a real section in the admin console nav');
   assert.match(
     consoleJs,
@@ -307,8 +307,10 @@ test('the sweeper pass is wired into the existing session sweeper, throttled', (
     'it runs on its own long interval, not on every 60s tick');
   assert.equal((serverJs.match(/stagingReap\.staleSweepDue\(\)/g) || []).length, 2,
     'both the boot run and the sweeper tick gate on the same helper');
-  // It must hand the sweeper a way to see live turns (selectStale needs it).
-  assert.match(serverJs, /isInFlight: \(id\) => worker\.isInFlight\(id\)/);
+  // It must hand the sweeper a way to see every live session-owned operation,
+  // including CLI staging/check and sync tails that have no worker exec.
+  assert.match(serverJs,
+    /isInFlight: \(id\) => activeWorkersSvc\.isSessionBusy\(id\)/);
 });
 
 test('the pass also runs once at boot, after the heal recovery', () => {

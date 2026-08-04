@@ -366,8 +366,10 @@ function makeMockPool() {
       return { rows: event ? [{ id: event.id, internal: event.internal, season_id: event.season_id }] : [] };
     }
 
-    // GET /season-events (list, no placeholders at all).
-    if (sql.includes('display_activities FROM season_events')) {
+    // GET /season-events (list, no placeholders at all). The select also
+    // carries display_leaderboard, so a client can default to an event
+    // whose standings actually render (public/js/topochain-events.js).
+    if (sql.includes('display_activities, display_leaderboard')) {
       const includePast = sql.includes('WHERE internal = FALSE ORDER');
       const rows = SEASON_EVENTS
         .filter((e) => !e.internal && (includePast || e.is_active))
