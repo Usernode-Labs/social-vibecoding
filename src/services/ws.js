@@ -317,12 +317,20 @@ async function canWriteChat(pool, client) {
 
 async function handleMessage(pool, client, msg) {
   if (WRITE_MSG_TYPES.has(msg.type)) {
-    const allowed = await canWriteChat(pool, client).catch(() => false);
+    let allowed;
+    try {
+      allowed = await canWriteChat(pool, client);
+    } catch (err) {
+      log.warn('ws', 'write message dropped: access check failed', {
+        appId: client.appId, userId: client.user.id, type: msg.type, err: err.message,
+      });
+      return { ok: false, code: 'write_access_failed' };
+    }
     if (!allowed) {
       log.warn('ws', 'write message dropped: not a collaborator', {
         appId: client.appId, userId: client.user.id, type: msg.type,
       });
-      return;
+      return { ok: false, code: 'not_collaborator' };
     }
   }
   switch (msg.type) {
@@ -336,12 +344,12 @@ async function handleMessage(pool, client, msg) {
         log.warn('ws', 'chat message dropped: bad attachment ids', {
           appId: client.appId, userId: client.user.id,
         });
-        return;
+        return { ok: false, code: 'invalid_attachment_ids' };
       }
       // An attachments-only send is allowed (#694): content stays ''
       // (column is NOT NULL) and the client renders no body.
       const content = (msg.content || '').trim().substring(0, MAX_CHAT_LEN);
-      if (!content && !attIds.length) return;
+      if (!content && !attIds.length) return { ok: false, code: 'empty_message' };
 
       // #194: optional thread scoping. An invalid/spoofed ref drops the
       // whole message (never silently re-route a thread post into the
@@ -354,7 +362,7 @@ async function handleMessage(pool, client, msg) {
           log.warn('ws', 'chat message dropped: invalid thread ref', {
             appId: client.appId, userId: client.user.id,
           });
-          return;
+          return { ok: false, code: 'invalid_thread' };
         }
       }
 
@@ -455,7 +463,7 @@ async function handleMessage(pool, client, msg) {
             appId: client.appId, userId: client.user.id,
             requested: attIds.length, found: found.length,
           });
-          return;
+          return { ok: false, code: 'attachment_not_owned' };
         }
         // Preserve the client's send order (the SELECT doesn't).
         attRows = attIds.map((id) => found.find((r) => r.id === id));
@@ -620,7 +628,10 @@ async function handleMessage(pool, client, msg) {
           appId: client.appId, userId: client.user.id, err: err.message,
         });
       }
-      break;
+      // WebSocket callers intentionally ignore this value. The JSON chat
+      // route uses it to return the exact row produced by this canonical
+      // mutation path instead of duplicating persistence and fan-out logic.
+      return { ok: true, message: outMsg };
     }
 
     // Message editing: the author rewrites the content of one of their own

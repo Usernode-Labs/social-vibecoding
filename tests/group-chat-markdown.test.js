@@ -370,8 +370,10 @@ test('handleMessage caps an over-length chat body at MAX_CHAT_LEN on insert', as
     },
   };
   const client = { appId: 1, user: { id: 2, username: 'bob' } };
-  await ws.handleMessage(pool, client, { type: 'chat', content: 'a'.repeat(9000) });
+  const result = await ws.handleMessage(pool, client, { type: 'chat', content: 'a'.repeat(9000) });
   assert.equal(insertedContent.length, ws.MAX_CHAT_LEN);
+  assert.equal(result.ok, true);
+  assert.equal(result.message.content.length, ws.MAX_CHAT_LEN);
 });
 
 test('handleMessage caps an over-length edit body at MAX_CHAT_LEN on update', async () => {
