@@ -197,11 +197,12 @@ const HomePanels = {
   // Home._dragActive: this section is outside #app-list, so painting it
   // mid-drag can't yank a card out from under the pointer.
   render() {
-    // Two possible hosts. Home.render() plants a col-span-full slot INSIDE
-    // #app-list at the viewer's dragged position, and that wins when it is
-    // there; the standalone section below the grid is the fallback (search
-    // is active, the grid didn't render, or the viewer has never dragged).
-    // Painting whichever exists keeps one render path for both.
+    // Two possible hosts. Home.render() plants a multi-cell slot INSIDE
+    // #app-list at the viewer's position (default: after the last card),
+    // and that wins when it is there; the standalone section below the grid
+    // is the fallback for the views that have no grid to ride in — an
+    // active search, or a grid that hasn't rendered yet. Painting whichever
+    // exists keeps one render path for both.
     const slot = document.getElementById('home-panel-slot');
     const section = document.getElementById('home-panels');
     const host = slot || section;
@@ -218,8 +219,9 @@ const HomePanels = {
     if (html) HomePanels._wire(host);
   },
 
-  // Cards above the block, as last dragged. null = never dragged, so the
-  // block keeps its default place under the whole grid.
+  // Cards above the block, as last dragged. null = never dragged, which
+  // Home.render() reads as "after the last card" — the place the block
+  // occupied before it was draggable at all.
   positionFor(key) {
     const positions = HomePanels._data && HomePanels._data.positions;
     if (!positions || typeof positions !== 'object') return null;
@@ -228,14 +230,21 @@ const HomePanels = {
   },
 
   // The one panel the grid hosts. With a single widget this is simply
-  // "challenges when it is visible and positioned"; a second widget would
-  // extend this to a list of slots.
+  // "challenges when it is visible"; a second widget would extend this to
+  // a list of slots.
+  //
+  // Deliberately NOT gated on a stored position any more. It was, and that
+  // was the "I can't drag it" bug: the grid slot is the only item the kit's
+  // reorder recognizer knows about, and the only writer of a position is a
+  // completed drag inside the grid — so an account that had never dragged
+  // the widget had no slot, no recognizer, and no way to ever get one. An
+  // absent position is a DEFAULT (after the last card), not an absent slot.
   gridSlotPanelKey() {
     if (!HomePanels._data) return null;
     const panels = HomePanels._data.panels;
     if (!Array.isArray(panels) || !panels.length) return null;
-    const key = panels[0].key;
-    return HomePanels.positionFor(key) == null ? null : key;
+    if (!HomePanels.renderAll()) return null;
+    return panels[0].key;
   },
 
   // One article per visible panel, stacked. Empty string = render nothing

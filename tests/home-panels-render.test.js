@@ -561,11 +561,12 @@ test('the row declares nowrap and clips, so a wrap cannot ship unnoticed', () =>
     'a chip that still overflows is clipped, not spilled onto the next row');
 });
 
-// ── Drag position among the app-grid rows ─────────────────────────
+// ── Drag position within the app grid ─────────────────────────────
 //
-// The block is a col-span-full item in #app-list, so the grid breaks its
-// row around it and it sits BETWEEN app rows, iOS-widget style. The kit's
-// existing attachReorder carries it; only the persisted index is new.
+// The block is a multi-cell item of #app-list — two columns wide, two rows
+// tall from md up — so app icons flow around it iOS-widget style and it can
+// be dropped BESIDE a card as well as between rows. The kit's existing
+// attachReorder carries it; only the persisted index is new.
 
 test('positionFor reads the per-user index and defaults to "not dragged"', () => {
   const { HP } = makeHomePanels();
@@ -573,15 +574,37 @@ test('positionFor reads the per-user index and defaults to "not dragged"', () =>
   assert.equal(HP.positionFor('challenges'), 4);
   assert.equal(HP.positionFor('nope'), null);
 
-  // No positions at all → null, which is what keeps the block in its own
-  // section below the grid for every account that has never dragged it.
+  // No positions at all → null, which Home.render() reads as the DEFAULT
+  // "after the last card" — not as "no slot".
   HP._data = { registry: [], hidden: [], panels: [panel()] };
   assert.equal(HP.positionFor('challenges'), null);
-  assert.equal(HP.gridSlotPanelKey(), null, 'no slot until it has been placed');
 
   HP._data = { registry: [], hidden: [], positions: { challenges: 0 }, panels: [panel()] };
   assert.equal(HP.positionFor('challenges'), 0, 'index 0 is a real position, not absent');
   assert.equal(HP.gridSlotPanelKey(), 'challenges');
+});
+
+// Regression: gridSlotPanelKey() used to require a stored position, and that
+// was the "I can't drag it" bug. The in-grid slot is the ONLY item the kit's
+// reorder recognizer knows about, and the only writer of a position is a
+// completed in-grid drag — so an account that had never dragged the widget
+// got no slot, no recognizer, and no way to ever get one.
+test('gridSlotPanelKey does not wait for a drag that can only happen in the grid', () => {
+  const { HP } = makeHomePanels();
+  for (const positions of [undefined, {}, null, { other: 2 }]) {
+    HP._data = { registry: [], hidden: [], positions, panels: [panel()] };
+    assert.equal(HP.gridSlotPanelKey(), 'challenges', JSON.stringify(positions) || 'absent');
+  }
+
+  // Still nothing to host when there is nothing to paint: an unloaded cache,
+  // no panels, or a panel that renders to nothing would otherwise plant an
+  // empty two-by-two hole in the middle of the grid.
+  HP._data = null;
+  assert.equal(HP.gridSlotPanelKey(), null, 'unloaded');
+  HP._data = { registry: [], hidden: [], positions: {}, panels: [] };
+  assert.equal(HP.gridSlotPanelKey(), null, 'no panels');
+  HP._data = { registry: [], hidden: [], positions: {}, panels: [{ key: 'not-a-panel' }] };
+  assert.equal(HP.gridSlotPanelKey(), null, 'nothing this client can paint');
 });
 
 test('positionFor rejects junk rather than placing the block at NaN', () => {
@@ -613,9 +636,7 @@ test('setPosition persists the index and updates the cache optimistically', asyn
 });
 
 test('home.js plants the slot in the grid and routes its drop to setPosition', () => {
-  // col-span-full is what makes the block break the grid row.
   assert.match(HOME, /renderPanelSlot\(key\)/);
-  assert.match(HOME, /id="home-panel-slot"[^`]*col-span-full/);
   // The slot is an item of the SAME reorder instance as the app cards.
   assert.match(HOME, /itemSelector: '\.app-card:not\(\[data-demo\]\), \.home-panel-slot'/);
   // The drop dispatcher distinguishes the two item kinds and persists the
@@ -625,6 +646,56 @@ test('home.js plants the slot in the grid and routes its drop to setPosition', (
   // Card drops get a CARD-ONLY index — with a second item type in the
   // list, the kit's raw `to` would be one too high below the panel.
   assert.match(HOME, /_onKitCardDrop\(from, cardsBefore\(item\), item, yoursCount\)/);
+});
+
+// The horizontal half of "draggable within the grid": a row-breaking
+// col-span-full item can only ever land BETWEEN rows, because every drop
+// target in its row is itself. Real cells are what make an in-row drop, and
+// therefore a horizontal drag, mean something.
+test('the slot occupies real grid cells rather than breaking the row', () => {
+  const slot = HOME.match(/renderPanelSlot\(key\) \{[\s\S]*?\n {2}\},/)[0];
+  assert.doesNotMatch(slot, /col-span-full/,
+    'a full-row slot has no horizontal neighbours to be dropped beside');
+  // Two of #app-list's columns: the whole row at the 2-column phone width,
+  // about half a row at every width above it.
+  assert.match(slot, /\bcol-span-2\b/);
+  assert.match(INDEX, /id="app-list"[^>]*\bgrid-cols-2\b[^>]*>/);
+  // Two rows from md up, so icons flow BESIDE and BELOW it. Not at the phone
+  // width, where it already spans every column.
+  assert.match(slot, /\bmd:row-span-2\b/);
+  assert.doesNotMatch(slot, /(?<!md:)\brow-span-2\b/);
+});
+
+// Position persistence has to survive the OTHER item kind moving: the index
+// is card-relative, so dragging a card past the widget changes what the
+// stored number means. Both drop paths therefore re-anchor it.
+test('a card drop re-anchors the panel to where it actually sits', () => {
+  assert.match(HOME, /_syncPanelSlotPosition\(listEl, cardsBefore\)/,
+    'the card branch re-reads the panel index after the cards move');
+  const sync = HOME.match(/_syncPanelSlotPosition\(listEl, cardsBefore\) \{[\s\S]*?\n {2}\},/)[0];
+  assert.match(sync, /querySelector\('\.home-panel-slot'\)/);
+  assert.match(sync, /dataset\.panelSlot/);
+  // No-op when nothing crossed it, so an ordinary card reorder writes no
+  // extra request.
+  assert.match(sync, /positionFor\?\.\(key\) === at\) return/);
+  assert.match(sync, /setPosition\?\.\(key, at\)/);
+});
+
+// Regression companion to gridSlotPanelKey's: the two fetches race, and when
+// the panels payload lost, render() planted no slot and the block fell back
+// to the #home-panels section — which has no reorder wiring at all, so the
+// widget was undraggable exactly as reported.
+test('home.js re-plants the slot when the panels payload lands after the grid', () => {
+  const load = HOME.match(/async load\(\) \{[\s\S]*?\n {2}\},/)[0];
+  const hook = load.match(/ensureLoaded\(\)\?\.then\(\(\) => \{[\s\S]*?\n {4}\}\);/);
+  assert.ok(hook, 'the panels load resolves into a re-plant check');
+  assert.match(hook[0], /if \(!Home\._apps\) return;/, 'only once the grid has a payload');
+  assert.match(hook[0], /getElementById\('home-panel-slot'\)\) return;/, 'no-op when already planted');
+  assert.match(hook[0], /gridSlotPanelKey\?\.\(\)\) return;/, 'nothing to plant');
+  assert.match(hook[0], /Home\.render\(\);/);
+  // An active search has no slot ON PURPOSE — the section below the grid is
+  // that view's host.
+  assert.match(hook[0], /Home\._query \|\| ''\)\.trim\(\)\) return;/);
 });
 
 test('the "Your apps" heading is gone from the grid', () => {
@@ -673,6 +744,20 @@ test('the width cap is half the home column, left-aligned, on both hosts', () =>
   // up with the first app icon. Auto side margins would centre it.
   assert.doesNotMatch(css.match(/\.home-panel \{[^}]*\}/)[0], /margin(-left|-right)?:\s*auto/);
   assert.doesNotMatch(css.match(/\.home-panel-slot \{[^}]*\}/)[0], /margin(-left|-right)?:\s*auto/);
+});
+
+// Two consequences of the slot spanning real ROWS rather than breaking one.
+test('the multi-row slot neither inflates its rows nor stretches its neighbours', () => {
+  const css = read('public/css/app.css');
+  const slotRule = css.match(/\.home-panel-slot \{[^}]*\}/)[0];
+  // A margin adds to the item's OUTER height, so a row-span-2 slot would
+  // demand 14rem + margin from two 6.75rem rows and stretch every card
+  // sharing them. The grid's own gap-2 is the spacing.
+  assert.doesNotMatch(slotRule, /margin/,
+    'the grid gap spaces the slot; a margin would inflate the rows it spans');
+  // And the cards in those rows sit at the top instead of growing a pool of
+  // dead space under their titles when an expanded widget makes the row tall.
+  assert.match(css.match(/#app-list > \.app-card \{[^}]*\}/)[0], /align-self:\s*start/);
 });
 
 test('the 14rem cap still matches the app tile it is derived from', () => {

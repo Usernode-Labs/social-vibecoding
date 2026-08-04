@@ -452,20 +452,33 @@ html, body {
   overflow: visible;
 }
 
-/* The in-grid drag host. A col-span-full grid item, so the grid breaks its
-   row around the block and it sits BETWEEN app rows — the iOS widget
-   idiom. It carries no visuals of its own: the bordered .home-panel
-   article inside it is the widget. The bottom margin matches the grid's
-   own gap-2 so the row below doesn't crowd it. */
+/* The in-grid drag host (#911). It spans real cells — `col-span-2
+   md:row-span-2` in home.js, derived there — so app icons flow around it,
+   the iOS widget idiom, and it can be dropped beside a card as well as
+   between rows. It carries no visuals of its own: the bordered .home-panel
+   article inside it is the widget.
+
+   NO margin here, deliberately: a margin-bottom (which this had while the
+   slot was a col-span-full row break) adds to the item's outer height, so a
+   row-span-2 item would demand 224px + margin from two 108px rows and
+   stretch every card sharing them. The grid's own gap-2 is the spacing.
+
+   The width cap is kept as a backstop, above the widest span (496px at lg
+   vs the 512px cap), so it never binds in the grid but still bounds the
+   #home-panels fallback host and the kit's lift ghost. min-width: 0 keeps
+   a long goal from pushing the item past its cells. */
 .home-panel-slot {
-  margin-bottom: 0.5rem;
-  /* Bounded to the same width as the article it hosts, from the same
-     variable — otherwise the slot stays a full-width col-span-full item
-     and the kit's lift ghost and drop-indicator bar are drawn at 1024px
-     around a 512px widget, which reads as dragging something other than
-     what you grabbed. A grid item defaults to justify-self: stretch, so
-     max-width alone keeps it pinned to the grid's first column. */
   max-width: var(--home-panel-max-w);
+  min-width: 0;
+}
+
+/* App tiles sit at the TOP of their row rather than stretching to fill it.
+   Rows are 108px tall whenever cards alone define them, so this changes
+   nothing on its own — it only matters in the rows the panel slot spans,
+   where an expanded widget makes the row taller than a card and a stretched
+   tile would grow a pool of dead space under its title. */
+#app-list > .app-card {
+  align-self: start;
 }
 
 /* The feed body is a full-height flex COLUMN so the trailing sections can

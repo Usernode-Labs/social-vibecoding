@@ -16,8 +16,27 @@ const Home = {
     Home._probeShortcutSupport();
     // Home-screen panels (#911, public/js/home-panels.js). TTL-guarded
     // inside, so the dozen WS/event paths that call load() don't turn into
-    // a dozen fetches; it paints its own section when the data lands.
-    window.HomePanels?.ensureLoaded();
+    // a dozen fetches; it paints itself when the data lands.
+    //
+    // Deliberately NOT awaited — the grid must not wait on a second request
+    // to paint. But the two fetches race, and losing that race used to cost
+    // the widget its drag: with no panels data yet, render() below plants no
+    // slot, so the block fell back to the #home-panels section, which has no
+    // reorder wiring at all. Re-plant once the data lands if the grid is
+    // already painted without a slot. Self-terminating — the slot then
+    // exists — and render() defers itself mid-drag like every other path.
+    window.HomePanels?.ensureLoaded()?.then(() => {
+      // Gated on _apps, not on the DOM: "the grid has painted a payload" is
+      // the condition, and #app-list is non-empty for the failure state too.
+      if (!Home._apps) return;
+      // An active search legitimately has no slot — the section below the
+      // grid is that view's host on purpose. Re-rendering would be a no-op
+      // at best and would rebuild the results grid for nothing.
+      if ((Home._query || '').trim()) return;
+      if (document.getElementById('home-panel-slot')) return;
+      if (!window.HomePanels?.gridSlotPanelKey?.()) return;
+      Home.render();
+    });
     const listEl = document.getElementById('app-list');
 
     try {
@@ -178,14 +197,22 @@ const Home = {
         // drag wiring's selector and the drop classification;
         // cursor-grab replaces cursor-pointer as the discoverability
         // hint when the card is draggable.
-        // The home-screen panel (#911) rides IN the grid when the viewer
-        // has dragged it: a col-span-full slot planted after N cards, so
-        // it breaks onto its own line between app rows exactly like an iOS
-        // widget. Un-dragged, panelSlotAt is null and the block stays in
-        // its own section below the grid.
+        // The home-screen panel (#911) rides IN the grid, ALWAYS: a slot
+        // spanning two grid columns (and two rows from md up) planted after
+        // N cards, so app icons flow around it exactly like an iOS widget
+        // and it can be dropped beside a card as well as between rows.
+        //
+        // It is in the grid from the first paint even for an account that
+        // has never dragged it, and that is the fix for "I can't drag it":
+        // the slot is the ONLY thing the kit's reorder recognizer sees, so
+        // gating it on a stored position made the widget undraggable until
+        // a drag had already happened. No position stored → it sits after
+        // the last card, which is where the un-dragged block used to
+        // render, so the default view is unchanged.
         const panelKey = window.HomePanels?.gridSlotPanelKey?.() || null;
+        const panelStored = panelKey ? window.HomePanels.positionFor(panelKey) : null;
         const panelAt = panelKey
-          ? Math.max(0, Math.min(window.HomePanels.positionFor(panelKey), yours.length))
+          ? Math.max(0, Math.min(panelStored == null ? yours.length : panelStored, yours.length))
           : null;
         const cards = yours.map((a) => {
           let card = Home.renderAppCard(a);
@@ -203,6 +230,12 @@ const Home = {
         // this user needs to see, and a centered hero would push them
         // off the fold. Most accounts have zero apps here.
         html += `<div class="col-span-full pb-2 text-sm text-zinc-500 dark:text-zinc-400">You haven&rsquo;t added any apps yet — pick one below.</div>`;
+        // With no cards there is nothing to reorder against, but the panel
+        // still hosts in the grid so there is exactly ONE host for it here
+        // (the #home-panels section below is the search-view fallback) and
+        // the block doesn't jump hosts the moment a first app is added.
+        const emptyPanelKey = window.HomePanels?.gridSlotPanelKey?.() || null;
+        if (emptyPanelKey) html += Home.renderPanelSlot(emptyPanelKey);
       }
     }
 
@@ -218,13 +251,26 @@ const Home = {
     Home._searchReveal.sync();
   },
 
-  // The in-grid host for a home-screen panel (#911). col-span-full so the
-  // grid breaks the row around it — that is what makes the block sit
-  // BETWEEN app rows, iOS-widget style, at any breakpoint. HomePanels
-  // paints into it; the drag itself is the same kit attachReorder the app
-  // cards use (see _wireCards), with this slot added to its item selector.
+  // The in-grid host for a home-screen panel (#911) — a real multi-cell
+  // grid item, not a row break. HomePanels paints into it; the drag is the
+  // same kit attachReorder the app cards use (see _wireCards), with this
+  // slot in its item selector, so the widget drops HORIZONTALLY beside a
+  // card as readily as it drops between rows.
+  //
+  // The spans, against #app-list's `grid-cols-2 md:grid-cols-3
+  // lg:grid-cols-4 xl:grid-cols-5`:
+  //   • col-span-2 is the whole row at the 2-column phone width (a 1-column
+  //     widget would be ~179px, too narrow for a goal plus its chips) and
+  //     roughly half the row at every width above it — 493px at md, 496px
+  //     at lg, 395px at xl, all under the 32rem cap, so the cap never
+  //     binds in the grid and the block has no dead space inside its cells.
+  //   • md:row-span-2 makes it occupy two real rows, which is exactly its
+  //     224px cap (108 + 8 + 108 — see --home-panel-max-h). App icons then
+  //     flow into the cells beside and below it instead of the row breaking.
+  //     Not applied at the phone width, where the widget already spans
+  //     every column and a second row would just be empty.
   renderPanelSlot(key) {
-    return `<div id="home-panel-slot" class="home-panel-slot app-card-draggable touch-pan-y col-span-full" data-panel-slot="${escapeHtml(key)}"></div>`;
+    return `<div id="home-panel-slot" class="home-panel-slot app-card-draggable touch-pan-y col-span-2 md:row-span-2" data-panel-slot="${escapeHtml(key)}"></div>`;
   },
 
   // "Featured apps": one contained card holding the admin-curated
@@ -2308,6 +2354,24 @@ const Home = {
       return;
     }
     Home._onKitCardDrop(from, cardsBefore(item), item, yoursCount);
+    // A CARD moved, which can change how many cards sit above the panel
+    // (drag the first card past it and the panel's stored index is now one
+    // too high) — so re-anchor the panel to where it actually is. Both
+    // kinds of item live in one grid; the panel's index is card-relative,
+    // so it has to be re-read whenever the cards move under it.
+    Home._syncPanelSlotPosition(listEl, cardsBefore);
+  },
+
+  // Persist the panel slot's card-relative index if the settled DOM
+  // disagrees with what is stored. A no-op when nothing moved across it,
+  // so an ordinary reorder writes no extra request.
+  _syncPanelSlotPosition(listEl, cardsBefore) {
+    const slot = listEl.querySelector('.home-panel-slot');
+    if (!slot) return;
+    const key = slot.dataset.panelSlot;
+    const at = cardsBefore(slot);
+    if (window.HomePanels?.positionFor?.(key) === at) return;
+    window.HomePanels?.setPosition?.(key, at);
   },
 
   _onKitCardDrop(from, to, item, yoursCount) {
