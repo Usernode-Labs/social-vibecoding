@@ -171,6 +171,46 @@
       },
       "catches": "Review can distinguish a true pill or independent raised surface from decorative rounding.",
       "misses": "No scanner can infer the semantic object class from radius alone."
+    },
+    {
+      "id": "redline-caller-margin",
+      "page": "redlines",
+      "lawSection": "2. Radius and spacing",
+      "kind": "scanner-rule",
+      "rule": "no-caller-margin",
+      "check": "check:interface-laws",
+      "test": {
+        "path": "scripts/interface-law-tools.test.mjs",
+        "name": "paper, container, spacing, margin, radius, and primitive rules are structural"
+      },
+      "catches": "Literal margin utilities added by callers to governed components, with the redline probe making the same violation visible at runtime.",
+      "misses": "The scanner does not resolve dynamic classes, and one rendered probe does not prove every caller boundary is margin-free."
+    },
+    {
+      "id": "redline-desktop-shell",
+      "page": "redlines",
+      "lawSection": "1. Surface role",
+      "kind": "rendered-test",
+      "check": "test:storybook",
+      "story": {
+        "path": "@/docs/shell-redlines.stories.tsx",
+        "export": "DesktopShell"
+      },
+      "catches": "The production sidebar, Paper, TopBar, route viewport, safe-area ownership, and their live keylines remain geometrically connected.",
+      "misses": "A deterministic shell specimen does not prove every product route preserves the same anatomy."
+    },
+    {
+      "id": "redline-mobile-shell",
+      "page": "redlines",
+      "lawSection": "3. Type and target roles",
+      "kind": "rendered-test",
+      "check": "test:storybook",
+      "story": {
+        "path": "@/docs/shell-redlines.stories.tsx",
+        "export": "MobileShell"
+      },
+      "catches": "The candidate bottom navigation stays outside Paper, reserves the mobile Canvas band, and exposes four non-overlapping 44-to-48-pixel rendered targets.",
+      "misses": "The story does not emulate every coarse-pointer engine or authorize mounting the candidate navigation in PlatformShell."
     }
   ]
 }

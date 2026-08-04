@@ -9,7 +9,7 @@ const repoRoot = path.resolve(frontendRoot, "..")
 const defaultCitationsPath = path.join(frontendRoot, "design-system", "interface-law-citations.json")
 const defaultLedgerAuthorityPath = path.join(frontendRoot, "design-system", "decision-ledger-authority.json")
 const defaultLedgerPath = path.join(frontendRoot, "design-system", "decision-ledger.json")
-const foundationPageIds = ["surfaces", "ink-levels", "type-ramp", "spacing-rhythm", "radius-grouping"]
+const foundationPageIds = ["surfaces", "ink-levels", "type-ramp", "spacing-rhythm", "radius-grouping", "redlines"]
 
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value)

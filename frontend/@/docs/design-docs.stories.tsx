@@ -13,6 +13,46 @@ const meta = {
 export default meta
 type Story = StoryObj<typeof meta>
 
+async function assertRedlineGeometry(redline: HTMLElement) {
+  const wrapper = redline.firstElementChild as HTMLElement
+  const host = wrapper.firstElementChild as HTMLElement
+  const style = getComputedStyle(host)
+  const expected = {
+    pt: Number.parseFloat(style.paddingTop),
+    pb: Number.parseFloat(style.paddingBottom),
+    pl: Number.parseFloat(style.paddingLeft),
+    pr: Number.parseFloat(style.paddingRight),
+    gap: Number.parseFloat(style.rowGap || style.gap),
+  }
+  const borders = {
+    top: Number.parseFloat(style.borderTopWidth),
+    right: Number.parseFloat(style.borderRightWidth),
+    bottom: Number.parseFloat(style.borderBottomWidth),
+    left: Number.parseFloat(style.borderLeftWidth),
+  }
+  const first = host.firstElementChild as HTMLElement
+  const gapTop = first.getBoundingClientRect().bottom - host.getBoundingClientRect().top
+  const bands = redline.querySelectorAll<HTMLElement>("[data-redline-band]")
+  await expect([...bands].map((band) => band.dataset.redlineBand).sort()).toEqual(["gap", "padding", "padding", "padding", "padding"])
+  for (const [key, value] of Object.entries(expected)) {
+    const band = redline.querySelector<HTMLElement>(`[data-redline-key="${key}"]`)!
+    await expect(band).toBeTruthy()
+    await expect(band.textContent).toContain(`${value}px`)
+    const dimension = key === "pl" || key === "pr" ? band.style.width : band.style.height
+    await expect(Number.parseFloat(dimension)).toBe(value)
+  }
+  await expect(Number.parseFloat(redline.querySelector<HTMLElement>('[data-redline-key="pt"]')!.style.top)).toBe(borders.top)
+  await expect(Number.parseFloat(redline.querySelector<HTMLElement>('[data-redline-key="pb"]')!.style.bottom)).toBe(borders.bottom)
+  await expect(Number.parseFloat(redline.querySelector<HTMLElement>('[data-redline-key="pl"]')!.style.left)).toBe(borders.left)
+  await expect(Number.parseFloat(redline.querySelector<HTMLElement>('[data-redline-key="pr"]')!.style.right)).toBe(borders.right)
+  const gapBand = redline.querySelector<HTMLElement>('[data-redline-key="gap"]')!
+  await expect(Number.parseFloat(gapBand.style.top)).toBe(gapTop)
+  await expect(Number.parseFloat(gapBand.style.left)).toBe(borders.left + expected.pl)
+  await expect(Number.parseFloat(gapBand.style.right)).toBe(borders.right + expected.pr)
+  await expect(redline.querySelector("figcaption")?.textContent).toContain(`${expected.gap}px`)
+  return { host, wrapper }
+}
+
 function page(value: DesignDocPage): Story {
   return {
     args: { page: value },
@@ -23,7 +63,7 @@ function page(value: DesignDocPage): Story {
       await expect(canvasElement.querySelectorAll("[data-source-ref]").length).toBeGreaterThan(0)
       await expect(canvasElement.querySelectorAll('[data-surface="paper"]').length).toBe(1)
       for (const points of canvasElement.querySelectorAll("[data-doc-points]")) await expect(points.children.length).toBeLessThanOrEqual(3)
-      if (["surfaces", "ink-levels", "type-ramp", "spacing-rhythm", "radius-grouping"].includes(value)) {
+      if (["surfaces", "ink-levels", "type-ramp", "spacing-rhythm", "radius-grouping", "redlines"].includes(value)) {
         await expect(canvasElement.querySelector("[data-law-block]")).toBeTruthy()
         await expect(canvasElement.querySelectorAll("[data-citation-id]").length).toBeGreaterThan(0)
         const docPage = canvasElement.querySelector<HTMLElement>("[data-doc-page]")!
@@ -71,36 +111,13 @@ function page(value: DesignDocPage): Story {
         const redlines = canvasElement.querySelectorAll<HTMLElement>("[data-redline]")
         await expect(redlines.length).toBe(2)
         for (const redline of redlines) {
-          const wrapper = redline.firstElementChild as HTMLElement
-          const host = wrapper.firstElementChild as HTMLElement
-          const style = getComputedStyle(host)
-          const expected = {
-            pt: Number.parseFloat(style.paddingTop),
-            pb: Number.parseFloat(style.paddingBottom),
-            pl: Number.parseFloat(style.paddingLeft),
-            pr: Number.parseFloat(style.paddingRight),
-            gap: Number.parseFloat(style.rowGap || style.gap),
+          const { host } = await assertRedlineGeometry(redline)
+          await expect(redline.querySelectorAll('[data-redline-violation="margin"]')).toHaveLength(0)
+          for (const child of [...host.children] as HTMLElement[]) {
+            const childStyle = getComputedStyle(child)
+            await expect([childStyle.marginTop, childStyle.marginRight, childStyle.marginBottom, childStyle.marginLeft]).toEqual(["0px", "0px", "0px", "0px"])
           }
-          const first = host.firstElementChild as HTMLElement
-          const gapTop = first.getBoundingClientRect().bottom - host.getBoundingClientRect().top
-          const bands = redline.querySelectorAll<HTMLElement>("[data-redline-band]")
-          await expect(bands.length).toBe(5)
-          for (const [key, value] of Object.entries(expected)) {
-            const band = redline.querySelector<HTMLElement>(`[data-redline-key="${key}"]`)!
-            await expect(band).toBeTruthy()
-            await expect(band.textContent).toContain(`${value}px`)
-            const dimension = key === "pl" || key === "pr" ? band.style.width : band.style.height
-            await expect(Number.parseFloat(dimension)).toBe(value)
-          }
-          await expect(redline.querySelector<HTMLElement>('[data-redline-key="pt"]')?.style.top).toBe("0px")
-          await expect(redline.querySelector<HTMLElement>('[data-redline-key="pb"]')?.style.bottom).toBe("0px")
-          await expect(redline.querySelector<HTMLElement>('[data-redline-key="pl"]')?.style.left).toBe("0px")
-          await expect(redline.querySelector<HTMLElement>('[data-redline-key="pr"]')?.style.right).toBe("0px")
-          const gapBand = redline.querySelector<HTMLElement>('[data-redline-key="gap"]')!
-          await expect(Number.parseFloat(gapBand.style.top)).toBe(gapTop)
-          await expect(Number.parseFloat(gapBand.style.left)).toBe(expected.pl)
-          await expect(Number.parseFloat(gapBand.style.right)).toBe(expected.pr)
-          await expect(redline.querySelector("figcaption")?.textContent).toContain(`${expected.gap}px`)
+          await expect(redline.querySelector("figcaption")?.textContent).toContain("Direct-child margins: 0px")
         }
       }
       if (value === "radius-grouping") {
@@ -114,6 +131,57 @@ function page(value: DesignDocPage): Story {
         const innerRadius = Number.parseFloat(innerStyle.borderTopLeftRadius)
         const inset = Number.parseFloat(outerStyle.paddingLeft)
         await expect(outerRadius).toBeGreaterThanOrEqual(innerRadius + inset)
+      }
+      if (value === "redlines") {
+        const shell = canvasElement.querySelector<HTMLElement>("[data-redline-contract]")!
+        await expect(shell).toBeTruthy()
+        await expect([...shell.children].map((element) => element.getAttribute("data-redline-region"))).toEqual(["header", "body", "targets"])
+
+        const keyline = getComputedStyle(shell)
+        for (const width of [keyline.borderTopWidth, keyline.borderRightWidth, keyline.borderBottomWidth, keyline.borderLeftWidth]) await expect(width).toBe("1px")
+        for (const style of [keyline.borderTopStyle, keyline.borderRightStyle, keyline.borderBottomStyle, keyline.borderLeftStyle]) await expect(style).toBe("solid")
+        for (const color of [keyline.borderTopColor, keyline.borderRightColor, keyline.borderBottomColor, keyline.borderLeftColor]) await expect(color).not.toMatch(/^(?:transparent|rgba\([^)]*,\s*0\))$/)
+
+        const targets = [...canvasElement.querySelectorAll<HTMLElement>("[data-live-target]")]
+        await expect(targets.length).toBe(4)
+        for (const target of targets) {
+          const bounds = target.getBoundingClientRect()
+          await expect(bounds.height).toBeGreaterThanOrEqual(44)
+          await expect(bounds.height).toBeLessThanOrEqual(48)
+        }
+        for (const [index, target] of targets.entries()) {
+          const left = target.getBoundingClientRect()
+          for (const sibling of targets.slice(index + 1)) {
+            const right = sibling.getBoundingClientRect()
+            const overlaps = left.left < right.right && left.right > right.left && left.top < right.bottom && left.bottom > right.top
+            await expect(overlaps).toBe(false)
+          }
+        }
+
+        const shellRedline = shell.closest<HTMLElement>("[data-redline]")!
+        const { host: measuredShell } = await assertRedlineGeometry(shellRedline)
+        await expect(shellRedline.querySelectorAll('[data-redline-violation="margin"]')).toHaveLength(0)
+        await expect(canvasElement.querySelectorAll('[data-redline-band="margin"]')).toHaveLength(0)
+        for (const child of [...measuredShell.children] as HTMLElement[]) {
+          const style = getComputedStyle(child)
+          await expect([style.marginTop, style.marginRight, style.marginBottom, style.marginLeft]).toEqual(["0px", "0px", "0px", "0px"])
+        }
+        const marginHost = canvasElement.querySelector<HTMLElement>("[data-margin-probe]")!
+        const marginRedline = marginHost.closest<HTMLElement>("[data-redline]")!
+        const violations = marginRedline.querySelectorAll<HTMLElement>('[data-redline-violation="margin"]')
+        await expect(violations).toHaveLength(1)
+        await expect(violations[0]).toHaveAttribute("data-redline-child-index", "1")
+        await expect(violations[0].textContent).toContain("top 8px")
+        await expect(violations[0]).not.toHaveAttribute("data-redline-band")
+        const violatingChild = marginHost.children[1] as HTMLElement
+        const wrapperRect = (marginRedline.firstElementChild as HTMLElement).getBoundingClientRect()
+        const childRect = violatingChild.getBoundingClientRect()
+        await expect(Number.parseFloat(violations[0].style.top)).toBe(childRect.top - wrapperRect.top)
+        await expect(Number.parseFloat(violations[0].style.left)).toBe(childRect.left - wrapperRect.left)
+        const guidance = canvas.getByText(/native measure tool/i)
+        await expect(guidance).toBeVisible()
+        await expect(guidance.textContent).toMatch(/Press M to toggle/i)
+        await expect(guidance.querySelector("kbd")?.textContent).toBe("M")
       }
       if (value === "index") {
         await expect(canvasElement.querySelectorAll("[data-catalog-component]").length).toBe(catalogCount)
@@ -133,5 +201,6 @@ export const InkLevelsDark = { ...page("ink-levels"), globals: { theme: "dark" }
 export const TypeRamp = page("type-ramp")
 export const SpacingRhythm = page("spacing-rhythm")
 export const RadiusGrouping = page("radius-grouping")
+export const RedlineGeometry = page("redlines")
 export const DecisionLedger = page("ledger")
 export const ComponentIndex = page("index")

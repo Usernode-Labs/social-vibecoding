@@ -21,7 +21,7 @@ import {
   type Citation,
 } from "@/docs/design-doc-data"
 
-export type DesignDocPage = "case" | "loop" | "surfaces" | "ink-levels" | "type-ramp" | "spacing-rhythm" | "radius-grouping" | "ledger" | "index"
+export type DesignDocPage = "case" | "loop" | "surfaces" | "ink-levels" | "type-ramp" | "spacing-rhythm" | "radius-grouping" | "redlines" | "ledger" | "index"
 
 const sourceNames = {
   laws: "design-system/interface-laws.md",
@@ -225,25 +225,67 @@ function TypeLine({ pixels, role }: { pixels: number; role: string }) {
 function Redline({ children, label }: { children: ReactNode; label: string }) {
   const ref = useRef<HTMLDivElement>(null)
   const [bands, setBands] = useState<Array<{ key: string; style: Record<string, string | number>; text: string; kind: "padding" | "gap" }>>([])
+  const [marginViolations, setMarginViolations] = useState<Array<{
+    childIndex: number
+    key: string
+    style: Record<string, string | number>
+    text: string
+  }>>([])
+  const themeRevision = useThemeRevision()
   useLayoutEffect(() => {
-    const host = ref.current?.firstElementChild as HTMLElement | null
+    const host = ref.current?.querySelector<HTMLElement>("[data-redline-host]") || ref.current?.firstElementChild as HTMLElement | null
     if (!host) return
-    const style = getComputedStyle(host)
-    const next: typeof bands = []
-    const pt = parseFloat(style.paddingTop); const pb = parseFloat(style.paddingBottom)
-    const pl = parseFloat(style.paddingLeft); const pr = parseFloat(style.paddingRight)
-    if (pt > 0) next.push({ key: "pt", kind: "padding", style: { top: 0, left: 0, right: 0, height: pt }, text: `${pt}px` })
-    if (pb > 0) next.push({ key: "pb", kind: "padding", style: { bottom: 0, left: 0, right: 0, height: pb }, text: `${pb}px` })
-    if (pl > 0) next.push({ key: "pl", kind: "padding", style: { top: 0, bottom: 0, left: 0, width: pl }, text: `${pl}px` })
-    if (pr > 0) next.push({ key: "pr", kind: "padding", style: { top: 0, bottom: 0, right: 0, width: pr }, text: `${pr}px` })
-    const gap = parseFloat(style.rowGap || style.gap)
-    if (Number.isFinite(gap) && gap > 0 && host.children.length > 1) {
-      const first = host.children[0] as HTMLElement
-      const offset = first.getBoundingClientRect().bottom - host.getBoundingClientRect().top
-      next.push({ key: "gap", kind: "gap", style: { top: offset, left: pl, right: pr, height: gap }, text: `gap ${gap}px` })
+    const measure = () => {
+      const style = getComputedStyle(host)
+      const next: typeof bands = []
+      const pt = parseFloat(style.paddingTop); const pb = parseFloat(style.paddingBottom)
+      const pl = parseFloat(style.paddingLeft); const pr = parseFloat(style.paddingRight)
+      const bt = parseFloat(style.borderTopWidth); const bb = parseFloat(style.borderBottomWidth)
+      const bl = parseFloat(style.borderLeftWidth); const br = parseFloat(style.borderRightWidth)
+      if (pt > 0) next.push({ key: "pt", kind: "padding", style: { top: bt, left: bl, right: br, height: pt }, text: `${pt}px` })
+      if (pb > 0) next.push({ key: "pb", kind: "padding", style: { bottom: bb, left: bl, right: br, height: pb }, text: `${pb}px` })
+      if (pl > 0) next.push({ key: "pl", kind: "padding", style: { top: bt, bottom: bb, left: bl, width: pl }, text: `${pl}px` })
+      if (pr > 0) next.push({ key: "pr", kind: "padding", style: { top: bt, bottom: bb, right: br, width: pr }, text: `${pr}px` })
+      const gap = parseFloat(style.rowGap || style.gap)
+      if (Number.isFinite(gap) && gap > 0 && host.children.length > 1) {
+        const first = host.children[0] as HTMLElement
+        const offset = first.getBoundingClientRect().bottom - host.getBoundingClientRect().top
+        next.push({ key: "gap", kind: "gap", style: { top: offset, left: bl + pl, right: br + pr, height: gap }, text: `gap ${gap}px` })
+      }
+      setBands(next)
+      const wrapperRect = ref.current!.getBoundingClientRect()
+      setMarginViolations([...host.children].flatMap((child, childIndex) => {
+        const node = child as HTMLElement
+        const childStyle = getComputedStyle(node)
+        const margins = [
+          ["top", Number.parseFloat(childStyle.marginTop)],
+          ["right", Number.parseFloat(childStyle.marginRight)],
+          ["bottom", Number.parseFloat(childStyle.marginBottom)],
+          ["left", Number.parseFloat(childStyle.marginLeft)],
+        ] as const
+        const nonzero = margins.filter(([, value]) => Number.isFinite(value) && Math.abs(value) > 0.01)
+        if (!nonzero.length) return []
+        const rect = node.getBoundingClientRect()
+        return [{
+          childIndex,
+          key: `margin-${childIndex}`,
+          style: {
+            height: rect.height,
+            left: rect.left - wrapperRect.left,
+            top: rect.top - wrapperRect.top,
+            width: rect.width,
+          },
+          text: `Margin violation: ${nonzero.map(([side, value]) => `${side} ${value}px`).join(", ")}`,
+        }]
+      }))
     }
-    setBands(next)
-  }, [])
+    measure()
+    void document.fonts.ready.then(measure)
+    const observer = new ResizeObserver(measure)
+    observer.observe(host)
+    for (const child of host.children) observer.observe(child)
+    return () => observer.disconnect()
+  }, [themeRevision])
   return (
     <figure className="flex flex-col gap-2" data-redline={label}>
       <div className="relative w-fit" ref={ref}>
@@ -258,9 +300,21 @@ function Redline({ children, label }: { children: ReactNode; label: string }) {
             style={band.style}
           >{band.text}</span>
         ))}
+        {marginViolations.map((violation) => (
+          <span
+            className="pointer-events-none absolute border-2 border-dashed border-status-negative-foreground text-status-negative-foreground"
+            data-redline-child-index={violation.childIndex}
+            data-redline-violation="margin"
+            key={violation.key}
+            role="status"
+            style={violation.style}
+          >
+            <span className="absolute bottom-full left-0 whitespace-nowrap bg-paper px-1 font-mono text-xs">{violation.text}</span>
+          </span>
+        ))}
       </div>
       <figcaption className="text-xs text-muted-foreground">
-        {label} — measured from the live component: {bands.map((band) => `${band.key === "gap" ? "gap" : `${({ pt: "top", pb: "bottom", pl: "left", pr: "right" } as const)[band.key as "pt" | "pb" | "pl" | "pr"]} padding`} ${band.text.replace("gap ", "")}`).join(", ") || "measuring…"}. Rose = padding, blue = gap.
+        {label} — measured from the live component: {bands.map((band) => `${band.key === "gap" ? "gap" : `${({ pt: "top", pb: "bottom", pl: "left", pr: "right" } as const)[band.key as "pt" | "pb" | "pl" | "pr"]} padding`} ${band.text.replace("gap ", "")}`).join(", ") || "measuring…"}. Rose = padding, blue = gap. {marginViolations.length ? marginViolations.map((violation) => violation.text).join("; ") : "Direct-child margins: 0px."}
       </figcaption>
     </figure>
   )
@@ -281,6 +335,39 @@ function SpacingSpecimen() {
           <Input className="min-h-12" id="docs-search" placeholder={`Search ${catalogCount} governed components`} />
         </div>
       </Redline>
+    </section>
+  )
+}
+
+function RedlineContractSpecimen() {
+  return (
+    <section aria-label="Redline overlay contract" className="flex flex-col gap-4" data-redline-contract-specimen>
+      <Redline label="Overlay contract — padding and inter-region gap">
+        <section className="flex w-[30rem] max-w-full flex-col gap-3 rounded-3xl border border-border bg-container p-4" data-redline-contract data-redline-host data-surface="container">
+          <header className="flex min-h-12 items-center justify-between border-b border-border" data-redline-region="header" data-surface="print">
+            <span className="text-sm font-semibold">Overlay host</span>
+            <MeasuredLabel>computed, never transcribed</MeasuredLabel>
+          </header>
+          <div className="flex flex-col gap-2" data-redline-region="body" data-surface="print">
+            <label className="text-sm font-medium" htmlFor="redline-contract-search">Measured target</label>
+            <Input className="h-12 min-h-12" data-live-target id="redline-contract-search" placeholder="Target" />
+          </div>
+          <div className="flex items-center justify-between gap-2 border-t border-border" data-redline-region="targets" data-surface="print">
+            <Button className="h-12 min-h-12" data-live-target size="sm">Home</Button>
+            <Button className="h-12 min-h-12" data-live-target size="sm" variant="ghost">Work</Button>
+            <Button className="h-12 min-h-12" data-live-target size="sm" variant="ghost">Search</Button>
+          </div>
+        </section>
+      </Redline>
+      <Redline label="Deliberate no-caller-margin violation">
+        <div className="flex w-72 max-w-full flex-col gap-2 rounded-2xl bg-container p-4" data-margin-probe data-redline-host data-surface="container">
+          <span className="text-sm">Owned by the container</span>
+          <span className="text-sm" style={{ marginTop: 8 }}>Illegal caller margin</span>
+        </div>
+      </Redline>
+      <p className="text-sm text-muted-foreground" data-measure-tool-guidance>
+        Press <kbd className="font-mono text-xs">M</kbd> to toggle Storybook’s native Measure tool and inspect this live shell and its targets.
+      </p>
     </section>
   )
 }
@@ -466,10 +553,26 @@ function IndexPage() {
   )
 }
 
+function RedlinesPage() {
+  const lawLine = lawExcerpts("spacing-rhythm")[0]?.split(". ")[0]
+  return (
+    <DocShell eyebrow="Redlines" headline="Shell geometry, measured rather than narrated." lawLine={lawLine ? `${lawLine}. — interface-laws.md` : undefined} sources={[sourceNames.tokens, sourceNames.laws, sourceNames.citations]}>
+      <RedlineContractSpecimen />
+      <Points items={[
+        { tone: "yes", text: "Redline bands have two legal types: padding and gap. Every label comes from computed geometry." },
+        { tone: "no", text: "A margin band would expose a no-caller-margin violation; this overlay deliberately has no margin mode." },
+        { text: "Desktop Shell and Mobile Shell stories render production shell primitives; their keylines and targets are asserted from browser geometry." },
+      ]} />
+      <EnforcementStrip page="redlines" />
+    </DocShell>
+  )
+}
+
 export function DesignDocs({ page }: { page: DesignDocPage }) {
   if (page === "case") return <CasePage />
   if (page === "loop") return <LoopPage />
   if (page === "ledger") return <LedgerPage />
   if (page === "index") return <IndexPage />
+  if (page === "redlines") return <RedlinesPage />
   return <FoundationPage page={page} />
 }
