@@ -55,6 +55,9 @@ test("structured citations resolve exact scanner rules, package checks, and test
     }],
   }
   assert.deepEqual(validateDesignDocCitations(citation, { frontendRoot: root, requiredPages: ["surfaces"] }), [])
+  citation.citations[0].check = "lint"
+  assert.match(validateDesignDocCitations(citation, { frontendRoot: root, requiredPages: ["surfaces"] }).join("\n"), /interface-law scanner lane/)
+  citation.citations[0].check = "check:interface-laws"
   citation.citations[0].rule = "invented-rule"
   assert.match(validateDesignDocCitations(citation, { frontendRoot: root, requiredPages: ["surfaces"] }).join("\n"), /does not exist in the scanner/)
   citation.citations[0].rule = "no-paper-in-paper"

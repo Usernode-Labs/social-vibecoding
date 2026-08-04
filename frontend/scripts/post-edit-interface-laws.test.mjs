@@ -12,6 +12,7 @@ import {
 const frontendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const repoRoot = path.resolve(frontendRoot, "..")
 const themeSwitcher = path.join(frontendRoot, "@", "components", "theme-switcher.tsx")
+const designDocs = path.join(frontendRoot, "@", "docs", "design-docs.tsx")
 const acceptedWarningFixture = path.join(frontendRoot, "@", "features", "account", "settings.tsx")
 
 test("Codex apply_patch input selects governed files and ignores stories", () => {
@@ -31,6 +32,17 @@ test("Claude Edit and Write input selects an absolute governed file", () => {
     tool_name: "Edit",
     tool_input: { file_path: themeSwitcher },
   }), [themeSwitcher])
+})
+
+test("documentation source is governed while documentation stories remain excluded", () => {
+  const files = governedFilesFromHookInput({
+    cwd: repoRoot,
+    tool_name: "apply_patch",
+    tool_input: {
+      command: "*** Begin Patch\n*** Update File: frontend/@/docs/design-docs.tsx\n*** Update File: frontend/@/docs/design-docs.stories.tsx\n*** End Patch",
+    },
+  })
+  assert.deepEqual(files, [designDocs])
 })
 
 test("non-governed edits produce no hook response", () => {

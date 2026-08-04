@@ -36,10 +36,11 @@ const browser = await chromium.launch()
 try {
   const page = await browser.newPage({ viewport: { width: 1600, height: 900 }, deviceScaleFactor: 1 })
   await page.goto(pathToFileURL(htmlPath).href, { waitUntil: "load" })
-  await page.addStyleTag({ content: "body{padding:0!important;display:block!important}.deck{gap:0!important}.slide{box-shadow:none!important}" })
+  await page.addStyleTag({ content: "body{padding:0!important;display:block!important}.deck{gap:0!important}.deck-stage{position:static!important;display:block!important}.deck-frame{width:1600px!important;height:900px!important}.slide{box-shadow:none!important}.deck-hud,.lb{display:none!important}" })
   await page.evaluate(() => document.fonts.ready)
   const slideIds = await page.locator(".slide").evaluateAll((slides) => slides.map((slide) => slide.dataset.slideId))
   const layoutFailures = await page.locator(".slide").evaluateAll((slides) => {
+    document.querySelectorAll(".deck-frame").forEach((frame) => { frame.style.display = "block"; frame.style.transform = "none" })
     slides.forEach((slide) => { slide.hidden = false })
     return slides.flatMap((slide) => {
       const bounds = slide.getBoundingClientRect()
@@ -48,7 +49,8 @@ try {
       const footer = slide.querySelector(":scope > footer")?.getBoundingClientRect()
       const contentOverlapsReceipt = content && receipt && content.bottom > receipt.top + 0.5
       const footerOverflows = footer && footer.bottom - bounds.top > slide.clientHeight + 0.5
-      return contentOverlapsReceipt || footerOverflows
+      const visualOverflow = slide.scrollWidth > slide.clientWidth + 0.5 || slide.scrollHeight > slide.clientHeight + 0.5
+      return contentOverlapsReceipt || footerOverflows || visualOverflow
         ? [{
             id: slide.dataset.slideId,
             contentBottom: content && content.bottom - bounds.top,
@@ -63,14 +65,22 @@ try {
   for (const [index, id] of slideIds.entries()) {
     await page.evaluate((slideId) => {
       const slides = [...document.querySelectorAll(".slide")]
-      slides.forEach((slide) => { slide.hidden = slide.dataset.slideId !== slideId })
+      slides.forEach((slide) => { slide.hidden = false })
+      document.querySelectorAll(".deck-frame").forEach((frame) => {
+        const ownsSlide = frame.querySelector(".slide")?.dataset.slideId === slideId
+        frame.style.display = ownsSlide ? "block" : "none"
+        frame.style.transform = "none"
+      })
     }, id)
     const fileName = `slides/${String(index + 1).padStart(2, "0")}-${id}.png`
     await page.locator(`[data-slide-id="${id}"]`).screenshot({ path: path.join(outputRoot, fileName) })
     slideArtifacts.push(artifact(fileName, "slide-image", { slideId: id, width: 1600, height: 900 }))
   }
 
-  await page.evaluate(() => document.querySelectorAll(".slide").forEach((slide) => { slide.hidden = false }))
+  await page.evaluate(() => {
+    document.querySelectorAll(".slide").forEach((slide) => { slide.hidden = false })
+    document.querySelectorAll(".deck-frame").forEach((frame) => { frame.style.display = "block"; frame.style.transform = "none" })
+  })
   await page.emulateMedia({ media: "print" })
   await page.pdf({
     path: pdfPath,

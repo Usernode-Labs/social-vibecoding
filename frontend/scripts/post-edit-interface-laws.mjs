@@ -9,7 +9,7 @@ import {
 
 const frontendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const repoRoot = path.resolve(frontendRoot, "..")
-const governedFile = /^frontend\/@\/(?:components|features)\/.+\.(?:ts|tsx)$/
+const governedFile = /^frontend\/@\/(?:components|features|docs)\/.+\.(?:ts|tsx)$/
 
 function stringValues(value) {
   if (typeof value === "string") return [value]

@@ -66,6 +66,8 @@ const prCase = JSON.parse(prCaseSource) as {
   }
 }
 
+export const lawFullText = lawsSource
+
 function token(path: string) {
   const value = path.split(".").reduce<unknown>((current, key) => (
     typeof current === "object" && current !== null ? (current as TokenTree)[key] : undefined

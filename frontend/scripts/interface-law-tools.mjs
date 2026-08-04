@@ -44,7 +44,7 @@ function filesIn(directory) {
 }
 
 export function governedInterfaceFiles(frontendRoot) {
-  return [path.join(frontendRoot, "@", "components"), path.join(frontendRoot, "@", "features")]
+  return [path.join(frontendRoot, "@", "components"), path.join(frontendRoot, "@", "features"), path.join(frontendRoot, "@", "docs")]
     .flatMap(filesIn)
     .filter((fileName) => !fileName.endsWith(".stories.tsx"))
     .sort()
@@ -370,7 +370,7 @@ export function stagedInterfaceSources(frontendRoot) {
   const relativeFiles = execFileSync("git", ["diff", "--cached", "--name-only", "--diff-filter=ACMR"], {
     cwd: repoRoot,
     encoding: "utf8",
-  }).trim().split("\n").filter((file) => /^frontend\/@\/(?:components|features)\/.+\.(?:ts|tsx)$/.test(file) && !file.endsWith(".stories.tsx"))
+  }).trim().split("\n").filter((file) => /^frontend\/@\/(?:components|features|docs)\/.+\.(?:ts|tsx)$/.test(file) && !file.endsWith(".stories.tsx"))
   const files = relativeFiles.map((file) => path.join(repoRoot, file))
   const sources = new Map(files.map((fileName, index) => [
     fileName,

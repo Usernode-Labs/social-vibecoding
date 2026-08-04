@@ -6,6 +6,7 @@ import zlib from "node:zlib"
 
 import { PNG } from "pngjs"
 
+import { buildReviewerDeck } from "./pr-case-deck.mjs"
 import { buildTokenDemo, collectPrCaseEvidence, PR_CASE_BASE_REVISION, PR_CASE_BRANCH_REVISION } from "./pr-case-tools.mjs"
 
 const frontendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
@@ -141,7 +142,7 @@ function buildHtml(evidence, captureManifest) {
   const appendixGroups = [evidence.claims.slice(0, 4), evidence.claims.slice(4, 8), evidence.claims.slice(8, 12)]
   const appendix = appendixGroups.map((group, index) => appendixPage(group, index + 1, appendixGroups.length)).join("\n")
 
-  return `<!doctype html>
+  const legacyHtml = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Usernode pull-request case</title>
 <style>
 :root{--canvas:#f1f1ef;--paper:#fff;--ink:#181817;--muted:#696963;--line:#d8d8d2;--accent:#a36e00;--accent-soft:#f4dfaa;--dark:#11110f;--dark-paper:#1b1b18;--red:#bf3d31;--red-soft:#f7d8d3;font-family:Arial,"Helvetica Neue",sans-serif;color:var(--ink);background:#d7d7d2}
@@ -151,6 +152,17 @@ function buildHtml(evidence, captureManifest) {
 @page{size:16.666667in 9.375in;margin:0}@media print{body{display:block;padding:0;background:#fff}.deck{display:block}.slide{box-shadow:none;break-after:page;page-break-after:always}.slide:last-child{break-after:auto}}
 </style></head><body><main class="deck">${slides.join("\n")}${appendix}</main>
 <script>const slides=[...document.querySelectorAll('.slide')];let current=0;function show(index){current=Math.max(0,Math.min(slides.length-1,index));slides.forEach((slide,i)=>slide.hidden=i!==current);location.hash=slides[current].dataset.slideId}function printMode(){slides.forEach(slide=>slide.hidden=false)}if(!matchMedia('print').matches){const hash=location.hash.slice(1);const found=slides.findIndex(slide=>slide.dataset.slideId===hash);show(found<0?0:found)}addEventListener('keydown',event=>{if(event.key==='ArrowRight'||event.key==='PageDown')show(current+1);if(event.key==='ArrowLeft'||event.key==='PageUp')show(current-1);if(event.key==='Home')show(0);if(event.key==='End')show(slides.length-1)});addEventListener('beforeprint',printMode);addEventListener('afterprint',()=>show(current));</script></body></html>`
+  return buildReviewerDeck({
+    evidence,
+    captureManifest,
+    repoRoot,
+    imageData,
+    escapeHtml,
+    baseRevision: PR_CASE_BASE_REVISION,
+    branchRevision: PR_CASE_BRANCH_REVISION,
+    tokenDemo,
+    legacyHtml,
+  })
 }
 
 function validateEvidence(evidence, captureManifest, html) {
@@ -214,7 +226,14 @@ function validateEvidence(evidence, captureManifest, html) {
   for (const pattern of forbidden) if (pattern.test(html)) errors.push(`generated HTML contains forbidden private or local text: ${pattern}`)
   const slideIds = [...html.matchAll(/<section class="slide[^"]*" data-slide-id="([^"]+)"/g)].map((match) => match[1])
   if (new Set(slideIds).size !== slideIds.length) errors.push("generated HTML has duplicate slide identifiers")
-  if (slideIds[8] !== "regression-caught") errors.push("the regression slide is not stable at narrative slide 9")
+  if (slideIds.length !== 32) errors.push(`generated HTML must contain 32 reviewer deck slides, received ${slideIds.length}`)
+  for (const stableId of ["token-authority-demo", "lean-mechanical-loop", "regression-caught"]) {
+    if (!slideIds.includes(stableId)) errors.push(`generated HTML is missing stable selected slide ${stableId}`)
+  }
+  const claimIds = [...html.matchAll(/data-claim-id="([^"]+)"/g)].map((match) => match[1])
+  if (claimIds.length !== evidence.claims.length || evidence.claims.some((item) => !claimIds.includes(item.id))) {
+    errors.push("generated HTML must carry one detail slide for every reproducible claim")
+  }
   if (!html.startsWith("<!doctype html>") || !html.includes("data:image/png;base64,")) errors.push("generated HTML is not self-contained")
   if (errors.length) throw new Error(`pull-request case validation failed:\n\n- ${errors.join("\n- ")}`)
 }
@@ -297,4 +316,4 @@ validateEvidence(evidence, captureManifest, html)
 writeOrCheck("claims.json", `${JSON.stringify(evidence, null, 2)}\n`)
 writeOrCheck("index.html", html)
 validateExportManifest()
-console.log(`Pull-request case ${checkOnly ? "is current" : "generated"}: 12 narrative slides, 3 appendix pages, ${evidence.claims.length} reproducible claims.`)
+console.log(`Pull-request case ${checkOnly ? "is current" : "generated"}: 13 narrative slides, 19 detail slides, ${evidence.claims.length} reproducible claims.`)

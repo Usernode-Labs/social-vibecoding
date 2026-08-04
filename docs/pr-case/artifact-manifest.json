@@ -13,8 +13,8 @@
     {
       "file": "index.html",
       "kind": "self-contained-html",
-      "bytes": 216136,
-      "sha256": "199e1f96179ae7c3a03dc609353e47e465b8e4bb4752615d3a8d77e79fdaa509"
+      "bytes": 310475,
+      "sha256": "beca565974fe15793602ee40086f7fdc11fca23863f3cc17238b2c8c3b4bbb76"
     },
     {
       "file": "README.md",
@@ -55,9 +55,9 @@
     {
       "file": "pr-case.pdf",
       "kind": "portable-document",
-      "bytes": 746126,
-      "sha256": "13392395b6a3a17223cb01ed61f0286347734c2821a052dcf6b7a81d08b08878",
-      "pages": 15,
+      "bytes": 428152,
+      "sha256": "79d99e7c7de485649dea8702a901e2853d344926e6b486bbcd64908cb1c885fe",
+      "pages": 32,
       "aspectRatio": 1.7774617845716316
     },
     {
@@ -93,145 +93,298 @@
       "height": 720
     },
     {
-      "file": "slides/01-main-partial-centralization.png",
+      "file": "slides/01-nv-1.png",
       "kind": "slide-image",
-      "bytes": 97142,
-      "sha256": "e616aec942bb972422ed7eb93ed43def60e56c7949b1eb4cf0530787371f1b5a",
-      "slideId": "main-partial-centralization",
+      "bytes": 60607,
+      "sha256": "046ae8996b9b7c017fbfb6fa8b47880d51244ec5df0ecfda5507d0dc855f0fdd",
+      "slideId": "nv-1",
       "width": 1600,
       "height": 900
     },
     {
-      "file": "slides/02-token-authority-demo.png",
+      "file": "slides/02-nv-2.png",
       "kind": "slide-image",
-      "bytes": 119641,
-      "sha256": "d5e06ec443a13cd17600d3dd5471530e7f205c7f0f0016456e966806a906b8d2",
+      "bytes": 63327,
+      "sha256": "5c9bfa995a9cfa54e6acf2ae6d0654846740ffdcebd03ca5b7af640ea3023154",
+      "slideId": "nv-2",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/03-nv-3.png",
+      "kind": "slide-image",
+      "bytes": 71068,
+      "sha256": "e8195e0c4a1a333acaf7f1b36c15d04a4e52c0c6f1879f53652bc09eb71767f7",
+      "slideId": "nv-3",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/04-claim-R1.png",
+      "kind": "slide-image",
+      "bytes": 72286,
+      "sha256": "f8b12e60ff8a2d845834e5c923c15839119c00b9f1119a18c57b5d3c935e5c79",
+      "slideId": "claim-R1",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/05-nv-4.png",
+      "kind": "slide-image",
+      "bytes": 85168,
+      "sha256": "0049532653c3f23d47658b9e828740a30a280191d5a01dbaae2cb32439b9deaf",
+      "slideId": "nv-4",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/06-measure-it-yourself.png",
+      "kind": "slide-image",
+      "bytes": 64660,
+      "sha256": "50c09e2203a32b0ca239d1218c7beaf9aa00f6d2a77213cffe7f28500376fd6b",
+      "slideId": "measure-it-yourself",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/07-nv-5.png",
+      "kind": "slide-image",
+      "bytes": 64835,
+      "sha256": "490ceab96ebdc73e75f0c4f33d0cd3e588efcd83cc9470b3fadf57870752087e",
+      "slideId": "nv-5",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/08-claim-R2.png",
+      "kind": "slide-image",
+      "bytes": 89348,
+      "sha256": "73a9b39e8043dcc9778c2804943bffc4997cc3049f16553626ab2eb722b1f002",
+      "slideId": "claim-R2",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/09-token-authority-demo.png",
+      "kind": "slide-image",
+      "bytes": 58303,
+      "sha256": "d25c7bc202066b06bafc61ecd9686b0c270903a702348b573c4905ad02a35ee1",
       "slideId": "token-authority-demo",
       "width": 1600,
       "height": 900
     },
     {
-      "file": "slides/03-verification-files.png",
+      "file": "slides/10-nv-6.png",
       "kind": "slide-image",
-      "bytes": 92666,
-      "sha256": "7b7e9235998ed16fe55d5eb036ff46f17aa2c3aa275a0e0167321dfb886c1244",
-      "slideId": "verification-files",
+      "bytes": 73643,
+      "sha256": "aed35270176cdb1cdd0b898ade64ff56eef7620c11a35cb5dcca92892d7de79c",
+      "slideId": "nv-6",
       "width": 1600,
       "height": 900
     },
     {
-      "file": "slides/04-verification-category.png",
+      "file": "slides/11-claim-R3.png",
       "kind": "slide-image",
-      "bytes": 98831,
-      "sha256": "56248f42c6ad7fb4d40bbab07f3148045a99986b2df3b30ea70cd554c4070a1a",
-      "slideId": "verification-category",
+      "bytes": 71024,
+      "sha256": "778bb2758f409635a2e4d27fc007f02480dc1051cf408017436a5379fce81e87",
+      "slideId": "claim-R3",
       "width": 1600,
       "height": 900
     },
     {
-      "file": "slides/05-surface-grammar.png",
+      "file": "slides/12-claim-R4.png",
       "kind": "slide-image",
-      "bytes": 82193,
-      "sha256": "70ef4914ed1c1308c7e159e3e4414aa7d00f243ba1db387b1e68449a96d6a612",
-      "slideId": "surface-grammar",
+      "bytes": 71969,
+      "sha256": "cc68629b5150fe629be4ac7b772b728561c48208b554b6d31387de688079322d",
+      "slideId": "claim-R4",
       "width": 1600,
       "height": 900
     },
     {
-      "file": "slides/06-legacy-interface-loop.png",
+      "file": "slides/13-nv-7.png",
       "kind": "slide-image",
-      "bytes": 106595,
-      "sha256": "b1108859fad0bbef44c8247b8495e83b7dcc3b6647115aecec26c3b03fc9da59",
-      "slideId": "legacy-interface-loop",
+      "bytes": 71562,
+      "sha256": "69f1ff9020c30c3b21f897062e4ea6fca85a005e3bc050df77d868e53e269d0e",
+      "slideId": "nv-7",
       "width": 1600,
       "height": 900
     },
     {
-      "file": "slides/07-lean-mechanical-loop.png",
+      "file": "slides/14-claim-R5.png",
       "kind": "slide-image",
-      "bytes": 126075,
-      "sha256": "8d9bb86d711c3a18fe125208550570513ef3c667bde5ccbcf5ea88c1a0966f88",
+      "bytes": 70961,
+      "sha256": "ab1bc27a042c591c686c4fa7fb3e9432866b21b5e3618bd02d3ae6f8b9b84635",
+      "slideId": "claim-R5",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/15-the-grammar-in-the-product-light.png",
+      "kind": "slide-image",
+      "bytes": 55548,
+      "sha256": "5ed1aca82cf8606c7a095d0f558cbc7fa25c203c8a9717d572a6eff2595eeadf",
+      "slideId": "the-grammar-in-the-product-light",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/16-the-grammar-in-the-product-dark.png",
+      "kind": "slide-image",
+      "bytes": 58461,
+      "sha256": "1eccd59c478a1c052db1b2afa6998ab062871e1aeebe543328a65bcaf02de2e9",
+      "slideId": "the-grammar-in-the-product-dark",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/17-nv-8.png",
+      "kind": "slide-image",
+      "bytes": 70505,
+      "sha256": "7bf6002b044b2be7a72ede8a2abd5809a60214963e5d3797b4078b521a2ff904",
+      "slideId": "nv-8",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/18-claim-R6.png",
+      "kind": "slide-image",
+      "bytes": 68597,
+      "sha256": "eb8d31c2e9ddc4b1c5a518ad96d636f706559503f82510dfe9c933f70a8b7778",
+      "slideId": "claim-R6",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/19-nv-9.png",
+      "kind": "slide-image",
+      "bytes": 82617,
+      "sha256": "da0aa81ee6bb4195a240ac79557e8ab2f255ac647afc91d8ec688ac653b8d67e",
+      "slideId": "nv-9",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/20-lean-mechanical-loop.png",
+      "kind": "slide-image",
+      "bytes": 89045,
+      "sha256": "879ae9086f0cfac6cfb6429d725c643f5c6c930440ff288ef46275ba2cc50226",
       "slideId": "lean-mechanical-loop",
       "width": 1600,
       "height": 900
     },
     {
-      "file": "slides/08-harness-integrity.png",
+      "file": "slides/21-claim-R8.png",
       "kind": "slide-image",
-      "bytes": 80762,
-      "sha256": "fcefa865d69236f7f19275ff2a3fbdc40c79d0d6410a24f5e6dfae3b0c175206",
-      "slideId": "harness-integrity",
+      "bytes": 72638,
+      "sha256": "cf98542387ad1ef9929ff474716130529f6b4ad65d59ee3d4728076764eaa96f",
+      "slideId": "claim-R8",
       "width": 1600,
       "height": 900
     },
     {
-      "file": "slides/09-regression-caught.png",
+      "file": "slides/22-regression-caught.png",
       "kind": "slide-image",
-      "bytes": 104372,
-      "sha256": "effbfd77ae7587146ab1f83475d4fc7ec1e906c6f4d7c5a622946d92cfcb12fc",
+      "bytes": 76607,
+      "sha256": "2c822e87e8161a3cfecbdb580d60c0202a4b3870b421274a3929c091571ca968",
       "slideId": "regression-caught",
       "width": 1600,
       "height": 900
     },
     {
-      "file": "slides/10-costs-honestly.png",
+      "file": "slides/23-nv-10.png",
       "kind": "slide-image",
-      "bytes": 89486,
-      "sha256": "01841ef0e8c8a593d143f2a58c44539becc62a9b0832037ad25c9b7df09fbcf1",
-      "slideId": "costs-honestly",
+      "bytes": 56077,
+      "sha256": "52d5024bc50a6857867f54136ad0212708c651cff080ba57522ed7c4d94ae261",
+      "slideId": "nv-10",
       "width": 1600,
       "height": 900
     },
     {
-      "file": "slides/11-review-the-system.png",
+      "file": "slides/24-claim-R10.png",
       "kind": "slide-image",
-      "bytes": 97173,
-      "sha256": "9109562aad40514f73e83c0b3f6333322d8ee4e1283f3931ceb056e11297e506",
-      "slideId": "review-the-system",
+      "bytes": 66045,
+      "sha256": "7cf7ca66bb864c4541fc5f6185fb70c852c3ea1bb7f26e80a0584dc8e4fa1586",
+      "slideId": "claim-R10",
       "width": 1600,
       "height": 900
     },
     {
-      "file": "slides/12-compatibility-evidence.png",
+      "file": "slides/25-nv-11.png",
       "kind": "slide-image",
-      "bytes": 94686,
-      "sha256": "6e7eee1e1f13905865b08fa046eb0d0ab636e9b5ea3fdff60f76655f885c1b2e",
-      "slideId": "compatibility-evidence",
+      "bytes": 69949,
+      "sha256": "33c77632717ad66aa30949caecc0c6943a4d8e0d5115f5452e0517aab0cea3b3",
+      "slideId": "nv-11",
       "width": 1600,
       "height": 900
     },
     {
-      "file": "slides/13-appendix-1.png",
+      "file": "slides/26-claim-R11.png",
       "kind": "slide-image",
-      "bytes": 134573,
-      "sha256": "0600776715c544d8f8f298208af4983a18c0bde67606f2e66e95bf49848ce4b8",
-      "slideId": "appendix-1",
+      "bytes": 76064,
+      "sha256": "011399b7bf7888044201527e992b421251d75cef8ab22a6b586afc0ee5220b2b",
+      "slideId": "claim-R11",
       "width": 1600,
       "height": 900
     },
     {
-      "file": "slides/14-appendix-2.png",
+      "file": "slides/27-claim-R12.png",
       "kind": "slide-image",
-      "bytes": 126713,
-      "sha256": "9f488cf5741831030f8ff38bf3a4a28ee61d5fd4f59e57767e9968adf84df033",
-      "slideId": "appendix-2",
+      "bytes": 77303,
+      "sha256": "739785b464a8224239c5fe805acf5826838d5eb018a58fbcf78aba11fcae5725",
+      "slideId": "claim-R12",
       "width": 1600,
       "height": 900
     },
     {
-      "file": "slides/15-appendix-3.png",
+      "file": "slides/28-before-and-after-light.png",
       "kind": "slide-image",
-      "bytes": 113748,
-      "sha256": "45ebf3e0042a43fa1a8d538c12775899fd50a4f162d4a6faa8daf231b6a17e6c",
-      "slideId": "appendix-3",
+      "bytes": 58243,
+      "sha256": "c43cefd0b14df0dbb377694c39b07a6996ce10c82e4bbd23205ee5973a3724b5",
+      "slideId": "before-and-after-light",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/29-before-and-after-dark.png",
+      "kind": "slide-image",
+      "bytes": 58918,
+      "sha256": "85f762a47b54aea1e654c71d9e3619b3e2fc51ded6c7f48c6c60c80642f91807",
+      "slideId": "before-and-after-dark",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/30-nv-12.png",
+      "kind": "slide-image",
+      "bytes": 71562,
+      "sha256": "cb5a6a5c111bca5a047e67580d83a367cab9b57ba4a371ed9c0ab516382dceb0",
+      "slideId": "nv-12",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/31-nv-13.png",
+      "kind": "slide-image",
+      "bytes": 66011,
+      "sha256": "0355a35d3fbf1f551ebd0e4a73b268de8d2f1061c56378f78c317bdfe3e79cfb",
+      "slideId": "nv-13",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/32-twelve-probes-one-command.png",
+      "kind": "slide-image",
+      "bytes": 76342,
+      "sha256": "f6934cb73093e7d0f0893a22c0af1818f1b97ccd819d51cb4a50a104d3516167",
+      "slideId": "twelve-probes-one-command",
       "width": 1600,
       "height": 900
     },
     {
       "file": "images/pr-case-token-authority.png",
       "kind": "pull-request-image",
-      "bytes": 119641,
-      "sha256": "d5e06ec443a13cd17600d3dd5471530e7f205c7f0f0016456e966806a906b8d2",
+      "bytes": 58303,
+      "sha256": "d25c7bc202066b06bafc61ecd9686b0c270903a702348b573c4905ad02a35ee1",
       "slideId": "token-authority-demo",
       "width": 1600,
       "height": 900
@@ -239,8 +392,8 @@
     {
       "file": "images/pr-case-live-loop.png",
       "kind": "pull-request-image",
-      "bytes": 126075,
-      "sha256": "8d9bb86d711c3a18fe125208550570513ef3c667bde5ccbcf5ea88c1a0966f88",
+      "bytes": 89045,
+      "sha256": "879ae9086f0cfac6cfb6429d725c643f5c6c930440ff288ef46275ba2cc50226",
       "slideId": "lean-mechanical-loop",
       "width": 1600,
       "height": 900
@@ -248,8 +401,8 @@
     {
       "file": "images/pr-case-regression.png",
       "kind": "pull-request-image",
-      "bytes": 104372,
-      "sha256": "effbfd77ae7587146ab1f83475d4fc7ec1e906c6f4d7c5a622946d92cfcb12fc",
+      "bytes": 76607,
+      "sha256": "2c822e87e8161a3cfecbdb580d60c0202a4b3870b421274a3929c091571ca968",
       "slideId": "regression-caught",
       "width": 1600,
       "height": 900

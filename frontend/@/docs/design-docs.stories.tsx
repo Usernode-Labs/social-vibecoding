@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite"
 import { expect, within } from "storybook/test"
 
 import { DesignDocs, type DesignDocPage } from "@/docs/design-docs"
-import { catalogCount, catalogExportCount } from "@/docs/design-doc-data"
+import { catalogCount, catalogExportCount, lawFullText, loopFacts } from "@/docs/design-doc-data"
 
 const meta = {
   title: "Docs/Design system",
@@ -94,6 +94,17 @@ function page(value: DesignDocPage): Story {
         for (const line of inkLines) {
           await expect(line.querySelector("[data-measured-label]")?.textContent).toContain(getComputedStyle(line).color)
         }
+      }
+      if (value === "loop") {
+        const fullLaw = canvasElement.querySelector<HTMLElement>("[data-law-in-full]")!
+        const lawViewer = fullLaw.querySelector("pre")!
+        await expect(fullLaw).toBeTruthy()
+        await expect(lawViewer.textContent).toBe(lawFullText)
+        await expect(lawViewer).toHaveAttribute("tabindex", "0")
+        await expect(fullLaw.querySelector("[data-measured-label]")?.textContent).toContain(`${new TextEncoder().encode(lawFullText).byteLength.toLocaleString()} bytes`)
+        await expect(canvasElement.querySelectorAll("[data-base-entry]").length).toBe(loopFacts.routedEntries.length)
+        await expect(canvasElement.querySelectorAll('[role="progressbar"]')).toHaveLength(0)
+        await expect(canvas.getByRole("heading", { name: /everything else arrives only when the task asks/i })).toBeVisible()
       }
       if (value === "type-ramp") {
         await expect(canvasElement.querySelectorAll("[data-type-role]").length).toBe(3)

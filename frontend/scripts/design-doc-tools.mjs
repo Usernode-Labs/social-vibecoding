@@ -273,7 +273,7 @@ export function validateDesignDocCitations(citations, options = {}) {
 
     if (citation.kind === "scanner-rule") {
       if (!rules.has(citation.rule)) violations.push(`${label}.rule does not exist in the scanner: ${citation.rule}`)
-      if (!Object.hasOwn(packageScripts, citation.check)) violations.push(`${label}.check is not a package script: ${citation.check}`)
+      if (citation.check !== "check:interface-laws" || !Object.hasOwn(packageScripts, citation.check)) violations.push(`${label}.check must resolve to the interface-law scanner lane: ${citation.check}`)
       const testFile = resolveFrontendPath(root, citation.test?.path)
       if (!testFile || !fs.existsSync(testFile)) violations.push(`${label}.test.path does not exist: ${citation.test?.path}`)
       else {

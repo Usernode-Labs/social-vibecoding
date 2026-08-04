@@ -10,6 +10,7 @@ import {
   citationsFor,
   decisionLedger,
   inkTokens,
+  lawFullText,
   lawExcerpts,
   loopFacts,
   radius,
@@ -31,6 +32,7 @@ const sourceNames = {
   baseline: "design-system/interface-law-baseline.json",
   ledger: "design-system/decision-ledger.json",
 }
+const lawByteLength = new TextEncoder().encode(lawFullText).byteLength
 
 /* ---------------------------------------------------------------- measured */
 /** Read a computed style off a live node after layout; the rendered label is
@@ -455,38 +457,46 @@ function FoundationPage({ page }: { page: keyof typeof foundationCopy }) {
   )
 }
 
-function LoopPage() {
-  const before = [
-    { label: "Always loaded", value: loopFacts.alwaysLoaded, limit: loopFacts.alwaysLoadedRatchet },
-    { label: "Component review", value: loopFacts.componentReview, limit: loopFacts.componentReviewRatchet },
-  ]
+function LawInFull() {
   return (
-    <DocShell eyebrow="The live loop" headline="Lean guidance in. Mechanical proof out." sources={["AGENTS.md", "agent-skills/ui-development/SKILL.md", "design-system/context-budget.json", "docs/pr-case/claims.json"]}>
-      <section className="grid gap-4 lg:grid-cols-2">
-        <div className="flex flex-col gap-4 rounded-3xl bg-container p-5" data-surface="container">
-          <p className="text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase">Before generation</p>
-          {before.map((fact) => (
-            <div className="flex flex-col gap-1.5" key={fact.label}>
-              <div className="flex items-baseline justify-between gap-4"><span className="text-sm">{fact.label}</span><strong className="tabular-nums">{fact.value.toLocaleString()} / {fact.limit.toLocaleString()} B</strong></div>
-              <div aria-label={`${fact.label} context budget`} aria-valuemax={fact.limit} aria-valuenow={fact.value} className="h-1.5 overflow-hidden rounded-full bg-border" role="progressbar"><div className="h-full rounded-full bg-status-positive-foreground" style={{ width: `${Math.min(100, (fact.value / fact.limit) * 100)}%` }} /></div>
-            </div>
+    <section aria-label="The entire always-loaded law" className="flex flex-col gap-3 rounded-3xl bg-container p-5" data-law-in-full data-surface="container">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-xl font-semibold">The law, in full. This is not an excerpt.</h2>
+        <MeasuredLabel>{lawByteLength.toLocaleString()} bytes · {lawFullText.split("\n").length} lines · counted from this very text</MeasuredLabel>
+      </div>
+      <pre aria-label="Complete interface law text" className="max-h-96 overflow-auto rounded-2xl p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground" tabIndex={0}>{lawFullText}</pre>
+    </section>
+  )
+}
+
+function LoopPage() {
+  const manifestTotal = loopFacts.routedEntries.reduce((total, entry) => total + entry.acceptedBytes, 0)
+  return (
+    <DocShell eyebrow="The live loop" headline="The base is small enough to show you. Here it is." sources={["AGENTS.md", "agent-skills/ui-development/SKILL.md", "design-system/context-budget.json", "docs/pr-case/claims.json"]}>
+      <LawInFull />
+      <section aria-label="Component-review base manifest" className="flex flex-col gap-3 rounded-3xl bg-container p-5" data-base-manifest data-surface="container">
+        <h2 className="text-xl font-semibold">Everything a component review loads. All of it.</h2>
+        <ul className="flex flex-col gap-1.5">
+          {loopFacts.routedEntries.map((entry) => (
+            <li className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-sm" data-base-entry={entry.path} key={entry.path}>
+              <code className="text-xs text-muted-foreground">{entry.path.replace("frontend/", "")}</code>
+              <span className="tabular-nums">{entry.acceptedBytes.toLocaleString()} B</span>
+            </li>
           ))}
-          <p className="text-sm text-muted-foreground">Owner ceiling {loopFacts.ownerCeiling.toLocaleString()} bytes — no exception path.</p>
-        </div>
-        <div className="flex flex-col gap-4 rounded-3xl bg-container p-5" data-surface="container">
-          <p className="text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase">After generation</p>
-          <dl className="grid grid-cols-2 gap-3">
-            <Metric label="Package checks" numeric value={loopFacts.checkScripts} />
-            <Metric label="Gate stages" numeric value={loopFacts.gateStages} />
-            <Metric label="Routed guidance" numeric value={`${loopFacts.routedGuidance.toLocaleString()} B`} />
-            <Metric label="Preserved failures" numeric value={loopFacts.failedExactHeads} />
-          </dl>
+        </ul>
+        <div className="flex flex-wrap items-baseline justify-between gap-4 border-t border-border pt-3 text-sm">
+          <span className="font-medium">Manifest total · route total · ratchet · owner ceiling</span>
+          <strong className="tabular-nums">{manifestTotal.toLocaleString()} · {loopFacts.componentReview.toLocaleString()} · {loopFacts.componentReviewRatchet.toLocaleString()} · {loopFacts.ownerCeiling.toLocaleString()} B</strong>
         </div>
       </section>
-      <Points items={[
-        { tone: "yes", text: `The loop caught itself: integration briefly hit ${loopFacts.integrationRegression.toLocaleString()} bytes against the ${loopFacts.alwaysLoadedRatchet.toLocaleString()} ratchet — refused, then routed.` },
-        { text: "These pages are generated from the same sources the gate checksums; a stale projection fails the build." },
-      ]} />
+      <section aria-label="Progressively revealed" className="flex flex-col gap-3">
+        <h2 className="text-xl font-semibold">Everything else arrives only when the task asks.</h2>
+        <Points items={[
+          { text: `The catalog is queried per target — ${catalogCount} components indexed, never bulk-read into context.` },
+          { text: "The per-edit check answers in a fraction of a second with a ~30-token teaching message — only on violation." },
+          { tone: "yes", text: `And the loop polices itself: guidance briefly hit ${loopFacts.integrationRegression.toLocaleString()} bytes against the ${loopFacts.alwaysLoadedRatchet.toLocaleString()} ratchet — the ${loopFacts.gateStages}-stage gate refused, ${loopFacts.routedGuidance.toLocaleString()} bytes moved on demand, the ratchet never moved.` },
+        ]} />
+      </section>
     </DocShell>
   )
 }
