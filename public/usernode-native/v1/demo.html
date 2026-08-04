@@ -5,11 +5,13 @@
   <!-- viewport-fit=cover per the kit's safe-area adoption contract -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>usernode-native v1 — demo</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>tailwind.config = {
-    darkMode: 'class',
-    future: { hoverOnlyWhenSupported: true },
-  }</script>
+  <!-- The platform's own compiled Tailwind (absolute path — same origin as
+       this page). Was cdn.tailwindcss.com with an inline config; the shell's
+       tailwind.config.js scans this file too, so demo-only classes are
+       included. One consequence, accepted deliberately: this page now
+       inherits the platform's zinc/violet ramps instead of stock Tailwind's,
+       which is a marginally different grey on a dev/tuning page. -->
+  <link rel="stylesheet" href="/css/tailwind.css">
   <link rel="stylesheet" href="./native.css">
   <script src="./native.js"></script>
 </head>

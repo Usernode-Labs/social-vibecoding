@@ -1,12 +1,15 @@
 // PWA offline-mode (#487) shell wiring: pins the contracts that keep the
 // offline boot complete and the manifest installable.
 //
-//  1. Precache-list sync — every local script/stylesheet (and CDN script)
-//     referenced by index.html appears in sw.js's SHELL_ASSETS /
-//     CDN_ASSETS, so a newly-added <script> can't silently break offline
-//     boot. (index.html is the single shell document now — the old
-//     standalone auth pages are redirect stubs into the SPA's hash
-//     routes; fold-auth-pages-into-SPA.)
+//  1. Precache-list sync — every local script/stylesheet referenced by
+//     index.html appears in sw.js's SHELL_ASSETS, so a newly-added
+//     <script> can't silently break offline boot, AND index.html loads
+//     nothing cross-origin at all (Tailwind is compiled into
+//     /css/tailwind.css, marked/DOMPurify/qrcodejs are vendored under
+//     /vendor/ — so SHELL_ASSETS is the complete render set and a first
+//     offline launch can never come up unstyled). (index.html is the single
+//     shell document now — the old standalone auth pages are redirect stubs
+//     into the SPA's hash routes; fold-auth-pages-into-SPA.)
 //  2. Every SHELL_ASSETS entry maps to a real file under public/ (no
 //     dead precache entries, which would 404 during install).
 //  3. manifest.webmanifest is valid and its icon files exist.
@@ -37,9 +40,12 @@ function localAssets(html) {
   return [...out];
 }
 
-function cdnAssets(html) {
+// Cross-origin scripts / stylesheets referenced by an HTML shell page.
+// Expected to be empty — see the invariant test below.
+function crossOriginAssets(html) {
   const out = new Set();
-  for (const m of html.matchAll(/<script[^>]+src="(https:\/\/[^"]+)"/g)) out.add(m[1]);
+  for (const m of html.matchAll(/<script[^>]+src="(https?:\/\/[^"]+)"/g)) out.add(m[1]);
+  for (const m of html.matchAll(/<link[^>]+href="(https?:\/\/[^"]+)"/g)) out.add(m[1]);
   return [...out];
 }
 
@@ -51,12 +57,29 @@ test('sw.js precaches every local asset index.html loads', () => {
       `index.html loads ${asset} but sw.js SHELL_ASSETS doesn't precache it`
     );
   }
-  for (const url of cdnAssets(html)) {
-    assert.ok(
-      sw.CDN_ASSETS.includes(url),
-      `index.html loads ${url} but sw.js CDN_ASSETS doesn't list it`
-    );
-  }
+});
+
+// The invariant that replaced the old CDN_ASSETS sync check: there is no
+// third-party origin in the shell's critical path any more, so precaching
+// SHELL_ASSETS is sufficient to render offline. Adding a CDN <script> back
+// would silently reintroduce an unstyled/degraded offline boot and a
+// dependency on someone else's uptime — compile it (npm run build:css) or
+// vendor it (npm run vendor:assets) instead.
+test('index.html loads no cross-origin scripts or stylesheets', () => {
+  const offOrigin = crossOriginAssets(readPublic('index.html'));
+  assert.deepEqual(
+    offOrigin, [],
+    `index.html must load every asset from its own origin; found: ${offOrigin.join(', ')}`
+  );
+});
+
+// The native kit's demo page is served by this app too, and shares the one
+// compiled stylesheet rather than pulling the Tailwind Play CDN.
+test('the usernode-native demo page uses the compiled stylesheet, not a CDN', () => {
+  const demo = readPublic('usernode-native/v1/demo.html');
+  assert.deepEqual(crossOriginAssets(demo), []);
+  assert.ok(demo.includes('<link rel="stylesheet" href="/css/tailwind.css">'),
+    'demo.html should load the platform\'s compiled Tailwind');
 });
 
 test('sw.js precaches the shell page itself and the manifest, not the stubs', () => {
