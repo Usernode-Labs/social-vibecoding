@@ -151,6 +151,35 @@ function notificationsRoutes(config) {
     }
   });
 
+  // Native push carries no notification copy or route, only an opaque id.
+  // Resolve that id through the authenticated Social session and deliberately
+  // return the same 404 for an absent row and another user's row.
+  router.get('/api/notifications/:id', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    res.set('Cache-Control', 'no-store');
+    const rawId = String(req.params.id || '');
+    if (!/^[1-9]\d{0,9}$/.test(rawId)) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+    const id = Number(rawId);
+    if (!Number.isSafeInteger(id) || id > 2147483647) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+    try {
+      const row = await notifications.getForUser(pool, req.user.id, id);
+      if (!row) {
+        return res.status(404).json({ error: 'Notification not found' });
+      }
+      return res.json({ notification: notifications.serialize(row) });
+    } catch (err) {
+      log.error('notifications', 'exact lookup failed', {
+        id,
+        message: err.message,
+      });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.post('/api/notifications/read', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     const {

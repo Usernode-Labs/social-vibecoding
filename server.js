@@ -78,6 +78,7 @@ const chainPoller = require('./src/services/chain-poller');
 const genesisAccounts = require('./src/services/genesis-accounts');
 const nodeStatus = require('./src/services/node-status');
 const statusService = require('./src/services/status');
+const mobilePush = require('./src/services/mobile-push');
 const { getActiveWorkerCount } = require('./src/routes/sessions');
 const { sweepStuckCreatingApps } = require('./src/routes/apps');
 const appAccess = require('./src/services/app-access');
@@ -678,6 +679,7 @@ app.get('*', (req, res) => {
 
 async function start() {
   await migrate(config);
+  await mobilePush.initialize(config);
 
   // Credential rows deliberately outlive their active period for settings
   // and audit correlation, then age out on the documented schedule.
@@ -793,6 +795,7 @@ async function start() {
   shutdownPool = getPool(config);
 
   ws.attach(server, config);
+  mobilePush.start();
   chainPoller.start(config);
   genesisAccounts.start();
   nodeStatus.start({ nodeRpcUrl: process.env.NODE_RPC_URL });
@@ -3742,6 +3745,13 @@ async function cleanup() {
   if (cleanupStarted) return;
   cleanupStarted = true;
   lifecycle.setShuttingDown();
+  // Stop claiming push jobs immediately. The bounded drain runs in
+  // parallel with HTTP/session draining and is awaited before pool close.
+  const pushStop = mobilePush.stop({ timeoutMs: DRAIN_TIMEOUT_MS }).catch((err) => {
+    log.warn('server', 'Mobile push shutdown failed', {
+      code: typeof err?.code === 'string' ? err.code : 'unknown',
+    });
+  });
 
   // Stop accepting BEFORE draining. Caddy's apex proxy and the wildcard
   // forward_auth gate both hold-and-retry a refused dial for 30s
@@ -3793,6 +3803,7 @@ async function cleanup() {
   } else if (startingCount > 0) {
     log.info('server', 'All handlers drained; worker containers persist across restart');
   }
+  await pushStop;
 
   // Close the pg pool so in-flight queries settle instead of being severed
   // by process.exit(). Bounded: a pool that won't drain must not hold the

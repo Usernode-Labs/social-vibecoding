@@ -37,6 +37,11 @@
   const DevAlerts = {
     _audioCtx: null,
     _lastToneAt: 0,
+    _remoteDeliveryActive: false,
+
+    setRemoteDeliveryActive(active) {
+      DevAlerts._remoteDeliveryActive = active === true;
+    },
 
     enabled() {
       try {
@@ -171,6 +176,10 @@
       const title = info.title || 'Dev chat';
       const body = info.body || '';
       if (DevAlerts._isNative()) {
+        // The canonical notification already has an FCM delivery. Avoid a
+        // second legacy local notification from the live WebView; foreground
+        // chimes remain unchanged.
+        if (DevAlerts._remoteDeliveryActive) return;
         try {
           if (window.Usernode && typeof window.Usernode.postMessage === 'function') {
             window.Usernode.postMessage(JSON.stringify({

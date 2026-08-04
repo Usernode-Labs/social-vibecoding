@@ -88,6 +88,7 @@ const SHELL_ASSETS = [
   '/js/native-chrome.js',
   '/js/node-pill.js',
   '/js/notifications.js',
+  '/js/social-push.js',
   '/js/offline.js',
   '/js/profile.js',
   '/js/screenshot-select.js',

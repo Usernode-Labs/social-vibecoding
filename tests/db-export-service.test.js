@@ -190,7 +190,9 @@ test('pg_dump is invoked as argv — plain SQL, no shell anywhere', async () => 
   assert.ok(Array.isArray(seen.args), 'args is an argv array, not a command string');
   assert.deepEqual(seen.args, [
     'exec', dbExport.DB_CONTAINER, 'pg_dump', '-U', dbExport.DB_USER,
-    '-Fp', '--no-owner', '--no-privileges', '--no-password', 'usernode',
+    '-Fp', '--no-owner', '--no-privileges', '--no-password',
+    ...dbExport.EXCLUDED_TABLE_DATA.map((table) => `--exclude-table-data=${table}`),
+    'usernode',
   ]);
   assert.ok(!seen.args.includes('-Fc'), 'the custom format is gone — this is plain SQL');
   // The gzip step is a Node stream, NOT a shell pipeline: nothing may be
