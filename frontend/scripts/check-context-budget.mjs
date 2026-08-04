@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -5,6 +6,7 @@ import { fileURLToPath } from "node:url"
 import { collectHarnessFitness, fitnessSnapshot } from "./check-harness-fitness.mjs"
 
 const frontendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
+const repoRoot = path.resolve(frontendRoot, "..")
 const defaultPolicyPath = path.join(frontendRoot, "design-system/context-budget.json")
 const knownMetrics = new Set([
   "payloadBytes",
@@ -152,6 +154,30 @@ function postRoutingMeasurement(componentReview, measuredEntries, totalBytes, vi
   }
 }
 
+function nestedValue(object, keys) {
+  return keys.reduce((value, key) => value?.[key], object)
+}
+
+function enforceMonotonicRatchets(policy, previousPolicy, violations) {
+  if (!previousPolicy) {
+    violations.push("previous committed context-budget policy is required to enforce monotonic ratchets")
+    return
+  }
+  for (const [label, keys] of [
+    ["payloadBytes", ["componentReview", "buckets", "payload", "maximumBytes"]],
+    ["guidanceBytes", ["componentReview", "buckets", "guidance", "maximumBytes"]],
+    ["alwaysLoadedBytes", ["globalRatchets", "alwaysLoadedBytes"]],
+    ["skillActivationBytes", ["globalRatchets", "skillActivationBytes"]],
+    ["postRoutingBytes", ["componentReview", "postRoutingRatchetBytes"]],
+  ]) {
+    const current = nestedValue(policy, keys)
+    const previous = nestedValue(previousPolicy, keys)
+    if (integer(current) && integer(previous) && current > previous) {
+      violations.push(`${label} ratchet increased from ${previous} to ${current}; base ratchets may only stay level or move down, so use an exact active exception for temporary growth`)
+    }
+  }
+}
+
 export function collectContextBudgetMeasurement(options = {}) {
   const fitness = collectHarnessFitness(options)
   const snapshot = fitnessSnapshot(fitness.metrics)
@@ -205,6 +231,7 @@ export function evaluateContextBudget(policy, measurement, options = {}) {
   if (policy.componentReview?.routingCaseId !== measurement.componentReview.id) {
     violations.push(`context budget must govern routing case ${measurement.componentReview.id}`)
   }
+  enforceMonotonicRatchets(policy, options.previousPolicy, violations)
   for (const field of ["alwaysLoadedBytes", "skillActivationBytes"]) {
     if (!integer(policy.globalRatchets?.[field])) {
       violations.push(`globalRatchets.${field} must be a non-negative integer`)
@@ -281,35 +308,44 @@ export function evaluateContextBudget(policy, measurement, options = {}) {
   }
 
   const exceptions = validatedExceptions(policy, now, violations)
+  const ratchets = {
+    payloadBytes: policy.componentReview?.buckets?.payload?.maximumBytes ?? -1,
+    guidanceBytes: policy.componentReview?.buckets?.guidance?.maximumBytes ?? -1,
+    alwaysLoadedBytes: policy.globalRatchets?.alwaysLoadedBytes ?? -1,
+    skillActivationBytes: policy.globalRatchets?.skillActivationBytes ?? -1,
+    postRoutingBytes: policy.phase === "post-routing"
+      ? policy.componentReview?.postRoutingRatchetBytes ?? -1
+      : null,
+  }
   const limits = {
     payloadBytes: activeLimit(
       "payloadBytes",
-      policy.componentReview?.buckets?.payload?.maximumBytes ?? -1,
+      ratchets.payloadBytes,
       exceptions,
       violations,
     ),
     guidanceBytes: activeLimit(
       "guidanceBytes",
-      policy.componentReview?.buckets?.guidance?.maximumBytes ?? -1,
+      ratchets.guidanceBytes,
       exceptions,
       violations,
     ),
     alwaysLoadedBytes: activeLimit(
       "alwaysLoadedBytes",
-      policy.globalRatchets?.alwaysLoadedBytes ?? -1,
+      ratchets.alwaysLoadedBytes,
       exceptions,
       violations,
     ),
     skillActivationBytes: activeLimit(
       "skillActivationBytes",
-      policy.globalRatchets?.skillActivationBytes ?? -1,
+      ratchets.skillActivationBytes,
       exceptions,
       violations,
     ),
     postRoutingBytes: policy.phase === "post-routing"
       ? activeLimit(
           "postRoutingBytes",
-          policy.componentReview?.postRoutingRatchetBytes ?? -1,
+          ratchets.postRoutingBytes,
           exceptions,
           violations,
         )
@@ -353,14 +389,40 @@ export function evaluateContextBudget(policy, measurement, options = {}) {
     gitRevision: measurement.gitRevision,
     gitWorktreeDirty: measurement.gitWorktreeDirty,
     current,
+    ratchets,
     limits,
     ownerCeilingBytes: policy.ownerLock?.postRoutingCeilingBytes ?? null,
+    monotonicReferenceRevision: options.previousRevision ?? null,
     violations,
   }
 }
 
 export function readContextBudgetPolicy(policyPath = defaultPolicyPath) {
   return JSON.parse(fs.readFileSync(policyPath, "utf8"))
+}
+
+export function previousPolicyRevision(currentSource, headSource) {
+  return currentSource === headSource ? "HEAD^" : "HEAD"
+}
+
+export function readPreviousContextBudgetPolicy(policyPath = defaultPolicyPath, options = {}) {
+  const root = options.repoRoot || repoRoot
+  const execute = options.execute || ((command, args) => execFileSync(command, args, {
+    cwd: root,
+    encoding: "utf8",
+  }))
+  const relativePath = path.relative(root, path.resolve(policyPath)).split(path.sep).join("/")
+  if (!relativePath || relativePath.startsWith("../")) {
+    throw new Error(`context-budget policy must be inside the repository: ${policyPath}`)
+  }
+  const currentSource = fs.readFileSync(policyPath, "utf8")
+  const headSource = execute("git", ["show", `HEAD:${relativePath}`])
+  const revision = previousPolicyRevision(currentSource, headSource)
+  const previousSource = execute("git", ["show", `${revision}:${relativePath}`])
+  return {
+    revision: execute("git", ["rev-parse", revision]).trim(),
+    policy: JSON.parse(previousSource),
+  }
 }
 
 function printSummary(report) {
@@ -371,18 +433,26 @@ function printSummary(report) {
     console.log(`- Payload: ${report.current.payloadBytes}/${report.limits.payloadBytes} bytes`)
     console.log(`- Guidance: ${report.current.guidanceBytes}/${report.limits.guidanceBytes} bytes`)
   } else {
-    console.log(`- Post-routing ratchet: ${report.limits.postRoutingBytes} bytes`)
+    console.log(`- Post-routing ratchet: ${report.ratchets.postRoutingBytes} bytes`)
+    if (report.limits.postRoutingBytes !== report.ratchets.postRoutingBytes) {
+      console.log(`- Active post-routing limit: ${report.limits.postRoutingBytes} bytes`)
+    }
     console.log(`- Owner ceiling: ${report.ownerCeilingBytes} bytes`)
   }
   console.log(`- Always loaded: ${report.current.alwaysLoadedBytes}/${report.limits.alwaysLoadedBytes} bytes`)
   console.log(`- Skill activation: ${report.current.skillActivationBytes}/${report.limits.skillActivationBytes} bytes`)
+  if (report.monotonicReferenceRevision) {
+    console.log(`- Monotonic reference: ${report.monotonicReferenceRevision}`)
+  }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const policyPath = process.env.CONTEXT_BUDGET_POLICY_PATH || defaultPolicyPath
+  const previous = readPreviousContextBudgetPolicy(policyPath)
   const report = evaluateContextBudget(
     readContextBudgetPolicy(policyPath),
     collectContextBudgetMeasurement(),
+    { previousPolicy: previous.policy, previousRevision: previous.revision },
   )
   if (process.argv.includes("--json")) console.log(JSON.stringify(report, null, 2))
   else printSummary(report)
