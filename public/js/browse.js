@@ -392,6 +392,14 @@ const Browse = {
         Browse.noteDetailOrigin('list');
         location.hash = `#apps/${encodeURIComponent(slug)}`;
       });
+      // #931: a row tap lands on the detail page, not in the app, so this is
+      // a warm-up for the "Open" button one screen later — by then the token
+      // is minted and the connection to the app's origin is open.
+      if (row.dataset.slug && row.dataset.demo !== 'true') {
+        const warm = () => { try { App.prewarmApp(row.dataset.slug); } catch (err) { /* ignore */ } };
+        row.addEventListener('pointerdown', warm, { passive: true });
+        row.addEventListener('mouseenter', warm);
+      }
     });
     listEl.querySelectorAll('.browse-add-btn').forEach((btn) => {
       btn.addEventListener('click', (e) => {
@@ -673,8 +681,15 @@ const Browse = {
       ${contribHtml}`;
 
     if (canOpen) {
-      host.querySelector('#browse-detail-open')
-        ?.addEventListener('click', () => App.navigateToApp(app.slug));
+      const openBtn = host.querySelector('#browse-detail-open');
+      openBtn?.addEventListener('click', () => App.navigateToApp(app.slug));
+      // #931: warm the mint + origin connection on press/hover, so the tap
+      // can point the app frame at the app in its own tick.
+      if (openBtn) {
+        const warm = () => { try { App.prewarmApp(app.slug); } catch (err) { /* ignore */ } };
+        openBtn.addEventListener('pointerdown', warm, { passive: true });
+        openBtn.addEventListener('mouseenter', warm);
+      }
     }
     host.querySelector('#browse-detail-fav')?.addEventListener('click', () => {
       Home.toggleAdded(app.slug, !Home.isYours(app), () => Browse.render());
