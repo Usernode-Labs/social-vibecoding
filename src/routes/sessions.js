@@ -36,6 +36,8 @@ const attachmentsSvc = require('../services/attachments');
 // shared by GET /transcript and POST /fork (see services/transcript-share.js).
 const transcriptShare = require('../services/transcript-share');
 const appAccess = require('../services/app-access');
+const appAdmins = require('../services/app-admins');
+const governance = require('../services/governance');
 const userAgentFiles = require('../services/user-agent-files');
 const debugAccess = require('../services/debug-access');
 // Backs the Mayor's get_prod_status data tool (admin sessions on the
@@ -293,6 +295,17 @@ async function loadSessionSpec(pool, sessionId) {
     [sessionId]
   );
   return (rows[0] && rows[0].spec_md) || '';
+}
+
+// #918: authoritative reviewer eligibility for the simplified Accept path.
+// Keep this separate from ordinary clone/promote authorization: all
+// collaborators may still use the advanced workflow, while Easy Accept is
+// intentionally reserved for the app's current approval electorate/admins.
+async function canEasyAccept(pool, app, user) {
+  const gov = await governance.getGovernance(pool, app.id);
+  if (gov.approverPolicy !== 'invited') return true;
+  if (await governance.isApprover(pool, app.id, user.id)) return true;
+  return appAdmins.canManageApp(pool, app, user);
 }
 
 // Build the inline spec-preview snippet (F8): cap length but cut on a
@@ -1018,7 +1031,8 @@ function sessionRoutes(config) {
   router.post('/api/sessions/:id/clone-headless', drainGuard, async (req, res) => {
     try {
       const { rows: srcRows } = await pool.query(
-        `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url
+        `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url,
+                a.created_by AS app_created_by
          FROM chat_sessions cs
          JOIN apps a ON cs.app_id = a.id
          WHERE cs.id = $1 AND cs.is_headless = TRUE`,
@@ -1032,6 +1046,32 @@ function sessionRoutes(config) {
             ? 'The auto session is still generating — try again when it finishes.'
             : 'This auto session is not in a cloneable state.',
         });
+      }
+
+      // Easy Accept is a privileged convenience layered on top of this
+      // existing clone route. Re-check every server-owned prerequisite at
+      // mutation time so a stale modal or hand-written request cannot rely
+      // on an earlier `canAccept` response. Omitting easyAccept preserves the
+      // ordinary collaborator clone workflow byte-for-byte.
+      if (req.body?.easyAccept === true) {
+        const appForGate = { id: src.app_id, created_by: src.app_created_by };
+        if (!(await canEasyAccept(pool, appForGate, req.user))) {
+          return res.status(403).json({
+            error: 'Only a current approver or app admin can accept this proposal.',
+          });
+        }
+        if (!['code', 'spec_code'].includes(src.headless_outcome)) {
+          return res.status(409).json({
+            error: 'This result needs implementation in Dev Chat before it can be accepted.',
+          });
+        }
+        if (!['passing', 'skipped'].includes(src.check_state)) {
+          return res.status(409).json({
+            error: src.check_state === 'pending'
+              ? 'Automated checks are still running.'
+              : 'Automated checks must pass before this proposal can be accepted.',
+          });
+        }
       }
 
       // The clone is an ordinary dev-chat session, so the usual caps apply.
@@ -1201,6 +1241,143 @@ function sessionRoutes(config) {
       res.status(201).json({ session });
     } catch (err) {
       log.error('sessions', 'Failed to clone headless session', { message: err.message, stack: err.stack });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #918: compact, read-only review payload for a finished unattended
+  // issue proposal. The route is deliberately narrower than GET /sessions:
+  // collaborators may clone a shared headless run, but must not receive its
+  // raw transcript, agent logs, token accounting, or worker metadata merely
+  // to decide whether the result is worth accepting.
+  router.get('/api/sessions/:id/easy-review', async (req, res) => {
+    const sessionId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(sessionId) || sessionId <= 0) {
+      return res.status(400).json({ error: 'Invalid session id' });
+    }
+
+    try {
+      const { rows } = await pool.query(
+        `SELECT cs.id, cs.session_title, cs.branch_name, cs.spec_md,
+                cs.headless_status, cs.headless_outcome, cs.staging_url,
+                cs.check_state, cs.check_error_detail, cs.test_results,
+                a.id AS app_id, a.slug AS app_slug, a.repo_url, a.created_by,
+                a.collab_visibility, a.view_visibility
+           FROM chat_sessions cs
+           JOIN apps a ON a.id = cs.app_id
+          WHERE cs.id = $1 AND cs.is_headless = TRUE`,
+        [sessionId]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Auto proposal not found' });
+      const session = rows[0];
+      // The generic id-scoped guard intentionally permits view-level GETs.
+      // Easy review exposes an unpublished branch diff/spec, so raise this
+      // particular read to collab level (important when view is public but
+      // collaboration is invite-only).
+      const canCollaborate = await appAccess.checkAppAccess(pool, {
+        id: session.app_id,
+        collab_visibility: session.collab_visibility,
+        view_visibility: session.view_visibility,
+      }, req.user, 'collab');
+      if (!canCollaborate) return res.status(404).json({ error: 'Auto proposal not found' });
+      if (session.headless_status !== 'ready') {
+        return res.status(409).json({
+          error: session.headless_status === 'generating'
+            ? 'The proposal is still being generated.'
+            : 'This proposal is not ready for review.',
+        });
+      }
+
+      // The last assistant message is the unattended run's user-facing
+      // wrap-up. It is useful review context; system rows are intentionally
+      // excluded because they can carry raw coding-agent output.
+      const { rows: summaryRows } = await pool.query(
+        `SELECT LEFT(content, 6000) AS content
+           FROM chat_session_messages
+          WHERE session_id = $1 AND role = 'assistant'
+          ORDER BY id DESC LIMIT 1`,
+        [sessionId]
+      );
+
+      const codeOutcome = ['code', 'spec_code'].includes(session.headless_outcome);
+      let changedFiles = [];
+      let diff = '';
+      let diffTruncated = false;
+      let reviewError = null;
+      if (codeOutcome) {
+        const [, owner, repo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+        if (!github.isEnabled() || !owner || !repo || !session.branch_name) {
+          reviewError = 'The code comparison is unavailable for this proposal.';
+        } else {
+          try {
+            const comparison = await github.compareRefs(
+              owner, repo, `main...${session.branch_name}`
+            );
+            changedFiles = comparison.files;
+            const proposalDiff = await github.getProposalDiff(
+              owner, repo, `main...${session.branch_name}`
+            );
+            diff = proposalDiff.diff;
+            diffTruncated = proposalDiff.truncated;
+            if (!comparison.filesComplete) {
+              reviewError = 'This proposal changes more files than Easy review can safely list.';
+            } else if (!changedFiles.length || !diff.trim()) {
+              reviewError = 'No reviewable code difference was found for this proposal.';
+            }
+          } catch (err) {
+            log.warn('sessions', 'Easy-review comparison failed', {
+              sessionId, message: err.message,
+            });
+            reviewError = 'The code comparison could not be loaded. Open Dev Chat to review it.';
+          }
+        }
+      }
+
+      // Under the open electorate every collaborator is an eligible
+      // approver. Under an invited electorate, only an accepted approver or
+      // creator/app/full admin gets the one-click Accept action. This only
+      // controls the simplified action; the normal proposal/vote routes keep
+      // enforcing their own existing authorization and governance.
+      const eligibleReviewer = await canEasyAccept(pool, {
+        id: session.app_id, created_by: session.created_by,
+      }, req.user);
+      const checksPassed = ['passing', 'skipped'].includes(session.check_state);
+      const reviewComplete = codeOutcome && !reviewError && checksPassed;
+      const acceptBlockedBy = [];
+      if (!codeOutcome) acceptBlockedBy.push('This result needs implementation in Dev Chat first.');
+      if (codeOutcome && reviewError) acceptBlockedBy.push(reviewError);
+      if (codeOutcome && !checksPassed) {
+        acceptBlockedBy.push(session.check_state === 'pending'
+          ? 'Automated checks are still running.'
+          : 'Automated checks must pass before this proposal can be accepted.');
+      }
+      if (!eligibleReviewer) {
+        acceptBlockedBy.push('Only a current approver or app admin can accept this proposal.');
+      }
+
+      res.json({
+        review: {
+          sessionId: session.id,
+          title: session.session_title || `Proposal ${session.id}`,
+          outcome: session.headless_outcome,
+          summary: summaryRows[0]?.content || '',
+          spec: session.spec_md || '',
+          stagingUrl: session.staging_url || null,
+          checkState: session.check_state || null,
+          checkError: session.check_error_detail || null,
+          testResults: Array.isArray(session.test_results) ? session.test_results : [],
+          changedFiles,
+          diff,
+          diffTruncated,
+          reviewError,
+          canAccept: eligibleReviewer && reviewComplete,
+          acceptBlockedBy,
+        },
+      });
+    } catch (err) {
+      log.error('sessions', 'Failed to load Easy review', {
+        sessionId, message: err.message,
+      });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

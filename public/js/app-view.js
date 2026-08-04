@@ -7102,70 +7102,29 @@ const AppView = {
       ? 'You already placed a bounty on this issue'
       : (budgetSpent ? 'Weekly kudos allowance spent' : 'Pledge a kudos bounty — paid to whoever\'s merged PR closes this issue');
     const kudosBtn = `<button class="gc-vote-btn"${kudosDisabled ? ' disabled' : ''} title="${kudosTitle}" onclick="AppView.giveIssueBounty(${n})">${issue.my_bounty ? '&#9733; Bountied' : 'Pledge kudos'}</button>`;
-    // #287: once the viewer has started a proposal dev chat for this issue
-    // (myPrSessionId, from /github-issues), the "Create proposal" button is
-    // replaced — for them — with "Create new proposal", which starts another
-    // fresh dev chat (a second attempt) rather than reopening the first.
-    // Strictly per-viewer and reverts to "Create proposal" once the session
-    // is archived (server filters archived rows out of myPrSessionId). This is
-    // independent of the headless Generate-proposal path below — both can
-    // show on the same row. The viewer's existing session is still reachable
-    // from the Dev Chat tab.
-    const hasMySession = !!issue.myPrSessionId;
-    const createBtn = hasMySession
-      ? `<button class="gc-vote-btn" title="Start another dev chat for this issue" onclick="AppView.createPrForIssue(${n})">Create new proposal</button>`
-      : `<button class="gc-vote-btn" title="Start a dev chat to solve this issue" onclick="AppView.createPrForIssue(${n})">Create proposal</button>`;
-    // #155: headless auto-session button. Four states driven by the
-    // issue's `headless` field from /github-issues:
-    //   none/failed → "Generate proposal" (opens the confirm + model popup)
-    //   generating  → disabled progress label
-    //   ready       → contextual clone-for-me label by outcome (#168):
-    //                 "Review spec / Review solution / Answer question
-    //                 & start session", generic fallback otherwise
-    //   ready + viewer already cloned (mySessionId, #172) → "Go to
-    //                 session", navigating to their derived session
-    //                 instead of offering a second clone
+    // #918: one primary issue → proposal path. The old card showed both a
+    // manual "Create proposal" and an automated "Generate proposal", forcing
+    // users to understand two session models before they had started. The
+    // primary action now runs the existing credit-confirmed unattended flow;
+    // manual Dev Chat remains available from Easy review when it is useful.
     const h = issue.headless;
+    const createBtn = (!h || !['generating', 'ready'].includes(h.status))
+      ? `<button class="gc-vote-btn" title="Generate a proposal for this issue — you will confirm the model and credit use first" onclick="AppView.confirmAutoSession(${n})">Create proposal</button>`
+      : '';
+    // Headless state supplies the secondary stateful half of that one path:
+    // generating → disabled progress; ready → Easy review; ready + this
+    // viewer already cloned it → Go to session.
     let autoBtn;
     if (h && h.status === 'generating') {
       autoBtn = `<button class="gc-vote-btn" disabled title="A headless AI session is working on this issue${h.username ? ` (started by ${escapeAttr(h.username)})` : ''}">Generating proposal&hellip;</button>`;
     } else if (h && h.status === 'ready') {
-      // #183: a code/spec_code run with a live preview gets the
-      // changes-ready treatment — label + a Preview button that opens
-      // the auto run's staging (plain open, same overlay as PR rows).
-      // stagingUrl is nulled when the preview is GC'd, so the row
-      // degrades back to the plain outcome wording.
-      const hasPreview = !!h.stagingUrl && (h.outcome === 'code' || h.outcome === 'spec_code');
-      const previewBtn = hasPreview
-        ? `<button class="gc-vote-btn gc-vote-btn-preview" title="Open the proposal's staging preview" onclick="AppView.swapToStagingForSession(${h.sessionId}, '${h.stagingUrl}')">Preview</button>`
-        : '';
       if (h.mySessionId) {
-        autoBtn = `${previewBtn}<button class="gc-vote-btn" title="You already started a session from this proposal — open it" onclick="AppView.goToAutoSessionClone(${h.mySessionId})">Go to session</button>`;
+        autoBtn = `<button class="gc-vote-btn" title="You already started a session from this proposal — open it" onclick="AppView.goToAutoSessionClone(${h.mySessionId})">Go to session</button>`;
       } else {
-        const outcomeNote = h.outcome === 'spec' ? 'it drafted a spec'
-          : h.outcome === 'code' ? 'it pushed a code change'
-          : h.outcome === 'spec_code' ? 'it drafted a spec and pushed a code change'
-          : 'it has a question for you';
-        const autoLabel = hasPreview ? 'Changes ready &mdash; review &amp; start session'
-          : h.outcome === 'spec' ? 'Review spec &amp; start session'
-          : h.outcome === 'code' ? 'Review solution &amp; start session'
-          : h.outcome === 'question' ? 'Answer question &amp; start session'
-          : 'Start session from proposal';
-        autoBtn = `${previewBtn}<button class="gc-vote-btn" title="Clone the finished proposal (${outcomeNote}) into your own dev chat — others can clone it too" onclick="AppView.startFromAutoSession(${h.sessionId})">${autoLabel}</button>`;
-      }
-      // #150: a question outcome doesn't block re-running — answer the
-      // questions on the issue, then press Generate proposal again and
-      // the new run reads the answers. But only offer this when the viewer
-      // has NOT already cloned the run: once h.mySessionId is set the row
-      // shows "Go to session", and appending "Generate proposal" there
-      // produces two competing actions for a proposal that already exists.
-      // Gate on !h.mySessionId so the rerun affordance stays only on the
-      // no-session path (where "Go to session" never appears).
-      if (h.outcome === 'question' && !h.mySessionId) {
-        autoBtn += `<button class="gc-vote-btn" title="Questions were posted on the issue — answer them, then generate a proposal again" onclick="AppView.confirmAutoSession(${n})">Generate proposal</button>`;
+        autoBtn = `<button class="gc-vote-btn" title="Review the generated summary, changes and checks" onclick="AppView.openEasyReview(${n}, ${h.sessionId})">Review proposal</button>`;
       }
     } else {
-      autoBtn = `<button class="gc-vote-btn" title="Spin up a headless AI session that starts solving this issue on its own — uses your credits" onclick="AppView.confirmAutoSession(${n})">Generate proposal</button>`;
+      autoBtn = '';
     }
     // #250: the chip icon mirrors the auto-solve state so proposal issues
     // read at a glance — pulsing sky document while generating, steady sky
@@ -7924,6 +7883,199 @@ const AppView = {
       });
       document.addEventListener('keydown', onKey, true);
     });
+  },
+
+  // #918: load the deliberately narrow, collaborator-safe review payload
+  // for a finished unattended issue run and present it without exposing the
+  // raw agent transcript. The endpoint owns all acceptance gates; the client
+  // only explains them and invokes the existing clone/promote lifecycle.
+  async openEasyReview(issueNumber, headlessSessionId) {
+    let root = document.getElementById('easy-review-modal');
+    if (root) root.remove();
+    root = document.createElement('div');
+    root.id = 'easy-review-modal';
+    root.className = 'fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/60';
+    root.innerHTML = `<div class="flex min-h-full items-center justify-center p-4">
+      <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-4xl shadow-xl text-zinc-900 dark:text-zinc-100" role="dialog" aria-modal="true" aria-labelledby="easy-review-title">
+        <div class="flex items-center justify-between gap-4">
+          <h2 id="easy-review-title" class="text-lg font-bold">Easy review</h2>
+          <button type="button" class="text-zinc-500 hover:text-zinc-900 dark:hover:text-white" aria-label="Close review" onclick="AppView.closeEasyReview()">&times;</button>
+        </div>
+        <div class="mt-6 flex items-center gap-2 text-sm text-zinc-500"><span class="dc-status-spinner-arc" aria-hidden="true"></span> Loading proposal…</div>
+      </div>
+    </div>`;
+    document.body.appendChild(root);
+
+    AppView._easyReviewKeyHandler = (event) => {
+      if (event.key === 'Escape') AppView.closeEasyReview();
+    };
+    document.addEventListener('keydown', AppView._easyReviewKeyHandler, true);
+    root.addEventListener('click', (event) => {
+      if (event.target === root) AppView.closeEasyReview();
+    });
+
+    try {
+      const resp = await fetch(`/api/sessions/${headlessSessionId}/easy-review`);
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.error || `Couldn't load review (HTTP ${resp.status}).`);
+      // Navigation may have closed/replaced this modal while the request was
+      // in flight. Never resurrect stale review UI in the new app/session.
+      if (!document.getElementById('easy-review-modal')) return;
+      AppView._renderEasyReview(issueNumber, data.review || {});
+    } catch (err) {
+      const mounted = document.getElementById('easy-review-modal');
+      const dialog = mounted && mounted.querySelector('[role="dialog"]');
+      if (dialog) {
+        dialog.innerHTML = `<div class="flex items-center justify-between gap-4">
+          <h2 id="easy-review-title" class="text-lg font-bold">Easy review</h2>
+          <button type="button" class="text-zinc-500 hover:text-zinc-900 dark:hover:text-white" aria-label="Close review" onclick="AppView.closeEasyReview()">&times;</button>
+        </div>
+        <p class="mt-5 text-sm text-red-500">${escapeHtml(err.message)}</p>
+        <div class="mt-6 flex justify-end"><button class="gc-vote-btn" onclick="AppView.closeEasyReview()">Close</button></div>`;
+      }
+    }
+  },
+
+  _easyReviewKeyHandler: null,
+
+  closeEasyReview() {
+    const root = document.getElementById('easy-review-modal');
+    if (root) root.remove();
+    if (AppView._easyReviewKeyHandler) {
+      document.removeEventListener('keydown', AppView._easyReviewKeyHandler, true);
+      AppView._easyReviewKeyHandler = null;
+    }
+  },
+
+  _renderEasyReview(issueNumber, review) {
+    const root = document.getElementById('easy-review-modal');
+    const dialog = root && root.querySelector('[role="dialog"]');
+    if (!dialog) return;
+    const md = (text) => (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
+      ? DevChat.renderMarkdown(String(text || ''), { breaks: false })
+      : `<pre class="whitespace-pre-wrap">${escapeHtml(String(text || ''))}</pre>`;
+    const checkState = review.checkState || 'not run';
+    const checkTone = ['passing', 'skipped'].includes(checkState)
+      ? 'text-emerald-500' : (checkState === 'pending' ? 'text-amber-500' : 'text-red-500');
+    const testResults = Array.isArray(review.testResults) ? review.testResults : [];
+    const testsHtml = testResults.length ? `<ul class="mt-2 space-y-1">${testResults.map((t) => {
+      const status = String(t.status || 'unknown').toLowerCase();
+      const label = t.name || t.command || t.path || 'Automated check';
+      const detail = t.summary || t.error || '';
+      return `<li class="text-xs text-zinc-600 dark:text-zinc-300"><span class="font-medium">${escapeHtml(status)}</span> · ${escapeHtml(String(label))}${detail ? ` — ${escapeHtml(String(detail))}` : ''}</li>`;
+    }).join('')}</ul>` : '<p class="mt-2 text-xs text-zinc-500">No individual test results were recorded.</p>';
+    const files = Array.isArray(review.changedFiles) ? review.changedFiles : [];
+    const filesHtml = files.length
+      ? `<div class="mt-2 flex flex-wrap gap-1">${files.map((f) => `<code class="rounded bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 text-xs">${escapeHtml(String(f))}</code>`).join('')}</div>`
+      : '<p class="mt-2 text-xs text-zinc-500">No changed files to show.</p>';
+    const diffHtml = review.diff
+      ? `<details class="mt-3"><summary class="cursor-pointer text-sm font-medium">View code diff${review.diffTruncated ? ' (truncated)' : ''}</summary><pre class="mt-2 max-h-80 overflow-auto rounded-lg bg-zinc-950 p-3 text-xs text-zinc-100 whitespace-pre-wrap">${escapeHtml(String(review.diff))}</pre></details>`
+      : '';
+    const blocked = Array.isArray(review.acceptBlockedBy) ? review.acceptBlockedBy : [];
+    const blockersHtml = blocked.length
+      ? `<ul class="mt-2 list-disc pl-5 text-xs text-amber-600 dark:text-amber-400">${blocked.map((b) => `<li>${escapeHtml(String(b))}</li>`).join('')}</ul>`
+      : '';
+    const outcomeNeedsWork = !['code', 'spec_code'].includes(review.outcome);
+    const questionRetry = review.outcome === 'question'
+      ? `<button class="gc-vote-btn" onclick="AppView.retryEasyReview(${issueNumber})">Generate again</button>` : '';
+    const preview = review.stagingUrl
+      ? `<button class="gc-vote-btn gc-vote-btn-preview" onclick="AppView.previewEasyReview(${review.sessionId}, '${escapeAttr(review.stagingUrl)}')">Preview</button>` : '';
+    const accept = review.canAccept
+      ? `<button class="dc-pr-btn dc-pr-btn-promote" onclick="AppView.acceptEasyReview(${issueNumber}, ${review.sessionId}, this)">Accept &amp; propose</button>`
+      : `<button class="dc-pr-btn dc-pr-btn-promote" disabled title="${escapeAttr(blocked.join(' '))}">Accept &amp; propose</button>`;
+
+    dialog.innerHTML = `
+      <div class="flex items-start justify-between gap-4">
+        <div><div class="text-xs font-medium uppercase tracking-wide text-violet-500">Easy review</div><h2 id="easy-review-title" class="mt-1 text-lg font-bold">${escapeHtml(review.title || `Issue #${issueNumber} proposal`)}</h2></div>
+        <button type="button" class="text-zinc-500 hover:text-zinc-900 dark:hover:text-white" aria-label="Close review" onclick="AppView.closeEasyReview()">&times;</button>
+      </div>
+      <div class="mt-5 grid gap-4 md:grid-cols-2">
+        <section class="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4"><h3 class="text-sm font-semibold">What it does</h3><div class="mt-2 text-sm dc-msg-content">${review.summary ? md(review.summary) : '<span class="text-zinc-500">No summary was recorded.</span>'}</div></section>
+        <section class="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4"><h3 class="text-sm font-semibold">Automated checks</h3><p class="mt-2 text-sm font-medium ${checkTone}">${escapeHtml(checkState)}</p>${review.checkError ? `<p class="mt-1 text-xs text-red-500">${escapeHtml(String(review.checkError))}</p>` : ''}${testsHtml}</section>
+      </div>
+      ${review.spec ? `<details class="mt-4 rounded-lg border border-zinc-200 dark:border-zinc-800 p-4"><summary class="cursor-pointer text-sm font-semibold">Generated specification</summary><div class="mt-3 dc-msg-content">${md(review.spec)}</div></details>` : ''}
+      <section class="mt-4 rounded-lg border border-zinc-200 dark:border-zinc-800 p-4"><h3 class="text-sm font-semibold">Changed files</h3>${filesHtml}${review.reviewError ? `<p class="mt-2 text-xs text-amber-600 dark:text-amber-400">${escapeHtml(String(review.reviewError))}</p>` : ''}${diffHtml}</section>
+      ${outcomeNeedsWork ? '<p class="mt-4 text-sm text-zinc-500">This run produced planning or questions rather than an accept-ready code change. Continue in Dev Chat to finish it.</p>' : ''}
+      ${blockersHtml}
+      <div class="mt-6 flex flex-wrap items-center justify-end gap-2">
+        <button class="gc-vote-btn" onclick="AppView.openEasyReviewInChat(${review.sessionId})">Open in Dev Chat</button>
+        ${questionRetry}${preview}${accept}
+      </div>`;
+  },
+
+  retryEasyReview(issueNumber) {
+    AppView.closeEasyReview();
+    AppView.confirmAutoSession(issueNumber);
+  },
+
+  openEasyReviewInChat(headlessSessionId) {
+    AppView.closeEasyReview();
+    AppView.startFromAutoSession(headlessSessionId);
+  },
+
+  previewEasyReview(headlessSessionId, stagingUrl) {
+    // Both surfaces are fixed overlays; close review first so it cannot sit
+    // above the preview at the same stacking level.
+    AppView.closeEasyReview();
+    AppView.swapToStagingForSession(headlessSessionId, stagingUrl);
+  },
+
+  // Clone first, then submit through the exact same promotion endpoint as
+  // the normal Dev Chat card. A promotion failure never discards the clone:
+  // the reviewer is taken to that recoverable session with an actionable
+  // toast, where they can fix/retry using the advanced workflow.
+  async acceptEasyReview(issueNumber, headlessSessionId, btn) {
+    if (btn?.disabled || typeof DevChat === 'undefined') return;
+    const original = btn.innerHTML;
+    btn.disabled = true;
+    btn.setAttribute('aria-busy', 'true');
+    btn.textContent = 'Accepting…';
+    let clone = null;
+    try {
+      const cloneResp = await fetch(`/api/sessions/${headlessSessionId}/clone-headless`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ easyAccept: true }),
+      });
+      const cloneData = await cloneResp.json().catch(() => ({}));
+      if (!cloneResp.ok) throw new Error(cloneData.error || `Couldn't create the proposal session (HTTP ${cloneResp.status}).`);
+      clone = cloneData.session;
+      if (!clone || !clone.id) throw new Error('The proposal session was created without an id.');
+      for (const issue of AppView._ghIssues || []) {
+        if (issue.number === issueNumber && issue.headless) issue.headless.mySessionId = clone.id;
+      }
+      DevChat.sessions.unshift(clone);
+
+      const promoteResp = await fetch(`/api/sessions/${clone.id}/promote`, { method: 'POST' });
+      const promoteData = await promoteResp.json().catch(() => ({}));
+      if (!promoteResp.ok) {
+        throw new Error(promoteData.error || `The session was created, but proposing failed (HTTP ${promoteResp.status}).`);
+      }
+      clone.status = 'promoted';
+      if (promoteData.prNumber) clone.pr_number = promoteData.prNumber;
+      if (promoteData.prUrl) clone.pr_url = promoteData.prUrl;
+      if (promoteData.prTitle) clone.pr_title = promoteData.prTitle;
+      AppView.closeEasyReview();
+      PlatformUI.toast('Proposal accepted and sent through the app approval workflow.');
+      if (typeof App !== 'undefined' && App.switchTab) {
+        await App.switchTab('dev', clone.id, 'sessions');
+      }
+    } catch (err) {
+      if (clone && clone.id) {
+        AppView.closeEasyReview();
+        PlatformUI.toast(`${err.message} The saved session is open so you can review or retry.`);
+        if (typeof App !== 'undefined' && App.switchTab) {
+          await App.switchTab('dev', clone.id, 'sessions');
+        }
+      } else {
+        PlatformUI.toast(err.message);
+        if (btn) {
+          btn.disabled = false;
+          btn.removeAttribute('aria-busy');
+          btn.innerHTML = original;
+        }
+      }
+    }
   },
 
   // "Start session from proposal" — clone the finished headless session

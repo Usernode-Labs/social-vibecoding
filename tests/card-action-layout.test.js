@@ -94,36 +94,37 @@ test('_cardActionsHtml: empty / all-falsy input renders nothing', () => {
 
 const baseIssue = (over) => ({ number: 5, title: 'Fix the thing', ...over });
 
-test('issue card: all actions inline in the shared row, no primary/overflow', () => {
+test('issue card: one primary Create proposal action starts the confirmed generator', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderIssueRow(baseIssue());
   assert.match(html, /gc-card-actions/, 'shared action row present');
   assert.match(html, /giveIssueBounty\(5\)/, 'Pledge kudos present');
-  assert.match(html, /createPrForIssue\(5\)/, 'Create proposal present');
-  assert.match(html, /confirmAutoSession\(5\)/, 'Generate proposal present');
+  assert.doesNotMatch(html, /createPrForIssue\(5\)/, 'manual chat is not a competing card action');
+  assert.match(html, /confirmAutoSession\(5\)/, 'Create proposal uses the confirmed generator');
   assert.match(html, />Create proposal</);
-  assert.match(html, />Generate proposal</);
+  assert.doesNotMatch(html, />Generate proposal</);
   assertNoOverflowMachinery(html);
 });
 
-test('issue card: a ready headless run keeps its contextual label inline (no violet)', () => {
+test('issue card: a ready headless run opens Easy review as its sole proposal action', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderIssueRow(baseIssue({
     headless: { status: 'ready', outcome: 'spec', sessionId: 90 },
   }));
-  assert.match(html, /startFromAutoSession\(90\)[^>]*>Review spec/, 'contextual ready label present');
-  assert.match(html, />Create proposal</, 'Create proposal still present');
+  assert.match(html, /openEasyReview\(5, 90\)[^>]*>Review proposal/, 'Easy review action present');
+  assert.doesNotMatch(html, />Create proposal</, 'no second proposal action while a result is ready');
+  assert.doesNotMatch(html, /startFromAutoSession\(90\)/, 'manual clone moved into Easy review');
   assert.match(html, /giveIssueBounty\(5\)/, 'kudos still present');
   assertNoOverflowMachinery(html);
 });
 
-test('issue card: question-outcome rerun "Generate proposal" stays inline', () => {
+test('issue card: question outcomes also enter Easy review without competing rerun controls', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderIssueRow(baseIssue({
     headless: { status: 'ready', outcome: 'question', sessionId: 91 },
   }));
-  assert.match(html, /startFromAutoSession\(91\)/, 'clone action present');
-  assert.match(html, /confirmAutoSession\(5\)/, 'rerun Generate proposal present');
+  assert.match(html, /openEasyReview\(5, 91\)/, 'question is reviewed before choosing chat or rerun');
+  assert.doesNotMatch(html, /confirmAutoSession\(5\)/, 'rerun lives inside review, not beside it');
   assertNoOverflowMachinery(html);
 });
 
