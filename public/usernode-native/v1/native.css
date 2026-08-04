@@ -78,6 +78,14 @@
   --un-toast-text: #ffffff;
   --un-toast-action: #a78bfa;
 
+  /* Async-state primitives. Apps may override these alongside the other
+     --un-* tokens; their semantic geometry remains part of the v1 kit. */
+  --un-async-surface: color-mix(in srgb, var(--un-group-bg) 78%, transparent);
+  --un-async-text: var(--un-muted);
+  --un-async-error: #b91c1c;
+  --un-skeleton-base: rgba(113, 113, 122, 0.16);
+  --un-skeleton-shine: rgba(255, 255, 255, 0.48);
+
   /* Radii */
   --un-radius: 0.5rem;
   --un-radius-full: 9999px;
@@ -121,6 +129,9 @@
   --un-toast-bg: rgba(58, 58, 82, 0.94);
   --un-toast-text: #f4f4f8;
   --un-toast-action: #c4b5fd;
+  --un-async-error: #fca5a5;
+  --un-skeleton-base: rgba(161, 161, 170, 0.18);
+  --un-skeleton-shine: rgba(244, 244, 245, 0.16);
 }
 
 /* ── Touch polish ──────────────────────────────────────────────────────
@@ -534,6 +545,84 @@ html.un-android .un-switch:checked:active::before {
   z-index: 2;
   pointer-events: none;
 }
+
+/* ── Async states ─────────────────────────────────────────────────────
+   unNative.createAsyncState() renders into an app-owned container. These
+   classes are also useful as plain markup for apps that manage state
+   themselves. Text is provided with textContent by the JS helper: never
+   interpolate untrusted error strings through innerHTML. */
+
+.un-async-state {
+  min-height: 7rem;
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+.un-async-state-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.45rem;
+  max-width: 30rem;
+  padding: 1.25rem;
+  color: var(--un-async-text);
+}
+.un-async-title {
+  color: inherit;
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+.un-async-message {
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.un-async-error .un-async-title,
+.un-async-error .un-async-message {
+  color: var(--un-async-error);
+}
+.un-async-spinner {
+  width: 1.25rem;
+  height: 1.25rem;
+  border: 2px solid var(--un-skeleton-base);
+  border-top-color: var(--un-accent);
+  border-radius: var(--un-radius-full);
+  animation: un-async-spin 800ms linear infinite;
+}
+.un-async-retry {
+  margin-top: 0.35rem;
+  min-height: 2.5rem;
+  padding: 0.45rem 0.85rem;
+  border: 1px solid var(--un-accent);
+  border-radius: var(--un-radius);
+  background: transparent;
+  color: var(--un-accent);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.un-async-retry:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+.un-async-skeletons {
+  width: min(100%, 30rem);
+  display: grid;
+  gap: 0.65rem;
+  padding: 1rem;
+}
+.un-skeleton {
+  height: 0.8rem;
+  width: 100%;
+  border-radius: var(--un-radius-full);
+  background: linear-gradient(90deg, var(--un-skeleton-base) 20%, var(--un-skeleton-shine) 50%, var(--un-skeleton-base) 80%);
+  background-size: 200% 100%;
+  animation: un-skeleton-shimmer 1.4s ease-in-out infinite;
+}
+.un-skeleton-title { width: 62%; height: 1.15rem; }
+@keyframes un-async-spin { to { transform: rotate(360deg); } }
+@keyframes un-skeleton-shimmer { to { background-position: -200% 0; } }
 
 /* ── Overlay backdrop (sheets, action sheets, alerts) ──────────────────
    Opacity is JS-driven for gesture-coupled surfaces (rides the sheet's
@@ -1030,6 +1119,10 @@ html.un-android .un-toast.un-in {
   .un-modal,
   .un-alert {
     transition: opacity 180ms ease;
+  }
+  .un-async-spinner,
+  .un-skeleton {
+    animation: none;
   }
   /* Keyboard-inset moves still apply, just without animation. */
   .un-sheet,

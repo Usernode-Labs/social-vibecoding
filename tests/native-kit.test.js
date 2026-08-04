@@ -12,7 +12,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { physics } = require('../public/usernode-native/v1/native.js');
+const { physics, asyncState } = require('../public/usernode-native/v1/native.js');
 
 const {
   PRESETS,
@@ -40,6 +40,28 @@ const {
   zoomPose,
   zoomRectUsable,
 } = physics;
+
+// ── Async-state coordinator (issue #581) ─────────────────────────────
+
+test('async-state tracker lets only the latest run settle', () => {
+  const tracker = asyncState.createTracker();
+  const first = tracker.begin();
+  const second = tracker.begin();
+  assert.equal(tracker.pending(), true);
+  assert.equal(tracker.settle(first), false, 'a late first completion must be ignored');
+  assert.equal(tracker.pending(), true, 'late work cannot clear current pending state');
+  assert.equal(tracker.settle(second), true);
+  assert.equal(tracker.pending(), false);
+});
+
+test('async-state tracker invalidates an old retry before a replacement state', () => {
+  const tracker = asyncState.createTracker();
+  const retry = tracker.begin();
+  tracker.invalidate(); // explicit loading/empty/error/ready state wins
+  assert.equal(tracker.isCurrent(retry), false);
+  assert.equal(tracker.settle(retry), false, 'invalidated retry cannot repaint the container');
+  assert.equal(tracker.pending(), false);
+});
 
 // ── Spring integrator ──────────────────────────────────────────────────
 

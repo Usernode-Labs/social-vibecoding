@@ -175,6 +175,19 @@
         <p id="toast-result" class="text-xs text-zinc-500 mt-2">iOS/desktop: bottom capsule. Android: snackbar. Tap "Toast" repeatedly — a new toast replaces the old one (last-writer-wins). A <em>priority</em> toast holds the slot: fire "Undo flow", then tap "Toast" while the Undo is up — it waits its turn and appears after the undo window resolves instead of eating the Undo button.</p>
       </section>
 
+      <!-- Async states / local boundary -->
+      <section>
+        <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Async states &amp; retry</h2>
+        <div class="flex flex-wrap gap-3 mb-3">
+          <button id="async-load-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium text-white" style="background:var(--un-accent)">Load</button>
+          <button id="async-skeleton-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Skeleton</button>
+          <button id="async-empty-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Empty</button>
+          <button id="async-error-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Fail once</button>
+        </div>
+        <div id="async-state-demo" class="rounded-xl border border-zinc-200 dark:border-zinc-800"></div>
+        <p class="text-xs text-zinc-500 mt-2">A framework-free, in-place state controller: the failure offers a retry, and a later load always wins if an older request resolves after it.</p>
+      </section>
+
       <!-- Pull to refresh -->
       <section>
         <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Pull to refresh (touch devices)</h2>
@@ -711,6 +724,48 @@
           },
         });
       });
+
+      // ── Async states / local error boundary ───────────────────────
+      var asyncDemo = unNative.createErrorBoundary(document.getElementById('async-state-demo'), {
+        loading: 'Loading example…',
+        emptyTitle: 'No saved items',
+        emptyMessage: 'Create an item to see it here.',
+        errorMessage: 'The example request did not finish. You can safely retry it.',
+      });
+      function renderAsyncResult(value) {
+        var row = document.createElement('div');
+        row.className = 'px-4 py-3 text-sm';
+        row.textContent = value;
+        return row;
+      }
+      document.getElementById('async-load-btn').addEventListener('click', function () {
+        asyncDemo.guard(function () {
+          return new Promise(function (resolve) {
+            setTimeout(function () { resolve('Loaded at ' + new Date().toLocaleTimeString()); }, 700);
+          });
+        }, renderAsyncResult);
+      });
+      document.getElementById('async-skeleton-btn').addEventListener('click', function () {
+        asyncDemo.clear();
+        // Boundary state exposes the underlying container only through its
+        // local controller, so this standalone state is intentionally shown
+        // with the controller API as a second usage pattern.
+        var state = unNative.createAsyncState(document.getElementById('async-state-demo'));
+        state.loading({ skeleton: true, rows: 3, label: 'Loading example rows' });
+      });
+      document.getElementById('async-empty-btn').addEventListener('click', function () {
+        var state = unNative.createAsyncState(document.getElementById('async-state-demo'));
+        state.empty({ title: 'No saved items', message: 'Create an item to see it here.' });
+      });
+      document.getElementById('async-error-btn').addEventListener('click', function () {
+        var tries = 0;
+        asyncDemo.guard(function () {
+          tries += 1;
+          if (tries === 1) return Promise.reject(new Error('Demo failure'));
+          return Promise.resolve('Retry succeeded.');
+        }, renderAsyncResult);
+      });
+      asyncDemo.clear();
 
       // ── Pull-to-refresh list ───────────────────────────────────────
       var ptrList = document.getElementById('ptr-list');

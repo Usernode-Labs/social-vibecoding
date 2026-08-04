@@ -72,6 +72,12 @@
  *                                        onClose?(reason) }; a priority
  *                                        toast holds the slot for undo
  *                                        flows)
+ *   unNative.createAsyncState(el, opts?) — in-place loading, skeleton,
+ *                                        empty, ready and recoverable error
+ *                                        states; run(task, renderReady)
+ *                                        prevents stale async completions
+ *   unNative.createErrorBoundary(el, opts?) — local guard/capture wrapper
+ *                                        for app-owned async/render work
  *   unNative.attachNavBar(bar, opts)  — blurred nav bar + large-title collapse
  *   unNative.attachKeyboardAvoidance(scrollEl, opts) — keyboard avoidance
  *                                        for a fixed-shell app's content
@@ -569,9 +575,36 @@
     zoomRectUsable: zoomRectUsable,
   };
 
+  // Small DOM-free coordinator behind createAsyncState(). Keeping this
+  // separate makes the important async guarantees unit-testable without a
+  // browser: a newer run always wins, and retry cannot double-start work.
+  function createAsyncStateTracker() {
+    var generation = 0;
+    var pending = false;
+    return {
+      begin: function () {
+        generation += 1;
+        pending = true;
+        return generation;
+      },
+      isCurrent: function (token) { return token === generation; },
+      settle: function (token) {
+        if (token !== generation) return false;
+        pending = false;
+        return true;
+      },
+      invalidate: function () {
+        generation += 1;
+        pending = false;
+        return generation;
+      },
+      pending: function () { return pending; },
+    };
+  }
+
   // Node (unit tests): export the math and stop — no DOM below this line.
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { physics: physics };
+    module.exports = { physics: physics, asyncState: { createTracker: createAsyncStateTracker } };
   }
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
 
@@ -3659,6 +3692,217 @@
   }
 
   /* ────────────────────────────────────────────────────────────────────
+   * Async states — small, framework-free loading / empty / error surfaces.
+   * Apps own their data and rendering; this helper owns only the temporary
+   * state inside one supplied container. It deliberately does not install
+   * global error handlers, which would make unrelated page failures vanish.
+   * ──────────────────────────────────────────────────────────────────── */
+
+  function asyncNoop() {
+    return {
+      loading: function () {}, empty: function () {}, error: function () {},
+      ready: function () {}, clear: function () {}, run: function () { return Promise.resolve(); },
+      get state() { return 'idle'; },
+    };
+  }
+
+  function asyncMessage(value, fallback) {
+    if (typeof value === 'function') {
+      try { value = value(); } catch (e) { value = null; }
+    }
+    return value == null || value === '' ? fallback : String(value);
+  }
+
+  function appendAsyncContent(container, content) {
+    if (content == null) return;
+    if (content.nodeType) container.appendChild(content);
+    else container.textContent = String(content);
+  }
+
+  // createAsyncState(container, { loading?, empty?, errorMessage?,
+  // retryLabel? }) -> { loading, empty, error, ready, clear, run, state }.
+  // `run` consumes a task function and never rethrows its rejection: errors
+  // become a recoverable in-place state. A supplied renderReady(value,
+  // container, controller) may return a Node or text, or render itself.
+  function createAsyncState(container, options) {
+    if (!container || container.nodeType !== 1) {
+      console.warn('[unNative] createAsyncState: container must be an Element — helper disabled.');
+      return asyncNoop();
+    }
+    var opts = options || {};
+    var tracker = createAsyncStateTracker();
+    var currentState = 'idle';
+    var retryBusy = false;
+    var retryTask = null;
+    var retryRender = null;
+    var controller;
+
+    function reset(kind, busy) {
+      while (container.firstChild) container.removeChild(container.firstChild);
+      container.className = (container.className + ' un-async-state').trim();
+      container.setAttribute('data-un-async-state', kind);
+      container.setAttribute('aria-busy', busy ? 'true' : 'false');
+      currentState = kind;
+    }
+
+    function addCopy(kind, title, message) {
+      var card = document.createElement('div');
+      card.className = 'un-async-state-card un-async-' + kind;
+      var heading = document.createElement('div');
+      heading.className = 'un-async-title';
+      heading.textContent = title;
+      card.appendChild(heading);
+      if (message) {
+        var body = document.createElement('div');
+        body.className = 'un-async-message';
+        body.textContent = message;
+        card.appendChild(body);
+      }
+      container.appendChild(card);
+      return card;
+    }
+
+    function showLoading(details) {
+      tracker.invalidate();
+      retryTask = null;
+      reset('loading', true);
+      var useSkeleton = details && details.skeleton;
+      if (useSkeleton) {
+        var skeleton = document.createElement('div');
+        skeleton.className = 'un-async-skeletons';
+        skeleton.setAttribute('aria-label', asyncMessage(details.label, opts.loading || 'Loading'));
+        for (var i = 0; i < (details.rows || 3); i++) {
+          var line = document.createElement('div');
+          line.className = 'un-skeleton' + (i === 0 ? ' un-skeleton-title' : '');
+          skeleton.appendChild(line);
+        }
+        container.appendChild(skeleton);
+      } else {
+        var card = addCopy('loading', asyncMessage(details && details.label, opts.loading || 'Loading'), '');
+        card.setAttribute('role', 'status');
+        card.setAttribute('aria-live', 'polite');
+        var spinner = document.createElement('span');
+        spinner.className = 'un-async-spinner';
+        spinner.setAttribute('aria-hidden', 'true');
+        card.insertBefore(spinner, card.firstChild);
+      }
+      return controller;
+    }
+
+    function showEmpty(details) {
+      tracker.invalidate();
+      retryTask = null;
+      reset('empty', false);
+      var input = details || {};
+      addCopy('empty', asyncMessage(input.title, opts.emptyTitle || 'Nothing here yet'),
+        asyncMessage(input.message, opts.emptyMessage || ''));
+      return controller;
+    }
+
+    function showError(error, retry, details) {
+      tracker.invalidate();
+      retryTask = typeof retry === 'function' ? retry : null;
+      retryRender = null;
+      reset('error', false);
+      var input = details || {};
+      var message = input.message;
+      if (message == null && typeof opts.errorMessage === 'function') {
+        try { message = opts.errorMessage(error); } catch (e) { message = null; }
+      }
+      var card = addCopy('error', asyncMessage(input.title, opts.errorTitle || 'Something went wrong'),
+        asyncMessage(message, typeof opts.errorMessage === 'string' ? opts.errorMessage : 'Please try again.'));
+      card.setAttribute('role', 'alert');
+      if (retryTask) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'un-async-retry';
+        button.textContent = asyncMessage(input.retryLabel, opts.retryLabel || 'Try again');
+        button.addEventListener('click', function () {
+          if (retryBusy || !retryTask) return;
+          retryBusy = true;
+          button.disabled = true;
+          var task = retryTask;
+          retryBusy = false;
+          run(task, retryRender);
+        });
+        card.appendChild(button);
+      }
+      return controller;
+    }
+
+    function showReady(value, renderReady) {
+      reset('ready', false);
+      retryTask = null;
+      var content = value;
+      if (typeof renderReady === 'function') {
+        try { content = renderReady(value, container, controller); } catch (err) {
+          showError(err);
+          return controller;
+        }
+      }
+      appendAsyncContent(container, content);
+      return controller;
+    }
+
+    function run(task, renderReady) {
+      if (typeof task !== 'function') {
+        showError(new Error('Async task must be a function.'));
+        return Promise.resolve(undefined);
+      }
+      var token = tracker.begin();
+      // render loading without invalidating the run token we just allocated.
+      while (container.firstChild) container.removeChild(container.firstChild);
+      container.className = (container.className + ' un-async-state').trim();
+      container.setAttribute('data-un-async-state', 'loading');
+      container.setAttribute('aria-busy', 'true');
+      currentState = 'loading';
+      var loadingCard = addCopy('loading', asyncMessage(opts.loading, 'Loading'), '');
+      loadingCard.setAttribute('role', 'status');
+      loadingCard.setAttribute('aria-live', 'polite');
+      var spinner = document.createElement('span');
+      spinner.className = 'un-async-spinner';
+      spinner.setAttribute('aria-hidden', 'true');
+      loadingCard.insertBefore(spinner, loadingCard.firstChild);
+      return Promise.resolve().then(task).then(function (value) {
+        if (!tracker.settle(token)) return undefined;
+        return showReady(value, renderReady);
+      }, function (error) {
+        if (!tracker.settle(token)) return undefined;
+        retryTask = task;
+        retryRender = renderReady;
+        showError(error, function () { return task(); });
+        retryTask = task;
+        retryRender = renderReady;
+        return undefined;
+      });
+    }
+
+    controller = {
+      loading: showLoading,
+      empty: showEmpty,
+      error: showError,
+      ready: showReady,
+      clear: function () { tracker.invalidate(); retryTask = null; reset('idle', false); return controller; },
+      run: run,
+      get state() { return currentState; },
+    };
+    return controller;
+  }
+
+  // A local error boundary for work explicitly passed to it. Unlike a
+  // framework boundary it cannot observe arbitrary descendants; callers use
+  // guard() around their Promise-producing work or capture() in event code.
+  function createErrorBoundary(container, options) {
+    var state = createAsyncState(container, options);
+    return {
+      capture: function (error, retry) { state.error(error, retry); return error; },
+      guard: function (task, renderReady) { return state.run(task, renderReady); },
+      clear: state.clear,
+      get state() { return state.state; },
+    };
+  }
+
+  /* ────────────────────────────────────────────────────────────────────
    * Nav bars — blurred compact bar with hairline-on-scroll, optional
    * collapsing large title.
    * ──────────────────────────────────────────────────────────────────── */
@@ -4050,6 +4294,8 @@
     menu: menu,
     alert: alertDialog,
     toast: toast,
+    createAsyncState: createAsyncState,
+    createErrorBoundary: createErrorBoundary,
     attachNavBar: attachNavBar,
     attachKeyboardAvoidance: attachKeyboardAvoidance,
     gestures: gestures,
