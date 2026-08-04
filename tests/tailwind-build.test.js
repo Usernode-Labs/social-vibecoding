@@ -19,9 +19,12 @@
 //     values, opacity modifiers, dark:/group-hover: variants) are present, so
 //     a content-glob regression shows up as a failing test rather than one
 //     subtly unstyled badge on one screen.
-//  4. WIRING — index.html links the stylesheet ahead of the native kit and
-//     app.css (cascade order the shell depends on), references each vendored
-//     library, and carries no CDN reference at all.
+//  4. WIRING — index.html links the stylesheet AFTER the native kit and
+//     app.css (the cascade position the Play CDN's appended <style> had, and
+//     which app.css was authored against), references each vendored library,
+//     and carries no CDN reference at all.
+//  5. WHOLE LITERALS — no class attribute glues an interpolation onto a
+//     utility prefix, since the extractor is a regex and cannot see those.
 //
 // Deliberately requires nothing from node_modules: freshness is verifiable
 // without tailwindcss installed, so this runs in any checkout.
@@ -129,17 +132,82 @@ test('sentinel classes used by the shell are present', () => {
   }
 });
 
-test('index.html links the compiled stylesheet before the kit and app.css', () => {
-  const tailwindAt = indexHtml.indexOf('href="/css/tailwind.css"');
+// Cascade contract. The Play CDN did NOT inject its <style> where its
+// <script> tag sat: it compiled asynchronously and then called
+// `document.head.append(...)`, so the generated stylesheet always landed at
+// the END of <head> — after native.css and app.css. Utilities therefore won
+// every equal-specificity tie against those two, and both were authored
+// against exactly that cascade.
+//
+// The first cut of the compiled build linked /css/tailwind.css at the TOP of
+// <head> on the (wrong) assumption that the CDN injected there, which
+// inverted every one of those ties. Measured in a real browser against a
+// probe page reproducing the old head order, `.attr-chip` on the dev screen
+// went from 10.4px/500/tinted to 16px/400/transparent, because app.css's
+// `.attr-chip { font: inherit; background: none }` started outranking
+// `text-[0.65rem] font-medium bg-zinc-500/10` — that is what broke the
+// "Set priority" / "Set category" / "Unassigned" chips.
+//
+// So: the compiled stylesheet must be linked LAST.
+test('index.html links the compiled stylesheet AFTER the kit and app.css', () => {
+  const tailwindAt = indexHtml.indexOf('<link rel="stylesheet" href="/css/tailwind.css">');
   const kitAt = indexHtml.indexOf('href="/usernode-native/v1/native.css"');
   const appAt = indexHtml.indexOf('href="/css/app.css"');
   assert.ok(tailwindAt > -1, 'index.html must link /css/tailwind.css');
   assert.ok(kitAt > -1 && appAt > -1, 'index.html must still link the kit and app.css');
-  // Cascade contract: utilities first, so the kit's --un-* overrides and
-  // app.css keep winning equal-specificity conflicts (as they did when the
-  // Play CDN injected its <style> at the top of <head>).
-  assert.ok(tailwindAt < kitAt, '/css/tailwind.css must be linked BEFORE the native kit stylesheet');
-  assert.ok(tailwindAt < appAt, '/css/tailwind.css must be linked BEFORE /css/app.css');
+  assert.ok(tailwindAt > kitAt, '/css/tailwind.css must be linked AFTER the native kit stylesheet');
+  assert.ok(tailwindAt > appAt, '/css/tailwind.css must be linked AFTER /css/app.css');
+});
+
+// The usernode-native demo page loads the same compiled stylesheet beside the
+// kit's own CSS and needs the identical ordering for the identical reason.
+test('the native-kit demo page links the compiled stylesheet after native.css', () => {
+  const demo = fs.readFileSync(
+    path.join(ROOT, 'public', 'usernode-native', 'v1', 'demo.html'), 'utf8');
+  const tailwindAt = demo.indexOf('href="/css/tailwind.css"');
+  const kitAt = demo.indexOf('href="./native.css"');
+  assert.ok(tailwindAt > -1 && kitAt > -1, 'demo.html must link both stylesheets');
+  assert.ok(tailwindAt > kitAt, '/css/tailwind.css must be linked AFTER ./native.css in demo.html');
+});
+
+// Every class name in the shell must be a COMPLETE literal in source: the
+// extractor is a regex over source text, so `'bg-' + tone + '-500'` compiles
+// to nothing and renders unstyled. Conditionals must pick whole strings out
+// of a map/ternary. This scans the same files the content globs do and fails
+// on a class attribute that glues an interpolation to a class-name fragment.
+test('no Tailwind class name is assembled from fragments at runtime', () => {
+  const scanned = [
+    path.join(ROOT, 'public', 'index.html'),
+    path.join(ROOT, 'public', 'usernode-native', 'v1', 'demo.html'),
+  ];
+  (function walk(dir) {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name.endsWith('.js')) scanned.push(p);
+    }
+  })(path.join(ROOT, 'public', 'js'));
+
+  // A Tailwind utility prefix glued directly to an interpolation, e.g.
+  // class="bg-${tone}-500" or class="${size}:hidden". App-defined hook
+  // classes (`gc-vote-btn-yes${...}`) are fine — they're styled by app.css,
+  // not compiled — so only the known utility prefixes are flagged.
+  const UTILITY = '(?:bg|text|border|ring|shadow|from|via|to|w|h|min-w|min-h|max-w|max-h'
+    + '|p|px|py|pt|pb|pl|pr|m|mx|my|mt|mb|ml|mr|gap|grid-cols|grid-rows|col-span|row-span'
+    + '|space-x|space-y|rounded|opacity|z|inset|translate|scale|rotate|leading|tracking'
+    + '|font|basis|order|duration|delay|divide|fill|stroke|blur|line-clamp|animate)';
+  const glued = new RegExp(`\\b${UTILITY}-\\$\\{`);
+  const offenders = [];
+  for (const file of scanned) {
+    const src = fs.readFileSync(file, 'utf8');
+    for (const m of src.matchAll(/class=(?:"([^"]*)"|'([^']*)'|`([^`]*)`)/g)) {
+      const value = m[1] !== undefined ? m[1] : (m[2] !== undefined ? m[2] : m[3]);
+      if (glued.test(value)) offenders.push(`${path.relative(ROOT, file)}: ${value.slice(0, 80)}`);
+    }
+  }
+  assert.deepEqual(offenders, [],
+    'these class attributes build a utility name from fragments, which the '
+    + 'compiler cannot see — pick whole class strings out of a map or ternary');
 });
 
 test('index.html loads nothing from a CDN and has no inline config left', () => {
