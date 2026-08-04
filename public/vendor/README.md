@@ -19,6 +19,13 @@ attributes are recorded here instead — re-verify any row against npm with:
 
     npm pack <package>@<version>   # then sha384 the dist file
 
+The `marked` and `dompurify` digests below are **identical to the
+`integrity` attributes the old jsdelivr tags carried**, i.e. these copies
+are byte-for-byte what the CDN was serving. The `qrcodejs` digest matches
+`qrcodejs@1.0.0` on npm — an improvement on the old tag, which pulled an
+UNPINNED GitHub ref (`/gh/davidshimjs/qrcodejs/qrcode.min.js`) with no
+integrity attribute at all.
+
 | File | Package | Version | Source path in package | sha384 (base64) | Size |
 |---|---|---|---|---|---|
 | `marked-15.0.12.min.js` | `marked` | 15.0.12 | `marked.min.js` | `948ahk4ZmxYVYOc+rxN1H2gM1EJ2Duhp7uHtZ4WSLkV4Vtx5MUqnV+l7u9B+jFv+` | 39.0 KB |

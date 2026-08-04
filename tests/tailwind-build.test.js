@@ -32,6 +32,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const { expectedStamp, readStamp, OUTPUT_FILE } = require('../scripts/tailwind-stamp');
 
@@ -158,6 +159,31 @@ test('every vendored library is referenced and present on disk', () => {
   const provenance = fs.readFileSync(readme, 'utf8');
   for (const rel of VENDOR_FILES) {
     assert.ok(provenance.includes(path.basename(rel)), `README.md should record provenance for ${rel}`);
+  }
+});
+
+// The vendored bytes are what the browser actually runs, and dropping the
+// `integrity` attributes means nothing verifies them at load time any more.
+// This is the replacement check: the file on disk must hash to the digest
+// its own provenance row claims. It catches a hand-patched vendored library,
+// a half-finished version bump, and a README that has drifted away from the
+// bytes beside it (which is exactly how this file first went stale — the
+// generator was edited after it had already been run).
+test('each vendored library matches the sha384 recorded in its provenance row', () => {
+  const provenance = fs.readFileSync(path.join(ROOT, 'public', 'vendor', 'README.md'), 'utf8');
+  for (const rel of VENDOR_FILES) {
+    const name = path.basename(rel);
+    // Row shape: | `file` | `pkg` | version | `src path` | `sha384` | size |
+    const row = provenance.split('\n').find((l) => l.startsWith(`| \`${name}\``));
+    assert.ok(row, `README.md has no provenance row for ${name}`);
+    const digest = row.split('|')[5].trim().replace(/`/g, '');
+    assert.match(digest, /^[A-Za-z0-9+/]{60,}={0,2}$/, `${name}: provenance row has no sha384 digest`);
+    const actual = crypto.createHash('sha384')
+      .update(fs.readFileSync(path.join(ROOT, 'public', rel.replace(/^\//, ''))))
+      .digest('base64');
+    assert.equal(actual, digest,
+      `${name} does not match its recorded sha384 — re-run \`npm run vendor:assets\` `
+      + '(or, if the file was edited by hand, restore it: vendored copies are verbatim upstream)');
   }
 });
 
