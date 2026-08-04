@@ -5,7 +5,7 @@ Platform-shell laws were ratified on 2026-07-31 at
 `3f972005def9e2a580373ae2f14a8836f0f92e78c661bd846107976654ac7a5c`.
 Receipt: `a2c93c597a7966312e4edc4798e3d6edea6b7cf66d6e4a442e6ced99fc06dffc`.
 
-Quiet Money was owner-locked on 2026-08-03 in Buzz event
+Quiet UI was owner-locked on 2026-08-03 in Buzz event
 `9626471f2ea679b95328ba4cfa940dcee1bf59cdfbce6dfab5ffa44decabb76c`
 from baseline `49e5e47f89329bfbd999cec2ba6b516d622ee712`.
 

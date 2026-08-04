@@ -14,7 +14,7 @@
       "file": "index.html",
       "kind": "self-contained-html",
       "bytes": 216136,
-      "sha256": "e92e1164acd7699df8f792b4f083b7fa2547d04c23230ad6390ca49c2329e190"
+      "sha256": "199e1f96179ae7c3a03dc609353e47e465b8e4bb4752615d3a8d77e79fdaa509"
     },
     {
       "file": "README.md",
@@ -26,7 +26,7 @@
       "file": "claims.json",
       "kind": "claim-manifest",
       "bytes": 22858,
-      "sha256": "e940119b2dae5db7cf666bcecc4ae5c1dce7d1fed72e319932e7163420cc526d"
+      "sha256": "5b3393c6c5d25eee118d6353b3c481c8fb08d4536950449dc4b91030aed97fb2"
     },
     {
       "file": "capture-manifest.json",
@@ -55,8 +55,8 @@
     {
       "file": "pr-case.pdf",
       "kind": "portable-document",
-      "bytes": 745861,
-      "sha256": "74564008424ce0933dc7339767e1596a3d5611c6df953a0b07f13393191a831d",
+      "bytes": 746126,
+      "sha256": "13392395b6a3a17223cb01ed61f0286347734c2821a052dcf6b7a81d08b08878",
       "pages": 15,
       "aspectRatio": 1.7774617845716316
     },
@@ -149,8 +149,8 @@
     {
       "file": "slides/07-lean-mechanical-loop.png",
       "kind": "slide-image",
-      "bytes": 126294,
-      "sha256": "1c18b60c743aede8da5fbb5a29d83c25244232cb1c00f16e68ab69ba444b87ea",
+      "bytes": 126075,
+      "sha256": "8d9bb86d711c3a18fe125208550570513ef3c667bde5ccbcf5ea88c1a0966f88",
       "slideId": "lean-mechanical-loop",
       "width": 1600,
       "height": 900
@@ -212,8 +212,8 @@
     {
       "file": "slides/14-appendix-2.png",
       "kind": "slide-image",
-      "bytes": 126811,
-      "sha256": "d9c3f698c7fc6a36201d48a2e7c21e4159c47b62cf053d37b6a90f2d5bc43579",
+      "bytes": 126713,
+      "sha256": "9f488cf5741831030f8ff38bf3a4a28ee61d5fd4f59e57767e9968adf84df033",
       "slideId": "appendix-2",
       "width": 1600,
       "height": 900
@@ -239,8 +239,8 @@
     {
       "file": "images/pr-case-live-loop.png",
       "kind": "pull-request-image",
-      "bytes": 126294,
-      "sha256": "1c18b60c743aede8da5fbb5a29d83c25244232cb1c00f16e68ab69ba444b87ea",
+      "bytes": 126075,
+      "sha256": "8d9bb86d711c3a18fe125208550570513ef3c667bde5ccbcf5ea88c1a0966f88",
       "slideId": "lean-mechanical-loop",
       "width": 1600,
       "height": 900

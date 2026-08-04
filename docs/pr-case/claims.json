@@ -5,7 +5,7 @@
     "comparisonBranchRevision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
     "projectionAuthority": {
       "tokenHarness": "sha256:e497489ef8db686bcf3237eb294ef4c056be458b31aa4acd83c7764a79febb18",
-      "contextHarness": "sha256:e8c4526c93ee95d9de3e9b4070d21dbd04190101cb43abeb519af1dd66fc0ac3",
+      "contextHarness": "sha256:65024a7ecc1fc9568a545a26e7efe85a73dfa2aecb6128781f5fc53ee53c6538",
       "capture": "sha256:08d47a72c517d89c3363c38c53fd8471ee994d0e84d4f9bb2c0bfa9473da1637"
     }
   },
@@ -48,7 +48,7 @@
     "context": {
       "alwaysLoadedBytes": 17378,
       "alwaysLoadedRatchetBytes": 17427,
-      "componentReviewBytes": 21260,
+      "componentReviewBytes": 21257,
       "componentReviewRatchetBytes": 21268,
       "ownerCeilingBytes": 100000
     },
@@ -348,41 +348,41 @@
     {
       "id": "R7",
       "slideId": "lean-mechanical-loop",
-      "statement": "Component-review context is 21260 bytes under a 21268-byte ratchet and 100000-byte owner ceiling.",
+      "statement": "Component-review context is 21257 bytes under a 21268-byte ratchet and 100000-byte owner ceiling.",
       "metrics": [
         {
           "id": "alwaysLoadedBytes",
           "value": 17378,
           "unit": "bytes",
-          "revision": "sha256:e8c4526c93ee95d9de3e9b4070d21dbd04190101cb43abeb519af1dd66fc0ac3",
+          "revision": "sha256:65024a7ecc1fc9568a545a26e7efe85a73dfa2aecb6128781f5fc53ee53c6538",
           "scope": "current projection"
         },
         {
           "id": "alwaysLoadedRatchetBytes",
           "value": 17427,
           "unit": "bytes",
-          "revision": "sha256:e8c4526c93ee95d9de3e9b4070d21dbd04190101cb43abeb519af1dd66fc0ac3",
+          "revision": "sha256:65024a7ecc1fc9568a545a26e7efe85a73dfa2aecb6128781f5fc53ee53c6538",
           "scope": "current projection"
         },
         {
           "id": "componentReviewBytes",
-          "value": 21260,
+          "value": 21257,
           "unit": "bytes",
-          "revision": "sha256:e8c4526c93ee95d9de3e9b4070d21dbd04190101cb43abeb519af1dd66fc0ac3",
+          "revision": "sha256:65024a7ecc1fc9568a545a26e7efe85a73dfa2aecb6128781f5fc53ee53c6538",
           "scope": "current projection"
         },
         {
           "id": "componentReviewRatchetBytes",
           "value": 21268,
           "unit": "bytes",
-          "revision": "sha256:e8c4526c93ee95d9de3e9b4070d21dbd04190101cb43abeb519af1dd66fc0ac3",
+          "revision": "sha256:65024a7ecc1fc9568a545a26e7efe85a73dfa2aecb6128781f5fc53ee53c6538",
           "scope": "current projection"
         },
         {
           "id": "ownerCeilingBytes",
           "value": 100000,
           "unit": "bytes",
-          "revision": "sha256:e8c4526c93ee95d9de3e9b4070d21dbd04190101cb43abeb519af1dd66fc0ac3",
+          "revision": "sha256:65024a7ecc1fc9568a545a26e7efe85a73dfa2aecb6128781f5fc53ee53c6538",
           "scope": "owner policy"
         }
       ],

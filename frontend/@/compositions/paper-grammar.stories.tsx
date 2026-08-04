@@ -58,7 +58,7 @@ function PaperGrammar() {
         <header className="flex flex-col gap-5 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-8 sm:py-6" data-surface="print">
           <div className="flex min-w-0 flex-col gap-1">
             <p className="text-xs font-medium tracking-[0.16em] text-muted-foreground uppercase" data-type-role="tertiary">Personal treasury</p>
-            <h1 className="text-2xl font-semibold tracking-tight">Quiet money</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">Quiet UI</h1>
             <p className="max-w-xl text-base text-muted-foreground" data-type-role="prose">One Paper carries the decisions. Containers group printed content by compositing with their immediate context.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">

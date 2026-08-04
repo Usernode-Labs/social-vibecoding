@@ -1,0 +1,176 @@
+{
+  "version": 1,
+  "citations": [
+    {
+      "id": "surface-nesting-scanner",
+      "page": "surfaces",
+      "lawSection": "1. Surface role",
+      "kind": "scanner-rule",
+      "rule": "no-paper-in-paper",
+      "check": "check:interface-laws",
+      "test": {
+        "path": "scripts/interface-law-tools.test.mjs",
+        "name": "paper, container, spacing, margin, radius, and primitive rules are structural"
+      },
+      "catches": "A statically declared Paper nested inside another Paper in governed component and feature source.",
+      "misses": "It does not prove that every route has exactly one Paper or resolve dynamic wrappers."
+    },
+    {
+      "id": "surface-rendered-specimen",
+      "page": "surfaces",
+      "lawSection": "1. Surface role",
+      "kind": "rendered-test",
+      "check": "test:storybook",
+      "story": {
+        "path": "@/compositions/paper-grammar.stories.tsx",
+        "export": "DesktopLight"
+      },
+      "catches": "The integrated specimen has one Paper, compositing Containers, distinct Canvas and Paper, and no nested Paper.",
+      "misses": "A passing specimen does not prove every product route uses the same roles."
+    },
+    {
+      "id": "surface-route-count-review",
+      "page": "surfaces",
+      "lawSection": "1. Surface role",
+      "kind": "review-only",
+      "review": {
+        "path": "design-system/interface-laws.md",
+        "instruction": "Review each route composition for exactly one shell-owned Paper and no Card-as-layout substitution."
+      },
+      "catches": "Human review can judge whether a route assigns the semantic surface roles correctly.",
+      "misses": "There is no global static rule requiring exactly one Paper per route."
+    },
+    {
+      "id": "ink-role-scanner",
+      "page": "ink-levels",
+      "lawSection": "1. Surface role",
+      "kind": "scanner-rule",
+      "rule": "invalid-surface-role",
+      "check": "check:interface-laws",
+      "test": {
+        "path": "scripts/interface-law-tools.test.mjs",
+        "name": "status colour is ink rather than a sixth surface role"
+      },
+      "catches": "Invalid surface markers such as treating status as a structural surface.",
+      "misses": "It cannot infer whether arbitrary painted content semantically represents status."
+    },
+    {
+      "id": "ink-rendered-contrast",
+      "page": "ink-levels",
+      "lawSection": "1. Surface role",
+      "kind": "rendered-test",
+      "check": "test:storybook",
+      "story": {
+        "path": "@/components/ui/alert.stories.tsx",
+        "export": "StatusTonesLight"
+      },
+      "catches": "The rendered status treatments use governed ink and compositing Container treatments with alpha below one.",
+      "misses": "It does not assert the dark story or judge whether a product chose the correct consequence level."
+    },
+    {
+      "id": "type-rendered-ramp",
+      "page": "type-ramp",
+      "lawSection": "3. Type and target roles",
+      "kind": "rendered-test",
+      "check": "test:storybook",
+      "story": {
+        "path": "@/components/stream-row.stories.tsx",
+        "export": "ReadAndUnread"
+      },
+      "catches": "The representative stream row renders the governed title and functional-metadata sizes.",
+      "misses": "It does not scan the product for every misuse of tertiary type."
+    },
+    {
+      "id": "type-role-review",
+      "page": "type-ramp",
+      "lawSection": "3. Type and target roles",
+      "kind": "review-only",
+      "review": {
+        "path": "design-system/interface-laws.md",
+        "instruction": "Review subtitles, alerts, actions, and mobile-critical facts for forbidden tertiary sizing."
+      },
+      "catches": "Review can judge whether information importance matches its assigned type role.",
+      "misses": "No scanner currently enforces the semantic 16/14/12 role assignment product-wide."
+    },
+    {
+      "id": "spacing-caller-margin",
+      "page": "spacing-rhythm",
+      "lawSection": "2. Radius and spacing",
+      "kind": "scanner-rule",
+      "rule": "no-caller-margin",
+      "check": "check:interface-laws",
+      "test": {
+        "path": "scripts/interface-law-tools.test.mjs",
+        "name": "paper, container, spacing, margin, radius, and primitive rules are structural"
+      },
+      "catches": "Literal margin utilities added by callers to governed components.",
+      "misses": "It does not decide whether an ordinary parent gap matches the intended semantic density."
+    },
+    {
+      "id": "spacing-macro-zone",
+      "page": "spacing-rhythm",
+      "lawSection": "2. Radius and spacing",
+      "kind": "scanner-rule",
+      "rule": "macro-spacing-outer-zone",
+      "check": "check:interface-laws",
+      "test": {
+        "path": "scripts/interface-law-tools.test.mjs",
+        "name": "paper, container, spacing, margin, radius, and primitive rules are structural"
+      },
+      "catches": "Annotated macro spacing placed outside an outer layout zone.",
+      "misses": "The rule depends on the author declaring the macro tier and does not infer visual rhythm."
+    },
+    {
+      "id": "spacing-density-review",
+      "page": "spacing-rhythm",
+      "lawSection": "2. Radius and spacing",
+      "kind": "review-only",
+      "review": {
+        "path": "design-system/interface-laws.md",
+        "instruction": "Review tight, compact, standard, and generous relationships in the rendered product context."
+      },
+      "catches": "Review can judge whether spacing expresses the intended relationship.",
+      "misses": "No mechanical mapping exists between every gap utility and the four semantic densities."
+    },
+    {
+      "id": "radius-ladder-scanner",
+      "page": "radius-grouping",
+      "lawSection": "2. Radius and spacing",
+      "kind": "scanner-rule",
+      "rule": "radius-ladder-only",
+      "check": "check:interface-laws",
+      "test": {
+        "path": "scripts/interface-law-tools.test.mjs",
+        "name": "paper, container, spacing, margin, radius, and primitive rules are structural"
+      },
+      "catches": "Off-ladder literal radius utilities in governed JSX class strings.",
+      "misses": "Named radii hidden behind helpers, variants, or dynamic class composition can evade the scan."
+    },
+    {
+      "id": "radius-concentricity-scanner",
+      "page": "radius-grouping",
+      "lawSection": "2. Radius and spacing",
+      "kind": "scanner-rule",
+      "rule": "radius-concentricity",
+      "check": "check:interface-laws",
+      "test": {
+        "path": "scripts/interface-law-tools.test.mjs",
+        "name": "radius enforcement rejects named off-ladder values and non-concentric painted nesting"
+      },
+      "catches": "A directly nested painted surface whose static outer radius is smaller than its inner radius plus uniform inset.",
+      "misses": "It does not resolve asymmetric, dynamic, or deeper geometry and does not judge role appropriateness."
+    },
+    {
+      "id": "radius-role-review",
+      "page": "radius-grouping",
+      "lawSection": "2. Radius and spacing",
+      "kind": "review-only",
+      "review": {
+        "path": "design-system/interface-laws.md",
+        "instruction": "Review large, medium, small, and full radii against the semantic role of the rendered object."
+      },
+      "catches": "Review can distinguish a true pill or independent raised surface from decorative rounding.",
+      "misses": "No scanner can infer the semantic object class from radius alone."
+    }
+  ]
+}

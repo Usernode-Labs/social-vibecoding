@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "generatedFrom": [
+    "design-system/decision-ledger-authority.json",
+    "git log --first-parent 9bcd28a521a06f8226589194235ace1a53708bb1..HEAD"
+  ],
+  "entries": [
+    {
+      "date": "2026-08-03",
+      "decision": "Lock the non-waivable context ceiling and Quiet UI authority.",
+      "originEvent": "9626471f2ea679b95328ba4cfa940dcee1bf59cdfbce6dfab5ffa44decabb76c",
+      "commit": "1ae9d002489234652d7de40008a447d3083d2565",
+      "commitSubject": "Lock Quiet Money authority and context budget",
+      "receiptEvent": "af2bdd5b0c836f2b1bb2b4fd1105d751e9b742624efc9c2e2cd3b7f737cec291",
+      "approvalEvent": "6351307da3aaacd2f2c8dd9115b59baad2844da5590535e75e01ee7f47b16df0"
+    },
+    {
+      "date": "2026-08-03",
+      "decision": "Route component review through target-only progressive discovery.",
+      "originEvent": "9626471f2ea679b95328ba4cfa940dcee1bf59cdfbce6dfab5ffa44decabb76c",
+      "commit": "9589a6fd9b0d314d0f8452dce700d33649087316",
+      "commitSubject": "Route component review through target-only discovery",
+      "receiptEvent": "81e23bb492ed86ff43a0b33704931c88488641e401adcad2753e527ce763ffd6",
+      "approvalEvent": "6351307da3aaacd2f2c8dd9115b59baad2844da5590535e75e01ee7f47b16df0"
+    },
+    {
+      "date": "2026-08-03",
+      "decision": "Enforce interface laws at three speeds, with an exact warning ratchet.",
+      "originEvent": "47be8445c5db5be7b21b309bf4b0b2b92f9012a3eb0db46bcc662ad469ebe775",
+      "commit": "7b107683355a760030a1d034d9935fd6249015e5",
+      "commitSubject": "fix(frontend): complete interface-law enforcement",
+      "receiptEvent": "384250fdb6b04931eb8411342250249e76fce3117d35e66052c20016100b1bf0",
+      "approvalEvent": "6351307da3aaacd2f2c8dd9115b59baad2844da5590535e75e01ee7f47b16df0"
+    },
+    {
+      "date": "2026-08-03",
+      "decision": "Establish one Paper on Canvas as the shell’s visual grammar.",
+      "originEvent": "bb7ae1cb6704683af89398be7570ad1a44a1dd8127dc4a5dc1f646f52a3172aa",
+      "commit": "a728ac322d7383acb433e1cf9bbf495abf3480f4",
+      "commitSubject": "fix(frontend): keep Recess darker than Paper",
+      "receiptEvent": "7966df08c91bdbb8a7f05dfc9598a78eb93dad977dbfb52ef21d5c79785a4a5d",
+      "approvalEvent": "6351307da3aaacd2f2c8dd9115b59baad2844da5590535e75e01ee7f47b16df0"
+    },
+    {
+      "date": "2026-08-03",
+      "decision": "Promote Metric and selected controls into governed components.",
+      "originEvent": "48a7720d29226a375873d5ebf51447313d9a64ce0137bbb92247b9e262ce4888",
+      "commit": "74376559aa228978716e9efe9ecc9a25a9359cda",
+      "commitSubject": "test(frontend): pin ToggleGroup selected rendering",
+      "receiptEvent": "3b7d21cb8607d65236818d6ec7656bc29355accdbb8255975545131b3271d9e6",
+      "approvalEvent": "6351307da3aaacd2f2c8dd9115b59baad2844da5590535e75e01ee7f47b16df0"
+    },
+    {
+      "date": "2026-08-03",
+      "decision": "Adopt compositing Containers for printed content.",
+      "originEvent": "7b8019bf077eec61ea362f61d83062ab0937ec19d9f3840d4929edfe324b82d5",
+      "commit": "259e65bb1d5b72a196f501d025ba3173e0301742",
+      "commitSubject": "Close Container review gaps with production evidence",
+      "receiptEvent": "aa978ce3cddc435083a93e122da3ca6d71174c3106d8e85b326f1505e8f2a591",
+      "approvalEvent": "6351307da3aaacd2f2c8dd9115b59baad2844da5590535e75e01ee7f47b16df0"
+    },
+    {
+      "date": "2026-08-03",
+      "decision": "Enforce compositing surface authority across the shell.",
+      "originEvent": "fcdd383cf959c1eb0ba4a6df344c85534c7a1efe82f1392aa7e4f5633ce4d6d0",
+      "commit": "039d47decd07b564adba7caeed2a6eca217a5737",
+      "commitSubject": "Enforce compositing surface authority",
+      "receiptEvent": "edeb0f60e14297d301352045a4e5776ccca15cf190415fad90fb47f6fbebd2ce",
+      "approvalEvent": "6351307da3aaacd2f2c8dd9115b59baad2844da5590535e75e01ee7f47b16df0"
+    },
+    {
+      "date": "2026-08-04",
+      "decision": "Prevent persistent mobile navigation from occluding Paper.",
+      "originEvent": "3a559afdc1dcc53437aab75f2f51043c9553470e6696ebf6d0ee2a7ff331361f",
+      "commit": "2b3cea4878d2573f3eb97020ba3d2ffc7261deb4",
+      "commitSubject": "Prevent mobile navigation from occluding Paper",
+      "receiptEvent": "d79aeb66f3046c2dad51afdcf3429322cd218d4544f46bd39779f3a97984d33a",
+      "approvalEvent": "6351307da3aaacd2f2c8dd9115b59baad2844da5590535e75e01ee7f47b16df0"
+    },
+    {
+      "date": "2026-08-04",
+      "decision": "Integrate current main without rewriting the migration’s provenance.",
+      "originEvent": "1f28b46b63f83bce4f53b37777d2b4261fb1ccd7cdf4b30e21424381791362a2",
+      "commit": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+      "commitSubject": "Test proposal guidance through its context route",
+      "receiptEvent": "fcad73b4c3c9735cddc8939374162ea101f0dffbadf7454fc85a87baf656755d",
+      "approvalEvent": "6351307da3aaacd2f2c8dd9115b59baad2844da5590535e75e01ee7f47b16df0"
+    },
+    {
+      "date": "2026-08-04",
+      "decision": "Ship a reproducible reviewer case pinned to exact comparison revisions.",
+      "originEvent": "9dd040aa9c1584f39070f345aae2a1d5c3b58ffd3253027482f7825ee19c2738",
+      "commit": "e8586ab998659ec60000ade589c0cb4dab4dc2c0",
+      "commitSubject": "Refresh D1 artifact checksum envelope",
+      "receiptEvent": "d322852d6f85daa8c0a8acf26408e17a9af868da0e2e8403281552d70b8b6f33",
+      "approvalEvent": "6351307da3aaacd2f2c8dd9115b59baad2844da5590535e75e01ee7f47b16df0"
+    }
+  ]
+}

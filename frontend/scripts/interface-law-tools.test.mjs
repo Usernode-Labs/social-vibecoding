@@ -12,6 +12,12 @@ import {
 const frontendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const fixtureFile = path.join(frontendRoot, "@", "features", "fixture.tsx")
 
+function assertRuleCoverage(testName, findings, rules) {
+  for (const rule of rules) {
+    assert.ok(findings.some((item) => item.rule === rule), `${testName} does not exercise ${rule}`)
+  }
+}
+
 test("variant parsing ignores colons inside bracketed selectors", () => {
   assert.deepEqual(splitTailwindVariant("[&_[data-slot=card]]:bg-transparent"), {
     variants: ["[&_[data-slot=card]]"],
@@ -29,20 +35,20 @@ test("surface direction exempts ephemeral state and transparent removal but not 
   assert.deepEqual(findings.filter((item) => item.rule === "caller-surface-direction").map((item) => item.match), ["data-[state=on]:bg-card"])
 })
 
-test("paper, container, spacing, margin, radius, and primitive rules are structural", () => {
+const structuralTestName = "paper, container, spacing, margin, radius, and primitive rules are structural"
+test(structuralTestName, () => {
   const findings = scanInterfaceSource(frontendRoot, fixtureFile, `
     import { Card } from "@/components/ui/card"
     export function Fixture() {
       return <main data-surface="paper"><section data-surface="paper"><div data-surface="container" /><Card className="mt-4 rounded-[2px]" /><div data-spacing-tier="macro" /><button>Save</button></section></main>
     }
   `)
-  for (const rule of ["no-paper-in-paper", "no-caller-margin", "radius-ladder-only", "macro-spacing-outer-zone", "use-owned-primitive"]) {
-    assert.ok(findings.some((item) => item.rule === rule), `missing ${rule}`)
-  }
+  assertRuleCoverage(structuralTestName, findings, ["no-paper-in-paper", "no-caller-margin", "radius-ladder-only", "macro-spacing-outer-zone", "use-owned-primitive"])
   assert.ok(!findings.some((item) => item.rule === "invalid-surface-role"))
 })
 
-test("radius enforcement rejects named off-ladder values and non-concentric painted nesting", () => {
+const radiusTestName = "radius enforcement rejects named off-ladder values and non-concentric painted nesting"
+test(radiusTestName, () => {
   const findings = scanInterfaceSource(
     frontendRoot,
     fixtureFile,
@@ -50,6 +56,7 @@ test("radius enforcement rejects named off-ladder values and non-concentric pain
       return <><div className="rounded-xs" /><section className="rounded-3xl p-1" data-surface="paper"><div className="rounded-3xl" data-surface="container" /></section><section className="rounded-4xl p-1" data-surface="paper"><div className="rounded-3xl" data-surface="container" /></section></>
     }`,
   )
+  assertRuleCoverage(radiusTestName, findings, ["radius-ladder-only", "radius-concentricity"])
   assert.deepEqual(findings.filter((item) => item.rule === "radius-ladder-only").map((item) => item.match), ["rounded-xs"])
   assert.deepEqual(findings.filter((item) => item.rule === "radius-concentricity").map((item) => item.match), ["rounded-3xl > rounded-3xl + p-1"])
 })
@@ -79,12 +86,14 @@ test("Sheet remains a legal drawer primitive name and the persistent overlay ten
   assert.ok(findings.some((item) => item.rule === "single-persistent-overlay"))
 })
 
-test("status colour is ink rather than a sixth surface role", () => {
+const statusTestName = "status colour is ink rather than a sixth surface role"
+test(statusTestName, () => {
   const findings = scanInterfaceSource(frontendRoot, fixtureFile, `
     export function Fixture() {
       return <div data-surface="status" />
     }
   `)
+  assertRuleCoverage(statusTestName, findings, ["invalid-surface-role"])
   const invalid = findings.find((item) => item.rule === "invalid-surface-role")
   assert.equal(invalid?.match, "status")
   assert.match(invalid?.remediation || "", /status colour is ink/)

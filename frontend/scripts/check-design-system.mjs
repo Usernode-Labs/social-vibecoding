@@ -6,6 +6,7 @@ import { checkCatalog } from "./design-system-catalog-tools.mjs"
 import { checkDesignTokens } from "./design-token-tools.mjs"
 import { relationshipViolations } from "./component-relationship-tools.mjs"
 import { checkNavigationLedger } from "./navigation-ledger-tools.mjs"
+import { checkDesignDocs } from "./design-doc-tools.mjs"
 
 const frontendRoot = process.cwd()
 const manifestPath = path.join(frontendRoot, "design-system.manifest.json")
@@ -440,7 +441,7 @@ if (manifest) {
     }
   }
 
-  const allowedStoryPrefixes = [...Object.values(tierPrefixes), "Compositions/"]
+  const allowedStoryPrefixes = [...Object.values(tierPrefixes), "Compositions/", "Docs/"]
   for (const storyPath of filesIn(path.join(frontendRoot, "@")).filter((fileName) => fileName.endsWith(".stories.tsx"))) {
     const title = storyMetaTitle(fs.readFileSync(storyPath, "utf8"), storyPath)
     const label = path.relative(frontendRoot, storyPath)
@@ -495,6 +496,8 @@ try {
 } catch (error) {
   violations.push(error.message)
 }
+
+violations.push(...checkDesignDocs())
 
 try {
   execFileSync(process.execPath, [path.join(frontendRoot, "scripts", "generate-pr-case.mjs"), "--check"], {

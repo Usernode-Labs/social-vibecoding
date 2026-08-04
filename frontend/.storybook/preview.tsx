@@ -32,6 +32,11 @@ const preview: Preview = {
     ),
   ],
   parameters: {
+    options: {
+      storySort: {
+        order: ["Docs", "Elements", "Blocks", "Compositions", "Features"],
+      },
+    },
     controls: {
       matchers: {
        color: /(background|color)$/i,
