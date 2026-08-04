@@ -1050,6 +1050,17 @@ const DevChat = {
         }
         return m;
       });
+      // A staging/check result belongs to the session, not to the browser
+      // tab that happened to receive its SSE event. Most web-authored turns
+      // also persist a matching system row, but CLI handoff builds run after
+      // the request has returned and historically only updated chat_sessions
+      // before broadcasting `staging_ready`. A closed/reloading Dev page
+      // therefore missed the event and showed no Changes ready card even
+      // though the authoritative session row had a live preview and verdict.
+      // Derive the missing presentation row on read. This also repairs old
+      // CLI sessions without a data migration; a real persisted card always
+      // wins, so normal histories and cloned cards are not duplicated.
+      DevChat.messages = DevChat._hydrateChangesReadyFromSession(session, DevChat.messages);
       // #647: flag the rows this session inherited from an auto session so
       // their Claude Code disclosures render collapsed by default.
       DevChat._markInheritedMessages(DevChat.messages, session);
@@ -2846,6 +2857,48 @@ const DevChat = {
       if (m.ccOutput || m.stagingUrl || m.changesReady || m.stagingFailed) return;
       if (m.stagingBuild === 'running') { m._active = true; return; }
     }
+  },
+
+  // Reconstruct a missing Changes ready card from durable chat_sessions
+  // state. `staging_url` is sufficient for every session type. A CLI handoff
+  // can also finish with no preview (for example, a staging/check failure),
+  // so its submitted head plus a terminal verdict is authoritative evidence
+  // that reviewable work exists and should still get the card.
+  //
+  // Return a new array rather than mutating the API response. The synthetic
+  // row deliberately has no DB id and is never uploaded as conversation
+  // history; it is a view of the session row, exactly like the lifecycle
+  // badge rendered inside the card.
+  _hydrateChangesReadyFromSession(session, messages) {
+    if (!session || !Array.isArray(messages)) return messages || [];
+    if (messages.some((m) => m && (m.stagingUrl || m.changesReady))) return messages;
+    // Archived sessions are deliberately non-reviewable. A staging URL can
+    // survive only when teardown failed; turning that leak-recovery state into
+    // a fresh interactive card would incorrectly advertise a usable preview.
+    if (session.status === 'archived') return messages;
+
+    const checkState = String(session.check_state || '').toLowerCase();
+    const terminalCheck = ['passing', 'skipped', 'failing', 'error'].includes(checkState);
+    const submittedCliHead = session.source === 'cli_handoff'
+      && !!(session.handoff_head_sha || session.checks_commit_sha);
+    if (!session.staging_url && !(submittedCliHead && terminalCheck)) return messages;
+
+    const checksNeedAttention = checkState === 'failing' || checkState === 'error';
+    const content = session.staging_url
+      ? 'Staging deployed!'
+      : (checksNeedAttention ? 'Changes ready — checks need attention.' : 'Changes ready.');
+    return [...messages, {
+      role: 'system',
+      content,
+      stagingUrl: session.staging_url || null,
+      changesReady: true,
+      prNumber: session.pr_number ?? null,
+      prUrl: session.pr_url || null,
+      created_at: session.checks_checked_at || session.last_activity_at
+        || session.updated_at || session.created_at || null,
+      _slug: `session-state-${session.id}`,
+      _derivedFromSession: true,
+    }];
   },
 
   _deactivateLastStatus() {

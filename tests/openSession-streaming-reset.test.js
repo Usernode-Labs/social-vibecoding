@@ -216,6 +216,40 @@ function statusFetch(busy) {
   };
 }
 
+test('opening an existing CLI handoff hydrates its missing staging card from the session row', async () => {
+  const { DevChat, sandbox } = makeHarness();
+  sandbox.fetch = async (url) => {
+    if (/\/status$/.test(String(url))) {
+      return { ok: true, json: async () => ({ busy: false, progress: [], phase: null }) };
+    }
+    return {
+      ok: true,
+      json: async () => ({
+        session: {
+          id: 2969,
+          status: 'promoted',
+          source: 'cli_handoff',
+          handoff_head_sha: 'a'.repeat(40),
+          checks_commit_sha: 'a'.repeat(40),
+          check_state: 'passing',
+          staging_url: 'https://crypto-predictions--s2969.example.test',
+          pr_number: 4,
+        },
+        // This is the historical failure mode: the CLI build updated the
+        // session row but no staging-card system message was persisted.
+        messages: [{ role: 'assistant', content: 'Local checks passed.' }],
+      }),
+    };
+  };
+
+  await DevChat.openSession(2969);
+
+  const cards = DevChat.messages.filter((m) => m.stagingUrl || m.changesReady);
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0]._derivedFromSession, true);
+  assert.equal(cards[0].stagingUrl, 'https://crypto-predictions--s2969.example.test');
+});
+
 test('opening a different idle session resets Stop → Send (busy:false)', async () => {
   const { DevChat, sandbox, document, getEl } = makeHarness();
   const btn = getEl('dc-send-btn');

@@ -1,5 +1,16 @@
 # Coding-agent project guidance
 
+## Codex promotion-hook readiness
+
+- When running in Codex, expect a separate hook-injected developer context on
+  each user prompt reporting that the Usernode promotion-guard health check
+  passed. If that separate context is absent, tell the user once that the
+  project promotion guard is not active and ask them to open `/hooks`, review
+  and enable/trust the Usernode project hook, then send another message. Safe
+  non-promotion work may continue, but do not promote a proposal until a later
+  prompt carries the passing hook context. This check is Codex-only; Claude
+  Code does not use Codex's `/hooks` trust UI.
+
 ## Usernode API requests
 
 - When the user asks to inspect or change Usernode app/platform state, perform
@@ -42,8 +53,12 @@
      history, and structured local test results. Usernode verifies ancestry and
      runs the normal staging and proposal-check pipeline.
   6. Poll `proposal_status` until it reports `ready` or `failed`. Fix and
-     submit a later fast-forwarding commit when needed. Once ready, call
-     `proposal_promote` when the user wants the proposal opened for voting.
+     submit a later fast-forwarding commit when needed. Once ready, call only
+     `proposal_promote` when the user wants the proposal opened for voting;
+     never substitute `api_write` or a hand-written `/promote` request. Codex
+     requires a manual approval for that dedicated tool. If it returns
+     `host_execution_required`, run only its exact returned `argv`: the Codex
+     promotion hook binds that fallback to the approved tool call and turn.
   The returned `webPath` opens this same native session in the web Dev page,
   so work can optionally continue there. Opening it is never required: the
   local agent may carry the proposal through staging and promotion itself.

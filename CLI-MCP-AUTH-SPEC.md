@@ -1157,6 +1157,8 @@ than make the MCP unavailable.
 `.codex/config.toml` using canonical absolute paths. Conceptually it writes:
 
 ```toml
+approvals_reviewer = "user"
+
 [mcp_servers.social_vibecoding]
 command = "/absolute/path/to/the/current/node"
 args = [
@@ -1178,7 +1180,77 @@ enabled_tools = [
   "social_vibecoding.proposal_status",
   "social_vibecoding.proposal_promote",
 ]
+
+[mcp_servers.social_vibecoding.tools."social_vibecoding.proposal_promote"]
+approval_mode = "prompt"
+
+[[hooks.UserPromptSubmit]]
+
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "<same generated pinned-hook runner>"
+additionalContextLimit = 256
+
+[[hooks.PreToolUse]]
+matcher = "(^Bash$|api_write$)"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "<generated Node -e runner that verifies the hook SHA-256 before loading it>"
+
+[[hooks.PermissionRequest]]
+matcher = "^Bash$"
+
+[[hooks.PermissionRequest.hooks]]
+type = "command"
+command = "<same generated pinned-hook runner>"
+
+[[hooks.PostToolUse]]
+matcher = "proposal_promote$"
+
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = "<same generated pinned-hook runner>"
 ```
+
+Proposal consent is a Codex client concern, not a second server-side approval
+protocol. The dedicated `proposal_promote` MCP tool always uses Codex's manual
+reviewer and `prompt` approval mode. A project `PreToolUse` hook rejects the
+generic `api_write` promotion path and direct shell commands that visibly call
+the promotion route. This is a client workflow guardrail, not a security
+boundary against an adversarial agent or an opaque wrapper script.
+
+The MCP subprocess may be unable to read the native credential store after the
+tool is approved. In that case `proposal_promote` returns the exact canonical
+host `argv` for its POST rather than a useless status-only command. A
+`PostToolUse` hook records a private, short-lived receipt bound to the Codex
+session, turn, proposal session ID, and exact `argv`; the first matching
+`PreToolUse` invocation atomically claims it by tool-call ID, and later tool
+calls cannot reuse it. `PermissionRequest` treats that claimed fallback as part
+of the approval the user just gave instead of displaying a duplicate prompt.
+The receipt grants no bearer token and expires after ten minutes. Other turns,
+proposal IDs, commands, clients, and raw HTTP calls do not match it.
+
+The server still performs authorization, ready/check state, and exact reviewed
+head validation. It does not store or infer whether a human clicked a Codex
+approval control. This client-side guardrail applies to Codex; another client
+such as Claude needs its own equivalent approval policy if it requires the same
+interaction guarantee.
+
+Setup pins the hook file's SHA-256 into every generated hook command. A small
+inline Node runner in the trusted command verifies that digest before loading
+any code from the hook file and exits with the blocking status on a mismatch.
+Changing the tracked hook therefore requires rerunning `codex setup`, which
+changes the hook command definition and triggers Codex's normal hook trust
+review for the new revision.
+
+The same pinned file also runs on `UserPromptSubmit` and adds a short,
+model-visible health attestation. Project guidance expects that separate
+attestation on Codex prompts. If it is absent because hooks are disabled,
+untrusted, pending review, or blocked by policy, Codex asks the user to open
+`/hooks` and does not promote until a later prompt carries the attestation.
+Codex cannot itself operate the `/hooks` trust UI. This is a readiness signal,
+not a replacement for the `PreToolUse` enforcement above.
 
 For a self-hosted user profile, configuration may use
 `--profile lab`; setup puts only that validated profile name in `args`. The
@@ -1213,10 +1285,12 @@ rules as `mcp`, but materializes only its name. It refuses a symlink/reparse
 point at `.codex`, the target, lock, or its temporary file. A bounded
 setup-specific interprocess lock covers inspect-through-replace, and the write
 uses the same-directory durable-replace discipline as other local state.
-The lock is also gitignored.
-After creating or changing the table, setup tells the user to restart/reload
-Codex's MCP servers; it never claims that an already running MCP process has
-adopted the new command, path, forwarded variables, or profile.
+The lock is also gitignored. After creating or changing the table, setup tells
+the user to restart/reload Codex. On the first prompt, the attestation check
+asks the user to review and trust the exact promotion hook through `/hooks` if
+it is not active; Codex does not run a new or changed non-managed project hook
+before that review. Setup never claims that an already running MCP process has
+adopted the new command, path, forwarded variables, profile, or hook.
 
 The materialized table may contain only the launcher, arguments, absolute
 checkout `cwd`, timeouts, and reviewed tool allowlist. It must not set `env`,
@@ -1983,6 +2057,14 @@ This keeps global platform identity separate from child-app identity.
   ignored project config, works across Codex working-directory differences,
   is idempotent for its own file, and refuses symlinked or non-generated
   targets without overwriting them.
+- `codex setup` pins approval review to the user for this project, configures
+  `proposal_promote` to prompt, and installs a protected hook that rejects the
+  direct generic-API and literal-shell promotion paths. An approved
+  native-store fallback is limited to one exact host tool call, Codex session,
+  turn, proposal ID, and a ten-minute window.
+- A prompt-time health attestation lets Codex detect that this hook is active;
+  when the attestation is absent, it asks the user to review `/hooks` and
+  refuses proposal promotion until a later prompt proves the guard is active.
 - `claude setup` registers the same canonical credential-free command through
   `claude mcp` local scope, refuses an unowned same-name collision, repairs a
   missing owned registration, updates moved paths/profile selections with

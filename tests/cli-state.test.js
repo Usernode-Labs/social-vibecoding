@@ -310,6 +310,7 @@ test('Codex setup table contains only canonical launcher data and reviewed tools
     checkoutRoot: '/checkout',
     profile: 'production',
     forwardEnv: false,
+    hookSha256: 'a'.repeat(64),
   });
   assert.match(document, /command = "\/usr\/bin\/node"/);
   assert.match(document, /"mcp"/);
@@ -323,6 +324,20 @@ test('Codex setup table contains only canonical launcher data and reviewed tools
   assert.match(document, /"social_vibecoding\.proposal_submit_build"/);
   assert.match(document, /"social_vibecoding\.proposal_status"/);
   assert.match(document, /"social_vibecoding\.proposal_promote"/);
+  assert.match(document, /^approvals_reviewer = "user"$/m);
+  assert.match(
+    document,
+    /\[mcp_servers\.social_vibecoding\.tools\."social_vibecoding\.proposal_promote"\]\napproval_mode = "prompt"/
+  );
+  assert.match(document, /\[\[hooks\.PreToolUse\]\]/);
+  assert.match(document, /\[\[hooks\.UserPromptSubmit\]\]/);
+  assert.match(document, /\[\[hooks\.UserPromptSubmit\.hooks\]\]/);
+  assert.match(document, /additionalContextLimit = 256/);
+  assert.match(document, /\[\[hooks\.PermissionRequest\]\]/);
+  assert.match(document, /\[\[hooks\.PostToolUse\]\]/);
+  assert.match(document, /\/checkout\/\.codex\/hooks\/promotion-approval\.js/);
+  assert.match(document, /createHash\\\("sha256"\\\)|createHash\('sha256'\)/);
+  assert.match(document, /a{64}/);
   assert.doesNotMatch(document, /\benv\s*=|bearer_token|SOCIAL_VIBECODING_TOKEN/);
   assert.doesNotMatch(document, new RegExp(PRODUCTION_ORIGIN));
 
@@ -332,11 +347,25 @@ test('Codex setup table contains only canonical launcher data and reviewed tools
     checkoutRoot: '/checkout',
     profile: 'lab',
     forwardEnv: true,
+    hookSha256: 'b'.repeat(64),
   });
   assert.match(
     forwarded,
     /env_vars = \["SOCIAL_VIBECODING_TOKEN", "SOCIAL_VIBECODING_SERVER"\]/
   );
+  assert.ok(
+    forwarded.indexOf('env_vars =')
+      < forwarded.indexOf('[mcp_servers.social_vibecoding.tools.'),
+    'forwarded MCP environment names stay in the server table'
+  );
+  assert.throws(() => main.setupToml({
+    nodePath: '/usr/bin/node',
+    scriptPath: '/checkout/tools/social-vibecoding',
+    checkoutRoot: '/checkout',
+    profile: 'production',
+    forwardEnv: false,
+    hookSha256: 'not-a-digest',
+  }), /SHA-256/);
 });
 
 test('Claude setup registers only the canonical credential-free stdio command', () => {
