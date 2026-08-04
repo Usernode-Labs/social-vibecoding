@@ -37,8 +37,8 @@
     {
       "file": "capture-fixtures/README.md",
       "kind": "capture-fixture-documentation",
-      "bytes": 587,
-      "sha256": "0ab0ad425dd8352c7dea988a44dd9b74086f32513286c4b310bcb848e41fa4e4"
+      "bytes": 586,
+      "sha256": "3904e020c0c2775324d2702dec0351f9b0ee119265d7fc56b556038f3b320c49"
     },
     {
       "file": "capture-fixtures/tailwind-play-2026-08-04.js.gz",
