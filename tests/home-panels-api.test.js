@@ -476,6 +476,46 @@ test('GET /api/home-panels: ?demo=1 is a no-op outside staging', async () => {
   assert.equal(body.panels[0].demo, undefined);
 });
 
+// The demo payload is what the before/after screenshots and the dapp.json
+// check actually render (/?demo=1), so the states a reviewer is meant to
+// compare have to survive the four-slot budget — not merely exist in the
+// fixture and fall off the bottom.
+test('GET ?demo=1 in staging spends its four slots on both kinds of DONE', async () => {
+  const prev = process.env.USERNODE_ENV;
+  process.env.USERNODE_ENV = 'staging';
+  let body;
+  try {
+    const { app } = makeApp({ season: SEASON, rows: [row()] }, { user: USER });
+    ({ body } = await get(app, '/api/home-panels?demo=1'));
+  } finally {
+    process.env.USERNODE_ENV = prev;
+  }
+  const p = body.panels[0];
+  assert.equal(p.demo, true);
+  assert.equal(p.challenges.length, 4, 'the collapsed block draws four rows');
+
+  // Not-done first (the client mirrors this order), then the two finished
+  // ones ADJACENT: a ✓ with no bar, and a ✓ over a bar filled end to end.
+  // Seeing the two kinds of "done" side by side is the point.
+  const done = p.challenges.filter((c) => c.progress.done);
+  assert.equal(done.length, 2);
+  assert.deepEqual(p.challenges.map((c) => !!c.progress.done),
+    [false, false, true, true], 'the done pair sits at the bottom, together');
+  const binaryDone = done.find((c) => !c.metric);
+  const numericDone = done.find((c) => c.metric);
+  assert.ok(binaryDone, 'a finished BINARY challenge (✓, no bar)');
+  assert.ok(numericDone, 'a finished NUMERIC challenge (✓ over a full bar)');
+  assert.equal(numericDone.progress.current, numericDone.progress.target,
+    'full target, or the bar is not full and the state is not the one being shown');
+
+  // And a part-filled numeric is still up top, so "in progress" and
+  // "finished" are both readable in one shot.
+  const partial = p.challenges.find((c) => c.metric && !c.progress.done
+    && c.progress.current > 0);
+  assert.ok(partial, 'the part-filled bar keeps its slot');
+  assert.equal(p.done, 2, 'the header counter agrees with the glyphs');
+});
+
 // ─── POST /api/home-panels/:key/visibility ────────────────────────────
 
 test('POST visibility: 401 unauthenticated', async () => {

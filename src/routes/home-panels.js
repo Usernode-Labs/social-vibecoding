@@ -361,17 +361,12 @@ function demoChallengesPanel(opts) {
       progress: { done: false, current: null, target: null },
       earned_points: 0,
     },
-    {
-      id: 900513,
-      label: 'COMMUNITY',
-      goal: 'Staging demo challenge — give kudos to five builders',
-      task: 'Send kudos on five merged proposals from other builders.',
-      reward: '1500',
-      cta: null,
-      metric: { kind: 'count', label: 'Kudos', target: 5 },
-      progress: { done: false, current: 0, target: 5 },
-      earned_points: 0,
-    },
+    // The two DONE rows come last (the client's orderRows puts them there
+    // anyway) and deliberately sit next to each other: one binary, one
+    // numeric at full target. Seeing both kinds of "done" side by side —
+    // a ✓ with no bar, and a ✓ over a bar filled end to end — is the whole
+    // reason the numeric one exists here, and the collapsed block only has
+    // four slots to spend.
     {
       id: 900511,
       label: 'SOCIAL',
@@ -382,6 +377,33 @@ function demoChallengesPanel(opts) {
       metric: null,
       progress: { done: true, current: null, target: null },
       earned_points: 50,
+    },
+    {
+      id: 900516,
+      label: 'COMMUNITY',
+      goal: 'Staging demo challenge — vote on five proposals',
+      task: 'Cast a vote on five open proposals from other builders.',
+      reward: '900 pts',
+      cta: null,
+      metric: { kind: 'count', label: 'Proposals voted', target: 5 },
+      progress: { done: true, current: 5, target: 5 },
+      earned_points: 900,
+    },
+  ];
+  // Open, but past the four collapsed slots — the empty 0-of-5 track, which
+  // is the least informative of the numeric states and so the one that
+  // gives up its slot to the finished numeric above. Expanding shows it.
+  const overflow = [
+    {
+      id: 900513,
+      label: 'COMMUNITY',
+      goal: 'Staging demo challenge — give kudos to five builders',
+      task: 'Send kudos on five merged proposals from other builders.',
+      reward: '1500',
+      cta: null,
+      metric: { kind: 'count', label: 'Kudos', target: 5 },
+      progress: { done: false, current: 0, target: 5 },
+      earned_points: 0,
     },
   ];
   // Expanding shows the season's FINISHED challenges too — the state the
@@ -414,15 +436,15 @@ function demoChallengesPanel(opts) {
   ];
 
   // Collapsed `total` deliberately exceeds the four-slot budget so the
-  // footer reads "See all 6 challenges" and the expand toggle has
+  // footer reads "See all 7 challenges" and the expand toggle has
   // something to reveal. Expanded returns the open rows PLUS the finished
   // ones, which is exactly what the real builder does when it drops the
   // not-completed filter.
-  const all = expanded ? [...rows, ...finished] : rows;
+  const all = expanded ? [...rows, ...overflow, ...finished] : rows;
   return {
     season: { id: 900500, name: 'Staging Demo Season — Topochain' },
-    total: expanded ? all.length : 6,
-    done: expanded ? 2 : 1,
+    total: expanded ? all.length : 7,
+    done: expanded ? 3 : 2,
     points_remaining: null,
     challenges: all,
     expanded,

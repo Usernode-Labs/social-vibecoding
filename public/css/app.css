@@ -355,13 +355,24 @@ html, body {
    The cap is enforced by flexbox, not arithmetic: the title bar is
    flex: none and the rows list takes the remainder with min-height: 0 +
    overflow: hidden, so content clips at the cap instead of growing the
-   block. Budget inside 14rem: 2px border + ~26px title bar + 4 rows x
-   38px = ~180px. The block deliberately spends LESS than the cap — the
-   cap is the ceiling that stops it pushing "Featured apps" off the fold,
-   but a widget that merely fits under a ceiling still reads tall. 180px
-   against a 224px cap leaves ~44px of headroom, which is also what
-   absorbs a larger system text size before the rows list starts to
-   clip.
+   block. Budget inside 14rem, counting every band the collapsed block
+   actually draws:
+
+     border            1px top + 1px bottom          =   2px
+     title bar         py-1 8 + 16.5 line + 1 rule   =  25.5px
+     rows              4 x --home-panel-row-h (40)   = 160px
+     footer            26px min-height + 1 rule      =  27px
+                                                       -------
+                                                        214.5px
+
+   The block deliberately spends LESS than the cap — the cap is the
+   ceiling that stops it pushing "Featured apps" off the fold, but a
+   widget that merely fits under a ceiling still reads tall. ~215px
+   against a 224px cap leaves ~9px of headroom, which is also what
+   absorbs a slightly larger system text size before the rows list
+   starts to clip. Growing the row past 40px spends that headroom
+   directly: at 42px the four rows plus chrome are 222.5px and one more
+   pixel of text anywhere clips the last row.
 
    WIDTH CAP — half the home column, and derived from it the same way:
 
@@ -386,6 +397,17 @@ html, body {
 :root {
   --home-panel-max-h: 14rem;
   --home-panel-max-w: 32rem; /* half of .home-column's 64rem */
+  --home-panel-row-h: 2.5rem; /* 40px — see the budget above */
+  /* The METER LANE: the strip along the bottom of every row in a panel
+     that has at least one progress bar. The bar lives in it and the row's
+     text is pushed clear of it (padding-bottom on the row, so the flex
+     centring happens in what's left). Before this, the text was centred in
+     the whole row and the bar was jammed underneath it — half a pixel of
+     line-box clearance, three pixels to the divider — which read as one
+     cramped smear rather than "a goal, and how far along it is". */
+  --home-panel-meter-lane: 0.875rem; /* 14px */
+  --home-panel-bar-h: 0.5625rem;     /* 9px — the bar itself */
+  --home-panel-bar-gap: 0.3125rem;   /* 5px — bar to the row divider */
 }
 
 .home-panel {
@@ -455,14 +477,14 @@ html, body {
    `overflow: hidden` clips rather than letting a chip spill over the
    neighbouring row.
 
-   38px, not 44: the whole row is the tap target and it spans the column
+   40px, not 44: the whole row is the tap target and it spans the column
    (~366px on a phone), so its hit AREA is far past what the 44px
    minimum-dimension guideline protects — that rule is about small icon
    controls, and the one of those here (the ⋮ menu) keeps
    .un-touch-target. */
 .home-panel-row {
   position: relative;
-  height: 2.375rem; /* 38px */
+  height: var(--home-panel-row-h);
   white-space: nowrap;
   overflow: hidden;
 }
@@ -470,11 +492,39 @@ html, body {
   border-top: 1px solid var(--border-light);
 }
 
+/* The meter lane is reserved on EVERY row of a metered panel, not only on
+   the rows that draw a bar, so all the goals sit on one baseline — rows
+   whose text floated 7px lower than their neighbours' read as a rendering
+   slip, not as "this one has no bar". It is scoped to the panel (the
+   class goes on the rows list, from renderChallengesPanel) so an
+   all-binary widget keeps plain centring instead of reserving a lane
+   nothing will ever fill. */
+.home-panel-rows--metered .home-panel-row {
+  padding-bottom: var(--home-panel-meter-lane);
+}
+/* The bar's own geometry lives here rather than in utility classes so it
+   is derived from the lane it sits in: 5px + 9px fills the 14px lane
+   exactly, which is what puts the bar's top edge at the bottom of the
+   text's box rather than under it. The visible gap above the bar is then
+   the row's own centring slack — ~3px of line box, ~7px of ink — and the
+   gap below it is the 5px to the divider.
+
+   Horizontally it spans the row's TEXT column — its left edge is the
+   goal's (px-2.5 10 + glyph 10 + gap-2 8 = 28px), and it stops 12px short
+   on the right so it clears the reward chip's edge rather than running
+   flush into the row's corner. */
+.home-panel-bar-track {
+  left: 1.75rem;   /* 28px — the goal text's left edge */
+  right: 0.75rem;  /* 12px */
+  bottom: var(--home-panel-bar-gap);
+  height: var(--home-panel-bar-h);
+}
+
 /* The footer bar: the expand/collapse toggle and the way out to the
    Challenges screen. Same height family as the title bar so the block
    reads as chrome-rows-around-content. */
 .home-panel-footer {
-  min-height: 1.75rem; /* 28px */
+  min-height: 1.625rem; /* 26px */
 }
 
 /* EXPANDED: the cap is lifted so the block grows to fit every challenge,

@@ -173,7 +173,7 @@ test('summaryLine: the points clause only appears when it can be honest', () => 
 
 // ── visibleSlots ──────────────────────────────────────────────────
 //
-// The height cap buys exactly ROW_SLOTS 38px rows. Overflow spends the
+// The height cap buys exactly ROW_SLOTS 40px rows. Overflow spends the
 // LAST slot on the "See all N" link rather than adding a row, so the
 // budget is the same whether or not there is overflow.
 
@@ -278,13 +278,12 @@ test('render: a numeric row gets a progressbar with truthful aria values', () =>
   assert.match(html, /3\/8/);
   assert.match(html, /aria-label="[^"]*3 of 8 Apps tested"/);
   // The bar hugs the row's bottom edge — that's what keeps rows uniform —
-  // and is OUTLINED so an empty track still reads as a bar.
-  //
-  // left-7 (28px), NOT left-2.5: the bar starts at the goal text's left
-  // edge, to the right of the status glyph, so it measures the row's text
-  // instead of running under the dot. Its right edge stays at the row's
-  // gutter. See the glyph pin below for where 28px comes from.
-  assert.match(html, /absolute left-7 right-2\.5 bottom-\[3px\] h-\[9px\]/);
+  // and is OUTLINED so an empty track still reads as a bar. Its geometry
+  // is in app.css now (pinned in "the bar gets a lane…" below), derived
+  // from the meter lane, so the markup carries only `absolute`.
+  assert.match(html, /home-panel-bar-track absolute rounded-full/);
+  assert.doesNotMatch(html, /bottom-\[3px\]/,
+    'the cramped 3px-from-the-divider geometry is gone, and is no longer a utility class');
   // A FAINT outline: it describes the bar's extent without competing with
   // the violet fill, which is the actual signal.
   assert.match(html, /home-panel-bar-track[^"]*border border-zinc-300\/60/);
@@ -306,8 +305,90 @@ test('render: a numeric row at zero still renders an (empty) bar', () => {
   assert.match(html, /home-panel-bar-track[^"]*border border-zinc-300\/60 dark:border-zinc-600\/60 bg-white dark:bg-zinc-900/);
 });
 
+// ── The bar's breathing room ──────────────────────────────────────
+//
+// The bar used to be centred-text-with-a-bar-jammed-underneath: half a
+// pixel of line-box clearance above it, three pixels to the row divider
+// below. The fix is a LANE — a strip reserved along the bottom of every
+// row in the panel, which the text is padded clear of — rather than a
+// taller row, because the height cap only had ~16px to give.
+
+test('the bar gets a lane, and the lane is what holds the text off it', () => {
+  const css = read('public/css/app.css');
+  // The lane, and the bar's geometry derived from it. Both are variables
+  // so the two clearances move together instead of drifting apart.
+  assert.match(css, /--home-panel-meter-lane:\s*0\.875rem/);
+  const laneRule = css.match(/\.home-panel-rows--metered \.home-panel-row \{[^}]*\}/)[0];
+  assert.match(laneRule, /padding-bottom:\s*var\(--home-panel-meter-lane\)/,
+    'padding on the row is what moves the TEXT up — flex centres in what is left');
+  const barRule = css.match(/\.home-panel-bar-track \{[^}]*\}/)[0];
+  assert.match(barRule, /bottom:\s*var\(--home-panel-bar-gap\)/);
+  assert.match(barRule, /height:\s*var\(--home-panel-bar-h\)/);
+  // Clear of the divider below by more than the 3px that read as cramped.
+  const gapPx = parseFloat(css.match(/--home-panel-bar-gap:\s*([\d.]+)rem/)[1]) * 16;
+  assert.ok(gapPx >= 5, `the bar must clear the row divider (${gapPx}px)`);
+  // And the lane must be taller than the bar, or there is no gap ABOVE it.
+  const lanePx = parseFloat(css.match(/--home-panel-meter-lane:\s*([\d.]+)rem/)[1]) * 16;
+  const barPx = parseFloat(css.match(/--home-panel-bar-h:\s*([\d.]+)rem/)[1]) * 16;
+  assert.ok(lanePx > barPx + gapPx - 1,
+    `the lane (${lanePx}px) must hold the bar (${barPx}px + ${gapPx}px) clear of the text`);
+  // Sideways it spans the row's TEXT column — the goal's left edge — and
+  // stops short of the right corner rather than running flush into it.
+  assert.match(barRule, /left:\s*1\.75rem/);
+  assert.match(barRule, /right:\s*0\.75rem/);
+});
+
+test('the lane is reserved per PANEL, so every goal sits on one baseline', () => {
+  // A row with no bar still gets the lane when a SIBLING has one —
+  // otherwise the goals in a mixed list float at two different heights,
+  // which reads as a rendering slip rather than as "this one has no bar".
+  const mixed = renderWith({
+    registry: [], hidden: [],
+    panels: [panel({
+      challenges: [
+        challenge({ id: 1 }),
+        challenge({
+          id: 2,
+          metric: { kind: 'count', label: 'Kudos', target: 5 },
+          progress: { done: false, current: 2, target: 5 },
+        }),
+      ],
+    })],
+  }).html;
+  assert.match(mixed, /home-panel-rows home-panel-rows--metered/);
+
+  // …but a widget with no numeric challenge at all reserves nothing: an
+  // empty strip under every row, for a bar that will never come, is just
+  // a row that looks top-heavy.
+  const binaryOnly = renderWith({
+    registry: [], hidden: [], panels: [panel({ challenges: [challenge({ id: 1 })] })],
+  }).html;
+  assert.doesNotMatch(binaryOnly, /home-panel-rows--metered/);
+});
+
+test('a numeric challenge at full target draws a full bar AND the ✓', () => {
+  // The state the staging seed exists to make visible (challenge 900514,
+  // credited five of five). Both halves matter: a full bar with a hollow
+  // ring, or a ✓ over a part-filled bar, would each be a bug.
+  const { html } = renderWith({
+    registry: [], hidden: [],
+    panels: [panel({
+      done: 1,
+      challenges: [challenge({
+        goal: 'Vote on five proposals',
+        metric: { kind: 'count', label: 'Proposals voted', target: 5 },
+        progress: { done: true, current: 5, target: 5 },
+      })],
+    })],
+  });
+  assert.match(html, /width:100%/);
+  assert.match(html, /aria-valuenow="5"[^>]*aria-valuemax="5"/);
+  assert.match(html, /5\/5/);
+  assert.match(html, /home-panel-glyph[^>]*text-emerald-500[^>]*>&#10003;</);
+});
+
 test('both glyph states occupy the same 10px box the bar aligns to', () => {
-  // The bar's left-7 (28px) is px-2.5 (10) + glyph (10) + gap-2 (8). A ✓
+  // The bar's left: 1.75rem (28px) is px-2.5 (10) + glyph (10) + gap-2 (8). A ✓
   // that sized itself intrinsically would shift the goal text and
   // desynchronise the bar from it on precisely the done rows, so both
   // glyphs are pinned to w-2.5 here.
@@ -322,7 +403,7 @@ test('both glyph states occupy the same 10px box the bar aligns to', () => {
   assert.match(rows({ done: false, current: 0 }), /home-panel-glyph shrink-0 w-2\.5 h-2\.5 rounded-full/);
   assert.match(rows({ done: true, current: 5 }), /home-panel-glyph shrink-0 w-2\.5 h-2\.5 flex/);
   // The row's own gutter and gap are the other two terms — if either
-  // moves, left-7 has to move with it.
+  // moves, the bar's 28px left inset has to move with it.
   assert.match(rows({ done: false, current: 0 }), /home-panel-row flex items-center gap-2 px-2\.5/);
 });
 
@@ -358,7 +439,7 @@ test('render: organiser text is escaped in text AND attribute contexts', () => {
   assert.match(html, /&#39;quote&#39;/);
 });
 
-test('render: the footer carries the expand toggle and the Open button', () => {
+test('render: the footer carries the expand toggle and the way out', () => {
   const four = Array.from({ length: 4 }, (_, i) => challenge({ id: i + 1 }));
   const { html } = renderWith({
     registry: [], hidden: [], panels: [panel({ total: 8, challenges: four })],
@@ -371,8 +452,12 @@ test('render: the footer carries the expand toggle and the Open button', () => {
   assert.equal((html.match(/home-panel-row\b(?!s)/g) || []).length, 4);
   assert.equal((html.match(/data-challenge-id/g) || []).length, 4);
   assert.doesNotMatch(html, /home-panel-more/, 'the old link ROW is gone');
-  // And the separate way out to the Challenges screen, bottom right.
-  assert.match(html, /home-panel-open[^>]*title="Open the Challenges screen"/);
+  // And the separate way out, bottom right. It NAMES its destination:
+  // "Open" sat beside a control that also opens something (this block, in
+  // place), leaving the reader to work out which one left the home screen.
+  assert.match(html, /home-panel-open[^>]*title="Go to the Challenges tab on the Leaderboard screen"/);
+  assert.match(html, /home-panel-open[^>]*aria-label="Go to leaderboard"/);
+  assert.doesNotMatch(html, />Open<\/span>/, 'the bare "Open" label is gone');
   assert.match(html, /aria-expanded="false"/);
 });
 
@@ -547,11 +632,13 @@ test('the title bar and the footer controls are single-line too', () => {
   // Title + counter: the counter must not push the title to a second line.
   assert.match(html, /home-panel-title[^"]*truncate whitespace-nowrap/);
   assert.match(html, /normal-case tracking-normal whitespace-nowrap/);
-  // Both footer labels — the expand toggle and the Open button. Neither
-  // may wrap: the footer is a fixed-height flex row, so a wrap would be
-  // clipped exactly like a wrapped row.
+  // Both footer labels — the expand toggle and the "Go to leaderboard"
+  // button. Neither may wrap: the footer is a fixed-height flex row, so a
+  // wrap would be clipped exactly like a wrapped row. The right-hand label
+  // is the longer of the two now, which is why this pin matters more than
+  // it did when it read "Open".
   assert.match(html, /<span class="whitespace-nowrap">See all 9 challenges<\/span>/);
-  assert.match(html, /<span class="whitespace-nowrap">Open<\/span>/);
+  assert.match(html, /<span class="whitespace-nowrap">Go to leaderboard<\/span>/);
   assert.match(html, /home-panel-expand[^>]*whitespace-nowrap/);
   assert.match(html, /home-panel-open[^>]*whitespace-nowrap/);
 });
@@ -848,8 +935,23 @@ test('the cap is a CSS constant, enforced by flex, and clips rather than grows',
   const rowsRule = css.match(/\.home-panel-rows \{[^}]*\}/)[0];
   assert.match(rowsRule, /min-height:\s*0/);
   assert.match(rowsRule, /overflow:\s*hidden/);
-  // Uniform 38px rows are what make the 4-slot budget exact.
-  assert.match(css.match(/\.home-panel-row \{[^}]*\}/)[0], /height:\s*2\.375rem/);
+  // Uniform rows are what make the 4-slot budget exact, and the height is
+  // a variable so the budget comment above it has one number to check.
+  assert.match(css.match(/\.home-panel-row \{[^}]*\}/)[0],
+    /height:\s*var\(--home-panel-row-h\)/);
+  assert.match(css, /--home-panel-row-h:\s*2\.5rem/);
+  // 4 rows + the chrome must still clear the cap with room to spare: 2px
+  // border + 25.5px title bar + 4 x 40px + 27px footer = 214.5 against
+  // 224. This is the arithmetic the comment spells out; if a future row
+  // height eats the headroom, it fails here rather than clipping the
+  // fourth row in a browser nobody opened.
+  const rowPx = parseFloat(css.match(/--home-panel-row-h:\s*([\d.]+)rem/)[1]) * 16;
+  const capPx = parseFloat(css.match(/--home-panel-max-h:\s*([\d.]+)rem/)[1]) * 16;
+  const footerPx = parseFloat(
+    css.match(/\.home-panel-footer \{[^}]*min-height:\s*([\d.]+)rem/)[1]) * 16;
+  const collapsed = 2 + 25.5 + 4 * rowPx + footerPx + 1;
+  assert.ok(collapsed <= capPx - 5,
+    `the collapsed block (${collapsed}px) must stay clear of the ${capPx}px cap`);
   // No runtime measurement — #922 deleted that mechanism for the width
   // axis and app.css says not to bring it back.
   assert.doesNotMatch(HOME, /alignSections|--home-section-indent/);

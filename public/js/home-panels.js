@@ -24,9 +24,9 @@
 // is the handle; the ⋮ button is the one thing excluded from it (_wire).
 //
 // DENSITY — the block is capped at two app-grid rows (--home-panel-max-h,
-// derived in app.css) and spends that budget on a ~28px title bar plus
-// FOUR 38px single-line rows. Overflow is handled by rendering fewer rows
-// and giving the last slot to a "See all N" link — never an inner
+// derived in app.css) and spends that budget on a ~26px title bar, FOUR
+// 40px single-line rows and a ~27px footer. Overflow is handled by
+// rendering fewer rows and the footer's expand toggle — never an inner
 // scroller (a nested scroll region inside the page scroller is a touch
 // trap) and never a horizontal pager (invisible to the screenshot capture
 // and to dapp.json checks, which can only navigate). That mirrors the
@@ -313,6 +313,12 @@ const HomePanels = {
   // The footer bar: the expand/collapse toggle on the LEFT (it grows the
   // block past its cap in place, and the same control collapses it), and
   // the way out to the full Challenges screen on the RIGHT.
+  //
+  // That right-hand control says "Go to leaderboard", not "Open": it
+  // navigates to #leaderboard/challenges — a DIFFERENT screen — while the
+  // control beside it opens this same block in place. Two adjacent
+  // affordances both reading as "open" left it to the reader to work out
+  // which one left the home screen; naming the destination settles it.
   _panelFooter(key, total, expanded) {
     const esc = HomePanels.esc;
     const label = expanded
@@ -327,8 +333,8 @@ const HomePanels = {
           <span class="whitespace-nowrap">${label}</span>
         </button>
         <button type="button" class="home-panel-open flex items-center gap-1 text-[12px] font-medium text-zinc-500 dark:text-zinc-400 hover:text-violet-600 dark:hover:text-violet-400 whitespace-nowrap"
-          title="Open the Challenges screen" aria-label="Open the Challenges screen">
-          <span class="whitespace-nowrap">Open</span>
+          title="Go to the Challenges tab on the Leaderboard screen" aria-label="Go to leaderboard">
+          <span class="whitespace-nowrap">Go to leaderboard</span>
           <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
         </button>
       </div>`;
@@ -363,21 +369,34 @@ const HomePanels = {
       <span class="home-panel-title min-w-0 flex-1 truncate whitespace-nowrap text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${title}<span class="normal-case tracking-normal whitespace-nowrap"> · ${summary}</span></span>`;
 
     const rowsHtml = rows.map((c) => HomePanels.renderChallengeRow(c)).join('');
+    // The meter lane is a property of the LIST, not of the row that draws
+    // a bar: reserving it on every row is what keeps the goals on one
+    // baseline. A panel with no numeric challenge at all reserves nothing
+    // and its rows centre plainly — see app.css.
+    const metered = rows.some((c) => HomePanels.hasMeter(c));
 
     return HomePanels._panelShell(panel.key, titleHtml,
-      `<div class="home-panel-rows">${rowsHtml}</div>`,
+      `<div class="home-panel-rows${metered ? ' home-panel-rows--metered' : ''}">${rowsHtml}</div>`,
       HomePanels._panelFooter(panel.key, total, expanded));
   },
 
-  // One 38px line: glyph · goal · count · reward, plus a 2px progress bar
-  // riding the row's bottom edge on numeric rows. Category, task, the
-  // organiser CTA and the earned-points line are deliberately absent —
-  // they don't fit at this density and all four live one tap away on the
-  // Challenges screen.
+  // Does this challenge draw a progress bar? One definition, used by the
+  // row (to draw one) and by the panel (to reserve the lane every row
+  // shares), so the two can't disagree and leave a bar in a row with no
+  // room for it.
+  hasMeter(c) {
+    return !!(c && c.metric && c.progress && c.progress.target != null);
+  },
+
+  // One 40px line: glyph · goal · count · reward, plus a 9px progress bar
+  // in the meter lane along the row's bottom edge on numeric rows.
+  // Category, task, the organiser CTA and the earned-points line are
+  // deliberately absent — they don't fit at this density and all four live
+  // one tap away on the Challenges screen.
   renderChallengeRow(c) {
     const esc = HomePanels.esc;
     const done = !!(c.progress && c.progress.done);
-    const numeric = !!(c.metric && c.progress && c.progress.target != null);
+    const numeric = HomePanels.hasMeter(c);
 
     // A glyph, not a chip: same signal, a fraction of the width.
     //
@@ -419,14 +438,17 @@ const HomePanels = {
       // made a mostly-empty bar look like the loud element in the row. The
       // fill is the signal; the outline is the ruler behind it.
       //
-      // 9px tall — enough to read as a bar rather than a rule at row
-      // density, still absolutely positioned so the row keeps its fixed
-      // 38px height. It starts at left-7 = 28px, the goal text's own left
-      // edge (see the glyph comment above), so it measures the row's TEXT
-      // rather than running under the status dot, where its empty end used
-      // to read as a stray underline attached to the glyph.
+      // Its GEOMETRY — 9px tall, 5px clear of the row divider, spanning
+      // from the goal text's own left edge (28px, see the glyph comment
+      // above) to 12px short of the right — is in app.css, derived there
+      // from --home-panel-meter-lane, the strip every row of a metered
+      // panel reserves along its bottom. Keeping it out of utility classes
+      // is what lets the lane and the bar move together: the bar's whole
+      // problem was that it was jammed against the text above it and the
+      // divider below, and those two clearances are properties of the
+      // lane, not of this span.
       barHtml = `
-        <span class="home-panel-bar-track absolute left-7 right-2.5 bottom-[3px] h-[9px] rounded-full border border-zinc-300/60 dark:border-zinc-600/60 bg-white dark:bg-zinc-900 overflow-hidden"
+        <span class="home-panel-bar-track absolute rounded-full border border-zinc-300/60 dark:border-zinc-600/60 bg-white dark:bg-zinc-900 overflow-hidden"
               role="progressbar" aria-valuenow="${esc(current)}" aria-valuemin="0" aria-valuemax="${esc(target)}"
               aria-label="${esc(c.goal || 'Challenge')}: ${esc(current)} of ${esc(target)}${esc(label)}">
           <span class="home-panel-bar-fill block h-full bg-violet-500" style="width:${pct}%"></span>
