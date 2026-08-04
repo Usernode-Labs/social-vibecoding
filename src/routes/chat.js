@@ -7,7 +7,20 @@ const models = require('../services/models');
 const { listActiveUserIds } = require('../services/active-users');
 const appAccess = require('../services/app-access');
 const attachmentsSvc = require('../services/attachments');
-const { attachmentUploadLimiter } = require('../middleware/rate-limits');
+const {
+  attachmentUploadLimiter,
+  groupChatWriteLimiter,
+} = require('../middleware/rate-limits');
+
+const THREAD_TYPES = new Set(['issue', 'session', 'governance']);
+const MAX_THREAD_REF = 2147483647; // PostgreSQL INTEGER
+
+function parseThreadRef(value) {
+  const ref = typeof value === 'number'
+    ? value
+    : (typeof value === 'string' && /^[1-9]\d*$/.test(value) ? Number(value) : NaN);
+  return Number.isSafeInteger(ref) && ref > 0 && ref <= MAX_THREAD_REF ? ref : null;
+}
 
 function chatRoutes(config) {
   const router = Router();
@@ -39,11 +52,10 @@ function chatRoutes(config) {
     // the general stream. Both params must be present and valid to
     // select a thread; a malformed pair is a 400 rather than silently
     // falling back to general chat.
-    const THREAD_TYPES = new Set(['issue', 'session', 'governance']);
     const threadType = req.query.thread_type || null;
-    const threadRef = req.query.thread_ref != null ? parseInt(req.query.thread_ref, 10) : null;
+    const threadRef = req.query.thread_ref != null ? parseThreadRef(req.query.thread_ref) : null;
     if (threadType || req.query.thread_ref != null) {
-      if (!THREAD_TYPES.has(threadType) || !Number.isInteger(threadRef) || threadRef <= 0) {
+      if (!THREAD_TYPES.has(threadType) || threadRef == null) {
         return res.status(400).json({ error: 'Invalid thread_type/thread_ref' });
       }
     }
@@ -123,6 +135,86 @@ function chatRoutes(config) {
     } catch (err) {
       log.error('chat', 'Failed to load messages', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Bearer-compatible group-chat write path. The browser normally sends
+  // these over /ws/chat/:slug, but CLI/MCP clients authenticate with an API
+  // bearer rather than a browser session cookie. Route the JSON request
+  // through the same handler so persistence, thread validation, broadcasts,
+  // events, mentions, replies, and unread-state updates cannot drift.
+  router.post('/api/apps/:slug/messages', groupChatWriteLimiter, async (req, res) => {
+    try {
+      // Posting is collab-gated and returns the same 404 for a missing app
+      // and denied access, so private app slugs cannot be enumerated.
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS
+      );
+      if (!app) return res.status(404).json({ error: 'App not found' });
+
+      // Validate only after the existence-hiding gate. A denied caller gets
+      // the same 404 regardless of whether its payload happens to be valid.
+      const body = req.body;
+      if (!body || Array.isArray(body) || typeof body !== 'object'
+          || typeof body.content !== 'string' || !body.content.trim()) {
+        return res.status(400).json({ error: 'A non-empty content string is required' });
+      }
+
+      const hasThreadType = Object.prototype.hasOwnProperty.call(body, 'thread_type');
+      const hasThreadRef = Object.prototype.hasOwnProperty.call(body, 'thread_ref');
+      let thread = null;
+      if (hasThreadType || hasThreadRef) {
+        const ref = parseThreadRef(body.thread_ref);
+        if (!hasThreadType || !hasThreadRef
+            || !THREAD_TYPES.has(body.thread_type) || ref == null) {
+          return res.status(400).json({ error: 'Invalid thread_type/thread_ref' });
+        }
+        thread = { type: body.thread_type, ref };
+      }
+
+      const { handleMessage } = require('../services/ws');
+      const result = await handleMessage(
+        pool,
+        { user: req.user, appId: app.id, appSlug: app.slug },
+        { type: 'chat', content: body.content, ...(thread ? { thread } : {}) }
+      );
+      if (!result?.ok) {
+        if (result?.code === 'not_collaborator') {
+          return res.status(404).json({ error: 'App not found' });
+        }
+        if (result?.code === 'write_access_failed') {
+          return res.status(503).json({ error: 'temporarily_unavailable' });
+        }
+        if (result?.code === 'invalid_thread') {
+          return res.status(400).json({ error: 'Invalid thread_type/thread_ref' });
+        }
+        log.error('chat', 'Canonical chat write returned no result', {
+          slug: req.params.slug, code: result?.code,
+        });
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+
+      const message = result.message;
+      return res.status(201).json({
+        message: {
+          id: message.id,
+          user_id: message.userId,
+          username: message.username,
+          content: message.content,
+          msg_type: message.msgType,
+          metadata: message.metadata || {},
+          thread_type: message.thread?.type || null,
+          thread_ref: message.thread?.ref || null,
+          created_at: message.createdAt,
+          edited_at: null,
+          reactions: [],
+        },
+      });
+    } catch (err) {
+      log.error('chat', 'Failed to post message', {
+        slug: req.params.slug, message: err.message,
+      });
+      return res.status(500).json({ error: 'Internal server error' });
     }
   });
 

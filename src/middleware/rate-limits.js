@@ -158,6 +158,19 @@ const chatLimiter = makeLimiter({
   message: 'Too many chat messages — slow down for a minute.',
 });
 
+// Native app/group-chat JSON writes: 60 / minute / user. Browser clients
+// normally use the WebSocket path, while CLI/MCP clients use
+// POST /api/apps/:slug/messages. Keep this bucket separate from chatLimiter:
+// posting native discussion replies must not consume the budget for agent
+// turns (which can incur an LLM spend), or vice versa.
+const groupChatWriteLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 60,
+  name: 'group-chat-write',
+  keyByUser: true,
+  message: 'Too many discussion messages — slow down for a minute.',
+});
+
 // #556: live title previews for the feedback modal (POST /api/feedback/
 // title). Same sizing rationale as chatLimiter — each call is a Haiku
 // spend against the daily LLM budget, so this must not become a faster
@@ -304,4 +317,4 @@ const waitlistJoinLimiter = makeLimiter({
   message: 'Too many signups from this address — try again in a few minutes.',
 });
 
-module.exports = { dbExportLimiter, authLimiter, homePanelPrefLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, topochainMobileAuthLimiter, waitlistJoinLimiter };
+module.exports = { dbExportLimiter, authLimiter, homePanelPrefLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, topochainMobileAuthLimiter, waitlistJoinLimiter };

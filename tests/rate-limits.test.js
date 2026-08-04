@@ -15,7 +15,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
-const { issueKindLimiter, agentFileWriteLimiter } = require('../src/middleware/rate-limits');
+const {
+  issueKindLimiter,
+  agentFileWriteLimiter,
+  chatLimiter,
+  groupChatWriteLimiter,
+} = require('../src/middleware/rate-limits');
 
 let server;
 let base;
@@ -41,6 +46,8 @@ test.before(async () => {
   });
   // Mirrors POST /api/me/agent-files.
   app.post('/files', agentFileWriteLimiter, (req, res) => res.status(201).json({ ok: true }));
+  app.post('/agent-chat', chatLimiter, (_req, res) => res.status(201).json({ ok: true }));
+  app.post('/group-chat', groupChatWriteLimiter, (_req, res) => res.status(201).json({ ok: true }));
 
   await new Promise((resolve) => { server = app.listen(0, '127.0.0.1', resolve); });
   base = `http://127.0.0.1:${server.address().port}`;
@@ -149,4 +156,19 @@ test('agent-file saves use their own per-minute bucket with an "under a minute" 
   // being exhausted doesn't bleed into governance actions.
   const issue = await post('/issues', { user, kind: 'general' });
   assert.equal(issue.status, 200);
+});
+
+test('native discussion writes have their own bucket separate from agent chat', async () => {
+  const user = 'group-chat-user';
+  for (let i = 0; i < 60; i++) {
+    const r = await post('/group-chat', { user });
+    assert.equal(r.status, 201, `discussion message #${i + 1} should pass`);
+  }
+  const blocked = await post('/group-chat', { user });
+  assert.equal(blocked.status, 429);
+  assert.match(blocked.body.error, /Too many discussion messages/);
+
+  const agentTurn = await post('/agent-chat', { user });
+  assert.equal(agentTurn.status, 201,
+    'exhausting native discussion writes must not throttle an agent turn');
 });

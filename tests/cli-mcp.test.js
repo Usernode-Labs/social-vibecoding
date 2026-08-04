@@ -120,6 +120,8 @@ test('MCP initializes without credentials and returns the external login contrac
       /branch to push/i);
     assert.ok(byName.get('social_vibecoding.proposal_push_commit')
       .inputSchema.required.includes('repo_path'));
+    assert.match(byName.get('social_vibecoding.api_write').description,
+      /POST \/api\/apps\/:slug\/messages/);
 
     const status = await client.callTool({
       name: 'social_vibecoding.login_status',
