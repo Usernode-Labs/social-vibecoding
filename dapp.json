@@ -36,30 +36,6 @@
       "description": "Anthropic ADMIN API key (`sk-ant-admin…`) — NOT the same credential as ANTHROPIC_API_KEY above, and not interchangeable with it. Used read-only for GET /v1/organizations/cost_report, which backs the \"Anthropic credits\" row in the hamburger status area (#555). Optional: with it unset, that row falls back to an estimate derived from the platform's own spend ledgers and says so. No staging_default — staging inherits the unset state, which is exactly the fallback path a reviewer should see."
     },
     {
-      "key": "WAITLIST_GITHUB_CLIENT_ID",
-      "required": false,
-      "private": true,
-      "description": "OAuth client ID for optional GitHub account verification on the waitlist's stage-2 form. Configure it together with WAITLIST_GITHUB_CLIENT_SECRET; this is a user-facing GitHub OAuth app, not the platform's GITHUB_APP_ID. Without the pair, the GitHub connect button remains unavailable and the form accepts a self-reported handle instead."
-    },
-    {
-      "key": "WAITLIST_GITHUB_CLIENT_SECRET",
-      "required": false,
-      "private": true,
-      "description": "OAuth client secret paired with WAITLIST_GITHUB_CLIENT_ID for optional GitHub account verification on the waitlist's stage-2 form. Keep this credential private. Without both GitHub OAuth values, the GitHub connect button remains unavailable and the form accepts a self-reported handle instead."
-    },
-    {
-      "key": "WAITLIST_X_CLIENT_ID",
-      "required": false,
-      "private": true,
-      "description": "OAuth client ID for optional X account verification on the waitlist's stage-2 form. Configure it together with WAITLIST_X_CLIENT_SECRET. Without the pair, the X connect button remains unavailable and the form accepts a self-reported handle instead."
-    },
-    {
-      "key": "WAITLIST_X_CLIENT_SECRET",
-      "required": false,
-      "private": true,
-      "description": "OAuth client secret paired with WAITLIST_X_CLIENT_ID for optional X account verification on the waitlist's stage-2 form. Keep this credential private. Without both X OAuth values, the X connect button remains unavailable and the form accepts a self-reported handle instead."
-    },
-    {
       "key": "ADMIN_USERNAME",
       "required": true,
       "default": "admin",
@@ -104,6 +80,34 @@
       "group": "Platform",
       "default": "INFO",
       "description": "Log verbosity for the platform process: DEBUG, INFO, WARN or ERROR. Raising it to DEBUG is the one tunable you actually want to change without a code change while chasing something in prod."
+    },
+    {
+      "key": "WAITLIST_GITHUB_CLIENT_ID",
+      "group": "Waitlist OAuth",
+      "required": false,
+      "private": true,
+      "description": "OAuth client ID for optional GitHub account verification on the waitlist's stage-2 form. Configure it together with WAITLIST_GITHUB_CLIENT_SECRET; this is a user-facing GitHub OAuth app, not the platform's GITHUB_APP_ID. Without the pair, the GitHub connect button remains unavailable and the form accepts a self-reported handle instead."
+    },
+    {
+      "key": "WAITLIST_GITHUB_CLIENT_SECRET",
+      "group": "Waitlist OAuth",
+      "required": false,
+      "private": true,
+      "description": "OAuth client secret paired with WAITLIST_GITHUB_CLIENT_ID for optional GitHub account verification on the waitlist's stage-2 form. Keep this credential private. Without both GitHub OAuth values, the GitHub connect button remains unavailable and the form accepts a self-reported handle instead."
+    },
+    {
+      "key": "WAITLIST_X_CLIENT_ID",
+      "group": "Waitlist OAuth",
+      "required": false,
+      "private": true,
+      "description": "OAuth client ID for optional X account verification on the waitlist's stage-2 form. Configure it together with WAITLIST_X_CLIENT_SECRET. Without the pair, the X connect button remains unavailable and the form accepts a self-reported handle instead."
+    },
+    {
+      "key": "WAITLIST_X_CLIENT_SECRET",
+      "group": "Waitlist OAuth",
+      "required": false,
+      "private": true,
+      "description": "OAuth client secret paired with WAITLIST_X_CLIENT_ID for optional X account verification on the waitlist's stage-2 form. Keep this credential private. Without both X OAuth values, the X connect button remains unavailable and the form accepts a self-reported handle instead."
     },
     {
       "key": "MAX_GLOBAL_SESSIONS",
