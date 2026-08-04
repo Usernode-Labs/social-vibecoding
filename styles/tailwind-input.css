@@ -1,0 +1,13 @@
+/* Input stylesheet for the shell's compiled Tailwind build.
+ *
+ * Lives OUTSIDE public/ on purpose: it must never be served (it is
+ * meaningless to a browser — `@tailwind` is a build-time directive).
+ * `npm run build:css` compiles it to public/css/tailwind.css.
+ *
+ * `base` is the preflight layer. The Play CDN injected it too, so dropping
+ * it here would silently change every heading, list and form reset in the
+ * shell. Keep all three layers, in this order.
+ */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

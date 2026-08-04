@@ -40,6 +40,16 @@ const PUBLIC_PATHS = [
   '/health',
   '/css/',
   '/js/',
+  // Vendored third-party browser libs (public/vendor/ — marked, DOMPurify,
+  // qrcodejs). Same public tier as /css/ and /js/, and public for the same
+  // reason: index.html loads them from its <head> on EVERY load including
+  // the anonymous landing/login screens, so a redirect-to-root HTML body
+  // here would arrive where a script was expected (leaving marked /
+  // DOMPurify / QRCode undefined) and would poison the service worker
+  // precache with redirects. Static assets only, no data access.
+  // NB: keep single quotes out of comments in this array — tests parse
+  // every quoted string here as a public prefix (see history.test.js).
+  '/vendor/',
   '/usernode-bridge.js',
   '/usernode-bridge/',
   // Native-feel UI kit (public/usernode-native/v1/) — centrally hosted for

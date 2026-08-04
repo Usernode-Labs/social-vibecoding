@@ -60,6 +60,10 @@ test('GET /api/* JSON is network-first-with-cache', () => {
 test('shell assets classify as shell', () => {
   assert.equal(classify('GET', '/js/app.js'), 'shell');
   assert.equal(classify('GET', '/css/app.css'), 'shell');
+  // Compiled Tailwind + the vendored libs that replaced the CDN tags.
+  assert.equal(classify('GET', '/css/tailwind.css'), 'shell');
+  assert.equal(classify('GET', '/vendor/marked-15.0.12.min.js'), 'shell');
+  assert.equal(classify('GET', '/vendor/qrcode-1.0.0.min.js'), 'shell');
   assert.equal(classify('GET', '/usernode-bridge.js'), 'shell');
   assert.equal(classify('GET', '/usernode-bridge/v1/bridge.js'), 'shell');
   assert.equal(classify('GET', '/manifest.webmanifest'), 'shell');
@@ -71,14 +75,19 @@ test('content-addressed images are cache-first', () => {
   assert.equal(classify('GET', `/visuals/${'b'.repeat(32)}`), 'immutable');
 });
 
-test('known CDN scripts classify as cdn; other cross-origin is bypassed', () => {
-  assert.equal(classifyRequest('GET', 'https://cdn.tailwindcss.com/', null, 'no-cors', ORIGIN), 'cdn');
+// ALL cross-origin traffic is bypassed now: the shell compiles Tailwind into
+// /css/tailwind.css and vendors marked/DOMPurify/qrcodejs under /vendor/, so
+// there is no third-party asset left to cache. The URLs that used to be
+// special-cased are asserted explicitly, so a partial revert can't quietly
+// leave the SW half-wired to a CDN it no longer loads.
+test('all cross-origin requests are bypassed', () => {
+  assert.equal(classifyRequest('GET', 'https://cdn.tailwindcss.com/', null, 'no-cors', ORIGIN), 'bypass');
   assert.equal(classifyRequest('GET',
-    'https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js', null, 'cors', ORIGIN), 'cdn');
+    'https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js', null, 'cors', ORIGIN), 'bypass');
   assert.equal(classifyRequest('GET',
-    'https://cdn.jsdelivr.net/npm/dompurify@3.4.4/dist/purify.min.js', null, 'cors', ORIGIN), 'cdn');
+    'https://cdn.jsdelivr.net/npm/dompurify@3.4.4/dist/purify.min.js', null, 'cors', ORIGIN), 'bypass');
   assert.equal(classifyRequest('GET',
-    'https://cdn.jsdelivr.net/gh/davidshimjs/qrcodejs/qrcode.min.js', null, 'no-cors', ORIGIN), 'cdn');
+    'https://cdn.jsdelivr.net/gh/davidshimjs/qrcodejs/qrcode.min.js', null, 'no-cors', ORIGIN), 'bypass');
   // Arbitrary third-party hosts (and child-app subdomains) are untouched.
   assert.equal(classifyRequest('GET', 'https://evil.example/x.js', null, 'no-cors', ORIGIN), 'bypass');
   assert.equal(classifyRequest('GET',
