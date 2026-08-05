@@ -1598,9 +1598,14 @@ END $$;
 -- 'session_done' (#161 — a dev-session turn finished after its owner
 -- left; session_id points to the session), 'auto_solve_done' (#161 —
 -- a headless auto-solve run finished; `detail` holds the outcome:
--- spec | code | spec_code | question | failed) and 'spec_shared' (#86 —
+-- spec | code | spec_code | question | failed), 'check_failed' (proposal
+-- staging failed), and 'spec_shared' (#86 —
 -- someone privately shared a spec version with you; session_id points
 -- to the dev session, `detail` holds the version number as a string).
+-- Collaboration and governance invitation history uses 'collab_invite',
+-- 'collab_invite_accepted', 'approver_invite', and
+-- 'approver_invite_accepted'. The authoritative current-state contract is
+-- NOTIFICATIONS-ARCHITECTURE.md.
 CREATE TABLE IF NOT EXISTS notifications (
   id              SERIAL PRIMARY KEY,
   user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

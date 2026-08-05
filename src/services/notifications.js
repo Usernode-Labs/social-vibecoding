@@ -11,8 +11,14 @@
 // (#161 — a dev-session turn finished after its owner left),
 // 'auto_solve_done' (#161 — a headless auto-solve run finished; `detail`
 // holds the outcome: spec | code | spec_code (#170) | question | failed)
-// and 'spec_shared' (#86 — someone privately shared a spec version with
+// plus 'check_failed' (proposal staging failed), and 'spec_shared' (#86 —
+// someone privately shared a spec version with
 // you; `detail` carries the version number as a string).
+
+// Collaboration and governance invite history adds 'collab_invite',
+// 'collab_invite_accepted', 'approver_invite', and
+// 'approver_invite_accepted'. See NOTIFICATIONS-ARCHITECTURE.md for the
+// reviewed channel, lifecycle, reliability, and scaling contract.
 
 const log = require('./logger');
 const { listActiveUserIds } = require('./active-users');

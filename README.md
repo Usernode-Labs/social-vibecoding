@@ -16,6 +16,9 @@ Mayor / Claude Code pipeline that produces real PRs.
   for the shipped self-app: DB rename runbook, rollback procedure,
   flag-flip recipes, why each phase exists. The phase numbers here
   are cited from comments throughout the codebase.
+- **[NOTIFICATIONS-ARCHITECTURE.md](./NOTIFICATIONS-ARCHITECTURE.md)** —
+  validated current-state notification topology, guarantees, failure modes,
+  scaling boundary, and decision gates for any channel expansion.
 - **[src/prompts/app-conventions.md](./src/prompts/app-conventions.md)**
   — authoritative platform conventions injected into Mayor and
   Claude Code prompts. Also served live at `/claude.md` on every
