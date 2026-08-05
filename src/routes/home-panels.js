@@ -527,7 +527,14 @@ const PANEL_REGISTRY = [
     key: 'create',
     title: 'Create app',
     removable: true,
-    sizes: { 4: [1, 1], 5: [1, 1] },
+    // Full-width strip on a phone, a single tile on desktop. At four columns
+    // a 1x1 create tile read as one more app icon in a row of app icons —
+    // the one thing on the grid that is an ACTION rather than a launcher had
+    // the least presence of anything on it. One row of its own at 4x1 gives
+    // it the same weight as the two full-width widgets without spending a
+    // second row; the tile itself lays its icon and label out side by side
+    // below 640px (see .home-create-tile in home-panels.js / app.css).
+    sizes: { 4: [4, 1], 5: [1, 1] },
     build: async () => ({}),
     demo: () => ({ demo: true }),
   },

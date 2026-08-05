@@ -601,7 +601,8 @@ test('the registry describes every widget, with its footprint and removability',
   // width and its content is a single lane; its original two on desktop,
   // where the second row carries the Popular lane.
   assert.deepEqual(byKey.discover.sizes, { 4: [4, 1], 5: [2, 2] });
-  assert.deepEqual(byKey.create.sizes, { 4: [1, 1], 5: [1, 1] });
+  // Create app takes a whole phone row (4 wide, 1 tall) and one desktop cell.
+  assert.deepEqual(byKey.create.sizes, { 4: [4, 1], 5: [1, 1] });
   // Discover is the shell's only door to the app directory.
   assert.equal(byKey.discover.removable, false);
   assert.equal(byKey.challenges.removable, true);

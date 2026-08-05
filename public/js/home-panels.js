@@ -635,15 +635,23 @@ const HomePanels = {
       || 'Ask an admin to enable app creation for your account.';
     // The whole tile is the button (a 1x1 cell has no room for chrome around
     // one), and .home-create-btn is what Home.wireCreateButtons() binds.
+    //
+    // TWO SHAPES, ONE MARKUP. The widget's footprint is 4x1 below 640px and
+    // 1x1 at and above it (PANEL_REGISTRY `sizes`), so the content flips with
+    // the SAME Tailwind `sm:` breakpoint the grid does: a full-width row lays
+    // the icon and label out side by side (stacking them in a 116px row would
+    // leave the label clipped against the tile's own padding), a single cell
+    // stacks them as before. Whole class literals, so the compiled stylesheet
+    // carries both.
     return `
       <div class="home-create-widget ${canCreate ? '' : 'home-create-widget--disabled'} h-full" data-panel="${esc(panel.key)}" data-create-enabled="${canCreate}">
-        <button type="button" class="home-create-btn home-create-tile w-full h-full rounded-xl p-3 flex flex-col items-center justify-center text-center gap-2 transition-colors"
+        <button type="button" class="home-create-btn home-create-tile w-full h-full rounded-xl p-3 flex flex-row sm:flex-col items-center justify-center text-center gap-3 sm:gap-2 transition-colors"
           ${canCreate ? '' : 'aria-disabled="true" '}title="${canCreate ? 'Create a new app' : esc(hint)}"
           aria-label="${canCreate ? 'Create a new app' : esc(hint)}">
           <span class="app-icon-tile app-icon-tile--empty w-14 h-14 rounded-xl flex items-center justify-center shrink-0" aria-hidden="true">
             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
           </span>
-          <span class="home-create-label text-xs leading-tight max-w-full ${canCreate ? 'text-violet-600 dark:text-violet-400' : 'text-zinc-400 dark:text-zinc-500'}">Create app</span>
+          <span class="home-create-label text-sm sm:text-xs leading-tight max-w-full ${canCreate ? 'text-violet-600 dark:text-violet-400' : 'text-zinc-400 dark:text-zinc-500'}">Create app</span>
         </button>
       </div>`;
   },

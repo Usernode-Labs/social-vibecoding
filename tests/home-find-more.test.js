@@ -380,7 +380,8 @@ test('every widget is one bordered block, sized by the cells it occupies', () =>
   // Discover is ASYMMETRIC (#949): one row on a phone where it is full
   // width, its original two on desktop where the second is the Popular lane.
   assert.match(ROUTE, /sizes: \{ 4: \[4, 1\], 5: \[2, 2\] \}/);
-  assert.match(ROUTE, /sizes: \{ 4: \[1, 1\], 5: \[1, 1\] \}/);   // create
+  // The create widget is a single desktop cell and a full-width phone ROW.
+  assert.match(ROUTE, /sizes: \{ 4: \[4, 1\], 5: \[1, 1\] \}/);   // create
 });
 
 // Short feed on a tall screen: the trailing sections sit at the BOTTOM of
