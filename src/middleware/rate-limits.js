@@ -272,6 +272,20 @@ const homeLayoutLimiter = makeLimiter({
   message: 'Too many layout changes — slow down for a minute.',
 });
 
+// #940: saved dev-chat drafts, now server-backed. One write per deliberate
+// save / trash / send, plus a burst when a device that was offline flushes
+// its local mirror on reconcile (bounded by MAX_SAVED_DRAFTS = 20 posts +
+// its tombstones). 60/min per user clears that flush with room to spare and
+// still bounds a runaway client. Per-user keyed, mirroring boardOrderLimiter
+// — drafts belong to the account, not to an IP.
+const draftWriteLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 60,
+  name: 'chat-drafts',
+  keyByUser: true,
+  message: 'Too many draft updates — slow down for a minute.',
+});
+
 // Platform database export tickets: 3 / 24h / full admin. Each ticket
 // authorizes ONE full, unredacted pg_dump of the platform database — every
 // password hash, every live session token, every app credential — so the
@@ -342,4 +356,4 @@ const waitlistJoinLimiter = makeLimiter({
   message: 'Too many signups from this address — try again in a few minutes.',
 });
 
-module.exports = { dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, waitlistJoinLimiter };
+module.exports = { dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, waitlistJoinLimiter };

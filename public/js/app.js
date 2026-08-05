@@ -1090,6 +1090,15 @@ const App = {
               AppView.refreshDevData('board-order');
             }
             break;
+          case 'session_drafts_changed':
+            // #940: another device of THIS user saved or trashed a draft.
+            // No-ops unless that session is the one on screen; a dropped
+            // socket costs nothing, since opening the session or returning
+            // to the tab reconciles anyway.
+            if (typeof DevChat !== 'undefined' && DevChat.applyDraftsUpdate) {
+              DevChat.applyDraftsUpdate(data.sessionId);
+            }
+            break;
           case 'notification_new':
             if (window.Notifications) Notifications.handleIncoming(data.notification);
             // A mention/reply/reaction may have arrived for a message in
