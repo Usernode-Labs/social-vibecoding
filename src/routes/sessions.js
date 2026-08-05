@@ -4083,8 +4083,12 @@ function sessionRoutes(config) {
 
     // #239: whether the auto-conflict-resolver currently has a resolve
     // in flight for this session. The client's "resolving merge
-    // conflicts" banner polls this as its reload-recovery and
-    // missed-WS-event safety net.
+    // conflicts" banner used to poll this as its reload-recovery and
+    // missed-WS-event safety net; that banner was retired in #962, so
+    // no client reads this today. Kept as a cheap, honest fact about
+    // the session for admin/debug tooling and future surfaces — the
+    // per-proposal badge derives the same state from the WS
+    // `resolving` broadcasts + the merge_conflict_state snapshot.
     const { isResolving } = require('../services/conflict-resolver');
 
     // Merge lifecycle status ('promoted' | 'merging' | 'merged' | …).

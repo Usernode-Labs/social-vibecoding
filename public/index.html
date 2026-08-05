@@ -562,6 +562,11 @@
        the latter swaps in after PLATFORM_UPDATE_TIMEOUT_MS so a botched
        deploy doesn't trap the tab forever.
 
+       A REAL MERGE IS THE ONLY TRIGGER (#962). The retired #239
+       "resolving merge conflicts" variant used to share this element
+       for background branch-sync work that usually merged nothing;
+       that state now lives on the proposal's own badge instead.
+
        The banner only signals; the actual write-blocking happens in
        App's wrapped fetch() (rejects non-GET while the flag is up).
        Read-only browsing keeps working. -->
@@ -574,13 +579,6 @@
     <button id="platform-updating-reload" type="button"
             class="hidden ml-2 px-2 py-0.5 rounded border border-current text-xs font-semibold hover:bg-black/10 dark:hover:bg-white/10"
             onclick="location.reload()">Reload</button>
-    <!-- #239: shown only in the resolving banner's red "resolution
-         failed" terminal state — that variant has no SHA flip or
-         reload coming, so the user dismisses it by hand (it also
-         auto-hides after ~20s). -->
-    <button id="platform-updating-dismiss" type="button"
-            class="hidden ml-2 px-2 py-0.5 rounded border border-current text-xs font-semibold hover:bg-black/10 dark:hover:bg-white/10"
-            onclick="App.PlatformUpdating.dismissResolveFailure()">Dismiss</button>
   </div>
 
   <!-- Home screen: app list. Rendered as a responsive grid of compact
