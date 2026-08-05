@@ -65,31 +65,50 @@ async function getSignupByMoreToken(pool, token) {
 // several visits. Returns the merged answers, or null when the token
 // doesn't resolve.
 async function mergeMoreAnswers(pool, token, patch) {
-  const row = await getSignupByMoreToken(pool, token);
-  if (!row) return null;
-  const current = row.answers && typeof row.answers === 'object' ? row.answers : {};
-  const merged = { ...current, ...patch, _version: ANSWERS_VERSION };
-  await pool.query(
-    `UPDATE waitlist_signups SET answers = $1 WHERE id = $2`,
-    [JSON.stringify(merged), row.id]
+  if (typeof token !== 'string' || !/^[a-f0-9]{48}$/.test(token)) return null;
+  if (!patch || Array.isArray(patch) || typeof patch !== 'object') return null;
+  const { rows } = await pool.query(
+    `UPDATE waitlist_signups
+        SET answers =
+          (CASE WHEN jsonb_typeof(answers) = 'object'
+                THEN answers ELSE '{}'::jsonb END)
+          || $2::jsonb
+          || jsonb_build_object('_version', $3::int)
+      WHERE more_token = $1
+      RETURNING answers`,
+    [token, JSON.stringify(patch), ANSWERS_VERSION]
   );
-  return merged;
+  return rows[0]?.answers || null;
 }
 
 // Record an OAuth-verified social handle (github / x) on the signup.
 // Verified handles live under answers.verified so they are distinct
 // from the self-reported answers.handles entries.
 async function setVerifiedHandle(pool, token, provider, handle) {
-  const row = await getSignupByMoreToken(pool, token);
-  if (!row) return null;
-  const current = row.answers && typeof row.answers === 'object' ? row.answers : {};
-  const verified = { ...(current.verified || {}), [provider]: handle };
-  const merged = { ...current, verified, _version: ANSWERS_VERSION };
-  await pool.query(
-    `UPDATE waitlist_signups SET answers = $1 WHERE id = $2`,
-    [JSON.stringify(merged), row.id]
+  if (typeof token !== 'string' || !/^[a-f0-9]{48}$/.test(token)) return null;
+  if ((provider !== 'github' && provider !== 'x')
+      || typeof handle !== 'string' || !handle || handle.length > 255) return null;
+
+  // One statement is important: GitHub and X callbacks can finish at
+  // the same time, and the stage-2 form can be saved in parallel. The
+  // row lock taken by UPDATE makes every expression see the latest row,
+  // so unrelated answers and the other provider cannot be lost.
+  const { rows } = await pool.query(
+    `UPDATE waitlist_signups
+        SET answers = jsonb_set(
+          CASE WHEN jsonb_typeof(answers) = 'object'
+               THEN answers ELSE '{}'::jsonb END,
+          '{verified}',
+          (CASE WHEN jsonb_typeof(answers->'verified') = 'object'
+                THEN answers->'verified' ELSE '{}'::jsonb END)
+            || jsonb_build_object($2::text, $3::text),
+          TRUE
+        ) || jsonb_build_object('_version', $4::int)
+      WHERE more_token = $1
+      RETURNING answers`,
+    [token, provider, handle, ANSWERS_VERSION]
   );
-  return merged;
+  return rows[0]?.answers || null;
 }
 
 // Grant platform access to a user (idempotent — re-granting keeps the

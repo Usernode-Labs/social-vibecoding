@@ -54,12 +54,13 @@ function collapse(sql) {
 }
 
 function makeState() {
-  return { signups: new Map(), users: new Map(), nextSignupId: 1 };
+  return { signups: new Map(), users: new Map(), nextSignupId: 1, queries: [] };
 }
 
 function makePool(state) {
   async function query(rawSql, params = []) {
     const sql = collapse(rawSql);
+    state.queries.push(sql);
 
     if (sql.startsWith('INSERT INTO waitlist_signups')) {
       const [email, , answers, moreToken] = params;
@@ -75,10 +76,36 @@ function makePool(state) {
       return { rowCount: 1, rows: [] };
     }
 
-    if (sql.includes('WHERE more_token = $1')) {
+    if (sql.startsWith('SELECT id, email, answers FROM waitlist_signups WHERE more_token = $1')) {
       const [token] = params;
       const s = [...state.signups.values()].find((r) => r.more_token === token);
       return { rows: s ? [{ id: s.id, email: s.email, answers: s.answers }] : [] };
+    }
+
+    if (sql.startsWith("UPDATE waitlist_signups SET answers = (CASE WHEN jsonb_typeof(answers) = 'object'")) {
+      const [token, patchJson, version] = params;
+      const s = [...state.signups.values()].find((r) => r.more_token === token);
+      if (!s) return { rowCount: 0, rows: [] };
+      const current = s.answers && !Array.isArray(s.answers) && typeof s.answers === 'object'
+        ? s.answers : {};
+      s.answers = { ...current, ...JSON.parse(patchJson), _version: version };
+      return { rowCount: 1, rows: [{ answers: s.answers }] };
+    }
+
+    if (sql.startsWith('UPDATE waitlist_signups SET answers = jsonb_set(')) {
+      const [token, provider, handle, version] = params;
+      const s = [...state.signups.values()].find((r) => r.more_token === token);
+      if (!s) return { rowCount: 0, rows: [] };
+      const current = s.answers && !Array.isArray(s.answers) && typeof s.answers === 'object'
+        ? s.answers : {};
+      const oldVerified = current.verified && !Array.isArray(current.verified)
+        && typeof current.verified === 'object' ? current.verified : {};
+      s.answers = {
+        ...current,
+        verified: { ...oldVerified, [provider]: handle },
+        _version: version,
+      };
+      return { rowCount: 1, rows: [{ answers: s.answers }] };
     }
 
     if (sql.includes('SET answers = $1 WHERE id = $2')) {
@@ -236,6 +263,7 @@ test('mergeMoreAnswers merges section-wise and keeps stage-1 answers', async () 
 
   // Unknown token → null, nothing written.
   assert.equal(await mergeMoreAnswers(pool, 'e'.repeat(48), { group: {} }), null);
+  assert.equal(await mergeMoreAnswers(pool, moreToken, null), null);
 });
 
 test('setVerifiedHandle stores OAuth-verified handles apart from self-reported ones', async () => {
@@ -249,6 +277,39 @@ test('setVerifiedHandle stores OAuth-verified handles apart from self-reported o
   const row = state.signups.get('v@example.com');
   assert.equal(row.answers.verified.github, 'octocat');
   assert.equal(row.answers.handles.discord, 'selfclaimed');
+});
+
+test('verified handles and survey saves use atomic updates that preserve each other', async () => {
+  const state = makeState();
+  const pool = makePool(state);
+  const { moreToken } = await joinWaitlist(pool, {
+    email: 'atomic@example.com',
+    answers: { made_url: 'https://example.com/work' },
+  });
+
+  const before = state.queries.length;
+  await setVerifiedHandle(pool, moreToken, 'github', 'octocat');
+  assert.equal(state.queries.length, before + 1, 'verified write is one DB statement');
+  assert.match(state.queries.at(-1), /WHERE more_token = \$1 RETURNING answers$/);
+
+  await mergeMoreAnswers(pool, moreToken, { group: { name: 'Builders' } });
+  await setVerifiedHandle(pool, moreToken, 'x', 'octocat_x');
+
+  const answers = state.signups.get('atomic@example.com').answers;
+  assert.equal(answers.made_url, 'https://example.com/work');
+  assert.equal(answers.group.name, 'Builders');
+  assert.deepEqual(answers.verified, { github: 'octocat', x: 'octocat_x' });
+});
+
+test('setVerifiedHandle rejects unknown providers and malformed inputs without a DB write', async () => {
+  const state = makeState();
+  const pool = makePool(state);
+  const before = state.queries.length;
+
+  assert.equal(await setVerifiedHandle(pool, 'bad-token', 'github', 'octocat'), null);
+  assert.equal(await setVerifiedHandle(pool, 'a'.repeat(48), 'google', 'someone'), null);
+  assert.equal(await setVerifiedHandle(pool, 'a'.repeat(48), 'x', ''), null);
+  assert.equal(state.queries.length, before);
 });
 
 // ─── 3. Account-creation linkage ──────────────────────────────────────

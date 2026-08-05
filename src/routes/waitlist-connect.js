@@ -31,24 +31,52 @@ const { PRODUCTION_ORIGIN } = require('../services/cli-auth-constants');
 // fine: the platform is a single process, and an entry only needs to
 // survive the seconds-long hop to the provider and back.
 const pending = new Map();
+const pendingByFlow = new Map();
 const STATE_TTL_MS = 10 * 60 * 1000;
+const PROVIDER_TIMEOUT_MS = 10 * 1000;
 
-function putState(entry) {
+function flowKey(entry) {
+  // Do not duplicate the raw waitlist capability in another long-lived
+  // map key. The callback still needs it in the short-lived state value.
+  return crypto.createHash('sha256')
+    .update(`${entry.provider}\0${entry.token}`)
+    .digest('hex');
+}
+
+function deleteState(nonce, entry) {
+  pending.delete(nonce);
+  const key = flowKey(entry);
+  if (pendingByFlow.get(key) === nonce) pendingByFlow.delete(key);
+}
+
+function putState(entry, now = Date.now()) {
   // Opportunistic sweep so abandoned round-trips don't accumulate.
-  const now = Date.now();
   for (const [k, v] of pending) {
-    if (v.expiresAt < now) pending.delete(k);
+    if (v.expiresAt <= now) deleteState(k, v);
   }
+
+  // A refresh/retry for one waitlist capability and provider supersedes
+  // its older round-trip. This bounds one holder to one live state entry
+  // per provider instead of letting repeated starts grow the map.
+  const key = flowKey(entry);
+  const previousNonce = pendingByFlow.get(key);
+  if (previousNonce) {
+    const previous = pending.get(previousNonce);
+    if (previous) deleteState(previousNonce, previous);
+    else pendingByFlow.delete(key);
+  }
+
   const nonce = crypto.randomBytes(24).toString('hex');
   pending.set(nonce, { ...entry, expiresAt: now + STATE_TTL_MS });
+  pendingByFlow.set(key, nonce);
   return nonce;
 }
 
-function takeState(nonce) {
+function takeState(nonce, now = Date.now()) {
   const entry = pending.get(nonce);
   if (!entry) return null;
-  pending.delete(nonce);
-  return entry.expiresAt < Date.now() ? null : entry;
+  deleteState(nonce, entry);
+  return entry.expiresAt <= now ? null : entry;
 }
 
 // Where the round-trip lands back in the SPA. `status` rides in the
@@ -87,17 +115,25 @@ function callbackUrl(config, provider) {
 }
 
 async function fetchJson(url, opts) {
-  const res = await fetch(url, opts);
+  const res = await fetch(url, {
+    ...opts,
+    signal: opts?.signal || AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+  });
   const text = await res.text();
   let body = null;
   try { body = JSON.parse(text); } catch (_) { /* provider error page */ }
   if (!res.ok) {
-    throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
+    // Provider bodies are untrusted and can contain authorization data.
+    // Keep them out of application errors because the caller logs the
+    // message. Status is enough for an operator to classify the failure.
+    throw new Error(`HTTP ${res.status}`);
   }
   return body;
 }
 
 // Exchange the authorization code and resolve the account's handle.
+// Access tokens remain local to this call: they are never returned to
+// callers, written to the database, or included in logs.
 async function resolveHandle(provider, creds, code, redirectUri, verifier) {
   if (provider === 'github') {
     const tokenResp = await fetchJson('https://github.com/login/oauth/access_token', {
@@ -239,4 +275,15 @@ function waitlistConnectRoutes(config) {
   return router;
 }
 
-module.exports = { waitlistConnectRoutes };
+function resetPendingForTests() {
+  pending.clear();
+  pendingByFlow.clear();
+}
+
+module.exports = {
+  PROVIDER_TIMEOUT_MS,
+  STATE_TTL_MS,
+  waitlistConnectRoutes,
+  // Pure state/transport seams for focused tests. They are not HTTP API.
+  _testing: { fetchJson, putState, resetPendingForTests, takeState },
+};
