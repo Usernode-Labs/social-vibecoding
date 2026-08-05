@@ -1623,7 +1623,13 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   your `cellFromPoint(x, y)` (returning `{ col, row }` or `null`), asks
   `canPlace(item, cell)` on each cell change, calls `onHover(item, cell,
   ok)` so you can paint the target highlight, and finally
-  `onPlace(item, cell)` on a committed drop. `onLift` / `onSettle` carry
+  `onPlace(item, cell)` on a committed drop. **If your drop displaces
+  occupants rather than refusing, preview that in `onHover`** — move the
+  items that would be pushed to the cells they'd land in. A flow reorder
+  shows that for free (everything shuffles as you drag); free placement
+  only moves what actually collides, so without the preview an occupied
+  target is a guess. Compute the plan once in `canPlace` and reuse it in
+  `onHover`, or the highlight and the drop can disagree. `onLift` / `onSettle` carry
   the same deferral contract as `attachReorder` (hold a re-render flag in
   the first, flush it in the second — it fires on drops, cancels and
   detach alike). Rendering the grid as real cell elements while dragging

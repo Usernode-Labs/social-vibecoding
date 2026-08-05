@@ -321,9 +321,9 @@
       "expectSelector": "#app-list .app-card[data-yours=\"true\"][style*=\"grid-row\"]"
     },
     {
-      "name": "Dragging shows the grid, and occupied cells are droppable (?shot=home-grid)",
+      "name": "Dragging shows the grid and previews what gets pushed (?shot=home-grid)",
       "path": "/?demo=1&shot=home-grid",
-      "expectSelector": "#app-list.un-reordering #home-grid-overlay .home-grid-cell[data-cell=\"0,0\"].home-grid-cell--on"
+      "expectSelector": "#app-list.un-reordering .home-item-displaced[style*=\"translate\"]"
     },
     {
       "name": "App tiles carry no user count and no status dot",

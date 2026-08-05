@@ -801,16 +801,16 @@ const Home = {
       Home._placementHandle = window.unNative.attachGridPlacement(listEl, {
         itemSelector: '.app-card[data-yours]:not([data-demo]), .home-panel-slot',
         cellFromPoint: (x, y) => Home._cellFromPoint(x, y),
-        canPlace: (item, cell) => {
-          const it = Home._itemFor(item);
-          if (!it) return false;
-          return HomeLayout.canPlace(Home.currentLayoutCached(cols), it, cell.col, cell.row, cols);
-        },
+        // canPlace runs first on every cell change and onHover right after,
+        // and both need the SAME displacement plan — so compute it once here
+        // and memo it for the paint. Recomputing would risk the highlight
+        // describing a different outcome than the one that commits.
+        canPlace: (item, cell) => !!Home._planFor(item, cell, cols),
         onLift: (item) => {
           Home._dragActive = true;
           Home._showGridOverlay(listEl, cols, item);
         },
-        onHover: (item, cell, ok) => { Home._highlightCell(item, cell, ok, cols); },
+        onHover: (item, cell, ok) => { Home._previewDrop(item, cell, ok, cols); },
         onPlace: (item, cell) => { Home._onGridPlace(item, cell, cols); },
         onSettle: () => {
           Home._dragActive = false;
@@ -2451,39 +2451,140 @@ const Home = {
   },
 
   _hideGridOverlay() {
+    Home._clearPreview();
+    Home._planMemo = null;
     if (Home._overlayEl && Home._overlayEl.parentNode) {
       Home._overlayEl.parentNode.removeChild(Home._overlayEl);
     }
     Home._overlayEl = null;
   },
 
+  // ===== The live displacement preview =====
+  //
+  // While an item hovers a target, the occupants that WOULD be pushed move to
+  // the cells they'd land in, right now — so the drop is never a surprise.
+  // This is the same information the flow reorder gave for free (everything
+  // shuffled as you dragged); free placement has to show it deliberately,
+  // because only the items that actually collide move.
+  //
+  // The plan is HomeLayout.place's own output, so what is previewed and what
+  // commits are one computation, not two that can disagree.
+
+  // Memo of the last plan, keyed by (item, cell). canPlace runs immediately
+  // before onHover on every cell change; sharing the result means the
+  // highlight can never describe a different outcome than the drop.
+  _planMemo: null,
+
+  _planFor(el, cell, cols) {
+    const item = Home._itemFor(el);
+    if (!item || !cell) return null;
+    const key = `${HomeLayout.idOf(item)}@${cell.col},${cell.row},${cols}`;
+    if (Home._planMemo && Home._planMemo.key === key) return Home._planMemo.plan;
+    const layout = Home.currentLayoutCached(cols);
+    const next = HomeLayout.place(layout, item, cell.col, cell.row, cols);
+    const plan = next ? { item, layout, next } : null;
+    Home._planMemo = { key, plan };
+    return plan;
+  },
+
+  // Elements currently wearing a preview transform, so the next hover can put
+  // them back without re-deriving which ones moved.
+  _previewEls: null,
+
+  // Restores the transforms only. It must NOT drop _planMemo: _previewDrop
+  // calls this first, and the memo it needs is the one canPlace computed a
+  // moment earlier — clearing it here made every hover recompute the plan,
+  // which is exactly the two-computations-that-can-disagree this memo exists
+  // to prevent. The memo is keyed by (item, cell, cols), so a stale entry can
+  // never be read; _hideGridOverlay drops it when the gesture ends.
+  _clearPreview() {
+    if (!Home._previewEls) return;
+    for (const el of Home._previewEls) {
+      el.style.transform = '';
+      el.classList.remove('home-item-displaced', 'home-item-to-overflow');
+    }
+    Home._previewEls = null;
+  },
+
+  // The DOM element for a layout item, or null. Identity only — an item's
+  // cell lives in the model, never in the DOM.
+  _elFor(item, listEl) {
+    const root = listEl || document.getElementById('app-list');
+    if (!root || !item) return null;
+    return item.type === 'widget'
+      ? root.querySelector(`[data-panel-slot="${item.key}"]`)
+      : root.querySelector(`.app-card[data-slug="${item.slug}"]`);
+  },
+
   // Tint the cells the drop would land in — the whole footprint for a widget,
   // so the user sees the block they are about to occupy rather than just the
-  // cell under the finger.
+  // cell under the finger — and move the items it would displace.
   //
   // Occupied targets tint too: a drop there DISPLACES the occupant rather
   // than being refused (HomeLayout.place), so refusing to highlight it would
   // be the grid lying about where a release lands. The only untinted state is
   // the pointer genuinely leaving the canvas.
-  _highlightCell(el, cell, ok, cols) {
+  _previewDrop(el, cell, ok, cols) {
     const overlay = Home._overlayEl;
     if (!overlay) return;
+    Home._clearPreview();
     overlay.querySelectorAll('.home-grid-cell--on').forEach((c) => {
       c.classList.remove('home-grid-cell--on');
     });
     if (!cell || !ok) return;
-    const item = Home._itemFor(el);
-    const [w, h] = item ? HomeLayout.sizeOf(item, cols) : [1, 1];
-    // Clamp exactly as HomeLayout.place does, so the tint shows where the
-    // item will actually land after an edge nudge — not where the finger is.
-    const c0 = Math.max(0, Math.min(cell.col, cols - w));
-    const r0 = Math.max(0, Math.min(cell.row, HomeLayout.MAX_ROWS - h));
-    for (let dx = 0; dx < w; dx++) {
-      for (let dy = 0; dy < h; dy++) {
-        const target = overlay.querySelector(`[data-cell="${c0 + dx},${r0 + dy}"]`);
-        if (target) target.classList.add('home-grid-cell--on');
+
+    const plan = Home._planFor(el, cell, cols);
+    if (!plan) return;
+    const { item, layout, next } = plan;
+    const draggedId = HomeLayout.idOf(item);
+
+    // The target footprint, read off the PLAN rather than re-clamped here, so
+    // the tint sits exactly where the item lands after an edge nudge.
+    const placed = next.find((it) => HomeLayout.idOf(it) === draggedId);
+    const [w, h] = HomeLayout.sizeOf(item, cols);
+    if (placed) {
+      for (let dx = 0; dx < w; dx++) {
+        for (let dy = 0; dy < h; dy++) {
+          const t = overlay.querySelector(`[data-cell="${placed.col + dx},${placed.row + dy}"]`);
+          if (t) t.classList.add('home-grid-cell--on');
+        }
       }
     }
+
+    // Everything the plan moves EXCEPT the dragged item — that one is
+    // represented by the ghost under the finger and its dashed origin slot.
+    const before = new Map(layout.map((it) => [HomeLayout.idOf(it), it]));
+    const moved = new Set();
+    const listEl = overlay.parentNode;
+    for (const to of next) {
+      const id = HomeLayout.idOf(to);
+      if (id === draggedId) continue;
+      const from = before.get(id);
+      if (!from || (from.col === to.col && from.row === to.row)) continue;
+      const node = Home._elFor(to, listEl);
+      if (!node) continue;
+
+      if (to.row >= HomeLayout.MAX_ROWS) {
+        // Pushed off the canvas into the dense overflow rows. There is no
+        // overlay cell to translate to, so say it in place instead of
+        // sliding the tile to a position that doesn't exist yet.
+        node.classList.add('home-item-to-overflow');
+        moved.add(node);
+        continue;
+      }
+      // The delta comes from the overlay's OWN cell rects — the same grid the
+      // tiles are laid out in — so the preview lands pixel-exact with no
+      // arithmetic over column widths or row heights.
+      const fromCell = overlay.querySelector(`[data-cell="${from.col},${from.row}"]`);
+      const toCell = overlay.querySelector(`[data-cell="${to.col},${to.row}"]`);
+      if (!fromCell || !toCell) continue;
+      const a = fromCell.getBoundingClientRect();
+      const b = toCell.getBoundingClientRect();
+      node.classList.add('home-item-displaced');
+      node.style.transform = `translate(${b.left - a.left}px, ${b.top - a.top}px)`;
+      moved.add(node);
+    }
+    Home._previewEls = moved.size ? moved : null;
   },
 
   // Screenshot-state deep link (?shot=home-grid): the drag overlay only
@@ -2513,8 +2614,31 @@ const Home = {
     // outlines, so a check at this URL can catch that regression instead of
     // only noticing the overlay went missing.
     listEl.classList.add('un-reordering');
-    const first = Home._overlayEl && Home._overlayEl.querySelector('[data-cell="0,0"]');
-    if (first) first.classList.add('home-grid-cell--on');
+
+    // Render a REAL displacement preview, not just the outlines: pick the
+    // last canvas item as the notional dragged one and hover it over (0,0).
+    // Whatever sits there gets pushed and shows it. That is the whole point
+    // of the link — the preview is the part a reviewer needs to see and the
+    // part nothing can navigate to, and it makes the state assertable by a
+    // declared check instead of only by a live gesture.
+    const layout = Home.currentLayoutCached(cols);
+    const canvas = HomeLayout.canvasItems(layout);
+    const dragged = canvas.length > 1 ? canvas[canvas.length - 1] : null;
+    const el = dragged ? Home._elFor(dragged, listEl) : null;
+    if (el) {
+      // The same dashed, contents-hidden drop slot a real lift gives the
+      // dragged item (native.css .un-reorder-slot). Without it the tile stays
+      // fully painted in its origin cell while the item it displaced slides
+      // over that spot, and the shot reads as two things overlapping rather
+      // than one thing making way for another.
+      el.classList.add('un-reorder-slot');
+      Home._previewDrop(el, { col: 0, row: 0 }, true, cols);
+    } else {
+      // Nothing to displace (an empty or single-item grid) — still tint the
+      // target so the outlines have a subject.
+      const first = Home._overlayEl && Home._overlayEl.querySelector('[data-cell="0,0"]');
+      if (first) first.classList.add('home-grid-cell--on');
+    }
   },
 
   // Kit-era long-press actions menu for cards the kit reorder does NOT

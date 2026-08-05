@@ -349,6 +349,274 @@ test('canPlace accepts occupied targets and self-overlap', () => {
   assert.equal(opts.canPlace(challenges, { col: 0, row: 0 }), true, 'occupied by a tile');
 });
 
+// ── The live displacement preview ─────────────────────────────────────
+//
+// While an item hovers a target, the occupants that WOULD be pushed move to
+// the cells they'd land in. The flow reorder this replaced gave that away for
+// free; free placement has to show it deliberately, because only the items
+// that actually collide move at all.
+
+// A grid whose cells and items are real enough for the preview to measure.
+// Each overlay cell reports a rect from its data-cell, so a translate delta
+// is exactly (dcol * CELL_W, drow * CELL_H).
+const CELL_W = 100;
+const CELL_H = 120;
+
+function makeGridDom(items) {
+  const cells = new Map();
+  const nodes = new Map();
+  const mk = (extra) => ({
+    style: {},
+    _cls: new Set(),
+    classList: {
+      add(...c) { c.forEach((x) => extra._cls.add(x)); },
+      remove(...c) { c.forEach((x) => extra._cls.delete(x)); },
+      contains: (c) => extra._cls.has(c),
+    },
+    ...extra,
+  });
+  for (let col = 0; col < 5; col++) {
+    for (let row = 0; row < 8; row++) {
+      const cell = { dataset: { cell: `${col},${row}` }, _cls: new Set() };
+      cell.classList = {
+        add: (c) => cell._cls.add(c),
+        remove: (c) => cell._cls.delete(c),
+        contains: (c) => cell._cls.has(c),
+      };
+      cell.getBoundingClientRect = () => ({ left: col * CELL_W, top: row * CELL_H });
+      cells.set(`${col},${row}`, cell);
+    }
+  }
+  for (const it of items) {
+    const node = { dataset: {}, style: {}, _cls: new Set() };
+    node.classList = {
+      add: (...c) => c.forEach((x) => node._cls.add(x)),
+      remove: (...c) => c.forEach((x) => node._cls.delete(x)),
+      contains: (c) => node._cls.has(c),
+    };
+    if (it.type === 'widget') {
+      node.dataset.panelSlot = it.key;
+      // _itemFor dispatches on this class, exactly as the real host carries it.
+      node._cls.add('home-panel-slot');
+    } else {
+      node.dataset.slug = it.slug;
+    }
+    nodes.set(it.type === 'widget' ? `widget:${it.key}` : `app:${it.slug}`, node);
+  }
+  const overlay = {
+    _cls: new Set(),
+    classList: { add: () => {}, remove: () => {}, contains: () => false },
+    querySelector: (sel) => {
+      const m = /\[data-cell="([^"]+)"\]/.exec(sel);
+      return m ? (cells.get(m[1]) || null) : null;
+    },
+    querySelectorAll: (sel) => (sel === '.home-grid-cell--on'
+      ? [...cells.values()].filter((c) => c._cls.has('home-grid-cell--on'))
+      : []),
+  };
+  const listEl = {
+    querySelector: (sel) => {
+      let m = /\[data-panel-slot="([^"]+)"\]/.exec(sel);
+      if (m) return nodes.get(`widget:${m[1]}`) || null;
+      m = /\.app-card\[data-slug="([^"]+)"\]/.exec(sel);
+      if (m) return nodes.get(`app:${m[1]}`) || null;
+      return null;
+    },
+    querySelectorAll: () => [],
+    appendChild: () => {},
+    classList: { add: () => {}, remove: () => {}, contains: () => false },
+  };
+  overlay.parentNode = Object.assign(listEl, { removeChild: () => {} });
+  return { overlay, listEl, nodes, cells, mk };
+}
+
+// Wire a Home with a known layout and a measurable overlay, then hover.
+function makePreview(layout) {
+  const h = makeHome();
+  h.Home._layouts = { 5: layout, 4: [] };
+  h.Home._layoutFetchedAt = Date.now();
+  h.Home._layoutCache = layout;
+  const dom = makeGridDom(layout);
+  h.Home._overlayEl = dom.overlay;
+  h.dom = dom;
+  h.hover = (id, col, row) => {
+    const el = dom.nodes.get(id);
+    h.Home._previewDrop(el, { col, row }, true, 5);
+  };
+  h.transformOf = (id) => dom.nodes.get(id).style.transform || '';
+  h.classesOf = (id) => [...dom.nodes.get(id)._cls].sort().join(' ');
+  h.tinted = () => [...dom.cells.values()]
+    .filter((c) => c._cls.has('home-grid-cell--on'))
+    .map((c) => c.dataset.cell);
+  return h;
+}
+
+test('hovering an occupied cell slides the occupant to where it would land', () => {
+  const layout = [
+    { type: 'app', slug: 'a', col: 0, row: 0 },
+    { type: 'app', slug: 'b', col: 2, row: 0 },
+    { type: 'app', slug: 'far', col: 4, row: 4 },
+  ];
+  const h = makePreview(layout);
+  h.hover('app:a', 2, 0);
+
+  // The target tints...
+  assert.deepEqual(h.tinted(), ['2,0']);
+  // ...and the occupant has actually MOVED to the cell it would land in —
+  // a's vacated (0,0), two columns to the left of where b sits.
+  assert.equal(h.transformOf('app:b'), `translate(${-2 * CELL_W}px, 0px)`);
+  assert.match(h.classesOf('app:b'), /home-item-displaced/);
+  // The dragged item is NOT transformed: the ghost under the finger and its
+  // dashed origin slot already represent it.
+  assert.equal(h.transformOf('app:a'), '');
+  // An item the drop doesn't touch holds completely still.
+  assert.equal(h.transformOf('app:far'), '');
+  assert.equal(h.classesOf('app:far'), '');
+});
+
+test('the preview clears and restores when the hover moves', () => {
+  const layout = [
+    { type: 'app', slug: 'a', col: 0, row: 0 },
+    { type: 'app', slug: 'b', col: 2, row: 0 },
+    { type: 'app', slug: 'c', col: 3, row: 1 },
+  ];
+  const h = makePreview(layout);
+
+  h.hover('app:a', 2, 0);
+  assert.notEqual(h.transformOf('app:b'), '', 'b is previewed');
+
+  // Hover a DIFFERENT occupied cell: b goes back, c takes over.
+  h.hover('app:a', 3, 1);
+  assert.equal(h.transformOf('app:b'), '', 'b is restored');
+  assert.equal(h.classesOf('app:b'), '');
+  assert.notEqual(h.transformOf('app:c'), '', 'c is now previewed');
+
+  // Hover an EMPTY cell: nothing is displaced at all.
+  h.hover('app:a', 4, 4);
+  assert.equal(h.transformOf('app:c'), '');
+  assert.deepEqual(h.tinted(), ['4,4']);
+
+  // Leaving the grid clears the tint and every transform.
+  h.Home._previewDrop(h.dom.nodes.get('app:a'), null, false, 5);
+  assert.deepEqual(h.tinted(), []);
+  assert.equal(h.transformOf('app:b'), '');
+  assert.equal(h.transformOf('app:c'), '');
+});
+
+test('a widget hover previews its whole footprint and every item it pushes', () => {
+  const layout = [
+    { type: 'widget', key: 'challenges', col: 0, row: 0 },   // 2x2
+    { type: 'app', slug: 'a', col: 3, row: 3 },
+    { type: 'app', slug: 'b', col: 4, row: 3 },
+    { type: 'app', slug: 'c', col: 3, row: 4 },
+    { type: 'app', slug: 'd', col: 4, row: 4 },
+  ];
+  const h = makePreview(layout);
+  h.hover('widget:challenges', 3, 3);
+
+  // All four cells of the 2x2 target tint, not just the one under the finger.
+  assert.deepEqual(h.tinted().sort(), ['3,3', '3,4', '4,3', '4,4']);
+  // ...and all four tiles it covers are previewed into the vacated 2x2.
+  for (const slug of ['a', 'b', 'c', 'd']) {
+    assert.match(h.classesOf(`app:${slug}`), /home-item-displaced/, slug);
+    assert.notEqual(h.transformOf(`app:${slug}`), '', slug);
+  }
+});
+
+// A displaced item can be pushed clean off the 8-row canvas. There is no
+// overlay cell to slide it to, so it says so where it stands rather than
+// moving silently or sliding somewhere that doesn't exist yet.
+test('an item pushed into the overflow rows is marked, not translated', () => {
+  // A FULL canvas: a 2x2 widget at (0,0) plus a tile in every other cell.
+  const layout = [{ type: 'widget', key: 'challenges', col: 0, row: 0 }];
+  for (let row = 0; row < 8; row++) {
+    for (let col = 0; col < 5; col++) {
+      if (row < 2 && col < 2) continue;            // the widget's own cells
+      layout.push({ type: 'app', slug: `a${col}${row}`, col, row });
+    }
+  }
+  const h = makePreview(layout);
+  // Drag the far-corner TILE onto the widget's origin. The widget has to go
+  // somewhere; the vacated cell is one wide and there is no free 2x2 left, so
+  // it is pushed clean off the canvas.
+  h.hover('app:a47', 0, 0);
+
+  const widget = h.dom.nodes.get('widget:challenges');
+  assert.ok(widget._cls.has('home-item-to-overflow'),
+    'the widget is marked as heading for the overflow rows');
+  assert.equal(widget.style.transform || '', '',
+    'and is NOT slid to a cell that does not exist yet');
+  assert.ok(!widget._cls.has('home-item-displaced'),
+    'the two states are distinct — one slides, one says so in place');
+});
+
+// The preview and the drop must be ONE computation. Two would eventually
+// disagree, and the grid would lie about where a release lands.
+test('the preview reuses the plan canPlace computed', () => {
+  const layout = [
+    { type: 'app', slug: 'a', col: 0, row: 0 },
+    { type: 'app', slug: 'b', col: 2, row: 0 },
+  ];
+  const h = makePreview(layout);
+  let calls = 0;
+  const realPlace = h.HomeLayout.place;
+  h.HomeLayout.place = (...args) => { calls += 1; return realPlace.apply(h.HomeLayout, args); };
+
+  const el = h.dom.nodes.get('app:a');
+  assert.equal(h.Home._planFor(el, { col: 2, row: 0 }, 5) !== null, true);
+  assert.equal(calls, 1);
+  // onHover right after must not recompute it.
+  h.Home._previewDrop(el, { col: 2, row: 0 }, true, 5);
+  assert.equal(calls, 1, 'the memo is what makes highlight and drop agree');
+  // A different cell is a different plan.
+  h.Home._previewDrop(el, { col: 3, row: 0 }, true, 5);
+  assert.equal(calls, 2);
+  h.HomeLayout.place = realPlace;
+});
+
+test('hiding the overlay clears every preview transform', () => {
+  const layout = [
+    { type: 'app', slug: 'a', col: 0, row: 0 },
+    { type: 'app', slug: 'b', col: 2, row: 0 },
+  ];
+  const h = makePreview(layout);
+  h.hover('app:a', 2, 0);
+  assert.notEqual(h.transformOf('app:b'), '');
+  // onSettle → _hideGridOverlay: a cancelled or refused drag must not leave a
+  // tile parked at a position nothing saved.
+  h.Home._hideGridOverlay();
+  assert.equal(h.transformOf('app:b'), '');
+  assert.equal(h.classesOf('app:b'), '');
+});
+
+test('the preview motion matches the kit’s FLIP family', () => {
+  const CSS = read('public/css/app.css');
+  // 200ms ease is attachReorder's gridFlip timing — the preview has to feel
+  // like the same mechanism, not a second animation language.
+  assert.match(CSS, /\.home-item-displaced \{[^}]*transition: transform 200ms ease/);
+  assert.match(read('public/usernode-native/v1/native.js'), /transition = 'transform 200ms ease'/);
+  // z-index so a sliding tile passes OVER its stationary neighbours.
+  assert.match(CSS, /\.home-item-displaced \{[^}]*z-index: 2/);
+  // Reduced motion drops the tween but keeps the move — the new POSITION is
+  // the information.
+  assert.match(CSS, /prefers-reduced-motion[^}]*\}[\s\S]*?\.home-item-displaced \{ transition: none/);
+  // The overflow marker is a visible state, not a silent move.
+  assert.match(CSS, /\.home-item-to-overflow \{[^}]*opacity/);
+  assert.match(CSS, /\.home-item-to-overflow::after \{[^}]*content: '↓'/);
+});
+
+test('?shot=home-grid renders a real preview, not just the outlines', () => {
+  // The preview is the part a reviewer needs to see and the part nothing can
+  // navigate to, so the deep link has to enter it — otherwise the declared
+  // check only proves the dashed cells still paint.
+  const shot = HOME_SRC.slice(
+    HOME_SRC.indexOf('_maybeShowShotGrid(listEl) {'),
+    HOME_SRC.indexOf('\n  // Kit-era long-press actions menu'));
+  assert.match(shot, /_previewDrop\(el, \{ col: 0, row: 0 \}, true, cols\)/);
+  assert.match(shot, /canvas\[canvas\.length - 1\]/, 'a deterministic notional dragged item');
+  assert.match(shot, /canvas\.length > 1/, 'a single-item grid has nothing to displace');
+});
+
 test('a rejected write reverts to server truth', async () => {
   const { Home, toasts, setFetch, fetchCalls } = makeHome();
   seedLayout(Home);

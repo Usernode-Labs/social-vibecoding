@@ -2022,7 +2022,15 @@
   //   canPlace(item, cell)     → false vetoes: no highlight, release springs
   //                              home. Called on every cell CHANGE, not per
   //                              frame.
-  //   onHover(item, cell, ok)  → paint/clear the target highlight. cell is
+  //   onHover(item, cell, ok)  → paint/clear whatever the host wants to show
+  //                              for this target. A highlight is the minimum;
+  //                              a host whose drop DISPLACES occupants should
+  //                              also preview that here (move the items that
+  //                              would be pushed to where they'd land), since
+  //                              this is the only place it knows the target
+  //                              before the release. Fires on every cell
+  //                              CHANGE, not per frame, so it is cheap enough
+  //                              to re-derive a plan in. cell is
   //                              null when the pointer leaves the grid.
   //   onPlace(item, cell)      → committed drop. Fires before onSettle, and
   //                              only for a legal, changed cell.

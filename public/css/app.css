@@ -674,6 +674,54 @@ html, body {
   .home-grid-cell { transition: none; }
 }
 
+/* ── The live displacement preview ──────────────────────────
+   While something hovers a target, the items it WOULD push move to the cells
+   they'd land in. The flow reorder this replaced gave that away for free
+   (everything shuffled as you dragged); free placement has to show it
+   deliberately, because only the items that actually collide move at all —
+   without it a drop onto an occupied cell is a guess.
+
+   The transform is set inline from the plan (a measured delta between two of
+   the overlay's own cells); this rule only supplies the MOTION, so it matches
+   the kit's FLIP family — 200ms ease, the same as attachReorder's gridFlip.
+   z-index keeps a sliding tile above its stationary neighbours instead of
+   disappearing behind the one it is passing. */
+.home-item-displaced {
+  transition: transform 200ms ease;
+  z-index: 2;
+}
+
+/* Pushed clean off the canvas into the dense overflow rows below it. There is
+   no overlay cell to slide to, so the tile says so where it stands: dimmed,
+   with a downward chevron. Better than sliding it to a position that does not
+   exist yet, and better than moving it silently. */
+.home-item-to-overflow {
+  position: relative;
+  opacity: 0.45;
+}
+.home-item-to-overflow::after {
+  content: '↓';
+  position: absolute;
+  right: 0.25rem;
+  bottom: 0.25rem;
+  width: 1.125rem;
+  height: 1.125rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  line-height: 1;
+  color: #fff;
+  background-color: rgba(139, 92, 246, 0.9);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The new POSITION is the information, so the tiles still move — only the
+     tween goes. */
+  .home-item-displaced { transition: none; }
+}
+
 /* Tiles and widgets sit ABOVE the overlay. Without this the overlay's cells
    would paint over the icons they are supposed to sit behind. */
 #app-list > .app-card,
