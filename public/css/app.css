@@ -759,19 +759,110 @@ html, body {
 }
 
 /* ── Discover widget ────────────────────────────────────────
-   The compact featured tiles inside a 2x2 block (~171px wide on a phone,
-   ~397px on desktop). auto-fill rather than a fixed column count: the same
-   markup has to read well at both, and letting the tiles decide how many fit
-   is what keeps a 40px icon from being stranded alone on a wide row. */
+   ONE SHAPE PER BREAKPOINT (#949 — registry sizes 4x1 / 2x2 in
+   src/routes/home-panels.js). The block is ~366px wide on a phone and
+   ~397px on a wide desktop.
+
+   PHONE — one grid row, spent on the title bar and one lane:
+
+     border            1px top + 1px bottom          =   2px
+     title bar         py-1 8 + 18 line + 1 rule     =  27px
+     tile lane         8 + 40 icon + 4 gap + 12 name + 8
+                                                     =  72px
+                                                       -------
+                                                        101px
+
+   against --home-cell-h 7.25rem (116px) — ~15px of headroom, which is what
+   absorbs a larger system text size before the lane starts to clip. That
+   27px title bar is why Discover's browse control lives IN the bar and it
+   draws no footer: a .home-panel-footer is 27px more and the lane has
+   nowhere to give it.
+
+   DESKTOP — two rows, unchanged from before the issue, with the second one
+   earned rather than trimmed:
+
+     border 2 + title bar 27 + lane 72
+     + divider/"Popular" caption (1 rule + ~18)      =  19px
+     + second lane                                   =  72px
+                                                       -------
+                                                        192px
+
+   against --home-panel-max-h 16rem (256px) = two cells plus the gap. The
+   64px of slack is deliberately NOT a void at the bottom: both lanes are
+   `flex: 1 1 0`, so they split it into equal halves and each centres its
+   single row of tiles in its own band.
+
+   tests/home-panels-render.test.js pins both budgets against those tokens,
+   so don't move one number without the other.
+
+   SIX EXPLICIT TRACKS, NOT auto-fill. Each lane must be exactly one row:
+   with a lane budgeted at one row, anything that wraps is clipped by
+   .home-panel-rows' overflow and silently disappears. auto-fill made the
+   track count follow the pixel width — 6 tracks on a phone and on a wide
+   desktop, but only 3-4 in a 640-800px window, where a full six tiles
+   wrapped. Six is Home.FEATURED_LIMIT / Home.POPULAR_LIMIT, so there is
+   exactly one track per tile either lane can ever produce.
+
+   The icon is FLUID for the same reason: the narrowest 5-column lane gives
+   a track ~32px, and a fixed 40px box would overflow it. It fills its track
+   up to the 40px it has always drawn at, so a phone and a wide desktop are
+   unchanged and a narrow desktop window shrinks instead of clipping. */
 .home-discover-tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(3.25rem, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 0.375rem;
   padding: 0.5rem 0.625rem;
-  align-content: start;
+  /* One row inside a band that is taller than it needs: centre it rather
+     than hanging it off the top edge. */
+  align-content: center;
 }
-.home-discover-tile {
+/* Both lanes share the leftover height evenly instead of the first one
+   taking it all — `1 1 0` rather than .home-panel-rows' own `1 1 auto`, so
+   the basis is the band and not the content. */
+.home-discover-lane {
+  flex: 1 1 0;
+}
+/* .app-card buys these tiles their tap/drag behaviour, but NOT its padding:
+   that class is the 56px launcher tile, and its 8px (phone) / 12px (desktop)
+   inset is sized for a card that owns a whole grid cell. Inherited here it
+   added 16px to every tile, which put the phone widget at 116px of a 116px
+   cell — no headroom at all, so the first reader with larger system text
+   would have had the captions clipped. The lane's own padding is the inset;
+   the tile just holds the icon and its name.
+
+   Two classes deep on purpose: .app-card's own padding is declared LATER in
+   this file (in the phone-density block), so an equal-specificity rule here
+   would lose to it at exactly the width where it matters most. */
+.home-discover-tiles .home-discover-tile {
   min-width: 0;
+  padding: 0;
+}
+/* THE CAP LIVES ON THE WRAPPER, NOT THE ICON. The icon's own box is a flex
+   item of a `flex-col items-center` tile, so it is shrink-to-fit: a
+   `width: 100%` on it resolves against a parent whose width comes from its
+   content, which is circular — the icons collapsed to whatever their glyph
+   happened to measure (a 12px emoji, a 30px image) instead of a uniform
+   40px. Giving the WRAPPER a definite width (the track, capped at 40px)
+   breaks the cycle: the icon then fills a box that is already decided, and
+   the +/✓ badge, which is positioned against this wrapper, keeps tracking
+   the icon's real edges at every size. */
+.home-discover-icon-wrap {
+  width: 100%;
+  max-width: 2.5rem;   /* 40px — the size the tile has always drawn at */
+  margin-inline: auto;
+}
+.home-discover-icon {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+}
+/* The "Popular" caption sits on its own hairline row between the lanes. */
+.home-discover-divider {
+  min-height: 1.125rem; /* 18px */
+}
+/* The empty state: no tile lane at all, one centred line in its place, so
+   the block reads as a compact strip rather than a mostly-blank box. */
+.home-discover-empty {
+  padding: 0.5rem 0.625rem;
 }
 
 /* ── Create-app widget ──────────────────────────────────────

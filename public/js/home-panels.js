@@ -251,22 +251,29 @@ const HomePanels = {
     if (html) HomePanels._wire(section);
   },
 
-  // Lift a widget's own state attribute onto its HOST.
+  // Lift a widget's own state attributes onto its HOST.
   //
-  // The create widget stamps `data-create-enabled` on the markup it returns,
-  // but that markup is painted INSIDE the `[data-panel-slot]` host — so a
-  // selector written the way the spec describes it ("stamped on the host"),
-  // and the way the dapp.json checks and screenshot assertions write it,
-  // `[data-panel-slot="create"][data-create-enabled="true"]`, asks for both
-  // attributes on ONE element and matches nothing. Mirroring the value up is
-  // cheaper and less brittle than teaching every caller the two-element
-  // shape, and it keeps the widget itself the single place that decides.
+  // The create widget stamps `data-create-enabled` on the markup it returns
+  // (and Discover stamps `data-featured` / `data-popular` with its two lane
+  // counts), but that markup is painted INSIDE the `[data-panel-slot]` host
+  // — so a selector written the way the spec describes it ("stamped on the
+  // host"), and the way the dapp.json checks and screenshot assertions write
+  // it, `[data-panel-slot="create"][data-create-enabled="true"]`, asks for
+  // both attributes on ONE element and matches nothing. Mirroring the value
+  // up is cheaper and less brittle than teaching every caller the
+  // two-element shape, and it keeps the widget itself the single place that
+  // decides.
+  //
+  // Every attribute here is mirrored or CLEARED on each paint, so a host can
+  // never keep a stale value a later render stopped emitting.
+  STATE_ATTRS: ['data-create-enabled', 'data-featured', 'data-popular'],
+
   _stampState(host) {
     if (!host || !host.querySelector) return;
-    const inner = host.querySelector('[data-create-enabled]');
-    if (inner) host.setAttribute('data-create-enabled', inner.getAttribute('data-create-enabled'));
-    else if (host.hasAttribute && host.hasAttribute('data-create-enabled')) {
-      host.removeAttribute('data-create-enabled');
+    for (const attr of HomePanels.STATE_ATTRS) {
+      const inner = host.querySelector(`[${attr}]`);
+      if (inner) host.setAttribute(attr, inner.getAttribute(attr));
+      else if (host.hasAttribute && host.hasAttribute(attr)) host.removeAttribute(attr);
     }
   },
 
@@ -375,11 +382,18 @@ const HomePanels = {
   // The one control on the bar is the ⋮ menu, and it is deliberately NOT
   // part of the handle — see _wire, which stops its pointerdown before the
   // grid's reorder recognizer can see it.
-  _panelShell(key, titleHtml, bodyHtml, footerHtml) {
+  //
+  // `attrs` is an optional bag of extra attributes for the article — the
+  // widget's own state (Discover's two lane counts), which _stampState
+  // mirrors onto the [data-panel-slot] host so one selector can ask for the
+  // slot AND the state.
+  _panelShell(key, titleHtml, bodyHtml, footerHtml, attrs) {
     const esc = HomePanels.esc;
     const expanded = !!HomePanels._expanded[key];
+    const extra = Object.entries(attrs || {})
+      .map(([name, value]) => ` ${name}="${esc(value)}"`).join('');
     return `
-      <article class="home-panel home-panel-card${expanded ? ' home-panel--expanded' : ''} rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/50 overflow-hidden" data-panel="${esc(key)}">
+      <article class="home-panel home-panel-card${expanded ? ' home-panel--expanded' : ''} rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/50 overflow-hidden" data-panel="${esc(key)}"${extra}>
         <div class="home-panel-bar flex-none flex items-center gap-2 px-2.5 py-1 border-b border-zinc-200 dark:border-zinc-800 select-none" title="Drag to move this widget">
           ${titleHtml}
           <button type="button" class="home-panel-menu un-touch-target shrink-0 w-4 h-4 flex items-center justify-center rounded-full text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 leading-none"
@@ -466,49 +480,96 @@ const HomePanels = {
   // ── Discover ───────────────────────────────────────────────────────
   //
   // The former "Featured apps" section, now a widget in the grid: the
-  // admin-curated tiles plus the way into the #apps directory as the block's
-  // footer row. Both halves are unchanged in behaviour — the tiles are the
-  // same per-viewer `featured` flags GET /api/apps already serializes
-  // (Home.featuredApps derives them; no second query), and the footer is the
-  // same #home-browse-btn that used to sit under the old card.
+  // admin-curated tiles plus the way into the #apps directory. The tiles are
+  // the same per-viewer `featured` flags GET /api/apps already serializes
+  // (Home.featuredApps derives them; no second query), and the browse
+  // control is the same #home-browse-btn that used to sit under the old card.
   //
   // Tiles are the COMPACT 40px treatment (the widget-strip tile, not the
-  // 56px launcher card): a 2x2 block is ~171px wide on a phone and ~397px on
-  // desktop, and a full card simply does not fit. The count adapts to the
-  // footprint rather than being a constant.
+  // 56px launcher card): the block is ~366px wide on a phone and ~397px on
+  // desktop, and a full card simply does not fit.
   //
-  // The footer ALWAYS renders — it is THE discovery path, so it must not
-  // depend on curation existing. With nothing left to feature, the tile row
-  // is swapped for a one-line note rather than hidden, so the block never
-  // collapses to a bare heading over a button.
+  // TWO SHAPES, ONE PER BREAKPOINT (#949) — the widget's registry footprint
+  // is asymmetric (4x1 on a phone, 2x2 on desktop), and the content follows:
+  //
+  //   PHONE (4 cols, one row): the title bar and the featured lane, and
+  //     that is the whole widget. It is full width there, so the row this
+  //     gives back is a clean full-width gap.
+  //   DESKTOP (5 cols, two rows): the same, plus a hairline, a "Popular"
+  //     caption and a second lane — the most-used apps this viewer doesn't
+  //     have yet (Home.popularApps). The footprint is unchanged from before
+  //     this issue, so no stored desktop arrangement moves; the row that was
+  //     dead space is earned instead of trimmed.
+  //
+  // The column count is read from Home.currentCols() — the viewport, not the
+  // DOM, so it is answerable before the first paint — and a breakpoint
+  // crossing re-renders through Home._applyColumnCount() → Home.render() →
+  // HomePanels.render(), which only fires when the count actually moved.
+  //
+  // THE BROWSE CONTROL RIDES IN THE TITLE BAR, not in a footer of its own.
+  // A .home-panel-footer costs 27px, which on a phone is exactly the
+  // difference between a tile lane that fits its one cell and one that clips
+  // its captions. Challenges keeps _panelFooter (it has an expand toggle and
+  // a second destination to name); Discover has ONE destination, so it
+  // belongs beside the title. _wire() needs no change for this: its
+  // pointerdown guard is on `.home-panel button` generally, so the button is
+  // excluded from the drag handle the bar otherwise is.
+  //
+  // The browse control ALWAYS renders — it is THE discovery path, so it must
+  // not depend on curation existing. With nothing left to feature the tile
+  // lane is dropped entirely (rather than drawn empty) and one centred line
+  // takes its place.
   renderDiscoverPanel(panel) {
     const esc = HomePanels.esc;
-    const apps = (window.Home && typeof Home.featuredApps === 'function')
-      ? Home.featuredApps(Home._apps || []) : [];
+    const hasHome = !!(window.Home && typeof Home.featuredApps === 'function');
+    const featured = hasHome ? Home.featuredApps(Home._apps || []) : [];
+    // Desktop only. With no Home there is no app list either, so the widget
+    // is down to its note whatever this answers — 5 is the honest default.
+    const cols = (window.Home && typeof Home.currentCols === 'function')
+      ? Home.currentCols() : 5;
+    const popular = (cols === 5 && hasHome && typeof Home.popularApps === 'function')
+      ? Home.popularApps(Home._apps || []) : [];
+
     const titleHtml = `
-      <span class="home-panel-title min-w-0 flex-1 truncate whitespace-nowrap text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${esc(panel.title || 'Discover')}</span>`;
+      <span class="home-panel-title min-w-0 flex-1 truncate whitespace-nowrap text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${esc(panel.title || 'Discover')}</span>
+      <button type="button" id="home-browse-btn" class="home-panel-browse shrink-0 flex items-center gap-1 text-[12px] font-medium text-violet-600 dark:text-violet-400 hover:underline whitespace-nowrap"
+        title="Browse every app in the directory" aria-label="Browse all apps">
+        <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+        <span class="whitespace-nowrap">Browse all apps</span>
+      </button>`;
 
-    const body = apps.length
-      ? `<div class="home-panel-rows home-discover-tiles">${
-          apps.map((a) => HomePanels.renderDiscoverTile(a)).join('')
-        }</div>`
-      : `<p class="home-panel-rows flex items-center px-2.5 py-2 text-[12px] leading-snug text-zinc-500 dark:text-zinc-400">Nothing featured right now — browse the full directory to find apps to add.</p>`;
+    const lane = (apps, extraClass) => `<div class="home-panel-rows home-discover-lane home-discover-tiles${
+      extraClass ? ` ${extraClass}` : ''
+    }">${apps.map((a) => HomePanels.renderDiscoverTile(a)).join('')}</div>`;
 
-    const footer = `
-      <div class="home-panel-footer flex-none flex items-center justify-between gap-2 px-2.5 border-t border-zinc-200 dark:border-zinc-800">
-        <button type="button" id="home-browse-btn" class="home-panel-browse flex items-center gap-1.5 text-[12px] font-medium text-violet-600 dark:text-violet-400 hover:underline whitespace-nowrap">
-          <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-          <span class="whitespace-nowrap">Browse all apps</span>
-        </button>
-        <svg class="w-3.5 h-3.5 shrink-0 opacity-50 text-zinc-500 dark:text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-      </div>`;
+    const featuredHtml = featured.length
+      ? lane(featured)
+      : `<p class="home-panel-rows home-discover-lane home-discover-empty flex items-center justify-center px-2.5 text-center text-[12px] leading-snug text-zinc-500 dark:text-zinc-400">Nothing featured right now — browse the directory.</p>`;
 
-    return HomePanels._panelShell(panel.key, titleHtml, body, footer);
+    // No popular apps → no divider and no second lane, rather than a second
+    // apology stacked under the first. The featured lane (or its note) then
+    // has the whole box, which is exactly the pre-#949 rendering.
+    const popularHtml = popular.length
+      ? `<div class="home-discover-divider flex-none flex items-center px-2.5 border-t border-zinc-200 dark:border-zinc-800">
+          <span class="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Popular</span>
+        </div>${lane(popular, 'home-discover-popular')}`
+      : '';
+
+    return HomePanels._panelShell(panel.key, titleHtml, featuredHtml + popularHtml, null, {
+      'data-featured': String(featured.length),
+      'data-popular': String(popular.length),
+    });
   },
 
-  // One compact featured tile. Carries .app-card + data-slug so
-  // Home._wireDiscoveryCards binds it exactly as it bound the old featured
-  // row — same tap-to-open, same +/✓ add badge, same optimistic toggle.
+  // One compact discovery tile — the same markup in both lanes. Carries
+  // .app-card + data-slug so Home._wireDiscoveryCards binds it exactly as it
+  // bound the old featured row — same tap-to-open, same +/✓ add badge, same
+  // optimistic toggle.
+  //
+  // The icon carries NO w-10 h-10: app.css sizes it fluidly (100% of its
+  // track, capped at the same 2.5rem it always drew at) because a lane's six
+  // tracks are only ~32px wide in the narrowest 5-column window, where a
+  // fixed 40px box would overflow its track and be clipped by the panel.
   renderDiscoverTile(app) {
     const esc = HomePanels.esc;
     const added = !!(window.Home && Home.isYours && Home.isYours(app));
@@ -526,8 +587,8 @@ const HomePanels = {
     }
     return `
       <div class="app-card home-discover-tile relative flex flex-col items-center gap-1 cursor-pointer" data-slug="${esc(app.slug)}" data-status="${esc(app.status || '')}"${app.demo ? ' data-demo="true"' : ''}>
-        <div class="relative">
-          <div class="app-icon-tile w-10 h-10 rounded-lg overflow-hidden flex items-center justify-center font-bold text-base" data-icon="${iconKind}">${iconHtml}</div>
+        <div class="home-discover-icon-wrap relative">
+          <div class="app-icon-tile home-discover-icon rounded-lg overflow-hidden flex items-center justify-center font-bold text-base" data-icon="${iconKind}">${iconHtml}</div>
           <button class="card-add-btn absolute -top-1.5 -right-1.5 w-5 h-5 flex items-center justify-center rounded-full border shadow-sm transition-colors ${
             added
               ? 'bg-emerald-500 border-emerald-500 text-white'
@@ -734,10 +795,15 @@ const HomePanels = {
         location.hash = '#apps';
       });
     });
-    const tiles = section.querySelector('.home-discover-tiles');
-    if (tiles && window.Home && typeof Home._wireDiscoveryCards === 'function') {
-      Home._wireDiscoveryCards(tiles);
-    }
+    // querySelectorAll, not querySelector: Discover draws TWO lanes on
+    // desktop (featured + popular), and a lane whose tiles were never wired
+    // looks identical in a screenshot while every tap and every + badge in
+    // it is dead.
+    section.querySelectorAll('.home-discover-tiles').forEach((tiles) => {
+      if (window.Home && typeof Home._wireDiscoveryCards === 'function') {
+        Home._wireDiscoveryCards(tiles);
+      }
+    });
 
     // Create: the enabled tile opens the create modal through
     // Home.wireCreateButtons (which owns the cloneNode re-bind discipline).
