@@ -429,7 +429,12 @@ const Leaderboard = {
 
     const subtitle = isHistory
       ? 'Everything you’ve given — kudos, bounty pledges, and votes — newest first. Only you can see this.'
-      : '5 kudos per week, resets Monday 00:00 UTC. Give them to PRs you appreciate.';
+      // #964: read the cap from the budget the badge already fetched rather
+      // than hardcoding it here, so raising WEEKLY_KUDOS_LIMIT server-side
+      // can never leave this subtitle quoting a stale number again. The
+      // fallback matches the server constant for the brief window before
+      // /api/me/kudos-budget lands (or when it failed).
+      : `${window.Kudos?.Budget?.state?.limit || 20} kudos per week, resets Monday 00:00 UTC. Give them to PRs you appreciate.`;
 
     // No <h2> of our own: the Leaderboard screen shell already titles the
     // page and the section tab above says "Kudos". The subtitle stays —

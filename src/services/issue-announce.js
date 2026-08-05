@@ -1,6 +1,9 @@
 const log = require('./logger');
 const github = require('./github');
 const { pushIssueUpdate } = require('./ws');
+// ACCESS_COLUMNS only; app-access.js depends on nothing but the logger, so
+// there is no cycle back through here.
+const { ACCESS_COLUMNS } = require('./app-access');
 
 // Resolve the app row backed by a given GitHub repo, or undefined. The
 // platform repo is itself an app on self-hosted instances, which is why a
@@ -11,8 +14,14 @@ const { pushIssueUpdate } = require('./ws');
 // Extracted so the feedback route's bounty placement targets the SAME app row
 // this file broadcasts to — a bounty attached to one app while the
 // issue_update went to another would render a pill no panel ever refreshes.
+//
+// The projection carries ACCESS_COLUMNS, not just the id/slug this file's own
+// broadcast needs: routes/feedback.js runs the returned row through
+// appAccess.checkAppAccess for the bounty's collab gate, and that function
+// THROWS on a row whose visibility columns were trimmed away. Selecting them
+// here keeps every caller safe rather than making the next one rediscover it.
 async function findAppByRepo(pool, owner, repo) {
-  const { rows } = await pool.query('SELECT id, slug, repo_url FROM apps');
+  const { rows } = await pool.query(`SELECT ${ACCESS_COLUMNS}, repo_url FROM apps`);
   return rows.find((r) => {
     const [, o, rp] = (r.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
     return o && rp

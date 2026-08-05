@@ -278,6 +278,16 @@ function feedbackRoutes(config) {
       pageStateTruncated = req.body.pageStateTruncated === true;
     }
 
+    // #964: optional kudos bounty on the issue about to be filed. Validated
+    // up front (like title / screenshotId / pageState) so a malformed flag
+    // fails fast rather than after an issue exists. Strict boolean: a
+    // truthy string would make "false" pledge, which is exactly the kind of
+    // accident that spends someone's allowance without their say-so.
+    if (req.body.bounty !== undefined && typeof req.body.bounty !== 'boolean') {
+      return res.status(400).json({ error: 'bounty must be a boolean' });
+    }
+    const wantsBounty = req.body.bounty === true;
+
     // Normalise the feedback target. Anything other than the explicit
     // 'app' opt-in falls back to platform feedback (today's behaviour).
     const target = req.body.target === 'app' ? 'app' : 'platform';
@@ -293,6 +303,10 @@ function feedbackRoutes(config) {
     let issueOwner = feedbackOwner;
     let issueRepo = feedbackRepo;
     let appContext = null;
+    // The app row a bounty would attach to, carrying appAccess.ACCESS_COLUMNS.
+    // Non-null only for app-targeted feedback that asked for a bounty; the
+    // platform target resolves its app by repo at placement time instead.
+    let bountyApp = null;
     if (target === 'app') {
       if (!appSlug || typeof appSlug !== 'string') {
         return res.status(400).json({ error: 'appSlug is required for app feedback' });
@@ -302,7 +316,15 @@ function feedbackRoutes(config) {
       }
       let appRow;
       try {
-        const { rows } = await pool.query('SELECT id, slug, name, repo_url FROM apps WHERE slug = $1', [appSlug]);
+        // #964: the visibility columns ride along ONLY when a bounty was
+        // asked for — checkAppAccess throws on a row whose access columns
+        // were projected away, and the plain feedback path has no use for
+        // them. `name` / `repo_url` are not in ACCESS_COLUMNS, so both sets
+        // are selected together for that case.
+        const columns = wantsBounty
+          ? `name, repo_url, ${appAccess.ACCESS_COLUMNS}`
+          : 'id, slug, name, repo_url';
+        const { rows } = await pool.query(`SELECT ${columns} FROM apps WHERE slug = $1`, [appSlug]);
         appRow = rows[0];
       } catch (err) {
         log.error('feedback', 'App lookup failed', { message: err.message });
@@ -318,6 +340,10 @@ function feedbackRoutes(config) {
       issueOwner = owner;
       issueRepo = repo;
       appContext = { id: appRow.id, slug: appRow.slug, name: appRow.name };
+      // Keep the full row (access columns included) for the bounty's collab
+      // check; appContext stays the narrow shape announceIssueCreated and
+      // the issue body already expect.
+      bountyApp = wantsBounty ? appRow : null;
     }
 
     // #140: include the admin's actual username so the issues panel can show
@@ -428,7 +454,19 @@ function feedbackRoutes(config) {
         await queueTitleHeal(issueOwner, issueRepo, issue.number);
         await linkScreenshot(issueOwner, issueRepo, issue.number);
         await announceIssueCreated(pool, issueOwner, issueRepo, issue, appContext);
-        return res.json({ url: issue.html_url, title, titleFallback });
+        // #964: the pledge goes last — after the issue exists and after the
+        // announce — and can only ever add a `bounty` field to the response.
+        // The filed issue is never at risk from it.
+        const bounty = wantsBounty
+          ? await attachBounty(pool, {
+            app: bountyApp, owner: issueOwner, repo: issueRepo,
+            issueNumber: issue.number, user: req.user,
+          })
+          : null;
+        return res.json({
+          url: issue.html_url, title, titleFallback,
+          ...(bounty ? { bounty } : {}),
+        });
       }
 
       const ghRes = await fetch(`https://api.github.com/repos/${issueOwner}/${issueRepo}/issues`, {
@@ -474,7 +512,20 @@ function feedbackRoutes(config) {
       // too. announceIssueCreated resolves the app row by repo (no-op
       // when none matches).
       await announceIssueCreated(pool, issueOwner, issueRepo, issue, null);
-      res.json({ url: issue.html_url, title, titleFallback });
+      // #964: same placement as the app branch. `app: null` sends
+      // attachBounty to findAppByRepo, which resolves the platform repo to
+      // the self-hosted platform app — the same row announceIssueCreated
+      // just broadcast against, so the pill and the broadcast agree.
+      const bounty = wantsBounty
+        ? await attachBounty(pool, {
+          app: null, owner: issueOwner, repo: issueRepo,
+          issueNumber: issue.number, user: req.user,
+        })
+        : null;
+      res.json({
+        url: issue.html_url, title, titleFallback,
+        ...(bounty ? { bounty } : {}),
+      });
     } catch (err) {
       log.error('feedback', 'Error filing issue', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
