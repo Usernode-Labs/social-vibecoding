@@ -376,9 +376,10 @@
       "expectText": "Nothing featured right now"
     },
     {
-      "name": "App tiles are placed at explicit grid cells, with holes allowed",
+      "name": "App tiles are placed at explicit grid cells, with iOS-sized two-line labels (#951)",
       "path": "/?demo=1",
-      "expectSelector": "#app-list .app-card[data-yours=\"true\"][style*=\"grid-row\"]"
+      "expectSelector": "#app-list .app-card[data-yours=\"true\"][style*=\"grid-row\"] .app-card-title",
+      "expectText": "Staging demo photo album and journal"
     },
     {
       "name": "Dragging shows the grid and previews what gets pushed (?shot=home-grid)",
