@@ -1229,7 +1229,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     const declaredTests = await resolveDeclaredTests(repoOwner, repoName, gitRef);
     const tests = (declaredTests.length
       ? declaredTests
-      : capturePaths.map((p) => ({ name: `Loads ${p}`, path: p, expectSelector: '', expectText: '', allowConsoleErrors: false }))
+      : capturePaths.map((p) => ({ name: `Loads ${p}`, path: p, expectSelector: '', expectText: '', allowConsoleErrors: false, steps: [] }))
     ).map((t, index) => {
       const visitPath = isSelfApp ? selfAppHashPath(t.path) : t.path;
       return {
@@ -1242,6 +1242,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         expectSelector: t.expectSelector || '',
         expectText: t.expectText || '',
         allowConsoleErrors: !!t.allowConsoleErrors,
+        steps: Array.isArray(t.steps) ? t.steps : [],
       };
     });
 

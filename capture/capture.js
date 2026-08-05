@@ -170,6 +170,7 @@ const MAX_SCROLL_VIEWPORTS = 3;
 const MAX_CONSOLE_ERRORS = 20;
 const MAX_CONSOLE_MSG_LEN = 500;
 const CONSOLE_ONLY_SETTLE_MS = 1500;
+const TEST_STEP_TIMEOUT_MS = 5000;
 
 // Whether this run also produces the before/after media artifacts. The
 // orchestrator sets MEDIA=0 for the always-on console-only check on a
@@ -683,9 +684,77 @@ function resolveTests(env) {
       expectSelector: t.expectSelector ? String(t.expectSelector).slice(0, 256) : '',
       expectText: t.expectText ? String(t.expectText).slice(0, 256) : '',
       allowConsoleErrors: !!t.allowConsoleErrors,
+      // Already validated and capped by app-manifest in the orchestrator.
+      // Re-cap here for rolling-deploy safety and to keep direct TESTS input
+      // unable to turn one capture into an unbounded run.
+      steps: Array.isArray(t.steps) ? t.steps.slice(0, 12) : [],
     });
   }
   return out;
+}
+
+function expectationFailure(snapshot, step) {
+  const text = String(snapshot?.text || '');
+  const value = String(snapshot?.value || '');
+  const attribute = snapshot?.attribute == null ? null : String(snapshot.attribute);
+  if (step.text && !text.toLowerCase().includes(String(step.text).toLowerCase())) {
+    return 'rendered text did not contain the declared text';
+  }
+  if (step.valueIncludes && !value.includes(String(step.valueIncludes))) {
+    return 'element value did not contain the declared substring';
+  }
+  if (step.valueExcludes && value.includes(String(step.valueExcludes))) {
+    return 'element value contained a forbidden substring';
+  }
+  if (step.attributeIncludes && !(attribute || '').includes(String(step.attributeIncludes))) {
+    return `attribute ${step.attribute || '(missing)'} did not contain the declared substring`;
+  }
+  if (step.attributeExcludes && (attribute || '').includes(String(step.attributeExcludes))) {
+    return `attribute ${step.attribute || '(missing)'} contained a forbidden substring`;
+  }
+  return '';
+}
+
+// Run the closed, declarative workflow language. There is intentionally no
+// evaluate-source/action escape hatch and no navigation step: every workflow
+// stays on the app origin selected by the orchestrator. Returns a concise,
+// non-secret-bearing failure reason instead of throwing into the outer run.
+async function runTestSteps(page, steps) {
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i] || {};
+    const label = `Step ${i + 1} (${step.action || 'invalid'})`;
+    let handle;
+    try {
+      handle = await page.waitForSelector(step.selector, {
+        visible: true,
+        timeout: TEST_STEP_TIMEOUT_MS,
+      });
+    } catch {
+      return `${label}: visible element "${String(step.selector || '').slice(0, 256)}" was not found`;
+    }
+    try {
+      if (step.action === 'click') {
+        await handle.click();
+      } else if (step.action === 'expect') {
+        const snapshot = await page.evaluate((el, attributeName) => ({
+          text: el.innerText || '',
+          value: 'value' in el ? el.value : '',
+          attribute: attributeName ? el.getAttribute(attributeName) : null,
+        }), handle, step.attribute || '');
+        const failure = expectationFailure(snapshot, step);
+        if (failure) return `${label}: ${failure}`;
+      } else {
+        return `${label}: unsupported action`;
+      }
+    } catch {
+      // Browser/DOM errors can contain the current URL or element value.
+      // Keep the durable check result useful without reflecting runtime data.
+      return `${label}: browser action failed`;
+    } finally {
+      if (handle && typeof handle.dispose === 'function') await handle.dispose().catch(() => {});
+    }
+  }
+  return '';
 }
 
 // #47: run one declared test against the staging build. Navigates the
@@ -748,6 +817,9 @@ async function runTest(browser, test) {
     if (status >= 400) {
       pushErr('load', `page returned HTTP ${status}`, test.url);
       failureReason = `Page returned HTTP ${status}`;
+    }
+    if (!failureReason && test.steps.length) {
+      failureReason = await runTestSteps(page, test.steps);
     }
     // Give deferred async errors a moment to fire before we judge.
     await sleep(CONSOLE_ONLY_SETTLE_MS);
@@ -872,4 +944,4 @@ if (require.main === module) {
 // file whose BEHAVIOUR (how many navigations it makes, whether it starts a
 // recording) is the thing under test, and it takes its page from the browser
 // it is handed, so a fake browser exercises it without Chromium.
-module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, mediaEnabled, resolveTests, captureTarget, setFrameSink, CHROMIUM_LAUNCH_ARGS };
+module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, mediaEnabled, resolveTests, expectationFailure, runTestSteps, captureTarget, setFrameSink, CHROMIUM_LAUNCH_ARGS };

@@ -296,6 +296,48 @@
   ],
   "tests": [
     {
+      "name": "E2E: anonymous landing opens the waitlist form (#715)",
+      "path": "/?shot=anon#landing",
+      "allowConsoleErrors": true,
+      "steps": [
+        {
+          "action": "click",
+          "selector": "#landing-waitlist-cta"
+        },
+        {
+          "action": "expect",
+          "selector": "#auth-waitlist-screen:not(.hidden) #waitlist-form #waitlist-email"
+        }
+      ]
+    },
+    {
+      "name": "E2E: an open app exposes a token-free Share App link (#715)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "steps": [
+        {
+          "action": "click",
+          "selector": "#header-menu-btn"
+        },
+        {
+          "action": "click",
+          "selector": "#drawer-row-share:not(.hidden)"
+        },
+        {
+          "action": "expect",
+          "selector": "#share-modal:not(.hidden) #share-url-input",
+          "valueIncludes": "http",
+          "valueExcludes": "token="
+        },
+        {
+          "action": "expect",
+          "selector": "#share-modal:not(.hidden) #share-open-link",
+          "attribute": "href",
+          "attributeIncludes": "http",
+          "attributeExcludes": "token="
+        }
+      ]
+    },
+    {
       "name": "Tapping an app shows its icon and name while it loads, not a blank window (#931)",
       "path": "/?shot=app-launching",
       "expectSelector": "#app-launch-cover .app-icon-tile",

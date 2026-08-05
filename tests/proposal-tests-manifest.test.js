@@ -27,6 +27,7 @@ test('a valid entry carries path, defaulted name, and assertions', () => {
     expectSelector: '.board',
     expectText: null,
     allowConsoleErrors: false,
+    steps: [],
   });
 });
 
@@ -57,6 +58,37 @@ test('allowConsoleErrors + expectText pass through', () => {
   });
   assert.equal(out[0].expectText, 'Hello');
   assert.equal(out[0].allowConsoleErrors, true);
+});
+
+test('workflow steps are closed, bounded, and normalize safe assertions', () => {
+  const many = Array.from({ length: appManifest.MAX_TEST_STEPS + 2 }, (_, i) => ({
+    action: i % 2 ? 'expect' : 'click',
+    selector: ` #step-${i} `,
+    text: 'Visible',
+    valueExcludes: 'token=',
+    attribute: 'href',
+    attributeIncludes: 'http',
+  }));
+  const [entry] = appManifest.readTests({ tests: [{ path: '/', steps: many }] });
+  assert.equal(entry.steps.length, appManifest.MAX_TEST_STEPS);
+  assert.deepEqual(entry.steps[0], { action: 'click', selector: '#step-0' });
+  assert.deepEqual(entry.steps[1], {
+    action: 'expect', selector: '#step-1', text: 'Visible',
+    valueExcludes: 'token=', attribute: 'href', attributeIncludes: 'http',
+  });
+});
+
+test('invalid workflow actions, selectors, and attribute names fail closed without forwarding input', () => {
+  const steps = appManifest.readTestSteps([
+    { action: 'evaluate', selector: '#x', source: 'danger()' },
+    { action: 'click', selector: '  ' },
+    { action: 'expect', selector: '#ok', attribute: 'href onclick', attributeIncludes: 'x', valueIncludes: 'safe' },
+  ]);
+  assert.deepEqual(steps, [
+    { action: 'invalid', selector: 'html' },
+    { action: 'invalid', selector: 'html' },
+    { action: 'invalid', selector: 'html' },
+  ]);
 });
 
 test('duplicate (name+path) entries collapse', () => {

@@ -56,10 +56,58 @@ const MANIFEST_FILENAME = 'dapp.json';
 // staging route and asserts load + no-console-errors (+ optional
 // selector/text). Extras over the cap are dropped and logged, never
 // silently truncated.
-const MAX_TESTS = 10;
+// Two workflow checks are prepended by the self-app below. Thirteen keeps
+// those plus the previous first eleven checks active, including the platform
+// variables regression check that is deliberately guarded by a unit test.
+const MAX_TESTS = 13;
 const MAX_TEST_NAME_LEN = 120;
 const MAX_TEST_SELECTOR_LEN = 256;
 const MAX_TEST_TEXT_LEN = 256;
+const MAX_TEST_STEPS = 12;
+const MAX_TEST_ATTRIBUTE_LEN = 64;
+
+// Tests may opt into a small declarative browser workflow. Keep this list
+// deliberately closed: manifest authors can ask the capture browser to click
+// and inspect DOM state, but can never inject JavaScript or navigate to a
+// second origin. Every string is bounded before it reaches Puppeteer.
+function readTestSteps(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const candidate of raw.slice(0, MAX_TEST_STEPS)) {
+    if (!candidate || typeof candidate !== 'object') {
+      out.push({ action: 'invalid', selector: 'html' });
+      continue;
+    }
+    const action = candidate.action === 'click' || candidate.action === 'expect'
+      ? candidate.action : '';
+    const selector = typeof candidate.selector === 'string'
+      ? candidate.selector.trim().slice(0, MAX_TEST_SELECTOR_LEN) : '';
+    if (!action || !selector) {
+      out.push({ action: 'invalid', selector: 'html' });
+      continue;
+    }
+    const step = { action, selector };
+    if (action === 'expect') {
+      for (const key of ['text', 'valueIncludes', 'valueExcludes', 'attributeIncludes', 'attributeExcludes']) {
+        if (typeof candidate[key] === 'string' && candidate[key]) {
+          step[key] = candidate[key].slice(0, MAX_TEST_TEXT_LEN);
+        }
+      }
+      if (typeof candidate.attribute === 'string') {
+        const attribute = candidate.attribute.trim().slice(0, MAX_TEST_ATTRIBUTE_LEN);
+        if (/^[A-Za-z_:][-A-Za-z0-9_:.]*$/.test(attribute)) step.attribute = attribute;
+      }
+      // Fail closed instead of silently degrading a misspelled attribute
+      // assertion into a visibility-only check (a dangerous false positive).
+      if (!step.attribute && (step.attributeIncludes || step.attributeExcludes)) {
+        out.push({ action: 'invalid', selector: 'html' });
+        continue;
+      }
+    }
+    out.push(step);
+  }
+  return out;
+}
 
 // Normalize the optional top-level `tests` array. Each entry must carry a
 // valid `path` (same rules as a testing-block path: relative, single
@@ -95,6 +143,7 @@ function readTests(parsed) {
       expectText: typeof t.expectText === 'string' && t.expectText.trim()
         ? t.expectText.trim().slice(0, MAX_TEST_TEXT_LEN) : null,
       allowConsoleErrors: !!t.allowConsoleErrors,
+      steps: readTestSteps(t.steps),
     });
   }
   if (dropped > 0) {
@@ -1443,6 +1492,8 @@ module.exports = {
   PLATFORM_ENV_UNWRITABLE,
   MAX_PLATFORM_ENV,
   MAX_TESTS,
+  MAX_TEST_STEPS,
+  readTestSteps,
   MAX_APP_ADMINS,
   MAX_ADMIN_USERNAME_LENGTH,
   MAX_ICON_EMOJI_LENGTH,

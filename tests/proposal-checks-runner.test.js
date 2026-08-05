@@ -7,7 +7,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { resolveTests } = require('../capture/capture');
+const { resolveTests, expectationFailure, runTestSteps } = require('../capture/capture');
 const visuals = require('../src/services/visuals');
 
 // Build a __USERNODE_TEST__ frame the way capture.js emits it.
@@ -36,6 +36,73 @@ test('resolveTests drops entries with no url and tolerates garbage', () => {
   assert.deepEqual(resolveTests({ TESTS: '{}' }), []);
   const out = resolveTests({ TESTS: JSON.stringify([{ name: 'no url' }, { url: 'http://s/x' }]) });
   assert.equal(out.length, 1);
+});
+
+test('resolveTests carries workflows but re-caps direct input', () => {
+  const steps = Array.from({ length: 20 }, (_, i) => ({ action: 'click', selector: `#s${i}` }));
+  const [entry] = resolveTests({ TESTS: JSON.stringify([{ url: 'http://s/', steps }]) });
+  assert.equal(entry.steps.length, 12);
+});
+
+test('expectationFailure checks text, value and attributes without echoing runtime values', () => {
+  assert.equal(expectationFailure({ text: 'Join Waitlist' }, { text: 'waitlist' }), '');
+  assert.match(expectationFailure({ value: 'https://app/?token=secret' }, { valueExcludes: 'token=' }), /forbidden substring/);
+  assert.equal(expectationFailure({ attribute: 'https://app/' }, { attribute: 'href', attributeIncludes: 'http', attributeExcludes: 'token=' }), '');
+  assert.match(expectationFailure({ value: 'runtime-secret' }, { valueIncludes: 'expected' }), /declared substring/);
+});
+
+test('runTestSteps waits for visible elements, clicks sequentially, and disposes handles', async () => {
+  const events = [];
+  const handles = new Map();
+  for (const selector of ['#open', '#done']) {
+    handles.set(selector, {
+      click: async () => events.push(`click:${selector}`),
+      dispose: async () => events.push(`dispose:${selector}`),
+    });
+  }
+  const page = {
+    waitForSelector: async (selector, options) => {
+      events.push(`wait:${selector}:${options.visible}`);
+      return handles.get(selector);
+    },
+    evaluate: async () => ({ text: 'Done', value: '', attribute: null }),
+  };
+  const failure = await runTestSteps(page, [
+    { action: 'click', selector: '#open' },
+    { action: 'expect', selector: '#done', text: 'done' },
+  ]);
+  assert.equal(failure, '');
+  assert.deepEqual(events, [
+    'wait:#open:true', 'click:#open', 'dispose:#open',
+    'wait:#done:true', 'dispose:#done',
+  ]);
+});
+
+test('runTestSteps reports the exact failed step and still disposes its handle', async () => {
+  let disposed = false;
+  const page = {
+    waitForSelector: async () => ({ dispose: async () => { disposed = true; } }),
+    evaluate: async () => ({ text: 'Wrong', value: '', attribute: null }),
+  };
+  const failure = await runTestSteps(page, [{ action: 'expect', selector: '#result', text: 'Ready' }]);
+  assert.match(failure, /^Step 1 \(expect\): rendered text/);
+  assert.equal(disposed, true);
+});
+
+test('runTestSteps gives a bounded timeout diagnostic for a missing visible selector', async () => {
+  const page = { waitForSelector: async () => { throw new Error('Timeout'); } };
+  const failure = await runTestSteps(page, [{ action: 'click', selector: '#missing' }]);
+  assert.equal(failure, 'Step 1 (click): visible element "#missing" was not found');
+});
+
+test('runTestSteps fails a normalized invalid step instead of passing a static load', async () => {
+  const page = {
+    waitForSelector: async () => ({ dispose: async () => {} }),
+  };
+  assert.equal(
+    await runTestSteps(page, [{ action: 'invalid', selector: 'html' }]),
+    'Step 1 (invalid): unsupported action'
+  );
 });
 
 // ── visuals parseTests / classifyTests ─────────────────────────────────

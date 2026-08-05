@@ -482,6 +482,16 @@ Per-test fields:
 - `allowConsoleErrors` — set `true` only for a route that legitimately
   logs errors; it opts that one test out of the baseline no-console-errors
   rule.
+- `steps` — optional bounded browser workflow, run after the initial route
+  loads. Each step is either `{ "action": "click", "selector": "..." }`
+  or `{ "action": "expect", "selector": "..." }`. An `expect` may also
+  declare `text`, `valueIncludes`, `valueExcludes`, and an `attribute` paired
+  with `attributeIncludes` and/or `attributeExcludes`. Selectors are waited
+  for in the visible state and every step has a five-second timeout. Workflows
+  are capped at 12 steps, run sequentially in a fresh page, cannot execute
+  arbitrary JavaScript, and cannot navigate to another origin. Prefer stable
+  ids/data attributes and assertion-driven waits over sleeps. A malformed
+  step fails closed rather than silently degrading into a page-load check.
 
 When you add or change a user-visible screen, **add or extend a test for
 it** in the same commit, pointing it at the same route(s) you put in the
