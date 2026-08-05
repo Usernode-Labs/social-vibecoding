@@ -22,15 +22,10 @@ const appStorageEnv = require('./app-storage-env');
 const { appIdentityEnv } = require('./app-identity-env');
 const { getPool } = require('../db/pool');
 
-// Core shared by respawnAppContainer (boot migration) and app-heal.js:
-// assemble the production env contract (per-role DATABASE_URL, LLM-proxy
-// pair, merged secrets) for the app's ALREADY-BUILT image, stop+rm any
-// existing container, and `docker run` a fresh one. Returns the new
-// containerId, or null when required secrets are missing (the image
-// cannot run — callers decide whether that's a warn or a failure).
-// Does NOT health-check and does NOT persist apps.container_id; callers
-// own both so each can pick its own strictness.
-async function runExistingImage(config, app) {
+// Assemble the complete production run contract for an already-built image.
+// Kept separate from the destructive replacement primitive so the admin
+// rollover can hand the exact same image/env/limits to app-blue-green.
+async function existingImageRunSpec(config, app) {
   if (!app.db_password) {
     throw new Error(
       `runExistingImage: app ${app.slug} has no db_password — ` +
@@ -38,7 +33,6 @@ async function runExistingImage(config, app) {
     );
   }
 
-  const containerName = `usernode-app-${app.slug}`;
   const imageName = `usernode-app-${app.slug}:latest`;
 
   const pool = getPool(config);
@@ -62,14 +56,12 @@ async function runExistingImage(config, app) {
     dbManager.appDbName(app.slug), app.db_password
   );
 
-  await docker.stopAndRemove(containerName).catch(() => {});
-
   // Same production env contract as app-creator / rebuildProduction —
   // a respawn must not silently drop the LLM-proxy pair (issue #34) or
   // the app-storage pair (#752).
   const llmEnv = await appLlmEnv.productionLlmEnv(pool, app.id);
   const storageEnv = await appStorageEnv.productionStorageEnv(pool, app.id);
-  const containerId = await docker.runContainer(containerName, {
+  return {
     image: imageName,
     env: {
       DATABASE_URL: dbUrl,
@@ -81,7 +73,18 @@ async function runExistingImage(config, app) {
       ...merge.env,
     },
     port: 3000,
-  });
+  };
+}
+
+// Core shared by respawnAppContainer (boot migration) and app-heal.js:
+// assemble the production env contract, stop+rm any existing container, and
+// run a fresh one. Does NOT health-check or persist apps.container_id.
+async function runExistingImage(config, app) {
+  const spec = await existingImageRunSpec(config, app);
+  if (!spec) return null;
+  const containerName = `usernode-app-${app.slug}`;
+  await docker.stopAndRemove(containerName).catch(() => {});
+  const containerId = await docker.runContainer(containerName, spec);
 
   return containerId;
 }
@@ -123,4 +126,4 @@ async function respawnAppContainer(config, app) {
   return containerId;
 }
 
-module.exports = { respawnAppContainer, runExistingImage };
+module.exports = { respawnAppContainer, runExistingImage, existingImageRunSpec };

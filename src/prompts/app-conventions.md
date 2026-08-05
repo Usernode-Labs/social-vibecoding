@@ -163,14 +163,42 @@ character check used on the landing-page anchor).
 - Connect via a single `pg.Pool({ connectionString: process.env.DATABASE_URL })`.
 - Record ownership with `user_id` / `username` from `req.user`.
 
+## Blue-green production compatibility
+
+New apps declare this block in `dapp.json`:
+
+```json
+"deployment": {
+  "strategy": "blue-green",
+  "databaseCompatibility": "expand-contract",
+  "backgroundWork": "none"
+}
+```
+
+That declaration is a safety contract, not a performance hint. During a
+production deploy the old and new containers share the same database for a
+short confidence/drain window. Keep it only while both versions can use the
+schema concurrently (expand first, deploy compatible readers/writers, contract
+in a later deploy) and while the process starts no cron, queue consumer,
+leader-election-free scheduler, or other singleton background work. Before a
+blocking/destructive migration or singleton worker is introduced, set
+`strategy` to `replace` (or remove the block). Missing, partial, and unknown
+values fail safe to replacement deploys.
+
+The platform starts and health-checks the candidate before cutover, verifies
+the stable container and public edge after cutover, keeps one old rollback
+target for a bounded drain window, and restores it if confidence checks fail.
+Established HTTP streams, SSE and WebSockets can remain on the old container
+until that deadline; clients must still reconnect normally after it expires.
+
 ## Graceful shutdown
 
-Every app container is stopped and replaced on each deploy — a staging
-preview rebuilds on every push, and production is rebuilt on every merge.
-The platform does this by sending **SIGTERM** and giving the process a
-few seconds to exit before Docker SIGKILLs it. An app that ignores the
-signal is killed mid-request with open transactions, and the deploy waits
-out the whole grace window for nothing.
+Every app container is eventually stopped on each deploy — staging previews
+use replacement, while compatible production apps use the blue-green drain
+above. The platform sends **SIGTERM** and gives the retiring process a few
+seconds to exit before Docker SIGKILLs it. An app that ignores the signal is
+killed mid-request with open transactions, and the deploy waits out the whole
+grace window for nothing.
 
 So **every app must install a shutdown handler.** The contract: stop
 accepting new connections, let in-flight requests finish under a hard

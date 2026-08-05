@@ -50,6 +50,8 @@
 const log = require('./logger');
 const docker = require('./docker');
 const appRespawn = require('./app-respawn');
+const appBlueGreen = require('./app-blue-green');
+const caddy = require('./caddy');
 const appDeployStatus = require('./app-deploy-status');
 const deployFailure = require('./deploy-failure');
 const events = require('./events');
@@ -375,7 +377,20 @@ async function rollOne(config, pool, app) {
     try {
       let containerId;
       try {
-        containerId = await appRespawn.runExistingImage(config, app);
+        if (appBlueGreen.isEligible(app.manifest_snapshot?.deployment)) {
+          const spec = await appRespawn.existingImageRunSpec(config, app);
+          if (!spec) return { outcome: 'skipped_missing_secrets' };
+          const deployed = await appBlueGreen.deploy({
+            slug: app.slug,
+            image: spec.image,
+            env: spec.env,
+            port: spec.port,
+            hostname: caddy.productionHostname(app.slug),
+          });
+          containerId = deployed.containerId;
+        } else {
+          containerId = await appRespawn.runExistingImage(config, app);
+        }
       } catch (err) {
         if (/db_password/.test(err.message || '')) {
           log.warn('app-rollover', 'App has no db_password — skipping', { slug: app.slug });

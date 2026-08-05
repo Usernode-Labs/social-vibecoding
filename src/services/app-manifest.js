@@ -496,6 +496,30 @@ function readLlm(parsed) {
   return out;
 }
 
+// Rolling two production versions against one app database is safe only when
+// the app explicitly owns that compatibility contract. Keep this strict and
+// fail-safe: any missing/unknown field makes app-blue-green.isEligible false
+// and rebuildProduction uses the legacy single-container replacement path.
+function readDeployment(parsed) {
+  const raw = parsed?.deployment;
+  if (raw == null) return null;
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    log.warn('app-manifest', 'Ignoring non-object deployment block');
+    return null;
+  }
+  const deployment = {
+    strategy: raw.strategy === 'blue-green' || raw.strategy === 'replace'
+      ? raw.strategy : null,
+    databaseCompatibility: raw.databaseCompatibility === 'expand-contract'
+      ? raw.databaseCompatibility : null,
+    backgroundWork: raw.backgroundWork === 'none' ? raw.backgroundWork : null,
+  };
+  if (!deployment.strategy || !deployment.databaseCompatibility || !deployment.backgroundWork) {
+    log.warn('app-manifest', 'Deployment block is incomplete or incompatible; using replacement deploy');
+  }
+  return deployment;
+}
+
 // Allowed device-scale values for the optional top-level `screenshot`
 // block (issue #360). The platform's before/after preview screenshots
 // default to 2× (HiDPI/retina); an app declares `1` to opt its previews
@@ -609,9 +633,9 @@ function read(cloneDir) {
   try {
     raw = fs.readFileSync(filePath, 'utf-8');
   } catch (err) {
-    if (err.code === 'ENOENT') return { name: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
+    if (err.code === 'ENOENT') return { name: null, secrets: [], llm: null, deployment: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
     log.warn('app-manifest', 'Read failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
+    return { name: null, secrets: [], llm: null, deployment: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
   }
 
   let parsed;
@@ -619,7 +643,7 @@ function read(cloneDir) {
     parsed = JSON.parse(raw);
   } catch (err) {
     log.warn('app-manifest', 'Parse failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
+    return { name: null, secrets: [], llm: null, deployment: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
   }
 
   const platformEnv = readPlatformEnv(parsed);
@@ -672,6 +696,7 @@ function read(cloneDir) {
     name: readName(parsed),
     secrets,
     llm: readLlm(parsed),
+    deployment: readDeployment(parsed),
     visibility: readVisibility(parsed),
     governance: readGovernance(parsed),
     screenshot: readScreenshot(parsed),
@@ -1432,6 +1457,7 @@ module.exports = {
   read,
   readName,
   readLlm,
+  readDeployment,
   readVisibility,
   readGovernance,
   readScreenshot,

@@ -240,10 +240,17 @@
 	# (they respond 200, so handle_response never fires; the #477 bridge
 	# pill keeps handling those) — passes through verbatim.
 	reverse_proxy {upstream}:3000 {
-		# Fail FAST on a dead app container (dial only — deliberately no
-		# lb_try hold here, unlike the platform proxies): a dead APP
-		# should drop into the friendly /__app_unavailable flow below
-		# immediately, not stall for a retry window (#711).
+		# Blue-green production cutover moves the stable Docker DNS name from
+		# the old container to an already-healthy candidate with two rename
+		# operations. Retry inside that bounded sub-second identity gap (and
+		# while Docker DNS drops its stale answer) instead of surfacing a 502.
+		# Existing SSE/WebSocket connections stay pinned to the old container
+		# and are unaffected by name resolution.
+		lb_try_duration 3s
+		lb_try_interval 100ms
+		# Keep each dial fast. The short retry budget above exists only to
+		# bridge a blue-green name handoff; a genuinely dead app still falls
+		# into /__app_unavailable in at most three seconds (#711).
 		transport http {
 			dial_timeout 2s
 		}

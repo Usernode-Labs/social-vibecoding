@@ -89,7 +89,7 @@ function loadScaffoldMiddleware(source, env) {
     if (id === 'pg') return { Pool: class { async query() { return { rows: [] }; } } };
     throw new Error(`scaffold sandbox: unexpected require(${id})`);
   };
-  const fakeProcess = { env, exit: () => {}, cwd: () => process.cwd() };
+  const fakeProcess = { env, exit: () => {}, cwd: () => process.cwd(), on: () => {} };
 
   // eslint-disable-next-line no-new-func
   new Function('require', 'process', '__dirname', 'console', source)(

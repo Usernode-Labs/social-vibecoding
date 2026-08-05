@@ -53,12 +53,13 @@ test('wildcard forward_auth gate holds and retries across restarts', () => {
   assert.match(gate, /dial_timeout 2s/);
 });
 
-test('app-container proxy stays fail-fast (no retry hold)', () => {
+test('app-container proxy has a short blue-green handoff retry only', () => {
   const appProxy = sliceBetween(
     wildcardSite, 'reverse_proxy {upstream}:3000 {', 'encode gzip', 'app proxy'
   );
-  assert.doesNotMatch(appProxy, /lb_try_duration/,
-    'a dead APP must drop into /__app_unavailable immediately, not stall in a retry hold');
+  assert.match(appProxy, /lb_try_duration 3s/,
+    'the two-name cutover and Docker DNS refresh get one bounded retry window');
+  assert.match(appProxy, /lb_try_interval 100ms/);
   assert.match(appProxy, /dial_timeout 2s/, 'dead app containers should fail dials fast');
 });
 

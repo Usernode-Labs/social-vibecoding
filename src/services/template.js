@@ -266,7 +266,18 @@ node_modules
       // USERNODE_MISSING_SECRETS) are managed by the platform and
       // can't appear in this list.
       path: 'dapp.json',
-      content: JSON.stringify({ secrets: [] }, null, 2),
+      content: JSON.stringify({
+        // Safe rolling-deploy contract for the generated app as shipped:
+        // its boot migration is additive/idempotent and it starts no cron,
+        // queue consumer or other singleton background work. Change the
+        // strategy to "replace" before either assumption stops being true.
+        deployment: {
+          strategy: 'blue-green',
+          databaseCompatibility: 'expand-contract',
+          backgroundWork: 'none',
+        },
+        secrets: [],
+      }, null, 2),
     },
     {
       path: 'server.js',
@@ -278,6 +289,9 @@ const jwt = require('jsonwebtoken');
 const app = express();
 const port = process.env.PORT || 3000;
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const DRAIN_MS = 3000;
+let server = null;
+let shuttingDown = false;
 
 // The platform signs user-identity tokens with an RSA private key it never
 // shares. Containers get only the PUBLIC half, so this app can verify who a
@@ -331,7 +345,10 @@ app.use((req, res, next) => {
   next();
 });
 
-app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+app.get('/health', (_req, res) => {
+  if (shuttingDown) return res.status(503).json({ status: 'shutting_down' });
+  res.json({ status: 'ok' });
+});
 
 // The template ships no favicon file; index.html carries an inline SVG
 // icon instead. Answer 204 here so anything that still probes
@@ -413,10 +430,30 @@ async function start() {
       created_at TIMESTAMPTZ DEFAULT NOW()
     )
   \`);
-  app.listen(port, () => console.log(\`Listening on :\${port}\`));
+  server = app.listen(port, () => console.log(\`Listening on :\${port}\`));
 }
 
 start().catch(err => { console.error(err); process.exit(1); });
+
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(\`[shutdown] \${signal} received, draining\`);
+  server?.close(() => {});
+  server?.closeIdleConnections?.();
+  const hardStop = setTimeout(() => {
+    server?.closeAllConnections?.();
+    process.exit(0);
+  }, DRAIN_MS);
+  hardStop.unref?.();
+  try { await pool.end(); }
+  catch (err) { console.error('[shutdown] pool.end failed', err.message); }
+  clearTimeout(hardStop);
+  process.exit(0);
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 `,
     },
     {

@@ -296,6 +296,16 @@ async function restartContainer(nameOrId) {
   log.info('docker', 'Container restarted', { nameOrId });
 }
 
+// Rename a live container without disconnecting it from the shared network.
+// Established TCP connections are keyed by the container IP, so they survive
+// the name change; new connections resolve the new Docker DNS name. The
+// blue-green deployer uses this primitive to move the stable production name
+// between two already-running containers.
+async function renameContainer(nameOrId, newName) {
+  await execFileAsync('docker', ['rename', nameOrId, newName], { timeout: 10000 });
+  log.info('docker', 'Container renamed', { nameOrId, newName });
+}
+
 // Stop then force-remove a container. `stopTimeoutSec` is the SIGTERM→
 // SIGKILL grace handed to `docker stop -t` (see STOP_GRACE_SEC above).
 //
@@ -606,6 +616,7 @@ module.exports = {
   runOneShot,
   startContainer,
   restartContainer,
+  renameContainer,
   stopAndRemove,
   getContainerStatus,
   getContainerLabels,

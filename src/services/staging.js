@@ -7,6 +7,7 @@ const appManifest = require('./app-manifest');
 const appSecrets = require('./app-secrets');
 const appLlmEnv = require('./app-llm-env');
 const appStorageEnv = require('./app-storage-env');
+const appBlueGreen = require('./app-blue-green');
 const { appIdentityEnv } = require('./app-identity-env');
 const stagingEnv = require('./staging-env');
 const events = require('./events');
@@ -734,9 +735,6 @@ async function rebuildProductionInner(config, app) {
     await docker.buildImage(cloneDir, imageName);
     await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
 
-    // Stop old container and start new one
-    await docker.stopAndRemove(containerName).catch(() => {});
-
     // Reload the app row to pick up apps.db_password — the per-role
     // migration in db/migrate.js may have populated it after the
     // caller fetched `app`, and createApp may have set it on a
@@ -759,21 +757,40 @@ async function rebuildProductionInner(config, app) {
     // Likewise the app-storage env pair (#752) — production only; the
     // staging path above deliberately injects neither storage var.
     const storageEnv = await appStorageEnv.productionStorageEnv(prodPool, app.id);
-    const containerId = await docker.runContainer(containerName, {
-      image: imageName,
-      env: {
-        DATABASE_URL: dbUrl,
-        ...appIdentityEnv(app, config),
-        PORT: '3000',
-        USERNODE_ENV: 'production',
-        ...llmEnv,
-        ...storageEnv,
-        ...merge.env,
-      },
-      port: 3000,
-    });
+    const runtimeEnv = {
+      DATABASE_URL: dbUrl,
+      ...appIdentityEnv(app, config),
+      PORT: '3000',
+      USERNODE_ENV: 'production',
+      ...llmEnv,
+      ...storageEnv,
+      ...merge.env,
+    };
 
-    await docker.waitForHealthy(containerName, 3000, '/health');
+    let containerId;
+    let deploymentStrategy = 'replace';
+    if (appBlueGreen.isEligible(manifest.deployment)) {
+      const deployed = await appBlueGreen.deploy({
+        slug: app.slug,
+        image: imageName,
+        env: runtimeEnv,
+        port: 3000,
+        hostname: caddy.productionHostname(app.slug),
+      });
+      containerId = deployed.containerId;
+      deploymentStrategy = deployed.strategy;
+    } else {
+      // Compatibility-preserving fallback for every legacy app and any app
+      // that does not explicitly promise expand/contract DB compatibility
+      // plus the absence of duplicate singleton/background work.
+      await docker.stopAndRemove(containerName).catch(() => {});
+      containerId = await docker.runContainer(containerName, {
+        image: imageName,
+        env: runtimeEnv,
+        port: 3000,
+      });
+      await docker.waitForHealthy(containerName, 3000, '/health');
+    }
 
     // No Caddy route to register. The wildcard site in the Caddyfile
     // maps `<slug>.<domain>` straight to this container
@@ -790,7 +807,9 @@ async function rebuildProductionInner(config, app) {
       'UPDATE apps SET last_failure = NULL WHERE id = $1', [app.id]
     ).catch((e) => log.warn('staging', 'Failed to clear last_failure', { app: app.slug, err: e.message }));
 
-    log.info('staging', 'Production rebuilt', { app: app.slug, sha: mainSha });
+    log.info('staging', 'Production rebuilt', {
+      app: app.slug, sha: mainSha, deploymentStrategy,
+    });
     succeeded = true;
     resultSha = mainSha;
     return { containerId, sha: mainSha };

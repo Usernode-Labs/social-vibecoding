@@ -190,6 +190,18 @@
       "description": "Seconds docker waits after SIGTERM before killing a container. Raising it makes deploys slower but gives in-flight requests longer to drain."
     },
     {
+      "key": "APP_BLUE_GREEN_MAX_PARALLEL",
+      "group": "Scaling",
+      "default": "2",
+      "description": "Maximum child-app production deploys allowed to hold old and candidate containers concurrently. Each overlap adds at most one 256 MiB / 0.5 CPU app container; values are clamped to 1–8."
+    },
+    {
+      "key": "APP_BLUE_GREEN_DRAIN_MS",
+      "group": "Platform",
+      "default": "30000",
+      "description": "Confidence and connection-drain window after a compatible child app cuts over. The old container remains the rollback target and keeps established HTTP/SSE/WebSocket connections until this deadline; values are clamped to 0–300000 ms."
+    },
+    {
       "key": "DATA_ENCRYPTION_KEY",
       "group": "Platform keys",
       "required": false,

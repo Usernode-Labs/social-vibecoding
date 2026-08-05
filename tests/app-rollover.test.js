@@ -18,6 +18,8 @@ const ids = {
   docker: require.resolve('../src/services/docker'),
   staging: require.resolve('../src/services/staging'),
   respawn: require.resolve('../src/services/app-respawn'),
+  blueGreen: require.resolve('../src/services/app-blue-green'),
+  caddy: require.resolve('../src/services/caddy'),
   deployStatus: require.resolve('../src/services/app-deploy-status'),
   events: require.resolve('../src/services/events'),
   ws: require.resolve('../src/services/ws'),
@@ -38,6 +40,7 @@ function freshFixtures() {
     healthyShouldFail: false,
     // app-respawn
     respawnCalls: [],
+    blueGreenCalls: [],
     respawnResult: 'container-id',
     respawnError: null,
     respawnDelayMs: 0,
@@ -89,6 +92,9 @@ function installStubs() {
     },
   });
   stub(ids.respawn, {
+    async existingImageRunSpec(_config, app) {
+      return { image: `usernode-app-${app.slug}:latest`, env: { FRESH: '1' }, port: 3000 };
+    },
     async runExistingImage(_config, app) {
       fx.respawnCalls.push(app.slug);
       fx.concurrentNow += 1;
@@ -103,6 +109,18 @@ function installStubs() {
       }
     },
   });
+  stub(ids.blueGreen, {
+    isEligible(d) {
+      return d?.strategy === 'blue-green'
+        && d.databaseCompatibility === 'expand-contract'
+        && d.backgroundWork === 'none';
+    },
+    async deploy(opts) {
+      fx.blueGreenCalls.push(opts);
+      return { containerId: `bg-${opts.slug}`, strategy: 'blue-green' };
+    },
+  });
+  stub(ids.caddy, { productionHostname: (slug) => `${slug}.example.test` });
   stub(ids.staging, {
     // Real serializeRebuild is a per-slug promise chain; for these tests
     // pass-through plus a call log is enough (the chaining itself is
@@ -222,6 +240,30 @@ test('happy path re-runs the existing image, health-checks, and persists', async
   assert.ok(!/main_sha/.test(update.sql),
     'main_sha is never touched — nothing was rebuilt');
   assert.deepEqual(update.params, ['container-id', 4]);
+});
+
+test('compatible env-only rollover uses the blue-green lifecycle', async () => {
+  const rollover = setup();
+  fx.apps = [appRow(40, 'rolling', {
+    manifest_snapshot: {
+      secrets: [],
+      deployment: {
+        strategy: 'blue-green',
+        databaseCompatibility: 'expand-contract',
+        backgroundWork: 'none',
+      },
+    },
+  })];
+  const job = await runSweep(rollover);
+
+  assert.deepEqual(outcomes(job), { rolling: 'rolled' });
+  assert.equal(fx.respawnCalls.length, 0, 'the destructive respawn path is not used');
+  assert.deepEqual(fx.blueGreenCalls, [{
+    slug: 'rolling', image: 'usernode-app-rolling:latest',
+    env: { FRESH: '1' }, port: 3000, hostname: 'rolling.example.test',
+  }]);
+  const update = fx.queries.find((q) => /^UPDATE apps SET container_id/.test(q.sql));
+  assert.deepEqual(update.params, ['bg-rolling', 40]);
 });
 
 test('a missing image falls back to a full rebuild, outside the per-slug lock', async () => {
