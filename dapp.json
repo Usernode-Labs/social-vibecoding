@@ -296,6 +296,16 @@
   ],
   "tests": [
     {
+      "name": "Send Feedback offers a kudos bounty, unchecked by default (#964)",
+      "path": "/?shot=feedback",
+      "expectSelector": "#feedback-bounty-row:not(.hidden) #feedback-bounty-checkbox:not(:checked):not(:disabled)"
+    },
+    {
+      "name": "The bounty checkbox is disabled once the weekly allowance is spent (#964)",
+      "path": "/?shot=feedback-spent",
+      "expectSelector": "#feedback-bounty-row:not(.hidden) #feedback-bounty-checkbox:disabled"
+    },
+    {
       "name": "Tapping an app shows its icon and name while it loads, not a blank window (#931)",
       "path": "/?shot=app-launching",
       "expectSelector": "#app-launch-cover .app-icon-tile",
@@ -320,9 +330,31 @@
       "expectText": "Go to leaderboard"
     },
     {
+      "name": "Challenges widget: with nothing running it says so, and fills the rest (#947)",
+      "path": "/?demo=1&challenges=none",
+      "expectSelector": "#app-list [data-panel-slot=\"challenges\"] article.home-panel[data-rows=\"0\"][data-fill=\"3\"] .home-panel-lb-row",
+      "expectText": "No challenges are running right now"
+    },
+    {
+      "name": "Challenges widget: the fill previews the Topochain standings (#962)",
+      "path": "/?demo=1&challenges=none",
+      "expectSelector": "#app-list [data-panel-slot=\"challenges\"] article.home-panel .home-panel-fill[data-fill-kind=\"topochain\"] .home-panel-lb-row[data-lb-kind=\"topochain\"]",
+      "expectText": "staging-demo-validator"
+    },
+    {
+      "name": "Challenges widget: with no standings at all the fill falls back to the Kudos board (#962)",
+      "path": "/?demo=1&challenges=none&board=kudos",
+      "expectSelector": "#app-list [data-panel-slot=\"challenges\"] article.home-panel .home-panel-fill[data-fill-kind=\"kudos\"] .home-panel-lb-row[data-lb-kind=\"kudos\"]"
+    },
+    {
+      "name": "Bare #leaderboard renders all three tabs and opens on the standings (#962)",
+      "path": "/#leaderboard",
+      "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"]) #topochain-leaderboard-root:not(.hidden) #tc-lb-body table"
+    },
+    {
       "name": "The Create app widget sits in the grid and opens the create flow",
       "path": "/?demo=1",
-      "expectSelector": "#app-list [data-panel-slot=\"create\"][data-create-enabled=\"true\"] .home-create-btn",
+      "expectSelector": "#app-list [data-panel-slot=\"create\"][data-create-enabled=\"true\"] .home-create-btn[class*=\"sm:flex-col\"]",
       "expectText": "Create app"
     },
     {
@@ -332,10 +364,16 @@
       "expectText": "Create app"
     },
     {
-      "name": "The Discover widget renders curated tiles + the way into the directory",
+      "name": "Discover renders both lanes: curated tiles, then Popular (#949)",
       "path": "/?demo=1",
-      "expectSelector": "#app-list [data-panel-slot=\"discover\"] .home-panel .home-discover-tiles .app-card",
+      "expectSelector": "#app-list [data-panel-slot=\"discover\"] .home-panel .home-discover-popular .app-card:not(:has(.users-badge))",
       "expectText": "Browse all apps"
+    },
+    {
+      "name": "With nothing featured, Discover shows its compact note (?shot=discover-empty)",
+      "path": "/?demo=1&shot=discover-empty",
+      "expectSelector": "#app-list [data-panel-slot=\"discover\"][data-featured=\"0\"] .home-panel-browse",
+      "expectText": "Nothing featured right now"
     },
     {
       "name": "App tiles are placed at explicit grid cells, with iOS-sized two-line labels (#951)",
@@ -626,7 +664,7 @@
     },
     {
       "name": "Leaderboard screen renders with the Kudos Top-users tab",
-      "path": "/leaderboard",
+      "path": "/#leaderboard/users",
       "expectText": "Top users"
     },
     {
@@ -1019,7 +1057,7 @@
     {
       "name": "Drawer status pane renders the kudos budget as inline text",
       "path": "/",
-      "expectSelector": "#drawer-row-kudos #kudos-budget-slot a[href=\"#leaderboard\"].drawer-meter"
+      "expectSelector": "#drawer-row-kudos #kudos-budget-slot a[href=\"#leaderboard/prs\"].drawer-meter"
     },
     {
       "name": "Theme selector ships its 3-segment track and caret",
@@ -1294,11 +1332,6 @@
       "expectSelector": "#leaderboard-screen:not(.hidden) #topochain-leaderboard-root:not(.hidden) #tc-lb-body"
     },
     {
-      "name": "Leaderboard renders all three tabs at #leaderboard",
-      "path": "/#leaderboard",
-      "expectSelector": "#standings-tabs [data-standings-tab=\"challenges\"]"
-    },
-    {
       "name": "Legacy #topochain/seasons lands on the Leaderboard screen's Challenges tab",
       "path": "/#topochain/seasons",
       "expectSelector": "#leaderboard-screen:not(.hidden) #challenges-root:not(.hidden) #tc-se-grid"
@@ -1429,6 +1462,16 @@
       "path": "/?shot=preview-rebuilding#app/usernode-2d5619/dev",
       "expectSelector": "#staging-overlay:not(.hidden) #staging-loader-title",
       "expectText": "Spinning the preview back up…"
+    },
+    {
+      "name": "The bounty row states the weekly kudos allowance (#964)",
+      "path": "/?shot=feedback",
+      "expectText": "pledges 1 of your weekly kudos"
+    },
+    {
+      "name": "A spent allowance says so instead of showing a count (#964)",
+      "path": "/?shot=feedback-spent",
+      "expectText": "resets Monday 00:00 UTC"
     }
   ],
   "governance": {

@@ -1391,6 +1391,39 @@ CREATE INDEX IF NOT EXISTS idx_pr_votes_user ON pr_votes (user_id, created_at DE
 -- their next promote, vote, or merge reconciliation. Append-only; safe on boot.
 ALTER TABLE pr_votes ADD COLUMN IF NOT EXISTS head_sha VARCHAR(40);
 
+-- #955: provenance for commits the PLATFORM itself pushed onto a proposal
+-- branch (today only the MODE=sync "merge origin/main" turn — clean or
+-- Claude-resolved). A proposal's votes are pinned to the exact reviewed
+-- commit, so without this record the platform's own conflict-resolution
+-- commit is indistinguishable from an author push and wipes the tally.
+--
+-- Authenticity comes from "we pushed this SHA", never from commit message,
+-- author identity, or merge-commit shape — all of which an author can
+-- reproduce locally, which would turn vote preservation into a governance
+-- bypass. first_parent_sha lets the reconciler walk a chain of stacked
+-- platform commits back to the reviewed head without re-reading GitHub;
+-- prior_reviewed_head_sha records what the review was pinned to at push
+-- time (audit only). Append-only; rows cascade with the session.
+--
+-- Deliberately NOT tagged 'staging:private': it holds no user content and no
+-- credential — just commit ids the platform authored. It still arrives empty
+-- in a staging clone, as a transitive FK child of the private chat_sessions
+-- (db-manager.js truncates those CASCADE and its recursive discovery finds
+-- this table automatically), exactly like its sibling pr_votes.
+CREATE TABLE IF NOT EXISTS session_platform_pushes (
+  id                      SERIAL PRIMARY KEY,
+  session_id              INTEGER REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  sha                     VARCHAR(40) NOT NULL,
+  first_parent_sha        VARCHAR(40),
+  prior_reviewed_head_sha VARCHAR(40),
+  kind                    VARCHAR(24) NOT NULL DEFAULT 'sync_main',
+  sync_result             VARCHAR(16),
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(session_id, sha)
+);
+CREATE INDEX IF NOT EXISTS idx_session_platform_pushes_session
+  ON session_platform_pushes (session_id, sha);
+
 -- Community-voted "priority" + "assigned person" on issues and PR
 -- proposals. ONE unified table because both fields share identical
 -- voting mechanics (one movable vote per user per field per card; the
@@ -1712,9 +1745,11 @@ COMMENT ON COLUMN apps.db_password IS 'staging:private';
 -- to anyone the staging clone would be spun up for.
 
 -- PR kudos. A platform-wide appreciation signal that's orthogonal to
--- `pr_votes` (which is a yes/no merge gate). Every user gets 5 kudos
--- per week, can give at most 1 per PR, can't give to their own PR, and
--- can't take a kudos back. Eligibility lives in src/routes/kudos.js:
+-- `pr_votes` (which is a yes/no merge gate). Every user gets a weekly
+-- allowance (WEEKLY_KUDOS_LIMIT in src/services/bounties.js, currently
+-- 20, shared with issue bounties), can give at most 1 per PR, can't give
+-- to their own PR, and can't take a kudos back.
+-- Eligibility lives in src/routes/kudos.js:
 -- only chat_sessions in status ('promoted','merging','merged') can
 -- receive kudos.
 --

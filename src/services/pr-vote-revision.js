@@ -26,14 +26,27 @@ function reviewedHeadSql(sessionAlias = 'cs') {
     + `THEN ${cs}.imported_pr_head_sha ELSE ${cs}.reviewed_head_sha END)`;
 }
 
+// #955: compare head stamps case-insensitively. Every writer today lands a
+// lower-case SHA (GitHub reads, `git rev-parse`, the handoff normalizer), but
+// a single upper-case character anywhere would make an IDENTICAL commit read
+// as a different revision — silently hiding a vote that must still count. The
+// comparison is the cheap place to be exact about it.
 function currentVotePredicateSql(voteAlias = 'pv', sessionAlias = 'cs') {
   const pv = checkedAlias(voteAlias);
   const head = reviewedHeadSql(sessionAlias);
-  return `(${head} IS NULL OR ${pv}.head_sha = ${head})`;
+  return `(${head} IS NULL OR LOWER(${pv}.head_sha) = LOWER(${head}))`;
+}
+
+// The one place that decides "is this stamp the reviewed revision?" for JS
+// callers, matching currentVotePredicateSql's case-insensitive semantics.
+function sameSha(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  return a.toLowerCase() === b.toLowerCase();
 }
 
 module.exports = {
   reviewedHeadForSession,
   reviewedHeadSql,
   currentVotePredicateSql,
+  sameSha,
 };

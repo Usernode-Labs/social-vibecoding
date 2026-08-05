@@ -49,6 +49,14 @@ const { getPool } = require('../../db/pool');
 const log = require('../../services/logger');
 const { optionalSessionAuth } = require('../../middleware/topochain-auth');
 const { computeStandings } = require('../../services/topochain/standings');
+// The per-event standings vocabulary — identifier masking, the display-name
+// fallback chain, EVENT_LEADERBOARD_SQL and the type-branch that resolves one
+// event's rows — moved into this service when the home screen's Challenges
+// widget started previewing the same standings. One definition of a rank and
+// one of a display name, shared by the routes and the widget.
+const {
+  resolveIdentifier, maskIdentifier, resolveDisplayName, fetchEventLeaderboardRows,
+} = require('../../services/topochain/event-standings');
 const {
   ok, fail, iso, num, paginate, meta, ValidationError,
 } = require('./helpers');
@@ -116,133 +124,13 @@ function eventStatus(startsAt, endsAt, now = new Date()) {
   return { hasStarted, hasEnded, status: hasEnded ? 'ended' : (hasStarted ? 'active' : 'upcoming') };
 }
 
-// ─── Identifier masking + display-name fallback (SPEC 958, 1246) ────────
-
-// Which raw channel backs this user's public "identifier" (judgment
-// call #2: email > telegram > discord, no priority given in the spec).
-function resolveIdentifier(user) {
-  if (user.email) return { type: 'email', value: user.email };
-  if (user.telegram) return { type: 'telegram', value: user.telegram };
-  if (user.discord) return { type: 'discord', value: user.discord };
-  return { type: null, value: null };
-}
-
-function maskGeneric(value) {
-  return `${String(value).slice(0, 3)}***`;
-}
-
-// email -> abc***@***.tld; telegram/discord -> abc*** (SPEC 958).
-function maskIdentifier({ type, value }) {
-  if (!value) return null;
-  if (type === 'email') {
-    const at = value.indexOf('@');
-    if (at === -1) return maskGeneric(value);
-    const local = value.slice(0, at);
-    const domain = value.slice(at + 1);
-    const dot = domain.lastIndexOf('.');
-    const tld = dot === -1 ? '' : domain.slice(dot);
-    return `${local.slice(0, 3)}***@***${tld}`;
-  }
-  return maskGeneric(value);
-}
-
-// discord -> display_name -> masked identifier (SPEC 1246's fallback
-// chain, reused everywhere a display name is shown in this file).
+// ─── Identifier masking, display names, per-event rows ──────────────────
 //
-// `includeDiscord: false` (security-review finding) drops the raw discord
-// handle from the head of the chain — used ONLY by /leaderboard/global for
-// non-admin callers: SPEC 988 marks `discord` ADMIN ONLY on that endpoint
-// ("key absent for anonymous callers"), and emitting the same handle
-// verbatim as `display_name` would defeat that redaction entirely. Every
-// other endpoint keeps the full SPEC 1246 chain (spec mandates it there);
-// note the masked-identifier tail may still derive from discord, but only
-// in its masked `abc***` form (SPEC 958), never the raw handle.
-function resolveDisplayName(user, { includeDiscord = true } = {}) {
-  if (includeDiscord && user.discord) return user.discord;
-  if (user.display_name) return user.display_name;
-  return maskIdentifier(resolveIdentifier(user));
-}
-
-// ─── GET /leaderboard: per-event row shape + fetch ───────────────────────
-
-// Single-event leaderboard rows: the latest snapshot per user (SPEC 960)
-// joined to the user's identity columns and their onchain account for
-// this event (falling back to a season-wide account when no event-scoped
-// one exists — same nullable-event-scope idiom `onchain_accounts` itself
-// uses). Rank comes straight off the stored `leaderboard_snapshots.rank`
-// column — this is the 'regular' event path (see fetchEventLeaderboardRows).
-const EVENT_LEADERBOARD_SQL = `
-  WITH latest AS (
-    SELECT DISTINCT ON (ls.user_id) ls.*
-      FROM leaderboard_snapshots ls
-     WHERE ls.season_event_id = $1
-     ORDER BY ls.user_id, ls.snapshot_at DESC, ls.id DESC
-  ),
-  accounts AS (
-    SELECT DISTINCT ON (oa.user_id) oa.user_id, oa.public_key, oa.address
-      FROM onchain_accounts oa
-     WHERE oa.user_id IS NOT NULL
-       AND (oa.season_event_id = $1
-            OR (oa.season_event_id IS NULL
-                AND oa.season_id = (SELECT season_id FROM season_events WHERE id = $1)))
-     ORDER BY oa.user_id, (oa.season_event_id IS NULL) ASC, oa.id DESC
-  )
-  SELECT l.*, u.email, u.telegram, u.discord, u.display_name, u.exclude_podium,
-         a.public_key AS wallet_address, a.address AS bech32m
-    FROM latest l
-    JOIN users u ON u.id = l.user_id
-    LEFT JOIN accounts a ON a.user_id = l.user_id
-   ORDER BY l.rank ASC, l.total_points DESC
-`;
-
-// Resolves the leaderboard rows for one `season_events` row. 'regular'
-// events (the common case, and every event Task 4's fixtures create for
-// day-to-day display) read the stored per-event snapshot rows straight —
-// SPEC 960. Any other `type` (e.g. the 'season' wrap-up fixture event) has
-// no per-event snapshots of its own to rank; SPEC 2935/2957 says this
-// rank column is instead "served by the standings query", so it's
-// computed live via the shared §4.10 aggregate (judgment call #1) and
-// mapped onto the same row shape — per-event-only breakdown fields
-// (bug_report_points and friends) aren't part of that aggregate and are
-// reported as 0 for this path.
-async function fetchEventLeaderboardRows(pool, event) {
-  if (event.type === 'regular') {
-    const { rows } = await pool.query(EVENT_LEADERBOARD_SQL, [event.id]);
-    return rows;
-  }
-
-  const seasonId = event.type === 'season' ? Number(event.season_id) : null;
-  const standings = await computeStandings(pool, { seasonId });
-  return standings.map((s) => ({
-    rank: s.rank,
-    total_points: s.total_points,
-    extra_points: s.extra_points,
-    exclude_podium: s.is_non_podium,
-    email: s.email,
-    telegram: s.telegram,
-    discord: s.discord,
-    display_name: s.display_name,
-    wallet_address: null,
-    bech32m: null,
-    bug_report_points: 0,
-    inviting_new_participant_points: 0,
-    community_contribution_points: 0,
-    last_epoch_total_produced_blocks: 0,
-    event_total_produced_blocks: s.total_produced_blocks,
-    vrf_total_won_slots: 0,
-    canonical_total_won_slots: 0,
-    canonical_total_produced_blocks: 0,
-    canonical_won_slots_up_to_current: 0,
-    canonical_produced_blocks_up_to_current: 0,
-    max_bp_success_rate_up_to_current: 0,
-    event_success_rate: 0,
-    epoch_success_rate: 0,
-    first_block_points: 0,
-    produced_half_blocks_points: 0,
-    top_3_points: 0,
-    success_50_percent_points: 0,
-  }));
-}
+// resolveIdentifier / maskIdentifier / resolveDisplayName (SPEC 958, 1246),
+// EVENT_LEADERBOARD_SQL and fetchEventLeaderboardRows all live in
+// src/services/topochain/event-standings.js now — see the require at the top
+// of this file, and that module's header for why they moved. Their behaviour
+// is unchanged; the SQL text is byte-identical.
 
 function formatLeaderboardRow(r) {
   const identifier = resolveIdentifier(r);

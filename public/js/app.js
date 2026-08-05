@@ -228,6 +228,7 @@ const App = {
     App.restoreFromHash();
     App._applyMenuShot();
     App._applyLaunchShot();
+    App._applyFeedbackShot();
 
     // Re-poll the platform version every 10s so the header pill flips to
     // its "deploying" state within seconds of the deploy workflow signaling
@@ -302,6 +303,43 @@ const App = {
       try { AppView.showLaunchCoverShot(); } catch (err) { /* ignore */ }
     };
     setTimeout(paint, 50);
+  },
+
+  // Screenshot-state deep links `?shot=feedback` / `?shot=feedback-spent`
+  // (#964): open the Send Feedback dialog at boot. The dialog — and with it
+  // the new "Put a kudos bounty on this" row — is reachable ONLY by tapping
+  // the header speech-bubble or the Dev plus-menu, so without this link the
+  // before/after screenshots, the "Test this change" button and the
+  // dapp.json checks would all show the home feed instead of the change.
+  //
+  // `feedback-spent` additionally forces a client-side remaining:0 budget
+  // BEFORE opening, so the greyed-out/exhausted state is reviewable without
+  // writing kudos rows for a real cloned user (which the staging seed rules
+  // forbid). That override is display-only: it never posts, and the server
+  // remains the real allowance gate on submit.
+  //
+  // Pure UI state, no writes, deliberately NOT env-gated — same reasoning as
+  // ?shot=menu above: an IS_STAGING-only link would starve the production
+  // "before" shot forever.
+  _applyFeedbackShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'feedback' && shot !== 'feedback-spent') return;
+    const spent = shot === 'feedback-spent';
+    // One tick after restoreFromHash so the screen it navigated to has
+    // painted and the dialog opens over a settled shell.
+    setTimeout(() => {
+      try {
+        if (spent && window.Kudos?.Budget) {
+          const limit = Kudos.Budget.state?.limit || 20;
+          // Pin the exhausted figure and stop the hourly poll from
+          // replacing it mid-screenshot with the real (unspent) budget.
+          Kudos.Budget.state = { given_this_week: limit, remaining: 0, limit };
+          Kudos.Budget.refresh = () => Promise.resolve();
+        }
+        App.openFeedbackModal();
+      } catch (err) { /* ignore */ }
+    }, 50);
   },
 
   renderAdminButton() {
@@ -506,31 +544,28 @@ const App = {
   // init() so a tab that loaded mid-restart (or was reloaded by the
   // user) re-renders the banner immediately and re-arms the poll.
   //
-  // #239 second mode — "resolving merge conflicts". When a self-app
-  // merge fails on a conflict and the auto-resolver kicks in
-  // (vote_update { resolving:true } / { mergeFailed:true,
-  // resolving:true }), the banner switches to a non-blocking amber
-  // state instead of silently dismissing. Crucially isActive() stays
-  // false in this mode, so the fetch wrap never blocks writes — the
-  // platform isn't actually restarting. The state persists in
-  // sessionStorage (verified against /api/sessions/:id/status on
-  // restore), polls that endpoint every ~5s as the missed-WS-event
-  // safety net, and ends on the resolver's terminal broadcast:
-  // merged → begin() has already upgraded us to full updating mode;
-  // synced/noop → quiet dismiss; failed → red variant + Dismiss
-  // button, auto-hiding after ~20s.
+  // ONE MODE ONLY (#962). This banner used to carry a second,
+  // non-blocking "resolving merge conflicts" state (#239), armed off
+  // the auto-conflict-resolver's vote_update { resolving:true }. That
+  // broadcast fires whenever an eligible proposal's branch needs a
+  // worker `git merge origin/main` — routine drift housekeeping that
+  // in production ended WITHOUT a merge about 7 times in 10 — so it
+  // announced a merge conflict and a retry to every signed-in person
+  // while nothing was merging and nothing was paused. The per-proposal
+  // signals (the "Resolving conflicts…" / "⚠ Conflict resolution
+  // failed" badges in merge-status.js, the dev-chat sync banner, the
+  // group-chat play-by-play) carry that state in context instead. The
+  // server still broadcasts `resolving` — those badges read it — this
+  // banner just no longer does.
   // ─────────────────────────────────────────────────────────────────
   PlatformUpdating: {
     SS_KEY: 'usernode:platform_updating',
     POLL_FAST_MS: 2000,
     STUCK_AFTER_MS: 5 * 60 * 1000,
-    RESOLVE_POLL_MS: 5000,
-    RESOLVE_FAILED_HIDE_MS: 20 * 1000,
 
     // Mutable runtime state. Persisted shape (in sessionStorage) is
-    // just { fromSha, since } — or { mode:'resolving', sessionId,
-    // appSlug, since } for the resolving mode — the timer ids and DOM
-    // refs are ephemeral and must be re-derived on page load.
+    // just { fromSha, since, appSlug, sessionId } — the timer ids and
+    // DOM refs are ephemeral and must be re-derived on page load.
     fromSha: null,
     since: null,
     // Session whose merge armed the banner — lets restore / the stuck
@@ -540,11 +575,6 @@ const App = {
     fastPollTimer: null,
     stuckTimer: null,
     fetchWrapInstalled: false,
-    // #239 resolving-mode state: { sessionId, appSlug, since } | null.
-    resolvingSession: null,
-    resolvePollTimer: null,
-    resolveStuckTimer: null,
-    resolveFailedTimer: null,
 
     isActive() {
       return !!this.fromSha;
@@ -556,12 +586,6 @@ const App = {
       // — re-capturing on a duplicate call would defeat the SHA-flip
       // dismissal if the new container had already booted in between.
       if (this.isActive()) return;
-      // #239 upgrade path: the resolver fixed the conflicts and the
-      // retried merge is now in flight (merging:true arrives before the
-      // resolver's terminal event). Clear the resolving state quietly —
-      // no hide, the banner transitions in place to full updating mode
-      // — so the late endResolving('merged') is a guaranteed no-op.
-      if (this.resolvingSession) this._clearResolvingState();
       const fromSha = App.loadedPlatformSha || null;
       this.fromSha = fromSha;
       this.since = Date.now();
@@ -587,38 +611,17 @@ const App = {
         try { sessionStorage.removeItem(this.SS_KEY); } catch {}
         return;
       }
-      // #239: resolving-mode payload. Verify against the server before
-      // re-showing — the resolve may have finished while this tab was
-      // reloading, and a stale banner with no terminal event coming
-      // would sit until the stuck timer. Drop the state on anything
-      // but a confirmed in-flight resolve.
-      if (parsed.mode === 'resolving') {
-        const since = parsed.since || Date.now();
-        if (!parsed.sessionId || Date.now() - since >= this.STUCK_AFTER_MS) {
-          try { sessionStorage.removeItem(this.SS_KEY); } catch {}
-          return;
-        }
-        fetch(`/api/sessions/${parsed.sessionId}/status`)
-          .then((r) => (r.ok ? r.json() : null))
-          .then((data) => {
-            // A WS event may have armed either mode while we awaited.
-            if (this.isActive() || this.resolvingSession) return;
-            if (data && data.resolving) {
-              this.resolvingSession = {
-                sessionId: parsed.sessionId, appSlug: parsed.appSlug || null, since,
-              };
-              this.showResolving();
-              this.startResolvePolling();
-              this.armResolveStuckTimer();
-              console.log('[platform-updating] resolving banner restored from session');
-            } else {
-              try { sessionStorage.removeItem(this.SS_KEY); } catch {}
-            }
-          })
-          .catch(() => {});
+      // #962: only a real merge payload can restore this banner. A tab
+      // that armed the retired #239 resolving mode before this build
+      // deployed still has its { mode:'resolving', … } payload here,
+      // and any payload without a usable fromSha has no dismissal
+      // condition (no SHA to flip away from) — so it could only ever
+      // sit until the stuck timer. Treat both as garbage.
+      if (parsed.mode === 'resolving' || !parsed.fromSha) {
+        try { sessionStorage.removeItem(this.SS_KEY); } catch {}
         return;
       }
-      this.fromSha = parsed.fromSha || null;
+      this.fromSha = parsed.fromSha;
       this.since = parsed.since || Date.now();
       this.sessionId = parsed.sessionId || null;
       const elapsed = Date.now() - this.since;
@@ -661,165 +664,6 @@ const App = {
       this.hide();
     },
 
-    // ── #239 resolving mode ──────────────────────────────────────────
-    // Non-blocking sibling of begin(): the merge hit conflicts and the
-    // auto-resolver is fixing the branch (1–2 min worker turn). The
-    // platform is NOT restarting, so isActive() stays false and writes
-    // keep flowing — the banner is purely informational.
-    beginResolving({ sessionId, appSlug } = {}) {
-      // Idempotent + first-wins: a no-op while updating mode is active
-      // (that banner outranks this one) or while already tracking a
-      // resolve (a second concurrent resolve on a different session is
-      // covered by the vote-panel badges instead).
-      if (this.isActive() || this.resolvingSession) return;
-      if (sessionId == null) return;
-      const since = Date.now();
-      this.resolvingSession = { sessionId, appSlug: appSlug || null, since };
-      try {
-        sessionStorage.setItem(this.SS_KEY, JSON.stringify({
-          mode: 'resolving', sessionId, appSlug: appSlug || null, since,
-        }));
-      } catch {}
-      this.showResolving();
-      this.startResolvePolling();
-      this.armResolveStuckTimer();
-      console.log('[platform-updating] resolving banner armed', { sessionId, appSlug });
-    },
-
-    // Terminal handler for the resolver lifecycle. `sessionId` (when
-    // provided — the WS event carries it; the status poll doesn't)
-    // must match the tracked resolve.
-    endResolving(outcome, sessionId) {
-      // Ordering guard: on the success path the retried merge's
-      // merging:true broadcast precedes the resolver's terminal event,
-      // and begin() has already upgraded the banner to full updating
-      // mode (clearing resolvingSession on the way). A late
-      // endResolving('merged') must not touch that banner.
-      if (!this.resolvingSession) return;
-      if (sessionId != null && this.resolvingSession.sessionId !== sessionId) return;
-      console.log('[platform-updating] resolving ended', { outcome });
-      this._clearResolvingState();
-      if (outcome === 'failed') {
-        this.showResolveFailed();
-      } else {
-        // merged (when begin() somehow hasn't fired yet) / synced /
-        // noop → quiet dismiss; group chat carries the details.
-        this.hide();
-      }
-    },
-
-    // Clears the resolving runtime state without touching the banner
-    // DOM — callers decide whether to hide, swap variants, or (on the
-    // begin() upgrade path) leave it for show() to repaint in place.
-    _clearResolvingState() {
-      this.resolvingSession = null;
-      this.stopResolvePolling();
-      this.disarmResolveStuckTimer();
-      // Only drop the persisted payload when it's ours: on the upgrade
-      // path begin() overwrites SS_KEY right after this anyway, and
-      // updating mode is never active while resolving mode is.
-      if (!this.isActive()) {
-        try { sessionStorage.removeItem(this.SS_KEY); } catch {}
-      }
-    },
-
-    showResolving() {
-      const el = document.getElementById('platform-updating-banner');
-      if (!el) return;
-      this._clearResolveFailedTimer();
-      el.classList.remove('hidden');
-      this._setBannerTone('amber');
-      const text = document.getElementById('platform-updating-text');
-      const spinner = document.getElementById('platform-updating-spinner');
-      const reload = document.getElementById('platform-updating-reload');
-      const dismiss = document.getElementById('platform-updating-dismiss');
-      if (text) text.textContent = 'Merge hit conflicts with main — resolving them automatically, then retrying the merge. This usually takes a minute or two.';
-      if (spinner) spinner.classList.remove('hidden');
-      if (reload) reload.classList.add('hidden');
-      if (dismiss) dismiss.classList.add('hidden');
-    },
-
-    // Red terminal variant: Claude couldn't resolve the conflicts (or
-    // the sync errored / owner over budget). No deploy is coming, so
-    // there's nothing to wait for — Dismiss button + ~20s auto-hide.
-    showResolveFailed() {
-      const el = document.getElementById('platform-updating-banner');
-      if (!el) return;
-      this._clearResolveFailedTimer();
-      el.classList.remove('hidden');
-      this._setBannerTone('red');
-      const text = document.getElementById('platform-updating-text');
-      const spinner = document.getElementById('platform-updating-spinner');
-      const reload = document.getElementById('platform-updating-reload');
-      const dismiss = document.getElementById('platform-updating-dismiss');
-      if (text) text.textContent = "Automatic conflict resolution failed — check the app's group chat for details";
-      if (spinner) spinner.classList.add('hidden');
-      if (reload) reload.classList.add('hidden');
-      if (dismiss) dismiss.classList.remove('hidden');
-      this.resolveFailedTimer = setTimeout(() => this.dismissResolveFailure(), this.RESOLVE_FAILED_HIDE_MS);
-    },
-
-    // Wired to #platform-updating-dismiss (and the auto-hide timer).
-    // Guarded so a stale timer can't hide a banner that a later
-    // begin()/beginResolving() has since re-armed.
-    dismissResolveFailure() {
-      this._clearResolveFailedTimer();
-      if (this.isActive() || this.resolvingSession) return;
-      this.hide();
-    },
-
-    _clearResolveFailedTimer() {
-      if (this.resolveFailedTimer != null) {
-        clearTimeout(this.resolveFailedTimer);
-        this.resolveFailedTimer = null;
-      }
-    },
-
-    // ~5s safety-net poll of /api/sessions/:id/status — WS is
-    // fire-and-forget, so a dropped connection could eat the terminal
-    // event and strand the banner until the stuck timer.
-    startResolvePolling() {
-      if (this.resolvePollTimer != null) return;
-      this.resolvePollTimer = setInterval(() => {
-        const rs = this.resolvingSession;
-        if (!rs) return;
-        fetch(`/api/sessions/${rs.sessionId}/status`)
-          .then((r) => (r.ok ? r.json() : null))
-          .then((data) => {
-            if (data && data.resolving === false && this.resolvingSession === rs) {
-              this.endResolving('noop');
-            }
-          })
-          .catch(() => {});
-      }, this.RESOLVE_POLL_MS);
-    },
-
-    stopResolvePolling() {
-      if (this.resolvePollTimer != null) {
-        clearInterval(this.resolvePollTimer);
-        this.resolvePollTimer = null;
-      }
-    },
-
-    // 5-minute hard ceiling, mirroring the updating banner's stuck
-    // timer — but the failure mode here is benign (no write block), so
-    // on fire we just dismiss quietly instead of going red.
-    armResolveStuckTimer() {
-      this.disarmResolveStuckTimer();
-      const since = this.resolvingSession?.since || Date.now();
-      const remaining = Math.max(0, this.STUCK_AFTER_MS - (Date.now() - since));
-      this.resolveStuckTimer = setTimeout(() => {
-        if (this.resolvingSession) this.endResolving('noop');
-      }, remaining);
-    },
-
-    disarmResolveStuckTimer() {
-      if (this.resolveStuckTimer != null) {
-        clearTimeout(this.resolveStuckTimer);
-        this.resolveStuckTimer = null;
-      }
-    },
-
     // Shared amber/red class swap for all banner variants. Swapping
     // classes rather than re-rendering keeps the spinner animation
     // uninterrupted when a variant flips mid-flight.
@@ -857,13 +701,10 @@ const App = {
     show(stuck) {
       const el = document.getElementById('platform-updating-banner');
       if (!el) return;
-      this._clearResolveFailedTimer();
       el.classList.remove('hidden');
       const reload = document.getElementById('platform-updating-reload');
       const text = document.getElementById('platform-updating-text');
       const spinner = document.getElementById('platform-updating-spinner');
-      const dismiss = document.getElementById('platform-updating-dismiss');
-      if (dismiss) dismiss.classList.add('hidden');
       if (stuck) {
         // Swap to the red "stuck" variant (class swap keeps the
         // animation uninterrupted if we flip mid-flight, e.g. on
@@ -1739,38 +1580,17 @@ const App = {
     // present) + no merge is the terminal shape every abort path
     // broadcasts; keying on it rather than just `mergeFailed` covers the
     // head-moved / deferred aborts, which are deliberately not flagged
-    // as failures. #239: when the auto-resolver is kicking in
-    // (resolving:true rides on the mergeFailed event for conflict-class
-    // failures), immediately re-arm in the non-blocking resolving state
-    // so the banner transitions in place instead of silently vanishing
-    // while the resolver spends 1–2 min on the fix.
+    // as failures.
+    //
+    // #962: `data.resolving` is deliberately NOT consulted here (nor
+    // anywhere else in this handler). The banner tracks the merge and
+    // only the merge: when a merge attempt ends on a conflict we
+    // unlatch immediately, and if the auto-resolver's fix lands and a
+    // fresh merge is claimed, that merge's own `merging:true` re-arms
+    // us. The intervening 1–2 min of branch-sync work is carried by
+    // the proposal's own badges, not by platform-wide chrome.
     if (data.merging === false && !data.merged && data.selfHosted) {
       App.PlatformUpdating.cancel();
-      if (data.resolving) {
-        App.PlatformUpdating.beginResolving({
-          sessionId: data.sessionId,
-          appSlug: data.appSlug,
-        });
-      }
-    }
-    // #239 resolver start broadcast — covers resolutions that never
-    // armed a banner (behind-main pre-gate, drift poller, post-merge
-    // sweep) and doubles as a late confirm for the mergeFailed path
-    // above (beginResolving is idempotent). No cancel() here: a bare
-    // start event must not kill an updating banner that's legitimately
-    // active for a different, already-merged PR's deploy.
-    if (data.resolving === true && data.selfHosted && !data.mergeFailed) {
-      App.PlatformUpdating.beginResolving({
-        sessionId: data.sessionId,
-        appSlug: data.appSlug,
-      });
-    }
-    // Terminal event: the resolver finished (merged / synced / failed /
-    // noop). endResolving ignores it unless the sessionId matches the
-    // tracked resolve — and is a no-op once begin() has upgraded the
-    // banner to full updating mode on the merged path.
-    if (data.resolving === false) {
-      App.PlatformUpdating.endResolving(data.resolutionOutcome, data.sessionId);
     }
     // Refresh the proposals tab / inline chat vote state if we're in
     // this app's Dev view.
@@ -2273,6 +2093,30 @@ const App = {
     let stateAvailable = false;
     const stateRow = document.getElementById('feedback-state-row');
     const stateCheckbox = document.getElementById('feedback-state-checkbox');
+    // #964: the opt-in kudos-bounty row. Unlike the state row this shows for
+    // BOTH targets — "This app" and "Social Vibecoding Platform" alike file
+    // into a repository the platform tracks as an app, so either can carry a
+    // bounty.
+    const bountyRow = document.getElementById('feedback-bounty-row');
+    const bountyCheckbox = document.getElementById('feedback-bounty-checkbox');
+    const bountyNote = document.getElementById('feedback-bounty-note');
+    // Paint the row from the viewer's live weekly allowance and return it to
+    // its unchecked default. Budget state is null only when the first-load
+    // fetch failed — show the row enabled with no count rather than hiding a
+    // working feature; the server is the real gate.
+    const resetBountyRow = () => {
+      bountyCheckbox.checked = false;
+      const budget = window.Kudos?.Budget?.state || null;
+      const remaining = budget ? budget.remaining : null;
+      const limit = budget ? budget.limit : null;
+      const exhausted = remaining === 0;
+      bountyCheckbox.disabled = exhausted;
+      bountyRow.classList.toggle('opacity-60', exhausted);
+      if (remaining === null) bountyNote.textContent = '';
+      else if (exhausted) bountyNote.textContent = `You've used all ${limit} kudos this week — resets Monday 00:00 UTC.`;
+      else bountyNote.textContent = `${remaining} of ${limit} kudos left this week`;
+      bountyRow.classList.remove('hidden');
+    };
     // The selected option uses a darker violet on hover so it keeps its
     // active look; the unselected option uses the neutral zinc hover.
     const activeTargetClasses = ['bg-violet-600', 'text-white', 'border-violet-600', 'hover:bg-violet-500'];
@@ -2535,6 +2379,14 @@ const App = {
         const customTitle = feedbackTitle.value.trim();
         if (customTitle && (titleDirty || text === lastGeneratedFor)) body.title = customTitle;
         if (target === 'app') body.appSlug = App.currentApp;
+        // #964: pledge a kudos bounty on the issue this submit files.
+        // Captured at submit time alongside the target, and only when the
+        // box is both ticked and enabled — a disabled (allowance-spent)
+        // checkbox must never send the flag. The server files the issue
+        // regardless of what happens to the bounty.
+        const wantBounty = bountyCheckbox.checked && !bountyCheckbox.disabled
+          && !bountyRow.classList.contains('hidden');
+        if (wantBounty) body.bounty = true;
         // #683: attach the uploaded screenshot — the server appends the
         // embed line and links the row to the filed issue.
         if (screenshotId) body.screenshotId = screenshotId;
@@ -2563,9 +2415,30 @@ const App = {
         });
         const data = await res.json();
         if (res.ok) {
-          feedbackStatus.textContent = (target === 'app'
-            ? `Thanks! Filed against ${AppView?.appData?.name || 'this app'}.`
-            : 'Thanks! Filed against Social Vibecoding.') + stateNotice;
+          // #964: report both outcomes on one line. A declined bounty
+          // (allowance ran out between opening and submitting, repo isn't
+          // an app the platform can attach one to) never reads as a
+          // failure — the issue IS filed, and the bounty can still be added
+          // later from the Dev screen's Topics row.
+          let bountyNotice = '';
+          if (data.bounty) {
+            if (data.bounty.placed) {
+              bountyNotice = ` — and pledged 1 kudos as a bounty. ${data.bounty.remaining} left this week.`;
+              // The drawer's Kudos meter must show the number the user
+              // just spent down to, not the one they saw before.
+              window.Kudos?.Budget?.refresh?.();
+            } else {
+              bountyNotice = ` Couldn't add the bounty: ${data.bounty.error || 'the bounty could not be placed'}.`;
+            }
+          }
+          const filedAgainst = (target === 'app'
+            ? `Thanks! Filed against ${AppView?.appData?.name || 'this app'}`
+            : 'Thanks! Filed against Social Vibecoding');
+          // The success variant continues the sentence ("… — and pledged");
+          // every other variant ends it before appending.
+          feedbackStatus.textContent = (data.bounty?.placed
+            ? filedAgainst + bountyNotice
+            : `${filedAgainst}.${bountyNotice}`) + stateNotice;
           feedbackStatus.className = 'text-sm mt-2 text-emerald-400';
           feedbackStatus.classList.remove('hidden');
           feedbackText.value = '';
@@ -2658,6 +2531,18 @@ const App = {
         && typeof AppView.issueStateAvailable === 'function'
         && AppView.issueStateAvailable();
       stateCheckbox.checked = true;
+      // #964: the bounty row paints from the budget the badge already
+      // holds, then a refresh lands the current figure a moment later — a
+      // long-lived tab could otherwise show an hour-stale count. Both the
+      // immediate paint and the post-refresh repaint reset the checkbox to
+      // unchecked, which is the whole point of the row: a pledge is always
+      // a deliberate tick, never a side effect of filing feedback.
+      resetBountyRow();
+      Promise.resolve(window.Kudos?.Budget?.refresh?.()).then(() => {
+        // Only if the dialog is still open and untouched by the user.
+        const modal = document.getElementById('feedback-modal');
+        if (!modal.classList.contains('hidden') && !bountyCheckbox.checked) resetBountyRow();
+      }).catch(() => { /* budget unavailable — row stays as painted */ });
       if (canTargetApp) {
         feedbackTargetApp.textContent = appData?.name ? `This app (${appData.name})` : 'This app';
         setAppTargetEnabled(true);
@@ -2695,6 +2580,8 @@ const App = {
       // #683: cancelling discards the attachment client-side; an already
       // uploaded (now orphaned) row is GC'd server-side after 24h.
       resetScreenshotState();
+      // #964: drop any pledge intent with the rest of the draft.
+      bountyCheckbox.checked = false;
     });
     document.getElementById('feedback-modal').addEventListener('click', (e) => {
       if (e.target === e.currentTarget || e.target.dataset.modalBackdrop !== undefined) document.getElementById('feedback-cancel').click();
@@ -2877,12 +2764,14 @@ const App = {
         App.setChromeless(false);
         // Optional sub-view segment (#leaderboard/history etc.) — pass
         // it through so deep links land on the right tab. Bare
-        // #leaderboard keeps whatever tab was last active (Top PRs on
-        // first visit). A third segment on the users tab
-        // (#leaderboard/users/<username>) deep-links a user profile
-        // (#60). #leaderboard/topochain and #leaderboard/challenges
-        // select the screen's second / third SECTION instead of a Kudos
-        // sub-tab.
+        // #leaderboard keeps whatever tab was last active (the Topochain
+        // standings — the primary tab — on first visit). A third segment
+        // on the users tab (#leaderboard/users/<username>) deep-links a
+        // user profile (#60). #leaderboard/kudos, #leaderboard/topochain
+        // and #leaderboard/challenges select a SECTION rather than a
+        // Kudos sub-tab; the first two then self-heal their hash
+        // (#leaderboard/topochain -> #leaderboard, #leaderboard/kudos ->
+        // #leaderboard/prs) through Leaderboard._syncHash.
         const profileUser = parts[1] === 'users' && parts[2]
           ? decodeURIComponent(parts[2])
           : null;
@@ -2945,13 +2834,16 @@ const App = {
         // to the canonical form, then hand off. 'seasons' -> the
         // challenges tab (its challenge grid; its event hero became that
         // screen's shared event bar); anything else, including a bare
-        // #topochain, -> the standings tab. The replaceState fires BEFORE
-        // the navigate so Leaderboard._syncHash sees a #leaderboard hash
-        // and doesn't skip its own sync.
+        // #topochain, -> the standings tab, whose canonical address is the
+        // BARE #leaderboard now that it is the primary tab (so this is one
+        // replaceState, not one here and a second from _syncHash). The
+        // replaceState fires BEFORE the navigate so Leaderboard._syncHash
+        // sees a #leaderboard hash and doesn't skip its own sync.
         App.setChromeless(false);
         const _tcSection = parts[1] === 'seasons' ? 'challenges' : 'topochain';
         try {
-          history.replaceState(null, '', `#leaderboard/${_tcSection}`);
+          history.replaceState(null, '',
+            _tcSection === 'challenges' ? '#leaderboard/challenges' : '#leaderboard');
         } catch (err) { /* non-fatal: navigation below still works */ }
         App.navigateToLeaderboard(_tcSection, null);
         return;
@@ -3161,15 +3053,15 @@ const App = {
 
   // Show the Leaderboard screen. Sibling to navigateToApp/navigateHome —
   // hides home + app, reveals the dedicated #leaderboard-screen, lets
-  // the Leaderboard module render the tab strip + the Kudos pane into
-  // #leaderboard-root (and hand the two Topochain panes to
-  // TopochainLeaderboard / TopochainChallenges).
+  // the Leaderboard module render the tab strip and hand the standings /
+  // challenges panes to TopochainLeaderboard / TopochainChallenges (it
+  // renders the Kudos pane into #leaderboard-root itself).
   //
   // `sub` is the hash's second segment: 'prs' | 'users' | 'history'
-  // select a Kudos sub-tab, and the special values 'topochain' /
-  // 'challenges' select the screen's second / third SECTION instead.
-  // `profileUser` (#60) opens the per-user PR profile drill-in instead of
-  // a plain tab.
+  // select a Kudos sub-tab, and the SECTION values 'topochain' (the
+  // primary standings tab), 'kudos' and 'challenges' select a whole
+  // section instead. `profileUser` (#60) opens the per-user PR profile
+  // drill-in instead of a plain tab.
   navigateToLeaderboard(sub, profileUser) {
     // Same iframe caveat as navigateHome: no animated snapshot over a
     // live App-tab iframe.
@@ -3206,7 +3098,7 @@ const App = {
     // re-render in place; open() below dedupes the in-flight load.
     if (profileUser && window.Leaderboard?.openProfile) {
       Leaderboard.openProfile(profileUser);
-    } else if ((sub === 'topochain' || sub === 'challenges')
+    } else if ((sub === 'topochain' || sub === 'kudos' || sub === 'challenges')
                && window.Leaderboard?._setSection) {
       Leaderboard._setSection(sub);
     } else if (sub && window.Leaderboard?._setSub) {

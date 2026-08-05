@@ -150,7 +150,18 @@ const Home = {
   // them would be noise. Ordered by the admin's featured_order
   // (ascending, NULLs last) and capped at FEATURED_LIMIT.
   // Pure — unit-tested in tests/home-find-more.test.js.
+  //
+  // ?shot=discover-empty forces the empty answer regardless (#949), for the
+  // same reason ?shot=create-disabled exists above: "nothing left to
+  // feature" is what a viewer sees once they have added the featured apps,
+  // and no URL could reach it — so the Discover widget's compact state was
+  // invisible to the before/after screenshots and to every declared check.
+  // Pure UI state: it changes one derived list at render time, writes
+  // nothing, and is not env-gated, so it works in production immediately.
   featuredApps(apps) {
+    try {
+      if (new URLSearchParams(location.search).get('shot') === 'discover-empty') return [];
+    } catch (err) { /* ignore */ }
     return (apps || [])
       .filter((a) => a && a.featured && !Home.isYours(a))
       .sort((x, y) => {
@@ -159,6 +170,41 @@ const Home = {
         return xo - yo;
       })
       .slice(0, Home.FEATURED_LIMIT);
+  },
+
+  // How many tiles the Discover widget's "Popular" lane shows. Same number
+  // as FEATURED_LIMIT because both lanes share the same six-track grid —
+  // see .home-discover-lane in app.css.
+  POPULAR_LIMIT: 6,
+
+  // The Popular lane's contents (#949): what everyone else is actually
+  // using, for the desktop widget's second row. Derived from the SAME
+  // /api/apps payload the grid already holds — `active_users` rides along
+  // with every row (see the au join in src/routes/apps.js), so this costs
+  // no query.
+  //
+  // The ranking mirrors Browse.sortApps' non-featured tail exactly (most
+  // users first, ties keeping the server's own order via a stable sort), so
+  // the widget and the Browse directory can't disagree about what is
+  // popular. parseInt because the count arrives as a STRING — it is a
+  // Postgres bigint and, unlike open_prs, the serializer doesn't coerce it.
+  //
+  // Four exclusions, each load-bearing:
+  //   * `featured` — the lane above already offers those.
+  //   * isYours — the whole point is apps you don't have yet.
+  //   * status 'error' — a broken app is not a discovery target.
+  //   * self_hosted — the platform app itself is visible only to admins, so
+  //     including it would make the lane read differently per viewer.
+  // And a floor of one active user: an app nobody uses is not "popular",
+  // and padding the lane out with zero-user rows would misrepresent it.
+  // Pure — unit-tested in tests/home-find-more.test.js.
+  popularApps(apps) {
+    const users = (a) => (parseInt(a && a.active_users, 10) || 0);
+    return (apps || [])
+      .filter((a) => a && !a.featured && !a.self_hosted
+        && a.status !== 'error' && !Home.isYours(a) && users(a) >= 1)
+      .sort((x, y) => users(y) - users(x))
+      .slice(0, Home.POPULAR_LIMIT);
   },
 
   // ===== Free-form grid layout =====
@@ -1645,11 +1691,13 @@ const Home = {
   _probeShortcutSupport() {
     if (Home._shortcutProbeStarted) return;
     Home._shortcutProbeStarted = true;
-    // Start watching the system appearance here rather than inside the
-    // widget branch below: the probe resolves asynchronously, so the
-    // registration would otherwise race a flip that happens during it.
-    // The handler is inert until the widget mechanism is known anyway.
+    // Start watching the system appearance (and foregrounds) here rather
+    // than inside the widget branch below: the probe resolves
+    // asynchronously, so the registration would otherwise race a flip
+    // that happens during it. Both handlers are inert until the widget
+    // mechanism is known anyway.
     Home._watchWidgetScheme();
+    Home._watchWidgetForeground();
     const bridge = window.usernode;
     if (!bridge || typeof bridge.getHomeScreenShortcutSupport !== 'function') return;
     bridge.getHomeScreenShortcutSupport().then((support) => {
@@ -1725,6 +1773,17 @@ const Home = {
   //          which read as a bright white tile on a dark homescreen.
   //          The scheme is also part of the source marker below, so a
   //          light↔dark flip re-sends on top of this one-time bump.
+  //
+  // Deliberately NOT bumped for the dual-icon work (#948). The shell
+  // that can't take a pair still gets byte-identical gen-5 pixels under
+  // a byte-identical `tile:5:<scheme>:…` marker, so bumping would cost
+  // every one of those users a full-grid re-send for artwork that did
+  // not change. The only entries whose artwork DOES change are the ones
+  // on a capable shell, and those are already distinguished by the new
+  // `dual` value in the marker's variant segment — which is what
+  // actually drives re-sends. (Gen 6 was briefly claimed by an
+  // appearance-neutral tile that was reverted before merging, so the
+  // number is free; use 7 if that ever reaches main independently.)
   WIDGET_ICON_GEN: 5,
   // The two faces the canvas tile can wear, mirroring `.app-icon-tile`
   // in app.css. Light is the pre-existing treatment, unchanged; dark
@@ -1758,20 +1817,62 @@ const Home = {
     const mq = Home._schemeQuery();
     return (mq && mq.matches) ? 'dark' : 'light';
   },
+  // ── Dual-icon capability (#948) ─────────────────────────────────────
+  //
+  // A stored PNG can't restyle itself, and SV can't repaint one while
+  // the app is closed — which is exactly when the system flips. The
+  // only real fix is to hand the widget BOTH faces and let it pick per
+  // colorScheme natively. That needs the shell to store a second icon
+  // (Flutter repo issue #518), so it is gated on the capability the
+  // shell advertises once it honours the field end to end.
+  //
+  // Absent the flag, everything below stays on the gen-5 path: bake the
+  // face matching the current system appearance and re-send on a flip,
+  // with the known limitation that the correction waits for the next
+  // app open. Present, the payload carries both faces and stops
+  // depending on the appearance at all.
+  WIDGET_DARK_ICON_CAPABILITY: 'homeScreenShortcutDarkIcon',
+  // null until probed, then true/false. The synchronous payload/marker
+  // builders read this, so both entry points below await the probe
+  // first — a pass that ran with `null` would send a single face and
+  // then immediately re-send it as a pair.
+  _widgetDarkIcons: null,
+  _darkIconProbe: null,
+  _ensureDarkIconCapability() {
+    if (Home._darkIconProbe) return Home._darkIconProbe;
+    const chrome = window.NativeChrome;
+    const probe = (chrome && typeof chrome.has === 'function')
+      ? Promise.resolve(chrome.has(Home.WIDGET_DARK_ICON_CAPABILITY)).catch(() => false)
+      // No NativeChrome (plain browser, standalone page, tests) means no
+      // native shell at all, so certainly no dual-icon support.
+      : Promise.resolve(false);
+    Home._darkIconProbe = probe.then((has) => {
+      Home._widgetDarkIcons = has === true;
+      return Home._widgetDarkIcons;
+    });
+    return Home._darkIconProbe;
+  },
   _iconSrcKey: 'sv:widget_icon_src',
   _iconHealTried: null,
   // The icon source the widget *should* have for this app right now.
   // Image icons: the absolute URL (matches _shortcutPayloadFor). Canvas
   // tiles: an opaque marker keyed by emoji + rendering generation + the
-  // scheme the PNG was painted for, so flipping the system appearance
-  // marks every canvas tile stale and re-sends it. The scheme is NOT
-  // part of the image-icon marker — that payload is the app's own URL
-  // and looks identical in both schemes, so folding it in would re-send
-  // every image tile on each flip for no visual change.
+  // VARIANT the payload was built for.
+  //
+  // The variant is 'dual' where the shell takes a light/dark pair — the
+  // payload is then identical in both appearances, so a flip must NOT
+  // mark anything stale. Otherwise it is the scheme the single face was
+  // painted for ('light' / 'dark'), exactly as gen 5 recorded it, so a
+  // flip still marks every canvas tile stale and re-sends it.
+  //
+  // The variant is NOT part of the image-icon marker — that payload is
+  // the app's own URL, identical in both schemes and in both capability
+  // states, so folding it in would re-send every image tile for no
+  // visual change.
   _desiredIconSrcFor(app) {
-    return app.icon_url
-      ? new URL(app.icon_url, location.origin).href
-      : `tile:${Home.WIDGET_ICON_GEN}:${Home._widgetScheme()}:${app.icon_emoji || ''}`;
+    if (app.icon_url) return new URL(app.icon_url, location.origin).href;
+    const variant = Home._widgetDarkIcons === true ? 'dual' : Home._widgetScheme();
+    return `tile:${Home.WIDGET_ICON_GEN}:${variant}:${app.icon_emoji || ''}`;
   },
   // Re-paint pinned canvas tiles when the system appearance flips.
   //
@@ -1807,16 +1908,75 @@ const Home = {
     Home._iconHealTried = null;
     Promise.resolve(Home._healWidgetIcons()).catch(() => {});
   },
+  // Re-run the heal pass when the app comes back to the foreground.
+  //
+  // Not redundant with the scheme watcher above. The native shell can
+  // restore the webview without a page load, so Home.load() and the
+  // probe don't necessarily re-run when someone reopens the app — gen 5
+  // relied on the media-query listener happening to fire on resume,
+  // which is incidental rather than guaranteed. It is also how a newly
+  // installed dual-icon-capable shell gets picked up: the capability is
+  // probed per page load and the marker transition needs a pass to act
+  // on it.
+  //
+  // Overlap with the scheme watcher is free: the _widgetSchemeSeen
+  // guard, the per-entry marker comparison, _iconHealTried and the
+  // in-flight guard all turn a redundant pass into a no-op.
+  //
+  // Inert on web, Android and desktop: the handler early-returns unless
+  // the app reported the widget mechanism.
+  WIDGET_FOREGROUND_HEAL_MS: 30000,
+  _widgetForegroundWatching: false,
+  _widgetForegroundHealedAt: 0,
+  _watchWidgetForeground() {
+    if (Home._widgetForegroundWatching) return;
+    Home._widgetForegroundWatching = true;
+    if (typeof document.addEventListener !== 'function') return;
+    document.addEventListener('visibilitychange', Home._onWidgetForeground);
+  },
+  _onWidgetForeground() {
+    if (document.visibilityState !== 'visible') return;
+    if (Home._shortcutSupport?.mechanism !== 'widget') return;
+    // Throttled: _iconHealTried caps sends to one attempt per shortcut
+    // id per page load, and clearing it is what lets a pending heal
+    // retry. Rapid app switching must not turn a persistently failing
+    // icon into a send on every foreground.
+    const now = Date.now();
+    if (now - Home._widgetForegroundHealedAt < Home.WIDGET_FOREGROUND_HEAL_MS) return;
+    Home._widgetForegroundHealedAt = now;
+    Home._iconHealTried = null;
+    Promise.resolve(Home._healWidgetIcons()).catch(() => {});
+  },
   _loadIconSrcMap() {
     try {
       const parsed = JSON.parse(localStorage.getItem(Home._iconSrcKey));
       return parsed && typeof parsed === 'object' ? parsed : {};
     } catch (_) { return {}; /* private mode / corrupt */ }
   },
-  async _healWidgetIcons() {
+  // Serialised: a pass reads the recorded-source map, awaits a bridge
+  // round trip per stale tile, then writes the map back. Two overlapping
+  // passes would each write a snapshot taken before the other's sends,
+  // so the last writer drops the other's records and those tiles re-send
+  // on the next load. Several triggers can collide — Home.load(),
+  // _refreshWidgetItems, the scheme watcher and the foreground watcher —
+  // so a second caller joins the running pass instead of starting its
+  // own.
+  _healInFlight: null,
+  _healWidgetIcons() {
+    if (Home._healInFlight) return Home._healInFlight;
+    const pass = Home._healWidgetIconsPass()
+      .finally(() => { Home._healInFlight = null; });
+    Home._healInFlight = pass;
+    return pass;
+  },
+  async _healWidgetIconsPass() {
     if (Home._shortcutSupport?.mechanism !== 'widget') return;
     const bridge = window.usernode;
     if (!bridge || typeof bridge.addHomeScreenShortcut !== 'function') return;
+    // Resolve the dual-icon capability BEFORE building any marker or
+    // payload, so the synchronous builders below never see the unprobed
+    // null and send a single face that the next pass re-sends as a pair.
+    await Home._ensureDarkIconCapability();
     const tried = (Home._iconHealTried ||= new Set());
     const srcMap = Home._loadIconSrcMap();
     let mapDirty = false;
@@ -1833,8 +1993,19 @@ const Home = {
       if (!app) continue;
       const desired = Home._desiredIconSrcFor(app);
       const needsIcon = item.has_icon === false;
+      // Pinned before the shell could hold a dark asset: the marker can
+      // already match (same emoji, same generation) while the second
+      // face is simply missing, so the read-back flag is what catches
+      // it. Strict === false, like has_icon above, so a shell that
+      // reports neither key never triggers a send. Image icons are
+      // permanently dark-assetless by design (the app's own artwork is
+      // appearance-independent), hence the !app.icon_url clause —
+      // without it every image tile would look stale on every pass.
+      const needsDark = Home._widgetDarkIcons === true
+        && !app.icon_url
+        && item.has_icon_dark === false;
       const stale = srcMap[item.id] !== desired;
-      if (!needsIcon && !stale) continue;
+      if (!needsIcon && !needsDark && !stale) continue;
       tried.add(item.id);
       try {
         await bridge.addHomeScreenShortcut({
@@ -2277,12 +2448,16 @@ const Home = {
   // widget's own surface, light or dark.
   //
   // A PNG can't follow the system theme the way the CSS tile does, so
-  // the palette is chosen at render time from the CURRENT system
-  // appearance (_widgetScheme) and the scheme rides along in the source
-  // marker — a light↔dark flip makes every pinned tile stale and
-  // _healWidgetIcons re-sends it in the other palette. Apps with a real
-  // icon image skip this (the image URL is passed through instead).
-  _widgetIconDataUrl(app) {
+  // the palette is a PARAMETER: the caller (_shortcutPayloadFor) knows
+  // whether the shell can hold a light/dark pair and asks for both
+  // faces, or for just the one matching the current system appearance.
+  // Nothing in here reads the appearance itself — that decision belongs
+  // one level up, so the capable path can produce a payload that is
+  // identical in both appearances. `variant` defaults to the current
+  // scheme so a caller that forgets it still paints a sane face, and an
+  // unrecognised key falls back to light. Apps with a real icon image
+  // skip this entirely (the image URL is passed through instead).
+  _widgetIconDataUrl(app, variant) {
     try {
       const size = 128;
       const canvas = document.createElement('canvas');
@@ -2312,7 +2487,7 @@ const Home = {
       // .app-icon-tile` resolves to. The hairline is what keeps the
       // tile shape legible against iOS's own dark widget material, so
       // it must not be dropped in the dark palette.
-      const palette = Home.WIDGET_TILE_PALETTE[Home._widgetScheme()]
+      const palette = Home.WIDGET_TILE_PALETTE[variant || Home._widgetScheme()]
         || Home.WIDGET_TILE_PALETTE.light;
       ctx.fillStyle = palette.face;
       ctx.fill();
@@ -2347,17 +2522,40 @@ const Home = {
 
   // The addHomeScreenShortcut payload for an SV app — shared by the add
   // flows and the icon-heal pass so every path sends the same icon.
+  //
+  // Three shapes, and only three:
+  //   - Real icon image → the absolute URL the app downloads, and NO
+  //     dark field: the author's artwork is the same in both
+  //     appearances, so a second copy would double the native download
+  //     for no visual change.
+  //   - Canvas tile, shell takes a pair → the light face as icon_url
+  //     (so a shell that stores the field but renders only icon_url
+  //     still shows a sane tile) plus the dark face as icon_url_dark.
+  //     The widget picks per colorScheme, natively, with SV closed.
+  //   - Canvas tile, shell can't → the single face matching the current
+  //     system appearance, exactly as gen 5 sent it.
+  //
+  // icon_url_dark is OMITTED rather than sent as null when there is no
+  // dark asset: that keeps the payload byte-identical to what shipped
+  // before this change for every non-capable shell, and gives the
+  // native side an unambiguous "clear the dark slot" on a re-add.
+  //
+  // Callers must have awaited _ensureDarkIconCapability() — see the
+  // heal pass and _addShortcutForApp.
   _shortcutPayloadFor(app) {
-    return {
+    const payload = {
       name: app.name,
       url: `${location.origin}/#app/${encodeURIComponent(app.slug)}`,
-      // Real icon image: absolute URL the app downloads. Emoji/letter
-      // tiles: canvas-rendered PNG data URI so the widget matches the
-      // in-app tile exactly.
       icon_url: app.icon_url
         ? new URL(app.icon_url, location.origin).href
-        : Home._widgetIconDataUrl(app),
+        : Home._widgetIconDataUrl(app, Home._widgetDarkIcons === true
+          ? 'light'
+          : Home._widgetScheme()),
     };
+    if (!app.icon_url && Home._widgetDarkIcons === true) {
+      payload.icon_url_dark = Home._widgetIconDataUrl(app, 'dark');
+    }
+    return payload;
   },
 
   // Shared by the hamburger item and the drag-onto-strip drop. On iOS a
@@ -2365,6 +2563,10 @@ const Home = {
   // re-fetched and re-rendered to show the new tile.
   async _addShortcutForApp(app) {
     try {
+      // Before building the payload: an un-probed capability would send
+      // a single face that the next heal pass immediately re-sends as a
+      // pair — a wasted round trip and a visible double refresh.
+      await Home._ensureDarkIconCapability();
       await window.usernode.addHomeScreenShortcut(Home._shortcutPayloadFor(app));
       if (Home._shortcutSupport?.mechanism === 'widget') {
         await Home._refreshWidgetItems();

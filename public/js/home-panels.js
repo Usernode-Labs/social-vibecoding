@@ -48,6 +48,21 @@
 // removed mobile Challenges tab, which paged by navigation: it was a
 // plain vertical list of bordered cards on a screen of its own.
 //
+// UNDERFLOW is the other half, and it splits by breakpoint (#947). On a
+// PHONE the widget is full-width, so a short list just ends sooner and the
+// block draws at its content height — that half is pure CSS (the
+// `home-panel--fit` rule inside app.css's phone media block). On DESKTOP it
+// is a tile among app icons, where shrinking would leave a notch, so it
+// keeps its exact two-row height and spends the leftover on a LEADERBOARD
+// section: the top few rows of the same board the Leaderboard screen's
+// primary tab shows — the Topochain standings — plus the viewer's own row
+// when they have one. The server sends it as `panel.leaderboard`, already
+// carrying its `kind` ('topochain', or 'kudos' for the fallback board a
+// deployment with no public standings falls back to), its `label` and the
+// `you` flags; src/services/topochain/event-standings.js and
+// src/services/leaderboard-users.js are the one copy of each board's
+// ordering. See fillSlots/currentCols below for the row budget.
+//
 // FETCH DISCIPLINE. Home.load() is called from a dozen WS/event paths, so
 // this module must NOT fetch per Home.load(): ensureLoaded() is
 // TTL-guarded and de-duped on an in-flight promise, while render() is
@@ -75,6 +90,53 @@ const HomePanels = {
   // most this many challenges; when more are open, the last slot becomes
   // the "See all N" link instead of a fourth challenge.
   ROW_SLOTS: 4,
+
+  // ── The breakpoint split (#947) ────────────────────────────────────
+  //
+  // PHONE (4 columns): the widget spans the full grid width, so a shorter
+  // block just ends sooner — nothing sits beside it, nothing has to move.
+  // It draws at its CONTENT height. That half is pure CSS: the article
+  // always carries `home-panel--fit`, and the `align-self: flex-start` rule
+  // lives inside app.css's `@media (max-width: 639.98px)` block, so a window
+  // dragged across the breakpoint resizes instantly, before any re-render.
+  //
+  // DESKTOP (5 columns): the widget is a TILE in a grid of app icons —
+  // shrinking it would leave a notch — so it keeps its exact two-row height
+  // and spends whatever the challenge rows don't use on a LEADERBOARD
+  // section (top builders + the viewer's own rank). THAT half is decided
+  // here, because it changes what markup exists.
+  //
+  // The row budget, from app.css's own tokens:
+  //   tile 256 - border 2 - title bar 25.5 - footer 27  = 201.5px
+  //   a row is 40px (--home-panel-row-h); the label costs 16px
+  // so `fillRows = 4 - max(challengeRows, 1)` — 3 at zero or one challenge,
+  // 2 at two, 1 at three, 0 at four (a 40px row plus its 16px label does not
+  // fit in the ~41px the four-row state leaves).
+  DESKTOP_COLS: 5,
+
+  fillSlots(challengeRows) {
+    return Math.max(0, HomePanels.ROW_SLOTS - Math.max(Number(challengeRows) || 0, 1));
+  },
+
+  // The column count the grid is rendering at. Home owns this (it reads the
+  // viewport against HomeLayout.BREAKPOINT_PX, the same 640px as the CSS);
+  // the fallbacks keep this module usable — and testable — with neither on
+  // the window. Unknown width defaults to the COMPACT rendering: it claims
+  // no space it can't fill and needs no fill data, so it is always safe.
+  currentCols() {
+    const w = window.Home;
+    if (w && typeof w.currentCols === 'function') {
+      const cols = Number(w.currentCols());
+      if (Number.isFinite(cols) && cols > 0) return cols;
+    }
+    const layout = window.HomeLayout;
+    const width = Number(window.innerWidth);
+    if (layout && typeof layout.columnsForWidth === 'function' && Number.isFinite(width)) {
+      return layout.columnsForWidth(width);
+    }
+    if (Number.isFinite(width)) return width >= 640 ? 5 : 4;
+    return 4;
+  },
 
   // Escapes every character that is dangerous in EITHER a text node OR a
   // double-quoted attribute value. Organiser-authored strings (challenge
@@ -177,9 +239,22 @@ const HomePanels = {
     // ?demo=1 rides along exactly like Home.load()'s own demoQS — the
     // server only honours it in staging. `expand` names the one panel the
     // viewer has opened in place, so the fetch brings its full list.
+    //
+    // `challenges=few|none` and `board=kudos` ride along WITH it: both demo
+    // variants are chosen server-side, so a param left in the address bar but
+    // not on the fetch would silently serve the default payload — which is
+    // what the deep link, the dapp.json check and the before/after
+    // screenshots would then all capture.
     const params = new URLSearchParams();
     try {
-      if (new URLSearchParams(location.search).get('demo') === '1') params.set('demo', '1');
+      const here = new URLSearchParams(location.search);
+      if (here.get('demo') === '1') {
+        params.set('demo', '1');
+        const variant = here.get('challenges');
+        if (variant) params.set('challenges', variant);
+        const board = here.get('board');
+        if (board) params.set('board', board);
+      }
     } catch (err) { /* ignore */ }
     const expandKey = Object.keys(HomePanels._expanded)
       .find((k) => HomePanels._expanded[k]);
@@ -236,7 +311,12 @@ const HomePanels = {
       for (const slot of slots) {
         const key = slot.dataset.panelSlot;
         const panel = HomePanels.panelFor(key);
-        const html = panel ? HomePanels.renderPanel(panel) : '';
+        // IN-GRID: this host is a real (column, row) rectangle of #app-list,
+        // so the desktop fill has a fixed height to fill. `cols` decides
+        // whether it does — see fillSlots / currentCols.
+        const html = panel
+          ? HomePanels.renderPanel(panel, { inGrid: true, cols: HomePanels.currentCols() })
+          : '';
         slot.innerHTML = html;
         slot.classList.toggle('hidden', !html);
         HomePanels._stampState(slot);
@@ -251,22 +331,29 @@ const HomePanels = {
     if (html) HomePanels._wire(section);
   },
 
-  // Lift a widget's own state attribute onto its HOST.
+  // Lift a widget's own state attributes onto its HOST.
   //
-  // The create widget stamps `data-create-enabled` on the markup it returns,
-  // but that markup is painted INSIDE the `[data-panel-slot]` host — so a
-  // selector written the way the spec describes it ("stamped on the host"),
-  // and the way the dapp.json checks and screenshot assertions write it,
-  // `[data-panel-slot="create"][data-create-enabled="true"]`, asks for both
-  // attributes on ONE element and matches nothing. Mirroring the value up is
-  // cheaper and less brittle than teaching every caller the two-element
-  // shape, and it keeps the widget itself the single place that decides.
+  // The create widget stamps `data-create-enabled` on the markup it returns
+  // (and Discover stamps `data-featured` / `data-popular` with its two lane
+  // counts), but that markup is painted INSIDE the `[data-panel-slot]` host
+  // — so a selector written the way the spec describes it ("stamped on the
+  // host"), and the way the dapp.json checks and screenshot assertions write
+  // it, `[data-panel-slot="create"][data-create-enabled="true"]`, asks for
+  // both attributes on ONE element and matches nothing. Mirroring the value
+  // up is cheaper and less brittle than teaching every caller the
+  // two-element shape, and it keeps the widget itself the single place that
+  // decides.
+  //
+  // Every attribute here is mirrored or CLEARED on each paint, so a host can
+  // never keep a stale value a later render stopped emitting.
+  STATE_ATTRS: ['data-create-enabled', 'data-featured', 'data-popular'],
+
   _stampState(host) {
     if (!host || !host.querySelector) return;
-    const inner = host.querySelector('[data-create-enabled]');
-    if (inner) host.setAttribute('data-create-enabled', inner.getAttribute('data-create-enabled'));
-    else if (host.hasAttribute && host.hasAttribute('data-create-enabled')) {
-      host.removeAttribute('data-create-enabled');
+    for (const attr of HomePanels.STATE_ATTRS) {
+      const inner = host.querySelector(`[${attr}]`);
+      if (inner) host.setAttribute(attr, inner.getAttribute(attr));
+      else if (host.hasAttribute && host.hasAttribute(attr)) host.removeAttribute(attr);
     }
   },
 
@@ -336,12 +423,16 @@ const HomePanels = {
   // fallback host (the search view) — the in-grid path paints each slot
   // individually so each widget lands in its own cell.
   // Empty string = render nothing at all (the section is hidden).
+  //
+  // NOT in the grid, so there is no fixed-height rectangle to fill: this host
+  // always gets the COMPACT rendering, at any width. (The article is a plain
+  // block-level flex container here, so it already sizes to its content.)
   renderAll() {
     if (!window.App || !App.user) return '';
     if (!HomePanels._data) return '';
     const blocks = HomePanels.gridSlotKeys()
       .map((k) => HomePanels.panelFor(k))
-      .map((p) => (p ? HomePanels.renderPanel(p) : ''))
+      .map((p) => (p ? HomePanels.renderPanel(p, { inGrid: false, cols: 4 }) : ''))
       .filter(Boolean);
     if (!blocks.length) return '';
     // space-y-2 between blocks: each widget reads as its own box.
@@ -351,9 +442,9 @@ const HomePanels = {
   // Dispatch on panel key. An unknown key renders nothing rather than
   // throwing, so a server that ships a new panel before the client knows
   // it degrades to "not shown" instead of a blank home screen.
-  renderPanel(panel) {
+  renderPanel(panel, opts) {
     if (!panel) return '';
-    if (panel.key === 'challenges') return HomePanels.renderChallengesPanel(panel);
+    if (panel.key === 'challenges') return HomePanels.renderChallengesPanel(panel, opts);
     if (panel.key === 'discover') return HomePanels.renderDiscoverPanel(panel);
     if (panel.key === 'create') return HomePanels.renderCreatePanel(panel);
     return '';
@@ -375,11 +466,26 @@ const HomePanels = {
   // The one control on the bar is the ⋮ menu, and it is deliberately NOT
   // part of the handle — see _wire, which stops its pointerdown before the
   // grid's reorder recognizer can see it.
-  _panelShell(key, titleHtml, bodyHtml, footerHtml) {
+  //
+  // `stamps` carries extra per-panel state onto the article. Two shapes ride
+  // through here: the challenges widget's `{ cls, attrs }` (an extra CSS
+  // class plus a pre-built `data-rows`/`data-fill` attribute string — a
+  // HEIGHT/COMPOSITION change, and a height is invisible to a CSS selector,
+  // so the dapp.json checks and screenshot assertions need something to hold
+  // on to), and Discover's plain `{ name: value }` bag (its two lane counts,
+  // which _stampState mirrors onto the [data-panel-slot] host so one selector
+  // can ask for the slot AND the state).
+  _panelShell(key, titleHtml, bodyHtml, footerHtml, stamps) {
     const esc = HomePanels.esc;
     const expanded = !!HomePanels._expanded[key];
+    const extraCls = (stamps && stamps.cls) ? ` ${stamps.cls}` : '';
+    const extra = (stamps && typeof stamps.attrs === 'string')
+      ? ` ${stamps.attrs}`
+      : Object.entries(stamps || {})
+        .filter(([name]) => name !== 'cls')
+        .map(([name, value]) => ` ${name}="${esc(value)}"`).join('');
     return `
-      <article class="home-panel home-panel-card${expanded ? ' home-panel--expanded' : ''} rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/50 overflow-hidden" data-panel="${esc(key)}">
+      <article class="home-panel home-panel-card${expanded ? ' home-panel--expanded' : ''}${extraCls} rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/50 overflow-hidden" data-panel="${esc(key)}"${extra}>
         <div class="home-panel-bar flex-none flex items-center gap-2 px-2.5 py-1 border-b border-zinc-200 dark:border-zinc-800 select-none" title="Drag to move this widget">
           ${titleHtml}
           <button type="button" class="home-panel-menu un-touch-target shrink-0 w-4 h-4 flex items-center justify-center rounded-full text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 leading-none"
@@ -423,26 +529,182 @@ const HomePanels = {
       </div>`;
   },
 
-  renderChallengesPanel(panel) {
+  // The footer for the ZERO-challenge desktop tile: there is nothing to
+  // expand and nothing to count, so the expand toggle would be a control
+  // that does nothing. One way out instead, and it names where it goes —
+  // the rows above it are leaderboard rows, so it goes to the leaderboard.
+  // `kind` follows the rows: the standings go to the Leaderboard screen's
+  // primary tab, the kudos fallback to the Kudos tab's Top users view.
+  _fillFooter(kind) {
+    const esc = HomePanels.esc;
+    const k = kind === 'kudos' ? 'kudos' : 'topochain';
+    const title = k === 'kudos'
+      ? 'Go to the Top users view on the Leaderboard screen’s Kudos tab'
+      : 'Go to the Leaderboard screen';
+    return `
+      <div class="home-panel-footer flex-none flex items-center justify-end gap-2 px-2.5 border-t border-zinc-200 dark:border-zinc-800">
+        <button type="button" class="home-panel-lb-open flex items-center gap-1 text-[12px] font-medium text-zinc-500 dark:text-zinc-400 hover:text-violet-600 dark:hover:text-violet-400 whitespace-nowrap"
+          data-lb-kind="${esc(k)}"
+          title="${esc(title)}" aria-label="See full leaderboard">
+          <span class="whitespace-nowrap">See full leaderboard</span>
+          <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+        </button>
+      </div>`;
+  },
+
+  // The LEADERBOARD block: a hairline label plus `slots` rows, drawn only on
+  // the desktop tile and only when the challenge rows leave room.
+  //
+  // Composition: the top rows in order, and the VIEWER'S OWN ROW last,
+  // tinted — the pattern every standings surface uses, and the reason the
+  // fill is worth the space at all ("where am I?"). A viewer already inside
+  // the top slice is highlighted in place rather than repeated, and the freed
+  // slot goes to the next entry down. A viewer with NO row on the board (the
+  // common case on the Topochain standings, which are keyed by participation
+  // rather than by having an account) simply doesn't get a line — the slot
+  // goes to one more participant instead of inventing a rank.
+  //
+  // The server decides which rows are the viewer's (`row.you`) and what the
+  // block is called (`fill.label` — "Leaderboard" for the Topochain
+  // standings, "Kudos" for the fallback board), so the client never has to
+  // string-match names or know which board it was handed.
+  //
+  // Returns '' when there is no room or no data, which is also what makes
+  // `data-fill="0"` honest.
+  renderFillBlock(fill, slots) {
+    if (!fill || slots < 1) return '';
+    const esc = HomePanels.esc;
+    const top = Array.isArray(fill.top) ? fill.top : [];
+    const viewer = fill.viewer || null;
+    const total = Number(fill.total) || 0;
+    const kind = fill.kind === 'kudos' ? 'kudos' : 'topochain';
+    const label = fill.label || 'Leaderboard';
+    // Is the viewer inside the part of the top list we can actually show?
+    const viewerInTop = !!viewer && top.slice(0, slots).some((r) => r && r.you);
+    let picks;
+    if (viewer && !viewerInTop) {
+      // Last slot belongs to the viewer; the rest is the head of the board.
+      picks = top.slice(0, slots - 1).map((r) => ({ row: r, you: false }));
+      picks.push({ row: viewer, you: true });
+    } else {
+      picks = top.slice(0, slots).map((r) => ({ row: r, you: !!(r && r.you) }));
+    }
+    if (!picks.length) return '';
+    const rowsHtml = picks
+      .map((p) => HomePanels.renderFillRow(p.row, p.you, total, fill))
+      .join('');
+    return `
+      <div class="home-panel-fill flex-none" data-fill-kind="${esc(kind)}">
+        <div class="home-panel-fill-label flex items-center px-2.5 text-[10px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500 border-t border-zinc-200 dark:border-zinc-800">${esc(label)}</div>
+        ${rowsHtml}
+      </div>`;
+  },
+
+  // Points are five-figure numbers on the Topochain standings (production's
+  // top score is ~59,000) against single digits on the kudos board, so the
+  // primary board's score is shortened — "59.1k" — to keep the name lane
+  // readable. The screen's own table keeps the full figures.
+  formatFillScore(score, kind) {
+    const n = Number(score) || 0;
+    if (kind === 'kudos' || n < 1000) return String(n);
+    try {
+      return new Intl.NumberFormat('en-US', {
+        notation: 'compact', maximumFractionDigits: 1,
+      }).format(n).toLowerCase();
+    } catch (err) {
+      return String(n);
+    }
+  },
+
+  // One leaderboard line, on the challenge row's geometry: the rank sits in
+  // the glyph's 10px column, the name takes the goal's lane, and the score
+  // takes the reward chip's slot — so the two kinds of row line up rather
+  // than reading as two different lists jammed together.
+  //
+  // `.home-panel-lb-row` is load-bearing and not decoration: _wire() excludes
+  // it from the challenges click handler, because these rows go to the
+  // Leaderboard screen, not to Challenges.
+  renderFillRow(row, isYou, total, fill) {
+    const esc = HomePanels.esc;
+    const kind = fill && fill.kind === 'kudos' ? 'kudos' : 'topochain';
+    // A podium-excluded standings row carries no rank — the screen's table
+    // draws those as an em dash, so the fill does too.
+    const rank = Number(row.rank) || 0;
+    const rankLabel = rank ? String(rank) : '—';
+    const score = Number(row.score) || 0;
+    const who = String(row.name || '');
+    const name = isYou ? 'You' : who;
+    const metric = kind === 'kudos'
+      ? 'by kudos on merged proposals'
+      : `by points${fill && fill.event && fill.event.name ? ` in ${fill.event.name}` : ''}`;
+    const where = rank ? `#${rank}` : 'unranked';
+    const tip = isYou
+      ? `You are ${where}${total ? ` of ${total}` : ''} ${metric}`
+      : `${who} — ${where} ${metric}`;
+    // A zero score is muted rather than a violet chip: "0" shouted in the
+    // accent colour reads as a warning, not as a starting point.
+    const scoreHtml = score > 0
+      ? `<span class="shrink-0 whitespace-nowrap text-[11px] font-semibold text-violet-600 dark:text-violet-400">${esc(HomePanels.formatFillScore(score, kind))}</span>`
+      : `<span class="shrink-0 whitespace-nowrap text-[11px] text-zinc-400 dark:text-zinc-500">0</span>`;
+    return `
+      <div class="home-panel-row home-panel-lb-row flex items-center gap-2 px-2.5 cursor-pointer hover:bg-violet-500/[0.04] dark:hover:bg-violet-500/10 transition-colors${
+        isYou ? ' home-panel-lb-you bg-violet-500/[0.06] dark:bg-violet-500/10' : ''
+      }" data-lb-kind="${esc(kind)}" title="${esc(tip)}">
+        <span class="home-panel-glyph shrink-0 w-2.5 text-[10px] leading-none tabular-nums text-right text-zinc-400 dark:text-zinc-500" aria-hidden="true">${esc(rankLabel)}</span>
+        <span class="home-panel-goal flex-1 min-w-0 truncate whitespace-nowrap text-[13px] ${
+          isYou ? 'font-semibold text-zinc-900 dark:text-zinc-100' : 'text-zinc-900 dark:text-zinc-100'
+        }">${esc(name)}</span>
+        ${scoreHtml}
+      </div>`;
+  },
+
+  renderChallengesPanel(panel, opts) {
     const esc = HomePanels.esc;
     const total = Number(panel.total) || 0;
-    const isAdmin = !!(window.App && App.user && App.user.isAdmin);
     const title = esc(panel.title || 'Challenges');
+    const expanded = !!HomePanels._expanded[panel.key];
+    // The desktop tile is the only place with a fixed height to fill.
+    const inGrid = !!(opts && opts.inGrid);
+    const cols = Number(opts && opts.cols) || 4;
+    const canFill = inGrid && cols >= HomePanels.DESKTOP_COLS && !expanded;
+    // `home-panel--fit` is stamped in BOTH branches; app.css only honours it
+    // below 640px, which is what keeps the desktop tile a fixed 2x2.
+    const rowsOf = (n, fillRows) => ({
+      cls: 'home-panel--fit',
+      attrs: `data-rows="${n}" data-fill="${fillRows}"`,
+    });
 
-    // Nothing open: the block is absent for ordinary users (an empty box on
-    // every home screen is worse than no box), but admins still see it so
-    // they can confirm the feature shipped — and so the between-seasons
-    // state is visible to whoever runs the seasons.
+    // Nothing open. The block STAYS — for everyone, admins included — and
+    // says why: a widget that silently vanishes between seasons leaves the
+    // viewer with no way to tell "nothing is running" from "this broke".
+    // On a phone that is the whole block (one line, no footer, ~68px); on
+    // desktop the same line leads and the LEADERBOARD fill spends the rest
+    // of the tile.
     if (!total || !Array.isArray(panel.challenges) || !panel.challenges.length) {
-      if (!isAdmin) return '';
+      // A payload that came back empty can't be expanded — and leaving the
+      // flag set would keep ?expand=challenges on every later fetch, asking
+      // for a finished-challenge list that would repopulate the block.
+      if (HomePanels._expanded[panel.key]) HomePanels._expanded[panel.key] = false;
+      const fillHtml = canFill
+        ? HomePanels.renderFillBlock(panel.leaderboard, HomePanels.fillSlots(0))
+        : '';
+      const fillRows = HomePanels._countFillRows(fillHtml);
+      const noteHtml = `<p class="home-panel-rows home-panel-row flex items-center px-2.5 text-[13px] text-zinc-500 dark:text-zinc-400 cursor-pointer hover:bg-violet-500/[0.04] dark:hover:bg-violet-500/10 transition-colors" title="Go to the Challenges tab on the Leaderboard screen">No challenges are running right now</p>`;
       return HomePanels._panelShell(
         panel.key,
-        `<span class="home-panel-title min-w-0 truncate whitespace-nowrap text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${title}</span>`,
-        `<p class="home-panel-rows home-panel-row flex items-center px-2.5 text-[13px] text-zinc-500 dark:text-zinc-400">No challenges are running right now</p>`
+        // flex-1 so the ⋮ menu sits at the right edge, same as the populated
+        // branch — this state is on every home screen now, so its chrome has
+        // to match the one beside it.
+        `<span class="home-panel-title min-w-0 flex-1 truncate whitespace-nowrap text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${title}</span>`,
+        `<div class="home-panel-body">${noteHtml}${fillHtml}</div>`,
+        // Nothing to expand, nothing to count: the phone block ends at the
+        // note, and the desktop tile offers the one destination its rows
+        // actually point at.
+        fillRows ? HomePanels._fillFooter(panel.leaderboard && panel.leaderboard.kind) : '',
+        rowsOf(0, fillRows)
       );
     }
 
-    const expanded = !!HomePanels._expanded[panel.key];
     const { rows } = HomePanels.visibleSlots(panel);
     const summary = esc(HomePanels.summaryLine(panel));
     // truncate (which carries white-space: nowrap) + an explicit nowrap on
@@ -455,60 +717,126 @@ const HomePanels = {
     // The meter lane is a property of the LIST, not of the row that draws
     // a bar: reserving it on every row is what keeps the goals on one
     // baseline. A panel with no numeric challenge at all reserves nothing
-    // and its rows centre plainly — see app.css.
+    // and its rows centre plainly — see app.css. The fill block sits OUTSIDE
+    // this list, so leaderboard rows never inherit the lane's padding.
     const metered = rows.some((c) => HomePanels.hasMeter(c));
+    const fillHtml = canFill
+      ? HomePanels.renderFillBlock(panel.leaderboard, HomePanels.fillSlots(rows.length))
+      : '';
+    const fillRows = HomePanels._countFillRows(fillHtml);
 
     return HomePanels._panelShell(panel.key, titleHtml,
-      `<div class="home-panel-rows${metered ? ' home-panel-rows--metered' : ''}">${rowsHtml}</div>`,
-      HomePanels._panelFooter(panel.key, total, expanded));
+      `<div class="home-panel-body"><div class="home-panel-rows${metered ? ' home-panel-rows--metered' : ''}">${rowsHtml}</div>${fillHtml}</div>`,
+      HomePanels._panelFooter(panel.key, total, expanded),
+      rowsOf(rows.length, fillRows));
+  },
+
+  // How many leaderboard rows a rendered fill block actually drew. Counting
+  // the markup (rather than threading the number back out of the renderer)
+  // keeps `data-fill` describing what is ON SCREEN — it can never claim rows
+  // that renderFillBlock declined to draw.
+  // (The "you" highlight is `home-panel-lb-you`, deliberately NOT a
+  // `home-panel-lb-row--you` modifier: a class that contains the row class as
+  // a substring would count that row twice here and in every check written
+  // the same way.)
+  _countFillRows(html) {
+    if (!html) return 0;
+    return (html.match(/home-panel-lb-row/g) || []).length;
   },
 
   // ── Discover ───────────────────────────────────────────────────────
   //
   // The former "Featured apps" section, now a widget in the grid: the
-  // admin-curated tiles plus the way into the #apps directory as the block's
-  // footer row. Both halves are unchanged in behaviour — the tiles are the
-  // same per-viewer `featured` flags GET /api/apps already serializes
-  // (Home.featuredApps derives them; no second query), and the footer is the
-  // same #home-browse-btn that used to sit under the old card.
+  // admin-curated tiles plus the way into the #apps directory. The tiles are
+  // the same per-viewer `featured` flags GET /api/apps already serializes
+  // (Home.featuredApps derives them; no second query), and the browse
+  // control is the same #home-browse-btn that used to sit under the old card.
   //
   // Tiles are the COMPACT 40px treatment (the widget-strip tile, not the
-  // 56px launcher card): a 2x2 block is ~171px wide on a phone and ~397px on
-  // desktop, and a full card simply does not fit. The count adapts to the
-  // footprint rather than being a constant.
+  // 56px launcher card): the block is ~366px wide on a phone and ~397px on
+  // desktop, and a full card simply does not fit.
   //
-  // The footer ALWAYS renders — it is THE discovery path, so it must not
-  // depend on curation existing. With nothing left to feature, the tile row
-  // is swapped for a one-line note rather than hidden, so the block never
-  // collapses to a bare heading over a button.
+  // TWO SHAPES, ONE PER BREAKPOINT (#949) — the widget's registry footprint
+  // is asymmetric (4x1 on a phone, 2x2 on desktop), and the content follows:
+  //
+  //   PHONE (4 cols, one row): the title bar and the featured lane, and
+  //     that is the whole widget. It is full width there, so the row this
+  //     gives back is a clean full-width gap.
+  //   DESKTOP (5 cols, two rows): the same, plus a hairline, a "Popular"
+  //     caption and a second lane — the most-used apps this viewer doesn't
+  //     have yet (Home.popularApps). The footprint is unchanged from before
+  //     this issue, so no stored desktop arrangement moves; the row that was
+  //     dead space is earned instead of trimmed.
+  //
+  // The column count is read from Home.currentCols() — the viewport, not the
+  // DOM, so it is answerable before the first paint — and a breakpoint
+  // crossing re-renders through Home._applyColumnCount() → Home.render() →
+  // HomePanels.render(), which only fires when the count actually moved.
+  //
+  // THE BROWSE CONTROL RIDES IN THE TITLE BAR, not in a footer of its own.
+  // A .home-panel-footer costs 27px, which on a phone is exactly the
+  // difference between a tile lane that fits its one cell and one that clips
+  // its captions. Challenges keeps _panelFooter (it has an expand toggle and
+  // a second destination to name); Discover has ONE destination, so it
+  // belongs beside the title. _wire() needs no change for this: its
+  // pointerdown guard is on `.home-panel button` generally, so the button is
+  // excluded from the drag handle the bar otherwise is.
+  //
+  // The browse control ALWAYS renders — it is THE discovery path, so it must
+  // not depend on curation existing. With nothing left to feature the tile
+  // lane is dropped entirely (rather than drawn empty) and one centred line
+  // takes its place.
   renderDiscoverPanel(panel) {
     const esc = HomePanels.esc;
-    const apps = (window.Home && typeof Home.featuredApps === 'function')
-      ? Home.featuredApps(Home._apps || []) : [];
+    const hasHome = !!(window.Home && typeof Home.featuredApps === 'function');
+    const featured = hasHome ? Home.featuredApps(Home._apps || []) : [];
+    // Desktop only. With no Home there is no app list either, so the widget
+    // is down to its note whatever this answers — 5 is the honest default.
+    const cols = (window.Home && typeof Home.currentCols === 'function')
+      ? Home.currentCols() : 5;
+    const popular = (cols === 5 && hasHome && typeof Home.popularApps === 'function')
+      ? Home.popularApps(Home._apps || []) : [];
+
     const titleHtml = `
-      <span class="home-panel-title min-w-0 flex-1 truncate whitespace-nowrap text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${esc(panel.title || 'Discover')}</span>`;
+      <span class="home-panel-title min-w-0 flex-1 truncate whitespace-nowrap text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${esc(panel.title || 'Discover')}</span>
+      <button type="button" id="home-browse-btn" class="home-panel-browse shrink-0 flex items-center gap-1 text-[12px] font-medium text-violet-600 dark:text-violet-400 hover:underline whitespace-nowrap"
+        title="Browse every app in the directory" aria-label="Browse all apps">
+        <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+        <span class="whitespace-nowrap">Browse all apps</span>
+      </button>`;
 
-    const body = apps.length
-      ? `<div class="home-panel-rows home-discover-tiles">${
-          apps.map((a) => HomePanels.renderDiscoverTile(a)).join('')
-        }</div>`
-      : `<p class="home-panel-rows flex items-center px-2.5 py-2 text-[12px] leading-snug text-zinc-500 dark:text-zinc-400">Nothing featured right now — browse the full directory to find apps to add.</p>`;
+    const lane = (apps, extraClass) => `<div class="home-panel-rows home-discover-lane home-discover-tiles${
+      extraClass ? ` ${extraClass}` : ''
+    }">${apps.map((a) => HomePanels.renderDiscoverTile(a)).join('')}</div>`;
 
-    const footer = `
-      <div class="home-panel-footer flex-none flex items-center justify-between gap-2 px-2.5 border-t border-zinc-200 dark:border-zinc-800">
-        <button type="button" id="home-browse-btn" class="home-panel-browse flex items-center gap-1.5 text-[12px] font-medium text-violet-600 dark:text-violet-400 hover:underline whitespace-nowrap">
-          <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-          <span class="whitespace-nowrap">Browse all apps</span>
-        </button>
-        <svg class="w-3.5 h-3.5 shrink-0 opacity-50 text-zinc-500 dark:text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-      </div>`;
+    const featuredHtml = featured.length
+      ? lane(featured)
+      : `<p class="home-panel-rows home-discover-lane home-discover-empty flex items-center justify-center px-2.5 text-center text-[12px] leading-snug text-zinc-500 dark:text-zinc-400">Nothing featured right now — browse the directory.</p>`;
 
-    return HomePanels._panelShell(panel.key, titleHtml, body, footer);
+    // No popular apps → no divider and no second lane, rather than a second
+    // apology stacked under the first. The featured lane (or its note) then
+    // has the whole box, which is exactly the pre-#949 rendering.
+    const popularHtml = popular.length
+      ? `<div class="home-discover-divider flex-none flex items-center px-2.5 border-t border-zinc-200 dark:border-zinc-800">
+          <span class="text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Popular</span>
+        </div>${lane(popular, 'home-discover-popular')}`
+      : '';
+
+    return HomePanels._panelShell(panel.key, titleHtml, featuredHtml + popularHtml, null, {
+      'data-featured': String(featured.length),
+      'data-popular': String(popular.length),
+    });
   },
 
-  // One compact featured tile. Carries .app-card + data-slug so
-  // Home._wireDiscoveryCards binds it exactly as it bound the old featured
-  // row — same tap-to-open, same +/✓ add badge, same optimistic toggle.
+  // One compact discovery tile — the same markup in both lanes. Carries
+  // .app-card + data-slug so Home._wireDiscoveryCards binds it exactly as it
+  // bound the old featured row — same tap-to-open, same +/✓ add badge, same
+  // optimistic toggle.
+  //
+  // The icon carries NO w-10 h-10: app.css sizes it fluidly (100% of its
+  // track, capped at the same 2.5rem it always drew at) because a lane's six
+  // tracks are only ~32px wide in the narrowest 5-column window, where a
+  // fixed 40px box would overflow its track and be clipped by the panel.
   renderDiscoverTile(app) {
     const esc = HomePanels.esc;
     const added = !!(window.Home && Home.isYours && Home.isYours(app));
@@ -526,8 +854,8 @@ const HomePanels = {
     }
     return `
       <div class="app-card home-discover-tile relative flex flex-col items-center gap-1 cursor-pointer" data-slug="${esc(app.slug)}" data-status="${esc(app.status || '')}"${app.demo ? ' data-demo="true"' : ''}>
-        <div class="relative">
-          <div class="app-icon-tile w-10 h-10 rounded-lg overflow-hidden flex items-center justify-center font-bold text-base" data-icon="${iconKind}">${iconHtml}</div>
+        <div class="home-discover-icon-wrap relative">
+          <div class="app-icon-tile home-discover-icon rounded-lg overflow-hidden flex items-center justify-center font-bold text-base" data-icon="${iconKind}">${iconHtml}</div>
           <button class="card-add-btn absolute -top-1.5 -right-1.5 w-5 h-5 flex items-center justify-center rounded-full border shadow-sm transition-colors ${
             added
               ? 'bg-emerald-500 border-emerald-500 text-white'
@@ -574,15 +902,23 @@ const HomePanels = {
       || 'Ask an admin to enable app creation for your account.';
     // The whole tile is the button (a 1x1 cell has no room for chrome around
     // one), and .home-create-btn is what Home.wireCreateButtons() binds.
+    //
+    // TWO SHAPES, ONE MARKUP. The widget's footprint is 4x1 below 640px and
+    // 1x1 at and above it (PANEL_REGISTRY `sizes`), so the content flips with
+    // the SAME Tailwind `sm:` breakpoint the grid does: a full-width row lays
+    // the icon and label out side by side (stacking them in a 116px row would
+    // leave the label clipped against the tile's own padding), a single cell
+    // stacks them as before. Whole class literals, so the compiled stylesheet
+    // carries both.
     return `
       <div class="home-create-widget ${canCreate ? '' : 'home-create-widget--disabled'} h-full" data-panel="${esc(panel.key)}" data-create-enabled="${canCreate}">
-        <button type="button" class="home-create-btn home-create-tile w-full h-full rounded-xl p-3 flex flex-col items-center justify-center text-center gap-2 transition-colors"
+        <button type="button" class="home-create-btn home-create-tile w-full h-full rounded-xl p-3 flex flex-row sm:flex-col items-center justify-center text-center gap-3 sm:gap-2 transition-colors"
           ${canCreate ? '' : 'aria-disabled="true" '}title="${canCreate ? 'Create a new app' : esc(hint)}"
           aria-label="${canCreate ? 'Create a new app' : esc(hint)}">
           <span class="app-icon-tile app-icon-tile--empty w-14 h-14 rounded-xl flex items-center justify-center shrink-0" aria-hidden="true">
             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
           </span>
-          <span class="home-create-label text-xs leading-tight max-w-full ${canCreate ? 'text-violet-600 dark:text-violet-400' : 'text-zinc-400 dark:text-zinc-500'}">Create app</span>
+          <span class="home-create-label text-sm sm:text-xs leading-tight max-w-full ${canCreate ? 'text-violet-600 dark:text-violet-400' : 'text-zinc-400 dark:text-zinc-500'}">Create app</span>
         </button>
       </div>`;
   },
@@ -682,6 +1018,15 @@ const HomePanels = {
     location.hash = '#leaderboard/challenges';
   },
 
+  // The desktop fill's destination: the full version of whichever board the
+  // fill previewed. The Topochain standings ARE the Leaderboard screen's
+  // primary tab, so they address as the bare hash; the kudos fallback goes to
+  // the Kudos tab's Top users view. Same real hash navigation as
+  // goToChallenges, so the device back gesture returns home.
+  goToLeaderboard(kind) {
+    location.hash = kind === 'kudos' ? '#leaderboard/users' : '#leaderboard';
+  },
+
   _wire(section) {
     // EVERY control in the block is excluded from the drag. The grid's
     // reorder recognizer listens for pointerdown on #app-list, of which this
@@ -696,11 +1041,28 @@ const HomePanels = {
     });
 
     // Rows and the footer's "Open" button both go to the Challenges screen.
-    section.querySelectorAll('.home-panel-row').forEach((row) => {
+    // NOT the leaderboard fill's rows, though — they are a different list
+    // with a different destination, and inheriting this handler would send a
+    // tap on "#1 alice" to the Challenges tab.
+    section.querySelectorAll('.home-panel-row:not(.home-panel-lb-row)').forEach((row) => {
       row.addEventListener('click', HomePanels.goToChallenges);
     });
     section.querySelectorAll('.home-panel-open').forEach((btn) => {
       btn.addEventListener('click', (e) => { e.stopPropagation(); HomePanels.goToChallenges(); });
+    });
+    // The fill's rows and its footer control go to the Leaderboard screen —
+    // to the tab that shows the board they previewed, which each element
+    // carries on `data-lb-kind`.
+    section.querySelectorAll('.home-panel-lb-row').forEach((row) => {
+      row.addEventListener('click', () => {
+        HomePanels.goToLeaderboard(row.dataset.lbKind);
+      });
+    });
+    section.querySelectorAll('.home-panel-lb-open').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        HomePanels.goToLeaderboard(btn.dataset.lbKind);
+      });
     });
     section.querySelectorAll('.home-panel-expand').forEach((btn) => {
       btn.addEventListener('click', (e) => {
@@ -726,10 +1088,15 @@ const HomePanels = {
         location.hash = '#apps';
       });
     });
-    const tiles = section.querySelector('.home-discover-tiles');
-    if (tiles && window.Home && typeof Home._wireDiscoveryCards === 'function') {
-      Home._wireDiscoveryCards(tiles);
-    }
+    // querySelectorAll, not querySelector: Discover draws TWO lanes on
+    // desktop (featured + popular), and a lane whose tiles were never wired
+    // looks identical in a screenshot while every tap and every + badge in
+    // it is dead.
+    section.querySelectorAll('.home-discover-tiles').forEach((tiles) => {
+      if (window.Home && typeof Home._wireDiscoveryCards === 'function') {
+        Home._wireDiscoveryCards(tiles);
+      }
+    });
 
     // Create: the enabled tile opens the create modal through
     // Home.wireCreateButtons (which owns the cloneNode re-bind discipline).

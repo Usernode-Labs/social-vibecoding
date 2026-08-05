@@ -7624,6 +7624,10 @@ const AppView = {
         issue.bounty_count = typeof data.bountyCount === 'number' ? data.bountyCount : (issue.bounty_count || 0) + 1;
       }
       if (typeof data.remaining === 'number') AppView._ghIssuesMeta.myRemaining = data.remaining;
+      // #964: the drawer's Kudos meter draws from its own budget state, so
+      // without this it kept showing the pre-pledge figure until the hourly
+      // poll came round. A pledge here spends from the same weekly pool.
+      window.Kudos?.Budget?.refresh?.();
       AppView._repaintCards();
     } catch (err) {
       PlatformUI.toast(`Couldn't place bounty: ${err.message}`);

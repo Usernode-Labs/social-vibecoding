@@ -189,10 +189,58 @@ function demoIconApps() {
     // actually overflows one line at phone width.
     {
       ...base,
-      id: 900004,
+      id: 900012,
       slug: 'staging-demo-long-name',
       name: 'Staging demo photo album and journal',
       icon_emoji: '📔',
+    },
+    // Four more featured rows so the Discover widget's curated lane is
+    // reviewable AT ITS CAP (#949): the lane holds six tiles — one per
+    // Home.FEATURED_LIMIT slot — and the whole point of the six-track grid
+    // is that all six fit on ONE row. With only the two rows above, a
+    // staging capture showed a third-full lane and proved nothing.
+    {
+      ...base, id: 900004, slug: 'staging-demo-featured-2',
+      name: 'Staging demo featured 2', icon_emoji: '🎲',
+      featured: true, featured_order: 2,
+    },
+    {
+      ...base, id: 900005, slug: 'staging-demo-featured-3',
+      name: 'Staging demo featured 3', icon_emoji: '🧩',
+      featured: true, featured_order: 3,
+    },
+    {
+      ...base, id: 900006, slug: 'staging-demo-featured-4',
+      name: 'Staging demo featured 4', icon_emoji: '🚀',
+      featured: true, featured_order: 4,
+    },
+    {
+      ...base, id: 900007, slug: 'staging-demo-featured-5',
+      name: 'Staging demo featured 5', icon_emoji: '🎨',
+      featured: true, featured_order: 5,
+    },
+    // ...and four NON-featured rows carrying an active-user count, for the
+    // desktop widget's second lane (Home.popularApps ranks by
+    // `active_users` and drops anything at zero). Without these the Popular
+    // lane is empty in every staging preview — the clone's own rows keep
+    // their real counts, but a check runs against a fresh database.
+    // Numbers here where production sends bigint STRINGS; the client
+    // coerces either, and tests cover both shapes.
+    {
+      ...base, id: 900008, slug: 'staging-demo-popular-1',
+      name: 'Staging demo popular 1', icon_emoji: '🔥', active_users: 12,
+    },
+    {
+      ...base, id: 900009, slug: 'staging-demo-popular-2',
+      name: 'Staging demo popular 2', icon_emoji: '📈', active_users: 9,
+    },
+    {
+      ...base, id: 900010, slug: 'staging-demo-popular-3',
+      name: 'Staging demo popular 3', icon_emoji: '🎧', active_users: 7,
+    },
+    {
+      ...base, id: 900011, slug: 'staging-demo-popular-4',
+      name: 'Staging demo popular 4', icon_emoji: '🗺️', active_users: 5,
     },
   ];
 }

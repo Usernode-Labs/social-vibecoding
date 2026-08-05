@@ -719,6 +719,23 @@ surface that needs to recognize the platform's own row without
 guessing. The banner lifecycle itself uses the WS payload's
 `selfHosted` boolean rather than slug-matching.
 
+**Scope (#962): a real `promoted → merging` merge is the only
+trigger.** A second, non-blocking "resolving merge conflicts"
+variant (#239) used to share this banner, armed off the
+auto-conflict-resolver's `vote_update { resolving: true }`. That
+broadcast fires whenever an eligible proposal's branch needs a
+worker `git merge origin/main` — routine drift housekeeping that
+in production ended *without* a merge roughly 7 times in 10 — so
+it announced a merge conflict and a retry to every signed-in
+person while nothing was merging and nothing was paused. It was
+retired in favour of the per-proposal signals that already carry
+that state in context: the `Resolving conflicts…` /
+`⚠ Conflict resolution failed` badges from
+[merge-status.js](./public/js/merge-status.js), the dev-chat
+sync banner, and the group-chat play-by-play. The server-side
+`resolving` broadcasts are unchanged — those badges read them;
+this banner simply no longer does.
+
 **Acceptance (verified at deploy):** during a self-app PR merge,
 all open tabs render the amber banner from the moment the merge
 starts through the new container becoming reachable; non-`GET`

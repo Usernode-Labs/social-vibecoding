@@ -175,7 +175,7 @@ const AdminAnalytics = (() => {
     'power-users': 'A power user, evaluated over a 7-day window, both used dapps &ge; 3 times that week (counting each use of any dapp) AND did &ge; 3 visible developer actions (each a kudos given, vote cast, or proposal made). <b>Power-user WAU</b> is a 7-day rolling count; <b>Consistency (L4)</b> stacks, per day, how many of the trailing 4 weeks each user was a power user (1/4…4/4). Hover for exact counts.',
     'top-users': 'The 30 most prolific builders by lifetime dev sessions started, highest on the left. Hover a bar for the per-outcome breakdown (PRs produced, promoted, voted, merged).',
     'spend-by-builder': 'The 30 biggest LLM spenders, highest on the left. The toggle re-ranks by <b>Platform key</b> spend, <b>User key</b> (BYOK) spend, or <b>Both</b>. Hover a bar for the full breakdown.',
-    kudos: 'Per ISO week, how many users gave 0–5 kudos (everyone gets a budget of 5/week). The 0 bucket is registered users who gave none that week, making this a participation view rather than a raw count.',
+    kudos: 'Per ISO week, how many users gave 0, 1, 2, 3, 4–5, 6–10 or 11+ kudos (everyone gets a budget of 20/week). The 0 bucket is registered users who gave none that week, making this a participation view rather than a raw count. Counts direct PR kudos only — issue-bounty pledges draw on the same weekly allowance but are not in this series.',
     'spend-distribution': 'Per day, how many users\' platform-key AI spend (what the daily caps track) fell into each dollar bucket. The <b>$0</b> bucket is every registered user (as of that day) with no platform spend — it usually dwarfs the paid buckets, so it is hidden by default; use the <b>Show $0</b> toggle to include it. The top tier splits <b>$20+ capped</b> (heavy spenders with no usable own key — blocked at the cap) from <b>$20+ own key</b> (heavy spenders who had a personal Anthropic key configured, or spent on it that day, so could keep going). The "has own key" signal is a current snapshot corrected by that day\'s own-key spend, so past-day attribution is approximate.',
   };
 
@@ -738,8 +738,10 @@ const AdminAnalytics = (() => {
   }
 
   // ── Kudos giving distribution (weekly) ────────────────────────
-  // One stacked bar per week. Segments = number of users who gave exactly
-  // 0/1/2/3/4/5 kudos that week (0 = registered users who gave none).
+  // One stacked bar per week. Segments = number of users whose kudos-giving
+  // that week fell in each band: 0, 1, 2, 3, 4–5, 6–10, 11+ (0 = registered
+  // users who gave none). Bands, not exact counts, since #964 raised the
+  // weekly allowance to 20 — see the endpoint's comment in routes/dashboard.js.
   function renderKudos(d) {
     const weeks = d.weeks || [];
     const el = $('kudos-weekly');
@@ -748,14 +750,19 @@ const AdminAnalytics = (() => {
       el.innerHTML = EMPTY_MSG;
       return;
     }
-    // 0 first (drawn at the bottom, muted); 1..5 stacked above in a ramp.
+    // 0 first (drawn at the bottom, muted); the giving bands stacked above
+    // in the same six-step ramp. #964 rebanded the top three steps from the
+    // exact counts 3/4/5 to 3, 4–5, 6–10, 11+ when the weekly allowance rose
+    // to 20 — the colours are unchanged, so a week's bar keeps reading the
+    // same way; only what the upper segments mean widened.
     const segs = [
       { key: 'g0', label: '0', color: '#3f3f5a' },
       { key: 'g1', label: '1', color: '#c4b5fd' },
       { key: 'g2', label: '2', color: '#a78bfa' },
       { key: 'g3', label: '3', color: '#8b5cf6' },
-      { key: 'g4', label: '4', color: '#7c3aed' },
-      { key: 'g5', label: '5', color: '#5b21b6' },
+      { key: 'g4_5', label: '4–5', color: '#7c3aed' },
+      { key: 'g6_10', label: '6–10', color: '#5b21b6' },
+      { key: 'g11p', label: '11+', color: '#4c1d95' },
     ];
     const totals = weeks.map((w) => segs.reduce((a, s) => a + (Number(w[s.key]) || 0), 0));
     const max = Math.max(1, ...totals);
@@ -785,17 +792,21 @@ const AdminAnalytics = (() => {
         return `<rect x="${(x + 1).toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(1, bw - 2).toFixed(1)}" height="${h.toFixed(1)}" fill="${s.color}"></rect>`;
       }).join('');
 
-      // Per-week breakdown tooltip covering the full column height.
-      const n5 = Number(w.g5) || 0, n4 = Number(w.g4) || 0, n3 = Number(w.g3) || 0;
-      const n2 = Number(w.g2) || 0, n1 = Number(w.g1) || 0, n0 = Number(w.g0) || 0;
-      const totalKudos = n5 * 5 + n4 * 4 + n3 * 3 + n2 * 2 + n1;
-      const givers = n5 + n4 + n3 + n2 + n1;
+      // Per-week breakdown tooltip covering the full column height. Banded
+      // buckets can't yield an exact kudos total any more (a "6–10" bucket
+      // is 6..10 each), so the headline reports the one figure the bands DO
+      // give exactly — how many people gave at all that week — rather than a
+      // weighted guess dressed up as a count.
+      const n11p = Number(w.g11p) || 0, n6_10 = Number(w.g6_10) || 0, n4_5 = Number(w.g4_5) || 0;
+      const n3 = Number(w.g3) || 0, n2 = Number(w.g2) || 0, n1 = Number(w.g1) || 0;
+      const n0 = Number(w.g0) || 0;
+      const givers = n11p + n6_10 + n4_5 + n3 + n2 + n1;
       const row = (label, num) => `<div class="flex justify-between gap-3"><span class="text-zinc-400">${label}</span><span>${num}</span></div>`;
       const tipId = `kudos-${i}`;
       tipStore[tipId] = `<div class="font-semibold mb-1">${esc(labels[i])}${isCurrent(i) ? ' (current)' : ''}</div>
-        <div class="mb-1">${totalKudos} kudo${totalKudos === 1 ? '' : 's'} from ${givers} giver${givers === 1 ? '' : 's'}</div>
+        <div class="mb-1">${givers} giver${givers === 1 ? '' : 's'} this week</div>
         <div class="text-[11px] leading-tight">
-          ${row('gave 5', n5)}${row('gave 4', n4)}${row('gave 3', n3)}${row('gave 2', n2)}${row('gave 1', n1)}${row('gave 0', n0)}
+          ${row('gave 11+', n11p)}${row('gave 6–10', n6_10)}${row('gave 4–5', n4_5)}${row('gave 3', n3)}${row('gave 2', n2)}${row('gave 1', n1)}${row('gave 0', n0)}
         </div>`;
       const overlay = `<rect class="dc-hover" x="${x.toFixed(1)}" y="${topPad}" width="${bw.toFixed(1)}" height="${plot}"
         fill="#8b5cf6" fill-opacity="0" pointer-events="all" data-tip-id="${tipId}"></rect>`;
@@ -1503,7 +1514,8 @@ const AdminAnalytics = (() => {
             <span class="dc-info" data-info="kudos" tabindex="0" role="button" aria-label="What is this?">?</span>
           </h3>
           <p class="text-xs text-zinc-500 mb-4">
-            Per week, how many users gave 0&ndash;5 kudos (everyone gets a budget of 5/week).
+            Per week, how many users gave 0, 1, 2, 3, 4&ndash;5, 6&ndash;10 or 11+ kudos
+            (everyone gets a budget of 20/week).
             The 0 bucket is registered users who gave none that week.
           </p>
           <div id="kudos-weekly"></div>
