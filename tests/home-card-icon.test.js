@@ -194,46 +194,80 @@ test('the tile hairline steps down to --border in dark mode', () => {
 });
 
 // The widget PNG is baked once per pinned tile and can't restyle
-// itself, so both palettes have to live in the source and the scheme
-// has to reach the staleness marker. Pin all three halves together:
-// the palette table, the render-time lookup, and the generation bump —
-// a rendering change without a bump never reaches a homescreen.
-test('the widget PNG carries a light AND a dark palette', () => {
+// itself — and SV can't repaint it while the app is closed, which is
+// exactly when the system flips (#948). So there is ONE appearance-
+// neutral treatment: a translucent plate that composites correctly onto
+// both widget surfaces. Pin the palette and the generation bump
+// together — a rendering change without a bump never reaches a
+// homescreen.
+test('the widget PNG carries one appearance-neutral palette', () => {
   const src = fs.readFileSync(
     path.join(__dirname, '..', 'public', 'js', 'home.js'),
     'utf8'
   );
-  // Light: unchanged from the original single-palette treatment.
-  assert.match(
-    src,
-    /light: \{ face: '#ffffff', hairline: '#e4e4e7', letter: '#a1a1aa' \}/,
-    'light palette matches the in-app light tile'
-  );
-  // Dark: --bg-secondary / --border / --text-faint under `.dark`.
-  assert.match(
-    src,
-    /dark: \{ face: '#1a1a30', hairline: '#2e2e50', letter: '#9898b0' \}/,
-    'dark palette matches the in-app dark tile'
-  );
-  // Emoji keep their own colour glyphs in BOTH palettes.
+  const palette = src.match(/WIDGET_TILE_PALETTE: \{[\s\S]*?\n  \},/);
+  assert.ok(palette, 'WIDGET_TILE_PALETTE is defined');
+  assert.match(palette[0], /face: 'rgba\(122, 122, 142, 0\.16\)'/,
+    'translucent grey face');
+  assert.match(palette[0], /hairline: 'rgba\(122, 122, 142, 0\.38\)'/,
+    'translucent hairline — the tile shape must stay legible on dark');
+  assert.match(palette[0], /letter: '#8a8a99'/,
+    'mid-grey letter, legible over both composites');
+  // No per-appearance branch survives: one face, not a light/dark table.
+  assert.doesNotMatch(palette[0], /light:/, 'no light-only face');
+  assert.doesNotMatch(palette[0], /dark:/, 'no dark-only face');
+  // Emoji keep their own colour glyphs.
   assert.match(src, /app\.icon_emoji \? null : palette\.letter/);
-  assert.match(src, /WIDGET_ICON_GEN: 5,/);
+  assert.match(src, /WIDGET_ICON_GEN: 6,/);
 });
 
-// The PNG lands on the iOS homescreen, which renders under the SYSTEM
-// appearance — it cannot see SV's in-app Light/Dark/System override.
-// Keying the palette off `.dark` / Theme.get() would paint a light
-// widget onto a dark homescreen for anyone who forces SV to light.
-test('the widget palette keys off the system scheme, not the .dark class', () => {
+// The whole point of the neutral tile: nothing about the painted PNG or
+// its staleness marker may depend on the appearance. A per-appearance
+// signal here is unfixable by construction — the page is the only thing
+// that can repaint a pinned PNG, and it isn't running when the system
+// flips under a closed app.
+test('the widget PNG path reads no appearance signal at all', () => {
   const src = fs.readFileSync(
     path.join(__dirname, '..', 'public', 'js', 'home.js'),
     'utf8'
   );
-  const scheme = src.match(/_widgetScheme\(\) \{[\s\S]*?\n  \},/);
-  assert.ok(scheme, '_widgetScheme is defined');
-  assert.doesNotMatch(scheme[0], /classList/, 'does not read the .dark class');
-  assert.doesNotMatch(scheme[0], /Theme/, 'does not read the in-app theme');
-  assert.match(src, /_schemeQuery\(\) \{[\s\S]*?prefers-color-scheme: dark/);
+  assert.doesNotMatch(src, /_widgetScheme/, '_widgetScheme is gone');
+  assert.doesNotMatch(src, /_schemeQuery/, '_schemeQuery is gone');
+  assert.doesNotMatch(src, /prefers-color-scheme/,
+    'nothing in home.js queries the system appearance');
+  for (const name of ['_widgetIconDataUrl', '_desiredIconSrcFor']) {
+    const fn = src.match(new RegExp(`\\n  ${name}\\(app\\) \\{[\\s\\S]*?\\n  \\},`));
+    assert.ok(fn, `${name} is defined`);
+    assert.doesNotMatch(fn[0], /matchMedia/, `${name} does not read matchMedia`);
+    assert.doesNotMatch(fn[0], /classList/, `${name} does not read the .dark class`);
+    assert.doesNotMatch(fn[0], /Theme/, `${name} does not read the in-app theme`);
+  }
+});
+
+// The in-app widget strip mirrors the pinned homescreen grid, so its
+// tiles must wear the PNG's face — not the page's per-theme one. Pin
+// the CSS values against the JS palette so the two can't drift apart.
+test('the widget strip tile mirrors the PNG palette in app.css', () => {
+  const css = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'css', 'app.css'),
+    'utf8'
+  );
+  assert.match(
+    css,
+    /\.widget-tile \.app-icon-tile \{[^}]*background-color: rgba\(122, 122, 142, 0\.16\);[^}]*border-color: rgba\(122, 122, 142, 0\.38\);/,
+    'strip tiles use the translucent face + hairline'
+  );
+  assert.match(
+    css,
+    /\.widget-tile \.app-icon-tile\[data-icon="letter"\] \{\s*color: #8a8a99;/,
+    'strip letter tiles use the neutral mid-grey'
+  );
+  // The override must come AFTER `.dark .app-icon-tile` — same
+  // specificity (0,2,0), so source order is what decides dark mode.
+  assert.ok(
+    css.indexOf('.widget-tile .app-icon-tile {') > css.indexOf('.dark .app-icon-tile {'),
+    'the strip override wins over the dark-mode face'
+  );
 });
 
 test('image icons fill the tile inside its hairline (w-full/h-full)', () => {
@@ -285,34 +319,11 @@ test('updateAppCardIcon is a safe no-op when the card is not mounted', () => {
   assert.doesNotThrow(() => Home.updateAppCardIcon('ghost', '🎮', null));
 });
 
-// _desiredIconSrcFor calls _widgetScheme on every heal pass, so a throw
-// where matchMedia is missing (old WebViews, this sandbox) would break
-// icon healing outright rather than just the palette choice.
-test('_widgetScheme falls back to light without matchMedia', () => {
-  const Home = makeHome();
-  assert.equal(Home.__sandbox.window.matchMedia, undefined, 'sandbox has no matchMedia');
-  assert.equal(Home._widgetScheme(), 'light');
-  assert.doesNotThrow(() => Home._desiredIconSrcFor(baseApp()));
-});
-
-test('_widgetScheme tracks the media query when matchMedia exists', () => {
-  const Home = makeHome();
-  let dark = false;
-  Home.__sandbox.matchMedia = (q) => ({
-    media: q,
-    get matches() { return dark; },
-    addEventListener: () => {},
-  });
-  assert.equal(Home._widgetScheme(), 'light');
-  dark = true;
-  assert.equal(Home._widgetScheme(), 'dark');
-});
-
-// The scheme rides in the canvas-tile marker (that's what makes a flip
-// re-send), but NOT in the image-icon marker — an app's own icon URL
-// looks the same in both schemes, so folding it in would re-send every
-// image tile on each flip for no visual change.
-test('the scheme is part of the canvas-tile marker only', () => {
+// The marker decides what gets re-sent. It must be byte-identical in
+// both appearances (and where matchMedia doesn't exist at all): a
+// marker that moved on a flip would mark every pinned tile stale for a
+// PNG that didn't change, and could only be healed by opening the app.
+test('the tile marker is identical in both appearances', () => {
   const Home = makeHome();
   let dark = false;
   Home.__sandbox.matchMedia = () => ({ get matches() { return dark; }, addEventListener: () => {} });
@@ -321,15 +332,22 @@ test('the scheme is part of the canvas-tile marker only', () => {
   const emoji = baseApp({ icon_emoji: '🎮' });
   const image = baseApp({ icon_url: '/app-icons/' + 'a'.repeat(32) });
 
-  assert.equal(Home._desiredIconSrcFor(letter), `tile:${Home.WIDGET_ICON_GEN}:light:`);
-  assert.equal(Home._desiredIconSrcFor(emoji), `tile:${Home.WIDGET_ICON_GEN}:light:🎮`);
+  assert.equal(Home._desiredIconSrcFor(letter), `tile:${Home.WIDGET_ICON_GEN}:`);
+  assert.equal(Home._desiredIconSrcFor(emoji), `tile:${Home.WIDGET_ICON_GEN}:🎮`);
   const imageSrc = Home._desiredIconSrcFor(image);
 
   dark = true;
-  assert.equal(Home._desiredIconSrcFor(letter), `tile:${Home.WIDGET_ICON_GEN}:dark:`);
-  assert.equal(Home._desiredIconSrcFor(emoji), `tile:${Home.WIDGET_ICON_GEN}:dark:🎮`);
+  assert.equal(Home._desiredIconSrcFor(letter), `tile:${Home.WIDGET_ICON_GEN}:`);
+  assert.equal(Home._desiredIconSrcFor(emoji), `tile:${Home.WIDGET_ICON_GEN}:🎮`);
   assert.equal(
     Home._desiredIconSrcFor(image), imageSrc,
-    'image icons keep one scheme-independent marker'
+    'image icons keep their URL marker'
   );
+
+  // …and with no matchMedia at all (old WebViews, this sandbox): the
+  // marker must resolve without throwing, since _desiredIconSrcFor runs
+  // on every heal pass.
+  delete Home.__sandbox.matchMedia;
+  assert.equal(Home._desiredIconSrcFor(letter), `tile:${Home.WIDGET_ICON_GEN}:`);
+  assert.equal(Home._desiredIconSrcFor(emoji), `tile:${Home.WIDGET_ICON_GEN}:🎮`);
 });

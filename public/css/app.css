@@ -247,6 +247,24 @@ html, body {
 .app-icon-tile[data-icon="letter"] {
   color: var(--text-faint);
 }
+/* The iOS widget strip mirrors the pinned homescreen grid, so its tiles
+   wear the PNG's face rather than the page's: an appearance-neutral
+   translucent plate that composites correctly onto whatever surface it
+   lands on. That's what lets the widget survive a system light/dark flip
+   while the app is closed (#948) — SV can't repaint a pinned bitmap
+   then, so the bitmap can't be per-appearance. These three values mirror
+   Home.WIDGET_TILE_PALETTE in public/js/home.js; keep the two in step.
+   Deliberately scoped to the strip: every other .app-icon-tile call site
+   (home cards, the create placeholder, the launch cover) keeps the
+   opaque per-theme face above. */
+.widget-tile .app-icon-tile {
+  background-color: rgba(122, 122, 142, 0.16);
+  border-color: rgba(122, 122, 142, 0.38);
+}
+.widget-tile .app-icon-tile[data-icon="letter"] {
+  color: #8a8a99;
+}
+
 /* The create-tile placeholder: same face, dashed ring + muted glyph so
    it still reads "empty slot" within the same visual family. */
 .app-icon-tile--empty {

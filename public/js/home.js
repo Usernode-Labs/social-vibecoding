@@ -213,9 +213,8 @@ const Home = {
   //   - matchMedia('(min-width: 640px)') change — fires exactly once, on the
   //     crossing itself, and costs nothing in between;
   //   - a debounced resize — the backstop for WebViews old enough to lack
-  //     MediaQueryList.addEventListener (the same caution Home._schemeQuery
-  //     takes over matchMedia itself), and the thing that catches a viewport
-  //     change that arrives without a media-query flip.
+  //     MediaQueryList.addEventListener, and the thing that catches a
+  //     viewport change that arrives without a media-query flip.
   // Both funnel into _applyColumnCount, which no-ops unless the count
   // actually moved, so double delivery is free.
   _viewportWired: false,
@@ -1641,11 +1640,11 @@ const Home = {
   _probeShortcutSupport() {
     if (Home._shortcutProbeStarted) return;
     Home._shortcutProbeStarted = true;
-    // Start watching the system appearance here rather than inside the
-    // widget branch below: the probe resolves asynchronously, so the
-    // registration would otherwise race a flip that happens during it.
-    // The handler is inert until the widget mechanism is known anyway.
-    Home._watchWidgetScheme();
+    // Start watching for foregrounds here rather than inside the widget
+    // branch below: the probe resolves asynchronously, so the
+    // registration would otherwise race a foreground that happens during
+    // it. The handler is inert until the widget mechanism is known.
+    Home._watchWidgetForeground();
     const bridge = window.usernode;
     if (!bridge || typeof bridge.getHomeScreenShortcutSupport !== 'function') return;
     bridge.getHomeScreenShortcutSupport().then((support) => {
@@ -1721,85 +1720,78 @@ const Home = {
   //          which read as a bright white tile on a dark homescreen.
   //          The scheme is also part of the source marker below, so a
   //          light↔dark flip re-sends on top of this one-time bump.
-  WIDGET_ICON_GEN: 5,
-  // The two faces the canvas tile can wear, mirroring `.app-icon-tile`
-  // in app.css. Light is the pre-existing treatment, unchanged; dark
-  // uses the same tokens the CSS tile resolves to under `.dark`
-  // (--bg-secondary / --border / --text-faint). Emoji glyphs are never
-  // recoloured — they carry their own colours in both schemes.
+  //   gen 6: appearance-neutral translucent face — gens 3–5 baked a
+  //          per-appearance OPAQUE face, which went wrong the moment
+  //          the system flipped while the app was closed (#948). The
+  //          page is the only thing that can repaint a pinned PNG, and
+  //          it isn't running then, so the whole per-scheme scheme was
+  //          unfixable by construction. One translucent treatment
+  //          composites correctly onto both widget surfaces instead,
+  //          and the scheme leaves the source marker entirely.
+  WIDGET_ICON_GEN: 6,
+  // The ONE face the canvas tile wears, in both appearances.
+  //
+  // The PNG lands on the iOS homescreen widget, which re-renders its
+  // own background per system appearance but cannot restyle a stored
+  // bitmap — and SV cannot repaint one while the app is closed. So the
+  // tile must be correct on both surfaces at once: a translucent grey
+  // plate + hairline that composites to a light tile over the light
+  // widget material (~#eaeaed / ~#cdcdd2) and a dark one over the dark
+  // material (~#2b2b30 / ~#404047). The letter is opaque mid-grey,
+  // legible either way and about as quiet as the in-app --text-faint
+  // placeholder it stands in for. Emoji glyphs are never recoloured —
+  // they carry their own colours. Mirrored by `.widget-tile
+  // .app-icon-tile` in app.css; keep the two in step.
   WIDGET_TILE_PALETTE: {
-    light: { face: '#ffffff', hairline: '#e4e4e7', letter: '#a1a1aa' },
-    dark: { face: '#1a1a30', hairline: '#2e2e50', letter: '#9898b0' },
-  },
-  // The colour scheme the widget PNG should be painted for.
-  //
-  // Deliberately the SYSTEM appearance (prefers-color-scheme), NOT the
-  // `.dark` class / Theme.get(): the PNG is consumed by the iOS
-  // homescreen widget, which renders under the system appearance and
-  // cannot see SV's in-app Light/Dark/System override. Keying off the
-  // in-app theme would paint a light widget onto a dark homescreen
-  // whenever someone forces SV to light.
-  //
-  // Falls back to 'light' wherever matchMedia is missing (old WebViews,
-  // the vm sandbox in tests) — _desiredIconSrcFor runs on every heal
-  // pass, so throwing here would break icon healing outright.
-  _schemeQuery() {
-    try {
-      return typeof window.matchMedia === 'function'
-        ? window.matchMedia('(prefers-color-scheme: dark)')
-        : null;
-    } catch (_) { return null; }
-  },
-  _widgetScheme() {
-    const mq = Home._schemeQuery();
-    return (mq && mq.matches) ? 'dark' : 'light';
+    face: 'rgba(122, 122, 142, 0.16)',
+    hairline: 'rgba(122, 122, 142, 0.38)',
+    letter: '#8a8a99',
   },
   _iconSrcKey: 'sv:widget_icon_src',
   _iconHealTried: null,
   // The icon source the widget *should* have for this app right now.
   // Image icons: the absolute URL (matches _shortcutPayloadFor). Canvas
-  // tiles: an opaque marker keyed by emoji + rendering generation + the
-  // scheme the PNG was painted for, so flipping the system appearance
-  // marks every canvas tile stale and re-sends it. The scheme is NOT
-  // part of the image-icon marker — that payload is the app's own URL
-  // and looks identical in both schemes, so folding it in would re-send
-  // every image tile on each flip for no visual change.
+  // tiles: an opaque marker keyed by emoji + rendering generation.
+  //
+  // Deliberately carries NO appearance signal (it did until gen 5): the
+  // painted tile is identical in light and dark, so a flip changes
+  // nothing about the desired payload and must not mark anything stale.
   _desiredIconSrcFor(app) {
     return app.icon_url
       ? new URL(app.icon_url, location.origin).href
-      : `tile:${Home.WIDGET_ICON_GEN}:${Home._widgetScheme()}:${app.icon_emoji || ''}`;
+      : `tile:${Home.WIDGET_ICON_GEN}:${app.icon_emoji || ''}`;
   },
-  // Re-paint pinned canvas tiles when the system appearance flips.
+  // Re-run the heal pass when the app comes back to the foreground.
   //
-  // Registered once per page load. The heal pass itself is gated on the
-  // widget mechanism + the bridge, so this is inert on web, Android and
-  // desktop; the handler only does work when the scheme ACTUALLY moved,
-  // so a spurious media event can't re-send the whole grid.
-  _widgetSchemeWatching: false,
-  _widgetSchemeSeen: null,
-  _watchWidgetScheme() {
-    if (Home._widgetSchemeWatching) return;
-    Home._widgetSchemeWatching = true;
-    Home._widgetSchemeSeen = Home._widgetScheme();
-    const mq = Home._schemeQuery();
-    if (mq && typeof mq.addEventListener === 'function') {
-      mq.addEventListener('change', Home._onWidgetSchemeChange);
-    }
-    // Theme also re-broadcasts OS changes while the user is in "system"
-    // mode. Redundant with the query above, but free: the equality
-    // guard below turns a duplicate notification into a no-op, and it
-    // costs nothing where window.Theme isn't loaded (tests, standalone).
-    if (window.Theme && typeof window.Theme.onChange === 'function') {
-      window.Theme.onChange(Home._onWidgetSchemeChange);
-    }
+  // Registered once per page load, from _probeShortcutSupport, before
+  // the async probe resolves. The native shell can restore the webview
+  // without a reload, so Home.load() / the probe don't necessarily
+  // re-run when someone reopens the app — without this, a pending heal
+  // (a generation bump, an icon that failed to send) would wait for a
+  // real page load. Nothing here is appearance-dependent; the widget
+  // PNG no longer varies by scheme.
+  //
+  // Inert on web, Android and desktop: the handler early-returns unless
+  // the app reported the widget mechanism.
+  WIDGET_FOREGROUND_HEAL_MS: 30000,
+  _widgetForegroundWatching: false,
+  _widgetForegroundHealedAt: 0,
+  _watchWidgetForeground() {
+    if (Home._widgetForegroundWatching) return;
+    Home._widgetForegroundWatching = true;
+    if (typeof document.addEventListener !== 'function') return;
+    document.addEventListener('visibilitychange', Home._onWidgetForeground);
   },
-  _onWidgetSchemeChange() {
-    const scheme = Home._widgetScheme();
-    if (scheme === Home._widgetSchemeSeen) return;
-    Home._widgetSchemeSeen = scheme;
-    // Load-bearing: _iconHealTried caps sends to one attempt per
-    // shortcut id per page load. Without clearing it the flip would
-    // mark every tile stale and then skip all of them.
+  _onWidgetForeground() {
+    if (document.visibilityState !== 'visible') return;
+    if (Home._shortcutSupport?.mechanism !== 'widget') return;
+    // Throttled: _iconHealTried caps sends to one attempt per shortcut
+    // id per page load, and clearing it is what lets a pending heal
+    // retry. Rapid app switching must not turn a persistently failing
+    // icon into a send on every foreground.
+    const now = Date.now();
+    if (now - Home._widgetForegroundHealedAt < Home.WIDGET_FOREGROUND_HEAL_MS) return;
+    Home._widgetForegroundHealedAt = now;
     Home._iconHealTried = null;
     Promise.resolve(Home._healWidgetIcons()).catch(() => {});
   },
@@ -1809,7 +1801,22 @@ const Home = {
       return parsed && typeof parsed === 'object' ? parsed : {};
     } catch (_) { return {}; /* private mode / corrupt */ }
   },
-  async _healWidgetIcons() {
+  // Serialised: a pass reads the recorded-source map, awaits a bridge
+  // round trip per stale tile, then writes the map back. Two overlapping
+  // passes would each write a snapshot taken before the other's sends,
+  // so the last writer drops the other's records and those tiles re-send
+  // on the next load. Several triggers can collide — Home.load(),
+  // _refreshWidgetItems and the foreground watcher above — so a second
+  // caller joins the running pass instead of starting its own.
+  _healInFlight: null,
+  _healWidgetIcons() {
+    if (Home._healInFlight) return Home._healInFlight;
+    const pass = Home._healWidgetIconsPass()
+      .finally(() => { Home._healInFlight = null; });
+    Home._healInFlight = pass;
+    return pass;
+  },
+  async _healWidgetIconsPass() {
     if (Home._shortcutSupport?.mechanism !== 'widget') return;
     const bridge = window.usernode;
     if (!bridge || typeof bridge.addHomeScreenShortcut !== 'function') return;
@@ -2272,12 +2279,12 @@ const Home = {
   // so the corners stay transparent and the shape reads correctly on the
   // widget's own surface, light or dark.
   //
-  // A PNG can't follow the system theme the way the CSS tile does, so
-  // the palette is chosen at render time from the CURRENT system
-  // appearance (_widgetScheme) and the scheme rides along in the source
-  // marker — a light↔dark flip makes every pinned tile stale and
-  // _healWidgetIcons re-sends it in the other palette. Apps with a real
-  // icon image skip this (the image URL is passed through instead).
+  // A PNG can't follow the system theme the way the CSS tile does, and
+  // SV can't repaint a pinned one while the app is closed — which is
+  // exactly when the system flips (#948). So the face is TRANSLUCENT
+  // and appearance-neutral: it composites onto whatever surface the
+  // widget is drawing, light or dark, and never needs re-sending. Apps
+  // with a real icon image skip this (the image URL is passed through).
   _widgetIconDataUrl(app) {
     try {
       const size = 128;
@@ -2303,13 +2310,10 @@ const Home = {
         ctx.arcTo(inset, inset, inset + box, inset, radius);
         ctx.closePath();
       }
-      // Light: #ffffff face / #e4e4e7 hairline (unchanged).
-      // Dark: #1a1a30 face / #2e2e50 hairline — the tokens `.dark
-      // .app-icon-tile` resolves to. The hairline is what keeps the
-      // tile shape legible against iOS's own dark widget material, so
-      // it must not be dropped in the dark palette.
-      const palette = Home.WIDGET_TILE_PALETTE[Home._widgetScheme()]
-        || Home.WIDGET_TILE_PALETTE.light;
+      // One translucent grey plate for both appearances. The hairline
+      // is what keeps the tile shape legible against iOS's own dark
+      // widget material, so it must not be dropped.
+      const palette = Home.WIDGET_TILE_PALETTE;
       ctx.fillStyle = palette.face;
       ctx.fill();
       ctx.strokeStyle = palette.hairline;
@@ -2320,8 +2324,9 @@ const Home = {
       const font = app.icon_emoji
         ? '72px system-ui, sans-serif'
         : 'bold 64px system-ui, sans-serif';
-      // Letters only — emoji keep their own colour glyphs. The faint
-      // grey matches .app-icon-tile[data-icon="letter"] (--text-faint).
+      // Letters only — emoji keep their own colour glyphs. The mid grey
+      // stands in for .app-icon-tile[data-icon="letter"] (--text-faint)
+      // at a value that stays legible over both composites.
       const color = app.icon_emoji ? null : palette.letter;
       // Pixel-centering first: textAlign/textBaseline metrics misplace
       // emoji glyphs in iOS WebKit (tiles came out anchored bottom-left),
