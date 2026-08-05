@@ -82,63 +82,289 @@ async function persistConflictState(pool, session, { state, files }) {
 //   sessionId(Number) -> { phase, startedAt, promise }
 const _inFlightSyncs = new Map();
 
-// A main-sync changes the branch commit without changing the proposal patch.
-// Ordinary web-native sessions intentionally keep their existing checks and
-// votes across that operation. Shared local/web sessions pin those same
-// checks and votes to exact SHAs, so advance both the checked revision and,
-// once promoted, the reviewed PR revision (plus only matching vote stamps) to
-// the pushed sync commit. This lives in the service—not the HTTP route—so
-// resume auto-sync and conflict resolution get identical semantics while
-// runSyncMain's cross-surface operation claim is still held.
-async function advanceSharedReviewAfterSync(pool, session, result) {
-  if (!session || session.source !== 'cli_handoff') return false;
+function repoOf(session) {
+  const m = (session?.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+  return m ? { owner: m[1], repo: m[2] } : null;
+}
+
+// #955: durable provenance for a commit the PLATFORM pushed onto a proposal
+// branch. Written on EVERY successful sync push — before the review advance is
+// even attempted — so a reconciliation that runs after a race, a skipped
+// advance, or a process restart can still recognise the commit as ours rather
+// than mistaking it for an author push and wiping the tally. Best-effort: a
+// failed insert only costs us the safety net, never the sync itself.
+async function recordPlatformPush(pool, session, {
+  sha, firstParentSha = null, priorReviewedSha = null,
+  kind = 'sync_main', syncResult = null,
+}) {
+  if (!session?.id || typeof sha !== 'string' || !COMMIT_SHA_RE.test(sha)) return false;
+  try {
+    await pool.query(
+      `INSERT INTO session_platform_pushes
+         (session_id, sha, first_parent_sha, prior_reviewed_head_sha, kind, sync_result)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (session_id, sha) DO UPDATE
+          SET first_parent_sha = COALESCE(session_platform_pushes.first_parent_sha,
+                                          EXCLUDED.first_parent_sha)`,
+      [
+        session.id, sha.toLowerCase(),
+        firstParentSha ? String(firstParentSha).toLowerCase() : null,
+        priorReviewedSha ? String(priorReviewedSha).toLowerCase() : null,
+        kind, syncResult,
+      ]
+    );
+    return true;
+  } catch (err) {
+    log.warn('sync-main', 'recordPlatformPush failed (non-fatal)', {
+      sessionId: session.id, sha, err: err.message,
+    });
+    return false;
+  }
+}
+
+// Look one platform push up by exact SHA. Used by the reconciler's head-move
+// classifier (routes/votes.js) to prove provenance before preserving votes.
+async function findPlatformPush(pool, sessionId, sha) {
+  if (sessionId == null || typeof sha !== 'string' || !COMMIT_SHA_RE.test(sha)) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT sha, first_parent_sha, kind, sync_result
+         FROM session_platform_pushes
+        WHERE session_id = $1 AND LOWER(sha) = LOWER($2)
+        LIMIT 1`,
+      [sessionId, sha]
+    );
+    return rows[0] || null;
+  } catch (err) {
+    log.warn('sync-main', 'findPlatformPush failed', { sessionId, sha, err: err.message });
+    return null;
+  }
+}
+
+// Fill in a platform push's first parent after the fact (the GitHub read can
+// fail at push time). Keeps the chain walk a pure DB read on later passes.
+async function backfillPlatformPushParent(pool, sessionId, sha, firstParentSha) {
+  if (!firstParentSha) return;
+  try {
+    await pool.query(
+      `UPDATE session_platform_pushes SET first_parent_sha = $3
+        WHERE session_id = $1 AND LOWER(sha) = LOWER($2) AND first_parent_sha IS NULL`,
+      [sessionId, sha, String(firstParentSha).toLowerCase()]
+    );
+  } catch (err) {
+    log.warn('sync-main', 'backfillPlatformPushParent failed', {
+      sessionId, sha, err: err.message,
+    });
+  }
+}
+
+// A main-sync changes the branch commit without changing the proposal patch,
+// so the approval it already earned still describes the code under review —
+// that is why a sync commit has never reset votes. Since the reviewed revision
+// became an exact SHA pin (#872) the platform has to say so explicitly:
+// advance the pinned revision to the commit we just pushed and carry the
+// matching vote stamps with it, or the very next reconciliation reads OUR
+// merge commit as an author push and deletes the tally (#955).
+//
+// The safety gate is the pushed commit's FIRST parent: it must be the revision
+// currently under review. A merge made on top of an author commit nobody
+// reviewed fails that test, and we then advance nothing — the ordinary
+// author-push reset is the correct outcome there.
+//
+// Checks policy follows who wrote the tree: a `clean` merge is pure git, so the
+// existing verdict carries forward with the stamp; a `resolved` merge contains
+// Claude's edits, so the verdict is dropped and an exact-SHA re-check kicked
+// (visuals.maybeAutoMergeAfterChecks re-drives the merge when it turns green).
+//
+// This lives in the service—not the HTTP route—so resume auto-sync and conflict
+// resolution get identical semantics while runSyncMain's cross-surface
+// operation claim is still held.
+async function advanceReviewAfterPlatformSync(pool, session, result, opts = {}) {
+  if (!session || session.source === 'imported') return false;
   if (!['clean', 'resolved'].includes(result?.syncResult)
       || !result.pushOk || typeof result.sha !== 'string'
       || !COMMIT_SHA_RE.test(result.sha)) return false;
+  const { config = null, dstep = null } = opts;
   const nextSha = result.sha.toLowerCase();
   const priorChecksSha = session.checks_commit_sha || session.handoff_head_sha || null;
-  const priorReviewedSha = session.reviewed_head_sha || null;
+  const priorReviewedSha = session.reviewed_head_sha
+    ? session.reviewed_head_sha.toLowerCase()
+    : null;
+  const carryChecks = result.syncResult === 'clean';
+
+  // eslint-disable-next-line global-require
+  const github = require('./github');
+  const repo = repoOf(session);
+  const externalBranch = github.isEnabled() && !!repo;
+
+  // Provenance read + record BEFORE the advance, so the safety net exists even
+  // if the advance below is skipped, raced, or interrupted by a restart.
+  let firstParent = null;
+  let parentsKnown = !externalBranch; // nothing external to verify against
+  if (externalBranch) {
+    try {
+      const parents = await github.getCommitParents(repo.owner, repo.repo, nextSha);
+      firstParent = parents[0] || null;
+      parentsKnown = true;
+    } catch (err) {
+      // Fail CLOSED on the carry: without the parents we cannot prove this
+      // commit sits on the reviewed revision, and guessing would let an
+      // author push inherit an approval.
+      log.warn('sync-main', 'Could not read pushed commit parents; skipping vote carry', {
+        sessionId: session.id, sha: nextSha, err: err.message,
+      });
+    }
+  }
+  await recordPlatformPush(pool, session, {
+    sha: nextSha,
+    firstParentSha: firstParent,
+    priorReviewedSha,
+    syncResult: result.syncResult,
+  });
+
+  // The gate only bites when there IS a pin to protect and a real branch to
+  // verify against:
+  //   - no pin yet (legacy row): stamping it here is what binds it, and
+  //     pre-#872 semantics counted its unbound votes anyway, so nothing is lost;
+  //   - GitHub off / PR-less local session: no external mutable branch exists,
+  //     so there is no author push to defend against (reconcileNativeReviewedHead
+  //     returns enforced:false in that mode for the same reason);
+  //   - otherwise: the pushed commit must sit directly on the reviewed revision,
+  //     and an unreadable parent list fails CLOSED (guessing would let an author
+  //     push inherit an approval).
+  const gatePassed = !priorReviewedSha || !externalBranch
+    ? true
+    : (parentsKnown && firstParent === priorReviewedSha);
+  if (!gatePassed) {
+    log.info('sync-main', 'Platform sync did not sit on the reviewed revision; review unchanged', {
+      sessionId: session.id, reviewedHead: priorReviewedSha, firstParent, pushed: nextSha,
+    });
+    if (dstep) {
+      await dstep({
+        phase: 'platform_advance', level: 'warn',
+        message: 'Sync commit does not sit directly on the reviewed revision — votes are not carried.',
+        detail: { reviewedHead: priorReviewedSha, firstParent, pushed: nextSha },
+      });
+    }
+    return false;
+  }
+
   const { rows = [] } = await pool.query(
     `WITH advanced AS (
        UPDATE chat_sessions
-          SET checks_commit_sha = $1,
-              reviewed_head_sha = CASE
-                WHEN $3::varchar IS NOT NULL
-                 AND reviewed_head_sha IS NOT DISTINCT FROM $3::varchar
-                THEN $1
-                ELSE reviewed_head_sha
-              END,
+          SET checks_commit_sha = CASE WHEN $5::boolean THEN $1 ELSE checks_commit_sha END,
+              reviewed_head_sha = $1,
               last_activity_at = NOW()
-        WHERE id = $2 AND source = 'cli_handoff'
+        WHERE id = $2 AND COALESCE(source, '') <> 'imported'
           AND status IN ('active', 'promoted', 'merging')
+          AND reviewed_head_sha IS NOT DISTINCT FROM $3::varchar
           AND checks_commit_sha IS NOT DISTINCT FROM $4::varchar
-        RETURNING id, reviewed_head_sha
+        RETURNING id, reviewed_head_sha, checks_commit_sha
      ), moved_votes AS (
        UPDATE pr_votes SET head_sha = $1
         WHERE session_id IN (SELECT id FROM advanced)
-          AND $3::varchar IS NOT NULL
           AND head_sha IS NOT DISTINCT FROM $3::varchar
-          AND EXISTS (
-            SELECT 1 FROM advanced WHERE reviewed_head_sha = $1
-          )
         RETURNING 1
      )
-     SELECT reviewed_head_sha FROM advanced`,
-    [nextSha, session.id, priorReviewedSha, priorChecksSha]
+     SELECT reviewed_head_sha, checks_commit_sha,
+            (SELECT COUNT(*)::int FROM moved_votes) AS votes_moved
+       FROM advanced`,
+    [nextSha, session.id, priorReviewedSha, priorChecksSha, carryChecks]
   );
   if (!rows.length) return false;
-  session.checks_commit_sha = nextSha;
-  if (priorReviewedSha && rows[0].reviewed_head_sha === nextSha) {
-    session.reviewed_head_sha = nextSha;
-  }
-  log.info('sync-main', 'Shared proposal review advanced after sync', {
+
+  const votesMoved = parseInt(rows[0]?.votes_moved, 10) || 0;
+  session.reviewed_head_sha = nextSha;
+  if (carryChecks) session.checks_commit_sha = nextSha;
+
+  log.info('sync-main', 'Proposal review advanced after platform sync', {
     sessionId: session.id,
-    checksFrom: priorChecksSha,
     reviewedFrom: priorReviewedSha,
+    checksFrom: priorChecksSha,
     to: nextSha,
+    syncResult: result.syncResult,
+    votesCarried: votesMoved,
+    checksCarried: carryChecks,
   });
+  if (dstep) {
+    await dstep({
+      phase: 'platform_advance',
+      message: `Review advanced to the pushed sync commit — ${votesMoved} vote${votesMoved === 1 ? '' : 's'} carried, checks ${carryChecks ? 'carried forward' : 're-running'}.`,
+      detail: {
+        from: priorReviewedSha, to: nextSha,
+        syncResult: result.syncResult, votesCarried: votesMoved,
+      },
+    });
+  }
+
+  // Claude edited this tree — the old green verdict says nothing about it.
+  // Drop it and rebuild exactly this SHA; #451's post-checks drain merges the
+  // preserved votes the moment it turns green.
+  if (!carryChecks) {
+    await kickChecksForSyncedHead(config, pool, session, nextSha);
+  }
+
+  try {
+    const { pushVoteUpdate } = require('./ws');
+    pushVoteUpdate({
+      sessionId: session.id,
+      appSlug: session.app_slug || null,
+      merged: false,
+      headMoved: true,
+      votesKept: true,
+    });
+  } catch (_) { /* ws failures are non-fatal */ }
+
+  if (votesMoved > 0) {
+    const label = session.pr_number
+      ? `PR #${session.pr_number}`
+      : 'This proposal';
+    const how = result.syncResult === 'resolved'
+      ? 'was synced with main and its merge conflicts were resolved automatically'
+      : 'was synced with main';
+    const checksNote = carryChecks
+      ? ''
+      : ' Its checks are re-running against the new commit and it will merge on its own once they pass.';
+    try {
+      const { sendSystemMessage } = require('./ws');
+      await sendSystemMessage(
+        pool, session.app_id,
+        `${label} ${how} — existing votes were kept (now pinned to commit ${nextSha.slice(0, 8)}).${checksNote}`,
+        'system',
+        { headChanged: true, votesKept: true, headSha: nextSha },
+        { type: 'session', ref: session.id }
+      );
+    } catch (err) {
+      log.warn('sync-main', 'votes-kept message failed (non-fatal)', {
+        sessionId: session.id, err: err.message,
+      });
+    }
+  }
   return true;
 }
+
+// Invalidate the stale verdict and rebuild staging pinned to the exact commit
+// the sync pushed. Mirrors routes/votes.js kickNativeRevisionChecks; kept here
+// so the sync path owns it now that the reconciler no longer sees a head move.
+async function kickChecksForSyncedHead(config, pool, session, headSha) {
+  const visuals = require('./visuals');
+  await visuals.setChecksPending(pool, session.id, headSha, 'building')
+    .catch((err) => log.warn('sync-main', 'setChecksPending failed (non-fatal)', {
+      sessionId: session.id, headSha, err: err.message,
+    }));
+  try { visuals.notifyChecksPending(session.id, headSha, 'building'); } catch (_) {}
+  session.check_state = 'pending';
+  session.checks_commit_sha = headSha;
+  require('./pr-import-sync').rerunChecksForNewHead({
+    config, pool, session, newHead: headSha,
+  }).catch((err) => log.warn('sync-main', 'post-sync checks re-run failed', {
+    sessionId: session.id, headSha, err: err.message,
+  }));
+}
+
+// Historical name, kept because routes/sessions.js re-exports it and callers
+// (plus tests) import it from there.
+const advanceSharedReviewAfterSync = advanceReviewAfterPlatformSync;
 
 // Read by GET /api/sessions/:id/status for reload recovery and the
 // client's poll fallback. Null when nothing is syncing.
@@ -422,11 +648,15 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
       await require('./app-admins').refreshExplicitApproval(pool, session, session);
     }
 
-    await advanceSharedReviewAfterSync(pool, session, {
+    // #955: bind the reviewed revision (and the votes stamped on it) to the
+    // commit we just pushed. Runs for every native row, not just CLI handoffs.
+    await advanceReviewAfterPlatformSync(pool, session, {
       syncResult,
       pushOk: !!result.pushOk,
       sha: result.sha || null,
-    });
+    }, { config, dstep }).catch((err) => log.warn('sync-main', 'Review advance after sync failed', {
+      sessionId: session.id, err: err.message,
+    }));
 
     // Close the activity with a terminal status. Routing through
     // sendStatus both persists the breadcrumb row (so it survives reload)
@@ -499,5 +729,9 @@ module.exports = {
   persistBehindMain,
   persistConflictState,
   getSyncState,
+  advanceReviewAfterPlatformSync,
   advanceSharedReviewAfterSync,
+  recordPlatformPush,
+  findPlatformPush,
+  backfillPlatformPushParent,
 };
