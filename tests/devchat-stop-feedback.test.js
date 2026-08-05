@@ -96,14 +96,22 @@ function makeHarness() {
     removeItem: (k) => storage.delete(k),
   };
 
-  // Timers are inert: the 30s "taking longer than usual" escalation is
-  // exercised by calling the row mutation directly, not by waiting.
+  // Timers never fire on their own — nothing here waits out 15 or 40
+  // seconds. #937: they ARE recorded, so the escalation-ladder tests can
+  // fire a specific rung by its scheduled delay (fireRung below) instead
+  // of reaching past the real _armStoppingLadder to mutate rows by hand.
+  const timers = new Map();
+  let nextTimerId = 1;
   const sandbox = {
     console,
     setInterval: () => 0,
     clearInterval: () => {},
-    setTimeout: () => 0,
-    clearTimeout: () => {},
+    setTimeout: (fn, ms) => {
+      const id = nextTimerId++;
+      timers.set(id, { fn, ms });
+      return id;
+    },
+    clearTimeout: (id) => { timers.delete(id); },
     document,
     localStorage,
     AbortController,
@@ -140,8 +148,24 @@ function makeHarness() {
   DevChat._restoreComposer = () => {};
   DevChat._reconcileAfterFallbackDone = () => {};
 
-  return { DevChat, sandbox, document, getEl };
+  return { DevChat, sandbox, document, getEl, timers };
 }
+
+// #937: run the escalation rung scheduled for `ms` (15000 = "taking longer
+// than usual" + silent re-POST, 40000 = "isn't responding" + Force stop).
+// Returns false when no such timer is armed, which is itself assertable.
+function fireRung(timers, ms) {
+  for (const [id, t] of timers) {
+    if (t.ms === ms) {
+      timers.delete(id);
+      t.fn();
+      return true;
+    }
+  }
+  return false;
+}
+
+const armedDelays = (timers) => [...timers.values()].map((t) => t.ms).sort((a, b) => a - b);
 
 const SESSION_ID = 42;
 
@@ -372,4 +396,218 @@ test('a fresh send never inherits the previous turn stopping state', () => {
   const btn = document.getElementById('dc-send-btn');
   assert.equal(btn.classList.contains('dc-btn-stopping'), false);
   assert.equal(btn.classList.contains('dc-btn-stop'), true, 'a new turn is interruptible again');
+});
+
+// ── #937: the escalation ladder ─────────────────────────────────────────
+//
+// Before this, a stop that didn't land left the UI frozen forever: the
+// button said "Stopping…", and the ONLY thing that ever changed was a 30s
+// text mutation appending "(taking longer than usual)". In the reported
+// incident that state held for 17m51s while the agent kept working, and
+// the user had no way out. The ladder now retries, then offers Force stop.
+
+test('rung 1 (15s): says so and silently re-POSTs the stop exactly once', async () => {
+  const { DevChat, sandbox, timers } = makeHarness();
+  arriveMidTurn(DevChat);
+
+  const posts = [];
+  sandbox.fetch = async (url, opts) => {
+    posts.push({ url, method: opts?.method, body: opts?.body });
+    return { ok: true, status: 200, json: async () => ({ ok: true, stopped: true, phase: 'cc' }) };
+  };
+
+  await DevChat._stopCurrentTurn();
+  assert.equal(posts.length, 1, 'the click itself');
+  // Both rungs armed, at the documented delays.
+  assert.deepEqual(armedDelays(timers), [15000, 40000]);
+
+  assert.equal(fireRung(timers, 15000), true);
+
+  const row = DevChat.messages.find((m) => m._stopping);
+  assert.match(row.content, /\(taking longer than usual\)$/);
+  assert.equal(posts.length, 2, 'the stop is quietly asked again');
+  assert.equal(posts[1].method, 'POST');
+  assert.equal(posts[1].url, `/api/sessions/${SESSION_ID}/stop`);
+  assert.equal(posts[1].body, undefined, 'a plain retry, not a force');
+  // No Force stop yet — 15s is "slow", not "stuck".
+  assert.ok(!row._forceOffered);
+});
+
+test('the 15s retry fires once however many stopping events arrive', async () => {
+  const { DevChat, sandbox, timers } = makeHarness();
+  arriveMidTurn(DevChat);
+
+  const posts = [];
+  sandbox.fetch = async (url, opts) => {
+    posts.push({ url, method: opts?.method });
+    return { ok: true, status: 200, json: async () => ({ ok: true, stopped: true, phase: 'cc' }) };
+  };
+
+  await DevChat._stopCurrentTurn();
+  // The clicking tab also receives the server's echoed `stopping` on the
+  // POST SSE, the global WS and a bus replay — three more deliveries.
+  DevChat._enterStoppingState({ by: 'evan' });
+  DevChat._enterStoppingState({ by: 'evan' });
+  DevChat._enterStoppingState({ by: 'evan' });
+
+  fireRung(timers, 15000);
+  DevChat._retryStopRequest();
+  DevChat._retryStopRequest();
+
+  assert.equal(posts.length, 2, 'the click plus exactly one retry');
+});
+
+test('rung 2 (40s): admits it is stuck and offers Force stop', async () => {
+  const { DevChat, sandbox, timers } = makeHarness();
+  arriveMidTurn(DevChat);
+  sandbox.fetch = async () => ({ ok: true, status: 200, json: async () => ({ ok: true, stopped: true, phase: 'cc' }) });
+
+  await DevChat._stopCurrentTurn();
+  fireRung(timers, 15000);
+  assert.equal(fireRung(timers, 40000), true);
+
+  const row = DevChat.messages.find((m) => m._stopping);
+  // The wording drops the euphemism — by now it genuinely is not coming.
+  assert.equal(row.content, 'Still stopping — the agent isn’t responding.');
+  // The flag renderMessages branches on to draw the in-row button.
+  assert.equal(row._forceOffered, true);
+  // Still exactly one row: escalation mutates, never appends.
+  assert.equal(stoppingRows(DevChat).length, 1);
+});
+
+test('Force stop POSTs { force: true } and disables its own button', async () => {
+  const { DevChat, sandbox, timers } = makeHarness();
+  arriveMidTurn(DevChat);
+  const posts = [];
+  sandbox.fetch = async (url, opts) => {
+    posts.push({ url, method: opts?.method, body: opts?.body });
+    return { ok: true, status: 200, json: async () => ({ ok: true, stopped: true, forced: true }) };
+  };
+
+  await DevChat._stopCurrentTurn();
+  fireRung(timers, 40000);
+
+  const btn = { disabled: false, textContent: 'Force stop' };
+  await DevChat._forceStopTurn(btn);
+
+  const forced = posts[posts.length - 1];
+  assert.equal(forced.url, `/api/sessions/${SESSION_ID}/stop`);
+  assert.equal(forced.method, 'POST');
+  assert.deepEqual(JSON.parse(forced.body), { force: true });
+  // Double-click protection: the container teardown behind this is not
+  // something to run twice.
+  assert.equal(btn.disabled, true);
+  assert.equal(btn.textContent, 'Forcing…');
+});
+
+test('a rejected Force stop hands back a usable UI', async () => {
+  const { DevChat, sandbox, timers } = makeHarness();
+  arriveMidTurn(DevChat);
+  sandbox.fetch = async (url, opts) => (opts?.body
+    // The server 409s a force with no stop pending — force is strictly a
+    // second-order escape hatch, never a shortcut.
+    ? { ok: false, status: 409, json: async () => ({ ok: false, reason: 'no stop pending' }) }
+    : { ok: true, status: 200, json: async () => ({ ok: true, stopped: true, phase: 'cc' }) });
+
+  await DevChat._stopCurrentTurn();
+  fireRung(timers, 40000);
+  await DevChat._forceStopTurn({ disabled: false, textContent: 'Force stop' });
+
+  assert.equal(stoppingRows(DevChat).length, 0, 'the stuck row is cleared');
+  assert.match(DevChat.messages[DevChat.messages.length - 1].content, /Couldn’t stop the agent/);
+  assert.equal(DevChat._stopping, false);
+  assert.equal(DevChat.isStreaming, true, 'the turn itself is untouched');
+});
+
+test('a landing stop disarms the whole ladder', async () => {
+  const { DevChat, sandbox, timers } = makeHarness();
+  arriveMidTurn(DevChat);
+  sandbox.fetch = async () => ({ ok: true, status: 200, json: async () => ({ ok: true, stopped: true, phase: 'cc' }) });
+
+  await DevChat._stopCurrentTurn();
+  fireRung(timers, 15000);
+  assert.deepEqual(armedDelays(timers), [40000], 'rung 2 still pending');
+
+  // The server's `stopped` lands — this is what the turn teardown calls.
+  DevChat._finishStreaming();
+
+  assert.equal(stoppingRows(DevChat).length, 0);
+  assert.equal(DevChat._stopping, false);
+  assert.equal(DevChat._stoppingSince, null);
+  assert.equal(DevChat._stopRetried, false);
+  assert.deepEqual(armedDelays(timers), [],
+    'no rung may fire against a stop that already landed');
+});
+
+test('duplicate `stopped` events (force + the owning request) settle cleanly', async () => {
+  // The force path announces the stop itself, because the request that
+  // owns the turn may be the wedged thing being rescued. That request then
+  // unwinds and announces it again. Both must collapse to one clean UI.
+  const { DevChat, sandbox, timers } = makeHarness();
+  arriveMidTurn(DevChat);
+  sandbox.fetch = async () => ({ ok: true, status: 200, json: async () => ({ ok: true, stopped: true }) });
+
+  await DevChat._stopCurrentTurn();
+  fireRung(timers, 40000);
+
+  DevChat._finishStreaming();
+  DevChat._finishStreaming();
+
+  assert.equal(stoppingRows(DevChat).length, 0);
+  assert.equal(DevChat._stopping, false);
+  assert.equal(DevChat.isStreaming, false);
+  const btn = sandbox.document.getElementById('dc-send-btn');
+  assert.equal(btn.textContent, 'Send');
+  assert.equal(btn.disabled, false);
+  assert.equal(btn.classList.contains('dc-btn-stopping'), false);
+});
+
+// ── #937: reload / second-tab recovery ──────────────────────────────────
+
+test('a tab joining a long-pending stop lands on the stuck rung immediately', () => {
+  // The reload case. GET /status serves `stopping` + `stopRequestedAt`;
+  // seeding the clock from the server is what stops a refreshed tab from
+  // restarting a calm "Stopping…" that would never escalate — which is
+  // exactly what the reporter would have seen on reload.
+  const { DevChat, timers } = makeHarness();
+  arriveMidTurn(DevChat);
+
+  DevChat._enterStoppingState({ stopRequestedAt: Date.now() - 90000 });
+
+  const row = DevChat.messages.find((m) => m._stopping);
+  assert.equal(row.content, 'Still stopping — the agent isn’t responding.');
+  assert.equal(row._forceOffered, true, 'Force stop is offered without waiting 40 more seconds');
+  assert.deepEqual(armedDelays(timers), [], 'nothing left to wait for');
+});
+
+test('a tab joining a fresh stop still waits out both rungs', () => {
+  const { DevChat, timers } = makeHarness();
+  arriveMidTurn(DevChat);
+
+  // A stop started by someone else (the harness user is `evan`).
+  DevChat._enterStoppingState({ by: 'dana', stopRequestedAt: Date.now() });
+
+  const row = DevChat.messages.find((m) => m._stopping);
+  assert.equal(row.content, '@dana is stopping the agent…');
+  assert.ok(!row._forceOffered, 'no premature escape hatch');
+  assert.deepEqual(armedDelays(timers), [15000, 40000]);
+});
+
+test('a later server timestamp re-arms the ladder on the already-showing row', () => {
+  // The clicking tab starts its clock optimistically at click time; the
+  // server's stamp is authoritative and arrives on the echoed `stopping`.
+  // Both tabs must converge on one clock, or they escalate at different
+  // moments and disagree about whether Force stop is available.
+  const { DevChat, timers } = makeHarness();
+  arriveMidTurn(DevChat);
+
+  DevChat._enterStoppingState();
+  assert.deepEqual(armedDelays(timers), [15000, 40000]);
+
+  DevChat._enterStoppingState({ stopRequestedAt: Date.now() - 45000 });
+
+  const row = DevChat.messages.find((m) => m._stopping);
+  assert.equal(row._forceOffered, true);
+  assert.equal(stoppingRows(DevChat).length, 1, 'still one row');
+  assert.deepEqual(armedDelays(timers), [], 'the stale timers were replaced, not stacked');
 });

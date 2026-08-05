@@ -1098,7 +1098,7 @@ const DevChat = {
       try {
         const statusRes = await fetch(`/api/sessions/${sessionId}/status`);
         if (statusRes.ok) {
-          const { busy, progress, phase, sync, stopping } = await statusRes.json();
+          const { busy, progress, phase, sync, stopping, stopRequestedAt } = await statusRes.json();
           // #252: reload recovery for the sync banner. A MODE=sync turn
           // also flips `busy` (it holds the worker), so check it first
           // and don't arm the chat-turn streaming UI for a sync.
@@ -1149,6 +1149,21 @@ const DevChat = {
               if (m.ccOutput || m.progressLog || m.stagingUrl || m.ccLog) continue;
               m._active = true;
               break;
+            }
+            // #937: rebuild the stopping row and its escalation ladder from
+            // the server's `stopRequestedAt`. Before this, a reload during a
+            // stuck stop painted a calm "Stopping…" button with no history —
+            // so the escalation and the Force stop button, the user's only
+            // way out, could never appear in the reloaded tab. Seeding the
+            // clock from the server means a tab that joins 90s in lands
+            // straight on the stuck rung instead of restarting at zero.
+            //
+            // Resurrecting the transient row is safe: it stays flagged
+            // `_stopping`, so _clearStoppingState filters it out when the
+            // stop lands and the persisted "…stopped by @user." row is
+            // still the only thing that survives.
+            if (stopping) {
+              DevChat._enterStoppingState({ stopRequestedAt: stopRequestedAt || null });
             }
             // Hook into the resumable event stream so we get *live*
             // updates from this tab (tokens, status transitions, PR
@@ -1379,7 +1394,7 @@ const DevChat = {
               case 'stopping':
                 // #889: a stop was requested for this session — by this tab
                 // (echoed back) or by another viewer. Idempotent.
-                DevChat._enterStoppingState({ by: data.by });
+                DevChat._enterStoppingState({ by: data.by, stopRequestedAt: data.stopRequestedAt || null });
                 break;
               case 'stopped':
                 DevChat._flushStreamingFinal();
@@ -1854,7 +1869,7 @@ const DevChat = {
         // #889: mirrors the primary POST-SSE handler. Replayed off the
         // resumable channel this is how a tab that reconnected mid-stop
         // learns the turn is being killed.
-        DevChat._enterStoppingState({ by: data.by });
+        DevChat._enterStoppingState({ by: data.by, stopRequestedAt: data.stopRequestedAt || null });
         break;
       case 'stopped': {
         DevChat._removeSpinner();
@@ -2239,26 +2254,131 @@ const DevChat = {
   // stop actually lands. Persisting both would double up on refresh.
   _stopping: false,
   _stoppingSlowTimer: null,
+  // #937: the escalation ladder's state. `_stoppingSince` is the epoch ms
+  // of the stop REQUEST (server-supplied where possible, so a reload or a
+  // second tab rebuilds the ladder at the right rung instead of restarting
+  // a calm "Stopping…" that never escalates). `_stopRetried` makes the 15s
+  // re-POST fire at most once per stop, however many `stopping` events
+  // arrive (POST SSE + WS + a bus replay all deliver one).
+  _stoppingSince: null,
+  _stoppingStuckTimer: null,
+  _stopRetried: false,
 
   // How long a stop may take before the transcript row admits something is
   // wrong. With the server-side fix a stop lands in ~1-2s, so crossing this
-  // means a genuinely stuck worker, not a slow one.
-  STOPPING_SLOW_MS: 30000,
+  // means a genuinely stuck worker, not a slow one. #937 lowered this from
+  // 30s (where the wording was the ONLY thing that ever changed, and it
+  // changed too late to be useful) and paired it with a silent re-POST.
+  STOPPING_SLOW_MS: 15000,
+
+  // #937: past this the stop is not coming on its own. The row says so
+  // plainly and offers Force stop.
+  STOPPING_STUCK_MS: 40000,
 
   _stoppingRow() {
     return DevChat.messages.find((m) => m && m._stopping) || null;
+  },
+
+  // #937: (re-)arm the escalation ladder from `_stoppingSince`. Split out
+  // of _enterStoppingState so a tab that learns the stop's true age from
+  // the server — a reload's status poll, or a `stopping` event from
+  // another tab — can jump straight to the rung it should already be on
+  // rather than starting the clock over.
+  _armStoppingLadder() {
+    if (DevChat._stoppingSlowTimer) clearTimeout(DevChat._stoppingSlowTimer);
+    if (DevChat._stoppingStuckTimer) clearTimeout(DevChat._stoppingStuckTimer);
+    DevChat._stoppingSlowTimer = null;
+    DevChat._stoppingStuckTimer = null;
+
+    const since = DevChat._stoppingSince || Date.now();
+    const elapsed = Math.max(0, Date.now() - since);
+
+    // Rung 1 — the stop is taking longer than it should. Say so, and
+    // quietly ask again: the server treats a repeat stop as idempotent
+    // (it re-issues the kill), so this is a free self-heal for the case
+    // where the first request's kill found nothing to kill.
+    const slow = () => {
+      const row = DevChat._stoppingRow();
+      if (!row) return;
+      row.content = `${row.content.replace(/ \(taking longer than usual\)$/, '')} (taking longer than usual)`;
+      DevChat._retryStopRequest();
+      DevChat.renderMessages();
+    };
+    // Rung 2 — it isn't coming. Offer the way out.
+    const stuck = () => {
+      const row = DevChat._stoppingRow();
+      if (!row) return;
+      row.content = 'Still stopping — the agent isn’t responding.';
+      row._forceOffered = true;
+      DevChat.renderMessages();
+    };
+
+    if (elapsed >= DevChat.STOPPING_SLOW_MS) slow();
+    else DevChat._stoppingSlowTimer = setTimeout(slow, DevChat.STOPPING_SLOW_MS - elapsed);
+
+    if (elapsed >= DevChat.STOPPING_STUCK_MS) stuck();
+    else DevChat._stoppingStuckTimer = setTimeout(stuck, DevChat.STOPPING_STUCK_MS - elapsed);
+  },
+
+  // #937: the one-shot re-POST behind rung 1. Deliberately silent — if it
+  // works the turn just unwinds, and if it doesn't rung 2 is seconds away.
+  _retryStopRequest() {
+    if (DevChat._stopRetried) return;
+    DevChat._stopRetried = true;
+    const sessionId = DevChat.currentSession?.id;
+    if (!sessionId) return;
+    fetch(`/api/sessions/${sessionId}/stop`, { method: 'POST' })
+      .catch((err) => console.warn('[dc] stop retry failed', err));
+  },
+
+  // #937: Force stop. Only reachable from rung 2, i.e. after an ordinary
+  // stop has been pending ~40s — the server enforces the same ordering and
+  // 409s a force with no stop pending.
+  async _forceStopTurn(btn) {
+    const sessionId = DevChat.currentSession?.id;
+    if (!sessionId) return;
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Forcing…';
+    }
+    let res;
+    try {
+      res = await fetch(`/api/sessions/${sessionId}/stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: true }),
+      });
+    } catch (err) {
+      console.warn('[dc] force stop failed', err);
+      return DevChat._stopRequestFailed();
+    }
+    if (Number(sessionId) !== Number(DevChat.currentSession?.id)) return;
+    if (!res.ok) {
+      console.warn('[dc] force stop rejected', res.status);
+      return DevChat._stopRequestFailed();
+    }
+    // The server emits `stopped` + `done` itself on the force path, so the
+    // ordinary teardown handles the UI from here.
   },
 
   // Enter (or re-enter) the stopping state. Idempotent by design: the tab
   // that clicked Stop calls this directly AND receives the server's echoed
   // `stopping` event, possibly twice over (POST SSE + WS + a bus replay).
   // All of those must collapse into one row.
-  _enterStoppingState({ by = null } = {}) {
+  _enterStoppingState({ by = null, stopRequestedAt = null } = {}) {
     if (!DevChat.isStreaming) return;
     if (DevChat._stoppingRow()) {
       // Already showing. Repaint the button in case this arrived before
       // the flag was set (a `stopping` event from another tab).
       DevChat._stopping = true;
+      // #937: a server-supplied timestamp is authoritative over the
+      // optimistic local one — it's how a tab that clicked Stop and a tab
+      // that only heard about it converge on the same rung. Re-arm only
+      // when it actually moves the clock.
+      if (stopRequestedAt && stopRequestedAt !== DevChat._stoppingSince) {
+        DevChat._stoppingSince = stopRequestedAt;
+        DevChat._armStoppingLadder();
+      }
       DevChat._setStreamingUI(true, DevChat._streamingPhase);
       return;
     }
@@ -2279,14 +2399,12 @@ const DevChat = {
       _stopping: true,
     });
     DevChat._stopping = true;
-
-    if (DevChat._stoppingSlowTimer) clearTimeout(DevChat._stoppingSlowTimer);
-    DevChat._stoppingSlowTimer = setTimeout(() => {
-      const row = DevChat._stoppingRow();
-      if (!row) return;
-      row.content = `${row.content.replace(/ \(taking longer than usual\)$/, '')} (taking longer than usual)`;
-      DevChat.renderMessages();
-    }, DevChat.STOPPING_SLOW_MS);
+    // #937: prefer the server's stamp so every tab (and this one after a
+    // reload) escalates off the same clock; fall back to now for the tab
+    // that just clicked, whose POST hasn't answered yet.
+    DevChat._stoppingSince = stopRequestedAt || Date.now();
+    DevChat._stopRetried = false;
+    DevChat._armStoppingLadder();
 
     DevChat._setStreamingUI(true, DevChat._streamingPhase);
     DevChat.renderMessages();
@@ -2302,10 +2420,19 @@ const DevChat = {
   // or paint something else in its place.
   _clearStoppingState() {
     DevChat._stopping = false;
+    // #937: the whole ladder is torn down together — both rungs' timers
+    // plus the clock and the retry latch they read. Leaving any of them
+    // armed would escalate a stop that has already landed.
     if (DevChat._stoppingSlowTimer) {
       clearTimeout(DevChat._stoppingSlowTimer);
       DevChat._stoppingSlowTimer = null;
     }
+    if (DevChat._stoppingStuckTimer) {
+      clearTimeout(DevChat._stoppingStuckTimer);
+      DevChat._stoppingStuckTimer = null;
+    }
+    DevChat._stoppingSince = null;
+    DevChat._stopRetried = false;
     const before = DevChat.messages.length;
     DevChat.messages = DevChat.messages.filter((m) => !(m && m._stopping));
     return DevChat.messages.length !== before;
@@ -3558,6 +3685,18 @@ const DevChat = {
         // build step.
         if (msg.billingSwitch) {
           return `<div class="dc-status-line" style="opacity:0.8"><span class="dc-status-icon" aria-hidden="true">&#128273;</span> ${escapeHtml(msg.content)}${tsSpan}</div>`;
+        }
+
+        // #937: the stop-escalation row. Once the stop has been pending
+        // long enough that it is clearly not landing (the ladder's 40s
+        // rung sets `_forceOffered`), the row grows a Force stop button —
+        // the user's only way out of what was otherwise a permanent
+        // "Stopping…". Same inline-onclick shape as the other in-row
+        // actions (the platform-issue draft card above).
+        if (msg._stopping && msg._forceOffered) {
+          return `<div class="dc-status-line">${iconHtml} ${escapeHtml(msg.content)} ${elapsedHtml}`
+            + '<button class="dc-force-stop-btn" onclick="DevChat._forceStopTurn(this)">Force stop</button>'
+            + `${tsSpan}</div>`;
         }
 
         return `<div class="dc-status-line">${iconHtml} ${msg.content} ${elapsedHtml}${tsSpan}</div>`;
