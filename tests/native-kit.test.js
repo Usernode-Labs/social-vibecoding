@@ -844,7 +844,8 @@ test('attachGridPlacement is exported and documented beside attachReorder', () =
     NATIVE_JS.indexOf('function attachGridPlacement(listEl, options) {'),
     NATIVE_JS.indexOf('/* ────────────────────────────────────────────────────────────────────\n   * Page transitions'));
   assert.ok(fn.length > 1000, 'located attachGridPlacement');
-  assert.match(fn, /opts\.cellFromPoint\(drag\.lastX, drag\.lastY\)/);
+  assert.match(fn, /opts\.cellFromPoint\(drag\.lastX, drag\.lastY, ghostInfo\(\)\)/,
+    'the pointer stays the first two arguments; the tile’s geometry rides along');
   assert.match(fn, /opts\.canPlace\(drag\.item, cell\)/);
   assert.match(fn, /opts\.onPlace\(item, cell\)/);
   // The real item never moves during the drag — that is the whole
@@ -852,6 +853,52 @@ test('attachGridPlacement is exported and documented beside attachReorder', () =
   assert.doesNotMatch(fn, /insertBefore|gridFlip/);
   // The ghost must not occlude the host's own elementFromPoint hit-test.
   assert.match(fn, /ghost\.style\.pointerEvents = 'none'/);
+});
+
+// The finger is not the tile. The ghost tracks the pointer from wherever the
+// item was grabbed, so a host that resolves its target from x/y puts the
+// tile's TOP-LEFT under the finger — for a multi-cell item the highlight then
+// sits a whole tile away from the block the user is holding. The kit can't fix
+// that itself (it computes no cells) but it is the only party that knows where
+// the ghost actually is, so it reports that geometry and the doc tells hosts
+// to use the centroid.
+test('cellFromPoint is handed the dragged TILE’s live geometry, not just the finger', () => {
+  const fn = NATIVE_JS.slice(
+    NATIVE_JS.indexOf('function attachGridPlacement(listEl, options) {'),
+    NATIVE_JS.indexOf('/* ────────────────────────────────────────────────────────────────────\n   * Page transitions'));
+
+  const info = fn.slice(fn.indexOf('function ghostInfo() {'), fn.indexOf('function update() {'));
+  assert.ok(info.length > 100, 'located ghostInfo()');
+
+  // The ghost is position:fixed, so its viewport rect is the lift rect plus
+  // the live translate — pure arithmetic. A getBoundingClientRect() here would
+  // put a forced layout on the pointermove path.
+  assert.match(info, /var left = drag\.ghostLeft \+ drag\.gx;/);
+  assert.match(info, /var top = drag\.ghostTop \+ drag\.gy;/);
+  assert.doesNotMatch(info, /getBoundingClientRect/);
+  const update = fn.slice(fn.indexOf('function update() {'), fn.indexOf('function autoScrollFrame() {'));
+  assert.doesNotMatch(update, /getBoundingClientRect/);
+
+  // Size comes from the lift measurement, so the rect is complete.
+  assert.match(fn, /drag\.ghostW = rect\.width;/);
+  assert.match(fn, /drag\.ghostH = rect\.height;/);
+  assert.match(info, /width: drag\.ghostW, height: drag\.ghostH/);
+
+  // The dragged item rides along (mirroring canPlace/onHover), and so does the
+  // CENTRE — the thing a host needs to place a footprint under the tile.
+  assert.match(info, /item: drag\.item,/);
+  assert.match(info, /centerX: left \+ drag\.ghostW \/ 2,/);
+  assert.match(info, /centerY: top \+ drag\.ghostH \/ 2,/);
+  // x/y keep their meaning, so a host that ignores info is unaffected.
+  assert.match(info, /pointerX: drag\.lastX,/);
+  assert.match(info, /pointerY: drag\.lastY,/);
+
+  // And the contract says which one to answer from.
+  const doc = NATIVE_JS.slice(
+    NATIVE_JS.indexOf('// attachGridPlacement(listEl, {'),
+    NATIVE_JS.indexOf('function attachGridPlacement(listEl, options) {'));
+  assert.match(doc, /cellFromPoint\(x, y, info\)/);
+  assert.match(doc, /CENTROID/, 'the doc block names the rule hosts should follow');
 });
 
 test('attachGridPlacement never throws on bad input', () => {
