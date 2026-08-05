@@ -1510,6 +1510,52 @@ Expected app behavior:
 - `null` means "no preference set", NOT "English" — keep it
   distinguishable so device-language auto-detection still works.
 
+## Safe-area insets inside the app frame
+
+On a phone with a notch or a home indicator, the platform shell runs
+edge to edge and so does your app's iframe — it reaches the true bottom
+of the screen, past the rounded corners. **But `env(safe-area-inset-*)`
+resolves to `0px` inside a cross-origin iframe in every browser**, so an
+embedded app cannot see those insets on its own: any safe-area CSS it
+writes is silently inert, and bottom-anchored chrome would sit under the
+home indicator.
+
+The platform therefore forwards the insets **that apply to your frame's
+rectangle** (the shell's own header already covers the status bar, so
+your top inset is normally `0` and becomes the real one only in the
+chromeless full-screen view). The hosted bridge publishes them three
+ways — no app-side plumbing, just the bridge `<script>`:
+
+- **CSS custom properties on `<html>`** — `--un-safe-inset-top`,
+  `--un-safe-inset-right`, `--un-safe-inset-bottom`,
+  `--un-safe-inset-left`, in `px`. **This is the one to reach for.** Write
+  every safe-area value as
+  `var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px))`: the
+  property wins inside the platform frame, and the `env()` fallback keeps
+  it exact when the app is opened standalone (where the property is
+  deliberately left unset). The usernode-native kit's own CSS already
+  uses this form, so **kit bars, sheets, action sheets, modals, toasts
+  and nav bars inset themselves correctly with no change to your app.**
+- **`usernode.safeAreaInsets`** — `{ top, right, bottom, left }` in px
+  (all zeros until the first value arrives), for layout you compute in
+  JS rather than CSS.
+- **`usernode:safe-area-changed`** — a `CustomEvent` on `window` whose
+  `detail` is that same object. The shell pushes a new value on rotation,
+  on keyboard/toolbar moves, and whenever your frame's rect shifts;
+  listen if your app re-measures in JS.
+
+Notes:
+
+- These are the **safe area only**. On-screen keyboard clearance is a
+  separate concern your app already sees correctly through
+  `visualViewport` (and the kit's `--un-kb-inset` / `attachKeyboardAvoidance`).
+- Values are `0` on desktop and on devices with no notch — every branch
+  collapses to today's behaviour, so the `var(..., env(...))` form is
+  safe to adopt unconditionally.
+- Your app's own viewport meta does **not** need `viewport-fit=cover` for
+  the forwarded properties to work (it is still required for bare `env()`
+  to work standalone).
+
 ## Native-feel UI kit — centrally hosted (`usernode-native`)
 
 An **opt-in** CSS + JS kit that makes an app's mobile UI feel native on
@@ -1836,9 +1882,17 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   combined mutation. Push/pop remain the default for plain screen
   navigation.
 - **Safe areas.** Opt-in helpers `.un-safe-top` / `.un-safe-top-extend`
-  / `.un-safe-bottom` / `.un-safe-bottom-extend` / `.un-safe-x` apply
-  `env(safe-area-inset-*)` padding to fixed bars. They require
+  / `.un-safe-bottom` / `.un-safe-bottom-extend` / `.un-safe-x` inset
+  fixed bars from the notch and the home indicator. They require
   `viewport-fit=cover` in the page's viewport meta.
+  **Inside the platform app frame, bare `env(safe-area-inset-*)` is
+  always `0px`** — browsers only expose safe areas to the top-level
+  document, so an iframed app can't see them. The platform forwards the
+  real values instead (see "Safe-area insets inside the app frame"
+  below) and the kit helpers already read them, so the helpers above
+  work in both hosts. Your own fixed chrome should follow the same
+  pattern — `var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px))`
+  rather than bare `env()` — which is correct embedded *and* standalone.
 - **Spring engine.** `unNative.spring(elOrCallback, { from, to,
   velocity, preset })` — the kit's own rAF damped-spring integrator,
   available for custom gestures so they match the kit's motion family.
@@ -1896,7 +1950,10 @@ apps.
 1. Add the two hosted tags above to the HTML shell's `<head>`.
 2. Add `viewport-fit=cover` to the viewport meta; put `.un-safe-top` /
    `.un-safe-bottom` (or the `-extend` variants) on fixed headers /
-   bottom bars.
+   bottom bars. For fixed chrome the helpers don't cover, write
+   `var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px))` —
+   bare `env()` is `0px` inside the platform frame (see "Safe-area
+   insets inside the app frame").
 3. Add `future: { hoverOnlyWhenSupported: true }` so `hover:` styles stop
    sticking after taps on touch screens — in `tailwind.config.js` on the
    precompiled path (the scaffold already sets it), or in the page's inline
