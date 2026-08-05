@@ -63,6 +63,7 @@ const { topochainMobileAuthRoutes, computeLevel } = require('./mobile-auth');
 const { mobilePushRegistrationRoutes } = require('./mobile-push-registration');
 const { verifyCompletion, ZkBridgeError } = require('../../services/topochain/zk-bridge');
 const { readDelegationState, setDelegationState } = require('../../services/topochain/delegations');
+const { topochainNodeEfficiencyRoutes } = require('./node-efficiency');
 
 // ─── Small shared formatters (duplicated in miniature from public.js — ──
 // that file doesn't export its identifier/display-name helpers, and these
@@ -732,6 +733,8 @@ async function fetchSeasonEventsWithChallenges(pool, seasonId, opts) {
 function topochainMobileRoutes(config) {
   const router = Router();
   const pool = getPool(config);
+
+  router.use(topochainNodeEfficiencyRoutes(config));
 
   // Mount-order probe (plan Task 3). Deliberately NOT gated by
   // mobileTokenAuth — it exists only to prove this router sits ahead of

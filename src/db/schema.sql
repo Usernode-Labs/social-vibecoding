@@ -3351,6 +3351,9 @@ CREATE TABLE IF NOT EXISTS slot_outcome_reports (
 CREATE INDEX IF NOT EXISTS idx_slot_outcome_reports_captured_at_ms ON slot_outcome_reports (captured_at_ms);
 CREATE INDEX IF NOT EXISTS idx_slot_outcome_reports_chain_epoch ON slot_outcome_reports (chain_id, epoch);
 CREATE INDEX IF NOT EXISTS idx_slot_outcome_reports_user ON slot_outcome_reports (user_id);
+CREATE INDEX IF NOT EXISTS idx_slot_outcome_reports_user_captured
+  ON slot_outcome_reports (user_id, captured_at_ms DESC)
+  WHERE user_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_slot_outcome_reports_chain_wallet_global_slot ON slot_outcome_reports (chain_id, wallet_address, global_slot);
 CREATE INDEX IF NOT EXISTS idx_slot_outcome_reports_chain_global_slot ON slot_outcome_reports (chain_id, global_slot);
 
