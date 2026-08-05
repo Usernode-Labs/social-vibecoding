@@ -44,6 +44,15 @@ version:
 - `sessionBoundAuthStatus`: auth snapshots include `participantId` and
   identity `epoch`, and node starts can be bound to both values.
 
+One additive **widget** capability extends v4 the same way:
+
+- `homeScreenShortcutDarkIcon`: the shell stores a SECOND icon per
+  homescreen shortcut and the iOS widget selects between them per system
+  appearance. Advertise it only once that is true end to end — SV reads
+  it as "sending a dark icon has a visible effect" and re-sends every
+  pinned canvas tile the first time it appears. See the homescreen
+  shortcuts section below for the contract it unlocks.
+
 ## Methods
 
 ### Wallet / transactions (pre-existing, v1)
@@ -61,6 +70,41 @@ version:
 `getHomeScreenShortcutSupport`, `addHomeScreenShortcut`,
 `getHomeScreenShortcuts`, `removeHomeScreenShortcut`,
 `reorderHomeScreenShortcuts` — see the comments in `usernode-bridge.js`.
+
+#### Per-appearance icons (additive; `homeScreenShortcutDarkIcon`)
+
+`addHomeScreenShortcut` takes
+`{ name, url, icon_url, icon_url_dark?, silent? }`:
+
+- `icon_url` — required-in-practice primary asset. When a pair is sent it
+  is the **light**-appearance asset.
+- `icon_url_dark` — **optional** dark-appearance asset. Absent, null or
+  empty means "single icon", i.e. exactly the pre-existing behaviour. A
+  re-add without it **clears** the dark slot (a re-add of the same URL is
+  an in-place refresh — that is what `silent: true` is for).
+- Either field may be an `https` URL **or** a `data:image/png;base64,…`
+  URI. SV sends data URIs for its canvas-rendered emoji/letter tiles, so
+  both fields must go through the same fetch/decode path.
+- `version` stays **4**: this is purely additive, and shells that don't
+  know the field ignore it like any other unknown key in `args`.
+
+`getHomeScreenShortcuts()` items carry `{ id, name, url, pinnedAtMs }`
+plus two icon-presence flags: `has_icon` (SV treats `false` as "the PNG
+never landed" and silently re-sends) and `has_icon_dark` (same, for the
+second asset). Report `has_icon_dark: true` only once the dark asset is
+actually stored; SV tests it with a strict `=== false`, so a build that
+omits the key entirely is safe.
+
+**Why this exists, and why the flag must not be advertised early.** A
+stored PNG cannot restyle itself, and SV cannot repaint one while the app
+is closed — which is exactly when the system flips light/dark (#948).
+Without the capability, SV bakes the single face matching the current
+system appearance and re-sends it when it notices a flip, so the
+correction always waits for the next app open. With it, SV sends both
+faces and the widget flips natively with SV closed. A shell that accepts
+and stores `icon_url_dark` but does not select on `colorScheme` must NOT
+advertise the capability: SV would send an asset nobody renders and would
+have given up the repaint-on-flip fallback for nothing.
 
 ### Chrome data (v2 — the app-as-SV-chrome surface)
 

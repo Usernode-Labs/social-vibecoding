@@ -4,6 +4,7 @@ const log = require('../services/logger');
 const ws = require('../services/ws');
 const events = require('../services/events');
 const appAccess = require('../services/app-access');
+const { rankedUsers, weekStartUtc } = require('../services/leaderboard-users');
 
 // Weekly quota per giver. The plan locks this at 5; if it ever moves,
 // tweak here and the FE budget badge will pick it up via /api/me/kudos-budget.
@@ -65,28 +66,10 @@ function shapeLeaderboardRow(row, selectedKeys, dropEmpty) {
   return out;
 }
 
-// Compute the Monday-00:00-UTC date that contains the given Date.
-// Mirror of Postgres's `date_trunc('week', t AT TIME ZONE 'UTC')::DATE`
-// for that same instant. JS getUTCDay() returns 0..6 with Sunday=0; we
-// shift so Monday=0 and subtract that many days from the UTC date.
-//
-// Returned as a `YYYY-MM-DD` string so it slots straight into pg DATE
-// parameters without timezone-edge surprises (pg would otherwise
-// re-interpret a JS Date in the connection's TZ).
-function weekStartUtc(date = new Date()) {
-  const utcMidnight = new Date(Date.UTC(
-    date.getUTCFullYear(),
-    date.getUTCMonth(),
-    date.getUTCDate()
-  ));
-  const day = utcMidnight.getUTCDay();
-  const daysSinceMonday = (day + 6) % 7;
-  utcMidnight.setUTCDate(utcMidnight.getUTCDate() - daysSinceMonday);
-  const y = utcMidnight.getUTCFullYear();
-  const m = String(utcMidnight.getUTCMonth() + 1).padStart(2, '0');
-  const d = String(utcMidnight.getUTCDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
+// weekStartUtc now lives in src/services/leaderboard-users.js — the service
+// buckets its own week and must not depend on this route, which depends on IT.
+// It is imported at the top and RE-EXPORTED below unchanged, so every existing
+// importer (src/routes/issues.js, tests/kudos.test.js) is unaffected.
 
 // Single round-trip count of kudos this user has given in the current
 // week bucket. Uses the (giver_user_id, week_start) index. Returns the
@@ -788,146 +771,18 @@ function kudosRoutes(config) {
     const dropEmpty = req.query.include_0_values === '0';
     try {
       const weekStart = weekStartUtc();
-      const params = [];
-      // Window filter lives in the kudos LEFT JOIN's ON clause (not a
-      // WHERE) so users/sessions are preserved even when they have no
-      // kudos in the window — only the kudos aggregates get scoped.
-      let kudosWindow = '';
-      // The `kudos_given` LATERAL (below) reuses the same week_start
-      // param when scoping to the current week, so capture its index.
-      let givenWindow = '';
-      // The awarded-bounty LATERAL (below) scopes by awarded_at, bucketed to
-      // the same Monday-00:00-UTC week as weekStartUtc(), reusing the param.
-      let bountyWindow = '';
-      // The issues-created LATERAL (below) scopes by created_at, bucketed to
-      // the same Monday-00:00-UTC week as weekStartUtc(), reusing the param.
-      let issuesWindow = '';
-      if (windowArg === 'week') {
-        params.push(weekStart);
-        kudosWindow = `AND pk.week_start = $${params.length}`;
-        givenWindow = `AND gk.week_start = $${params.length}`;
-        bountyWindow = `AND date_trunc('week', ib.awarded_at AT TIME ZONE 'UTC')::date = $${params.length}`;
-        issuesWindow = `AND date_trunc('week', i.created_at AT TIME ZONE 'UTC')::date = $${params.length}`;
-      }
-      let limitClause = '';
-      if (hasLimit) {
-        params.push(clampLimit(req.query.limit));
-        limitClause = `LIMIT $${params.length}`;
-      }
-      // `kudos_given` is a GIVEN-side metric (rows where the user is the
-      // giver), orthogonal to every other column here (all RECEIVED-side,
-      // keyed off the user's authored sessions). Folding it into the main
-      // GROUP BY would cross-multiply the two fan-outs and corrupt the
-      // received counts, so it's computed in an independent LEFT JOIN
-      // LATERAL that builds a {week_start: count} JSON map per user.
-      // Counts are clamped to the weekly quota with LEAST(..., ${WEEKLY_KUDOS_LIMIT})
-      // so the documented give-time race (overshoot by ≤1) never surfaces
-      // a value above the cap. Uses idx_pr_kudos_giver_week. COALESCE
-      // turns the no-rows case (jsonb_object_agg → NULL) into '{}'.
-      const { rows } = await pool.query(
-        // `ab` (awarded bounties) is RECEIVED-side credit that resolves on
-        // merge: a bounty awarded to a user IS kudos on a merged PR. It's
-        // computed in its own LATERAL (one scalar per user) so it can't
-        // cross-multiply the pk fan-out, then ADDED into kudos_received and
-        // kudos_received_prs_merged (every awarded bounty is merged credit).
-        // prs_kudosed / kudos_received_prs_unmerged stay pr_kudos-only by
-        // design (a bounty is never unmerged credit). last_kudos_at folds in
-        // the most recent award so recency tiebreaks stay correct.
-        `SELECT u.id AS user_id,
-                u.username,
-                (COUNT(pk.id) + COALESCE(ab.received, 0))::int AS kudos_received,
-                COUNT(DISTINCT pk.session_id)::int AS prs_kudosed,
-                (COUNT(pk.id) FILTER (WHERE cs.status = 'merged') + COALESCE(ab.received, 0))::int AS kudos_received_prs_merged,
-                COUNT(pk.id) FILTER (WHERE cs.status <> 'merged')::int AS kudos_received_prs_unmerged,
-                COUNT(DISTINCT cs.id) FILTER (WHERE cs.status = 'merged')::int AS prs_merged,
-                GREATEST(MAX(pk.created_at), ab.last_at) AS last_kudos_at,
-                kg.kudos_given,
-                COALESCE(ic.cnt, 0)::int AS issues_created,
-                u.usernode_pubkey AS address,
-                aa.active_apps
-           FROM users u
-           LEFT JOIN chat_sessions cs ON cs.user_id = u.id
-             AND EXISTS (SELECT 1 FROM apps ap
-                         WHERE ap.id = cs.app_id AND ap.view_visibility = 'public')
-           LEFT JOIN pr_kudos pk ON pk.session_id = cs.id ${kudosWindow}
-           LEFT JOIN LATERAL (
-             SELECT COALESCE(
-                      jsonb_object_agg(g.week_start::text, g.c),
-                      '{}'::jsonb
-                    ) AS kudos_given
-               FROM (
-                 SELECT gk.week_start,
-                        LEAST(COUNT(*), ${WEEKLY_KUDOS_LIMIT})::int AS c
-                   FROM pr_kudos gk
-                   WHERE gk.giver_user_id = u.id ${givenWindow}
-                   GROUP BY gk.week_start
-               ) g
-           ) kg ON true
-           LEFT JOIN LATERAL (
-             SELECT COUNT(*)::int AS received, MAX(ib.awarded_at) AS last_at
-               FROM issue_bounties ib
-              WHERE ib.awarded_user_id = u.id AND ib.status = 'awarded' ${bountyWindow}
-                AND EXISTS (SELECT 1 FROM apps ap
-                            WHERE ap.id = ib.app_id AND ap.view_visibility = 'public')
-           ) ab ON true
-           LEFT JOIN LATERAL (
-             SELECT COUNT(*)::int AS cnt
-               FROM issues i
-              WHERE i.created_by = u.id ${issuesWindow}
-                AND EXISTS (SELECT 1 FROM apps ap
-                            WHERE ap.id = i.app_id AND ap.view_visibility = 'public')
-           ) ic ON true
-          -- The apps the user is CURRENTLY active on — a pure ACTIVITY signal
-          -- (the "active user"/"tested" definition), deliberately decoupled
-          -- from collab-eligibility. Uses the activity half of
-          -- src/services/active-users.js (hasQualifyingActivity); keep the
-          -- 60s bar / 10-day window in sync if either moves:
-          --   * non-self-hosted apps only (the self-app never accrues its own
-          --     app_activity rows). Private-VIEW apps ARE included — a user's
-          --     own activity on a private-view app is not private data about
-          --     anyone else, and the leaderboard should reflect all the apps
-          --     they use, not just the public-view ones.
-          --   * EVER qualified: some app_activity row with seconds_spent >= 60;
-          --   * visited recently: an app_activity row within the last 10 days.
-          -- NO collab-membership gate: a user who spent >=60s/day on an app has
-          -- "tested" it whether or not they're a member collaborator. Collab-
-          -- eligibility is a SEPARATE concern, enforced at the vote layer
-          -- (appAccess 'collab') and folded into the vote-majority denominator
-          -- (active-users.js getActiveUserStats = activity ∩ eligibility) — not
-          -- here, where it would hide collab-private apps (e.g. goalio) from
-          -- their own testers.
-          -- Intrinsically 10-day-windowed, so it is NOT scoped by the window arg.
-          -- COALESCE to an empty array so "active on nothing" is [] not null.
-          LEFT JOIN LATERAL (
-            SELECT COALESCE(
-                     jsonb_agg(
-                       jsonb_build_object('slug', ap.slug, 'name', ap.name)
-                       ORDER BY ap.name, ap.slug
-                     ),
-                     '[]'::jsonb
-                   ) AS active_apps
-              FROM apps ap
-             WHERE ap.self_hosted = FALSE
-               AND EXISTS (
-                 SELECT 1 FROM app_activity r
-                  WHERE r.app_id = ap.id AND r.user_id = u.id
-                    AND r.date >= CURRENT_DATE - 10
-               )
-               AND EXISTS (
-                 SELECT 1 FROM app_activity q
-                  WHERE q.app_id = ap.id AND q.user_id = u.id
-                    AND q.seconds_spent >= 60
-               )
-           ) aa ON true
-           GROUP BY u.id, u.username, u.usernode_pubkey, kg.kudos_given, ab.received, ab.last_at, ic.cnt, aa.active_apps
-           ORDER BY kudos_received_prs_merged DESC,
-                    prs_merged DESC,
-                    kudos_received DESC,
-                    last_kudos_at DESC NULLS LAST,
-                    u.username ASC
-           ${limitClause}`,
-        params
-      );
+      // The RANKING lives in src/services/leaderboard-users.js. The home
+      // screen's Challenges widget shows the same ranks in its LEADERBOARD
+      // fill, and two copies of this ORDER BY would eventually disagree about
+      // who is #3 — so there is one copy. This route still owns everything
+      // about the REQUEST: the window/limit params, the `fields` projection
+      // and the response envelope.
+      const rows = await rankedUsers(pool, {
+        window: windowArg,
+        limit: hasLimit ? clampLimit(req.query.limit) : null,
+        weekStart,
+        weeklyKudosLimit: WEEKLY_KUDOS_LIMIT,
+      });
       // Shape each item per the optional `fields` / `include_0_values`
       // params (projection then zero/null filtering, username always kept).
       // When neither is set this is a no-op and rows pass through unchanged.
