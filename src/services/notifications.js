@@ -6,8 +6,9 @@
 // group chat), 'reaction' (#25 — someone reacted to your message;
 // `detail` carries the emoji), 'stale_pr' (a promoted PR going quiet),
 // 'pr_proposed' (a PR was promoted for voting — fanned out to the app's
-// active users + creator + favoriters so they come vote; self-app PRs
-// go to creator + favoriters only), 'session_done'
+// active users + creator + favoriters so they come vote; on invited-policy
+// apps the accepted approver electorate is always included; self-app PRs
+// otherwise go to creator + favoriters only), 'session_done'
 // (#161 — a dev-session turn finished after its owner left),
 // 'auto_solve_done' (#161 — a headless auto-solve run finished; `detail`
 // holds the outcome: spec | code | spec_code (#170) | question | failed)
@@ -280,11 +281,13 @@ async function hydrateAndPush(pool, row) {
 // Targeting (deliberately narrower than "every registered user", which
 // would be a platform-wide firehose since membership is global): the
 // app's currently-active users (the people whose votes actually count
-// per services/active-users.js), plus the app creator and anyone who
-// favorited it — so stakeholders who aren't currently "active" still get
-// nudged. The proposer is always excluded. For the platform self-app,
-// active users are skipped entirely (see inline comment below) — only
-// creator + favoriters are pinged.
+// under the default policy), plus the app creator and anyone who favorited
+// it — so stakeholders who aren't currently "active" still get nudged.
+// Under invited-approver governance the accepted approver electorate is
+// always included because those are the people whose votes count. The
+// proposer is always excluded. For the platform self-app, active users are
+// skipped entirely (see inline comment below), but invited approvers remain
+// eligible recipients.
 //
 // De-dupe: skips any recipient who already has a pr_proposed row for this
 // session, so a re-promote (e.g. a PR that went stale then was proposed
@@ -301,11 +304,27 @@ async function createPrProposedNotifications(pool, { appId, sessionId, proposerI
   // subscription. Child apps keep the active-users fan-out: active-on-
   // that-app is already a meaningful audience.
   const { rows: appRows } = await pool.query(
-    'SELECT self_hosted FROM apps WHERE id = $1',
+    'SELECT self_hosted, approver_policy FROM apps WHERE id = $1',
     [appId]
   );
   const selfHosted = !!appRows[0]?.self_hosted;
   const activeIds = selfHosted ? [] : await listActiveUserIds(pool, appId);
+
+  // Invited governance is an explicit electorate, not merely a display
+  // label. Include the exact set used by the merge gate — including its
+  // full-admin deadlock fallback when the accepted roster is empty — so a
+  // proposal never depends on a voter who was omitted from the vote request.
+  // Resolve at call time to avoid a notifications <-> governance module
+  // dependency during bootstrap and to match the service's test stubbing.
+  let approverIds = [];
+  let approverAdminFallback = false;
+  if (appRows[0]?.approver_policy === 'invited') {
+    // eslint-disable-next-line global-require
+    const governance = require('./governance');
+    const electorate = await governance.getApproverSet(pool, appId);
+    approverIds = electorate.ids;
+    approverAdminFallback = electorate.adminFallback;
+  }
 
   // App creator + favoriters as a stakeholder floor. Either may already
   // be in activeIds; we dedupe via the Set below.
@@ -316,25 +335,36 @@ async function createPrProposedNotifications(pool, { appId, sessionId, proposerI
     [appId]
   );
 
-  let recipientIds = new Set([...activeIds, ...extraRows.map((r) => r.id)]);
+  let recipientIds = new Set([
+    ...activeIds,
+    ...extraRows.map((r) => r.id),
+    ...approverIds,
+  ]);
   recipientIds.delete(proposerId);
   // Collab-private apps: only collaborators can vote, so only they get
   // nudged (a favoriter of a view-public/collab-private app would
   // otherwise be asked to vote on a PR they can't act on).
   recipientIds = new Set(await filterToCollaborators(pool, appId, [...recipientIds]));
+  // Full admins bypass private-app collaboration checks and are the actual
+  // electorate when an invited roster is empty. Restore only that documented
+  // fallback after the ordinary privacy filter; explicit approver members on
+  // private apps are required to be collaborators when invited.
+  if (approverAdminFallback) {
+    for (const id of approverIds) {
+      if (id !== proposerId) recipientIds.add(id);
+    }
+  }
   if (!recipientIds.size) return [];
 
-  // INSERT ... SELECT with a NOT EXISTS guard so the per-recipient
-  // de-dupe is atomic (no read-then-write race on concurrent promotes).
+  // The partial unique index in schema.sql makes the per-recipient de-dupe
+  // atomic: concurrent promotes can both reach this statement, but only one
+  // `pr_proposed` row per (user, session) can commit.
   const ids = [...recipientIds];
   const { rows } = await pool.query(
     `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
      SELECT u, $2, $3, $4, 'pr_proposed'
        FROM UNNEST($1::int[]) AS u
-      WHERE NOT EXISTS (
-        SELECT 1 FROM notifications n
-        WHERE n.user_id = u AND n.session_id = $3 AND n.kind = 'pr_proposed'
-      )
+     ON CONFLICT (user_id, session_id) WHERE kind = 'pr_proposed' DO NOTHING
      RETURNING id, user_id, app_id, session_id, source_user_id, kind, created_at`,
     [ids, appId, sessionId, proposerId || null]
   );

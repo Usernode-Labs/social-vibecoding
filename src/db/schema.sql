@@ -1627,6 +1627,22 @@ CREATE INDEX IF NOT EXISTS idx_notifications_user_recent
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS session_id
   INTEGER REFERENCES chat_sessions(id) ON DELETE CASCADE;
 
+-- Vote requests are one-shot per recipient + proposal. The service also
+-- uses ON CONFLICT against this partial index, so concurrent promotion paths
+-- cannot create duplicate nudges. Older deployments used a racy NOT EXISTS
+-- insert; retain the earliest of any historical duplicates before creating
+-- the constraint so the migration is safe to apply in place.
+DELETE FROM notifications newer
+USING notifications older
+WHERE newer.kind = 'pr_proposed'
+  AND older.kind = 'pr_proposed'
+  AND newer.user_id = older.user_id
+  AND newer.session_id = older.session_id
+  AND newer.id > older.id;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_pr_proposed_once
+  ON notifications (user_id, session_id)
+  WHERE kind = 'pr_proposed';
+
 -- #25: free-form detail for a notification kind that needs a small extra
 -- string. Today only 'reaction' uses it (the emoji someone reacted with);
 -- kept generic + nullable so future kinds can reuse it.

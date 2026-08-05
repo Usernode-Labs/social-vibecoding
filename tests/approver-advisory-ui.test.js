@@ -22,7 +22,8 @@ const APP_VIEW_SRC = read('app-view.js');
 const WORK_DRAWER_SRC = read('work-drawer.js');
 
 // `opts.el` backs document.getElementById (the roster paints into it);
-// `opts.fetchData` backs fetch().json() (the roster endpoint's payload).
+// `opts.fetchData` backs the votes response and `opts.approverData` backs
+// the collaboration-gated accepted-approver roster.
 function makeSandbox(opts = {}) {
   const sandbox = {
     console,
@@ -37,7 +38,12 @@ function makeSandbox(opts = {}) {
       createElement: () => ({ style: {}, classList: { add: () => {}, remove: () => {} } }),
       body: { appendChild: () => {} },
     },
-    fetch: async () => ({ ok: true, json: async () => (opts.fetchData || {}) }),
+    fetch: async (url) => ({
+      ok: true,
+      json: async () => String(url).endsWith('/approvers')
+        ? (opts.approverData || { approvers: [] })
+        : (opts.fetchData || {}),
+    }),
     alert: () => {},
     setTimeout, clearTimeout, setInterval, clearInterval,
     addEventListener: () => {},
@@ -53,6 +59,8 @@ function makeAppView(opts) {
   const sandbox = makeSandbox(opts);
   vm.runInContext(`${MERGE_STATUS_SRC}\n${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
+  AppView.appData = { slug: 'demo-app' };
+  AppView.readOnly = false;
   AppView._proposalsCtx = { majority: 3, activeUsers: 5, locked: false };
   return AppView;
 }
@@ -157,6 +165,11 @@ test('_loadVoteRoster: invited roster splits the headline into Q✓ + A advisory
   const AppView = makeAppView({
     el,
     fetchData: { yes: ['alice', 'bob'], no: [], approvers: ['alice'] },
+    approverData: { approvers: [
+      { username: 'alice', status: 'member' },
+      { username: 'carol', status: 'member' },
+      { username: 'pending', status: 'invited' },
+    ] },
   });
   AppView._proposals = [];
   await AppView._loadVoteRoster(1);
@@ -164,6 +177,8 @@ test('_loadVoteRoster: invited roster splits the headline into Q✓ + A advisory
   assert.match(el.innerHTML, /No \(0✓\):/);
   assert.match(el.innerHTML, /@alice&nbsp;✓/);
   assert.match(el.innerHTML, /only invited approvers/);
+  assert.match(el.innerHTML, /Awaiting 1 invited approver: @carol/);
+  assert.doesNotMatch(el.innerHTML, /@pending/);
 });
 
 test('_loadVoteRoster: default policy keeps the plain totals', async () => {
@@ -176,6 +191,39 @@ test('_loadVoteRoster: default policy keeps the plain totals', async () => {
   await AppView._loadVoteRoster(1);
   assert.match(el.innerHTML, /Yes \(2\):/);
   assert.doesNotMatch(el.innerHTML, /advisory/);
+});
+
+test('_approverResponseStatus: reports complete and admin-fallback states', () => {
+  const AppView = makeAppView();
+  assert.equal(
+    AppView._approverResponseStatus(
+      { yes: ['alice'], no: ['bob'], approvers: ['alice', 'bob'] },
+      ['alice', 'bob']
+    ),
+    'All invited approvers have responded.'
+  );
+  assert.match(
+    AppView._approverResponseStatus({ yes: [], no: [], approvers: [] }, []),
+    /full admins are the eligible fallback/
+  );
+  assert.equal(
+    AppView._approverResponseStatus({ yes: [], no: [] }, ['alice']),
+    '',
+    'non-invited response stays backward compatible'
+  );
+});
+
+test('_loadVoteRoster: escapes outstanding approver usernames in rendered status', async () => {
+  const el = { innerHTML: '', textContent: '' };
+  const AppView = makeAppView({
+    el,
+    fetchData: { yes: [], no: [], approvers: [] },
+    approverData: { approvers: [{ username: '<img onerror=alert(1)>', status: 'member' }] },
+  });
+  AppView._proposals = [];
+  await AppView._loadVoteRoster(1);
+  assert.doesNotMatch(el.innerHTML, /<img/);
+  assert.match(el.innerHTML, /&lt;img onerror=alert\(1\)&gt;/);
 });
 
 // ── _votingHelpText ──────────────────────────────────────────────────

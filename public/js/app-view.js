@@ -6076,6 +6076,23 @@ const AppView = {
       if (!res.ok) { el.textContent = ''; return; }
       const data = await res.json();
       const ctx = AppView._proposalsCtx || {};
+      // The vote endpoint deliberately lists only people who have voted.
+      // For invited governance, collaborators can already read the complete
+      // accepted roster from /approvers; combine the two here to expose the
+      // useful coordination state without widening either API's access.
+      let eligibleApprovers = null;
+      const slug = AppView.appData && AppView.appData.slug;
+      if (Array.isArray(data.approvers) && !AppView.readOnly && slug) {
+        try {
+          const ar = await fetch(`/api/apps/${encodeURIComponent(slug)}/approvers`);
+          if (ar.ok) {
+            const ad = await ar.json();
+            eligibleApprovers = (ad.approvers || [])
+              .filter((a) => a && a.status === 'member' && typeof a.username === 'string')
+              .map((a) => a.username);
+          }
+        } catch {}
+      }
       // #646: on invited-approver apps the endpoint lists which voters'
       // votes QUALIFY — tag those names so advisory votes are legible.
       const approverSet = new Set(data.approvers || []);
@@ -6098,13 +6115,34 @@ const AppView = {
         : (data.approvers
           ? ` · only invited approvers' (✓) votes count`
           : ` · needs ${ctx.majority || 1} of ${ctx.activeUsers || 1} active users`);
+      const responseStatus = AppView._approverResponseStatus(data, eligibleApprovers);
       el.innerHTML =
         `<span class="text-emerald-500 font-medium">Yes ${rosterCount(data.yes)}:</span> ${fmt((data.yes || []).map((u) => escapeHtml(u)))}`
         + ` &nbsp;<span class="text-red-400 font-medium">No ${rosterCount(data.no)}:</span> ${fmt((data.no || []).map((u) => escapeHtml(u)))}`
-        + `<span class="text-zinc-500">${escapeHtml(needs)}</span>`;
+        + `<span class="text-zinc-500">${escapeHtml(needs)}</span>`
+        + (responseStatus
+          ? `<div class="mt-1 text-violet-500 dark:text-violet-300">${escapeHtml(responseStatus)}</div>`
+          : '');
     } catch {
       el.textContent = '';
     }
+  },
+
+  // Pure coordination summary for invited-policy proposal details. `null`
+  // means the viewer could not read the roster (or the fetch failed), so we
+  // omit the line instead of guessing. An empty accepted roster is a real
+  // state: governance's documented full-admin fallback remains eligible.
+  _approverResponseStatus(votes, eligibleApprovers) {
+    if (!votes || !Array.isArray(votes.approvers) || !Array.isArray(eligibleApprovers)) return '';
+    const eligible = [...new Set(eligibleApprovers.filter((u) => typeof u === 'string' && u))];
+    if (!eligible.length) {
+      return 'No invited approvers are accepted yet; full admins are the eligible fallback.';
+    }
+    const responded = new Set([...(votes.yes || []), ...(votes.no || [])]);
+    const awaiting = eligible.filter((u) => !responded.has(u));
+    if (!awaiting.length) return 'All invited approvers have responded.';
+    return `Awaiting ${awaiting.length} invited approver${awaiting.length === 1 ? '' : 's'}: `
+      + awaiting.map((u) => `@${u}`).join(', ');
   },
 
   // "Create proposal" — proposals are PRs, and PRs come from dev
