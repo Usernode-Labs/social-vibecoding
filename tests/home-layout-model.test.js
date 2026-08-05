@@ -8,8 +8,9 @@
 //      and the overflow region. A drop leaves every other item where it is.
 //   2. The breakpoint boundary agrees with the CSS. The JS lays out against
 //      the column count the grid actually renders, or every cell is wrong.
-//   3. deriveDefault reproduces today's arrangement — apps in flow order,
-//      then the widgets — which is what lets this ship with no backfill.
+//   3. deriveDefault is a DESIGNED starting arrangement, not a pack: the
+//      widgets have fixed home cells and the apps fill in around them, so
+//      two accounts with different app counts get the same home screen.
 //   4. The create widget is placed regardless of app quota. Quota decides
 //      whether it is TAPPABLE, never whether it exists.
 //   5. repair() is total: it drops what is gone, adds what is new, resolves
@@ -91,18 +92,98 @@ test('sizeOf reads the registry per column count; apps are always 1x1', () => {
 
 // ── deriveDefault ─────────────────────────────────────────────────────
 
-test('deriveDefault reproduces today’s arrangement: apps, then widgets', () => {
+// The designed default. Challenges top-left, Discover on the 4th row in the
+// 2nd column, Create app on the 5th row in the 4th column — all zero-indexed
+// in the model. Apps fill in around them rather than pushing them about.
+const cellOf = (layout, id) => {
+  const it = layout.find((x) => HomeLayout.idOf(x) === id);
+  return it ? [it.col, it.row] : null;
+};
+
+test('deriveDefault puts each widget in its designed home cell', () => {
   const layout = HomeLayout.deriveDefault({
     apps: ['a', 'b', 'c'],
     widgets: ['challenges', 'discover', 'create'],
     cols: 5,
   });
-  // Apps pack from the top-left in flow order, exactly where they are today.
-  assert.deepEqual([layout[0].col, layout[0].row], [0, 0]);
-  assert.deepEqual([layout[1].col, layout[1].row], [1, 0]);
-  assert.deepEqual([layout[2].col, layout[2].row], [2, 0]);
-  // Every widget got a cell, and nothing overlaps.
-  assert.equal(layout.length, 6);
+  assert.deepEqual(cellOf(layout, 'widget:challenges'), [0, 0], 'top-left');
+  assert.deepEqual(cellOf(layout, 'widget:discover'), [1, 3], '4th row, 2nd column');
+  assert.deepEqual(cellOf(layout, 'widget:create'), [3, 4], '5th row, 4th column');
+  assert.equal(layout.length, 6, 'and every app is still placed');
+  assertNoOverlap(layout, 5);
+});
+
+// The cells are the DESIGN, so they must not drift with the app count — the
+// old behaviour packed apps first and dropped the widgets into whatever gap
+// was left, which meant two accounts with different numbers of apps got
+// visibly different home screens.
+test('the widget cells do not move as the app count changes', () => {
+  for (const n of [0, 1, 7, 20]) {
+    const apps = Array.from({ length: n }, (_, i) => `app${i}`);
+    const layout = HomeLayout.deriveDefault({
+      apps, widgets: ['challenges', 'discover', 'create'], cols: 5,
+    });
+    assert.deepEqual(cellOf(layout, 'widget:challenges'), [0, 0], `${n} apps`);
+    assert.deepEqual(cellOf(layout, 'widget:discover'), [1, 3], `${n} apps`);
+    assert.deepEqual(cellOf(layout, 'widget:create'), [3, 4], `${n} apps`);
+    assertNoOverlap(layout, 5);
+  }
+});
+
+test('apps fill in AROUND the widgets, in reading order', () => {
+  const layout = HomeLayout.deriveDefault({
+    apps: ['a', 'b', 'c', 'd'],
+    widgets: ['challenges', 'discover', 'create'],
+    cols: 5,
+  });
+  // Challenges occupies (0,0)-(1,1) at five columns, so the first free cell
+  // in reading order is (2,0) — the apps start beside it, not under it.
+  assert.deepEqual(cellOf(layout, 'app:a'), [2, 0]);
+  assert.deepEqual(cellOf(layout, 'app:b'), [3, 0]);
+  assert.deepEqual(cellOf(layout, 'app:c'), [4, 0]);
+  assert.deepEqual(cellOf(layout, 'app:d'), [2, 1]);
+});
+
+// At four columns Challenges and Discover are full-width, so their COLUMN
+// cannot survive — the row is the part of the design that does. And that
+// makes Create app's cell (3,4) land inside Discover's (0,3)-(3,4)
+// footprint, so it keeps its column and slides to the row below rather than
+// jumping back to the top-left.
+test('at 4 columns the full-width widgets keep their row and lose their column', () => {
+  const layout = HomeLayout.deriveDefault({
+    apps: ['a', 'b'],
+    widgets: ['challenges', 'discover', 'create'],
+    cols: 4,
+  });
+  assert.deepEqual(cellOf(layout, 'widget:challenges'), [0, 0]);
+  assert.deepEqual(cellOf(layout, 'widget:discover'), [0, 3], 'row 3 kept, pulled to column 0');
+  assert.deepEqual(cellOf(layout, 'widget:create'), [3, 5],
+    'column 3 kept, pushed one row past the widget it would have overlapped');
+  assertNoOverlap(layout, 4);
+});
+
+// A hidden widget is simply absent; the others stay exactly where they are.
+test('hiding a widget does not move the ones that remain', () => {
+  const full = HomeLayout.deriveDefault({
+    apps: [], widgets: ['challenges', 'discover', 'create'], cols: 5,
+  });
+  const noChallenges = HomeLayout.deriveDefault({
+    apps: [], widgets: ['discover', 'create'], cols: 5,
+  });
+  assert.equal(cellOf(noChallenges, 'widget:challenges'), null);
+  assert.deepEqual(cellOf(noChallenges, 'widget:discover'), cellOf(full, 'widget:discover'));
+  assert.deepEqual(cellOf(noChallenges, 'widget:create'), cellOf(full, 'widget:create'));
+});
+
+// A widget the client has no home cell for (a future registry entry) is not
+// a crash and not an overlap — it lands at the first free rectangle after
+// the anchored ones, which is the old behaviour for everything.
+test('a widget with no designed cell falls back to the first free rectangle', () => {
+  const layout = HomeLayout.deriveDefault({
+    apps: [], widgets: ['challenges', 'discover', 'create', 'from-the-future'], cols: 5,
+  });
+  assert.ok(cellOf(layout, 'widget:from-the-future'), 'it is placed');
+  assert.deepEqual(cellOf(layout, 'widget:challenges'), [0, 0], 'and disturbs nothing');
   assertNoOverlap(layout, 5);
 });
 

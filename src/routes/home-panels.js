@@ -462,8 +462,10 @@ function demoChallengesPanel(opts) {
 // ─── Registry ────────────────────────────────────────────────────────
 //
 // key → { title, removable, sizes, build(pool, user), demo() }. Order here
-// IS the default placement order on the home screen (HomeLayout.deriveDefault
-// walks it), and it is also the order Settings renders its checkboxes in.
+// is the order Settings renders its checkboxes in, and the fallback
+// placement order for any widget the client has no designed home cell for.
+// The three shipped widgets do have one — see HomeLayout.WIDGET_HOME_CELLS,
+// which is the source of truth for where a fresh home screen puts them.
 //
 // `sizes` is the widget's FOOTPRINT in grid cells, per column count:
 // { 4: [w, h], 5: [w, h] }. It lives here — not in the stored layout — so a

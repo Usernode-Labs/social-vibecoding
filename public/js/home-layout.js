@@ -155,11 +155,38 @@ const HomeLayout = {
 
   // ── Deriving a layout ──────────────────────────────────────────────
 
-  // The arrangement for an account that has never dragged anything: app
-  // tiles in flow order packed from (0,0), then each VISIBLE widget in
-  // registry order at the first free rectangle. That reproduces exactly
-  // today's home screen (apps, then the widgets after them), which is what
-  // makes this feature need no backfill migration.
+  // ── Where the widgets start out ────────────────────────────────────
+  //
+  // The DEFAULT home screen is designed, not packed: each widget has a cell
+  // it belongs in, and the app tiles fill in around them. Zero-indexed, so
+  // Challenges is the 1st row / 1st column, Discover the 4th row / 2nd
+  // column, Create app the 5th row / 4th column.
+  //
+  // Only the default. The moment someone drags anything at a width, that
+  // width has a stored layout and none of this is consulted again — these
+  // cells are the starting arrangement, never a constraint on where things
+  // may live.
+  WIDGET_HOME_CELLS: {
+    challenges: { col: 0, row: 0 },
+    discover: { col: 1, row: 3 },
+    create: { col: 3, row: 4 },
+  },
+
+  // Placement order for the anchored widgets. It matters: Create app's
+  // fallback is "the first free row below", which can only be computed once
+  // Discover is actually on the board. Any widget WITHOUT an anchor (a
+  // future registry entry) is placed after these, at the first free
+  // rectangle, in registry order.
+  WIDGET_HOME_ORDER: ['challenges', 'discover', 'create'],
+
+  // The arrangement for an account that has never dragged anything: the
+  // VISIBLE widgets at their home cells above, then app tiles in flow order
+  // packed into whatever is left, in reading order.
+  //
+  // Widgets go down FIRST, which is the whole point — packing apps first and
+  // then slotting widgets into the gaps put them wherever the app count
+  // happened to leave room, so two accounts with different numbers of apps
+  // got different-looking home screens.
   //
   // "Visible" means "not in the viewer's hidden list" and NOTHING else. In
   // particular the `create` widget is placed for every account including one
@@ -167,22 +194,60 @@ const HomeLayout = {
   // never a placement one, so a quota change can't re-pack someone's grid.
   deriveDefault({ apps, widgets, cols }) {
     const layout = [];
-    const push = (item) => {
-      const size = HomeLayout.sizeOf(item, cols);
-      const spot = HomeLayout.firstFreeCell(layout, size, cols);
+    const push = (item, spot) => {
       // No room on the canvas → overflow (rows at/after MAX_ROWS), packed
       // densely by overflowItems() at render time.
       layout.push(spot
         ? { ...item, col: spot.col, row: spot.row }
         : { ...item, col: 0, row: HomeLayout.MAX_ROWS });
     };
-    for (const slug of apps || []) push({ type: 'app', slug });
+
     // An EMPTY list means "this viewer has hidden every widget" and must be
     // honoured; only an ABSENT one falls back to the registry. Treating the
     // two the same would hand every hidden widget straight back.
-    const keys = Array.isArray(widgets) ? widgets : HomeLayout._order;
-    for (const key of keys || []) push({ type: 'widget', key });
+    const keys = Array.isArray(widgets) ? widgets : (HomeLayout._order || []);
+    const anchored = HomeLayout.WIDGET_HOME_ORDER.filter((k) => keys.includes(k));
+    const rest = keys.filter((k) => !HomeLayout.WIDGET_HOME_ORDER.includes(k));
+
+    for (const key of anchored) {
+      const item = { type: 'widget', key };
+      push(item, HomeLayout._homeCellFor(layout, key, HomeLayout.sizeOf(item, cols), cols));
+    }
+    for (const key of rest) {
+      const item = { type: 'widget', key };
+      push(item, HomeLayout.firstFreeCell(layout, HomeLayout.sizeOf(item, cols), cols));
+    }
+    for (const slug of apps || []) {
+      push({ type: 'app', slug }, HomeLayout.firstFreeCell(layout, [1, 1], cols));
+    }
     return layout;
+  },
+
+  // Resolve one widget's home cell against the board so far. Three steps,
+  // in order:
+  //
+  //   1. CLAMP the anchor inside the canvas. At 4 columns Challenges and
+  //      Discover are full-width, so `cols - w` is 0 and both are pulled to
+  //      column 0 — their ROW is the part of the design that survives the
+  //      narrow breakpoint, their column can't.
+  //   2. If that rectangle is free, take it.
+  //   3. Otherwise KEEP THE COLUMN and walk down for the first row that
+  //      fits. This is what happens to Create app on a phone: its cell
+  //      (3,4) is inside full-width Discover's (0,3)-(3,4) footprint, so it
+  //      slides to the row below rather than jumping to the top-left.
+  //
+  // Only if the whole column is blocked does it fall back to the first free
+  // rectangle anywhere — overlapping is never an option.
+  _homeCellFor(layout, key, size, cols) {
+    const anchor = HomeLayout.WIDGET_HOME_CELLS[key];
+    if (!anchor) return HomeLayout.firstFreeCell(layout, size, cols);
+    const [w, h] = size;
+    const col = Math.max(0, Math.min(anchor.col, cols - w));
+    const taken = HomeLayout.occupancy(layout, cols);
+    for (let row = Math.max(0, anchor.row); row <= HomeLayout.MAX_ROWS - h; row++) {
+      if (HomeLayout.fits(taken, col, row, w, h, cols)) return { col, row };
+    }
+    return HomeLayout.firstFreeCell(layout, size, cols);
   },
 
   // Order-preserving repack from one column count to another. Reads the

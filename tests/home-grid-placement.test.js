@@ -690,13 +690,13 @@ test('deriving from flow order places every widget, create included', async () =
 
   const layout = Home.currentLayout(5);
   const ids = HomeLayoutIdsOf(layout);
-  // Apps first — today's arrangement — then the widgets, each at the first
-  // free rectangle in registry order. Reading order and PLACEMENT order
-  // differ once a 2x2 widget leaves a 1x1 gap beside it, so assert the
-  // contract (apps lead, nothing is dropped) rather than a brittle sequence.
-  assert.equal(ids.slice(0, 2).join(','), 'app:a,app:b');
-  assert.equal(ids.slice(2).sort().join(','),
-    'widget:challenges,widget:create,widget:discover');
+  // The designed default: widgets at their home cells (Challenges top-left,
+  // so it leads reading order), apps filling in around them. The exact cells
+  // are pinned in tests/home-layout-model.test.js — what matters here is
+  // that the derivation is complete, so assert the SET, not the sequence.
+  assert.equal([...ids].sort().join(','),
+    'app:a,app:b,widget:challenges,widget:create,widget:discover');
+  assert.equal(ids[0], 'widget:challenges', 'the top-left cell is Challenges');
   // No app quota changes nothing about placement.
   assert.ok(ids.includes('widget:create'));
   await flush();
