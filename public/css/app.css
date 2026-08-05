@@ -418,8 +418,9 @@ html, body {
 
      against the 116px phone cell — ~7px of headroom. No footer: a
      .home-panel-footer is 27px more and that IS the second row, so the way
-     out to the Challenges screen rides in the title bar instead (the same
-     trade Discover's browse control makes at this breakpoint, #949), and
+     off this screen rides in the title bar instead — the leaderboard link of
+     #980, which is Discover's browse control in the same place for the same
+     reason (#949) — the rows themselves still open the Challenges tab, and
      expand-in-place is a desktop-only state. The empty state is 69px of the
      same cell. See HomePanels.renderChallengesPanel's compact branch.
 
