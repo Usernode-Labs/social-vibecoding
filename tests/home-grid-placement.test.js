@@ -41,7 +41,7 @@ const LAYOUT_SRC = read('public/js/home-layout.js');
 
 // The registry the server serves, as the client sees it.
 const REGISTRY = [
-  { key: 'challenges', title: 'Challenges', removable: true, sizes: { 4: [4, 2], 5: [2, 2] } },
+  { key: 'challenges', title: 'Challenges', removable: true, sizes: { 4: [4, 1], 5: [2, 2] } },
   { key: 'discover', title: 'Discover', removable: false, sizes: { 4: [4, 1], 5: [2, 2] } },
   { key: 'create', title: 'Create app', removable: true, sizes: { 4: [4, 1], 5: [1, 1] } },
 ];
@@ -804,13 +804,15 @@ test('a 2x2 widget grabbed at its bottom-right lands under the TILE, not the fin
 });
 
 test('a phone-width widget follows the tile’s row, not the finger’s', () => {
-  // 4 columns: Challenges is full-width by two rows, so only the ROW is a real
-  // choice — and dropping a row lower than the tile is the whole bug report.
+  // 4 columns: Challenges is full-width and one row tall (#968), so only the
+  // ROW is a real choice — and dropping a row lower than the tile is the whole
+  // bug report. The finger holds the tile's bottom edge, which is inside the
+  // row BELOW the one the tile is sitting in.
   const layout = [{ type: 'widget', key: 'challenges', col: 0, row: 1 }];
   const h = makePreview(layout, { cols: 4, width: 390 });
   hitTestCells(h, 4);
   const el = h.dom.nodes.get('widget:challenges');
-  const info = ghostInfo(el, { left: 0, top: CELL_H, w: 4, h: 2, grabX: 0.5, grabY: 0.95 });
+  const info = ghostInfo(el, { left: 0, top: CELL_H, w: 4, h: 1, grabX: 0.5, grabY: 1 });
 
   assert.equal(h.Home._cellFromPoint(info.pointerX, info.pointerY).row, 2,
     'the finger is in the tile’s lower row');
@@ -1251,10 +1253,17 @@ test('the row-height token switches at the SAME 640px boundary', () => {
   assert.match(CSS, /--home-cell-h: 7\.75rem;/, 'the desktop row height is a token');
   // The phone override and the overlay's phone gap share one block, keyed
   // to the same boundary (639.98 is the standard non-overlapping spelling
-  // of "below 640").
-  assert.match(CSS, /@media \(max-width: 639\.98px\) \{[\s\S]{0,400}--home-cell-h: 7\.25rem;/,
+  // of "below 640"). Sliced to that block rather than matched within a
+  // character window of its opening brace: the window made the assertion a
+  // function of how much PROSE the block carries, so a comment growing by a
+  // line failed a test about geometry.
+  const at = CSS.indexOf('@media (max-width: 639.98px)');
+  assert.ok(at > -1, 'the phone block exists');
+  const end = CSS.indexOf('@media (min-width: 640px)', at);
+  const phoneBlock = CSS.slice(at, end > -1 ? end : CSS.length);
+  assert.match(phoneBlock, /--home-cell-h: 7\.25rem;/,
     'the row height flips at 640px, the same boundary as grid-cols-4 sm:grid-cols-5');
-  assert.match(CSS, /@media \(max-width: 639\.98px\) \{[\s\S]{0,600}\.home-grid-overlay \{ gap: 0\.375rem; \}/,
+  assert.match(phoneBlock, /\.home-grid-overlay \{ gap: 0\.375rem; \}/,
     'and the drag overlay flips with it, so its cells stay aligned to the tiles');
   assert.equal(HomeLayoutBreakpoint(), 640,
     'and the JS agrees, or it lays out against a count the CSS is not rendering');

@@ -37,7 +37,7 @@ const SCHEMA = read('src/db/schema.sql');
 
 // The registry the server serves, mirroring PANEL_REGISTRY.
 const REGISTRY = [
-  { key: 'challenges', title: 'Challenges', removable: true, sizes: { 4: [4, 2], 5: [2, 2] } },
+  { key: 'challenges', title: 'Challenges', removable: true, sizes: { 4: [4, 1], 5: [2, 2] } },
   { key: 'discover', title: 'Discover', removable: false, sizes: { 4: [4, 1], 5: [2, 2] } },
   { key: 'create', title: 'Create app', removable: true, sizes: { 4: [4, 1], 5: [1, 1] } },
 ];
@@ -83,7 +83,8 @@ test('the module is loaded before its consumers and precached', () => {
 test('sizeOf reads the registry per column count; apps are always 1x1', () => {
   assert.deepEqual(HomeLayout.sizeOf(A('a', 0, 0), 5), [1, 1]);
   assert.deepEqual(HomeLayout.sizeOf(W('challenges', 0, 0), 5), [2, 2]);
-  assert.deepEqual(HomeLayout.sizeOf(W('challenges', 0, 0), 4), [4, 2], 'full width on a phone');
+  assert.deepEqual(HomeLayout.sizeOf(W('challenges', 0, 0), 4), [4, 1],
+    'full width, and one row tall, on a phone (#968)');
   assert.deepEqual(HomeLayout.sizeOf(W('create', 0, 0), 5), [1, 1], 'one cell on desktop');
   assert.deepEqual(HomeLayout.sizeOf(W('create', 0, 0), 4), [4, 1],
     'a full-width row of its own on a phone');
