@@ -185,7 +185,7 @@
           <button id="async-error-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Fail once</button>
         </div>
         <div id="async-state-demo" class="rounded-xl border border-zinc-200 dark:border-zinc-800"></div>
-        <p class="text-xs text-zinc-500 mt-2">A framework-free, in-place state controller: the failure offers a retry, and a later load always wins if an older request resolves after it.</p>
+        <p class="text-xs text-zinc-500 mt-2">A framework-free, in-place state controller: the failure offers a retry, and a later state aborts superseded work while stale completions remain unable to repaint.</p>
       </section>
 
       <!-- Pull to refresh -->
@@ -739,23 +739,21 @@
         return row;
       }
       document.getElementById('async-load-btn').addEventListener('click', function () {
-        asyncDemo.guard(function () {
-          return new Promise(function (resolve) {
-            setTimeout(function () { resolve('Loaded at ' + new Date().toLocaleTimeString()); }, 700);
+        asyncDemo.guard(function (signal) {
+          return new Promise(function (resolve, reject) {
+            var timer = setTimeout(function () { resolve('Loaded at ' + new Date().toLocaleTimeString()); }, 700);
+            if (signal) signal.addEventListener('abort', function () {
+              clearTimeout(timer);
+              reject(new Error('Superseded'));
+            }, { once: true });
           });
         }, renderAsyncResult);
       });
       document.getElementById('async-skeleton-btn').addEventListener('click', function () {
-        asyncDemo.clear();
-        // Boundary state exposes the underlying container only through its
-        // local controller, so this standalone state is intentionally shown
-        // with the controller API as a second usage pattern.
-        var state = unNative.createAsyncState(document.getElementById('async-state-demo'));
-        state.loading({ skeleton: true, rows: 3, label: 'Loading example rows' });
+        asyncDemo.loading({ skeleton: true, rows: 3, label: 'Loading example rows' });
       });
       document.getElementById('async-empty-btn').addEventListener('click', function () {
-        var state = unNative.createAsyncState(document.getElementById('async-state-demo'));
-        state.empty({ title: 'No saved items', message: 'Create an item to see it here.' });
+        asyncDemo.empty({ title: 'No saved items', message: 'Create an item to see it here.' });
       });
       document.getElementById('async-error-btn').addEventListener('click', function () {
         var tries = 0;

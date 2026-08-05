@@ -1785,22 +1785,30 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   accessible in-place state at a time: `.loading({ skeleton?, rows?,
   label? })`, `.empty({ title?, message? })`, `.error(error, retry?,
   { title?, message?, retryLabel? })`, `.ready(value, renderReady?)`,
-  `.clear()`, or `.run(task, renderReady?)`. `run` first shows Loading,
-  calls `task`, and passes the resolved value to `renderReady(value,
-  container, controller)`; that function may return a Node or text, or
-  render into `container` itself. A later `run` wins over every older
-  completion/rejection, preventing stale fetches from replacing fresh
-  content. A rejected task becomes a generic recoverable error by default;
+  `.clear()`, `.dispose()`, or `.run(task, renderReady?)`. `run` first shows
+  Loading, calls `task(signal, controller)`, and passes the resolved value to
+  `renderReady(value, container, controller)`; that function may return a Node or text, or
+  render into `container` itself. A later `run` or explicit state transition
+  wins over every older completion/rejection, preventing stale fetches from
+  replacing fresh content. Where supported, replacement also aborts the old
+  task's `signal`; pass it to `fetch` and treat it as nullable for older
+  WebViews. Generation checks still guarantee ordering without
+  `AbortController`. A rejected or synchronously throwing task becomes a
+  generic recoverable error by default;
   provide an explicitly safe `errorMessage` for user-facing detail — never
   expose a raw server error. Retry is opt-in, runs the latest failed task,
   and disables duplicate attempts while it starts. `.loading({ skeleton:
-  true, rows: 3 })` gives a motion-reduced-aware skeleton. The same
+  true, rows: 3 })` gives an accessible, motion-reduced-aware skeleton.
+  Call `.dispose()` when permanently removing a controller: it aborts active
+  work, removes kit-owned content/attributes/listeners, and makes later calls
+  no-ops. The same
   `--un-*` theme contract covers `.un-async-state`, `.un-skeleton`, and
   `.un-async-retry` for apps managing their own DOM.
 
   For app-owned render or event code, use
   `unNative.createErrorBoundary(container, options)` and call
-  `.guard(task, renderReady?)` or `.capture(error, retry?)`. This is a
+  `.guard(task, renderReady?)` or `.capture(error, retry?)`; it also forwards
+  `.loading()`, `.empty()`, `.ready()`, `.clear()`, and `.dispose()`. This is a
   deliberately **local** boundary: it does not install global `error` or
   `unhandledrejection` listeners, so it cannot hide unrelated failures.
   Vanilla JS has no framework-wide component boundary; route the async work

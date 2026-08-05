@@ -11,6 +11,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 
 const { physics, asyncState } = require('../public/usernode-native/v1/native.js');
 
@@ -61,6 +62,160 @@ test('async-state tracker invalidates an old retry before a replacement state', 
   assert.equal(tracker.isCurrent(retry), false);
   assert.equal(tracker.settle(retry), false, 'invalidated retry cannot repaint the container');
   assert.equal(tracker.pending(), false);
+});
+
+class AsyncTestElement {
+  constructor(tag = 'div') {
+    this.nodeType = 1;
+    this.tagName = tag.toUpperCase();
+    this.children = [];
+    this.attributes = {};
+    this.listeners = {};
+    this._className = '';
+    this._textContent = '';
+    this.classList = {
+      add: (...names) => {
+        const tokens = new Set(this._className.split(/\s+/).filter(Boolean));
+        names.forEach((name) => tokens.add(name));
+        this._className = [...tokens].join(' ');
+      },
+      remove: (...names) => {
+        const removed = new Set(names);
+        this._className = this._className.split(/\s+/).filter((name) => name && !removed.has(name)).join(' ');
+      },
+      contains: (name) => this._className.split(/\s+/).includes(name),
+    };
+  }
+  get className() { return this._className; }
+  set className(value) { this._className = String(value); }
+  get firstChild() { return this.children[0] || null; }
+  get textContent() {
+    return this.children.length ? this.children.map((child) => child.textContent).join('') : this._textContent;
+  }
+  set textContent(value) { this.children = []; this._textContent = String(value); }
+  appendChild(child) { this._textContent = ''; this.children.push(child); return child; }
+  insertBefore(child, before) {
+    const at = this.children.indexOf(before);
+    if (at === -1) return this.appendChild(child);
+    this.children.splice(at, 0, child);
+    return child;
+  }
+  removeChild(child) { this.children.splice(this.children.indexOf(child), 1); return child; }
+  setAttribute(name, value) { this.attributes[name] = String(value); }
+  removeAttribute(name) { delete this.attributes[name]; }
+  addEventListener(name, listener) { (this.listeners[name] ||= []).push(listener); }
+  dispatch(name) { for (const listener of this.listeners[name] || []) listener({ target: this }); }
+}
+
+function asyncFactoryForTest() {
+  const source = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'usernode-native', 'v1', 'native.js'),
+    'utf8'
+  );
+  const trackerStart = source.indexOf('  function createAsyncStateTracker()');
+  const trackerEnd = source.indexOf('  // Node (unit tests):', trackerStart);
+  const asyncStart = source.indexOf('  function asyncNoop()');
+  const asyncEnd = source.indexOf('  var NAVBAR_COLLAPSE_PX', asyncStart);
+  assert.ok(trackerStart > 0 && trackerEnd > trackerStart && asyncStart > trackerEnd && asyncEnd > asyncStart);
+  const sandbox = {
+    AbortController,
+    console,
+    document: { createElement: (tag) => new AsyncTestElement(tag) },
+  };
+  vm.runInNewContext(
+    `${source.slice(trackerStart, trackerEnd)}\n${source.slice(asyncStart, asyncEnd)}\nthis.factory = createAsyncState;`,
+    sandbox
+  );
+  return sandbox.factory;
+}
+
+function findAsyncNode(root, predicate) {
+  if (predicate(root)) return root;
+  for (const child of root.children) {
+    const match = findAsyncNode(child, predicate);
+    if (match) return match;
+  }
+  return null;
+}
+
+test('async state: explicit ready aborts and defeats an older completion', async () => {
+  const createAsyncState = asyncFactoryForTest();
+  const root = new AsyncTestElement();
+  const state = createAsyncState(root);
+  let finish;
+  let signal;
+  const oldRun = state.run((runSignal) => {
+    signal = runSignal;
+    return new Promise((resolve) => { finish = resolve; });
+  });
+  await Promise.resolve();
+  state.ready('newer explicit content');
+  assert.equal(signal.aborted, true);
+  assert.equal(root.textContent, 'newer explicit content');
+  finish('stale network content');
+  await oldRun;
+  assert.equal(root.textContent, 'newer explicit content');
+  assert.equal(state.state, 'ready');
+});
+
+test('async state: synchronous throw is recoverable and retry is one-shot', async () => {
+  const createAsyncState = asyncFactoryForTest();
+  const root = new AsyncTestElement();
+  const state = createAsyncState(root, { errorMessage: 'Safe failure' });
+  let attempts = 0;
+  const task = () => {
+    attempts += 1;
+    if (attempts === 1) throw new Error('private server detail');
+    return 'recovered';
+  };
+  await state.run(task);
+  assert.equal(state.state, 'error');
+  assert.match(root.textContent, /Safe failure/);
+  assert.doesNotMatch(root.textContent, /private server detail/);
+  const retry = findAsyncNode(root, (node) => node.tagName === 'BUTTON');
+  retry.dispatch('click');
+  retry.dispatch('click');
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(attempts, 2);
+  assert.equal(root.textContent, 'recovered');
+  assert.equal(state.state, 'ready');
+});
+
+test('async state: dispose aborts work, releases markup, and is idempotent', async () => {
+  const createAsyncState = asyncFactoryForTest();
+  const root = new AsyncTestElement();
+  root.className = 'app-surface';
+  const state = createAsyncState(root);
+  let signal;
+  let finish;
+  const work = state.run((runSignal) => {
+    signal = runSignal;
+    return new Promise((resolve) => { finish = resolve; });
+  });
+  await Promise.resolve();
+  state.dispose();
+  state.dispose();
+  assert.equal(signal.aborted, true);
+  assert.equal(state.state, 'disposed');
+  assert.equal(root.className, 'app-surface');
+  assert.deepEqual(root.attributes, {});
+  assert.equal(root.children.length, 0);
+  finish('late');
+  await work;
+  assert.equal(root.children.length, 0);
+  await state.run(() => 'must not run');
+  assert.equal(state.state, 'disposed');
+});
+
+test('async state: skeleton announces loading without exposing shimmer decoration', () => {
+  const createAsyncState = asyncFactoryForTest();
+  const root = new AsyncTestElement();
+  createAsyncState(root).loading({ skeleton: true, rows: 2, label: 'Loading rows' });
+  const status = root.children[0];
+  assert.equal(status.attributes.role, 'status');
+  assert.equal(status.attributes['aria-live'], 'polite');
+  assert.equal(status.attributes['aria-label'], 'Loading rows');
 });
 
 // ── Spring integrator ──────────────────────────────────────────────────
@@ -1381,7 +1536,7 @@ test('every helper native.js calls is declared in it (no stale renames)', () => 
     'requestAnimationFrame', 'cancelAnimationFrame', 'setTimeout',
     'clearTimeout', 'setInterval', 'clearInterval', 'getComputedStyle',
     'ResizeObserver', 'MutationObserver', 'IntersectionObserver',
-    'CustomEvent', 'URLSearchParams', 'matchMedia', 'require',
+    'CustomEvent', 'AbortController', 'URLSearchParams', 'matchMedia', 'require',
   ]);
 
   const unknown = [];

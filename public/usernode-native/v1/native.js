@@ -75,7 +75,8 @@
  *   unNative.createAsyncState(el, opts?) — in-place loading, skeleton,
  *                                        empty, ready and recoverable error
  *                                        states; run(task, renderReady)
- *                                        prevents stale async completions
+ *                                        prevents stale async completions,
+ *                                        aborts replaced work when supported
  *   unNative.createErrorBoundary(el, opts?) — local guard/capture wrapper
  *                                        for app-owned async/render work
  *   unNative.attachNavBar(bar, opts)  — blurred nav bar + large-title collapse
@@ -3702,6 +3703,7 @@
     return {
       loading: function () {}, empty: function () {}, error: function () {},
       ready: function () {}, clear: function () {}, run: function () { return Promise.resolve(); },
+      dispose: function () {},
       get state() { return 'idle'; },
     };
   }
@@ -3720,10 +3722,12 @@
   }
 
   // createAsyncState(container, { loading?, empty?, errorMessage?,
-  // retryLabel? }) -> { loading, empty, error, ready, clear, run, state }.
-  // `run` consumes a task function and never rethrows its rejection: errors
-  // become a recoverable in-place state. A supplied renderReady(value,
-  // container, controller) may return a Node or text, or render itself.
+  // retryLabel? }) -> { loading, empty, error, ready, clear, run, dispose,
+  // state }. `run` consumes task(signal, controller) and never rethrows its
+  // rejection: errors become a recoverable in-place state. A supplied
+  // renderReady(value, container, controller) may return a Node or text, or
+  // render itself. The signal is null where AbortController is unavailable;
+  // stale-result protection is generation-based and works in every browser.
   function createAsyncState(container, options) {
     if (!container || container.nodeType !== 1) {
       console.warn('[unNative] createAsyncState: container must be an Element — helper disabled.');
@@ -3732,14 +3736,26 @@
     var opts = options || {};
     var tracker = createAsyncStateTracker();
     var currentState = 'idle';
-    var retryBusy = false;
-    var retryTask = null;
-    var retryRender = null;
+    var activeAbort = null;
+    var disposed = false;
     var controller;
+
+    function abortActive() {
+      var abort = activeAbort;
+      activeAbort = null;
+      if (abort) {
+        try { abort.abort(); } catch (e) { /* an AbortController abort must not break UI state */ }
+      }
+    }
+
+    function invalidateActive() {
+      abortActive();
+      tracker.invalidate();
+    }
 
     function reset(kind, busy) {
       while (container.firstChild) container.removeChild(container.firstChild);
-      container.className = (container.className + ' un-async-state').trim();
+      container.classList.add('un-async-state');
       container.setAttribute('data-un-async-state', kind);
       container.setAttribute('aria-busy', busy ? 'true' : 'false');
       currentState = kind;
@@ -3762,15 +3778,15 @@
       return card;
     }
 
-    function showLoading(details) {
-      tracker.invalidate();
-      retryTask = null;
+    function renderLoading(details) {
       reset('loading', true);
       var useSkeleton = details && details.skeleton;
       if (useSkeleton) {
         var skeleton = document.createElement('div');
         skeleton.className = 'un-async-skeletons';
         skeleton.setAttribute('aria-label', asyncMessage(details.label, opts.loading || 'Loading'));
+        skeleton.setAttribute('role', 'status');
+        skeleton.setAttribute('aria-live', 'polite');
         for (var i = 0; i < (details.rows || 3); i++) {
           var line = document.createElement('div');
           line.className = 'un-skeleton' + (i === 0 ? ' un-skeleton-title' : '');
@@ -3789,9 +3805,15 @@
       return controller;
     }
 
+    function showLoading(details) {
+      if (disposed) return controller;
+      invalidateActive();
+      return renderLoading(details);
+    }
+
     function showEmpty(details) {
-      tracker.invalidate();
-      retryTask = null;
+      if (disposed) return controller;
+      invalidateActive();
       reset('empty', false);
       var input = details || {};
       addCopy('empty', asyncMessage(input.title, opts.emptyTitle || 'Nothing here yet'),
@@ -3799,10 +3821,7 @@
       return controller;
     }
 
-    function showError(error, retry, details) {
-      tracker.invalidate();
-      retryTask = typeof retry === 'function' ? retry : null;
-      retryRender = null;
+    function renderError(error, retry, renderReady, details) {
       reset('error', false);
       var input = details || {};
       var message = input.message;
@@ -3812,31 +3831,35 @@
       var card = addCopy('error', asyncMessage(input.title, opts.errorTitle || 'Something went wrong'),
         asyncMessage(message, typeof opts.errorMessage === 'string' ? opts.errorMessage : 'Please try again.'));
       card.setAttribute('role', 'alert');
-      if (retryTask) {
+      if (typeof retry === 'function') {
         var button = document.createElement('button');
+        var retryStarted = false;
         button.type = 'button';
         button.className = 'un-async-retry';
         button.textContent = asyncMessage(input.retryLabel, opts.retryLabel || 'Try again');
         button.addEventListener('click', function () {
-          if (retryBusy || !retryTask) return;
-          retryBusy = true;
+          if (retryStarted) return;
+          retryStarted = true;
           button.disabled = true;
-          var task = retryTask;
-          retryBusy = false;
-          run(task, retryRender);
+          run(retry, renderReady);
         });
         card.appendChild(button);
       }
       return controller;
     }
 
-    function showReady(value, renderReady) {
+    function showError(error, retry, details) {
+      if (disposed) return controller;
+      invalidateActive();
+      return renderError(error, retry, null, details);
+    }
+
+    function renderReadyState(value, renderReady) {
       reset('ready', false);
-      retryTask = null;
       var content = value;
       if (typeof renderReady === 'function') {
         try { content = renderReady(value, container, controller); } catch (err) {
-          showError(err);
+          renderError(err, null, null);
           return controller;
         }
       }
@@ -3844,35 +3867,38 @@
       return controller;
     }
 
+    function showReady(value, renderReady) {
+      if (disposed) return controller;
+      // Explicit ready content is a state transition just like empty/error:
+      // it must win over any request that was already in flight.
+      invalidateActive();
+      return renderReadyState(value, renderReady);
+    }
+
     function run(task, renderReady) {
+      if (disposed) return Promise.resolve(undefined);
       if (typeof task !== 'function') {
         showError(new Error('Async task must be a function.'));
         return Promise.resolve(undefined);
       }
+      abortActive();
       var token = tracker.begin();
-      // render loading without invalidating the run token we just allocated.
-      while (container.firstChild) container.removeChild(container.firstChild);
-      container.className = (container.className + ' un-async-state').trim();
-      container.setAttribute('data-un-async-state', 'loading');
-      container.setAttribute('aria-busy', 'true');
-      currentState = 'loading';
-      var loadingCard = addCopy('loading', asyncMessage(opts.loading, 'Loading'), '');
-      loadingCard.setAttribute('role', 'status');
-      loadingCard.setAttribute('aria-live', 'polite');
-      var spinner = document.createElement('span');
-      spinner.className = 'un-async-spinner';
-      spinner.setAttribute('aria-hidden', 'true');
-      loadingCard.insertBefore(spinner, loadingCard.firstChild);
-      return Promise.resolve().then(task).then(function (value) {
+      var abort = null;
+      if (typeof AbortController !== 'undefined') {
+        try { abort = new AbortController(); } catch (e) { /* generation guard remains sufficient */ }
+      }
+      activeAbort = abort;
+      renderLoading();
+      return Promise.resolve().then(function () {
+        return task(abort ? abort.signal : null, controller);
+      }).then(function (value) {
         if (!tracker.settle(token)) return undefined;
-        return showReady(value, renderReady);
+        if (activeAbort === abort) activeAbort = null;
+        return renderReadyState(value, renderReady);
       }, function (error) {
         if (!tracker.settle(token)) return undefined;
-        retryTask = task;
-        retryRender = renderReady;
-        showError(error, function () { return task(); });
-        retryTask = task;
-        retryRender = renderReady;
+        if (activeAbort === abort) activeAbort = null;
+        renderError(error, task, renderReady);
         return undefined;
       });
     }
@@ -3882,8 +3908,23 @@
       empty: showEmpty,
       error: showError,
       ready: showReady,
-      clear: function () { tracker.invalidate(); retryTask = null; reset('idle', false); return controller; },
+      clear: function () {
+        if (disposed) return controller;
+        invalidateActive();
+        reset('idle', false);
+        return controller;
+      },
       run: run,
+      dispose: function () {
+        if (disposed) return;
+        invalidateActive();
+        disposed = true;
+        while (container.firstChild) container.removeChild(container.firstChild);
+        container.classList.remove('un-async-state');
+        container.removeAttribute('data-un-async-state');
+        container.removeAttribute('aria-busy');
+        currentState = 'disposed';
+      },
       get state() { return currentState; },
     };
     return controller;
@@ -3897,7 +3938,11 @@
     return {
       capture: function (error, retry) { state.error(error, retry); return error; },
       guard: function (task, renderReady) { return state.run(task, renderReady); },
+      loading: state.loading,
+      empty: state.empty,
+      ready: state.ready,
       clear: state.clear,
+      dispose: state.dispose,
       get state() { return state.state; },
     };
   }
