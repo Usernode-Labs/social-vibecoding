@@ -746,8 +746,8 @@ const PANEL_REGISTRY = [
     //
     //   4 columns (phone): [4, 1] — full width, so the row it gives back is
     //     a clean full-width gap rather than a notch mid-grid. The client
-    //     reshapes the CONTENT to fit that one 116px cell (title bar with a
-    //     "See all" control, up to two rows, no footer) — see
+    //     reshapes the CONTENT to fit that one 116px cell (title bar with the
+    //     leaderboard link, up to two rows, no footer) — see
     //     HomePanels.renderChallengesPanel's compact branch.
     //   5 columns (desktop): [2, 2] — UNCHANGED, so no stored desktop
     //     arrangement moves and the tile keeps its four rows, its footer and
