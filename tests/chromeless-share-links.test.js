@@ -204,7 +204,7 @@ test('app.js screenIdOf treats ?path= as the same screen and re-dispatches on a 
     'a chromeless hash with a different inner path forces a re-render');
 });
 
-test('app.js setChromeless toggles the header, the bottom inset and the pill', () => {
+test('app.js setChromeless toggles the header and the pill', () => {
   const src = read('public/js/app.js');
   assert.ok(src.includes("document.getElementById('platform-header')"));
   // The App/Dev switch needs no line of its own: it lives inside
@@ -212,10 +212,18 @@ test('app.js setChromeless toggles the header, the bottom inset and the pill', (
   // hiding the header hides it too.
   assert.ok(!src.includes("document.getElementById('app-tabs')"),
     'setChromeless still reaches for the deleted tab bar');
-  // What DOES need handling is the safe-area inset that moved onto
-  // #app-view — chromeless must render edge-to-edge.
-  assert.ok(src.includes("classList.toggle('un-safe-bottom', !enable)"),
-    'chromeless must strip the bottom inset from #app-view');
+  // #970: the bottom safe-area inset needs no line of its own EITHER any
+  // more. It used to: #app-view carried `un-safe-bottom` for every surface,
+  // so chromeless had to strip the class to render edge-to-edge. The inset
+  // is now surface-dependent (`data-app-surface`, set by
+  // AppView._setSurface) and chromeless always lands on the app surface,
+  // which reserves nothing. Re-adding the toggle would double-manage it.
+  assert.ok(!src.includes("classList.toggle('un-safe-bottom'"),
+    'setChromeless must not hand-manage the bottom inset any more (#970)');
+  // Hiding/showing the header changes #app-view's rect, so the per-frame
+  // insets forwarded into the app have to be recomputed.
+  assert.ok(src.includes('AppView.scheduleSafeAreaBroadcast()'),
+    'toggling chromeless must re-broadcast the frame safe-area insets');
   assert.ok(src.includes('_mountChromelessPill'));
   assert.ok(src.includes('_unmountChromelessPill'));
   // The pill's exit target is the regular App-tab view, which clears the

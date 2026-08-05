@@ -201,6 +201,51 @@ html, body {
 .app-card { transition: background-color 150ms; }
 .app-card:hover { background-color: var(--bg-card); }
 
+/* THE TILE LABEL — iOS-homescreen sized (#951).
+   11px on a 13px line, TWO lines, ellipsised on overflow. The old label
+   was one 14px/20px line with `truncate`, which cut most real app names
+   after ~12 characters; at this size and two lines a tile shows roughly
+   three times as much of a long name.
+
+   The lane is a FIXED 26px (2 x 13), not min-height: a one-line title and
+   a two-line title must occupy exactly the same box or the caption below
+   it — and the tile's whole content height — would shift per tile, and
+   the grid's rows are a fixed --home-cell-h with the cards top-aligned
+   (`align-self: start`), so a taller card paints over its neighbour.
+   Together with the tightened caption lane below, the 124px budget in
+   the --home-cell-h derivation is unchanged.
+
+   -webkit-line-clamp is the only cross-browser way to ellipsise at a
+   line COUNT (the standard `line-clamp` is listed alongside it for the
+   engines that have shipped it unprefixed); it needs the -webkit-box
+   display, which is why this is a class rather than Tailwind's
+   `truncate`. overflow-wrap: anywhere keeps a single long unbroken word
+   (a slug-style name) inside the tile instead of overflowing it. */
+.app-card-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  width: 100%;
+  height: 1.625rem; /* 26px — exactly two lines */
+  font-size: 0.6875rem; /* 11px */
+  line-height: 0.8125rem; /* 13px */
+  font-weight: 500;
+  text-align: center;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* The status caption ("Spinning up…" / "Awaiting secrets" / "Error")
+   steps down with it: 11px on a 12px line, no top margin, so the two
+   text lanes together are 26 + 12 = 38px — the same as the old
+   20 (title) + 16 (caption) + 2 (mt-0.5) budget. */
+.app-card-status {
+  font-size: 0.6875rem; /* 11px */
+  line-height: 0.75rem; /* 12px */
+}
+
 /* ── App icon tiles ────────────────────────────────────────
    The single treatment for every homescreen-style app icon tile:
    home cards, the widget strip, the landing (unauthed) grid, and
@@ -442,11 +487,17 @@ html, body {
      Desktop (>= 640px), from .app-card's own tokens in home.js renderAppCard:
        p-3        0.75rem x 2  = 1.5rem
        w-14 h-14  3.5rem       = 3.5rem
-       gap-2      0.5rem       = 0.5rem
-       text-sm    1.25rem line = 1.25rem
-       caption    1rem line    = 1rem     <- see below
+       gap-1.5    0.375rem     = 0.375rem
+       title      2 x 13px     = 1.625rem  <- .app-card-title, two lines
+       caption    12px line    = 0.75rem   <- .app-card-status, see below
                                 --------
                                 7.75rem   (124px)
+
+     #951 shrank the label from one 14px/20px line to two 11px/13px lines
+     and tightened the icon->label gap and the caption line to match, so
+     the total is UNCHANGED and nothing derived from --home-cell-h moved.
+     Both text lanes are fixed heights, so a one-line and a two-line title
+     produce identical tiles.
      The phone variant is 116px: index.html tightens the tile to `p-2`
      (0.5rem x 2), which is 8px less. Four 56px icons per row only read as a
      home screen at that density.
@@ -1062,7 +1113,7 @@ html, body {
    a column count the CSS isn't rendering. */
 @media (max-width: 639.98px) {
   :root {
-    /* 116px — p-2 (16) + icon 56 + gap-2 (8) + name 20 + caption 16 */
+    /* 116px — p-2 (16) + icon 56 + gap-1.5 (6) + title 26 + caption 12 */
     --home-cell-h: 7.25rem;
     /* ONE CELL (#968). Every widget's phone footprint is one row now
        (PANEL_REGISTRY `sizes` 4: [4, 1] for all three), so the cap is the
@@ -1075,7 +1126,17 @@ html, body {
     --home-panel-max-h: var(--home-cell-h);
   }
   .home-grid-overlay { gap: 0.375rem; }
-  .app-card { padding: 0.5rem; }
+  /* The doubled class is deliberate. This rule is what makes the phone
+     cell 116px rather than 124px, but the card element carries Tailwind's
+     own `p-3`, and tailwind.css is linked AFTER app.css in index.html — so
+     at equal specificity the utility won and this tightening never applied
+     (the cell budget above said p-2 while tiles rendered at p-3, which is
+     how a captioned tile came to overflow its row). `.app-card.app-card`
+     is the same element, one specificity step up, so the intended phone
+     padding lands without an !important or a #app-list scope that would
+     miss the landing grid's tiles. It also buys the label 8px of extra
+     line width, which at 11px is roughly two more characters per line. */
+  .app-card.app-card { padding: 0.5rem; }
 
   /* SIZE TO CONTENT, phone only (#947, #968). The widget is full-width here,
      so a shorter block just ends sooner — no neighbour to leave a notch
@@ -1262,6 +1323,23 @@ html, body {
 /* ── App iframe ────────────────────────────────────────── */
 
 #app-content { position: relative; }
+
+/* Surface-dependent bottom safe area (#970).
+   #app-view used to carry the kit's `un-safe-bottom` unconditionally, so
+   its padding was subtracted from the flex height of EVERY surface inside
+   #app-content — the running app included. On a phone that left the app
+   ~34px short of the screen's rounded bottom edge, with the body
+   background showing through the gap, while the shell itself painted
+   edge-to-edge.
+   Now only PLATFORM surfaces (Dev mode, the status/offline placeholders)
+   reserve the strip. On an `app` surface the frame reaches the true
+   bottom edge and the insets are forwarded INTO the app instead
+   (AppView._broadcastSafeArea → the bridge's --un-safe-inset-*), so the
+   app can inset its own bottom chrome rather than being clipped by ours.
+   No `!important` needed: nothing competes with this rule. */
+#app-view[data-app-surface="platform"] {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
 
 #app-iframe {
   position: absolute;

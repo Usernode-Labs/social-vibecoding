@@ -1271,7 +1271,7 @@ const Home = {
       ? ` title="${escapeHtml(String(app.last_failure_reason)).replace(/"/g, '&quot;')}"`
       : '';
     const warningHtml = statusLabel
-      ? `<p class="text-xs mt-0.5 ${isAwaiting ? 'text-amber-500' : 'text-yellow-500'}"${failureTip}>${statusLabel}</p>`
+      ? `<p class="app-card-status ${isAwaiting ? 'text-amber-500' : 'text-yellow-500'}"${failureTip}>${statusLabel}</p>`
       : '';
 
     // Hamburger actions-menu trigger, rendered as a round badge
@@ -1337,6 +1337,9 @@ const Home = {
       : '';
 
     const icon = Home.iconTileFor(app);
+    // escapeHtml is a textContent->innerHTML pass, which leaves quotes
+    // alone — same attribute-safe extra step the failure tooltip takes.
+    const nameAttr = escapeHtml(String(app.name || '')).replace(/"/g, '&quot;');
 
     // Layout: icon first at the top (hamburger badged on its corner),
     // the name centered below it, then the status warning when present
@@ -1345,9 +1348,12 @@ const Home = {
     // Everything is
     // horizontally centered in the tile — homescreen-launcher style —
     // and the card draws NO border: the violet hover/drop-slot tint
-    // (.app-card:hover in app.css) is the affordance. The title row
-    // is width-capped (max-w-full + min-w-0) so long names truncate
-    // with an ellipsis instead of stretching the layout.
+    // (.app-card:hover in app.css) is the affordance. The title is
+    // .app-card-title (app.css): iOS-sized 11px/13px type clamped to
+    // TWO lines with an ellipsis, in a fixed-height lane so a long name
+    // shows far more of itself without making its tile any taller than
+    // a short one. The untruncated name stays reachable as the title
+    // attribute (and in the "…" menu header).
     //
     // Every card carries app-card-draggable + touch-pan-y (not just
     // the reorderable ones): the long-press actions menu applies to
@@ -1360,7 +1366,7 @@ const Home = {
     // would 404. They keep the long-press menu instead.
     const demoAttr = app.demo ? ' data-demo="true"' : '';
     return `
-      <div class="app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-2 ${cursorClass}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${isLocked}"${demoAttr}>
+      <div class="app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-1.5 ${cursorClass}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${isLocked}"${demoAttr}>
         ${retryHtml}
         <div class="relative w-14 h-14 shrink-0">
           <div class="app-icon-tile w-14 h-14 rounded-xl overflow-hidden flex items-center justify-center font-bold text-xl" data-icon="${icon.kind}">
@@ -1370,9 +1376,7 @@ const Home = {
           ${forkTagHtml}
         </div>
         <div class="w-full min-w-0">
-          <div class="flex items-center justify-center min-w-0 max-w-full">
-            <span class="font-medium text-sm truncate min-w-0">${escapeHtml(app.name)}</span>
-          </div>
+          <div class="app-card-title" title="${nameAttr}">${escapeHtml(app.name)}</div>
           ${warningHtml}
         </div>
       </div>
