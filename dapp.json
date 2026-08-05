@@ -296,6 +296,12 @@
   ],
   "tests": [
     {
+      "name": "Work notifications show a session's title, not its dev name (#971)",
+      "path": "/?shot=work-drawer&demo=1",
+      "expectSelector": "#work-drawer-panel:not(.hidden) #work-drawer-list",
+      "expectText": "[Mock] Session titled but not yet proposed"
+    },
+    {
       "name": "Send Feedback offers a kudos bounty, unchecked by default (#964)",
       "path": "/?shot=feedback",
       "expectSelector": "#feedback-bounty-row:not(.hidden) #feedback-bounty-checkbox:not(:checked):not(:disabled)"
