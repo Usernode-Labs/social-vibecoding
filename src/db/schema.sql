@@ -2736,11 +2736,19 @@ CREATE TABLE IF NOT EXISTS db_exports (
   ip            VARCHAR(64),
   user_agent    TEXT,
   bytes_sent    BIGINT       NOT NULL DEFAULT 0,
+  artifact_sha256 VARCHAR(64) CHECK (
+    artifact_sha256 IS NULL OR (status = 'completed' AND artifact_sha256 ~ '^[0-9a-f]{64}$')
+  ),
   requested_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
   started_at    TIMESTAMPTZ,
   finished_at   TIMESTAMPTZ,
   error         TEXT
 );
+-- Existing deployments created db_exports before integrity evidence was
+-- available. NULL is deliberate: never invent a digest for a legacy or
+-- incomplete export.
+ALTER TABLE db_exports ADD COLUMN IF NOT EXISTS artifact_sha256 VARCHAR(64)
+  CHECK (artifact_sha256 IS NULL OR (status = 'completed' AND artifact_sha256 ~ '^[0-9a-f]{64}$'));
 CREATE INDEX IF NOT EXISTS idx_db_exports_requested ON db_exports (requested_at DESC);
 CREATE INDEX IF NOT EXISTS idx_db_exports_user ON db_exports (user_id, requested_at DESC);
 

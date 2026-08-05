@@ -41,7 +41,7 @@ const mockPool = {
         id: nextAuditId++, user_id: params[0], username: params[1], db_name: params[2],
         status: params[3], denied_reason: params[4], ip: params[5], user_agent: params[6],
         bytes_sent: 0, requested_at: '2026-07-27T00:00:00.000Z',
-        started_at: null, finished_at: null, error: null,
+        artifact_sha256: null, started_at: null, finished_at: null, error: null,
       };
       audit.push(row);
       return { rows: [{ id: row.id }] };
@@ -50,7 +50,11 @@ const mockPool = {
       const row = audit.find((r) => r.id === params[0]);
       if (row) {
         row.status = params[1] ?? row.status;
-        if (params.length > 2) { row.bytes_sent = params[2]; row.error = params[3]; }
+        if (params.length > 2) {
+          row.bytes_sent = params[2];
+          row.artifact_sha256 = params[3];
+          row.error = params[4];
+        }
         row.finished_at = '2026-07-27T00:01:00.000Z';
       }
       return { rows: [] };
@@ -114,7 +118,11 @@ test.before(async () => {
     res.setHeader('Content-Type', dbExport.EXPORT_CONTENT_TYPE);
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.end(require('node:zlib').gzipSync('-- fake SQL dump\n'));
-    return { status: 'completed', bytesSent: 10, rawBytes: 17, error: null, headersSent: true };
+    return {
+      status: 'completed', bytesSent: 10, rawBytes: 17,
+      artifactSha256: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      error: null, headersSent: true,
+    };
   };
 });
 
@@ -311,12 +319,43 @@ test('a valid ticket streams the gzipped SQL as an attachment, once', async () =
   const row = audit.find((r) => r.status === 'completed');
   assert.ok(row, 'the audit row is closed out as completed');
   assert.equal(Number(row.bytes_sent), 10);
+  assert.equal(row.artifact_sha256,
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
   assert.ok(events.some((p) => p.includes('db_exported')), 'a db_exported analytics event is emitted');
 
   // Replay of the same URL is dead on arrival.
   const replay = await json(await req(`/api/admin/db-export?t=${body.token}`));
   assert.equal(replay.status, 403);
   assert.equal(replay.body.code, 'ticket_invalid');
+});
+
+test('a completed stream without a valid SHA-256 fails closed in the audit', async () => {
+  const me = freshAdmin();
+  reset(me);
+  const defaultRunExport = dbExport.runExport;
+  dbExport.runExport = async ({ res, filename, onStart }) => {
+    if (typeof onStart === 'function') onStart();
+    res.setHeader('Content-Type', dbExport.EXPORT_CONTENT_TYPE);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.end(require('node:zlib').gzipSync('-- fake SQL dump\n'));
+    return {
+      status: 'completed', bytesSent: 10, rawBytes: 17,
+      artifactSha256: 'not-a-digest', error: null, headersSent: true,
+    };
+  };
+  try {
+    const { body } = await ticket();
+    await (await req(`/api/admin/db-export?t=${body.token}`)).arrayBuffer();
+  } finally {
+    dbExport.runExport = defaultRunExport;
+  }
+
+  assert.equal(audit.length, 1);
+  assert.equal(audit[0].status, 'failed');
+  assert.equal(audit[0].artifact_sha256, null);
+  assert.match(audit[0].error, /without valid SHA-256 integrity evidence/);
+  assert.ok(!events.some((p) => p.includes('db_exported')),
+    'an unverifiable stream is never recorded as a successful export event');
 });
 
 test('the single-flight guard is released after a download', async () => {

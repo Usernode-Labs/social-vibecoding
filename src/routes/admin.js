@@ -1195,18 +1195,34 @@ function adminRoutes(config) {
     }
   }
 
-  async function finishExportAudit(id, { status, bytesSent = 0, error = null, started = false }) {
+  function validArtifactSha256(value) {
+    return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+  }
+
+  async function finishExportAudit(id, {
+    status, bytesSent = 0, artifactSha256 = null, error = null, started = false,
+  }) {
     if (!id) return;
+    // A digest is completion evidence, never partial-progress metadata.
+    // Defense in depth: even a malformed injected service result cannot
+    // put arbitrary text or a partial digest into the append-only record.
+    const digest = status === 'completed' && validArtifactSha256(artifactSha256)
+      ? artifactSha256 : null;
     try {
       await pool.query(
         `UPDATE db_exports
             SET status = $2,
                 bytes_sent = $3,
-                error = $4,
-                started_at = COALESCE(started_at, CASE WHEN $5 THEN NOW() ELSE NULL END),
+                artifact_sha256 = $4,
+                error = $5,
+                started_at = COALESCE(started_at, CASE WHEN $6 THEN NOW() ELSE NULL END),
                 finished_at = NOW()
           WHERE id = $1`,
-        [id, status, bytesSent, error ? log.redactString(String(error)).slice(0, 4000) : null, started]
+        [
+          id, status, bytesSent, digest,
+          error ? log.redactString(String(error)).slice(0, 4000) : null,
+          started,
+        ]
       );
     } catch (err) {
       log.error('admin', 'db-export audit update failed', { message: err.message, id });
@@ -1279,7 +1295,7 @@ function adminRoutes(config) {
       const { rows: countRows } = await pool.query('SELECT COUNT(*)::int AS total FROM db_exports');
       const { rows } = await pool.query(
         `SELECT id, user_id, username, db_name, status, denied_reason, ip,
-                bytes_sent, requested_at, started_at, finished_at, error
+                bytes_sent, artifact_sha256, requested_at, started_at, finished_at, error
            FROM db_exports
           ORDER BY requested_at DESC, id DESC
           LIMIT ${limit} OFFSET ${offset}`
@@ -1470,9 +1486,26 @@ function adminRoutes(config) {
         dbExport.endExport();
       }
 
+      // A cleanly-ended download without a valid digest is not trustworthy
+      // completion evidence. The socket has already ended, so we cannot
+      // retract the bytes, but we can and must fail closed in the durable
+      // audit and avoid emitting DB_EXPORTED as a successful event.
+      if (result.status === 'completed' && !validArtifactSha256(result.artifactSha256)) {
+        log.error('admin', 'Database export completed without valid SHA-256 evidence', {
+          dbName: target.dbName, auditId,
+        });
+        result = {
+          ...result,
+          status: 'failed',
+          artifactSha256: null,
+          error: 'export completed without valid SHA-256 integrity evidence',
+        };
+      }
+
       await finishExportAudit(auditId, {
         status: result.status,
         bytesSent: result.bytesSent,
+        artifactSha256: result.artifactSha256,
         error: result.error,
         started,
       });

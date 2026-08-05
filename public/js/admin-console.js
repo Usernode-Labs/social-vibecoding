@@ -2616,6 +2616,9 @@ const AdminConsole = {
             taken with <code class="font-mono">--no-owner --no-privileges</code>. Restore it with:<br>
             <code class="font-mono text-zinc-600 dark:text-zinc-300 break-all">gunzip -c &lt;file&gt;.sql.gz | psql -v ON_ERROR_STOP=1 -d &lt;target-db&gt;</code><br>
             Read it without unpacking with <code class="font-mono">zless</code> / <code class="font-mono">zgrep</code>.
+            After the download finishes, refresh Export history and compare its SHA-256 with
+            <code class="font-mono">sha256sum &lt;file&gt;.sql.gz</code>. A match verifies this one file's bytes;
+            it does not prove restore success or coverage of the excluded stores above.
           </p>
         </div>
 
@@ -2783,6 +2786,11 @@ const AdminConsole = {
       ? `<span class="text-zinc-500">reason: ${esc(String(r.denied_reason).replace(/_/g, ' '))}</span>` : '';
     const errLine = r.error
       ? `<div class="text-xs text-red-600 dark:text-red-400 mt-1 break-words">${esc(r.error)}</div>` : '';
+    const artifactSha256 = r.status === 'completed'
+      && /^[0-9a-f]{64}$/.test(String(r.artifact_sha256 || ''))
+      ? String(r.artifact_sha256) : '';
+    const digestLine = artifactSha256
+      ? `<div class="text-xs text-zinc-500 mt-1 break-all">SHA-256 <code class="font-mono">${esc(artifactSha256)}</code></div>` : '';
     el.innerHTML = `
       <div class="flex items-start justify-between gap-3 flex-wrap">
         <div class="min-w-0">
@@ -2798,6 +2806,7 @@ const AdminConsole = {
             <span>from ${esc(r.ip || '—')}</span>
             ${denied}
           </div>
+          ${digestLine}
           ${errLine}
         </div>
       </div>`;

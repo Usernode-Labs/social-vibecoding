@@ -308,6 +308,22 @@ test('the restore instructions match the file the server actually sends', () => 
   assert.ok(!/&lt;file&gt;\.dump/.test(consoleJs), 'no leftover .dump filename');
 });
 
+test('the export section explains how to verify the exact artifact without overstating recovery', () => {
+  assert.match(consoleJs, /sha256sum &lt;file&gt;\.sql\.gz/,
+    'the operator can compare the downloaded file with its durable history digest');
+  assert.match(consoleJs, /does not prove restore success or coverage of the excluded stores above/,
+    'a matching hash is not presented as a recovery test or complete backup');
+  const row = consoleJs.slice(
+    consoleJs.indexOf('  _dbExportRow(r)'),
+    consoleJs.indexOf('  async loadDbExportHistory()')
+  );
+  assert.match(row, /\^\[0-9a-f\]\{64\}\$/,
+    'history renders only a structurally valid lowercase SHA-256');
+  assert.match(row, /r\.status === 'completed'/,
+    'failed and incomplete rows cannot present completion evidence');
+  assert.match(row, /esc\(artifactSha256\)/, 'the digest is escaped before insertion into HTML');
+});
+
 test('the export button is enabled by the server, not by the client', () => {
   const fn = consoleJs.slice(
     consoleJs.indexOf('  async loadDbExportStatus()'),

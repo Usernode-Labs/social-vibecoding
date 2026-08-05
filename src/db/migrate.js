@@ -1242,22 +1242,23 @@ async function seedStagingDbExports(pool) {
     await pool.query(
       `INSERT INTO db_exports
          (user_id, username, db_name, status, denied_reason, ip, user_agent,
-          bytes_sent, requested_at, started_at, finished_at, error)
+          bytes_sent, artifact_sha256, requested_at, started_at, finished_at, error)
        VALUES
          ($1, 'Staging demo admin', $2, 'completed', NULL, '203.0.113.10',
           'Staging demo browser', 188743680,
+          'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
           NOW() - INTERVAL '2 days', NOW() - INTERVAL '2 days',
           NOW() - INTERVAL '2 days' + INTERVAL '40 seconds', NULL),
          ($1, 'Staging demo admin', $2, 'failed', NULL, '203.0.113.10',
-          'Staging demo browser', 0,
+          'Staging demo browser', 0, NULL,
           NOW() - INTERVAL '1 day', NOW() - INTERVAL '1 day',
           NOW() - INTERVAL '1 day' + INTERVAL '3 seconds',
           'Staging demo failure — pg_dump exited 1'),
          ($1, 'Staging demo admin', $2, 'denied', 'bad_password', '203.0.113.22',
-          'Staging demo browser', 0,
+          'Staging demo browser', 0, NULL,
           NOW() - INTERVAL '5 hours', NULL, NOW() - INTERVAL '5 hours', NULL),
          ($1, 'Staging demo admin', $2, 'cancelled', NULL, '203.0.113.10',
-          'Staging demo browser', 4194304,
+          'Staging demo browser', 4194304, NULL,
           NOW() - INTERVAL '1 hour', NOW() - INTERVAL '1 hour',
           NOW() - INTERVAL '1 hour' + INTERVAL '12 seconds', NULL)`,
       [adminId, dbName]

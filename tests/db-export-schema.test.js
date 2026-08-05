@@ -43,11 +43,20 @@ test('db_exports exists and is created idempotently', () => {
 test('every column the audit trail needs is present', () => {
   for (const col of [
     'user_id', 'username', 'db_name', 'status', 'denied_reason',
-    'ip', 'user_agent', 'bytes_sent', 'requested_at', 'started_at',
+    'ip', 'user_agent', 'bytes_sent', 'artifact_sha256', 'requested_at', 'started_at',
     'finished_at', 'error',
   ]) {
     assert.match(table, new RegExp(`\\b${col}\\b`), `column ${col}`);
   }
+});
+
+test('completed artifacts can store a strict SHA-256 while legacy rows remain nullable', () => {
+  assert.match(table, /artifact_sha256\s+VARCHAR\(64\)/);
+  assert.match(table,
+    /artifact_sha256 IS NULL OR \(status = 'completed' AND artifact_sha256 ~ '\^\[0-9a-f\]\{64\}\$'\)/,
+    'only a completed row can carry a lowercase 64-hex digest');
+  assert.match(schema, /ALTER TABLE db_exports ADD COLUMN IF NOT EXISTS artifact_sha256/,
+    'existing deployments receive the nullable column idempotently');
 });
 
 test('deleting the admin does not delete the evidence', () => {
@@ -173,9 +182,10 @@ test('DB_EXPORTED is in the canonical event vocabulary', () => {
   // Emitted only where the dump actually left the building.
   const emit = adminJs.match(/events\.record\(pool, \{[\s\S]{0,200}DB_EXPORTED/g) || [];
   assert.equal(emit.length, 1, 'exactly one emitter');
+  const eventAt = adminJs.indexOf('events.EVENT_TYPES.DB_EXPORTED');
   const completedGuard = adminJs.slice(
-    adminJs.indexOf("if (result.status === 'completed')"),
-    adminJs.indexOf('DB_EXPORTED')
+    adminJs.lastIndexOf("if (result.status === 'completed')", eventAt),
+    eventAt
   );
   assert.ok(completedGuard.length > 0 && completedGuard.length < 300,
     'the event is emitted only on the completed path');

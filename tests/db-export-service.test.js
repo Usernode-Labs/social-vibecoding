@@ -234,6 +234,10 @@ test('a successful export is a valid gzip of the SQL, and the count is what went
   assert.equal(out.rawBytes, sql.length, 'rawBytes is the uncompressed SQL');
   assert.equal(out.bytesSent, body.length, 'bytesSent is the COMPRESSED size the browser downloaded');
   assert.equal(res.bytes(), body.length, 'the bytes reached the socket, not a buffer');
+  assert.equal(out.artifactSha256, crypto.createHash('sha256').update(body).digest('hex'),
+    'the digest covers the exact compressed artifact delivered to the browser');
+  assert.notEqual(out.artifactSha256, crypto.createHash('sha256').update(sql).digest('hex'),
+    'the digest is not of the uncompressed SQL');
 });
 
 test('the gzip trailer is never truncated by ending the socket at pg_dump exit', async () => {
@@ -260,7 +264,9 @@ test('an empty database still yields a valid, downloadable .gz', async () => {
   const out = await p;
   assert.equal(out.status, 'completed');
   assert.equal(res.headers['content-type'], 'application/gzip');
-  assert.equal(zlib.gunzipSync(Buffer.concat(res.chunks)).length, 0);
+  const body = Buffer.concat(res.chunks);
+  assert.equal(zlib.gunzipSync(body).length, 0);
+  assert.equal(out.artifactSha256, crypto.createHash('sha256').update(body).digest('hex'));
 });
 
 test('download headers are set on the first byte, and no Content-Length is claimed', async () => {
@@ -363,6 +369,7 @@ test('a client hang-up kills pg_dump and reports cancelled', async () => {
   child.exit(null);
   const out = await p;
   assert.equal(out.status, 'cancelled');
+  assert.equal(out.artifactSha256, null, 'a partial download never receives completion evidence');
 });
 
 test('a spawn failure resolves rather than rejecting', async () => {
@@ -373,6 +380,7 @@ test('a spawn failure resolves rather than rejecting', async () => {
   });
   assert.equal(out.status, 'failed');
   assert.match(out.error, /docker not found/);
+  assert.equal(out.artifactSha256, null);
 });
 
 test('backpressure pauses the child instead of buffering the dump', async () => {

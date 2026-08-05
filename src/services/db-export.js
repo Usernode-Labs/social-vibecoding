@@ -234,7 +234,7 @@ function _resetTickets() { _tickets.clear(); }
 // `docker exec <container> pg_dump -U <user> -Fp --no-owner --no-privileges
 //  --no-password <db>`
 // through an in-process gzip into `res`. Always resolves (never rejects)
-// with { status, bytesSent, rawBytes, error }, where status is one of
+// with { status, bytesSent, rawBytes, artifactSha256, error }, where status is one of
 // 'completed' | 'failed' | 'cancelled'. `bytesSent` is COMPRESSED bytes
 // (what the browser actually downloaded); `rawBytes` is the SQL before
 // compression, for the log line.
@@ -255,7 +255,10 @@ function _resetTickets() { _tickets.clear(); }
 function runExport({ dbName, res, filename, onStart, spawnFn }) {
   return new Promise((resolve) => {
     if (!SAFE_IDENT.test(String(dbName || ''))) {
-      resolve({ status: 'failed', bytesSent: 0, rawBytes: 0, error: 'unsafe database name' });
+      resolve({
+        status: 'failed', bytesSent: 0, rawBytes: 0,
+        artifactSha256: null, error: 'unsafe database name',
+      });
       return;
     }
 
@@ -273,13 +276,20 @@ function runExport({ dbName, res, filename, onStart, spawnFn }) {
     try {
       child = (spawnFn || spawn)('docker', args, { stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (err) {
-      resolve({ status: 'failed', bytesSent: 0, rawBytes: 0, error: err.message });
+      resolve({
+        status: 'failed', bytesSent: 0, rawBytes: 0,
+        artifactSha256: null, error: err.message,
+      });
       return;
     }
 
     // The compressor sits between pg_dump and the socket. Errors from it
     // are handled like any other mid-stream failure.
     const gzip = zlib.createGzip({ level: GZIP_LEVEL });
+    // Hash the exact compressed chunks accepted by the HTTP response, not
+    // the SQL before compression. That makes the audit digest directly
+    // comparable with `sha256sum <download>.sql.gz`.
+    const artifactHash = crypto.createHash('sha256');
 
     let headersSent = false;
     let bytesSent = 0;     // compressed, on the wire
@@ -291,6 +301,7 @@ function runExport({ dbName, res, filename, onStart, spawnFn }) {
     let killTimer = null;
     let gzipFlushed = false;
     let paused = false;
+    let artifactSha256 = null;
 
     const finish = (status, error) => {
       if (settled) return;
@@ -298,7 +309,14 @@ function runExport({ dbName, res, filename, onStart, spawnFn }) {
       clearTimeout(timeoutTimer);
       if (killTimer) clearTimeout(killTimer);
       if (!gzipFlushed) { try { gzip.destroy(); } catch { /* already gone */ } }
-      resolve({ status, bytesSent, rawBytes, error: error || null, headersSent });
+      resolve({
+        status,
+        bytesSent,
+        rawBytes,
+        artifactSha256: status === 'completed' ? artifactSha256 : null,
+        error: error || null,
+        headersSent,
+      });
     };
 
     // TWO independent backpressure sources now sit downstream of pg_dump:
@@ -371,6 +389,7 @@ function runExport({ dbName, res, filename, onStart, spawnFn }) {
     gzip.on('data', (chunk) => {
       if (clientGone || settled) return;
       if (!headersSent) sendHeaders();
+      artifactHash.update(chunk);
       bytesSent += chunk.length;
       // Backpressure: a slow browser must not make us buffer the dump.
       if (res.write(chunk) === false) {
@@ -397,6 +416,7 @@ function runExport({ dbName, res, filename, onStart, spawnFn }) {
     gzip.on('end', () => {
       gzipFlushed = true;
       if (settled || clientGone) return;
+      artifactSha256 = artifactHash.digest('hex');
       if (!headersSent) sendHeaders(); // an empty database still gets a valid .gz
       try { res.end(); } catch { /* socket already gone */ }
       finish('completed', null);
