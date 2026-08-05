@@ -1,7 +1,21 @@
-// Home-screen panels (issue #911) — the compact widget blocks that sit
-// between the "Your apps" grid and "Featured apps". One panel exists so
-// far: "Challenges", listing the season's open challenges with the
-// viewer's own progress and the points each pays out.
+// Home-screen panels (issue #911) — the widget blocks that live IN the
+// launcher grid alongside the app tiles. Three exist:
+//
+//   challenges — the season's open challenges with the viewer's progress.
+//   discover   — the admin-curated featured tiles, with "Browse all apps"
+//                as the block's footer. The shell's ONLY door to the app
+//                directory, which is why it cannot be hidden.
+//   create     — the create-an-app tile. On EVERY home screen, for every
+//                account: an account with no app quota gets the same widget,
+//                dimmed, explaining itself on tap (see renderCreatePanel for
+//                why this is unconditional rather than conditionally placed).
+//
+// PLACEMENT is not this module's business any more. Each widget occupies a
+// real (column, row) cell chosen by the viewer, stored per breakpoint and
+// written for the whole grid at once — see public/js/home-layout.js and
+// PUT /api/home-layout. This module owns the registry view (which widgets
+// exist, which are hidden, which may be hidden) and the CONTENT of each
+// block; home.js plants a slot per widget and this paints into it.
 //
 // NAMING — "panel", not "widget". home.js already owns a DIFFERENT
 // concept called "widget" (Home.renderWidgetSection / #widget-strip /
@@ -18,10 +32,11 @@
 // work here. Blocks are plain full-width children — .home-column bounds
 // the feed (see app.css; #922 removed the per-box bound).
 //
-// DRAGGING — the block is an item of the app grid itself (home.js plants
-// #home-panel-slot inside #app-list), so ONE recognizer — the kit's
-// attachReorder the app cards already use — carries it. The whole title bar
-// is the handle; the ⋮ button is the one thing excluded from it (_wire).
+// DRAGGING — each block is an item of the app grid itself (home.js plants a
+// `[data-panel-slot="<key>"]` host inside #app-list at the widget's stored
+// cell), so ONE recognizer — the kit's attachGridPlacement the app tiles
+// also use — carries them. The whole title bar is the handle; the ⋮ button
+// and the widgets' own controls are excluded from it (_wire).
 //
 // DENSITY — the block is capped at two app-grid rows (--home-panel-max-h,
 // derived in app.css) and spends that budget on a ~26px title bar, FOUR
@@ -202,65 +217,131 @@ const HomePanels = {
   // Home._dragActive: this section is outside #app-list, so painting it
   // mid-drag can't yank a card out from under the pointer.
   render() {
-    // Two possible hosts. Home.render() plants a multi-cell slot INSIDE
-    // #app-list at the viewer's position (default: after the last card),
-    // and that wins when it is there; the standalone section below the grid
-    // is the fallback for the views that have no grid to ride in — an
-    // active search, or a grid that hasn't rendered yet. Painting whichever
-    // exists keeps one render path for both.
-    const slot = document.getElementById('home-panel-slot');
+    // Hosts, in two shapes. Home.render() plants one multi-cell slot INSIDE
+    // #app-list per placed widget — `[data-panel-slot="<key>"]` — and those
+    // win when they exist; the standalone #home-panels section below the
+    // grid is the fallback for views that have no grid to ride in (an active
+    // search, or a grid that hasn't painted yet). Painting whichever exists
+    // keeps one render path for both.
+    const slots = Array.from(document.querySelectorAll('[data-panel-slot]'));
     const section = document.getElementById('home-panels');
-    const host = slot || section;
-    if (!host) return;
-    const html = HomePanels.renderAll();
-    if (slot && section) {
-      // Don't leave a stale copy in the section when the slot owns it.
-      section.innerHTML = '';
-      section.classList.add('hidden');
+    if (!slots.length && !section) return;
+
+    if (slots.length) {
+      // Don't leave a stale copy in the section when the slots own it.
+      if (section) {
+        section.innerHTML = '';
+        section.classList.add('hidden');
+      }
+      for (const slot of slots) {
+        const key = slot.dataset.panelSlot;
+        const panel = HomePanels.panelFor(key);
+        const html = panel ? HomePanels.renderPanel(panel) : '';
+        slot.innerHTML = html;
+        slot.classList.toggle('hidden', !html);
+        HomePanels._stampState(slot);
+        if (html) HomePanels._wire(slot);
+      }
+      return;
     }
-    host.innerHTML = html;
-    if (host === section) section.classList.toggle('hidden', !html);
-    else host.classList.toggle('hidden', !html);
-    if (html) HomePanels._wire(host);
+
+    const html = HomePanels.renderAll();
+    section.innerHTML = html;
+    section.classList.toggle('hidden', !html);
+    if (html) HomePanels._wire(section);
   },
 
-  // Cards above the block, as last dragged. null = never dragged, which
-  // Home.render() reads as "after the last card" — the place the block
-  // occupied before it was draggable at all.
-  positionFor(key) {
-    const positions = HomePanels._data && HomePanels._data.positions;
-    if (!positions || typeof positions !== 'object') return null;
-    const n = Number(positions[key]);
-    return Number.isInteger(n) && n >= 0 ? n : null;
-  },
-
-  // The one panel the grid hosts. With a single widget this is simply
-  // "challenges when it is visible"; a second widget would extend this to
-  // a list of slots.
+  // Lift a widget's own state attribute onto its HOST.
   //
-  // Deliberately NOT gated on a stored position any more. It was, and that
-  // was the "I can't drag it" bug: the grid slot is the only item the kit's
-  // reorder recognizer knows about, and the only writer of a position is a
-  // completed drag inside the grid — so an account that had never dragged
-  // the widget had no slot, no recognizer, and no way to ever get one. An
-  // absent position is a DEFAULT (after the last card), not an absent slot.
-  gridSlotPanelKey() {
-    if (!HomePanels._data) return null;
-    const panels = HomePanels._data.panels;
-    if (!Array.isArray(panels) || !panels.length) return null;
-    if (!HomePanels.renderAll()) return null;
-    return panels[0].key;
+  // The create widget stamps `data-create-enabled` on the markup it returns,
+  // but that markup is painted INSIDE the `[data-panel-slot]` host — so a
+  // selector written the way the spec describes it ("stamped on the host"),
+  // and the way the dapp.json checks and screenshot assertions write it,
+  // `[data-panel-slot="create"][data-create-enabled="true"]`, asks for both
+  // attributes on ONE element and matches nothing. Mirroring the value up is
+  // cheaper and less brittle than teaching every caller the two-element
+  // shape, and it keeps the widget itself the single place that decides.
+  _stampState(host) {
+    if (!host || !host.querySelector) return;
+    const inner = host.querySelector('[data-create-enabled]');
+    if (inner) host.setAttribute('data-create-enabled', inner.getAttribute('data-create-enabled'));
+    else if (host.hasAttribute && host.hasAttribute('data-create-enabled')) {
+      host.removeAttribute('data-create-enabled');
+    }
   },
 
-  // One article per visible panel, stacked. Empty string = render nothing
-  // at all (the section is hidden).
+  // Every widget the grid should place for this viewer, in registry order:
+  // the registry minus what they've hidden. This — NOT the built `panels`
+  // array — is what HomeLayout places, because `discover` and `create` are
+  // marker entries with no payload and would otherwise never get a cell.
+  gridSlotKeys() {
+    const data = HomePanels._data;
+    if (!data) return [];
+    const hidden = new Set(Array.isArray(data.hidden) ? data.hidden : []);
+    // The registry is the authority — it carries the marker widgets
+    // (discover, create) that build no payload and so never appear in
+    // `panels`. Falling back to the built panels when it is absent keeps a
+    // partial payload rendering something rather than blanking the grid.
+    const source = Array.isArray(data.registry) && data.registry.length
+      ? data.registry
+      : (Array.isArray(data.panels) ? data.panels : []);
+    return source.map((r) => r.key).filter((k) => k && !hidden.has(k));
+  },
+
+  // Is this widget allowed to be hidden? Discover is not (its footer is the
+  // shell's only door to the app directory). Everything else is — including
+  // `create`, for every account regardless of app quota.
+  isRemovable(key) {
+    const data = HomePanels._data;
+    const entry = data && Array.isArray(data.registry)
+      ? data.registry.find((r) => r.key === key) : null;
+    return !entry || entry.removable !== false;
+  },
+
+  titleFor(key) {
+    const data = HomePanels._data;
+    const entry = data && Array.isArray(data.registry)
+      ? data.registry.find((r) => r.key === key) : null;
+    if (entry && entry.title) return entry.title;
+    // A built payload carries its own title; fall back to it so a partial
+    // response (panels but no registry) still names the widget in its menu
+    // rather than heading the action sheet "Widget".
+    const built = data && Array.isArray(data.panels)
+      ? data.panels.find((p) => p && p.key === key) : null;
+    return (built && built.title) || 'Widget';
+  },
+
+  // The widget CONTENT for one key, whether or not the server built a
+  // payload for it. `challenges` has a real builder; `discover` and `create`
+  // are markers, so panelFor() may hand back a bare `{ key }` — enough for
+  // renderPanel() to dispatch on.
+  panelFor(key) {
+    if (!key) return null;
+    const data = HomePanels._data;
+    const panels = data && data.panels;
+    if (Array.isArray(panels)) {
+      const built = panels.find((p) => p && p.key === key);
+      if (built) return built;
+    }
+    // Not in `panels` (a marker widget, or one whose build failed): still
+    // renderable if the registry knows it and the viewer hasn't hidden it.
+    if (!data || !Array.isArray(data.registry)) return null;
+    if (!data.registry.some((r) => r.key === key)) return null;
+    const hidden = Array.isArray(data.hidden) ? data.hidden : [];
+    if (hidden.includes(key)) return null;
+    return { key, title: HomePanels.titleFor(key) };
+  },
+
+  // One article per visible panel, stacked. Used ONLY by the #home-panels
+  // fallback host (the search view) — the in-grid path paints each slot
+  // individually so each widget lands in its own cell.
+  // Empty string = render nothing at all (the section is hidden).
   renderAll() {
     if (!window.App || !App.user) return '';
     if (!HomePanels._data) return '';
-    const panels = HomePanels._data.panels;
-    if (!Array.isArray(panels) || !panels.length) return '';
-    const blocks = panels
-      .map((p) => HomePanels.renderPanel(p))
+    const blocks = HomePanels.gridSlotKeys()
+      .map((k) => HomePanels.panelFor(k))
+      .map((p) => (p ? HomePanels.renderPanel(p) : ''))
       .filter(Boolean);
     if (!blocks.length) return '';
     // space-y-2 between blocks: each widget reads as its own box.
@@ -273,6 +354,8 @@ const HomePanels = {
   renderPanel(panel) {
     if (!panel) return '';
     if (panel.key === 'challenges') return HomePanels.renderChallengesPanel(panel);
+    if (panel.key === 'discover') return HomePanels.renderDiscoverPanel(panel);
+    if (panel.key === 'create') return HomePanels.renderCreatePanel(panel);
     return '';
   },
 
@@ -378,6 +461,130 @@ const HomePanels = {
     return HomePanels._panelShell(panel.key, titleHtml,
       `<div class="home-panel-rows${metered ? ' home-panel-rows--metered' : ''}">${rowsHtml}</div>`,
       HomePanels._panelFooter(panel.key, total, expanded));
+  },
+
+  // ── Discover ───────────────────────────────────────────────────────
+  //
+  // The former "Featured apps" section, now a widget in the grid: the
+  // admin-curated tiles plus the way into the #apps directory as the block's
+  // footer row. Both halves are unchanged in behaviour — the tiles are the
+  // same per-viewer `featured` flags GET /api/apps already serializes
+  // (Home.featuredApps derives them; no second query), and the footer is the
+  // same #home-browse-btn that used to sit under the old card.
+  //
+  // Tiles are the COMPACT 40px treatment (the widget-strip tile, not the
+  // 56px launcher card): a 2x2 block is ~171px wide on a phone and ~397px on
+  // desktop, and a full card simply does not fit. The count adapts to the
+  // footprint rather than being a constant.
+  //
+  // The footer ALWAYS renders — it is THE discovery path, so it must not
+  // depend on curation existing. With nothing left to feature, the tile row
+  // is swapped for a one-line note rather than hidden, so the block never
+  // collapses to a bare heading over a button.
+  renderDiscoverPanel(panel) {
+    const esc = HomePanels.esc;
+    const apps = (window.Home && typeof Home.featuredApps === 'function')
+      ? Home.featuredApps(Home._apps || []) : [];
+    const titleHtml = `
+      <span class="home-panel-title min-w-0 flex-1 truncate whitespace-nowrap text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${esc(panel.title || 'Discover')}</span>`;
+
+    const body = apps.length
+      ? `<div class="home-panel-rows home-discover-tiles">${
+          apps.map((a) => HomePanels.renderDiscoverTile(a)).join('')
+        }</div>`
+      : `<p class="home-panel-rows flex items-center px-2.5 py-2 text-[12px] leading-snug text-zinc-500 dark:text-zinc-400">Nothing featured right now — browse the full directory to find apps to add.</p>`;
+
+    const footer = `
+      <div class="home-panel-footer flex-none flex items-center justify-between gap-2 px-2.5 border-t border-zinc-200 dark:border-zinc-800">
+        <button type="button" id="home-browse-btn" class="home-panel-browse flex items-center gap-1.5 text-[12px] font-medium text-violet-600 dark:text-violet-400 hover:underline whitespace-nowrap">
+          <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+          <span class="whitespace-nowrap">Browse all apps</span>
+        </button>
+        <svg class="w-3.5 h-3.5 shrink-0 opacity-50 text-zinc-500 dark:text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+      </div>`;
+
+    return HomePanels._panelShell(panel.key, titleHtml, body, footer);
+  },
+
+  // One compact featured tile. Carries .app-card + data-slug so
+  // Home._wireDiscoveryCards binds it exactly as it bound the old featured
+  // row — same tap-to-open, same +/✓ add badge, same optimistic toggle.
+  renderDiscoverTile(app) {
+    const esc = HomePanels.esc;
+    const added = !!(window.Home && Home.isYours && Home.isYours(app));
+    let iconHtml;
+    let iconKind;
+    if (app.icon_url) {
+      iconKind = 'image';
+      iconHtml = `<img src="${esc(app.icon_url)}" alt="" loading="lazy" draggable="false" class="w-full h-full rounded-lg object-cover">`;
+    } else if (app.icon_emoji) {
+      iconKind = 'emoji';
+      iconHtml = `<span class="text-xl leading-none" aria-hidden="true">${esc(app.icon_emoji)}</span>`;
+    } else {
+      iconKind = 'letter';
+      iconHtml = esc(String(app.name || '?').charAt(0).toUpperCase());
+    }
+    return `
+      <div class="app-card home-discover-tile relative flex flex-col items-center gap-1 cursor-pointer" data-slug="${esc(app.slug)}" data-status="${esc(app.status || '')}"${app.demo ? ' data-demo="true"' : ''}>
+        <div class="relative">
+          <div class="app-icon-tile w-10 h-10 rounded-lg overflow-hidden flex items-center justify-center font-bold text-base" data-icon="${iconKind}">${iconHtml}</div>
+          <button class="card-add-btn absolute -top-1.5 -right-1.5 w-5 h-5 flex items-center justify-center rounded-full border shadow-sm transition-colors ${
+            added
+              ? 'bg-emerald-500 border-emerald-500 text-white'
+              : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-600 dark:text-violet-400 hover:border-violet-400'
+          }" data-slug="${esc(app.slug)}" data-added="${added}" title="${
+            added ? 'Added — tap to remove from Your apps' : 'Add to Your apps'
+          }" aria-label="${
+            added ? `Remove ${esc(app.name)} from Your apps` : `Add ${esc(app.name)} to Your apps`
+          }" aria-pressed="${added}">${
+            added
+              ? '<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>'
+              : '<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>'
+          }</button>
+        </div>
+        <span class="text-[0.6rem] leading-tight truncate w-full text-center text-zinc-600 dark:text-zinc-300">${esc(app.name)}</span>
+      </div>`;
+  },
+
+  // ── Create app ─────────────────────────────────────────────────────
+  //
+  // The former "Create an app" section, now a 1x1 tile-sized widget.
+  //
+  // IT IS ON EVERY HOME SCREEN, FOR EVERY ACCOUNT. An account with no app
+  // quota gets the same widget in the same cell — dimmed, and tapping it
+  // says why — rather than having it silently absent. Two reasons this is
+  // the right shape and not a conditional placement:
+  //
+  //   1. canCreateApps is DERIVED per request (isAdmin || live app count <
+  //      app_quota — see /api/auth/me), so it flips without any user action:
+  //      creating your one allowed app, an admin editing your quota, an app
+  //      erroring out. Conditional placement would turn each of those flips
+  //      into a layout mutation that re-packs the grid under the user.
+  //   2. It's the majority rendering — most accounts carry no quota — so
+  //      "absent" would read as a missing feature rather than a locked one.
+  //
+  // The disabled state must NOT be a `disabled` attribute: a disabled
+  // element swallows pointer events, which would kill both the explanatory
+  // toast AND the widget's participation in the drag recognizer. aria-disabled
+  // plus a branch in the click handler keeps it draggable and tappable.
+  renderCreatePanel(panel) {
+    const esc = HomePanels.esc;
+    const canCreate = !!(window.Home && typeof Home.canCreate === 'function' && Home.canCreate());
+    const hint = (window.Home && Home.CREATE_DISABLED_HINT)
+      || 'Ask an admin to enable app creation for your account.';
+    // The whole tile is the button (a 1x1 cell has no room for chrome around
+    // one), and .home-create-btn is what Home.wireCreateButtons() binds.
+    return `
+      <div class="home-create-widget ${canCreate ? '' : 'home-create-widget--disabled'} h-full" data-panel="${esc(panel.key)}" data-create-enabled="${canCreate}">
+        <button type="button" class="home-create-btn home-create-tile w-full h-full rounded-xl p-3 flex flex-col items-center justify-center text-center gap-2 transition-colors"
+          ${canCreate ? '' : 'aria-disabled="true" '}title="${canCreate ? 'Create a new app' : esc(hint)}"
+          aria-label="${canCreate ? 'Create a new app' : esc(hint)}">
+          <span class="app-icon-tile app-icon-tile--empty w-14 h-14 rounded-xl flex items-center justify-center shrink-0" aria-hidden="true">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+          </span>
+          <span class="home-create-label text-xs leading-tight max-w-full ${canCreate ? 'text-violet-600 dark:text-violet-400' : 'text-zinc-400 dark:text-zinc-500'}">Create app</span>
+        </button>
+      </div>`;
   },
 
   // Does this challenge draw a progress bar? One definition, used by the
@@ -507,6 +714,46 @@ const HomePanels = {
         HomePanels.openMenu(btn.dataset.panelKey, btn);
       });
     });
+
+    // Discover: the footer's way into the app directory, plus the featured
+    // tiles. The tiles reuse Home's discovery wiring wholesale (tap opens,
+    // the badge toggles "Your apps") so the widget can't drift from the row
+    // it replaced. Route through the hash so the browse screen gets a real
+    // history entry and the OS back gesture returns here.
+    section.querySelectorAll('.home-panel-browse').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        location.hash = '#apps';
+      });
+    });
+    const tiles = section.querySelector('.home-discover-tiles');
+    if (tiles && window.Home && typeof Home._wireDiscoveryCards === 'function') {
+      Home._wireDiscoveryCards(tiles);
+    }
+
+    // Create: the enabled tile opens the create modal through
+    // Home.wireCreateButtons (which owns the cloneNode re-bind discipline).
+    // The DISABLED tile explains itself instead — same string as the tooltip
+    // and the ⋮ note, and deliberately not a no-op: a dead tap on a dimmed
+    // tile reads as broken, where a toast reads as locked.
+    const createHost = section.querySelector('.home-create-widget');
+    if (createHost) {
+      if (createHost.dataset.createEnabled === 'true') {
+        if (window.Home && typeof Home.wireCreateButtons === 'function') {
+          Home.wireCreateButtons();
+        }
+      } else {
+        const btn = createHost.querySelector('.home-create-btn');
+        if (btn) {
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const hint = (window.Home && Home.CREATE_DISABLED_HINT)
+              || 'Ask an admin to enable app creation for your account.';
+            if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast(hint);
+          });
+        }
+      }
+    }
   },
 
   // ── The widget menu ────────────────────────────────────────────────
@@ -527,11 +774,28 @@ const HomePanels = {
     if (key === 'challenges') {
       items.push({ label: 'Open challenges', handler: () => { HomePanels.goToChallenges(); } });
     }
-    items.push({
-      label: 'Hide widget',
-      destructive: true,
-      handler: () => { HomePanels.setHidden(key, true); },
-    });
+    if (key === 'discover') {
+      items.push({ label: 'Browse all apps', handler: () => { location.hash = '#apps'; } });
+    }
+    // The create widget's menu carries the ask-an-admin sentence as an inert
+    // note when the viewer has no quota — the same string the tile's tooltip
+    // and its tap toast use, so the explanation is reachable from the
+    // widget's own affordance rather than only by tapping it.
+    if (key === 'create' && window.Home && typeof Home.canCreate === 'function' && !Home.canCreate()) {
+      items.push({
+        label: Home.CREATE_DISABLED_HINT || 'Ask an admin to enable app creation for your account.',
+        disabled: true,
+      });
+    }
+    // Discover is the shell's only door to the app directory — it has no
+    // Hide row at all (and the server refuses the write besides).
+    if (HomePanels.isRemovable(key)) {
+      items.push({
+        label: 'Hide widget',
+        destructive: true,
+        handler: () => { HomePanels.setHidden(key, true); },
+      });
+    }
     return items;
   },
 
@@ -552,15 +816,16 @@ const HomePanels = {
     if (!key) return Promise.resolve(null);
     const present = HomePanels._menuApi();
     // No kit at all (the legacy/no-JS-kit path): send the press where the
-    // rows go rather than swallowing it. Hiding stays reachable in Settings.
+    // widget's own primary row goes rather than swallowing it. Hiding stays
+    // reachable in Settings.
     if (!present) {
-      HomePanels.goToChallenges();
+      if (key === 'challenges') HomePanels.goToChallenges();
+      else if (key === 'discover') location.hash = '#apps';
       return Promise.resolve(null);
     }
-    const panel = HomePanels.panelFor(key);
     return present({
       anchorEl,
-      title: (panel && panel.title) || 'Widget',
+      title: HomePanels.titleFor(key),
       items: HomePanels.menuItems(key),
     });
   },
@@ -586,36 +851,20 @@ const HomePanels = {
     }
   },
 
-  // Persist an iOS-style drag: `index` is how many app cards sit above the
-  // block. Optimistic — the grid has already moved the element, so this
-  // only records where it landed.
-  async setPosition(key, index) {
-    if (!key) return false;
-    const n = Number(index);
-    if (!Number.isInteger(n) || n < 0) return false;
-    if (HomePanels._data) {
-      HomePanels._data = {
-        ...HomePanels._data,
-        positions: { ...(HomePanels._data.positions || {}), [key]: n },
-      };
-    }
-    try {
-      const res = await fetch(`/api/home-panels/${encodeURIComponent(key)}/position`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({ index: n }),
-      });
-      return res.ok;
-    } catch (err) {
-      return false;
-    }
-  },
+  // NOTE: setPosition() is gone. A widget's place on the home screen is a
+  // real (column, row) cell now, written for the whole grid at once through
+  // PUT /api/home-layout — see HomeLayout + Home._persistLayout in home.js.
 
   // Per-user show/hide. Optimistic: the block disappears immediately and
   // comes back if the write fails.
+  //
+  // Discover refuses to hide (the server 400s it too): its footer is the
+  // shell's only door to the app directory. Create hides like any other
+  // widget REGARDLESS of app quota — the widget is on every home screen,
+  // so removing it must be equally available to everyone.
   async setHidden(key, hidden) {
     if (!key) return false;
+    if (hidden && !HomePanels.isRemovable(key)) return false;
     const prev = HomePanels._data;
     if (prev) {
       HomePanels._data = {
@@ -640,6 +889,10 @@ const HomePanels = {
       // Un-hiding needs the payload rebuilt — it was never fetched, or was
       // filtered out of the cache above.
       if (!hidden) await HomePanels.ensureLoaded({ force: true });
+      // Showing/hiding a widget changes which items the grid places, so the
+      // layout has to be re-derived (and re-persisted) around it. Home owns
+      // that; a missing Home just means the next load picks it up.
+      if (window.Home && typeof Home.load === 'function') Home.load();
       return true;
     } catch (err) {
       HomePanels._data = prev;

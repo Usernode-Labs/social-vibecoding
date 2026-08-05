@@ -1609,6 +1609,45 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   swipe actions first, then reorder on the container — the items are
   the `.un-swipe` wrappers) and with pull-to-refresh via the gesture
   arbiter. Returns `{ detach() }`; never throws on bad input.
+- **Free-form grid placement (the homescreen model).**
+  `unNative.attachGridPlacement(listEl, { cellFromPoint, itemSelector?,
+  handle?, longPressMs?, canPlace?, onLift?, onHover?, rectForCell?,
+  onPlace?, onSettle? })`. Reach for this instead of `attachReorder` when
+  your grid
+  is a CANVAS rather than a list — when a tile should be droppable in any
+  cell, gaps included, and nothing should re-pack behind it. Same physics
+  as reorder's grid mode (long-press lift on touch, drag past the slop on
+  desktop, a fixed ghost tracking the finger on both axes, edge
+  auto-scroll, haptics, spring settle, gesture arbiter), but the real item
+  holds its cell as a dashed slot and siblings never move. **The kit owns
+  the gesture; you own the geometry**: it never computes a cell, it calls
+  your `cellFromPoint(x, y)` (returning `{ col, row }` or `null`), asks
+  `canPlace(item, cell)` on each cell change, calls `onHover(item, cell,
+  ok)` so you can paint the target highlight, and finally
+  `onPlace(item, cell)` on a committed drop. **If your drop displaces
+  occupants rather than refusing, preview that in `onHover`** — move the
+  items that would be pushed to the cells they'd land in. A flow reorder
+  shows that for free (everything shuffles as you drag); free placement
+  only moves what actually collides, so without the preview an occupied
+  target is a guess. Compute the plan once in `canPlace` and reuse it in
+  `onHover`, or the highlight and the drop can disagree. **Give it
+  `rectForCell(item, cell)` too** — return where a committed drop lands
+  (`{ left, top }` in viewport coords; the target cell's own
+  `getBoundingClientRect()` is the natural answer) and the release glide
+  settles there. Omit it and the ghost settles on the dragged element's own
+  rect, which in this mode is still the cell it was picked up from: the tile
+  flies away from the finger, back to its origin, and only then pops into the
+  drop cell. Answer from the same plan the highlight used, so the glide lands
+  where the highlight promised even when the plan nudged the item to fit.
+  Everything else — the ghost, the origin slot, the highlight, your
+  `onPlace` re-render — is held until that glide finishes, so the whole
+  release reads as one motion. `onLift` / `onSettle` carry
+  the same deferral contract as `attachReorder` (hold a re-render flag in
+  the first, flush it in the second — it fires on drops, cancels and
+  detach alike). Rendering the grid as real cell elements while dragging
+  makes `cellFromPoint` a one-line `elementFromPoint(...).closest(...)`
+  and gives the user the drop target for free. Returns `{ detach() }`;
+  never throws on bad input.
 - **Bottom sheet.** `unNative.presentSheet({ content | contentEl,
   onDismiss })` — grabber, spring presentation, 1:1 drag-to-dismiss
   with momentum commit (a touch mid-spring inherits position and

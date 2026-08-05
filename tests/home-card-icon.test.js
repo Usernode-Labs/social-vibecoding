@@ -21,6 +21,13 @@ const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'home.js'),
   'utf8'
 );
+// The "Create app" tile moved out of home.js: it is a home-screen WIDGET
+// now (HomePanels.renderCreatePanel), so it is loaded here to keep it under
+// the same shared-icon-treatment assertions the app tiles are.
+const PANELS_SRC = fs.readFileSync(
+  path.join(__dirname, '..', 'public', 'js', 'home-panels.js'),
+  'utf8'
+);
 
 // Minimal functional stand-in for the DOM bits home.js's escapeHtml
 // leans on (createElement + textContent/innerHTML round-trip).
@@ -59,9 +66,10 @@ function makeHome() {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
-  vm.runInContext(`${SRC}\n;globalThis.__Home = Home;`, sandbox);
+  vm.runInContext(`${SRC}\n${PANELS_SRC}\n;globalThis.__Home = Home;`, sandbox);
   const Home = sandbox.__Home;
   Home.__sandbox = sandbox;
+  Home.__HP = sandbox.HomePanels;
   return Home;
 }
 
@@ -111,7 +119,7 @@ test('every icon tile carries .app-icon-tile and no violet colouring', () => {
     Home.renderAppCard(baseApp()),
     Home.renderAppCard(baseApp({ icon_emoji: '🎮' })),
     Home.renderAppCard(baseApp({ icon_url: '/app-icons/' + 'a'.repeat(32) })),
-    Home.renderCreateTile(),
+    Home.__HP.renderCreatePanel({ key: 'create' }),
     Home.renderWidgetTile({ id: 'w1', name: 'Demo App', slug: 'demo' }),
   ];
   for (const html of variants) {
@@ -124,7 +132,7 @@ test('every icon tile carries .app-icon-tile and no violet colouring', () => {
     assert.doesNotMatch(tile[0], /text-violet/, 'no violet glyph colour');
   }
   // The create-tile placeholder keeps its "empty slot" variant.
-  assert.match(Home.renderCreateTile(), /app-icon-tile app-icon-tile--empty/);
+  assert.match(Home.__HP.renderCreatePanel({ key: 'create' }), /app-icon-tile app-icon-tile--empty/);
 });
 
 // The fainter letter is CSS-side: the tile tags its kind with

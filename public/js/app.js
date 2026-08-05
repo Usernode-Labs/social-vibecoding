@@ -1212,10 +1212,13 @@ const App = {
     // Update home screen card if visible
     const card = document.querySelector(`.app-card[data-slug="${data.slug}"]`);
     if (card) {
-      const dot = card.querySelector('.status-dot');
-      if (dot) {
-        dot.className = `status-dot ${data.status}`;
-      }
+      // The tile carries no status dot any more (a launcher icon should
+      // read as an app, not a dashboard row), so `data-status` IS the
+      // update: it gates the tap-to-open handler and the cursor, and it is
+      // what a full re-render reads back. The visible copy — "Spinning
+      // up…" / "Error" and the Retry button — comes from the Home.load()
+      // below, which every status worth showing already triggers.
+      card.dataset.status = data.status;
       // #416: 'error' also triggers a re-pull — the fresh list carries
       // the (server-gated) last_failure_reason for the card tooltip and
       // the "View build log" menu item.

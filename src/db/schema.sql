@@ -92,19 +92,16 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_progress_estimate BOOLEAN NOT NULL
 -- "widget" for the iOS home-screen widget's pinned app grid.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panels_hidden TEXT[] NOT NULL DEFAULT '{}';
 
--- Where each home-screen panel sits among the app-grid rows (issue #911) —
--- an iOS-homescreen-style drag position, one entry per panel key:
---   { "challenges": 4 }   -- 4 app cards above the block
--- The value counts APP CARDS above the panel, not rows: the panel is a
--- col-span-full grid item, so it always breaks onto its own line and the
--- cards above it fill whatever rows the current breakpoint gives them.
--- That keeps the stored position correct across breakpoints (a row index
--- would mean something different at 2 columns than at 5).
--- An ABSENT key means "the default slot" — directly under the whole grid —
--- so every existing account keeps today's layout with no backfill. Keys
--- are validated against the server registry on write, same as
--- home_panels_hidden above; read and written only by
--- src/routes/home-panels.js.
+-- RETIRED — superseded by the `user_home_layout` table (free-form home-grid
+-- placement). It used to hold an iOS-homescreen-style drag position per
+-- panel key ({ "challenges": 4 } = four app cards above the block), which
+-- only ever expressed "which flow slot" — the home grid now stores real
+-- (column, row) cells per breakpoint instead, and holes are a first-class
+-- concept a card-count can't represent.
+--
+-- The column is LEFT IN PLACE, unread and unwritten: this file is
+-- append-only (it has no DROP COLUMN anywhere) and a dead JSONB default of
+-- '{}' costs nothing. Nothing may read it — see user_home_layout below.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panel_positions JSONB NOT NULL DEFAULT '{}';
 
 -- Platform-level user language preference (issue #757). A BCP-47 language
@@ -1834,6 +1831,73 @@ ALTER TABLE app_favorites ADD COLUMN IF NOT EXISTS sort_order INTEGER;
 -- insert/delete (see POST /api/apps/:slug/favorite in
 -- src/routes/apps.js).
 ALTER TABLE app_favorites ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Free-form per-user home-screen layout: where every app tile and widget
+-- sits on the launcher grid, as a real (column, row) CELL rather than a
+-- position in a flow. This is what makes holes possible — an arrangement
+-- with an empty row and one app alone in the bottom-right corner is
+-- expressible here and is not expressible as an ordering.
+--
+-- ONE LAYOUT PER COLUMN COUNT. `cols` is the breakpoint discriminator: the
+-- home grid is 4 columns on a phone and 5 above 640px, and a layout with
+-- intentional holes has no round-trip between the two widths. Storing one
+-- arrangement per width is what lets a phone drag be remembered without
+-- silently rewriting the desktop arrangement (and vice versa). A width with
+-- NO rows means "never dragged at this width" — the client derives that
+-- view by reflowing the other one (or from app_favorites.sort_order flow
+-- order) and only persists once the user actually drags there. That is why
+-- this table needs no backfill: every existing account keeps today's
+-- arrangement as a derivation.
+--
+-- A table rather than a JSONB column on `users` (the retired
+-- home_panel_positions above was the latter) precisely for the app FK:
+-- ON DELETE CASCADE means a deleted app vacates its cell for free, where a
+-- blob would accumulate dead ids that every home paint would have to filter.
+--
+-- Cells only, never sizes: a widget's footprint (w x h, per column count)
+-- comes from PANEL_REGISTRY in src/routes/home-panels.js, so a widget can
+-- be resized in code without migrating anyone's stored layout. The client's
+-- HomeLayout.repair() resolves any overlap that a size change introduces.
+--
+-- Widget rows are NEVER conditional on the viewer's permissions — notably
+-- the 'create' widget is stored for every account regardless of app quota;
+-- whether it is tappable is a render-time read of the derived canCreateApps
+-- boolean. Nothing about quota reaches this table, so gaining or losing it
+-- can never move or drop anyone's tiles.
+--
+-- Not staging:private: a home-screen arrangement is a display preference
+-- with no sensitive content, and staging previews are far more useful with
+-- real layouts in them.
+CREATE TABLE IF NOT EXISTS user_home_layout (
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  -- 4 (phone) or 5 (>= 640px). Kept in step with HomeLayout.columnsForWidth
+  -- in public/js/home-layout.js and the grid classes on #app-list.
+  cols        SMALLINT NOT NULL,
+  item_type   TEXT NOT NULL,
+  app_id      INTEGER REFERENCES apps(id) ON DELETE CASCADE,
+  widget_key  TEXT,
+  grid_col    SMALLINT NOT NULL,
+  grid_row    SMALLINT NOT NULL,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT user_home_layout_kind CHECK (
+    (item_type = 'app' AND app_id IS NOT NULL AND widget_key IS NULL)
+    OR (item_type = 'widget' AND widget_key IS NOT NULL AND app_id IS NULL)
+  ),
+  CONSTRAINT user_home_layout_cols CHECK (cols IN (4, 5)),
+  CONSTRAINT user_home_layout_col CHECK (grid_col >= 0 AND grid_col < cols),
+  -- 8 rows is the free-PLACEMENT canvas, not a capacity cap: items that
+  -- don't fit render as dense overflow rows below it (client-side) and are
+  -- simply not stored until they're dragged back onto the canvas.
+  CONSTRAINT user_home_layout_row CHECK (grid_row >= 0 AND grid_row < 8)
+);
+-- One cell per item per width. Partial indexes rather than a composite PK
+-- because exactly one of app_id / widget_key is set on any row.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_home_layout_app
+  ON user_home_layout(user_id, cols, app_id) WHERE app_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_home_layout_widget
+  ON user_home_layout(user_id, cols, widget_key) WHERE widget_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_user_home_layout_read
+  ON user_home_layout(user_id, cols);
 
 -- Admin-curated "Find more apps" row on the home screen. Global (one
 -- ordered list for everyone — no per-user targeting), display-only, and

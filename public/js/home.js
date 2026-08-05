@@ -1,5 +1,25 @@
 const Home = {
+  // Can this viewer create apps right now? Derived per request by
+  // /api/auth/me as `isAdmin || live app count < app_quota`, so it flips
+  // without any user action — creating your one allowed app, an admin
+  // editing your quota, an app erroring out.
+  //
+  // It gates the create WIDGET's appearance only, never whether the widget
+  // exists: the widget is on every home screen, in the layout, for every
+  // account (see HomePanels.renderCreatePanel for why).
+  //
+  // ?shot=create-disabled forces the locked rendering regardless. That is
+  // not a convenience: every capture identity is an admin, and the only
+  // zero-quota staging fixture carries a sentinel password and cannot be
+  // signed into — so without a URL the MAJORITY rendering (most accounts
+  // carry no quota) would be invisible to before/after screenshots and to
+  // every declared check. Pure UI state: it flips one boolean at render
+  // time, writes nothing, and is not env-gated, so it works in production
+  // the moment it ships.
   canCreate() {
+    try {
+      if (new URLSearchParams(location.search).get('shot') === 'create-disabled') return false;
+    } catch (err) { /* ignore */ }
     return !!App.user?.canCreateApps;
   },
 
@@ -14,29 +34,30 @@ const Home = {
       return;
     }
     Home._probeShortcutSupport();
-    // Home-screen panels (#911, public/js/home-panels.js). TTL-guarded
-    // inside, so the dozen WS/event paths that call load() don't turn into
-    // a dozen fetches; it paints itself when the data lands.
+    // Home-screen widgets (#911, public/js/home-panels.js) and the viewer's
+    // stored grid layout (public/js/home-layout.js). Both are TTL-guarded /
+    // de-duped inside, so the dozen WS/event paths that call load() don't
+    // turn into a dozen fetches.
     //
     // Deliberately NOT awaited — the grid must not wait on a second request
-    // to paint. But the two fetches race, and losing that race used to cost
-    // the widget its drag: with no panels data yet, render() below plants no
-    // slot, so the block fell back to the #home-panels section, which has no
-    // reorder wiring at all. Re-plant once the data lands if the grid is
-    // already painted without a slot. Self-terminating — the slot then
-    // exists — and render() defers itself mid-drag like every other path.
-    window.HomePanels?.ensureLoaded()?.then(() => {
+    // to paint. But the fetches race, and losing that race used to cost the
+    // widgets their drag: with no registry yet, render() plants no slots, so
+    // the blocks fell back to the #home-panels section, which has no drag
+    // wiring at all. Re-render once either lands if the grid is already
+    // painted without slots. Self-terminating — the slots then exist — and
+    // render() defers itself mid-drag like every other path.
+    const repaint = () => {
       // Gated on _apps, not on the DOM: "the grid has painted a payload" is
       // the condition, and #app-list is non-empty for the failure state too.
       if (!Home._apps) return;
-      // An active search legitimately has no slot — the section below the
+      // An active search legitimately has no slots — the section below the
       // grid is that view's host on purpose. Re-rendering would be a no-op
       // at best and would rebuild the results grid for nothing.
       if ((Home._query || '').trim()) return;
-      if (document.getElementById('home-panel-slot')) return;
-      if (!window.HomePanels?.gridSlotPanelKey?.()) return;
       Home.render();
-    });
+    };
+    window.HomePanels?.ensureLoaded()?.then(repaint);
+    Home._ensureLayoutLoaded()?.then(repaint);
     const listEl = document.getElementById('app-list');
 
     try {
@@ -140,6 +161,262 @@ const Home = {
       .slice(0, Home.FEATURED_LIMIT);
   },
 
+  // ===== Free-form grid layout =====
+  //
+  // The viewer's arrangement, per column count: { "4": [item…], "5": […] }.
+  // Populated from GET /api/home-layout; a width with an empty array has
+  // never been dragged and is DERIVED on demand (see currentLayout).
+  _layouts: null,
+  _layoutFetchedAt: 0,
+  _layoutInflight: null,
+  LAYOUT_TTL_MS: 60 * 1000,
+
+  // True when `_layouts` came from the staging ?demo=1 payload rather than
+  // this viewer's own rows. That payload is READ-ONLY by contract — it
+  // exists so a reviewer signed in as any cloned identity can see the
+  // feature — so nothing derived from it may be written back. Without this
+  // flag the very first paint persists it: the demo layout references demo
+  // apps that don't exist for the viewer, repair() drops them, and the
+  // "stored layout was corrected" path then overwrites their real cells
+  // with a repaired copy of the fixture.
+  _layoutIsDemo: false,
+
+  // The column count the grid is rendering at right now. Read from the
+  // viewport, NOT from the DOM: it has to be answerable before the first
+  // paint, and it must agree with the `grid-cols-4 sm:grid-cols-5` classes
+  // on #app-list — HomeLayout.BREAKPOINT_PX is the single source for that
+  // 640px boundary.
+  currentCols() {
+    const w = (typeof window !== 'undefined' && window.innerWidth) || 1280;
+    return HomeLayout.columnsForWidth(w);
+  },
+
+  // The column count the DOM currently HOLDS, as opposed to the one the
+  // viewport now implies. null while the search view is up (a flat list has
+  // no placement to go stale). The two diverge the instant a window crosses
+  // 640px, which is what _wireViewport watches for.
+  _renderedCols: null,
+
+  // ===== Live reflow across the 640px boundary =====
+  //
+  // The CSS switches columns on its own — `grid-cols-4 sm:grid-cols-5` plus
+  // the media-queried --home-cell-h — but every item's cell comes from an
+  // INLINE grid-column/grid-row this module wrote at render time. Without
+  // this handler those inline placements survive the breakpoint: widen a
+  // narrowed window and the tiles keep the 4-column arrangement inside a
+  // 5-column grid — a dead trailing column, widgets spanning 4 of 5, and it
+  // stays that way until some unrelated event (a WS app_status, a poll)
+  // happens to re-render. Desktop windows are resizable, so this is a
+  // desktop bug even though the breakpoint reads as a phone/tablet one.
+  //
+  // Two signals, one idempotent handler:
+  //   - matchMedia('(min-width: 640px)') change — fires exactly once, on the
+  //     crossing itself, and costs nothing in between;
+  //   - a debounced resize — the backstop for WebViews old enough to lack
+  //     MediaQueryList.addEventListener (the same caution Home._schemeQuery
+  //     takes over matchMedia itself), and the thing that catches a viewport
+  //     change that arrives without a media-query flip.
+  // Both funnel into _applyColumnCount, which no-ops unless the count
+  // actually moved, so double delivery is free.
+  _viewportWired: false,
+  _resizeDebounce: null,
+  RESIZE_DEBOUNCE_MS: 150,
+
+  _wireViewport() {
+    if (Home._viewportWired) return;
+    if (typeof window === 'undefined' || !window.addEventListener) return;
+    Home._viewportWired = true;
+
+    window.addEventListener('resize', () => {
+      clearTimeout(Home._resizeDebounce);
+      Home._resizeDebounce = setTimeout(
+        () => Home._applyColumnCount(), Home.RESIZE_DEBOUNCE_MS
+      );
+    });
+
+    try {
+      const mq = typeof window.matchMedia === 'function'
+        ? window.matchMedia(`(min-width: ${HomeLayout.BREAKPOINT_PX}px)`)
+        : null;
+      // addListener is the deprecated spelling; some WebViews have only it.
+      if (mq && mq.addEventListener) {
+        mq.addEventListener('change', () => Home._applyColumnCount());
+      } else if (mq && mq.addListener) {
+        mq.addListener(() => Home._applyColumnCount());
+      }
+    } catch (err) { /* resize alone still covers it */ }
+  },
+
+  // Re-render at the viewport's column count when — and only when — it
+  // changed. The layout itself comes from Home.currentLayout(cols), which
+  // already resolves "this width's stored arrangement, else the other
+  // width's reflowed, else flow order" and — crucially — only writes back a
+  // repair of a genuinely STORED layout. A derivation is never persisted, so
+  // dragging a window across 640px can never claim the other breakpoint on
+  // the viewer's behalf: they have to actually drag something at that width.
+  _applyColumnCount() {
+    // The search view is a flat, transient list with no placement and no
+    // drag, so nothing about it can go stale at a new width. The next grid
+    // render reads the live count (_renderedCols is null here, so the
+    // comparison below can't wrongly skip it).
+    if ((Home._query || '').trim()) return;
+    const cols = Home.currentCols();
+    if (cols === Home._renderedCols) return;
+    // A breakpoint crossing MID-GESTURE. The recognizer captured the old
+    // column count when it was attached, the overlay was built with the old
+    // number of cells, and the CSS grid underneath has already switched — so
+    // the tint, the hit-test and the drop would all be describing a grid
+    // that is no longer on screen. detach() is the kit's clean abort: it
+    // removes the ghost, releases the dashed slot, clears the hover preview
+    // and fires onSettle(false), which drops _dragActive and takes the
+    // overlay down. The item stays where it was; nothing is persisted. The
+    // re-render below then re-attaches against the new column count.
+    if (Home._dragActive && Home._placementHandle) {
+      try { Home._placementHandle.detach(); } catch (err) { /* ignore */ }
+      Home._placementHandle = null;
+      Home._dragActive = false;
+    }
+    Home.render();
+  },
+
+  // Every item that should be on the grid right now, as stable ids: the
+  // viewer's apps plus the widgets they haven't hidden. This is the input
+  // HomeLayout.repair reconciles a stored layout against.
+  //
+  // The `create` widget is in here for EVERY account — HomePanels.gridSlotKeys
+  // filters on hidden-ness alone and never on app quota. A quota change must
+  // never look like "this item disappeared", or losing quota would delete the
+  // widget from the layout and re-place it somewhere else on the way back.
+  presentIds() {
+    const { yours } = Home.partitionApps(Home._apps || []);
+    const ids = yours.map((a) => `app:${a.slug}`);
+    // Staging's request-time demo tiles (?demo=1, src/routes/apps.js) are
+    // NOT favourites and NOT collaborations, so partitionApps rightly leaves
+    // them out of "Your apps" — but the ?demo=1 layout places them on the
+    // grid on purpose, and repair() drops any item that isn't present. The
+    // result was a demo route whose whole point is showing the grid rendering
+    // a grid with the demo tiles silently removed: for a viewer with no apps
+    // of their own that left nothing but the three widgets. They are placed
+    // like anything else (the spec's rule); only the DRAG excludes them,
+    // which the recognizer's `:not([data-demo])` selector already handles.
+    for (const app of Home._apps || []) {
+      if (app && app.demo && !Home.isYours(app)) ids.push(`app:${app.slug}`);
+    }
+    for (const key of (window.HomePanels?.gridSlotKeys?.() || [])) ids.push(`widget:${key}`);
+    return ids;
+  },
+
+  // The layout to render at this column count, always repaired against what
+  // actually exists. Resolution order:
+  //   1. this width's stored arrangement (the viewer dragged here);
+  //   2. the OTHER width's, reflowed (they dragged on their other device);
+  //   3. flow order from favorite_order — i.e. exactly today's home screen.
+  // Only (1) is authoritative; (2) and (3) are derivations and are NOT
+  // persisted until the viewer actually drags at this width. That is what
+  // makes this feature need no backfill and what keeps a phone visit from
+  // silently rewriting a desktop arrangement.
+  currentLayout(cols) {
+    const present = Home.presentIds();
+    const stored = Home._layouts && Home._layouts[String(cols)];
+    let base;
+    if (Array.isArray(stored) && stored.length) {
+      base = stored;
+    } else {
+      const other = cols === 4 ? 5 : 4;
+      const otherStored = Home._layouts && Home._layouts[String(other)];
+      if (Array.isArray(otherStored) && otherStored.length) {
+        base = HomeLayout.reflow(otherStored, other, cols);
+      } else {
+        const { yours } = Home.partitionApps(Home._apps || []);
+        base = HomeLayout.deriveDefault({
+          apps: yours.map((a) => a.slug),
+          widgets: window.HomePanels?.gridSlotKeys?.() || [],
+          cols,
+        });
+      }
+    }
+    const { layout, changed } = HomeLayout.repair(base, cols, present);
+    // ALWAYS cache what we are about to render. The drag handlers resolve a
+    // dragged element to its layout item through this (Home._itemFor), so a
+    // path that left it stale made every drop a no-op — canPlace could not
+    // find the item and vetoed the whole gesture.
+    Home._layoutCache = layout;
+    // A repair of a STORED layout is a real correction (an app was added or
+    // deleted, a widget was hidden, a size changed) and is worth persisting
+    // so the next load is clean. A repair of a derivation is not — writing it
+    // would turn a passive visit into a claim on this width.
+    if (changed && Array.isArray(stored) && stored.length) {
+      Home._layouts[String(cols)] = layout;
+      Home._persistLayout(cols, layout);
+    }
+    return layout;
+  },
+
+  // One fetch per TTL, shared by concurrent callers — Home.load() runs from
+  // a dozen WS/event paths and must not turn into a dozen requests.
+  _ensureLayoutLoaded(opts) {
+    const force = !!(opts && opts.force);
+    if (!window.App || !App.user) return Promise.resolve();
+    if (Home._layoutInflight) return Home._layoutInflight;
+    if (!force && Home._layouts
+        && Date.now() - Home._layoutFetchedAt < Home.LAYOUT_TTL_MS) {
+      return Promise.resolve();
+    }
+    let qs = '';
+    try {
+      if (new URLSearchParams(location.search).get('demo') === '1') qs = '?demo=1';
+    } catch (err) { /* ignore */ }
+    Home._layoutInflight = fetch(`/api/home-layout${qs}`, { credentials: 'same-origin' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json) => {
+        if (!json || !json.layouts) return;
+        // The server's widget registry is the authority on footprints —
+        // adopt it before anything lays out against it.
+        HomeLayout.setRegistry(json.widgets);
+        Home._layouts = json.layouts;
+        Home._layoutIsDemo = !!json.demo;
+        Home._layoutFetchedAt = Date.now();
+      })
+      // Silent on failure: a home screen must never break (or shout in the
+      // console) because the layout read hiccuped — it falls back to the
+      // derived default, which is exactly today's arrangement.
+      .catch(() => {})
+      .then(() => { Home._layoutInflight = null; });
+    return Home._layoutInflight;
+  },
+
+  // Write one width's whole arrangement. Fire-and-forget with a revert:
+  // the grid has already repainted optimistically, so this only records
+  // where things landed. Same optimistic-then-revert shape the favourite
+  // toggle uses.
+  async _persistLayout(cols, layout) {
+    // The staging demo payload is read-only by contract — it is a fixture,
+    // not the viewer's arrangement, and writing it back would overwrite
+    // their real cells with it. The grid still repaints optimistically, so
+    // a reviewer can drag things around; nothing survives the reload.
+    if (Home._layoutIsDemo) return true;
+    try {
+      const res = await fetch('/api/home-layout', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ cols, items: HomeLayout.toWire(layout) }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      if (json && json.layouts) {
+        Home._layouts = json.layouts;
+        Home._layoutFetchedAt = Date.now();
+      }
+      return true;
+    } catch (err) {
+      PlatformUI.toast('Couldn’t save your home screen layout.');
+      await Home._ensureLayoutLoaded({ force: true });
+      Home.render();
+      return false;
+    }
+  },
+
   render() {
     // Same deferral as load(): a search keystroke must not yank the
     // grid out from under an in-flight drag either.
@@ -152,6 +429,9 @@ const Home = {
     const canCreate = Home.canCreate();
     const apps = Home._apps || [];
     Home._wireSearch();
+    // Idempotent, and armed from the same place as the search wiring so the
+    // grid starts watching the breakpoint on its very first paint.
+    Home._wireViewport();
 
     const query = (Home._query || '').trim();
     // Home is "Your apps" only now — every other app lives on the
@@ -170,150 +450,94 @@ const Home = {
       // header, widget strip and drag affordance all step aside until
       // the query clears — reorder is only meaningful against the
       // canonical ordering.
+      //
+      // No placement here, so there is no column count to keep in step —
+      // and null can never equal currentCols(), so clearing the query and
+      // re-rendering always re-reads the live width.
+      Home._renderedCols = null;
       const matches = Home.filterApps(yours, query);
       if (!matches.length) {
-        html = `<div class="col-span-full py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">No apps match &ldquo;${escapeHtml(query)}&rdquo; — try <span class="text-violet-500">Browse all apps</span> below.</div>`;
+        html = `<div class="col-span-full py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">No apps match &ldquo;${escapeHtml(query)}&rdquo; — clear the search and try the <span class="text-violet-500">Discover</span> widget.</div>`;
       } else {
         html = `<div class="home-section-header col-span-full">${matches.length} result${matches.length === 1 ? '' : 's'}</div>`;
         html += matches.map((a) => Home.renderAppCard(a)).join('');
       }
     } else {
       yoursCount = yours.length;
-      // Legacy-path gate only: reordering is meaningless with a single
-      // card. The kit path drags every card in the section, so it
-      // ignores this.
-      canDragYours = yours.length >= 2;
-      const kitDrag = Home._useKitReorder();
-      // iOS-in-app only: mirror of the homescreen widget's pinned grid,
-      // manageable in place (drag in / reorder / ✕). Empty string
-      // everywhere else — see _widgetUiActive.
-      html = Home.renderWidgetSection();
-      // No "Your apps" heading: the grid IS the top of the feed, and the
-      // label was pure chrome above icons that already read as apps. The
-      // trailing sections keep their own headings — they need naming, this
-      // didn't.
-      if (yours.length) {
-        // Tag the cards at render time: data-yours drives both the
-        // drag wiring's selector and the drop classification;
-        // cursor-grab replaces cursor-pointer as the discoverability
-        // hint when the card is draggable.
-        // The home-screen panel (#911) rides IN the grid, ALWAYS: a slot
-        // spanning two grid columns (and two rows from md up) planted after
-        // N cards, so app icons flow around it exactly like an iOS widget
-        // and it can be dropped beside a card as well as between rows.
-        //
-        // It is in the grid from the first paint even for an account that
-        // has never dragged it, and that is the fix for "I can't drag it":
-        // the slot is the ONLY thing the kit's reorder recognizer sees, so
-        // gating it on a stored position made the widget undraggable until
-        // a drag had already happened. No position stored → it sits after
-        // the last card, which is where the un-dragged block used to
-        // render, so the default view is unchanged.
-        const panelKey = window.HomePanels?.gridSlotPanelKey?.() || null;
-        const panelStored = panelKey ? window.HomePanels.positionFor(panelKey) : null;
-        const panelAt = panelKey
-          ? Math.max(0, Math.min(panelStored == null ? yours.length : panelStored, yours.length))
-          : null;
-        const cards = yours.map((a) => {
-          let card = Home.renderAppCard(a);
-          card = card.replace('class="app-card ', 'data-yours="true" class="app-card ');
-          if (kitDrag || canDragYours) card = card.replace('cursor-pointer', 'cursor-grab');
-          return card;
-        });
-        if (panelAt != null) {
-          cards.splice(panelAt, 0, Home.renderPanelSlot(panelKey));
-        }
-        html += cards.join('');
-      } else {
-        // Compact inline line, NOT a full-height empty state: the
-        // sections below ("Featured apps", "Create an app") are what
-        // this user needs to see, and a centered hero would push them
-        // off the fold. Most accounts have zero apps here.
-        html += `<div class="col-span-full pb-2 text-sm text-zinc-500 dark:text-zinc-400">You haven&rsquo;t added any apps yet — pick one below.</div>`;
-        // With no cards there is nothing to reorder against, but the panel
-        // still hosts in the grid so there is exactly ONE host for it here
-        // (the #home-panels section below is the search-view fallback) and
-        // the block doesn't jump hosts the moment a first app is added.
-        const emptyPanelKey = window.HomePanels?.gridSlotPanelKey?.() || null;
-        if (emptyPanelKey) html += Home.renderPanelSlot(emptyPanelKey);
-      }
+      canDragYours = true;
+      // FREE-FORM PLACEMENT. Every app tile and every visible widget is a
+      // grid item at an explicit (column, row) cell the viewer chose —
+      // holes and all. There is no flow: an item's position comes from the
+      // layout model, never from its order in this array.
+      const cols = Home.currentCols();
+      // What the DOM is about to hold. _applyColumnCount diffs the live
+      // viewport against this to decide whether a resize is a real
+      // breakpoint crossing or just a window getting a bit wider.
+      Home._renderedCols = cols;
+      const layout = Home.currentLayout(cols);
+      const canvas = HomeLayout.canvasItems(layout);
+      const overflow = HomeLayout.overflowItems(layout);
+      const parts = canvas.map((it) => Home.renderGridItem(it, cols));
+      // Items past the 8-row canvas render after it in plain flow, packed
+      // densely. The row cap bounds free PLACEMENT, never how many apps a
+      // viewer may have — stranding a tile would be far worse than an
+      // extra row.
+      parts.push(...overflow.map((it) => Home.renderGridItem(it, cols, true)));
+      html += parts.join('');
     }
 
+    // The search view is a flat, transient list — it must not inherit the
+    // canvas's fixed row height (its "N results" header and empty-state
+    // line would each claim a whole 100px tile row). app.css keys the
+    // auto-rows off this attribute.
+    listEl.dataset.view = query ? 'search' : 'grid';
     listEl.innerHTML = html;
     Home._wireCards(listEl, canDragYours, yoursCount);
-    Home._wireWidgetStrip(listEl);
-    // Pure paint from the panels cache (#911) — no network. Keeps the card
-    // present through the grid's wholesale innerHTML re-renders.
+    // The iOS widget-editing strip renders ABOVE the grid, in its own
+    // section: a full-width flow item cannot coexist with explicit cell
+    // placement inside #app-list, which is where it used to live.
+    const stripSection = document.getElementById('home-widget-strip-section');
+    if (stripSection) {
+      const stripHtml = Home.renderWidgetSection();
+      stripSection.innerHTML = stripHtml;
+      stripSection.classList.toggle('hidden', !stripHtml);
+      if (stripHtml) Home._wireWidgetStrip(stripSection);
+    }
+    // Pure paint from the widgets cache (#911) — no network. Keeps each
+    // block present through the grid's wholesale innerHTML re-renders.
     window.HomePanels?.render();
-    Home.renderFindMore(apps);
-    Home.renderCreateSection(canCreate);
     Home._maybeOpenShotMenu(listEl);
     Home._searchReveal.sync();
+    // Screenshot-state deep link: paint the drag overlay in its resting
+    // visible state so the gesture-only surface is capturable and testable.
+    Home._maybeShowShotGrid(listEl);
   },
 
-  // The in-grid host for a home-screen panel (#911) — a real multi-cell
-  // grid item, not a row break. HomePanels paints into it; the drag is the
-  // same kit attachReorder the app cards use (see _wireCards), with this
-  // slot in its item selector, so the widget drops HORIZONTALLY beside a
-  // card as readily as it drops between rows.
-  //
-  // The spans, against #app-list's `grid-cols-2 md:grid-cols-3
-  // lg:grid-cols-4 xl:grid-cols-5`:
-  //   • col-span-2 is the whole row at the 2-column phone width (a 1-column
-  //     widget would be ~179px, too narrow for a goal plus its chips) and
-  //     roughly half the row at every width above it — 493px at md, 496px
-  //     at lg, 395px at xl, all under the 32rem cap, so the cap never
-  //     binds in the grid and the block has no dead space inside its cells.
-  //   • md:row-span-2 makes it occupy two real rows, which is exactly its
-  //     224px cap (108 + 8 + 108 — see --home-panel-max-h). App icons then
-  //     flow into the cells beside and below it instead of the row breaking.
-  //     Not applied at the phone width, where the widget already spans
-  //     every column and a second row would just be empty.
-  renderPanelSlot(key) {
-    return `<div id="home-panel-slot" class="home-panel-slot app-card-draggable touch-pan-y col-span-2 md:row-span-2" data-panel-slot="${escapeHtml(key)}"></div>`;
-  },
-
-  // "Featured apps": one contained card holding the admin-curated
-  // featured tiles and, as its attached footer row, the way into the
-  // #apps browse screen (see the card markup in index.html).
-  //
-  // The footer always renders — it is THE discovery path, so it must not
-  // depend on curation existing. When there is nothing left to feature
-  // for this viewer the tile grid is swapped for a one-line note rather
-  // than hidden outright, so the card never collapses to a bare heading
-  // sitting on top of a button.
-  renderFindMore(apps) {
-    const listEl = document.getElementById('home-featured-list');
-    if (!listEl) return;
-    const featured = Home.featuredApps(apps);
-    listEl.innerHTML = featured
-      .map((a) => Home.renderAppCard(a, { mode: 'featured' }))
-      .join('');
-    listEl.classList.toggle('hidden', featured.length === 0);
-    const emptyEl = document.getElementById('home-featured-empty');
-    if (emptyEl) emptyEl.classList.toggle('hidden', featured.length > 0);
-    Home._wireDiscoveryCards(listEl);
-    const btn = document.getElementById('home-browse-btn');
-    if (btn && !btn.dataset.wired) {
-      btn.dataset.wired = '1';
-      // Route through the hash so the browse screen gets a real history
-      // entry (the OS/browser back gesture returns here).
-      btn.addEventListener('click', () => { location.hash = '#apps'; });
+  // One placed item → its grid markup, carrying its cell as an INLINE
+  // style. Inline and not Tailwind classes: Tailwind here is the CDN JIT
+  // (see index.html), so per-cell arbitrary classes would be generated at
+  // runtime — and a cell that paints a frame late is a tile visibly jumping
+  // into place. `overflow` items get no placement at all so they flow.
+  renderGridItem(item, cols, overflow) {
+    const [w, h] = HomeLayout.sizeOf(item, cols);
+    const style = overflow
+      ? ''
+      : ` style="grid-column:${item.col + 1}/span ${w};grid-row:${item.row + 1}/span ${h}"`;
+    if (item.type === 'widget') {
+      return `<div class="home-panel-slot app-card-draggable touch-pan-y" data-panel-slot="${escapeHtml(item.key)}"${style}></div>`;
     }
-  },
-
-  // "Create an app": the former in-grid tile, now the page's trailing
-  // section. Non-creators get the same "ask an admin" hint the old
-  // empty state showed.
-  renderCreateSection(canCreate) {
-    const host = document.getElementById('home-create-body');
-    if (!host) return;
-    if (canCreate) {
-      host.innerHTML = Home.renderCreateTile();
-      Home.wireCreateButtons();
-    } else {
-      host.innerHTML = `<p class="home-create-disabled-hint text-sm text-zinc-400 dark:text-zinc-500 max-w-sm">${escapeHtml(Home.CREATE_DISABLED_HINT)}</p>`;
-    }
+    const app = (Home._apps || []).find((a) => a.slug === item.slug);
+    if (!app) return '';
+    let card = Home.renderAppCard(app);
+    // ONE splice for both attributes, onto the card's root element. Two
+    // sequential replaces looked equivalent and was not: inserting
+    // `data-yours` ahead of `class=` moved the anchor the placement replace
+    // was matching on, so every app tile silently lost its cell and fell
+    // back to flowing — the grid looked plausible and was not placed at all.
+    card = card.replace('class="app-card ',
+      `data-yours="true"${style} class="app-card `);
+    card = card.replace('cursor-pointer', 'cursor-grab');
+    return card;
   },
 
   // ===== Hidden search bar (pull-to-reveal) =====
@@ -658,62 +882,55 @@ const Home = {
         App.navigateToApp(card.dataset.slug);
       });
       Home._wirePrewarm(card);
-      // Gesture wiring, two eras (spec: reorder migration, old path
-      // kept behind a temporary flag for one release):
-      //
-      // Kit era (default): the kit's attachReorder (below, after this
-      // loop) owns long-press-lift-drag on EVERY card in the sectioned
-      // view (issue #746 — All Apps cards drag into "Your apps", yours
-      // cards reorder or drag out). The long-press actions menu
-      // survives only where the kit doesn't own the gesture: the
-      // search view and inert staging demo tiles. All other cards
-      // reach the menu through their "…" button. Drag-a-card-onto-
-      // the-widget-strip is retired on this path (the card menu's
-      // "Add to widget" covers it).
-      //
-      // Legacy era (localStorage platform-legacy-reorder = '1', or kit
-      // failed to load): the original hand-rolled pointer machinery
-      // ("Your apps" reorder only — no cross-section drags).
-      if (Home._useKitReorder()) {
-        if (yoursCount == null || card.dataset.demo === 'true') {
-          Home._wireCardLongPressMenu(card);
-        }
-      } else {
-        card.addEventListener('pointerdown', (e) => Home._onCardPointerDown(
-          e, card, listEl,
-          canDragYours && card.dataset.yours === 'true',
-          !!widgetSlugs
-            && card.dataset.status === 'running'
-            && !widgetSlugs.has(card.dataset.slug)
-        ));
+      // The placement recognizer (below) owns long-press-lift-drag on every
+      // card it matches. The long-press actions menu survives only where it
+      // does NOT: the search view (a transient view with no layout to write)
+      // and inert staging demo tiles. All other cards reach the menu through
+      // their "…" button.
+      if (yoursCount == null || card.dataset.demo === 'true') {
+        Home._wireCardLongPressMenu(card);
       }
     });
 
-    // Kit drag on every app card, in the kit's grid (displacement)
-    // mode: long-press lifts a floating ghost that tracks the finger on
-    // both axes, the real card stays in the grid as a dashed drop slot,
-    // siblings FLIP aside as the slot moves, and drops are cell-accurate
-    // (XY hit-testing, not row-only). Edge auto-scroll, springs, and the
-    // gesture arbiter come from the kit.
-    // The grid holds ONE section now ("Your apps" — every other app
-    // moved to the #apps browse screen), so every drop is a reorder:
-    // canDropCard vetoes nothing and _onKitCardDrop always persists an
-    // order. Removing an app is the card menu's "Remove from Your apps"
-    // (or the browse screen's ✓ badge). onLift/onSettle hold
-    // _dragActive so a WS-driven Home.load() can't replace the grid
-    // under the gesture (the legacy path's guard, now shared).
-    if (Home._useKitReorder() && yoursCount != null) {
-      if (Home._reorderHandle) { try { Home._reorderHandle.detach(); } catch {} }
-      Home._reorderHandle = window.unNative.attachReorder(listEl, {
-        grid: true,
-        // The home-screen panel slot (#911) is a draggable item in the SAME
-        // grid, so moving it between app rows is the kit's existing
-        // gesture rather than a second recognizer competing for the touch.
-        itemSelector: '.app-card:not([data-demo]), .home-panel-slot',
-        canDrop: (item, to) => Home.canDropCard(item.dataset.yours === 'true', to, yoursCount),
-        onLift: () => { Home._dragActive = true; },
+    // FREE-FORM PLACEMENT on the whole grid: long-press (or a desktop drag
+    // past the slop) lifts a floating ghost that tracks the finger on both
+    // axes, the real item holds its cell as a dashed slot, the grid draws
+    // itself underneath, and the drop lands in whatever cell the pointer is
+    // over — including an empty one with nothing around it. Nothing
+    // re-packs; the holes the viewer leaves are the point.
+    //
+    // The kit owns the gesture, this owns the geometry: cellFromPoint hits
+    // the overlay's own cell elements, so the highlight the user sees and
+    // the cell the drop commits to come from one code path with no
+    // arithmetic over grid-template-columns.
+    //
+    // The item selector deliberately matches EVERY widget host, including a
+    // create widget rendered in its disabled state — being unable to create
+    // apps must not make the widget unmovable.
+    if (yoursCount != null && window.unNative?.attachGridPlacement) {
+      if (Home._placementHandle) { try { Home._placementHandle.detach(); } catch {} }
+      const cols = Home.currentCols();
+      Home._placementHandle = window.unNative.attachGridPlacement(listEl, {
+        itemSelector: '.app-card[data-yours]:not([data-demo]), .home-panel-slot',
+        cellFromPoint: (x, y) => Home._cellFromPoint(x, y),
+        // canPlace runs first on every cell change and onHover right after,
+        // and both need the SAME displacement plan — so compute it once here
+        // and memo it for the paint. Recomputing would risk the highlight
+        // describing a different outcome than the one that commits.
+        canPlace: (item, cell) => !!Home._planFor(item, cell, cols),
+        onLift: (item) => {
+          Home._dragActive = true;
+          Home._showGridOverlay(listEl, cols, item);
+        },
+        onHover: (item, cell, ok) => { Home._previewDrop(item, cell, ok, cols); },
+        // The release spring's destination. Same memoised plan again: the
+        // tile settles on the cell the tint promised, not on the cell it was
+        // picked up from.
+        rectForCell: (item, cell) => Home._rectForCell(item, cell, cols),
+        onPlace: (item, cell) => { Home._onGridPlace(item, cell, cols); },
         onSettle: () => {
           Home._dragActive = false;
+          Home._hideGridOverlay();
           if (Home._reloadPending) {
             Home._reloadPending = false;
             Home._rerenderPending = false;
@@ -723,7 +940,6 @@ const Home = {
             Home.render();
           }
         },
-        onReorder: (from, to, item) => { Home._onGridDrop(from, to, item, listEl, yoursCount); },
       });
     }
 
@@ -913,30 +1129,23 @@ const Home = {
     const mode = (opts && opts.mode) || 'home';
     const discovery = mode === 'featured' || mode === 'browse';
     const isAwaiting = app.status === 'awaiting_secrets';
-    // The status dot is the home tile's single signal for "this app
-    // is doing something right now" — so an in-flight redeploy on an
-    // already-running app flips the dot back to its pulsing-yellow
-    // state, even though `app.status` is still 'running'. This is
-    // what makes it safe to render the per-app pill in `quiet` mode
-    // below (it skips the yellow `--deploying` modifier and stays a
-    // border-only chip; the dot carries the signal instead).
-    const isInFlightDeploy = !!(app.deployProgress && app.deployProgress.deploying);
-    const statusClass = isInFlightDeploy ? 'creating'
-      : app.status === 'running' ? 'running'
-      : app.status === 'creating' ? 'creating'
-      : isAwaiting ? 'creating'
-      : 'error';
+    // The status DOT is gone from the tile face — a launcher icon should
+    // read as an app, not as a dashboard row. What it signalled that no
+    // other tile element does is an in-flight redeploy of an
+    // ALREADY-RUNNING app; that state now lives only in the "…" menu's
+    // version pill (renderMenuHeaderHtml), which renders it explicitly.
+    // Every non-running status still says so in words on the tile — see
+    // statusLabel / warningHtml below — so "Spinning up…", "Awaiting
+    // secrets" and "Error" are unaffected.
     const statusLabel = app.status === 'running' ? ''
       : app.status === 'creating' ? 'Spinning up...'
       : isAwaiting ? 'Awaiting secrets'
       : 'Error';
     const isError = app.status === 'error';
     const isRunning = app.status === 'running';
-    // The active-users count (the same sticky 10-day rule as the
-    // group-chat dashboard tile — see src/services/active-users.js —
-    // so the home card and the dashboard agree) renders as a compact
-    // badge beside the title; the tooltip spells it out.
-    const activeUsers = parseInt(app.active_users || 0);
+    // The active-users badge is gone from the tile face too. The count is
+    // still served (and still shown where it is actually information: the
+    // Browse-all directory, which is a ranked list — see browse.js).
     // Awaiting-secrets cards stay clickable so the user can open the
     // app view + Secrets modal to fill values; other non-running
     // statuses show no app surface.
@@ -963,12 +1172,6 @@ const Home = {
     const warningHtml = statusLabel
       ? `<p class="text-xs mt-0.5 ${isAwaiting ? 'text-amber-500' : 'text-yellow-500'}"${failureTip}>${statusLabel}</p>`
       : '';
-
-    // Active-users badge beside the title: a tiny person glyph + the
-    // bare count, neutral grey, display-only. Always rendered (0
-    // included) so the signal is uniform across cards.
-    const usersBadgeHtml = `
-      <span class="users-badge inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium bg-zinc-500/10 text-zinc-500 dark:text-zinc-400 shrink-0" title="${activeUsers} active user${activeUsers === 1 ? '' : 's'}"><svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>${activeUsers}</span>`;
 
     // Hamburger actions-menu trigger, rendered as a round badge
     // overlapping the icon's top-right corner — always in that spot
@@ -1035,8 +1238,10 @@ const Home = {
     const icon = Home.iconTileFor(app);
 
     // Layout: icon first at the top (hamburger badged on its corner),
-    // title row centered below it (name + status dot + active-users
-    // badge), then the status warning when present. Everything is
+    // the name centered below it, then the status warning when present
+    // (the status dot and the active-users badge that used to flank the
+    // name are both gone — a launcher tile is an icon and a label).
+    // Everything is
     // horizontally centered in the tile — homescreen-launcher style —
     // and the card draws NO border: the violet hover/drop-slot tint
     // (.app-card:hover in app.css) is the affordance. The title row
@@ -1064,10 +1269,8 @@ const Home = {
           ${forkTagHtml}
         </div>
         <div class="w-full min-w-0">
-          <div class="flex items-center justify-center gap-1.5 min-w-0 max-w-full">
+          <div class="flex items-center justify-center min-w-0 max-w-full">
             <span class="font-medium text-sm truncate min-w-0">${escapeHtml(app.name)}</span>
-            <span class="status-dot ${statusClass} shrink-0" title="${app.status}"></span>
-            ${usersBadgeHtml}
           </div>
           ${warningHtml}
         </div>
@@ -1075,34 +1278,16 @@ const Home = {
     `;
   },
 
-  // "Build your own app" placeholder, rendered in the home screen's
-  // "Create an app" section (it used to be the last tile in the grid).
-  // Layout mirrors a real tile (thumbnail + title row, pill
-  // stacked on the left) but with a dashed violet outline around the
-  // card and a dashed, muted thumbnail (.app-icon-tile--empty) to
-  // telegraph "this slot is empty, tap to fill it".
-  // The click target is just the inner pill (.home-create-btn,
-  // wired in Home.wireCreateButtons) — clicking the surrounding
-  // tile chrome is intentionally inert so the tile reads as
-  // "decorative frame around a button" rather than "button-shaped
-  // hover surface". Hover/active styles live on the pill itself.
-  renderCreateTile() {
-    return `
-      <div class="home-create-tile rounded-xl bg-violet-500/[0.02] dark:bg-violet-500/[0.04] p-3 flex flex-col items-center text-center gap-2">
-        <div class="app-icon-tile app-icon-tile--empty w-14 h-14 rounded-xl flex items-center justify-center font-bold text-xl shrink-0">
-          Y
-        </div>
-        <div class="italic text-sm text-zinc-500 dark:text-zinc-400 truncate max-w-full">Build your own app</div>
-        <button type="button" class="home-create-btn inline-flex items-center gap-2 rounded-full border border-violet-500 dark:border-violet-400 px-4 py-2 text-sm font-medium text-violet-600 dark:text-violet-400 bg-white dark:bg-zinc-900 hover:bg-violet-50 dark:hover:bg-violet-950 transition-colors">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
-          Create new app
-        </button>
-      </div>`;
-  },
+  // NOTE: renderCreateTile() is gone. "Create an app" is a WIDGET in the
+  // grid now (HomePanels.renderCreatePanel), present on every home screen
+  // for every account — dimmed and self-explaining where the viewer has no
+  // app quota, rather than swapped for a hint paragraph in a trailing
+  // section. Home.wireCreateButtons() below still binds its button, and
+  // CREATE_DISABLED_HINT is still the one wording of the locked case.
 
   // ── Usernode widget section (iOS in-app only) ──────────────────────
   //
-  // A strip above "Your apps" mirroring the pinned grid the iOS
+  // A strip above the launcher grid mirroring the pinned grid the iOS
   // homescreen widget renders. Tiles are the device registry, in widget
   // order; entries pinned by other dapps show up too (letter icon, no
   // SV app match) and are just as removable/reorderable.
@@ -1129,7 +1314,7 @@ const Home = {
       </div>`
       : '';
     return `
-      <div class="home-section-header col-span-full flex items-center justify-between">
+      <div class="home-section-header flex items-center justify-between">
         <span class="flex items-center gap-1.5">Usernode widget
           <button id="widget-section-help" class="w-4 h-4 flex items-center justify-center rounded-full text-zinc-400 dark:text-zinc-500 hover:text-violet-500 dark:hover:text-violet-400 transition-colors" title="How to add the widget to your home screen" aria-label="How to add the widget to your home screen" aria-expanded="${Home._widgetHelpVisible}">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
@@ -1139,7 +1324,7 @@ const Home = {
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
         </button>
       </div>
-      <div id="widget-strip" class="col-span-full flex flex-wrap items-start gap-3 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-600 p-3 transition-colors">
+      <div id="widget-strip" class="flex flex-wrap items-start gap-3 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-600 p-3 transition-colors">
         ${helpPanel}
         ${tiles}
         <div class="widget-strip-hint w-full text-[0.7rem] text-zinc-500 dark:text-zinc-400 ${items.length ? '' : 'py-3 text-center'}">${hint}</div>
@@ -1204,13 +1389,16 @@ const Home = {
         Home._removeWidgetItem(btn.dataset.wid);
       });
     });
-    if (Home._useKitReorder()) {
-      // Kit reorder on the widget tiles (same flag as the card grid), in
-      // the kit's grid (displacement) mode — the list model's Y-only
+    if (window.unNative && typeof window.unNative.attachReorder === 'function') {
+      // The strip keeps attachREORDER, not the grid's attachGridPlacement,
+      // and that is the right call: the iOS widget's pinned shortcuts are a
+      // genuine ORDERED LIST on the device (the bridge's
+      // reorderHomeScreenShortcuts takes a sequence), not a canvas with
+      // holes. Displacement mode is used because the list model's Y-only
       // ghost and drop line are degenerate for a one-row tile strip
       // (issue #770). onLift/onSettle hold _dragActive so a WS-driven
       // Home.load() can't replace the strip mid-gesture (same guard as
-      // the card grid above).
+      // the card grid).
       if (Home._widgetReorderHandle) { try { Home._widgetReorderHandle.detach(); } catch {} }
       Home._widgetReorderHandle = window.unNative.attachReorder(strip, {
         grid: true,
@@ -2289,162 +2477,304 @@ const Home = {
   // Eats the synthetic click the browser fires right after the
   // pointerup that ends a drag (see the card click handler in load()).
   _suppressClick: false,
-  _reorderHandle: null,
+  _placementHandle: null,
   _widgetReorderHandle: null,
+  // The layout the CURRENT drag is resolving against. Snapshotted at lift so
+  // canPlace/onPlace can't disagree with each other, and so a mid-gesture
+  // fetch landing can't move the target cells under the finger.
+  _layoutCache: null,
 
-  // Kit-vs-legacy reorder switch (spec: keep the old code path behind a
-  // temporary flag for one release). Kit path is the default; set
-  // localStorage['platform-legacy-reorder'] = '1' to fall back to the
-  // hand-rolled drag if the kit physics regress on some device.
-  _useKitReorder() {
-    let legacy = false;
-    try { legacy = localStorage.getItem('platform-legacy-reorder') === '1'; } catch {}
-    return !legacy && !!(window.unNative && typeof window.unNative.attachReorder === 'function');
+  // ===== Free-form placement =====
+
+  // The layout the drag is working against — the same array render() painted
+  // from. Falls back to computing one if a drag somehow starts before a
+  // render (it can't, but a null here would be a silent no-op drop).
+  currentLayoutCached(cols) {
+    return Home._layoutCache || Home.currentLayout(cols);
   },
 
-  // ===== Drop classification =====
-  //
-  // The home grid is "Your apps" only now (every other app lives on the
-  // #apps browse screen), so there is no second section to drag into or
-  // out of: the old cross-section add / remove drops (issue #746) have
-  // no target left, and removal is the card menu's "Remove from Your
-  // apps" (or the browse screen's ✓ badge) instead.
-  //
-  // Both helpers are kept — rather than inlined — because they are the
-  // unit-tested seam for this behaviour (tests/home-drag-add.test.js).
-  //
-  // Every in-grid slot is now a legal reorder target.
-  canDropCard(_isYours, _to, _yoursCount) {
-    return true;
-  },
-
-  // Pure classifier for a completed kit drop: always a reorder within
-  // "Your apps", clamped to the section so a drop past the last card
-  // appends rather than writing an out-of-range index.
-  classifyCardDrop(from, to, yoursCount) {
-    // yoursCount == null means the caller doesn't know the section size
-    // (drag is disabled in that view anyway) — take `to` as given rather
-    // than clamping against a number we don't have.
-    if (yoursCount == null) return { kind: 'reorder', index: Math.max(0, to) };
-    const last = Math.max(0, yoursCount - 1);
-    return { kind: 'reorder', index: Math.max(0, Math.min(to, last)) };
-  },
-
-  // Pure builder for the new "Your apps" slug order after a drop:
-  // moves `slug` to `index` within `yoursSlugs`. (It also tolerates a
-  // slug absent from the list — it inserts in that case — which is why
-  // it needs no change now that only reorders reach it.)
-  buildYoursOrder(yoursSlugs, slug, index) {
-    const order = (yoursSlugs || []).filter((s) => s !== slug);
-    order.splice(Math.max(0, Math.min(index, order.length)), 0, slug);
-    return order;
-  },
-
-  // Completed kit drop: classify, update the Home._apps cache
-  // optimistically (the re-render is deferred to onSettle via
-  // _rerenderPending — onReorder fires while _dragActive still holds),
-  // then persist. Failure reverts to server truth via Home.load(),
-  // same optimistic-then-revert shape as _menuToggleFavorite.
-  // Dispatch a completed grid drop. Two kinds of item share the grid now:
-  // app cards, and the home-screen panel slot (#911).
-  //
-  // Both branches derive their index from the SETTLED DOM rather than the
-  // kit's `to`. That is not belt-and-braces: with a second item type in
-  // the list, `to` counts panel and cards together, so a card dropped
-  // below the panel would persist an index one too high. Counting the
-  // cards that actually precede the item is exact and needs no arithmetic
-  // about what else is in the grid.
-  _onGridDrop(from, to, item, listEl, yoursCount) {
-    const cardsBefore = (el) => {
-      let n = 0;
-      for (const node of listEl.querySelectorAll('.app-card[data-slug], .home-panel-slot')) {
-        if (node === el) break;
-        if (node.classList.contains('app-card')) n += 1;
-      }
-      return n;
-    };
-    if (item?.classList?.contains('home-panel-slot')) {
-      // The panel moved: record how many app cards ended up above it.
-      // Nothing else in the grid changed, so no card order is written.
-      const key = item.dataset.panelSlot;
-      window.HomePanels?.setPosition?.(key, cardsBefore(item));
-      return;
+  // A dragged DOM element → its layout item. The element carries only its
+  // identity (data-slug / data-panel-slot); the cell comes from the model,
+  // so the DOM never becomes a second source of truth about position.
+  _itemFor(el) {
+    if (!el) return null;
+    const layout = Home._layoutCache || [];
+    if (el.classList?.contains('home-panel-slot')) {
+      const key = el.dataset.panelSlot;
+      return layout.find((it) => it.type === 'widget' && it.key === key) || null;
     }
-    Home._onKitCardDrop(from, cardsBefore(item), item, yoursCount);
-    // A CARD moved, which can change how many cards sit above the panel
-    // (drag the first card past it and the panel's stored index is now one
-    // too high) — so re-anchor the panel to where it actually is. Both
-    // kinds of item live in one grid; the panel's index is card-relative,
-    // so it has to be re-read whenever the cards move under it.
-    Home._syncPanelSlotPosition(listEl, cardsBefore);
+    const slug = el.dataset?.slug;
+    return layout.find((it) => it.type === 'app' && it.slug === slug) || null;
   },
 
-  // Persist the panel slot's card-relative index if the settled DOM
-  // disagrees with what is stored. A no-op when nothing moved across it,
-  // so an ordinary reorder writes no extra request.
-  _syncPanelSlotPosition(listEl, cardsBefore) {
-    const slot = listEl.querySelector('.home-panel-slot');
-    if (!slot) return;
-    const key = slot.dataset.panelSlot;
-    const at = cardsBefore(slot);
-    if (window.HomePanels?.positionFor?.(key) === at) return;
-    window.HomePanels?.setPosition?.(key, at);
+  // Which cell is the pointer over? Answered by hit-testing the OVERLAY's
+  // own cell elements rather than by arithmetic over the grid's computed
+  // template — that is the whole reason the overlay is real DOM. The kit's
+  // ghost is pointer-events:none, so it never occludes them.
+  _cellFromPoint(x, y) {
+    const el = document.elementFromPoint(x, y);
+    const cell = el && el.closest ? el.closest('[data-cell]') : null;
+    if (!cell) return null;
+    const [col, row] = String(cell.dataset.cell).split(',').map(Number);
+    if (!Number.isInteger(col) || !Number.isInteger(row)) return null;
+    return { col, row };
   },
 
-  _onKitCardDrop(from, to, item, yoursCount) {
-    const drop = Home.classifyCardDrop(from, to, yoursCount);
-    const slug = item?.dataset?.slug;
-    const app = (Home._apps || []).find((a) => a.slug === slug);
-    if (!app) return;
-    // New section order: current yours slugs with the dragged one at its
-    // drop index. Mirror the server's contiguous sort_order rewrite
-    // locally so the deferred re-render agrees with what
-    // PUT /api/favorites/order is about to persist.
-    const yoursSlugs = Home.partitionApps(Home._apps).yours.map((a) => a.slug);
-    const order = Home.buildYoursOrder(yoursSlugs, slug, drop.index);
-    order.forEach((s, i) => {
-      const a = (Home._apps || []).find((x) => x.slug === s);
-      if (a) a.favorite_order = i;
-    });
+  // A committed drop. Mutate the model, keep the write to the width that is
+  // actually on screen, and defer the repaint to onSettle (this fires while
+  // _dragActive still holds, so an immediate render() would be swallowed).
+  _onGridPlace(el, cell, cols) {
+    const item = Home._itemFor(el);
+    if (!item) return;
+    const next = HomeLayout.place(Home.currentLayoutCached(cols), item, cell.col, cell.row, cols);
+    if (!next) return;
+    Home._layoutCache = next;
+    if (!Home._layouts) Home._layouts = {};
+    Home._layouts[String(cols)] = next;
     Home._rerenderPending = true;
-    Home._persistYoursDrop(drop.kind, app, order);
+    Home._persistLayout(cols, next);
   },
 
-  // Persist a classified drop. Reorders (the only kind the home grid
-  // produces now) skip the favorite POST — membership is unchanged. The
-  // non-reorder branch is retained for the legacy pointer path's
-  // remove-by-drag, which passes 'remove'.
-  async _persistYoursDrop(kind, app, order) {
-    try {
-      if (kind !== 'reorder') {
-        const res = await fetch(`/api/apps/${app.slug}/favorite`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ favorited: kind === 'add' }),
-        });
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          throw new Error(data.error || `HTTP ${res.status}`);
+  // ===== The drag-time grid overlay =====
+  //
+  // While something is lifted, the grid it snaps to is drawn underneath it:
+  // every cell of the canvas outlined, including the empty ones, so "you can
+  // drop this anywhere" is visible rather than something to discover.
+  //
+  // The overlay is a real GRID sharing #app-list's own template, gap and row
+  // height — that is what guarantees pixel alignment with zero arithmetic,
+  // and it doubles as the hit-test surface (_cellFromPoint). The layer is
+  // pointer-events:none; the individual cells re-enable them so
+  // elementFromPoint lands on a cell rather than on a tile behind it.
+  _overlayEl: null,
+
+  _showGridOverlay(listEl, cols, liftedEl) {
+    Home._hideGridOverlay();
+    if (!listEl) return;
+    const overlay = document.createElement('div');
+    overlay.id = 'home-grid-overlay';
+    overlay.className = 'home-grid-overlay';
+    overlay.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+    let cells = '';
+    for (let row = 0; row < HomeLayout.MAX_ROWS; row++) {
+      for (let col = 0; col < cols; col++) {
+        cells += `<div class="home-grid-cell" data-cell="${col},${row}"></div>`;
+      }
+    }
+    overlay.innerHTML = cells;
+    listEl.appendChild(overlay);
+    Home._overlayEl = overlay;
+  },
+
+  _hideGridOverlay() {
+    Home._clearPreview();
+    Home._planMemo = null;
+    if (Home._overlayEl && Home._overlayEl.parentNode) {
+      Home._overlayEl.parentNode.removeChild(Home._overlayEl);
+    }
+    Home._overlayEl = null;
+  },
+
+  // ===== The live displacement preview =====
+  //
+  // While an item hovers a target, the occupants that WOULD be pushed move to
+  // the cells they'd land in, right now — so the drop is never a surprise.
+  // This is the same information the flow reorder gave for free (everything
+  // shuffled as you dragged); free placement has to show it deliberately,
+  // because only the items that actually collide move.
+  //
+  // The plan is HomeLayout.place's own output, so what is previewed and what
+  // commits are one computation, not two that can disagree.
+
+  // Memo of the last plan, keyed by (item, cell). canPlace runs immediately
+  // before onHover on every cell change; sharing the result means the
+  // highlight can never describe a different outcome than the drop.
+  _planMemo: null,
+
+  _planFor(el, cell, cols) {
+    const item = Home._itemFor(el);
+    if (!item || !cell) return null;
+    const key = `${HomeLayout.idOf(item)}@${cell.col},${cell.row},${cols}`;
+    if (Home._planMemo && Home._planMemo.key === key) return Home._planMemo.plan;
+    const layout = Home.currentLayoutCached(cols);
+    const next = HomeLayout.place(layout, item, cell.col, cell.row, cols);
+    const plan = next ? { item, layout, next } : null;
+    Home._planMemo = { key, plan };
+    return plan;
+  },
+
+  // Where a committed drop LANDS, in viewport coords — the kit settles the
+  // release spring here instead of on the dragged element's own rect, which
+  // is still the origin cell (a placement drag never moves the real item).
+  // Without this the tile flew from the finger back to where it was picked
+  // up and only then jumped to the drop cell.
+  //
+  // Read off the same plan the tint and the drop use, so the tile settles
+  // exactly where the highlight promised — including after an edge nudge,
+  // where the landing cell is not the cell under the finger.
+  _rectForCell(el, cell, cols) {
+    const overlay = Home._overlayEl;
+    const plan = Home._planFor(el, cell, cols);
+    if (!overlay || !plan) return null;
+    const placed = plan.next.find((it) => HomeLayout.idOf(it) === HomeLayout.idOf(plan.item));
+    if (!placed || placed.row >= HomeLayout.MAX_ROWS) return null;
+    const target = overlay.querySelector(`[data-cell="${placed.col},${placed.row}"]`);
+    if (!target) return null;
+    const r = target.getBoundingClientRect();
+    return { left: r.left, top: r.top };
+  },
+
+  // Elements currently wearing a preview transform, so the next hover can put
+  // them back without re-deriving which ones moved.
+  _previewEls: null,
+
+  // Restores the transforms only. It must NOT drop _planMemo: _previewDrop
+  // calls this first, and the memo it needs is the one canPlace computed a
+  // moment earlier — clearing it here made every hover recompute the plan,
+  // which is exactly the two-computations-that-can-disagree this memo exists
+  // to prevent. The memo is keyed by (item, cell, cols), so a stale entry can
+  // never be read; _hideGridOverlay drops it when the gesture ends.
+  _clearPreview() {
+    if (!Home._previewEls) return;
+    for (const el of Home._previewEls) {
+      el.style.transform = '';
+      el.classList.remove('home-item-displaced', 'home-item-to-overflow');
+    }
+    Home._previewEls = null;
+  },
+
+  // The DOM element for a layout item, or null. Identity only — an item's
+  // cell lives in the model, never in the DOM.
+  _elFor(item, listEl) {
+    const root = listEl || document.getElementById('app-list');
+    if (!root || !item) return null;
+    return item.type === 'widget'
+      ? root.querySelector(`[data-panel-slot="${item.key}"]`)
+      : root.querySelector(`.app-card[data-slug="${item.slug}"]`);
+  },
+
+  // Tint the cells the drop would land in — the whole footprint for a widget,
+  // so the user sees the block they are about to occupy rather than just the
+  // cell under the finger — and move the items it would displace.
+  //
+  // Occupied targets tint too: a drop there DISPLACES the occupant rather
+  // than being refused (HomeLayout.place), so refusing to highlight it would
+  // be the grid lying about where a release lands. The only untinted state is
+  // the pointer genuinely leaving the canvas.
+  _previewDrop(el, cell, ok, cols) {
+    const overlay = Home._overlayEl;
+    if (!overlay) return;
+    Home._clearPreview();
+    overlay.querySelectorAll('.home-grid-cell--on').forEach((c) => {
+      c.classList.remove('home-grid-cell--on');
+    });
+    if (!cell || !ok) return;
+
+    const plan = Home._planFor(el, cell, cols);
+    if (!plan) return;
+    const { item, layout, next } = plan;
+    const draggedId = HomeLayout.idOf(item);
+
+    // The target footprint, read off the PLAN rather than re-clamped here, so
+    // the tint sits exactly where the item lands after an edge nudge.
+    const placed = next.find((it) => HomeLayout.idOf(it) === draggedId);
+    const [w, h] = HomeLayout.sizeOf(item, cols);
+    if (placed) {
+      for (let dx = 0; dx < w; dx++) {
+        for (let dy = 0; dy < h; dy++) {
+          const t = overlay.querySelector(`[data-cell="${placed.col + dx},${placed.row + dy}"]`);
+          if (t) t.classList.add('home-grid-cell--on');
         }
       }
-      if (order) {
-        const res = await fetch('/api/favorites/order', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ order }),
-        });
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          throw new Error(data.error || `HTTP ${res.status}`);
-        }
+    }
+
+    // Everything the plan moves EXCEPT the dragged item — that one is
+    // represented by the ghost under the finger and its dashed origin slot.
+    const before = new Map(layout.map((it) => [HomeLayout.idOf(it), it]));
+    const moved = new Set();
+    const listEl = overlay.parentNode;
+    for (const to of next) {
+      const id = HomeLayout.idOf(to);
+      if (id === draggedId) continue;
+      const from = before.get(id);
+      if (!from || (from.col === to.col && from.row === to.row)) continue;
+      const node = Home._elFor(to, listEl);
+      if (!node) continue;
+
+      if (to.row >= HomeLayout.MAX_ROWS) {
+        // Pushed off the canvas into the dense overflow rows. There is no
+        // overlay cell to translate to, so say it in place instead of
+        // sliding the tile to a position that doesn't exist yet.
+        node.classList.add('home-item-to-overflow');
+        moved.add(node);
+        continue;
       }
-      // Confirmation on removal only: the card jumps to its
-      // activity-ordered slot in All Apps (possibly off-screen), so
-      // the move needs a word; adds and reorders are self-evident.
-      if (kind === 'remove') PlatformUI.toast('Removed from Your apps');
-    } catch (err) {
-      PlatformUI.toast(`Update failed: ${err.message}`);
-      await Home.load();
+      // The delta comes from the overlay's OWN cell rects — the same grid the
+      // tiles are laid out in — so the preview lands pixel-exact with no
+      // arithmetic over column widths or row heights.
+      const fromCell = overlay.querySelector(`[data-cell="${from.col},${from.row}"]`);
+      const toCell = overlay.querySelector(`[data-cell="${to.col},${to.row}"]`);
+      if (!fromCell || !toCell) continue;
+      const a = fromCell.getBoundingClientRect();
+      const b = toCell.getBoundingClientRect();
+      node.classList.add('home-item-displaced');
+      node.style.transform = `translate(${b.left - a.left}px, ${b.top - a.top}px)`;
+      moved.add(node);
+    }
+    Home._previewEls = moved.size ? moved : null;
+  },
+
+  // Screenshot-state deep link (?shot=home-grid): the drag overlay only
+  // exists mid-gesture, so neither the before/after captures nor a dapp.json
+  // test could ever see it. Paint it in its resting visible state with the
+  // first cell tinted. Pure UI state — no writes, no env gate — so the
+  // production "before" side works too once shipped.
+  //
+  // Deliberately NOT once-per-page-load, unlike ?shot=card-menu: the grid's
+  // innerHTML is replaced on every WS app event and every payload that lands
+  // after the first paint, which wipes the overlay with it. A menu must not
+  // pop back open under the user; an overlay is idempotent decoration, so
+  // re-painting it is exactly right — a once-only guard here just meant the
+  // capture raced the second render and shot a bare grid.
+  _maybeShowShotGrid(listEl) {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'home-grid') return;
+    if (!listEl || listEl.offsetParent === null) return; // not the visible grid
+    if (Home._dragActive) return; // a real gesture owns the overlay
+    const cols = Home.currentCols();
+    Home._showGridOverlay(listEl, cols, null);
+    // The kit sets .un-reordering for the span of a real lift, and the CSS
+    // hangs the tiles' pointer-events:none off it — the thing that makes an
+    // occupied cell resolvable as a drop target at all. Setting it here makes
+    // this link a TRUE rendering of the mid-drag state rather than just the
+    // outlines, so a check at this URL can catch that regression instead of
+    // only noticing the overlay went missing.
+    listEl.classList.add('un-reordering');
+
+    // Render a REAL displacement preview, not just the outlines: pick the
+    // last canvas item as the notional dragged one and hover it over (0,0).
+    // Whatever sits there gets pushed and shows it. That is the whole point
+    // of the link — the preview is the part a reviewer needs to see and the
+    // part nothing can navigate to, and it makes the state assertable by a
+    // declared check instead of only by a live gesture.
+    const layout = Home.currentLayoutCached(cols);
+    const canvas = HomeLayout.canvasItems(layout);
+    const dragged = canvas.length > 1 ? canvas[canvas.length - 1] : null;
+    const el = dragged ? Home._elFor(dragged, listEl) : null;
+    if (el) {
+      // The same dashed, contents-hidden drop slot a real lift gives the
+      // dragged item (native.css .un-reorder-slot). Without it the tile stays
+      // fully painted in its origin cell while the item it displaced slides
+      // over that spot, and the shot reads as two things overlapping rather
+      // than one thing making way for another.
+      el.classList.add('un-reorder-slot');
+      Home._previewDrop(el, { col: 0, row: 0 }, true, cols);
+    } else {
+      // Nothing to displace (an empty or single-item grid) — still tint the
+      // target so the outlines have a subject.
+      const first = Home._overlayEl && Home._overlayEl.querySelector('[data-cell="0,0"]');
+      if (first) first.classList.add('home-grid-cell--on');
     }
   },
 
@@ -2484,517 +2814,16 @@ const Home = {
     });
   },
 
-  // Unified card pointer handler, attached to EVERY card by
-  // _wireCards. Two gestures share it:
-  //   - touch long-press (~350ms, finger still) → opens the "…"
-  //     actions menu for any card;
-  //   - drag-to-reorder (canDrag — "Your apps" cards only, and only
-  //     in the sectioned view): mouse promotes on >6px movement as
-  //     before; on touch, keeping the finger down after the menu
-  //     opened and moving >10px dismisses the menu and picks the card
-  //     up, so both gestures coexist on one press.
-  // canDrag: "Your apps" reorder. canWidgetDrop: the widget strip is
-  // showing and this running card isn't in it yet — the card can be
-  // picked up (even outside "Your apps") and dropped onto the strip to
-  // pin it. Both may be true; the drop target decides what happens.
-  _onCardPointerDown(e, card, listEl, canDrag, canWidgetDrop = false) {
-    if (e.button !== 0) return;
-    // A previous drag may still be settling (the ghost glides into the
-    // slot for ~190ms after pointerup, with _dragActive held true).
-    // Starting a second gesture mid-settle would let the old gesture's
-    // teardown clear _dragActive and sibling styles under the new one.
-    if (Home._dragActive) return;
-    // Same guard list as the navigation click handler — a press that
-    // starts on a button is a button press, never a drag or a
-    // long-press.
-    if (
-      e.target.closest('.card-menu-btn') ||
-      e.target.closest('.retry-btn')
-    ) return;
+  // NOTE: the legacy hand-rolled pointer drag (_onCardPointerDown, ~500
+  // lines of ghost / hit-test / auto-scroll machinery behind the
+  // `platform-legacy-reorder` localStorage flag) is GONE. It only ever
+  // implemented FLOW reordering — pick a card up, everything re-packs — and
+  // that model cannot express a layout with holes. Keeping it as a fallback
+  // would have meant two incompatible ideas of what the home screen is,
+  // with the fallback silently destroying the arrangement the primary path
+  // exists to preserve. The kit's attachGridPlacement is now the only
+  // recognizer, and it carries the same physics the flag was insurance for.
 
-    const startX = e.clientX;
-    const startY = e.clientY;
-    const pointerId = e.pointerId;
-    const isTouch = e.pointerType === 'touch';
-    let dragging = false;
-    let menuOpened = false;
-    let longPressTimer = null;
-    let ghost = null;
-    // Pointer position at pickup + the ghost's fixed-position origin;
-    // every move translates the ghost by the pointer's delta from here.
-    let grabX = 0;
-    let grabY = 0;
-    let ghostLeft = 0;
-    let ghostTop = 0;
-    // Latest pointer position, kept fresh on every move so the
-    // edge auto-scroll loop can re-run the hit-test while the finger
-    // holds still against the edge and the content scrolls underneath.
-    let lastClientX = 0;
-    let lastClientY = 0;
-    // rAF handle for the edge auto-scroll loop (null when not scrolling).
-    let autoScrollRAF = null;
-    // The scrollable viewport the favorites live in (#home-screen has
-    // overflow-y-auto). Falling back to the document scroller keeps the
-    // feature working if the markup ever changes.
-    const scrollEl = listEl.closest('.overflow-y-auto') || document.scrollingElement;
-    // Widget-strip drop target (iOS in-app only, see renderWidgetSection).
-    const strip = canWidgetDrop ? document.getElementById('widget-strip') : null;
-
-    const yoursCards = () =>
-      [...listEl.querySelectorAll('.app-card[data-yours="true"]')];
-
-    // Advertise / spotlight the strip while a droppable card is in
-    // flight. Inline styles for the same reason as the drop slot below:
-    // no dependency on the Tailwind JIT mid-gesture.
-    const setStripHighlight = (mode) => {
-      if (!strip) return;
-      if (mode === 'none') {
-        strip.style.borderColor = '';
-        strip.style.backgroundColor = '';
-        strip.style.borderStyle = '';
-      } else {
-        strip.style.borderStyle = 'dashed';
-        strip.style.borderColor = mode === 'hover'
-          ? 'rgba(139, 92, 246, 0.9)'
-          : 'rgba(139, 92, 246, 0.55)';
-        strip.style.backgroundColor = mode === 'hover'
-          ? 'rgba(139, 92, 246, 0.14)'
-          : 'rgba(139, 92, 246, 0.05)';
-      }
-    };
-
-    const isOverStrip = (x, y) =>
-      !!strip && !!document.elementFromPoint(x, y)?.closest('#widget-strip');
-
-    const beginDrag = (refX, refY) => {
-      dragging = true;
-      Home._dragActive = true;
-      grabX = refX;
-      grabY = refY;
-      // Capture on the grid container, NOT the card: the live reflow
-      // below removes + reinserts the card, and Chromium releases
-      // pointer capture the moment the captured element leaves the
-      // DOM — capture on the card dies on the first reflow and every
-      // subsequent pointer event lands on whatever card is under the
-      // cursor instead. listEl never moves during a drag (Home.load()
-      // is deferred via _dragActive), so capture on it survives.
-      try { listEl.setPointerCapture(pointerId); } catch {}
-
-      // "Pick up": a fixed-position clone floats above the page and
-      // tracks the pointer, slightly scaled + elevated like a
-      // homescreen icon. pointer-events: none keeps it invisible to
-      // the elementFromPoint hit-test in onMove.
-      const rect = card.getBoundingClientRect();
-      ghostLeft = rect.left;
-      ghostTop = rect.top;
-      ghost = card.cloneNode(true);
-      ghost.removeAttribute('data-yours');
-      Object.assign(ghost.style, {
-        position: 'fixed',
-        left: `${rect.left}px`,
-        top: `${rect.top}px`,
-        width: `${rect.width}px`,
-        height: `${rect.height}px`,
-        margin: '0',
-        zIndex: '1000',
-        pointerEvents: 'none',
-        boxShadow: '0 16px 40px rgba(0, 0, 0, 0.3)',
-        transform: 'scale(1.04)',
-        transition: 'none',
-      });
-      document.body.appendChild(ghost);
-
-      // The real card stays in the grid as the drop slot: contents
-      // hidden, box restyled as a dashed violet gap. Inline styles
-      // rather than Tailwind utilities so the look doesn't depend on
-      // the CDN JIT generating classes mid-gesture. The explicit
-      // borderWidth matters: the resting card is borderless now, so
-      // dashed style alone would render nothing.
-      for (const child of card.children) child.style.visibility = 'hidden';
-      Object.assign(card.style, {
-        borderWidth: '1px',
-        borderStyle: 'dashed',
-        borderColor: 'rgba(139, 92, 246, 0.55)',
-        backgroundColor: 'rgba(139, 92, 246, 0.07)',
-        // touch-action is evaluated at touchstart and immutable for
-        // the gesture, so this only shields NEW touches that land
-        // mid-drag/settle — the in-flight gesture is claimed by
-        // onTouchMove's preventDefault below, the one veto browsers
-        // still honor after the gesture has started.
-        touchAction: 'none',
-      });
-      // The cards themselves are already select-none via
-      // .app-card-draggable; this covers the rest of the page so a
-      // mouse drag that sweeps across headers / other sections
-      // doesn't paint a selection. webkitUserSelect alongside the
-      // standard property for older WebKit.
-      document.body.style.userSelect = 'none';
-      document.body.style.webkitUserSelect = 'none';
-      document.body.style.cursor = 'grabbing';
-      setStripHighlight('ready');
-    };
-
-    // Touch: a ~350ms long-press during which the finger stays put
-    // (< 10px) opens the "…" actions menu (every card). On a
-    // draggable card, continuing to hold and moving the finger then
-    // promotes to a drag (see onMove). Movement before the timer
-    // fires means the user is scrolling — bail and let the browser
-    // pan (touch-pan-y on the card keeps that path native).
-    if (isTouch) {
-      longPressTimer = setTimeout(() => {
-        menuOpened = true;
-        // Eat the synthetic click the browser fires when the finger
-        // lifts, so releasing the long-press doesn't also open the
-        // app. The card click handler resets the flag; onUp's timeout
-        // clears it when no click follows.
-        Home._suppressClick = true;
-        Home.openCardMenu(card.dataset.slug, card.getBoundingClientRect());
-      }, 350);
-    }
-
-    // Pointer Events alone can't hold off the browser's pan once the
-    // long-press promotes to a drag: the card's touch-action (pan-y)
-    // was locked in at touchstart, and preventDefault() on pointermove
-    // has no effect on scrolling — so the first finger movement would
-    // start a page scroll and pointercancel the drag. The one veto
-    // browsers still honor is preventDefault() on the raw touchmove,
-    // which works here because the finger held still through the
-    // long-press, so no scroll has been committed yet. Must be
-    // registered non-passive (document-level touchmove defaults to
-    // passive). While the gesture is still ambiguous (!dragging) it
-    // does nothing and scrolling stays native.
-    // (menuOpened counts too: once the long-press menu is up we keep
-    // the gesture claimed, so held-move can still promote to a drag
-    // instead of scrolling the page out from under the open menu.)
-    const onTouchMove = (ev) => { if (dragging || menuOpened) ev.preventDefault(); };
-    // Android fires contextmenu at ~500ms of long-press — after our
-    // 350ms menu/pickup — which would pop the native menu on top; eat it.
-    const onContextMenu = (ev) => { if (dragging || menuOpened) ev.preventDefault(); };
-    if (isTouch) {
-      document.addEventListener('touchmove', onTouchMove, { passive: false });
-      document.addEventListener('contextmenu', onContextMenu);
-    }
-
-    const moveGhost = (x, y) => {
-      ghost.style.transform =
-        `translate(${x - grabX}px, ${y - grabY}px) scale(1.04)`;
-    };
-
-    // FLIP-animate the other "Your apps" cards when the drop slot
-    // moves: measure where each sibling is right now (mid-animation
-    // positions included, so rapid slot changes retarget smoothly),
-    // apply the reorder, then play each one from its old spot to its
-    // new grid position.
-    const flipReorder = (applyReorder) => {
-      const sibs = yoursCards().filter((c) => c !== card);
-      const firstRects = new Map(sibs.map((c) => [c, c.getBoundingClientRect()]));
-      applyReorder();
-      // Clear in-flight transforms so the post-reorder measurement is
-      // the true layout position, not a mid-transition one.
-      for (const c of sibs) {
-        c.style.transition = 'none';
-        c.style.transform = '';
-      }
-      for (const c of sibs) {
-        const first = firstRects.get(c);
-        const last = c.getBoundingClientRect();
-        const dx = first.left - last.left;
-        const dy = first.top - last.top;
-        if (dx || dy) c.style.transform = `translate(${dx}px, ${dy}px)`;
-      }
-      // Flush the inverted transforms before enabling transitions, so
-      // the jump back to the old position isn't itself animated.
-      void listEl.offsetHeight;
-      requestAnimationFrame(() => {
-        for (const c of sibs) {
-          c.style.transition = 'transform 200ms ease';
-          c.style.transform = '';
-        }
-      });
-    };
-
-    // Move the drop slot to wherever (x, y) points. Hit-tests against
-    // the other "Your apps" cards (the ghost is pointer-events: none,
-    // so it never occludes this). Hits on "All Apps" cards, the create
-    // tile, or section headers fall through (no [data-yours] ancestor)
-    // and the slot stays put — drops are constrained to the Your apps
-    // section by construction. Shared by pointer moves and the
-    // auto-scroll loop.
-    const updateSlot = (x, y) => {
-      // A widget-drop-only pickup (card outside "Your apps") must not
-      // reorder the grid — its slot stays put and only the strip reacts.
-      if (!canDrag) return;
-      const over = document.elementFromPoint(x, y)
-        ?.closest('.app-card[data-yours="true"]');
-      if (!over || over === card || !listEl.contains(over)) return;
-      // Insert before when the pointer is in the leading half of the
-      // hovered card, after otherwise. "Leading" follows reading order:
-      // the left half at 2-3 grid columns, the top half when the grid is
-      // single-column (card spans the full row).
-      const rect = over.getBoundingClientRect();
-      const multiCol = rect.width < listEl.getBoundingClientRect().width * 0.9;
-      const before = multiCol
-        ? x < rect.left + rect.width / 2
-        : y < rect.top + rect.height / 2;
-      // Skip no-op reinserts: before()/after() always remove + re-add the
-      // node even when it already sits in the target slot, which would
-      // churn layout and re-fire FLIP for nothing.
-      if (before) {
-        if (card.nextElementSibling !== over) flipReorder(() => over.before(card));
-      } else {
-        if (over.nextElementSibling !== card) flipReorder(() => over.after(card));
-      }
-    };
-
-    // ===== Edge auto-scroll (touch) =====
-    // When the finger nears the top/bottom of the scroll viewport, pan
-    // the page so favorites below/above the fold can be reordered past
-    // the visible area. The distance the finger sits INTO the edge zone
-    // sets the speed (closer to the edge = faster), so a gentle hover
-    // creeps and pressing right up to the edge races.
-    const EDGE_ZONE = 72;      // px from an edge where auto-scroll kicks in
-    const MAX_SCROLL_STEP = 18; // px/frame at the very edge
-
-    // Signed px/frame to scroll for a finger at viewport-y `y`
-    // (negative = up), 0 when outside both edge zones.
-    const edgeScrollStep = (y) => {
-      const rect = scrollEl === document.scrollingElement
-        ? { top: 0, bottom: window.innerHeight }
-        : scrollEl.getBoundingClientRect();
-      if (y < rect.top + EDGE_ZONE) {
-        const t = Math.min(1, (rect.top + EDGE_ZONE - y) / EDGE_ZONE);
-        return -Math.ceil(t * MAX_SCROLL_STEP);
-      }
-      if (y > rect.bottom - EDGE_ZONE) {
-        const t = Math.min(1, (y - (rect.bottom - EDGE_ZONE)) / EDGE_ZONE);
-        return Math.ceil(t * MAX_SCROLL_STEP);
-      }
-      return 0;
-    };
-
-    const autoScrollTick = () => {
-      if (!dragging) { autoScrollRAF = null; return; }
-      const step = edgeScrollStep(lastClientY);
-      if (step === 0) { autoScrollRAF = null; return; }
-      const before = scrollEl.scrollTop;
-      scrollEl.scrollTop += step;
-      // Only if the container actually moved (not already pinned at
-      // top/bottom) does the card under the stationary finger change —
-      // re-run the hit-test so the slot follows the scrolling content.
-      // The ghost is fixed-position and pinned to the finger, so it
-      // needs no update while the finger holds still.
-      if (scrollEl.scrollTop !== before) updateSlot(lastClientX, lastClientY);
-      autoScrollRAF = requestAnimationFrame(autoScrollTick);
-    };
-
-    // Start the loop if the finger is in an edge zone, stop it otherwise.
-    // Touch-only: desktop mouse drag is intentionally left unchanged.
-    const syncAutoScroll = () => {
-      if (isTouch && edgeScrollStep(lastClientY) !== 0) {
-        if (autoScrollRAF == null) autoScrollRAF = requestAnimationFrame(autoScrollTick);
-      } else if (autoScrollRAF != null) {
-        cancelAnimationFrame(autoScrollRAF);
-        autoScrollRAF = null;
-      }
-    };
-
-    const stopAutoScroll = () => {
-      if (autoScrollRAF != null) {
-        cancelAnimationFrame(autoScrollRAF);
-        autoScrollRAF = null;
-      }
-    };
-
-    const detach = () => {
-      clearTimeout(longPressTimer);
-      stopAutoScroll();
-      listEl.removeEventListener('pointermove', onMove);
-      listEl.removeEventListener('pointerup', onUp);
-      listEl.removeEventListener('pointercancel', onCancel);
-      document.removeEventListener('touchmove', onTouchMove);
-      document.removeEventListener('contextmenu', onContextMenu);
-      try { listEl.releasePointerCapture(pointerId); } catch {}
-    };
-
-    // Remove the ghost, turn the drop slot back into the real card,
-    // and clear every style this gesture touched. Ends the re-render
-    // deferral window.
-    const restoreCard = () => {
-      if (ghost) {
-        ghost.remove();
-        ghost = null;
-      }
-      for (const child of card.children) child.style.visibility = '';
-      card.style.borderWidth = '';
-      card.style.borderStyle = '';
-      card.style.borderColor = '';
-      card.style.backgroundColor = '';
-      card.style.touchAction = '';
-      for (const c of yoursCards()) {
-        c.style.transition = '';
-        c.style.transform = '';
-      }
-      document.body.style.userSelect = '';
-      document.body.style.webkitUserSelect = '';
-      document.body.style.cursor = '';
-      setStripHighlight('none');
-      Home._dragActive = false;
-    };
-
-    const runPendingReload = () => {
-      if (Home._reloadPending) {
-        Home._reloadPending = false;
-        Home.load();
-      }
-    };
-
-    const onMove = (ev) => {
-      if (ev.pointerId !== pointerId) return;
-      if (!dragging) {
-        const dist = Math.hypot(ev.clientX - startX, ev.clientY - startY);
-        if (isTouch) {
-          if (!menuOpened) {
-            // Finger moved before the long-press fired → it's a scroll.
-            if (dist > 10) detach();
-          } else if ((canDrag || canWidgetDrop) && dist > 10) {
-            // Held past the long-press and moved on a reorderable
-            // card: the menu steps aside and the drag takes over.
-            Home.closeCardMenu();
-            beginDrag(ev.clientX, ev.clientY);
-          }
-        } else if ((canDrag || canWidgetDrop) && dist > 6) {
-          // Mouse/pen: > 6px from the down point promotes to a drag;
-          // below that it stays a click for the navigation handler.
-          beginDrag(ev.clientX, ev.clientY);
-        }
-        if (!dragging) return;
-      }
-      ev.preventDefault();
-      lastClientX = ev.clientX;
-      lastClientY = ev.clientY;
-      moveGhost(ev.clientX, ev.clientY);
-      updateSlot(ev.clientX, ev.clientY);
-      if (strip) {
-        setStripHighlight(isOverStrip(ev.clientX, ev.clientY) ? 'hover' : 'ready');
-      }
-      // Start/stop edge auto-scroll based on where the finger now sits.
-      syncAutoScroll();
-    };
-
-    const onUp = (ev) => {
-      if (ev.pointerId !== pointerId) return;
-      const didDrag = dragging;
-      detach();
-      if (!didDrag) {
-        // A long-press that opened the menu set _suppressClick so the
-        // release doesn't navigate; clear it on the next tick in case
-        // no synthetic click follows (it would otherwise eat a later
-        // genuine tap).
-        if (menuOpened) setTimeout(() => { Home._suppressClick = false; }, 0);
-        runPendingReload();
-        return;
-      }
-      // Eat the synthetic click that follows pointerup. It dispatches
-      // synchronously before any timer below runs; the timeout just
-      // clears a stale flag when no click follows (e.g. touch drags).
-      Home._suppressClick = true;
-      setTimeout(() => { Home._suppressClick = false; }, 0);
-      // Dropped onto the widget strip: this drag was an "add to
-      // widget", not a reorder. Glide the ghost onto the strip, put the
-      // card back where it was (updateSlot never moved a widget-only
-      // pickup; a "Your apps" card may have shuffled in flight, but
-      // nothing was persisted, so the next render restores the saved
-      // order), and hand off to the shortcut flow — the app shows its
-      // native confirmation from here.
-      if (canWidgetDrop && isOverStrip(ev.clientX, ev.clientY)) {
-        const stripRect = strip.getBoundingClientRect();
-        ghost.style.transition = 'transform 180ms ease, opacity 180ms ease';
-        ghost.style.opacity = '0';
-        ghost.style.transform =
-          `translate(${stripRect.left + 16 - ghostLeft}px, ${stripRect.top + 8 - ghostTop}px) scale(0.4)`;
-        const slug = card.dataset.slug;
-        setTimeout(async () => {
-          restoreCard();
-          runPendingReload();
-          // Same capacity rule as the menu path: a full widget shakes
-          // instead of accepting the drop.
-          if ((Home._widgetItems || []).length >= Home.WIDGET_CAPACITY) {
-            Home._shakeWidgetStrip();
-            return;
-          }
-          const app = (Home._apps || []).find((a) => a.slug === slug);
-          if (app) await Home._addShortcutForApp(app);
-        }, 190);
-        return;
-      }
-      // "Put down": glide the ghost into the drop slot, then swap the
-      // real card back in and persist. _dragActive stays true during
-      // the settle so a WS-driven Home.load() can't delete the slot
-      // out from under the animation.
-      const target = card.getBoundingClientRect();
-      ghost.style.transition = 'transform 180ms ease, box-shadow 180ms ease';
-      ghost.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.15)';
-      ghost.style.transform =
-        `translate(${target.left - ghostLeft}px, ${target.top - ghostTop}px) scale(1)`;
-      setTimeout(async () => {
-        restoreCard();
-        if (canDrag) await Home._saveYoursOrder(listEl);
-        runPendingReload();
-      }, 190);
-    };
-
-    // Browser took over the gesture mid-drag (or the pointer died).
-    // Dropping at the current position would persist an order the user
-    // may not have meant — abort without saving and reload server truth.
-    const onCancel = (ev) => {
-      if (ev.pointerId !== pointerId) return;
-      const didDrag = dragging;
-      detach();
-      if (didDrag) {
-        restoreCard();
-        Home._reloadPending = false;
-        Home.load();
-      } else {
-        runPendingReload();
-      }
-    };
-
-    // Listen on the grid container rather than the card: before the
-    // drag starts, events on the card bubble up here; once listEl
-    // takes pointer capture in beginDrag, events retarget here
-    // directly — either way these handlers keep firing across card
-    // reflows (a card-level listener would go silent as soon as the
-    // pointer left the card, since the card loses capture when the
-    // reflow reinserts it).
-    listEl.addEventListener('pointermove', onMove);
-    listEl.addEventListener('pointerup', onUp);
-    listEl.addEventListener('pointercancel', onCancel);
-  },
-
-  // Persist the "Your apps" order currently shown in the DOM (the
-  // server upserts app_favorites rows, so member apps that were never
-  // manually added hold a position too). On success the DOM is already
-  // correct — no reload needed, the server now agrees. On failure,
-  // alert + full Home.load() to restore server truth (same
-  // optimistic-then-revert shape as _menuToggleFavorite).
-  async _saveYoursOrder(listEl) {
-    const order = [...listEl.querySelectorAll('.app-card[data-yours="true"]')]
-      .map((c) => c.dataset.slug);
-    try {
-      const res = await fetch('/api/favorites/order', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ order }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || `HTTP ${res.status}`);
-      }
-    } catch (err) {
-      PlatformUI.toast(`Reorder failed: ${err.message}`);
-      await Home.load();
-    }
-  },
 
   // Empty-state ("No apps yet") has two variants — the existing
   // "Create your first app" CTA for users with permission, and a
@@ -3002,10 +2831,11 @@ const Home = {
   // without. Toggle the CTA button on/off in place rather than
   // rebuilding the static DOM, so the surrounding "No apps yet"
   // copy stays put.
-  // Shown in the "Create an app" section (Home.renderCreateSection)
-  // instead of the create tile when this account has no app quota.
-  // Kept as a constant so both that renderer and any future surface
-  // word it the same way.
+  // The one wording of "you can't create apps right now". The create WIDGET
+  // is on every home screen regardless of quota, so this string is what the
+  // disabled tile shows in three places at once: its tooltip, the toast a
+  // tap produces, and the inert note in its ⋮ menu. One constant so those
+  // three can never drift.
   CREATE_DISABLED_HINT: 'Ask an admin to enable app creation for your account.',
 
   // Idempotent click-wiring for every `.home-create-btn` currently
@@ -3040,38 +2870,42 @@ const Home = {
   //
   // The commit pill no longer renders on the card face — build info
   // lives in the "…" menu's header, which is built lazily from the
-  // Home._apps cache at open time. So this (1) refreshes the cached
-  // app's version/deployProgress so an already-open-next-time menu
-  // shows fresh info, and (2) re-classes the card's status dot — the
-  // tile's only visible "this app is redeploying" signal. Without the
-  // dot update, a redeploy arriving over WS on an already-running card
-  // wouldn't change any visible state until a full Home.load().
+  // Home._apps cache at open time. So this refreshes the cached app's
+  // version/deployProgress, so a menu opened next shows fresh info.
+  //
+  // It used to ALSO re-class the tile's status dot, which was the only
+  // visible "this app is redeploying" signal on an already-running card.
+  // That dot is gone from the tile face on purpose (see renderAppCard), so
+  // an in-flight redeploy of a running app now changes nothing visible on
+  // the tile — it shows in the "…" menu's version pill instead. Nothing
+  // else regressed: every non-running status still says so in words, and
+  // those come from a full Home.load() as before.
   updateAppCardPill(slug, opts) {
     if (!slug) return;
     const app = (Home._apps || []).find((a) => a.slug === slug);
-    if (app) {
-      app.deployProgress = opts && opts.deployProgress ? opts.deployProgress : null;
-      // The deploy-start event carries version: null (the old SHA is
-      // hidden while deploying anyway); keep the cached SHA so the
-      // menu's fallback text stays meaningful, and only overwrite when
-      // an event actually supplies one.
-      if (opts && opts.version) app.version = opts.version;
-    }
-    const card = document.querySelector(`.app-card[data-slug="${slug}"]`);
-    if (!card) return;
-    const isInFlightDeploy = !!(opts && opts.deployProgress && opts.deployProgress.deploying);
-    const dot = card.querySelector('.status-dot');
-    if (dot) {
-      const baseStatus = card.dataset.status;
-      const next = isInFlightDeploy ? 'creating'
-        : baseStatus === 'running' ? 'running'
-        : (baseStatus === 'creating' || baseStatus === 'awaiting_secrets') ? 'creating'
-        : 'error';
-      dot.classList.remove('running', 'creating', 'error');
-      dot.classList.add(next);
-    }
+    if (!app) return;
+    app.deployProgress = opts && opts.deployProgress ? opts.deployProgress : null;
+    // The deploy-start event carries version: null (the old SHA is
+    // hidden while deploying anyway); keep the cached SHA so the
+    // menu's fallback text stays meaningful, and only overwrite when
+    // an event actually supplies one.
+    if (opts && opts.version) app.version = opts.version;
   },
 };
+
+// `const Home` at the top of a classic script lands in the GLOBAL LEXICAL
+// scope, which is NOT `window` — so `window.Home` is undefined even though
+// bare `Home` resolves fine. home-panels.js guards nine call sites on
+// `window.Home && …` (the same defensive shape it uses for `window.App` and
+// that app.js satisfies with `window.App = App`), and every one of them was
+// silently taking the "Home isn't loaded" branch forever: the Discover
+// widget always rendered its empty-state note instead of the curated tiles,
+// the Create widget always rendered LOCKED regardless of quota, the discover
+// tiles and the create button were never wired, and hiding a widget never
+// reloaded the grid. None of it threw — the guards are exactly what made it
+// silent. Publishing Home the way App and HomePanels publish themselves is
+// what makes those guards mean what they read as.
+window.Home = Home;
 
 function escapeHtml(str) {
   const div = document.createElement('div');

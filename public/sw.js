@@ -80,6 +80,7 @@ const SHELL_ASSETS = [
   '/js/group-chat.js',
   '/js/header-layout.js',
   '/js/home.js',
+  '/js/home-layout.js',
   '/js/home-panels.js',
   '/js/kudos.js',
   '/js/ai-credit.js',
