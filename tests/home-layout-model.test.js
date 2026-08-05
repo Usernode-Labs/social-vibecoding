@@ -38,7 +38,7 @@ const SCHEMA = read('src/db/schema.sql');
 // The registry the server serves, mirroring PANEL_REGISTRY.
 const REGISTRY = [
   { key: 'challenges', title: 'Challenges', removable: true, sizes: { 4: [4, 2], 5: [2, 2] } },
-  { key: 'discover', title: 'Discover', removable: false, sizes: { 4: [4, 2], 5: [2, 2] } },
+  { key: 'discover', title: 'Discover', removable: false, sizes: { 4: [4, 1], 5: [2, 2] } },
   { key: 'create', title: 'Create app', removable: true, sizes: { 4: [4, 1], 5: [1, 1] } },
 ];
 HomeLayout.setRegistry(REGISTRY);
@@ -147,9 +147,10 @@ test('apps fill in AROUND the widgets, in reading order', () => {
 });
 
 // At four columns all three widgets are full-width, so their COLUMN cannot
-// survive — the row is the part of the design that does. Create app's cell
-// (3,5) clamps to column 0, which lands inside Discover's (0,4)-(3,5)
-// footprint, so it slides to the row below and takes that row on its own.
+// survive — the row is the part of the design that does. Discover is one
+// row tall at this breakpoint (#949), so it occupies row 4 alone; Create
+// app's cell (3,5) clamps to column 0, where row 5 is free (Discover no
+// longer spans into it), so it lands there directly.
 test('at 4 columns the full-width widgets keep their row and lose their column', () => {
   const layout = HomeLayout.deriveDefault({
     apps: ['a', 'b'],
@@ -158,8 +159,8 @@ test('at 4 columns the full-width widgets keep their row and lose their column',
   });
   assert.deepEqual(cellOf(layout, 'widget:challenges'), [0, 0]);
   assert.deepEqual(cellOf(layout, 'widget:discover'), [0, 4], 'row 4 kept, pulled to column 0');
-  assert.deepEqual(cellOf(layout, 'widget:create'), [0, 6],
-    'pulled to column 0 and pushed one row past the widget it would have overlapped');
+  assert.deepEqual(cellOf(layout, 'widget:create'), [0, 5],
+    'pulled to column 0; row 5 is free now that Discover is only one row tall');
   assert.deepEqual(HomeLayout.sizeOf(W('create', 0, 0), 4), [4, 1],
     'and it is the whole row — four columns wide, one tall');
   assertNoOverlap(layout, 4);
@@ -181,6 +182,23 @@ test('the create widget spans a whole phone row and only one row', () => {
   assert.equal(create.col, 0, 'a full-width row can only start at column 0');
   assert.ok(create.col + w <= 4 && create.row + h <= HomeLayout.MAX_ROWS, 'and it fits');
   assertNoOverlap(layout, 4);
+});
+
+// The asymmetry itself: a widget may be a different HEIGHT at each
+// breakpoint, not just a different width. Nothing in the model needed to
+// change for that — every consumer already reads sizes per column count —
+// so this is the guard that keeps it true.
+test('a widget can be a different height per breakpoint', () => {
+  assert.deepEqual(HomeLayout.sizeOf(W('discover', 0, 0), 4), [4, 1],
+    'one row on a phone, where it is full width');
+  assert.deepEqual(HomeLayout.sizeOf(W('discover', 0, 0), 5), [2, 2],
+    'its original two on desktop, where the second row is the Popular lane');
+  // And a reflow re-looks-up the footprint at the TARGET width rather than
+  // carrying the source breakpoint's height across.
+  const at5 = [W('discover', 0, 0), A('a', 2, 0)];
+  const at4 = HomeLayout.reflow(at5, 5, 4);
+  assert.deepEqual(HomeLayout.sizeOf(at4.find((i) => i.key === 'discover'), 4), [4, 1]);
+  assertNoOverlap(at4, 4);
 });
 
 // A hidden widget is simply absent; the others stay exactly where they are.

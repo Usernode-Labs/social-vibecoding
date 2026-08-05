@@ -338,10 +338,16 @@
       "expectText": "Create app"
     },
     {
-      "name": "The Discover widget renders curated tiles + the way into the directory",
+      "name": "Discover renders both lanes: curated tiles, then Popular (#949)",
       "path": "/?demo=1",
-      "expectSelector": "#app-list [data-panel-slot=\"discover\"] .home-panel .home-discover-tiles .app-card",
+      "expectSelector": "#app-list [data-panel-slot=\"discover\"] .home-panel .home-discover-popular .app-card:not(:has(.users-badge))",
       "expectText": "Browse all apps"
+    },
+    {
+      "name": "With nothing featured, Discover shows its compact note (?shot=discover-empty)",
+      "path": "/?demo=1&shot=discover-empty",
+      "expectSelector": "#app-list [data-panel-slot=\"discover\"][data-featured=\"0\"] .home-panel-browse",
+      "expectText": "Nothing featured right now"
     },
     {
       "name": "App tiles are placed at explicit grid cells, with holes allowed",

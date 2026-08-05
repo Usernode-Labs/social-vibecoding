@@ -651,7 +651,22 @@ const PANEL_REGISTRY = [
     key: 'discover',
     title: 'Discover',
     removable: false,
-    sizes: { 4: [4, 2], 5: [2, 2] },
+    // ASYMMETRIC ON PURPOSE (#949). Discover's curated lane is ONE row of
+    // 40px tiles, so two grid rows was half a widget of dead space at both
+    // widths — worst on a phone, where a viewer who has added the featured
+    // apps got a one-line note inside a 238px box.
+    //
+    //   4 columns (phone): [4, 1] — full width, so the row it gives back is
+    //     a clean full-width gap rather than a notch mid-grid.
+    //   5 columns (desktop): [2, 2] — UNCHANGED, so no stored desktop
+    //     arrangement moves. The second row is earned rather than trimmed:
+    //     the client fills it with the "Popular" lane (HomePanels
+    //     .renderDiscoverPanel + Home.popularApps).
+    //
+    // Differing heights per column count need no new mechanism: widgetSize()
+    // below, HomeLayout.sizeOf() and reflow() all read this map per-cols,
+    // and the two breakpoints' layouts are stored and validated separately.
+    sizes: { 4: [4, 1], 5: [2, 2] },
     build: async () => ({}),
     demo: () => ({ demo: true }),
   },
