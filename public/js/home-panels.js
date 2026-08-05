@@ -240,11 +240,11 @@ const HomePanels = {
     // server only honours it in staging. `expand` names the one panel the
     // viewer has opened in place, so the fetch brings its full list.
     //
-    // `challenges=few|none` rides along WITH it: the demo variant is chosen
-    // server-side, so a param left in the address bar but not on the fetch
-    // would silently serve the default payload — which is what the deep link,
-    // the dapp.json check and the before/after screenshots would then all
-    // capture.
+    // `challenges=few|none` and `board=kudos` ride along WITH it: both demo
+    // variants are chosen server-side, so a param left in the address bar but
+    // not on the fetch would silently serve the default payload — which is
+    // what the deep link, the dapp.json check and the before/after
+    // screenshots would then all capture.
     const params = new URLSearchParams();
     try {
       const here = new URLSearchParams(location.search);
@@ -252,6 +252,8 @@ const HomePanels = {
         params.set('demo', '1');
         const variant = here.get('challenges');
         if (variant) params.set('challenges', variant);
+        const board = here.get('board');
+        if (board) params.set('board', board);
       }
     } catch (err) { /* ignore */ }
     const expandKey = Object.keys(HomePanels._expanded)
