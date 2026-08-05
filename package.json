@@ -11,6 +11,7 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "test": "node --test --test-force-exit tests/*.test.js",
+    "readiness:evidence": "node scripts/readiness-evidence.js",
     "build:css": "node scripts/build-tailwind.js",
     "watch:css": "node scripts/build-tailwind.js --watch",
     "vendor:assets": "node scripts/vendor-assets.js"
