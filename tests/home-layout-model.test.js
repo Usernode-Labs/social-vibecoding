@@ -92,8 +92,8 @@ test('sizeOf reads the registry per column count; apps are always 1x1', () => {
 
 // ── deriveDefault ─────────────────────────────────────────────────────
 
-// The designed default. Challenges top-left, Discover on the 4th row in the
-// 2nd column, Create app on the 5th row in the 4th column — all zero-indexed
+// The designed default. Challenges top-left, Discover on the 5th row in the
+// 2nd column, Create app on the 6th row in the 4th column — all zero-indexed
 // in the model. Apps fill in around them rather than pushing them about.
 const cellOf = (layout, id) => {
   const it = layout.find((x) => HomeLayout.idOf(x) === id);
@@ -107,8 +107,8 @@ test('deriveDefault puts each widget in its designed home cell', () => {
     cols: 5,
   });
   assert.deepEqual(cellOf(layout, 'widget:challenges'), [0, 0], 'top-left');
-  assert.deepEqual(cellOf(layout, 'widget:discover'), [1, 3], '4th row, 2nd column');
-  assert.deepEqual(cellOf(layout, 'widget:create'), [3, 4], '5th row, 4th column');
+  assert.deepEqual(cellOf(layout, 'widget:discover'), [1, 4], '5th row, 2nd column');
+  assert.deepEqual(cellOf(layout, 'widget:create'), [3, 5], '6th row, 4th column');
   assert.equal(layout.length, 6, 'and every app is still placed');
   assertNoOverlap(layout, 5);
 });
@@ -124,8 +124,8 @@ test('the widget cells do not move as the app count changes', () => {
       apps, widgets: ['challenges', 'discover', 'create'], cols: 5,
     });
     assert.deepEqual(cellOf(layout, 'widget:challenges'), [0, 0], `${n} apps`);
-    assert.deepEqual(cellOf(layout, 'widget:discover'), [1, 3], `${n} apps`);
-    assert.deepEqual(cellOf(layout, 'widget:create'), [3, 4], `${n} apps`);
+    assert.deepEqual(cellOf(layout, 'widget:discover'), [1, 4], `${n} apps`);
+    assert.deepEqual(cellOf(layout, 'widget:create'), [3, 5], `${n} apps`);
     assertNoOverlap(layout, 5);
   }
 });
@@ -146,7 +146,7 @@ test('apps fill in AROUND the widgets, in reading order', () => {
 
 // At four columns Challenges and Discover are full-width, so their COLUMN
 // cannot survive — the row is the part of the design that does. And that
-// makes Create app's cell (3,4) land inside Discover's (0,3)-(3,4)
+// makes Create app's cell (3,5) land inside Discover's (0,4)-(3,5)
 // footprint, so it keeps its column and slides to the row below rather than
 // jumping back to the top-left.
 test('at 4 columns the full-width widgets keep their row and lose their column', () => {
@@ -156,8 +156,8 @@ test('at 4 columns the full-width widgets keep their row and lose their column',
     cols: 4,
   });
   assert.deepEqual(cellOf(layout, 'widget:challenges'), [0, 0]);
-  assert.deepEqual(cellOf(layout, 'widget:discover'), [0, 3], 'row 3 kept, pulled to column 0');
-  assert.deepEqual(cellOf(layout, 'widget:create'), [3, 5],
+  assert.deepEqual(cellOf(layout, 'widget:discover'), [0, 4], 'row 4 kept, pulled to column 0');
+  assert.deepEqual(cellOf(layout, 'widget:create'), [3, 6],
     'column 3 kept, pushed one row past the widget it would have overlapped');
   assertNoOverlap(layout, 4);
 });

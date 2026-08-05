@@ -159,8 +159,8 @@ const HomeLayout = {
   //
   // The DEFAULT home screen is designed, not packed: each widget has a cell
   // it belongs in, and the app tiles fill in around them. Zero-indexed, so
-  // Challenges is the 1st row / 1st column, Discover the 4th row / 2nd
-  // column, Create app the 5th row / 4th column.
+  // Challenges is the 1st row / 1st column, Discover the 5th row / 2nd
+  // column, Create app the 6th row / 4th column.
   //
   // Only the default. The moment someone drags anything at a width, that
   // width has a stored layout and none of this is consulted again — these
@@ -168,8 +168,8 @@ const HomeLayout = {
   // may live.
   WIDGET_HOME_CELLS: {
     challenges: { col: 0, row: 0 },
-    discover: { col: 1, row: 3 },
-    create: { col: 3, row: 4 },
+    discover: { col: 1, row: 4 },
+    create: { col: 3, row: 5 },
   },
 
   // Placement order for the anchored widgets. It matters: Create app's
@@ -233,7 +233,7 @@ const HomeLayout = {
   //   2. If that rectangle is free, take it.
   //   3. Otherwise KEEP THE COLUMN and walk down for the first row that
   //      fits. This is what happens to Create app on a phone: its cell
-  //      (3,4) is inside full-width Discover's (0,3)-(3,4) footprint, so it
+  //      (3,5) is inside full-width Discover's (0,4)-(3,5) footprint, so it
   //      slides to the row below rather than jumping to the top-left.
   //
   // Only if the whole column is blocked does it fall back to the first free
