@@ -17,6 +17,12 @@
 // `event` object inside GET /api/v4/leaderboard, NOT on /season-events/:id,
 // which is why the disclaimer stays here rather than in the shared hero.)
 //
+// Plus one line that is NOT standings-specific: the challenge tally and
+// "View challenges →" cross-link above the table (#981). It exists because
+// the completed-challenge list moved off the profile screen onto this
+// screen's Challenges tab, and this tab is where most people arrive — see
+// _loadChallengeCounts for the (deliberately failure-silent) fetch.
+//
 // No isAdmin gate: this is a public read, reachable by anyone, signed in
 // or not. Everything below _renderShell is unchanged by the merge — the
 // module still owns #tc-lb-body / #tc-lb-drill and its own event/page
@@ -66,6 +72,13 @@ const TopochainLeaderboard = {
   // Neutral "there is nothing here" copy, distinct from _error (which
   // paints red). Set when the server has no public events at all.
   _empty: null,
+
+  // Challenge tally for the selected event (#981), for the one-line
+  // cross-link above the table. Purely additive, exactly like the challenges
+  // pane's own personalization pass: a failed/absent count renders NO line
+  // and NEVER touches _error — a standings table must not paint a red banner
+  // because a decoration alongside it couldn't load.
+  _challengeCounts: { total: 0, completed: 0 },
 
   // Drill-down panel state. `_drillRow` is the clicked row (or null); the
   // three sections load independently so one failing/being unavailable
@@ -118,6 +131,7 @@ const TopochainLeaderboard = {
         if (!TopochainLeaderboard._open) return;
         TopochainLeaderboard._page = 1;
         TopochainLeaderboard._drillRow = null;
+        TopochainLeaderboard._challengeCounts = { total: 0, completed: 0 };
         TopochainLeaderboard.loadLeaderboard();
       });
     }
@@ -127,6 +141,7 @@ const TopochainLeaderboard = {
   close() {
     TopochainLeaderboard._open = false;
     TopochainLeaderboard._drillRow = null;
+    TopochainLeaderboard._challengeCounts = { total: 0, completed: 0 };
     if (TopochainLeaderboard._unsub) {
       TopochainLeaderboard._unsub();
       TopochainLeaderboard._unsub = null;
@@ -203,6 +218,32 @@ const TopochainLeaderboard = {
       }
     }
     TopochainLeaderboard._renderBody();
+    // The tally lands in a second pass so the table never waits on it. Read
+    // the event id back through _eventId() rather than reusing the local
+    // above: on the FIRST load that local is null and the id we want is the
+    // one the server just resolved and fed into the picker silently.
+    TopochainLeaderboard._loadChallengeCounts(TopochainLeaderboard._eventId());
+  },
+
+  // The selected event's challenge tally, for the cross-link above the table
+  // (#981). Same discipline as the challenges pane's `_loadMine`: additive,
+  // one shot, and SILENT on failure — no _error, no banner, no retry. A
+  // failure just means the line isn't there.
+  async _loadChallengeCounts(eventId) {
+    if (eventId == null) return;
+    const { ok, data } = await TopochainLeaderboard.fetchJson(
+      `/api/v4/season-events/${encodeURIComponent(eventId)}/challenges`
+    );
+    // Same staleness guard loadLeaderboard uses, so a fast event switch can
+    // never paint one event's tally over another's standings.
+    if (!TopochainLeaderboard._open
+        || TopochainLeaderboard._eventId() !== eventId) return;
+    if (!ok || !data?.success || !Array.isArray(data.data)) return;
+    TopochainLeaderboard._challengeCounts = {
+      total: data.data.length,
+      completed: data.data.filter((c) => c && c.completed === true).length,
+    };
+    TopochainLeaderboard._renderBody();
   },
 
   // ── Rendering ────────────────────────────────────────────────────────
@@ -245,6 +286,20 @@ const TopochainLeaderboard = {
       ? `<p id="tc-lb-disclaimer" class="text-xs text-zinc-500 mb-3">${esc(event.disclaimer)}</p>`
       : '';
 
+    // The challenge tally + cross-link (#981) — the mirror of the challenges
+    // pane's "See where the season stands →". Omitted entirely when the event
+    // has no challenges or the count hasn't (or couldn't) load, so an empty
+    // or failed tally is invisible rather than a "0 of 0" line.
+    const counts = TopochainLeaderboard._challengeCounts || { total: 0, completed: 0 };
+    const challengeLine = counts.total > 0
+      ? `<p id="tc-lb-challenge-link" class="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
+          ${esc(counts.completed)} of ${esc(counts.total)} challenges completed
+          <span class="text-zinc-400 dark:text-zinc-600">·</span>
+          <button id="tc-lb-to-challenges"
+            class="font-medium text-violet-600 dark:text-violet-400 hover:underline">View challenges &rarr;</button>
+        </p>`
+      : '';
+
     if (!event.display_leaderboard) {
       host.innerHTML = `${disclaimer}
         <p class="text-sm text-zinc-500 py-8 text-center">
@@ -253,9 +308,13 @@ const TopochainLeaderboard = {
       return;
     }
 
+    // The cross-link DOES belong here: an event can have challenges before
+    // anyone has scored on it, and that is exactly when "go look at the
+    // challenges" is the most useful thing this pane can say.
     if (!leaderboard.length) {
-      host.innerHTML = `${disclaimer}
+      host.innerHTML = `${challengeLine}${disclaimer}
         <p class="text-sm text-zinc-500 py-8 text-center">No leaderboard entries yet.</p>`;
+      TopochainLeaderboard._wireChallengeLink();
       return;
     }
 
@@ -286,7 +345,7 @@ const TopochainLeaderboard = {
         </div>
       </div>` : '';
 
-    host.innerHTML = `${disclaimer}
+    host.innerHTML = `${challengeLine}${disclaimer}
       <div class="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
         <table class="w-full">
           <thead class="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500">
@@ -303,6 +362,7 @@ const TopochainLeaderboard = {
       </div>
       ${pagination}`;
 
+    TopochainLeaderboard._wireChallengeLink();
     host.querySelectorAll('.tc-lb-row').forEach((tr) => {
       tr.addEventListener('click', () => {
         const idx = parseInt(tr.dataset.rowIndex, 10);
@@ -318,6 +378,15 @@ const TopochainLeaderboard = {
     document.getElementById('tc-lb-next')?.addEventListener('click', () => {
       TopochainLeaderboard._page += 1;
       TopochainLeaderboard.loadLeaderboard();
+    });
+  },
+
+  // Real hash navigation, so the section switch goes through the router and
+  // the shared event selection survives it — same reasoning as the challenges
+  // pane's `#tc-se-to-standings` link in the opposite direction.
+  _wireChallengeLink() {
+    document.getElementById('tc-lb-to-challenges')?.addEventListener('click', () => {
+      window.location.hash = '#leaderboard/challenges';
     });
   },
 

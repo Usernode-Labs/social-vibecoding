@@ -132,3 +132,41 @@ test('the signed-out branch is checked before the generic error branch', () => {
   assert.ok(fn.indexOf('d.signedOut') < fn.indexOf('if (d.error)'),
     'otherwise a signed-out visitor still sees the connection-error copy');
 });
+
+// ─── The completed-challenges section is gone (#981) ─────────────────────
+//
+// It listed `challenges.completed` — an ORGANISER flag about the challenge,
+// not "you finished it" — season-wide, so every user saw the same ~32 cards
+// buried under their own rank/token/breakdown blocks. It lives on the
+// Leaderboard screen's Challenges tab now.
+
+test('the profile no longer renders a completed-challenges section', () => {
+  assert.doesNotMatch(profileJs, /Completed challenges/,
+    'the heading must be gone, not merely hidden');
+  assert.doesNotMatch(profileJs, /No completed challenges yet/,
+    'and so must its empty-state placeholder');
+});
+
+test('the profile no longer fetches the season challenge list', () => {
+  // The whole point: this screen stops paying for a list it does not show.
+  // /challenges-api/me/* and /challenges-api/seasons must survive.
+  //
+  // Asserted against the CODE, not the whole file: the header comment names
+  // the retired route on purpose, to explain why it went.
+  const body = profileJs.slice(profileJs.indexOf('const Profile'));
+  assert.doesNotMatch(body, /\/challenges-api\/challenges/,
+    'the challenges fetch must go with the section it fed');
+  assert.match(profileJs, /\/challenges-api\/seasons/,
+    'the season lookup stays — it scopes both /me/* reads and names the season');
+  assert.match(profileJs, /\/challenges-api\/me\/ranking/);
+  assert.match(profileJs, /\/challenges-api\/me\/breakdown/);
+});
+
+test('the module header no longer claims the screen renders completed challenges', () => {
+  // A comment describing behaviour the code no longer has is worse than no
+  // comment: the next reader trusts it (same rule as the drawer-row tests
+  // above).
+  const header = profileJs.slice(0, profileJs.indexOf('const Profile'));
+  assert.doesNotMatch(header, /Renders[\s\S]*?and completed challenges/,
+    'the header must not still advertise a completed-challenges section');
+});

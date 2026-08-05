@@ -504,11 +504,11 @@ test('render: the footer carries the expand toggle and the way out', () => {
   assert.equal((html.match(/home-panel-row\b(?!s)/g) || []).length, 4);
   assert.equal((html.match(/data-challenge-id/g) || []).length, 4);
   assert.doesNotMatch(html, /home-panel-more/, 'the old link ROW is gone');
-  // And the separate way out, bottom right. It NAMES its destination:
-  // "Open" sat beside a control that also opens something (this block, in
-  // place), leaving the reader to work out which one left the home screen.
+  // And the separate way out, bottom right. It NAMES its destination — the
+  // Challenges TAB, which is not where the title bar's leaderboard link goes
+  // (#980), so neither label may say only "leaderboard" or only "open".
   assert.match(html, /home-panel-open[^>]*title="Go to the Challenges tab on the Leaderboard screen"/);
-  assert.match(html, /home-panel-open[^>]*aria-label="Go to leaderboard"/);
+  assert.match(html, /home-panel-open[^>]*aria-label="Open challenges"/);
   assert.doesNotMatch(html, />Open<\/span>/, 'the bare "Open" label is gone');
   assert.match(html, /aria-expanded="false"/);
 });
@@ -712,20 +712,20 @@ test('the title bar and the footer controls are single-line too', () => {
   // Title + counter: the counter must not push the title to a second line.
   assert.match(html, /home-panel-title[^"]*truncate whitespace-nowrap/);
   assert.match(html, /normal-case tracking-normal whitespace-nowrap/);
-  // The phone bar carries the way out BESIDE that title (#968), so it is the
-  // one place a long summary and a control compete for the same row: the
-  // control is shrink-0 and nowrap, and the title truncates around it.
+  // The phone bar carries the way out BESIDE that title (#968, now the
+  // leaderboard link of #980), so it is the one place a long summary and a
+  // control compete for the same row: the control is shrink-0 and nowrap, and
+  // the title truncates around it. The compact label is the SHORT one, which
+  // is the whole reason _leaderboardLink takes the flag.
   const phone = renderWith(data).html;
-  assert.match(phone, /home-panel-open shrink-0[^"]*whitespace-nowrap/);
-  assert.match(phone, /<span class="whitespace-nowrap">See all<\/span>/);
+  assert.match(phone, /home-panel-lb-browse shrink-0[^"]*whitespace-nowrap/);
+  assert.match(phone, /<span class="whitespace-nowrap">Leaderboard<\/span>/);
   assert.match(phone, /home-panel-title[^"]*truncate whitespace-nowrap/);
-  // Both footer labels — the expand toggle and the "Go to leaderboard"
-  // button. Neither may wrap: the footer is a fixed-height flex row, so a
-  // wrap would be clipped exactly like a wrapped row. The right-hand label
-  // is the longer of the two now, which is why this pin matters more than
-  // it did when it read "Open".
+  // Both footer labels — the expand toggle and the "Open challenges" button.
+  // Neither may wrap: the footer is a fixed-height flex row, so a wrap would
+  // be clipped exactly like a wrapped row.
   assert.match(html, /<span class="whitespace-nowrap">See all 9 challenges<\/span>/);
-  assert.match(html, /<span class="whitespace-nowrap">Go to leaderboard<\/span>/);
+  assert.match(html, /<span class="whitespace-nowrap">Open challenges<\/span>/);
   assert.match(html, /home-panel-expand[^>]*whitespace-nowrap/);
   assert.match(html, /home-panel-open[^>]*whitespace-nowrap/);
 });
@@ -1012,20 +1012,25 @@ test('the menu offers the destination and a deliberate hide', () => {
 
   const items = HP.menuItems('challenges');
   // Joined rather than deep-equalled: the module runs in a vm realm, so its
-  // arrays fail deepStrictEqual's prototype check.
-  assert.equal(labels(items), 'Open challenges | Hide widget');
-  assert.equal(items[1].destructive, true, 'hiding is the destructive row');
+  // arrays fail deepStrictEqual's prototype check. BOTH destinations are here
+  // (#980) — the widget has two, and each row names the screen it opens.
+  assert.equal(labels(items), 'Open challenges | Open leaderboard | Hide widget');
+  assert.equal(items[2].destructive, true, 'hiding is the destructive row');
   assert.ok(!items[0].destructive);
+  assert.ok(!items[1].destructive);
 
-  // Row 1 is a real hash navigation, so the device back gesture returns here.
+  // Both destination rows are real hash navigations, so the device back
+  // gesture returns here.
   items[0].handler();
   assert.equal(sandbox.location.hash, '#leaderboard/challenges');
+  items[1].handler();
+  assert.equal(sandbox.location.hash, '#leaderboard');
 
-  // Row 2 is exactly what the ✕ did — persisted, and still restorable from
-  // Settings → Home screen widgets.
+  // The last row is exactly what the ✕ did — persisted, and still restorable
+  // from Settings → Home screen widgets.
   const calls = [];
   sandbox.fetch = async (url) => { calls.push(url); return { ok: true, json: async () => ({}) }; };
-  items[1].handler();
+  items[2].handler();
   assert.equal(Array.from(HP._data.hidden).join(), 'challenges');
   assert.deepEqual(calls, ['/api/home-panels/challenges/visibility']);
 
@@ -1048,7 +1053,7 @@ test('openMenu goes through the kit\'s ADAPTIVE menu — one call site, both idi
   assert.equal(seen.length, 1);
   assert.equal(seen[0].anchorEl, anchor, 'the anchor is what makes it a popover on desktop');
   assert.equal(seen[0].title, 'Challenges', 'the sheet needs a heading; a popover ignores it');
-  assert.equal(labels(seen[0].items), 'Open challenges | Hide widget');
+  assert.equal(labels(seen[0].items), 'Open challenges | Open leaderboard | Hide widget');
   assert.match(read('public/js/platform-ui.js'), /unNative[\s\S]{0,400}?\.menu\(/);
 
   // Kit but no wrapper (a page that loads native.js directly).
@@ -1663,10 +1668,15 @@ test('desktop: the zero state leads with the note, then fills the tile', () => {
   assert.match(html, /No challenges are running right now/, 'same copy at both widths');
   assert.match(html, /data-rows="0"/);
   assert.match(html, /data-fill="3"/);
-  // Nothing to expand or count: one control, and it names where it goes.
+  // Nothing to expand or count: one footer control, and it names THE BOARD it
+  // is the full version of — the title bar's link is what says "leaderboard"
+  // now (#980), so the two must not read as the same door twice.
   assert.doesNotMatch(html, /home-panel-expand/);
   assert.match(html, /home-panel-lb-open/);
-  assert.match(html, /See full leaderboard/);
+  assert.match(html, /See full standings/);
+  assert.doesNotMatch(html, /See full leaderboard/);
+  // …and the bar carries the widget's leaderboard link in this state too.
+  assert.match(html, /home-panel-lb-browse[^>]*aria-label="Open leaderboard"/);
 });
 
 test('desktop: the viewer’s own row is last, marked, and never duplicated', () => {
@@ -1847,19 +1857,22 @@ test('phone: two rows, the way out in the title bar, and no footer', () => {
   assert.equal((html.match(/data-challenge-id/g) || []).length, 2);
   assert.match(html, /data-rows="2"/, 'and data-rows reports what is DRAWN');
 
-  // No footer: its 27px is the second row. Both of its controls are
-  // accounted for — see below and the ⋮ menu's "Open challenges".
+  // No footer: its 27px is the second row. Its controls are accounted for —
+  // see below, the rows themselves, and the ⋮ menu's two destination rows.
   assert.doesNotMatch(html, /home-panel-footer/);
   assert.doesNotMatch(html, /home-panel-expand/);
 
-  // The way out rides in the title bar instead, on the SAME class _wire
-  // already binds, so the destination survives the footer's removal.
-  assert.match(html, /home-panel-bar[\s\S]*?home-panel-open[\s\S]*?home-panel-menu/,
+  // The way out rides in the title bar instead — the leaderboard link of
+  // #980, which is Discover's browse control in the same place for the same
+  // reason, so the phone shape keeps exactly ONE bar control.
+  assert.match(html, /home-panel-bar[\s\S]*?home-panel-lb-browse[\s\S]*?home-panel-menu/,
     'inside the bar, before the ⋮ menu');
-  assert.match(html, /home-panel-open[^>]*title="Go to the Challenges tab on the Leaderboard screen"/);
-  assert.match(html, /home-panel-open[^>]*aria-label="See all challenges"/);
+  assert.match(html, /home-panel-lb-browse[^>]*title="Open the Leaderboard screen"/);
+  assert.match(html, /home-panel-lb-browse[^>]*aria-label="Open leaderboard"/);
+  assert.doesNotMatch(html, /home-panel-open/,
+    'and NOT a second violet link beside it — the bar has room for one');
   assert.match(read('public/js/home-panels.js'),
-    /querySelectorAll\('\.home-panel-open'\)/, 'and that class is wired');
+    /querySelectorAll\('\.home-panel-lb-browse'\)/, 'and that class is wired');
 });
 
 test('phone: the empty state is the bar plus its one note row', () => {
@@ -1903,8 +1916,12 @@ test('desktop keeps all four rows, its footer and its toggle', () => {
   assert.match(html, /home-panel-footer/);
   assert.match(html, /home-panel-expand[^>]*data-panel-key="challenges"/);
   assert.match(html, /See all 8 challenges/);
-  assert.match(html, /home-panel-open[^>]*aria-label="Go to leaderboard"/,
-    'the footer keeps the LONG label; "See all" is the phone bar’s');
+  assert.match(html, /home-panel-open[^>]*aria-label="Open challenges"/,
+    'the footer keeps the Challenges-tab door; the bar carries the leaderboard');
+  // …and the bar's leaderboard link is on BOTH shapes, with the long label
+  // here where there is room for it (#980).
+  assert.match(html, /home-panel-lb-browse[^>]*aria-label="Open leaderboard"/);
+  assert.match(html, /<span class="whitespace-nowrap">Open leaderboard<\/span>/);
 });
 
 // The fallback host (#home-panels, the search view) has no grid cell — but
