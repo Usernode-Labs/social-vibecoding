@@ -22,7 +22,7 @@ const topoJs = fs.readFileSync(path.join(root, 'public/js/admin-topochain.js'), 
 // capability, accept_logs, is folded into the Users form instead).
 const BUILT_SUBS = [
   'seasons', 'season-events', 'users', 'onchain-accounts', 'user-activities',
-  'challenge-templates', 'settings', 'app-version', 'sql-console', 'api-tester',
+  'challenge-templates', 'settings', 'app-version', 'bp-diagnostics', 'sql-console', 'api-tester',
 ];
 const GAP_SUBS = ['challenge-kinds', 'terms-versions', 'token-allocation', 'mobile-logs'];
 
@@ -106,7 +106,7 @@ test('every built subsection has a render function reachable from _renderSub', (
   const renderFns = [
     'renderSeasonEvents', 'renderUsers', 'renderOnchainAccounts', 'renderUserActivities',
     'renderChallengeTemplates', 'renderSettings', 'renderAppVersion', 'renderSqlConsole',
-    'renderApiTester', 'renderSeasons',
+    'renderBpDiagnostics', 'renderApiTester', 'renderSeasons',
   ];
   for (const name of renderFns) {
     assert.ok(fn.includes(name), `_renderSub dispatches to ${name}`);
@@ -131,6 +131,19 @@ test('the seasons subsection is documented as read-only/derived in its own rende
   const fn = topoJs.slice(topoJs.indexOf('async renderSeasons(host)'), topoJs.indexOf('_renderSeasonsList('));
   assert.match(fn, /no dedicated Seasons API/i, 'the UI itself tells the admin why there is no create/edit/delete here');
   assert.ok(!/canWrite/.test(fn), 'seasons has no mutating controls to gate — it is read-only by construction');
+});
+
+test('BP diagnostics is aggregate-only, privacy-suppressed, and explicit about unavailable filters', () => {
+  const fn = topoJs.slice(
+    topoJs.indexOf('  async renderBpDiagnostics(host) {'),
+    topoJs.indexOf('  // ══', topoJs.indexOf('  async renderBpDiagnostics(host) {'))
+  );
+  assert.match(fn, /canonical blocks \/ won slots/i);
+  assert.match(fn, /fewer than[\s\S]*distinct wallets/i);
+  assert.match(fn, /App-version.*do not define the won-slot denominator/is);
+  assert.match(fn, /paused, delegated, and block-production-release state is not available/is);
+  assert.match(fn, /No all-history query was run/i);
+  assert.doesNotMatch(fn, /wallet_address|user_id|slot_outcome_reports|vrf_obligations/);
 });
 
 // ─── Sub-nav hash handling ──────────────────────────────────────────────

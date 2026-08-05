@@ -85,6 +85,7 @@ const AdminTopochain = {
     { key: 'challenge-templates', label: 'Challenge templates' },
     { key: 'settings', label: 'Settings' },
     { key: 'app-version', label: 'App version' },
+    { key: 'bp-diagnostics', label: 'BP diagnostics' },
     { key: 'sql-console', label: 'SQL console' },
     { key: 'api-tester', label: 'API tester' },
   ],
@@ -327,6 +328,7 @@ const AdminTopochain = {
       case 'challenge-templates': return AdminTopochain.renderChallengeTemplates(c);
       case 'settings': return AdminTopochain.renderSettings(c);
       case 'app-version': return AdminTopochain.renderAppVersion(c);
+      case 'bp-diagnostics': return AdminTopochain.renderBpDiagnostics(c);
       case 'sql-console': return AdminTopochain.renderSqlConsole(c);
       case 'api-tester': return AdminTopochain.renderApiTester(c);
       default: return AdminTopochain.renderSeasons(c);
@@ -2330,6 +2332,148 @@ const AdminTopochain = {
     document.getElementById('admin-topo-av-form').innerHTML = '';
     AdminTopochain._appver.editingId = null;
     AdminTopochain._loadAppVersions();
+  },
+
+  // ══════════════════════════════════════════════════════════════════
+  // Block-production diagnostics — aggregate receiver-reported epoch
+  // counters only. This view intentionally has no device or wallet
+  // dimensions and no write controls.
+  // ══════════════════════════════════════════════════════════════════
+
+  _bpdiag: { eventId: '', events: [] },
+
+  async renderBpDiagnostics(host) {
+    host.innerHTML = `
+      <div class="flex flex-wrap items-start justify-between gap-3 mb-3">
+        <div>
+          <h2 class="text-lg font-semibold">Block-production diagnostics</h2>
+          <p class="text-xs text-zinc-500 mt-1">
+            Canonical success = receiver-reported canonical blocks / won slots,
+            calculated as a weighted ratio of sums.
+          </p>
+        </div>
+        <label class="text-xs text-zinc-500">
+          Season event
+          <select id="admin-topo-bpd-event"
+            class="block mt-1 min-w-56 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1.5 text-sm">
+            <option value="">Newest current active event</option>
+          </select>
+        </label>
+      </div>
+      <div class="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-xs text-amber-800 dark:text-amber-200 mb-4">
+        Diagnostic evidence only — no target or SLA is configured. App-version
+        device reports do not define the won-slot denominator. Historical
+        paused, delegated, and block-production-release state is not available
+        per epoch and is not filtered here.
+      </div>
+      <div id="admin-topo-bpd-result"><p class="text-sm text-zinc-500">Loading&hellip;</p></div>`;
+
+    const events = await AdminTopochain._fetchAllEvents();
+    if (AdminTopochain._sub !== 'bp-diagnostics') return;
+    AdminTopochain._bpdiag.events = events;
+    const picker = document.getElementById('admin-topo-bpd-event');
+    if (!picker) return;
+    const esc = AdminTopochain.esc;
+    picker.innerHTML = '<option value="">Newest current active event</option>'
+      + events.map((event) =>
+        `<option value="${esc(event.id)}">${esc(event.name)} (#${esc(event.id)})</option>`
+      ).join('');
+    picker.value = String(AdminTopochain._bpdiag.eventId || '');
+    picker.addEventListener('change', () => {
+      AdminTopochain._bpdiag.eventId = picker.value;
+      AdminTopochain._loadBpDiagnostics();
+    });
+    AdminTopochain._loadBpDiagnostics();
+  },
+
+  async _loadBpDiagnostics() {
+    const selected = AdminTopochain._bpdiag.eventId;
+    const params = selected
+      ? `?season_event_id=${encodeURIComponent(selected)}` : '';
+    const { ok, data } = await AdminTopochain.fetchJson(
+      `/api/v4/admin/block-production-diagnostics${params}`);
+    if (AdminTopochain._sub !== 'bp-diagnostics') return;
+    const host = document.getElementById('admin-topo-bpd-result');
+    if (!host) return;
+    if (!ok || !data?.success) {
+      host.innerHTML = `<p class="text-sm text-red-500">${AdminTopochain.esc(data?.error || 'Diagnostics unavailable.')}</p>`;
+      return;
+    }
+    AdminTopochain._renderBpDiagnosticsResult(data.data);
+  },
+
+  _renderBpDiagnosticsResult(payload) {
+    const host = document.getElementById('admin-topo-bpd-result');
+    if (!host) return;
+    const esc = AdminTopochain.esc;
+    const event = payload?.event;
+    if (!event) {
+      host.innerHTML = '<p class="text-sm text-zinc-500">No current active event is configured. Choose an event explicitly to inspect it.</p>';
+      return;
+    }
+    const picker = document.getElementById('admin-topo-bpd-event');
+    if (picker && !AdminTopochain._bpdiag.eventId) picker.value = String(event.id);
+    const minimum = payload?.privacy?.minimum_cohort_wallets ?? 5;
+    const pct = (value) => value == null ? '—' : `${esc(value)}%`;
+    const cards = (payload.cohorts || []).map((cohort) => {
+      if (cohort.status === 'suppressed') {
+        return `<article class="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
+          <h3 class="font-mono text-sm font-semibold">${esc(cohort.chain_id)}</h3>
+          <p class="text-xs text-zinc-500 mt-2">
+            Hidden: fewer than ${esc(cohort.minimum_cohort_wallets || minimum)}
+            distinct wallets contributed to this cohort.
+          </p>
+        </article>`;
+      }
+      if (cohort.status === 'no_data') {
+        return `<article class="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
+          <h3 class="font-mono text-sm font-semibold">${esc(cohort.chain_id)}</h3>
+          <p class="text-xs text-zinc-500 mt-2">No receiver epoch data in this event’s configured epoch bounds.</p>
+        </article>`;
+      }
+      if (cohort.status === 'unavailable') {
+        return `<article class="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
+          <h3 class="font-mono text-sm font-semibold">${esc(cohort.chain_id)}</h3>
+          <p class="text-xs text-zinc-500 mt-2">
+            Diagnostics unavailable: this event needs valid start and end epoch
+            bounds. No all-history query was run.
+          </p>
+        </article>`;
+      }
+      const flags = (cohort.quality_flags || []).length
+        ? `<p class="text-xs text-amber-600 dark:text-amber-400 mt-3">Quality flags: ${esc(cohort.quality_flags.join(', '))}</p>`
+        : '';
+      return `<article class="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
+        <div class="flex items-center justify-between gap-3">
+          <h3 class="font-mono text-sm font-semibold">${esc(cohort.chain_id)}</h3>
+          <span class="text-xs text-zinc-500">${esc(cohort.wallet_count)} wallets</span>
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-3">
+          <div><div class="text-xs text-zinc-500">Canonical success</div><div class="text-lg font-semibold">${pct(cohort.canonical_success_rate)}</div></div>
+          <div><div class="text-xs text-zinc-500">Produced / won</div><div class="text-lg font-semibold">${pct(cohort.produced_success_rate)}</div></div>
+          <div><div class="text-xs text-zinc-500">Canonical / produced</div><div class="text-lg font-semibold">${pct(cohort.canonicality_rate)}</div></div>
+          <div><div class="text-xs text-zinc-500">Won slots</div><div class="font-mono">${esc(cohort.won_slots)}</div></div>
+          <div><div class="text-xs text-zinc-500">Produced</div><div class="font-mono">${esc(cohort.produced_blocks)}</div></div>
+          <div><div class="text-xs text-zinc-500">Canonical</div><div class="font-mono">${esc(cohort.canonical_blocks)}</div></div>
+          <div><div class="text-xs text-zinc-500">Orphaned</div><div class="font-mono">${esc(cohort.orphaned_blocks)}</div></div>
+          <div><div class="text-xs text-zinc-500">Failed</div><div class="font-mono">${esc(cohort.failed_blocks)}</div></div>
+          <div><div class="text-xs text-zinc-500">Epochs observed</div><div class="font-mono">${esc(cohort.first_epoch)}–${esc(cohort.last_epoch)}</div></div>
+        </div>
+        <p class="text-xs text-zinc-500 mt-3">Latest receiver update: ${esc(AdminTopochain._fmt(cohort.last_updated_at))}</p>
+        ${flags}
+      </article>`;
+    }).join('');
+    host.innerHTML = `
+      <div class="mb-3 text-sm">
+        <span class="font-semibold">${esc(event.name)}</span>
+        <span class="text-zinc-500">(#${esc(event.id)}; epochs ${esc(event.start_epoch ?? 'open')}–${esc(event.end_epoch ?? 'open')})</span>
+      </div>
+      <p class="text-xs text-zinc-500 mb-3">
+        Cohorts below ${esc(minimum)} distinct wallets are suppressed. Current
+        receiver rows are recomputed on each load so late corrections can replace
+        earlier values.
+      </p>
+      <div class="grid grid-cols-1 xl:grid-cols-2 gap-3">${cards || '<p class="text-sm text-zinc-500">This event has no configured chains.</p>'}</div>`;
   },
 
   // ══════════════════════════════════════════════════════════════════

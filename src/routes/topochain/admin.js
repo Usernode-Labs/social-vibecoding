@@ -33,6 +33,9 @@ const { appVersionConfigsAdminRoutes } = require('./admin/app-version-configs');
 const { settingsAdminRoutes } = require('./admin/settings');
 const { dbToolsAdminRoutes } = require('./admin/db-tools');
 const { waitlistAdminRoutes } = require('./admin/waitlist');
+const {
+  blockProductionDiagnosticsAdminRoutes,
+} = require('./admin/block-production-diagnostics');
 
 function topochainAdminRoutes(config) {
   const router = Router();
@@ -124,6 +127,7 @@ function topochainAdminRoutes(config) {
   // release-bp)` paths don't collide with users.js (whose `/users/:id`
   // routes are one segment shorter and never POST to a sub-action).
   router.use(waitlistAdminRoutes(config));
+  router.use(blockProductionDiagnosticsAdminRoutes(config));
 
   return router;
 }
