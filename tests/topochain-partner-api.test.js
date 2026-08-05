@@ -93,6 +93,10 @@ function handleQuery(rawSql, params = []) {
     return { rows: [] };
   }
 
+  if (sql === 'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))') {
+    return { rows: [{ pg_advisory_xact_lock: null }] };
+  }
+
   // POST /user-activities: season_events existence + season_id lookup.
   if (sql.startsWith('SELECT id, season_id FROM season_events WHERE id = $1')) {
     const event = SEASON_EVENTS.find((e) => e.id === params[0]);

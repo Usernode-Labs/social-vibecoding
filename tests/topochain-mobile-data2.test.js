@@ -253,6 +253,10 @@ function handleQuery(rawSql, params = []) {
 
   if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
 
+  if (sql === 'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))') {
+    return { rows: [{ pg_advisory_xact_lock: null }] };
+  }
+
   // mobileTokenAuth.
   if (sql.startsWith('SELECT t.id, t.user_id, t.ability, t.expires_at, u.username FROM mobile_auth_tokens')) {
     const tok = TOKENS.find((t) => t.token_hash === params[0]);

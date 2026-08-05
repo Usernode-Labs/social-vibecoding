@@ -30,6 +30,16 @@ async function readDelegationState(pool, account) {
 // read + the one write the new state needs). Returns
 // `{ delegated, changed, delegatedSince }`.
 async function setDelegationState(client, account, delegated) {
+  // A row lock cannot serialize the first mutation for an account because
+  // there is no row to lock yet. Take a transaction-scoped advisory lock
+  // first so concurrent first-time enables cannot both reach the INSERT and
+  // race on the UNIQUE(account) constraint. Hash collisions only serialize
+  // unrelated accounts; the account remains the key for every state query.
+  await client.query(
+    'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+    [account]
+  );
+
   const { rows: lockedRows } = await client.query(
     'SELECT id, started_at, ended_at FROM account_delegation_periods WHERE account = $1 FOR UPDATE',
     [account]
