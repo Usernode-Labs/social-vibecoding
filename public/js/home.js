@@ -811,6 +811,10 @@ const Home = {
           Home._showGridOverlay(listEl, cols, item);
         },
         onHover: (item, cell, ok) => { Home._previewDrop(item, cell, ok, cols); },
+        // The release spring's destination. Same memoised plan again: the
+        // tile settles on the cell the tint promised, not on the cell it was
+        // picked up from.
+        rectForCell: (item, cell) => Home._rectForCell(item, cell, cols),
         onPlace: (item, cell) => { Home._onGridPlace(item, cell, cols); },
         onSettle: () => {
           Home._dragActive = false;
@@ -2485,6 +2489,27 @@ const Home = {
     const plan = next ? { item, layout, next } : null;
     Home._planMemo = { key, plan };
     return plan;
+  },
+
+  // Where a committed drop LANDS, in viewport coords — the kit settles the
+  // release spring here instead of on the dragged element's own rect, which
+  // is still the origin cell (a placement drag never moves the real item).
+  // Without this the tile flew from the finger back to where it was picked
+  // up and only then jumped to the drop cell.
+  //
+  // Read off the same plan the tint and the drop use, so the tile settles
+  // exactly where the highlight promised — including after an edge nudge,
+  // where the landing cell is not the cell under the finger.
+  _rectForCell(el, cell, cols) {
+    const overlay = Home._overlayEl;
+    const plan = Home._planFor(el, cell, cols);
+    if (!overlay || !plan) return null;
+    const placed = plan.next.find((it) => HomeLayout.idOf(it) === HomeLayout.idOf(plan.item));
+    if (!placed || placed.row >= HomeLayout.MAX_ROWS) return null;
+    const target = overlay.querySelector(`[data-cell="${placed.col},${placed.row}"]`);
+    if (!target) return null;
+    const r = target.getBoundingClientRect();
+    return { left: r.left, top: r.top };
   },
 
   // Elements currently wearing a preview transform, so the next hover can put

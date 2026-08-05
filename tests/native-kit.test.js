@@ -880,6 +880,113 @@ test('attachGridPlacement fires onSettle on every teardown path', () => {
   assert.match(detach, /pendingFinish/, 'a ghost settle stopped mid-spring still owes its callbacks');
 });
 
+// ── The release glide ──────────────────────────────────────────────────
+//
+// One release must read as ONE motion: from wherever the ghost is under the
+// finger, to the cell the tile lands in. Three separate things broke that,
+// and each is pinned below.
+
+test('the ghost glide runs in the PIXEL domain, not on 0→1 progress', () => {
+  // isAtRest's thresholds are absolute — REST_DELTA px, REST_VELOCITY px/ms.
+  // Drive a spring over a normalized 0→1 progress value through them and
+  // "rest" fires while the progress is still REST_DELTA short of 1, i.e. at
+  // ~66% of the travel: the ghost teleports the last third of the way. That
+  // is not a tuning nit, it is the difference between landing and snapping.
+  const norm = simulateSpring(0, 1, 0, PRESETS.stiff);
+  assert.ok(norm.x < 0.7,
+    `a normalized stiff spring quits at ${norm.x.toFixed(3)} of the travel`);
+
+  // The same preset over the same journey expressed in pixels arrives.
+  const dist = 300;
+  const px = simulateSpring(dist, 0, 0, PRESETS.stiff);
+  assert.ok(Math.abs(px.x) < physics.REST_DELTA, `pixel-domain spring arrives: ${px.x}`);
+  assert.ok(px.durationMs > norm.durationMs,
+    'and it takes longer, because it actually finishes the trip');
+
+  // glideGhost is that spring, shared by both ghost drops.
+  assert.match(NATIVE_JS, /function glideGhost\(ghost, gx, gy, tx, ty, onRest\) \{/);
+  const glide = NATIVE_JS.slice(
+    NATIVE_JS.indexOf('function glideGhost(ghost, gx, gy, tx, ty, onRest) {'),
+    NATIVE_JS.indexOf('Swipe-to-act rows'));
+  assert.match(glide, /from: dist, to: 0/, 'counts remaining DISTANCE down to zero');
+  assert.doesNotMatch(glide, /from: 0, to: 1/);
+  // Interpolates both axes off that one scalar, so the flight is a straight
+  // line rather than two springs racing.
+  assert.match(glide, /1 - remaining \/ dist/);
+  assert.match(glide, /translate\('\s*\+\s*\n?\s*\(gx \+ dx \* p\) \+ 'px, ' \+ \(gy \+ dy \* p\) \+ 'px\)'/);
+
+  // Neither drop site may hand-roll it again.
+  assert.equal(NATIVE_JS.match(/activeSpring = glideGhost\(ghost, gx, gy, tx, ty,/g).length, 2,
+    'both the reorder drop and the placement drop use it');
+  assert.doesNotMatch(NATIVE_JS, /from: 0, to: 1, velocity: 0, preset: 'stiff'/,
+    'no normalized ghost settle survives anywhere in the kit');
+});
+
+test('the placement glide STARTS at the ghost’s live offset and ENDS on the landing cell', () => {
+  const fn = NATIVE_JS.slice(
+    NATIVE_JS.indexOf('function attachGridPlacement(listEl, options) {'),
+    NATIVE_JS.indexOf('/* ────────────────────────────────────────────────────────────────────\n   * Page transitions'));
+  const release = fn.slice(fn.indexOf('function release(cancelled) {'),
+    fn.indexOf('function onPointerDown(e) {'));
+  assert.ok(release.length > 500, 'located release()');
+
+  // ORIGIN: the ghost's own live translate under the finger. Re-deriving it
+  // from the pointer would drop the lift offset and jump on the first frame.
+  assert.match(release, /var gx = drag\.gx;\n\s*var gy = drag\.gy;/);
+
+  // TARGET: the host's landing rect for a COMMITTED drop. The real item never
+  // moves during a placement drag, so its own rect is still the ORIGIN cell —
+  // settling there flies the tile back to where it was picked up and only
+  // then lets the re-render pop it into the drop cell.
+  assert.match(release, /if \(placed && typeof opts\.rectForCell === 'function'\)/);
+  assert.match(release, /target = opts\.rectForCell\(item, cell\)/);
+  assert.match(release, /var tx = target\.left - drag\.ghostLeft;/);
+  assert.match(release, /var ty = target\.top - drag\.ghostTop;/);
+  // A host that omits it, or returns something unmeasurable, still gets a
+  // glide rather than NaN.
+  assert.match(release, /if \(!target \|\| typeof target\.left !== 'number'[\s\S]*?target = item\.getBoundingClientRect\(\);/);
+  assert.match(release, /catch \(err\) \{ target = null; \}/);
+  // A refused or cancelled drop lands nowhere, so it never asks the host and
+  // springs back to the item instead — `placed` is what gates it, and it is
+  // false for both.
+  assert.match(release, /var placed = !cancelled && !!cell && drag\.ok;/);
+  assert.equal(release.match(/opts\.rectForCell\(/g).length, 1,
+    'one call, behind the placed gate');
+});
+
+test('nothing swaps into place until the glide finishes', () => {
+  const fn = NATIVE_JS.slice(
+    NATIVE_JS.indexOf('function attachGridPlacement(listEl, options) {'),
+    NATIVE_JS.indexOf('/* ────────────────────────────────────────────────────────────────────\n   * Page transitions'));
+  const release = fn.slice(fn.indexOf('function release(cancelled) {'),
+    fn.indexOf('function onPointerDown(e) {'));
+  const finish = release.slice(release.indexOf('function finish() {'),
+    release.indexOf('listEl.classList.remove(\'un-reordering\')'));
+
+  // The host's re-render is driven from onPlace, and the origin slot and
+  // ghost come off, all inside finish() — which the spring's onRest calls.
+  for (const owed of [/opts\.onPlace\(item, cell\)/, /removeChild\(ghost\)/,
+    /item\.classList\.remove\('un-reorder-slot'\)/, /opts\.onSettle\(placed\)/]) {
+    assert.match(finish, owed);
+  }
+  assert.match(release, /activeSpring = glideGhost\(ghost, gx, gy, tx, ty, function \(\) \{\n\s*activeSpring = null;\n\s*finish\(\);/,
+    'finish() is the glide’s onRest, not something release() runs itself');
+  // …and nothing above finish() may do any of it early.
+  const beforeFinish = release.slice(0, release.indexOf('function finish() {'));
+  assert.doesNotMatch(beforeFinish, /onPlace|removeChild|un-reorder-slot/);
+
+  // The displacement preview is part of the same motion: clearing hover at
+  // release would snap the displaced occupants back to their old cells while
+  // the tile is still in the air, then move them a second time on the
+  // re-render. A committed drop tears it down in finish(); a REFUSED one
+  // clears at once, because nothing is landing.
+  assert.match(release, /if \(!placed\) hover\(null, false\);/);
+  assert.match(finish, /if \(placed && opts\.onHover\)[\s\S]*?opts\.onHover\(item, null, false\)/);
+  // Ordering inside finish(): the preview comes off in the same task as the
+  // re-render onPlace triggers, so both land in one paint.
+  assert.ok(finish.indexOf('onHover') < finish.indexOf('onPlace'));
+});
+
 // ── Reorder edge auto-scroll ───────────────────────────────────────────
 
 test('autoScrollVelocity: zero outside the edge band, ramps to ±max at the edge', () => {

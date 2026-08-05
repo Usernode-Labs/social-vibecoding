@@ -700,3 +700,115 @@ test('cellFromPoint reads the overlay’s own cells, never grid arithmetic', () 
   sandbox.document.elementFromPoint = () => null;
   assert.equal(Home._cellFromPoint(10, 10), null);
 });
+
+// ── Where the release glide lands ──────────────────────────────────────
+//
+// The kit settles the ghost on the rect _rectForCell returns. Getting that
+// wrong is the bug this suite exists to prevent regressing: a placement drag
+// never moves the real item, so if the kit falls back to the item's own rect
+// the tile flies from the finger BACK to the cell it was picked up from and
+// only then pops into the drop cell — one release, two contradictory motions,
+// too fast to read as anything but a glitch.
+
+test('rectForCell settles the ghost on the LANDING cell, not the origin cell', () => {
+  const layout = [
+    { type: 'app', slug: 'a', col: 0, row: 0 },
+    { type: 'app', slug: 'b', col: 2, row: 3 },
+  ];
+  const h = makePreview(layout);
+  const el = h.dom.nodes.get('app:a');
+
+  // Drop 'a' (origin 0,0 → rect 0,0) on cell 3,5.
+  assert.deepEqual({ ...h.Home._rectForCell(el, { col: 3, row: 5 }, 5) },
+    { left: 3 * CELL_W, top: 5 * CELL_H });
+  // Emphatically NOT the origin, which is what item.getBoundingClientRect()
+  // would still report mid-drag.
+  assert.notDeepEqual({ ...h.Home._rectForCell(el, { col: 3, row: 5 }, 5) }, { left: 0, top: 0 });
+
+  // Dropping where it already is settles in place — a no-op drop must not
+  // glide anywhere.
+  assert.deepEqual({ ...h.Home._rectForCell(el, { col: 0, row: 0 }, 5) }, { left: 0, top: 0 });
+});
+
+test('the settle target is the plan’s cell, so an edge nudge lands where the tint promised', () => {
+  // A 2x2 widget hovered at the last column cannot be placed there — the
+  // plan nudges it left to fit. The tint shows the nudged footprint, and the
+  // glide has to agree with it: settling on the cell under the FINGER would
+  // drop the tile a column short of where it visibly lands.
+  const layout = [{ type: 'widget', key: 'discover', col: 0, row: 0, w: 2, h: 2 }];
+  const h = makePreview(layout);
+  const el = h.dom.nodes.get('widget:discover');
+
+  const plan = h.Home._planFor(el, { col: 4, row: 1 }, 5);
+  const placed = plan.next.find((i) => h.HomeLayout.idOf(i) === 'widget:discover');
+  assert.equal(placed.col, 3, 'a 2-wide widget at col 4 of 5 is nudged to col 3');
+
+  assert.deepEqual({ ...h.Home._rectForCell(el, { col: 4, row: 1 }, 5) },
+    { left: 3 * CELL_W, top: 1 * CELL_H }, 'the glide follows the plan, not the pointer');
+  // And the tint agrees, which is the whole point of sharing the memo.
+  h.Home._previewDrop(el, { col: 4, row: 1 }, true, 5);
+  assert.deepEqual(h.tinted().sort(), ['3,1', '3,2', '4,1', '4,2']);
+});
+
+test('rectForCell returns null when there is no cell to settle on', () => {
+  // Null means "fall back to the item's own rect": a slightly wrong glide is
+  // better than reading a rect off nothing, and better than a thrown error
+  // mid-release, which would leave the ghost on screen forever.
+  const layout = [{ type: 'app', slug: 'a', col: 0, row: 0 }];
+  const h = makePreview(layout);
+  const el = h.dom.nodes.get('app:a');
+
+  // No overlay at all (a drop resolved after teardown).
+  const overlay = h.Home._overlayEl;
+  h.Home._overlayEl = null;
+  assert.equal(h.Home._rectForCell(el, { col: 1, row: 1 }, 5), null);
+  h.Home._overlayEl = overlay;
+
+  // An element that is in no layout has no plan and therefore no landing.
+  assert.equal(h.Home._rectForCell({ dataset: {}, _cls: new Set(), classList: { contains: () => false } },
+    { col: 1, row: 1 }, 5), null);
+
+  // A landing off the bottom of the canvas has no overlay cell to measure.
+  // canPlace refuses those, so this guard is belt-and-braces — stub the plan
+  // to reach it.
+  const realPlace = h.HomeLayout.place;
+  h.HomeLayout.place = () => [{ type: 'app', slug: 'a', col: 0, row: h.HomeLayout.MAX_ROWS }];
+  h.Home._planMemo = null;
+  assert.equal(h.Home._rectForCell(el, { col: 0, row: 1 }, 5), null);
+  h.HomeLayout.place = realPlace;
+  h.Home._planMemo = null;
+});
+
+test('the host hands rectForCell to the kit, wired to the same memo as the tint', () => {
+  const { Home, attachCalls } = makeHome();
+  Home._apps = [app('a')];
+  Home._wireCards({ querySelectorAll: () => [] }, true, 1);
+  const { opts } = attachCalls[0];
+  assert.equal(typeof opts.rectForCell, 'function',
+    'without this the kit settles on the item’s own rect — the origin cell');
+
+  // It must route through _rectForCell (and so through _planFor's memo)
+  // rather than measure something of its own.
+  const calls = [];
+  const real = Home._rectForCell;
+  Home._rectForCell = (...args) => { calls.push(args); return { left: 7, top: 9 }; };
+  const el = { dataset: {} };
+  assert.deepEqual(opts.rectForCell(el, { col: 2, row: 2 }), { left: 7, top: 9 });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], el);
+  assert.deepEqual(calls[0][1], { col: 2, row: 2 });
+  Home._rectForCell = real;
+});
+
+test('the overlay is inset by the grid’s ASYMMETRIC padding', () => {
+  // _rectForCell measures overlay cells, so any offset between the overlay
+  // and the real grid becomes a jump at the very end of the glide — the one
+  // frame the motion is supposed to be seamless. #app-list is
+  // `p-2 pt-1.5 sm:p-3 sm:pt-2`: the top is tighter than the sides, and a
+  // uniform inset sits the whole overlay 2px (phone) / 4px (desktop) low.
+  const CSS = read('public/css/app.css');
+  assert.match(read('public/index.html'), /id="app-list"[^>]*class="[^"]*\bp-2 pt-1\.5 sm:p-3 sm:pt-2/,
+    'the padding these insets mirror');
+  assert.match(CSS, /\.home-grid-overlay \{[^}]*inset: 0\.375rem 0\.5rem 0\.5rem;/);
+  assert.match(CSS, /min-width: 640px\)[\s\S]*?\.home-grid-overlay \{[^}]*inset: 0\.5rem 0\.75rem 0\.75rem;/);
+});

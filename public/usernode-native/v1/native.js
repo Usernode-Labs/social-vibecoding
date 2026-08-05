@@ -751,6 +751,31 @@
     return handle;
   }
 
+  // Fly a lifted drag ghost from its current translate offset (gx, gy) to
+  // (tx, ty) — the release glide shared by the reorder and placement drops.
+  // Returns the spring handle so the caller can stop() it.
+  //
+  // The spring runs on the REMAINING DISTANCE IN PIXELS, counting down to 0,
+  // rather than on a 0→1 progress value. isAtRest's thresholds are absolute
+  // — REST_DELTA 0.4 px, REST_VELOCITY 0.004 px/ms — so a normalized spring
+  // is declared "at rest" as soon as the progress value is within 0.4 of 1,
+  // i.e. at 66% of the travel, and the ghost teleports the last third of the
+  // way. In the pixel domain 0.4 means 0.4 of a pixel and the glide actually
+  // arrives, which is the difference between a drop that lands and a drop
+  // that visibly snaps.
+  function glideGhost(ghost, gx, gy, tx, ty, onRest) {
+    var dx = tx - gx;
+    var dy = ty - gy;
+    var dist = Math.sqrt(dx * dx + dy * dy);
+    return spring(function (remaining) {
+      var p = dist > 0 ? 1 - remaining / dist : 1;
+      ghost.style.transform = 'translate(' +
+        (gx + dx * p) + 'px, ' + (gy + dy * p) + 'px)';
+    }, {
+      from: dist, to: 0, velocity: 0, preset: 'stiff', onRest: onRest,
+    });
+  }
+
   /* ────────────────────────────────────────────────────────────────────
    * Swipe-to-act rows
    * ──────────────────────────────────────────────────────────────────── */
@@ -1687,12 +1712,9 @@
       if (activeSpring) activeSpring.stop();
       pendingFinish = finish;
       ghost.classList.add('un-reorder-ghost-drop'); // scale eases back to 1
-      activeSpring = spring(function (p) {
-        ghost.style.transform = 'translate(' +
-          (gx + (tx - gx) * p) + 'px, ' + (gy + (ty - gy) * p) + 'px)';
-      }, {
-        from: 0, to: 1, velocity: 0, preset: 'stiff',
-        onRest: function () { activeSpring = null; finish(); },
+      activeSpring = glideGhost(ghost, gx, gy, tx, ty, function () {
+        activeSpring = null;
+        finish();
       });
     }
 
@@ -2031,7 +2053,24 @@
   //                              before the release. Fires on every cell
   //                              CHANGE, not per frame, so it is cheap enough
   //                              to re-derive a plan in. cell is
-  //                              null when the pointer leaves the grid.
+  //                              null when the pointer leaves the grid, and
+  //                              once more at the END of a committed drop —
+  //                              after the ghost has finished flying, so a
+  //                              displacement preview holds still through
+  //                              the release instead of snapping back under
+  //                              the travelling tile.
+  //   rectForCell(item, cell)  → where a COMMITTED drop lands, in viewport
+  //                              coords ({ left, top } — a DOMRect from the
+  //                              host's own overlay cell is the natural
+  //                              answer). The ghost's release spring settles
+  //                              here, so the tile flies from the finger to
+  //                              the cell it is landing in. Omit it and the
+  //                              ghost settles on the item's own rect, which
+  //                              in this mode is still the ORIGIN cell — the
+  //                              tile flies back to where it was picked up
+  //                              and then jumps to the drop cell. Any host
+  //                              that moves items on drop should implement
+  //                              it. Return null to fall back.
   //   onPlace(item, cell)      → committed drop. Fires before onSettle, and
   //                              only for a legal, changed cell.
   //   onLift(item) / onSettle(placed) → same deferral contract as
@@ -2197,19 +2236,46 @@
       var cell = cancelled ? null : drag.cell;
       var placed = !cancelled && !!cell && drag.ok;
       if (placed) haptic();
-      hover(null, false);
 
-      // Glide the ghost home to the slot either way: on a committed drop the
-      // host re-renders the item into its new cell right after, and on a
-      // refused one this IS the "springs back" feedback.
-      var slotRect = item.getBoundingClientRect();
+      // WHERE THE GHOST SETTLES. On a REFUSED or CANCELLED drop it glides
+      // back to the item's own rect — that is the "springs back" feedback,
+      // and the item is still sitting there wearing the dashed slot.
+      //
+      // On a COMMITTED drop it must glide to the cell the item is LANDING
+      // in, which is why rectForCell exists. The real item does not move
+      // during a placement drag (that is the whole difference from
+      // displacement mode), so its rect is still the ORIGIN cell — settling
+      // there would fly the tile away from the finger, back to where it was
+      // picked up, and only then let the re-render pop it into the drop
+      // cell. One release, two contradictory motions. Asking the host for
+      // the landing rect makes it one continuous motion from finger to cell.
+      var target = null;
+      if (placed && typeof opts.rectForCell === 'function') {
+        try { target = opts.rectForCell(item, cell); } catch (err) { target = null; }
+      }
+      if (!target || typeof target.left !== 'number' || typeof target.top !== 'number') {
+        target = item.getBoundingClientRect();
+      }
       var gx = drag.gx;
       var gy = drag.gy;
-      var tx = slotRect.left - drag.ghostLeft;
-      var ty = slotRect.top - drag.ghostTop;
+      var tx = target.left - drag.ghostLeft;
+      var ty = target.top - drag.ghostTop;
+
+      // The hover state — highlight, and any displacement preview the host
+      // painted — stays up for the FLIGHT of a committed drop, and is torn
+      // down in finish() together with the ghost. Clearing it here would
+      // snap the displaced occupants back to their old cells while the tile
+      // is still travelling, then move them a second time on the re-render.
+      // A refused drop clears immediately: nothing is landing.
+      if (!placed) hover(null, false);
 
       function finish() {
         pendingFinish = null;
+        // Same task as the host's re-render below, so the preview transforms
+        // come off and the items paint in their real cells in one frame.
+        if (placed && opts.onHover) {
+          try { opts.onHover(item, null, false); } catch (err) { /* ignore */ }
+        }
         if (ghost && ghost.parentNode) ghost.parentNode.removeChild(ghost);
         item.classList.remove('un-reorder-slot');
         if (placed && opts.onPlace) {
@@ -2230,12 +2296,9 @@
       if (activeSpring) activeSpring.stop();
       pendingFinish = finish;
       ghost.classList.add('un-reorder-ghost-drop');
-      activeSpring = spring(function (p) {
-        ghost.style.transform = 'translate(' +
-          (gx + (tx - gx) * p) + 'px, ' + (gy + (ty - gy) * p) + 'px)';
-      }, {
-        from: 0, to: 1, velocity: 0, preset: 'stiff',
-        onRest: function () { activeSpring = null; finish(); },
+      activeSpring = glideGhost(ghost, gx, gy, tx, ty, function () {
+        activeSpring = null;
+        finish();
       });
     }
 
