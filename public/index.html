@@ -2427,6 +2427,21 @@
           <span class="text-xs text-zinc-600 dark:text-zinc-400"><span class="font-medium text-zinc-700 dark:text-zinc-300">Include app state</span> &mdash; this app can attach a snapshot of its current state to help debugging</span>
         </label>
       </div>
+      <!-- #964: opt-in kudos bounty on the issue this dialog is about to
+           file. Starts UNCHECKED on every open (app.js openFeedbackModal) —
+           filing feedback must never quietly spend someone's weekly
+           allowance. The note under it carries the viewer's live remaining
+           figure, and the checkbox is disabled at zero; the server is the
+           real gate either way, and a bounty that can't be placed never
+           costs the user their filed issue. Same utility classes as
+           #feedback-state-row above, so no new Tailwind names appear. -->
+      <div id="feedback-bounty-row" class="hidden mt-2">
+        <label class="flex items-start gap-2 cursor-pointer select-none">
+          <input id="feedback-bounty-checkbox" type="checkbox"
+            class="accent-violet-500 w-4 h-4 mt-0.5">
+          <span class="text-xs text-zinc-600 dark:text-zinc-400"><span class="font-medium text-zinc-700 dark:text-zinc-300">Put a kudos bounty on this</span> &mdash; pledges 1 of your weekly kudos to whoever's merged proposal closes this issue<br><span id="feedback-bounty-note" class="text-zinc-500 dark:text-zinc-500"></span></span>
+        </label>
+      </div>
       <div id="feedback-status" class="text-sm mt-2 hidden"></div>
       <div class="flex gap-3 mt-4">
         <button id="feedback-cancel" class="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>

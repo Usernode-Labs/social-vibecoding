@@ -228,6 +228,7 @@ const App = {
     App.restoreFromHash();
     App._applyMenuShot();
     App._applyLaunchShot();
+    App._applyFeedbackShot();
 
     // Re-poll the platform version every 10s so the header pill flips to
     // its "deploying" state within seconds of the deploy workflow signaling
@@ -302,6 +303,43 @@ const App = {
       try { AppView.showLaunchCoverShot(); } catch (err) { /* ignore */ }
     };
     setTimeout(paint, 50);
+  },
+
+  // Screenshot-state deep links `?shot=feedback` / `?shot=feedback-spent`
+  // (#964): open the Send Feedback dialog at boot. The dialog — and with it
+  // the new "Put a kudos bounty on this" row — is reachable ONLY by tapping
+  // the header speech-bubble or the Dev plus-menu, so without this link the
+  // before/after screenshots, the "Test this change" button and the
+  // dapp.json checks would all show the home feed instead of the change.
+  //
+  // `feedback-spent` additionally forces a client-side remaining:0 budget
+  // BEFORE opening, so the greyed-out/exhausted state is reviewable without
+  // writing kudos rows for a real cloned user (which the staging seed rules
+  // forbid). That override is display-only: it never posts, and the server
+  // remains the real allowance gate on submit.
+  //
+  // Pure UI state, no writes, deliberately NOT env-gated — same reasoning as
+  // ?shot=menu above: an IS_STAGING-only link would starve the production
+  // "before" shot forever.
+  _applyFeedbackShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'feedback' && shot !== 'feedback-spent') return;
+    const spent = shot === 'feedback-spent';
+    // One tick after restoreFromHash so the screen it navigated to has
+    // painted and the dialog opens over a settled shell.
+    setTimeout(() => {
+      try {
+        if (spent && window.Kudos?.Budget) {
+          const limit = Kudos.Budget.state?.limit || 20;
+          // Pin the exhausted figure and stop the hourly poll from
+          // replacing it mid-screenshot with the real (unspent) budget.
+          Kudos.Budget.state = { given_this_week: limit, remaining: 0, limit };
+          Kudos.Budget.refresh = () => Promise.resolve();
+        }
+        App.openFeedbackModal();
+      } catch (err) { /* ignore */ }
+    }, 50);
   },
 
   renderAdminButton() {
@@ -2055,6 +2093,30 @@ const App = {
     let stateAvailable = false;
     const stateRow = document.getElementById('feedback-state-row');
     const stateCheckbox = document.getElementById('feedback-state-checkbox');
+    // #964: the opt-in kudos-bounty row. Unlike the state row this shows for
+    // BOTH targets — "This app" and "Social Vibecoding Platform" alike file
+    // into a repository the platform tracks as an app, so either can carry a
+    // bounty.
+    const bountyRow = document.getElementById('feedback-bounty-row');
+    const bountyCheckbox = document.getElementById('feedback-bounty-checkbox');
+    const bountyNote = document.getElementById('feedback-bounty-note');
+    // Paint the row from the viewer's live weekly allowance and return it to
+    // its unchecked default. Budget state is null only when the first-load
+    // fetch failed — show the row enabled with no count rather than hiding a
+    // working feature; the server is the real gate.
+    const resetBountyRow = () => {
+      bountyCheckbox.checked = false;
+      const budget = window.Kudos?.Budget?.state || null;
+      const remaining = budget ? budget.remaining : null;
+      const limit = budget ? budget.limit : null;
+      const exhausted = remaining === 0;
+      bountyCheckbox.disabled = exhausted;
+      bountyRow.classList.toggle('opacity-60', exhausted);
+      if (remaining === null) bountyNote.textContent = '';
+      else if (exhausted) bountyNote.textContent = `You've used all ${limit} kudos this week — resets Monday 00:00 UTC.`;
+      else bountyNote.textContent = `${remaining} of ${limit} kudos left this week`;
+      bountyRow.classList.remove('hidden');
+    };
     // The selected option uses a darker violet on hover so it keeps its
     // active look; the unselected option uses the neutral zinc hover.
     const activeTargetClasses = ['bg-violet-600', 'text-white', 'border-violet-600', 'hover:bg-violet-500'];
@@ -2317,6 +2379,14 @@ const App = {
         const customTitle = feedbackTitle.value.trim();
         if (customTitle && (titleDirty || text === lastGeneratedFor)) body.title = customTitle;
         if (target === 'app') body.appSlug = App.currentApp;
+        // #964: pledge a kudos bounty on the issue this submit files.
+        // Captured at submit time alongside the target, and only when the
+        // box is both ticked and enabled — a disabled (allowance-spent)
+        // checkbox must never send the flag. The server files the issue
+        // regardless of what happens to the bounty.
+        const wantBounty = bountyCheckbox.checked && !bountyCheckbox.disabled
+          && !bountyRow.classList.contains('hidden');
+        if (wantBounty) body.bounty = true;
         // #683: attach the uploaded screenshot — the server appends the
         // embed line and links the row to the filed issue.
         if (screenshotId) body.screenshotId = screenshotId;
@@ -2345,9 +2415,30 @@ const App = {
         });
         const data = await res.json();
         if (res.ok) {
-          feedbackStatus.textContent = (target === 'app'
-            ? `Thanks! Filed against ${AppView?.appData?.name || 'this app'}.`
-            : 'Thanks! Filed against Social Vibecoding.') + stateNotice;
+          // #964: report both outcomes on one line. A declined bounty
+          // (allowance ran out between opening and submitting, repo isn't
+          // an app the platform can attach one to) never reads as a
+          // failure — the issue IS filed, and the bounty can still be added
+          // later from the Dev screen's Topics row.
+          let bountyNotice = '';
+          if (data.bounty) {
+            if (data.bounty.placed) {
+              bountyNotice = ` — and pledged 1 kudos as a bounty. ${data.bounty.remaining} left this week.`;
+              // The drawer's Kudos meter must show the number the user
+              // just spent down to, not the one they saw before.
+              window.Kudos?.Budget?.refresh?.();
+            } else {
+              bountyNotice = ` Couldn't add the bounty: ${data.bounty.error || 'the bounty could not be placed'}.`;
+            }
+          }
+          const filedAgainst = (target === 'app'
+            ? `Thanks! Filed against ${AppView?.appData?.name || 'this app'}`
+            : 'Thanks! Filed against Social Vibecoding');
+          // The success variant continues the sentence ("… — and pledged");
+          // every other variant ends it before appending.
+          feedbackStatus.textContent = (data.bounty?.placed
+            ? filedAgainst + bountyNotice
+            : `${filedAgainst}.${bountyNotice}`) + stateNotice;
           feedbackStatus.className = 'text-sm mt-2 text-emerald-400';
           feedbackStatus.classList.remove('hidden');
           feedbackText.value = '';
@@ -2440,6 +2531,18 @@ const App = {
         && typeof AppView.issueStateAvailable === 'function'
         && AppView.issueStateAvailable();
       stateCheckbox.checked = true;
+      // #964: the bounty row paints from the budget the badge already
+      // holds, then a refresh lands the current figure a moment later — a
+      // long-lived tab could otherwise show an hour-stale count. Both the
+      // immediate paint and the post-refresh repaint reset the checkbox to
+      // unchecked, which is the whole point of the row: a pledge is always
+      // a deliberate tick, never a side effect of filing feedback.
+      resetBountyRow();
+      Promise.resolve(window.Kudos?.Budget?.refresh?.()).then(() => {
+        // Only if the dialog is still open and untouched by the user.
+        const modal = document.getElementById('feedback-modal');
+        if (!modal.classList.contains('hidden') && !bountyCheckbox.checked) resetBountyRow();
+      }).catch(() => { /* budget unavailable — row stays as painted */ });
       if (canTargetApp) {
         feedbackTargetApp.textContent = appData?.name ? `This app (${appData.name})` : 'This app';
         setAppTargetEnabled(true);
@@ -2477,6 +2580,8 @@ const App = {
       // #683: cancelling discards the attachment client-side; an already
       // uploaded (now orphaned) row is GC'd server-side after 24h.
       resetScreenshotState();
+      // #964: drop any pledge intent with the rest of the draft.
+      bountyCheckbox.checked = false;
     });
     document.getElementById('feedback-modal').addEventListener('click', (e) => {
       if (e.target === e.currentTarget || e.target.dataset.modalBackdrop !== undefined) document.getElementById('feedback-cancel').click();

@@ -296,6 +296,16 @@
   ],
   "tests": [
     {
+      "name": "Send Feedback offers a kudos bounty, unchecked by default (#964)",
+      "path": "/?shot=feedback",
+      "expectSelector": "#feedback-bounty-row:not(.hidden) #feedback-bounty-checkbox:not(:checked):not(:disabled)"
+    },
+    {
+      "name": "The bounty checkbox is disabled once the weekly allowance is spent (#964)",
+      "path": "/?shot=feedback-spent",
+      "expectSelector": "#feedback-bounty-row:not(.hidden) #feedback-bounty-checkbox:disabled"
+    },
+    {
       "name": "Tapping an app shows its icon and name while it loads, not a blank window (#931)",
       "path": "/?shot=app-launching",
       "expectSelector": "#app-launch-cover .app-icon-tile",
@@ -1451,6 +1461,16 @@
       "path": "/?shot=preview-rebuilding#app/usernode-2d5619/dev",
       "expectSelector": "#staging-overlay:not(.hidden) #staging-loader-title",
       "expectText": "Spinning the preview back up…"
+    },
+    {
+      "name": "The bounty row states the weekly kudos allowance (#964)",
+      "path": "/?shot=feedback",
+      "expectText": "pledges 1 of your weekly kudos"
+    },
+    {
+      "name": "A spent allowance says so instead of showing a count (#964)",
+      "path": "/?shot=feedback-spent",
+      "expectText": "resets Monday 00:00 UTC"
     }
   ],
   "governance": {

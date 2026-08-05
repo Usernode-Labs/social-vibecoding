@@ -1745,9 +1745,11 @@ COMMENT ON COLUMN apps.db_password IS 'staging:private';
 -- to anyone the staging clone would be spun up for.
 
 -- PR kudos. A platform-wide appreciation signal that's orthogonal to
--- `pr_votes` (which is a yes/no merge gate). Every user gets 5 kudos
--- per week, can give at most 1 per PR, can't give to their own PR, and
--- can't take a kudos back. Eligibility lives in src/routes/kudos.js:
+-- `pr_votes` (which is a yes/no merge gate). Every user gets a weekly
+-- allowance (WEEKLY_KUDOS_LIMIT in src/services/bounties.js, currently
+-- 20, shared with issue bounties), can give at most 1 per PR, can't give
+-- to their own PR, and can't take a kudos back.
+-- Eligibility lives in src/routes/kudos.js:
 -- only chat_sessions in status ('promoted','merging','merged') can
 -- receive kudos.
 --

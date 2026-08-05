@@ -649,10 +649,23 @@ function dashboardRoutes(config) {
 
   // ── Kudos giving distribution (weekly) ─────────────────────
   //
-  // Every user gets a budget of 5 kudos per ISO week (WEEKLY_KUDOS_LIMIT
-  // in routes/kudos.js). For each of the last 12 weeks we bucket users by
-  // how many kudos they actually gave that week (0..5). pr_kudos.week_start
-  // is already the Monday-00:00-UTC bucket, so we group on it directly.
+  // Every user gets a budget of 20 kudos per ISO week (WEEKLY_KUDOS_LIMIT
+  // in services/bounties.js). For each of the last 12 weeks we bucket users
+  // by how many kudos they actually gave that week. pr_kudos.week_start is
+  // already the Monday-00:00-UTC bucket, so we group on it directly.
+  //
+  // #964: the buckets are BANDED (1, 2, 3, 4–5, 6–10, 11+) rather than one
+  // per exact count. Under the old 5-per-week cap an exact 1..5 series was
+  // exhaustive; at 20 it silently was not — anyone giving 6+ fell out of
+  // every named bucket AND got swept into g0 by its
+  // "population minus the named buckets" subtraction, i.e. the most
+  // generous givers were reported as having given nothing. Bands keep the
+  // series exhaustive at any cap, so g0 stays a true "gave none".
+  //
+  // Note this series measures pr_kudos ONLY, not issue-bounty pledges, even
+  // though the two draw on one shared allowance. Widening it to the combined
+  // ledger would be a more honest participation view but changes the meaning
+  // of an existing chart, so it is deliberately left alone here.
   //
   // The g0 ("gave none") bucket is everyone registered as of that week's
   // end who didn't give a kudos that week — i.e. cumulative user base minus
@@ -680,8 +693,9 @@ function dashboardRoutes(config) {
                   COUNT(pg.giver_user_id) FILTER (WHERE pg.k = 1)::int AS g1,
                   COUNT(pg.giver_user_id) FILTER (WHERE pg.k = 2)::int AS g2,
                   COUNT(pg.giver_user_id) FILTER (WHERE pg.k = 3)::int AS g3,
-                  COUNT(pg.giver_user_id) FILTER (WHERE pg.k = 4)::int AS g4,
-                  COUNT(pg.giver_user_id) FILTER (WHERE pg.k = 5)::int AS g5
+                  COUNT(pg.giver_user_id) FILTER (WHERE pg.k BETWEEN 4 AND 5)::int AS g4_5,
+                  COUNT(pg.giver_user_id) FILTER (WHERE pg.k BETWEEN 6 AND 10)::int AS g6_10,
+                  COUNT(pg.giver_user_id) FILTER (WHERE pg.k >= 11)::int AS g11p
            FROM weeks w
            LEFT JOIN per_giver pg ON pg.wk = w.wk
            GROUP BY w.wk
@@ -695,14 +709,14 @@ function dashboardRoutes(config) {
          )
          SELECT to_char(b.wk, 'YYYY-MM-DD') AS wk,
                 p.users,
-                b.g1, b.g2, b.g3, b.g4, b.g5,
-                GREATEST(p.users - (b.g1 + b.g2 + b.g3 + b.g4 + b.g5), 0)::int AS g0
+                b.g1, b.g2, b.g3, b.g4_5, b.g6_10, b.g11p,
+                GREATEST(p.users - (b.g1 + b.g2 + b.g3 + b.g4_5 + b.g6_10 + b.g11p), 0)::int AS g0
          FROM buckets b
          JOIN pop p ON p.wk = b.wk
          ORDER BY b.wk`
       );
       // Staging demo: pr_kudos is staging:private.
-      if (wantsDemo(req) && allZero(rows, ['g0', 'g1', 'g2', 'g3', 'g4', 'g5'])) {
+      if (wantsDemo(req) && allZero(rows, ['g0', 'g1', 'g2', 'g3', 'g4_5', 'g6_10', 'g11p'])) {
         return res.json(analyticsDemo.kudos());
       }
       res.json({ weeks: rows });
