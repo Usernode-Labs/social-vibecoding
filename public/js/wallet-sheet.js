@@ -103,6 +103,15 @@
       return addr.slice(0, 8) + '…' + addr.slice(-6);
     },
 
+    // The existing native transfer flow accepts whole numeric amounts.
+    // Never let Number/parseInt silently reinterpret what the user typed: a
+    // transfer amount must survive this boundary exactly.
+    _parseAmount(value) {
+      if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value)) return null;
+      const amount = Number(value);
+      return Number.isSafeInteger(amount) ? amount : null;
+    },
+
     // Kept the historical name from the header-chip era; now paints the
     // balance readout on the drawer row.
     _renderChip() {
@@ -320,13 +329,13 @@
 
       sendBtn.addEventListener('click', async () => {
         const to = toInput.value.trim();
-        const amount = parseInt(amtInput.value.trim(), 10);
+        const amount = WalletSheet._parseAmount(amtInput.value);
         if (!to || !to.startsWith('ut1')) {
           PlatformUI.toast('Enter a valid ut1… address');
           return;
         }
-        if (!Number.isFinite(amount) || amount <= 0) {
-          PlatformUI.toast('Enter a positive amount');
+        if (amount == null) {
+          PlatformUI.toast('Enter a positive whole-number amount (digits only)');
           return;
         }
         sendBtn.disabled = true;
