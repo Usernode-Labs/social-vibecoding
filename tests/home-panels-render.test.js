@@ -1121,16 +1121,23 @@ test('the multi-row slot neither inflates its rows nor stretches its neighbours'
 });
 
 test('the cell height still matches the app tile it is derived from', () => {
-  // p-3 (0.75rem x 2) + 3.5rem icon + 0.5rem gap + 1.25rem name + 1rem
-  // caption lane = 7.75rem per cell; two cells + the grid's 0.5rem gap =
-  // 16rem. If any of these tokens moves, --home-cell-h and
-  // --home-panel-max-h have to move with it — that is the point of pinning
-  // both sides here.
+  // p-3 (0.75rem x 2) + 3.5rem icon + 0.375rem gap + 1.625rem name (two
+  // 13px lines, #951) + 0.75rem caption lane = 7.75rem per cell; two cells
+  // + the grid's 0.5rem gap = 16rem. If any of these tokens moves,
+  // --home-cell-h and --home-panel-max-h have to move with it — that is the
+  // point of pinning both sides here.
   const card = HOME.match(/<div class="app-card app-card-draggable[^"]*"/)[0];
   assert.match(card, /\bp-3\b/, 'app tile padding feeds the 1.5rem term');
-  assert.match(card, /\bgap-2\b/, 'app tile gap feeds the 0.5rem term');
+  assert.match(card, /\bgap-1\.5\b/, 'app tile gap feeds the 0.375rem term');
   assert.match(HOME, /class="app-icon-tile w-14 h-14/, 'icon feeds the 3.5rem term');
-  assert.match(HOME, /class="font-medium text-sm truncate/, 'name feeds the 1.25rem term');
+  assert.match(HOME, /class="app-card-title"/, 'name feeds the 1.625rem term');
+  // …and the two label lanes are FIXED heights in app.css, so a one-line
+  // and a two-line title produce identically sized tiles.
+  const titleRule = CSS.match(/\.app-card-title \{[^}]*\}/)[0];
+  assert.match(titleRule, /height:\s*1\.625rem/, 'the title lane is exactly two lines');
+  assert.match(titleRule, /line-height:\s*0\.8125rem/);
+  assert.match(titleRule, /-webkit-line-clamp:\s*2/, 'long names ellipsise at two lines');
+  assert.match(CSS.match(/\.app-card-status \{[^}]*\}/)[0], /line-height:\s*0\.75rem/);
   // THE CAPTION LANE IS LOAD-BEARING. The status dot is gone from the tile
   // face, so this line is a tile's only status signal — and rows are a
   // fixed height, so a caption with no budget paints over the tile below
@@ -1139,8 +1146,11 @@ test('the cell height still matches the app tile it is derived from', () => {
   assert.match(CSS, /THE CAPTION LANE IS NOT OPTIONAL/);
   const grid = INDEX.match(/<div id="app-list"[^>]*>/)[0];
   assert.match(grid, /\bsm:gap-2\b/, 'the grid gap feeds the between-rows 0.5rem term');
-  // The phone variant tightens the tile and shrinks the cell in step.
+  // The phone variant tightens the tile and shrinks the cell in step —
+  // and the tightening has to OUT-SPECIFY Tailwind's own p-3 utility,
+  // since tailwind.css is linked after app.css (see the rule's comment).
   assert.match(grid, /\bp-2\b/);
+  assert.match(CSS, /\.app-card\.app-card \{ padding: 0\.5rem; \}/);
   assert.match(CSS, /--home-cell-h: 7\.25rem/);
   assert.match(CSS, /--home-panel-max-h: 14\.875rem/);
 });

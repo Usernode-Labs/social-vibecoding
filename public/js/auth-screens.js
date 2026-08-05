@@ -957,7 +957,7 @@
     _buildLandingAppTile(app, el) {
       const gated = !!app.requires_login;
       const tile = el('div',
-        'app-card relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-2 cursor-pointer'
+        'app-card relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-1.5 cursor-pointer'
         + (gated ? ' opacity-50 grayscale' : ''));
       tile.setAttribute('data-slug', app.slug || '');
       tile.setAttribute('data-gated', gated ? 'true' : 'false');
@@ -998,12 +998,15 @@
       // home screen renders, so it lost the active-users badge with it —
       // an icon and a label, nothing else. The count still shows in the
       // Browse-all directory, which is a ranked list where it is the point.
+      // The label is .app-card-title (app.css) — iOS-sized 11px/13px type
+      // clamped to two lines in a fixed-height lane, same as the authed
+      // grid (#951), so both launchers show the same amount of a name.
       const body = el('div', 'w-full min-w-0');
-      const nameRow = el('div', 'flex items-center justify-center min-w-0 max-w-full');
-      nameRow.appendChild(el('span', 'font-medium text-sm truncate min-w-0', app.name || app.slug));
-      body.appendChild(nameRow);
+      const name = el('div', 'app-card-title', app.name || app.slug);
+      name.title = app.name || app.slug || '';
+      body.appendChild(name);
       if (gated) {
-        body.appendChild(el('p', 'text-xs mt-0.5 text-zinc-400 dark:text-zinc-500', 'Account required'));
+        body.appendChild(el('p', 'app-card-status text-zinc-400 dark:text-zinc-500', 'Account required'));
       }
       tile.appendChild(body);
 
