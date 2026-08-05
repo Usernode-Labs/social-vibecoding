@@ -28,6 +28,95 @@ const AppView = {
   // announcing frame is still the mounted production iframe.
   _issueStateSource: null,
 
+  // #419: first-run introduction state is browser-local and app-scoped.
+  // It intentionally excludes a deploy SHA: routine releases must not
+  // repeatedly interrupt a returning user. The in-memory set keeps a
+  // storage-denied browser from showing the same intro twice in one page.
+  ABOUT_SEEN_PREFIX: 'usernode:app-about-seen:',
+  _aboutSeenThisPage: new Set(),
+  _aboutReturnFocus: null,
+
+  _aboutStorageKey(slug) {
+    return `${AppView.ABOUT_SEEN_PREFIX}${encodeURIComponent(String(slug || ''))}`;
+  },
+
+  _authoredAbout() {
+    const about = AppView.appData?.manifest_snapshot?.about;
+    return about && typeof about === 'object' && typeof about.summary === 'string'
+      && about.summary.trim() ? about : null;
+  },
+
+  maybeShowAbout(slug) {
+    const about = AppView._authoredAbout();
+    if (!about || !slug || AppView.appData?.slug !== slug) return false;
+    const key = AppView._aboutStorageKey(slug);
+    if (AppView._aboutSeenThisPage.has(key)) return false;
+    try {
+      if (window.localStorage.getItem(key) === '1') return false;
+      window.localStorage.setItem(key, '1');
+    } catch { /* private/storage-denied mode: page-local guard still works */ }
+    AppView._aboutSeenThisPage.add(key);
+    AppView.openAbout();
+    return true;
+  },
+
+  openAbout({ returnFocus = null } = {}) {
+    const root = document.getElementById('app-about-modal');
+    const app = AppView.appData;
+    if (!root || !app) return false;
+    const about = AppView._authoredAbout();
+    const name = String(app.name || app.slug || 'This app');
+    const summary = about
+      ? about.summary.trim().slice(0, 160)
+      : 'This app has not published an introduction yet. You can still open it and explore what it offers.';
+    const description = about && typeof about.description === 'string'
+      ? about.description.trim().slice(0, 1200) : '';
+    const features = about && Array.isArray(about.features)
+      ? about.features.filter((entry) => typeof entry === 'string' && entry.trim())
+        .slice(0, 6).map((entry) => entry.trim().slice(0, 120))
+      : [];
+
+    // textContent only: the manifest is repository-controlled, untrusted
+    // input and is never interpreted as HTML or Markdown.
+    root.querySelector('#app-about-title').textContent = name;
+    root.querySelector('#app-about-summary').textContent = summary;
+    const descriptionEl = root.querySelector('#app-about-description');
+    descriptionEl.textContent = description;
+    descriptionEl.classList.toggle('hidden', !description);
+    const icon = root.querySelector('#app-about-icon');
+    icon.textContent = (typeof app.icon_emoji === 'string' && app.icon_emoji.trim())
+      ? app.icon_emoji.trim() : name.charAt(0).toUpperCase();
+    const list = root.querySelector('#app-about-features');
+    list.replaceChildren();
+    for (const feature of features) {
+      const item = document.createElement('li');
+      item.className = 'flex items-start gap-2';
+      const dot = document.createElement('span');
+      dot.className = 'mt-1.5 w-1.5 h-1.5 rounded-full bg-violet-500 shrink-0';
+      dot.setAttribute('aria-hidden', 'true');
+      const text = document.createElement('span');
+      text.textContent = String(feature);
+      item.append(dot, text);
+      list.appendChild(item);
+    }
+    root.querySelector('#app-about-features-wrap')
+      .classList.toggle('hidden', features.length === 0);
+
+    AppView._aboutReturnFocus = returnFocus || document.activeElement;
+    root.classList.remove('hidden');
+    setTimeout(() => root.querySelector('#app-about-close')?.focus(), 0);
+    return true;
+  },
+
+  closeAbout() {
+    const root = document.getElementById('app-about-modal');
+    if (!root || root.classList.contains('hidden')) return;
+    root.classList.add('hidden');
+    const target = AppView._aboutReturnFocus;
+    AppView._aboutReturnFocus = null;
+    try { target?.focus?.(); } catch {}
+  },
+
   // Open-issues state. `_ghIssues` caches the last-fetched GitHub issue
   // list (with bounty_count/my_bounty) so feed paging and the
   // give-bounty optimistic update can re-render without a refetch.
@@ -450,6 +539,17 @@ const AppView = {
           document.getElementById('dev-plus-btn')?.click();
         }, 300);
       }
+      if (shot === 'app-about') {
+        // Capture state is read-only: it opens the real modal directly and
+        // deliberately does not record the first-run acknowledgement.
+        setTimeout(() => {
+          if (AppView.appData?.slug === slug) AppView.openAbout();
+        }, 300);
+      } else if (!shot) {
+        setTimeout(() => {
+          if (AppView.appData?.slug === slug) AppView.maybeShowAbout(slug);
+        }, 350);
+      }
       if (shot === 'preview-loading' || shot === 'preview-rebuilding') {
         setTimeout(() => {
           // Gate on the ROUTE, not on appData: the dev tab clears appData
@@ -500,6 +600,7 @@ const AppView = {
   },
 
   close() {
+    AppView.closeAbout();
     AppView.stopActivityTracking();
     AppView.stopTokenRefresh();
     AppView._issueStateSource = null;

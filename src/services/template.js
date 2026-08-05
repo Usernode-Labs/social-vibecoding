@@ -238,15 +238,17 @@ node_modules
 `,
     },
     {
-      // Per-app secrets manifest. Empty by default — apps that need
-      // env vars beyond the platform-injected DATABASE_URL/
+      // Per-app manifest. `about` supplies plain-text copy for the
+      // platform-owned introduction/About surface; apps should edit it as
+      // their product takes shape. `secrets` stays empty by default — apps
+      // that need env vars beyond the platform-injected DATABASE_URL/
       // USERNODE_JWT_PUBLIC_KEY/USERNODE_APP_ID/PORT/USERNODE_ENV add
       // entries here. The Usernode platform
       // reads this on every deploy and refuses to start the container
       // if a required key has no stored value (see
       // src/services/app-secrets.js + app-manifest.js in the platform).
       //
-      // Schema:
+      // Secrets schema:
       //   {
       //     "secrets": [
       //       {
@@ -266,7 +268,14 @@ node_modules
       // USERNODE_MISSING_SECRETS) are managed by the platform and
       // can't appear in this list.
       path: 'dapp.json',
-      content: JSON.stringify({ secrets: [] }, null, 2),
+      content: JSON.stringify({
+        about: {
+          summary: `${appName} is ready to explore.`,
+          description: 'Use the app inside Usernode, and edit this introduction as the product takes shape.',
+          features: [],
+        },
+        secrets: [],
+      }, null, 2),
     },
     {
       path: 'server.js',

@@ -1,4 +1,13 @@
 {
+  "about": {
+    "summary": "Build, use, and improve community-owned apps together.",
+    "description": "Usernode brings apps, collaborative development, proposals, and community governance into one place.",
+    "features": [
+      "Open community apps from one home screen",
+      "Discuss issues and build improvements together",
+      "Review proposals before changes reach production"
+    ]
+  },
   "icon": {
     "emoji": "🏗️"
   },

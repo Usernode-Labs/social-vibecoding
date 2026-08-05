@@ -524,6 +524,14 @@
       <div id="drawer-row-app-fork" class="hidden drawer-ver-row items-center gap-2 px-4">
         <span id="app-fork-badge-slot" class="ml-auto inline-flex min-w-0 justify-end"></span>
       </div>
+      <!-- App-scoped, platform-owned introduction. The row follows the
+           central setAppOpen lifecycle, so it is present in App and Dev
+           modes without reaching into the isolated app iframe. -->
+      <button id="drawer-row-app-about" type="button"
+              class="hidden flex items-center gap-3 px-4 min-h-[44px] w-full text-left border-t border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800">
+        <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path stroke-linecap="round" d="M12 11v5m0-8h.01"></path></svg>
+        <span class="text-sm font-medium">About this app</span>
+      </button>
       <!-- View on GitHub — only shown when app is open and has a repo -->
       <a id="drawer-row-github" href="#" target="_blank"
          class="hidden flex items-center gap-3 px-4 min-h-[44px] border-t border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800">
@@ -2492,6 +2500,32 @@
       <div id="app-secrets-status" class="text-sm mt-3 hidden"></div>
       <div id="app-secrets-footer" class="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500 hidden">
         Changes apply on the next deploy. Admins can <button id="app-secrets-redeploy" class="text-violet-500 hover:text-violet-400 underline">redeploy now</button>.
+      </div>
+    </div>
+  </div>
+
+  <!-- App introduction / About surface (#419). All copy is normalized from
+       dapp.json and inserted with textContent by AppView; the iframe never
+       supplies markup or participates in this dialog. -->
+  <div id="app-about-modal" class="hidden fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/60"
+       role="dialog" aria-modal="true" aria-labelledby="app-about-title" aria-describedby="app-about-summary">
+    <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
+      <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-lg shadow-xl relative max-h-[85vh] overflow-y-auto">
+        <button id="app-about-close" type="button" class="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-full text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-500/10" aria-label="Close About this app">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+        <div id="app-about-icon" class="w-14 h-14 rounded-2xl bg-violet-600/15 text-violet-600 dark:text-violet-400 flex items-center justify-center text-2xl font-bold mb-4" aria-hidden="true"></div>
+        <p class="text-xs font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 mb-1">About this app</p>
+        <h2 id="app-about-title" class="text-xl font-bold text-zinc-900 dark:text-zinc-100 pr-8"></h2>
+        <p id="app-about-summary" class="mt-2 text-sm font-medium text-zinc-700 dark:text-zinc-300"></p>
+        <p id="app-about-description" class="hidden mt-3 text-sm leading-relaxed whitespace-pre-line text-zinc-600 dark:text-zinc-400"></p>
+        <div id="app-about-features-wrap" class="hidden mt-5">
+          <h3 class="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400 mb-2">What you can do</h3>
+          <ul id="app-about-features" class="space-y-2 text-sm text-zinc-700 dark:text-zinc-300"></ul>
+        </div>
+        <div class="flex justify-end mt-6">
+          <button id="app-about-continue" type="button" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white">Continue</button>
+        </div>
       </div>
     </div>
   </div>

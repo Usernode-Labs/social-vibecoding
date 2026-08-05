@@ -1,8 +1,8 @@
 'use strict';
 
 /**
- * Reader for `dapp.json` — the per-dapp manifest declaring which env
- * vars the dapp needs at runtime.
+ * Reader for `dapp.json` — the per-dapp manifest declaring app metadata
+ * and which env vars the dapp needs at runtime.
  *
  * Lives in the dapp repo root, alongside Dockerfile and package.json. The
  * platform reads it from the freshly-cloned working tree on every deploy
@@ -285,6 +285,44 @@ function readPlatformEnv(parsed) {
 // can't outrun the apps.name column or the rename UI's validation.
 const MAX_APP_NAME_LENGTH = 64;
 const MIN_APP_NAME_LENGTH = 1;
+
+// Optional developer-authored copy for the platform-owned first-run and
+// About surfaces (issue #419). This is deliberately plain text: dapp repos
+// are untrusted input, so the shell never accepts HTML/Markdown or remote
+// assets here. Tight bounds keep the manifest snapshot and mobile modal
+// useful without turning it into a general-purpose document store.
+const MAX_ABOUT_SUMMARY_LENGTH = 160;
+const MAX_ABOUT_DESCRIPTION_LENGTH = 1200;
+const MAX_ABOUT_FEATURES = 6;
+const MAX_ABOUT_FEATURE_LENGTH = 120;
+
+function readAbout(parsed) {
+  const raw = parsed?.about;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+
+  const summary = typeof raw.summary === 'string' ? raw.summary.trim() : '';
+  if (!summary || summary.length > MAX_ABOUT_SUMMARY_LENGTH) return null;
+
+  let description = null;
+  if (typeof raw.description === 'string') {
+    const value = raw.description.trim();
+    if (value && value.length <= MAX_ABOUT_DESCRIPTION_LENGTH) description = value;
+  }
+
+  const features = [];
+  const seen = new Set();
+  if (Array.isArray(raw.features)) {
+    for (const entry of raw.features) {
+      if (features.length >= MAX_ABOUT_FEATURES) break;
+      const value = typeof entry === 'string' ? entry.trim() : '';
+      if (!value || value.length > MAX_ABOUT_FEATURE_LENGTH || seen.has(value)) continue;
+      seen.add(value);
+      features.push(value);
+    }
+  }
+
+  return { summary, description, features };
+}
 
 // Normalize a raw top-level `name` into a trimmed string or null. Anything
 // that isn't a string, is empty after trimming, or busts the length bound
@@ -609,9 +647,9 @@ function read(cloneDir) {
   try {
     raw = fs.readFileSync(filePath, 'utf-8');
   } catch (err) {
-    if (err.code === 'ENOENT') return { name: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
+    if (err.code === 'ENOENT') return { name: null, about: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
     log.warn('app-manifest', 'Read failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
+    return { name: null, about: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
   }
 
   let parsed;
@@ -619,7 +657,7 @@ function read(cloneDir) {
     parsed = JSON.parse(raw);
   } catch (err) {
     log.warn('app-manifest', 'Parse failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
+    return { name: null, about: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
   }
 
   const platformEnv = readPlatformEnv(parsed);
@@ -670,6 +708,7 @@ function read(cloneDir) {
 
   return {
     name: readName(parsed),
+    about: readAbout(parsed),
     secrets,
     llm: readLlm(parsed),
     visibility: readVisibility(parsed),
@@ -1431,6 +1470,7 @@ async function reconcilePlatformEnv(pool, appId, entries) {
 module.exports = {
   read,
   readName,
+  readAbout,
   readLlm,
   readVisibility,
   readGovernance,
@@ -1466,4 +1506,8 @@ module.exports = {
   MANIFEST_FILENAME,
   MAX_APP_NAME_LENGTH,
   MIN_APP_NAME_LENGTH,
+  MAX_ABOUT_SUMMARY_LENGTH,
+  MAX_ABOUT_DESCRIPTION_LENGTH,
+  MAX_ABOUT_FEATURES,
+  MAX_ABOUT_FEATURE_LENGTH,
 };

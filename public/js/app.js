@@ -1816,6 +1816,8 @@ const App = {
     setAppOpen(open) {
       const row = document.getElementById('drawer-row-app-version');
       if (row) row.classList.toggle('hidden', !open);
+      const aboutRow = document.getElementById('drawer-row-app-about');
+      if (aboutRow) aboutRow.classList.toggle('hidden', !open);
       // Fork lineage is app-scoped too — closing an app can never leave
       // the previous app's "Forked from" line behind.
       if (!open) App.DrawerStatus.setForkVisible(false);
@@ -2015,6 +2017,20 @@ const App = {
       // Drawer row actions — each closes the menu after triggering its action.
       document.getElementById('drawer-row-github')
         .addEventListener('click', () => App.HeaderMenu.close());
+      document.getElementById('drawer-row-app-about')
+        ?.addEventListener('click', () => {
+          const slug = App.currentApp;
+          App.HeaderMenu.close();
+          // Let the drawer start dismissing before layering the modal over
+          // it. Returning focus goes to the persistent hamburger control,
+          // not to a now-hidden drawer row.
+          setTimeout(() => {
+            if (!slug || App.currentApp !== slug || AppView.appData?.slug !== slug) return;
+            window.AppView?.openAbout({
+              returnFocus: document.getElementById('header-menu-btn'),
+            });
+          }, 220);
+        });
       // Leaderboard (the merged Kudos + Topochain + Challenges screen) —
       // same real-anchor idiom as Profile below: navigation rides the
       // anchor's hash, the click handler here just closes the drawer. The
@@ -2734,6 +2750,29 @@ const App = {
     });
     const shareCopy = document.getElementById('share-copy-btn');
     if (shareCopy) shareCopy.addEventListener('click', () => AppView.copyShareUrl());
+
+    // App introduction / About modal (#419). It is shell-owned and uses
+    // the same dismiss semantics on desktop and mobile; the native kit's
+    // static-modal observer may adopt its card without changing these
+    // legacy lifecycle handlers.
+    const aboutModal = document.getElementById('app-about-modal');
+    if (aboutModal) {
+      document.getElementById('app-about-close')
+        ?.addEventListener('click', () => AppView.closeAbout());
+      document.getElementById('app-about-continue')
+        ?.addEventListener('click', () => AppView.closeAbout());
+      aboutModal.addEventListener('click', (e) => {
+        if (e.target === aboutModal || e.target.dataset.modalBackdrop !== undefined) {
+          AppView.closeAbout();
+        }
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !aboutModal.classList.contains('hidden')) {
+          e.preventDefault();
+          AppView.closeAbout();
+        }
+      });
+    }
 
     // Header App/Dev switch (#app-mode-switch), successor to the bottom
     // tab bar. Tapping the ALREADY-ACTIVE App segment is a no-op: the
