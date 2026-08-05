@@ -465,8 +465,11 @@ test('the totals query asks for the open rewards, and the row query is capped at
   assert.match(totals.sql, /array_agg\(COALESCE\(c\.reward, ct\.reward\)\) FILTER \(WHERE NOT \(/,
     'open rewards come from the full-predicate query, not the page');
   const rowQuery = calls.find((c) => c.sql.includes('LIMIT $3'));
-  // Four 44px rows is what fits under --home-panel-max-h; the client
-  // spends its last slot on "See all N" when total exceeds it.
+  // Four 40px rows is what fits the DESKTOP tile under --home-panel-max-h;
+  // the footer reads "See all N" when total exceeds it. The phone shape draws
+  // only two of them (#968) but the server still sends four: it has no idea
+  // what viewport is asking, and sending the desktop budget is what lets a
+  // window dragged across 640px repaint from cache with no refetch.
   assert.equal(rowQuery.params[2], 4);
   const route = read('src/routes/home-panels.js');
   assert.match(route, /const CHALLENGE_ROW_LIMIT = 4;/);
@@ -625,7 +628,11 @@ test('the registry describes every widget, with its footprint and removability',
   assert.deepEqual(Object.keys(byKey), ['challenges', 'discover', 'create']);
   // Footprints are per column count and live server-side, so the layout
   // route's overlap check and the client lay out against the same numbers.
-  assert.deepEqual(byKey.challenges.sizes, { 4: [4, 2], 5: [2, 2] });
+  // Challenges is asymmetric (#968): one row on a phone, where the widget is
+  // full width and a two-row footprint reserved space its content-height
+  // block never drew; its original two on desktop, where it is a tile among
+  // app icons and the leftover goes to the leaderboard fill.
+  assert.deepEqual(byKey.challenges.sizes, { 4: [4, 1], 5: [2, 2] });
   // Discover is asymmetric (#949): one row on a phone, where it is full
   // width and its content is a single lane; its original two on desktop,
   // where the second row carries the Popular lane.

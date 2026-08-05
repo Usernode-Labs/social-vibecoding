@@ -400,15 +400,28 @@ html, body {
    a drift in one without the other fails rather than silently mis-sizing
    the block.
 
-   WHAT THAT NUMBER MEANS DEPENDS ON THE BREAKPOINT (#947). The challenges
-   widget is the same markup at both widths and two different things:
+   WHAT THAT NUMBER MEANS DEPENDS ON THE BREAKPOINT (#947, #968). The
+   challenges widget is the same markup at both widths and two different
+   things:
 
-     PHONE (<640px, 4 columns) — the widget spans the FULL grid width, so a
-     shorter block simply ends sooner: nothing sits beside it and nothing has
-     to move. There the constant is a CEILING and the block draws at its
-     CONTENT height (`.home-panel--fit`, in the phone media block at the
-     bottom of this file). A two-challenge season is ~135px, not 238px, and
-     the between-seasons state is a ~68px title-bar-plus-one-line block.
+     PHONE (<640px, 4 columns) — the widget spans the FULL grid width and is
+     ONE CELL TALL (registry `sizes` 4: [4, 1]), so this two-cell constant
+     does not apply there at all: the phone media block at the bottom of this
+     file redefines --home-panel-max-h as one --home-cell-h. #947 made the
+     block draw at its CONTENT height (`.home-panel--fit`, same block) but
+     left the footprint at two rows, so the height it gave up became a band of
+     blank grid between the widget and the first row of app icons — a ~68px
+     box inside a 238px reservation between seasons. #968 cut the footprint
+     to one row and reshaped the CONTENT to fit it:
+
+       border 2 + title bar 27 + 2 rows x --home-panel-row-h (40) = 109px
+
+     against the 116px phone cell — ~7px of headroom. No footer: a
+     .home-panel-footer is 27px more and that IS the second row, so the way
+     out to the Challenges screen rides in the title bar instead (the same
+     trade Discover's browse control makes at this breakpoint, #949), and
+     expand-in-place is a desktop-only state. The empty state is 69px of the
+     same cell. See HomePanels.renderChallengesPanel's compact branch.
 
      DESKTOP (>=640px, 5 columns) — the widget is a TILE in a grid of app
      icons. Shrinking it would leave a notch beside the tiles it shares rows
@@ -713,7 +726,26 @@ html, body {
      media block at the bottom of this file releases `.home-panel--fit` from
      this stretch. Do not move that rule out of the media query — desktop
      depends on the stretch, and `align-items` here would take the create
-     widget's `h-full` 1x1 tile down with it. */
+     widget's `h-full` 1x1 tile down with it.
+
+     Releasing the stretch is only half of "shrinks", though (#968), and the
+     half that the reader of this rule cannot see: the slot is a grid item, so
+     what it releases is space INSIDE its own rectangle. Two things size that
+     rectangle, and BOTH had to move before the page got anything back —
+     a short block in a slot that still owns 238px of grid gives its height to
+     whitespace, not to the viewer:
+
+       * the footprint. Every widget's phone `sizes` entry is one row, so the
+         rectangle is one cell rather than two.
+       * the TRACK. Home.rowTemplate gives the row a fit widget owns outright
+         a content-sized track, so the cell is as tall as the widget draws —
+         see #app-list above.
+
+     This rule is what makes the second one visible rather than redundant: in
+     a content-sized track it is a no-op (the track already equals the
+     content), but it is still what keeps the article honest on any row that
+     is NOT a fit row — a hole-adjacent full-height row, the desktop tile's
+     sibling breakpoint, or the frame before a re-render lands. */
   display: flex;
   min-height: 0;
 }
@@ -734,7 +766,24 @@ html, body {
 
    The SEARCH view is exempt: it is a flat, transient list, and its "N
    results" header and empty-state line would each claim a whole tile row
-   under a fixed height. Home.render() stamps data-view on the grid. */
+   under a fixed height. Home.render() stamps data-view on the grid.
+
+   ON A PHONE THIS IS THE DEFAULT ROW HEIGHT, NOT EVERY ROW'S (#968).
+   Home.render() writes an inline `grid-template-rows` below 640px — one
+   entry per occupied row, `var(--home-cell-h)` for almost all of them and a
+   content-sized `minmax(floor, auto)` for a row a FIT widget owns outright
+   (HomeLayout.fitRows; challenges only today). Without it the between-seasons
+   widget drew a ~68px box inside a 116px reservation and handed the other
+   ~48px to nobody: a grid item cannot shrink a fixed track, so shrinking the
+   BOX was never going to shrink the PAGE.
+   Three things that rule deliberately does not do: it never shrinks a row
+   holding an app tile (a card with no status caption is ~100px, and that lane
+   is load-bearing — see --home-cell-h), it never collapses an empty row (a
+   hole is an arrangement the viewer chose, and a cell they can drop into),
+   and it never emits more entries than there are occupied rows (an explicit
+   grid exists whether or not anything is in it, so eight entries would pad a
+   three-app home screen out to ~950px). Desktop gets no template at all and
+   this token is still the whole story there. */
 #app-list {
   position: relative;
   grid-auto-rows: var(--home-cell-h);
@@ -753,6 +802,16 @@ html, body {
    it is inset by the grid's own padding. That is what makes it align with
    zero arithmetic: it is laid out by the same engine, with the same numbers,
    as the tiles it sits behind.
+
+   The row height below is the DEFAULT and the padding for rows past the
+   content (#968). Since a phone row can now be shorter than a cell,
+   Home._showGridOverlay copies #app-list's USED tracks
+   (getComputedStyle → "116px 67.5px …") onto this element inline and pads
+   them out to the eight-row canvas with this token. Copied rather than
+   re-derived on purpose: one element decides the row heights and the other
+   reads its answer, so the two grids cannot disagree. In pixels, too — the
+   cells here are empty divs, so a content-sized track would collapse to
+   nothing.
 
    The inset must track that padding EXACTLY, including the tighter top —
    #app-list is `p-2 pt-1.5 sm:p-3 sm:pt-2`, so a uniform inset sits the whole
@@ -1056,8 +1115,15 @@ html, body {
   :root {
     /* 116px — p-2 (16) + icon 56 + gap-1.5 (6) + title 26 + caption 12 */
     --home-cell-h: 7.25rem;
-    /* Two cells plus the phone gap: 116 + 6 + 116. */
-    --home-panel-max-h: 14.875rem; /* 238px */
+    /* ONE CELL (#968). Every widget's phone footprint is one row now
+       (PANEL_REGISTRY `sizes` 4: [4, 1] for all three), so the cap is the
+       cell they each own rather than the two rows Challenges used to claim.
+       It is a CEILING, not the drawn height — `.home-panel--fit` below is
+       what lets a block end sooner — and its job is to make an oversized
+       system text size CLIP inside the widget rather than paint the article
+       over the app tiles in the row below, which is what a 238px cap in a
+       116px cell would have allowed. */
+    --home-panel-max-h: var(--home-cell-h);
   }
   .home-grid-overlay { gap: 0.375rem; }
   /* The doubled class is deliberate. This rule is what makes the phone
@@ -1072,11 +1138,16 @@ html, body {
      line width, which at 11px is roughly two more characters per line. */
   .app-card.app-card { padding: 0.5rem; }
 
-  /* SIZE TO CONTENT, phone only (#947). The widget is full-width here, so a
-     shorter block just ends sooner — no neighbour to leave a notch beside,
-     nothing to re-pack. The footprint is unchanged (still two rows of the
-     grid); only the drawn box shrinks, and the leftover is ordinary grid
-     whitespace on a surface that is hole-bearing by design.
+  /* SIZE TO CONTENT, phone only (#947, #968). The widget is full-width here,
+     so a shorter block just ends sooner — no neighbour to leave a notch
+     beside, nothing to re-pack.
+
+     #947 shrank the drawn box, #968 shrank the FOOTPRINT to one grid row to
+     match, and then shrank the ROW ITSELF: Home.rowTemplate gives the row a
+     fit widget owns a content-sized track (see #app-list), so the height a
+     short block gives up is not reserved anywhere at all. There is no
+     leftover quantization to live with — the between-seasons state costs the
+     page ~68px, not a 116px cell holding a ~68px box.
 
      Deciding this in CSS rather than JS is deliberate: a window dragged
      across 640px resizes the block immediately, before the resize listener's

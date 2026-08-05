@@ -100,6 +100,81 @@ const HomeLayout = {
     return item.type === 'widget' ? `widget:${item.key}` : `app:${item.slug}`;
   },
 
+  // ── Fit rows (#968) ────────────────────────────────────────────────
+  //
+  // A row whose height follows its CONTENT instead of being one app-grid
+  // cell. The model is untouched by this — sizeOf() still answers in whole
+  // cells, occupancy/repair/reflow/place still work in integer coordinates,
+  // and the server's overlap check never hears about it. The ONLY thing that
+  // changes is the pixel height Home.render() writes into #app-list's
+  // grid-template-rows for that one track. That containment is the whole
+  // reason this is safe.
+  //
+  // WHY IT EXISTS. #947 made the phone block draw at its content height and
+  // #968 cut its footprint to one row, but a row is a fixed 116px — so the
+  // between-seasons state still drew a ~68px box inside a 116px reservation
+  // and handed ~48px back to nobody. Sizing the track to the content is the
+  // only way the page above the fold actually gets that space.
+  FIT_KEYS: new Set(['challenges']),
+
+  // PHONE ONLY. At five columns the widget is a tile among app icons and a
+  // short row would leave a notch beside its neighbours; at four it spans the
+  // whole width, so the row is exclusively its own and shrinking it costs
+  // nothing but gives the page back real estate.
+  FIT_COLS: 4,
+
+  // Which rows of this layout may size to their content, as a Set of row
+  // indices. Pure: no DOM, no CSS, no measurement — the caller turns these
+  // into track sizes.
+  //
+  // A row qualifies iff AT LEAST ONE item overlaps it and EVERY item
+  // overlapping it is a widget whose key is in FIT_KEYS.
+  //
+  //   * "every overlapping item" is what protects the app tiles. A card's
+  //     natural height is ~100px when it draws no status caption, so a row
+  //     holding one would visibly shrink under a content-sized track — and
+  //     the caption lane is exactly the budget that stops an errored app's
+  //     status painting over the tile below. On a phone a fit widget is
+  //     4-of-4 columns wide so it never shares a row, but stating the rule
+  //     this way keeps it correct the day one is narrower.
+  //   * "at least one item" keeps HOLES at full height. Nothing here re-packs
+  //     a layout and nothing here collapses a gap: an empty row is a cell the
+  //     viewer chose to leave empty, and it is also a cell they can drop into.
+  fitRows(layout, cols) {
+    const rows = new Set();
+    if (Number(cols) !== HomeLayout.FIT_COLS) return rows;
+    const disqualified = new Set();
+    for (const item of layout || []) {
+      if (!item || item.row >= HomeLayout.MAX_ROWS) continue; // overflow, off-canvas
+      const [, h] = HomeLayout.sizeOf(item, cols);
+      const fit = item.type === 'widget' && HomeLayout.FIT_KEYS.has(item.key);
+      for (let dy = 0; dy < h; dy++) {
+        const row = item.row + dy;
+        if (row < 0 || row >= HomeLayout.MAX_ROWS) continue;
+        if (fit) rows.add(row);
+        else disqualified.add(row);
+      }
+    }
+    for (const row of disqualified) rows.delete(row);
+    return rows;
+  },
+
+  // The last row any ON-CANVAS item occupies, or -1 for an empty canvas.
+  // Home.render() uses it to emit exactly that many track entries: declaring
+  // all eight would give the grid an explicit eight rows and pad a
+  // three-app home screen out to ~950px, where today the implicit grid
+  // simply ends at the last placed item.
+  lastOccupiedRow(layout, cols) {
+    let last = -1;
+    for (const item of layout || []) {
+      if (!item || item.row >= HomeLayout.MAX_ROWS) continue;
+      const [, h] = HomeLayout.sizeOf(item, cols);
+      const bottom = Math.min(item.row + h - 1, HomeLayout.MAX_ROWS - 1);
+      if (bottom > last) last = bottom;
+    }
+    return last;
+  },
+
   // ── Occupancy ──────────────────────────────────────────────────────
   //
   // A Set of "col,row" strings. Built fresh per query rather than cached:
