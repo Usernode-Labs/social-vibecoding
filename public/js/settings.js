@@ -68,6 +68,11 @@
     _menuScrollTop: 0,
     _mediaBound: false,
     _socialPushStateListener: null,
+    // True between an open({ chrome: false }) and the syncChrome() that
+    // app.js runs inside the screen transition (#979) — _syncChrome is a
+    // no-op while it is set, so nothing writes the platform header before
+    // the outgoing page has been captured.
+    _chromeSuspended: false,
 
     // The single source of truth in JS for where the sidebar layout starts.
     // Must stay in step with the `md:` classes in index.html's
@@ -323,10 +328,18 @@
     // keyboard, which is jarring when the user just wanted to view
     // settings. The credits-exhausted banner (#463) deep-links straight to
     // #settings/api-key instead of asking for a scroll.
-    open(section) {
+    // `opts.chrome === false` renders WITHOUT touching the platform
+    // header (#979): app.js calls this while #settings-screen is still
+    // hidden — invisible, so it may run before the screen transition —
+    // but the header title / back icon are visible, and writing them
+    // early bakes the incoming screen's chrome into the View Transition's
+    // snapshot of the page the user is leaving. The caller runs
+    // Settings.syncChrome() inside the transition callback instead.
+    open(section, opts) {
       Settings._open = true;
       Settings._pushedFromMenu = false;
       Settings._menuScrollTop = 0;
+      Settings._chromeSuspended = !!(opts && opts.chrome === false);
       // Per-mount state: the Usernode-app auto-retry is offered once per
       // visit to Settings, not once per document.
       Settings._usernodeAuthRetryUsed = false;
@@ -669,8 +682,16 @@
     // everywhere else it stays "Settings" and the home icon. setHeaderTitle
     // mirrors into document.title, so the native shell's AppBar picks the
     // section name up too.
+    // The public half of _syncChrome: clears the suspension a
+    // `chrome: false` open() set and applies the chrome for real. app.js
+    // calls this INSIDE the screen transition's callback (#979).
+    syncChrome() {
+      Settings._chromeSuspended = false;
+      Settings._syncChrome();
+    },
+
     _syncChrome() {
-      if (!window.App) return;
+      if (!window.App || Settings._chromeSuspended) return;
       const inSection = Settings._isMobile() && Settings._level === 2;
       if (App.setBackIcon) App.setBackIcon(inSection ? 'arrow' : 'home');
       if (!App.setHeaderTitle) return;

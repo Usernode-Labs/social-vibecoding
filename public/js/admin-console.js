@@ -85,6 +85,11 @@ const AdminConsole = {
   // #admin-screen scrollTop saved on drill-in, restored on the way back.
   _menuScrollTop: 0,
   _mediaBound: false,
+  // True between an open({ chrome: false }) and the syncChrome() app.js
+  // runs inside the screen transition (#979) — _syncChrome is a no-op
+  // while it is set, so the platform header is never rewritten before the
+  // View Transition has captured the page the viewer is leaving.
+  _chromeSuspended: false,
 
   // The single source of truth in JS for where the sidebar layout starts.
   // Must stay in step with the `md:` classes in _renderShell (Tailwind's
@@ -191,10 +196,18 @@ const AdminConsole = {
   // `opts.public` is set by app.js when a non-admin deep-linked one of the
   // `public` sections; it must be resolved BEFORE the first _renderShell so
   // the menu is filtered on the very first paint.
+  //
+  // `opts.chrome === false` renders WITHOUT touching the platform header
+  // (#979): the console renders into a still-hidden #admin-screen, which
+  // is invisible, but the header title / back icon are not — writing them
+  // before the screen transition starts bakes the incoming console's
+  // chrome into the snapshot of the page being left. app.js calls
+  // AdminConsole.syncChrome() inside the transition callback instead.
   open(section, opts) {
     AdminConsole._open = true;
     AdminConsole._public = !!(opts && opts.public);
     AdminConsole._pushedFromMenu = false;
+    AdminConsole._chromeSuspended = !!(opts && opts.chrome === false);
     AdminConsole._menuScrollTop = 0;
     AdminConsole._ensureMediaListener();
     const visible = AdminConsole._visibleSections();
@@ -347,8 +360,16 @@ const AdminConsole = {
   // everywhere else it stays the console's own title and the home icon.
   // setHeaderTitle mirrors into document.title, so the native shell's
   // AppBar picks the section name up too.
+  // The public half of _syncChrome: clears the suspension a
+  // `chrome: false` open() set and applies the chrome for real. app.js
+  // calls this INSIDE the screen transition's callback (#979).
+  syncChrome() {
+    AdminConsole._chromeSuspended = false;
+    AdminConsole._syncChrome();
+  },
+
   _syncChrome() {
-    if (!window.App) return;
+    if (!window.App || AdminConsole._chromeSuspended) return;
     const inSection = AdminConsole._isMobile() && AdminConsole._level === 2;
     if (App.setBackIcon) App.setBackIcon(inSection ? 'arrow' : 'home');
     if (!App.setHeaderTitle) return;

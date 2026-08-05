@@ -230,10 +230,24 @@ test('navigateToSettings mounts the screen and routes when already mounted', () 
   const head = fn.slice(0, 2600);
   assert.match(head, /if \(App\._inSettings && window\.Settings\?\.isOpen\?\.\(\)\) \{\s*Settings\.route\(section\);/,
     'an in-screen navigation is handed to the module, not re-mounted');
-  assert.match(head, /getElementById\('settings-screen'\)/, 'reveals #settings-screen');
+  assert.match(head, /App\._showOnlyScreen\('settings-screen'\)/,
+    'reveals #settings-screen (and hides every sibling root) through the shared primitive');
   assert.match(head, /App\.setHeaderTitle\('Settings'\)/, 'sets the header title');
   assert.match(head, /App\._inSettings = true;/, 'records that we are on the screen');
-  assert.match(head, /Settings\.open\(section\)/, 'hands the section to the module');
+  assert.match(head, /Settings\.open\(section, \{ chrome: false \}\)/,
+    'hands the section to the module, holding its header write for the transition');
+  assert.match(head, /Settings\.syncChrome\(\)/,
+    'and applies that header write inside the transition callback');
+  // #979: the reveal, the header title and the module's own chrome sync
+  // all belong INSIDE the transition callback — a View Transition captures
+  // the outgoing page a frame later, so anything mutated before the call
+  // shows up in the snapshot of the page the user is leaving.
+  const beforeTransition = head.slice(0, head.indexOf('PlatformUI.transition('));
+  assert.ok(beforeTransition.length > 0, 'navigateToSettings runs a transition');
+  for (const forbidden of ['setHeaderTitle', 'setBackIcon', 'classList', 'syncChrome']) {
+    assert.ok(!beforeTransition.includes(forbidden),
+      `no ${forbidden} before the transition — it would land in the outgoing snapshot`);
+  }
   // Every sibling screen is torn down on entry. (_exitChallenges and
   // _exitTopochainSeasons dropped off this list in the leaderboard merge:
   // both screens became tabs of the Leaderboard screen, so _exitLeaderboard
@@ -243,13 +257,19 @@ test('navigateToSettings mounts the screen and routes when already mounted', () 
   }
 });
 
-test('_exitSettings hides the screen, hands the back icon back and closes', () => {
+test('_exitSettings is state-only and closes the module', () => {
   const fn = appJs.slice(appJs.indexOf('  _exitSettings() {'), appJs.indexOf('  _exitSettings() {') + 600);
   assert.match(fn, /App\._inSettings = false;/);
-  assert.match(fn, /getElementById\('settings-screen'\)[\s\S]*classList\.add\('hidden'\)/);
-  assert.match(fn, /App\.setBackIcon\('home'\)/,
-    'the arrow is handed back or every later screen inherits it');
   assert.match(fn, /Settings\.close\(\)/);
+  // #979: hiding the screen here would delete the outgoing page before the
+  // View Transition captured it — the incoming navigation's
+  // _showOnlyScreen does it inside the transition callback instead. Same
+  // for the back chevron the mobile section view borrowed.
+  const body = fn.slice(0, fn.indexOf('\n  },'));
+  assert.ok(!body.includes('classList'),
+    'no classList work — the screen is hidden by the next _showOnlyScreen');
+  assert.ok(!body.includes('setBackIcon'),
+    'no setBackIcon — _showOnlyScreen hands the chevron back');
 });
 
 test('every sibling-exit site tears the settings screen down too', () => {
@@ -321,7 +341,7 @@ test('level state and the viewport listener exist', () => {
     'and whether the current level-2 entry was pushed by a menu tap');
   assert.match(settingsJs, /_ensureMediaListener\(\)\s*\{/,
     'a viewport listener re-resolves the layout on a breakpoint crossing');
-  const openFn = settingsJs.slice(settingsJs.indexOf('    open(section) {'));
+  const openFn = settingsJs.slice(settingsJs.indexOf('    open(section, opts) {'));
   assert.match(openFn.slice(0, 900), /_ensureMediaListener\(\)/,
     'the listener is bound lazily on the first open');
   assert.match(openFn.slice(0, 900), /_pushedFromMenu = false/,
@@ -329,7 +349,7 @@ test('level state and the viewport listener exist', () => {
 });
 
 test('a bare #settings means the MENU on mobile, the default on desktop', () => {
-  const openFn = settingsJs.slice(settingsJs.indexOf('    open(section) {'));
+  const openFn = settingsJs.slice(settingsJs.indexOf('    open(section, opts) {'));
   const head = openFn.slice(0, 1800);
   assert.match(head, /if \(Settings\._isMobile\(\) && !valid\)/,
     'mobile + no section segment lands on level 1');
