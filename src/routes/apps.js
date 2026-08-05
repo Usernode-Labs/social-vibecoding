@@ -183,6 +183,17 @@ function demoIconApps() {
       featured: true,
       featured_order: 1,
     },
+    // A deliberately LONG name (#951). The tile label is two 11px lines
+    // clamped with an ellipsis, and the only way a reviewer can see that
+    // working — here and in the before/after screenshots — is a name that
+    // actually overflows one line at phone width.
+    {
+      ...base,
+      id: 900004,
+      slug: 'staging-demo-long-name',
+      name: 'Staging demo photo album and journal',
+      icon_emoji: '📔',
+    },
   ];
 }
 
