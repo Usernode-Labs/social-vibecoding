@@ -77,11 +77,14 @@ function makeSlot(key) {
     getAttribute: (n) => (n in attrs ? attrs[n] : null),
     hasAttribute: (n) => n in attrs,
     removeAttribute: (n) => { delete attrs[n]; },
-    // Good enough for the one lookup _stampState does: find the inner
-    // element carrying data-create-enabled, reading it out of the HTML.
+    // Good enough for the lookups _stampState does: find the inner element
+    // carrying one of the state attributes, reading it out of the HTML.
+    // Attribute-selector shaped rather than hard-coded to one name, so a
+    // new entry in HomePanels.STATE_ATTRS is covered the day it lands.
     querySelector: (sel) => {
-      if (sel !== '[data-create-enabled]') return null;
-      const m = /data-create-enabled="([^"]*)"/.exec(slot.innerHTML);
+      const attr = /^\[([a-z-]+)\]$/.exec(sel);
+      if (!attr) return null;
+      const m = new RegExp(`${attr[1]}="([^"]*)"`).exec(slot.innerHTML);
       return m ? { getAttribute: () => m[1] } : null;
     },
     querySelectorAll: () => [],
@@ -1228,7 +1231,7 @@ test('the Discover widget renders the curated tiles when Home is reachable', () 
   const html = HP.renderDiscoverPanel({ key: 'discover', title: 'Discover' });
   assert.match(html, /home-discover-tiles/, 'the tile row, not the empty note');
   assert.match(html, /class="app-card home-discover-tile[^"]*" data-slug="alpha"/);
-  assert.match(html, /Browse all apps/, 'and the footer is always there');
+  assert.match(html, /Browse all apps/, 'and the browse control is always there');
   assert.doesNotMatch(html, /Nothing featured right now/);
 
   // With Home genuinely absent it still renders — the note, not a crash.
@@ -1236,6 +1239,115 @@ test('the Discover widget renders the curated tiles when Home is reachable', () 
     .renderDiscoverPanel({ key: 'discover', title: 'Discover' });
   assert.match(bare, /Nothing featured right now/);
   assert.match(bare, /Browse all apps/);
+});
+
+// ── Discover: one shape per breakpoint (#949) ──────────────────────────
+//
+// A phone gets one grid row (the widget is full width there, so the row it
+// gives back is a clean gap); desktop keeps its original two and spends the
+// second on the Popular lane. The CONTENT follows the footprint, so these
+// stub Home.currentCols to pick a side.
+
+const discoverHome = (over = {}) => ({
+  featuredApps: () => [{ slug: 'alpha', name: 'Alpha', featured: true }],
+  popularApps: () => [{ slug: 'pop', name: 'Popular One', active_users: 9 }],
+  currentCols: () => 5,
+  isYours: () => false,
+  _apps: [],
+  ...over,
+});
+
+const renderDiscover = (over) => makeHomePanels({ home: discoverHome(over) }).HP
+  .renderDiscoverPanel({ key: 'discover', title: 'Discover' });
+
+test('Discover draws the Popular lane on desktop and never on a phone', () => {
+  const desktop = renderDiscover();
+  assert.match(desktop, /home-discover-popular/, '5 columns gets the second lane');
+  assert.match(desktop, /data-slug="pop"/);
+  assert.match(desktop, /home-discover-divider/, 'with a hairline and its caption');
+  assert.match(desktop, />Popular</);
+
+  const phone = renderDiscover({ currentCols: () => 4 });
+  assert.doesNotMatch(phone, /home-discover-popular/,
+    'a phone widget is ONE row — a second lane there would be clipped');
+  assert.doesNotMatch(phone, /home-discover-divider/);
+  assert.match(phone, /data-slug="alpha"/, 'but the curated lane is unchanged');
+});
+
+test('Discover never draws a footer; the browse control is in the title bar', () => {
+  for (const cols of [4, 5]) {
+    const html = renderDiscover({ currentCols: () => cols });
+    assert.doesNotMatch(html, /home-panel-footer/, `${cols} columns`);
+    // The button is inside the bar, which is what buys the 27px the one-row
+    // phone budget needs.
+    assert.match(html, /home-panel-bar[\s\S]*?id="home-browse-btn"[\s\S]*?home-panel-menu/,
+      `${cols} columns: browse sits between the title and the ⋮`);
+  }
+  // ...and in the empty branch too — it is THE discovery path.
+  const empty = renderDiscover({ featuredApps: () => [], popularApps: () => [] });
+  assert.match(empty, /home-panel-bar[\s\S]*?id="home-browse-btn"/);
+});
+
+test('Discover’s degenerate states: which lane, which note', () => {
+  // Featured only: no divider, no second lane.
+  const featuredOnly = renderDiscover({ popularApps: () => [] });
+  assert.match(featuredOnly, /data-slug="alpha"/);
+  assert.doesNotMatch(featuredOnly, /home-discover-divider/,
+    'no popular apps means no caption row, not an empty one');
+  assert.doesNotMatch(featuredOnly, /Nothing featured right now/);
+
+  // Popular only — the reporter's case: everything featured is already
+  // theirs, so the top lane is the note and the second lane fills the box.
+  const popularOnly = renderDiscover({ featuredApps: () => [] });
+  assert.match(popularOnly, /Nothing featured right now/);
+  assert.match(popularOnly, /home-discover-popular/);
+  assert.match(popularOnly, /data-slug="pop"/);
+
+  // Neither: one centred line and nothing else.
+  const neither = renderDiscover({ featuredApps: () => [], popularApps: () => [] });
+  assert.match(neither, /Nothing featured right now/);
+  assert.doesNotMatch(neither, /home-discover-tiles/);
+  assert.doesNotMatch(neither, /home-discover-divider/);
+});
+
+test('Discover stamps both lane counts, and render() mirrors them onto the host', () => {
+  assert.match(renderDiscover(), /data-featured="1"/);
+  assert.match(renderDiscover(), /data-popular="1"/);
+  const empty = renderDiscover({ featuredApps: () => [], popularApps: () => [] });
+  assert.match(empty, /data-featured="0"/);
+  assert.match(empty, /data-popular="0"/);
+
+  // The checks select on [data-panel-slot="discover"][data-featured="0"],
+  // so the value has to reach the HOST, not just the article inside it.
+  const slot = makeSlot('discover');
+  const { HP } = makeHomePanels({
+    home: discoverHome({ featuredApps: () => [], popularApps: () => [] }),
+    slots: [slot],
+  });
+  HP._data = { registry: [{ key: 'discover', title: 'Discover', removable: false }],
+    hidden: [], panels: [{ key: 'discover', title: 'Discover' }] };
+  HP.render();
+  assert.equal(slot.getAttribute('data-featured'), '0');
+  assert.equal(slot.getAttribute('data-popular'), '0');
+
+  // A widget that stamps neither leaves the host clean rather than keeping a
+  // stale value from a previous paint.
+  const other = makeSlot('challenges');
+  other.setAttribute('data-featured', '3');
+  const h2 = makeHomePanels({ slots: [other] });
+  h2.HP._data = { registry: [{ key: 'challenges', title: 'Challenges', removable: true }],
+    hidden: [], panels: [{ key: 'challenges', title: 'Challenges', challenges: [], total: 0 }] };
+  h2.HP.render();
+  assert.equal(other.hasAttribute('data-featured'), false);
+});
+
+// A lane whose tiles were never wired looks IDENTICAL in a screenshot while
+// every tap and every + badge in it is dead — so this is asserted on the
+// source, which is where the singular querySelector bug would live.
+test('_wire hands EVERY discovery lane to Home._wireDiscoveryCards', () => {
+  assert.match(SRC, /querySelectorAll\('\.home-discover-tiles'\)[\s\S]{0,220}?_wireDiscoveryCards\(tiles\)/);
+  assert.doesNotMatch(SRC, /querySelector\('\.home-discover-tiles'\)/,
+    'singular would wire the featured lane and leave Popular inert');
 });
 
 test('the Create widget reads the viewer’s quota through Home', () => {
@@ -1297,10 +1409,84 @@ test('dapp.json’s home-widget checks describe markup this module emits', () =>
   assert.match(makeHomePanels({ home: { canCreate: () => true } }).HP
     .renderCreatePanel({ key: 'create' }), /class="home-create-btn/);
 
-  const discover = find('[data-panel-slot="discover"]');
+  // ONE Discover check covers the populated widget (#949). It selects the
+  // SECOND lane, which only exists once the whole block has painted, so it
+  // is strictly stronger than the featured-lane selector it replaced — and
+  // the checks run at the desktop viewport, which is the breakpoint that
+  // draws two lanes at all.
+  const discover = find('[data-panel-slot="discover"] .home-panel');
   assert.ok(discover, 'the discover check is declared');
-  // Its selector names the two classes the tile row must carry.
-  for (const cls of ['home-panel', 'home-discover-tiles', 'app-card']) {
+  for (const cls of ['home-panel', 'home-discover-popular', 'app-card']) {
     assert.ok(discover.expectSelector.includes(cls), cls);
   }
+  assert.equal(discover.expectText, 'Browse all apps');
+  const desktop = renderDiscover();
+  assert.ok(desktop.includes('home-discover-popular') && desktop.includes('app-card'),
+    'and this module emits both classes that selector chains');
+  // The manifest parses only the first MAX_TESTS entries, so the tile-face
+  // invariant that used to have a check of its own rides along on this
+  // selector instead — scoped to the discovery tiles, which is where a
+  // "popular" lane makes a user-count badge tempting in the first place.
+  assert.match(discover.expectSelector, /:not\(:has\(\.users-badge\)\)/);
+  assert.doesNotMatch(desktop, /users-badge/,
+    'a discovery tile states popularity by its rank, not by a badge');
+
+  // The empty state's check selects on the mirrored host attribute plus the
+  // browse control, and asserts the note's own copy.
+  const bare = find('[data-panel-slot="discover"][data-featured="0"]');
+  assert.ok(bare, 'the empty-state check is declared');
+  assert.match(bare.path, /shot=discover-empty/, 'reached by the deep link, not by luck');
+  assert.match(bare.expectSelector, /\.home-panel-browse/);
+  const emptyHtml = renderDiscover({ featuredApps: () => [], popularApps: () => [] });
+  assert.ok(emptyHtml.includes('data-featured="0"'), 'the widget stamps it');
+  assert.ok(emptyHtml.includes('home-panel-browse'), 'and still offers the browse control');
+  assert.ok(emptyHtml.includes(bare.expectText), `the note says "${bare.expectText}"`);
+});
+
+// The one-cell phone budget and the two-cell desktop budget, derived by hand
+// in app.css and pinned here exactly as that comment instructs — a token
+// moved on one side without the other mis-sizes the widget silently.
+test('the Discover lanes fit the cells their footprint buys', () => {
+  const css = read('public/css/app.css');
+  // Six explicit tracks, one per tile either lane can produce. auto-fill
+  // followed the pixel width and wrapped to a second (clipped) row in a
+  // 640-800px window.
+  assert.match(css, /\.home-discover-tiles \{[^}]*grid-template-columns: repeat\(6, minmax\(0, 1fr\)\)/);
+  const home = read('public/js/home.js');
+  assert.match(home, /FEATURED_LIMIT: 6/);
+  assert.match(home, /POPULAR_LIMIT: 6/, 'the lane cap equals the track count');
+  // Both lanes split the leftover height instead of the first one taking it.
+  assert.match(css, /\.home-discover-lane \{[^}]*flex: 1 1 0/);
+  assert.match(css, /\.home-discover-tiles \{[^}]*align-content: center/);
+  // The fluid icon caps at the 40px the tile always drew at — and the CAP
+  // is on the WRAPPER. On the icon itself, `width: 100%` resolves against a
+  // shrink-to-fit parent (the tile is `flex-col items-center`), which is
+  // circular: the icons rendered at whatever their glyph measured — 12px for
+  // an emoji, 30px for an image — instead of a uniform 40px.
+  assert.match(css, /\.home-discover-icon-wrap \{[^}]*width: 100%/);
+  assert.match(css, /\.home-discover-icon-wrap \{[^}]*max-width: 2\.5rem/);
+  assert.match(css, /\.home-discover-icon \{[^}]*aspect-ratio: 1 \/ 1/);
+  assert.match(SRC, /class="home-discover-icon-wrap relative"/,
+    'and the markup gives that wrapper its class');
+
+  // .app-card's own padding must NOT apply to a discovery tile: the lane
+  // supplies the inset, and inheriting the launcher tile's 8px added 16px
+  // per tile — enough to put the phone widget at 116px of a 116px cell,
+  // with no room left for a larger system text size. The selector is two
+  // classes deep because .app-card's padding is declared later in the file.
+  assert.match(css, /\.home-discover-tiles \.home-discover-tile \{[^}]*padding: 0/);
+
+  // Budgets, against the tokens they have to fit inside: the PHONE cell
+  // (the tighter one, declared in the max-width:639.98px block) and the
+  // desktop two-cell slot.
+  const rem = (re) => parseFloat(css.match(re)[1]) * 16;
+  const phoneCell = rem(/@media \(max-width: 639\.98px\)[\s\S]*?--home-cell-h: ([\d.]+)rem/);
+  const deskCap = rem(/--home-panel-max-h: ([\d.]+)rem/);
+  const bar = 27;      // py-1 8 + 18 line + 1px rule
+  const lane = 72;     // 8 + 40 icon + 4 gap + 12 caption + 8
+  const divider = 19;  // 1px rule + the ~18px "Popular" caption row
+  assert.ok(2 + bar + lane <= phoneCell,
+    `phone budget ${2 + bar + lane}px must fit the ${phoneCell}px cell`);
+  assert.ok(2 + bar + lane + divider + lane <= deskCap,
+    `desktop budget ${2 + bar + lane + divider + lane}px must fit the ${deskCap}px two-cell slot`);
 });

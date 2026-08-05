@@ -61,7 +61,9 @@ function makePanels({ canCreate = true, featured = [] } = {}) {
 const SCHEMA = read('src/db/schema.sql');
 const APPS_ROUTE = read('src/routes/apps.js');
 
-function makeHome() {
+// `search` drives the screenshot-state deep links the module reads off
+// location (?shot=create-disabled, ?shot=discover-empty).
+function makeHome({ search = '' } = {}) {
   const sandbox = {
     console,
     App: { user: { id: 1, canCreateApps: true } },
@@ -88,7 +90,7 @@ function makeHome() {
     fetch: async () => ({ ok: true, json: async () => ({}) }),
     setTimeout, clearTimeout, setInterval, clearInterval,
     URLSearchParams,
-    location: { search: '' },
+    location: { search },
     addEventListener: () => {},
     removeEventListener: () => {},
   };
@@ -176,6 +178,80 @@ test('featuredApps: empty / missing input is safe', () => {
   assert.equal(Home.featuredApps([app()]).length, 0, 'nothing featured');
 });
 
+// The screenshot-state deep link for the compact "nothing featured" state
+// (#949). Without it that rendering — what a viewer sees once they have
+// added the featured apps — is unreachable by URL, so the before/after
+// screenshots and every declared check would show the populated widget.
+test('featuredApps: ?shot=discover-empty forces the empty state', () => {
+  const apps = [app({ slug: 'f', featured: true, featured_order: 0 })];
+  assert.equal(makeHome().featuredApps(apps).length, 1, 'normally populated');
+  const shot = makeHome({ search: '?shot=discover-empty' });
+  assert.equal(shot.featuredApps(apps).length, 0, 'the deep link empties it');
+  // Paint-only: a DIFFERENT shot value must not touch this list.
+  assert.equal(makeHome({ search: '?shot=create-disabled' }).featuredApps(apps).length, 1);
+});
+
+// ── popularApps selection (#949) ──────────────────────────────────
+//
+// The desktop widget's second lane: what everyone else is using, from the
+// `active_users` count GET /api/apps already serves. The ranking mirrors
+// Browse.sortApps' non-featured tail so the widget and the directory can't
+// disagree about what is popular.
+
+const pop = (over) => app({ active_users: 3, ...over });
+
+test('popularApps: ranks non-featured apps by active users, most first', () => {
+  const Home = makeHome();
+  const apps = [
+    pop({ slug: 'few', active_users: 2 }),
+    pop({ slug: 'most', active_users: 11 }),
+    pop({ slug: 'some', active_users: 5 }),
+  ];
+  assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), ['most', 'some', 'few']);
+});
+
+test('popularApps: the count is coerced — the API sends it as a string', () => {
+  const Home = makeHome();
+  // Postgres COUNT(*) is a bigint, so the serializer hands the client "9",
+  // not 9. A lexicographic sort would rank "9" above "10".
+  const apps = [pop({ slug: 'nine', active_users: '9' }), pop({ slug: 'ten', active_users: '10' })];
+  assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), ['ten', 'nine']);
+  assert.deepEqual(Home.popularApps([pop({ slug: 'n', active_users: 4 })]).map((a) => a.slug),
+    ['n'], 'and a real number works too');
+});
+
+test('popularApps: ties keep the order the server returned', () => {
+  const Home = makeHome();
+  const apps = ['a', 'b', 'c'].map((slug) => pop({ slug, active_users: 4 }));
+  assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), ['a', 'b', 'c']);
+});
+
+test('popularApps: excludes featured, yours, errored, self-hosted and unused apps', () => {
+  const Home = makeHome();
+  const apps = [
+    pop({ slug: 'keep', active_users: 9 }),
+    pop({ slug: 'featured', featured: true, active_users: 20 }),
+    pop({ slug: 'mine', is_favorited: true, active_users: 20 }),
+    pop({ slug: 'broken', status: 'error', active_users: 20 }),
+    pop({ slug: 'platform', self_hosted: true, active_users: 20 }),
+    pop({ slug: 'unused', active_users: 0 }),
+    pop({ slug: 'never-counted', active_users: null }),
+  ];
+  assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), ['keep']);
+});
+
+test('popularApps: capped at POPULAR_LIMIT; empty / missing input is safe', () => {
+  const Home = makeHome();
+  assert.equal(Home.POPULAR_LIMIT, 6);
+  const many = Array.from({ length: 20 }, (_, i) => pop({
+    slug: `p${i}`, active_users: 100 - i,
+  }));
+  assert.deepEqual(Home.popularApps(many).map((a) => a.slug),
+    ['p0', 'p1', 'p2', 'p3', 'p4', 'p5'], 'the six most-used');
+  assert.equal(Home.popularApps([]).length, 0);
+  assert.equal(Home.popularApps(undefined).length, 0);
+});
+
 // ── The row hides itself when there is nothing to show ───────────
 
 test('the Discover widget swaps its tile row for a note, never an empty box', () => {
@@ -183,11 +259,12 @@ test('the Discover widget swaps its tile row for a note, never an empty box', ()
     PANELS_SRC.indexOf('renderDiscoverPanel(panel) {'),
     PANELS_SRC.indexOf('renderDiscoverTile(app) {'));
   assert.ok(src.length > 200, 'located renderDiscoverPanel');
-  // Tiles OR a one-line note — never a bare footer under a heading.
-  assert.match(src, /apps\.length/);
+  // Tiles OR a one-line note — never a bare bar over an empty lane.
+  assert.match(src, /featured\.length/);
   assert.match(src, /Nothing featured right now/);
-  // The footer always renders: it is THE discovery path, so it must not
-  // depend on curation existing.
+  // The browse control always renders: it is THE discovery path, so it must
+  // not depend on curation existing. It lives in the title bar now (#949),
+  // not in a footer — see the block test below.
   assert.match(src, /home-browse-btn/);
   assert.match(src, /Browse all apps/);
   // ...and the widget derives its tiles from the SAME per-viewer flags the
@@ -215,10 +292,16 @@ test('Discover tiles are the compact treatment, wired like the old row', () => {
   const src = PANELS_SRC.slice(
     PANELS_SRC.indexOf('renderDiscoverTile(app) {'),
     PANELS_SRC.indexOf('renderCreatePanel(panel) {'));
-  // A 2x2 block is ~171px wide on a phone — a 56px launcher card does not
-  // fit, so the widget uses the 40px widget-strip tile instead.
-  assert.match(src, /w-10 h-10/);
+  // The block is ~366px wide on a phone across six tracks — a 56px launcher
+  // card does not fit, so the widget uses the 40px widget-strip tile. The
+  // size lives in CSS now (#949): the icon fills its track up to that same
+  // 40px, because the narrowest 5-column lane gives it only ~32px and a
+  // fixed box there would overflow and be clipped.
+  assert.match(src, /class="app-icon-tile home-discover-icon/);
   assert.doesNotMatch(src, /w-14 h-14/);
+  // The cap sits on the wrapper, whose width is definite; see the sizing
+  // note in app.css and the budget test in home-panels-render.test.js.
+  assert.match(CSS, /\.home-discover-icon-wrap \{[^}]*max-width: 2\.5rem/);
   // It still carries .app-card + data-slug, which is what lets it reuse
   // Home._wireDiscoveryCards wholesale (tap opens, badge toggles) so the
   // widget cannot drift from the row it replaced.
@@ -261,16 +344,25 @@ test('index.html retires the two trailing sections for in-grid widgets', () => {
   assert.ok(strip > 0 && strip < grid);
 });
 
-test('Discover is one bordered block: tiles above, browse row as its footer', () => {
-  // Same shell as every other widget (title bar + body + footer), so the
-  // three read as one family and the drag handle is in the same place.
-  assert.match(PANELS_SRC, /renderDiscoverPanel\(panel\) \{[\s\S]*?_panelShell\(panel\.key, titleHtml, body, footer\)/);
+test('Discover is one bordered block: lanes under a bar that carries the browse link', () => {
+  // Same shell as every other widget, so the three read as one family and
+  // the drag handle is in the same place — but Discover passes NO footer
+  // (#949). A .home-panel-footer is 27px, which on a phone is the whole
+  // difference between a tile lane that fits its one cell and one that
+  // clips.
+  assert.match(PANELS_SRC,
+    /renderDiscoverPanel\(panel\) \{[\s\S]*?_panelShell\(panel\.key, titleHtml, featuredHtml \+ popularHtml, null,/);
   const src = PANELS_SRC.slice(
     PANELS_SRC.indexOf('renderDiscoverPanel(panel) {'),
     PANELS_SRC.indexOf('renderDiscoverTile(app) {'));
-  // The browse row is the block's FOOTER — separated by a hairline rather
-  // than a gap, so it stays visibly attached.
-  assert.match(src, /home-panel-footer[^`]*border-t/);
+  assert.doesNotMatch(src, /home-panel-footer/, 'no footer of its own');
+  // The browse control rides in the TITLE BAR instead, and it is still the
+  // same #home-browse-btn the old footer carried.
+  assert.match(src, /titleHtml = `[\s\S]*?id="home-browse-btn"[\s\S]*?`;/);
+  assert.match(src, /home-panel-browse/);
+  // The second lane is separated by a hairline, so it reads as part of the
+  // same block rather than a second card.
+  assert.match(src, /home-discover-divider[^`]*border-t/);
 });
 
 // The width bound is on the FEED, not on each box: #home-body is a
@@ -284,8 +376,11 @@ test('every widget is one bordered block, sized by the cells it occupies', () =>
   assert.match(CSS, /\.home-panel-slot \{[^}]*display: flex/);
   assert.match(CSS, /\.home-panel-slot > \.home-panel,[\s\S]*?width: 100%/);
   // Footprints come from the server registry, per column count.
-  assert.match(ROUTE, /sizes: \{ 4: \[4, 2\], 5: \[2, 2\] \}/);
-  assert.match(ROUTE, /sizes: \{ 4: \[1, 1\], 5: \[1, 1\] \}/);
+  assert.match(ROUTE, /sizes: \{ 4: \[4, 2\], 5: \[2, 2\] \}/);   // challenges
+  // Discover is ASYMMETRIC (#949): one row on a phone where it is full
+  // width, its original two on desktop where the second is the Popular lane.
+  assert.match(ROUTE, /sizes: \{ 4: \[4, 1\], 5: \[2, 2\] \}/);
+  assert.match(ROUTE, /sizes: \{ 4: \[1, 1\], 5: \[1, 1\] \}/);   // create
 });
 
 // Short feed on a tall screen: the trailing sections sit at the BOTTOM of

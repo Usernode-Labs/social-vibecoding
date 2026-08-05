@@ -195,14 +195,18 @@ function demoLayouts() {
   return {
     // Phone: 4 columns, the two full-width widgets stacked with an app row
     // between them, and the create widget alone in a row of its own.
+    // Discover is ONE row tall at this breakpoint (#949), so the app row and
+    // Challenges are pulled up to sit under it — the holes that remain (the
+    // middles of rows 0 and 2) are the deliberate ones, not a gap left
+    // behind by the resize.
     '4': [
       { type: 'app', slug: 'staging-demo-emoji-icon', col: 0, row: 0 },
       { type: 'app', slug: 'staging-demo-image-icon', col: 3, row: 0 },
       { type: 'widget', key: 'discover', col: 0, row: 1 },
-      { type: 'app', slug: 'staging-demo-chess-arena', col: 0, row: 3 },
-      { type: 'app', slug: 'staging-demo-pixel-racer', col: 3, row: 3 },
-      { type: 'widget', key: 'challenges', col: 0, row: 4 },
-      { type: 'widget', key: 'create', col: 3, row: 6 },
+      { type: 'app', slug: 'staging-demo-chess-arena', col: 0, row: 2 },
+      { type: 'app', slug: 'staging-demo-pixel-racer', col: 3, row: 2 },
+      { type: 'widget', key: 'challenges', col: 0, row: 3 },
+      { type: 'widget', key: 'create', col: 3, row: 5 },
     ],
     // Desktop: 5 columns. Chess Arena alone top-left, Pixel Racer alone at
     // the far end of the same row, both widgets side by side under them.
