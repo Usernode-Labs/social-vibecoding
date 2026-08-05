@@ -897,13 +897,28 @@ async function reapOne(item) {
   }
 
   // By-name path. The container is the only thing we are sure about.
+  let stopResult;
   try {
-    await docker.stopAndRemove(item.name, {
+    stopResult = await docker.stopAndRemove(item.name, {
       stopTimeoutSec: docker.STAGING_STOP_GRACE_SEC,
     });
   } catch (err) {
     log.warn('staging-reap', 'stopAndRemove failed', { name: item.name, err: err.message });
     return { outcome: FAILED, error: err.message };
+  }
+
+  // stopAndRemove is deliberately non-throwing for an operational removal
+  // failure: it verifies absence and returns { removed: false, error }. Do not
+  // drop the dependent staging database unless the runtime resource is gone.
+  // The surviving container remains in the next inventory, so preserving its
+  // database also preserves a safe retry path. Results without an explicit
+  // flag retain the pre-#851 compatibility behavior, matching teardownStaging.
+  if (stopResult && stopResult.removed === false) {
+    const error = stopResult.error || 'container survived teardown (still running)';
+    log.warn('staging-reap', 'By-name teardown left container running — keeping staging database', {
+      name: item.name, err: error,
+    });
+    return { outcome: FAILED, error };
   }
 
   // The staging DB name embeds the 6-hex commit the preview was built from,

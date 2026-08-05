@@ -51,6 +51,7 @@ function freshFixtures() {
     inspectCalls: [],
     stopCalls: [],
     stopError: null,
+    stopResult: { removed: true, error: null },
     // staging
     teardownCalls: [],
     teardownError: null,
@@ -117,6 +118,7 @@ function installStubs() {
       try {
         if (fx.unitDelayMs) await sleep(fx.unitDelayMs);
         if (fx.stopError) throw fx.stopError;
+        return fx.stopResult;
       } finally {
         fx.concurrentNow -= 1;
       }
@@ -377,6 +379,32 @@ test('a failed stopAndRemove is isolated to its own unit', async () => {
 
   assert.equal(job.failed, 2, 'only the two by-name units');
   assert.deepEqual(fx.dropCalls, [], 'a container that would not stop keeps its database');
+});
+
+test('an explicit removal failure keeps the database and the retry signal', async () => {
+  const reap = setup();
+  fleet();
+  fx.stopResult = { removed: false, error: 'device or resource busy' };
+  const job = await runSweep(reap);
+
+  assert.equal(job.failed, 2, 'only the two by-name units report the removal failure');
+  assert.deepEqual(fx.dropCalls, [],
+    'dependent databases are never dropped while their containers survive');
+  const failed = job.previews.filter((p) => p.state === 'failed');
+  assert.equal(failed.length, 2);
+  assert.ok(failed.every((p) => p.error === 'device or resource busy'),
+    'the runtime removal error remains visible to the admin job');
+});
+
+test('a legacy removal helper without a verdict retains the old cleanup path', async () => {
+  const reap = setup();
+  fx.psLines = [['usernode-staging-orphan-abc123--55', 'running', 'img:abc123']];
+  fx.sessions = [];
+  fx.stopResult = undefined;
+  const job = await runSweep(reap);
+
+  assert.equal(job.previews[0].state, 'torn_down');
+  assert.deepEqual(fx.dropCalls, ['app_orphan_abc123_staging_s55_abc123']);
 });
 
 // ── Job shape, singleton, progress and tally ────────────────────────────
