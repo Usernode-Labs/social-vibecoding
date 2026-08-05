@@ -437,9 +437,10 @@
       <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
       <span class="text-sm font-medium">Profile</span>
     </a>
-    <!-- Leaderboard — the one entry point for shared progress: the Kudos
-         leaderboard, the Topochain standings and the season's challenges,
-         three tabs on a single screen. This row replaces the header
+    <!-- Leaderboard — the one entry point for shared progress: the
+         Topochain standings (the primary tab, and what the bare
+         #leaderboard hash opens), the Kudos leaderboard and the season's
+         challenges, three tabs on a single screen. This row replaces the header
          trophy (#leaderboard-btn), the old
          #drawer-row-topochain-leaderboard, and the separate Challenges /
          Topochain-seasons rows that used to sit under it. Keeps the
@@ -719,22 +720,26 @@
   </main>
 
   <!-- Leaderboard screen (hidden by default): the one place the group's
-       shared progress lives — the Kudos leaderboard, the Topochain
-       standings and the season's challenges, as a three-tab strip.
-       Hash routes #leaderboard[/prs|users|history|users/<name>] (Kudos),
-       #leaderboard/topochain (standings) and #leaderboard/challenges.
-       The legacy #topochain/leaderboard hash aliases onto the standings
-       tab; #challenges and #topochain/seasons alias onto the challenges
-       tab. Mounted by App.navigateToLeaderboard.
+       shared progress lives — the Topochain standings, the Kudos
+       leaderboard and the season's challenges, as a three-tab strip.
+       Hash routes #leaderboard (the STANDINGS — the primary tab, labelled
+       simply "Leaderboard"), #leaderboard/[prs|users|history|users/<name>]
+       (Kudos) and #leaderboard/challenges.
+       The legacy #topochain/leaderboard and #leaderboard/topochain hashes
+       alias onto the standings tab and self-heal to the bare
+       #leaderboard; #challenges and #topochain/seasons alias onto the
+       challenges tab. Mounted by App.navigateToLeaderboard.
 
        Three panes, one visible at a time, each owned by its own module:
-       #leaderboard-root by public/js/leaderboard.js (which also renders
-       the tab strip and owns Leaderboard.section),
-       #topochain-leaderboard-root by public/js/topochain-leaderboard.js,
-       and #challenges-root by public/js/topochain-challenges.js. The two
-       Topochain-domain panes share one event selection, rendered into
-       #leaderboard-event-bar by public/js/topochain-event-context.js and
-       hidden while the Kudos tab is active.
+       #topochain-leaderboard-root by public/js/topochain-leaderboard.js
+       (the DEFAULT pane, so it and the event bar are the two that ship
+       visible), #leaderboard-root by public/js/leaderboard.js (the Kudos
+       pane — that module also renders the tab strip and owns
+       Leaderboard.section), and #challenges-root by
+       public/js/topochain-challenges.js. The two Topochain-domain panes
+       share one event selection, rendered into #leaderboard-event-bar by
+       public/js/topochain-event-context.js and hidden while the Kudos tab
+       is active.
 
        The wrapper is max-w-5xl for the Topochain table's sake; the Kudos
        pane keeps its narrower max-w-3xl reading column. -->
@@ -742,9 +747,9 @@
     <div class="max-w-5xl mx-auto p-4 w-full">
       <h2 class="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mb-3">Leaderboard</h2>
       <div id="standings-tabs" class="flex gap-2 border-b border-zinc-200 dark:border-zinc-800 mb-4"></div>
-      <div id="leaderboard-event-bar" class="hidden w-full mb-4"></div>
-      <div id="leaderboard-root" class="max-w-3xl"></div>
-      <div id="topochain-leaderboard-root" class="hidden w-full"></div>
+      <div id="leaderboard-event-bar" class="w-full mb-4"></div>
+      <div id="leaderboard-root" class="hidden max-w-3xl"></div>
+      <div id="topochain-leaderboard-root" class="w-full"></div>
       <div id="challenges-root" class="hidden w-full"></div>
     </div>
   </main>
@@ -1209,11 +1214,11 @@
 
   <!-- The Topochain leaderboard used to be its own <main> screen here
        (#topochain-leaderboard-screen, Task 14). The header slim-down
-       merged it into the Leaderboard screen above as the second tab:
-       #topochain-leaderboard-root now lives inside #leaderboard-screen
-       and TopochainLeaderboard renders into it unchanged. The legacy
-       #topochain/leaderboard hash still works — the router replaceStates
-       it to #leaderboard/topochain. -->
+       merged it into the Leaderboard screen above, where it is now the
+       PRIMARY (default) tab: #topochain-leaderboard-root lives inside
+       #leaderboard-screen and TopochainLeaderboard renders into it
+       unchanged. The legacy #topochain/leaderboard hash still works —
+       the router replaceStates it to the bare #leaderboard. -->
 
   <!-- The Topochain seasons/events screen used to be its own <main> here
        (#topochain-seasons-screen, Task 14). Its event hero moved up into
@@ -2576,7 +2581,8 @@
   <!-- Topochain-domain panes of the Leaderboard screen (Task 14, public
        screens; merged into one screen by the leaderboard merge). The
        Leaderboard module mounts these lazily when their tab is first
-       shown — #leaderboard/topochain -> TopochainLeaderboard.open(),
+       shown — #leaderboard -> TopochainLeaderboard.open() (the default
+       tab, so this one mounts on the screen's first open),
        #leaderboard/challenges -> TopochainChallenges.open() — and both
        read the event selection from TopochainEventContext, which owns
        the shared picker + hero. Loaded before app.js. -->
