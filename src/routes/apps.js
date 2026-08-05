@@ -22,6 +22,7 @@ const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
 const approverInvites = require('../services/approver-invites');
 const contributors = require('../services/contributors');
+const appSlug = require('../services/app-slug');
 
 // Cap on the `initialApprovers` list a governance-pr request may carry
 // (see that route below) — a sanity bound, not a product limit.
@@ -749,13 +750,10 @@ function appRoutes(config) {
       repoUrlNormalized = `https://github.com/${parsed.owner}/${parsed.repo}`;
     }
 
-    const crypto = require('crypto');
-    const base = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    const base = appSlug.appSlugBase(name);
     if (!base) {
       return res.status(400).json({ error: 'Invalid app name' });
     }
-    const code = crypto.randomBytes(3).toString('hex');
-    const slug = `${base}-${code}`;
 
     try {
       // Per-user app-creation quota (FULL admins bypass — parity with the
@@ -811,7 +809,7 @@ function appRoutes(config) {
       // The CTE makes app row + creator membership atomic — the creator
       // must always have a member row (it's what makes a collab-private
       // app reachable by anyone at all).
-      const { rows } = await pool.query(
+      const allocation = await appSlug.insertWithUniqueAppSlug(base, (slug) => pool.query(
         `WITH new_app AS (
            INSERT INTO apps (name, slug, repo_url, created_by, status,
                              collab_visibility, view_visibility)
@@ -824,7 +822,9 @@ function appRoutes(config) {
          )
          SELECT * FROM new_app`,
         [name.trim(), slug, repoUrlNormalized, req.user.id, collabVisibility, viewVisibility]
-      );
+      ));
+      const { slug } = allocation;
+      const { rows } = allocation.value;
 
       const appRow = rows[0];
       log.info('apps', repoUrlNormalized ? 'App imported (pending)' : 'App created (pending)', {
@@ -856,8 +856,11 @@ function appRoutes(config) {
 
       res.status(201).json({ app: appAccess.stripAppSecrets(appRow) });
     } catch (err) {
-      if (err.code === '23505') {
-        return res.status(409).json({ error: 'An app with that name already exists' });
+      if (err instanceof appSlug.AppSlugAllocationError) {
+        return res.status(503).json({
+          error: 'Could not reserve a unique app address. Please try again.',
+          code: err.code,
+        });
       }
       log.error('apps', 'Failed to create app', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -920,15 +923,13 @@ function appRoutes(config) {
         }
       }
 
-      const crypto = require('crypto');
-      const base = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      const base = appSlug.appSlugBase(name);
       if (!base) return res.status(400).json({ error: 'Invalid app name' });
-      const slug = `${base}-${crypto.randomBytes(3).toString('hex')}`;
 
       // Reference-only lineage: appId + slug, NEVER the name (resolved
       // live at serialize time). Inherit the source's visibility.
       const forkedFrom = JSON.stringify({ appId: sourceApp.id, slug: sourceApp.slug });
-      const { rows } = await pool.query(
+      const allocation = await appSlug.insertWithUniqueAppSlug(base, (slug) => pool.query(
         `WITH new_app AS (
            INSERT INTO apps (name, slug, created_by, status,
                              collab_visibility, view_visibility, forked_from)
@@ -941,7 +942,9 @@ function appRoutes(config) {
          )
          SELECT * FROM new_app`,
         [name.trim(), slug, req.user.id, sourceApp.collab_visibility, sourceApp.view_visibility, forkedFrom]
-      );
+      ));
+      const { slug } = allocation;
+      const { rows } = allocation.value;
       const appRow = rows[0];
       log.info('apps', 'App fork (pending)', { appId: appRow.id, slug, sourceSlug: sourceApp.slug });
       events.record(pool, {
@@ -964,8 +967,11 @@ function appRoutes(config) {
 
       res.status(201).json({ app: appAccess.stripAppSecrets(appRow) });
     } catch (err) {
-      if (err.code === '23505') {
-        return res.status(409).json({ error: 'An app with that name already exists' });
+      if (err instanceof appSlug.AppSlugAllocationError) {
+        return res.status(503).json({
+          error: 'Could not reserve a unique app address. Please try again.',
+          code: err.code,
+        });
       }
       log.error('apps', 'Failed to fork app', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
