@@ -1,8 +1,18 @@
 // Profile screen — the mobile app's native Profile screen absorbed into SV
 // (profile-and-settings-to-web migration, NATIVE-BRIDGE.md). Renders the
-// user's rank + points, token allocation (with reveal), points breakdown,
-// and completed challenges from the in-process /challenges-api routes
+// user's rank + points, token allocation (with reveal) and points breakdown
+// from the in-process /challenges-api/me/* routes
 // (src/routes/topochain/mobile.js).
+//
+// It deliberately does NOT list completed challenges (#981). It used to,
+// from /challenges-api/challenges?season_id=…, and that section was wrong
+// on two counts: `challenges.completed` is an ORGANISER flag about the
+// challenge ("this one is over"), not "you finished it", so every user saw
+// the same list — and season-scoped it ran to ~32 cards, burying the rank,
+// token and breakdown blocks this screen actually exists for. That list now
+// lives on the Leaderboard screen's Challenges tab, grouped and counted
+// per event (public/js/topochain-challenges.js), which is where the rest of
+// the challenge UI already was.
 //
 // Identity comes from the platform session: since the topochain merge,
 // leaderboard participants ARE platform users, so the /me/* routes scope
@@ -15,7 +25,7 @@
 const Profile = {
   _open: false,
   _loading: false,
-  // { ranking, breakdown, challenges, season } — kept across open/close so
+  // { ranking, breakdown, season } — kept across open/close so
   // re-entering the screen paints instantly, then refreshes.
   _data: null,
 
@@ -69,7 +79,8 @@ const Profile = {
         Profile._data = { signedOut: true };
         return;
       }
-      // Scope everything to the active season, like the challenges screen.
+      // Scope everything to the active season: both /me/* reads below take
+      // a season_id, and the header's season name comes from the picked row.
       const seasonsRaw = await Profile._fetchJson('/challenges-api/seasons');
       const seasons = Array.isArray(seasonsRaw)
         ? seasonsRaw
@@ -79,25 +90,15 @@ const Profile = {
       const seasonId = active ? (active.season_id ?? active.id) : null;
       const seasonQS = seasonId != null ? `?season_id=${seasonId}` : '';
 
-      const [ranking, breakdown, challenges] = await Promise.all([
+      const [ranking, breakdown] = await Promise.all([
         Profile._fetchJson(`/challenges-api/me/ranking${seasonQS}`),
         Profile._fetchJson(
           '/challenges-api/me/breakdown?include_activity=1' +
           (seasonId != null ? `&season_id=${seasonId}` : ''))
           .catch(() => null),
-        seasonId != null
-          ? Profile._fetchJson(
-              `/challenges-api/challenges?season_id=${seasonId}`)
-              .catch(() => [])
-          : Promise.resolve([]),
       ]);
 
-      Profile._data = {
-        season: active,
-        ranking,
-        breakdown,
-        challenges: Array.isArray(challenges) ? challenges : [],
-      };
+      Profile._data = { season: active, ranking, breakdown };
     } catch (err) {
       if (err && err.status === 401) {
         // Not signed in (or the session lapsed) — a normal state, not a
@@ -203,33 +204,8 @@ const Profile = {
       root.appendChild(box);
     }
 
-    // Completed challenges.
-    const completed = d.challenges.filter((c) => c.completed);
-    root.appendChild(Profile._el('div',
-      'text-sm font-semibold text-zinc-500 dark:text-zinc-400 mt-6 mb-2',
-      'Completed challenges'));
-    if (completed.length === 0) {
-      root.appendChild(Profile._el('div',
-        'text-sm text-zinc-400 py-2', 'No completed challenges yet.'));
-    }
-    for (const c of completed) {
-      const card = Profile._el('div',
-        'rounded-xl border border-zinc-200 dark:border-zinc-800 p-3 mb-2 ' +
-        'flex items-center gap-3');
-      const body = Profile._el('div', 'flex-1 min-w-0');
-      body.appendChild(Profile._el('div', 'font-medium text-sm truncate',
-        c.goal || c.task));
-      if (c.category) {
-        body.appendChild(Profile._el('div',
-          'text-xs text-zinc-500 dark:text-zinc-400 mt-0.5', c.category));
-      }
-      card.appendChild(body);
-      card.appendChild(Profile._el('span',
-        'shrink-0 px-2 py-0.5 rounded-full text-[0.65rem] font-semibold ' +
-        'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
-        'Completed'));
-      root.appendChild(card);
-    }
+    // The points breakdown is the LAST section (#981) — see the file header
+    // for why the completed-challenges list that used to follow it is gone.
   },
 
   // The backend zeroes total_tokens until terms are accepted, so a gated
