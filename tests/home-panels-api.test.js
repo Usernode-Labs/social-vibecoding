@@ -53,6 +53,9 @@ function makeMockPool(state) {
       if (sql.includes('SELECT home_panels_hidden FROM users')) {
         return { rows: [{ home_panels_hidden: state.hidden ?? [] }] };
       }
+      if (sql.includes('WITH social_feed AS')) {
+        return { rows: (state.socialRows || []).slice(0, Number(params[3]) || 5) };
+      }
       if (sql.startsWith('UPDATE users SET home_panels_hidden')) {
         const key = params[1];
         const cur = (state.hidden ?? []).filter((k) => k !== key);
@@ -266,11 +269,10 @@ test('GET /api/home-panels: no live season -> an empty panel, not an error', asy
   const { app } = makeApp({ season: null, rows: [] }, { user: USER });
   const { status, body } = await get(app, '/api/home-panels');
   assert.equal(status, 200);
-  assert.deepEqual(body.registry.map((r) => r.key), ['challenges', 'discover', 'create']);
-  // Three built entries: the challenges payload plus the two MARKER widgets
-  // (discover / create), which build nothing but still ride the response so
-  // the client can find every renderable in one place.
-  assert.deepEqual(body.panels.map((p) => p.key), ['challenges', 'discover', 'create']);
+  assert.deepEqual(body.registry.map((r) => r.key), ['challenges', 'community', 'discover', 'create']);
+  // Four built entries: challenge + community payloads and the two marker
+  // widgets, all discoverable through one response.
+  assert.deepEqual(body.panels.map((p) => p.key), ['challenges', 'community', 'discover', 'create']);
   const ch = body.panels.find((p) => p.key === 'challenges');
   assert.equal(ch.total, 0);
   assert.equal(ch.season, null);
@@ -450,9 +452,9 @@ test('GET /api/home-panels: a hidden panel is dropped from panels but still desc
   );
   const { body } = await get(app, '/api/home-panels');
   // Only the hidden one drops out; the rest still build.
-  assert.deepEqual(body.panels.map((p) => p.key), ['discover', 'create']);
+  assert.deepEqual(body.panels.map((p) => p.key), ['community', 'discover', 'create']);
   assert.deepEqual(body.hidden, ['challenges']);
-  assert.deepEqual(body.registry.map((r) => r.key), ['challenges', 'discover', 'create']);
+  assert.deepEqual(body.registry.map((r) => r.key), ['challenges', 'community', 'discover', 'create']);
 });
 
 test('GET /api/home-panels: unknown keys in the column are filtered out', async () => {
@@ -593,15 +595,17 @@ test('the registry describes every widget, with its footprint and removability',
   const { app } = makeApp({ season: SEASON, rows: [row()] }, { user: USER });
   const { body } = await get(app, '/api/home-panels');
   const byKey = Object.fromEntries(body.registry.map((r) => [r.key, r]));
-  assert.deepEqual(Object.keys(byKey), ['challenges', 'discover', 'create']);
+  assert.deepEqual(Object.keys(byKey), ['challenges', 'community', 'discover', 'create']);
   // Footprints are per column count and live server-side, so the layout
   // route's overlap check and the client lay out against the same numbers.
   assert.deepEqual(byKey.challenges.sizes, { 4: [4, 2], 5: [2, 2] });
+  assert.deepEqual(byKey.community.sizes, { 4: [4, 2], 5: [2, 2] });
   assert.deepEqual(byKey.discover.sizes, { 4: [4, 2], 5: [2, 2] });
   assert.deepEqual(byKey.create.sizes, { 4: [1, 1], 5: [1, 1] });
   // Discover is the shell's only door to the app directory.
   assert.equal(byKey.discover.removable, false);
   assert.equal(byKey.challenges.removable, true);
+  assert.equal(byKey.community.removable, true);
   assert.equal(byKey.create.removable, true);
   // Placement is no longer this route's business.
   assert.equal(body.positions, undefined);

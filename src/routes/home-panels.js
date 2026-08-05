@@ -33,10 +33,9 @@
 // same table and the same write as the app tiles. This file is the widget
 // REGISTRY plus per-widget CONTENT; it no longer stores a position.
 //
-// Three widgets today: `challenges` (the only one with a real builder),
-// `discover` (featured apps + the way into the app directory) and `create`
-// (the create-an-app tile). The registry indirection is deliberate: adding
-// a fourth is a new entry + a builder, not a refactor of route or client.
+// Four widgets today: `challenges`, read-only `community` activity,
+// `discover` (featured apps + the way into the app directory), and `create`
+// (the create-an-app tile). The registry indirection keeps additions local.
 
 'use strict';
 
@@ -45,6 +44,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const { homePanelPrefLimiter } = require('../middleware/rate-limits');
 const { TEMPLATE_JOIN_COLUMNS_SQL } = require('./topochain/challenge-view');
+const { listSocialFeed } = require('../services/social-feed');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
@@ -459,12 +459,60 @@ function demoChallengesPanel(opts) {
   };
 }
 
+// The home widget is a small window onto the same authoritative service as
+// GET /api/social-feed. It intentionally does not cache: current app
+// visibility and proposal lifecycle are privacy filters, not stale-able
+// decoration. The surrounding HomePanels request already has a one-minute
+// client TTL, which is sufficient load control for human-timescale activity.
+async function buildCommunityPanel(pool, _user, opts) {
+  const expanded = !!opts?.expanded;
+  const page = await listSocialFeed(pool, { limit: expanded ? 20 : 4 });
+  return { activity: page.items, has_more: page.has_more, expanded };
+}
+
+function demoCommunityPanel(opts) {
+  const expanded = !!opts?.expanded;
+  const now = Date.now();
+  const activity = [
+    {
+      id: 'kudos:9003', type: 'kudos',
+      occurred_at: new Date(now - 4 * 60 * 1000).toISOString(),
+      actor: { username: 'staging-demo-fan' },
+      app: { id: 9001, slug: 'staging-demo-chess-arena', name: 'Chess Arena' },
+      proposal: { id: 9003, number: 43, title: 'Accessible move history', status: 'merged', author: 'staging-demo-lead' },
+    },
+    {
+      id: 'proposal:9002', type: 'proposal',
+      occurred_at: new Date(now - 35 * 60 * 1000).toISOString(),
+      actor: { username: 'staging-demo-builder' },
+      app: { id: 9002, slug: 'staging-demo-pixel-racer', name: 'Pixel Racer' },
+      proposal: { id: 9002, number: 42, title: 'Smoother touch steering', status: 'proposed', author: 'staging-demo-builder' },
+    },
+    {
+      id: 'app_created:9001', type: 'app_created',
+      occurred_at: new Date(now - 2 * 3600 * 1000).toISOString(),
+      actor: { username: 'staging-demo-maker' },
+      app: { id: 9001, slug: 'staging-demo-word-garden', name: 'Word Garden' },
+    },
+  ];
+  if (expanded) {
+    activity.push({
+      id: 'proposal:9000', type: 'proposal',
+      occurred_at: new Date(now - 5 * 3600 * 1000).toISOString(),
+      actor: { username: 'staging-demo-lead' },
+      app: { id: 9000, slug: 'staging-demo-chess-arena', name: 'Chess Arena' },
+      proposal: { id: 9000, number: 40, title: 'Daily puzzle mode', status: 'merging', author: 'staging-demo-lead' },
+    });
+  }
+  return { activity, has_more: !expanded, expanded, demo: true };
+}
+
 // ─── Registry ────────────────────────────────────────────────────────
 //
 // key → { title, removable, sizes, build(pool, user), demo() }. Order here
 // is the order Settings renders its checkboxes in, and the fallback
 // placement order for any widget the client has no designed home cell for.
-// The three shipped widgets do have one — see HomeLayout.WIDGET_HOME_CELLS,
+// The four shipped widgets do have one — see HomeLayout.WIDGET_HOME_CELLS,
 // which is the source of truth for where a fresh home screen puts them.
 //
 // `sizes` is the widget's FOOTPRINT in grid cells, per column count:
@@ -499,6 +547,14 @@ const PANEL_REGISTRY = [
     sizes: { 4: [4, 2], 5: [2, 2] },
     build: buildChallengesPanel,
     demo: demoChallengesPanel,
+  },
+  {
+    key: 'community',
+    title: 'Community activity',
+    removable: true,
+    sizes: { 4: [4, 2], 5: [2, 2] },
+    build: buildCommunityPanel,
+    demo: demoCommunityPanel,
   },
   {
     key: 'discover',
@@ -665,4 +721,6 @@ module.exports = {
   parseRewardPoints,
   resolveProgress,
   buildChallengeRow,
+  buildCommunityPanel,
+  demoCommunityPanel,
 };

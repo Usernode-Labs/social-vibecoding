@@ -146,7 +146,7 @@ test('GET describes the canvas, the widget registry and both widths', async () =
   assert.deepEqual(body.breakpoints, [4, 5]);
   // Footprints ride along so the client lays out against the same numbers
   // the overlap check below validates with.
-  assert.deepEqual(body.widgets.map((w) => w.key), ['challenges', 'discover', 'create']);
+  assert.deepEqual(body.widgets.map((w) => w.key), ['challenges', 'community', 'discover', 'create']);
   assert.deepEqual(body.widgets.find((w) => w.key === 'create').sizes, { 4: [1, 1], 5: [1, 1] });
   // A width with nothing stored is an EMPTY array, not an error: it means
   // "never dragged here", and the client derives that view itself.

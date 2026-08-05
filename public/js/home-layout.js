@@ -168,6 +168,7 @@ const HomeLayout = {
   // may live.
   WIDGET_HOME_CELLS: {
     challenges: { col: 0, row: 0 },
+    community: { col: 3, row: 0 },
     discover: { col: 1, row: 4 },
     create: { col: 3, row: 5 },
   },
@@ -177,7 +178,7 @@ const HomeLayout = {
   // Discover is actually on the board. Any widget WITHOUT an anchor (a
   // future registry entry) is placed after these, at the first free
   // rectangle, in registry order.
-  WIDGET_HOME_ORDER: ['challenges', 'discover', 'create'],
+  WIDGET_HOME_ORDER: ['challenges', 'community', 'discover', 'create'],
 
   // The arrangement for an account that has never dragged anything: the
   // VISIBLE widgets at their home cells above, then app tiles in flow order

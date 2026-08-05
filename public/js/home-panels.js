@@ -1,10 +1,11 @@
 // Home-screen panels (issue #911) — the widget blocks that live IN the
-// launcher grid alongside the app tiles. Three exist:
+// launcher grid alongside the app tiles. Four exist:
 //
 //   challenges — the season's open challenges with the viewer's progress.
 //   discover   — the admin-curated featured tiles, with "Browse all apps"
 //                as the block's footer. The shell's ONLY door to the app
 //                directory, which is why it cannot be hidden.
+//   community  — recent authoritative public app/proposal/kudos activity.
 //   create     — the create-an-app tile. On EVERY home screen, for every
 //                account: an account with no app quota gets the same widget,
 //                dimmed, explaining itself on tap (see renderCreatePanel for
@@ -205,6 +206,21 @@ const HomePanels = {
     return HomePanels._inflight;
   },
 
+  // Live app/proposal/kudos events call this before Home.load(). `redact`
+  // is used for a visibility change: remove cached social rows immediately
+  // so a newly-private app's metadata cannot linger while the refresh is in
+  // flight. Other updates keep the prior paint until the fresh page lands.
+  invalidate(opts) {
+    HomePanels._fetchedAt = 0;
+    if (!opts?.redact || !HomePanels._data?.panels) return;
+    HomePanels._data.panels = HomePanels._data.panels.map((panel) => (
+      panel?.key === 'community'
+        ? { ...panel, activity: [], has_more: false }
+        : panel
+    ));
+    HomePanels.render();
+  },
+
   panelFor(key) {
     const panels = HomePanels._data && HomePanels._data.panels;
     if (!Array.isArray(panels)) return null;
@@ -354,6 +370,7 @@ const HomePanels = {
   renderPanel(panel) {
     if (!panel) return '';
     if (panel.key === 'challenges') return HomePanels.renderChallengesPanel(panel);
+    if (panel.key === 'community') return HomePanels.renderCommunityPanel(panel);
     if (panel.key === 'discover') return HomePanels.renderDiscoverPanel(panel);
     if (panel.key === 'create') return HomePanels.renderCreatePanel(panel);
     return '';
@@ -461,6 +478,70 @@ const HomePanels = {
     return HomePanels._panelShell(panel.key, titleHtml,
       `<div class="home-panel-rows${metered ? ' home-panel-rows--metered' : ''}">${rowsHtml}</div>`,
       HomePanels._panelFooter(panel.key, total, expanded));
+  },
+
+  // ── Community activity ─────────────────────────────────────────────
+  // Read-only cards over current public entities. No body copy, media,
+  // reactions, or ranking is rendered here; selecting a row opens the
+  // existing app/proposal surface where its normal controls and access
+  // checks apply again.
+  renderCommunityPanel(panel) {
+    const esc = HomePanels.esc;
+    const rows = Array.isArray(panel.activity) ? panel.activity : [];
+    const expanded = !!HomePanels._expanded[panel.key];
+    const visible = expanded ? rows : rows.slice(0, HomePanels.ROW_SLOTS);
+    const titleHtml = `<span class="home-panel-title min-w-0 flex-1 truncate whitespace-nowrap text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${esc(panel.title || 'Community activity')}<span class="normal-case tracking-normal whitespace-nowrap"> · last 30 days</span></span>`;
+    const body = visible.length
+      ? `<div class="home-panel-rows">${visible.map(HomePanels.renderCommunityRow).join('')}</div>`
+      : '<p class="home-panel-rows home-social-empty flex items-center px-2.5 text-[13px] text-zinc-500 dark:text-zinc-400">No recent public activity</p>';
+    const canExpand = expanded || panel.has_more || rows.length > HomePanels.ROW_SLOTS;
+    const footer = canExpand ? `
+      <div class="home-panel-footer flex-none flex items-center justify-start px-2.5 border-t border-zinc-200 dark:border-zinc-800">
+        <button type="button" class="home-panel-expand flex items-center gap-1 text-[12px] font-medium text-violet-600 dark:text-violet-400 hover:underline whitespace-nowrap"
+          data-panel-key="${esc(panel.key)}" aria-expanded="${expanded ? 'true' : 'false'}">
+          <svg class="w-3 h-3 shrink-0 transition-transform${expanded ? ' rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+          <span>${expanded ? 'Show less' : 'See more activity'}</span>
+        </button>
+      </div>` : '';
+    return HomePanels._panelShell(panel.key, titleHtml, body, footer);
+  },
+
+  renderCommunityRow(item) {
+    const esc = HomePanels.esc;
+    const plainActor = String(item?.actor?.username || 'A community member');
+    const plainAppName = String(item?.app?.name || 'an app');
+    const actor = esc(plainActor);
+    const appName = esc(plainAppName);
+    const proposal = item?.proposal || {};
+    const plainTitle = String(proposal.title || 'a proposal');
+    let glyph = '&#10022;';
+    let sentence;
+    let plainSentence;
+    if (item?.type === 'app_created') {
+      glyph = '+';
+      sentence = `<strong>${actor}</strong> created <strong>${appName}</strong>`;
+      plainSentence = `${plainActor} created ${plainAppName}`;
+    } else if (item?.type === 'kudos') {
+      glyph = '&#128079;';
+      sentence = `<strong>${actor}</strong> gave kudos to <strong>${esc(plainTitle)}</strong> in ${appName}`;
+      plainSentence = `${plainActor} gave kudos to ${plainTitle} in ${plainAppName}`;
+    } else {
+      const verb = proposal.status === 'merged' ? 'merged'
+        : (proposal.status === 'merging' ? 'is merging' : 'proposed');
+      sentence = `<strong>${actor}</strong> ${verb} <strong>${esc(plainTitle)}</strong> in ${appName}`;
+      plainSentence = `${plainActor} ${verb} ${plainTitle} in ${plainAppName}`;
+    }
+    const datetime = esc(item?.occurred_at || '');
+    const relative = typeof formatRelativeTime === 'function'
+      ? formatRelativeTime(item?.occurred_at) : '';
+    return `
+      <button type="button" class="home-social-row home-panel-row--social w-full flex items-center gap-2 px-2.5 text-left hover:bg-violet-500/[0.04] dark:hover:bg-violet-500/10 transition-colors"
+        data-app-slug="${esc(item?.app?.slug || '')}" data-session-id="${proposal.id == null ? '' : esc(proposal.id)}"
+        aria-label="${esc(relative ? `${plainSentence}, ${relative}` : plainSentence)}">
+        <span class="home-social-glyph shrink-0 w-5 text-center text-[12px] text-violet-500" aria-hidden="true">${glyph}</span>
+        <span class="min-w-0 flex-1 truncate whitespace-nowrap text-[12px] text-zinc-700 dark:text-zinc-200">${sentence}</span>
+        <time class="shrink-0 text-[10px] text-zinc-400" datetime="${datetime}">${esc(relative)}</time>
+      </button>`;
   },
 
   // ── Discover ───────────────────────────────────────────────────────
@@ -706,6 +787,17 @@ const HomePanels = {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         HomePanels.toggleExpanded(btn.dataset.panelKey);
+      });
+    });
+    section.querySelectorAll('.home-social-row').forEach((row) => {
+      row.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const slug = row.dataset.appSlug;
+        if (!slug) return;
+        const sessionId = parseInt(row.dataset.sessionId, 10);
+        location.hash = Number.isFinite(sessionId)
+          ? `#app/${encodeURIComponent(slug)}/dev/proposals/${sessionId}`
+          : `#app/${encodeURIComponent(slug)}/app`;
       });
     });
     section.querySelectorAll('.home-panel-menu').forEach((btn) => {

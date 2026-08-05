@@ -40,6 +40,7 @@ const { topicAttributeRoutes } = require('./src/routes/topic-attributes');
 const { boardOrderRoutes } = require('./src/routes/board-order');
 const { homePanelRoutes } = require('./src/routes/home-panels');
 const { homeLayoutRoutes } = require('./src/routes/home-layout');
+const { socialFeedRoutes } = require('./src/routes/social-feed');
 const { pmOrderRoutes } = require('./src/routes/pm-order');
 const { debugRoutes } = require('./src/routes/debug');
 const { galleryRoutes } = require('./src/routes/gallery');
@@ -496,6 +497,7 @@ app.use(boardOrderRoutes(config));
 // show/hide. Me-scoped reads, so it sits behind authMiddleware like the
 // ordering routes above.
 app.use(homePanelRoutes(config));
+app.use(socialFeedRoutes(config));
 // Free-form home-grid placement: where each app tile and widget sits, per
 // breakpoint. Me-scoped like the panels route above.
 app.use(homeLayoutRoutes(config));

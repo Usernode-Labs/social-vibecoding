@@ -198,11 +198,12 @@ function demoLayouts() {
     '4': [
       { type: 'app', slug: 'staging-demo-emoji-icon', col: 0, row: 0 },
       { type: 'app', slug: 'staging-demo-image-icon', col: 3, row: 0 },
+      { type: 'widget', key: 'create', col: 1, row: 0 },
       { type: 'widget', key: 'discover', col: 0, row: 1 },
       { type: 'app', slug: 'staging-demo-chess-arena', col: 0, row: 3 },
       { type: 'app', slug: 'staging-demo-pixel-racer', col: 3, row: 3 },
       { type: 'widget', key: 'challenges', col: 0, row: 4 },
-      { type: 'widget', key: 'create', col: 3, row: 6 },
+      { type: 'widget', key: 'community', col: 0, row: 6 },
     ],
     // Desktop: 5 columns. Chess Arena alone top-left, Pixel Racer alone at
     // the far end of the same row, both widgets side by side under them.
@@ -215,6 +216,7 @@ function demoLayouts() {
       { type: 'app', slug: 'staging-demo-word-garden', col: 3, row: 3 },
       { type: 'app', slug: 'staging-demo-emoji-icon', col: 0, row: 4 },
       { type: 'app', slug: 'staging-demo-image-icon', col: 1, row: 4 },
+      { type: 'widget', key: 'community', col: 2, row: 4 },
       { type: 'widget', key: 'create', col: 4, row: 4 },
     ],
   };

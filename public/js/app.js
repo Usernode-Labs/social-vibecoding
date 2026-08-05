@@ -1059,12 +1059,15 @@ const App = {
         const data = JSON.parse(event.data);
         switch (data.type) {
           case 'app_status':
+            window.HomePanels?.invalidate();
             App.handleAppStatusUpdate(data);
             break;
           case 'session_update':
+            window.HomePanels?.invalidate();
             App.handleSessionUpdate(data);
             break;
           case 'vote_update':
+            window.HomePanels?.invalidate();
             App.handleVoteUpdate(data);
             break;
           case 'kudos_update':
@@ -1072,11 +1075,18 @@ const App = {
             // any visible buttons + the leaderboard if open. Delegated
             // to Kudos so app.js stays thin.
             if (window.Kudos) Kudos.applyLiveUpdate(data);
+            window.HomePanels?.invalidate();
+            if (typeof Home !== 'undefined'
+                && document.getElementById('home-screen')
+                && !document.getElementById('home-screen').classList.contains('hidden')) {
+              Home.load();
+            }
             break;
           case 'session_event':
             App.handleSessionEvent(data);
             break;
           case 'app_update':
+            window.HomePanels?.invalidate({ redact: data.action === 'visibility_changed' });
             App.handleAppUpdate(data);
             break;
           case 'issue_update':

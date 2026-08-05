@@ -564,6 +564,20 @@ html, body {
 .home-panel--expanded {
   max-height: none;
 }
+
+/* Community activity uses the same four-row density as Challenges, but its
+   rows are semantic buttons. A fixed row height prevents long proposal
+   titles from changing the widget footprint; the visible label truncates
+   while aria-label keeps the complete sentence for assistive technology. */
+.home-social-row {
+  min-height: 2.5rem;
+  height: 2.5rem;
+}
+.home-social-empty { min-height: 10rem; }
+.home-social-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 .home-panel--expanded .home-panel-rows {
   overflow: visible;
 }
