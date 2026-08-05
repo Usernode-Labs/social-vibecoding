@@ -61,6 +61,11 @@ function makeSandbox() {
     localStorage: { getItem: () => null, setItem: () => {} },
     fetch: async () => ({ ok: false }),
     setTimeout, clearTimeout, setInterval, clearInterval,
+    // The drawer reads the query string for ?demo=1 and the #971
+    // ?shot=work-drawer capture deep link; a vm context gets neither for
+    // free. Default to a bare URL so existing tests see no params.
+    location: { search: '' },
+    URLSearchParams,
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
@@ -135,6 +140,145 @@ test('renderPendingSection renders the shared per-kind rows under a "Needs atten
   assert.match(html, /data-notif-id="2"/, 'reuses the bell row markup (clickable, markable)');
   assert.match(html, /Your dev session in/);
   assert.match(html, /Fix the header/);
+});
+
+// #971: the label ladder for the pinned "needs attention" session rows —
+// sessionTitle beats the dev name AND the PR title, and the dev name still
+// backstops a session that finished before it was ever titled.
+test('#971 session_done rows prefer the session title over the dev name', () => {
+  const sb = loadAll();
+  const now = new Date().toISOString();
+  sb.window.Notifications.items = [
+    // The issue's case: titled, not yet promoted.
+    {
+      id: 2, kind: 'session_done', appId: 5, appName: 'Demo App',
+      sessionTitle: 'Web UI app proposals implementation',
+      prTitle: null, branchName: 'dev/evan-1785951671234',
+      createdAt: now, readAt: null,
+    },
+    // Promoted: session title mirrors the PR title, so nothing regresses.
+    {
+      id: 3, kind: 'session_done', appId: 5, appName: 'Demo App',
+      sessionTitle: 'Make Topochain standings primary',
+      prTitle: 'Make Topochain standings primary',
+      branchName: 'dev/evan-1785946387499',
+      createdAt: now, readAt: null,
+    },
+    // Untitled: the branch name is still the last-resort label.
+    {
+      id: 4, kind: 'session_done', appId: 5, appName: 'Demo App',
+      sessionTitle: null, prTitle: null,
+      branchName: 'dev/evan-1785999999999',
+      createdAt: now, readAt: null,
+    },
+  ];
+  const html = sb.WorkDrawer.renderPendingSection();
+
+  assert.match(html, /Web UI app proposals implementation/, 'titled row shows its title');
+  assert.doesNotMatch(
+    html, /dev\/evan-1785951671234/,
+    'the titled row must NOT fall back to its branch name'
+  );
+  assert.match(html, /Make Topochain standings primary/, 'promoted row unchanged');
+  assert.doesNotMatch(html, /dev\/evan-1785946387499/, 'promoted row shows no dev name');
+  assert.match(
+    html, /dev\/evan-1785999999999/,
+    'a genuinely untitled session still falls back to the dev name'
+  );
+});
+
+// #971: the PR-scoped kinds keep leading with the PR title; the session title
+// only fills in ahead of the bare "PR #N".
+test('#971 stale_pr / check_failed keep the PR title first, session title as fallback', () => {
+  const sb = loadAll();
+  const now = new Date().toISOString();
+  sb.window.Notifications.items = [
+    {
+      id: 5, kind: 'stale_pr', appId: 5, appName: 'Demo App',
+      prTitle: 'The PR title', sessionTitle: 'The session title',
+      prNumber: 41, createdAt: now, readAt: null,
+    },
+    {
+      id: 6, kind: 'check_failed', appId: 5, appName: 'Demo App',
+      prTitle: null, sessionTitle: 'Session title fallback',
+      prNumber: 42, createdAt: now, readAt: null,
+    },
+  ];
+  const html = sb.WorkDrawer.renderPendingSection();
+  assert.match(html, /The PR title/, 'PR title still leads on proposal rows');
+  assert.doesNotMatch(html, /The session title/, 'session title not preferred there');
+  assert.match(html, /Session title fallback/, 'but it beats a bare "PR #N"');
+  assert.doesNotMatch(html, /PR #42/, 'so the number placeholder is not reached');
+});
+
+// #971: the OS-notification body (DevAlerts.onCompletion payload) reads from
+// the same ladder as the drawer row.
+test('#971 completionAlertInfo prefers the session title in its body copy', () => {
+  const sb = loadAll();
+  const N = sb.window.Notifications;
+  const captured = [];
+  sb.window.DevAlerts = { onCompletion: (info) => captured.push(info) };
+  sb.window.DevChat = { _userIsAway: () => false };
+  N.items = [];
+  N.unread = 0;
+  N.handleIncoming({
+    id: 9, kind: 'session_done', appId: 5, appName: 'Usernode',
+    appSlug: 'usernode', sessionId: 77,
+    sessionTitle: 'Web UI app proposals implementation',
+    prTitle: null, branchName: 'dev/evan-1785951671234',
+    createdAt: new Date().toISOString(), readAt: null,
+  });
+  assert.equal(captured.length, 1, 'the completion alert fired');
+  assert.match(captured[0].body, /Web UI app proposals implementation/);
+  assert.doesNotMatch(captured[0].body, /dev\/evan-/, 'no dev name in the OS notification');
+});
+
+// #971: the drawer only exists behind a click on the header cog, so the
+// capture pipeline needs ?shot=work-drawer to reach it at all.
+test('#971 ?shot=work-drawer opens the drawer once, and nothing else does', () => {
+  const sb = loadAll();
+  const W = sb.WorkDrawer;
+
+  // No shot param → the drawer stays shut.
+  sb.window.location.search = '?demo=1';
+  W._shotOpened = false;
+  W.open = false;
+  let shown = 0;
+  W.show = () => { shown += 1; W.open = true; };
+  W._maybeShotOpen();
+  assert.equal(shown, 0, 'a plain page load never auto-opens the drawer');
+
+  // With it → opens exactly once, even across repeated refresh ticks.
+  sb.window.location.search = '?shot=work-drawer&demo=1';
+  W._shotOpened = false;
+  W.open = false;
+  W._maybeShotOpen();
+  assert.equal(shown, 1, 'the deep link opens the drawer');
+  W.open = false; // simulate the user dismissing it
+  W._maybeShotOpen();
+  assert.equal(shown, 1, 'the 15s refresh poll does not reopen it');
+});
+
+// #971: dapp.json's `tests` array is newest-first and app-manifest keeps
+// only the first MAX_TESTS entries, so a check appended at the bottom would
+// never run. Pin this one inside the cap.
+test('#971 the work-drawer check is declared and survives the MAX_TESTS cap', () => {
+  const root = path.join(__dirname, '..');
+  const appManifest = require('../src/services/app-manifest');
+  const kept = appManifest.read(root).tests;
+  const check = kept.find((t) => t.path === '/?shot=work-drawer&demo=1');
+  assert.ok(check,
+    'the check must survive the cap — put it near the TOP of dapp.json tests');
+  assert.match(check.expectSelector, /#work-drawer-panel:not\(\.hidden\)/,
+    'asserts the drawer is actually revealed, not merely present');
+  assert.match(check.expectText, /^\[Mock\]/,
+    'and asserts a seeded session TITLE renders (the #971 fix)');
+  // The staging fixture the check reads must actually declare that title.
+  const { stagingMockNotifications } = require('../src/routes/notifications');
+  assert.ok(
+    stagingMockNotifications().some((r) => r.sessionTitle === check.expectText),
+    'the ?demo=1 fixtures must seed the exact title the check asserts on'
+  );
 });
 
 // ── 2. spin predicate ───────────────────────────────────────────────────

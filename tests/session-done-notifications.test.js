@@ -139,11 +139,16 @@ function makeMockPool(initial = {}) {
     }
     // hydrateAndPush's single-row hydrate.
     if (/SELECT n\.id, n\.kind[\s\S]*FROM notifications n[\s\S]*WHERE n\.id = \$1/i.test(s)) {
+      // #971: the hydrate MUST join in the session's display title — without
+      // it the client renderer falls back to the branch name on a session
+      // that already has a perfectly good name.
+      assert.match(s, /cs\.session_title/, 'hydrate selects cs.session_title');
       const n = state.notifications.find((x) => x.id === params[0]);
       if (!n) return { rows: [] };
       return {
         rows: [{
           ...n, app_slug: 'my-app', app_name: 'My App', message_content: null,
+          session_title: 'Add a feature',
           pr_title: 'Add a feature', pr_number: 7, headless_issue_number: 42,
           branch_name: 'dev/alice-123', source_username: null,
         }],
@@ -273,6 +278,9 @@ test('notifySessionDone: armed → clears flag, inserts session_done, pushes WS'
     assert.equal(loaded.pushes[0].payload.type, 'notification_new');
     assert.equal(loaded.pushes[0].payload.notification.kind, 'session_done');
     // The hydrate carries the session label fields the drawer renders.
+    // #971: sessionTitle is the one the row prefers; prTitle/branchName ride
+    // along as the second and last rungs of the fallback ladder.
+    assert.equal(loaded.pushes[0].payload.notification.sessionTitle, 'Add a feature');
     assert.equal(loaded.pushes[0].payload.notification.prTitle, 'Add a feature');
     assert.equal(loaded.pushes[0].payload.notification.branchName, 'dev/alice-123');
   } finally {
@@ -434,6 +442,64 @@ test('serialize exposes headlessIssueNumber and branchName for the drawer', () =
     assert.equal(out.headlessIssueNumber, 42);
     assert.equal(out.branchName, 'dev/auto-issue-42-1');
     assert.equal(out.detail, 'code');
+  } finally {
+    loaded.restore();
+  }
+});
+
+// #971: serialize must carry the session's display title, and must not
+// invent one when the column is NULL (the client's ladder needs a falsy
+// value to fall through to prTitle / branchName).
+test('serialize exposes sessionTitle, passing NULL through untouched', () => {
+  const pool = makeMockPool();
+  const loaded = loadSessions(pool);
+  const base = {
+    id: 1, kind: 'session_done', read_at: null, created_at: 'now',
+    app_id: 5, app_slug: 's', app_name: 'A', chat_message_id: null,
+    message_content: null, session_id: 30, pr_number: null,
+    headless_issue_number: null, source_username: null, detail: null,
+  };
+  try {
+    const titled = loaded.notifications.serialize({
+      ...base, session_title: 'Web UI app proposals implementation',
+      pr_title: null, branch_name: 'dev/evan-1785951671234',
+    });
+    assert.equal(titled.sessionTitle, 'Web UI app proposals implementation');
+    assert.equal(titled.branchName, 'dev/evan-1785951671234', 'ladder tail still rides along');
+
+    const untitled = loaded.notifications.serialize({
+      ...base, session_title: null, pr_title: null,
+      branch_name: 'dev/evan-1785999999999',
+    });
+    assert.equal(untitled.sessionTitle, null, 'NULL stays falsy so the ladder falls through');
+  } finally {
+    loaded.restore();
+  }
+});
+
+// #971: the three hydration queries are copy-pasted, so a change to one can
+// silently skip the others. Assert every session-joining query selects the
+// title column.
+test('listForUser and getForUser both select cs.session_title', async () => {
+  const seen = [];
+  const pool = {
+    query(sql) {
+      seen.push(String(sql));
+      return Promise.resolve({ rows: [], rowCount: 0 });
+    },
+  };
+  const loaded = loadSessions(pool);
+  try {
+    await loaded.notifications.listForUser(pool, 7, { limit: 10 });
+    await loaded.notifications.getForUser(pool, 7, 1);
+    assert.equal(seen.length, 2, 'both queries issued');
+    for (const sql of seen) {
+      assert.match(sql, /LEFT JOIN chat_sessions cs/, 'joins the session row');
+      assert.match(sql, /cs\.session_title/, 'selects the session title');
+      // The rest of the label ladder must stay selected alongside it.
+      assert.match(sql, /cs\.pr_title/);
+      assert.match(sql, /cs\.branch_name/);
+    }
   } finally {
     loaded.restore();
   }
