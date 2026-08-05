@@ -25,18 +25,31 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+// #937: the tests that drive a FULL execInWorker dispatch reach
+// mintWorkerJwt, which refuses to run unsecreted. (The gated tests never
+// get that far — which is itself the point: the pre-dispatch check sits
+// ahead of the JWT mint and the prompt write, so a stop that has already
+// landed costs nothing at all.)
+process.env.WORKER_JWT_SECRET = process.env.WORKER_JWT_SECRET || 'test-worker-secret';
+
 function stub(id, exports) {
   require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] };
 }
 
 // Load worker.js against a fake docker + logger so no daemon is involved.
 // Returns the module plus the recorded `docker.execFileAsync` calls.
-function loadWorker() {
+//
+// #937: `opts.onExec` lets a test react to a recorded call — used to
+// simulate a stop landing DURING the dispatch round-trip. `opts.journal`
+// installs a fake `child_process.spawn` so _consumeJournal's `tail -f`
+// resolves immediately off canned lines instead of shelling out.
+function loadWorker({ onExec = null, journalLines = null } = {}) {
   const ids = {
     docker: require.resolve('../src/services/docker'),
     logger: require.resolve('../src/services/logger'),
     subject: require.resolve('../src/services/worker'),
   };
+  if (journalLines) ids.childProcess = require.resolve('child_process');
   const orig = {};
   for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
 
@@ -46,11 +59,37 @@ function loadWorker() {
     ...realDocker,
     execFileAsync: async (cmd, args, opts) => {
       calls.push({ cmd, args, opts });
+      if (onExec) await onExec({ cmd, args, opts });
       return { stdout: '', stderr: '' };
     },
+    // execInWorker writes the turn prompt through this one.
+    execShellStdin: async () => ({ stdout: '', stderr: '' }),
   });
   const noop = () => {};
   stub(ids.logger, { info: noop, warn: noop, error: noop, debug: noop });
+
+  if (journalLines) {
+    const realCp = require('child_process');
+    stub(ids.childProcess, {
+      ...realCp,
+      spawn: () => {
+        const handlers = {};
+        const proc = {
+          stdout: { on: (ev, fn) => { if (ev === 'data') handlers.data = fn; } },
+          stderr: { on: () => {} },
+          on: (ev, fn) => { if (ev === 'close') handlers.close = fn; },
+          kill: () => {},
+        };
+        // Feed the canned journal on the next tick, exactly as a real tail
+        // would: the consumer stops the moment it parses the exit marker.
+        setImmediate(() => {
+          handlers.data?.(Buffer.from(`${journalLines.join('\n')}\n`));
+          handlers.close?.(0);
+        });
+        return proc;
+      },
+    });
+  }
 
   delete require.cache[ids.subject];
   const worker = require('../src/services/worker');
@@ -60,9 +99,27 @@ function loadWorker() {
       if (orig[k]) require.cache[id] = orig[k];
       else delete require.cache[id];
     }
+    delete require.cache[require.resolve('../src/services/worker')];
   };
   return { worker, calls, restore };
 }
+
+// A warm worker execInWorker will accept a dispatch for.
+function warmSession(worker, sessionId) {
+  worker.adoptWarmWorker(sessionId, `usernode-worker-${sessionId}`);
+}
+
+const DISPATCH_ARGS = {
+  mode: 'build',
+  prompt: 'do the thing',
+  model: 'claude-opus-5',
+  commitMsg: 'wip',
+  branchName: 'dev/test',
+};
+
+const isDispatch = (c) => c.args?.[0] === 'exec' && c.args?.[1] === '-d';
+const isStopScript = (c) => typeof c.args?.[4] === 'string'
+  && c.args[4].includes('__USERNODE_EXIT__ 143');
 
 // ── The script the stop runs inside the container ───────────────────────
 
@@ -195,4 +252,134 @@ test('the appended marker resolves the watch state like a natural exit', () => {
   // NOT a markerless turn: describeMarkerlessExit's "the agent was killed"
   // wording must never surface for a deliberate stop.
   assert.equal(state.markerlessCause, null);
+});
+
+// ── #937: the pending-stop record survives the dispatch it guards ───────
+//
+// The defect these pin: `execInWorker` used to write `stopRequestedAt:
+// null` in its dispatch upsert, commented as clearing "any flag a previous
+// turn left behind". It could not tell a previous turn's leftover from a
+// stop requested for THIS turn two seconds ago — so a stop clicked during
+// worker spin-up was erased by the very dispatch it was meant to prevent.
+// Production session 2974: clicked at 17:46:09, "Claude Code is running…"
+// landed at 17:46:14, and the agent ran until 18:03:59.
+
+test('clearPendingStop / getPendingStop round-trip the record', async () => {
+  const { worker, restore } = loadWorker();
+  try {
+    assert.equal(worker.getPendingStop(8001), null, 'nothing pending initially');
+
+    await worker.stopTurn(8001);
+    assert.ok(worker.getPendingStop(8001) > 0, 'stopTurn stamps it');
+
+    worker.clearPendingStop(8001);
+    assert.equal(worker.getPendingStop(8001), null, 'and only this clears it');
+  } finally { restore(); }
+});
+
+test('clearPendingStop on an unknown session does not invent a registry entry', () => {
+  const { worker, restore } = loadWorker();
+  try {
+    worker.clearPendingStop(8002);
+    const entry = worker.warmRegistrySnapshot().find((e) => e.sessionId === 8002);
+    assert.equal(entry, undefined, 'no phantom warm worker');
+  } finally { restore(); }
+});
+
+test('a pending stop makes execInWorker skip the dispatch entirely', async () => {
+  const { worker, calls, restore } = loadWorker();
+  try {
+    warmSession(worker, 8100);
+    await worker.stopTurn(8100);
+    const afterStop = calls.length;
+
+    const state = await worker.execInWorker(8100, DISPATCH_ARGS);
+
+    // THE assertion: no agent was started. Before this fix the exec ran
+    // and the user paid for the whole run they had just cancelled.
+    assert.ok(
+      !calls.slice(afterStop).some(isDispatch),
+      'no `docker exec -d` — the agent must never start'
+    );
+    // The prompt file isn't even written: the gate is ahead of that work.
+    assert.equal(calls.length, afterStop, 'no dispatch-side work at all');
+
+    // And it hands back the shape a genuinely killed turn produces, so the
+    // caller's stopped branch and the tail behave identically either way.
+    assert.equal(state.execExitSeen, true);
+    assert.equal(state.exitCode, 143, '128 + SIGTERM, as a real kill produces');
+    assert.equal(state.markerlessCause, null, 'a stop is not a markerless death');
+    assert.equal(state.sha, null);
+    assert.equal(state.ahead, 0);
+  } finally { restore(); }
+});
+
+test('the skipped dispatch leaves the pending stop standing', async () => {
+  const { worker, restore } = loadWorker();
+  try {
+    warmSession(worker, 8101);
+    await worker.stopTurn(8101);
+    const stampedAt = worker.getPendingStop(8101);
+
+    await worker.execInWorker(8101, DISPATCH_ARGS);
+
+    // The record must outlive the turn it stopped: the caller's post-run
+    // stopped-check still reads it, and a second dispatch attempt in the
+    // same turn must be refused too.
+    assert.equal(worker.getPendingStop(8101), stampedAt, 'untouched');
+    assert.equal(worker.warmRegistrySnapshot().find((e) => e.sessionId === 8101).inFlight,
+      false, 'and no in-flight turn was registered');
+  } finally { restore(); }
+});
+
+test('a stop landing DURING the dispatch re-issues the kill', async () => {
+  // The residual race the pre-dispatch gate cannot close: the stop arrives
+  // in the milliseconds while `docker exec -d` is in flight, so its kill
+  // found no turn process. The re-arm fires once the registry knows this
+  // turn's journal path, which is what makes the marker land.
+  let worker;
+  const { calls, restore, worker: w } = loadWorker({
+    journalLines: ['__USERNODE_EXIT__ 143'],
+    onExec: async ({ args }) => {
+      // Simulate the click landing between `exec -d` being issued and it
+      // returning — stamp the record the way POST /stop would.
+      if (args[0] === 'exec' && args[1] === '-d') await worker.stopTurn(8200);
+    },
+  });
+  worker = w;
+  try {
+    warmSession(worker, 8200);
+
+    await worker.execInWorker(8200, DISPATCH_ARGS);
+
+    const dispatchIdx = calls.findIndex(isDispatch);
+    assert.ok(dispatchIdx >= 0, 'this turn really did dispatch');
+    const killsAfter = calls.slice(dispatchIdx + 1).filter(isStopScript);
+    assert.ok(
+      killsAfter.length >= 1,
+      'the kill is re-issued once the turn is actually running'
+    );
+    // The re-issued kill must still carry the full ordered script — the
+    // TERM → wait → KILL → marker invariant the tests above pin.
+    const script = killsAfter[0].args[4];
+    assert.ok(script.indexOf('kill -TERM') < script.indexOf('kill -KILL'));
+    assert.ok(script.indexOf('kill -KILL') < script.indexOf('__USERNODE_EXIT__ 143'));
+    // Targeted at THIS turn's journal, not a discovery fallback — that is
+    // the whole point of re-arming after dispatch rather than before.
+    assert.match(script, /J='\/home\/node\/\.claude\/turn-\d+\.log'/);
+  } finally { restore(); }
+});
+
+test('with no stop pending, a dispatch proceeds and issues no kill', async () => {
+  const { worker, calls, restore } = loadWorker({
+    journalLines: ['__USERNODE_EXIT__ 0'],
+  });
+  try {
+    warmSession(worker, 8300);
+
+    await worker.execInWorker(8300, DISPATCH_ARGS);
+
+    assert.ok(calls.some(isDispatch), 'the ordinary path still dispatches');
+    assert.ok(!calls.some(isStopScript), 'and nothing kills a healthy turn');
+  } finally { restore(); }
 });
