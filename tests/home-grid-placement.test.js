@@ -456,9 +456,11 @@ function makeGridDom(items) {
 }
 
 // Wire a Home with a known layout and a measurable overlay, then hover.
-function makePreview(layout) {
-  const h = makeHome();
-  h.Home._layouts = { 5: layout, 4: [] };
+// `cols` picks the breakpoint the layout is stored at (5 = desktop, 4 = phone,
+// where the big widgets go full-width).
+function makePreview(layout, { cols = 5, width = cols === 4 ? 390 : 1280 } = {}) {
+  const h = makeHome({ width });
+  h.Home._layouts = cols === 4 ? { 4: layout, 5: [] } : { 5: layout, 4: [] };
   h.Home._layoutFetchedAt = Date.now();
   h.Home._layoutCache = layout;
   const dom = makeGridDom(layout);
@@ -724,6 +726,175 @@ test('cellFromPoint reads the overlay’s own cells, never grid arithmetic', () 
   assert.equal(Home._cellFromPoint(10, 10), null);
   sandbox.document.elementFromPoint = () => null;
   assert.equal(Home._cellFromPoint(10, 10), null);
+});
+
+// ── The target cell: the TILE's centroid, not the finger ──────────────
+//
+// The ghost tracks the finger from wherever the tile was grabbed, so the
+// pointer sits a grab-offset away from the tile's own box. Resolving the
+// target from the pointer put the tile's TOP-LEFT under the finger: grab a
+// 2x2 widget by its bottom-right and the highlight appeared two cells right
+// and two rows down from the block being held, and the drop landed there.
+// These pin the centroid rule that replaced it.
+
+// Point the sandbox's elementFromPoint at the fake overlay: a point resolves
+// to the cell containing it, or to nothing outside the canvas — the same
+// gate the real overlay provides through its own cell elements.
+function hitTestCells(h, cols = 5) {
+  h.sandbox.document.elementFromPoint = (x, y) => {
+    const col = Math.floor(x / CELL_W);
+    const row = Math.floor(y / CELL_H);
+    const cell = (col >= 0 && col < cols && row >= 0 && row < 8)
+      ? h.dom.cells.get(`${col},${row}`) : null;
+    return { closest: (sel) => (sel === '[data-cell]' && cell ? cell : null) };
+  };
+}
+
+// The kit's third argument: the dragged tile's live viewport geometry. `grab`
+// is where inside the tile the finger is holding it — the whole point being
+// that it must not change the answer.
+function ghostInfo(el, { left, top, w, h: rows, grabX = 0, grabY = 0 }) {
+  const width = w * CELL_W;
+  const height = rows * CELL_H;
+  return {
+    item: el,
+    rect: { left, top, width, height },
+    centerX: left + width / 2,
+    centerY: top + height / 2,
+    pointerX: left + grabX * width,
+    pointerY: top + grabY * height,
+  };
+}
+
+// The recognizer's own options, so these exercise the wired callback rather
+// than the internals.
+function wiredOpts(h) {
+  h.Home._apps = [app('a')];
+  h.Home._wireCards({ querySelectorAll: () => [] }, true, 1);
+  return h.attachCalls[h.attachCalls.length - 1].opts;
+}
+
+test('where the tile was grabbed does not move the target', () => {
+  const layout = [{ type: 'widget', key: 'discover', col: 0, row: 0 }];
+  const h = makePreview(layout);
+  hitTestCells(h);
+  const el = h.dom.nodes.get('widget:discover');
+  // A 2x2 ghost sitting exactly over cells (1,1)-(2,2).
+  const place = { left: CELL_W, top: CELL_H, w: 2, h: 2 };
+
+  for (const [grabX, grabY] of [[0, 0], [0.5, 0.5], [1, 1], [0.9, 0.1]]) {
+    const info = ghostInfo(el, { ...place, grabX, grabY });
+    assert.deepEqual({ ...h.Home._targetCellFor(info.pointerX, info.pointerY, info, 5) },
+      { col: 1, row: 1 }, `grab at ${grabX},${grabY} must not move the block`);
+  }
+});
+
+test('a 2x2 widget grabbed at its bottom-right lands under the TILE, not the finger', () => {
+  const layout = [{ type: 'widget', key: 'discover', col: 0, row: 0 }];
+  const h = makePreview(layout);
+  hitTestCells(h);
+  const el = h.dom.nodes.get('widget:discover');
+  const info = ghostInfo(el, { left: CELL_W, top: CELL_H, w: 2, h: 2, grabX: 1, grabY: 1 });
+
+  // The finger is two cells right and two rows down of the tile's own corner —
+  // which is exactly what the old pointer hit-test answered.
+  assert.deepEqual({ ...h.Home._cellFromPoint(info.pointerX, info.pointerY) }, { col: 3, row: 3 });
+  assert.deepEqual({ ...h.Home._targetCellFor(info.pointerX, info.pointerY, info, 5) },
+    { col: 1, row: 1 });
+});
+
+test('a phone-width widget follows the tile’s row, not the finger’s', () => {
+  // 4 columns: Challenges is full-width by two rows, so only the ROW is a real
+  // choice — and dropping a row lower than the tile is the whole bug report.
+  const layout = [{ type: 'widget', key: 'challenges', col: 0, row: 1 }];
+  const h = makePreview(layout, { cols: 4, width: 390 });
+  hitTestCells(h, 4);
+  const el = h.dom.nodes.get('widget:challenges');
+  const info = ghostInfo(el, { left: 0, top: CELL_H, w: 4, h: 2, grabX: 0.5, grabY: 0.95 });
+
+  assert.equal(h.Home._cellFromPoint(info.pointerX, info.pointerY).row, 2,
+    'the finger is in the tile’s lower row');
+  assert.deepEqual({ ...h.Home._targetCellFor(info.pointerX, info.pointerY, info, 4) },
+    { col: 0, row: 1 }, 'the block stays where the tile is');
+});
+
+test('a tile snaps once it is more than halfway into the next column', () => {
+  const layout = [{ type: 'app', slug: 'a', col: 0, row: 0 }];
+  const h = makePreview(layout);
+  hitTestCells(h);
+  const el = h.dom.nodes.get('app:a');
+  const at = (left) => h.Home._targetCellFor(0, 0,
+    ghostInfo(el, { left, top: 0, w: 1, h: 1 }), 5).col;
+
+  assert.equal(at(CELL_W), 1, 'aligned with column 1');
+  assert.equal(at(CELL_W + 40), 1, 'not yet halfway');
+  assert.equal(at(CELL_W + 60), 2, 'past halfway — snaps on');
+});
+
+test('the target is clamped to the canvas, so the token IS the landing cell', () => {
+  const layout = [{ type: 'widget', key: 'discover', col: 2, row: 2 }];
+  const h = makePreview(layout);
+  hitTestCells(h);
+  const el = h.dom.nodes.get('widget:discover');
+
+  // A 2x2 tile centred in the very first cell wants a top-left of (-1,-1).
+  const corner = ghostInfo(el, { left: -CELL_W / 2, top: -CELL_H / 2, w: 2, h: 2 });
+  assert.deepEqual({ ...h.Home._targetCellFor(0, 0, corner, 5) }, { col: 0, row: 0 });
+
+  // ...and one pushed at the last column is nudged in to where it fits, which
+  // is the same cell _rectForCell measures, so the glide can't disagree.
+  const edge = ghostInfo(el, { left: 3.9 * CELL_W, top: CELL_H, w: 2, h: 2 });
+  const cell = h.Home._targetCellFor(0, 0, edge, 5);
+  assert.deepEqual({ ...cell }, { col: 3, row: 1 });
+  assert.deepEqual({ ...h.Home._rectForCell(el, cell, 5) },
+    { left: 3 * CELL_W, top: 1 * CELL_H });
+});
+
+test('a tile whose CENTRE leaves the canvas has no target, finger or not', () => {
+  const layout = [{ type: 'app', slug: 'a', col: 0, row: 0 }];
+  const h = makePreview(layout);
+  hitTestCells(h);
+  const el = h.dom.nodes.get('app:a');
+  // Dragged up off the grid: the finger is still over a cell (it is holding
+  // the tile's bottom edge), the tile is not.
+  const info = ghostInfo(el, { left: 0, top: -0.75 * CELL_H, w: 1, h: 1, grabY: 1 });
+  assert.deepEqual({ ...h.Home._cellFromPoint(info.pointerX, info.pointerY) }, { col: 0, row: 0 });
+  assert.equal(h.Home._targetCellFor(info.pointerX, info.pointerY, info, 5), null);
+});
+
+test('no tile geometry (an older kit) falls back to the pointer hit-test', () => {
+  const layout = [{ type: 'app', slug: 'a', col: 0, row: 0 }];
+  const h = makePreview(layout);
+  hitTestCells(h);
+  const opts = wiredOpts(h);
+  h.Home._overlayEl = h.dom.overlay; // _wireCards doesn't touch it; be explicit
+
+  assert.deepEqual({ ...opts.cellFromPoint(250, 250) }, { col: 2, row: 2 },
+    'degrades to today’s behaviour rather than breaking the drag');
+  assert.deepEqual({ ...opts.cellFromPoint(250, 250, { item: null }) }, { col: 2, row: 2 });
+});
+
+test('the wired hover tints the block the TILE covers, and the glide agrees', () => {
+  const layout = [
+    { type: 'widget', key: 'discover', col: 0, row: 0 },
+    { type: 'app', slug: 'a', col: 4, row: 0 },
+  ];
+  const h = makePreview(layout);
+  hitTestCells(h);
+  const opts = wiredOpts(h);
+  h.Home._overlayEl = h.dom.overlay;
+  const el = h.dom.nodes.get('widget:discover');
+
+  // The tile is sitting over cells (2,1)-(3,2), held by its top-left corner.
+  const info = ghostInfo(el, { left: 2 * CELL_W, top: CELL_H, w: 2, h: 2 });
+  const cell = opts.cellFromPoint(info.pointerX, info.pointerY, info);
+  assert.deepEqual({ ...cell }, { col: 2, row: 1 });
+
+  assert.equal(opts.canPlace(el, cell), true);
+  opts.onHover(el, cell, true);
+  assert.deepEqual(h.tinted().sort(), ['2,1', '2,2', '3,1', '3,2'],
+    'exactly the block under the tile');
+  assert.deepEqual({ ...opts.rectForCell(el, cell) }, { left: 2 * CELL_W, top: CELL_H });
 });
 
 // ── Where the release glide lands ──────────────────────────────────────

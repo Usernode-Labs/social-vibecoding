@@ -1621,10 +1621,23 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   auto-scroll, haptics, spring settle, gesture arbiter), but the real item
   holds its cell as a dashed slot and siblings never move. **The kit owns
   the gesture; you own the geometry**: it never computes a cell, it calls
-  your `cellFromPoint(x, y)` (returning `{ col, row }` or `null`), asks
+  your `cellFromPoint(x, y, info)` (returning `{ col, row }` or `null`), asks
   `canPlace(item, cell)` on each cell change, calls `onHover(item, cell,
   ok)` so you can paint the target highlight, and finally
-  `onPlace(item, cell)` on a committed drop. **If your drop displaces
+  `onPlace(item, cell)` on a committed drop. **Resolve the target from the
+  dragged TILE, not from the finger.** `x`/`y` are the pointer, and the ghost
+  tracks it from wherever the tile was grabbed — so answering from `x`/`y`
+  puts the tile's top-left corner under the finger and the highlight a
+  grab-offset away from the tile the user is looking at (a whole tile's worth
+  for a multi-cell item). The third argument carries the tile's live geometry
+  — `{ item, rect: { left, top, width, height }, centerX, centerY, pointerX,
+  pointerY }` — so take `centerX`/`centerY` and subtract half the item's own
+  footprint: the **centroid** rule, which puts the highlight under the tile
+  whichever corner it was picked up by. Note an even-width footprint centres
+  exactly on a cell seam, so derive the column as a rounded fraction of the
+  cell pitch rather than hit-testing the centre and subtracting `floor(w/2)`.
+  `x`/`y` keep their meaning, so a host that ignores `info` behaves as
+  before. **If your drop displaces
   occupants rather than refusing, preview that in `onHover`** — move the
   items that would be pushed to the cells they'd land in. A flow reorder
   shows that for free (everything shuffles as you drag); free placement
