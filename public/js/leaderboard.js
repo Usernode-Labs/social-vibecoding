@@ -1,11 +1,12 @@
 // Leaderboard screen — the one place the group's shared progress lives:
-// the Kudos leaderboard, the Topochain standings, and the season's
+// the Topochain standings, the Kudos leaderboard, and the season's
 // challenges, as three top-level sections of one screen.
 //
 // Two levels of tabs:
-//   1. SECTION (Kudos | Topochain | Challenges), rendered into
-//      #standings-tabs by this module. 'topochain' reveals
-//      #topochain-leaderboard-root and hands off to the
+//   1. SECTION (Leaderboard | Kudos | Challenges), rendered into
+//      #standings-tabs by this module. 'topochain' — the PRIMARY section,
+//      labelled simply "Leaderboard" and the one a fresh visit opens on —
+//      reveals #topochain-leaderboard-root and hands off to the
 //      TopochainLeaderboard module; 'challenges' reveals #challenges-root
 //      and hands off to TopochainChallenges. Both are Topochain-domain
 //      views of one EVENT, so they also share the screen-level event bar
@@ -38,8 +39,10 @@ const Leaderboard = {
   // TopochainLeaderboard / TopochainChallenges modules in the sibling
   // panes. Remembered for the session (the object outlives close()), so
   // re-opening the screen lands where you left it; a fresh page load
-  // starts on Kudos.
-  section: 'kudos',      // 'kudos' | 'topochain' | 'challenges'
+  // starts on the PRIMARY section — the Topochain standings, which is
+  // what "the leaderboard" means on this platform, and which the tab
+  // strip therefore labels simply "Leaderboard".
+  section: 'topochain',  // 'topochain' | 'kudos' | 'challenges'
   // Whether TopochainLeaderboard.open() / TopochainChallenges.open() have
   // run for this screen mount — each Topochain-domain pane loads lazily,
   // only once its tab is first shown, and so does the shared event bar
@@ -104,9 +107,10 @@ const Leaderboard = {
 
   // ── Section (Kudos | Topochain | Challenges) ─────────────────────
 
-  // The two sections that live in the Topochain event domain, i.e. the
-  // ones the shared event bar applies to.
-  SECTIONS: ['kudos', 'topochain', 'challenges'],
+  // Every section, in TAB ORDER — the primary standings first. The two
+  // that live in the Topochain event domain (i.e. the ones the shared
+  // event bar applies to) are declared separately below.
+  SECTIONS: ['topochain', 'kudos', 'challenges'],
   EVENT_SECTIONS: ['topochain', 'challenges'],
 
   // Switch the screen's top-level section. Mirrors _setSub's contract:
@@ -170,9 +174,13 @@ const Leaderboard = {
   _renderSectionTabs() {
     const host = document.getElementById('standings-tabs');
     if (!host) return;
+    // The standings tab is labelled "Leaderboard", not "Topochain": it is
+    // the primary ranking on this platform and the screen's own title. The
+    // `data-standings-tab` KEYS stay as they are — every hash alias in
+    // app.js and every dapp.json check speaks in them.
     const sections = [
+      { key: 'topochain', label: 'Leaderboard' },
       { key: 'kudos', label: 'Kudos' },
-      { key: 'topochain', label: 'Topochain' },
       { key: 'challenges', label: 'Challenges' },
     ];
     host.innerHTML = sections.map((s) => {
@@ -272,16 +280,20 @@ const Leaderboard = {
     Leaderboard._load();
   },
 
-  // Keep the hash deep-linkable (#leaderboard/history, /topochain,
-  // /challenges etc.) without polluting history — replaceState, and only
-  // while we're actually on a leaderboard hash (never hijack an app route
-  // mid-navigation). The legacy #topochain/leaderboard, #topochain/seasons
-  // and #challenges hashes have already been rewritten to their
-  // #leaderboard/… form by the router before we get here, so the
-  // startsWith guard holds for those entry paths too.
+  // Keep the hash deep-linkable (#leaderboard/history, /challenges etc.)
+  // without polluting history — replaceState, and only while we're actually
+  // on a leaderboard hash (never hijack an app route mid-navigation). The
+  // legacy #topochain/leaderboard, #topochain/seasons and #challenges hashes
+  // have already been rewritten to their #leaderboard/… form by the router
+  // before we get here, so the startsWith guard holds for those entry paths
+  // too.
+  //
+  // The standings are the PRIMARY section, so their canonical address is the
+  // BARE '#leaderboard' — which also means an arriving '#leaderboard/topochain'
+  // bookmark self-heals to it, exactly as the legacy hashes self-heal here.
   _syncHash() {
     const target = Leaderboard.section === 'topochain'
-      ? '#leaderboard/topochain'
+      ? '#leaderboard'
       : Leaderboard.section === 'challenges'
         ? '#leaderboard/challenges'
         : Leaderboard.profileUser
