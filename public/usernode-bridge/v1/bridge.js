@@ -451,6 +451,89 @@
     return new Promise(function (resolve) { setTimeout(resolve, ms); });
   }
 
+  // Explorer transaction queries are read-only even though the explorer
+  // accepts them as POST filters. Give each query a bounded transport and
+  // retry one explicitly transient failure; a single dead explorer must not
+  // leave every dapp send promise hung behind fetch's platform default.
+  function fetchExplorerTransactions(url, body) {
+    var configuredTimeout = window.usernode.explorerRequestTimeoutMs;
+    var timeoutMs = typeof configuredTimeout === "number" &&
+        Number.isFinite(configuredTimeout)
+      ? Math.min(Math.max(configuredTimeout, 100), 60000)
+      : 8000;
+    var configuredRetryDelay = window.usernode.explorerRetryDelayMs;
+    var retryDelayMs = typeof configuredRetryDelay === "number" &&
+        Number.isFinite(configuredRetryDelay)
+      ? Math.min(Math.max(configuredRetryDelay, 0), 5000)
+      : 100;
+
+    function oneAttempt() {
+      return new Promise(function (resolve, reject) {
+        var settled = false;
+        var timedOut = false;
+        var controller = typeof AbortController !== "undefined"
+          ? new AbortController()
+          : null;
+
+        function finish(fn, value) {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          fn(value);
+        }
+
+        var timer = setTimeout(function () {
+          timedOut = true;
+          if (controller) controller.abort();
+          var err = new Error("getTransactions timed out");
+          err._explorerRetryable = true;
+          finish(reject, err);
+        }, timeoutMs);
+
+        var init = {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body || {}),
+        };
+        if (controller) init.signal = controller.signal;
+
+        fetch(url, init).then(function (resp) {
+          if (resp.status === 502 || resp.status === 503 || resp.status === 504) {
+            if (resp.body && typeof resp.body.cancel === "function") {
+              try { resp.body.cancel(); } catch (_) {}
+            }
+            var transient = new Error("getTransactions temporarily unavailable");
+            transient._explorerRetryable = true;
+            finish(reject, transient);
+            return;
+          }
+          if (!resp.ok) {
+            if (resp.body && typeof resp.body.cancel === "function") {
+              try { resp.body.cancel(); } catch (_) {}
+            }
+            finish(reject, new Error("getTransactions failed (" + resp.status + ")"));
+            return;
+          }
+          resp.json().then(
+            function (data) { finish(resolve, data); },
+            function () { finish(reject, new Error("getTransactions returned invalid JSON")); }
+          );
+        }).catch(function () {
+          var err = new Error(
+            timedOut ? "getTransactions timed out" : "getTransactions temporarily unavailable"
+          );
+          err._explorerRetryable = true;
+          finish(reject, err);
+        });
+      });
+    }
+
+    return oneAttempt().catch(function (err) {
+      if (!err || !err._explorerRetryable) throw err;
+      return sleep(retryDelayMs).then(oneAttempt);
+    });
+  }
+
   function normalizeTransactionsResponse(resp) {
     if (Array.isArray(resp)) return resp;
     if (!resp || typeof resp !== "object") return [];
@@ -3724,18 +3807,7 @@
           "transactionsBaseUrl not configured (set window.usernode.transactionsBaseUrl)"
         ));
       }
-      return fetch(base + "/transactions", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(filterOptions || {}),
-      }).then(function (resp) {
-        if (!resp.ok) {
-          return resp.text().then(function (text) {
-            throw new Error("getTransactions failed (" + resp.status + "): " + text);
-          });
-        }
-        return resp.json();
-      });
+      return fetchExplorerTransactions(base + "/transactions", filterOptions || {});
     }
 
     window.getTransactions = function getTransactions(filterOptions) {

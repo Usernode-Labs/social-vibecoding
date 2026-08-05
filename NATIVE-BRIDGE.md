@@ -56,6 +56,60 @@ version:
 | `txObserved` | fire-and-forget inclusion ack | — |
 | `openExternal` | `{ url }` (http/https only) | `true` when the system browser opened |
 
+#### Shared transaction lifecycle
+
+Apps should use `window.sendTransaction()` and the receipt APIs above rather
+than copying an app-specific transaction poller. The shared lifecycle is:
+
+1. The native, mock, or QR transport returns a submitted result. A returned
+   `tx_id`, `txid`, `txId`, `hash`, `tx_hash`, `txHash`, or `id` is treated as
+   the transport's transaction identifier.
+2. Unless `opts.waitForInclusion === false`, the bridge waits for the
+   transaction to become visible through the configured server cache or the
+   transaction explorer. Matching prefers that identifier and falls back to
+   sender + recipient + memo + send-time correlation for transports that
+   initially return a provisional identifier.
+3. A matched explorer transaction is attached as `result.tx`; the transport
+   result is not rewritten, so callers that retained its provisional ID do
+   not lose correlation. The matched transaction carries the authoritative
+   on-chain hash/ID.
+4. The bridge emits the fire-and-forget `txObserved` acknowledgement so the
+   native receipt can record inclusion latency and block metadata.
+
+The native receipt is authoritative for wallet dispatch. Its dispatch states
+are `queued`, `denied`, and `error`; `onChainStatus: "confirmed"` (plus
+`confirmedAt` and optional `blockHeight`) is the terminal inclusion state.
+An inclusion timeout is not proof that the chain rejected a transaction: the
+send promise rejects after 180 seconds by default, and an app may continue to
+show its domain record as unresolved and offer a later status refresh.
+
+Confirmation uses a configured server cache first. Its SSE `waitForTx` stream
+falls back to the same cache's paged transaction query when SSE cannot be
+opened; without a server cache the bridge polls `getTransactions` directly.
+Apps may override `timeoutMs`, `pollIntervalMs`, and `limit` per send. A server
+cache is preferred for production apps because it consolidates explorer
+traffic across clients. Direct explorer transaction queries have an 8-second
+per-attempt timeout and retry exactly once on a network error, timeout, or
+HTTP 502/503/504. Apps may tune those transport values through
+`window.usernode.explorerRequestTimeoutMs` and
+`window.usernode.explorerRetryDelayMs` when their network requires it. Values
+are clamped to 100 ms–60 s and 0–5 s respectively, so overrides remain
+bounded.
+
+#### Mock/demo boundary
+
+Demo transaction behavior is local to an app server, never a platform-global
+production toggle. The bridge enables it only when `GET /__mock/enabled`
+returns a real 2xx response from that app origin. In that mode every
+transaction call uses the app's `/__mock/*` endpoints, so no native wallet
+confirmation sheet opens and no real transaction is broadcast. The app owns
+the deterministic mock data and progression it returns.
+
+The production Social Vibecoding shell deliberately returns 404 for the whole
+`/__mock/*` namespace. Do not add a query-string, local-storage, or remotely
+writable global override: a presentation/demo flag must never be able to skip
+wallet confirmation for a production transaction.
+
 ### Homescreen shortcuts (pre-existing, v1)
 
 `getHomeScreenShortcutSupport`, `addHomeScreenShortcut`,

@@ -73,10 +73,12 @@ const APP_AUDIENCE = process.env.USERNODE_APP_ID
   : null;
 const PUBLIC_API_PATHS = new Set(['/health']);
 // Public path prefixes that bypass the JWT gate. `/explorer-api/*`
-// is a transparent proxy to the public block explorer — gating it
-// blocks the bridge's POST /<chain_id>/transactions polling from
-// inside the iframe (which has no token to forward) and adds zero
-// security since anyone can hit the upstream directly.
+// is a bounded, read-only (GET/POST-query) proxy to the public block
+// explorer — gating it blocks the bridge's POST /<chain_id>/transactions
+// polling from inside the iframe (which has no token to forward) and adds
+// zero security since anyone can hit the upstream directly. Cap request and
+// response bodies, apply a per-attempt timeout, and retry only transient
+// network/timeout/502/503/504 failures once; never forward mutating methods.
 const PUBLIC_PREFIXES = ['/explorer-api/'];
 
 app.use((req, res, next) => {
@@ -110,7 +112,9 @@ Key properties:
 - All non-GET requests + all `/api/*` requests are **deny-by-default**.
 - To intentionally expose an API route without auth, add its exact
   path to `PUBLIC_API_PATHS`. Do **not** remove the middleware.
-- `/explorer-api/*` is intentionally public (see `PUBLIC_PREFIXES`).
+- `/explorer-api/*` is intentionally public (see `PUBLIC_PREFIXES`) but must
+  allow only GET and read-only POST queries, with bounded bodies, an upstream
+  timeout, and at most one retry for transient failures.
   The bridge polls `POST /<chain_id>/transactions` after every send to
   wait for inclusion, and that request is issued from the iframe's JS
   with no platform token to forward.

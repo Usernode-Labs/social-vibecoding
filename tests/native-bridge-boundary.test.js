@@ -13,6 +13,7 @@ function loadBridge({
   capabilities = [],
   silentMethods = [],
   timeoutScale = 1,
+  fetchImpl = async () => ({ ok: false }),
 } = {}) {
   const nativePosts = [];
   const messageListeners = [];
@@ -73,7 +74,7 @@ function loadBridge({
       if (type === 'message') messageListeners.push(listener);
     },
     dispatchEvent() {},
-    fetch: async () => ({ ok: false }),
+    fetch: fetchImpl,
   };
   sandbox.window = sandbox;
   sandbox.parent = sandbox;
@@ -100,6 +101,80 @@ function loadBridge({
     },
   };
 }
+
+test('transaction explorer reads retry one transient HTTP failure', async () => {
+  const calls = [];
+  let transactionAttempts = 0;
+  const loaded = loadBridge({
+    fetchImpl: async (url) => {
+      calls.push(url);
+      if (url === '/__mock/enabled') return { ok: false, status: 404 };
+      transactionAttempts += 1;
+      if (transactionAttempts === 1) {
+        return { ok: false, status: 503, body: { cancel() {} } };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ items: [{ tx_id: 'real-1' }] }),
+      };
+    },
+  });
+  loaded.sandbox.usernode.transactionsBaseUrl = 'https://explorer.example/testnet';
+  loaded.sandbox.usernode.explorerRetryDelayMs = 0;
+
+  const result = await loaded.sandbox.getTransactions({ limit: 1 });
+  assert.equal(transactionAttempts, 2);
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), {
+    items: [{ tx_id: 'real-1' }],
+  });
+  assert.deepEqual(calls, [
+    '/__mock/enabled',
+    'https://explorer.example/testnet/transactions',
+    'https://explorer.example/testnet/transactions',
+  ]);
+});
+
+test('transaction explorer reads do not retry non-transient HTTP failures', async () => {
+  let transactionAttempts = 0;
+  const loaded = loadBridge({
+    fetchImpl: async (url) => {
+      if (url === '/__mock/enabled') return { ok: false, status: 404 };
+      transactionAttempts += 1;
+      return { ok: false, status: 400, body: { cancel() {} } };
+    },
+  });
+  loaded.sandbox.usernode.transactionsBaseUrl = 'https://explorer.example/testnet';
+
+  await assert.rejects(
+    loaded.sandbox.getTransactions({ limit: 1 }),
+    /getTransactions failed \(400\)/
+  );
+  assert.equal(transactionAttempts, 1);
+});
+
+test('transaction explorer reads retry once after their bounded timeout', async () => {
+  let transactionAttempts = 0;
+  const loaded = loadBridge({
+    fetchImpl: (url) => {
+      if (url === '/__mock/enabled') return Promise.resolve({ ok: false, status: 404 });
+      transactionAttempts += 1;
+      if (transactionAttempts === 1) return new Promise(() => {});
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ items: [] }),
+      });
+    },
+  });
+  loaded.sandbox.usernode.transactionsBaseUrl = 'https://explorer.example/testnet';
+  loaded.sandbox.usernode.explorerRequestTimeoutMs = 100;
+  loaded.sandbox.usernode.explorerRetryDelayMs = 0;
+
+  const result = await loaded.sandbox.getTransactions({ limit: 1 });
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), { items: [] });
+  assert.equal(transactionAttempts, 2);
+});
 
 test('top-frame privileged calls carry one closure-only navigation capability', async () => {
   const loaded = loadBridge({

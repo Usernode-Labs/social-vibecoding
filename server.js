@@ -87,6 +87,7 @@ const platformJwt = require('./src/services/platform-jwt');
 const { getPool } = require('./src/db/pool');
 const { trustedProxyClientIp } = require('./src/services/client-ip');
 const { currentVotePredicateSql } = require('./src/services/pr-vote-revision');
+const { createExplorerProxy } = require('./src/services/explorer-proxy');
 
 const config = loadConfig();
 log.setLevel(config.logLevel);
@@ -121,58 +122,7 @@ app.use(cliPreAuthRoutes(config));
 // streams through, and before authMiddleware so it isn't redirected — makes
 // the panel work without an app redeploy. Matches the documented
 // PUBLIC_PREFIXES = ['/explorer-api/'] convention (src/prompts/app-conventions.md).
-const EXPLORER_UPSTREAM =
-  process.env.EXPLORER_UPSTREAM || 'testnet-explorer.usernodelabs.org';
-const EXPLORER_UPSTREAM_BASE = process.env.EXPLORER_UPSTREAM_BASE || '/api';
-const EXPLORER_USE_HTTP = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01]))/.test(
-  EXPLORER_UPSTREAM.replace(/:\d+$/, '')
-);
-
-app.use('/explorer-api', (req, res) => {
-  const transport = EXPLORER_USE_HTTP ? require('http') : require('https');
-  // req.url is the path *after* the /explorer-api mount point, e.g.
-  // "/active_chain" or "/<chain>/transactions" (query string preserved).
-  const subPath = req.url.replace(/^\/+/, '');
-  const upstreamPath = `${EXPLORER_UPSTREAM_BASE}/${subPath}`;
-  const [hostname, portStr] = EXPLORER_UPSTREAM.split(':');
-  const port = portStr ? Number(portStr) : EXPLORER_USE_HTTP ? 80 : 443;
-
-  const chunks = [];
-  req.on('data', (c) => chunks.push(c));
-  req.on('end', () => {
-    const bodyBuf = chunks.length ? Buffer.concat(chunks) : null;
-    const upReq = transport.request(
-      {
-        hostname,
-        port,
-        path: upstreamPath,
-        method: req.method,
-        headers: {
-          'content-type': 'application/json',
-          accept: 'application/json',
-          ...(bodyBuf ? { 'content-length': bodyBuf.length } : {}),
-        },
-      },
-      (upRes) => {
-        const rChunks = [];
-        upRes.on('data', (c) => rChunks.push(c));
-        upRes.on('end', () => {
-          res.writeHead(upRes.statusCode || 502, {
-            'content-type': upRes.headers['content-type'] || 'application/json',
-            'access-control-allow-origin': '*',
-          });
-          res.end(Buffer.concat(rChunks));
-        });
-      }
-    );
-    upReq.on('error', (err) => {
-      log.error('explorer-proxy', 'upstream error', { err: err.message });
-      res.status(502).type('text/plain').send(`Explorer proxy error: ${err.message}`);
-    });
-    if (bodyBuf) upReq.write(bodyBuf);
-    upReq.end();
-  });
-});
+app.use('/explorer-api', createExplorerProxy({ log }));
 
 // ── Challenges API (SV web shell) ──────────────────────────────────────────
 // /challenges-api/* used to be a READ-ONLY proxy to the (now retired)
