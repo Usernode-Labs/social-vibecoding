@@ -40,6 +40,7 @@ const { topicAttributeRoutes } = require('./src/routes/topic-attributes');
 const { boardOrderRoutes } = require('./src/routes/board-order');
 const { homePanelRoutes } = require('./src/routes/home-panels');
 const { homeLayoutRoutes } = require('./src/routes/home-layout');
+const { chatDraftsRoutes } = require('./src/routes/chat-drafts');
 const { pmOrderRoutes } = require('./src/routes/pm-order');
 const { debugRoutes } = require('./src/routes/debug');
 const { galleryRoutes } = require('./src/routes/gallery');
@@ -499,6 +500,10 @@ app.use(homePanelRoutes(config));
 // Free-form home-grid placement: where each app tile and widget sits, per
 // breakpoint. Me-scoped like the panels route above.
 app.use(homeLayoutRoutes(config));
+// #940: saved dev-chat drafts, now server-backed so they follow a user
+// across devices. Owner-scoped per session, like the /api/sessions/* family
+// in routes/sessions.js.
+app.use(chatDraftsRoutes(config));
 app.use(pmOrderRoutes(config));
 app.use(debugRoutes(config));
 app.use(galleryRoutes(config));

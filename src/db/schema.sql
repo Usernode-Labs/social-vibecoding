@@ -2521,6 +2521,53 @@ CREATE INDEX IF NOT EXISTS idx_chat_session_attachments_orphan
 -- migrate.js seeds a demo fixture so the UI is exercisable there.
 COMMENT ON TABLE chat_session_attachments IS 'staging:private';
 
+-- Saved dev-chat drafts (#940). The composer's save icon parks typed text
+-- as a DRAFT while a turn runs (#798, #810); until this table existed those
+-- drafts lived only in the localStorage of the browser that typed them, so
+-- a thought parked on a laptop was invisible on a phone and clearing site
+-- data lost it silently. Now they belong to the ACCOUNT: the client keeps
+-- localStorage as an instant-paint mirror + offline buffer and reconciles
+-- against these rows on every session open.
+--
+-- draft_id is CLIENT-generated (DevChat._newDraftId, `d<base36><rand>`) and
+-- validated against ^[A-Za-z0-9_-]{1,32}$ in the route. That is what makes
+-- an upload idempotent (ON CONFLICT DO NOTHING) and lets two devices
+-- recognise the same draft without a round trip; it is only ever a bound
+-- parameter, never interpolated, and is always paired with session_id in
+-- the primary key.
+--
+-- saved_at is the ordering key ("newest last", matching the render order),
+-- with draft_id as the tiebreak because two devices can stamp the same
+-- second. A client-supplied saved_at is clamped to [NOW() - 30 days, NOW()]
+-- in the route so a device with a wrong clock can't pin a draft to the top
+-- or to the far future.
+--
+-- Retention follows the parent session (ON DELETE CASCADE), bounded by a
+-- 20-drafts-per-session cap enforced at insert time.
+CREATE TABLE IF NOT EXISTS chat_session_drafts (
+  session_id INTEGER     NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  -- Always the session owner. Stored so the ownership check and any
+  -- per-user query is a single predicate on this table.
+  user_id    INTEGER     NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  draft_id   VARCHAR(32) NOT NULL,
+  content    TEXT        NOT NULL CHECK (length(content) BETWEEN 1 AND 10000),
+  saved_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (session_id, draft_id)
+);
+CREATE INDEX IF NOT EXISTS idx_chat_session_drafts_session
+  ON chat_session_drafts(session_id, saved_at, draft_id);
+CREATE INDEX IF NOT EXISTS idx_chat_session_drafts_user
+  ON chat_session_drafts(user_id);
+
+-- Private like its parent chat_sessions — forced, not a preference: this
+-- table FKs chat_sessions (public-FK-to-private is the combination the
+-- clone's FK-closure discovery forbids), and the rows are unsent private
+-- chat content in their own right. Schema-only in staging clones;
+-- migrate.js seeds a demo fixture (session 990402) so the DB-backed path
+-- is exercisable there.
+COMMENT ON TABLE chat_session_drafts IS 'staging:private';
+
 -- Fallback-title marker for the title auto-heal sweeper (services/
 -- title-heal.js). TRUE when the PR's title came from the LLM-unavailable
 -- fallback template ("<user>'s changes") — e.g. Anthropic credits ran out

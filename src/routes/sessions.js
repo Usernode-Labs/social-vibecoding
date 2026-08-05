@@ -32,6 +32,7 @@ const modelFallback = require('../services/model-fallback');
 const { getActiveUserStats } = require('../services/active-users');
 const { chatLimiter, attachmentUploadLimiter } = require('../middleware/rate-limits');
 const attachmentsSvc = require('../services/attachments');
+const { listDrafts } = require('./chat-drafts');
 // Read-only transcript sharing: the deny-by-default row/metadata allowlist
 // shared by GET /transcript and POST /fork (see services/transcript-share.js).
 const transcriptShare = require('../services/transcript-share');
@@ -1313,7 +1314,20 @@ function sessionRoutes(config) {
         session.visuals = await visuals.getForSession(pool, session.id);
       } catch { session.visuals = null; }
 
-      res.json({ session, messages });
+      // #940: the session's saved drafts ride along so opening a session
+      // needs no second round trip on the hot path. Best-effort: `null`
+      // means "unknown", which the client reads as "keep the local mirror
+      // and reconcile later" — a drafts hiccup must never break opening a
+      // session. The query is owner-scoped by construction (this whole
+      // handler already resolved the session as req.user's).
+      let drafts = null;
+      try {
+        drafts = await listDrafts(pool, session.id);
+      } catch (err) {
+        log.warn('sessions', 'drafts load failed', { sessionId: session.id, err: err.message });
+      }
+
+      res.json({ session, messages, drafts });
     } catch (err) {
       log.error('sessions', 'Failed to get session', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
