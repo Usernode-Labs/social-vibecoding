@@ -17,6 +17,70 @@
   --accent: #7c3aed;
   --accent-light: #8b5cf6;
   --accent-tint: rgba(124, 58, 237, 0.08);
+
+  /* ── Safe-area tokens ────────────────────────────────────
+     THE single source of truth for the shell's own safe-area
+     arithmetic. Every rule in this file that needs an inset reads one
+     of these two — never bare env() — so there is exactly one place to
+     change if the source ever moves.
+
+     Written as `var(--un-safe-inset-X, env(safe-area-inset-X, 0px))`,
+     the kit's convention (see the "Safe areas" block in
+     public/usernode-native/v1/native.css). The shell is a top-level
+     document, so nothing sets the custom property and env() supplies
+     the real value; writing it this way means the shell would also
+     honour a forwarded inset if it were ever framed, and it is what
+     lets `?shot=safe-bottom` (public/js/app.js) paint the whole shell
+     — kit `.un-safe-*` classes included — as if it were on a notched
+     phone. */
+  --platform-safe-bottom: var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px));
+  --platform-safe-top: var(--un-safe-inset-top, env(safe-area-inset-top, 0px));
+}
+
+/* ── Safe-area utilities ─────────────────────────────────
+   The platform's half of "backgrounds extend into the bottom inset,
+   interactive content insets itself":
+
+   .platform-safe-scroll — a scroll container whose content ends at the
+     bottom of the screen. Block-end padding is part of a scroller's
+     scrollable overflow, so the last row becomes reachable AND the
+     scroller's own background still paints through the strip.
+   .platform-safe-bar — a pinned bottom bar (every composer block) that
+     already carries Tailwind `p-2`. The 8px base gap is preserved and
+     the inset is added below it.
+
+   `!important` is load-bearing, not laziness: /css/tailwind.css is
+   linked AFTER /css/app.css (index.html — and the inline probe there
+   enforces that order), so a plain class here loses the specificity
+   tie against `p-2` / `p-4` on the same element purely on source
+   order. The kit's own `.un-safe-*` helpers carry `!important` for
+   exactly this reason.
+
+   Deliberately NOT the kit's `.un-safe-bottom`: that one REPLACES the
+   element's own bottom padding with the bare inset (a composer would
+   lose its 8px gap) and has no keyboard-up suppression. These wrap the
+   kit's token rather than forking its CSS. */
+.platform-safe-scroll {
+  padding-bottom: var(--platform-safe-bottom) !important;
+}
+
+.platform-safe-bar {
+  padding-bottom: calc(0.5rem + var(--platform-safe-bottom)) !important;
+}
+
+/* Keyboard up: the home-indicator strip sits BEHIND the on-screen
+   keyboard, so reserving it there is pure dead space above the
+   keyboard. Same suppression the kit applies to its own surfaces
+   (`html.un-kb .un-panel-body` / `.un-action-sheet` / `.un-kb-avoid`
+   in native.css). The bar keeps its 8px base gap; a scroller that also
+   carries the kit's `.un-kb-avoid` gets the keyboard inset from the
+   kit instead. */
+html.un-kb .platform-safe-scroll {
+  padding-bottom: 0 !important;
+}
+
+html.un-kb .platform-safe-bar {
+  padding-bottom: 0.5rem !important;
 }
 
 .dark {
@@ -1225,7 +1289,7 @@ html, body {
   display: flex;
   flex-direction: column;
   min-height: 100%;
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-bottom: var(--platform-safe-bottom);
 }
 
 /* NOTE: .home-bottom-anchor is gone with the two trailing sections it
@@ -1353,21 +1417,40 @@ html, body {
 
 #app-content { position: relative; }
 
-/* Surface-dependent bottom safe area (#970).
+/* Surface-dependent bottom safe area (#970, extended).
    #app-view used to carry the kit's `un-safe-bottom` unconditionally, so
    its padding was subtracted from the flex height of EVERY surface inside
    #app-content — the running app included. On a phone that left the app
    ~34px short of the screen's rounded bottom edge, with the body
    background showing through the gap, while the shell itself painted
-   edge-to-edge.
-   Now only PLATFORM surfaces (Dev mode, the status/offline placeholders)
-   reserve the strip. On an `app` surface the frame reaches the true
-   bottom edge and the insets are forwarded INTO the app instead
-   (AppView._broadcastSafeArea → the bridge's --un-safe-inset-*), so the
-   app can inset its own bottom chrome rather than being clipped by ours.
-   No `!important` needed: nothing competes with this rule. */
+   edge-to-edge. #970 gated that padding on the PLATFORM surface.
+
+   NEITHER SURFACE CARRIES PADDING ANY MORE. Gating it was only half the
+   fix: on a platform surface the padding still sat on the OUTER box, so
+   every Dev-mode surface was shrunk by the inset and the strip below it
+   was dead background — the dev-chat composer floated above an empty
+   band and the chat lost that height. The inset moved INWARD to the
+   innermost thing that needs it (each scroller's content padding, each
+   composer bar's own padding, via .platform-safe-scroll /
+   .platform-safe-bar above), so Dev mode now paints edge-to-edge like
+   the app surface does and only its content is held clear.
+
+   What these two rules do is publish the TOKEN, so the surface contract
+   stays stated where it is read and tested:
+   - platform: restate the real inset (identical to :root — explicit
+     here because this is the boundary the contract is about);
+   - app: ZERO it, so no shared class can ever reserve the strip over an
+     app frame. The frame keeps reaching the true bottom edge and the
+     insets are forwarded INTO the app instead (AppView.broadcastSafeArea
+     → the bridge's --un-safe-inset-*), which is what lets an app inset
+     its own bottom chrome rather than being clipped by ours.
+   No `!important` needed: nothing competes with either rule. */
 #app-view[data-app-surface="platform"] {
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+  --platform-safe-bottom: var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px));
+}
+
+#app-view[data-app-surface="app"] {
+  --platform-safe-bottom: 0px;
 }
 
 #app-iframe {
@@ -3562,11 +3645,20 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 
 /* Narrow viewports: fullscreen modal that floats over the chat. The
    inline `width` set by JS from the previous side-panel drag is
-   overridden by `width: auto` so the modal still fills the screen. */
+   overridden by `width: auto` so the modal still fills the screen.
+
+   `inset: 0` means this panel covers the WHOLE screen — it escapes
+   #app-view and the platform header alike — so it owns both insets
+   itself. padding-top keeps the header row (version picker, the two
+   Share buttons, ✕) out from under the status bar and the notch; the
+   bottom half is carried by .dc-spec-viewer-body-wrap /
+   .dc-spec-viewer-build-hint below, which need it in the side-panel
+   layout too. */
 @media (max-width: 1023px) {
   .dc-spec-viewer.dc-spec-viewer-open {
     position: fixed;
     inset: 0;
+    padding-top: var(--platform-safe-top);
     width: auto !important;
     max-width: none;
     z-index: 50;
@@ -3648,6 +3740,14 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   border-left: 1px solid var(--border, rgba(255,255,255,0.12));
 }
 
+/* Fullscreen, the overlay is `inset: 0` — it covers the status bar, so
+   its own chrome bar has to clear the notch. Docked, it is pinned over
+   the in-page slot by the geometry sync and needs no inset at all,
+   hence the :not(). */
+#staging-overlay:not(.staging-overlay-docked) .staging-chrome-bar {
+  padding-top: calc(0.5rem + var(--platform-safe-top));
+}
+
 /* Docked chrome: "Back to session" makes no sense beside the still-
    visible session — the ×-close (.staging-dock-only) replaces it. */
 #staging-overlay.staging-overlay-docked #staging-back { display: none; }
@@ -3717,6 +3817,19 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   padding: 12px;
 }
 
+/* The bottom inset belongs to whichever of these two is LAST — the
+   build hint is conditional (only a non-empty latest version renders
+   it, see _renderSpecViewer), so both need a rule and neither may
+   double up. `:last-child` is what picks the right one: with the footer
+   present the scroller keeps its plain 12px and the footer's own
+   background fills the strip; with no footer the scroller carries it.
+   Unconditional, not inside the fullscreen media query: since #app-view
+   stopped padding, the side-panel layout reaches the true bottom edge
+   too. */
+.dc-spec-viewer-body-wrap:last-child {
+  padding-bottom: calc(12px + var(--platform-safe-bottom));
+}
+
 /* #196: two-half spec tabs (User-facing / Technical). Rendered only
    when the doc contains both marker headings — legacy specs keep the
    single untabbed body (see public/js/spec-sections.js). */
@@ -3764,7 +3877,10 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
    rendered while viewing a non-empty draft (see _renderSpecViewer). */
 .dc-spec-viewer-build-hint {
   flex-shrink: 0;
-  padding: 8px 12px;
+  /* Last element in the panel when it renders, so it owns the bottom
+     inset — and it has a background of its own, which is what makes the
+     strip read as an extension of the footer rather than a gap. */
+  padding: 8px 12px calc(8px + var(--platform-safe-bottom));
   font-size: 12px;
   line-height: 1.4;
   color: var(--text-secondary, #a1a1aa);
@@ -4127,7 +4243,10 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .gc-spec-panel-body {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 14px 16px;
+  /* Last (and only) child of the panel, so it carries the bottom inset.
+     Below 1024px the panel is `position: absolute; inset: 0` over
+     .gc-tab-body, whose bottom edge is now the screen's. */
+  padding: 14px 16px calc(14px + var(--platform-safe-bottom));
   overflow-y: auto;
   font-size: 13px;
   line-height: 1.6;

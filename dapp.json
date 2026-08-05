@@ -296,6 +296,11 @@
   ],
   "tests": [
     {
+      "name": "Settings reserves the home-indicator strip, and ?shot=safe-bottom boots clean",
+      "path": "/?shot=safe-bottom#settings",
+      "expectSelector": "#settings-screen.platform-safe-scroll:not(.hidden)"
+    },
+    {
       "name": "Work notifications show a session's title, not its dev name (#971)",
       "path": "/?shot=work-drawer&demo=1",
       "expectSelector": "#work-drawer-panel:not(.hidden) #work-drawer-list",

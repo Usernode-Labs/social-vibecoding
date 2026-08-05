@@ -69,6 +69,13 @@ const App = {
     App.PlatformUpdating.installFetchWrap();
     App.PlatformUpdating.restoreFromSessionStorage();
 
+    // FIRST, before any screen paints: the synthetic-inset shot state.
+    // Runs here rather than beside the other ?shot= handlers below
+    // because it must cover the anonymous shell too (the landing / login
+    // / waitlist screens are part of what it reviews) and because a
+    // later application would repaint every inset mid-boot.
+    App._applySafeAreaShot();
+
     // Chrome wiring is session-independent and has no re-entry guards
     // (double listeners otherwise), so it runs exactly once per document
     // — BEFORE we know whether a session exists. The anonymous shell
@@ -277,6 +284,42 @@ const App = {
     setTimeout(() => {
       try { App.HeaderMenu.open(); } catch (err) { /* ignore */ }
     }, 50);
+  },
+
+  // Screenshot-state deep link `?shot=safe-bottom`: paint the whole shell
+  // as if it were on a notched phone, so the safe-area treatment is
+  // REVIEWABLE. No desktop browser reports a bottom inset and Chrome's
+  // device emulation doesn't synthesise one, so without this every
+  // before/after capture and every manual check of the home-indicator
+  // clearance renders with zero insets — i.e. shows nothing.
+  //
+  // It writes the KIT's two custom properties rather than our own
+  // --platform-safe-* tokens, and that is the whole trick: our tokens are
+  // defined as `var(--un-safe-inset-X, env(...))`, so setting the kit
+  // property drives the platform utilities AND every `.un-safe-*` kit
+  // class (the header included) from one place — the shell shifts as a
+  // whole instead of insets appearing in a few places and not others.
+  //
+  // Pure paint state — nothing is written and no layout code branches on
+  // it — so it is deliberately NOT env-gated (same reasoning as
+  // ?shot=menu above). It also cannot lie to an app frame: the insets
+  // forwarded over the safe-area bridge are read from the hidden
+  // env()-valued probe element (AppView._readRootInsets), never from
+  // these properties, so an embedded app still receives its real ones.
+  //
+  // 47/34 are the iPhone 14/15-class status-bar and home-indicator
+  // insets in portrait — the frame the captures use (390x844).
+  SAFE_AREA_SHOT_INSETS: { top: '47px', bottom: '34px' },
+
+  _applySafeAreaShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'safe-bottom') return;
+    try {
+      const root = document.documentElement;
+      root.style.setProperty('--un-safe-inset-top', App.SAFE_AREA_SHOT_INSETS.top);
+      root.style.setProperty('--un-safe-inset-bottom', App.SAFE_AREA_SHOT_INSETS.bottom);
+    } catch (err) { /* ignore */ }
   },
 
   // Screenshot-state deep link `?shot=app-launching` (#931): paint the app

@@ -276,15 +276,23 @@ test('header and app view carry safe-area classes', () => {
   // home-indicator strip for every surface inside #app-content — the
   // running app's iframe included — which is what left apps cut off short
   // of a phone's rounded bottom edge. The `data-app-surface` attribute
-  // (AppView._setSurface) plus the app.css rule replaces it; the default
-  // is `platform` so a first paint keeps the old clearance.
+  // (AppView._setSurface) plus the app.css rules replace it; the default
+  // is `platform` so a first paint before any render is well-defined.
+  //
+  // The follow-up moved the inset off #app-view entirely: the surface
+  // rules publish the `--platform-safe-bottom` TOKEN (real value on a
+  // platform surface, 0px on an app one) and the padding itself lives on
+  // each inner scroller / composer bar, so Dev mode paints edge to edge
+  // like the app surface. tests/app-safe-area.test.js and
+  // tests/platform-safe-bottom.test.js pin that contract; here we only
+  // check the surface hook still exists for app.css to key on.
   assert.ok(!/<div id="app-view"[^>]*un-safe-bottom/.test(INDEX),
     '#app-view must not reserve the bottom inset for the app frame (#970)');
   assert.ok(/<div id="app-view"[^>]*data-app-surface="platform"/.test(INDEX),
     '#app-view needs the surface flag, defaulting to platform');
   assert.ok(
     read('public/css/app.css').includes('#app-view[data-app-surface="platform"]'),
-    'app.css must gate the bottom inset on the platform surface'
+    'app.css must carry the platform-surface rule'
   );
 });
 
