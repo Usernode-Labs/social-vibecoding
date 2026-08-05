@@ -3823,11 +3823,21 @@
     });
   };
 
-  // addHomeScreenShortcut({ name, url, icon_url }) asks the app to add a
-  // homescreen entry that reopens `url` inside the Usernode app. The app
-  // shows its own native confirmation UI. Resolves the app's result
-  // object ({ added: bool, mechanism, ... }); rejects when the user
-  // declines or the environment has no native channel.
+  // addHomeScreenShortcut({ name, url, icon_url, icon_url_dark }) asks
+  // the app to add a homescreen entry that reopens `url` inside the
+  // Usernode app. The app shows its own native confirmation UI. Resolves
+  // the app's result object ({ added: bool, mechanism, ... }); rejects
+  // when the user declines or the environment has no native channel.
+  //
+  // icon_url_dark is OPTIONAL and appearance-paired: when both are
+  // given, icon_url is the LIGHT-appearance asset and icon_url_dark the
+  // dark one, and the iOS widget picks between them per system
+  // appearance — which is the only way a pinned tile can follow a
+  // light/dark flip, since the page isn't running to repaint it (#948).
+  // Either field may be an https URL or a `data:image/png;base64,...`
+  // URI. Only shells advertising the `homeScreenShortcutDarkIcon`
+  // capability store the second asset; older builds ignore the extra
+  // arg, and a re-add without it clears the dark slot.
   window.usernode.addHomeScreenShortcut = function (opts) {
     opts = opts || {};
     if (!opts.name || !opts.url) {
@@ -3844,6 +3854,10 @@
       name: opts.name,
       url: opts.url,
       icon_url: opts.icon_url || null,
+      // Dark-appearance companion asset (see the note above). Null on
+      // every caller that doesn't supply one, which is what old shells
+      // have always seen.
+      icon_url_dark: opts.icon_url_dark || null,
       // Background refresh (e.g. re-sending a missing widget icon): the
       // app skips user-facing follow-ups like the add-the-widget
       // walkthrough.
