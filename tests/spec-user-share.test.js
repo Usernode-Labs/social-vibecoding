@@ -140,18 +140,17 @@ function makeMockPool(initial = {}) {
       state.notifications.push(row);
       return { rows: [row] };
     }
-    // hydrateAndPush's single-row hydrate.
-    if (/SELECT n\.id, n\.kind[\s\S]*FROM notifications n[\s\S]*WHERE n\.id = \$1/i.test(s)) {
-      const n = state.notifications.find((x) => x.id === params[0]);
-      if (!n) return { rows: [] };
-      const su = state.users.find((u) => u.id === n.source_user_id);
+    // hydrateAndPushMany's access-checked batch hydrate.
+    if (/SELECT n\.id, n\.kind[\s\S]*FROM notifications n[\s\S]*WHERE n\.id = ANY\(\$1::int\[\]\)/i.test(s)) {
+      const found = state.notifications.filter((x) => params[0].includes(x.id));
       return {
-        rows: [{
+        rows: found.map((n) => ({
           ...n, app_slug: 'my-app', app_name: 'My App', message_content: null,
           thread_type: null, thread_ref: null,
           pr_title: 'Add a feature', pr_number: 7, headless_issue_number: null,
-          branch_name: 'dev/alice-123', source_username: su ? su.username : null,
-        }],
+          branch_name: 'dev/alice-123',
+          source_username: state.users.find((u) => u.id === n.source_user_id)?.username || null,
+        })),
       };
     }
     // Widened spec read gate (GET /specs/:version).

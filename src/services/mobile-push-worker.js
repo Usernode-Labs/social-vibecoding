@@ -3,6 +3,7 @@
 const { decrypt } = require('./secrets');
 const { ALLOWED_KINDS, buildMessage } = require('./mobile-push-policy');
 const { classifyError } = require('./mobile-push-provider');
+const { NOTIFICATION_ACCESS_SQL } = require('./notifications');
 const log = require('./logger');
 
 const DEFAULTS = Object.freeze({
@@ -209,6 +210,7 @@ class MobilePushWorker {
               d.created_at AS delivery_created_at,
               n.id AS notification_id, n.user_id AS notification_user_id,
               n.kind, n.read_at,
+              ${NOTIFICATION_ACCESS_SQL} AS notification_accessible,
               d.environment AS delivery_environment,
               d.installation_id AS delivery_installation_id,
               state.send_enabled AS deployment_send_enabled,
@@ -229,6 +231,7 @@ class MobilePushWorker {
   }
 
   invalidReason(row) {
+    if (row.notification_accessible === false) return 'app_access_revoked';
     if (row.read_at) return 'notification_read';
     if (!ALLOWED_KINDS.has(row.kind)) return 'kind_not_allowed';
     if (!row.registration_id) return 'registration_missing';

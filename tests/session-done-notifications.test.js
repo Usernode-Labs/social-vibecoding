@@ -137,16 +137,16 @@ function makeMockPool(initial = {}) {
       state.notifications.push(row);
       return { rows: [row] };
     }
-    // hydrateAndPush's single-row hydrate.
-    if (/SELECT n\.id, n\.kind[\s\S]*FROM notifications n[\s\S]*WHERE n\.id = \$1/i.test(s)) {
-      const n = state.notifications.find((x) => x.id === params[0]);
-      if (!n) return { rows: [] };
+    // hydrateAndPushMany's access-checked batch hydrate.
+    if (/SELECT n\.id, n\.kind[\s\S]*FROM notifications n[\s\S]*WHERE n\.id = ANY\(\$1::int\[\]\)/i.test(s)) {
+      const ids = params[0];
+      const found = state.notifications.filter((x) => ids.includes(x.id));
       return {
-        rows: [{
+        rows: found.map((n) => ({
           ...n, app_slug: 'my-app', app_name: 'My App', message_content: null,
           pr_title: 'Add a feature', pr_number: 7, headless_issue_number: 42,
           branch_name: 'dev/alice-123', source_username: null,
-        }],
+        })),
       };
     }
     // markReadForAction.

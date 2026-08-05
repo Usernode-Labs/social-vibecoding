@@ -129,7 +129,7 @@ async function createManifestPR(config, pool, app, actor, opts) {
     sessionId, err: err.message,
   }));
 
-  const { sendSystemMessage, pushVoteUpdate, pushNotificationToUser } = require('./ws');
+  const { sendSystemMessage, pushVoteUpdate } = require('./ws');
   const notifications = require('./notifications');
   const { getActiveUserStats } = require('./active-users');
   const { active: activeUsers, majority } = await getActiveUserStats(pool, app.id);
@@ -161,19 +161,7 @@ async function createManifestPR(config, pool, app, actor, opts) {
       sessionId,
       proposerId: actor.id || null,
     });
-    for (const row of notifRows) {
-      pushNotificationToUser(row.user_id, {
-        type: 'notification_new',
-        notification: notifications.serialize({
-          ...row,
-          app_slug: app.slug,
-          app_name: app.name,
-          pr_title: prTitle,
-          pr_number: prData.number,
-          source_username: actor.username,
-        }),
-      });
-    }
+    await notifications.hydrateAndPushMany(pool, notifRows);
     if (notifRows.length) {
       log.info('rename-pr', 'Manifest-PR pr_proposed notifications sent', {
         sessionId, count: notifRows.length,

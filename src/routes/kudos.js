@@ -295,30 +295,8 @@ function kudosRoutes(config) {
             [session.user_id, session.app_id, sessionId, req.user.id]
           );
           if (notifRows.length) {
-            // Hydrate with app/sender/session info so the client
-            // dropdown renders immediately without another fetch.
-            // Same shape that listForUser → serialize produces for
-            // history loads.
-            const { rows: hydrated } = await pool.query(
-              `SELECT n.id, n.kind, n.read_at, n.created_at,
-                      n.app_id, a.slug AS app_slug, a.name AS app_name,
-                      n.chat_message_id, NULL AS message_content,
-                      n.session_id, cs.pr_title, cs.pr_number,
-                      su.username AS source_username, n.user_id
-                 FROM notifications n
-                 LEFT JOIN apps a ON a.id = n.app_id
-                 LEFT JOIN chat_sessions cs ON cs.id = n.session_id
-                 LEFT JOIN users su ON su.id = n.source_user_id
-                 WHERE n.id = $1`,
-              [notifRows[0].id]
-            );
-            if (hydrated.length) {
-              const notifications = require('../services/notifications');
-              ws.pushNotificationToUser(session.user_id, {
-                type: 'notification_new',
-                notification: notifications.serialize(hydrated[0]),
-              });
-            }
+            const notifications = require('../services/notifications');
+            await notifications.hydrateAndPush(pool, notifRows[0]);
           }
         } catch (err) {
           // Notification is best-effort — never fail the kudos itself.

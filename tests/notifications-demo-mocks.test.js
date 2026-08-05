@@ -32,6 +32,12 @@ function makeMockPool() {
     calls,
     query(sql, params) {
       calls.push({ sql: String(sql), params });
+      // Count now shares the same aliased current-access predicate as list
+      // and exact-id hydration, so recognize it before the generic feed
+      // SELECT below.
+      if (/COUNT\(\*\)::int AS c[\s\S]*FROM notifications n/.test(sql)) {
+        return Promise.resolve({ rows: [{ c: 2 }] });
+      }
       if (/FROM notifications n/.test(sql)) {
         // One real row so mock-vs-real ordering is observable.
         return Promise.resolve({
@@ -45,9 +51,6 @@ function makeMockPool() {
             branch_name: null, source_username: 'alice', detail: null,
           }],
         });
-      }
-      if (/COUNT\(\*\)::int AS c FROM notifications/.test(sql)) {
-        return Promise.resolve({ rows: [{ c: 2 }] });
       }
       if (/FROM app_collaborators/.test(sql)) {
         return Promise.resolve({ rows: [] });

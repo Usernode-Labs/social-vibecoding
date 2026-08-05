@@ -212,17 +212,22 @@ const Notifications = {
     // Dedup on id — a reconnect might replay the same notification that
     // /api/notifications already returned.
     const existing = Notifications.items.findIndex((n) => n.id === notif.id);
+    const isNew = existing < 0;
     if (existing >= 0) {
       Notifications.items[existing] = notif;
     } else {
       Notifications.items.unshift(notif);
     }
-    if (!notif.readAt) Notifications.unread += 1;
+    // Replayed delivery refreshes the row but is not a second unread event.
+    // Without the isNew gate a reconnect duplicate inflated the badge and
+    // replayed completion sound / system-alert side effects.
+    if (isNew && !notif.readAt) Notifications.unread += 1;
     // #161: a completion arriving while the user is away from the
     // browser tab sets the dedicated tab-title marker (the replacement
     // for the old streaming-driven "✅ Done"). If they're actively
     // looking at the page, the badge + drawer suffice.
-    if ((notif.kind === 'session_done' || notif.kind === 'auto_solve_done')
+    if (isNew
+        && (notif.kind === 'session_done' || notif.kind === 'auto_solve_done')
         && !notif.readAt
         && window.DevChat && DevChat.setCompletionTitle
         && DevChat._userIsAway && DevChat._userIsAway()) {
@@ -236,7 +241,8 @@ const Notifications = {
     // "user is elsewhere in the app, or backgrounded" path (notify_on_done
     // was armed, so a notification_new arrives); the "watching the same dev
     // chat" path is handled by DevChat._finishStreaming's direct tone.
-    if ((notif.kind === 'session_done' || notif.kind === 'auto_solve_done')
+    if (isNew
+        && (notif.kind === 'session_done' || notif.kind === 'auto_solve_done')
         && !notif.readAt
         && window.DevAlerts && typeof DevAlerts.onCompletion === 'function') {
       DevAlerts.onCompletion(completionAlertInfo(notif));

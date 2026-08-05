@@ -1629,6 +1629,56 @@ ALTER TABLE notifications ADD COLUMN IF NOT EXISTS session_id
 -- kept generic + nullable so future kinds can reuse it.
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS detail VARCHAR(32);
 
+-- Notification producers may run concurrently (detached-turn recovery,
+-- staging recovery, and repeated promote requests). INSERT ... WHERE NOT
+-- EXISTS is not a concurrency boundary under READ COMMITTED: two transactions
+-- can both observe the absence. Collapse any legacy duplicates before adding
+-- the database constraints that make those producer contracts real.
+DO $$
+BEGIN
+  IF to_regclass('ux_notifications_unread_session_kind') IS NULL THEN
+    WITH ranked_unread_session_notifications AS (
+      SELECT id,
+             ROW_NUMBER() OVER (
+               PARTITION BY user_id, session_id, kind
+               ORDER BY created_at DESC, id DESC
+             ) AS duplicate_rank
+        FROM notifications
+       WHERE read_at IS NULL
+         AND session_id IS NOT NULL
+         AND kind IN ('session_done', 'auto_solve_done', 'check_failed')
+    )
+    DELETE FROM notifications n
+     USING ranked_unread_session_notifications ranked
+     WHERE n.id = ranked.id AND ranked.duplicate_rank > 1;
+  END IF;
+
+  IF to_regclass('ux_notifications_pr_proposed_once') IS NULL THEN
+    WITH ranked_pr_proposed_notifications AS (
+      SELECT id,
+             ROW_NUMBER() OVER (
+               PARTITION BY user_id, session_id
+               ORDER BY created_at DESC, id DESC
+             ) AS duplicate_rank
+        FROM notifications
+       WHERE session_id IS NOT NULL AND kind = 'pr_proposed'
+    )
+    DELETE FROM notifications n
+     USING ranked_pr_proposed_notifications ranked
+     WHERE n.id = ranked.id AND ranked.duplicate_rank > 1;
+  END IF;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_notifications_unread_session_kind
+  ON notifications (user_id, session_id, kind)
+  WHERE read_at IS NULL
+    AND session_id IS NOT NULL
+    AND kind IN ('session_done', 'auto_solve_done', 'check_failed');
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_notifications_pr_proposed_once
+  ON notifications (user_id, session_id)
+  WHERE session_id IS NOT NULL AND kind = 'pr_proposed';
+
 -- Per-app environment secrets. Values are AES-256-GCM encrypted via
 -- src/services/secrets.js (keyed off DATA_ENCRYPTION_KEY), serialized as
 -- "v1:<iv>:<tag>:<ct>" — same scheme used for users.anthropic_key_enc.

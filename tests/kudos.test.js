@@ -221,10 +221,9 @@ function makeMockPool(initial = {}) {
     }
     // ------------ SELECT notification hydrate ------------
     if (/SELECT n\.id, n\.kind[\s\S]*FROM notifications n/i.test(s)) {
-      const id = params[0];
-      const n = state.notifications.find((x) => x.id === id);
-      if (!n) return { rows: [] };
-      return { rows: [{ ...n, app_slug: 'app', app_name: 'App', message_content: null, pr_title: null, pr_number: null, source_username: null }] };
+      const ids = Array.isArray(params[0]) ? params[0] : [params[0]];
+      const found = state.notifications.filter((x) => ids.includes(x.id));
+      return { rows: found.map((n) => ({ ...n, app_slug: 'app', app_name: 'App', message_content: null, pr_title: null, pr_number: null, source_username: null })) };
     }
     // ------------ COUNT per session ------------
     if (/SELECT COUNT\(\*\)::int AS c FROM pr_kudos WHERE session_id = \$1/i.test(s)) {

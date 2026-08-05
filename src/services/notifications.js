@@ -17,6 +17,40 @@
 const log = require('./logger');
 const { listActiveUserIds } = require('./active-users');
 
+// Notification ownership is necessary but not sufficient for app-scoped
+// content. A former collaborator keeps their notification rows for history,
+// but must not keep learning a private app's name, message previews, or
+// session details after access is revoked. Keep this predicate centralized so
+// history, unread counts, opaque-id lookup, and live hydration cannot drift.
+//
+// Invites and direct spec shares are intentional disclosures to recipients
+// who may not be collaborators yet, so those kinds bypass the membership
+// check. All other private-app rows require current membership or admin read
+// authority, matching the platform's normal app-access boundary.
+const NOTIFICATION_ACCESS_SQL = `(
+  n.app_id IS NULL
+  OR n.kind IN ('collab_invite', 'approver_invite', 'spec_shared')
+  OR EXISTS (
+    SELECT 1
+      FROM apps notification_app
+     WHERE notification_app.id = n.app_id
+       AND (
+         notification_app.collab_visibility = 'public'
+         OR EXISTS (
+           SELECT 1 FROM users notification_viewer
+            WHERE notification_viewer.id = n.user_id
+              AND notification_viewer.is_admin = TRUE
+         )
+         OR EXISTS (
+           SELECT 1 FROM app_collaborators notification_member
+            WHERE notification_member.app_id = n.app_id
+              AND notification_member.user_id = n.user_id
+              AND notification_member.status = 'member'
+         )
+       )
+  )
+)`;
+
 // Usernames in this app are [A-Za-z0-9_]+, length-restricted on signup.
 // Match @token that is NOT preceded by a word character (so emails don't
 // trigger mentions) and capture up to 32 chars.
@@ -162,6 +196,7 @@ async function createCheckFailedNotification(pool, { userId, appId, sessionId })
         WHERE n.user_id = $1 AND n.session_id = $3
           AND n.kind = 'check_failed' AND n.read_at IS NULL
       )
+     ON CONFLICT DO NOTHING
      RETURNING id, user_id, app_id, session_id, source_user_id, kind, created_at`,
     [userId, appId, sessionId]
   );
@@ -187,6 +222,7 @@ async function createSessionDoneNotification(pool, { userId, appId, sessionId })
         WHERE n.user_id = $1 AND n.session_id = $3
           AND n.kind = 'session_done' AND n.read_at IS NULL
       )
+     ON CONFLICT DO NOTHING
      RETURNING id, user_id, app_id, session_id, source_user_id, kind, created_at`,
     [userId, appId, sessionId]
   );
@@ -209,6 +245,7 @@ async function createAutoSolveDoneNotification(pool, { userId, appId, sessionId,
         WHERE n.user_id = $1 AND n.session_id = $3
           AND n.kind = 'auto_solve_done' AND n.read_at IS NULL
       )
+     ON CONFLICT DO NOTHING
      RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
     [userId, appId, sessionId, (detail || '').slice(0, 32) || null]
   );
@@ -239,8 +276,11 @@ async function createSpecSharedNotification(pool, { recipientId, appId, sessionI
 // listForUser performs and push it to its recipient over WS as a
 // notification_new. Best-effort: completion notifications ride inside
 // SSE/turn pipelines that must never fail because of a push.
-async function hydrateAndPush(pool, row) {
-  if (!row || !row.id) return;
+async function hydrateAndPushMany(pool, notificationRows) {
+  const rowsToHydrate = Array.isArray(notificationRows)
+    ? notificationRows.filter((row) => row && row.id)
+    : [];
+  if (!rowsToHydrate.length) return;
   try {
     const { rows } = await pool.query(
       `SELECT n.id, n.kind, n.read_at, n.created_at,
@@ -251,24 +291,39 @@ async function hydrateAndPush(pool, row) {
               n.session_id,
               cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
               su.username AS source_username,
-              n.detail
+              n.detail, n.user_id
        FROM notifications n
        LEFT JOIN apps a ON a.id = n.app_id
        LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
        LEFT JOIN chat_sessions cs ON cs.id = n.session_id
        LEFT JOIN users su ON su.id = n.source_user_id
-       WHERE n.id = $1`,
-      [row.id]
+       WHERE n.id = ANY($1::int[])
+         AND ${NOTIFICATION_ACCESS_SQL}`,
+      [rowsToHydrate.map((row) => row.id)]
     );
-    if (!rows.length) return;
     const { pushNotificationToUser } = require('./ws');
-    pushNotificationToUser(row.user_id, {
-      type: 'notification_new',
-      notification: serialize(rows[0]),
-    });
+    for (const hydrated of rows) {
+      try {
+        pushNotificationToUser(hydrated.user_id, {
+          type: 'notification_new',
+          notification: serialize(hydrated),
+        });
+      } catch (err) {
+        // One recipient/socket failure must not suppress later recipients.
+        log.warn('notifications', 'notification fanout failed', {
+          id: hydrated.id, userId: hydrated.user_id, err: err.message,
+        });
+      }
+    }
   } catch (err) {
-    log.warn('notifications', 'hydrateAndPush failed', { id: row.id, err: err.message });
+    log.warn('notifications', 'hydrateAndPush failed', {
+      ids: rowsToHydrate.map((row) => row.id), err: err.message,
+    });
   }
+}
+
+async function hydrateAndPush(pool, row) {
+  return hydrateAndPushMany(pool, row ? [row] : []);
 }
 
 // PR-proposed (vote-request) notification. Fired when a session is
@@ -331,10 +386,11 @@ async function createPrProposedNotifications(pool, { appId, sessionId, proposerI
     `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
      SELECT u, $2, $3, $4, 'pr_proposed'
        FROM UNNEST($1::int[]) AS u
-      WHERE NOT EXISTS (
+     WHERE NOT EXISTS (
         SELECT 1 FROM notifications n
         WHERE n.user_id = u AND n.session_id = $3 AND n.kind = 'pr_proposed'
       )
+     ON CONFLICT DO NOTHING
      RETURNING id, user_id, app_id, session_id, source_user_id, kind, created_at`,
     [ids, appId, sessionId, proposerId || null]
   );
@@ -502,6 +558,7 @@ async function listForUser(pool, userId, { limit = 100, before = null } = {}) {
      LEFT JOIN chat_sessions cs ON cs.id = n.session_id
      LEFT JOIN users su ON su.id = n.source_user_id
      WHERE n.user_id = $1
+       AND ${NOTIFICATION_ACCESS_SQL}
      ${cursorClause}
      ORDER BY n.created_at DESC, n.id DESC
      LIMIT $${limitIdx}`,
@@ -529,7 +586,8 @@ async function getForUser(pool, userId, id) {
        LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
        LEFT JOIN chat_sessions cs ON cs.id = n.session_id
        LEFT JOIN users su ON su.id = n.source_user_id
-      WHERE n.id = $1 AND n.user_id = $2`,
+      WHERE n.id = $1 AND n.user_id = $2
+        AND ${NOTIFICATION_ACCESS_SQL}`,
     [id, userId]
   );
   return rows[0] || null;
@@ -537,7 +595,10 @@ async function getForUser(pool, userId, id) {
 
 async function countUnread(pool, userId) {
   const { rows } = await pool.query(
-    `SELECT COUNT(*)::int AS c FROM notifications WHERE user_id = $1 AND read_at IS NULL`,
+    `SELECT COUNT(*)::int AS c
+       FROM notifications n
+      WHERE n.user_id = $1 AND n.read_at IS NULL
+        AND ${NOTIFICATION_ACCESS_SQL}`,
     [userId]
   );
   return rows[0]?.c || 0;
@@ -753,6 +814,7 @@ module.exports = {
   createAutoSolveDoneNotification,
   createSpecSharedNotification,
   hydrateAndPush,
+  hydrateAndPushMany,
   createPrProposedNotifications,
   createCollabInviteNotification,
   createCollabInviteAcceptedNotification,
@@ -772,6 +834,7 @@ module.exports = {
   markReadForMessage,
   unreadMessageIdsForUser,
   ACTION_COMPLETIONS,
+  NOTIFICATION_ACCESS_SQL,
   serialize,
 };
 

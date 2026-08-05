@@ -539,29 +539,7 @@ async function handleMessage(pool, client, msg) {
           senderId: client.user.id,
           recipientId: replyRecipientId,
         });
-        if (replyRows.length) {
-          const { rows: hydrated } = await pool.query(
-            `SELECT n.id, n.kind, n.read_at, n.created_at,
-                    n.app_id, a.slug AS app_slug, a.name AS app_name,
-                    n.chat_message_id, cm.content AS message_content,
-                    cm.thread_type, cm.thread_ref,
-                    n.session_id, cs.pr_title, cs.pr_number,
-                    su.username AS source_username, n.user_id
-             FROM notifications n
-             LEFT JOIN apps a ON a.id = n.app_id
-             LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
-             LEFT JOIN chat_sessions cs ON cs.id = n.session_id
-             LEFT JOIN users su ON su.id = n.source_user_id
-             WHERE n.id = ANY($1::int[])`,
-            [replyRows.map((r) => r.id)]
-          );
-          for (const row of hydrated) {
-            pushNotificationToUser(row.user_id, {
-              type: 'notification_new',
-              notification: notifications.serialize(row),
-            });
-          }
-        }
+        await notifications.hydrateAndPushMany(pool, replyRows);
       } catch (err) {
         log.warn('ws', 'reply notify failed', { err: err.message });
       }
@@ -576,35 +554,7 @@ async function handleMessage(pool, client, msg) {
           senderId: client.user.id,
           content,
         });
-        if (notifRows.length) {
-          // Hydrate with app/sender info so the client can render the
-          // dropdown item immediately without another fetch. Mirror the
-          // column set of notifications.listForUser so the same
-          // serialize() works for both fresh and history rows — kudos
-          // added session_id / pr_title / pr_number on top of the
-          // original mention shape.
-          const { rows: hydrated } = await pool.query(
-            `SELECT n.id, n.kind, n.read_at, n.created_at,
-                    n.app_id, a.slug AS app_slug, a.name AS app_name,
-                    n.chat_message_id, cm.content AS message_content,
-                    cm.thread_type, cm.thread_ref,
-                    n.session_id, cs.pr_title, cs.pr_number,
-                    su.username AS source_username, n.user_id
-             FROM notifications n
-             LEFT JOIN apps a ON a.id = n.app_id
-             LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
-             LEFT JOIN chat_sessions cs ON cs.id = n.session_id
-             LEFT JOIN users su ON su.id = n.source_user_id
-             WHERE n.id = ANY($1::int[])`,
-            [notifRows.map((r) => r.id)]
-          );
-          for (const row of hydrated) {
-            pushNotificationToUser(row.user_id, {
-              type: 'notification_new',
-              notification: notifications.serialize(row),
-            });
-          }
-        }
+        await notifications.hydrateAndPushMany(pool, notifRows);
       } catch (err) {
         log.warn('ws', 'mention notify failed', { err: err.message });
       }
@@ -745,29 +695,7 @@ async function handleMessage(pool, client, msg) {
             recipientId: authorId,
             emoji,
           });
-          if (notifRows.length) {
-            const { rows: hydrated } = await pool.query(
-              `SELECT n.id, n.kind, n.read_at, n.created_at,
-                      n.app_id, a.slug AS app_slug, a.name AS app_name,
-                      n.chat_message_id, cm.content AS message_content,
-                      cm.thread_type, cm.thread_ref,
-                      n.session_id, cs.pr_title, cs.pr_number,
-                      su.username AS source_username, n.user_id, n.detail
-               FROM notifications n
-               LEFT JOIN apps a ON a.id = n.app_id
-               LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
-               LEFT JOIN chat_sessions cs ON cs.id = n.session_id
-               LEFT JOIN users su ON su.id = n.source_user_id
-               WHERE n.id = ANY($1::int[])`,
-              [notifRows.map((r) => r.id)]
-            );
-            for (const row of hydrated) {
-              pushNotificationToUser(row.user_id, {
-                type: 'notification_new',
-                notification: notifications.serialize(row),
-              });
-            }
-          }
+          await notifications.hydrateAndPushMany(pool, notifRows);
         } catch (err) {
           log.warn('ws', 'reaction notify failed', { err: err.message });
         }
@@ -996,8 +924,16 @@ function pushNotificationToUser(userId, payload) {
   let sent = 0;
   for (const client of globalClients) {
     if (client.user.id === userId && client.ws.readyState === 1) {
-      client.ws.send(json);
-      sent++;
+      try {
+        client.ws.send(json);
+        sent++;
+      } catch (err) {
+        // A socket can close between readyState and send. Keep delivering to
+        // the user's other tabs/devices; persistence remains authoritative.
+        log.warn('ws', 'notification socket send failed', {
+          userId, err: err.message,
+        });
+      }
     }
   }
   return sent;

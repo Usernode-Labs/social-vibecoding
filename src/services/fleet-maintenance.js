@@ -404,7 +404,7 @@ async function openCampaignProposal({ config, pool, campaign, app, files, summar
   );
   const sessionId = sessRows[0].id;
 
-  const { sendSystemMessage, pushVoteUpdate, pushNotificationToUser } = require('./ws');
+  const { sendSystemMessage, pushVoteUpdate } = require('./ws');
   const notifications = require('./notifications');
   const events = require('./events');
   const { getActiveUserStats } = require('./active-users');
@@ -433,19 +433,7 @@ async function openCampaignProposal({ config, pool, campaign, app, files, summar
       sessionId,
       proposerId: platformUserId,
     });
-    for (const row of notifRows) {
-      pushNotificationToUser(row.user_id, {
-        type: 'notification_new',
-        notification: notifications.serialize({
-          ...row,
-          app_slug: app.slug,
-          app_name: app.name,
-          pr_title: prTitle,
-          pr_number: prData.number,
-          source_username: PLATFORM_USERNAME,
-        }),
-      });
-    }
+    await notifications.hydrateAndPushMany(pool, notifRows);
   } catch (err) {
     log.warn('fleet-maintenance', 'Campaign pr_proposed notify failed', { sessionId, err: err.message });
   }

@@ -88,6 +88,7 @@ test('eligible delivery sends one generic bound message and marks it sent', asyn
 test('pre-send revalidation cancels ineligible recipient and deployment state', async () => {
   for (const [change, reason] of [
     [{ read_at: new Date() }, 'notification_read'],
+    [{ notification_accessible: false }, 'app_access_revoked'],
     [{ delivery_environment: 'staging' }, 'environment_mismatch'],
     [{ deployment_send_enabled: false }, 'sender_disabled'],
     [{ deployment_send_enabled: null }, 'sender_disabled'],
@@ -128,6 +129,7 @@ test('delivery reload includes the current deployment state and activation times
   assert.match(seen.sql, /state\.send_enabled AS deployment_send_enabled/);
   assert.match(seen.sql, /state\.send_not_before AS deployment_send_not_before/);
   assert.match(seen.sql, /state\.firebase_project_id AS deployment_firebase_project_id/);
+  assert.match(seen.sql, /AS notification_accessible/);
   assert.deepEqual(seen.params, [JOB.id]);
 });
 
