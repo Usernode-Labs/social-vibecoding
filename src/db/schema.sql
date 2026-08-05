@@ -2033,6 +2033,73 @@ CREATE TABLE IF NOT EXISTS app_collaborators (
 );
 CREATE INDEX IF NOT EXISTS idx_app_collaborators_user ON app_collaborators(user_id, status);
 
+-- Private platform-wide social relationships (#586). Contacts are stored
+-- once per unordered pair: user_low_id is always less than user_high_id,
+-- requested_by records the consenting initiator, and an accepted row means
+-- mutual contact. These rows never participate in app access or governance.
+CREATE TABLE IF NOT EXISTS contact_relationships (
+  user_low_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_high_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  requested_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status       VARCHAR(16) NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'accepted')),
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  accepted_at  TIMESTAMPTZ,
+  PRIMARY KEY (user_low_id, user_high_id),
+  CHECK (user_low_id < user_high_id),
+  CHECK (requested_by IN (user_low_id, user_high_id)),
+  CHECK ((status = 'accepted') = (accepted_at IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_contact_relationships_high
+  ON contact_relationships(user_high_id, status, user_low_id);
+CREATE INDEX IF NOT EXISTS idx_contact_relationships_requester
+  ON contact_relationships(requested_by, status);
+
+-- Blocking is deliberately one-way and private. The social routes consult
+-- both directions before revealing or creating a contact/group invitation.
+-- Creating a block atomically removes the pair's contact relationship.
+CREATE TABLE IF NOT EXISTS user_blocks (
+  blocker_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  blocked_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (blocker_id, blocked_id),
+  CHECK (blocker_id <> blocked_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_blocks_blocked
+  ON user_blocks(blocked_id, blocker_id);
+
+-- Private membership-only groups. They are not chat channels and grant no
+-- app, proposal, wallet, or voting authority. Owner deletion cascades the
+-- entire group, which also makes platform-user hard deletion deterministic.
+CREATE TABLE IF NOT EXISTS social_groups (
+  id            SERIAL PRIMARY KEY,
+  name          VARCHAR(80) NOT NULL,
+  owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_social_groups_owner
+  ON social_groups(owner_user_id, id DESC);
+
+CREATE TABLE IF NOT EXISTS social_group_members (
+  group_id    INTEGER NOT NULL REFERENCES social_groups(id) ON DELETE CASCADE,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status      VARCHAR(16) NOT NULL DEFAULT 'invited'
+    CHECK (status IN ('invited', 'member')),
+  invited_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  accepted_at TIMESTAMPTZ,
+  PRIMARY KEY (group_id, user_id),
+  CHECK ((status = 'member') = (accepted_at IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_social_group_members_user
+  ON social_group_members(user_id, status, group_id DESC);
+
+COMMENT ON TABLE contact_relationships IS 'staging:private';
+COMMENT ON TABLE user_blocks IS 'staging:private';
+COMMENT ON TABLE social_groups IS 'staging:private';
+COMMENT ON TABLE social_group_members IS 'staging:private';
+
 -- Backfill: every existing app's creator becomes a member. Idempotent.
 INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
   SELECT id, created_by, 'member', NOW() FROM apps WHERE created_by IS NOT NULL

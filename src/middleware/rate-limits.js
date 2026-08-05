@@ -171,6 +171,18 @@ const groupChatWriteLimiter = makeLimiter({
   message: 'Too many discussion messages — slow down for a minute.',
 });
 
+// Social graph mutations (#586): requests, blocks, groups and membership
+// updates share a per-user bucket. Validation/conflict responses are refunded
+// so typos and harmless retries do not consume the allowance.
+const socialWriteLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 30,
+  name: 'social-write',
+  keyByUser: true,
+  skipFailedRequests: true,
+  message: 'Too many contact or group changes — slow down for a minute.',
+});
+
 // #556: live title previews for the feedback modal (POST /api/feedback/
 // title). Same sizing rationale as chatLimiter — each call is a Haiku
 // spend against the daily LLM budget, so this must not become a faster
@@ -328,4 +340,4 @@ const waitlistJoinLimiter = makeLimiter({
   message: 'Too many signups from this address — try again in a few minutes.',
 });
 
-module.exports = { dbExportLimiter, authLimiter, homePanelPrefLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, waitlistJoinLimiter };
+module.exports = { dbExportLimiter, authLimiter, homePanelPrefLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, socialWriteLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, waitlistJoinLimiter };

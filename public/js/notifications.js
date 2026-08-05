@@ -427,6 +427,16 @@ const Notifications = {
     // notifications. The drawer only dismisses via outside-click or the
     // explicit close button.
     Notifications._markOneRead(id);
+    if (item.kind === 'contact_request' || item.kind === 'contact_accepted'
+      || item.kind === 'social_group_invite') {
+      if (typeof Profile !== 'undefined' && Profile._social) {
+        Profile._social.tab = item.kind === 'social_group_invite' ? 'groups' : 'contacts';
+        Profile._social.groupDetail = null;
+      }
+      if (typeof App !== 'undefined' && App.navigateToProfile) App.navigateToProfile();
+      else window.location.hash = '#profile';
+      return;
+    }
     // #161/#194: completion notifications deep-link to their dev
     // sub-tab. session_done opens the dev session itself;
     // auto_solve_done opens the Issues tab with that issue's accordion
@@ -1054,6 +1064,9 @@ function previewText(n) {
     case 'collab_invite_accepted': return `✅ ${who} accepted your invite`;
     case 'approver_invite':          return `🗳️ ${who} invited you to be an approver`;
     case 'approver_invite_accepted': return `✅ ${who} accepted your approver invite`;
+    case 'contact_request':          return `👋 ${who} sent you a contact request`;
+    case 'contact_accepted':         return `✅ ${who} accepted your contact request`;
+    case 'social_group_invite':      return `👥 ${who} invited you to a private group`;
     case 'session_done':           return `✅ Your dev session finished`;
     case 'auto_solve_done':
       return n.detail === 'failed'
@@ -1270,6 +1283,24 @@ function renderRow(n) {
         <span class="font-medium text-zinc-800 dark:text-zinc-200">@${who}</span>
         <span>${verb}</span>
         <span class="font-medium text-zinc-700 dark:text-zinc-300">${appLine}</span>
+        <span class="text-zinc-500">· ${relativeTime(n.createdAt)}</span>
+      </div>
+    </button>`;
+  }
+
+  if (n.kind === 'contact_request' || n.kind === 'contact_accepted'
+    || n.kind === 'social_group_invite') {
+    const verb = n.kind === 'contact_request' ? 'sent you a contact request'
+      : n.kind === 'contact_accepted' ? 'accepted your contact request'
+        : 'invited you to a private group';
+    const icon = n.kind === 'social_group_invite' ? '👥'
+      : n.kind === 'contact_request' ? '👋' : '✅';
+    return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
+      <div class="text-xs text-zinc-500 dark:text-zinc-400 flex items-center gap-1 flex-wrap">
+        ${dot}
+        <span aria-hidden="true">${icon}</span>
+        <span class="font-medium text-zinc-800 dark:text-zinc-200">@${who}</span>
+        <span>${verb}</span>
         <span class="text-zinc-500">· ${relativeTime(n.createdAt)}</span>
       </div>
     </button>`;
