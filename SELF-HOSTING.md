@@ -1115,6 +1115,10 @@ Operational consequences for self-hosting:
 - **The endpoint comes free.** Any SV instance that ships
   `public/usernode-bridge/v1/bridge.js` serves the bridge at
   `https://<your-USERNODE_DOMAIN>/usernode-bridge/v1/bridge.js`.
+  The provider-neutral wallet convenience module is served beside it at
+  `/usernode-bridge/v1/wallet-client.mjs`. Both are public static code; the
+  directory sends `Access-Control-Allow-Origin: *` so child-app ES-module
+  imports work, and neither endpoint serves credentials or wallet state.
   The auth middleware exempts `/usernode-bridge/` and the static
   handler sets `Cache-Control: no-cache, must-revalidate`.
 - **Fleet dapps point at the upstream production instance.** The

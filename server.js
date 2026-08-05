@@ -613,6 +613,11 @@ app.get('/api/iframe-token', async (req, res) => {
 // additive scaffolding for a future migration off vendoring.
 app.use('/usernode-bridge', (_req, res, next) => {
   res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+  // The wallet convenience client is an ES module loaded by child apps from
+  // their own subdomains. Module scripts require CORS even though classic
+  // cross-origin <script> tags do not. This directory contains public static
+  // code only; no credentials or user data are served from it.
+  res.setHeader('Access-Control-Allow-Origin', '*');
   next();
 });
 

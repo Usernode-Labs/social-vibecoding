@@ -1475,6 +1475,81 @@ Rules:
   the bridge from upstream prod, or fork the dapps and edit the URL.
   See [SELF-HOSTING.md](../../SELF-HOSTING.md) for details.
 
+### Wallet and on-chain client — native first, noncustodial
+
+For new wallet work, load the bridge above and import the small, named-export
+client that lives beside it. Do not add an injected EVM provider or copy Web3
+patterns into a Usernode app:
+
+```html
+<script src="https://social-vibecoding.usernodelabs.org/usernode-bridge/v1/bridge.js"></script>
+<script type="module">
+  import {
+    createWalletClient,
+    WalletCapability,
+  } from 'https://social-vibecoding.usernodelabs.org/usernode-bridge/v1/wallet-client.mjs';
+
+  const wallet = createWalletClient({
+    capabilities: [WalletCapability.ADDRESS, WalletCapability.SEND],
+  });
+  const address = await wallet.getAddress();
+  const result = await wallet.send({
+    to: 'ut1…',
+    amount: 1,                 // integer Usernode base units
+    waitForInclusion: false,   // submitted is not the same as confirmed
+  });
+</script>
+```
+
+The module is dependency-free and side-effect-free. Import only its named
+exports so a bundler can tree-shake unused helpers. Its version is exported as
+`WALLET_CLIENT_VERSION`; incompatible client changes move to a new versioned
+path while additive fixes stay under bridge v1.
+
+Security and authority boundaries:
+
+- Keys, signing and transaction confirmation stay in the native Usernode
+  shell. The platform module never reads or persists a seed, secret key,
+  bearer credential, iframe JWT or provider key. Never add one to client
+  options, logs, local/session storage or an error payload.
+- The client's requested capabilities minimize the methods app code receives;
+  they are not an authorization boundary. The hosted bridge's origin/session
+  admission and the native confirmation screen remain authoritative. Feature
+  detect with `availableCapabilities()` and render an unavailable state.
+- Usernode wallet addresses use the `ut1…` form and amounts are positive
+  integer base units within JavaScript's safe-integer range. The client checks
+  syntax and size; native code still decides whether an address is valid for
+  the active chain. Do not assume `0x` addresses, wei, EVM `chainId`, ERC-20
+  metadata, injected providers, gas fields or EVM JSON-RPC methods.
+- For authentication or other signatures, obtain a random one-use nonce from
+  your authenticated backend and call `signChallenge` with that nonce,
+  purpose, issue time, expiry (at most five minutes) and a server-known
+  subject. The helper binds the exact signed JSON to the current origin. The
+  backend must verify the signature, origin, purpose, subject and expiry, then
+  atomically consume the nonce for that authenticated session. Never generate
+  a login nonce only in the browser or accept it twice.
+- A successful send may mean only **submitted**. Persist the app's business
+  intent before asking the wallet, store the concrete transaction ID when one
+  arrives, and show pending / confirmed / failed / retry states separately.
+  Do not auto-retry a send: a timeout can hide a successful broadcast. Query
+  records/inclusion first and require an explicit user retry.
+- Reconcile duplicates only by a concrete transaction ID. The client's
+  `reconcileTransactionRecords` intentionally keeps every ID-less record;
+  matching by wallet, amount, memo or timestamp can collapse two legitimate
+  transfers or attach an orphan to the wrong intent.
+- The bridge owns native/iframe/QR/mock transport selection and its existing
+  inclusion polling or server-cache behavior. Apps must not add another
+  explorer polling loop around it. Treat timeouts and unavailable state as
+  recoverable UI states, not proof a transfer failed.
+
+The module does not expose Topochain provisioning, partner, ingest or admin
+APIs. `/api/v4` keeps its existing boundaries: public reads are public;
+`/mobile/*` needs the mobile bearer token; `/partner/*` and ingest writes use
+their separate server-side credentials; `/admin/*` uses platform admin auth.
+Never send any of those credentials to browser code. The toolkit also does not
+select a chain/provider, define an asset registry, verify signatures, create
+keys, or provide custody—those require explicit protocol or native ownership.
+
 ## User language preference
 
 The platform owns a single per-user language/locale setting
