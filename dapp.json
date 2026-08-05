@@ -328,7 +328,7 @@
     {
       "name": "The Create app widget sits in the grid and opens the create flow",
       "path": "/?demo=1",
-      "expectSelector": "#app-list [data-panel-slot=\"create\"][data-create-enabled=\"true\"] .home-create-btn",
+      "expectSelector": "#app-list [data-panel-slot=\"create\"][data-create-enabled=\"true\"] .home-create-btn[class*=\"sm:flex-col\"]",
       "expectText": "Create app"
     },
     {

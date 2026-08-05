@@ -202,7 +202,8 @@ function demoLayouts() {
       { type: 'app', slug: 'staging-demo-chess-arena', col: 0, row: 3 },
       { type: 'app', slug: 'staging-demo-pixel-racer', col: 3, row: 3 },
       { type: 'widget', key: 'challenges', col: 0, row: 4 },
-      { type: 'widget', key: 'create', col: 3, row: 6 },
+      // 4 wide at this breakpoint, so column 0 is its only legal start.
+      { type: 'widget', key: 'create', col: 0, row: 6 },
     ],
     // Desktop: 5 columns. Chess Arena alone top-left, Pixel Racer alone at
     // the far end of the same row, both widgets side by side under them.

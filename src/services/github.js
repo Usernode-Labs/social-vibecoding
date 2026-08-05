@@ -690,6 +690,24 @@ async function compareCommitAncestry(owner, repo, baseSha, headSha) {
   };
 }
 
+// #955: the parent SHAs of one commit, oldest-first as Git stores them —
+// so `[0]` is the FIRST parent, i.e. the branch the merge was made ONTO.
+// The platform's sync turn merges origin/main into a proposal branch, so a
+// pushed sync commit whose first parent is the reviewed head proves it sits
+// directly on top of the reviewed revision and swept in no unreviewed author
+// commit. Throws on transport errors; callers fail closed (skip the vote
+// carry) rather than guessing provenance.
+async function getCommitParents(owner, repo, sha) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.request(
+    'GET /repos/{owner}/{repo}/git/commits/{commit_sha}',
+    { owner, repo, commit_sha: sha }
+  );
+  return (data.parents || [])
+    .map((p) => (typeof p?.sha === 'string' ? p.sha.toLowerCase() : null))
+    .filter(Boolean);
+}
+
 async function getBranchSha(owner, repo, branchName) {
   const octokit = await getOctokit(owner);
   const { data: ref } = await octokit.request(
@@ -1982,6 +2000,7 @@ module.exports = {
   createBranch,
   ensureBranchAtSha,
   compareCommitAncestry,
+  getCommitParents,
   getBranchSha,
   advanceBranchToSha,
   createProposalCommit,
