@@ -200,6 +200,17 @@
     else entry.resolve(value);
   };
 
+  // Errors raised BY the bridge (as opposed to relayed from native) carry
+  // a machine-readable `usernodeKind` so the chrome-read failure record
+  // below can tell "the page cannot reach the app" from "the app said no"
+  // without matching on message text. Native's own rejections carry no
+  // tag and classify as "rejected".
+  function taggedNativeError(message, kind) {
+    var err = new Error(message);
+    err.usernodeKind = kind;
+    return err;
+  }
+
   // 15 s is well above the Flutter confirm-screen turnaround (single
   // digits of ms in the relay leg + however long the user takes to
   // approve), so a timeout firing means the parent never picked up the
@@ -223,9 +234,10 @@
           if (!entry) return;
           delete window.__usernodeBridge.pending[id];
           console.warn("[usernode-bridge] relay timeout for", method, "id", id);
-          reject(new Error(
+          reject(taggedNativeError(
             "Usernode relay timed out (parent page never responded). " +
-            "Reload the host page so it picks up the latest bridge."
+            "Reload the host page so it picks up the latest bridge.",
+            "timeout"
           ));
         }, _RELAY_TIMEOUT_MS);
         // Wrap resolve/reject so the timeout is cleared on completion.
@@ -261,14 +273,17 @@
       console.warn(_BRIDGE_TAG, "no transport for", method,
         "(useIframeRelay=false, hasNativeChannel=false) — rejecting");
       delete window.__usernodeBridge.pending[id];
-      reject(new Error("Usernode native bridge not available"));
+      reject(taggedNativeError(
+        "Usernode native bridge not available", "no-transport"
+      ));
     });
   }
 
   function ensurePrivilegedCapability() {
     if (_inIframe) {
-      return Promise.reject(new Error(
-        "Privileged Usernode methods are only available to the top-level page"
+      return Promise.reject(taggedNativeError(
+        "Privileged Usernode methods are only available to the top-level page",
+        "no-transport"
       ));
     }
     if (_privilegedCapability) {
@@ -281,6 +296,20 @@
 
     var attempt = window.usernode.getBridgeInfo().then(function (info) {
       var capabilities = info && info.capabilities;
+      // A DEGRADED probe (timeout / native error inside the app) is "don't
+      // know", not "this build predates the privileged handshake" — the two
+      // used to be the same `{ version: 0, capabilities: [] }` value, so one
+      // unlucky 4s probe during a cold start latched `supported = false` and
+      // every privileged call for the rest of the document went unsigned,
+      // which a hardened build refuses (issue #978). Fail THIS attempt
+      // closed and leave the latch unset so the next call re-probes — the
+      // same discipline NativeChrome.prepareWebLogout() already applies to
+      // its cached probe.
+      if (info && info.degraded === true) {
+        throw taggedNativeError(
+          "Native bridge probe was inconclusive", "probe-inconclusive"
+        );
+      }
       var supported = Array.isArray(capabilities) &&
         capabilities.indexOf("privilegedBridgeCapability") !== -1;
       _privilegedCapabilitySupported = supported;
@@ -3902,6 +3931,15 @@
           if (done) return;
           done = true;
           clearTimeout(timer);
+          // An inconclusive capability probe is a "can't answer", not a
+          // native refusal — take the same policy this method already
+          // declares for a dropped request (reads resolve their fallback,
+          // mutations reject) instead of turning a read into a rejection.
+          if (err && err.usernodeKind === "probe-inconclusive") {
+            console.warn(_BRIDGE_TAG, method, "probe inconclusive");
+            onTimeout(resolve, reject);
+            return;
+          }
           reject(err);
         }
       );
@@ -3968,6 +4006,53 @@
   // native wallet provider waits for the node); don't cut it off early.
   var _WALLET_STATE_TIMEOUT_MS = 12000;
 
+  // ── Out-of-band failure record for the chrome reads ───────────────────
+  //
+  // The reads above must keep RESOLVING a fallback rather than rejecting —
+  // every caller `await`s them and renders "unavailable". The cost is that
+  // "timed out", "the app reported X" and "the privileged handshake is
+  // unavailable" all arrive as the same `null`, which is what made issue
+  // #978 undiagnosable from the device. So keep the resolving contract and
+  // record the reason beside it.
+  //
+  // A record is { method, kind, message, at }, with `kind` one of
+  // "timeout" | "rejected" | "no-transport" | "not-native" |
+  // "probe-inconclusive". It holds a method name plus the app's own error
+  // string ONLY: the privileged capability lives in this closure and never
+  // reaches an error message, and each frame keeps its own map, so a child
+  // frame can only ever read failures of calls it made itself.
+  var _lastNativeReadErrors = {};
+
+  function nativeReadErrorKind(err) {
+    return (err && typeof err.usernodeKind === "string")
+      ? err.usernodeKind
+      : "rejected";
+  }
+
+  function recordNativeReadError(method, kind, message) {
+    _lastNativeReadErrors[method] = {
+      method: method,
+      kind: kind,
+      message: message || null,
+      at: Date.now(),
+    };
+  }
+
+  // getLastNativeReadError(method) → { method, kind, message, at } for the
+  // most recent FAILED chrome read of that method, or null when its last
+  // read succeeded (or it was never called). Copied on the way out so a
+  // caller cannot mutate the record.
+  window.usernode.getLastNativeReadError = function (method) {
+    var rec = _lastNativeReadErrors[method];
+    if (!rec) return null;
+    return {
+      method: rec.method,
+      kind: rec.kind,
+      message: rec.message,
+      at: rec.at,
+    };
+  };
+
   function callNativeChromeRead(method, args, timeoutMs, fallbackValue) {
     return new Promise(function (resolve) {
       var done = false;
@@ -3975,6 +4060,8 @@
         if (done) return;
         done = true;
         console.log(_BRIDGE_TAG, method, "timed out (old app build?)");
+        recordNativeReadError(method, "timeout",
+          method + " did not respond within " + timeoutMs + "ms");
         resolve(fallbackValue);
       }, timeoutMs);
       callNative(method, args).then(
@@ -3982,6 +4069,7 @@
           if (done) return;
           done = true;
           clearTimeout(timer);
+          delete _lastNativeReadErrors[method];
           resolve(v);
         },
         function (err) {
@@ -3989,6 +4077,9 @@
           done = true;
           clearTimeout(timer);
           console.warn(_BRIDGE_TAG, method, "failed:", err && err.message);
+          recordNativeReadError(
+            method, nativeReadErrorKind(err), err && err.message
+          );
           resolve(fallbackValue);
         }
       );
@@ -3999,13 +4090,22 @@
   // { version: 0, capabilities: [] } outside the app and on old builds,
   // so chrome can always `await` it and gate UI on capabilities
   // (`capabilities.includes('getNodeStatus')` etc), never on version.
+  //
+  // A probe that FAILS inside the app additionally carries
+  // `degraded: true`. The empty shape alone cannot distinguish "this build
+  // has no capabilities" from "the one probe timed out", and treating the
+  // second as the first is how a cold-start hiccup used to disable
+  // privileged calls for the whole document (issue #978). Callers that
+  // latch or cache a negative MUST check `degraded` and re-probe;
+  // callers that only read `capabilities` need no change.
   window.usernode.getBridgeInfo = function () {
     var empty = { version: 0, capabilities: [] };
     if (!window.usernode.isNative) return Promise.resolve(empty);
     return callNativeChromeRead(
-      "getBridgeInfo", {}, _CHROME_PROBE_TIMEOUT_MS, empty
+      "getBridgeInfo", {}, _CHROME_PROBE_TIMEOUT_MS, null
     ).then(function (info) {
-      return info && Array.isArray(info.capabilities) ? info : empty;
+      if (info && Array.isArray(info.capabilities)) return info;
+      return { version: 0, capabilities: [], degraded: true };
     });
   };
 
@@ -4145,11 +4245,21 @@
 
   // getSettingsState() → { buildInfo: { appVersion, buildNumber,
   //   nodeVersion, commitHash, branch }, nodeSleepEnabled, debugMode,
-  //   facematchStrict, termsAccepted, authStatus,
+  //   facematchStrict, authStatus,
   //   permissions: { platform, exactAlarmGranted, batteryOptDisabled,
-  //   deviceManufacturer, iosKeepAliveActive } } or null.
+  //   deviceManufacturer } } or null. (v4 dropped `termsAccepted` — terms
+  //   moved to the session-authed /challenges-api routes — and
+  //   `iosKeepAliveActive` with the iOS keep-alive service.)
+  //
+  // On null, the reason is available out of band from
+  // usernode.getLastNativeReadError("getSettingsState"); SV's Settings
+  // screen renders it rather than a bare "could not load".
   window.usernode.getSettingsState = function () {
-    if (!window.usernode.isNative) return Promise.resolve(null);
+    if (!window.usernode.isNative) {
+      recordNativeReadError("getSettingsState", "not-native",
+        "getSettingsState is only available inside the Usernode mobile app.");
+      return Promise.resolve(null);
+    }
     return callNativeChromeRead(
       "getSettingsState", {}, _SETTINGS_STATE_TIMEOUT_MS, null
     );

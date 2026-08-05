@@ -496,3 +496,144 @@ test('dapp.json covers the settings screen and its deep links', () => {
     }
   }
 });
+
+// ── Usernode-app section: a failed native read is diagnosable ───────────
+//
+// The bridge's chrome reads resolve null on a timeout, on a native
+// rejection AND on a refused privileged handshake alike, so the section
+// used to collapse all of them into one dead-end line with no reason and
+// no way back (issue #978). What is pinned here:
+//   - the failure REASON is rendered from the bridge's out-of-band record,
+//     mapped per `kind`, with the app's own message beside it;
+//   - "Try again" retries in place;
+//   - the blocks that DON'T need the snapshot still render, so a failed
+//     read is not a dead end;
+//   - the auth-status re-attempt is removed as well as added, and bounded.
+// This section is the sanctioned exception to MOVE, DON'T REWRITE: the
+// #settings-usernode-section node ships EMPTY in index.html and is built
+// entirely by settings.js, so its controls are bound per render.
+
+test('the usernode section renders a reason, not just "could not load"', () => {
+  assert.match(settingsJs, /USERNODE_READ_ERROR_REASONS: \{/,
+    'the kind -> sentence map exists');
+  for (const kind of [
+    'timeout', 'rejected', 'probe-inconclusive', 'no-transport', 'not-native',
+  ]) {
+    assert.match(settingsJs, new RegExp(`'${kind}':`),
+      `${kind} has a plain-language sentence`);
+  }
+  assert.match(settingsJs, /USERNODE_READ_ERROR_FALLBACK: '[^']+'/,
+    'an unknown/absent kind still says something concrete');
+  assert.match(settingsJs, /_usernodeReadError\(\)\s*\{/,
+    'the reason is read through one helper');
+  assert.match(settingsJs, /NativeChrome\.lastReadError\('getSettingsState'\)/,
+    'it comes from the shared bridge record, not a settings-local guess');
+  assert.match(settingsJs, /'Could not load Usernode app settings\.'/,
+    'the headline is unchanged so existing reports stay recognisable');
+  assert.match(settingsJs, /font-mono[^']*', *\n? *readError\.message/,
+    "the app's own message is rendered verbatim");
+});
+
+test('the failed read is recoverable in place', () => {
+  const box = settingsJs.slice(
+    settingsJs.indexOf('    _renderUsernodeError(parent, readError, loading) {'),
+    settingsJs.indexOf('    _renderSocialPushSection(section) {'),
+  );
+  assert.ok(box, '_renderUsernodeError exists');
+  assert.match(box, /box\.id = 'settings-usernode-error'/,
+    'the error box has a stable id');
+  assert.match(box, /retry\.id = 'settings-usernode-retry'/,
+    'the retry button has a stable id');
+  assert.match(box, /'Try again'/, 'the retry is offered on the screen');
+  assert.match(box, /_renderUsernodeBody\(readError, true\)/,
+    'a retry swaps the box for a progress line instead of blanking the section');
+  assert.match(box, /await this\._renderUsernodeSection\(\)/,
+    'the retry re-runs the read');
+  // The JS-built ids must NOT be in the static shell — that is what makes
+  // this section the exception to the id-binding rule.
+  for (const id of ['settings-usernode-error', 'settings-usernode-retry']) {
+    assert.doesNotMatch(html, new RegExp(`id="${id}"`),
+      `#${id} is built by settings.js, never shipped in the markup`);
+  }
+});
+
+test('a failed read still leaves the snapshot-independent blocks up', () => {
+  const body = settingsJs.slice(
+    settingsJs.indexOf('    _renderUsernodeBody(readError, loading) {'),
+    settingsJs.indexOf('    _renderUsernodeError(parent, readError, loading) {'),
+  );
+  assert.ok(body, '_renderUsernodeBody takes the failure record');
+  assert.match(body, /if \(!s\) \{\n\s+this\._renderUsernodeError\(/,
+    'the error box replaces ONLY the snapshot-dependent permissions block');
+  // These need no snapshot, so they must not sit behind an `if (s)`.
+  for (const call of [
+    'this._renderSocialPushSection(section);',
+    'this._renderBpSection(section);',
+    'this._renderUsernodeFaq(aboutBox,',
+    "this._openNativeScreen('benchmark',",
+    "this._openNativeScreen('httpLogs',",
+  ]) {
+    assert.ok(body.includes(call), `${call} runs with or without a snapshot`);
+  }
+  // These read the snapshot, so every one of them must be guarded.
+  for (const guarded of [
+    's.nodeSleepEnabled', 's.facematchStrict', 's.debugMode', 's.authStatus',
+  ]) {
+    const at = body.indexOf(guarded);
+    assert.ok(at > -1, `${guarded} still drives its control`);
+    assert.match(body.slice(0, at), /if \(s\) \{|if \(s && /,
+      `${guarded} is only read behind a snapshot guard`);
+  }
+  assert.match(body, /const perms = \(s && s\.permissions\) \|\| \{\}/,
+    'no snapshot means no permission rows, not a TypeError');
+  assert.match(body, /const bi = \(s && s\.buildInfo\) \|\| \{\}/,
+    'the build line simply goes missing without a snapshot');
+});
+
+test('the usernode read is retried once on readiness and never leaks a listener', () => {
+  assert.match(settingsJs, /_armUsernodeAuthStatusRetry\(\)\s*\{/);
+  assert.match(settingsJs, /_clearUsernodeAuthStatusRetry\(\)\s*\{/);
+  const arm = settingsJs.slice(
+    settingsJs.indexOf('    _armUsernodeAuthStatusRetry() {'),
+    settingsJs.indexOf('    _clearUsernodeAuthStatusRetry() {'),
+  );
+  assert.match(arm, /if \(this\._usernodeAuthStatusListener\) return;/,
+    'never double-registers');
+  assert.match(arm, /if \(this\._usernodeAuthRetryUsed\) return;/,
+    'bounded: one re-attempt per mount, not a retry loop');
+  assert.match(arm, /d\.phase !== 'ready'/,
+    'it waits for a ready identity, the same signal native-chrome.js uses');
+  assert.match(arm,
+    /window\.addEventListener\('usernode:auth-status', listener\)/);
+  const clear = settingsJs.slice(
+    settingsJs.indexOf('    _clearUsernodeAuthStatusRetry() {'),
+    settingsJs.indexOf('    _renderUsernodeBody(readError, loading) {'),
+  );
+  assert.match(clear,
+    /window\.removeEventListener\(\n?\s*'usernode:auth-status'/,
+    'the listener is removed, following the social-push discipline');
+  // Removed on a successful read, on close, and reset per mount.
+  const section = settingsJs.slice(
+    settingsJs.indexOf('    async _renderUsernodeSection() {'),
+    settingsJs.indexOf('    _usernodeReadError() {'),
+  );
+  assert.match(section, /this\._clearUsernodeAuthStatusRetry\(\);\n\s+this\._renderUsernodeBody\(\);/,
+    'a successful read stops listening');
+  const close = settingsJs.slice(settingsJs.indexOf('    close() {'));
+  assert.match(close.slice(0, 500), /_clearUsernodeAuthStatusRetry\(\)/,
+    'leaving Settings stops listening');
+  const open = settingsJs.slice(settingsJs.indexOf('    open(section) {'));
+  assert.match(open.slice(0, 900), /_usernodeAuthRetryUsed = false/,
+    'the one re-attempt is offered again on the next visit');
+});
+
+test('only the newest usernode read attempt paints', () => {
+  const section = settingsJs.slice(
+    settingsJs.indexOf('    async _renderUsernodeSection() {'),
+    settingsJs.indexOf('    _usernodeReadError() {'),
+  );
+  assert.match(section, /const token = \+\+this\._usernodeRenderToken;/,
+    'each attempt is tagged');
+  assert.match(section, /if \(token !== this\._usernodeRenderToken\) return;/,
+    'a stale 12s read cannot overwrite a fresher result');
+});
