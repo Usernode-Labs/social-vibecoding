@@ -44,6 +44,9 @@ async function migrate(config) {
   await seedStagingStartScreenSession(pool, config);
   await seedStagingSavedDrafts(pool, config);
   await seedStagingSharedSession(pool, config);
+  // #945: must run AFTER seedStagingSharedSession — the proposal-thread
+  // half hangs off that fixture's session id.
+  await seedStagingDiscussionContext(pool, config);
   // Must run AFTER seedStagingSharedSession — it forks that fixture's rows.
   await seedStagingForkedChat(pool, config);
   await seedStagingCcProgressRun(pool, config);
@@ -5164,6 +5167,117 @@ async function seedStagingQaSession(pool, config) {
     owner: owner.username,
     sessionId,
   });
+}
+
+// #945: discussion-thread context for the bots. The threads themselves
+// (chat_messages) ARE staging-copied, but chat_sessions is
+// staging:private and truncated — so the fixture proposal sessions this
+// file seeds land with no Discussion thread at all, and the
+// proposal-thread half of the feature is unobservable on a staging
+// preview. This seeds both halves of what a bot now reads:
+//
+//   * a proposal thread (thread_type='session') on the shared-session
+//     fixture, with messages from two different people;
+//   * an issue thread (thread_type='issue') on fixture issue #42 — the
+//     same number seedStagingCloneQuestionSuggestions' seed message
+//     names — one message shaped like numbered answers to the bot's
+//     clarifying questions;
+//   * one 'vote' row and one 'system' row in the same threads, which the
+//     loader must EXCLUDE, so a tester can confirm the bot cites the
+//     human messages and not the lifecycle noise.
+//
+// Every message is prefixed "[staging fixture]" so it is recognisable
+// verbatim when the Mayor quotes it back. Idempotent on the first
+// message's content; a strict no-op outside staging.
+async function seedStagingDiscussionContext(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging discussion-context fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const MARKER = '[staging fixture] Can this also cover the mobile header?';
+  const { rows: already } = await pool.query(
+    `SELECT 1 FROM chat_messages WHERE app_id = $1 AND content = $2 LIMIT 1`,
+    [appId, MARKER]
+  );
+  if (already.length) return;
+
+  // Two distinct voices so the rendered block shows real attribution.
+  // The first-admin row is the same owner the other session fixtures
+  // use; 'staging-demo-user' is the synthetic account seeded by
+  // seedStagingSharedSession (which runs earlier).
+  const { rows: adminRows } = await pool.query(
+    `SELECT id, username FROM users ORDER BY is_admin DESC, id ASC LIMIT 1`
+  );
+  if (!adminRows.length) {
+    log.warn('db', 'Staging discussion-context fixture skipped: no users');
+    return;
+  }
+  const admin = adminRows[0];
+  const { rows: demoRows } = await pool.query(
+    'SELECT id FROM users WHERE username = $1', ['staging-demo-user']
+  );
+  // Fall back to the admin when the shared-session fixture didn't run —
+  // attribution is less interesting then, but the block still renders.
+  const other = demoRows[0]?.id || admin.id;
+
+  // The proposal thread hangs off the shared-session fixture's id
+  // (thread_ref for thread_type='session' IS chat_sessions.id).
+  const { rows: sessionRows } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, 'staging-fixture/shared-session']
+  );
+  const sessionId = sessionRows[0]?.id || null;
+
+  const insert = (userId, content, msgType, thread, mins) => pool.query(
+    `INSERT INTO chat_messages
+       (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref, created_at)
+     VALUES ($1, $2, $3, $4, '{}'::jsonb, $5, $6, NOW() - ($7 || ' minutes')::INTERVAL)`,
+    [appId, userId, content, msgType, thread.type, thread.ref, String(mins)]
+  );
+
+  if (sessionId) {
+    // Offsets sit AFTER seedStagingSharedSession's own two thread
+    // comments (-40 / -35 min) so the rendered block reads in one clean
+    // chronological run — the loader orders by id, the way the group-chat
+    // UI does, and a fixture whose ids and timestamps disagree would show
+    // the model a jumbled thread.
+    const t = { type: 'session', ref: sessionId };
+    await insert(admin.id, MARKER, 'message', t, 30);
+    await insert(other,
+      '[staging fixture] Agreed on the mobile header. One worry: the wider cards push the vote buttons below the fold on a phone — worth checking before this merges.',
+      'message', t, 24);
+    await insert(admin.id,
+      '[staging fixture] Good catch — let\'s keep the vote row pinned above the fold and only wrap the title.',
+      'message', t, 18);
+    // Lifecycle noise the thread loader must skip.
+    await insert(null, 'staging-demo-user voted yes on PR #9301 — Staging demo shared session', 'vote', t, 12);
+    await insert(null, 'Staging demo: a system activity row in the proposal thread', 'system', t, 10);
+  } else {
+    log.warn('db', 'Staging discussion-context fixture: shared-session row missing, seeded issue thread only');
+  }
+
+  // The issue thread. #42 is the issue the clone-question fixture's seed
+  // message names, so a tester can follow one number across both.
+  const issueThread = { type: 'issue', ref: 42 };
+  await insert(admin.id,
+    '[staging fixture] Two more things while you\'re in here: the header should stay readable in dark mode, and the change should not touch the desktop layout.',
+    'message', issueThread, 55);
+  await insert(other,
+    '[staging fixture] Answers to your questions:\n1. The app view header, not the platform top bar.\n2. "Nicer" means tidier spacing — no visual refresh.\n3. Yes, ship it behind no flag.',
+    'message', issueThread, 48);
+  await insert(null, 'Staging demo: a system activity row in the issue thread', 'system', issueThread, 45);
+
+  log.info('db', 'Seeded staging discussion-context fixture', { appId, sessionId, issueNumber: 42 });
 }
 
 // #32: reproduces the "session cloned from an auto run that ended in
