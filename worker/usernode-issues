@@ -19,9 +19,15 @@
 #   usernode-issues            list open issues (long bodies clipped with a
 #                              "[truncated — use usernode-issues N for full
 #                              text]" marker)
-#   usernode-issues <number>   that one issue, FULL body (#158) AND its
-#                              comment thread (#396: { issue, comments:
-#                              [{ author, body, createdAt }], commentsTruncated });
+#   usernode-issues <number>   that one issue, FULL body (#158) AND BOTH of
+#                              its discussion surfaces: the GitHub comment
+#                              thread (#396: { issue, comments:
+#                              [{ author, body, createdAt }], commentsTruncated })
+#                              and the issue's Usernode-side Discussion
+#                              thread (#945: usernodeThread /
+#                              usernodeThreadTruncated, present only when
+#                              non-empty — people answer clarifying
+#                              questions there as often as on GitHub);
 #                              also resolves recently-closed issues
 #
 # Endpoints: GET /api/internal/sessions/$SESSION_ID/issues
