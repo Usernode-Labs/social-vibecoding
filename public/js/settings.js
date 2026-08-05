@@ -340,6 +340,9 @@
       Settings._pushedFromMenu = false;
       Settings._menuScrollTop = 0;
       Settings._chromeSuspended = !!(opts && opts.chrome === false);
+      // Per-mount state: the Usernode-app auto-retry is offered once per
+      // visit to Settings, not once per document.
+      Settings._usernodeAuthRetryUsed = false;
       Settings._ensureMediaListener();
       Settings._renderAllSections();
 
@@ -1096,6 +1099,7 @@
       if (input) input.value = '';
       this._stopWalletPolling();
       this._clearAlertsTestCountdown();
+      this._clearUsernodeAuthStatusRetry();
     },
 
     // Clear the "Send a test alert" countdown interval (#138). Idempotent —
@@ -2017,6 +2021,31 @@
     // migration).
 
     _usernodeState: null,
+    // Bumped per read attempt so only the NEWEST one writes to the DOM:
+    // open() can re-render while an earlier 12s read is still in flight,
+    // and the manual retry / auth-status retry can overlap with either.
+    _usernodeRenderToken: 0,
+    _usernodeAuthStatusListener: null,
+    // The auth-status re-attempt is once per mount, not a loop.
+    _usernodeAuthRetryUsed: false,
+
+    // Plain-language reason per bridge failure `kind` (the record from
+    // usernode.getLastNativeReadError). Without this the section could only
+    // ever say "something went wrong": the bridge's chrome reads resolve
+    // null on a timeout, on a native rejection and on a refused privileged
+    // handshake alike, which is exactly what made issue #978 impossible to
+    // diagnose from the device.
+    USERNODE_READ_ERROR_REASONS: {
+      'timeout': 'The Usernode app didn’t respond in time. ' +
+        'It may still be starting up.',
+      'rejected': 'The Usernode app reported an error.',
+      'probe-inconclusive': 'The Usernode app hasn’t re-established ' +
+        'its secure connection for settings. Reopening the app usually ' +
+        'fixes this.',
+      'no-transport': 'This screen can’t reach the Usernode app from here.',
+      'not-native': 'This screen can’t reach the Usernode app from here.',
+    },
+    USERNODE_READ_ERROR_FALLBACK: 'The Usernode app returned no settings.',
 
     async _renderUsernodeSection() {
       const section = document.getElementById('settings-usernode-section');
@@ -2032,27 +2061,68 @@
       }
       section.classList.remove('hidden');
       this._renderNavIfOpen();
+      const token = ++this._usernodeRenderToken;
       if (!this._usernodeState) {
         section.textContent = '';
         section.appendChild(this._unEl('div',
           'mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700 ' +
           'text-xs text-zinc-500', 'Loading Usernode app settings…'));
       }
+      let state = null;
       try {
-        const state = await window.usernode.getSettingsState();
-        if (state) this._usernodeState = state;
+        state = await window.usernode.getSettingsState();
       } catch (err) {
+        // Defensive only: the bridge read resolves a fallback rather than
+        // rejecting, so the reason arrives through the record below.
         console.warn('[settings] getSettingsState failed:', err);
       }
+      // A later attempt already painted — its result is the fresher one.
+      if (token !== this._usernodeRenderToken) return;
+      if (state) this._usernodeState = state;
       if (!this._usernodeState) {
-        section.textContent = '';
-        section.appendChild(this._unEl('div',
-          'mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700 ' +
-          'text-xs text-zinc-500',
-          'Could not load Usernode app settings.'));
+        // The app may simply still be booting; retry itself once it reports
+        // a ready identity, so the section fills in without a tap.
+        this._armUsernodeAuthStatusRetry();
+        this._renderUsernodeBody(this._usernodeReadError());
         return;
       }
+      this._clearUsernodeAuthStatusRetry();
       this._renderUsernodeBody();
+    },
+
+    // Why the snapshot came back empty, straight from the bridge's
+    // out-of-band record. null when the bridge is too old to keep one.
+    _usernodeReadError() {
+      return (window.NativeChrome &&
+        typeof NativeChrome.lastReadError === 'function')
+        ? NativeChrome.lastReadError('getSettingsState')
+        : null;
+    },
+
+    // One re-attempt per mount when the app reports a ready identity: a
+    // Settings screen opened during app start-up is the common way to see
+    // the read fail, and the app announces readiness on this event
+    // (native-chrome.js listens to the same one to start the node).
+    _armUsernodeAuthStatusRetry() {
+      if (this._usernodeAuthStatusListener) return;
+      if (this._usernodeAuthRetryUsed) return;
+      const listener = (e) => {
+        const d = e && e.detail;
+        if (!d || d.phase !== 'ready') return;
+        this._usernodeAuthRetryUsed = true;
+        this._clearUsernodeAuthStatusRetry();
+        this._renderUsernodeSection();
+      };
+      this._usernodeAuthStatusListener = listener;
+      window.addEventListener('usernode:auth-status', listener);
+    },
+
+    _clearUsernodeAuthStatusRetry() {
+      if (!this._usernodeAuthStatusListener) return;
+      window.removeEventListener(
+        'usernode:auth-status', this._usernodeAuthStatusListener
+      );
+      this._usernodeAuthStatusListener = null;
     },
 
     _unEl(tag, className, text) {
@@ -2273,34 +2343,44 @@
         : null;
     },
 
-    _renderUsernodeBody() {
+    // `readError` / `loading` only matter when there is NO snapshot: the
+    // blocks that need one give way to the error box (or a loading line
+    // during a retry), while everything the snapshot has no say over —
+    // activity notifications, block production, Terms, the FAQ, the native
+    // diagnostics screens — still renders. A failed read used to blank the
+    // whole section, turning a transient app hiccup into a dead end.
+    _renderUsernodeBody(readError, loading) {
       const section = document.getElementById('settings-usernode-section');
       const s = this._usernodeState;
-      if (!section || !s) return;
+      if (!section) return;
       section.textContent = '';
-      const perms = s.permissions || {};
+      const perms = (s && s.permissions) || {};
       const isAndroid = perms.platform === 'android';
 
-      // Device permissions — mirrors the native QuickSettingsPanel.
-      const permBox = this._unSection(section, 'Usernode app — device permissions',
-        'Block production needs the app to wake your device at exact slot times.');
-      this._unStatusRow(permBox, isAndroid ? 'Exact alarms' : 'Alarm permissions',
-        !!perms.exactAlarmGranted, 'Granted', 'Not granted');
-      if (!perms.exactAlarmGranted) {
-        this._unButton(permBox, 'Request permissions', () =>
-          this._unApply(window.usernode.requestPermissions()));
-      }
-      if (isAndroid) {
-        this._unStatusRow(permBox, 'Battery optimization',
-          perms.batteryOptDisabled === true, 'Unrestricted', 'Restricted');
-        if (perms.batteryOptDisabled !== true) {
-          this._unButton(permBox, 'Open battery settings', () =>
-            window.usernode.openBatterySettings());
+      if (!s) {
+        this._renderUsernodeError(section, readError, loading);
+      } else {
+        // Device permissions — mirrors the native QuickSettingsPanel.
+        const permBox = this._unSection(section, 'Usernode app — device permissions',
+          'Block production needs the app to wake your device at exact slot times.');
+        this._unStatusRow(permBox, isAndroid ? 'Exact alarms' : 'Alarm permissions',
+          !!perms.exactAlarmGranted, 'Granted', 'Not granted');
+        if (!perms.exactAlarmGranted) {
+          this._unButton(permBox, 'Request permissions', () =>
+            this._unApply(window.usernode.requestPermissions()));
         }
-        if (perms.deviceManufacturer) {
-          permBox.appendChild(this._unEl('p',
-            'text-xs text-zinc-500 dark:text-zinc-500 mt-2',
-            `Device: ${perms.deviceManufacturer}`));
+        if (isAndroid) {
+          this._unStatusRow(permBox, 'Battery optimization',
+            perms.batteryOptDisabled === true, 'Unrestricted', 'Restricted');
+          if (perms.batteryOptDisabled !== true) {
+            this._unButton(permBox, 'Open battery settings', () =>
+              window.usernode.openBatterySettings());
+          }
+          if (perms.deviceManufacturer) {
+            permBox.appendChild(this._unEl('p',
+              'text-xs text-zinc-500 dark:text-zinc-500 mt-2',
+              `Device: ${perms.deviceManufacturer}`));
+          }
         }
       }
       this._renderSocialPushSection(section);
@@ -2309,11 +2389,13 @@
       // deleted from the app.)
 
       // Node.
-      const nodeBox = this._unSection(section, 'Usernode app — node',
-        'The node pauses when the app has been inactive for a while and wakes on your next interaction.');
-      this._unToggle(nodeBox, 'Node sleep on inactivity',
-        s.nodeSleepEnabled !== false,
-        (v) => this._unApply(window.usernode.setNodeSleepEnabled(v)));
+      if (s) {
+        const nodeBox = this._unSection(section, 'Usernode app — node',
+          'The node pauses when the app has been inactive for a while and wakes on your next interaction.');
+        this._unToggle(nodeBox, 'Node sleep on inactivity',
+          s.nodeSleepEnabled !== false,
+          (v) => this._unApply(window.usernode.setNodeSleepEnabled(v)));
+      }
 
       // Block production (onboarding flow alignment): producing blocks is
       // a released capability. The wallet works for dapp transactions
@@ -2321,29 +2403,35 @@
       this._renderBpSection(section);
 
       // Privacy & identity.
-      const privBox = this._unSection(section, 'Usernode app — privacy & identity',
-        'Controls for the ZK passport identity flow.');
-      this._unToggle(privBox, 'Strict facematch',
-        s.facematchStrict !== false,
-        (v) => this._unApply(window.usernode.setFacematchStrict(v)));
-      this._unButton(privBox, 'Restart ZK challenge', async () => {
-        const ok = await PlatformUI.confirm({
-          title: 'Restart the ZK challenge?',
-          message: 'Your in-progress identity registration will be discarded.',
-          confirmLabel: 'Restart',
-          danger: true,
-        });
-        if (!ok) return;
-        await window.usernode.resetZkChallenge();
-        if (window.PlatformUI) PlatformUI.toast('Challenge state reset');
-      }, { danger: true });
+      if (s) {
+        const privBox = this._unSection(section, 'Usernode app — privacy & identity',
+          'Controls for the ZK passport identity flow.');
+        this._unToggle(privBox, 'Strict facematch',
+          s.facematchStrict !== false,
+          (v) => this._unApply(window.usernode.setFacematchStrict(v)));
+        this._unButton(privBox, 'Restart ZK challenge', async () => {
+          const ok = await PlatformUI.confirm({
+            title: 'Restart the ZK challenge?',
+            message: 'Your in-progress identity registration will be discarded.',
+            confirmLabel: 'Restart',
+            danger: true,
+          });
+          if (!ok) return;
+          await window.usernode.resetZkChallenge();
+          if (window.PlatformUI) PlatformUI.toast('Challenge state reset');
+        }, { danger: true });
+      }
 
-      // Diagnostics.
+      // Diagnostics. The two native screens are reachable whether or not
+      // the snapshot loaded — they are exactly what someone debugging a
+      // failed read wants — so only the Debug mode toggle is gated.
       const diagBox = this._unSection(section, 'Usernode app — diagnostics',
         'Debugging tools for the app and its embedded node.');
-      this._unToggle(diagBox, 'Debug mode',
-        s.debugMode === true,
-        (v) => this._unApply(window.usernode.setDebugMode(v)));
+      if (s) {
+        this._unToggle(diagBox, 'Debug mode',
+          s.debugMode === true,
+          (v) => this._unApply(window.usernode.setDebugMode(v)));
+      }
       const diagBtns = this._unEl('div');
       this._unButton(diagBtns, 'Device benchmark', () =>
         this._openNativeScreen('benchmark', 'Could not open the benchmark'));
@@ -2351,9 +2439,10 @@
         this._openNativeScreen('httpLogs', 'Could not open the logs'));
       diagBox.appendChild(diagBtns);
 
-      // About & legal.
+      // About & legal. The build line needs the snapshot; Terms and the FAQ
+      // do not (terms are session-authed web routes).
       const aboutBox = this._unSection(section, 'Usernode app — about & legal');
-      const bi = s.buildInfo || {};
+      const bi = (s && s.buildInfo) || {};
       const buildBits = [];
       if (bi.appVersion) {
         buildBits.push(`App ${bi.appVersion}` +
@@ -2370,7 +2459,7 @@
       // Terms render in a web sheet now (session-authed /challenges-api
       // twins) — the native terms screen is gone. On accept, refresh the
       // usernode snapshot so the label flips without reopening Settings.
-      this._unButton(termsRow, s.termsAccepted === false
+      this._unButton(termsRow, (s && s.termsAccepted === false)
         ? 'Review terms (not yet accepted)' : 'Terms', () =>
         this.showTermsSheet(() => this._renderUsernodeSection()));
       aboutBox.appendChild(termsRow);
@@ -2386,13 +2475,51 @@
       // from the still-live web session — and the main "Log out" at the
       // top of this modal already tears down both sides at once. Only
       // the not-yet-authenticated hint remains.
-      if (s.authStatus !== 'authenticated') {
+      if (s && s.authStatus !== 'authenticated') {
         const acctBox = this._unSection(section, 'Usernode app — account');
         acctBox.appendChild(this._unEl('p',
           'text-xs text-zinc-500 dark:text-zinc-400',
           'The app signs in automatically with your platform account. ' +
           'If this message persists, try closing and reopening the app.'));
       }
+    },
+
+    // The snapshot-failure box: the unchanged headline (so existing reports
+    // stay recognisable), the mapped reason, the app's own message, and a
+    // retry that stays on this screen. `loading` renders the in-place
+    // progress line a retry swaps in, leaving the rest of the section up.
+    _renderUsernodeError(parent, readError, loading) {
+      const box = this._unEl('div',
+        'mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700');
+      box.id = 'settings-usernode-error';
+      if (loading) {
+        box.appendChild(this._unEl('p', 'text-xs text-zinc-500',
+          'Loading Usernode app settings…'));
+        parent.appendChild(box);
+        return box;
+      }
+      box.appendChild(this._unEl('p',
+        'text-sm font-bold text-red-600 dark:text-red-400',
+        'Could not load Usernode app settings.'));
+      const kind = readError && readError.kind;
+      box.appendChild(this._unEl('p',
+        'text-xs text-zinc-500 dark:text-zinc-400 mt-1',
+        this.USERNODE_READ_ERROR_REASONS[kind] ||
+          this.USERNODE_READ_ERROR_FALLBACK));
+      if (readError && readError.message) {
+        box.appendChild(this._unEl('p',
+          'text-xs font-mono text-zinc-500 dark:text-zinc-500 mt-1 break-words',
+          readError.message));
+      }
+      const retry = this._unButton(box, 'Try again', async () => {
+        // Swap this box for the progress line and re-read; the rest of the
+        // section (notifications, block production, Terms, FAQ) stays put.
+        this._renderUsernodeBody(readError, true);
+        await this._renderUsernodeSection();
+      });
+      retry.id = 'settings-usernode-retry';
+      parent.appendChild(box);
+      return box;
     },
 
     _renderSocialPushSection(section) {
