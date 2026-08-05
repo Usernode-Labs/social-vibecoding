@@ -1092,3 +1092,71 @@ function HomeLayoutBreakpoint() {
   const m = LAYOUT_SRC.match(/BREAKPOINT_PX:\s*(\d+)/);
   return m ? Number(m[1]) : null;
 }
+
+// ── The staging demo tiles are placed, not dropped ────────────────────
+//
+// GET /api/apps?demo=1 injects two read-only demo tiles, and the ?demo=1
+// layout places them on the grid on purpose — that route exists so a
+// reviewer signed in as ANY cloned identity sees the feature. But they are
+// neither favourited nor collaborations, so partitionApps rightly leaves
+// them out of "Your apps", and repair() drops whatever presentIds() does
+// not list. The demo route's whole subject was being deleted from it before
+// the first paint: a reviewer with no apps of their own got three widgets
+// on an otherwise bare grid, and every dapp.json check that selects an app
+// tile at ?demo=1 failed on a screen that looked deliberate.
+//
+// The spec's rule is that [data-demo] tiles are "excluded from the drag but
+// placed by the layout like anything else" — the recognizer's own
+// `:not([data-demo])` selector is what excludes them, not their absence.
+
+test('demo tiles count as present, so repair() keeps them on the grid', () => {
+  const { Home } = makeHome();
+  Home._apps = [
+    app('mine', { is_favorited: true }),
+    { ...app('demo-emoji'), demo: true, is_collaborator: false },
+    { ...app('demo-image'), demo: true, is_collaborator: false },
+  ];
+  const ids = Home.presentIds();
+  assert.ok(ids.includes('app:mine'));
+  assert.ok(ids.includes('app:demo-emoji'), 'a demo tile is present');
+  assert.ok(ids.includes('app:demo-image'));
+  // Listed exactly once — a demo tile that were ALSO yours must not appear
+  // twice, or repair() would try to place the same item two ways.
+  assert.equal(ids.filter((i) => i === 'app:demo-emoji').length, 1);
+});
+
+test('a demo tile that IS yours is listed once, not twice', () => {
+  const { Home } = makeHome();
+  Home._apps = [{ ...app('both', { is_favorited: true }), demo: true }];
+  const ids = Home.presentIds().filter((i) => i === 'app:both');
+  assert.deepEqual([...ids], ['app:both']);
+});
+
+test('the demo layout survives repair for a viewer with no apps of their own', () => {
+  const { Home, HomeLayout } = makeHome();
+  // Exactly the ?demo=1 shape: two demo tiles and the widgets, nothing the
+  // viewer owns.
+  Home._apps = [
+    { ...app('staging-demo-emoji-icon'), demo: true, is_collaborator: false },
+    { ...app('staging-demo-image-icon'), demo: true, is_collaborator: false },
+  ];
+  Home._layouts = {
+    4: [
+      { type: 'app', slug: 'staging-demo-emoji-icon', col: 0, row: 0 },
+      { type: 'app', slug: 'staging-demo-image-icon', col: 3, row: 0 },
+      { type: 'widget', key: 'discover', col: 0, row: 1 },
+      { type: 'widget', key: 'challenges', col: 0, row: 4 },
+      { type: 'widget', key: 'create', col: 3, row: 6 },
+    ],
+    5: [],
+  };
+  Home._layoutFetchedAt = Date.now();
+  Home._layoutIsDemo = true;
+
+  const layout = Home.currentLayout(4);
+  const ids = layout.map((i) => HomeLayout.idOf(i));
+  assert.ok(ids.includes('app:staging-demo-emoji-icon'),
+    'the demo route still shows the tiles it exists to show');
+  assert.ok(ids.includes('app:staging-demo-image-icon'));
+  assert.equal(layout.filter((i) => i.type === 'app').length, 2);
+});

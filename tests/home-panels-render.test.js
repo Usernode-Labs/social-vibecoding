@@ -52,22 +52,61 @@ function makeSection() {
         if (on) makeSection._last._classes.add(c);
         else makeSection._last._classes.delete(c);
       },
+      // The slot path clears and hides the section before painting the
+      // hosts, so both spellings have to exist on the stub.
+      add: (c) => makeSection._last._classes.add(c),
+      remove: (c) => makeSection._last._classes.delete(c),
+      contains: (c) => makeSection._last._classes.has(c),
     },
     querySelectorAll: () => [],
     querySelector: () => null,
   };
 }
 
-function makeHomePanels({ user = { id: 1, isAdmin: false }, search = '' } = {}) {
+// A `[data-panel-slot]` host, the shape Home.render() plants in #app-list.
+// Tracks the attributes render() stamps on it so the "state on the HOST"
+// contract can be asserted (see _stampState).
+function makeSlot(key) {
+  const attrs = { 'data-panel-slot': key };
+  const slot = {
+    dataset: { panelSlot: key },
+    innerHTML: '',
+    attrs,
+    classList: { toggle: () => {}, add: () => {}, remove: () => {}, contains: () => false },
+    setAttribute: (n, v) => { attrs[n] = v; },
+    getAttribute: (n) => (n in attrs ? attrs[n] : null),
+    hasAttribute: (n) => n in attrs,
+    removeAttribute: (n) => { delete attrs[n]; },
+    // Good enough for the one lookup _stampState does: find the inner
+    // element carrying data-create-enabled, reading it out of the HTML.
+    querySelector: (sel) => {
+      if (sel !== '[data-create-enabled]') return null;
+      const m = /data-create-enabled="([^"]*)"/.exec(slot.innerHTML);
+      return m ? { getAttribute: () => m[1] } : null;
+    },
+    querySelectorAll: () => [],
+    addEventListener: () => {},
+  };
+  return slot;
+}
+
+function makeHomePanels({
+  user = { id: 1, isAdmin: false }, search = '', home = null, slots = null,
+} = {}) {
   const section = makeSection();
   makeSection._last = section;
   const sandbox = {
     console,
     App: { user },
+    // Only when a test asks for it — the default keeps every existing test
+    // exercising the module with no Home on the window, exactly as before.
+    ...(home ? { Home: home } : {}),
     document: {
       getElementById: (id) => (id === 'home-panels' ? section : null),
       querySelector: () => null,
-      querySelectorAll: () => [],
+      querySelectorAll: (sel) => (
+        sel === '[data-panel-slot]' && slots ? slots : []
+      ),
       addEventListener: () => {},
     },
     fetch: async () => ({ ok: false, json: async () => ({}) }),
@@ -1143,4 +1182,125 @@ test('Settings offers the Home screen widgets section under Preferences', () => 
 
 test('the per-user hidden set defaults to "everything visible"', () => {
   assert.match(SCHEMA, /home_panels_hidden TEXT\[\] NOT NULL DEFAULT '\{\}'/);
+});
+
+// ── The widgets can actually SEE Home ─────────────────────────────────
+//
+// home-panels.js reads the Home module through `window.Home && …` — the
+// same defensive shape it uses for `window.App`. `const Home = {…}` at the
+// top of a classic script lands in the global LEXICAL scope, which is NOT
+// `window`, so unless home.js publishes itself every one of those guards
+// takes the "not loaded" branch — silently, forever. That shipped: the
+// Discover widget always drew its empty-state note instead of the curated
+// tiles, and the Create widget always drew LOCKED regardless of quota.
+//
+// Nothing threw and nothing logged, which is exactly why it needs a test.
+
+test('every window.<global> the widgets read is actually published', () => {
+  // Derive the list from the source rather than hard-coding it, so a NEW
+  // `window.Whatever` guard added later is covered the day it lands.
+  const referenced = new Set(
+    Array.from(SRC.matchAll(/\bwindow\.([A-Z][A-Za-z0-9_]*)/g), (m) => m[1])
+  );
+  assert.ok(referenced.has('Home'), 'the module does read window.Home');
+
+  // Every browser module the shell ships, so the publisher can be anywhere.
+  const shell = fs.readdirSync(path.join(__dirname, '..', 'public/js'))
+    .filter((f) => f.endsWith('.js'))
+    .map((f) => read(`public/js/${f}`))
+    .join('\n');
+
+  for (const name of referenced) {
+    assert.match(shell, new RegExp(`window\\.${name}\\s*=`),
+      `home-panels.js guards on window.${name}, but nothing assigns it — `
+      + 'that guard can only ever take the "missing" branch');
+  }
+});
+
+test('the Discover widget renders the curated tiles when Home is reachable', () => {
+  const featured = [
+    { slug: 'alpha', name: 'Alpha', icon_emoji: '🅰', featured: true },
+    { slug: 'beta', name: 'Beta', featured: true },
+  ];
+  const { HP } = makeHomePanels({
+    home: { featuredApps: () => featured, isYours: () => false, _apps: featured },
+  });
+  const html = HP.renderDiscoverPanel({ key: 'discover', title: 'Discover' });
+  assert.match(html, /home-discover-tiles/, 'the tile row, not the empty note');
+  assert.match(html, /class="app-card home-discover-tile[^"]*" data-slug="alpha"/);
+  assert.match(html, /Browse all apps/, 'and the footer is always there');
+  assert.doesNotMatch(html, /Nothing featured right now/);
+
+  // With Home genuinely absent it still renders — the note, not a crash.
+  const bare = makeHomePanels().HP
+    .renderDiscoverPanel({ key: 'discover', title: 'Discover' });
+  assert.match(bare, /Nothing featured right now/);
+  assert.match(bare, /Browse all apps/);
+});
+
+test('the Create widget reads the viewer’s quota through Home', () => {
+  const enabled = makeHomePanels({ home: { canCreate: () => true } }).HP
+    .renderCreatePanel({ key: 'create' });
+  assert.match(enabled, /data-create-enabled="true"/);
+  assert.doesNotMatch(enabled, /aria-disabled/);
+
+  const locked = makeHomePanels({ home: { canCreate: () => false } }).HP
+    .renderCreatePanel({ key: 'create' });
+  assert.match(locked, /data-create-enabled="false"/);
+  assert.match(locked, /aria-disabled="true"/);
+  assert.doesNotMatch(locked, /\sdisabled[=\s>]/, 'never the disabled ATTRIBUTE');
+});
+
+// The state has to end up on the HOST. The widget stamps it on markup that
+// is painted INSIDE the [data-panel-slot] host, so a selector written the
+// way the spec describes it — and the way the dapp.json checks and the
+// screenshot assertions write it —
+// `[data-panel-slot="create"][data-create-enabled="true"]` asks for both
+// attributes on ONE element and matched nothing at all.
+test('render() mirrors the create state onto the [data-panel-slot] host', () => {
+  const slot = makeSlot('create');
+  const { HP } = makeHomePanels({ home: { canCreate: () => true }, slots: [slot] });
+  HP._data = { registry: [{ key: 'create', title: 'Create app', removable: true }],
+    hidden: [], panels: [{ key: 'create', title: 'Create app' }] };
+  HP.render();
+  assert.equal(slot.getAttribute('data-create-enabled'), 'true',
+    'the host carries the state the checks select on');
+  assert.match(slot.innerHTML, /class="home-create-btn/);
+
+  const locked = makeSlot('create');
+  const h2 = makeHomePanels({ home: { canCreate: () => false }, slots: [locked] });
+  h2.HP._data = { registry: [{ key: 'create', title: 'Create app', removable: true }],
+    hidden: [], panels: [{ key: 'create', title: 'Create app' }] };
+  h2.HP.render();
+  assert.equal(locked.getAttribute('data-create-enabled'), 'false');
+
+  // A widget with no such state leaves the host clean rather than inheriting
+  // a stale value from a previous paint.
+  const other = makeSlot('challenges');
+  other.setAttribute('data-create-enabled', 'true');
+  const h3 = makeHomePanels({ slots: [other] });
+  h3.HP._data = { registry: [{ key: 'challenges', title: 'Challenges', removable: true }],
+    hidden: [], panels: [{ key: 'challenges', title: 'Challenges', challenges: [], total: 0 }] };
+  h3.HP.render();
+  assert.equal(other.hasAttribute('data-create-enabled'), false);
+});
+
+// The three selectors the checks actually run, asserted against the exact
+// strings in dapp.json so a markup change and the check can't drift apart.
+test('dapp.json’s home-widget checks describe markup this module emits', () => {
+  const declared = JSON.parse(read('dapp.json')).tests || [];
+  const find = (frag) => declared.find((t) => (t.expectSelector || '').includes(frag));
+
+  const create = find('[data-panel-slot="create"][data-create-enabled="true"]');
+  assert.ok(create, 'the enabled-create check is declared');
+  assert.match(create.expectSelector, /\.home-create-btn/);
+  assert.match(makeHomePanels({ home: { canCreate: () => true } }).HP
+    .renderCreatePanel({ key: 'create' }), /class="home-create-btn/);
+
+  const discover = find('[data-panel-slot="discover"]');
+  assert.ok(discover, 'the discover check is declared');
+  // Its selector names the two classes the tile row must carry.
+  for (const cls of ['home-panel', 'home-discover-tiles', 'app-card']) {
+    assert.ok(discover.expectSelector.includes(cls), cls);
+  }
 });

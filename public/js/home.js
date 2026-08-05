@@ -290,6 +290,18 @@ const Home = {
   presentIds() {
     const { yours } = Home.partitionApps(Home._apps || []);
     const ids = yours.map((a) => `app:${a.slug}`);
+    // Staging's request-time demo tiles (?demo=1, src/routes/apps.js) are
+    // NOT favourites and NOT collaborations, so partitionApps rightly leaves
+    // them out of "Your apps" — but the ?demo=1 layout places them on the
+    // grid on purpose, and repair() drops any item that isn't present. The
+    // result was a demo route whose whole point is showing the grid rendering
+    // a grid with the demo tiles silently removed: for a viewer with no apps
+    // of their own that left nothing but the three widgets. They are placed
+    // like anything else (the spec's rule); only the DRAG excludes them,
+    // which the recognizer's `:not([data-demo])` selector already handles.
+    for (const app of Home._apps || []) {
+      if (app && app.demo && !Home.isYours(app)) ids.push(`app:${app.slug}`);
+    }
     for (const key of (window.HomePanels?.gridSlotKeys?.() || [])) ids.push(`widget:${key}`);
     return ids;
   },
@@ -2880,6 +2892,20 @@ const Home = {
     if (opts && opts.version) app.version = opts.version;
   },
 };
+
+// `const Home` at the top of a classic script lands in the GLOBAL LEXICAL
+// scope, which is NOT `window` — so `window.Home` is undefined even though
+// bare `Home` resolves fine. home-panels.js guards nine call sites on
+// `window.Home && …` (the same defensive shape it uses for `window.App` and
+// that app.js satisfies with `window.App = App`), and every one of them was
+// silently taking the "Home isn't loaded" branch forever: the Discover
+// widget always rendered its empty-state note instead of the curated tiles,
+// the Create widget always rendered LOCKED regardless of quota, the discover
+// tiles and the create button were never wired, and hiding a widget never
+// reloaded the grid. None of it threw — the guards are exactly what made it
+// silent. Publishing Home the way App and HomePanels publish themselves is
+// what makes those guards mean what they read as.
+window.Home = Home;
 
 function escapeHtml(str) {
   const div = document.createElement('div');

@@ -239,6 +239,7 @@ const HomePanels = {
         const html = panel ? HomePanels.renderPanel(panel) : '';
         slot.innerHTML = html;
         slot.classList.toggle('hidden', !html);
+        HomePanels._stampState(slot);
         if (html) HomePanels._wire(slot);
       }
       return;
@@ -248,6 +249,25 @@ const HomePanels = {
     section.innerHTML = html;
     section.classList.toggle('hidden', !html);
     if (html) HomePanels._wire(section);
+  },
+
+  // Lift a widget's own state attribute onto its HOST.
+  //
+  // The create widget stamps `data-create-enabled` on the markup it returns,
+  // but that markup is painted INSIDE the `[data-panel-slot]` host — so a
+  // selector written the way the spec describes it ("stamped on the host"),
+  // and the way the dapp.json checks and screenshot assertions write it,
+  // `[data-panel-slot="create"][data-create-enabled="true"]`, asks for both
+  // attributes on ONE element and matches nothing. Mirroring the value up is
+  // cheaper and less brittle than teaching every caller the two-element
+  // shape, and it keeps the widget itself the single place that decides.
+  _stampState(host) {
+    if (!host || !host.querySelector) return;
+    const inner = host.querySelector('[data-create-enabled]');
+    if (inner) host.setAttribute('data-create-enabled', inner.getAttribute('data-create-enabled'));
+    else if (host.hasAttribute && host.hasAttribute('data-create-enabled')) {
+      host.removeAttribute('data-create-enabled');
+    }
   },
 
   // Every widget the grid should place for this viewer, in registry order:
