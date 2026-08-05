@@ -117,11 +117,13 @@ const HomeLayout = {
   // only way the page above the fold actually gets that space.
   FIT_KEYS: new Set(['challenges']),
 
-  // PHONE ONLY. At five columns the widget is a tile among app icons and a
-  // short row would leave a notch beside its neighbours; at four it spans the
-  // whole width, so the row is exclusively its own and shrinking it costs
-  // nothing but gives the page back real estate.
-  FIT_COLS: 4,
+  // The PHONE column count, and the gate on every rule that shortens a row
+  // (fitRows below, blankRows after it). One number, one comment: at five
+  // columns a row is shared between widgets and app icons, so a short row
+  // would leave a notch beside its neighbours; at four a full-width widget
+  // owns its row outright and an empty row is nobody's, so shrinking either
+  // costs nothing and gives the page back real estate.
+  PHONE_COLS: 4,
 
   // Which rows of this layout may size to their content, as a Set of row
   // indices. Pure: no DOM, no CSS, no measurement — the caller turns these
@@ -137,12 +139,13 @@ const HomeLayout = {
   //     status painting over the tile below. On a phone a fit widget is
   //     4-of-4 columns wide so it never shares a row, but stating the rule
   //     this way keeps it correct the day one is narrower.
-  //   * "at least one item" keeps HOLES at full height. Nothing here re-packs
-  //     a layout and nothing here collapses a gap: an empty row is a cell the
-  //     viewer chose to leave empty, and it is also a cell they can drop into.
+  //   * "at least one item" is what keeps this rule about CONTENT. An empty
+  //     row has no content to size to, so it is not a fit row and never
+  //     appears here — blankRows() below is the rule that governs its height,
+  //     and the two sets are disjoint by construction.
   fitRows(layout, cols) {
     const rows = new Set();
-    if (Number(cols) !== HomeLayout.FIT_COLS) return rows;
+    if (Number(cols) !== HomeLayout.PHONE_COLS) return rows;
     const disqualified = new Set();
     for (const item of layout || []) {
       if (!item || item.row >= HomeLayout.MAX_ROWS) continue; // overflow, off-canvas
@@ -156,6 +159,50 @@ const HomeLayout = {
       }
     }
     for (const row of disqualified) rows.delete(row);
+    return rows;
+  },
+
+  // ── Blank rows (#975) ──────────────────────────────────────────────
+  //
+  // A row with NOTHING in it draws at half a cell on a phone. Same
+  // containment as fit rows above, and for the same reason: this is a pixel
+  // height Home.render() writes into one grid track, nothing more. The model
+  // still answers in whole cells, occupancy/place/repair/reflow are untouched,
+  // and no stored position is rewritten on any device.
+  //
+  // HOLES ARE STILL THE POINT. This does not re-pack, collapse or tidy
+  // anything — the empty row stays exactly where the viewer left it and stays
+  // a cell they can drop into. It simply stops reserving a whole tile's worth
+  // of vertical space to do it: on the default phone arrangement (Challenges,
+  // one app row, two gaps, Discover, Create app) that is ~116px of the page
+  // handed back, which is the difference between the last widget sitting above
+  // the fold and below it.
+  //
+  // A row qualifies iff it is ON the emitted template (0 <= row <=
+  // lastOccupiedRow) and NO on-canvas item overlaps it.
+  //
+  //   * "no item overlaps it" is why a PARTLY empty row does not qualify. A
+  //     row holding one tile and three gaps is a full row — the tile in it
+  //     needs its whole cell, caption lane included.
+  //   * bounding at lastOccupiedRow is what keeps the TRAILING rows out.
+  //     They are not in the template at all (the grid ends at the last placed
+  //     item), so naming them could only push rowTemplate into declaring the
+  //     whole eight-row canvas — the very thing that would pad a three-app
+  //     home screen out with a tail of empty tracks.
+  blankRows(layout, cols) {
+    const rows = new Set();
+    if (Number(cols) !== HomeLayout.PHONE_COLS) return rows;
+    const last = HomeLayout.lastOccupiedRow(layout, cols);
+    if (last < 0) return rows;
+    const occupied = new Set();
+    for (const item of layout || []) {
+      if (!item || item.row >= HomeLayout.MAX_ROWS) continue; // overflow, off-canvas
+      const [, h] = HomeLayout.sizeOf(item, cols);
+      for (let dy = 0; dy < h; dy++) occupied.add(item.row + dy);
+    }
+    for (let row = 0; row <= last; row++) {
+      if (!occupied.has(row)) rows.add(row);
+    }
     return rows;
   },
 

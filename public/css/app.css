@@ -511,6 +511,17 @@ html, body {
      Budgeting for it is what keeps an errored app legible instead of
      bleeding into its neighbour. */
   --home-cell-h: 7.75rem; /* 124px — see the derivation above */
+  /* ONE EMPTY ROW on a phone (#975). Half a cell — 58px against the phone's
+     116px — so a row the viewer left empty keeps its place in the arrangement
+     without reserving a whole tile to be empty. DERIVED from the cell rather
+     than written out, so the two can never drift.
+
+     Emitted by Home.rowTemplate for the rows HomeLayout.blankRows names, and
+     only at four columns; the :root value here (62px) is never used, since a
+     desktop grid gets no inline template at all. A variable and not an inline
+     calc() because every track in that template has to stay a single
+     space-free token — see rowTemplate. */
+  --home-blank-row-h: calc(var(--home-cell-h) / 2);
   --home-panel-max-h: 16rem; /* two cells + the gap — see --home-cell-h */
   --home-panel-max-w: 32rem; /* half of .home-column's 64rem */
   --home-panel-row-h: 2.5rem; /* 40px — see the budget above */
@@ -768,22 +779,36 @@ html, body {
    results" header and empty-state line would each claim a whole tile row
    under a fixed height. Home.render() stamps data-view on the grid.
 
-   ON A PHONE THIS IS THE DEFAULT ROW HEIGHT, NOT EVERY ROW'S (#968).
+   ON A PHONE THIS IS THE DEFAULT ROW HEIGHT, NOT EVERY ROW'S (#968, #975).
    Home.render() writes an inline `grid-template-rows` below 640px — one
-   entry per occupied row, `var(--home-cell-h)` for almost all of them and a
-   content-sized `minmax(floor, auto)` for a row a FIT widget owns outright
-   (HomeLayout.fitRows; challenges only today). Without it the between-seasons
-   widget drew a ~68px box inside a 116px reservation and handed the other
-   ~48px to nobody: a grid item cannot shrink a fixed track, so shrinking the
-   BOX was never going to shrink the PAGE.
-   Three things that rule deliberately does not do: it never shrinks a row
+   entry per occupied row, `var(--home-cell-h)` for most of them plus two
+   exceptions:
+
+     * a content-sized `minmax(floor, auto)` for a row a FIT widget owns
+       outright (HomeLayout.fitRows; challenges only today). Without it the
+       between-seasons widget drew a ~68px box inside a 116px reservation and
+       handed the other ~48px to nobody: a grid item cannot shrink a fixed
+       track, so shrinking the BOX was never going to shrink the PAGE.
+     * `var(--home-blank-row-h)` — half a cell — for a row with NOTHING in it
+       (HomeLayout.blankRows). Same reasoning one step further: an empty row
+       was spending a whole tile's height on nothing, and on the default phone
+       arrangement there are two of them between the app tiles and the lower
+       widgets.
+
+   Note what shrinking a blank row is NOT: nothing re-packs, nothing collapses,
+   nothing is tidied away. The row keeps its index, keeps its place in the
+   arrangement and stays a drop target — a hole is still an arrangement the
+   viewer chose. Only its pixel height changes, and only on a phone.
+
+   Two things the rule deliberately does not do: it never shrinks a row
    holding an app tile (a card with no status caption is ~100px, and that lane
-   is load-bearing — see --home-cell-h), it never collapses an empty row (a
-   hole is an arrangement the viewer chose, and a cell they can drop into),
-   and it never emits more entries than there are occupied rows (an explicit
-   grid exists whether or not anything is in it, so eight entries would pad a
-   three-app home screen out to ~950px). Desktop gets no template at all and
-   this token is still the whole story there. */
+   is load-bearing — see --home-cell-h), which is also why a PARTLY empty row
+   stays full; and it never emits more entries than there are occupied rows (an
+   explicit grid exists whether or not anything is in it, so eight entries
+   would pad a three-app home screen out to ~950px — which is likewise why the
+   trailing empty rows below the last tile are not in the template and have
+   nothing to shrink). Desktop gets no template at all and this token is still
+   the whole story there. */
 #app-list {
   position: relative;
   grid-auto-rows: var(--home-cell-h);
@@ -804,10 +829,14 @@ html, body {
    as the tiles it sits behind.
 
    The row height below is the DEFAULT and the padding for rows past the
-   content (#968). Since a phone row can now be shorter than a cell,
+   content (#968, #975). Since a phone row can now be shorter than a cell —
+   content-sized for a fit widget, half a cell for an empty row —
    Home._showGridOverlay copies #app-list's USED tracks
-   (getComputedStyle → "116px 67.5px …") onto this element inline and pads
-   them out to the eight-row canvas with this token. Copied rather than
+   (getComputedStyle → "116px 67.5px 58px …") onto this element inline and pads
+   them out to the eight-row canvas with this token. The padded rows stay a
+   FULL cell on purpose: they are past the template, so they are the drag-only
+   region below the content, where there is no page height to reclaim and a big
+   drop target is worth more. Copied rather than
    re-derived on purpose: one element decides the row heights and the other
    reads its answer, so the two grids cannot disagree. In pixels, too — the
    cells here are empty divs, so a content-sized track would collapse to
