@@ -101,6 +101,10 @@ async function migrate(config) {
   // failing verdict onto an existing staging proposal.
   await seedStagingPlatformEnv(pool, config);
   await seedStagingTopochain(pool, config);
+  // Must run AFTER seedStagingTopochain (it decorates the same three viewer
+  // identities) and AFTER seedStagingLeaderboardProfile (it decorates that
+  // seed's 900001 / 900002 fixture accounts).
+  await seedStagingProfileCustomization(pool, config);
   await sweepInterruptedDbExports(pool);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
@@ -8749,6 +8753,156 @@ async function seedStagingTopochain(pool, config) {
   }
 }
 
+// Profile customization fixtures (issue #982).
+//
+// TWO of the three "missing in staging" categories apply here:
+//   1. `user_avatars` is a brand-new table — the boot migration creates it
+//      EMPTY in every staging clone, so without this seed the profile
+//      screen, the drawer row and the edit sheet all show the
+//      initial-circle fallback and the image path is never exercised.
+//   2. `users.bio` is new for the same reason, and `display_name` is null
+//      for most cloned accounts (production: 71 of 299), so the identity
+//      card would render as a bare @handle with nothing under it.
+//
+// The COMPLETED-CHALLENGES half needs no new activity rows:
+// seedStagingTopochain above already credits every viewer identity across
+// a deliberate mix — binary done (900500/900501/900511), numeric done
+// (900514, 5 of 5) and numeric NOT done (900512 at 3 of 8, 900513 at
+// 3 of 5) — which is exactly the regression coverage the per-user done
+// rule needs on screen. Those challenges sit on EVENT_REGULAR_ID inside
+// SEASON_ID, the season fetchProfileSeason resolves.
+//
+// Avatar bytes are inline base64 16x16 solid-colour PNGs (79 bytes each):
+// enough to prove GET /avatars/:id serves real image bytes with the right
+// content type, small enough to keep the migration cheap. Ids are fixed so
+// re-running the seed on every staging boot is a no-op.
+// The size/digest the real upload route records, derived from the same
+// bytes rather than hardcoded beside them — a fixture whose metadata
+// disagreed with its BYTEA would be a trap for whoever reads the table
+// next.
+function pngBytes(b64) {
+  return Buffer.from(b64, 'base64').length;
+}
+function pngSha256(b64) {
+  return crypto.createHash('sha256').update(Buffer.from(b64, 'base64')).digest('hex');
+}
+
+async function seedStagingProfileCustomization(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  // 16x16 solid PNGs. Distinct colours so three seeded viewers are
+  // visually distinguishable in a screenshot.
+  const PNG_VIOLET = 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mOosXpLEmIY1TCqYfhqAABPn6MQ2bsByAAAAABJRU5ErkJggg==';
+  const PNG_TEAL = 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mPgndJBEmIY1TCqYfhqAABqqikQLgE1SQAAAABJRU5ErkJggg==';
+  const PNG_AMBER = 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mO4Wc5GEmIY1TCqYfhqAACkxFYQZWitdgAAAABJRU5ErkJggg==';
+
+  try {
+    // ─── The viewer identities a tester's eyes look through ────────────
+    // Same three the topochain seed grants challenge activity to: the
+    // interactive admin login, plus the two capture identities
+    // (screenshots sign as usernode-capture, declared dapp.json tests as
+    // usernode-capture-admin — see services/visuals.js), so the /#profile
+    // check and the before/after shots both render the POPULATED card
+    // rather than the empty one.
+    //
+    // Resolved by username, not by fixed id, because these rows are
+    // created by seedAdmin() / the capture bootstrap with serial ids.
+    // Avatar ids are keyed off each name's POSITION in the list so a
+    // viewer's id never shifts when another identity appears or
+    // disappears between boots.
+    const VIEWER_USERNAMES = [
+      config.adminUsername, 'usernode-capture', 'usernode-capture-admin',
+    ];
+    const VIEWER_PNGS = [PNG_VIOLET, PNG_TEAL, PNG_AMBER];
+    // Fixed 32-hex ids in an obviously-synthetic block — the real route
+    // generates random ones, but a seed must be idempotent.
+    const VIEWER_AVATAR_IDS = [
+      'a0a0a0a0a0a0a0a0a0a0a0a0a0a05201',
+      'a0a0a0a0a0a0a0a0a0a0a0a0a0a05202',
+      'a0a0a0a0a0a0a0a0a0a0a0a0a0a05203',
+    ];
+
+    const { rows: viewerRows } = await pool.query(
+      'SELECT id, username FROM users WHERE username = ANY($1::text[])',
+      // Filtered for the lookup only — the slot arithmetic below still
+      // indexes into the unfiltered list, so an unset adminUsername
+      // shifts nobody's avatar id.
+      [VIEWER_USERNAMES.filter(Boolean)]
+    );
+
+    for (const viewer of viewerRows) {
+      const slot = VIEWER_USERNAMES.indexOf(viewer.username);
+      if (slot < 0) continue;
+      // COALESCE, not a bare assignment: a staging clone may already
+      // carry a real display name / handle from production, and the
+      // fixture must never clobber it.
+      await pool.query(
+        `UPDATE users
+            SET display_name = COALESCE(display_name, $2),
+                bio          = COALESCE(bio, $3),
+                github       = COALESCE(github, 'staging-demo'),
+                x            = COALESCE(x, 'staging_demo'),
+                updated_at   = NOW()
+          WHERE id = $1`,
+        [viewer.id, `[Staging demo] ${viewer.username}`,
+         '[Staging demo] Building the platform from inside the platform. ' +
+         'This bio is fixture text, not a real person’s words.']
+      );
+      const png = VIEWER_PNGS[slot];
+      await pool.query(
+        `INSERT INTO user_avatars (id, user_id, content_type, size_bytes, data, sha256)
+         VALUES ($1, $2, 'image/png', $4, decode($3, 'base64'), $5)
+         ON CONFLICT (user_id) DO NOTHING`,
+        [VIEWER_AVATAR_IDS[slot], viewer.id, png, pngBytes(png), pngSha256(png)]
+      );
+    }
+
+    // ─── The kudos-leaderboard fixture accounts ────────────────────────
+    // Keyed by USERNAME, not by a fixed id: seedStagingLeaderboardProfile
+    // declares staging-demo-author as id 900001, but 900001 is already
+    // taken by staging-demo-user (seedStagingDemoAppCard runs first), so
+    // its ON CONFLICT DO NOTHING leaves that row named staging-demo-user.
+    // Resolving by name means this fixture decorates whoever is actually
+    // there, and inserts nothing at all when the account is absent.
+    //
+    // staging-demo-user GETS a picture; staging-demo-giver deliberately
+    // does NOT, so the photo row and the initial-circle fallback are both
+    // on screen the moment the leaderboard surfaces land in the follow-up.
+    await pool.query(
+      `UPDATE users
+          SET display_name = COALESCE(display_name, '[Staging demo] Ada Author'),
+              bio          = COALESCE(bio, '[Staging demo] Ships small PRs, reviews smaller ones.'),
+              github       = COALESCE(github, 'staging-demo-author'),
+              updated_at   = NOW()
+        WHERE username = 'staging-demo-user'`
+    );
+    await pool.query(
+      `INSERT INTO user_avatars (id, user_id, content_type, size_bytes, data, sha256)
+       SELECT 'a0a0a0a0a0a0a0a0a0a0a0a0a0a05210', id, 'image/png', $2,
+              decode($1, 'base64'), $3
+         FROM users WHERE username = 'staging-demo-user'
+       ON CONFLICT (user_id) DO NOTHING`,
+      [PNG_TEAL, pngBytes(PNG_TEAL), pngSha256(PNG_TEAL)]
+    );
+    // staging-demo-giver keeps NO avatar on purpose — see above. It gets a
+    // display name only, so the fallback row still reads as a real person.
+    await pool.query(
+      `UPDATE users
+          SET display_name = COALESCE(display_name, '[Staging demo] Grace Giver'),
+              updated_at   = NOW()
+        WHERE username = 'staging-demo-giver'`
+    );
+
+    log.info('db', 'Profile-customization staging fixtures seeded', {
+      viewers: viewerRows.length,
+    });
+  } catch (err) {
+    log.warn('db', 'Profile-customization staging fixtures seeding failed', {
+      message: err.message,
+    });
+  }
+}
+
 // Per-app postgres role migration. Pre-migration model: every per-app
 // database (`app_<slug>`) is owned by the shared `usernode` superuser
 // and accessed via DATABASE_URL embedding the superuser password.
@@ -8872,4 +9026,4 @@ async function migrateAppDbsToPerRole(pool, config) {
 // mock pool (idempotency/param-flow behaviour, not just a source-text
 // regex) without running the entire migrate() boot sequence. It is not
 // meant to be called from anywhere else in the app.
-module.exports = { migrate, seedStagingTopochain };
+module.exports = { migrate, seedStagingTopochain, seedStagingProfileCustomization };

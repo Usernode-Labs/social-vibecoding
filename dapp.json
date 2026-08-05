@@ -296,6 +296,17 @@
   ],
   "tests": [
     {
+      "name": "Profile: an editable identity card above completions that link out (#982)",
+      "path": "/#profile",
+      "expectSelector": "a[data-completed-challenge][href^='#leaderboard/challenges/']",
+      "expectText": "Edit profile"
+    },
+    {
+      "name": "Edit profile opens with the username read-only (#982)",
+      "path": "/?shot=profile-edit#profile",
+      "expectSelector": "#profile-edit-sheet #profile-edit-username[disabled]"
+    },
+    {
       "name": "Work notifications show a session's title, not its dev name (#971)",
       "path": "/?shot=work-drawer&demo=1",
       "expectSelector": "#work-drawer-panel:not(.hidden) #work-drawer-list",

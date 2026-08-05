@@ -151,6 +151,28 @@ const App = {
     return true;
   },
 
+  // Swap the drawer's Profile row between the generic person glyph and the
+  // viewer's own picture (#982). Called on sign-in and again after the
+  // profile editor saves, so removing a photo puts the glyph back. Both
+  // nodes are static in index.html — only which one is `hidden` changes,
+  // and the <img> gets no src until there is one, so a user with no
+  // picture never issues a request.
+  applyUserAvatar() {
+    const img = document.getElementById('drawer-avatar');
+    const glyph = document.getElementById('drawer-profile-glyph');
+    if (!img || !glyph) return;
+    const url = App.user && App.user.avatarUrl;
+    if (url) {
+      img.src = url;
+      img.classList.remove('hidden');
+      glyph.classList.add('hidden');
+    } else {
+      img.removeAttribute('src');
+      img.classList.add('hidden');
+      glyph.classList.remove('hidden');
+    }
+  },
+
   enterAuthed(user) {
     App.user = user;
     // "View as non-admin" admin tool. We mask `App.user.isAdmin`
@@ -177,6 +199,9 @@ const App = {
       App.user.role = 'user';
       document.body.classList.add('is-view-as-non-admin');
     }
+
+    // #982: paint the drawer's Profile row with the viewer's picture.
+    App.applyUserAvatar();
 
     // A web session exists (platform access or not). The native login
     // handoff listens for this — wallet provisioning and the node work
