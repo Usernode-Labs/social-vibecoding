@@ -45,6 +45,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const { homePanelPrefLimiter } = require('../middleware/rate-limits');
 const { TEMPLATE_JOIN_COLUMNS_SQL } = require('./topochain/challenge-view');
+const { rankedUsers } = require('../services/leaderboard-users');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
@@ -230,10 +231,94 @@ const ALL_CHALLENGE_WHERE = `
 // screen — the footer's own button goes there for the full list.
 const CHALLENGE_EXPANDED_LIMIT = 40;
 
+// ─── The desktop LEADERBOARD fill ────────────────────────────────────
+//
+// At five columns the widget is a TILE in a grid of app icons: it holds a
+// fixed 2x2 footprint whatever it has to say, so a short challenge list used
+// to buy nothing but a blank band. Whenever the collapsed list leaves room,
+// the client spends it on the platform's own ranked-users board — the top few
+// builders plus the viewer's own rank (public/js/home-panels.js decides how
+// many rows fit; this just supplies enough of them).
+//
+// WHY THIS BOARD and not the Topochain standings: /api/v4/leaderboard resolves
+// the RUNNING event and 404s between seasons — i.e. it is empty exactly when
+// the fill is needed — and /leaderboard/global is keyed by wallet identity, so
+// most viewers have no row and "your rank" is unanswerable. The kudos board is
+// keyed by platform username, has a row for every account, and is already
+// public (GET /api/leaderboard/users), so the widget discloses nothing new.
+const FILL_TOP_ROWS = 3;
+
+// The ranked list is IDENTICAL for every viewer — only the "which row is me"
+// step is per-request — so one execution serves everyone who loads their home
+// screen inside the TTL. Short by design: standings that lag a minute are
+// fine, standings that need a query per home-screen paint are not.
+const FILL_TTL_MS = 30 * 1000;
+let _fillCache = { at: 0, rows: null };
+
+async function rankedUsersCached(pool) {
+  const now = Date.now();
+  if (_fillCache.rows && now - _fillCache.at < FILL_TTL_MS) return _fillCache.rows;
+  // `slim` drops the three display-only LATERALs (kudos_given, issues_created,
+  // active_apps): none of them appears in the ORDER BY, so the ranking is
+  // identical and the widget doesn't pay for columns it can't render.
+  const rows = await rankedUsers(pool, { window: 'all', slim: true });
+  _fillCache = { at: now, rows };
+  return rows;
+}
+
+// Exported for tests: a cached ranking would otherwise leak across cases.
+function _resetFillCache() {
+  _fillCache = { at: 0, rows: null };
+}
+
+// { top: [{ rank, username, score }], viewer: {…} | null, total }.
+// `score` is kudos_received_prs_merged — the same headline metric the Top
+// users tab ranks and badges on, so the widget's number and the screen's
+// number are the same number.
+async function buildLeaderboardFill(pool, user) {
+  const rows = await rankedUsersCached(pool);
+  if (!Array.isArray(rows) || !rows.length) return null;
+  const shape = (r, i) => ({
+    rank: i + 1,
+    username: r.username,
+    score: Number(r.kudos_received_prs_merged) || 0,
+  });
+  const top = rows.slice(0, FILL_TOP_ROWS).map(shape);
+  // Case-insensitive, like every other username match on the platform.
+  const me = String(user?.username || '').toLowerCase();
+  const myIndex = me
+    ? rows.findIndex((r) => String(r.username || '').toLowerCase() === me)
+    : -1;
+  return {
+    top,
+    viewer: myIndex >= 0 ? shape(rows[myIndex], myIndex) : null,
+    total: rows.length,
+  };
+}
+
+// Attach the fill when the collapsed list leaves room for it. Never fatal: a
+// leaderboard hiccup must not change the challenges panel, which is the
+// invariant this whole route is built on (one broken panel never blanks the
+// home screen). Skipped when EXPANDED — an expanded block is all challenges.
+async function attachLeaderboardFill(pool, user, panel) {
+  if (!panel || panel.expanded) return panel;
+  if ((panel.challenges || []).length >= CHALLENGE_ROW_LIMIT) return panel;
+  try {
+    const fill = await buildLeaderboardFill(pool, user);
+    if (fill) panel.leaderboard = fill;
+  } catch (err) {
+    log.error('home-panels', 'leaderboard fill failed', {
+      userId: user?.id, message: err.message,
+    });
+  }
+  return panel;
+}
+
 // The current active PUBLIC season — the same predicate GET /challenges
 // resolves its default scope with (mobile.js). Null when nothing is
 // running, which is production's state between seasons and is what makes
-// the card silently absent rather than an empty box on every home screen.
+// the card render its compact "nothing running" state (and, on desktop,
+// spend the tile on the leaderboard fill above).
 async function fetchCurrentSeason(pool) {
   const { rows } = await pool.query(
     `SELECT id, name FROM seasons
@@ -255,10 +340,13 @@ async function buildChallengesPanel(pool, user, opts) {
 
   const season = await fetchCurrentSeason(pool);
   if (!season) {
-    return {
+    // Between seasons. The panel still renders — a compact "nothing running"
+    // line on a phone, that line plus the LEADERBOARD fill on desktop — so
+    // the widget explains itself instead of vanishing.
+    return attachLeaderboardFill(pool, user, {
       season: null, total: 0, done: 0, points_remaining: null,
       challenges: [], expanded,
-    };
+    });
   }
 
   // Rows: one statement, per-user aggregates as correlated subqueries so
@@ -326,13 +414,31 @@ async function buildChallengesPanel(pool, user, opts) {
     pointsRemaining += n;
   }
 
-  return {
+  return attachLeaderboardFill(pool, user, {
     season: { id: Number(season.id), name: season.name },
     total: totalRows[0]?.total ?? challenges.length,
     done: totalRows[0]?.done ?? 0,
     points_remaining: pointsRemaining,
     challenges,
     expanded,
+  });
+}
+
+// The demo LEADERBOARD fill. The real fill reads public tables that staging
+// clones from production, so a preview HAS standings without any seeding —
+// but the dapp.json checks and the before/after screenshots need the tile to
+// be the SAME tile every run, and the viewer's own row has to exist whoever
+// is signed in. Obviously fake, read-only, written nowhere.
+function demoLeaderboardFill(username) {
+  const name = String(username || '').trim() || 'you';
+  return {
+    top: [
+      { rank: 1, username: 'staging-demo-lead', score: 41 },
+      { rank: 2, username: 'staging-demo-builder', score: 27 },
+      { rank: 3, username: 'staging-demo-tester', score: 18 },
+    ],
+    viewer: { rank: 7, username: name, score: 6 },
+    total: 42,
   };
 }
 
@@ -342,8 +448,29 @@ async function buildChallengesPanel(pool, user, opts) {
 // identity would see zero progress; this makes every state visible
 // deterministically regardless of who is looking. Read-only, obviously
 // fake, written nowhere, and a strict no-op outside staging.
+//
+// `variant` (from ?demo=1&challenges=few|none) picks the SHORT-LIST states,
+// which a staging clone cannot otherwise reach while the seeded season is
+// live — they are the whole point of this change and so have to be
+// URL-reachable for the checks and the screenshots:
+//   'few'  → two open rows: the shrink on a phone, two challenge lines plus
+//            two leaderboard lines on desktop.
+//   'none' → nothing open: the compact one-line block on a phone, that line
+//            plus the leaderboard section on desktop.
+// Absent/unknown → the four-row payload exactly as before.
 function demoChallengesPanel(opts) {
   const expanded = !!(opts && opts.expanded);
+  const variant = opts && opts.variant;
+  const username = opts && opts.username;
+
+  if (variant === 'none') {
+    return {
+      season: null, total: 0, done: 0, points_remaining: null,
+      challenges: [], expanded,
+      leaderboard: demoLeaderboardFill(username),
+      demo: true,
+    };
+  }
   const rows = [
     {
       id: 900512,
@@ -442,11 +569,31 @@ function demoChallengesPanel(opts) {
     },
   ];
 
+  // The SHORT-LIST variant: two open rows, one metered and one binary, so
+  // the progress-bar lane is still exercised at the smaller size. `total`
+  // matches the rows shown — there is nothing past the cap to "see all" of.
+  if (variant === 'few') {
+    const few = [rows[0], rows[1]];
+    return {
+      season: { id: 900500, name: 'Staging Demo Season — Topochain' },
+      total: 2,
+      done: 0,
+      points_remaining: null,
+      challenges: expanded ? [...few, ...finished] : few,
+      expanded,
+      leaderboard: demoLeaderboardFill(username),
+      demo: true,
+    };
+  }
+
   // Collapsed `total` deliberately exceeds the four-slot budget so the
   // footer reads "See all 7 challenges" and the expand toggle has
   // something to reveal. Expanded returns the open rows PLUS the finished
   // ones, which is exactly what the real builder does when it drops the
   // not-completed filter.
+  //
+  // No `leaderboard` here: four rows fill the tile, so there is no room to
+  // fill and the existing ?demo=1 check sees exactly the markup it always saw.
   const all = expanded ? [...rows, ...overflow, ...finished] : rows;
   return {
     season: { id: 900500, name: 'Staging Demo Season — Topochain' },
@@ -572,13 +719,18 @@ function homePanelRoutes() {
       // challenges included, row cap lifted). Per-visit UI state, so it
       // rides on the request rather than being stored.
       const expandKey = typeof req.query.expand === 'string' ? req.query.expand : '';
+      // ?demo=1&challenges=few|none picks a demo variant of the challenges
+      // payload — the short-list states a seeded staging season can't reach.
+      // Staging-only (it rides on `demo`, which is already IS_STAGING-gated)
+      // and read-only; an unknown value falls through to the default payload.
+      const variant = typeof req.query.challenges === 'string' ? req.query.challenges : '';
       const panels = [];
       for (const panel of PANEL_REGISTRY) {
         if (hidden.includes(panel.key)) continue;
         const expanded = expandKey === panel.key;
         try {
           const data = demo && panel.demo
-            ? panel.demo({ expanded })
+            ? panel.demo({ expanded, variant, username: req.user.username })
             : await panel.build(pool, req.user, { expanded });
           panels.push({ key: panel.key, title: panel.title, ...data });
         } catch (err) {
@@ -665,4 +817,11 @@ module.exports = {
   parseRewardPoints,
   resolveProgress,
   buildChallengeRow,
+  // The desktop LEADERBOARD fill (exported for tests; the cache reset keeps a
+  // memoised ranking from leaking between cases).
+  buildLeaderboardFill,
+  demoLeaderboardFill,
+  demoChallengesPanel,
+  _resetFillCache,
+  FILL_TOP_ROWS,
 };

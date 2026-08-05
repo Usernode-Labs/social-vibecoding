@@ -320,6 +320,12 @@
       "expectText": "Go to leaderboard"
     },
     {
+      "name": "Challenges widget: with nothing running it says so, and fills the rest (#947)",
+      "path": "/?demo=1&challenges=none",
+      "expectSelector": "#app-list [data-panel-slot=\"challenges\"] article.home-panel[data-rows=\"0\"][data-fill=\"3\"] .home-panel-lb-row",
+      "expectText": "No challenges are running right now"
+    },
+    {
       "name": "The Create app widget sits in the grid and opens the create flow",
       "path": "/?demo=1",
       "expectSelector": "#app-list [data-panel-slot=\"create\"][data-create-enabled=\"true\"] .home-create-btn",

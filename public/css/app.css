@@ -333,7 +333,7 @@ html, body {
    card. Each block is a plain full-width child of #home-panels — the
    column above is the only width bound (see .home-column).
 
-   HEIGHT CAP — "about two rows of app icons", derived from the app tile's
+   HEIGHT — "about two rows of app icons", derived from the app tile's
    own tokens rather than measured at runtime. #922 deleted exactly that
    kind of measure-on-render loop (Home.alignSections publishing
    --home-section-indent), so this stays a constant that a reader can
@@ -355,8 +355,32 @@ html, body {
    a drift in one without the other fails rather than silently mis-sizing
    the block.
 
+   WHAT THAT NUMBER MEANS DEPENDS ON THE BREAKPOINT (#947). The challenges
+   widget is the same markup at both widths and two different things:
+
+     PHONE (<640px, 4 columns) — the widget spans the FULL grid width, so a
+     shorter block simply ends sooner: nothing sits beside it and nothing has
+     to move. There the constant is a CEILING and the block draws at its
+     CONTENT height (`.home-panel--fit`, in the phone media block at the
+     bottom of this file). A two-challenge season is ~135px, not 238px, and
+     the between-seasons state is a ~68px title-bar-plus-one-line block.
+
+     DESKTOP (>=640px, 5 columns) — the widget is a TILE in a grid of app
+     icons. Shrinking it would leave a notch beside the tiles it shares rows
+     with, so the constant is the DRAWN height, always, and the widget fills
+     whatever the challenge rows don't use with a LEADERBOARD section (see
+     .home-panel-fill). Row budget inside the 16rem tile:
+
+       256 - border 2 - title bar 25.5 - footer 27           = 201.5px
+       a row is --home-panel-row-h (40); the fill label is 16
+       => fillRows = 4 - max(challengeRows, 1)
+
+     which is 3 rows at zero or one challenge, 2 at two, 1 at three, and 0 at
+     four — a 40px row plus its 16px label does not fit in the ~41px the
+     four-row state leaves, so that one state keeps its slack.
+
    The cap is enforced by flexbox, not arithmetic: the title bar is
-   flex: none and the rows list takes the remainder with min-height: 0 +
+   flex: none and the body takes the remainder with min-height: 0 +
    overflow: hidden, so content clips at the cap instead of growing the
    block. Budget inside 14rem, counting every band the collapsed block
    actually draws:
@@ -491,6 +515,45 @@ html, body {
   overflow: hidden;
 }
 
+/* The challenges widget's BODY (#947): the rows list plus, on the desktop
+   tile, the LEADERBOARD fill under it. It is the flex child that takes the
+   article's remaining height and clips — the job .home-panel-rows used to do
+   alone, moved out one level so the two stacked blocks inside it keep their
+   natural heights.
+
+   That is the whole reason this wrapper exists: with `flex: 1 1 auto` still
+   on the rows list, the surplus would be absorbed BETWEEN the challenge rows
+   and the leaderboard label, splitting the tile with a gap down its middle.
+   Pinning both children to their content height collects the leftover at the
+   BOTTOM of the tile, where it reads as ordinary padding.
+
+   Scoped to the challenges panel; discover and create keep their markup, and
+   the existing descendant selectors (`.home-panel .home-panel-rows--metered
+   .home-panel-row`, asserted in dapp.json) still match through it. */
+.home-panel-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.home-panel-body > .home-panel-rows {
+  flex: 0 0 auto;
+}
+
+/* The LEADERBOARD fill. Its rows carry .home-panel-row too, so they get the
+   same 40px single-line geometry as a challenge row — which is what makes the
+   two lists line up instead of reading as two lists jammed together. They sit
+   OUTSIDE .home-panel-rows, so a metered challenge list never pushes its
+   14px meter lane onto them. */
+.home-panel-fill {
+  flex: 0 0 auto;
+}
+/* 16px including its own hairline — the figure the row budget above spends. */
+.home-panel-fill-label {
+  height: 1rem;
+}
+
 /* 44px rows: the native kit's minimum touch target, and the whole row is
    a tap target into the Challenges screen. Uniform height is what makes
    the 4-slot budget above exact, which is why a numeric row's progress
@@ -588,7 +651,18 @@ html, body {
   min-width: 0;
   /* The slot IS its cells: the bordered .home-panel article inside it
      stretches to fill whatever rectangle the layout gave it, rather than
-     sitting at its natural height in the top-left of a 2x2 block. */
+     sitting at its natural height in the top-left of a 2x2 block.
+
+     THAT IS A DESKTOP CONTRACT (#947), not a universal one. At five columns
+     the widget is a tile among app icons and a short block would leave a
+     visible notch beside its neighbours — so it stretches, and the challenges
+     widget fills the surplus with its LEADERBOARD section rather than blank
+     space. At four columns the widget spans the whole width, so there is no
+     neighbour to leave a notch beside and shrinking costs nothing: the phone
+     media block at the bottom of this file releases `.home-panel--fit` from
+     this stretch. Do not move that rule out of the media query — desktop
+     depends on the stretch, and `align-items` here would take the create
+     widget's `h-full` 1x1 tile down with it. */
   display: flex;
   min-height: 0;
 }
@@ -843,6 +917,19 @@ html, body {
   }
   .home-grid-overlay { gap: 0.375rem; }
   .app-card { padding: 0.5rem; }
+
+  /* SIZE TO CONTENT, phone only (#947). The widget is full-width here, so a
+     shorter block just ends sooner — no neighbour to leave a notch beside,
+     nothing to re-pack. The footprint is unchanged (still two rows of the
+     grid); only the drawn box shrinks, and the leftover is ordinary grid
+     whitespace on a surface that is hole-bearing by design.
+
+     Deciding this in CSS rather than JS is deliberate: a window dragged
+     across 640px resizes the block immediately, before the resize listener's
+     re-render lands. --home-panel-max-h stays as the ceiling above. */
+  .home-panel-slot > .home-panel--fit {
+    align-self: flex-start;
+  }
 }
 @media (min-width: 640px) {
   .home-grid-overlay {

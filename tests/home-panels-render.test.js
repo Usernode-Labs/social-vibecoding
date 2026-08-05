@@ -555,16 +555,43 @@ test('render: nothing at all when signed out, unloaded, or hidden', () => {
   assert.equal(hiddenOut.html, '');
 });
 
-test('render: an empty card is admin-only', () => {
+// #947 reversed the admin-only empty box. It is now a COMPACT block that
+// every viewer gets: a widget that silently vanishes between seasons leaves
+// the viewer unable to tell "nothing is running" from "this broke", and the
+// compact block is not the full-size empty box the old comment argued
+// against (it is ~68px — title bar plus one line, no footer).
+test('render: the empty state renders for EVERY viewer, compact and footer-less', () => {
   const empty = panel({ total: 0, done: 0, challenges: [] });
-  const asUser = renderWith({ registry: [], hidden: [], panels: [empty] },
-    { user: { id: 1, isAdmin: false } });
-  assert.equal(asUser.html, '', 'no empty box on every home screen');
+  for (const isAdmin of [false, true]) {
+    const out = renderWith({ registry: [], hidden: [], panels: [empty] },
+      { user: { id: 1, isAdmin } });
+    const who = isAdmin ? 'admin' : 'member';
+    assert.match(out.html, /No challenges are running right now/,
+      `${who}: the block says why it is quiet`);
+    assert.ok(!out.section._classes.has('hidden'), `${who}: section shown`);
+    // Exactly one row, and no footer: nothing to expand, nothing to count.
+    assert.equal((out.html.match(/home-panel-row\b/g) || []).length, 1, `${who}: one line`);
+    assert.doesNotMatch(out.html, /home-panel-footer/, `${who}: no footer`);
+    // The ⋮ menu sits at the right edge, same as the populated branch.
+    assert.match(out.html, /home-panel-title[^"]*flex-1/, `${who}: title takes the bar`);
+    assert.match(out.html, /data-rows="0"/, `${who}: stamped`);
+    assert.match(out.html, /data-fill="0"/, `${who}: no fill without a grid host`);
+  }
+});
 
-  const asAdmin = renderWith({ registry: [], hidden: [], panels: [empty] },
-    { user: { id: 1, isAdmin: true } });
-  assert.match(asAdmin.html, /No challenges are running right now/);
-  assert.ok(!asAdmin.section._classes.has('hidden'));
+// The empty payload must not leave the expand flag set: ensureLoaded() would
+// keep sending ?expand=challenges, which asks for the season's FINISHED
+// challenges and would repopulate a block that should read as quiet.
+test('render: an empty payload clears the in-place expanded flag', () => {
+  const { HP, section } = makeHomePanels();
+  HP._expanded.challenges = true;
+  HP._data = {
+    registry: [], hidden: [],
+    panels: [panel({ total: 0, done: 0, challenges: [] })],
+  };
+  HP.render();
+  assert.equal(HP._expanded.challenges, false);
+  assert.match(section.innerHTML, /No challenges are running right now/);
 });
 
 test('setHidden drops the panel optimistically and restores it on failure', async () => {
@@ -1142,8 +1169,7 @@ test('index.html keeps #home-panels as the fallback host below the grid', () => 
 test('each block is a full-width child of the section, not separately bounded', () => {
   const populated = renderWith({ registry: [], hidden: [], panels: [panel()] }).html;
   const empty = renderWith(
-    { registry: [], hidden: [], panels: [panel({ total: 0, done: 0, challenges: [] })] },
-    { user: { id: 1, isAdmin: true } }
+    { registry: [], hidden: [], panels: [panel({ total: 0, done: 0, challenges: [] })] }
   ).html;
   for (const [name, html] of [['populated', populated], ['empty state', empty]]) {
     assert.doesNotMatch(html, /home-section-block/,
@@ -1303,4 +1329,208 @@ test('dapp.json’s home-widget checks describe markup this module emits', () =>
   for (const cls of ['home-panel', 'home-discover-tiles', 'app-card']) {
     assert.ok(discover.expectSelector.includes(cls), cls);
   }
+});
+
+// ── The breakpoint split (#947) ────────────────────────────────────
+//
+// One widget, two renderings. On a PHONE it sizes to content (a CSS-only
+// concern, asserted against app.css below). On DESKTOP it keeps its fixed
+// two-row tile and spends the leftover on a LEADERBOARD section, which is a
+// MARKUP concern and so is decided here.
+//
+// The harness has no innerWidth, so the column count is injected the way the
+// module actually reads it: through Home.currentCols().
+function makeDesktop(data, opts = {}) {
+  const slot = makeSlot('challenges');
+  const { HP } = makeHomePanels({
+    ...opts,
+    slots: [slot],
+    home: { currentCols: () => opts.cols || 5, ...(opts.home || {}) },
+  });
+  HP._data = data;
+  HP.render();
+  return { HP, html: slot.innerHTML, slot };
+}
+
+const fill = (over = {}) => ({
+  top: [
+    { rank: 1, username: 'ada', score: 41 },
+    { rank: 2, username: 'grace', score: 27 },
+    { rank: 3, username: 'linus', score: 18 },
+  ],
+  viewer: { rank: 7, username: 'me', score: 6 },
+  total: 42,
+  ...over,
+});
+
+const withFill = (panelOver = {}) => ({
+  registry: [], hidden: [],
+  panels: [panel({ leaderboard: fill(), ...panelOver })],
+});
+
+test('fillSlots: the row budget the desktop tile actually has', () => {
+  const { HP } = makeHomePanels();
+  // 201.5px of rows area, 40px a row, 16px for the label:
+  // fillRows = 4 - max(challengeRows, 1).
+  assert.equal(HP.fillSlots(0), 3, 'the empty state spends a row on its note');
+  assert.equal(HP.fillSlots(1), 3);
+  assert.equal(HP.fillSlots(2), 2);
+  assert.equal(HP.fillSlots(3), 1);
+  assert.equal(HP.fillSlots(4), 0, 'a 40px row + 16px label does not fit in ~41px');
+});
+
+test('desktop: leftover space becomes a LEADERBOARD section', () => {
+  const cases = [[1, 3], [2, 2], [3, 1], [4, 0]];
+  for (const [nChallenges, expectFill] of cases) {
+    const rows = Array.from({ length: nChallenges }, (_, i) => challenge({ id: i + 1 }));
+    const { html } = makeDesktop(withFill({ challenges: rows, total: nChallenges }));
+    const drawn = (html.match(/home-panel-lb-row/g) || []).length;
+    assert.equal(drawn, expectFill, `${nChallenges} challenges → ${expectFill} fill rows`);
+    assert.match(html, new RegExp(`data-rows="${nChallenges}"`));
+    assert.match(html, new RegExp(`data-fill="${expectFill}"`));
+    const labels = (html.match(/home-panel-fill-label/g) || []).length;
+    assert.equal(labels, expectFill ? 1 : 0, 'exactly one label, only when filled');
+  }
+});
+
+test('desktop: the zero state leads with the note, then fills the tile', () => {
+  const { html } = makeDesktop({
+    registry: [], hidden: [],
+    panels: [panel({ total: 0, done: 0, challenges: [], leaderboard: fill() })],
+  });
+  assert.match(html, /No challenges are running right now/, 'same copy at both widths');
+  assert.match(html, /data-rows="0"/);
+  assert.match(html, /data-fill="3"/);
+  // Nothing to expand or count: one control, and it names where it goes.
+  assert.doesNotMatch(html, /home-panel-expand/);
+  assert.match(html, /home-panel-lb-open/);
+  assert.match(html, /See full leaderboard/);
+});
+
+test('desktop: the viewer’s own row is last, marked, and never duplicated', () => {
+  const { html } = makeDesktop(withFill({ challenges: [challenge()], total: 1 }));
+  assert.match(html, /home-panel-lb-you/, 'the viewer is tinted');
+  // Names in the FILL block only — the challenge rows above it share the
+  // .home-panel-goal lane, which is the point (the two lists line up).
+  const namesIn = (h) => [...h.slice(h.indexOf('home-panel-fill-label'))
+    .matchAll(/home-panel-goal[^>]*>([^<]+)</g)].map((m) => m[1]);
+  // Top 2 then "You" — the last slot belongs to the viewer.
+  assert.deepEqual(namesIn(html), ['ada', 'grace', 'You']);
+  assert.equal((html.match(/home-panel-lb-you/g) || []).length, 1);
+
+  // Already in the top slice: highlighted in place, and the freed slot goes
+  // to the next entry down rather than repeating them.
+  const inTop = makeDesktop(withFill({
+    challenges: [challenge()],
+    total: 1,
+    leaderboard: fill({ viewer: { rank: 2, username: 'grace', score: 27 } }),
+  }));
+  assert.deepEqual(namesIn(inTop.html), ['ada', 'You', 'linus']);
+  assert.equal((inTop.html.match(/home-panel-lb-you/g) || []).length, 1);
+});
+
+test('desktop: a zero-kudos viewer row is muted, not a violet chip', () => {
+  const { html } = makeDesktop(withFill({
+    challenges: [challenge()],
+    total: 1,
+    leaderboard: fill({ viewer: { rank: 300, username: 'me', score: 0 } }),
+  }));
+  const youRow = html.slice(html.indexOf('home-panel-lb-you'));
+  assert.doesNotMatch(youRow.slice(0, 600), /text-violet-600/, '0 is not an accent-coloured shout');
+  assert.match(youRow, /You are #300 of 42 builders/);
+});
+
+test('no fill on a phone, in the search-view host, or while expanded', () => {
+  const data = withFill({ challenges: [challenge()], total: 1 });
+
+  // Phone: the widget is full-width, so it SHRINKS instead of filling.
+  const phone = makeDesktop(data, { cols: 4 });
+  assert.equal((phone.html.match(/home-panel-lb-row/g) || []).length, 0);
+  assert.match(phone.html, /data-fill="0"/);
+
+  // The #home-panels fallback (search view) has no fixed-height rectangle.
+  const fallback = renderWith(data);
+  assert.equal((fallback.html.match(/home-panel-lb-row/g) || []).length, 0);
+  assert.match(fallback.html, /data-fill="0"/);
+
+  // Expanded is all challenges — the fill steps aside.
+  const slot = makeSlot('challenges');
+  const { HP } = makeHomePanels({ slots: [slot], home: { currentCols: () => 5 } });
+  HP._expanded.challenges = true;
+  HP._data = data;
+  HP.render();
+  assert.equal((slot.innerHTML.match(/home-panel-lb-row/g) || []).length, 0);
+
+  // And no fill when the server sent no board at all (the panel still renders).
+  const noBoard = makeDesktop({
+    registry: [], hidden: [],
+    panels: [panel({ challenges: [challenge()], total: 1 })],
+  });
+  assert.equal((noBoard.html.match(/home-panel-lb-row/g) || []).length, 0);
+  assert.match(noBoard.html, /data-fill="0"/);
+  assert.match(noBoard.html, /Report a reproducible bug/);
+});
+
+test('currentCols: unknown width falls back to the COMPACT rendering', () => {
+  // Neither Home nor HomeLayout nor innerWidth on the window: the safe
+  // default is the phone shape, which claims no space it cannot fill.
+  const { HP } = makeHomePanels();
+  assert.equal(HP.currentCols(), 4);
+});
+
+test('fill rows are excluded from the challenges click wiring', () => {
+  const SRC_TEXT = read('public/js/home-panels.js');
+  // The row handler must not sweep up leaderboard rows — they go to
+  // #leaderboard/users, not to the Challenges tab.
+  assert.match(SRC_TEXT, /querySelectorAll\('\.home-panel-row:not\(\.home-panel-lb-row\)'\)/);
+  assert.match(SRC_TEXT, /goToLeaderboardUsers/);
+  assert.match(SRC_TEXT, /location\.hash = '#leaderboard\/users'/);
+});
+
+test('the challenges article always carries home-panel--fit', () => {
+  const populated = renderWith({ registry: [], hidden: [], panels: [panel()] }).html;
+  const empty = renderWith({ registry: [], hidden: [],
+    panels: [panel({ total: 0, done: 0, challenges: [] })] }).html;
+  for (const [name, html] of [['populated', populated], ['empty', empty]]) {
+    assert.match(html, /home-panel--fit/, `${name}: the phone sizing hook`);
+  }
+});
+
+// The sizing half of the split is CSS, and it is only correct if it is
+// SCOPED: unscoped, it would shrink the desktop tile and leave a notch in
+// the icon grid.
+test('app.css: the fit rule lives inside the phone media block, and only there', () => {
+  const css = read('public/css/app.css');
+  const at = css.indexOf('@media (max-width: 639.98px)');
+  assert.ok(at > -1, 'the phone block exists');
+  // The block runs to the next top-level @media.
+  const end = css.indexOf('@media (min-width: 640px)', at);
+  const phoneBlock = css.slice(at, end > -1 ? end : css.length);
+  assert.match(phoneBlock, /\.home-panel-slot > \.home-panel--fit \{[^}]*align-self:\s*flex-start/,
+    'content-height sizing is phone-only');
+  // Exactly one RULE for it in the whole file (prose mentions don't count).
+  assert.equal((css.match(/\.home-panel--fit\s*\{/g) || []).length, 1);
+  // Desktop keeps the stretch: the slot must not grow an align-items of its
+  // own (it would take the create widget's h-full 1x1 tile down with it).
+  // Comments stripped first — the rule's own prose explains that constraint,
+  // and asserting against prose would fail on an accurate comment.
+  const decls = (rule) => rule.replace(/\/\*[\s\S]*?\*\//g, '');
+  const slotRule = decls(css.match(/\.home-panel-slot \{[^}]*\}/)[0]);
+  assert.doesNotMatch(slotRule, /align-items/);
+  assert.match(slotRule, /display:\s*flex/);
+});
+
+test('app.css: the body wrapper and fill block carry the budget’s geometry', () => {
+  const css = read('public/css/app.css');
+  // The body takes the article's remaining height and clips...
+  const body = css.match(/\.home-panel-body \{[^}]*\}/)[0];
+  assert.match(body, /flex:\s*1 1 auto/);
+  assert.match(body, /min-height:\s*0/);
+  assert.match(body, /overflow:\s*hidden/);
+  // ...and both children hold their natural height, so the leftover collects
+  // at the BOTTOM of the tile rather than splitting it down the middle.
+  assert.match(css, /\.home-panel-body > \.home-panel-rows \{[^}]*flex:\s*0 0 auto/);
+  assert.match(css, /\.home-panel-fill \{[^}]*flex:\s*0 0 auto/);
+  // 16px is the figure the fillSlots budget spends on the label.
+  assert.match(css, /\.home-panel-fill-label \{[^}]*height:\s*1rem/);
 });
