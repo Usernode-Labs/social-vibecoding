@@ -21,6 +21,7 @@ const { isCliCredentialManagementSession } = require('../services/cli-api-policy
 const {
   reviewedHeadForSession,
   currentVotePredicateSql,
+  sameSha,
 } = require('../services/pr-vote-revision');
 
 const CLI_CREDENTIAL_MANAGEMENT_ERROR = 'credential_management_not_available_via_cli';
@@ -757,6 +758,100 @@ async function kickNativeRevisionChecks({ config, pool, session, headSha }) {
   }));
 }
 
+// #955: how far back the classifier will follow first parents looking for the
+// reviewed revision. Stacked platform syncs are the reason it is more than one
+// (a drain can resolve, fail to merge, and resolve again before anything
+// reconciles); a small cap keeps a pathological history from costing GitHub
+// reads. Anything deeper is treated as an author push — the safe direction.
+const MAX_PLATFORM_CHAIN_HOPS = 5;
+
+// True while the platform itself is moving this branch — either a MODE=sync
+// worker turn or a conflict-resolver drain. Process-local, same
+// single-Node-process assumption the two registries already make.
+function platformSyncInFlight(sessionId) {
+  try {
+    const { getSyncState } = require('../services/sync-main');
+    if (getSyncState(sessionId)) return true;
+  } catch (_) { /* treat an unavailable registry as "not syncing" */ }
+  try {
+    if (isResolving(sessionId)) return true;
+  } catch (_) { /* same */ }
+  return false;
+}
+
+// Walk first parents from the live head back towards the reviewed revision,
+// requiring EVERY commit on the way to be one the platform recorded pushing
+// for this session. Recorded provenance — not the commit's shape — is what
+// makes this safe: an author can trivially craft a "merge main" commit whose
+// first parent is the reviewed SHA, so trusting shape alone would turn vote
+// preservation into a governance bypass.
+async function platformPushChain({ session, pool, liveHead, reviewedHead }) {
+  const chain = [];
+  if (!liveHead) return { platform: false, chain };
+  const syncMain = require('../services/sync-main');
+  const target = nativeGithubTarget(session);
+  let cursor = liveHead;
+
+  for (let hop = 0; hop < MAX_PLATFORM_CHAIN_HOPS; hop++) {
+    const record = await syncMain.findPlatformPush(pool, session.id, cursor);
+    if (!record) return { platform: false, chain };
+    chain.push(record);
+
+    // A row with no pinned revision has no bound votes to protect; a recorded
+    // platform push is provenance enough to bind it (see sync-main).
+    if (!reviewedHead) return { platform: true, chain };
+
+    let parent = normalizedSha(record.first_parent_sha);
+    if (!parent && target && github.isEnabled()) {
+      // The parents read can fail at push time; fill it in now so later passes
+      // stay a pure DB walk.
+      try {
+        const parents = await github.getCommitParents(target.owner, target.repo, cursor);
+        parent = normalizedSha(parents[0]);
+        if (parent) {
+          await syncMain.backfillPlatformPushParent(pool, session.id, cursor, parent);
+        }
+      } catch (err) {
+        log.warn('votes', 'Could not read platform-push parents', {
+          sessionId: session.id, sha: cursor, err: err.message,
+        });
+      }
+    }
+    if (!parent) return { platform: false, chain };
+    if (parent === reviewedHead) return { platform: true, chain };
+    cursor = parent;
+  }
+  return { platform: false, chain };
+}
+
+// #955: decide WHO moved a native proposal's head before deciding what that
+// costs its votes.
+//   same            — the pin already describes this commit (case-insensitive).
+//   platform_advance— our own sync/conflict-resolution commit, sitting on top
+//                     of the reviewed revision: carry the votes across.
+//   pending_sync    — the platform is mid-sync and this commit isn't recorded
+//                     yet; don't decide at all, ask the caller to retry.
+//   author_push     — anything else: the reviewed code changed, clear the tally.
+async function classifyNativeHeadMove({ pool, session, liveHead }) {
+  const live = normalizedSha(liveHead);
+  const reviewed = normalizedSha(session.reviewed_head_sha);
+  if (live && reviewed && live === reviewed) return { kind: 'same' };
+
+  const { platform, chain } = await platformPushChain({
+    session, pool, liveHead: live, reviewedHead: reviewed,
+  });
+  if (platform) {
+    return {
+      kind: 'platform_advance',
+      chain,
+      // Pure git merges carry their verdict; a Claude-resolved tree does not.
+      resolvedTree: chain.some((c) => c.sync_result === 'resolved'),
+    };
+  }
+  if (platformSyncInFlight(session.id)) return { kind: 'pending_sync' };
+  return { kind: 'author_push' };
+}
+
 // Refresh a native proposal's reviewed revision from the live GitHub PR.
 // `fresh=false` avoids an unnecessary API read when a caller only needs to
 // initialize a legacy row; vote-time callers pass true because the PR may have
@@ -768,6 +863,10 @@ async function kickNativeRevisionChecks({ config, pool, session, headSha }) {
 // UPDATE makes concurrent voters idempotent: only one caller owns the reset,
 // while `head_sha IS DISTINCT FROM` preserves any vote already cast on the new
 // revision.
+//
+// #955: that reset is for AUTHOR pushes. The platform's own "sync with main"
+// commit changes the branch without changing the patch under review, so it
+// advances the pin and carries the votes with it instead.
 async function reconcileNativeReviewedHead({ config, pool, session, fresh = false, notify = true }) {
   if (!session || session.source === 'imported') {
     return { enforced: false, headSha: reviewedHeadForSession(session) };
@@ -840,32 +939,86 @@ async function reconcileNativeReviewedHead({ config, pool, session, fresh = fals
       reason: 'GitHub did not return a valid pull-request head commit.',
     };
   }
-  if (liveHead === session.reviewed_head_sha) {
+  if (sameSha(liveHead, session.reviewed_head_sha)) {
+    // Same commit — including a stamp that differs only in letter case. Nothing
+    // about the reviewed code changed, so nothing may be cleared.
     return { enforced: true, headSha: liveHead, unchanged: true };
   }
 
   const oldHead = session.reviewed_head_sha || null;
-  // Install the new head and remove stale approvals in ONE statement. If the
-  // cleanup fails, PostgreSQL rolls the head update back too, so a later retry
+  const move = await classifyNativeHeadMove({ pool, session, liveHead });
+
+  if (move.kind === 'pending_sync') {
+    // The platform is mid-sync and this commit isn't recorded yet: it is either
+    // our own push a moment before it lands in the ledger, or a genuine author
+    // push. Deciding now could destroy an approval that must survive, so defer
+    // — nothing is written, and the next attempt classifies it correctly.
+    log.info('votes', 'Head move deferred: platform sync in flight', {
+      sessionId: session.id, oldHead, liveHead,
+    });
+    return {
+      enforced: true,
+      blocked: true,
+      transient: true,
+      reason: 'This proposal is being synced with main — try again in a moment.',
+    };
+  }
+
+  const platformAdvance = move.kind === 'platform_advance';
+  // Install the new head and reconcile the approvals in ONE statement. If that
+  // half fails, PostgreSQL rolls the head update back too, so a later retry
   // cannot mistake a partially-reconciled row for a clean one.
+  //
+  // Author push  → delete every approval cast against another revision.
+  // Platform sync→ carry the approvals for the previous revision onto the new
+  //                one; approvals for any OTHER revision are still stale.
   const { rows: claimed } = await pool.query(
-    `WITH claimed AS (
-       UPDATE chat_sessions
-          SET reviewed_head_sha = $1, stale_notified_at = NULL
-        WHERE id = $2
-          AND reviewed_head_sha IS NOT DISTINCT FROM $3::varchar
-          AND reviewed_head_sha IS DISTINCT FROM $1
-        RETURNING reviewed_head_sha
-     ), deleted AS (
-       DELETE FROM pr_votes
-        WHERE session_id = $2
-          AND head_sha IS DISTINCT FROM $1
-          AND EXISTS (SELECT 1 FROM claimed)
-        RETURNING 1
-     )
-     SELECT reviewed_head_sha,
-            (SELECT COUNT(*)::int FROM deleted) AS votes_deleted
-       FROM claimed`,
+    platformAdvance
+      ? `WITH claimed AS (
+           UPDATE chat_sessions
+              SET reviewed_head_sha = $1, stale_notified_at = NULL
+            WHERE id = $2
+              AND reviewed_head_sha IS NOT DISTINCT FROM $3::varchar
+              AND reviewed_head_sha IS DISTINCT FROM $1
+            RETURNING reviewed_head_sha
+         ), moved AS (
+           UPDATE pr_votes SET head_sha = $1
+            WHERE session_id = $2
+              AND head_sha IS NOT DISTINCT FROM $3::varchar
+              AND EXISTS (SELECT 1 FROM claimed)
+            RETURNING 1
+         ), deleted AS (
+           DELETE FROM pr_votes
+            WHERE session_id = $2
+              AND head_sha IS DISTINCT FROM $1
+              -- disjoint from the moved set on purpose: two data-modifying
+              -- CTEs touching one row in a statement is undefined behaviour.
+              AND head_sha IS DISTINCT FROM $3::varchar
+              AND EXISTS (SELECT 1 FROM claimed)
+            RETURNING 1
+         )
+         SELECT reviewed_head_sha,
+                (SELECT COUNT(*)::int FROM moved) AS votes_moved,
+                (SELECT COUNT(*)::int FROM deleted) AS votes_deleted
+           FROM claimed`
+      : `WITH claimed AS (
+           UPDATE chat_sessions
+              SET reviewed_head_sha = $1, stale_notified_at = NULL
+            WHERE id = $2
+              AND reviewed_head_sha IS NOT DISTINCT FROM $3::varchar
+              AND reviewed_head_sha IS DISTINCT FROM $1
+            RETURNING reviewed_head_sha
+         ), deleted AS (
+           DELETE FROM pr_votes
+            WHERE session_id = $2
+              AND head_sha IS DISTINCT FROM $1
+              AND EXISTS (SELECT 1 FROM claimed)
+            RETURNING 1
+         )
+         SELECT reviewed_head_sha,
+                0 AS votes_moved,
+                (SELECT COUNT(*)::int FROM deleted) AS votes_deleted
+           FROM claimed`,
     [liveHead, session.id, oldHead]
   );
 
@@ -880,7 +1033,7 @@ async function reconcileNativeReviewedHead({ config, pool, session, fresh = fals
     );
     const storedHead = rows[0]?.reviewed_head_sha || null;
     session.reviewed_head_sha = storedHead;
-    if (storedHead === liveHead) {
+    if (sameSha(storedHead, liveHead)) {
       return { enforced: true, headSha: liveHead, unchanged: true };
     }
     return {
@@ -893,13 +1046,25 @@ async function reconcileNativeReviewedHead({ config, pool, session, fresh = fals
 
   session.reviewed_head_sha = liveHead;
   const votesDeleted = parseInt(claimed[0]?.votes_deleted, 10) || 0;
+  const votesMoved = parseInt(claimed[0]?.votes_moved, 10) || 0;
 
   // A platform-authored push may already have run checks for this exact head.
   // Preserve that verdict; otherwise invalidate the old result synchronously
-  // before launching the exact-SHA rebuild.
-  const needsChecks = session.checks_commit_sha !== liveHead;
+  // before launching the exact-SHA rebuild. A pure `clean` platform merge keeps
+  // its verdict too (git merged tested main into a tested branch), but a tree
+  // Claude edited to resolve conflicts is unverified and must be re-checked.
+  const checksCarry = platformAdvance && !move.resolvedTree;
+  const needsChecks = !sameSha(session.checks_commit_sha, liveHead) && !checksCarry;
   if (needsChecks) {
     await kickNativeRevisionChecks({ config, pool, session, headSha: liveHead });
+  } else if (checksCarry && !sameSha(session.checks_commit_sha, liveHead)) {
+    await pool.query(
+      `UPDATE chat_sessions SET checks_commit_sha = $1 WHERE id = $2`,
+      [liveHead, session.id]
+    ).catch((err) => log.warn('votes', 'Carrying checks stamp failed (non-fatal)', {
+      sessionId: session.id, headSha: liveHead, err: err.message,
+    }));
+    session.checks_commit_sha = liveHead;
   }
 
   if (notify) {
@@ -910,11 +1075,31 @@ async function reconcileNativeReviewedHead({ config, pool, session, fresh = fals
         appSlug: session.app_slug || null,
         merged: false,
         headMoved: oldHead != null,
+        ...(platformAdvance ? { votesKept: true } : {}),
       });
     } catch (_) { /* ws failures are non-fatal */ }
   }
 
-  if (notify && (oldHead || votesDeleted > 0)) {
+  if (notify && platformAdvance && votesMoved > 0) {
+    // Our own commit, not the author's: say what actually happened instead of
+    // asking everyone to re-review code they already approved.
+    const label = session.pr_title
+      ? `PR #${session.pr_number} — ${session.pr_title}`
+      : `PR #${session.pr_number}`;
+    const how = move.resolvedTree
+      ? 'was synced with main and its merge conflicts were resolved automatically'
+      : 'was synced with main';
+    const checksNote = move.resolvedTree
+      ? ' Its checks are re-running against the new commit and it will merge on its own once they pass.'
+      : '';
+    await sendSystemMessage(
+      pool, session.app_id,
+      `${label} ${how} — existing votes were kept (now pinned to commit ${liveHead.slice(0, 8)}).${checksNote}`,
+      'system',
+      { headChanged: true, votesKept: true, prNumber: session.pr_number, headSha: liveHead },
+      { type: 'session', ref: session.id }
+    ).catch(() => {});
+  } else if (notify && !platformAdvance && (oldHead || votesDeleted > 0)) {
     const label = session.pr_title
       ? `PR #${session.pr_number} — ${session.pr_title}`
       : `PR #${session.pr_number}`;
@@ -932,7 +1117,9 @@ async function reconcileNativeReviewedHead({ config, pool, session, fresh = fals
     sessionId: session.id,
     oldHead,
     newHead: liveHead,
+    moveKind: move.kind,
     votesDropped: votesDeleted,
+    votesCarried: votesMoved,
     checksReset: needsChecks,
   });
   return {
@@ -942,6 +1129,9 @@ async function reconcileNativeReviewedHead({ config, pool, session, fresh = fals
     initialized: oldHead == null,
     changed: oldHead != null,
     votesDropped: votesDeleted,
+    votesCarried: votesMoved,
+    platformAdvance,
+    votesKept: platformAdvance,
   };
 }
 
@@ -3443,7 +3633,11 @@ async function checkAndMerge(config, pool, session, options = {}) {
       error: revision.reason,
     };
   }
-  if (revision.updated) {
+  // #955: a revision the PLATFORM advanced (its own sync/conflict-resolution
+  // commit, sitting on the reviewed head) kept its approvals, so there is no
+  // review to return to — carry on and let the real gates decide. The pin now
+  // matches the live head, which is exactly what the merge needs.
+  if (revision.updated && !revision.votesKept) {
     // No approval predating the first immutable stamp may merge. A force
     // request also returns to review here; a second explicit request can merge
     // the now-pinned revision if that is still intended.
@@ -3992,24 +4186,46 @@ async function checkAndMerge(config, pool, session, options = {}) {
                 selfHosted: !!session.app_self_hosted,
               });
             } catch (_) { /* ws failures non-fatal */ }
+            // #955: the head may have moved because the PLATFORM synced this
+            // branch with main. Those approvals survived the refresh, so this
+            // is a re-pin and an immediate retry — not a return to review.
+            const votesKept = !isImported && !!nativeRefresh?.votesKept;
             const movedLabel = session.pr_title
               ? `PR #${session.pr_number} — ${session.pr_title}`
               : `PR #${session.pr_number}`;
             const movedMessage = isImported
               ? `${movedLabel} wasn't merged — the PR was updated on GitHub since the vote, so GitHub declined to merge the older commit. It'll be re-checked against the new commit and can merge again once it passes.`
-              : `${movedLabel} wasn't merged — its GitHub head changed after review. Earlier-revision votes were cleared and the new commit is being checked; please re-review it.`;
+              : votesKept
+                ? `${movedLabel} wasn't merged on this attempt — it had just been synced with main, so the merge is now pinned to commit ${String(nativeRefresh.headSha).slice(0, 8)}. Existing votes were kept and the merge retries automatically.`
+                : `${movedLabel} wasn't merged — its GitHub head changed after review. Earlier-revision votes were cleared and the new commit is being checked; please re-review it.`;
             await sendSystemMessage(pool, session.app_id,
               movedMessage,
               'system', null, { type: 'session', ref: session.id }
             ).catch(() => {});
             dstep({ phase: 'github_merge', level: 'warn', message: isImported
               ? 'GitHub refused the merge: the PR head moved since the reviewed commit. Released the merge claim; the sync poller will pick up the new head.'
-              : 'GitHub refused the merge: the native PR head moved since review. Released the merge claim and reset the proposal to the new revision.', detail: { headMoved: true, pinnedSha, refreshedHeadSha: nativeRefresh?.headSha || null } });
+              : votesKept
+                ? 'GitHub refused the merge: the pinned commit was superseded by the platform\'s own sync. Re-pinned to it with votes intact and re-queued the merge.'
+                : 'GitHub refused the merge: the native PR head moved since review. Released the merge claim and reset the proposal to the new revision.', detail: { headMoved: true, votesKept, pinnedSha, refreshedHeadSha: nativeRefresh?.headSha || null } });
             dend('deferred', isImported
               ? 'Head moved since the reviewed commit — deferred to the sync poller.'
-              : 'Head moved since review — returned to review on the new commit.');
+              : votesKept
+                ? 'Superseded by the platform\'s own sync commit — re-queued with votes intact.'
+                : 'Head moved since review — returned to review on the new commit.');
+            if (votesKept) {
+              // Re-drive the app drain so the merge is re-attempted against the
+              // corrected pin instead of waiting for the hourly sweeper. It
+              // cannot loop: the pin now equals the live head, so the retry
+              // either merges or blocks on a real gate (usually checks).
+              checkAndResolveConflicts(config, { app_id: session.app_id }).catch((e) => {
+                log.warn('votes', 'Post-sync merge re-kick failed', {
+                  sessionId: session.id, err: e.message,
+                });
+              });
+            }
             return {
               merged: false, headMoved: true, needed: required, yesCount,
+              ...(votesKept ? { votesKept: true } : {}),
               ...(nativeRefresh?.headSha ? { reviewedHeadSha: nativeRefresh.headSha } : {}),
             };
           }
@@ -4617,6 +4833,7 @@ module.exports = {
   // driving the full HTTP router.
   reconcileNativeReviewedHead,
   reconcilePromotedSweepHead,
+  classifyNativeHeadMove,
   reviewedHeadForSession,
   voteMatchesReviewedRevision,
   recordVote,

@@ -150,7 +150,18 @@ const Home = {
   // them would be noise. Ordered by the admin's featured_order
   // (ascending, NULLs last) and capped at FEATURED_LIMIT.
   // Pure — unit-tested in tests/home-find-more.test.js.
+  //
+  // ?shot=discover-empty forces the empty answer regardless (#949), for the
+  // same reason ?shot=create-disabled exists above: "nothing left to
+  // feature" is what a viewer sees once they have added the featured apps,
+  // and no URL could reach it — so the Discover widget's compact state was
+  // invisible to the before/after screenshots and to every declared check.
+  // Pure UI state: it changes one derived list at render time, writes
+  // nothing, and is not env-gated, so it works in production immediately.
   featuredApps(apps) {
+    try {
+      if (new URLSearchParams(location.search).get('shot') === 'discover-empty') return [];
+    } catch (err) { /* ignore */ }
     return (apps || [])
       .filter((a) => a && a.featured && !Home.isYours(a))
       .sort((x, y) => {
@@ -159,6 +170,41 @@ const Home = {
         return xo - yo;
       })
       .slice(0, Home.FEATURED_LIMIT);
+  },
+
+  // How many tiles the Discover widget's "Popular" lane shows. Same number
+  // as FEATURED_LIMIT because both lanes share the same six-track grid —
+  // see .home-discover-lane in app.css.
+  POPULAR_LIMIT: 6,
+
+  // The Popular lane's contents (#949): what everyone else is actually
+  // using, for the desktop widget's second row. Derived from the SAME
+  // /api/apps payload the grid already holds — `active_users` rides along
+  // with every row (see the au join in src/routes/apps.js), so this costs
+  // no query.
+  //
+  // The ranking mirrors Browse.sortApps' non-featured tail exactly (most
+  // users first, ties keeping the server's own order via a stable sort), so
+  // the widget and the Browse directory can't disagree about what is
+  // popular. parseInt because the count arrives as a STRING — it is a
+  // Postgres bigint and, unlike open_prs, the serializer doesn't coerce it.
+  //
+  // Four exclusions, each load-bearing:
+  //   * `featured` — the lane above already offers those.
+  //   * isYours — the whole point is apps you don't have yet.
+  //   * status 'error' — a broken app is not a discovery target.
+  //   * self_hosted — the platform app itself is visible only to admins, so
+  //     including it would make the lane read differently per viewer.
+  // And a floor of one active user: an app nobody uses is not "popular",
+  // and padding the lane out with zero-user rows would misrepresent it.
+  // Pure — unit-tested in tests/home-find-more.test.js.
+  popularApps(apps) {
+    const users = (a) => (parseInt(a && a.active_users, 10) || 0);
+    return (apps || [])
+      .filter((a) => a && !a.featured && !a.self_hosted
+        && a.status !== 'error' && !Home.isYours(a) && users(a) >= 1)
+      .sort((x, y) => users(y) - users(x))
+      .slice(0, Home.POPULAR_LIMIT);
   },
 
   // ===== Free-form grid layout =====

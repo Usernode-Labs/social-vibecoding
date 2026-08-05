@@ -226,15 +226,16 @@ const HomeLayout = {
   // Resolve one widget's home cell against the board so far. Three steps,
   // in order:
   //
-  //   1. CLAMP the anchor inside the canvas. At 4 columns Challenges and
-  //      Discover are full-width, so `cols - w` is 0 and both are pulled to
-  //      column 0 — their ROW is the part of the design that survives the
-  //      narrow breakpoint, their column can't.
+  //   1. CLAMP the anchor inside the canvas. At 4 columns Challenges,
+  //      Discover and Create app are all full-width, so `cols - w` is 0 and
+  //      each is pulled to column 0 — their ROW is the part of the design
+  //      that survives the narrow breakpoint, their column can't.
   //   2. If that rectangle is free, take it.
   //   3. Otherwise KEEP THE COLUMN and walk down for the first row that
-  //      fits. This is what happens to Create app on a phone: its cell
-  //      (3,5) is inside full-width Discover's (0,4)-(3,5) footprint, so it
-  //      slides to the row below rather than jumping to the top-left.
+  //      fits. This is what happens to Create app on a phone: it is
+  //      full-width there too, so the clamp pulls it to column 0, where
+  //      Discover's (0,4)-(3,5) footprint blocks its row — it slides to the
+  //      row below and takes that row on its own.
   //
   // Only if the whole column is blocked does it fall back to the first free
   // rectangle anywhere — overlapping is never an option.

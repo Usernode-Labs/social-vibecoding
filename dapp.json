@@ -320,9 +320,15 @@
       "expectText": "Go to leaderboard"
     },
     {
+      "name": "Challenges widget: with nothing running it says so, and fills the rest (#947)",
+      "path": "/?demo=1&challenges=none",
+      "expectSelector": "#app-list [data-panel-slot=\"challenges\"] article.home-panel[data-rows=\"0\"][data-fill=\"3\"] .home-panel-lb-row",
+      "expectText": "No challenges are running right now"
+    },
+    {
       "name": "The Create app widget sits in the grid and opens the create flow",
       "path": "/?demo=1",
-      "expectSelector": "#app-list [data-panel-slot=\"create\"][data-create-enabled=\"true\"] .home-create-btn",
+      "expectSelector": "#app-list [data-panel-slot=\"create\"][data-create-enabled=\"true\"] .home-create-btn[class*=\"sm:flex-col\"]",
       "expectText": "Create app"
     },
     {
@@ -332,10 +338,16 @@
       "expectText": "Create app"
     },
     {
-      "name": "The Discover widget renders curated tiles + the way into the directory",
+      "name": "Discover renders both lanes: curated tiles, then Popular (#949)",
       "path": "/?demo=1",
-      "expectSelector": "#app-list [data-panel-slot=\"discover\"] .home-panel .home-discover-tiles .app-card",
+      "expectSelector": "#app-list [data-panel-slot=\"discover\"] .home-panel .home-discover-popular .app-card:not(:has(.users-badge))",
       "expectText": "Browse all apps"
+    },
+    {
+      "name": "With nothing featured, Discover shows its compact note (?shot=discover-empty)",
+      "path": "/?demo=1&shot=discover-empty",
+      "expectSelector": "#app-list [data-panel-slot=\"discover\"][data-featured=\"0\"] .home-panel-browse",
+      "expectText": "Nothing featured right now"
     },
     {
       "name": "App tiles are placed at explicit grid cells, with holes allowed",

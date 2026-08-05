@@ -42,8 +42,8 @@ const LAYOUT_SRC = read('public/js/home-layout.js');
 // The registry the server serves, as the client sees it.
 const REGISTRY = [
   { key: 'challenges', title: 'Challenges', removable: true, sizes: { 4: [4, 2], 5: [2, 2] } },
-  { key: 'discover', title: 'Discover', removable: false, sizes: { 4: [4, 2], 5: [2, 2] } },
-  { key: 'create', title: 'Create app', removable: true, sizes: { 4: [1, 1], 5: [1, 1] } },
+  { key: 'discover', title: 'Discover', removable: false, sizes: { 4: [4, 1], 5: [2, 2] } },
+  { key: 'create', title: 'Create app', removable: true, sizes: { 4: [4, 1], 5: [1, 1] } },
 ];
 
 // Returns { Home, HomeLayout, fetchCalls, toasts, setFetch, sandbox,
@@ -1169,7 +1169,8 @@ test('each width keeps its OWN arrangement across a resize', () => {
     '4': [{ type: 'app', slug: 'a', col: 3, row: 5 }, { type: 'app', slug: 'b', col: 0, row: 0 },
       { type: 'widget', key: 'challenges', col: 0, row: 1 },
       { type: 'widget', key: 'discover', col: 0, row: 3 },
-      { type: 'widget', key: 'create', col: 1, row: 0 }],
+      // Full-width at four columns, so column 0 and a row of its own.
+      { type: 'widget', key: 'create', col: 0, row: 6 }],
     '5': [{ type: 'app', slug: 'a', col: 0, row: 0 }, { type: 'app', slug: 'b', col: 4, row: 4 },
       { type: 'widget', key: 'challenges', col: 1, row: 0 },
       { type: 'widget', key: 'discover', col: 3, row: 0 },
@@ -1317,7 +1318,7 @@ test('the demo layout survives repair for a viewer with no apps of their own', (
       { type: 'app', slug: 'staging-demo-image-icon', col: 3, row: 0 },
       { type: 'widget', key: 'discover', col: 0, row: 1 },
       { type: 'widget', key: 'challenges', col: 0, row: 4 },
-      { type: 'widget', key: 'create', col: 3, row: 6 },
+      { type: 'widget', key: 'create', col: 0, row: 6 },
     ],
     5: [],
   };

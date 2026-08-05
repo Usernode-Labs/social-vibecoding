@@ -77,11 +77,14 @@ function makeSlot(key) {
     getAttribute: (n) => (n in attrs ? attrs[n] : null),
     hasAttribute: (n) => n in attrs,
     removeAttribute: (n) => { delete attrs[n]; },
-    // Good enough for the one lookup _stampState does: find the inner
-    // element carrying data-create-enabled, reading it out of the HTML.
+    // Good enough for the lookups _stampState does: find the inner element
+    // carrying one of the state attributes, reading it out of the HTML.
+    // Attribute-selector shaped rather than hard-coded to one name, so a
+    // new entry in HomePanels.STATE_ATTRS is covered the day it lands.
     querySelector: (sel) => {
-      if (sel !== '[data-create-enabled]') return null;
-      const m = /data-create-enabled="([^"]*)"/.exec(slot.innerHTML);
+      const attr = /^\[([a-z-]+)\]$/.exec(sel);
+      if (!attr) return null;
+      const m = new RegExp(`${attr[1]}="([^"]*)"`).exec(slot.innerHTML);
       return m ? { getAttribute: () => m[1] } : null;
     },
     querySelectorAll: () => [],
@@ -555,16 +558,43 @@ test('render: nothing at all when signed out, unloaded, or hidden', () => {
   assert.equal(hiddenOut.html, '');
 });
 
-test('render: an empty card is admin-only', () => {
+// #947 reversed the admin-only empty box. It is now a COMPACT block that
+// every viewer gets: a widget that silently vanishes between seasons leaves
+// the viewer unable to tell "nothing is running" from "this broke", and the
+// compact block is not the full-size empty box the old comment argued
+// against (it is ~68px — title bar plus one line, no footer).
+test('render: the empty state renders for EVERY viewer, compact and footer-less', () => {
   const empty = panel({ total: 0, done: 0, challenges: [] });
-  const asUser = renderWith({ registry: [], hidden: [], panels: [empty] },
-    { user: { id: 1, isAdmin: false } });
-  assert.equal(asUser.html, '', 'no empty box on every home screen');
+  for (const isAdmin of [false, true]) {
+    const out = renderWith({ registry: [], hidden: [], panels: [empty] },
+      { user: { id: 1, isAdmin } });
+    const who = isAdmin ? 'admin' : 'member';
+    assert.match(out.html, /No challenges are running right now/,
+      `${who}: the block says why it is quiet`);
+    assert.ok(!out.section._classes.has('hidden'), `${who}: section shown`);
+    // Exactly one row, and no footer: nothing to expand, nothing to count.
+    assert.equal((out.html.match(/home-panel-row\b/g) || []).length, 1, `${who}: one line`);
+    assert.doesNotMatch(out.html, /home-panel-footer/, `${who}: no footer`);
+    // The ⋮ menu sits at the right edge, same as the populated branch.
+    assert.match(out.html, /home-panel-title[^"]*flex-1/, `${who}: title takes the bar`);
+    assert.match(out.html, /data-rows="0"/, `${who}: stamped`);
+    assert.match(out.html, /data-fill="0"/, `${who}: no fill without a grid host`);
+  }
+});
 
-  const asAdmin = renderWith({ registry: [], hidden: [], panels: [empty] },
-    { user: { id: 1, isAdmin: true } });
-  assert.match(asAdmin.html, /No challenges are running right now/);
-  assert.ok(!asAdmin.section._classes.has('hidden'));
+// The empty payload must not leave the expand flag set: ensureLoaded() would
+// keep sending ?expand=challenges, which asks for the season's FINISHED
+// challenges and would repopulate a block that should read as quiet.
+test('render: an empty payload clears the in-place expanded flag', () => {
+  const { HP, section } = makeHomePanels();
+  HP._expanded.challenges = true;
+  HP._data = {
+    registry: [], hidden: [],
+    panels: [panel({ total: 0, done: 0, challenges: [] })],
+  };
+  HP.render();
+  assert.equal(HP._expanded.challenges, false);
+  assert.match(section.innerHTML, /No challenges are running right now/);
 });
 
 test('setHidden drops the panel optimistically and restores it on failure', async () => {
@@ -1142,8 +1172,7 @@ test('index.html keeps #home-panels as the fallback host below the grid', () => 
 test('each block is a full-width child of the section, not separately bounded', () => {
   const populated = renderWith({ registry: [], hidden: [], panels: [panel()] }).html;
   const empty = renderWith(
-    { registry: [], hidden: [], panels: [panel({ total: 0, done: 0, challenges: [] })] },
-    { user: { id: 1, isAdmin: true } }
+    { registry: [], hidden: [], panels: [panel({ total: 0, done: 0, challenges: [] })] }
   ).html;
   for (const [name, html] of [['populated', populated], ['empty state', empty]]) {
     assert.doesNotMatch(html, /home-section-block/,
@@ -1228,7 +1257,7 @@ test('the Discover widget renders the curated tiles when Home is reachable', () 
   const html = HP.renderDiscoverPanel({ key: 'discover', title: 'Discover' });
   assert.match(html, /home-discover-tiles/, 'the tile row, not the empty note');
   assert.match(html, /class="app-card home-discover-tile[^"]*" data-slug="alpha"/);
-  assert.match(html, /Browse all apps/, 'and the footer is always there');
+  assert.match(html, /Browse all apps/, 'and the browse control is always there');
   assert.doesNotMatch(html, /Nothing featured right now/);
 
   // With Home genuinely absent it still renders — the note, not a crash.
@@ -1236,6 +1265,115 @@ test('the Discover widget renders the curated tiles when Home is reachable', () 
     .renderDiscoverPanel({ key: 'discover', title: 'Discover' });
   assert.match(bare, /Nothing featured right now/);
   assert.match(bare, /Browse all apps/);
+});
+
+// ── Discover: one shape per breakpoint (#949) ──────────────────────────
+//
+// A phone gets one grid row (the widget is full width there, so the row it
+// gives back is a clean gap); desktop keeps its original two and spends the
+// second on the Popular lane. The CONTENT follows the footprint, so these
+// stub Home.currentCols to pick a side.
+
+const discoverHome = (over = {}) => ({
+  featuredApps: () => [{ slug: 'alpha', name: 'Alpha', featured: true }],
+  popularApps: () => [{ slug: 'pop', name: 'Popular One', active_users: 9 }],
+  currentCols: () => 5,
+  isYours: () => false,
+  _apps: [],
+  ...over,
+});
+
+const renderDiscover = (over) => makeHomePanels({ home: discoverHome(over) }).HP
+  .renderDiscoverPanel({ key: 'discover', title: 'Discover' });
+
+test('Discover draws the Popular lane on desktop and never on a phone', () => {
+  const desktop = renderDiscover();
+  assert.match(desktop, /home-discover-popular/, '5 columns gets the second lane');
+  assert.match(desktop, /data-slug="pop"/);
+  assert.match(desktop, /home-discover-divider/, 'with a hairline and its caption');
+  assert.match(desktop, />Popular</);
+
+  const phone = renderDiscover({ currentCols: () => 4 });
+  assert.doesNotMatch(phone, /home-discover-popular/,
+    'a phone widget is ONE row — a second lane there would be clipped');
+  assert.doesNotMatch(phone, /home-discover-divider/);
+  assert.match(phone, /data-slug="alpha"/, 'but the curated lane is unchanged');
+});
+
+test('Discover never draws a footer; the browse control is in the title bar', () => {
+  for (const cols of [4, 5]) {
+    const html = renderDiscover({ currentCols: () => cols });
+    assert.doesNotMatch(html, /home-panel-footer/, `${cols} columns`);
+    // The button is inside the bar, which is what buys the 27px the one-row
+    // phone budget needs.
+    assert.match(html, /home-panel-bar[\s\S]*?id="home-browse-btn"[\s\S]*?home-panel-menu/,
+      `${cols} columns: browse sits between the title and the ⋮`);
+  }
+  // ...and in the empty branch too — it is THE discovery path.
+  const empty = renderDiscover({ featuredApps: () => [], popularApps: () => [] });
+  assert.match(empty, /home-panel-bar[\s\S]*?id="home-browse-btn"/);
+});
+
+test('Discover’s degenerate states: which lane, which note', () => {
+  // Featured only: no divider, no second lane.
+  const featuredOnly = renderDiscover({ popularApps: () => [] });
+  assert.match(featuredOnly, /data-slug="alpha"/);
+  assert.doesNotMatch(featuredOnly, /home-discover-divider/,
+    'no popular apps means no caption row, not an empty one');
+  assert.doesNotMatch(featuredOnly, /Nothing featured right now/);
+
+  // Popular only — the reporter's case: everything featured is already
+  // theirs, so the top lane is the note and the second lane fills the box.
+  const popularOnly = renderDiscover({ featuredApps: () => [] });
+  assert.match(popularOnly, /Nothing featured right now/);
+  assert.match(popularOnly, /home-discover-popular/);
+  assert.match(popularOnly, /data-slug="pop"/);
+
+  // Neither: one centred line and nothing else.
+  const neither = renderDiscover({ featuredApps: () => [], popularApps: () => [] });
+  assert.match(neither, /Nothing featured right now/);
+  assert.doesNotMatch(neither, /home-discover-tiles/);
+  assert.doesNotMatch(neither, /home-discover-divider/);
+});
+
+test('Discover stamps both lane counts, and render() mirrors them onto the host', () => {
+  assert.match(renderDiscover(), /data-featured="1"/);
+  assert.match(renderDiscover(), /data-popular="1"/);
+  const empty = renderDiscover({ featuredApps: () => [], popularApps: () => [] });
+  assert.match(empty, /data-featured="0"/);
+  assert.match(empty, /data-popular="0"/);
+
+  // The checks select on [data-panel-slot="discover"][data-featured="0"],
+  // so the value has to reach the HOST, not just the article inside it.
+  const slot = makeSlot('discover');
+  const { HP } = makeHomePanels({
+    home: discoverHome({ featuredApps: () => [], popularApps: () => [] }),
+    slots: [slot],
+  });
+  HP._data = { registry: [{ key: 'discover', title: 'Discover', removable: false }],
+    hidden: [], panels: [{ key: 'discover', title: 'Discover' }] };
+  HP.render();
+  assert.equal(slot.getAttribute('data-featured'), '0');
+  assert.equal(slot.getAttribute('data-popular'), '0');
+
+  // A widget that stamps neither leaves the host clean rather than keeping a
+  // stale value from a previous paint.
+  const other = makeSlot('challenges');
+  other.setAttribute('data-featured', '3');
+  const h2 = makeHomePanels({ slots: [other] });
+  h2.HP._data = { registry: [{ key: 'challenges', title: 'Challenges', removable: true }],
+    hidden: [], panels: [{ key: 'challenges', title: 'Challenges', challenges: [], total: 0 }] };
+  h2.HP.render();
+  assert.equal(other.hasAttribute('data-featured'), false);
+});
+
+// A lane whose tiles were never wired looks IDENTICAL in a screenshot while
+// every tap and every + badge in it is dead — so this is asserted on the
+// source, which is where the singular querySelector bug would live.
+test('_wire hands EVERY discovery lane to Home._wireDiscoveryCards', () => {
+  assert.match(SRC, /querySelectorAll\('\.home-discover-tiles'\)[\s\S]{0,220}?_wireDiscoveryCards\(tiles\)/);
+  assert.doesNotMatch(SRC, /querySelector\('\.home-discover-tiles'\)/,
+    'singular would wire the featured lane and leave Popular inert');
 });
 
 test('the Create widget reads the viewer’s quota through Home', () => {
@@ -1249,6 +1387,30 @@ test('the Create widget reads the viewer’s quota through Home', () => {
   assert.match(locked, /data-create-enabled="false"/);
   assert.match(locked, /aria-disabled="true"/);
   assert.doesNotMatch(locked, /\sdisabled[=\s>]/, 'never the disabled ATTRIBUTE');
+});
+
+// The widget is 4x1 below 640px and 1x1 at/above it (PANEL_REGISTRY
+// `sizes`), so its CONTENT has to flip at the same breakpoint: icon beside
+// label in the full-width phone row, icon above label in the single desktop
+// cell. One markup, two shapes, both class literals so the compiled
+// stylesheet actually carries them.
+test('the Create widget lays out as a row on a phone and a stack on desktop', () => {
+  const html = makeHomePanels({ home: { canCreate: () => true } }).HP
+    .renderCreatePanel({ key: 'create' });
+  const btn = html.match(/class="home-create-btn[^"]*"/)[0];
+  assert.match(btn, /\bflex-row\b/, 'the phone shape is a row');
+  assert.match(btn, /\bsm:flex-col\b/, 'and it stacks again at the 640px breakpoint');
+  assert.match(btn, /\bitems-center\b/);
+  assert.match(btn, /\bjustify-center\b/, 'centred in whichever rectangle it gets');
+  // The label steps up a size in the wide row, where there is room for it.
+  assert.match(html, /home-create-label[^"]*text-sm sm:text-xs/);
+  // The registry is the other half of the same decision — a 4x1 phone
+  // footprint with a stacked tile inside it would clip the label.
+  const route = read('src/routes/home-panels.js');
+  const create = route.slice(route.indexOf("key: 'create'"));
+  assert.match(create.slice(0, create.indexOf('},') + 1),
+    /sizes: \{ 4: \[4, 1\], 5: \[1, 1\] \}/,
+    'full-width row on a phone, one cell on desktop');
 });
 
 // The state has to end up on the HOST. The widget stamps it on markup that
@@ -1297,10 +1459,288 @@ test('dapp.json’s home-widget checks describe markup this module emits', () =>
   assert.match(makeHomePanels({ home: { canCreate: () => true } }).HP
     .renderCreatePanel({ key: 'create' }), /class="home-create-btn/);
 
-  const discover = find('[data-panel-slot="discover"]');
+  // ONE Discover check covers the populated widget (#949). It selects the
+  // SECOND lane, which only exists once the whole block has painted, so it
+  // is strictly stronger than the featured-lane selector it replaced — and
+  // the checks run at the desktop viewport, which is the breakpoint that
+  // draws two lanes at all.
+  const discover = find('[data-panel-slot="discover"] .home-panel');
   assert.ok(discover, 'the discover check is declared');
-  // Its selector names the two classes the tile row must carry.
-  for (const cls of ['home-panel', 'home-discover-tiles', 'app-card']) {
+  for (const cls of ['home-panel', 'home-discover-popular', 'app-card']) {
     assert.ok(discover.expectSelector.includes(cls), cls);
   }
+  assert.equal(discover.expectText, 'Browse all apps');
+  const desktop = renderDiscover();
+  assert.ok(desktop.includes('home-discover-popular') && desktop.includes('app-card'),
+    'and this module emits both classes that selector chains');
+  // The manifest parses only the first MAX_TESTS entries, so the tile-face
+  // invariant that used to have a check of its own rides along on this
+  // selector instead — scoped to the discovery tiles, which is where a
+  // "popular" lane makes a user-count badge tempting in the first place.
+  assert.match(discover.expectSelector, /:not\(:has\(\.users-badge\)\)/);
+  assert.doesNotMatch(desktop, /users-badge/,
+    'a discovery tile states popularity by its rank, not by a badge');
+
+  // The empty state's check selects on the mirrored host attribute plus the
+  // browse control, and asserts the note's own copy.
+  const bare = find('[data-panel-slot="discover"][data-featured="0"]');
+  assert.ok(bare, 'the empty-state check is declared');
+  assert.match(bare.path, /shot=discover-empty/, 'reached by the deep link, not by luck');
+  assert.match(bare.expectSelector, /\.home-panel-browse/);
+  const emptyHtml = renderDiscover({ featuredApps: () => [], popularApps: () => [] });
+  assert.ok(emptyHtml.includes('data-featured="0"'), 'the widget stamps it');
+  assert.ok(emptyHtml.includes('home-panel-browse'), 'and still offers the browse control');
+  assert.ok(emptyHtml.includes(bare.expectText), `the note says "${bare.expectText}"`);
+});
+
+// The one-cell phone budget and the two-cell desktop budget, derived by hand
+// in app.css and pinned here exactly as that comment instructs — a token
+// moved on one side without the other mis-sizes the widget silently.
+test('the Discover lanes fit the cells their footprint buys', () => {
+  const css = read('public/css/app.css');
+  // Six explicit tracks, one per tile either lane can produce. auto-fill
+  // followed the pixel width and wrapped to a second (clipped) row in a
+  // 640-800px window.
+  assert.match(css, /\.home-discover-tiles \{[^}]*grid-template-columns: repeat\(6, minmax\(0, 1fr\)\)/);
+  const home = read('public/js/home.js');
+  assert.match(home, /FEATURED_LIMIT: 6/);
+  assert.match(home, /POPULAR_LIMIT: 6/, 'the lane cap equals the track count');
+  // Both lanes split the leftover height instead of the first one taking it.
+  assert.match(css, /\.home-discover-lane \{[^}]*flex: 1 1 0/);
+  assert.match(css, /\.home-discover-tiles \{[^}]*align-content: center/);
+  // The fluid icon caps at the 40px the tile always drew at — and the CAP
+  // is on the WRAPPER. On the icon itself, `width: 100%` resolves against a
+  // shrink-to-fit parent (the tile is `flex-col items-center`), which is
+  // circular: the icons rendered at whatever their glyph measured — 12px for
+  // an emoji, 30px for an image — instead of a uniform 40px.
+  assert.match(css, /\.home-discover-icon-wrap \{[^}]*width: 100%/);
+  assert.match(css, /\.home-discover-icon-wrap \{[^}]*max-width: 2\.5rem/);
+  assert.match(css, /\.home-discover-icon \{[^}]*aspect-ratio: 1 \/ 1/);
+  assert.match(SRC, /class="home-discover-icon-wrap relative"/,
+    'and the markup gives that wrapper its class');
+
+  // .app-card's own padding must NOT apply to a discovery tile: the lane
+  // supplies the inset, and inheriting the launcher tile's 8px added 16px
+  // per tile — enough to put the phone widget at 116px of a 116px cell,
+  // with no room left for a larger system text size. The selector is two
+  // classes deep because .app-card's padding is declared later in the file.
+  assert.match(css, /\.home-discover-tiles \.home-discover-tile \{[^}]*padding: 0/);
+
+  // Budgets, against the tokens they have to fit inside: the PHONE cell
+  // (the tighter one, declared in the max-width:639.98px block) and the
+  // desktop two-cell slot.
+  const rem = (re) => parseFloat(css.match(re)[1]) * 16;
+  const phoneCell = rem(/@media \(max-width: 639\.98px\)[\s\S]*?--home-cell-h: ([\d.]+)rem/);
+  const deskCap = rem(/--home-panel-max-h: ([\d.]+)rem/);
+  const bar = 27;      // py-1 8 + 18 line + 1px rule
+  const lane = 72;     // 8 + 40 icon + 4 gap + 12 caption + 8
+  const divider = 19;  // 1px rule + the ~18px "Popular" caption row
+  assert.ok(2 + bar + lane <= phoneCell,
+    `phone budget ${2 + bar + lane}px must fit the ${phoneCell}px cell`);
+  assert.ok(2 + bar + lane + divider + lane <= deskCap,
+    `desktop budget ${2 + bar + lane + divider + lane}px must fit the ${deskCap}px two-cell slot`);
+});
+
+// ── The breakpoint split (#947) ────────────────────────────────────
+//
+// One widget, two renderings. On a PHONE it sizes to content (a CSS-only
+// concern, asserted against app.css below). On DESKTOP it keeps its fixed
+// two-row tile and spends the leftover on a LEADERBOARD section, which is a
+// MARKUP concern and so is decided here.
+//
+// The harness has no innerWidth, so the column count is injected the way the
+// module actually reads it: through Home.currentCols().
+function makeDesktop(data, opts = {}) {
+  const slot = makeSlot('challenges');
+  const { HP } = makeHomePanels({
+    ...opts,
+    slots: [slot],
+    home: { currentCols: () => opts.cols || 5, ...(opts.home || {}) },
+  });
+  HP._data = data;
+  HP.render();
+  return { HP, html: slot.innerHTML, slot };
+}
+
+const fill = (over = {}) => ({
+  top: [
+    { rank: 1, username: 'ada', score: 41 },
+    { rank: 2, username: 'grace', score: 27 },
+    { rank: 3, username: 'linus', score: 18 },
+  ],
+  viewer: { rank: 7, username: 'me', score: 6 },
+  total: 42,
+  ...over,
+});
+
+const withFill = (panelOver = {}) => ({
+  registry: [], hidden: [],
+  panels: [panel({ leaderboard: fill(), ...panelOver })],
+});
+
+test('fillSlots: the row budget the desktop tile actually has', () => {
+  const { HP } = makeHomePanels();
+  // 201.5px of rows area, 40px a row, 16px for the label:
+  // fillRows = 4 - max(challengeRows, 1).
+  assert.equal(HP.fillSlots(0), 3, 'the empty state spends a row on its note');
+  assert.equal(HP.fillSlots(1), 3);
+  assert.equal(HP.fillSlots(2), 2);
+  assert.equal(HP.fillSlots(3), 1);
+  assert.equal(HP.fillSlots(4), 0, 'a 40px row + 16px label does not fit in ~41px');
+});
+
+test('desktop: leftover space becomes a LEADERBOARD section', () => {
+  const cases = [[1, 3], [2, 2], [3, 1], [4, 0]];
+  for (const [nChallenges, expectFill] of cases) {
+    const rows = Array.from({ length: nChallenges }, (_, i) => challenge({ id: i + 1 }));
+    const { html } = makeDesktop(withFill({ challenges: rows, total: nChallenges }));
+    const drawn = (html.match(/home-panel-lb-row/g) || []).length;
+    assert.equal(drawn, expectFill, `${nChallenges} challenges → ${expectFill} fill rows`);
+    assert.match(html, new RegExp(`data-rows="${nChallenges}"`));
+    assert.match(html, new RegExp(`data-fill="${expectFill}"`));
+    const labels = (html.match(/home-panel-fill-label/g) || []).length;
+    assert.equal(labels, expectFill ? 1 : 0, 'exactly one label, only when filled');
+  }
+});
+
+test('desktop: the zero state leads with the note, then fills the tile', () => {
+  const { html } = makeDesktop({
+    registry: [], hidden: [],
+    panels: [panel({ total: 0, done: 0, challenges: [], leaderboard: fill() })],
+  });
+  assert.match(html, /No challenges are running right now/, 'same copy at both widths');
+  assert.match(html, /data-rows="0"/);
+  assert.match(html, /data-fill="3"/);
+  // Nothing to expand or count: one control, and it names where it goes.
+  assert.doesNotMatch(html, /home-panel-expand/);
+  assert.match(html, /home-panel-lb-open/);
+  assert.match(html, /See full leaderboard/);
+});
+
+test('desktop: the viewer’s own row is last, marked, and never duplicated', () => {
+  const { html } = makeDesktop(withFill({ challenges: [challenge()], total: 1 }));
+  assert.match(html, /home-panel-lb-you/, 'the viewer is tinted');
+  // Names in the FILL block only — the challenge rows above it share the
+  // .home-panel-goal lane, which is the point (the two lists line up).
+  const namesIn = (h) => [...h.slice(h.indexOf('home-panel-fill-label'))
+    .matchAll(/home-panel-goal[^>]*>([^<]+)</g)].map((m) => m[1]);
+  // Top 2 then "You" — the last slot belongs to the viewer.
+  assert.deepEqual(namesIn(html), ['ada', 'grace', 'You']);
+  assert.equal((html.match(/home-panel-lb-you/g) || []).length, 1);
+
+  // Already in the top slice: highlighted in place, and the freed slot goes
+  // to the next entry down rather than repeating them.
+  const inTop = makeDesktop(withFill({
+    challenges: [challenge()],
+    total: 1,
+    leaderboard: fill({ viewer: { rank: 2, username: 'grace', score: 27 } }),
+  }));
+  assert.deepEqual(namesIn(inTop.html), ['ada', 'You', 'linus']);
+  assert.equal((inTop.html.match(/home-panel-lb-you/g) || []).length, 1);
+});
+
+test('desktop: a zero-kudos viewer row is muted, not a violet chip', () => {
+  const { html } = makeDesktop(withFill({
+    challenges: [challenge()],
+    total: 1,
+    leaderboard: fill({ viewer: { rank: 300, username: 'me', score: 0 } }),
+  }));
+  const youRow = html.slice(html.indexOf('home-panel-lb-you'));
+  assert.doesNotMatch(youRow.slice(0, 600), /text-violet-600/, '0 is not an accent-coloured shout');
+  assert.match(youRow, /You are #300 of 42 builders/);
+});
+
+test('no fill on a phone, in the search-view host, or while expanded', () => {
+  const data = withFill({ challenges: [challenge()], total: 1 });
+
+  // Phone: the widget is full-width, so it SHRINKS instead of filling.
+  const phone = makeDesktop(data, { cols: 4 });
+  assert.equal((phone.html.match(/home-panel-lb-row/g) || []).length, 0);
+  assert.match(phone.html, /data-fill="0"/);
+
+  // The #home-panels fallback (search view) has no fixed-height rectangle.
+  const fallback = renderWith(data);
+  assert.equal((fallback.html.match(/home-panel-lb-row/g) || []).length, 0);
+  assert.match(fallback.html, /data-fill="0"/);
+
+  // Expanded is all challenges — the fill steps aside.
+  const slot = makeSlot('challenges');
+  const { HP } = makeHomePanels({ slots: [slot], home: { currentCols: () => 5 } });
+  HP._expanded.challenges = true;
+  HP._data = data;
+  HP.render();
+  assert.equal((slot.innerHTML.match(/home-panel-lb-row/g) || []).length, 0);
+
+  // And no fill when the server sent no board at all (the panel still renders).
+  const noBoard = makeDesktop({
+    registry: [], hidden: [],
+    panels: [panel({ challenges: [challenge()], total: 1 })],
+  });
+  assert.equal((noBoard.html.match(/home-panel-lb-row/g) || []).length, 0);
+  assert.match(noBoard.html, /data-fill="0"/);
+  assert.match(noBoard.html, /Report a reproducible bug/);
+});
+
+test('currentCols: unknown width falls back to the COMPACT rendering', () => {
+  // Neither Home nor HomeLayout nor innerWidth on the window: the safe
+  // default is the phone shape, which claims no space it cannot fill.
+  const { HP } = makeHomePanels();
+  assert.equal(HP.currentCols(), 4);
+});
+
+test('fill rows are excluded from the challenges click wiring', () => {
+  const SRC_TEXT = read('public/js/home-panels.js');
+  // The row handler must not sweep up leaderboard rows — they go to
+  // #leaderboard/users, not to the Challenges tab.
+  assert.match(SRC_TEXT, /querySelectorAll\('\.home-panel-row:not\(\.home-panel-lb-row\)'\)/);
+  assert.match(SRC_TEXT, /goToLeaderboardUsers/);
+  assert.match(SRC_TEXT, /location\.hash = '#leaderboard\/users'/);
+});
+
+test('the challenges article always carries home-panel--fit', () => {
+  const populated = renderWith({ registry: [], hidden: [], panels: [panel()] }).html;
+  const empty = renderWith({ registry: [], hidden: [],
+    panels: [panel({ total: 0, done: 0, challenges: [] })] }).html;
+  for (const [name, html] of [['populated', populated], ['empty', empty]]) {
+    assert.match(html, /home-panel--fit/, `${name}: the phone sizing hook`);
+  }
+});
+
+// The sizing half of the split is CSS, and it is only correct if it is
+// SCOPED: unscoped, it would shrink the desktop tile and leave a notch in
+// the icon grid.
+test('app.css: the fit rule lives inside the phone media block, and only there', () => {
+  const css = read('public/css/app.css');
+  const at = css.indexOf('@media (max-width: 639.98px)');
+  assert.ok(at > -1, 'the phone block exists');
+  // The block runs to the next top-level @media.
+  const end = css.indexOf('@media (min-width: 640px)', at);
+  const phoneBlock = css.slice(at, end > -1 ? end : css.length);
+  assert.match(phoneBlock, /\.home-panel-slot > \.home-panel--fit \{[^}]*align-self:\s*flex-start/,
+    'content-height sizing is phone-only');
+  // Exactly one RULE for it in the whole file (prose mentions don't count).
+  assert.equal((css.match(/\.home-panel--fit\s*\{/g) || []).length, 1);
+  // Desktop keeps the stretch: the slot must not grow an align-items of its
+  // own (it would take the create widget's h-full 1x1 tile down with it).
+  // Comments stripped first — the rule's own prose explains that constraint,
+  // and asserting against prose would fail on an accurate comment.
+  const decls = (rule) => rule.replace(/\/\*[\s\S]*?\*\//g, '');
+  const slotRule = decls(css.match(/\.home-panel-slot \{[^}]*\}/)[0]);
+  assert.doesNotMatch(slotRule, /align-items/);
+  assert.match(slotRule, /display:\s*flex/);
+});
+
+test('app.css: the body wrapper and fill block carry the budget’s geometry', () => {
+  const css = read('public/css/app.css');
+  // The body takes the article's remaining height and clips...
+  const body = css.match(/\.home-panel-body \{[^}]*\}/)[0];
+  assert.match(body, /flex:\s*1 1 auto/);
+  assert.match(body, /min-height:\s*0/);
+  assert.match(body, /overflow:\s*hidden/);
+  // ...and both children hold their natural height, so the leftover collects
+  // at the BOTTOM of the tile rather than splitting it down the middle.
+  assert.match(css, /\.home-panel-body > \.home-panel-rows \{[^}]*flex:\s*0 0 auto/);
+  assert.match(css, /\.home-panel-fill \{[^}]*flex:\s*0 0 auto/);
+  // 16px is the figure the fillSlots budget spends on the label.
+  assert.match(css, /\.home-panel-fill-label \{[^}]*height:\s*1rem/);
 });
