@@ -347,6 +347,13 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
     });
 
     activeWorkers.add(session.id);
+    // #937: a sync turn is a NEW turn, so it owns the pending-stop
+    // boundary the same way a chat turn does. Without this, a stop
+    // requested against an earlier chat turn would still be pending in the
+    // registry and execInWorker's pre-dispatch gate would refuse to
+    // dispatch this sync — a sync turn isn't in stopRegistry, so nothing
+    // else would ever clear it.
+    worker.clearPendingStop(session.id);
     let result;
     try {
       result = await worker.execInWorker(session.id, {

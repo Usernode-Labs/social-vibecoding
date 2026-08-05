@@ -96,6 +96,10 @@ function loadSyncMain({ execImpl }) {
   stub(ids.worker, {
     ensureWorkerImage: async () => {},
     ensureWorker: async () => {},
+    // #937: runSyncMain retires any pending stop before its own dispatch
+    // — a sync turn is a new turn, and it is not in stopRegistry, so
+    // nothing else would ever clear a flag left by an earlier chat stop.
+    clearPendingStop: () => {},
     execInWorker: async (sessionId, opts) => {
       execCalls.push({ sessionId, opts });
       return execImpl(opts);
