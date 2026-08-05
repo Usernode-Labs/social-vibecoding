@@ -15,6 +15,8 @@
 const Profile = {
   _open: false,
   _loading: false,
+  _targetUsername: null,
+  _loadToken: 0,
   // { ranking, breakdown, challenges, season } — kept across open/close so
   // re-entering the screen paints instantly, then refreshes.
   _data: null,
@@ -25,14 +27,19 @@ const Profile = {
 
   isOpen() { return Profile._open; },
 
-  async open() {
+  async open(targetUsername = null) {
     Profile._open = true;
+    Profile._targetUsername = targetUsername || null;
+    Profile._data = null;
     Profile._render();
-    await Profile._load();
+    const token = ++Profile._loadToken;
+    await Profile._load(token);
   },
 
   close() {
     Profile._open = false;
+    Profile._targetUsername = null;
+    Profile._loadToken++;
   },
 
   async _fetchJson(path) {
@@ -57,10 +64,25 @@ const Profile = {
     return body;
   },
 
-  async _load() {
-    if (Profile._loading) return;
+  async _load(token = ++Profile._loadToken) {
     Profile._loading = true;
     try {
+      if (Profile._targetUsername) {
+        const target = Profile._targetUsername;
+        const encoded = encodeURIComponent(target);
+        try {
+          const payload = await Profile._fetchJson(`/api/public/profiles/${encoded}`);
+          if (token !== Profile._loadToken || target !== Profile._targetUsername) return;
+          Profile._data = { publicProfile: payload.profile };
+        } catch (err) {
+          if (token !== Profile._loadToken || target !== Profile._targetUsername) return;
+          Profile._data = err && err.status === 404
+            ? { publicNotFound: true }
+            : { error: true };
+        }
+        if (Profile._open) Profile._render();
+        return;
+      }
       // Cheap pre-check: the SPA boots anonymously now (auth-screens.js),
       // so skip the round-trip entirely when there is no session at all.
       // The 401 branch below still covers a session that expired while
@@ -79,7 +101,7 @@ const Profile = {
       const seasonId = active ? (active.season_id ?? active.id) : null;
       const seasonQS = seasonId != null ? `?season_id=${seasonId}` : '';
 
-      const [ranking, breakdown, challenges] = await Promise.all([
+      const [ranking, breakdown, challenges, ownerProfile] = await Promise.all([
         Profile._fetchJson(`/challenges-api/me/ranking${seasonQS}`),
         Profile._fetchJson(
           '/challenges-api/me/breakdown?include_activity=1' +
@@ -90,15 +112,20 @@ const Profile = {
               `/challenges-api/challenges?season_id=${seasonId}`)
               .catch(() => [])
           : Promise.resolve([]),
+        Profile._fetchJson('/api/me/profile').catch(() => null),
       ]);
+
+      if (token !== Profile._loadToken || Profile._targetUsername) return;
 
       Profile._data = {
         season: active,
         ranking,
         breakdown,
         challenges: Array.isArray(challenges) ? challenges : [],
+        ownerProfile,
       };
     } catch (err) {
+      if (token !== Profile._loadToken) return;
       if (err && err.status === 401) {
         // Not signed in (or the session lapsed) — a normal state, not a
         // fault. Replace any stale data so we never show one user's
@@ -109,9 +136,9 @@ const Profile = {
         if (!Profile._data) Profile._data = { error: true };
       }
     } finally {
-      Profile._loading = false;
+      if (token === Profile._loadToken) Profile._loading = false;
     }
-    if (Profile._open) Profile._render();
+    if (Profile._open && token === Profile._loadToken) Profile._render();
   },
 
   // ── rendering ─────────────────────────────────────────────────────────
@@ -154,7 +181,22 @@ const Profile = {
         'Could not load your profile — check your connection and try again.'));
       return;
     }
+    if (d.publicNotFound) {
+      root.appendChild(Profile._el('div',
+        'text-sm text-zinc-400 py-12 text-center',
+        'This profile is unavailable.'));
+      return;
+    }
+    if (d.publicProfile) {
+      Profile._renderPublicProfile(root, d.publicProfile);
+      return;
+    }
     const r = d.ranking || {};
+
+    // Public identity is an explicit owner-controlled layer. Keep it above
+    // the private challenge/ranking information so publishing can never be
+    // mistaken for publishing the data below.
+    if (d.ownerProfile) root.appendChild(Profile._renderOwnerEditor(d.ownerProfile));
 
     // Rank + points header (native ScoreHeader equivalent).
     const head = Profile._el('div', 'text-center mb-5');
@@ -230,6 +272,148 @@ const Profile = {
         'Completed'));
       root.appendChild(card);
     }
+  },
+
+  _avatar(profile, sizeClass = 'w-20 h-20') {
+    const wrap = Profile._el('div', `${sizeClass} rounded-full overflow-hidden bg-violet-100 dark:bg-violet-950 flex items-center justify-center text-violet-700 dark:text-violet-300 text-2xl font-bold shrink-0`);
+    const fallback = (profile.displayName || profile.username || '?').trim().charAt(0).toUpperCase() || '?';
+    wrap.textContent = fallback;
+    if (profile.avatarUrl) {
+      const img = Profile._el('img', 'w-full h-full object-cover');
+      img.alt = '';
+      img.loading = 'lazy';
+      img.referrerPolicy = 'no-referrer';
+      img.src = profile.avatarUrl;
+      img.addEventListener('error', () => img.remove(), { once: true });
+      wrap.appendChild(img);
+    }
+    return wrap;
+  },
+
+  _renderPublicProfile(root, profile) {
+    const card = Profile._el('article', 'rounded-xl border border-zinc-200 dark:border-zinc-800 p-5');
+    const row = Profile._el('div', 'flex items-start gap-4');
+    row.appendChild(Profile._avatar(profile));
+    const copy = Profile._el('div', 'min-w-0 flex-1');
+    copy.appendChild(Profile._el('h2', 'text-xl font-bold break-words', profile.displayName || profile.username));
+    copy.appendChild(Profile._el('div', 'text-sm text-zinc-500 dark:text-zinc-400 break-all', `@${profile.username}`));
+    if (profile.bio) {
+      const bio = Profile._el('p', 'mt-3 text-sm whitespace-pre-wrap break-words', profile.bio);
+      copy.appendChild(bio);
+    }
+    row.appendChild(copy);
+    card.appendChild(row);
+    root.appendChild(card);
+
+    if (window.App?.user && App.user.username !== profile.username) {
+      const details = Profile._el('details', 'mt-4 text-sm');
+      const summary = Profile._el('summary', 'cursor-pointer text-zinc-500 dark:text-zinc-400', 'Report profile');
+      details.appendChild(summary);
+      const label = Profile._el('label', 'block mt-3 text-xs font-medium', 'Reason');
+      const select = Profile._el('select', 'mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent p-2 min-h-[44px]');
+      for (const [value, text] of [['impersonation', 'Impersonation'], ['harassment', 'Harassment'], ['spam', 'Spam'], ['unsafe_avatar', 'Unsafe avatar'], ['other', 'Other']]) {
+        const option = Profile._el('option', '', text); option.value = value; select.appendChild(option);
+      }
+      label.appendChild(select);
+      details.appendChild(label);
+      const noteLabel = Profile._el('label', 'block mt-3 text-xs font-medium', 'Details (optional)');
+      const note = Profile._el('textarea', 'mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent p-2');
+      note.maxLength = 500; note.rows = 3;
+      noteLabel.appendChild(note); details.appendChild(noteLabel);
+      const status = Profile._el('div', 'mt-2 text-xs text-zinc-500');
+      status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
+      const send = Profile._el('button', 'mt-3 px-3 min-h-[44px] rounded-lg border border-zinc-300 dark:border-zinc-700 font-medium', 'Send report');
+      send.addEventListener('click', async () => {
+        send.disabled = true; status.textContent = 'Sending…';
+        try {
+          const res = await fetch(`/api/profiles/${encodeURIComponent(profile.username)}/report`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reason: select.value, detail: note.value || null }),
+          });
+          if (!res.ok) throw new Error('request failed');
+          status.textContent = 'Report received.';
+        } catch { status.textContent = 'Could not send the report. Try again.'; send.disabled = false; }
+      });
+      details.appendChild(send); details.appendChild(status); root.appendChild(details);
+    }
+  },
+
+  _renderOwnerEditor(state) {
+    const p = state.profile || {};
+    const section = Profile._el('section', 'rounded-xl border border-zinc-200 dark:border-zinc-800 p-4 mb-6');
+    section.appendChild(Profile._el('h2', 'font-semibold text-lg', 'Public profile'));
+    section.appendChild(Profile._el('p', 'text-xs text-zinc-500 dark:text-zinc-400 mt-1 mb-4',
+      'Private by default. Publishing shares only the fields here — never your wallet, email, verification, role, memberships, or private activity.'));
+
+    const field = (title, control) => {
+      const label = Profile._el('label', 'block text-xs font-medium mb-3', title);
+      control.className = 'mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent p-2 min-h-[44px]';
+      label.appendChild(control); section.appendChild(label); return control;
+    };
+    const display = field('Display name', Profile._el('input'));
+    display.maxLength = 80; display.value = p.displayName || ''; display.autocomplete = 'name';
+    const bio = field('Bio', Profile._el('textarea'));
+    bio.maxLength = 500; bio.rows = 4; bio.value = p.bio || '';
+    const avatar = field('Avatar HTTPS URL', Profile._el('input'));
+    avatar.type = 'url'; avatar.inputMode = 'url'; avatar.maxLength = 500; avatar.value = p.avatarUrl || '';
+    section.appendChild(Profile._el('p', 'text-xs text-amber-600 dark:text-amber-400 -mt-2 mb-3',
+      'Remote avatar hosts can see visitors’ IP addresses. Query strings, fragments, local hosts, and non-HTTPS URLs are rejected.'));
+
+    const publishLabel = Profile._el('label', 'flex items-center gap-2 text-sm mb-3 min-h-[44px]');
+    const published = Profile._el('input'); published.type = 'checkbox'; published.checked = !!state.published;
+    publishLabel.appendChild(published); publishLabel.appendChild(document.createTextNode('Publish this profile'));
+    section.appendChild(publishLabel);
+    if (state.moderationDisabled) section.appendChild(Profile._el('p', 'text-sm text-red-600 dark:text-red-400 mb-3', 'This profile is hidden by moderation. You can still edit or unpublish it.'));
+
+    const actions = Profile._el('div', 'flex flex-wrap gap-2');
+    const save = Profile._el('button', 'px-3 min-h-[44px] rounded-lg bg-violet-600 text-white font-medium', 'Save profile');
+    const preview = Profile._el('button', 'px-3 min-h-[44px] rounded-lg border border-zinc-300 dark:border-zinc-700 font-medium', 'Preview');
+    const open = Profile._el('a', 'px-3 min-h-[44px] inline-flex items-center rounded-lg border border-zinc-300 dark:border-zinc-700 font-medium', 'Open public page');
+    open.href = `#profile/${encodeURIComponent(p.username || App.user.username)}`;
+    const copy = Profile._el('button', 'px-3 min-h-[44px] rounded-lg border border-zinc-300 dark:border-zinc-700 font-medium', 'Copy public link');
+    const clear = Profile._el('button', 'px-3 min-h-[44px] rounded-lg border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400', 'Clear profile');
+    const status = Profile._el('div', 'mt-3 text-xs text-zinc-500');
+    status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
+    const previewHost = Profile._el('div', 'hidden mt-4');
+    preview.addEventListener('click', () => {
+      previewHost.textContent = '';
+      Profile._renderPublicProfile(previewHost, {
+        username: p.username || App.user.username,
+        displayName: display.value.trim() || null,
+        bio: bio.value.trim() || null,
+        avatarUrl: avatar.value.trim() || null,
+      });
+      previewHost.classList.remove('hidden');
+    });
+    copy.addEventListener('click', async () => {
+      const absolute = new URL(p.url || open.getAttribute('href'), location.origin).href;
+      try {
+        await navigator.clipboard.writeText(absolute);
+        status.textContent = 'Public link copied.';
+      } catch { status.textContent = `Copy this link: ${absolute}`; }
+    });
+    save.addEventListener('click', async () => {
+      save.disabled = true; status.textContent = 'Saving…';
+      try {
+        const res = await fetch('/api/me/profile', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ published: published.checked, displayName: display.value || null, bio: bio.value || null, avatarUrl: avatar.value || null }) });
+        const payload = await res.json();
+        if (!res.ok) throw new Error(payload.error || 'Save failed');
+        Profile._data.ownerProfile = payload; status.textContent = payload.published ? 'Saved and published.' : 'Saved privately.';
+      } catch (err) { status.textContent = err.message || 'Could not save profile.'; }
+      finally { save.disabled = false; }
+    });
+    clear.addEventListener('click', async () => {
+      if (!window.confirm('Clear all public profile fields and unpublish?')) return;
+      clear.disabled = true; status.textContent = 'Clearing…';
+      try {
+        const res = await fetch('/api/me/profile', { method: 'DELETE' });
+        if (!res.ok) throw new Error('Clear failed');
+        Profile._data.ownerProfile = { profile: { username: p.username, displayName: null, bio: null, avatarUrl: null, url: p.url }, published: false, moderationDisabled: state.moderationDisabled };
+        Profile._render();
+      } catch { status.textContent = 'Could not clear profile.'; clear.disabled = false; }
+    });
+    actions.append(save, preview, open, copy, clear); section.append(actions, status, previewHost);
+    return section;
   },
 
   // The backend zeroes total_tokens until terms are accepted, so a gated

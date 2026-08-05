@@ -112,6 +112,43 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panel_positions JSONB NOT NULL D
 -- 35 chars is the RFC 5646 recommended buffer for BCP-47 tags.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS locale VARCHAR(35);
 
+-- Public profiles (#582). Platform username remains the canonical, unique
+-- identity and route key; there is deliberately no second mutable handle.
+-- Every profile starts private and publishes only the three explicitly
+-- allowlisted presentation fields below. Wallet/provider/account metadata
+-- stays on users but is never selected by the public profile routes.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_published BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_display_name VARCHAR(80);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_bio VARCHAR(500);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_avatar_url VARCHAR(500);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_disabled_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_disabled_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_disabled_reason VARCHAR(240);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_updated_at TIMESTAMPTZ;
+
+-- Reports are private moderation material. One open report per reporter and
+-- profile makes retrying idempotent while still allowing a later report after
+-- an admin has resolved the earlier one. Both user FKs cascade so hard account
+-- deletion removes public-profile abuse data instead of retaining identity
+-- edges; resolved_by is only audit attribution and may become NULL.
+CREATE TABLE IF NOT EXISTS profile_reports (
+  id              BIGSERIAL PRIMARY KEY,
+  profile_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reporter_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reason          VARCHAR(32) NOT NULL CHECK (reason IN ('impersonation', 'harassment', 'spam', 'unsafe_avatar', 'other')),
+  detail          VARCHAR(500),
+  status          VARCHAR(16) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'resolved', 'dismissed')),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resolved_at     TIMESTAMPTZ,
+  resolved_by     INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_profile_reports_open_reporter
+  ON profile_reports (profile_user_id, reporter_user_id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_profile_reports_status_created
+  ON profile_reports (status, created_at DESC, id DESC);
+COMMENT ON TABLE profile_reports IS 'staging:private';
+COMMENT ON COLUMN users.profile_disabled_reason IS 'staging:private';
+
 CREATE TABLE IF NOT EXISTS sessions (
   token      VARCHAR(64) PRIMARY KEY,
   user_id    INTEGER REFERENCES users(id) ON DELETE CASCADE,

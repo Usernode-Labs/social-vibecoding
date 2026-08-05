@@ -14,6 +14,7 @@ const { proposalHandoffRoutes } = require('./src/routes/proposal-handoff');
 const { voteRoutes } = require('./src/routes/votes');
 const { kudosRoutes } = require('./src/routes/kudos');
 const { publicApiRoutes } = require('./src/routes/public-api');
+const { profileRoutes } = require('./src/routes/profiles');
 const { waitlistConnectRoutes } = require('./src/routes/waitlist-connect');
 const { issueRoutes } = require('./src/routes/issues');
 const { campaignRoutes } = require('./src/routes/campaigns');
@@ -477,6 +478,7 @@ app.use(kudosRoutes(config));
 // like kudosRoutes; reachable anonymously via the `/api/public/` prefix in
 // PUBLIC_PATHS (src/middleware/auth.js).
 app.use(publicApiRoutes(config));
+app.use(profileRoutes(config));
 // Waitlist social-connect OAuth round-trip (two-stage waitlist survey).
 // Anonymous via the '/waitlist/connect/' PUBLIC_PATHS prefix.
 app.use(waitlistConnectRoutes(config));

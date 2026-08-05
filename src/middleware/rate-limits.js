@@ -342,4 +342,30 @@ const waitlistJoinLimiter = makeLimiter({
   message: 'Too many signups from this address — try again in a few minutes.',
 });
 
-module.exports = { dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, waitlistJoinLimiter };
+// Exact public-profile reads deliberately have no directory/search endpoint;
+// this IP bucket additionally bounds brute-force username enumeration.
+const publicProfileReadLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 120,
+  name: 'public-profile-read',
+  message: 'Too many profile lookups — slow down for a minute.',
+});
+
+const profileWriteLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 30,
+  name: 'profile-write',
+  keyByUser: true,
+  message: 'Too many profile changes — slow down for a minute.',
+});
+
+const profileReportLimiter = makeLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  name: 'profile-report',
+  keyByUser: true,
+  skipFailedRequests: true,
+  message: 'Too many profile reports — try again later.',
+});
+
+module.exports = { dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, waitlistJoinLimiter, publicProfileReadLimiter, profileWriteLimiter, profileReportLimiter };

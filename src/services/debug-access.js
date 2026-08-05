@@ -62,6 +62,7 @@ const DENIED_TABLES = new Set([
   'cli_access_tokens',   // global CLI bearer hashes and hints
   'cli_auth_audit_events', // security audit trail for CLI credentials
   'cli_auth_rate_limits', // shared security limiter state
+  'profile_reports',      // private abuse reports and reporter identities
 ]);
 
 const DENIED_COLUMNS = {
@@ -73,6 +74,7 @@ const DENIED_COLUMNS = {
     'wallet_link_expires_at',
     'email_confirmation_token', // topochain (SPEC §6)
     'waitlist_ip',              // topochain (SPEC §6)
+    'profile_disabled_reason',  // private moderator rationale
   ],
   apps: [
     'db_password',
