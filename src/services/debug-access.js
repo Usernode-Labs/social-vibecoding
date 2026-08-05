@@ -62,6 +62,7 @@ const DENIED_TABLES = new Set([
   'cli_access_tokens',   // global CLI bearer hashes and hints
   'cli_auth_audit_events', // security audit trail for CLI credentials
   'cli_auth_rate_limits', // shared security limiter state
+  'user_ai_credentials', // per-user AI/LLM provider keys (encrypted blobs, still deny)
 ]);
 
 const DENIED_COLUMNS = {

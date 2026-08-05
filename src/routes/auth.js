@@ -334,15 +334,17 @@ function authRoutes(config) {
       return res.status(400).json({ error: msg });
     }
 
-    const secrets = require('../services/secrets');
-    const encrypted = secrets.encrypt(clean, config.dataEncryptionKey);
-    const last4 = clean.slice(-4);
-
     try {
-      await pool.query(
-        `UPDATE users SET anthropic_key_enc = $1, anthropic_key_last4 = $2 WHERE id = $3`,
-        [encrypted, last4, req.user.id]
-      );
+      // #30 dual-write (plan.md PR2): persist through the generic
+      // credential store, which also mirrors into the legacy
+      // users.anthropic_key_* columns during the migration window. Same
+      // envelope, same verification — behavior unchanged, but the key now
+      // also lives in user_ai_credentials for the openrouter era.
+      const credentialStore = require('../services/credential-store');
+      const saved = await credentialStore.writeAnthropicCodingAgent({
+        pool, userId: req.user.id, apiKey: clean, dataKey: config.dataEncryptionKey,
+      });
+      const last4 = saved?.secret_last4 || clean.slice(-4);
       log.info('byok', 'API key saved', { userId: req.user.id });
       res.json({ ok: true, keyLast4: last4 });
     } catch (err) {
@@ -354,10 +356,8 @@ function authRoutes(config) {
   router.delete('/api/me/api-key', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     try {
-      await pool.query(
-        `UPDATE users SET anthropic_key_enc = NULL, anthropic_key_last4 = NULL WHERE id = $1`,
-        [req.user.id]
-      );
+      const credentialStore = require('../services/credential-store');
+      await credentialStore.deleteAnthropicCodingAgent({ pool, userId: req.user.id });
       log.info('byok', 'API key removed', { userId: req.user.id });
       res.json({ ok: true });
     } catch (err) {
