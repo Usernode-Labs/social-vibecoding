@@ -2,6 +2,25 @@ const log = require('./logger');
 const github = require('./github');
 const { pushIssueUpdate } = require('./ws');
 
+// Resolve the app row backed by a given GitHub repo, or undefined. The
+// platform repo is itself an app on self-hosted instances, which is why a
+// caller that only knows `owner/repo` can still find a target. Matching is
+// case-insensitive and tolerant of a trailing `.git`, mirroring how repo_url
+// is written across the fleet.
+//
+// Extracted so the feedback route's bounty placement targets the SAME app row
+// this file broadcasts to — a bounty attached to one app while the
+// issue_update went to another would render a pill no panel ever refreshes.
+async function findAppByRepo(pool, owner, repo) {
+  const { rows } = await pool.query('SELECT id, slug, repo_url FROM apps');
+  return rows.find((r) => {
+    const [, o, rp] = (r.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+    return o && rp
+      && o.toLowerCase() === owner.toLowerCase()
+      && rp.replace(/\.git$/, '').toLowerCase() === repo.replace(/\.git$/, '').toLowerCase();
+  });
+}
+
 // #125: after an issue lands in a repo through a platform path, make the
 // "Open Issues" panel of any app backed by that repo update without a
 // reload. Two halves: seed the server-side open-issues cache with the new
@@ -20,16 +39,7 @@ const { pushIssueUpdate } = require('./ws');
 async function announceIssueCreated(pool, owner, repo, rawIssue, app) {
   try {
     github.noteIssueCreated(owner, repo, rawIssue);
-    let target = app;
-    if (!target) {
-      const { rows } = await pool.query('SELECT id, slug, repo_url FROM apps');
-      target = rows.find((r) => {
-        const [, o, rp] = (r.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-        return o && rp
-          && o.toLowerCase() === owner.toLowerCase()
-          && rp.replace(/\.git$/, '').toLowerCase() === repo.replace(/\.git$/, '').toLowerCase();
-      });
-    }
+    const target = app || await findAppByRepo(pool, owner, repo);
     if (target) {
       pushIssueUpdate({
         action: 'created',
@@ -44,4 +54,4 @@ async function announceIssueCreated(pool, owner, repo, rawIssue, app) {
   }
 }
 
-module.exports = { announceIssueCreated };
+module.exports = { announceIssueCreated, findAppByRepo };

@@ -5,7 +5,9 @@ const log = require('../services/logger');
 const llm = require('../services/llm');
 const limits = require('../services/limits');
 const github = require('../services/github');
-const { announceIssueCreated } = require('../services/issue-announce');
+const { announceIssueCreated, findAppByRepo } = require('../services/issue-announce');
+const appAccess = require('../services/app-access');
+const { placeBounty } = require('../services/bounties');
 const { getPool } = require('../db/pool');
 const { sniffImageType } = require('../services/attachments');
 const { feedbackTitleLimiter, issueScreenshotLimiter } = require('../middleware/rate-limits');
@@ -79,6 +81,61 @@ function parseGitHubRepo(url) {
 // #125 announce (cache seed + issue_update broadcast) lives in
 // services/issue-announce.js — shared with the platform-issue draft
 // confirm path in routes/sessions.js.
+
+// #964: attach a kudos bounty to the issue this request just filed.
+//
+// Never throws and never rejects: the GitHub issue already exists by the time
+// this runs, so a bounty problem must cost the user their pledge, never their
+// written feedback. Every failure mode comes back as `{ placed: false, error }`
+// for the modal to show beside the "Thanks! Filed against…" line.
+//
+// Deliberately skips the open-issue re-verification the standalone bounty
+// route performs (routes/issues.js): the platform created this issue
+// microseconds ago, so it is open by construction — asking GitHub again would
+// only add a round-trip and a failure mode.
+//
+// `app` is the resolved target row for app-targeted feedback, or null for
+// platform-targeted feedback (looked up by repo here, exactly as
+// announceIssueCreated does, so the bounty and the issue_update address the
+// same app).
+async function attachBounty(pool, { app, owner, repo, issueNumber, user }) {
+  try {
+    const target = app || await findAppByRepo(pool, owner, repo);
+    if (!target) {
+      return { placed: false, issueNumber, error: "this repository isn't an app on this platform" };
+    }
+    // Bounties are a build-surface action, so they carry the same collab gate
+    // the standalone route applies. Feedback itself has no such gate — a
+    // collab-private app still accepts your issue, it just won't take your
+    // pledge. checkAppAccess throws if the visibility columns are missing,
+    // hence the ACCESS_COLUMNS re-select below/above at both call sites.
+    const allowed = await appAccess.checkAppAccess(pool, target, user, 'collab');
+    if (!allowed) {
+      return { placed: false, issueNumber, error: 'you need collaborator access on this app to place a bounty' };
+    }
+    const result = await placeBounty(pool, { app: target, user, issueNumber });
+    if (!result.ok) {
+      return {
+        placed: false,
+        issueNumber,
+        error: result.code === 'quota'
+          ? 'weekly kudos allowance is spent'
+          : result.error,
+        remaining: result.remaining,
+        limit: result.limit,
+      };
+    }
+    return {
+      placed: true,
+      issueNumber,
+      remaining: result.remaining,
+      limit: result.limit,
+    };
+  } catch (err) {
+    log.warn('feedback', 'Bounty attach failed', { issueNumber, message: err.message });
+    return { placed: false, issueNumber, error: "couldn't place the bounty just now" };
+  }
+}
 
 function feedbackRoutes(config) {
   const router = Router();

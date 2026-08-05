@@ -22,10 +22,13 @@
 // reformat of those clauses is a test failure there, by design.
 'use strict';
 
-// Weekly quota per giver, mirrored from src/routes/kudos.js (which owns it and
-// passes its own value in). Only used to clamp the kudos_given map; the default
-// keeps a caller that doesn't care from having to know about it.
-const DEFAULT_WEEKLY_KUDOS_LIMIT = 5;
+// Weekly quota per giver, mirrored from src/services/bounties.js (which owns
+// it; routes/kudos.js passes its own value in). Only used to clamp the
+// kudos_given map; the default keeps a caller that doesn't care from having to
+// know about it. Requiring bounties.js here would be a cycle — it requires
+// THIS file for weekStartUtc — so the number is duplicated deliberately and
+// must be kept in step with it.
+const DEFAULT_WEEKLY_KUDOS_LIMIT = 20;
 
 // Compute the Monday-00:00-UTC date that contains the given Date.
 // Mirror of Postgres's `date_trunc('week', t AT TIME ZONE 'UTC')::DATE`

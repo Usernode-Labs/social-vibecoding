@@ -5,10 +5,18 @@ const ws = require('../services/ws');
 const events = require('../services/events');
 const appAccess = require('../services/app-access');
 const { rankedUsers, weekStartUtc } = require('../services/leaderboard-users');
+const {
+  WEEKLY_KUDOS_LIMIT,
+  countWeeklyAllowanceUsed,
+} = require('../services/bounties');
 
-// Weekly quota per giver. The plan locks this at 5; if it ever moves,
-// tweak here and the FE budget badge will pick it up via /api/me/kudos-budget.
-const WEEKLY_KUDOS_LIMIT = 5;
+// WEEKLY_KUDOS_LIMIT (20) and countWeeklyAllowanceUsed now live in
+// src/services/bounties.js — the service places bounties and must not depend
+// on this route, which depends on IT (same reasoning as weekStartUtc in
+// services/leaderboard-users.js). Both are imported above and RE-EXPORTED
+// below unchanged, so every existing importer (src/routes/issues.js,
+// tests/kudos.test.js) is unaffected. The FE budget badge picks the number up
+// via /api/me/kudos-budget, so nothing hardcodes it client-side either.
 
 // PR states that can receive a kudos. Promoted (open vote) + merging
 // (in-flight merge) + merged (landed). Active drafts and paused
@@ -83,32 +91,9 @@ async function countKudosGivenThisWeek(pool, userId, weekStart) {
   return rows[0]?.c || 0;
 }
 
-// The SHARED weekly "give" allowance: PR kudos + issue bounties draw from the
-// same WEEKLY_KUDOS_LIMIT pool, so a user can't exceed 5 total combined gives
-// per week. Both the PR-kudos give endpoint and the issue-bounty endpoint
-// (src/routes/issues.js) gate on this combined figure. One round-trip across
-// both ledgers; uses idx_pr_kudos_giver_week + idx_issue_bounties_giver_week.
-//
-// A pledged bounty normally keeps consuming its slot whatever its outcome
-// (open → awarded), but a VOIDED bounty is refunded: it no longer counts
-// against the limit. The only thing that voids a bounty is the self-kudos
-// guard at merge time (routes/votes.js resolveIssueBounty) — when a user
-// pledged on an issue their own PR then closed. That void is a system-imposed
-// outcome the pledger can't avoid, so the slot is returned for them to spend
-// on someone else's PR. Hence the `status <> 'voided'` filter below.
-async function countWeeklyAllowanceUsed(pool, userId, weekStart) {
-  const { rows } = await pool.query(
-    `SELECT
-       (SELECT COUNT(*) FROM pr_kudos
-          WHERE giver_user_id = $1 AND week_start = $2)
-       +
-       (SELECT COUNT(*) FROM issue_bounties
-          WHERE giver_user_id = $1 AND week_start = $2
-            AND status <> 'voided') AS c`,
-    [userId, weekStart]
-  );
-  return parseInt(rows[0]?.c, 10) || 0;
-}
+// countWeeklyAllowanceUsed — the SHARED weekly "give" allowance across PR
+// kudos and issue bounties — now lives in src/services/bounties.js alongside
+// the constant it enforces. Imported at the top and re-exported below.
 
 // Fetch the kudos count + giver usernames + my_kudos flag for a
 // session. Used both by `GET /api/sessions/:id/kudos` and by the
@@ -927,7 +912,9 @@ module.exports = {
   // server-side "this week" filter with what the FE budget badge
   // shows). WEEKLY_KUDOS_LIMIT is a constant; ELIGIBLE_STATES is the
   // canonical list the FE can use to know when to render the give-
-  // kudos button at all.
+  // kudos button at all. WEEKLY_KUDOS_LIMIT + countWeeklyAllowanceUsed
+  // are re-exports from services/bounties.js — same values, same
+  // behaviour, so existing importers need no change.
   weekStartUtc,
   countKudosGivenThisWeek,
   countWeeklyAllowanceUsed,
