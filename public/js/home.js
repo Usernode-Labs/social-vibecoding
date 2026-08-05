@@ -490,6 +490,9 @@ const Home = {
     // cards. null = drag fully disabled (search results are a flat,
     // transient ordering that must not be persisted as a reorder).
     let yoursCount = null;
+    // The phone grid's explicit row tracks (#968). Empty string everywhere
+    // else, which clears any template a previous render left behind.
+    let rowTemplate = '';
 
     if (query) {
       // Active search over YOUR apps: one flat grid of matches. Section
@@ -530,6 +533,7 @@ const Home = {
       // extra row.
       parts.push(...overflow.map((it) => Home.renderGridItem(it, cols, true)));
       html += parts.join('');
+      rowTemplate = Home.rowTemplate(layout, cols);
     }
 
     // The search view is a flat, transient list — it must not inherit the
@@ -537,6 +541,11 @@ const Home = {
     // line would each claim a whole 100px tile row). app.css keys the
     // auto-rows off this attribute.
     listEl.dataset.view = query ? 'search' : 'grid';
+    // FIT ROWS (#968). '' clears it, which is what desktop and the search
+    // view get — app.css's grid-auto-rows is then the only row sizing, exactly
+    // as before. Written BEFORE the innerHTML so the first layout of the new
+    // children already has its tracks.
+    listEl.style.gridTemplateRows = rowTemplate;
     listEl.innerHTML = html;
     Home._wireCards(listEl, canDragYours, yoursCount);
     // The iOS widget-editing strip renders ABOVE the grid, in its own
@@ -557,6 +566,49 @@ const Home = {
     // Screenshot-state deep link: paint the drag overlay in its resting
     // visible state so the gesture-only surface is capturable and testable.
     Home._maybeShowShotGrid(listEl);
+  },
+
+  // ── The phone grid's row tracks (#968) ─────────────────────────────
+  //
+  // Every row is one app-grid cell EXCEPT the ones a fit widget owns
+  // outright, which size to what that widget actually draws. See
+  // HomeLayout.fitRows for the rule and why holes are excluded from it.
+  //
+  // Returns '' for "no template at all", which is the desktop and search-view
+  // answer: app.css's `grid-auto-rows: var(--home-cell-h)` is then the only
+  // row sizing, byte-for-byte as before.
+  //
+  // ONLY AS MANY ENTRIES AS THERE ARE OCCUPIED ROWS. Declaring all eight
+  // would make them EXPLICIT tracks, and an explicit grid exists whether or
+  // not anything is in it — a viewer with three apps would get a ~950px
+  // canvas of empty rows below their tiles. Today the grid's rows are
+  // implicit and stop at the last placed item; that must stay true.
+  //
+  // `auto`, not `min-content`: #app-list has no definite height (it flows
+  // inside .home-body-fill), so an auto track resolves to the item's content
+  // height and grows if content is added — and it sidesteps the question of
+  // what min-content means for a scroll container, which .home-panel-card is
+  // (`overflow-hidden`). The floor is the smallest block the widget ever
+  // draws, so it can never ADD space to a real state; its one job is to stop
+  // a slot that rendered nothing from taking its row to zero and reading as
+  // "the widget was deleted" rather than "the widget is short".
+  FIT_ROW_FLOOR: '4.25rem', // 68px — border 2 + title bar 25.5 + one row 40
+  rowTemplate(layout, cols) {
+    const fit = HomeLayout.fitRows(layout, cols);
+    if (!fit.size) return '';
+    const last = HomeLayout.lastOccupiedRow(layout, cols);
+    if (last < 0) return '';
+    const tracks = [];
+    for (let row = 0; row <= last; row++) {
+      // No space inside the minmax(): tracks are separated by spaces, so
+      // keeping each one a single token means the string can be split and
+      // counted (here, in the overlay's mirror, and in the tests) without
+      // parsing CSS.
+      tracks.push(fit.has(row)
+        ? `minmax(${Home.FIT_ROW_FLOOR},auto)`
+        : 'var(--home-cell-h)');
+    }
+    return tracks.join(' ');
   },
 
   // One placed item → its grid markup, carrying its cell as an INLINE
@@ -2778,8 +2830,18 @@ const Home = {
     // The footprint size comes from the MODEL, never from the ghost's pixel
     // size: an overflow tile renders in plain flow with no span, so its ghost
     // is about one cell however big the widget really is.
+    //
+    // COLUMNS are uniform by construction — the template is
+    // `repeat(cols, minmax(0, 1fr))` at both breakpoints — so one pitch
+    // describes all of them.
     const col = Math.round((info.centerX - a.left) / pitchX - w / 2);
-    const row = Math.round((info.centerY - a.top) / pitchY - h / 2);
+    // ROWS ARE NOT (#968). A fit row is as tall as the widget in it, so a
+    // pitch measured between rows 0 and 1 stops describing row 5. Search the
+    // overlay's real row geometry instead: the target is the placement whose
+    // spanned rectangle is centred nearest the ghost, which is the same
+    // centroid rule, just asked of measurements rather than of arithmetic.
+    // With uniform rows it picks exactly what the rounding above would.
+    const row = Home._rowNearest(overlay, info.centerY, h, pitchY);
     // Clamped here as well as in HomeLayout.place, so the token the kit
     // change-detects on is the cell the drop actually lands in — dragging past
     // an edge holds one steady target instead of churning the plan memo.
@@ -2787,6 +2849,47 @@ const Home = {
       col: Math.max(0, Math.min(col, cols - w)),
       row: Math.max(0, Math.min(row, HomeLayout.MAX_ROWS - h)),
     };
+  },
+
+  // The row a footprint `h` tall should take so its own centre sits closest to
+  // `centerY`. Measured off the overlay's column-0 cells, which ARE the rows.
+  //
+  // `fallbackPitch` covers a cell whose rect reports no usable height — the
+  // uniform assumption is a fine last resort, and it keeps a host that mocks
+  // only `{ left, top }` working rather than collapsing every row to zero.
+  _rowNearest(overlay, centerY, h, fallbackPitch) {
+    const tops = [];
+    const heights = [];
+    for (let r = 0; r < HomeLayout.MAX_ROWS; r++) {
+      const cell = overlay.querySelector(`[data-cell="0,${r}"]`);
+      if (!cell) break;
+      const rect = cell.getBoundingClientRect();
+      tops.push(rect.top);
+      heights.push(Number.isFinite(rect.height) && rect.height > 0 ? rect.height : null);
+    }
+    if (!tops.length) return 0;
+    // Fill the gaps: a row with no measured height is the distance to the next
+    // row's top (its own height plus the grid gap — close enough to centre a
+    // footprint), and the last one falls back to the pitch.
+    for (let r = 0; r < tops.length; r++) {
+      if (heights[r] !== null) continue;
+      heights[r] = r + 1 < tops.length
+        ? Math.max(0, tops[r + 1] - tops[r])
+        : Math.max(0, fallbackPitch);
+    }
+    const maxRow = Math.max(0, tops.length - h);
+    let best = 0;
+    let bestDist = Infinity;
+    for (let r = 0; r <= maxRow; r++) {
+      const last = Math.min(r + h - 1, tops.length - 1);
+      const mid = (tops[r] + tops[last] + heights[last]) / 2;
+      const dist = Math.abs(mid - centerY);
+      // `<=` scanning upward, so an exact tie takes the LARGER row index —
+      // which is what Math.round did (it rounds .5 up), and a ghost sitting
+      // exactly on a seam is precisely the case the old arithmetic hit.
+      if (dist <= bestDist + 1e-9) { bestDist = dist; best = r; }
+    }
+    return best;
   },
 
   // A committed drop. Mutate the model, keep the write to the width that is
@@ -2817,6 +2920,40 @@ const Home = {
   // elementFromPoint lands on a cell rather than on a tile behind it.
   _overlayEl: null,
 
+  // The overlay's ROW tracks, mirroring whatever #app-list actually did
+  // (#968). Rows are no longer uniform on a phone — a fit row is as tall as
+  // the widget in it — and an overlay that assumed 116px everywhere would
+  // draw its cells off the tiles they sit behind. That is not cosmetic:
+  // _rectForCell measures these cells to decide where the release glide
+  // lands, so any drift becomes a jump at the end of every drop.
+  //
+  // getComputedStyle returns the USED sizes of the container's EXPLICIT
+  // tracks — "116px 67.5px 116px" — so this is one read from the element
+  // that already decided the answer, not a second derivation that could
+  // disagree with it. Rows past the template are implicit in the grid and
+  // absent from that string; the overlay pads them to MAX_ROWS with the cell
+  // token, because the canvas is always eight rows deep even when the content
+  // is three. A container with no template at all reports "none" (desktop,
+  // the search view) — leave the overlay's own grid-auto-rows alone, which is
+  // exactly the pre-#968 behaviour.
+  //
+  // PIXELS, NOT `auto`: the overlay's cells are empty divs, so a content-sized
+  // track there would collapse to zero.
+  _overlayRowTemplate(listEl) {
+    if (!listEl || typeof getComputedStyle !== 'function') return '';
+    let used = '';
+    try {
+      used = String(getComputedStyle(listEl).gridTemplateRows || '').trim();
+    } catch (err) {
+      return '';
+    }
+    if (!used || used === 'none') return '';
+    const tracks = used.split(/\s+/).slice(0, HomeLayout.MAX_ROWS);
+    if (!tracks.length) return '';
+    while (tracks.length < HomeLayout.MAX_ROWS) tracks.push('var(--home-cell-h)');
+    return tracks.join(' ');
+  },
+
   _showGridOverlay(listEl, cols, liftedEl) {
     Home._hideGridOverlay();
     if (!listEl) return;
@@ -2824,6 +2961,8 @@ const Home = {
     overlay.id = 'home-grid-overlay';
     overlay.className = 'home-grid-overlay';
     overlay.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+    const rowTemplate = Home._overlayRowTemplate(listEl);
+    if (rowTemplate) overlay.style.gridTemplateRows = rowTemplate;
     let cells = '';
     for (let row = 0; row < HomeLayout.MAX_ROWS; row++) {
       for (let col = 0; col < cols; col++) {

@@ -1935,6 +1935,28 @@ test('the phone shape fits the one cell its footprint buys', () => {
     /key: 'challenges'[\s\S]*?sizes: \{ 4: \[4, 1\], 5: \[2, 2\] \}/);
 });
 
+// The row a fit widget owns is sized by the BROWSER (an `auto` track), so
+// nothing here can drift — except the floor, which is a hand-written constant
+// and therefore the one number that can. It must equal the smallest block the
+// widget ever draws: any larger and it reserves space a real state does not
+// use, which is the whole bug this issue is about.
+test('the fit-row floor is the empty block’s own height, not a guess', () => {
+  const css = read('public/css/app.css');
+  const home = read('public/js/home.js');
+  const rowPx = parseFloat(css.match(/--home-panel-row-h:\s*([\d.]+)rem/)[1]) * 16;
+  const floorPx = parseFloat(home.match(/FIT_ROW_FLOOR: '([\d.]+)rem'/)[1]) * 16;
+  // border 2 + title bar 25.5 (the empty state's bar carries no control) +
+  // one note row, which is a .home-panel-row like any other.
+  const emptyBlock = 2 + 25.5 + rowPx;
+  assert.ok(floorPx >= emptyBlock && floorPx < emptyBlock + 1,
+    `the floor (${floorPx}px) must be the empty block (${emptyBlock}px), rounded up`);
+  // …and comfortably under the cell, or it would be a reservation rather than
+  // a guard against a slot that rendered nothing.
+  const phoneCell = parseFloat(
+    css.match(/@media \(max-width: 639\.98px\)[\s\S]*?--home-cell-h: ([\d.]+)rem/)[1]) * 16;
+  assert.ok(floorPx < phoneCell);
+});
+
 test('the challenges article always carries home-panel--fit', () => {
   const populated = renderWith({ registry: [], hidden: [], panels: [panel()] }).html;
   const empty = renderWith({ registry: [], hidden: [],
