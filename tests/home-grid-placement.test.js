@@ -47,11 +47,17 @@ const REGISTRY = [
 ];
 
 // Returns { Home, HomeLayout, fetchCalls, toasts, setFetch, sandbox,
-// attachCalls }. attachCalls records every attachGridPlacement invocation.
+// attachCalls, setWidth, fireResize, fireMediaChange, mediaQueries }.
+// attachCalls records every attachGridPlacement invocation; the viewport
+// helpers drive the live-resize path (setWidth moves the reported
+// innerWidth, then fireResize/fireMediaChange delivers the signal the
+// browser would).
 function makeHome({ width = 1280, canCreateApps = true } = {}) {
   const fetchCalls = [];
   const toasts = [];
   const attachCalls = [];
+  const winListeners = Object.create(null);
+  const mediaQueries = [];
   let fetchImpl = async () => ({ ok: true, json: async () => ({}) });
   const sandbox = {
     console,
@@ -101,8 +107,22 @@ function makeHome({ width = 1280, canCreateApps = true } = {}) {
     location: { search: '', hash: '' },
     URLSearchParams,
     Date,
-    addEventListener: () => {},
+    addEventListener: (type, fn) => {
+      (winListeners[type] || (winListeners[type] = [])).push(fn);
+    },
     removeEventListener: () => {},
+    // The breakpoint signal. Records every query the code subscribes to so
+    // a test can assert it watched the right one, and lets a test deliver
+    // a `change` the way a real browser would on a viewport crossing.
+    matchMedia: (query) => {
+      const entry = { query, handlers: [], get matches() { return false; } };
+      entry.addEventListener = (type, fn) => {
+        if (type === 'change') entry.handlers.push(fn);
+      };
+      entry.removeEventListener = () => {};
+      mediaQueries.push(entry);
+      return entry;
+    },
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
@@ -118,8 +138,13 @@ function makeHome({ width = 1280, canCreateApps = true } = {}) {
     ensureLoaded: () => Promise.resolve(),
   };
   return {
-    Home, HomeLayout, fetchCalls, toasts, attachCalls, sandbox,
+    Home, HomeLayout, fetchCalls, toasts, attachCalls, sandbox, mediaQueries,
     setFetch: (fn) => { fetchImpl = fn; },
+    setWidth: (w) => { sandbox.innerWidth = w; },
+    fireResize: () => { (winListeners.resize || []).forEach((fn) => fn()); },
+    fireMediaChange: () => {
+      mediaQueries.forEach((mq) => mq.handlers.forEach((fn) => fn(mq)));
+    },
   };
 }
 
@@ -812,3 +837,258 @@ test('the overlay is inset by the grid’s ASYMMETRIC padding', () => {
   assert.match(CSS, /\.home-grid-overlay \{[^}]*inset: 0\.375rem 0\.5rem 0\.5rem;/);
   assert.match(CSS, /min-width: 640px\)[\s\S]*?\.home-grid-overlay \{[^}]*inset: 0\.5rem 0\.75rem 0\.75rem;/);
 });
+
+// ── Live reflow across the 640px boundary ─────────────────────────────
+//
+// Every item's cell is an INLINE grid-column/grid-row written at render
+// time. The CSS switches columns on its own (grid-cols-4 sm:grid-cols-5,
+// plus the media-queried --home-cell-h) but those inline placements do
+// not: without a resize handler, widening a narrowed desktop window keeps
+// the 4-column arrangement inside a 5-column grid — a dead trailing
+// column, widgets spanning 4 of 5 — until some unrelated event happens to
+// re-render. These pin the handler AND the rule that it never writes.
+
+// A helper: render() needs real DOM, so drive _applyColumnCount with
+// render stubbed out and count the re-renders.
+function watchRenders(Home) {
+  const calls = [];
+  Home.render = () => { calls.push(Home.currentCols()); };
+  return calls;
+}
+
+test('the grid subscribes to BOTH a resize and the 640px media query', () => {
+  const h = makeHome({ width: 1280 });
+  h.Home._apps = [app('a')];
+  h.Home._wireViewport();
+
+  // matchMedia is the precise signal — it fires once, on the crossing.
+  assert.equal(h.mediaQueries.length, 1, 'exactly one query, subscribed once');
+  assert.equal(h.mediaQueries[0].query, '(min-width: 640px)',
+    'the same boundary HomeLayout.columnsForWidth and Tailwind’s sm use');
+  assert.ok(h.mediaQueries[0].handlers.length >= 1);
+
+  // resize is the backstop for WebViews without MediaQueryList events.
+  const renders = watchRenders(h.Home);
+  h.Home._renderedCols = 5;
+  h.setWidth(500);
+  h.fireResize();
+  assert.deepEqual(renders, [], 'debounced — nothing yet');
+  return new Promise((resolve) => setTimeout(() => {
+    assert.deepEqual(renders, [4], 'and then exactly one re-render, at 4');
+    resolve();
+  }, h.Home.RESIZE_DEBOUNCE_MS + 60));
+});
+
+test('_wireViewport is idempotent — render() calls it on every paint', () => {
+  const h = makeHome();
+  h.Home._wireViewport();
+  h.Home._wireViewport();
+  h.Home._wireViewport();
+  assert.equal(h.mediaQueries.length, 1,
+    're-wiring on every render must not stack listeners');
+  // And render() is what arms it, so the very first paint starts watching.
+  assert.match(HOME_SRC, /Home\._wireSearch\(\);[\s\S]{0,220}Home\._wireViewport\(\);/,
+    'render() arms the viewport watcher alongside the search wiring');
+});
+
+test('narrowing a DESKTOP window past 640px re-renders at 4 columns', () => {
+  const h = makeHome({ width: 1280 });
+  h.Home._apps = [app('a')];
+  h.Home._wireViewport();
+  h.Home._renderedCols = 5;
+  const renders = watchRenders(h.Home);
+
+  h.setWidth(500);
+  h.fireMediaChange();
+  assert.deepEqual(renders, [4], 'the reflow is live, not next-event');
+
+  // Widening back returns to 5 — the round trip, which is the bug the user
+  // actually saw (the 4-column arrangement stranded in a 5-column grid).
+  h.Home._renderedCols = 4;
+  h.setWidth(1280);
+  h.fireMediaChange();
+  assert.deepEqual(renders, [4, 5]);
+
+  // The handler itself writes nothing. Persisting here would be the worst
+  // version of the bug: carrying a laptop's window across 640px would
+  // claim the phone's arrangement without the viewer touching a tile.
+  assert.deepEqual(h.fetchCalls.filter((c) => c.method === 'PUT'), []);
+});
+
+test('a resize that does NOT change the column count re-renders nothing', () => {
+  const h = makeHome({ width: 1280 });
+  h.Home._renderedCols = 5;
+  const renders = watchRenders(h.Home);
+  for (const w of [1100, 900, 700, 641, 2000]) {
+    h.setWidth(w);
+    h.Home._applyColumnCount();
+  }
+  assert.deepEqual(renders, [],
+    'dragging a window edge must not repaint the grid on every frame');
+});
+
+test('a resize during an active SEARCH re-renders nothing', () => {
+  const h = makeHome({ width: 1280 });
+  h.Home._query = 'chess';
+  h.Home._renderedCols = null; // what the search view records
+  const renders = watchRenders(h.Home);
+  h.setWidth(500);
+  h.Home._applyColumnCount();
+  assert.deepEqual(renders, [],
+    'the search view is a flat list with no placement to go stale');
+  // Clearing the query re-reads the live width, because null never matches.
+  h.Home._query = '';
+  h.Home._applyColumnCount();
+  assert.deepEqual(renders, [4]);
+});
+
+// THE NO-PERSIST RULE. A width the viewer has never dragged at is a
+// DERIVATION — reflowed from the other width, or packed from flow order.
+// Persisting it on a resize would let carrying a laptop's window across
+// 640px silently claim the phone's arrangement (and vice versa).
+test('crossing the breakpoint never persists a layout', async () => {
+  const h = makeHome({ width: 1280 });
+  h.Home._apps = [app('a'), app('b'), app('c')];
+  // The viewer has dragged at 5 columns only. 4 has never been touched.
+  h.Home._layouts = {
+    '4': [],
+    '5': [
+      { type: 'app', slug: 'a', col: 4, row: 0 },
+      { type: 'app', slug: 'b', col: 0, row: 2 },
+      { type: 'app', slug: 'c', col: 2, row: 3 },
+      { type: 'widget', key: 'challenges', col: 0, row: 0 },
+      { type: 'widget', key: 'discover', col: 2, row: 0 },
+      { type: 'widget', key: 'create', col: 4, row: 3 },
+    ],
+  };
+  h.Home._layoutFetchedAt = Date.now();
+  h.fetchCalls.length = 0;
+
+  // Narrow: 4 has nothing stored, so this is the reflow derivation.
+  h.setWidth(500);
+  const at4 = h.Home.currentLayout(4);
+  await flush();
+  assert.ok(at4.length >= 6, 'everything came across');
+  assert.deepEqual(h.fetchCalls.filter((c) => c.method === 'PUT'), [],
+    'a DERIVED layout is never written — the viewer must drag at this width first');
+
+  // And it is order-preserving, which is what "conforms on smaller screens
+  // like it does today" means: the 5-column arrangement read in reading
+  // order puts a on row 0, b on row 2 and c on row 3, and the 4-column
+  // derivation keeps them in that relative order.
+  const order = [...at4].filter((i) => i.type === 'app').map((i) => i.slug);
+  assert.deepEqual(order, ['a', 'b', 'c']);
+
+  // Widen back: 5 IS stored and needs no repair, so still no write, and
+  // the stored cells come back exactly.
+  h.setWidth(1280);
+  const at5 = h.Home.currentLayout(5);
+  await flush();
+  assert.deepEqual(h.fetchCalls.filter((c) => c.method === 'PUT'), [],
+    'returning to a stored width re-reads it, it does not re-save it');
+  const a5 = at5.find((i) => i.slug === 'a');
+  assert.deepEqual([a5.col, a5.row], [4, 0], 'the hole-bearing arrangement survived the round trip');
+});
+
+test('each width keeps its OWN arrangement across a resize', () => {
+  const h = makeHome({ width: 1280 });
+  h.Home._apps = [app('a'), app('b')];
+  // Two arrangements the viewer really made, at the two widths.
+  h.Home._layouts = {
+    '4': [{ type: 'app', slug: 'a', col: 3, row: 5 }, { type: 'app', slug: 'b', col: 0, row: 0 },
+      { type: 'widget', key: 'challenges', col: 0, row: 1 },
+      { type: 'widget', key: 'discover', col: 0, row: 3 },
+      { type: 'widget', key: 'create', col: 1, row: 0 }],
+    '5': [{ type: 'app', slug: 'a', col: 0, row: 0 }, { type: 'app', slug: 'b', col: 4, row: 4 },
+      { type: 'widget', key: 'challenges', col: 1, row: 0 },
+      { type: 'widget', key: 'discover', col: 3, row: 0 },
+      { type: 'widget', key: 'create', col: 0, row: 1 }],
+  };
+  h.Home._layoutFetchedAt = Date.now();
+
+  const cellOf = (layout, slug) => {
+    const i = layout.find((x) => x.slug === slug);
+    return [i.col, i.row];
+  };
+  assert.deepEqual(cellOf(h.Home.currentLayout(5), 'a'), [0, 0]);
+  h.setWidth(500);
+  assert.deepEqual(cellOf(h.Home.currentLayout(4), 'a'), [3, 5],
+    'the phone shows the phone arrangement, not a reflow of the desktop one');
+  h.setWidth(1280);
+  assert.deepEqual(cellOf(h.Home.currentLayout(5), 'a'), [0, 0],
+    'and the desktop one is untouched by the visit');
+});
+
+// A breakpoint crossing MID-GESTURE. The recognizer captured the old column
+// count when it was attached and the overlay was built with the old number
+// of cells, while the CSS grid underneath has already switched — the tint,
+// the hit-test and the drop would all describe a grid that is no longer on
+// screen. detach() is the kit's clean abort (ghost removed, dashed slot
+// released, hover cleared, onSettle(false) fired).
+test('a breakpoint crossing mid-drag aborts the gesture, then re-renders', () => {
+  const h = makeHome({ width: 1280 });
+  h.Home._wireViewport();
+  const detaches = [];
+  h.Home._renderedCols = 5;
+  h.Home._dragActive = true;
+  h.Home._placementHandle = {
+    detach: () => { detaches.push('detached'); h.Home._dragActive = false; },
+  };
+  const renders = watchRenders(h.Home);
+
+  h.setWidth(500);
+  h.fireMediaChange();
+
+  assert.deepEqual(detaches, ['detached'], 'the lift is cancelled, not left dangling');
+  assert.equal(h.Home._dragActive, false, 'so the re-render is not swallowed by the drag guard');
+  assert.equal(h.Home._placementHandle, null, 'and _wireCards re-attaches at the new count');
+  assert.deepEqual(renders, [4]);
+});
+
+test('the abort happens BEFORE the re-render, or the repaint is swallowed', () => {
+  // render() defers while _dragActive holds (it sets _reloadPending and
+  // returns), so a re-render ordered ahead of the detach would be dropped
+  // and the grid would stay in the old column count anyway.
+  const src = HOME_SRC.slice(HOME_SRC.indexOf('  _applyColumnCount() {'));
+  const body = src.slice(0, src.indexOf('\n  },'));
+  const detachAt = body.indexOf('_placementHandle.detach()');
+  const renderAt = body.indexOf('Home.render()');
+  assert.ok(detachAt > -1 && renderAt > -1);
+  assert.ok(detachAt < renderAt, 'detach must precede render');
+  assert.match(body, /Home\._dragActive && Home\._placementHandle/,
+    'and only when a gesture is actually in flight');
+});
+
+test('render() records the column count the DOM now holds', () => {
+  // _applyColumnCount diffs the live viewport against this. If render()
+  // stopped writing it the handler would either fire on every resize or
+  // never fire at all, depending on which way it went stale.
+  assert.match(HOME_SRC, /Home\._renderedCols = cols;/,
+    'the grid view records what it painted');
+  assert.match(HOME_SRC, /Home\._renderedCols = null;/,
+    'and the search view records "no placement"');
+  assert.match(HOME_SRC, /if \(cols === Home\._renderedCols\) return;/,
+    'the handler is a no-op unless the count actually moved');
+});
+
+test('the row-height token switches at the SAME 640px boundary', () => {
+  // The overlay measures cells and the tiles sit in them, so the cell
+  // height has to flip in step with the column count — a media query at a
+  // different boundary would leave one of them briefly wrong.
+  const CSS = read('public/css/app.css');
+  assert.match(CSS, /--home-cell-h: 7\.75rem;/, 'the desktop row height is a token');
+  // The phone override and the overlay's phone gap share one block, keyed
+  // to the same boundary (639.98 is the standard non-overlapping spelling
+  // of "below 640").
+  assert.match(CSS, /@media \(max-width: 639\.98px\) \{[\s\S]{0,400}--home-cell-h: 7\.25rem;/,
+    'the row height flips at 640px, the same boundary as grid-cols-4 sm:grid-cols-5');
+  assert.match(CSS, /@media \(max-width: 639\.98px\) \{[\s\S]{0,600}\.home-grid-overlay \{ gap: 0\.375rem; \}/,
+    'and the drag overlay flips with it, so its cells stay aligned to the tiles');
+  assert.equal(HomeLayoutBreakpoint(), 640,
+    'and the JS agrees, or it lays out against a count the CSS is not rendering');
+});
+
+function HomeLayoutBreakpoint() {
+  const m = LAYOUT_SRC.match(/BREAKPOINT_PX:\s*(\d+)/);
+  return m ? Number(m[1]) : null;
+}

@@ -191,6 +191,94 @@ const Home = {
     return HomeLayout.columnsForWidth(w);
   },
 
+  // The column count the DOM currently HOLDS, as opposed to the one the
+  // viewport now implies. null while the search view is up (a flat list has
+  // no placement to go stale). The two diverge the instant a window crosses
+  // 640px, which is what _wireViewport watches for.
+  _renderedCols: null,
+
+  // ===== Live reflow across the 640px boundary =====
+  //
+  // The CSS switches columns on its own — `grid-cols-4 sm:grid-cols-5` plus
+  // the media-queried --home-cell-h — but every item's cell comes from an
+  // INLINE grid-column/grid-row this module wrote at render time. Without
+  // this handler those inline placements survive the breakpoint: widen a
+  // narrowed window and the tiles keep the 4-column arrangement inside a
+  // 5-column grid — a dead trailing column, widgets spanning 4 of 5, and it
+  // stays that way until some unrelated event (a WS app_status, a poll)
+  // happens to re-render. Desktop windows are resizable, so this is a
+  // desktop bug even though the breakpoint reads as a phone/tablet one.
+  //
+  // Two signals, one idempotent handler:
+  //   - matchMedia('(min-width: 640px)') change — fires exactly once, on the
+  //     crossing itself, and costs nothing in between;
+  //   - a debounced resize — the backstop for WebViews old enough to lack
+  //     MediaQueryList.addEventListener (the same caution Home._schemeQuery
+  //     takes over matchMedia itself), and the thing that catches a viewport
+  //     change that arrives without a media-query flip.
+  // Both funnel into _applyColumnCount, which no-ops unless the count
+  // actually moved, so double delivery is free.
+  _viewportWired: false,
+  _resizeDebounce: null,
+  RESIZE_DEBOUNCE_MS: 150,
+
+  _wireViewport() {
+    if (Home._viewportWired) return;
+    if (typeof window === 'undefined' || !window.addEventListener) return;
+    Home._viewportWired = true;
+
+    window.addEventListener('resize', () => {
+      clearTimeout(Home._resizeDebounce);
+      Home._resizeDebounce = setTimeout(
+        () => Home._applyColumnCount(), Home.RESIZE_DEBOUNCE_MS
+      );
+    });
+
+    try {
+      const mq = typeof window.matchMedia === 'function'
+        ? window.matchMedia(`(min-width: ${HomeLayout.BREAKPOINT_PX}px)`)
+        : null;
+      // addListener is the deprecated spelling; some WebViews have only it.
+      if (mq && mq.addEventListener) {
+        mq.addEventListener('change', () => Home._applyColumnCount());
+      } else if (mq && mq.addListener) {
+        mq.addListener(() => Home._applyColumnCount());
+      }
+    } catch (err) { /* resize alone still covers it */ }
+  },
+
+  // Re-render at the viewport's column count when — and only when — it
+  // changed. The layout itself comes from Home.currentLayout(cols), which
+  // already resolves "this width's stored arrangement, else the other
+  // width's reflowed, else flow order" and — crucially — only writes back a
+  // repair of a genuinely STORED layout. A derivation is never persisted, so
+  // dragging a window across 640px can never claim the other breakpoint on
+  // the viewer's behalf: they have to actually drag something at that width.
+  _applyColumnCount() {
+    // The search view is a flat, transient list with no placement and no
+    // drag, so nothing about it can go stale at a new width. The next grid
+    // render reads the live count (_renderedCols is null here, so the
+    // comparison below can't wrongly skip it).
+    if ((Home._query || '').trim()) return;
+    const cols = Home.currentCols();
+    if (cols === Home._renderedCols) return;
+    // A breakpoint crossing MID-GESTURE. The recognizer captured the old
+    // column count when it was attached, the overlay was built with the old
+    // number of cells, and the CSS grid underneath has already switched — so
+    // the tint, the hit-test and the drop would all be describing a grid
+    // that is no longer on screen. detach() is the kit's clean abort: it
+    // removes the ghost, releases the dashed slot, clears the hover preview
+    // and fires onSettle(false), which drops _dragActive and takes the
+    // overlay down. The item stays where it was; nothing is persisted. The
+    // re-render below then re-attaches against the new column count.
+    if (Home._dragActive && Home._placementHandle) {
+      try { Home._placementHandle.detach(); } catch (err) { /* ignore */ }
+      Home._placementHandle = null;
+      Home._dragActive = false;
+    }
+    Home.render();
+  },
+
   // Every item that should be on the grid right now, as stable ids: the
   // viewer's apps plus the widgets they haven't hidden. This is the input
   // HomeLayout.repair reconciles a stored layout against.
@@ -329,6 +417,9 @@ const Home = {
     const canCreate = Home.canCreate();
     const apps = Home._apps || [];
     Home._wireSearch();
+    // Idempotent, and armed from the same place as the search wiring so the
+    // grid starts watching the breakpoint on its very first paint.
+    Home._wireViewport();
 
     const query = (Home._query || '').trim();
     // Home is "Your apps" only now — every other app lives on the
@@ -347,6 +438,11 @@ const Home = {
       // header, widget strip and drag affordance all step aside until
       // the query clears — reorder is only meaningful against the
       // canonical ordering.
+      //
+      // No placement here, so there is no column count to keep in step —
+      // and null can never equal currentCols(), so clearing the query and
+      // re-rendering always re-reads the live width.
+      Home._renderedCols = null;
       const matches = Home.filterApps(yours, query);
       if (!matches.length) {
         html = `<div class="col-span-full py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">No apps match &ldquo;${escapeHtml(query)}&rdquo; — clear the search and try the <span class="text-violet-500">Discover</span> widget.</div>`;
@@ -362,6 +458,10 @@ const Home = {
       // holes and all. There is no flow: an item's position comes from the
       // layout model, never from its order in this array.
       const cols = Home.currentCols();
+      // What the DOM is about to hold. _applyColumnCount diffs the live
+      // viewport against this to decide whether a resize is a real
+      // breakpoint crossing or just a window getting a bit wider.
+      Home._renderedCols = cols;
       const layout = Home.currentLayout(cols);
       const canvas = HomeLayout.canvasItems(layout);
       const overflow = HomeLayout.overflowItems(layout);
