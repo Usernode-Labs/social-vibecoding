@@ -73,6 +73,9 @@ const Browse = {
   // Whether the current page's list is past the 5-row fold. Reset on every
   // level change alongside _detailMissing so a new page never inherits it.
   _contribExpanded: false,
+  // True between an open({ chrome: false }) and the syncChrome() app.js
+  // runs inside the screen transition (#979).
+  _chromeSuspended: false,
 
   isOpen() { return Browse._open; },
 
@@ -92,8 +95,13 @@ const Browse = {
   // Screen entry. `slug` (from #apps/<slug>) opens straight onto a detail
   // page. First paint borrows Home's cache when it has one — the user
   // almost always arrives from the home feed — then the refetch reconciles.
-  open(slug) {
+  //
+  // `opts.chrome === false` renders without touching the platform header;
+  // the caller runs Browse.syncChrome() inside the screen transition
+  // instead (#979 — see _syncChrome).
+  open(slug, opts) {
     Browse._open = true;
+    Browse._chromeSuspended = !!(opts && opts.chrome === false);
     Browse._slug = slug || null;
     Browse._detailMissing = false;
     Browse._contribExpanded = false;
@@ -196,6 +204,26 @@ const Browse = {
     // Searching the directory is a level-1 affordance; on a detail page the
     // field would filter a list nobody can see.
     if (searchBar) searchBar.classList.toggle('hidden', onDetail);
+    Browse._syncChrome();
+  },
+
+  // The public half of _syncChrome: clears the suspension a
+  // `chrome: false` open() set and applies the chrome for real. app.js
+  // calls this INSIDE the screen transition's callback (#979).
+  syncChrome() {
+    Browse._chromeSuspended = false;
+    Browse._syncChrome();
+  },
+
+  // The platform-header half of _syncLevel, split out so screen ENTRY can
+  // defer it (#979). The rest of _syncLevel writes inside #browse-screen,
+  // which is still hidden at that point and therefore invisible; the
+  // header is not, and writing it before the screen transition starts
+  // bakes the incoming screen's title into the View Transition's snapshot
+  // of the page being left.
+  _syncChrome() {
+    if (Browse._chromeSuspended) return;
+    const onDetail = !!Browse._slug;
     App.setBackIcon(onDetail ? 'arrow' : 'home');
     if (onDetail) {
       const app = Browse.appBySlug(Browse._slug);
