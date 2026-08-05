@@ -2722,6 +2722,10 @@ const App = {
     });
     const shareCopy = document.getElementById('share-copy-btn');
     if (shareCopy) shareCopy.addEventListener('click', () => AppView.copyShareUrl());
+    const shareReferral = document.getElementById('share-referral-btn');
+    if (shareReferral) shareReferral.addEventListener('click', () => AppView.createReferralShareLink(false));
+    const shareReferralReset = document.getElementById('share-referral-reset');
+    if (shareReferralReset) shareReferralReset.addEventListener('click', () => AppView.createReferralShareLink(true));
 
     // Header App/Dev switch (#app-mode-switch), successor to the bottom
     // tab bar. Tapping the ALREADY-ACTIVE App segment is a no-op: the

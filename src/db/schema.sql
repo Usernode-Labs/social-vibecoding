@@ -2788,6 +2788,47 @@ CREATE INDEX IF NOT EXISTS pending_secret_decl_session
   ON pending_secret_declarations (session_id);
 
 -- ══════════════════════════════════════════════════════════════════
+-- Attribution-only referral primitive (issue #587).
+-- ══════════════════════════════════════════════════════════════════
+-- Referral codes are deliberately NOT collaborator/approver invites and
+-- grant no authority. They are opaque acquisition-attribution handles for
+-- the public-app Share flow. At most one unrevoked row exists per owner;
+-- rotation revokes the immutable old row so both its link and any pending
+-- waitlist attribution stop working immediately. The code is still tagged
+-- private so prod values never enter a staging clone.
+CREATE TABLE IF NOT EXISTS referral_codes (
+  id            BIGSERIAL PRIMARY KEY,
+  owner_user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code          VARCHAR(32) NOT NULL UNIQUE,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at    TIMESTAMPTZ NOT NULL,
+  revoked_at    TIMESTAMPTZ,
+  delete_after  TIMESTAMPTZ NOT NULL
+);
+COMMENT ON COLUMN referral_codes.code IS 'staging:private';
+CREATE INDEX IF NOT EXISTS idx_referral_codes_live
+  ON referral_codes (expires_at) WHERE revoked_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_referral_codes_one_active_owner
+  ON referral_codes (owner_user_id) WHERE revoked_at IS NULL;
+
+-- One first-touch attribution per account. There is intentionally no
+-- reward/access state and no visitor-facing join back to the inviter.
+-- Deleting EITHER person deletes the attribution, satisfying account
+-- deletion without retaining a relationship graph. Old code rows may be
+-- cleaned independently; their FK is audit context, not ownership.
+CREATE TABLE IF NOT EXISTS referral_attributions (
+  invitee_user_id  BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  inviter_user_id  BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  referral_code_id BIGINT REFERENCES referral_codes(id) ON DELETE SET NULL,
+  attributed_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  delete_after     TIMESTAMPTZ NOT NULL,
+  CHECK (invitee_user_id <> inviter_user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_referral_attributions_inviter
+  ON referral_attributions (inviter_user_id, attributed_at);
+COMMENT ON TABLE referral_attributions IS 'staging:private';
+
+-- ══════════════════════════════════════════════════════════════════
 -- Topochain (testnet competition) — SPEC §3.4 schema
 --
 -- Topochain becomes a native part of this platform: a testnet
@@ -3744,8 +3785,12 @@ CREATE TABLE IF NOT EXISTS waitlist_signups (
   ip             VARCHAR(45),
   answers        JSONB,
   released_at    TIMESTAMPTZ,
-  linked_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL
+  linked_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  referral_code_id BIGINT REFERENCES referral_codes(id) ON DELETE SET NULL
 );
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS referral_code_id
+  BIGINT REFERENCES referral_codes(id) ON DELETE SET NULL;
+COMMENT ON COLUMN waitlist_signups.referral_code_id IS 'staging:private';
 CREATE INDEX IF NOT EXISTS idx_waitlist_signups_released ON waitlist_signups (released_at);
 CREATE INDEX IF NOT EXISTS idx_waitlist_signups_linked_user ON waitlist_signups (linked_user_id);
 COMMENT ON COLUMN waitlist_signups.ip IS 'staging:private';

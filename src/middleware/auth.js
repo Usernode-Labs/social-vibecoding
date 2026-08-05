@@ -37,6 +37,9 @@ const PUBLIC_PATHS = [
   // survey). Pre-login by definition — waitlist signers have no account;
   // the unguessable more_token in the OAuth state is the capability.
   '/waitlist/connect/',
+  // Consent-based referral landing. These routes reveal neither inviter
+  // identity nor private app data and must work before account creation.
+  '/r/',
   '/health',
   '/css/',
   '/js/',

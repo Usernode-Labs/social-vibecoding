@@ -14,6 +14,7 @@ const { proposalHandoffRoutes } = require('./src/routes/proposal-handoff');
 const { voteRoutes } = require('./src/routes/votes');
 const { kudosRoutes } = require('./src/routes/kudos');
 const { publicApiRoutes } = require('./src/routes/public-api');
+const { referralRoutes } = require('./src/routes/referrals');
 const { waitlistConnectRoutes } = require('./src/routes/waitlist-connect');
 const { issueRoutes } = require('./src/routes/issues');
 const { campaignRoutes } = require('./src/routes/campaigns');
@@ -462,6 +463,7 @@ app.use(cliApiBearerAuth(config));
 app.use(authMiddleware(config));
 app.use(cliBrowserRoutes(config));
 app.use(authRoutes(config));
+app.use(referralRoutes(config));
 app.use(appRoutes(config));
 // Shell relay for usernode.uploadFile()/deleteFile()/getStorageUsage()
 // (#752): session-cookie authed, called only by public/js/app-view.js's

@@ -328,4 +328,23 @@ const waitlistJoinLimiter = makeLimiter({
   message: 'Too many signups from this address — try again in a few minutes.',
 });
 
-module.exports = { dbExportLimiter, authLimiter, homePanelPrefLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, waitlistJoinLimiter };
+// Referral landing/consent is public. It performs only bounded indexed
+// lookups and a cookie write, but a per-IP ceiling prevents code probing and
+// crawler churn. Authenticated code lifecycle writes use their own user-keyed
+// bucket so one account cannot rotate links continuously.
+const referralPublicLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 30,
+  name: 'referral-public',
+  message: 'Too many referral requests — try again in a minute.',
+});
+const referralWriteLimiter = makeLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  name: 'referral-write',
+  keyByUser: true,
+  skipFailedRequests: true,
+  message: 'Too many referral-link changes — try again later.',
+});
+
+module.exports = { dbExportLimiter, authLimiter, homePanelPrefLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, waitlistJoinLimiter, referralPublicLimiter, referralWriteLimiter };

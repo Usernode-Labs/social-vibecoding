@@ -8,6 +8,7 @@ const log = require('../services/logger');
 const { authLimiter, walletCheckLimiter } = require('../middleware/rate-limits');
 const genesisAccounts = require('../services/genesis-accounts');
 const waitlist = require('../services/waitlist');
+const referrals = require('../services/referrals');
 const events = require('../services/events');
 const { validatePassword } = require('../services/password-policy');
 const {
@@ -158,6 +159,13 @@ function authRoutes(config) {
       // (onboarding flow alignment). Without this, every invited user
       // would land in the waiting room, a regression on the invite flow.
       await waitlist.grantPlatformAccess(pool, userId);
+
+      // Attribution is best-effort and must never make account creation
+      // fail. The service clears the pending cookie whether valid, expired,
+      // duplicated, or self-owned.
+      await referrals.consumeCookie(pool, req, res, userId).catch((err) => {
+        log.warn('referrals', 'registration attribution failed', { userId, message: err.message });
+      });
 
       const token = crypto.randomBytes(32).toString('hex');
       const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
@@ -882,6 +890,10 @@ function authRoutes(config) {
       // Genesis-ledger registration is invite-equivalent (the genesis
       // allowlist IS the invite) — grant platform access directly.
       await waitlist.grantPlatformAccess(pool, userId);
+
+      await referrals.consumeCookie(pool, req, res, userId).catch((err) => {
+        log.warn('referrals', 'wallet registration attribution failed', { userId, message: err.message });
+      });
 
       const { token, expiresAt } = await createSession(pool, userId);
       createSessionCookie(res, token, expiresAt);

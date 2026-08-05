@@ -9310,13 +9310,75 @@ const AppView = {
     const input = document.getElementById('share-url-input');
     const link = document.getElementById('share-open-link');
     const copyBtn = document.getElementById('share-copy-btn');
+    const referralControls = document.getElementById('share-referral-controls');
+    const referralBtn = document.getElementById('share-referral-btn');
+    const referralReset = document.getElementById('share-referral-reset');
+    const referralStatus = document.getElementById('share-referral-status');
     if (input) input.value = url;
     if (link) link.href = url || '#';
     if (copyBtn) copyBtn.textContent = 'Copy';
+    // Referral attribution is intentionally available only for running,
+    // view-public child apps. Private/self apps keep the normal share URL;
+    // no referral path can weaken their access rules.
+    const eligible = !!url && AppView.appData?.status === 'running'
+      && AppView.appData?.view_visibility === 'public'
+      && !AppView.appData?.self_hosted;
+    if (referralControls) referralControls.classList.toggle('hidden', !eligible);
+    if (referralBtn) { referralBtn.disabled = false; referralBtn.textContent = 'Create referral link'; }
+    if (referralReset) referralReset.classList.add('hidden');
+    if (referralStatus) referralStatus.textContent = '';
     // Reveal now (see revealModal); the dismiss guard stops the opening tap
     // from ghost-clicking the backdrop closed.
     AppView.revealModal(modal);
     setTimeout(() => { if (input) { input.focus(); input.select(); } }, 0);
+  },
+
+  async createReferralShareLink(rotate = false) {
+    const app = AppView.appData;
+    if (!app?.slug) return;
+    if (rotate) {
+      // Rotation invalidates every existing link. If the platform dialog is
+      // unexpectedly unavailable, fail closed instead of rotating without a
+      // confirmation.
+      if (!window.PlatformUI?.confirm) return;
+      const ok = await PlatformUI.confirm({
+        title: 'Replace your referral code?',
+        message: 'Previously shared referral links will stop recording attribution immediately.',
+        confirmLabel: 'Replace code',
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    const input = document.getElementById('share-url-input');
+    const open = document.getElementById('share-open-link');
+    const btn = document.getElementById('share-referral-btn');
+    const reset = document.getElementById('share-referral-reset');
+    const status = document.getElementById('share-referral-status');
+    if (btn) btn.disabled = true;
+    if (reset) reset.disabled = true;
+    if (status) status.textContent = rotate ? 'Replacing referral code…' : 'Creating referral link…';
+    try {
+      const res = await fetch('/api/me/referrals/link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ appSlug: app.slug, rotate }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || typeof data.link !== 'string') throw new Error(data.error || 'Could not create referral link');
+      if (input) { input.value = data.link; input.focus(); input.select(); }
+      if (open) open.href = data.link;
+      if (btn) btn.textContent = 'Referral link ready';
+      if (reset) reset.classList.remove('hidden');
+      if (status) {
+        const count = Number(data.attributedSignups || 0);
+        status.textContent = `First-touch signup attribution only · ${count} attributed signup${count === 1 ? '' : 's'} so far.`;
+      }
+    } catch (err) {
+      if (status) status.textContent = err.message || 'Could not create referral link';
+    } finally {
+      if (btn) btn.disabled = false;
+      if (reset) reset.disabled = false;
+    }
   },
 
   closeShareModal() {

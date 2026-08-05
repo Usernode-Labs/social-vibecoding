@@ -62,6 +62,7 @@ const DENIED_TABLES = new Set([
   'cli_access_tokens',   // global CLI bearer hashes and hints
   'cli_auth_audit_events', // security audit trail for CLI credentials
   'cli_auth_rate_limits', // shared security limiter state
+  'referral_attributions', // private inviter-to-invitee relationship graph
 ]);
 
 const DENIED_COLUMNS = {
@@ -89,6 +90,10 @@ const DENIED_COLUMNS = {
   waitlist_signups: [
     'ip',         // submitter IP — same treatment as users.waitlist_ip
     'more_token', // stage-2 survey capability — editing rights over the signup's answers
+    'referral_code_id', // pending first-touch link to a referrer
+  ],
+  referral_codes: [
+    'code', // opaque referral URLs stay out of production debugging sessions
   ],
 };
 

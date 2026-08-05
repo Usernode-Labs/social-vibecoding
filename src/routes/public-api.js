@@ -34,6 +34,7 @@ const { clientIp } = require('../services/client-ip');
 const { waitlistJoinLimiter } = require('../middleware/rate-limits');
 const waitlist = require('../services/waitlist');
 const questions = require('../services/waitlist-questions');
+const referrals = require('../services/referrals');
 const { sendWaitlistJoinMail } = require('../services/topochain/mailer');
 const { productionHostname } = require('../services/caddy');
 const { loadContributors, shapeContributor } = require('../services/contributors');
@@ -190,6 +191,10 @@ function publicApiRoutes(config) {
         email,
         ip: clientIp(req),
         answers: stage1.value,
+        // A referral is accepted only after the dedicated consent page set
+        // this HttpOnly cookie. Existing email rows are never overwritten,
+        // preserving first-touch semantics.
+        referralCodeId: await referrals.validCodeId(pool, req.cookies?.usernode_referral),
       });
       if (created) {
         log.info('public-api', 'Waitlist join', {});

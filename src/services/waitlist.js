@@ -16,6 +16,7 @@
 const crypto = require('crypto');
 const log = require('./logger');
 const { ANSWERS_VERSION } = require('./waitlist-questions');
+const referrals = require('./referrals');
 
 function normalizeEmail(raw) {
   if (typeof raw !== 'string') return null;
@@ -32,16 +33,16 @@ function normalizeEmail(raw) {
 // row, and moreToken is null in that case: the stage-2 capability link
 // only goes to the FIRST join (and its email), never to whoever types
 // the same address again later.
-async function joinWaitlist(pool, { email, ip = null, answers = null }) {
+async function joinWaitlist(pool, { email, ip = null, answers = null, referralCodeId = null }) {
   const moreToken = crypto.randomBytes(24).toString('hex');
   const stored = answers
     ? { _version: ANSWERS_VERSION, ...answers }
     : null;
   const { rowCount } = await pool.query(
-    `INSERT INTO waitlist_signups (email, ip, answers, more_token)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO waitlist_signups (email, ip, answers, more_token, referral_code_id)
+     VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (email) DO NOTHING`,
-    [email, ip, stored ? JSON.stringify(stored) : null, moreToken]
+    [email, ip, stored ? JSON.stringify(stored) : null, moreToken, referralCodeId]
   );
   const created = rowCount > 0;
   return { created, moreToken: created ? moreToken : null };
@@ -119,12 +120,15 @@ async function linkUserByEmail(pool, { userId, email }) {
       `UPDATE waitlist_signups
           SET linked_user_id = $1
         WHERE email = $2
-        RETURNING released_at`,
+        RETURNING released_at, referral_code_id`,
       [userId, normalized]
     );
     if (rows[0] && rows[0].released_at) {
       await grantPlatformAccess(pool, userId);
       log.info('waitlist', 'Released waitlist email registered — access granted', { userId });
+    }
+    if (rows[0]?.referral_code_id) {
+      await referrals.recordAttributionByCodeId(pool, rows[0].referral_code_id, userId);
     }
   } catch (err) {
     log.error('waitlist', 'linkUserByEmail failed', { userId, message: err.message });
