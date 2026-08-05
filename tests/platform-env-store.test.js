@@ -41,8 +41,13 @@ function mockPool({ declarations = [], values = [] } = {}) {
         const d = declarations.find((x) => x.key === params[1]);
         return { rows: d ? [{ private: !!d.private }] : [] };
       }
-      if (/SELECT key, value_enc FROM platform_env_values/.test(sql)) {
-        return { rows: values.map((v) => ({ key: v.key, value_enc: v.value_enc })) };
+      if (/FROM platform_env_values v/.test(sql)) {
+        const declared = new Set(declarations.map((d) => d.key));
+        return {
+          rows: values
+            .filter((v) => declared.has(v.key))
+            .map((v) => ({ key: v.key, value_enc: v.value_enc })),
+        };
       }
       if (/FROM platform_env_declarations d/.test(sql)) {
         const set = new Set(values.map((v) => v.key));
@@ -214,20 +219,49 @@ test('an undeclared value is reported as an orphan, not hidden', async () => {
 // ── getRawValues (the deploy path) ────────────────────────────────────
 
 test('getRawValues decrypts writable values', async () => {
-  const pool = mockPool({ values: [stored('LOG_LEVEL', 'DEBUG'), stored('DB_POOL_MAX', '80')] });
+  const pool = mockPool({
+    declarations: [{ key: 'LOG_LEVEL' }, { key: 'DB_POOL_MAX' }],
+    values: [stored('LOG_LEVEL', 'DEBUG'), stored('DB_POOL_MAX', '80')],
+  });
   assert.deepEqual(await platformEnv.getRawValues(pool, 1, SECRET),
     { LOG_LEVEL: 'DEBUG', DB_POOL_MAX: '80' });
 });
 
+test('getRawValues does not deploy an orphan whose declaration was removed', async () => {
+  const pool = mockPool({
+    declarations: [{ key: 'STILL_ACTIVE' }],
+    values: [stored('STILL_ACTIVE', 'yes'), stored('REMOVED_BUT_RETAINED', 'no')],
+  });
+  assert.deepEqual(await platformEnv.getRawValues(pool, 1, SECRET), { STILL_ACTIVE: 'yes' },
+    'retaining a value for rollback must not keep it active after declaration removal');
+});
+
+test('getRawValues deploys a retained value again when rollback restores its declaration', async () => {
+  const value = stored('ROLLBACK_FLAG', 'restored');
+  const removed = mockPool({ values: [value] });
+  assert.deepEqual(await platformEnv.getRawValues(removed, 1, SECRET), {});
+
+  const restored = mockPool({ declarations: [{ key: 'ROLLBACK_FLAG' }], values: [value] });
+  assert.deepEqual(await platformEnv.getRawValues(restored, 1, SECRET), {
+    ROLLBACK_FLAG: 'restored',
+  });
+});
+
 test('getRawValues refuses an unwritable key even if a row exists', async () => {
-  const pool = mockPool({ values: [stored('JWT_SECRET', 'planted-by-hand'), stored('LOG_LEVEL', 'WARN')] });
+  const pool = mockPool({
+    declarations: [{ key: 'JWT_SECRET' }, { key: 'LOG_LEVEL' }],
+    values: [stored('JWT_SECRET', 'planted-by-hand'), stored('LOG_LEVEL', 'WARN')],
+  });
   const out = await platformEnv.getRawValues(pool, 1, SECRET);
   assert.deepEqual(out, { LOG_LEVEL: 'WARN' },
     'a row planted by a direct DB write must never override the GitHub-sourced .env line');
 });
 
 test('getRawValues skips a value it cannot decrypt instead of emitting garbage', async () => {
-  const pool = mockPool({ values: [{ key: 'LOG_LEVEL', value_enc: 'nonsense' }] });
+  const pool = mockPool({
+    declarations: [{ key: 'LOG_LEVEL' }],
+    values: [{ key: 'LOG_LEVEL', value_enc: 'nonsense' }],
+  });
   assert.deepEqual(await platformEnv.getRawValues(pool, 1, SECRET), {});
 });
 

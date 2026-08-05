@@ -296,6 +296,11 @@
   ],
   "tests": [
     {
+      "name": "Platform variables panel renders on the platform app (#826 folded into app secrets)",
+      "path": "/?shot=secrets#app/usernode-2d5619/dev",
+      "expectSelector": "#app-secrets-list code"
+    },
+    {
       "name": "Tapping an app shows its icon and name while it loads, not a blank window (#931)",
       "path": "/?shot=app-launching",
       "expectSelector": "#app-launch-cover .app-icon-tile",
@@ -351,11 +356,6 @@
       "name": "App tiles carry no user count and no status dot",
       "path": "/?demo=1",
       "expectSelector": "#app-list .app-card:not(:has(.users-badge)):not(:has(.status-dot))"
-    },
-    {
-      "name": "Platform variables panel renders on the platform app (#826 folded into app secrets)",
-      "path": "/?shot=secrets#app/usernode-2d5619/dev",
-      "expectSelector": "#app-secrets-list code"
     },
     {
       "name": "Browse renders app-store rows with an Add button (no \"…\" menu)",

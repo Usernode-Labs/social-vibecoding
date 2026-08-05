@@ -170,15 +170,25 @@ async function listView(pool, appId, dataKey) {
 }
 
 /**
- * Deploy-time resolution: { KEY: plaintext } for every stored value whose
- * key is writable. Unwritable keys are filtered even if a row somehow
- * exists for one — defence in depth, so a value planted by a direct DB
- * write (or a row surviving from before a key joined the unwritable set)
- * can never override the GitHub-secret-sourced line in .env.
+ * Deploy-time resolution: { KEY: plaintext } for every stored value that is
+ * still declared and whose key is writable. The declaration join is what
+ * separates rollback retention from active configuration: reconciliation
+ * deliberately keeps a removed declaration's encrypted value as an orphan,
+ * but that orphan must stop reaching .env until a rollback declares it again.
+ *
+ * Unwritable keys are filtered even if a row somehow exists for one — defence
+ * in depth, so a value planted by a direct DB write (or a row surviving from
+ * before a key joined the unwritable set) can never override the
+ * GitHub-secret-sourced line in .env.
  */
 async function getRawValues(pool, appId, dataKey) {
   const { rows } = await pool.query(
-    'SELECT key, value_enc FROM platform_env_values WHERE app_id = $1 ORDER BY key ASC',
+    `SELECT v.key, v.value_enc
+       FROM platform_env_values v
+       JOIN platform_env_declarations d
+         ON d.app_id = v.app_id AND d.key = v.key
+      WHERE v.app_id = $1
+      ORDER BY v.key ASC`,
     [appId]
   );
   const out = {};
