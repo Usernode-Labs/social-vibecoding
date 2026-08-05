@@ -1762,7 +1762,7 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   where `visualViewport` is absent; returns `{ detach() }`; never
   throws on bad input.
 - **Toast / transient status.** `unNative.toast(message, { duration?,
-  action?: { label, handler }, priority?, onClose? })` — fire-and-forget
+  action?: { label, handler }, priority?, type?, onClose? })` — fire-and-forget
   feedback ("Copied", "Saved", API errors): a bottom capsule HUD on
   iOS/desktop, a Material snackbar on Android, safe-area aware,
   auto-hiding (2.2s, 4s with an action). Singleton with
@@ -1773,7 +1773,12 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   priority toast still takes over). `onClose(reason)` fires exactly
   once per call — `'timeout'` | `'action'` (after the action handler) |
   `'dismiss'` | `'replaced'` — including for toasts replaced while
-  still waiting. For undo flows, use a priority action toast with
+  still waiting. The active lifetime pauses while hovered, while its
+  action is keyboard-focused, and while the document is hidden, then
+  resumes with the time actually remaining. `type` is `'info'` by
+  default; use `'success'` for successful completion and `'error'` for
+  failures. Info/success announce politely as status; errors announce
+  assertively as alerts. For undo flows, use a priority action toast with
   `onClose` and commit the pending operation on any reason except
   `'action'` — don't hand-roll an undo pill. It never steals taps from
   content underneath (`pointer-events` stay off except on the optional

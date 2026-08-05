@@ -37,6 +37,7 @@ const {
   autoScrollVelocity,
   createArbiter,
   createToastSlot,
+  createToastDeadline,
   zoomPose,
   zoomRectUsable,
 } = physics;
@@ -452,6 +453,48 @@ const NATIVE_JS = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'usernode-native', 'v1', 'native.js'),
   'utf8'
 );
+
+test('toast DOM contract is keyboard-safe, semantic, exception-safe and text-only', () => {
+  const toastCss = cssBlock('.un-toast');
+  assert.match(toastCss, /env\(safe-area-inset-bottom/,
+    'the toast must clear the home indicator');
+  assert.match(cssBlock('html.un-kb .un-toast'), /var\(--un-kb-inset, 0px\)/,
+    'overlay-keyboard WebViews must not hide the toast behind the keyboard');
+  assert.doesNotMatch(cssBlock('html.un-kb .un-toast'), /safe-area-inset-bottom/,
+    'the keyboard already covers the home-indicator area; do not double-stack it');
+  assert.match(cssBlock('.un-toast-action:focus-visible'), /outline:/,
+    'the time-pausing action still needs a visible keyboard focus indicator');
+
+  assert.match(NATIVE_JS, /setAttribute\('role', record\.type === 'error' \? 'alert' : 'status'\)/,
+    'error toasts are assertive alerts; ordinary completion remains a status');
+  assert.match(NATIVE_JS, /setAttribute\('aria-live', record\.type === 'error' \? 'assertive' : 'polite'\)/,
+    'screen-reader urgency must follow the explicit toast type');
+  assert.match(NATIVE_JS, /msg\.textContent = record\.message/,
+    'toast messages are text, never app-supplied HTML');
+  assert.match(NATIVE_JS, /btn\.textContent = record\.action\.label/,
+    'action labels are text, never app-supplied HTML');
+  assert.match(NATIVE_JS, /try \{[\s\S]*record\.action\.handler\(\);[\s\S]*\} finally \{[\s\S]*resolveToast\(record, 'action'\)/,
+    'an application exception must not strand the singleton toast');
+  assert.match(NATIVE_JS, /if \(record\.actionRunning\) \{[\s\S]{0,200}?record\.deferredActionClose = true/,
+    'a nested toast emitted by an action handler must defer the acted toast close');
+  assert.match(NATIVE_JS, /record\.actionRunning = false;[\s\S]{0,300}?closeToastRecord\(record, 'action'\)/,
+    'the action reason is delivered after a re-entrant action handler returns');
+  assert.match(NATIVE_JS, /var next = toastSlot\.resolve\(record\);[\s\S]{0,500}?closeToastRecord\(record, reason\);[\s\S]{0,200}?if \(toastPresentedRecord\) return;/,
+    'onClose may emit a replacement toast; resolve the slot first and never fade the replacement');
+});
+
+test('toast lifetime wiring pauses for interaction/background and cleans listeners', () => {
+  for (const event of ['pointerenter', 'pointerleave', 'focusin', 'focusout']) {
+    assert.match(NATIVE_JS, new RegExp("addEventListener\\('" + event + "'"),
+      `toast lifetime must listen for ${event}`);
+    assert.match(NATIVE_JS, new RegExp("removeEventListener\\('" + event + "'"),
+      `toast teardown must remove ${event}`);
+  }
+  assert.match(NATIVE_JS, /document\.addEventListener\('visibilitychange'/,
+    'backgrounded pages pause the active toast');
+  assert.match(NATIVE_JS, /document\.removeEventListener\('visibilitychange'/,
+    'the global visibility listener is removed with the singleton element');
+});
 
 test('native.js: the spinner lingers after onRefresh settles before retracting', () => {
   const hold = Number(/PTR_SETTLE_HOLD_MS\s*=\s*(\d+)/.exec(NATIVE_JS)[1]);
@@ -1142,6 +1185,36 @@ test('toast slot: every record ends exactly once across a mixed sequence', () =>
   for (const r of records) {
     assert.equal(ended.get(r), 1, `record ${r.id} ended ${ended.get(r)} times`);
   }
+});
+
+test('toast deadline pauses and resumes with only the actual time remaining', () => {
+  let now = 1000;
+  const deadline = createToastDeadline(() => now);
+  assert.equal(deadline.reset(4000), 4000);
+  assert.equal(deadline.resume(), 4000);
+  now += 750;
+  assert.equal(deadline.remaining(), 3250);
+  assert.equal(deadline.pause(), 3250);
+  assert.equal(deadline.running(), false);
+
+  // Time spent hovered/focused/hidden is not charged to the lifetime.
+  now += 9000;
+  assert.equal(deadline.remaining(), 3250);
+  assert.equal(deadline.pause(), 3250, 'repeated pauses are idempotent');
+  assert.equal(deadline.resume(), 3250);
+  now += 1250;
+  assert.equal(deadline.pause(), 2000);
+  deadline.clear();
+  assert.equal(deadline.remaining(), 0);
+  assert.equal(deadline.running(), false);
+});
+
+test('toast deadline normalizes unsafe timeout values for WebView compatibility', () => {
+  const deadline = createToastDeadline(() => 0);
+  assert.equal(deadline.reset(-10), 0);
+  assert.equal(deadline.reset('2500'), 2500);
+  assert.equal(deadline.reset(Infinity), 0);
+  assert.equal(deadline.reset(9e12), 2147483647);
 });
 
 // ── Anchored popover placement (issue #741) ────────────────────────────

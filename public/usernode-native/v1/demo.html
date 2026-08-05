@@ -168,11 +168,12 @@
       <section>
         <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Toasts</h2>
         <div class="flex flex-wrap items-center gap-3">
-          <button id="toast-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium text-white" style="background:var(--un-accent)">Toast</button>
+          <button id="toast-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium text-white" style="background:var(--un-accent)">Success toast</button>
+          <button id="toast-error-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Error toast</button>
           <button id="toast-action-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Toast with action</button>
           <button id="toast-undo-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Undo flow (priority)</button>
         </div>
-        <p id="toast-result" class="text-xs text-zinc-500 mt-2">iOS/desktop: bottom capsule. Android: snackbar. Tap "Toast" repeatedly — a new toast replaces the old one (last-writer-wins). A <em>priority</em> toast holds the slot: fire "Undo flow", then tap "Toast" while the Undo is up — it waits its turn and appears after the undo window resolves instead of eating the Undo button.</p>
+        <p id="toast-result" class="text-xs text-zinc-500 mt-2">iOS/desktop: bottom capsule. Android: snackbar. Success/info announce politely; errors announce assertively. Hover a toast, focus its action, or background the page to pause its remaining lifetime. Repeated ordinary toasts replace each other (last-writer-wins). A <em>priority</em> toast holds the slot: fire "Undo flow", then tap "Success toast" while the Undo is up — it waits its turn and appears after the undo window resolves instead of eating the Undo button.</p>
       </section>
 
       <!-- Pull to refresh -->
@@ -679,7 +680,10 @@
       var toastCount = 0;
       document.getElementById('toast-btn').addEventListener('click', function () {
         toastCount += 1;
-        unNative.toast('Copied to clipboard (' + toastCount + ')');
+        unNative.toast('Copied to clipboard (' + toastCount + ')', { type: 'success' });
+      });
+      document.getElementById('toast-error-btn').addEventListener('click', function () {
+        unNative.toast('Could not save changes', { type: 'error' });
       });
       document.getElementById('toast-action-btn').addEventListener('click', function () {
         unNative.toast('Item deleted', {

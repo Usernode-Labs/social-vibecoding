@@ -68,7 +68,7 @@
  *                                        desktop — one actionSheet-shaped
  *                                        call site serves both idioms
  *   unNative.toast(message, opts?)    — transient status toast / snackbar
- *                                        ({ duration?, action?, priority?,
+ *                                        ({ duration?, action?, priority?, type?,
  *                                        onClose?(reason) }; a priority
  *                                        toast holds the slot for undo
  *                                        flows)
@@ -501,6 +501,47 @@
     };
   }
 
+  // Pure remaining-time tracker for the toast DOM layer. It deliberately
+  // owns no setTimeout: callers can pause for several independent reasons
+  // (hover, focus, document hidden), then schedule exactly the returned
+  // remainder once every reason clears. Unit-tested with a fake clock.
+  function createToastDeadline(nowFn) {
+    var now = typeof nowFn === 'function' ? nowFn : Date.now;
+    var remaining = 0;
+    var startedAt = null;
+
+    function elapsed() {
+      return startedAt == null ? 0 : Math.max(0, now() - startedAt);
+    }
+
+    return {
+      reset: function (duration) {
+        var n = Number(duration);
+        // Browsers clamp oversized timeouts inconsistently; keep the
+        // v1 contract deterministic and treat invalid values as immediate.
+        remaining = isFinite(n) ? Math.max(0, Math.min(2147483647, n)) : 0;
+        startedAt = null;
+        return remaining;
+      },
+      pause: function () {
+        if (startedAt != null) {
+          remaining = Math.max(0, remaining - elapsed());
+          startedAt = null;
+        }
+        return remaining;
+      },
+      resume: function () {
+        if (startedAt == null) startedAt = now();
+        return remaining;
+      },
+      remaining: function () {
+        return Math.max(0, remaining - elapsed());
+      },
+      running: function () { return startedAt != null; },
+      clear: function () { remaining = 0; startedAt = null; },
+    };
+  }
+
   /* ────────────────────────────────────────────────────────────────────
    * Zoom-from-element math — pure functions for the 'zoom-in'/'zoom-out'
    * transition types. Unit-tested via the physics export.
@@ -565,6 +606,7 @@
     placePopover: placePopover,
     createArbiter: createArbiter,
     createToastSlot: createToastSlot,
+    createToastDeadline: createToastDeadline,
     zoomPose: zoomPose,
     zoomRectUsable: zoomRectUsable,
   };
@@ -3516,11 +3558,93 @@
   var toastHideTimer = null;
   var toastRemoveTimer = null;
   var toastSlot = createToastSlot();
+  var toastPresentedRecord = null;
+  var toastDeadline = createToastDeadline();
+  var toastPause = { hover: false, focus: false, hidden: false };
+
+  function toastIsPaused() {
+    return toastPause.hover || toastPause.focus || toastPause.hidden;
+  }
+
+  function clearToastLifetime() {
+    if (toastHideTimer) { clearTimeout(toastHideTimer); toastHideTimer = null; }
+    toastDeadline.clear();
+  }
+
+  function scheduleToastLifetime(record) {
+    if (!record || record.closed || toastSlot.current() !== record || toastPresentedRecord !== record) return;
+    if (toastHideTimer) { clearTimeout(toastHideTimer); toastHideTimer = null; }
+    if (toastIsPaused()) {
+      toastDeadline.pause();
+      return;
+    }
+    var remaining = toastDeadline.resume();
+    toastHideTimer = setTimeout(function () {
+      toastHideTimer = null;
+      resolveToast(record, 'timeout');
+    }, remaining);
+  }
+
+  function setToastPause(reason, paused) {
+    if (toastPause[reason] === paused) return;
+    toastPause[reason] = paused;
+    var record = toastPresentedRecord;
+    if (!record || record.closed) return;
+    if (paused) {
+      if (toastHideTimer) { clearTimeout(toastHideTimer); toastHideTimer = null; }
+      toastDeadline.pause();
+    } else {
+      scheduleToastLifetime(record);
+    }
+  }
+
+  function onToastPointerEnter() { setToastPause('hover', true); }
+  function onToastPointerLeave() { setToastPause('hover', false); }
+  function onToastFocusIn() { setToastPause('focus', true); }
+  function onToastFocusOut(e) {
+    if (!toastEl || !e.relatedTarget || !toastEl.contains(e.relatedTarget)) {
+      setToastPause('focus', false);
+    }
+  }
+  function onToastVisibility() {
+    setToastPause('hidden', document.visibilityState === 'hidden');
+  }
+
+  function bindToastLifetimeEvents() {
+    if (!toastEl) return;
+    toastEl.addEventListener('pointerenter', onToastPointerEnter);
+    toastEl.addEventListener('pointerleave', onToastPointerLeave);
+    toastEl.addEventListener('focusin', onToastFocusIn);
+    toastEl.addEventListener('focusout', onToastFocusOut);
+    document.addEventListener('visibilitychange', onToastVisibility);
+    toastPause.hidden = document.visibilityState === 'hidden';
+  }
+
+  function unbindToastLifetimeEvents() {
+    if (toastEl) {
+      toastEl.removeEventListener('pointerenter', onToastPointerEnter);
+      toastEl.removeEventListener('pointerleave', onToastPointerLeave);
+      toastEl.removeEventListener('focusin', onToastFocusIn);
+      toastEl.removeEventListener('focusout', onToastFocusOut);
+    }
+    document.removeEventListener('visibilitychange', onToastVisibility);
+    toastPause.hover = false;
+    toastPause.focus = false;
+    toastPause.hidden = false;
+  }
 
   // Exactly-once onClose delivery; an app callback that throws must not
   // break the kit.
   function closeToastRecord(record, reason) {
     if (!record || record.closed) return;
+    // An action handler is allowed to emit another toast synchronously.
+    // Slot displacement happens inside that nested call, but the acted
+    // toast's terminal reason is still `action`, delivered only after the
+    // handler returns (the documented ordering).
+    if (record.actionRunning) {
+      record.deferredActionClose = true;
+      return;
+    }
     record.closed = true;
     if (record.onClose) {
       try { record.onClose(reason); } catch (e) { /* ignore */ }
@@ -3529,8 +3653,11 @@
 
   function removeToast() {
     if (toastRemoveTimer) { clearTimeout(toastRemoveTimer); toastRemoveTimer = null; }
+    clearToastLifetime();
+    unbindToastLifetimeEvents();
     if (toastEl && toastEl.parentNode) toastEl.parentNode.removeChild(toastEl);
     toastEl = null;
+    toastPresentedRecord = null;
   }
 
   // Fade out and tear down the element; onGone runs once it's removed
@@ -3560,15 +3687,19 @@
     if (record.closed || toastSlot.current() !== record) return;
     if (toastHideTimer) { clearTimeout(toastHideTimer); toastHideTimer = null; }
     if (toastRemoveTimer) { clearTimeout(toastRemoveTimer); toastRemoveTimer = null; }
+    toastPresentedRecord = record;
 
     var fresh = !toastEl;
     if (fresh) {
       toastEl = document.createElement('div');
       toastEl.className = 'un-toast';
-      toastEl.setAttribute('role', 'status');
-      toastEl.setAttribute('aria-live', 'polite');
+      toastEl.setAttribute('aria-atomic', 'true');
       document.body.appendChild(toastEl);
+      bindToastLifetimeEvents();
     }
+    toastEl.setAttribute('data-type', record.type);
+    toastEl.setAttribute('role', record.type === 'error' ? 'alert' : 'status');
+    toastEl.setAttribute('aria-live', record.type === 'error' ? 'assertive' : 'polite');
     toastEl.classList.toggle('un-has-action', !!record.action);
     while (toastEl.firstChild) toastEl.removeChild(toastEl.firstChild);
     var msg = document.createElement('div');
@@ -3582,8 +3713,20 @@
       btn.textContent = record.action.label;
       btn.addEventListener('click', function () {
         if (record.closed || toastSlot.current() !== record) return;
-        if (record.action.handler) record.action.handler();
-        resolveToast(record, 'action');
+        // The application error still reaches the browser's event error
+        // reporting, but `finally` guarantees it cannot strand this toast.
+        record.actionRunning = true;
+        try {
+          if (record.action.handler) record.action.handler();
+        } finally {
+          record.actionRunning = false;
+          if (record.deferredActionClose) {
+            record.deferredActionClose = false;
+            closeToastRecord(record, 'action');
+          } else {
+            resolveToast(record, 'action');
+          }
+        }
       });
       toastEl.appendChild(btn);
     }
@@ -3601,24 +3744,33 @@
       toastEl.classList.add('un-in');
     }
 
-    toastHideTimer = setTimeout(function () {
-      resolveToast(record, 'timeout');
-    }, record.duration);
+    // Replacing a focused action removes that button; do not leave the new
+    // record paused by focus that no longer lives inside the singleton.
+    toastPause.focus = !!(document.activeElement && toastEl.contains(document.activeElement));
+    toastPause.hidden = document.visibilityState === 'hidden';
+    toastDeadline.reset(record.duration);
+    scheduleToastLifetime(record);
   }
 
   // End the VISIBLE record's lifetime: fire its onClose, fade out, then
   // present whatever was waiting in the pending slot (fresh entrance,
   // full duration starting now).
   function resolveToast(record, reason) {
-    if (record.closed || toastSlot.current() !== record) return;
-    closeToastRecord(record, reason);
+    if (record.closed || toastSlot.current() !== record || toastPresentedRecord !== record) return;
+    clearToastLifetime();
+    toastPresentedRecord = null;
     var next = toastSlot.resolve(record);
+    // Resolve the slot before calling application code. If onClose emits a
+    // newer toast, presentToast() reuses/re-enters the singleton and we must
+    // not fade that new record back out underneath it.
+    closeToastRecord(record, reason);
+    if (toastPresentedRecord) return;
     hideToast(function () {
       if (next && !next.closed && toastSlot.current() === next) presentToast(next);
     });
   }
 
-  // toast(message, { duration?, action?: { label, handler }, priority?,
+  // toast(message, { duration?, action?: { label, handler }, priority?, type?,
   // onClose?(reason) }) — returns { dismiss(), el }. A priority toast is
   // not displaced by ordinary toasts (those queue, one deep, latest
   // wins); onClose fires exactly once with 'timeout' | 'action' |
@@ -3629,12 +3781,16 @@
   function toast(message, options) {
     var opts = options || {};
     var action = opts.action && opts.action.label != null ? opts.action : null;
+    var type = opts.type === 'error' || opts.type === 'success' ? opts.type : 'info';
     var record = {
       message: message,
       action: action,
       duration: opts.duration != null ? opts.duration : (action ? 4000 : 2200),
       priority: !!opts.priority,
+      type: type,
       onClose: typeof opts.onClose === 'function' ? opts.onClose : null,
+      actionRunning: false,
+      deferredActionClose: false,
       closed: false,
     };
 
@@ -3648,11 +3804,18 @@
 
     return {
       get el() {
-        return !record.closed && toastSlot.current() === record ? toastEl : null;
+        return !record.closed && toastPresentedRecord === record ? toastEl : null;
       },
       dismiss: function () {
         if (record.closed) return;
-        if (toastSlot.current() === record) resolveToast(record, 'dismiss');
+        if (toastPresentedRecord === record) resolveToast(record, 'dismiss');
+        // A queued record becomes current as soon as the prior toast starts
+        // fading, but is not presented until that fade ends. Its handle must
+        // still be able to cancel it during this short gap.
+        else if (toastSlot.current() === record) {
+          toastSlot.resolve(record);
+          closeToastRecord(record, 'dismiss');
+        }
         else if (toastSlot.cancelPending(record)) closeToastRecord(record, 'dismiss');
       },
     };

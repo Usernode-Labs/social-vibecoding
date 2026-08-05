@@ -990,6 +990,12 @@ html.un-kb .un-kb-avoid {
   transition: opacity 180ms ease, transform 260ms var(--un-ease-spring-stiff);
   will-change: transform, opacity;
 }
+/* With an overlay keyboard up, its inset replaces the home-indicator safe
+   area: the safe area is behind the keyboard and must not be double-counted.
+   Resize-mode Android never gets .un-kb, so it keeps the baseline above. */
+html.un-kb .un-toast {
+  bottom: calc(16px + var(--un-kb-inset, 0px));
+}
 .un-toast.un-in {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
@@ -1010,6 +1016,11 @@ html.un-kb .un-kb-avoid {
   font-weight: 600;
   color: var(--un-toast-action);
   cursor: pointer;
+}
+.un-toast-action:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 /* Material snackbar skin: near-full-width rectangle, left-aligned. */
