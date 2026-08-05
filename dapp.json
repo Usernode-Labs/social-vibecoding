@@ -871,6 +871,18 @@
       "expectText": "Staging demo draft: also make the header sticky when scrolling."
     },
     {
+      "name": "Saved-drafts header says the list follows you across devices (#940)",
+      "path": "/?shot=drafts#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-drafts.dc-drafts-active .dc-drafts-head",
+      "expectText": "on all your devices"
+    },
+    {
+      "name": "Saved drafts render from the database, with no ?shot param (#940)",
+      "path": "/#app/usernode-2d5619/dev/sessions/990402",
+      "expectSelector": "#dc-drafts.dc-drafts-active .dc-draft-row .dc-draft-send",
+      "expectText": "Staging demo draft: also make the header sticky when scrolling."
+    },
+    {
       "name": "Dev session start screen keeps the original starter suggestions (#785)",
       "path": "/#app/usernode-2d5619/dev/sessions/990401",
       "expectText": "Fix something that's broken"
