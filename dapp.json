@@ -340,10 +340,10 @@
       "expectText": "staging-demo-lead"
     },
     {
-      "name": "Challenges widget: metered rows, expand toggle and the leaderboard link (#911)",
+      "name": "Challenges widget: metered rows plus the title bar's leaderboard link (#911, #980)",
       "path": "/?demo=1",
-      "expectSelector": "#home-body.home-column article.home-panel .home-panel-rows--metered .home-panel-row .home-panel-bar-track[role=progressbar] .home-panel-bar-fill",
-      "expectText": "Go to leaderboard"
+      "expectSelector": "#home-body.home-column article.home-panel:has(.home-panel-bar .home-panel-lb-browse[aria-label=\"Open leaderboard\"]) .home-panel-rows--metered .home-panel-row .home-panel-bar-track[role=progressbar] .home-panel-bar-fill",
+      "expectText": "Open leaderboard"
     },
     {
       "name": "Challenges widget: with nothing running it says so, and fills the rest (#947)",
