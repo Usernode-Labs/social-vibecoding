@@ -1251,6 +1251,30 @@ test('the Create widget reads the viewer’s quota through Home', () => {
   assert.doesNotMatch(locked, /\sdisabled[=\s>]/, 'never the disabled ATTRIBUTE');
 });
 
+// The widget is 4x1 below 640px and 1x1 at/above it (PANEL_REGISTRY
+// `sizes`), so its CONTENT has to flip at the same breakpoint: icon beside
+// label in the full-width phone row, icon above label in the single desktop
+// cell. One markup, two shapes, both class literals so the compiled
+// stylesheet actually carries them.
+test('the Create widget lays out as a row on a phone and a stack on desktop', () => {
+  const html = makeHomePanels({ home: { canCreate: () => true } }).HP
+    .renderCreatePanel({ key: 'create' });
+  const btn = html.match(/class="home-create-btn[^"]*"/)[0];
+  assert.match(btn, /\bflex-row\b/, 'the phone shape is a row');
+  assert.match(btn, /\bsm:flex-col\b/, 'and it stacks again at the 640px breakpoint');
+  assert.match(btn, /\bitems-center\b/);
+  assert.match(btn, /\bjustify-center\b/, 'centred in whichever rectangle it gets');
+  // The label steps up a size in the wide row, where there is room for it.
+  assert.match(html, /home-create-label[^"]*text-sm sm:text-xs/);
+  // The registry is the other half of the same decision — a 4x1 phone
+  // footprint with a stacked tile inside it would clip the label.
+  const route = read('src/routes/home-panels.js');
+  const create = route.slice(route.indexOf("key: 'create'"));
+  assert.match(create.slice(0, create.indexOf('},') + 1),
+    /sizes: \{ 4: \[4, 1\], 5: \[1, 1\] \}/,
+    'full-width row on a phone, one cell on desktop');
+});
+
 // The state has to end up on the HOST. The widget stamps it on markup that
 // is painted INSIDE the [data-panel-slot] host, so a selector written the
 // way the spec describes it — and the way the dapp.json checks and the

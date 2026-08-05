@@ -283,9 +283,11 @@ test('every widget is one bordered block, sized by the cells it occupies', () =>
   // than sitting at its natural height in the top-left of a 2x2 block.
   assert.match(CSS, /\.home-panel-slot \{[^}]*display: flex/);
   assert.match(CSS, /\.home-panel-slot > \.home-panel,[\s\S]*?width: 100%/);
-  // Footprints come from the server registry, per column count.
+  // Footprints come from the server registry, per column count. The two
+  // panels are 2x2 on desktop and full-width on a phone; the create widget
+  // is a single desktop cell and a full-width phone ROW (4x1).
   assert.match(ROUTE, /sizes: \{ 4: \[4, 2\], 5: \[2, 2\] \}/);
-  assert.match(ROUTE, /sizes: \{ 4: \[1, 1\], 5: \[1, 1\] \}/);
+  assert.match(ROUTE, /sizes: \{ 4: \[4, 1\], 5: \[1, 1\] \}/);
 });
 
 // Short feed on a tall screen: the trailing sections sit at the BOTTOM of

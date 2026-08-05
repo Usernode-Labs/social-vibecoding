@@ -788,12 +788,14 @@ html, body {
 .home-create-widget {
   min-width: 0;
 }
-/* "Create app" wraps to two lines rather than truncating: at ONE cell wide
-   on a phone (~85px) it does not fit on one, and "Create …" reads as a
-   rendering bug where an app tile's truncated name reads as a long name.
-   Two 16px lines fit the cell's budget (16 padding + 56 icon + 8 gap + 32),
-   which is what the caption lane an app tile spends on its status buys back
-   here — a widget has no status line. */
+/* "Create app" wraps to two lines rather than truncating: in the narrowest
+   shape the tile takes (ONE cell, ~150px on desktop) a truncated "Create …"
+   would read as a rendering bug, the way an app tile's truncated name reads
+   as a long name. Two 16px lines fit the cell's budget (16 padding + 56 icon
+   + 8 gap + 32), which is what the caption lane an app tile spends on its
+   status buys back here — a widget has no status line. Below 640px the
+   widget is a 4x1 full-width row and the label sits BESIDE the icon with
+   room to spare, so the clamp is a backstop there, not the layout. */
 .home-create-label {
   display: -webkit-box;
   -webkit-line-clamp: 2;
