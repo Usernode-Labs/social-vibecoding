@@ -4,14 +4,18 @@
 // screen and its drawer row read "Leaderboard" now.)
 //
 // The contract that's easy to break later:
-//   - the screen opens on Kudos, so the merge can't quietly change what
-//     the trophy/menu entry shows;
-//   - every existing #leaderboard deep link (prs / users / history /
+//   - the screen opens on the TOPOCHAIN STANDINGS, which the tab strip
+//     labels simply "Leaderboard" — it is the platform's primary ranking,
+//     and the trophy/menu entry, the bare #leaderboard hash and the home
+//     widget's fill must all agree on that;
+//   - the kudos board is still all there, one tab over, named "Kudos";
+//   - every existing #leaderboard/<sub> deep link (prs / users / history /
 //     users/<name>) still resolves to a Kudos sub-tab;
-//   - #leaderboard/topochain and #leaderboard/challenges are the canonical
-//     addresses for the other two tabs, and the three legacy hashes
-//     (#topochain/leaderboard, #topochain/seasons, #challenges) alias onto
-//     them, so old bookmarks work;
+//   - the bare #leaderboard and #leaderboard/challenges are the canonical
+//     addresses for the standings and challenges tabs, and the legacy
+//     hashes (#leaderboard/topochain, #topochain/leaderboard,
+//     #topochain/seasons, #challenges) alias onto them, so old bookmarks
+//     work;
 //   - the three panes keep SEPARATE data state — routing Topochain
 //     through Leaderboard._cache would break its event/page paging;
 //   - the two Topochain-domain panes share ONE event selection, owned by
@@ -52,8 +56,8 @@ test('the Leaderboard screen hosts a tab strip, an event bar and all three panes
   // Wide enough for the Topochain table; the Kudos lists keep their
   // narrower reading column.
   assert.match(screen, /max-w-5xl/, 'the shell is the wider column');
-  assert.match(screen, /id="leaderboard-root" class="max-w-3xl"/,
-    'the Kudos pane keeps its reading width');
+  assert.match(screen, /id="leaderboard-root" class="hidden max-w-3xl"/,
+    'the Kudos pane keeps its reading width (and now ships hidden — see below)');
 });
 
 test('the retired screens are gone from the shell', () => {
@@ -63,8 +67,15 @@ test('the retired screens are gone from the shell', () => {
     '#topochain-seasons-screen was folded into the Leaderboard screen');
 });
 
-test('only the Kudos pane ships visible — Kudos is the default section', () => {
-  for (const id of ['topochain-leaderboard-root', 'challenges-root', 'leaderboard-event-bar']) {
+test('the standings pane + event bar ship visible — standings are the default section', () => {
+  // The DEFAULT pane and the event bar it reads from must ship visible, or
+  // the screen paints the Kudos pane for a frame before _applySection runs.
+  for (const id of ['topochain-leaderboard-root', 'leaderboard-event-bar']) {
+    const el = html.match(new RegExp(`<div id="${id}"[^>]*>`));
+    assert.ok(el, `#${id} exists`);
+    assert.doesNotMatch(el[0], /class="hidden/, `#${id} ships visible`);
+  }
+  for (const id of ['leaderboard-root', 'challenges-root']) {
     const el = html.match(new RegExp(`<div id="${id}"[^>]*>`));
     assert.ok(el, `#${id} exists`);
     assert.match(el[0], /class="hidden/, `#${id} ships hidden`);
@@ -73,8 +84,24 @@ test('only the Kudos pane ships visible — Kudos is the default section', () =>
 
 // ─── Section state ───────────────────────────────────────────────────────
 
-test('Leaderboard.section defaults to kudos', () => {
-  assert.match(lbJs, /section: 'kudos',/, "the screen opens on the Kudos tab");
+test('Leaderboard.section defaults to the standings', () => {
+  assert.match(lbJs, /section: 'topochain',/,
+    "the screen opens on the primary standings tab, not on Kudos");
+});
+
+test('the tab strip leads with the standings, labelled simply "Leaderboard"', () => {
+  const fn = lbJs.slice(lbJs.indexOf('  _renderSectionTabs() {'), lbJs.indexOf('  // Re-fetch every cached pane'));
+  assert.ok(fn.length > 0, '_renderSectionTabs located');
+  const labels = [...fn.matchAll(/\{ key: '([a-z]+)', label: '([^']+)' \}/g)]
+    .map((m) => [m[1], m[2]]);
+  assert.deepEqual(labels, [
+    ['topochain', 'Leaderboard'],
+    ['kudos', 'Kudos'],
+    ['challenges', 'Challenges'],
+  ], 'standings first and called Leaderboard; the kudos board is the Kudos tab');
+  // The KEYS are the platform's vocabulary for these tabs (hash aliases in
+  // app.js, dapp.json checks) and must survive the relabelling.
+  assert.match(fn, /data-standings-tab="\$\{s\.key\}"/, 'tab keys are unchanged');
 });
 
 test('_setSection validates its input and syncs the hash', () => {
@@ -82,8 +109,8 @@ test('_setSection validates its input and syncs the hash', () => {
   assert.ok(fn.length > 0, '_setSection located');
   assert.match(fn, /if \(!Leaderboard\.SECTIONS\.includes\(section\)\) return;/,
     'garbage sections are a no-op, mirroring _setSub');
-  assert.match(lbJs, /SECTIONS: \['kudos', 'topochain', 'challenges'\],/,
-    'all three sections are declared in one place');
+  assert.match(lbJs, /SECTIONS: \['topochain', 'kudos', 'challenges'\],/,
+    'all three sections are declared in one place, in tab order');
   assert.match(lbJs, /EVENT_SECTIONS: \['topochain', 'challenges'\],/,
     'the two event-scoped sections are declared in one place');
   assert.match(fn, /Leaderboard\._syncHash\(\);/, 'the hash follows the tab');
@@ -100,10 +127,13 @@ test('_setSub still rejects garbage, and pins the section back to kudos', () => 
     "a Kudos sub-tab deep link must not land on a Topochain tab left over from earlier");
 });
 
-test('_syncHash emits the canonical topochain and challenges addresses', () => {
+test('_syncHash emits the canonical standings and challenges addresses', () => {
   const fn = lbJs.slice(lbJs.indexOf('  _syncHash() {'), lbJs.indexOf('  _setWindow(win)'));
   assert.ok(fn.length > 0, '_syncHash located');
-  assert.match(fn, /'#leaderboard\/topochain'/, 'the Topochain tab addresses as #leaderboard/topochain');
+  assert.match(fn, /\? '#leaderboard'\n/,
+    'the primary standings tab addresses as the BARE #leaderboard');
+  assert.doesNotMatch(fn, /'#leaderboard\/topochain'/,
+    'so an arriving #leaderboard/topochain bookmark self-heals to it');
   assert.match(fn, /'#leaderboard\/challenges'/, 'the Challenges tab addresses as #leaderboard/challenges');
   assert.match(fn, /#leaderboard\/users\/\$\{encodeURIComponent/, 'the profile drill-in hash is unchanged');
   assert.match(fn, /location\.hash\.startsWith\('#leaderboard'\)/,
@@ -112,14 +142,14 @@ test('_syncHash emits the canonical topochain and challenges addresses', () => {
 
 // ─── Router ──────────────────────────────────────────────────────────────
 
-test('navigateToLeaderboard routes both section segments to the section', () => {
+test('navigateToLeaderboard routes every section segment to the section', () => {
   const fn = appJs.slice(
     appJs.indexOf('  navigateToLeaderboard(sub, profileUser)'),
     appJs.indexOf('  _exitLeaderboard()')
   );
   assert.ok(fn.length > 0, 'navigateToLeaderboard located');
-  assert.match(fn, /sub === 'topochain' \|\| sub === 'challenges'/,
-    "both section segments select the section rather than falling through to _setSub");
+  assert.match(fn, /sub === 'topochain' \|\| sub === 'kudos' \|\| sub === 'challenges'/,
+    "every section segment selects the section rather than falling through to _setSub");
   assert.match(fn, /App\.setHeaderTitle\('Leaderboard'\)/, 'the screen is titled Leaderboard');
   // openProfile must still win over both — _setSub/_setSection would
   // replaceState the profile hash away.
@@ -136,8 +166,8 @@ test('the legacy #topochain hashes self-heal to the canonical form', () => {
   );
   assert.match(branch, /parts\[1\] === 'seasons' \? 'challenges' : 'topochain'/,
     'seasons maps onto the challenges tab, everything else onto standings');
-  assert.match(branch, /history\.replaceState\(null, '', `#leaderboard\/\$\{_tcSection\}`\)/,
-    'the address is rewritten in place');
+  assert.match(branch, /_tcSection === 'challenges' \? '#leaderboard\/challenges' : '#leaderboard'/,
+    'the address is rewritten in place — standings to the bare hash, one replaceState not two');
   assert.match(branch, /App\.navigateToLeaderboard\(_tcSection, null\)/, 'then hands off');
   assert.match(branch, /catch \(err\)/,
     'a replaceState failure must not swallow the navigation');

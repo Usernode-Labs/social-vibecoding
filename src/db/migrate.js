@@ -8454,7 +8454,14 @@ async function seedStagingTopochain(pool, config) {
          (900506, $7, $4, 1, 500, 0, ${LATER_SNAPSHOT}, $8, NOW(), NOW()),
          (900507, $7, $3, 2, 350, 0, ${LATER_SNAPSHOT}, $8, NOW(), NOW()),
          (900508, $7, $6, 3, 200, 0, ${LATER_SNAPSHOT}, $8, NOW(), NOW()),
-         (900509, $7, $1, 4, 0,   0, ${LATER_SNAPSHOT}, $8, NOW(), NOW()),
+         -- The podium-EXCLUDED user (seasonWide1, exclude_podium = TRUE)
+         -- leads the event on points in the later snapshot. That is the
+         -- whole point of seeding it high: the standings table shows the
+         -- row with a "—" rank and a non-podium tag, and the home widget's
+         -- leaderboard fill must SKIP it when picking its three podium
+         -- rows. Left at 0 it sat at the bottom and neither behaviour was
+         -- reachable by looking at a preview.
+         (900509, $7, $1, 1, 600, 0, ${LATER_SNAPSHOT}, $8, NOW(), NOW()),
          (900510, $7, $2, 5, 0,   0, ${LATER_SNAPSHOT}, $8, NOW(), NOW()),
          (900511, $7, $5, 6, 0,   0, ${LATER_SNAPSHOT}, $8, NOW(), NOW()),
          -- Standings for the fully-past event, so selecting it renders a
@@ -8698,9 +8705,11 @@ async function seedStagingTopochain(pool, config) {
          ON CONFLICT (id) DO NOTHING`,
         [viewerId, EVENT_REGULAR_ID]
       );
-      // A rank the profile header can show. Rank 2 on 350 points ties the
-      // fixture user holding exactly those points, so seeding several
-      // viewers reads as a tie rather than as three contradictory #1s.
+      // A rank the profile header can show — and, since the home screen's
+      // Challenges widget previews these same standings, the "you" row of
+      // its leaderboard fill. Rank 2 on 350 points ties the fixture user
+      // holding exactly those points, so seeding several viewers reads as
+      // a tie rather than as three contradictory #1s.
       await pool.query(
         `INSERT INTO leaderboard_snapshots
            (id, season_event_id, user_id, rank, total_points, extra_points,

@@ -105,8 +105,12 @@ test('the hash router aliases both #topochain sub-routes onto the sections', () 
   assert.ok(branch.length > 0, 'the topochain router branch is located');
   assert.match(branch, /parts\[1\] === 'seasons' \? 'challenges' : 'topochain'/,
     'seasons maps onto the challenges tab, everything else onto standings');
-  assert.match(branch, /history\.replaceState\(null, '', `#leaderboard\/\$\{_tcSection\}`\)/,
-    'the legacy hash is rewritten to its canonical #leaderboard/<section> form');
+  // Canonical form per section: the standings are the screen's PRIMARY tab,
+  // so their address is the bare #leaderboard (rewriting to
+  // #leaderboard/topochain here would only make Leaderboard._syncHash
+  // rewrite it a second time).
+  assert.match(branch, /_tcSection === 'challenges' \? '#leaderboard\/challenges' : '#leaderboard'/,
+    'the legacy hash is rewritten to its canonical form');
   assert.match(branch, /App\.navigateToLeaderboard\(_tcSection, null\)/,
     'then dispatches to the Leaderboard screen on that section');
   assert.ok(branch.indexOf('replaceState') < branch.indexOf('navigateToLeaderboard'),

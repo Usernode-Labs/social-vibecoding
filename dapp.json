@@ -326,6 +326,22 @@
       "expectText": "No challenges are running right now"
     },
     {
+      "name": "Challenges widget: the fill previews the Topochain standings (#962)",
+      "path": "/?demo=1&challenges=none",
+      "expectSelector": "#app-list [data-panel-slot=\"challenges\"] article.home-panel .home-panel-fill[data-fill-kind=\"topochain\"] .home-panel-lb-row[data-lb-kind=\"topochain\"]",
+      "expectText": "staging-demo-validator"
+    },
+    {
+      "name": "Challenges widget: with no standings at all the fill falls back to the Kudos board (#962)",
+      "path": "/?demo=1&challenges=none&board=kudos",
+      "expectSelector": "#app-list [data-panel-slot=\"challenges\"] article.home-panel .home-panel-fill[data-fill-kind=\"kudos\"] .home-panel-lb-row[data-lb-kind=\"kudos\"]"
+    },
+    {
+      "name": "Bare #leaderboard renders all three tabs and opens on the standings (#962)",
+      "path": "/#leaderboard",
+      "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"]) #topochain-leaderboard-root:not(.hidden) #tc-lb-body table"
+    },
+    {
       "name": "The Create app widget sits in the grid and opens the create flow",
       "path": "/?demo=1",
       "expectSelector": "#app-list [data-panel-slot=\"create\"][data-create-enabled=\"true\"] .home-create-btn[class*=\"sm:flex-col\"]",
@@ -637,7 +653,7 @@
     },
     {
       "name": "Leaderboard screen renders with the Kudos Top-users tab",
-      "path": "/leaderboard",
+      "path": "/#leaderboard/users",
       "expectText": "Top users"
     },
     {
@@ -1030,7 +1046,7 @@
     {
       "name": "Drawer status pane renders the kudos budget as inline text",
       "path": "/",
-      "expectSelector": "#drawer-row-kudos #kudos-budget-slot a[href=\"#leaderboard\"].drawer-meter"
+      "expectSelector": "#drawer-row-kudos #kudos-budget-slot a[href=\"#leaderboard/prs\"].drawer-meter"
     },
     {
       "name": "Theme selector ships its 3-segment track and caret",
@@ -1303,11 +1319,6 @@
       "name": "Legacy #topochain/leaderboard lands on the Leaderboard screen's Topochain tab",
       "path": "/#topochain/leaderboard",
       "expectSelector": "#leaderboard-screen:not(.hidden) #topochain-leaderboard-root:not(.hidden) #tc-lb-body"
-    },
-    {
-      "name": "Leaderboard renders all three tabs at #leaderboard",
-      "path": "/#leaderboard",
-      "expectSelector": "#standings-tabs [data-standings-tab=\"challenges\"]"
     },
     {
       "name": "Legacy #topochain/seasons lands on the Leaderboard screen's Challenges tab",

@@ -1552,24 +1552,44 @@ test('the Discover lanes fit the cells their footprint buys', () => {
 // module actually reads it: through Home.currentCols().
 function makeDesktop(data, opts = {}) {
   const slot = makeSlot('challenges');
-  const { HP } = makeHomePanels({
+  const { HP, sandbox } = makeHomePanels({
     ...opts,
     slots: [slot],
     home: { currentCols: () => opts.cols || 5, ...(opts.home || {}) },
   });
   HP._data = data;
   HP.render();
-  return { HP, html: slot.innerHTML, slot };
+  return { HP, html: slot.innerHTML, slot, sandbox };
 }
 
+// The board as src/routes/home-panels.js sends it: a `kind`, a `label`, rows
+// carrying a display `name` and a server-decided `you` flag. This one is the
+// PRIMARY board — the Topochain standings, five-figure points and all.
 const fill = (over = {}) => ({
+  kind: 'topochain',
+  label: 'Leaderboard',
+  event: { id: 77, name: 'Block Production Sprint' },
   top: [
-    { rank: 1, username: 'ada', score: 41 },
-    { rank: 2, username: 'grace', score: 27 },
-    { rank: 3, username: 'linus', score: 18 },
+    { rank: 1, name: 'ada', score: 59146, you: false },
+    { rank: 2, name: 'grace', score: 27515, you: false },
+    { rank: 3, name: 'linus', score: 918, you: false },
   ],
-  viewer: { rank: 7, username: 'me', score: 6 },
+  viewer: { rank: 7, name: 'me', score: 640, you: true },
   total: 42,
+  ...over,
+});
+
+// The FALLBACK board, for a deployment with no public standings at all.
+const kudosFill = (over = {}) => fill({
+  kind: 'kudos',
+  label: 'Kudos',
+  event: null,
+  top: [
+    { rank: 1, name: 'ada', score: 41, you: false },
+    { rank: 2, name: 'grace', score: 27, you: false },
+    { rank: 3, name: 'linus', score: 18, you: false },
+  ],
+  viewer: { rank: 7, name: 'me', score: 6, you: true },
   ...over,
 });
 
@@ -1628,26 +1648,79 @@ test('desktop: the viewer’s own row is last, marked, and never duplicated', ()
   assert.deepEqual(namesIn(html), ['ada', 'grace', 'You']);
   assert.equal((html.match(/home-panel-lb-you/g) || []).length, 1);
 
-  // Already in the top slice: highlighted in place, and the freed slot goes
-  // to the next entry down rather than repeating them.
+  // Already in the top slice: highlighted in place (the SERVER flags which
+  // row is theirs), and the freed slot goes to the next entry down rather
+  // than repeating them.
+  const base = fill();
   const inTop = makeDesktop(withFill({
     challenges: [challenge()],
     total: 1,
-    leaderboard: fill({ viewer: { rank: 2, username: 'grace', score: 27 } }),
+    leaderboard: fill({
+      top: base.top.map((r, i) => ({ ...r, you: i === 1 })),
+      viewer: { rank: 2, name: 'grace', score: 27515, you: true },
+    }),
   }));
   assert.deepEqual(namesIn(inTop.html), ['ada', 'You', 'linus']);
   assert.equal((inTop.html.match(/home-panel-lb-you/g) || []).length, 1);
 });
 
-test('desktop: a zero-kudos viewer row is muted, not a violet chip', () => {
+test('desktop: the standings board names itself and shortens its points', () => {
+  const { html } = makeDesktop(withFill({ challenges: [challenge()], total: 1 }));
+  const block = html.slice(html.indexOf('home-panel-fill-label'));
+  assert.match(block, /home-panel-fill-label[^>]*>Leaderboard</, 'labelled from the payload');
+  // Five-figure points are shortened so the name lane survives; small ones
+  // are left alone.
+  assert.match(block, />59\.1k</, '59,146 renders as 59.1k');
+  assert.match(block, />640</, 'a three-digit score is not shortened');
+  assert.match(block, /by points in Block Production Sprint/, 'the tooltip names the metric');
+  assert.match(html, /data-fill-kind="topochain"/);
+});
+
+test('desktop: the kudos fallback says Kudos, and keeps the kudos copy', () => {
+  const { html } = makeDesktop(withFill({
+    challenges: [challenge()], total: 1, leaderboard: kudosFill(),
+  }));
+  const block = html.slice(html.indexOf('home-panel-fill-label'));
+  assert.match(block, /home-panel-fill-label[^>]*>Kudos</,
+    'the fallback board must not call itself the Leaderboard');
+  assert.match(block, />41</, 'kudos counts are never abbreviated');
+  assert.match(block, /by kudos on merged proposals/);
+  assert.match(html, /data-fill-kind="kudos"/);
+});
+
+// Most viewers have no standings row at all — the slot goes to one more
+// participant rather than to an invented rank.
+test('desktop: a board with no viewer row spends every slot on the top', () => {
+  const namesIn = (h) => [...h.slice(h.indexOf('home-panel-fill-label'))
+    .matchAll(/home-panel-goal[^>]*>([^<]+)</g)].map((m) => m[1]);
+  const { html } = makeDesktop(withFill({
+    challenges: [challenge()], total: 1, leaderboard: fill({ viewer: null }),
+  }));
+  assert.deepEqual(namesIn(html), ['ada', 'grace', 'linus']);
+  assert.equal((html.match(/home-panel-lb-you/g) || []).length, 0);
+});
+
+// A podium-excluded row carries no rank; the screen's table draws those as
+// an em dash, so the fill does too rather than printing "#0".
+test('desktop: a rank-less row renders an em dash, not a zero', () => {
+  const { html } = makeDesktop(withFill({
+    challenges: [challenge()], total: 1,
+    leaderboard: fill({ viewer: { rank: null, name: 'me', score: 99999, you: true } }),
+  }));
+  const youRow = html.slice(html.indexOf('home-panel-lb-you'));
+  assert.match(youRow.slice(0, 700), /home-panel-glyph[^>]*>—</);
+  assert.match(youRow, /You are unranked of 42 by points/);
+});
+
+test('desktop: a zero-score viewer row is muted, not a violet chip', () => {
   const { html } = makeDesktop(withFill({
     challenges: [challenge()],
     total: 1,
-    leaderboard: fill({ viewer: { rank: 300, username: 'me', score: 0 } }),
+    leaderboard: kudosFill({ viewer: { rank: 300, name: 'me', score: 0, you: true } }),
   }));
   const youRow = html.slice(html.indexOf('home-panel-lb-you'));
   assert.doesNotMatch(youRow.slice(0, 600), /text-violet-600/, '0 is not an accent-coloured shout');
-  assert.match(youRow, /You are #300 of 42 builders/);
+  assert.match(youRow, /You are #300 of 42 by kudos on merged proposals/);
 });
 
 test('no fill on a phone, in the search-view host, or while expanded', () => {
@@ -1690,11 +1763,38 @@ test('currentCols: unknown width falls back to the COMPACT rendering', () => {
 
 test('fill rows are excluded from the challenges click wiring', () => {
   const SRC_TEXT = read('public/js/home-panels.js');
-  // The row handler must not sweep up leaderboard rows — they go to
-  // #leaderboard/users, not to the Challenges tab.
+  // The row handler must not sweep up leaderboard rows — they go to the
+  // Leaderboard screen, not to the Challenges tab.
   assert.match(SRC_TEXT, /querySelectorAll\('\.home-panel-row:not\(\.home-panel-lb-row\)'\)/);
-  assert.match(SRC_TEXT, /goToLeaderboardUsers/);
-  assert.match(SRC_TEXT, /location\.hash = '#leaderboard\/users'/);
+  assert.match(SRC_TEXT, /goToLeaderboard/);
+});
+
+// Each board previews a DIFFERENT tab, and every clickable element of the
+// fill carries which one on data-lb-kind (that is what _wire reads).
+test('the fill navigates to the tab that shows the board it previewed', () => {
+  const std = makeDesktop(withFill({ challenges: [challenge()], total: 1 }));
+  std.HP.goToLeaderboard('topochain');
+  assert.equal(std.sandbox.location.hash, '#leaderboard',
+    'the standings ARE the primary tab, so they address as the bare hash');
+  std.HP.goToLeaderboard('kudos');
+  assert.equal(std.sandbox.location.hash, '#leaderboard/users',
+    'the kudos fallback goes to the Kudos tab’s Top users view');
+  // An absent kind is the primary board — the same default the renderer uses.
+  std.HP.goToLeaderboard(undefined);
+  assert.equal(std.sandbox.location.hash, '#leaderboard');
+
+  // Every control the wiring hangs off must carry the kind.
+  for (const m of std.html.match(/home-panel-lb-(?:row|open)[^>]*>/g) || []) {
+    assert.match(m, /data-lb-kind="topochain"/, m.slice(0, 60));
+  }
+  const zero = makeDesktop({
+    registry: [], hidden: [],
+    panels: [panel({ total: 0, done: 0, challenges: [], leaderboard: kudosFill() })],
+  });
+  assert.match(zero.html, /home-panel-lb-open[^>]*data-lb-kind="kudos"/,
+    'the zero-state footer follows its rows');
+  assert.match(read('public/js/home-panels.js'),
+    /goToLeaderboard\((?:row|btn)\.dataset\.lbKind\)/);
 });
 
 test('the challenges article always carries home-panel--fit', () => {

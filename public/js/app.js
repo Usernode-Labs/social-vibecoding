@@ -2659,12 +2659,14 @@ const App = {
         App.setChromeless(false);
         // Optional sub-view segment (#leaderboard/history etc.) — pass
         // it through so deep links land on the right tab. Bare
-        // #leaderboard keeps whatever tab was last active (Top PRs on
-        // first visit). A third segment on the users tab
-        // (#leaderboard/users/<username>) deep-links a user profile
-        // (#60). #leaderboard/topochain and #leaderboard/challenges
-        // select the screen's second / third SECTION instead of a Kudos
-        // sub-tab.
+        // #leaderboard keeps whatever tab was last active (the Topochain
+        // standings — the primary tab — on first visit). A third segment
+        // on the users tab (#leaderboard/users/<username>) deep-links a
+        // user profile (#60). #leaderboard/kudos, #leaderboard/topochain
+        // and #leaderboard/challenges select a SECTION rather than a
+        // Kudos sub-tab; the first two then self-heal their hash
+        // (#leaderboard/topochain -> #leaderboard, #leaderboard/kudos ->
+        // #leaderboard/prs) through Leaderboard._syncHash.
         const profileUser = parts[1] === 'users' && parts[2]
           ? decodeURIComponent(parts[2])
           : null;
@@ -2727,13 +2729,16 @@ const App = {
         // to the canonical form, then hand off. 'seasons' -> the
         // challenges tab (its challenge grid; its event hero became that
         // screen's shared event bar); anything else, including a bare
-        // #topochain, -> the standings tab. The replaceState fires BEFORE
-        // the navigate so Leaderboard._syncHash sees a #leaderboard hash
-        // and doesn't skip its own sync.
+        // #topochain, -> the standings tab, whose canonical address is the
+        // BARE #leaderboard now that it is the primary tab (so this is one
+        // replaceState, not one here and a second from _syncHash). The
+        // replaceState fires BEFORE the navigate so Leaderboard._syncHash
+        // sees a #leaderboard hash and doesn't skip its own sync.
         App.setChromeless(false);
         const _tcSection = parts[1] === 'seasons' ? 'challenges' : 'topochain';
         try {
-          history.replaceState(null, '', `#leaderboard/${_tcSection}`);
+          history.replaceState(null, '',
+            _tcSection === 'challenges' ? '#leaderboard/challenges' : '#leaderboard');
         } catch (err) { /* non-fatal: navigation below still works */ }
         App.navigateToLeaderboard(_tcSection, null);
         return;
@@ -2943,15 +2948,15 @@ const App = {
 
   // Show the Leaderboard screen. Sibling to navigateToApp/navigateHome —
   // hides home + app, reveals the dedicated #leaderboard-screen, lets
-  // the Leaderboard module render the tab strip + the Kudos pane into
-  // #leaderboard-root (and hand the two Topochain panes to
-  // TopochainLeaderboard / TopochainChallenges).
+  // the Leaderboard module render the tab strip and hand the standings /
+  // challenges panes to TopochainLeaderboard / TopochainChallenges (it
+  // renders the Kudos pane into #leaderboard-root itself).
   //
   // `sub` is the hash's second segment: 'prs' | 'users' | 'history'
-  // select a Kudos sub-tab, and the special values 'topochain' /
-  // 'challenges' select the screen's second / third SECTION instead.
-  // `profileUser` (#60) opens the per-user PR profile drill-in instead of
-  // a plain tab.
+  // select a Kudos sub-tab, and the SECTION values 'topochain' (the
+  // primary standings tab), 'kudos' and 'challenges' select a whole
+  // section instead. `profileUser` (#60) opens the per-user PR profile
+  // drill-in instead of a plain tab.
   navigateToLeaderboard(sub, profileUser) {
     // Same iframe caveat as navigateHome: no animated snapshot over a
     // live App-tab iframe.
@@ -2988,7 +2993,7 @@ const App = {
     // re-render in place; open() below dedupes the in-flight load.
     if (profileUser && window.Leaderboard?.openProfile) {
       Leaderboard.openProfile(profileUser);
-    } else if ((sub === 'topochain' || sub === 'challenges')
+    } else if ((sub === 'topochain' || sub === 'kudos' || sub === 'challenges')
                && window.Leaderboard?._setSection) {
       Leaderboard._setSection(sub);
     } else if (sub && window.Leaderboard?._setSub) {

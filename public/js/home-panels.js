@@ -54,10 +54,14 @@
 // `home-panel--fit` rule inside app.css's phone media block). On DESKTOP it
 // is a tile among app icons, where shrinking would leave a notch, so it
 // keeps its exact two-row height and spends the leftover on a LEADERBOARD
-// section: the top builders plus the viewer's own rank, from the same ranked
-// board the Leaderboard screen's Top users tab shows (the server sends it as
-// `panel.leaderboard`; src/services/leaderboard-users.js is the one copy of
-// that ordering). See fillSlots/currentCols below for the row budget.
+// section: the top few rows of the same board the Leaderboard screen's
+// primary tab shows — the Topochain standings — plus the viewer's own row
+// when they have one. The server sends it as `panel.leaderboard`, already
+// carrying its `kind` ('topochain', or 'kudos' for the fallback board a
+// deployment with no public standings falls back to), its `label` and the
+// `you` flags; src/services/topochain/event-standings.js and
+// src/services/leaderboard-users.js are the one copy of each board's
+// ordering. See fillSlots/currentCols below for the row budget.
 //
 // FETCH DISCIPLINE. Home.load() is called from a dozen WS/event paths, so
 // this module must NOT fetch per Home.load(): ensureLoaded() is
@@ -236,11 +240,11 @@ const HomePanels = {
     // server only honours it in staging. `expand` names the one panel the
     // viewer has opened in place, so the fetch brings its full list.
     //
-    // `challenges=few|none` rides along WITH it: the demo variant is chosen
-    // server-side, so a param left in the address bar but not on the fetch
-    // would silently serve the default payload — which is what the deep link,
-    // the dapp.json check and the before/after screenshots would then all
-    // capture.
+    // `challenges=few|none` and `board=kudos` ride along WITH it: both demo
+    // variants are chosen server-side, so a param left in the address bar but
+    // not on the fetch would silently serve the default payload — which is
+    // what the deep link, the dapp.json check and the before/after
+    // screenshots would then all capture.
     const params = new URLSearchParams();
     try {
       const here = new URLSearchParams(location.search);
@@ -248,6 +252,8 @@ const HomePanels = {
         params.set('demo', '1');
         const variant = here.get('challenges');
         if (variant) params.set('challenges', variant);
+        const board = here.get('board');
+        if (board) params.set('board', board);
       }
     } catch (err) { /* ignore */ }
     const expandKey = Object.keys(HomePanels._expanded)
@@ -527,11 +533,19 @@ const HomePanels = {
   // expand and nothing to count, so the expand toggle would be a control
   // that does nothing. One way out instead, and it names where it goes —
   // the rows above it are leaderboard rows, so it goes to the leaderboard.
-  _fillFooter() {
+  // `kind` follows the rows: the standings go to the Leaderboard screen's
+  // primary tab, the kudos fallback to the Kudos tab's Top users view.
+  _fillFooter(kind) {
+    const esc = HomePanels.esc;
+    const k = kind === 'kudos' ? 'kudos' : 'topochain';
+    const title = k === 'kudos'
+      ? 'Go to the Top users view on the Leaderboard screen’s Kudos tab'
+      : 'Go to the Leaderboard screen';
     return `
       <div class="home-panel-footer flex-none flex items-center justify-end gap-2 px-2.5 border-t border-zinc-200 dark:border-zinc-800">
         <button type="button" class="home-panel-lb-open flex items-center gap-1 text-[12px] font-medium text-zinc-500 dark:text-zinc-400 hover:text-violet-600 dark:hover:text-violet-400 whitespace-nowrap"
-          title="Go to the Top users tab on the Leaderboard screen" aria-label="See full leaderboard">
+          data-lb-kind="${esc(k)}"
+          title="${esc(title)}" aria-label="See full leaderboard">
           <span class="whitespace-nowrap">See full leaderboard</span>
           <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
         </button>
@@ -541,44 +555,65 @@ const HomePanels = {
   // The LEADERBOARD block: a hairline label plus `slots` rows, drawn only on
   // the desktop tile and only when the challenge rows leave room.
   //
-  // Composition: the top builders in order, and the VIEWER'S OWN ROW last,
+  // Composition: the top rows in order, and the VIEWER'S OWN ROW last,
   // tinted — the pattern every standings surface uses, and the reason the
   // fill is worth the space at all ("where am I?"). A viewer already inside
   // the top slice is highlighted in place rather than repeated, and the freed
-  // slot goes to the next entry down.
+  // slot goes to the next entry down. A viewer with NO row on the board (the
+  // common case on the Topochain standings, which are keyed by participation
+  // rather than by having an account) simply doesn't get a line — the slot
+  // goes to one more participant instead of inventing a rank.
+  //
+  // The server decides which rows are the viewer's (`row.you`) and what the
+  // block is called (`fill.label` — "Leaderboard" for the Topochain
+  // standings, "Kudos" for the fallback board), so the client never has to
+  // string-match names or know which board it was handed.
   //
   // Returns '' when there is no room or no data, which is also what makes
   // `data-fill="0"` honest.
   renderFillBlock(fill, slots) {
     if (!fill || slots < 1) return '';
+    const esc = HomePanels.esc;
     const top = Array.isArray(fill.top) ? fill.top : [];
     const viewer = fill.viewer || null;
     const total = Number(fill.total) || 0;
+    const kind = fill.kind === 'kudos' ? 'kudos' : 'topochain';
+    const label = fill.label || 'Leaderboard';
     // Is the viewer inside the part of the top list we can actually show?
-    const viewerInTop = !!viewer && top.slice(0, slots)
-      .some((r) => String(r.username || '').toLowerCase()
-        === String(viewer.username || '').toLowerCase());
+    const viewerInTop = !!viewer && top.slice(0, slots).some((r) => r && r.you);
     let picks;
     if (viewer && !viewerInTop) {
       // Last slot belongs to the viewer; the rest is the head of the board.
       picks = top.slice(0, slots - 1).map((r) => ({ row: r, you: false }));
       picks.push({ row: viewer, you: true });
     } else {
-      picks = top.slice(0, slots).map((r) => ({
-        row: r,
-        you: !!viewer && String(r.username || '').toLowerCase()
-          === String(viewer.username || '').toLowerCase(),
-      }));
+      picks = top.slice(0, slots).map((r) => ({ row: r, you: !!(r && r.you) }));
     }
     if (!picks.length) return '';
     const rowsHtml = picks
-      .map((p) => HomePanels.renderFillRow(p.row, p.you, total))
+      .map((p) => HomePanels.renderFillRow(p.row, p.you, total, fill))
       .join('');
     return `
-      <div class="home-panel-fill flex-none">
-        <div class="home-panel-fill-label flex items-center px-2.5 text-[10px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500 border-t border-zinc-200 dark:border-zinc-800">Leaderboard</div>
+      <div class="home-panel-fill flex-none" data-fill-kind="${esc(kind)}">
+        <div class="home-panel-fill-label flex items-center px-2.5 text-[10px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500 border-t border-zinc-200 dark:border-zinc-800">${esc(label)}</div>
         ${rowsHtml}
       </div>`;
+  },
+
+  // Points are five-figure numbers on the Topochain standings (production's
+  // top score is ~59,000) against single digits on the kudos board, so the
+  // primary board's score is shortened — "59.1k" — to keep the name lane
+  // readable. The screen's own table keeps the full figures.
+  formatFillScore(score, kind) {
+    const n = Number(score) || 0;
+    if (kind === 'kudos' || n < 1000) return String(n);
+    try {
+      return new Intl.NumberFormat('en-US', {
+        notation: 'compact', maximumFractionDigits: 1,
+      }).format(n).toLowerCase();
+    } catch (err) {
+      return String(n);
+    }
   },
 
   // One leaderboard line, on the challenge row's geometry: the rank sits in
@@ -587,26 +622,35 @@ const HomePanels = {
   // than reading as two different lists jammed together.
   //
   // `.home-panel-lb-row` is load-bearing and not decoration: _wire() excludes
-  // it from the challenges click handler, because these rows go to the Top
-  // users tab, not to Challenges.
-  renderFillRow(row, isYou, total) {
+  // it from the challenges click handler, because these rows go to the
+  // Leaderboard screen, not to Challenges.
+  renderFillRow(row, isYou, total, fill) {
     const esc = HomePanels.esc;
+    const kind = fill && fill.kind === 'kudos' ? 'kudos' : 'topochain';
+    // A podium-excluded standings row carries no rank — the screen's table
+    // draws those as an em dash, so the fill does too.
     const rank = Number(row.rank) || 0;
+    const rankLabel = rank ? String(rank) : '—';
     const score = Number(row.score) || 0;
-    const name = isYou ? 'You' : String(row.username || '');
-    const tip = isYou && total
-      ? `You are #${rank} of ${total} builders by kudos on merged proposals`
-      : `${row.username || ''} — #${rank} by kudos on merged proposals`;
+    const who = String(row.name || '');
+    const name = isYou ? 'You' : who;
+    const metric = kind === 'kudos'
+      ? 'by kudos on merged proposals'
+      : `by points${fill && fill.event && fill.event.name ? ` in ${fill.event.name}` : ''}`;
+    const where = rank ? `#${rank}` : 'unranked';
+    const tip = isYou
+      ? `You are ${where}${total ? ` of ${total}` : ''} ${metric}`
+      : `${who} — ${where} ${metric}`;
     // A zero score is muted rather than a violet chip: "0" shouted in the
     // accent colour reads as a warning, not as a starting point.
     const scoreHtml = score > 0
-      ? `<span class="shrink-0 whitespace-nowrap text-[11px] font-semibold text-violet-600 dark:text-violet-400">${esc(score)}</span>`
+      ? `<span class="shrink-0 whitespace-nowrap text-[11px] font-semibold text-violet-600 dark:text-violet-400">${esc(HomePanels.formatFillScore(score, kind))}</span>`
       : `<span class="shrink-0 whitespace-nowrap text-[11px] text-zinc-400 dark:text-zinc-500">0</span>`;
     return `
       <div class="home-panel-row home-panel-lb-row flex items-center gap-2 px-2.5 cursor-pointer hover:bg-violet-500/[0.04] dark:hover:bg-violet-500/10 transition-colors${
         isYou ? ' home-panel-lb-you bg-violet-500/[0.06] dark:bg-violet-500/10' : ''
-      }" title="${esc(tip)}">
-        <span class="home-panel-glyph shrink-0 w-2.5 text-[10px] leading-none tabular-nums text-right text-zinc-400 dark:text-zinc-500" aria-hidden="true">${esc(rank)}</span>
+      }" data-lb-kind="${esc(kind)}" title="${esc(tip)}">
+        <span class="home-panel-glyph shrink-0 w-2.5 text-[10px] leading-none tabular-nums text-right text-zinc-400 dark:text-zinc-500" aria-hidden="true">${esc(rankLabel)}</span>
         <span class="home-panel-goal flex-1 min-w-0 truncate whitespace-nowrap text-[13px] ${
           isYou ? 'font-semibold text-zinc-900 dark:text-zinc-100' : 'text-zinc-900 dark:text-zinc-100'
         }">${esc(name)}</span>
@@ -656,7 +700,7 @@ const HomePanels = {
         // Nothing to expand, nothing to count: the phone block ends at the
         // note, and the desktop tile offers the one destination its rows
         // actually point at.
-        fillRows ? HomePanels._fillFooter() : '',
+        fillRows ? HomePanels._fillFooter(panel.leaderboard && panel.leaderboard.kind) : '',
         rowsOf(0, fillRows)
       );
     }
@@ -974,11 +1018,13 @@ const HomePanels = {
     location.hash = '#leaderboard/challenges';
   },
 
-  // The desktop fill's destination: the Leaderboard screen's Top users tab,
-  // which is the full version of the list the fill previews. Same real hash
-  // navigation as goToChallenges, so the device back gesture returns home.
-  goToLeaderboardUsers() {
-    location.hash = '#leaderboard/users';
+  // The desktop fill's destination: the full version of whichever board the
+  // fill previewed. The Topochain standings ARE the Leaderboard screen's
+  // primary tab, so they address as the bare hash; the kudos fallback goes to
+  // the Kudos tab's Top users view. Same real hash navigation as
+  // goToChallenges, so the device back gesture returns home.
+  goToLeaderboard(kind) {
+    location.hash = kind === 'kudos' ? '#leaderboard/users' : '#leaderboard';
   },
 
   _wire(section) {
@@ -1004,14 +1050,18 @@ const HomePanels = {
     section.querySelectorAll('.home-panel-open').forEach((btn) => {
       btn.addEventListener('click', (e) => { e.stopPropagation(); HomePanels.goToChallenges(); });
     });
-    // The fill's rows and its footer control go to the Top users tab.
+    // The fill's rows and its footer control go to the Leaderboard screen —
+    // to the tab that shows the board they previewed, which each element
+    // carries on `data-lb-kind`.
     section.querySelectorAll('.home-panel-lb-row').forEach((row) => {
-      row.addEventListener('click', HomePanels.goToLeaderboardUsers);
+      row.addEventListener('click', () => {
+        HomePanels.goToLeaderboard(row.dataset.lbKind);
+      });
     });
     section.querySelectorAll('.home-panel-lb-open').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        HomePanels.goToLeaderboardUsers();
+        HomePanels.goToLeaderboard(btn.dataset.lbKind);
       });
     });
     section.querySelectorAll('.home-panel-expand').forEach((btn) => {
