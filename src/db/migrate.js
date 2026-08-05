@@ -42,6 +42,7 @@ async function migrate(config) {
   await seedStagingArchiveProposalFixtures(pool, config);
   await seedStagingActiveSessions(pool, config);
   await seedStagingStartScreenSession(pool, config);
+  await seedStagingSavedDrafts(pool, config);
   await seedStagingSharedSession(pool, config);
   // Must run AFTER seedStagingSharedSession — it forks that fixture's rows.
   await seedStagingForkedChat(pool, config);
@@ -2039,6 +2040,89 @@ async function seedStagingStartScreenSession(pool, config) {
     owner: owner.username,
     sessionId: STAGING_START_SCREEN_SESSION_ID,
     inserted: rowCount,
+  });
+}
+
+// #940: saved dev-chat drafts now live in `chat_session_drafts`, which is
+// staging:private — so a staging clone ships it EMPTY and the DB-backed
+// path would be invisible to a reviewer. This fixture gives it a URL: a
+// message-less session carrying two seeded drafts, so
+// /#app/<self-slug>/dev/sessions/990402 renders the list straight from the
+// database, with no `?shot` param involved.
+//
+// A DEDICATED session rather than drafts on 990401 on purpose: that row's
+// emptiness IS its fixture (see above), and four dapp.json checks plus its
+// before/after screenshots point at it.
+//
+// Id is explicit and in the same 99xxxx fake-id range as its neighbours
+// (990001-990003, 990101-990105, 990401), three orders of magnitude above
+// the live SERIAL so a staging clone can't grow into it. The draft copy
+// matches DevChat._DEMO_SAVED_DRAFTS so the DB-backed list and the
+// `?shot=drafts` demo paint read identically. Idempotent on both ids;
+// strict no-op in production.
+const STAGING_SAVED_DRAFTS_SESSION_ID = 990402;
+
+const STAGING_SAVED_DRAFTS = [
+  { id: 'stagingdraft1', text: 'Staging demo draft: also make the header sticky when scrolling.', minutesAgo: 6 },
+  { id: 'stagingdraft2', text: 'Staging demo draft: rename the "Submit" button to "Publish".', minutesAgo: 5 },
+];
+
+async function seedStagingSavedDrafts(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging saved-drafts fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  // Same first-admin selection as the neighbouring session fixtures, so
+  // GET /api/sessions/990402 (owner-scoped) resolves for the tester.
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username, is_admin
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 1`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging saved-drafts fixture skipped: no users');
+    return;
+  }
+  const owner = userRows[0];
+
+  const { rowCount } = await pool.query(
+    `INSERT INTO chat_sessions
+       (id, app_id, user_id, branch_name, pr_title, session_title, status, created_at, last_activity_at)
+     VALUES ($1, $2, $3, 'staging-fixture/saved-drafts', NULL,
+             '[staging fixture] Session with saved drafts', 'active',
+             NOW() - INTERVAL '8 minutes', NOW() - INTERVAL '4 minutes')
+     ON CONFLICT (id) DO NOTHING`,
+    [STAGING_SAVED_DRAFTS_SESSION_ID, appId, owner.id]
+  );
+
+  let drafts = 0;
+  for (const d of STAGING_SAVED_DRAFTS) {
+    const { rowCount: added } = await pool.query(
+      `INSERT INTO chat_session_drafts (session_id, user_id, draft_id, content, saved_at)
+       VALUES ($1, $2, $3, $4, NOW() - ($5::int * INTERVAL '1 minute'))
+       ON CONFLICT (session_id, draft_id) DO NOTHING`,
+      [STAGING_SAVED_DRAFTS_SESSION_ID, owner.id, d.id, d.text, d.minutesAgo]
+    );
+    drafts += added;
+  }
+
+  log.info('db', 'Staging saved-drafts fixture seeded', {
+    appId,
+    owner: owner.username,
+    sessionId: STAGING_SAVED_DRAFTS_SESSION_ID,
+    sessionInserted: rowCount,
+    draftsInserted: drafts,
   });
 }
 
