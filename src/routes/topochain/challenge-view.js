@@ -139,6 +139,17 @@ function buildOverridesAndEffective(r) {
 // `overrides`, `effective`, `card_preview`, `detail_modal`, plus the
 // template under `activity_type`. Shared verbatim by admin/challenges.js's
 // own index route (SPEC 2672: "the same mapped structure").
+//
+// `completed` is the ORGANISER's "this challenge is over" flag on the
+// challenges row — never a per-user completion (the per-user signal is
+// user_activities; see src/routes/home-panels.js's DONE_SQL). It is
+// published here so the public challenge grid can group and count finished
+// challenges for EVERY viewer, signed in or not: before this, the web
+// grid's "Completed" chip came only from the session-authed
+// /challenges-api personalization pass, so an anonymous visitor saw no
+// completion state at all. Coerced with `=== true` rather than passed
+// through, because not every caller's row carries the column and an
+// `undefined` in the payload would make the client's grouping ambiguous.
 function buildChallengeListItem(r) {
   const template = templateProjectionFromJoinedRow(r);
   const { overrides, effective } = buildOverridesAndEffective(r);
@@ -147,6 +158,7 @@ function buildChallengeListItem(r) {
     season_event_id: Number(r.season_event_id),
     challenge_template_id: Number(r.challenge_template_id),
     enabled: r.enabled,
+    completed: r.completed === true,
     activity_type: template,
     overrides,
     effective,
