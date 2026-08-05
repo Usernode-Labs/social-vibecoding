@@ -18,6 +18,10 @@
 
 const log = require('../logger');
 
+// A verifier outage must not pin a mobile request indefinitely. This is
+// a fail-closed transport bound, not a claim about proof freshness.
+const BRIDGE_TIMEOUT_MS = 10_000;
+
 class ZkBridgeError extends Error {
   constructor(message, status) {
     super(message);
@@ -39,8 +43,10 @@ function requireBridgeUrl(config) {
 }
 
 // POSTs the proof to the bridge's `/verify` endpoint and returns
-// `{ verified, completedAt }` on ANY well-formed reply (verified may be
-// false — that is a 422 the route reports, not a bridge failure). Throws
+// `{ verified }` on ANY well-formed reply (verified may be false — that
+// is a 422 the route reports, not a bridge failure). The platform does
+// not trust the optional bridge timestamp under this boolean-only
+// contract; the route records its own verification time. Throws
 // `ZkBridgeError(502)` for a network failure or a payload that isn't a
 // recognizable verification result — SPEC: "bridge request failed or
 // returned an unexpected payload".
@@ -52,6 +58,7 @@ async function verifyCompletion(config, { challengeId, sessionId, nullifierHex, 
     response = await fetch(`${base}/verify`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(BRIDGE_TIMEOUT_MS),
       body: JSON.stringify({
         challenge_id: challengeId,
         session_id: sessionId,
@@ -76,13 +83,7 @@ async function verifyCompletion(config, { challengeId, sessionId, nullifierHex, 
     throw new ZkBridgeError('The zkPassport bridge returned an unexpected payload.', 502);
   }
 
-  return {
-    verified: payload.verified,
-    // Optional bridge-reported completion timestamp (SPEC: "falls back to
-    // the bridge timestamp, then to now" — the route applies that fallback
-    // chain; this just parses whatever the bridge sent, or null).
-    completedAt: payload.completed_at ? new Date(payload.completed_at) : null,
-  };
+  return { verified: payload.verified };
 }
 
-module.exports = { verifyCompletion, ZkBridgeError };
+module.exports = { BRIDGE_TIMEOUT_MS, verifyCompletion, ZkBridgeError };

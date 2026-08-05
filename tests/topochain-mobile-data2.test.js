@@ -140,6 +140,8 @@ let userTermsConsents;
 let mobileLogs;
 let delegationRows;
 let nextDelegationId;
+let injectSessionRaceOnLock;
+let transactionCommands;
 
 function resetFixtures() {
   userActivities = [
@@ -158,7 +160,7 @@ function resetFixtures() {
     },
     {
       id: 3, user_id: 9, challenge_id: 8, points: '10.00',
-      metadata: { kind: 'challenge_completion', session_id: 'sess-ivan-8', nullifier_hex: '0xdeadbeef', wallet_address: 'wallet_ivan' },
+      metadata: { kind: 'challenge_completion', session_id: 'sess-ivan-8', nullifier_hex: '0xDEADBEEF', wallet_address: 'wallet_ivan' },
       activity_at: T(-3), created_at: T(-3),
     },
   ];
@@ -167,6 +169,8 @@ function resetFixtures() {
   mobileLogs = [];
   delegationRows = [];
   nextDelegationId = 1;
+  injectSessionRaceOnLock = null;
+  transactionCommands = [];
 }
 
 // ─── Mock pool ───────────────────────────────────────────────────────────
@@ -251,7 +255,17 @@ function seasonsRows(sql, params) {
 function handleQuery(rawSql, params = []) {
   const sql = collapse(rawSql);
 
-  if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
+  if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+    transactionCommands.push(sql);
+    return { rows: [] };
+  }
+  if (sql === 'SELECT pg_advisory_xact_lock(hashtext($1)::bigint)') {
+    if (injectSessionRaceOnLock) {
+      userActivities.push(injectSessionRaceOnLock);
+      injectSessionRaceOnLock = null;
+    }
+    return { rows: [{ pg_advisory_xact_lock: null }] };
+  }
 
   // mobileTokenAuth.
   if (sql.startsWith('SELECT t.id, t.user_id, t.ability, t.expires_at, u.username FROM mobile_auth_tokens')) {
@@ -387,9 +401,10 @@ function handleQuery(rawSql, params = []) {
     const row = userActivities.find((a) => a.metadata && a.metadata.kind === 'challenge_completion' && a.metadata.session_id === sessionId);
     return { rows: row ? [{ id: row.id }] : [] };
   }
-  if (sql.startsWith("SELECT id FROM user_activities WHERE challenge_id = $1 AND metadata->>'nullifier_hex' = $2")) {
+  if (sql.startsWith("SELECT id FROM user_activities WHERE challenge_id = $1 AND LOWER(metadata->>'nullifier_hex') = $2")) {
     const [challengeId, nullifierHex] = params;
-    const row = userActivities.find((a) => a.challenge_id === challengeId && a.metadata && a.metadata.nullifier_hex === nullifierHex);
+    const row = userActivities.find((a) => a.challenge_id === challengeId && a.metadata
+      && String(a.metadata.nullifier_hex).toLowerCase() === nullifierHex);
     return { rows: row ? [{ id: row.id }] : [] };
   }
   if (sql.startsWith('INSERT INTO user_activities')) {
@@ -820,11 +835,19 @@ test('POST /terms/consent: invalid status -> 422', async () => {
 
 // ─── POST /zkpassport/complete (SPEC 2092-2141, 2939, 2961-2973) ────────
 
+test('zkpassport: bridge transport deadline is fixed at ten seconds', () => {
+  const { BRIDGE_TIMEOUT_MS } = require('../src/services/topochain/zk-bridge');
+  assert.equal(BRIDGE_TIMEOUT_MS, 10_000);
+});
+
 test('zkpassport: happy path -> 201, activity row with points/metadata, source=zkpassport', async () => {
   await withServer({ topochainZkBridgeUrl: BRIDGE_URL }, async (base) => {
-    await withFetchMock(async () => bridgeResponse({ verified: true }), async () => {
+    await withFetchMock(async (_url, opts) => {
+      assert.ok(opts.signal instanceof AbortSignal, 'bridge request carries a deadline signal');
+      return bridgeResponse({ verified: true });
+    }, async () => {
       const res = await postJson(base, '/api/v4/mobile/zkpassport/complete', {
-        challenge_id: 7, session_id: 'sess-heidi-7', nullifier_hex: '0xdead1007', wallet_address: 'wallet_heidi_100',
+        challenge_id: 7, session_id: 'sess-heidi-7', nullifier_hex: '0xDEAD1007', wallet_address: 'wallet_heidi_100',
       }, HEIDI);
       assert.equal(res.status, 201);
       const body = await res.json();
@@ -840,7 +863,8 @@ test('zkpassport: happy path -> 201, activity row with points/metadata, source=z
       assert.equal(stored.points, '10.00', 'points from the effective reward (template\'s 10)');
       assert.equal(stored.metadata.kind, 'challenge_completion');
       assert.equal(stored.metadata.session_id, 'sess-heidi-7');
-      assert.equal(stored.metadata.wallet_address, 'wallet_heidi_100');
+      assert.equal(stored.metadata.nullifier_hex, '0xdead1007', 'hex is stored canonically');
+      assert.equal(Object.hasOwn(stored.metadata, 'wallet_address'), false, 'wallet is not duplicated into proof metadata');
     });
   });
 });
@@ -934,12 +958,56 @@ test('zkpassport: session already used by a different completion -> 409', async 
   });
 });
 
-test('zkpassport: nullifier already claimed for this challenge -> 409', async () => {
+test('zkpassport: legacy mixed-case nullifier is still recognized as claimed -> 409', async () => {
   await withServer({ topochainZkBridgeUrl: BRIDGE_URL }, async (base) => {
     const res = await postJson(base, '/api/v4/mobile/zkpassport/complete', {
       challenge_id: 8, session_id: 'sess-fresh', nullifier_hex: '0xdeadbeef', wallet_address: 'wallet_heidi_100',
     }, HEIDI);
     assert.equal(res.status, 409);
+    assert.match((await res.json()).error, /already been claimed/);
+  });
+});
+
+test('zkpassport: transaction-time session recheck closes a concurrent replay race', async () => {
+  await withServer({ topochainZkBridgeUrl: BRIDGE_URL }, async (base) => {
+    injectSessionRaceOnLock = {
+      id: 90, user_id: 9, challenge_id: 1, points: '10.00',
+      metadata: { kind: 'challenge_completion', session_id: 'sess-raced', nullifier_hex: '0x9000' },
+      activity_at: T(-1), created_at: T(-1),
+    };
+    await withFetchMock(async () => bridgeResponse({ verified: true }), async () => {
+      const res = await postJson(base, '/api/v4/mobile/zkpassport/complete', {
+        challenge_id: 7, session_id: 'sess-raced', nullifier_hex: '0x7000', wallet_address: 'wallet_heidi_100',
+      }, HEIDI);
+      assert.equal(res.status, 409);
+      assert.match((await res.json()).error, /session has already been used/);
+      assert.equal(userActivities.some((a) => a.user_id === 8 && a.challenge_id === 7), false);
+      assert.deepEqual(transactionCommands, ['BEGIN', 'ROLLBACK']);
+    });
+  });
+});
+
+test('zkpassport: caller and bridge timestamps cannot control persisted award time', async () => {
+  await withServer({ topochainZkBridgeUrl: BRIDGE_URL }, async (base) => {
+    const before = Date.now();
+    await withFetchMock(async () => bridgeResponse({
+      verified: true,
+      completed_at: '2001-01-01T00:00:00.000Z',
+    }), async () => {
+      const res = await postJson(base, '/api/v4/mobile/zkpassport/complete', {
+        challenge_id: 7,
+        session_id: 'sess-server-time',
+        nullifier_hex: '0x7001',
+        wallet_address: 'wallet_heidi_100',
+        completed_at: '2099-01-01T00:00:00.000Z',
+      }, HEIDI);
+      assert.equal(res.status, 201);
+      const body = await res.json();
+      const stored = userActivities.find((a) => a.id === body.data.activity_id);
+      assert.ok(stored.activity_at.getTime() >= before);
+      assert.ok(stored.activity_at.getTime() <= Date.now());
+      assert.equal(body.data.completed_at, body.data.verified_at);
+    });
   });
 });
 
@@ -971,6 +1039,27 @@ test('zkpassport: bridge request failure -> 502', async () => {
       assert.equal(res.status, 502);
     });
   });
+});
+
+test('zkpassport: bridge deadline abort fails closed as 502', async () => {
+  const originalTimeout = AbortSignal.timeout;
+  AbortSignal.timeout = () => AbortSignal.abort(new DOMException('timed out', 'TimeoutError'));
+  try {
+    await withServer({ topochainZkBridgeUrl: BRIDGE_URL }, async (base) => {
+      await withFetchMock(async (_url, opts) => {
+        if (opts.signal.aborted) throw opts.signal.reason;
+        return bridgeResponse({ verified: true });
+      }, async () => {
+        const res = await postJson(base, '/api/v4/mobile/zkpassport/complete', {
+          challenge_id: 7, session_id: 's-timeout', nullifier_hex: '0x502c', wallet_address: 'wallet_heidi_100',
+        }, HEIDI);
+        assert.equal(res.status, 502);
+        assert.match((await res.json()).error, /request failed/);
+      });
+    });
+  } finally {
+    AbortSignal.timeout = originalTimeout;
+  }
 });
 
 test('zkpassport: bridge unexpected payload -> 502', async () => {

@@ -1617,6 +1617,11 @@ function topochainMobileRoutes(config) {
   //      state; this mirrors the §4.10 "challenge_progress placeholder"
   //      precedent of reporting the honest absence of a mechanism rather
   //      than a fabricated success.
+  //
+  // SECURITY BOUNDARY: this remains challenge completion only. A boolean
+  // from this bridge is not an account-personhood attestation and must not
+  // be reused to grant platform-funded credits without a separate,
+  // purpose-bound verifier contract.
   router.post('/api/v4/mobile/zkpassport/complete', mobileTokenAuth(config), async (req, res) => {
     try {
       const body = req.body || {};
@@ -1630,23 +1635,23 @@ function topochainMobileRoutes(config) {
         details.session_id = ['The session_id field is required and must be at most 255 characters.'];
       }
 
-      const nullifierHex = typeof body.nullifier_hex === 'string' ? body.nullifier_hex.trim() : '';
-      if (!nullifierHex || nullifierHex.length > 255 || !/^0x[0-9a-fA-F]+$/.test(nullifierHex)) {
+      const rawNullifierHex = typeof body.nullifier_hex === 'string' ? body.nullifier_hex.trim() : '';
+      if (!rawNullifierHex || rawNullifierHex.length > 255 || !/^0x[0-9a-fA-F]+$/.test(rawNullifierHex)) {
         details.nullifier_hex = ['The nullifier_hex field is required and must match 0x[0-9a-fA-F]+.'];
       }
+      // Hex letter case is not part of the underlying value. Keep one
+      // representation so textual case cannot bypass replay protection.
+      const nullifierHex = rawNullifierHex.toLowerCase();
 
       const walletAddress = typeof body.wallet_address === 'string' ? body.wallet_address.trim() : '';
       if (!walletAddress || walletAddress.length > 255) {
         details.wallet_address = ['The wallet_address field is required and must be at most 255 characters.'];
       }
 
-      let requestedCompletedAt = null;
       if (body.completed_at !== undefined && body.completed_at !== null && body.completed_at !== '') {
         const parsed = new Date(body.completed_at);
         if (Number.isNaN(parsed.getTime())) {
           details.completed_at = ['The completed_at field must be a valid date.'];
-        } else {
-          requestedCompletedAt = parsed;
         }
       }
 
@@ -1748,7 +1753,9 @@ function topochainMobileRoutes(config) {
 
       // ── 409: this proof already claimed for this challenge ────────────
       const { rows: nullifierRows } = await pool.query(
-        `SELECT id FROM user_activities WHERE challenge_id = $1 AND metadata->>'nullifier_hex' = $2 LIMIT 1`,
+        `SELECT id FROM user_activities
+          WHERE challenge_id = $1 AND LOWER(metadata->>'nullifier_hex') = $2
+          LIMIT 1`,
         [challengeId, nullifierHex]
       );
       if (nullifierRows.length) return fail(res, 409, 'This proof has already been claimed for this challenge.');
@@ -1776,10 +1783,14 @@ function topochainMobileRoutes(config) {
       }
 
       const verifiedAt = new Date();
-      const completedAt = requestedCompletedAt || bridgeResult.completedAt || verifiedAt;
+      // Neither the caller nor today's boolean-only bridge contract
+      // authenticates a completion timestamp. Award at the platform's
+      // own verification time; completed_at remains accepted above only
+      // for wire compatibility with deployed clients.
+      const completedAt = verifiedAt;
       const activityType = challenge.t_category || 'zkpassport_completion';
       const metadata = {
-        kind: 'challenge_completion', session_id: sessionId, nullifier_hex: nullifierHex, wallet_address: walletAddress,
+        kind: 'challenge_completion', session_id: sessionId, nullifier_hex: nullifierHex,
       };
 
       // ── One transaction: the activity row IS the completion row (no
@@ -1789,6 +1800,24 @@ function topochainMobileRoutes(config) {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
+        // The early lookup avoids an unnecessary bridge call for ordinary
+        // replays, but two requests can pass it concurrently. Serialize
+        // only the short final DB decision; the bridge call is already
+        // complete, so no pool connection waits on external I/O.
+        await client.query(
+          'SELECT pg_advisory_xact_lock(hashtext($1)::bigint)',
+          [`zkpassport-challenge-session:${sessionId}`]
+        );
+        const { rows: finalSessionRows } = await client.query(
+          `SELECT id FROM user_activities
+            WHERE metadata->>'kind' = 'challenge_completion' AND metadata->>'session_id' = $1
+            LIMIT 1`,
+          [sessionId]
+        );
+        if (finalSessionRows.length) {
+          await client.query('ROLLBACK');
+          return fail(res, 409, 'This zkPassport session has already been used.');
+        }
         const { rows: insertRows } = await client.query(
           `INSERT INTO user_activities
              (user_id, season_event_id, activity_type, points, description, metadata,
