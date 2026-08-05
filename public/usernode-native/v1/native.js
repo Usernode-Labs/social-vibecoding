@@ -24,7 +24,9 @@
  *                                        lingers briefly once onRefresh
  *                                        settles; never throws on bad input)
  *   unNative.attachGridPlacement(listEl, opts) — free-form placement on a
- *     fixed grid (drop anywhere, holes allowed — the homescreen model)
+ *     fixed grid (drop anywhere, holes allowed — the homescreen model;
+ *     cellFromPoint(x, y, info) gets the dragged tile's live rect/centre in
+ *     `info`, so the target can be resolved from the TILE, not the finger)
  *   unNative.attachReorder(listEl, opts) — drag-to-reorder lists (long-press
  *                                        lift on touch, handle/pointer drag on
  *                                        desktop, overlay drop indicator,
@@ -2031,16 +2033,38 @@
   // dragged there.
   //
   // DIVISION OF LABOUR: the kit owns the GESTURE, the host owns the GEOMETRY.
-  // The kit never computes a cell — it asks `cellFromPoint(x, y)`, which for
-  // a host that renders a real grid overlay is a one-line elementFromPoint +
-  // closest('[data-cell]'). That keeps the kit free of any assumption about
+  // The kit never computes a cell — it asks `cellFromPoint(x, y, info)`, which
+  // for a host that renders a real grid overlay is a one-line elementFromPoint
+  // + closest('[data-cell]'). That keeps the kit free of any assumption about
   // row heights, gaps or `grid-template-columns`, and it means the highlight
   // the user sees and the cell the drop commits to are resolved by the same
-  // code path.
+  // code path. `info` is the dragged tile's own live geometry, so the host can
+  // answer from the TILE (its centroid) rather than from the finger — see
+  // below.
   //
-  //   cellFromPoint(x, y)      → any host cell token, or null over deadspace.
+  //   cellFromPoint(x, y, info) → any host cell token, or null over deadspace.
   //                              Compared with `sameCell` below, so it may be
   //                              an object ({ col, row }) or a string.
+  //                              x/y are the POINTER. `info` describes the
+  //                              dragged TILE — { item, rect: {left, top,
+  //                              width, height}, centerX, centerY, pointerX,
+  //                              pointerY }, the ghost's live viewport
+  //                              geometry — and RESOLVING FROM THE TILE IS
+  //                              THE RECOMMENDED ANSWER. The ghost tracks the
+  //                              finger from wherever it was grabbed, so the
+  //                              pointer sits a grab-offset away from the
+  //                              tile's own box: a host that answers from x/y
+  //                              puts the highlight that same offset away
+  //                              from the tile the user is looking at, which
+  //                              for a multi-cell item can be a whole tile's
+  //                              worth. Answer from `centerX`/`centerY` minus
+  //                              half the item's own footprint instead — the
+  //                              CENTROID rule — and the highlight sits under
+  //                              the tile whatever corner it was picked up by.
+  //                              (The centre is also the one point the ghost's
+  //                              1.04 lift scale leaves untouched.) x/y keep
+  //                              their meaning, so a host that ignores `info`
+  //                              behaves exactly as it did before.
   //   canPlace(item, cell)     → false vetoes: no highlight, release springs
   //                              home. Called on every cell CHANGE, not per
   //                              frame.
@@ -2137,13 +2161,31 @@
       try { opts.onHover(drag.item, cell, ok); } catch (err) { /* ignore */ }
     }
 
+    // The dragged TILE's live geometry, for a host that resolves its target
+    // from the tile rather than from the finger (see cellFromPoint's third
+    // argument in the doc block above). Pure arithmetic: the ghost is
+    // position:fixed, so its viewport rect is the lift rect plus the current
+    // translate — no getBoundingClientRect() on a per-move path.
+    function ghostInfo() {
+      var left = drag.ghostLeft + drag.gx;
+      var top = drag.ghostTop + drag.gy;
+      return {
+        item: drag.item,
+        rect: { left: left, top: top, width: drag.ghostW, height: drag.ghostH },
+        centerX: left + drag.ghostW / 2,
+        centerY: top + drag.ghostH / 2,
+        pointerX: drag.lastX,
+        pointerY: drag.lastY,
+      };
+    }
+
     function update() {
       if (!drag || !drag.lifted) return;
       drag.gx = drag.lastX - drag.liftX;
       drag.gy = drag.lastY - drag.liftY;
       drag.ghost.style.transform = 'translate(' + drag.gx + 'px, ' + drag.gy + 'px)';
       var cell = null;
-      try { cell = opts.cellFromPoint(drag.lastX, drag.lastY); } catch (err) { cell = null; }
+      try { cell = opts.cellFromPoint(drag.lastX, drag.lastY, ghostInfo()); } catch (err) { cell = null; }
       if (sameCell(cell, drag.cell)) return;
       drag.cell = cell;
       if (!cell) { drag.ok = false; hover(null, false); return; }
@@ -2192,6 +2234,10 @@
       var rect = drag.item.getBoundingClientRect();
       drag.ghostLeft = rect.left;
       drag.ghostTop = rect.top;
+      // Size is captured here too, so ghostInfo() can report the tile's live
+      // rect on every move without measuring anything mid-gesture.
+      drag.ghostW = rect.width;
+      drag.ghostH = rect.height;
       var ghost = drag.item.cloneNode(true);
       ghost.classList.add('un-reorder-ghost');
       ghost.style.position = 'fixed';

@@ -902,7 +902,10 @@ const Home = {
     // The kit owns the gesture, this owns the geometry: cellFromPoint hits
     // the overlay's own cell elements, so the highlight the user sees and
     // the cell the drop commits to come from one code path with no
-    // arithmetic over grid-template-columns.
+    // arithmetic over grid-template-columns. It answers from the dragged
+    // TILE's centroid rather than the finger (see _targetCellFor), so the
+    // block that tints is the block the tile is visibly covering however it
+    // was picked up.
     //
     // The item selector deliberately matches EVERY widget host, including a
     // create widget rendered in its disabled state — being unable to create
@@ -912,7 +915,7 @@ const Home = {
       const cols = Home.currentCols();
       Home._placementHandle = window.unNative.attachGridPlacement(listEl, {
         itemSelector: '.app-card[data-yours]:not([data-demo]), .home-panel-slot',
-        cellFromPoint: (x, y) => Home._cellFromPoint(x, y),
+        cellFromPoint: (x, y, info) => Home._targetCellFor(x, y, info, cols),
         // canPlace runs first on every cell change and onHover right after,
         // and both need the SAME displacement plan — so compute it once here
         // and memo it for the paint. Recomputing would risk the highlight
@@ -2507,10 +2510,11 @@ const Home = {
     return layout.find((it) => it.type === 'app' && it.slug === slug) || null;
   },
 
-  // Which cell is the pointer over? Answered by hit-testing the OVERLAY's
+  // Which cell is this POINT over? Answered by hit-testing the OVERLAY's
   // own cell elements rather than by arithmetic over the grid's computed
   // template — that is the whole reason the overlay is real DOM. The kit's
-  // ghost is pointer-events:none, so it never occludes them.
+  // ghost is pointer-events:none and the tiles go pointer-events:none for the
+  // span of a lift (#app-list.un-reordering), so neither occludes them.
   _cellFromPoint(x, y) {
     const el = document.elementFromPoint(x, y);
     const cell = el && el.closest ? el.closest('[data-cell]') : null;
@@ -2518,6 +2522,69 @@ const Home = {
     const [col, row] = String(cell.dataset.cell).split(',').map(Number);
     if (!Number.isInteger(col) || !Number.isInteger(row)) return null;
     return { col, row };
+  },
+
+  // ===== The target cell: the TILE's centroid, not the finger =====
+  //
+  // The dragged ghost tracks the finger from wherever it was grabbed, so the
+  // pointer sits a grab-offset away from the tile's own box. Resolving the
+  // target from the pointer therefore put the tile's TOP-LEFT under the
+  // finger: grab a 2x2 widget by its bottom-right corner and the highlight
+  // appeared two cells right and two rows down from the block the user was
+  // actually holding, and the drop landed there. Multiply that by the phone
+  // breakpoint, where Challenges and Discover are full-width by two rows, and
+  // "the widget always drops one row lower than I put it" is the whole bug.
+  //
+  // So the target is the cell block the TILE is sitting over: take the ghost's
+  // centre, and place a footprint of the item's own size centred on it.
+  //
+  // Two steps, deliberately: the overlay's own cells still GATE what counts as
+  // being on the canvas (they carry the grid's asymmetric inset and the
+  // ::before gap bleed, and re-deriving that arithmetically would be a second
+  // source of truth), and the pitch arithmetic then REFINES the hit to the
+  // footprint's top-left. A cell hit-test alone cannot do the second step: a
+  // correctly centred even-width footprint puts its centre exactly on the seam
+  // between two columns, so which side elementFromPoint resolves would decide
+  // the column.
+  _targetCellFor(x, y, info, cols) {
+    const overlay = Home._overlayEl;
+    const rect = info && info.rect;
+    // No geometry to work from (a kit older than the third argument, or a
+    // resolve after the overlay came down): the pointer hit-test is the
+    // honest degradation, not a guess.
+    if (!overlay || !rect || !Number.isFinite(info.centerX) || !Number.isFinite(info.centerY)) {
+      return Home._cellFromPoint(x, y);
+    }
+    // GATE: the tile's centre has to be over the canvas at all.
+    if (!Home._cellFromPoint(info.centerX, info.centerY)) return null;
+
+    const origin = overlay.querySelector('[data-cell="0,0"]');
+    const nextCol = overlay.querySelector('[data-cell="1,0"]');
+    const nextRow = overlay.querySelector('[data-cell="0,1"]');
+    if (!origin || !nextCol || !nextRow) return Home._cellFromPoint(x, y);
+    // Measured fresh on every resolve, never cached at lift: edge auto-scroll
+    // slides the overlay under a stationary ghost, which is precisely why the
+    // kit re-asks without the pointer having moved.
+    const a = origin.getBoundingClientRect();
+    const pitchX = nextCol.getBoundingClientRect().left - a.left;
+    const pitchY = nextRow.getBoundingClientRect().top - a.top;
+    if (!(pitchX > 0) || !(pitchY > 0)) return Home._cellFromPoint(x, y);
+
+    const item = Home._itemFor(info.item);
+    if (!item) return null;
+    const [w, h] = HomeLayout.sizeOf(item, cols);
+    // The footprint size comes from the MODEL, never from the ghost's pixel
+    // size: an overflow tile renders in plain flow with no span, so its ghost
+    // is about one cell however big the widget really is.
+    const col = Math.round((info.centerX - a.left) / pitchX - w / 2);
+    const row = Math.round((info.centerY - a.top) / pitchY - h / 2);
+    // Clamped here as well as in HomeLayout.place, so the token the kit
+    // change-detects on is the cell the drop actually lands in — dragging past
+    // an edge holds one steady target instead of churning the plan memo.
+    return {
+      col: Math.max(0, Math.min(col, cols - w)),
+      row: Math.max(0, Math.min(row, HomeLayout.MAX_ROWS - h)),
+    };
   },
 
   // A committed drop. Mutate the model, keep the write to the width that is
