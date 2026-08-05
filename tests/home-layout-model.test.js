@@ -120,11 +120,13 @@ test('a row holding an app tile never fits, even beside a fit widget', () => {
   assert.deepEqual([...HomeLayout.fitRows(shared.slice().reverse(), 4)], []);
 });
 
-test('a hole is not a fit row — it keeps its whole cell', () => {
-  // HOLES ARE THE POINT: an empty row is an arrangement the viewer chose, and
-  // a cell they can still drop into. Collapsing it would rewrite their layout.
+test('a hole is not a fit row — it has no content to size to', () => {
+  // Scoped to fitRows: an empty row has nothing to measure, so it is never
+  // reported here. Its height is blankRows' business (#975, below) — and even
+  // there it only shrinks, never moves: an empty row is an arrangement the
+  // viewer chose and a cell they can still drop into.
   const layout = [W('challenges', 0, 0), A('a', 0, 3)];
-  assert.deepEqual([...HomeLayout.fitRows(layout, 4)], [0], 'rows 1 and 2 stay full');
+  assert.deepEqual([...HomeLayout.fitRows(layout, 4)], [0], 'rows 1 and 2 are not fit rows');
 });
 
 test('a non-fit widget disqualifies the rows it covers', () => {
@@ -138,6 +140,78 @@ test('an overflow item is off-canvas and cannot fit a row', () => {
   const layout = [{ type: 'widget', key: 'challenges', col: 0, row: HomeLayout.MAX_ROWS }];
   assert.deepEqual([...HomeLayout.fitRows(layout, 4)], []);
   assert.equal(HomeLayout.lastOccupiedRow(layout, 4), -1);
+});
+
+// ── Blank rows (#975) ─────────────────────────────────────────────────
+//
+// Which rows draw at half a cell because there is nothing in them. Same
+// containment as fit rows: a pixel height for one grid track, phone only, with
+// the model answering in whole cells throughout.
+
+test('an empty row between items is blank on a phone, and only on a phone', () => {
+  const layout = [W('challenges', 0, 0), A('a', 0, 1), A('b', 0, 3)];
+  assert.deepEqual([...HomeLayout.blankRows(layout, 4)], [2]);
+  assert.deepEqual([...HomeLayout.blankRows(layout, 5)], [],
+    'at five columns a row is shared with app icons and a short one is a notch');
+});
+
+test('blank rows stop at the last occupied row — trailing rows are not tracks', () => {
+  // rowTemplate emits entries 0..lastOccupiedRow. Naming a row past that could
+  // only push it into declaring the whole eight-row canvas, which is what pads
+  // a three-app home screen out with a tail of empty tracks.
+  const layout = [A('a', 0, 0), A('b', 0, 2)];
+  assert.deepEqual([...HomeLayout.blankRows(layout, 4)], [1]);
+  assert.equal(HomeLayout.lastOccupiedRow(layout, 4), 2);
+});
+
+test('a PARTLY empty row is not blank — the tile in it needs its whole cell', () => {
+  // One tile and three gaps is a full row: a card with no status caption is
+  // ~100px and that caption lane is load-bearing.
+  assert.deepEqual([...HomeLayout.blankRows([A('a', 0, 0), A('b', 0, 2)], 4)], [1]);
+  assert.deepEqual([...HomeLayout.blankRows([A('a', 2, 0)], 4)], [],
+    'a single tile in column 2 still owns its row');
+});
+
+test('an empty canvas has no blank rows — there is no template at all', () => {
+  assert.deepEqual([...HomeLayout.blankRows([], 4)], []);
+  assert.deepEqual([...HomeLayout.blankRows([A('a', 0, 0)], 4)], []);
+  // Overflow items are off-canvas, so a layout of nothing but overflow is an
+  // empty canvas as far as this is concerned.
+  const overflow = [{ type: 'app', slug: 'a', col: 0, row: HomeLayout.MAX_ROWS }];
+  assert.deepEqual([...HomeLayout.blankRows(overflow, 4)], []);
+});
+
+test('a widget taller than one row covers the rows it spans', () => {
+  // Desktop footprints are 2 rows, so this is really a statement about the
+  // spanning arithmetic: sizeOf's height, not just item.row, decides occupancy.
+  const layout = [W('challenges', 0, 0), A('a', 0, 3)];
+  assert.deepEqual([...HomeLayout.blankRows(layout, 4)], [1, 2],
+    'one row tall on a phone, so rows 1 and 2 are both empty');
+});
+
+test('blankRows and fitRows are disjoint, always', () => {
+  // By construction — a fit row needs at least one item, a blank row needs
+  // none — and rowTemplate reads both, so an overlap would be an ambiguous
+  // track. Checked over an assortment rather than argued about in a comment.
+  const layouts = [
+    [W('challenges', 0, 0), A('a', 0, 1), A('b', 0, 4)],
+    [W('discover', 0, 0), W('challenges', 0, 2)],
+    [A('a', 0, 0), A('b', 3, 0), W('create', 0, 5)],
+    [W('challenges', 0, 3)],
+    [],
+  ];
+  for (const layout of layouts) {
+    const fit = HomeLayout.blankRows(layout, 4);
+    for (const row of HomeLayout.fitRows(layout, 4)) {
+      assert.ok(!fit.has(row), `row ${row} cannot be both fit and blank`);
+    }
+  }
+});
+
+test('PHONE_COLS is the one number both short-row rules gate on', () => {
+  assert.equal(HomeLayout.PHONE_COLS, 4);
+  assert.equal(HomeLayout.PHONE_COLS, HomeLayout.columnsForWidth(390),
+    'and it is the count a phone actually renders');
 });
 
 test('lastOccupiedRow bounds the template to the rows that exist', () => {
