@@ -241,6 +241,28 @@
       "description": "Base URL of the external zkPassport bridge service that verifies proofs for POST /api/v4/mobile/zkpassport/complete (src/services/topochain/zk-bridge.js). Unset doesn't block boot — every zkpassport/complete call returns 500 'The zkPassport bridge is not configured.' until it is set. Not secret, so it stays visible in the console for is-it-pointed-at-the-right-host checks."
     },
     {
+      "key": "MOBILE_PUSH_ENABLED",
+      "group": "Mobile push",
+      "default": "false",
+      "description": "Allows authenticated mobile users to register encrypted FCM destinations and starts the durable activity-notification sender. Requires PUSH_ENV plus matching Firebase credentials."
+    },
+    {
+      "key": "PUSH_ENV",
+      "group": "Mobile push",
+      "description": "Trusted environment partition embedded in every push payload and checked by Flutter, for example production or staging. It must match the mobile build exactly."
+    },
+    {
+      "key": "FIREBASE_PROJECT_ID",
+      "group": "Mobile push",
+      "description": "Authoritative Firebase project ID returned to mobile registration clients and expected in the service-account document. Required while mobile push is enabled; sending fails closed when the credential differs."
+    },
+    {
+      "key": "FIREBASE_SERVICE_ACCOUNT_JSON_B64",
+      "group": "Mobile push",
+      "private": true,
+      "description": "Complete Firebase Admin service-account JSON encoded as base64 on one line. Required only while MOBILE_PUSH_ENABLED is true; never forwarded to child apps."
+    },
+    {
       "key": "TOPOCHAIN_MAIL_API_URL",
       "group": "Topochain mail",
       "description": "HTTPS send endpoint of the mail provider (Resend: https://api.resend.com/emails). POSTed as JSON with a bearer token; body shape lives in src/services/topochain/mail-transport.js. All three TOPOCHAIN_MAIL_* keys must be set together — a partial config sends nothing. Unset never blocks boot: both mail flows still report success while delivering nothing. See Admin → Topochain → Settings."
@@ -407,6 +429,17 @@
       "name": "Custom category chip renders on a Dev card (#780)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectText": "Staging demo perf"
+    },
+    {
+      "name": "Dev board renders the Set priority / Set category / Unassigned metadata chips",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "button.attr-chip[data-attr-field=\"priority\"]",
+      "expectText": "Set priority"
+    },
+    {
+      "name": "Dev board metadata chips keep their compiled utility styling (no console error from the cascade self-check)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "button.attr-chip[data-attr-field=\"assignee\"] .attr-avatar-empty"
     },
     {
       "name": "Restart-recovery pill fixtures are seeded (#786)",

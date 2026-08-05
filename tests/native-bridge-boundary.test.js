@@ -22,6 +22,13 @@ function loadBridge({
     beginSessionHandoff: { blocked: true },
     enterAnonymousSession: { admitted: true },
     getWalletState: { address: 'ut1-wallet' },
+    getSocialPushState: {
+      enabled: true,
+      permissionStatus: 'authorized',
+      registrationStatus: 'registered',
+      deliveryActive: true,
+    },
+    claimPendingSocialNotification: { notificationId: 42 },
   };
   const sandbox = {
     console: { log() {}, warn() {}, error() {} },
@@ -158,6 +165,43 @@ test('old native builds retain the legacy privileged request shape', async () =>
   );
   assert.equal('privilegedCapability' in loaded.nativePosts[1], false);
 });
+
+test('Social push state and tap methods stay behind the top-frame capability',
+  async () => {
+    const loaded = loadBridge({
+      capabilities: [
+        'privilegedBridgeCapability',
+        'getSocialPushState',
+        'setSocialPushEnabled',
+        'claimPendingSocialNotification',
+        'ackPendingSocialNotification',
+      ],
+    });
+
+    const state = await loaded.sandbox.usernode.getSocialPushState();
+    await loaded.sandbox.usernode.setSocialPushEnabled(true);
+    const claim = await loaded.sandbox.usernode.claimPendingSocialNotification();
+    await loaded.sandbox.usernode.ackPendingSocialNotification(42);
+
+    assert.equal(state.deliveryActive, true);
+    assert.equal(claim.notificationId, 42);
+    assert.deepEqual(
+      loaded.nativePosts.map((post) => post.method),
+      [
+        'getBridgeInfo',
+        'getPrivilegedBridgeCapability',
+        'getSocialPushState',
+        'setSocialPushEnabled',
+        'claimPendingSocialNotification',
+        'ackPendingSocialNotification',
+      ]
+    );
+    for (const post of loaded.nativePosts.slice(2)) {
+      assert.equal(post.privilegedCapability, 'navigation-capability');
+    }
+    assert.deepEqual(loaded.nativePosts[3].args, { enabled: true });
+    assert.deepEqual(loaded.nativePosts[5].args, { notificationId: 42 });
+  });
 
 test('legacy shortcut management gets a full request budget after probing',
   async () => {

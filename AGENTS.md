@@ -1,5 +1,24 @@
 # Coding-agent project guidance
 
+## Shell CSS is a committed build artifact — rebuild it
+
+- The platform shell's Tailwind is **compiled**, not loaded from a CDN:
+  `tailwind.config.js` + `styles/tailwind-input.css` build to
+  `public/css/tailwind.css` via `npm run build:css`, and that output is
+  committed (the runtime image installs with `npm ci --production`, so there
+  is no tailwindcss and no build step at deploy time).
+- **After editing `public/index.html`, anything under `public/js/`, the
+  usernode-native demo page, or the Tailwind config — run `npm run build:css`
+  and commit the result in the same commit.** A new utility class that isn't
+  in the compiled stylesheet simply has no styles.
+- `tests/tailwind-build.test.js` stamps and verifies this: the suite fails
+  with "public/css/tailwind.css is STALE" when the artifact predates the
+  sources, so don't hand-edit the generated CSS.
+- The shell loads **no cross-origin assets**. marked, DOMPurify and qrcodejs
+  are vendored under `public/vendor/` by `npm run vendor:assets` (provenance
+  in `public/vendor/README.md`). Don't add a CDN `<script>`/`<link>` to
+  `public/index.html` — vendor or compile it instead; two tests enforce this.
+
 ## Codex promotion-hook readiness
 
 - When running in Codex, expect a separate hook-injected developer context on

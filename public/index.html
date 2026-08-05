@@ -4,15 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>dApps</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>tailwind.config = {
-    darkMode: 'class',
-    future: { hoverOnlyWhenSupported: true },
-    theme: { extend: { colors: {
-      zinc: { 50:'#f6f6fb',100:'#eeeef6',200:'#d4d4e4',300:'#b0b0c8',400:'#9898b0',500:'#6e6e8a',600:'#4e4e6a',700:'#484870',800:'#2e2e50',900:'#1a1a30',950:'#08080f' },
-      violet: { 400:'#a78bfa',500:'#8b5cf6',600:'#7c3aed',700:'#6d28d9' },
-    } } },
-  }</script>
   <script>
     if (localStorage.theme === 'light' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: light)').matches)) {
       document.documentElement.classList.remove('dark');
@@ -33,12 +24,16 @@
       document.documentElement.classList.add('in-native-webview');
     }
   </script>
-  <script src="https://cdn.jsdelivr.net/gh/davidshimjs/qrcodejs/qrcode.min.js"></script>
-  <!-- marked + DOMPurify power renderMarkdown() in dev-chat.js. SRI hashes
-       below verified against the pinned npm dist files (sha384). If either
-       script fails to load, renderMarkdown falls back to a raw <pre> view. -->
-  <script src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js" integrity="sha384-948ahk4ZmxYVYOc+rxN1H2gM1EJ2Duhp7uHtZ4WSLkV4Vtx5MUqnV+l7u9B+jFv+" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.4/dist/purify.min.js" integrity="sha384-ljaibG+rFiOlF9Y2x5ulbWhmu7GWQMKeAPHRiLXj0iozfwSIrIs1Ud1WeQ0Z+FqY" crossorigin="anonymous"></script>
+  <!-- Third-party browser libs, vendored into public/vendor/ by
+       `npm run vendor:assets` (was cdn.jsdelivr.net). Version-stamped
+       filenames ARE the pin; sha384 provenance lives in
+       public/vendor/README.md, since same-origin tags can't use SRI. Same
+       order as before: QR first, then marked + DOMPurify, which power
+       renderMarkdown() in dev-chat.js — if either fails to load,
+       renderMarkdown still falls back to a raw <pre> view. -->
+  <script src="/vendor/qrcode-1.0.0.min.js"></script>
+  <script src="/vendor/marked-15.0.12.min.js"></script>
+  <script src="/vendor/purify-3.4.4.min.js"></script>
   <!-- usernode-native kit: the platform dogfoods its own hosted kit
        (same-origin absolute path — the canonical copy this server
        serves to every app). Loaded before app.css so the platform's
@@ -46,6 +41,68 @@
   <link rel="stylesheet" href="/usernode-native/v1/native.css">
   <script src="/usernode-native/v1/native.js"></script>
   <link rel="stylesheet" href="/css/app.css">
+  <!-- Tailwind, COMPILED and served by this app (was cdn.tailwindcss.com's
+       in-browser JIT plus an inline `tailwind.config` here). The config moved
+       verbatim to tailwind.config.js at the repo root; the build is
+       `npm run build:css` (scripts/build-tailwind.js) and the output is
+       committed, because the runtime image has no devDependencies to compile
+       with.
+
+       POSITION MATTERS — KEEP THIS LINK LAST, after native.css and app.css.
+       The Play CDN did NOT inject its <style> up where its <script> tag sat:
+       it compiled asynchronously (it awaits PostCSS) and then ran
+       `document.head.append(...)`, so the generated stylesheet always landed
+       at the END of <head>, i.e. after both of those links. Utilities
+       therefore won every equal-specificity conflict against them, and
+       app.css was written against exactly that cascade. Linking the compiled
+       file first inverted it and silently broke every such collision —
+       `.attr-chip { font: inherit; background: none }` in app.css, for one,
+       started beating `text-[0.65rem] font-medium bg-zinc-500/10` and blew up
+       the "Set priority" / "Set category" / "Unassigned" chips on the dev
+       screen (#938 fallout). tests/tailwind-build.test.js asserts this
+       ordering so it cannot regress again. -->
+  <link rel="stylesheet" href="/css/tailwind.css">
+  <script>
+    // Cascade self-check. The source-order contract above is asserted at build
+    // time by tests/tailwind-build.test.js, but that only sees THIS file — it
+    // cannot see a stale service-worker precache, a proxy that reorders, or a
+    // deploy that ships a half-built stylesheet. So verify the outcome in the
+    // browser: probe the exact trio that regressed (an app.css `.attr-chip`
+    // shorthand vs. the utilities it collides with) and report if a utility
+    // lost. The only cost on a healthy load is one detached span.
+    //
+    // console.error is the point, not a side effect: the dev console forwards
+    // it, and the platform's proposal checks fail any route that logs one — so
+    // a reordered stylesheet blocks the merge instead of shipping a screen of
+    // 16px unstyled chips.
+    // Runs on DOMContentLoaded, not inline: a probe appended while <body> is
+    // still unparsed has no layout box, and getComputedStyle returns empty
+    // strings for it.
+    document.addEventListener('DOMContentLoaded', function () {
+      try {
+        var probe = document.createElement('span');
+        probe.className = 'attr-chip text-[0.65rem] font-medium bg-zinc-500/10';
+        probe.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none';
+        document.body.appendChild(probe);
+        // Read everything BEFORE detaching — getComputedStyle is live, and a
+        // removed element resolves back to empty strings.
+        var s = getComputedStyle(probe);
+        var fontSize = s.fontSize;
+        var size = parseFloat(fontSize);
+        var weight = s.fontWeight;
+        var bg = s.backgroundColor;
+        probe.remove();
+        var tinted = bg && !/^(transparent|rgba\(0, 0, 0, 0\))$/.test(bg);
+        if (!(size > 0 && size < 12) || weight !== '500' || !tinted) {
+          console.error(
+            '[tailwind] compiled utilities are losing the cascade to app.css — '
+            + '/css/tailwind.css must be the LAST stylesheet in <head>. Probe got '
+            + 'font-size:' + fontSize + ' font-weight:' + weight
+            + ' background:' + bg + ' (expected ~10.4px / 500 / a tint).');
+        }
+      } catch (e) { /* never let a self-check break the shell */ }
+    });
+  </script>
   <!-- PWA (#487): installable shell + read-only offline mode. The service
        worker is registered by /js/offline.js (loaded with the app bundle
        below). -->
@@ -514,14 +571,14 @@
     <span id="platform-updating-spinner" class="inline-block w-4 h-4 rounded-full border-2 border-current border-t-transparent animate-spin" aria-hidden="true"></span>
     <span id="platform-updating-text">Platform updating&hellip; sit tight, write actions are paused.</span>
     <button id="platform-updating-reload" type="button"
-            class="hidden ml-2 px-2 py-0.5 rounded border border-current text-xs font-semibold hover:bg-current/10"
+            class="hidden ml-2 px-2 py-0.5 rounded border border-current text-xs font-semibold hover:bg-black/10 dark:hover:bg-white/10"
             onclick="location.reload()">Reload</button>
     <!-- #239: shown only in the resolving banner's red "resolution
          failed" terminal state — that variant has no SHA flip or
          reload coming, so the user dismisses it by hand (it also
          auto-hides after ~20s). -->
     <button id="platform-updating-dismiss" type="button"
-            class="hidden ml-2 px-2 py-0.5 rounded border border-current text-xs font-semibold hover:bg-current/10"
+            class="hidden ml-2 px-2 py-0.5 rounded border border-current text-xs font-semibold hover:bg-black/10 dark:hover:bg-white/10"
             onclick="App.PlatformUpdating.dismissResolveFailure()">Dismiss</button>
   </div>
 
@@ -2459,6 +2516,7 @@
        before notifications.js / dev-chat.js, which both reference DevAlerts. -->
   <script src="/js/dev-alerts.js"></script>
   <script src="/js/notifications.js"></script>
+  <script src="/js/social-push.js"></script>
   <!-- Webview-safe replacement for window.confirm(). Loaded before any
        feature script that wants a "really?" gate (dev-chat archive,
        future settings/home destructive actions). -->

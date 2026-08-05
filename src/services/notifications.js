@@ -510,6 +510,31 @@ async function listForUser(pool, userId, { limit = 100, before = null } = {}) {
   return rows;
 }
 
+// Fetch one notification through the same ownership and hydration boundary as
+// the dropdown list. Native push carries only this opaque id; all private
+// content is resolved here after the Social web session is authenticated.
+async function getForUser(pool, userId, id) {
+  const { rows } = await pool.query(
+    `SELECT n.id, n.kind, n.read_at, n.created_at,
+            n.app_id, a.slug AS app_slug, a.name AS app_name,
+            n.chat_message_id,
+            cm.content AS message_content,
+            cm.thread_type, cm.thread_ref,
+            n.session_id,
+            cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
+            su.username AS source_username,
+            n.detail
+       FROM notifications n
+       LEFT JOIN apps a ON a.id = n.app_id
+       LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
+       LEFT JOIN chat_sessions cs ON cs.id = n.session_id
+       LEFT JOIN users su ON su.id = n.source_user_id
+      WHERE n.id = $1 AND n.user_id = $2`,
+    [id, userId]
+  );
+  return rows[0] || null;
+}
+
 async function countUnread(pool, userId) {
   const { rows } = await pool.query(
     `SELECT COUNT(*)::int AS c FROM notifications WHERE user_id = $1 AND read_at IS NULL`,
@@ -738,6 +763,7 @@ module.exports = {
   markApproverInviteNotificationsRead,
   filterToCollaborators,
   listForUser,
+  getForUser,
   countUnread,
   markRead,
   markReadForSession,

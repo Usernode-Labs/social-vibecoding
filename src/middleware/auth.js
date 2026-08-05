@@ -40,12 +40,29 @@ const PUBLIC_PATHS = [
   '/health',
   '/css/',
   '/js/',
+  // Vendored third-party browser libs (public/vendor/ — marked, DOMPurify,
+  // qrcodejs). Same public tier as /css/ and /js/, and public for the same
+  // reason: index.html loads them from its <head> on EVERY load including
+  // the anonymous landing/login screens, so a redirect-to-root HTML body
+  // here would arrive where a script was expected (leaving marked /
+  // DOMPurify / QRCode undefined) and would poison the service worker
+  // precache with redirects. Static assets only, no data access.
+  // NB: keep single quotes out of comments in this array — tests parse
+  // every quoted string here as a public prefix (see history.test.js).
+  '/vendor/',
   '/usernode-bridge.js',
   '/usernode-bridge/',
   // Native-feel UI kit (public/usernode-native/v1/) — centrally hosted for
   // child apps exactly like the bridge, so it must be fetchable anonymously
   // from any dapp origin. Static CSS/JS + demo page only, no data access.
   '/usernode-native/',
+  // Pinned Tailwind browser runtime (public/usernode-tailwind/v1/) —
+  // centrally hosted for child apps on the same terms as the bridge and the
+  // native kit. Every app that swaps off cdn.tailwindcss.com loads this from
+  // its own subdomain with no platform session, and a redirect-to-root HTML
+  // body would arrive where a script was expected, leaving the whole app
+  // unstyled. Static JS only, no data access.
+  '/usernode-tailwind/',
   // PWA shell assets (#487). The service-worker script, manifest and
   // icons must be fetchable without a session: the browser requests them
   // from login.html (pre-auth) and during background SW update checks,

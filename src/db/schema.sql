@@ -3514,6 +3514,154 @@ CREATE TABLE IF NOT EXISTS mobile_auth_tokens (
 );
 CREATE INDEX IF NOT EXISTS idx_mobile_auth_tokens_user ON mobile_auth_tokens (user_id);
 
+-- Database-owned sender identity and activation boundary. Same-identity sender
+-- restarts retain this cutoff so queued work survives ordinary deployments.
+-- Initial activation, re-enabling, and deployment identity changes establish
+-- a fresh cutoff so incompatible or disabled-period work is not delivered.
+CREATE TABLE IF NOT EXISTS mobile_push_deployment_state (
+  environment         VARCHAR(32) PRIMARY KEY,
+  firebase_project_id VARCHAR(128) NOT NULL CHECK (BTRIM(firebase_project_id) <> ''),
+  send_enabled        BOOLEAN NOT NULL DEFAULT FALSE,
+  send_not_before     TIMESTAMPTZ,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (BTRIM(environment) <> ''),
+  CHECK (NOT send_enabled OR send_not_before IS NOT NULL)
+);
+
+-- Mobile push registrations belong to a platform user and app installation.
+-- The bearer authorizes registration changes; only its expiry is copied as a
+-- bounded lifetime. Provider registrations are encrypted with
+-- DATA_ENCRYPTION_KEY; the hash is used only for uniqueness/rebinding and is
+-- never returned or logged.
+-- The installation mutation row deliberately survives logout/deletion so a
+-- delayed request cannot resurrect an older registration state.
+CREATE TABLE IF NOT EXISTS mobile_push_installation_mutations (
+  environment              VARCHAR(32) NOT NULL,
+  installation_id          UUID NOT NULL,
+  latest_mutation_revision BIGINT NOT NULL CHECK (latest_mutation_revision > 0),
+  latest_mutation_kind     VARCHAR(8) NOT NULL
+                             CHECK (latest_mutation_kind IN ('put', 'delete')),
+  created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (environment, installation_id),
+  CHECK (BTRIM(environment) <> '')
+);
+
+CREATE TABLE IF NOT EXISTS mobile_push_registrations (
+  id                 BIGSERIAL PRIMARY KEY,
+  user_id            INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  environment        VARCHAR(32) NOT NULL,
+  installation_id    UUID NOT NULL,
+  provider           VARCHAR(16) NOT NULL DEFAULT 'fcm' CHECK (provider = 'fcm'),
+  registration_hash  VARCHAR(64) NOT NULL CHECK (registration_hash ~ '^[0-9a-f]{64}$'),
+  registration_enc   TEXT NOT NULL CHECK (BTRIM(registration_enc) <> ''),
+  platform           VARCHAR(16) NOT NULL CHECK (platform IN ('android', 'ios')),
+  permission_status  VARCHAR(24) NOT NULL CHECK (
+                         permission_status IN (
+                           'authorized', 'provisional', 'denied', 'not_determined'
+                         )
+                       ),
+  session_expires_at TIMESTAMPTZ NOT NULL,
+  last_seen_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (environment, installation_id),
+  UNIQUE (environment, registration_hash),
+  CHECK (BTRIM(environment) <> '')
+);
+CREATE INDEX IF NOT EXISTS idx_mobile_push_registrations_user
+  ON mobile_push_registrations (user_id, environment);
+
+-- Durable notification outbox. No provider token is copied here. `attempts`
+-- tracks retry backoff within the single Social sender.
+CREATE TABLE IF NOT EXISTS mobile_push_deliveries (
+  id                BIGSERIAL PRIMARY KEY,
+  notification_id   INTEGER NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+  registration_id   BIGINT REFERENCES mobile_push_registrations(id) ON DELETE SET NULL,
+  environment       VARCHAR(32) NOT NULL CHECK (BTRIM(environment) <> ''),
+  installation_id   UUID NOT NULL,
+  status            VARCHAR(16) NOT NULL DEFAULT 'pending'
+                      CHECK (status IN ('pending', 'sending', 'sent', 'dead', 'cancelled')),
+  attempts          INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  available_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at        TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '24 hours'),
+  sent_at           TIMESTAMPTZ,
+  last_error_code   VARCHAR(96),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (notification_id, environment, installation_id)
+);
+CREATE INDEX IF NOT EXISTS idx_mobile_push_deliveries_claim
+  ON mobile_push_deliveries (environment, available_at, id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_mobile_push_deliveries_registration
+  ON mobile_push_deliveries (registration_id) WHERE registration_id IS NOT NULL;
+
+COMMENT ON TABLE mobile_push_deployment_state IS 'staging:private';
+COMMENT ON TABLE mobile_push_installation_mutations IS 'staging:private';
+COMMENT ON TABLE mobile_push_registrations IS 'staging:private';
+COMMENT ON TABLE mobile_push_deliveries IS 'staging:private';
+
+-- Capture the push outbox in the same transaction as the canonical
+-- notification. The allowlist is intentionally explicit: adding a new
+-- notification kind does not automatically make it a lock-screen event.
+CREATE OR REPLACE FUNCTION enqueue_mobile_push_deliveries()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.read_at IS NOT NULL
+     OR NEW.kind NOT IN ('session_done', 'auto_solve_done') THEN
+    RETURN NEW;
+  END IF;
+
+  -- Project changes lock deployment state before deleting registrations.
+  -- Take the same lock order here so outbox capture cannot deadlock with that
+  -- transition or commit an old-project registration behind it.
+  PERFORM environment
+    FROM mobile_push_deployment_state
+   ORDER BY environment
+   FOR KEY SHARE;
+
+  WITH eligible AS MATERIALIZED (
+    SELECT r.id, r.environment, r.installation_id
+      FROM mobile_push_registrations r
+      JOIN mobile_push_deployment_state s ON s.environment = r.environment
+     WHERE r.user_id = NEW.user_id
+       AND r.session_expires_at > NOW()
+       AND r.permission_status IN ('authorized', 'provisional')
+       AND s.send_enabled
+       AND s.send_not_before IS NOT NULL
+       AND COALESCE(NEW.created_at, NOW()) >= s.send_not_before
+     ORDER BY r.id
+     FOR KEY SHARE OF r
+  )
+  INSERT INTO mobile_push_deliveries (
+    notification_id, registration_id, environment, installation_id, expires_at
+  )
+  SELECT NEW.id, id, environment, installation_id,
+         COALESCE(NEW.created_at, NOW()) + INTERVAL '24 hours'
+    FROM eligible
+  ON CONFLICT (notification_id, environment, installation_id) DO NOTHING;
+
+  RETURN NEW;
+END;
+$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+     WHERE tgname = 'notifications_enqueue_mobile_push_deliveries'
+       AND tgrelid = 'notifications'::regclass
+       AND NOT tgisinternal
+  ) THEN
+    CREATE TRIGGER notifications_enqueue_mobile_push_deliveries
+      AFTER INSERT ON notifications
+      FOR EACH ROW EXECUTE FUNCTION enqueue_mobile_push_deliveries();
+  END IF;
+END $$;
+
 -- ═══════════════════════════════════════════════════════════════════════
 -- Topochain Task 2 — `users` columns, `platform_settings` seed, staging
 -- privacy (plan Task 2; SPEC §8.5 users columns 3283-3294, §3.5 settings

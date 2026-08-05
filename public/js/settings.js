@@ -67,6 +67,7 @@
     // #settings-screen scrollTop saved on drill-in, restored on the way back.
     _menuScrollTop: 0,
     _mediaBound: false,
+    _socialPushStateListener: null,
 
     // The single source of truth in JS for where the sidebar layout starts.
     // Must stay in step with the `md:` classes in index.html's
@@ -2281,6 +2282,7 @@
             `Device: ${perms.deviceManufacturer}`));
         }
       }
+      this._renderSocialPushSection(section);
       // (The iOS keep-alive toggle is gone — thin-shell migration: block
       // production is disabled on iOS and the keep-alive service was
       // deleted from the app.)
@@ -2370,6 +2372,70 @@
           'The app signs in automatically with your platform account. ' +
           'If this message persists, try closing and reopening the app.'));
       }
+    },
+
+    _renderSocialPushSection(section) {
+      if (this._socialPushStateListener) {
+        window.removeEventListener(
+          'usernode:social-push-state', this._socialPushStateListener
+        );
+        this._socialPushStateListener = null;
+      }
+      if (!window.SocialPush) return;
+      const box = this._unSection(section, 'Usernode app — activity notifications',
+        'Get a device notification when a dev session or auto-solve run finishes. Notification content is loaded only after you open Social.');
+      const holder = this._unEl('div');
+      holder.appendChild(this._unEl('p',
+        'text-xs text-zinc-500 dark:text-zinc-400', 'Checking status…'));
+      box.appendChild(holder);
+
+      const render = (state) => {
+        holder.textContent = '';
+        if (!state) {
+          holder.appendChild(this._unEl('p',
+            'text-xs text-zinc-500 dark:text-zinc-400',
+            'Notification settings are temporarily unavailable.'));
+          return;
+        }
+        this._unToggle(holder, 'Activity notifications', state.enabled,
+          async (enabled) => render(await SocialPush.setEnabled(enabled)));
+        let status = 'Off on this device.';
+        if (state.deliveryActive) {
+          status = 'On — this device is registered for activity notifications.';
+        } else if (state.permissionStatus === 'denied') {
+          status = 'Notification permission is denied in the device settings.';
+        } else if (state.enabled && state.registrationStatus === 'registering') {
+          status = 'Enabling notifications…';
+        } else if (state.enabled) {
+          status = 'Enabled, but delivery is not active yet.';
+        }
+        holder.appendChild(this._unEl('p',
+          'mt-2 text-xs text-zinc-500 dark:text-zinc-400', status));
+      };
+
+      const onState = (event) => {
+        if (!box.isConnected) return;
+        render(event && event.detail);
+      };
+      this._socialPushStateListener = onState;
+      window.addEventListener('usernode:social-push-state', onState);
+
+      SocialPush.isSupported().then((supported) => {
+        if (!supported) {
+          if (this._socialPushStateListener === onState) {
+            window.removeEventListener('usernode:social-push-state', onState);
+            this._socialPushStateListener = null;
+          }
+          box.remove();
+          return null;
+        }
+        return SocialPush.getState();
+      }).then((state) => {
+        if (box.isConnected) render(state);
+      }).catch((err) => {
+        console.warn('[settings] social push state failed:', err);
+        render(null);
+      });
     },
 
     // Block production queue (onboarding flow alignment). State comes

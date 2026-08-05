@@ -1,6 +1,8 @@
-// Platform database export — the full, unredacted `pg_dump` an admin can
-// download from the admin console (#admin/db-export), as a gzip-compressed
-// plain-SQL file (`.sql.gz`).
+// Platform database export — the unredacted `pg_dump` an admin can download
+// from the admin console (#admin/db-export), as a gzip-compressed plain-SQL
+// file (`.sql.gz`). Ephemeral mobile-push device/delivery rows are the sole
+// data exception: their schemas are retained, but their rows are excluded so
+// a restore cannot resurrect destinations or an old outbox in another env.
 //
 // WHY PLAIN SQL + GZIP: a custom-format (`-Fc`) dump can only be read by
 // `pg_restore` of a compatible version, which makes the one artifact an
@@ -91,6 +93,15 @@ const STDERR_CAP = 4000;
 // this constant is only for display in the capability probe. Keep the
 // two in sync.
 const MAX_PER_DAY = 3;
+
+// Keep table definitions in a backup, but never restore device destinations
+// or a stale delivery outbox into another deployment/environment.
+const EXCLUDED_TABLE_DATA = Object.freeze([
+  'mobile_push_deployment_state',
+  'mobile_push_installation_mutations',
+  'mobile_push_registrations',
+  'mobile_push_deliveries',
+]);
 
 // ── Environment ───────────────────────────────────────────────────────
 
@@ -253,7 +264,9 @@ function runExport({ dbName, res, filename, onStart, spawnFn }) {
     // route promises is visible at the call site.
     const args = [
       'exec', DB_CONTAINER, 'pg_dump', '-U', DB_USER,
-      '-Fp', '--no-owner', '--no-privileges', '--no-password', dbName,
+      '-Fp', '--no-owner', '--no-privileges', '--no-password',
+      ...EXCLUDED_TABLE_DATA.map((table) => `--exclude-table-data=${table}`),
+      dbName,
     ];
 
     let child;
@@ -452,6 +465,7 @@ module.exports = {
   GZIP_LEVEL,
   TICKET_TTL_MS,
   MAX_PER_DAY,
+  EXCLUDED_TABLE_DATA,
   SAFE_IDENT,
   isStaging,
   parseDbName,

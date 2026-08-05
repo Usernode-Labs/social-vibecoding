@@ -67,6 +67,7 @@ function loadNativeChrome({
     beginSessionHandoff: 0,
     enterAnonymousSession: 0,
     walletRelayAdmission: [],
+    events: [],
     order: [],
   };
   const windowListeners = {};
@@ -122,6 +123,12 @@ function loadNativeChrome({
   };
   const sandbox = {
     console: { log() {}, warn() {}, error() {} },
+    CustomEvent: class CustomEvent {
+      constructor(type, init) {
+        this.type = type;
+        this.detail = init && init.detail;
+      }
+    },
     App: { user: initialUser },
     usernode,
     localStorage: { getItem() { return '1'; }, setItem() {} },
@@ -131,6 +138,10 @@ function loadNativeChrome({
       addEventListener(type, listener) { documentListeners[type] = listener; },
     },
     addEventListener(type, listener) { windowListeners[type] = listener; },
+    dispatchEvent(event) {
+      calls.events.push(event.type);
+      if (windowListeners[event.type]) windowListeners[event.type](event);
+    },
     setTimeout(fn, delay) {
       const timer = setTimeout(fn, delay);
       if (timer && typeof timer.unref === 'function') timer.unref();
@@ -359,6 +370,10 @@ test('every handoff exchanges the web session and starts the bound identity', as
   ]);
   assert.deepEqual(plain(loaded.calls.startNode), [
     { address: 'ut1-7', participantId: 7, epoch: 1 },
+  ]);
+  assert.deepEqual(loaded.calls.events, [
+    'usernode:native-session-admission',
+    'usernode:native-session-admission',
   ]);
 
   await loaded.NativeChrome.runLoginHandoff();

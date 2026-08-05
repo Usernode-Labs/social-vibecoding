@@ -321,6 +321,17 @@ const topochainMobileAuthLimiter = makeLimiter({
   message: 'Too many requests — slow down for a minute.',
 });
 
+// Authenticated device-state synchronization. Normal lifecycle traffic is a
+// handful of writes; this prevents a stolen bearer from churning encrypted
+// registrations and delivery FKs in a tight loop.
+const topochainMobilePushRegistrationLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 60,
+  name: 'topochain-mobile-push-registration',
+  keyByUser: true,
+  message: 'Too many push registration updates — slow down for a minute.',
+});
+
 // Public waitlist join: 5 / 15 min / IP. Anonymous write endpoint on the
 // landing page — tight enough to stop bulk email harvesting/spam, loose
 // enough that a genuine visitor retrying a typo never hits it.
@@ -331,4 +342,4 @@ const waitlistJoinLimiter = makeLimiter({
   message: 'Too many signups from this address — try again in a few minutes.',
 });
 
-module.exports = { dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, topochainMobileAuthLimiter, waitlistJoinLimiter };
+module.exports = { dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, waitlistJoinLimiter };

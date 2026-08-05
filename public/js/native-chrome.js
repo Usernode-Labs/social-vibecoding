@@ -114,6 +114,7 @@
 
     _setSessionWalletRelayAdmission(admitted) {
       const next = admitted === true;
+      const changed = NativeChrome._sessionWalletRelayAdmitted !== next;
       NativeChrome._sessionWalletRelayAdmitted = next;
       const bridge = window.usernode;
       if (bridge &&
@@ -124,6 +125,17 @@
       if (walletSheet &&
           typeof walletSheet._setSessionWalletAdmission === 'function') {
         walletSheet._setSessionWalletAdmission(next);
+      }
+      // Consumers of privileged native methods must track the same admission
+      // edge. Closing immediately invalidates any state cached for the prior
+      // web session; reopening lets them safely retry work rejected while the
+      // handoff was in progress. This avoids coupling to private promise /
+      // generation state.
+      if (changed && typeof window.dispatchEvent === 'function' &&
+          typeof window.CustomEvent === 'function') {
+        window.dispatchEvent(new CustomEvent(
+          'usernode:native-session-admission', { detail: { admitted: next } }
+        ));
       }
     },
 
