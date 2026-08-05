@@ -2989,21 +2989,29 @@ const App = {
   // INSIDE #platform-header (it used to be the separate #app-tabs bar at
   // the foot of #app-view), so hiding the header hides it too.
   //
-  // What does need handling is the safe-area inset that moved off that
-  // bar onto #app-view: a chromeless share link is meant to be truly
-  // edge-to-edge (its only chrome is the floating pill, which insets
-  // itself via env(safe-area-inset-bottom)), so strip the padding while
-  // the mode is on and restore it on the way out.
+  // The bottom safe-area inset needs NO special case here any more
+  // (#970). It used to: #app-view carried `un-safe-bottom` for every
+  // surface, so chromeless had to strip the class to render truly
+  // edge-to-edge. The inset is now surface-dependent
+  // (`data-app-surface`, set by AppView._setSurface) and chromeless
+  // always lands on the app surface — which reserves nothing and
+  // forwards the insets into the app instead. The floating pill still
+  // insets itself via env(safe-area-inset-bottom).
+  //
+  // Hiding the header changes #app-view's rect, so re-broadcast the
+  // per-frame insets: the app's top inset is 0 while the header covers
+  // it and becomes the real status-bar inset once it doesn't.
   setChromeless(on) {
     const enable = !!on;
     if (App.chromeless === enable) return;
     App.chromeless = enable;
     const header = document.getElementById('platform-header');
-    const appView = document.getElementById('app-view');
     if (header) header.classList.toggle('hidden', enable);
-    if (appView) appView.classList.toggle('un-safe-bottom', !enable);
     if (enable) App._mountChromelessPill();
     else App._unmountChromelessPill();
+    if (typeof AppView !== 'undefined' && AppView.scheduleSafeAreaBroadcast) {
+      AppView.scheduleSafeAreaBroadcast();
+    }
   },
 
   // Floating pill, visually matching the bridge's share-view pill
@@ -4112,6 +4120,10 @@ const App = {
       const showForApp = tab === 'app' && AppView.appData?.status === 'running';
       DevConsole.setButtonVisible(showForApp);
     }
+
+    // #970: the switch changed which surface is mounted, so #app-view's
+    // rect (and therefore the frame's own insets) may have changed.
+    if (AppView.scheduleSafeAreaBroadcast) AppView.scheduleSafeAreaBroadcast();
 
     App.updateHash();
   },

@@ -1192,6 +1192,23 @@ html, body {
 
 #app-content { position: relative; }
 
+/* Surface-dependent bottom safe area (#970).
+   #app-view used to carry the kit's `un-safe-bottom` unconditionally, so
+   its padding was subtracted from the flex height of EVERY surface inside
+   #app-content — the running app included. On a phone that left the app
+   ~34px short of the screen's rounded bottom edge, with the body
+   background showing through the gap, while the shell itself painted
+   edge-to-edge.
+   Now only PLATFORM surfaces (Dev mode, the status/offline placeholders)
+   reserve the strip. On an `app` surface the frame reaches the true
+   bottom edge and the insets are forwarded INTO the app instead
+   (AppView._broadcastSafeArea → the bridge's --un-safe-inset-*), so the
+   app can inset its own bottom chrome rather than being clipped by ours.
+   No `!important` needed: nothing competes with this rule. */
+#app-view[data-app-surface="platform"] {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
 #app-iframe {
   position: absolute;
   top: 0; left: 0; width: 100%; height: 100%;

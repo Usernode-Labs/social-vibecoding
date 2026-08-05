@@ -4690,6 +4690,124 @@
     }
   })();
 
+  // =====================================================================
+  //  Public API: safe-area insets (usernode.safeAreaInsets) — additive v1
+  // =====================================================================
+  //
+  // Screen safe areas inside the app frame (SV issue #970).
+  //
+  // `env(safe-area-inset-*)` resolves to 0px inside a cross-origin iframe
+  // in every engine, so an app embedded in the platform shell cannot see
+  // the notch or the home indicator — every safe-area rule it writes is
+  // silently inert. The shell used to compensate by reserving the bottom
+  // strip itself, which is what left apps visibly cut off short of a
+  // phone's rounded bottom edge. Now the frame runs edge-to-edge and the
+  // shell FORWARDS the insets that apply to this frame's rect over a
+  // `__usernode_safe_area` message family. This block turns them into:
+  //
+  //   1. CSS custom properties on <html> — `--un-safe-inset-top` /
+  //      `-right` / `-bottom` / `-left`, in px. The usernode-native kit's
+  //      CSS reads them as `var(--un-safe-inset-bottom,
+  //      env(safe-area-inset-bottom, 0px))`, so kit bars, sheets, toasts
+  //      and nav bars inset themselves with no app change at all. Apps
+  //      with custom fixed chrome should use the same `var(..., env(...))`
+  //      form — it works both inside the shell and standalone.
+  //   2. `usernode.safeAreaInsets` — { top, right, bottom, left } in px,
+  //      all zeros until the first answer arrives.
+  //   3. A `usernode:safe-area-changed` CustomEvent on window with the
+  //      same object as `detail` (same convention as
+  //      `usernode:locale-changed`), for apps that lay out in JS.
+  //
+  // These are the SAFE AREA only — independent of the kit's
+  // `--un-kb-inset` keyboard tracking, which the app's own visualViewport
+  // already reports correctly inside the frame.
+  //
+  // Standalone (no parent frame, or a host that never answers) the
+  // properties are deliberately left UNSET rather than zeroed, so the
+  // `env()` fallback in that `var()` form wins — which is the correct
+  // value outside an iframe. There is nothing to time out on.
+  /* __USERNODE_SAFE_AREA_BEGIN__ */
+  (function () {
+    var EDGES = ["top", "right", "bottom", "left"];
+    var _insets = { top: 0, right: 0, bottom: 0, left: 0 };
+
+    window.usernode.safeAreaInsets = _insets;
+
+    function normalize(value) {
+      if (!value || typeof value !== "object") return null;
+      var out = {};
+      for (var i = 0; i < EDGES.length; i++) {
+        var n = Number(value[EDGES[i]]);
+        out[EDGES[i]] = isFinite(n) && n > 0 ? n : 0;
+      }
+      return out;
+    }
+
+    function apply(value) {
+      var next = normalize(value);
+      if (!next) return;
+      var changed = false;
+      for (var i = 0; i < EDGES.length; i++) {
+        if (_insets[EDGES[i]] !== next[EDGES[i]]) changed = true;
+      }
+      if (!changed) return;
+      for (var j = 0; j < EDGES.length; j++) {
+        _insets[EDGES[j]] = next[EDGES[j]];
+        try {
+          document.documentElement.style.setProperty(
+            "--un-safe-inset-" + EDGES[j],
+            next[EDGES[j]] + "px"
+          );
+        } catch (_) {}
+      }
+      try {
+        window.dispatchEvent(new CustomEvent("usernode:safe-area-changed", {
+          detail: {
+            top: _insets.top,
+            right: _insets.right,
+            bottom: _insets.bottom,
+            left: _insets.left,
+          },
+        }));
+      } catch (_) {}
+    }
+
+    // Standalone: no shell to ask, and env() already works here. Leave the
+    // custom properties unset so CSS falls through to it.
+    if (window === window.parent) return;
+
+    var _getId = "safe-area-" + String(Date.now()) + "-" +
+      Math.random().toString(16).slice(2);
+
+    window.addEventListener("message", function (e) {
+      if (e.source !== window.parent) return;
+      var data = e.data;
+      if (!data || !data.__usernode_safe_area) return;
+      // The shell PUSHES `changed` on rotation, keyboard/toolbar moves and
+      // whenever the frame's rect shifts; `response` answers our startup
+      // request. Both carry the same value shape.
+      if (data.__usernode_safe_area === "changed") {
+        apply(data.value);
+        return;
+      }
+      if (data.__usernode_safe_area === "response" && data.id === _getId) {
+        apply(data.value);
+      }
+    });
+
+    // Ask once at load so an app never has to wait for a resize to learn
+    // its insets — and so a `changed` posted before this listener existed
+    // can't be missed. A host that doesn't answer simply leaves the
+    // properties unset (see above).
+    try {
+      window.parent.postMessage(
+        { __usernode_safe_area: "get", id: _getId },
+        "*"
+      );
+    } catch (_) {}
+  })();
+  /* __USERNODE_SAFE_AREA_END__ */
+
   // Rendering invariants (issue #360) — additive within v1.
   //
   // Opt-in, no-op-by-default self-checks an app registers to catch

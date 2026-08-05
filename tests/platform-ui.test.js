@@ -271,10 +271,21 @@ test('settings toggles are kit switches (un-switch)', () => {
 
 test('header and app view carry safe-area classes', () => {
   assert.ok(/<header id="platform-header"[^>]*un-safe-top/.test(INDEX));
-  // The bottom inset moved off the deleted #app-tabs bar onto #app-view
-  // itself — that bar was the only thing keeping app content clear of the
-  // iOS home indicator.
-  assert.ok(/<div id="app-view"[^>]*un-safe-bottom/.test(INDEX));
+  // #970: the bottom inset is SURFACE-DEPENDENT now, so #app-view must NOT
+  // carry a blanket `un-safe-bottom`. That class reserved the
+  // home-indicator strip for every surface inside #app-content — the
+  // running app's iframe included — which is what left apps cut off short
+  // of a phone's rounded bottom edge. The `data-app-surface` attribute
+  // (AppView._setSurface) plus the app.css rule replaces it; the default
+  // is `platform` so a first paint keeps the old clearance.
+  assert.ok(!/<div id="app-view"[^>]*un-safe-bottom/.test(INDEX),
+    '#app-view must not reserve the bottom inset for the app frame (#970)');
+  assert.ok(/<div id="app-view"[^>]*data-app-surface="platform"/.test(INDEX),
+    '#app-view needs the surface flag, defaulting to platform');
+  assert.ok(
+    read('public/css/app.css').includes('#app-view[data-app-surface="platform"]'),
+    'app.css must gate the bottom inset on the platform surface'
+  );
 });
 
 test('the bottom App/Dev tab bar is gone, replaced by the header switch', () => {

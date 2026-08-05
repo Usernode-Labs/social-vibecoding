@@ -1834,12 +1834,24 @@
        the platform header. The full-width tab-bar nav that used to live
        here at the foot of this column is gone.
 
-       `un-safe-bottom` moved onto this element from that nav: the bar was
-       the only thing keeping app content clear of the iOS home indicator,
-       and every surface inside #app-content now reaches the true bottom
-       of the viewport. App.setChromeless() strips the class so a
-       chromeless share link still renders edge-to-edge. -->
-  <div id="app-view" class="hidden flex flex-col un-safe-bottom" style="flex:1;min-height:0;height:0">
+       The bottom safe-area inset is SURFACE-DEPENDENT (#970), which is
+       why this element no longer carries a blanket `un-safe-bottom`.
+       That class moved here from the deleted tab bar and reserved the
+       home-indicator strip for EVERY surface inside #app-content —
+       including the running app's iframe, which is how apps ended up
+       cut off short of the screen's rounded bottom edge while the shell
+       around them ran edge-to-edge.
+
+       `data-app-surface` is the switch: AppView._setSurface() sets it to
+       `app` wherever an app iframe / launch cover is mounted (no inset —
+       the app fills the screen and receives the insets over the
+       __usernode_safe_area bridge instead) and to `platform` for every
+       platform-rendered surface (Dev mode, status placeholders), which
+       keeps its clearance via the rule in app.css. It defaults to
+       `platform` so a first paint before any render behaves as before,
+       and chromeless needs no special case any more — it always lands on
+       an app surface. -->
+  <div id="app-view" class="hidden flex flex-col" data-app-surface="platform" style="flex:1;min-height:0;height:0">
     <div id="app-content" class="flex-1" style="min-height:0;overflow:hidden">
       <!-- Tab content renders here -->
     </div>
