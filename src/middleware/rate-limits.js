@@ -171,6 +171,30 @@ const groupChatWriteLimiter = makeLimiter({
   message: 'Too many discussion messages — slow down for a minute.',
 });
 
+// App-scoped direct messages are intentionally separate from group chat: a
+// scripted DM sender must not be able to exhaust the discussion-thread bucket
+// used by issue review.  Messages are cheap but potentially abusive, so the
+// ceiling is lower than group chat and always applies to admins too.
+const directMessageSendLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 30,
+  name: 'direct-message-send',
+  keyByUser: true,
+  message: 'Too many direct messages — slow down for a minute.',
+});
+
+// Requests, consent decisions, blocks, reports and deletions share a slower
+// action bucket. Failed requests intentionally still count: otherwise an
+// attacker could enumerate exact usernames through unlimited unavailable
+// requests without ever touching the throttle.
+const directMessageActionLimiter = makeLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 20,
+  name: 'direct-message-action',
+  keyByUser: true,
+  message: (s) => `Too many direct-message actions. You can try again ${retryPhrase(s)}.`,
+});
+
 // #556: live title previews for the feedback modal (POST /api/feedback/
 // title). Same sizing rationale as chatLimiter — each call is a Haiku
 // spend against the daily LLM budget, so this must not become a faster
@@ -342,4 +366,4 @@ const waitlistJoinLimiter = makeLimiter({
   message: 'Too many signups from this address — try again in a few minutes.',
 });
 
-module.exports = { dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, waitlistJoinLimiter };
+module.exports = { dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, directMessageSendLimiter, directMessageActionLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, waitlistJoinLimiter };

@@ -104,7 +104,9 @@ test('credential tables are deny-listed', () => {
   for (const t of ['sessions', 'activation_codes', 'app_secrets',
     'platform_env_values', 'pending_secret_declarations',
     'cli_device_authorizations', 'cli_access_tokens',
-    'cli_auth_audit_events', 'cli_auth_rate_limits']) {
+    'cli_auth_audit_events', 'cli_auth_rate_limits',
+    'direct_conversations', 'direct_messages', 'direct_message_blocks',
+    'direct_message_reports']) {
     assert.ok(debugAccess.DENIED_TABLES.has(t), `${t} must be denied`);
   }
 });

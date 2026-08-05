@@ -572,6 +572,94 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Privacy-first app-scoped direct messaging (#583). Existing general chat
+-- and typed issue/session/governance threads remain the channel model; these
+-- rows add only consent-gated one-to-one conversations. The ordered pair
+-- makes one conversation authoritative per app and prevents mirrored races.
+CREATE TABLE IF NOT EXISTS direct_conversations (
+  id           SERIAL PRIMARY KEY,
+  app_id       INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  user_low_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_high_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  requested_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status       VARCHAR(16) NOT NULL DEFAULT 'pending',
+  accepted_at  TIMESTAMPTZ,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT direct_conversations_ordered_pair CHECK (user_low_id < user_high_id),
+  CONSTRAINT direct_conversations_requester_participant
+    CHECK (requested_by = user_low_id OR requested_by = user_high_id),
+  CONSTRAINT direct_conversations_status
+    CHECK (status IN ('pending', 'accepted', 'declined')),
+  CONSTRAINT direct_conversations_accepted_time
+    CHECK ((status = 'accepted') = (accepted_at IS NOT NULL)),
+  UNIQUE (app_id, user_low_id, user_high_id)
+);
+CREATE INDEX IF NOT EXISTS idx_direct_conversations_low
+  ON direct_conversations (app_id, user_low_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_direct_conversations_high
+  ON direct_conversations (app_id, user_high_id, id DESC);
+
+CREATE TABLE IF NOT EXISTS direct_messages (
+  id              SERIAL PRIMARY KEY,
+  conversation_id INTEGER NOT NULL REFERENCES direct_conversations(id) ON DELETE CASCADE,
+  sender_id       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  content         TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_at      TIMESTAMPTZ,
+  CONSTRAINT direct_messages_content_state CHECK (
+    (deleted_at IS NULL AND content IS NOT NULL
+      AND length(btrim(content)) BETWEEN 1 AND 2000)
+    OR (deleted_at IS NOT NULL AND content IS NULL)
+  )
+);
+CREATE INDEX IF NOT EXISTS idx_direct_messages_page
+  ON direct_messages (conversation_id, id DESC);
+
+-- Directional, app-scoped blocks. Reads retain history, while requests,
+-- acceptance and sends recheck this table under the pair advisory lock.
+CREATE TABLE IF NOT EXISTS direct_message_blocks (
+  app_id         INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  blocker_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  blocked_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT direct_message_blocks_distinct CHECK (blocker_id <> blocked_user_id),
+  PRIMARY KEY (app_id, blocker_id, blocked_user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_direct_message_blocks_reverse
+  ON direct_message_blocks (app_id, blocked_user_id, blocker_id);
+
+-- Reports snapshot the reported body before an author may later scrub the
+-- live message. Only full platform admins can read or resolve these rows.
+CREATE TABLE IF NOT EXISTS direct_message_reports (
+  id                 SERIAL PRIMARY KEY,
+  app_id             INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  conversation_id    INTEGER NOT NULL REFERENCES direct_conversations(id) ON DELETE CASCADE,
+  message_id         INTEGER REFERENCES direct_messages(id) ON DELETE SET NULL,
+  reporter_id        INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  reported_sender_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  reported_content   TEXT,
+  reason             TEXT NOT NULL,
+  status             VARCHAR(16) NOT NULL DEFAULT 'open',
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resolved_at        TIMESTAMPTZ,
+  CONSTRAINT direct_message_reports_reason
+    CHECK (length(btrim(reason)) BETWEEN 1 AND 1000),
+  CONSTRAINT direct_message_reports_status
+    CHECK (status IN ('open', 'resolved', 'dismissed')),
+  CONSTRAINT direct_message_reports_resolution_time
+    CHECK ((status = 'open') = (resolved_at IS NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_direct_message_reports_queue
+  ON direct_message_reports (status, id DESC);
+
+-- Direct messages and reports are private user content and must never be
+-- copied into proposal staging databases.
+COMMENT ON TABLE direct_conversations   IS 'staging:private';
+COMMENT ON TABLE direct_messages        IS 'staging:private';
+COMMENT ON TABLE direct_message_blocks  IS 'staging:private';
+COMMENT ON TABLE direct_message_reports IS 'staging:private';
+
 -- Individual chat sessions (one per branch/PR)
 CREATE TABLE IF NOT EXISTS chat_sessions (
   id                   SERIAL PRIMARY KEY,

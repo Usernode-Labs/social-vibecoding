@@ -9,6 +9,7 @@ const { authMiddleware } = require('./src/middleware/auth');
 const { authRoutes } = require('./src/routes/auth');
 const { appRoutes } = require('./src/routes/apps');
 const { chatRoutes } = require('./src/routes/chat');
+const { directMessageRoutes } = require('./src/routes/direct-messages');
 const { sessionRoutes } = require('./src/routes/sessions');
 const { proposalHandoffRoutes } = require('./src/routes/proposal-handoff');
 const { voteRoutes } = require('./src/routes/votes');
@@ -469,6 +470,7 @@ app.use(appRoutes(config));
 // storage bridge handler on behalf of the app iframe.
 app.use(appFileShellRoutes(config));
 app.use(chatRoutes(config));
+app.use(directMessageRoutes(config));
 app.use(proposalHandoffRoutes(config));
 app.use(sessionRoutes(config));
 app.use(voteRoutes(config));

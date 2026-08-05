@@ -62,6 +62,10 @@ const DENIED_TABLES = new Set([
   'cli_access_tokens',   // global CLI bearer hashes and hints
   'cli_auth_audit_events', // security audit trail for CLI credentials
   'cli_auth_rate_limits', // shared security limiter state
+  'direct_conversations', // private participant graph
+  'direct_messages',      // private message bodies
+  'direct_message_blocks', // private safety preferences
+  'direct_message_reports', // private reports + snapshotted evidence
 ]);
 
 const DENIED_COLUMNS = {
