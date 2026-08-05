@@ -102,3 +102,12 @@ test('tooltips are attribute-escaped', () => {
   assert.ok(titles.length >= 1,
     `every title="" goes through escapeAttr (found ${titles.length})`);
 });
+
+test('failed refreshes clear stale allowance and remain immediately retryable', () => {
+  assert.match(creditJs, /if \(!res\.ok\) \{[\s\S]*?state = null;[\s\S]*?_lastFetchAt = 0;[\s\S]*?_render\(\);/);
+  assert.match(creditJs, /catch \(err\) \{[\s\S]*?state = null;[\s\S]*?_lastFetchAt = 0;[\s\S]*?_render\(\);/);
+});
+
+test('the detailed reset and payer explanation is exposed to assistive technology', () => {
+  assert.match(creditJs, /aria-label="' \+ escapeAttr\(tip\)/);
+});

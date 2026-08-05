@@ -350,8 +350,10 @@ const DevChat = {
   async refreshBudget() {
     try {
       const res = await fetch('/api/budget');
-      if (res.ok) DevChat.budget = await res.json();
-    } catch {}
+      DevChat.budget = res.ok ? await res.json() : null;
+    } catch {
+      DevChat.budget = null;
+    }
     DevChat.renderBudget();
   },
 
@@ -381,19 +383,28 @@ const DevChat = {
       const spent = (DevChat.budget.spentCents / 100).toFixed(2);
       const limit = (DevChat.budget.limitCents / 100).toFixed(2);
       const remaining = (Math.max(0, DevChat.budget.limitCents - DevChat.budget.spentCents) / 100).toFixed(2);
+      const globalOut = DevChat.budget.globalSpentCents >= DevChat.budget.globalLimitCents;
       const pct = Math.min(100, (DevChat.budget.spentCents / DevChat.budget.limitCents) * 100);
       const color = pct > 80 ? 'text-red-400' : pct > 50 ? 'text-yellow-400' : 'text-emerald-400';
-      const tip = `Today: $${spent} of your $${limit} platform daily limit ($${remaining} left)`
+      const tip = (globalOut
+        ? `Today: your personal allowance has $${remaining} left, but the shared daily AI budget is unavailable`
+        : `Today: $${spent} of your $${limit} platform daily limit ($${remaining} left)`)
         + (byokCents > 0 ? ` + $${byok} billed to your Anthropic key (…${last4})` : '')
-        + `. The daily limit is used first; your key (…${last4}) takes over once it runs out. Resets at midnight UTC.`;
-      let html = `<span class="text-zinc-600">limit </span><span class="${color}">$${spent}</span><span class="text-zinc-600">/$${limit} · left </span><span class="${remaining === '0.00' ? 'text-red-400' : 'text-emerald-400'}">$${remaining}</span>`;
+        + (globalOut
+          ? `. Your key (…${last4}) is used until the shared budget resets at midnight UTC.`
+          : `. The daily limit is used first; your key (…${last4}) takes over once it runs out. Resets at midnight UTC.`);
+      let html = `<span class="text-zinc-600">limit </span><span class="${color}">$${spent}</span><span class="text-zinc-600">/$${limit} · ${globalOut ? 'personal ' : ''}left </span><span class="${remaining === '0.00' ? 'text-red-400' : globalOut ? 'text-yellow-400' : 'text-emerald-400'}">$${remaining}</span>`;
+      if (globalOut) html += '<span class="text-yellow-400"> · shared unavailable</span>';
       if (byokCents > 0) {
         html += `<span class="text-zinc-600"> · </span><span class="text-emerald-400">your key $${byok}</span>`;
       }
-      el.innerHTML = `<span title="${tip}">${html}</span>`;
+      el.innerHTML = `<span title="${escapeHtml(tip)}" aria-label="${escapeHtml(tip)}">${html}</span>`;
       return;
     }
-    if (!DevChat.budget) return;
+    if (!DevChat.budget) {
+      el.innerHTML = '';
+      return;
+    }
     const spent = (DevChat.budget.spentCents / 100).toFixed(2);
     const limit = (DevChat.budget.limitCents / 100).toFixed(2);
     const remaining = (Math.max(0, DevChat.budget.limitCents - DevChat.budget.spentCents) / 100).toFixed(2);
@@ -401,6 +412,13 @@ const DevChat = {
     // pair — just unmistakably red, with the tooltip pointing at the
     // BYOK escape hatch. The banner carries the wordy explanation.
     if (DevChat._creditsExhausted()) {
+      const globalOut = DevChat.budget.globalSpentCents >= DevChat.budget.globalLimitCents;
+      const personalOut = DevChat.budget.spentCents >= DevChat.budget.limitCents;
+      if (globalOut && !personalOut) {
+        const tip = `Your personal allowance has $${remaining} left, but the shared daily AI budget is unavailable. Resets at midnight UTC — or add your own Anthropic API key in Settings to keep working.`;
+        el.innerHTML = `<span title="${escapeHtml(tip)}" aria-label="${escapeHtml(tip)}"><span class="text-zinc-500">$${spent}/$${limit} · personal left </span><span class="text-yellow-400">$${remaining} · shared unavailable</span></span>`;
+        return;
+      }
       el.innerHTML = `<span title="Your free daily AI credits are used up. Resets at midnight UTC — or add your own Anthropic API key in Settings to keep working."><span class="text-red-500 font-semibold">$${spent}</span><span class="text-red-400">/$${limit} · left $${remaining}</span></span>`;
       return;
     }
@@ -4986,7 +5004,7 @@ const DevChat = {
         <div id="dc-tab-chat" class="dc-chat-pane flex-1 flex flex-col min-h-0">
           <div id="dc-messages" class="dc-messages-container flex-1 overflow-y-auto py-2"></div>
           <div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2">
-            <div class="flex items-center gap-2 mb-2">
+            <div class="flex flex-wrap items-center gap-2 mb-2">
               <label class="text-xs text-zinc-500">Model:</label>
               <select id="dc-model-select" class="rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-violet-500">
                 ${modelOptions}
@@ -4997,7 +5015,7 @@ const DevChat = {
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
               </button>
               <span class="flex-1"></span>
-              <span id="dc-budget" class="text-xs font-mono"></span>
+              <span id="dc-budget" class="ml-auto max-w-full text-right text-xs leading-tight font-mono"></span>
             </div>
             <!-- #800: one-line plain-language description of the SELECTED
                  model — what kind of work it suits. Filled by

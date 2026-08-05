@@ -4154,29 +4154,26 @@ function sessionRoutes(config) {
   // Get current user's budget
   router.get('/api/budget', async (req, res) => {
     try {
-      const userLimit = await limits.getEffectiveUserLimitCents(pool, req.user.id);
+      // A display snapshot must not inherit checkBudget's deliberately
+      // collapsed { error } shape. Doing so made a shared-cap outage look
+      // as though this user had personally spent their entire allowance.
+      const user = await limits.getBudgetSnapshot(pool, req.user.id);
       const globalLimit = await limits.getGlobalLimitCents(pool);
-      const budget = await checkBudget(pool, req.user.id);
-      const userSpent = budget.error ? userLimit : userLimit - (budget.userRemaining || 0);
-      const globalSpent = budget.error ? globalLimit : globalLimit - (budget.globalRemaining || 0);
-      // #119: spend billed to the user's own Anthropic key today —
-      // informational only, never part of the cap math above.
-      const { rows: byokRows } = await pool.query(
-        'SELECT byok_cost_cents FROM llm_usage WHERE user_id = $1 AND date = CURRENT_DATE',
-        [req.user.id]
+      const { rows: globalRows } = await pool.query(
+        'SELECT SUM(total_cost_cents) AS total FROM llm_usage WHERE date = CURRENT_DATE'
       );
-      const byokSpentCents = parseFloat(byokRows[0]?.byok_cost_cents || 0);
+      const globalSpent = Math.max(0, parseFloat(globalRows[0]?.total || 0));
       // #297: surface AI availability so client chrome (the proposal
       // "Explore in dev chat" pill) can disable itself with a tooltip when there's
       // no usable LLM path — the platform key is unset AND the user has
       // no BYOK key on file. Same degradation posture the dev chat takes.
       const userApiKey = await limits.loadUserApiKey(pool, req.user.id, config.dataEncryptionKey);
       res.json({
-        spentCents: userSpent,
-        limitCents: userLimit,
+        spentCents: user.spentCents,
+        limitCents: user.limitCents,
         globalSpentCents: globalSpent,
         globalLimitCents: globalLimit,
-        byokSpentCents,
+        byokSpentCents: user.byokCents,
         aiEnabled: llm.isEnabled() || !!userApiKey,
       });
     } catch (err) {

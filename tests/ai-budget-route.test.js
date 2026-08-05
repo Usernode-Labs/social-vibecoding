@@ -18,6 +18,7 @@ const assert = require('node:assert/strict');
 // Stubbed pool: one users+llm_usage row, plus the platform-default limit
 // out of platform_settings.
 const poolMod = require('../src/db/pool');
+let failSnapshot = false;
 let row = {
   daily_limit_cents: null,
   total_cost_cents: 0,
@@ -35,6 +36,7 @@ poolMod.getPool = () => ({
       return { rows: [{ daily_limit_cents: row.daily_limit_cents }] };
     }
     if (/LEFT JOIN llm_usage/.test(sql)) {
+      if (failSnapshot) throw new Error('ledger unavailable');
       return {
         rows: [{
           total_cost_cents: row.total_cost_cents,
@@ -69,6 +71,7 @@ test.after(() => server && server.close());
 
 test.beforeEach(() => {
   limits.invalidate();
+  failSnapshot = false;
   currentUser = { id: 7, username: 'ada' };
   row = {
     daily_limit_cents: null,
@@ -136,4 +139,11 @@ test('no API key material is ever returned, only its presence', async () => {
   row.has_byok_key = true;
   const body = await fetch(`${base}/api/me/ai-budget`).then((x) => x.text());
   assert.ok(!/anthropic_key|last4|sk-ant/.test(body));
+});
+
+test('an unreadable ledger is unknown, never presented as a full allowance', async () => {
+  failSnapshot = true;
+  const res = await fetch(`${base}/api/me/ai-budget`);
+  assert.equal(res.status, 500);
+  assert.deepEqual(await res.json(), { error: 'Internal server error' });
 });

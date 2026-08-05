@@ -100,10 +100,18 @@
           var res = await fetch('/api/me/ai-budget' + (location.search.indexOf('demo=1') > -1 ? '?demo=1' : ''));
           // 401 on an anonymous / waiting-room document is expected —
           // leave the row hidden and say nothing.
-          if (!res.ok) return;
+          if (!res.ok) {
+            AiCredit.Budget.state = null;
+            AiCredit.Budget._lastFetchAt = 0;
+            AiCredit.Budget._render();
+            return;
+          }
           AiCredit.Budget.state = await res.json();
           AiCredit.Budget._render();
         } catch (err) {
+          AiCredit.Budget.state = null;
+          AiCredit.Budget._lastFetchAt = 0;
+          AiCredit.Budget._render();
           console.warn('[ai-credit] budget refresh failed', err);
         }
       },
@@ -169,7 +177,8 @@
         }
 
         slot.innerHTML =
-          '<span class="ai-budget-pill ai-budget-meter drawer-meter" title="' + escapeAttr(tip) + '">'
+          '<span class="ai-budget-pill ai-budget-meter drawer-meter" title="' + escapeAttr(tip)
+          + '" aria-label="' + escapeAttr(tip) + '">'
           + html
           + '</span>';
         setRowVisible('drawer-row-ai-budget', true);

@@ -165,9 +165,11 @@ async function getBudgetSnapshot(pool, userId) {
       hasByokKey = !!rows[0].has_byok_key;
     }
   } catch (err) {
-    // A display read must never 500 the drawer. Fall back to "nothing
-    // spent" — the limit itself is still accurate.
+    // Never turn an unknown ledger state into an apparently-full
+    // allowance. The route returns 500 and clients clear their previous
+    // figure, so a database failure cannot display unverified headroom.
     log.warn('limits', 'budget snapshot read failed', { userId, err: err.message });
+    throw err;
   }
   // Midnight UTC, matching the boundary checkBudget's message promises.
   const reset = new Date();
