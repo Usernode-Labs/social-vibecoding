@@ -119,14 +119,17 @@ test('each named screen entry passes its own screen element to the gate', () => 
 test('the zoom sites keep their split mutation intact under the gate', () => {
   // type:'none' still runs fn() and then opts.after() as one mutation
   // (kit contract), so `after` must remain — dropping it would leave the
-  // outgoing screen painted behind the new one.
+  // outgoing screen painted behind the new one. #979 widened the conceal
+  // from "just `departing`" to "every screen root" (App._showOnlyScreen),
+  // since the _exitX helpers no longer hide their own screens.
   const nav = appJs.slice(appJs.indexOf('async navigateToApp('));
-  const zoom = nav.slice(0, nav.indexOf("document.getElementById('back-btn')"));
+  const zoom = nav.slice(0, nav.indexOf('await AppView.open(slug)'));
   assert.match(zoom, /App\._entryTransition\('zoom-in', appViewEl\)/);
-  assert.match(zoom, /after: \(\) => \{ if \(departing\) departing\.classList\.add\('hidden'\); \}/,
+  assert.match(zoom, /after: \(\) => \{ App\._showOnlyScreen\('app-view'\); \}/,
     'the conceal half of the mutation must survive');
   const home = appJs.slice(appJs.indexOf('navigateHome() {'));
-  assert.match(home.slice(0, 1600), /App\._entryTransition\('zoom-out', av\)/);
+  assert.match(home.slice(0, home.indexOf('App.updateHash()')),
+    /App\._entryTransition\('zoom-out', av\)/);
 });
 
 // ── HeaderMenu presentation state ──────────────────────────────────────

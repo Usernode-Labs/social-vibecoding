@@ -226,7 +226,17 @@
         'zoom-in' | 'zoom-out' (zoom opts — el, fromEl/fromRect, after,
         fallback, outEl — forward to the kit untouched). Falls back to running
         the mutation directly — both halves, since zoom callers split it
-        into fn (reveal) + after (conceal) — when the kit is absent. */
+        into fn (reveal) + after (conceal) — when the kit is absent.
+
+        EVERY VISIBLE MUTATION OF THE NAVIGATION GOES INSIDE `fn`. For
+        push/pop the kit wraps it in a View Transition, and a View
+        Transition captures the OUTGOING page at the next rendering
+        opportunity — NOT at this call — so anything mutated
+        synchronously after calling this (hiding the screen being left,
+        retitling the header, mounting the incoming screen) is baked into
+        the "previous page" snapshot the animation slides out. That is
+        what made the Settings animation show the incoming page behind
+        itself (#979). */
     transition(fn, opts) {
       const un = kit();
       if (!un || typeof un.transition !== 'function') {
