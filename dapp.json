@@ -172,6 +172,12 @@
       "description": "How often the stale-proposal sweeper runs."
     },
     {
+      "key": "GOVERNANCE_APPLY_TICK_MS",
+      "group": "Proposals & retention",
+      "default": "60000",
+      "description": "How often the fast governance-apply ticker applies vote-passed rename / env-var / close-issue / campaign proposals whose merge window has elapsed. Set to 0 to disable it (the hourly stale-proposal sweeper still applies them)."
+    },
+    {
       "key": "CERT_WARM_TIMEOUT_MS",
       "group": "TLS",
       "default": "15000",
@@ -837,6 +843,23 @@
       "name": "Explicit-approval proposal still shows the rejection countdown (#788)",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000032",
       "expectSelector": ".gc-reject-countdown"
+    },
+    {
+      "name": "A passed close proposal whose window elapsed shows the closing spinner (#1010)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "[data-gov-row='9100005'] .gc-merging-badge .dc-status-spinner-arc",
+      "expectText": "Closing issue #900011"
+    },
+    {
+      "name": "A long-stalled close proposal degrades to the retry copy, no spinner (#1010)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "[data-gov-row='9100006'] .gc-checks-running-badge",
+      "expectText": "Close pending — will retry automatically"
+    },
+    {
+      "name": "The closing state also renders on the proposal's own discussion page (#1010)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100005",
+      "expectSelector": "#gc-thread-head [data-gov-row='9100005'] .gc-merging-badge .dc-status-spinner-arc"
     },
     {
       "name": "App-admins section ships in the Members modal (#788)",
