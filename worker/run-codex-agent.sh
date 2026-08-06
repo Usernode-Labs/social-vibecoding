@@ -103,22 +103,20 @@ AGENT_THREAD_OUT="$AGENT_THREAD_ID"
 TMP_JSONL=$(mktemp /home/node/.usernode/turn-codex-XXXX.jsonl 2>/dev/null || mktemp)
 
 # The prompt is fed on stdin (a detached docker exec has no inherited
-# stdin). Dash has no PIPESTATUS, so we run codex buffered to a temp JSONL
-# file, capture its exit code via a plain $?, then stream the file out to
-# the turn journal. This is correct and dash-compatible; it does not stream
-# live line-by-line, but the host journal tailer still sees every line once
-# emitted. The raw JSONL is also kept for thread-id extraction and
-# resume-failure classification.
+# stdin). Dash has no PIPESTATUS, so we capture codex's exit code via a
+# subshell that writes it to a status file, and stream codex output LIVE
+# to the turn journal through tee (review P4: long turns must show tool/
+# edit progress in real time, not only after codex exits). The same tee
+# writes a copy to TMP_JSONL for thread-id extraction and resume-failure
+# classification.
 
 CODEX_RUN_EXIT=0
+TMP_STATUS=$(mktemp /home/node/.usernode/turn-codex-status-XXXX 2>/dev/null || mktemp)
+
 start_codex() {
   # shellcheck disable=SC2086
-  "$@" < "$PROMPT_FILE" > "$TMP_JSONL" 2>&1
-  CODEX_RUN_EXIT=$?
-}
-
-stream_jsonl() {
-  cat "$TMP_JSONL"
+  ( "$@" < "$PROMPT_FILE"; echo $? > "$TMP_STATUS" ) 2>&1 | tee "$TMP_JSONL"
+  CODEX_RUN_EXIT=$(cat "$TMP_STATUS")
 }
 
 if [ -n "$AGENT_THREAD_ID" ]; then
@@ -127,19 +125,18 @@ if [ -n "$AGENT_THREAD_ID" ]; then
   if [ "$CODEX_RUN_EXIT" -ne 0 ]; then
     # Only retry fresh for a genuinely missing/stale thread (review P4):
     # auth/credit/rate-limit/unknown failures must NOT re-run (they'd
-    # repeat billed work against a partially modified tree). We already
-    # got the JSONL in $TMP_JSONL (which the runner emits below), so
-    # decide here from its error content.
+    # repeat billed work against a partially modified tree). Decide here
+    # from the error content in $TMP_JSONL (already streamed to the journal).
     if grep -qiE 'thread not found|session not found|local rollout unavailable' "$TMP_JSONL"; then
       echo "__USERNODE_WARN__ codex thread missing (exit $CODEX_RUN_EXIT); retrying fresh"
       start_codex codex exec - --json -p usernode-build
       AGENT_THREAD_OUT=""
     else
       echo "__USERNODE_WARN__ codex resume failed (exit $CODEX_RUN_EXIT); NOT retrying fresh"
-      stream_jsonl
       CODEX_EXIT=$CODEX_RUN_EXIT
       AGENT_THREAD_OUT=""
-      # Emit a terminal result so the host doesn't wait forever, then bail.
+      # The failed resume's output was already streamed live; emit a
+      # terminal result so the host doesn't wait forever, then bail.
       echo "__USERNODE_RESULT__ cc_exit=$CODEX_RUN_EXIT ahead=0 behind=0 sha= push_ok=0 mode=$MODE agent_backend=codex_openrouter agent_model=$AGENT_MODEL agent_thread_id= agent_exit=$CODEX_RUN_EXIT"
       exit "$CODEX_RUN_EXIT"
     fi
@@ -149,7 +146,7 @@ else
   start_codex codex exec - --json -p usernode-build
 fi
 CODEX_EXIT=$CODEX_RUN_EXIT
-stream_jsonl
+rm -f "$TMP_STATUS" 2>/dev/null
 
 # Extract the thread id from thread.started for resume on the next turn.
 if [ -z "$AGENT_THREAD_OUT" ]; then
@@ -163,6 +160,15 @@ rm -f "$TMP_JSONL" 2>/dev/null
 if [ "$MODE" = "scout" ]; then
   echo "__USERNODE_PHASE__ done"
   echo "__USERNODE_RESULT__ cc_exit=$CODEX_EXIT ahead=0 behind=0 sha= push_ok=0 mode=scout agent_backend=codex_openrouter agent_model=$AGENT_MODEL agent_thread_id=$AGENT_THREAD_OUT agent_exit=$CODEX_EXIT"
+  exit "$CODEX_EXIT"
+fi
+
+# A failed (non-zero) codex turn must NOT be committed or pushed — doing so
+# would publish partial/incomplete work. Emit a terminal result and bail.
+if [ "$CODEX_EXIT" -ne 0 ]; then
+  echo "__USERNODE_WARN__ codex exited non-zero ($CODEX_EXIT); skipping commit/push"
+  echo "__USERNODE_PHASE__ done"
+  echo "__USERNODE_RESULT__ cc_exit=$CODEX_EXIT ahead=0 behind=0 sha= push_ok=0 mode=build agent_backend=codex_openrouter agent_model=$AGENT_MODEL agent_thread_id=$AGENT_THREAD_OUT agent_exit=$CODEX_EXIT"
   exit "$CODEX_EXIT"
 fi
 

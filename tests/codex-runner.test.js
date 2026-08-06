@@ -27,7 +27,9 @@ function makeEnv(run) {
   fs.mkdirSync(ws, { recursive: true });
   const prompt = path.join(dir, 'prompt.txt');
   fs.writeFileSync(prompt, 'scout prompt');
+  const invokeLog = path.join(dir, 'codex-invocations.log');
   const env = {
+    INVOKE_LOG: invokeLog,
     PATH: `${bin}:${process.env.PATH}`,
     PROMPT_FILE: prompt,
     BRANCH: 'smoke',
@@ -42,8 +44,13 @@ function makeEnv(run) {
 
 test('runner: fresh scout turn reads prompt, extracts thread id, completes', () => {
   const fakeCodex = `#!/bin/sh
-# read stdin (the prompt) to prove it was delivered
-while IFS= read -r _line; do :; done
+# Prove the prompt was delivered: fail if stdin is empty (review P4).
+echo "invocation" >> "$INVOKE_LOG"
+INPUT=$(cat)
+if [ -z "$INPUT" ]; then
+  echo '{"type":"error","message":"No prompt provided via stdin"}'
+  exit 1
+fi
 echo '{"type":"thread.started","thread_id":"smoke-123"}'
 echo '{"type":"turn.started"}'
 echo '{"type":"item.completed","item":{"id":"i1","type":"agent_message","message":"DONE"}}'
@@ -73,9 +80,11 @@ exit 1
   assert.match(r.stdout, /mode=scout agent_backend=codex_openrouter .* agent_thread_id=/, 'terminal result emitted');
 });
 
-test('runner: resume that IS thread-missing retries fresh once', () => {
+test('runner: resume that IS thread-missing retries fresh once (a 2nd invocation ran)', () => {
   const fakeCodex = `#!/bin/sh
-while IFS= read -r _line; do :; done
+echo "invocation" >> "$INVOKE_LOG"
+INPUT=$(cat)
+if [ -z "$INPUT" ]; then exit 1; fi
 echo '{"type":"error","message":"thread not found"}'
 exit 1
 `;
@@ -84,4 +93,8 @@ exit 1
   const r = spawnSync('sh', [RUNNER], { env, encoding: 'utf8' });
   assert.match(r.stdout, /retrying fresh/, 'retries fresh when thread missing');
   assert.match(r.stdout, /mode scout/, 'runs the fresh turn');
+  // The missing-thread path must actually invoke codex a SECOND time (fresh
+  // build), not just print "retrying fresh" (review P4).
+  const invocations = fs.readFileSync(env.INVOKE_LOG, 'utf8').trim().split('\n').filter(Boolean);
+  assert.ok(invocations.length >= 2, `expected >=2 codex invocations, got ${invocations.length}`);
 });

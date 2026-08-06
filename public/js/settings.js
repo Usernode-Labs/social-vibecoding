@@ -1904,11 +1904,19 @@
     async _saveOpenRouterDefault() {
       const model = document.getElementById('settings-openrouter-model')?.value;
       const reasoningEffort = document.getElementById('settings-openrouter-reasoning')?.value || null;
+      // Preserve the user's existing cost cap across this save (review P3):
+      // include it explicitly so an omission can't drop the safety limit,
+      // and the server also COALESCEs when omitted.
+      let maxTurnCostUsd = null;
+      try {
+        const prefs = await (await fetch('/api/me/coding-agent', { credentials: 'same-origin' })).json();
+        maxTurnCostUsd = prefs.backends?.codex_openrouter?.maxTurnCostUsd ?? null;
+      } catch {}
       try {
         const r = await fetch('/api/me/coding-agent', {
           method: 'PATCH', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ defaultBackend: 'codex_openrouter', model, reasoningEffort }),
+          body: JSON.stringify({ defaultBackend: 'codex_openrouter', model, reasoningEffort, maxTurnCostUsd }),
         });
         if (!r.ok) { const j = await r.json().catch(() => ({})); this._setOrStatus(j.error || 'Failed to save.', 'error'); return; }
         this._setOrStatus('Codex saved as your default coding agent.', 'ok');

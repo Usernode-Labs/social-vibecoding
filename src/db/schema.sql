@@ -4813,6 +4813,7 @@ CREATE TABLE IF NOT EXISTS agent_turns (
   output_tokens            BIGINT NOT NULL DEFAULT 0,
   reasoning_output_tokens  BIGINT NOT NULL DEFAULT 0,
   actual_cost_usd          NUMERIC(18,8) NOT NULL DEFAULT 0,
+  reserved_cost_usd        NUMERIC(18,8) NOT NULL DEFAULT 0,
   cost_source              VARCHAR(24),
   billed_by                VARCHAR(32),
   error_code               VARCHAR(64),
@@ -4827,6 +4828,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_turns_session
 -- preceding PR revision has agent_turns without agent_config_version, and
 -- CREATE TABLE IF NOT EXISTS is a no-op there. This ALTER covers that path.
 ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS agent_config_version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS reserved_cost_usd NUMERIC(18,8) NOT NULL DEFAULT 0;
 
 -- Per-request proxy diagnostics. Uniqueness on (turn_id,
 -- upstream_request_id) prevents double-settlement from SSE replays.

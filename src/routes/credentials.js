@@ -211,7 +211,12 @@ function credentialRoutes(config) {
          ON CONFLICT (user_id, backend) DO UPDATE SET
            model_id = EXCLUDED.model_id,
            reasoning_effort = EXCLUDED.reasoning_effort,
-           max_turn_cost_usd = EXCLUDED.max_turn_cost_usd,
+           -- Preserve the existing cost cap when the request omits it
+           -- (review P3): Settings' model/default save doesn't send
+           -- maxTurnCostUsd, so a plain overwrite would silently wipe the
+           -- user's safety limit. Only replace when explicitly provided.
+           max_turn_cost_usd = COALESCE(EXCLUDED.max_turn_cost_usd,
+             user_agent_preferences.max_turn_cost_usd),
            is_default = EXCLUDED.is_default,
            updated_at = NOW()`,
         [req.user.id, backend, model || null, reasoningEffort || null, maxTurnCostUsd || null, !!defaultBackend],

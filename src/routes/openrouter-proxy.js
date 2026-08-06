@@ -125,18 +125,29 @@ function openrouterProxyRoutes(config) {
         try {
           await client.query('BEGIN');
           const { rows: costRows } = await client.query(
-            'SELECT actual_cost_usd FROM agent_turns WHERE id = $1 FOR UPDATE', [turnId],
+            'SELECT actual_cost_usd, reserved_cost_usd FROM agent_turns WHERE id = $1 FOR UPDATE', [turnId],
           );
           const spent = parseFloat(costRows[0]?.actual_cost_usd || 0);
-          // Conservative reservation: assume the request uses its full
-          // max_output_tokens budget at ~$2/M output + $1/M input.
-          const outBudget = (body.max_output_tokens || 128000) * (2 / 1000000);
-          const reserve = outBudget + 0.01;
-          if (spent + reserve >= effectiveMaxCost) {
+          const reserved = parseFloat(costRows[0]?.reserved_cost_usd || 0);
+          // Conservative reservation price, stored on the row so that a
+          // CONCURRENT request (which blocks on FOR UPDATE and then reads
+          // this row) sees the previous request's reservation and counts
+          // it against the cap (review P2). We over-estimate output cost;
+          // settlement swaps this reservation for the actual cost.
+          const estInput = 100000; // ~100k input tokens for repo context
+          const estOutput = body.max_output_tokens || 128000;
+          const reserve = (estInput * 1 / 1000000) + (estOutput * 3 / 1000000) + 0.05;
+          if (spent + reserved + reserve >= effectiveMaxCost) {
             await client.query('COMMIT').catch(() => {});
-            log.warn('openrouter-proxy', 'turn cost ceiling would be exceeded', { turnId, effectiveMaxCost, spent });
+            log.warn('openrouter-proxy', 'turn cost ceiling would be exceeded', { turnId, effectiveMaxCost, spent, reserved });
             return res.status(429).json({ error: { message: 'turn cost ceiling reached' } });
           }
+          // Persist the reservation atomically with the check so concurrent
+          // requests account for it (review P2).
+          await client.query(
+            'UPDATE agent_turns SET reserved_cost_usd = reserved_cost_usd + $2 WHERE id = $1',
+            [turnId, reserve],
+          );
           await client.query('COMMIT');
         } catch (e) {
           await client.query('ROLLBACK').catch(() => {});
@@ -198,6 +209,9 @@ function openrouterProxyRoutes(config) {
                    output_tokens = output_tokens + $6,
                    reasoning_output_tokens = reasoning_output_tokens + $7,
                    actual_cost_usd = actual_cost_usd + $8,
+                   -- release the admitted reservation; the next admission
+                   -- re-reserves (review P2)
+                   reserved_cost_usd = 0,
                    cost_source = 'openrouter_usage',
                    billed_by = 'user_openrouter'
                  WHERE id = $1`,
@@ -239,11 +253,12 @@ function openrouterProxyRoutes(config) {
         // usage and settle it — never skip settlement just because the
         // client didn't request streaming.
         if (upstream.ok) {
-          try {
-            const body = JSON.parse(text);
-            const u = extractUsage(body.type || 'response.completed', body);
-            if (u) await settle(u);
-          } catch {}
+          // Fail closed (review P2): if settlement throws (accounting
+          // failure), propagate and return an error rather than silently
+          // delivering a response whose cost was never recorded.
+          const body = JSON.parse(text);
+          const u = extractUsage(body.type || 'response.completed', body);
+          if (u) await settle(u);
         }
         return res.send(text);
       }

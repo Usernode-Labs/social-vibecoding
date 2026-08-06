@@ -6677,6 +6677,19 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
       ).catch(() => {});
       session.agent_thread_id = recoveredThreadId;
     }
+    // Complete the recovered Codex ledger turn using the persisted turn
+    // identity (review P1): turnUuid is stored in active_turn at dispatch,
+    // so a turn that survived a restart can still be marked terminal
+    // instead of being left 'running' forever.
+    if (activeTurn.backend === 'codex_openrouter' && activeTurn.turnUuid) {
+      const failed = !!(result.fatalError || result.ccIsError
+        || (result.agentExit != null && result.agentExit !== 0)
+        || (result.exitCode != null && result.exitCode > 0));
+      await agentTurn.completeCodexTurn({
+        pool, turnUuid: activeTurn.turnUuid,
+        status: failed ? 'failed' : 'completed',
+      });
+    }
     // Release the record AND the journal it points at (the resume above
     // consumed it, and holdTurnRecord callers no longer delete it in
     // execInWorker's finally).
@@ -8501,7 +8514,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
       // (review P1): completing after the first dispatch would 409 the
       // headless retry that reuses the same turn token.
       if (codexCtx?.turnUuid) {
-        const failed = !!(result?.fatalError || result?.ccIsError);
+        const failed = !!(result?.fatalError || result?.ccIsError || (result?.agentExit != null && result?.agentExit !== 0) || (result?.exitCode != null && result?.exitCode > 0));
         await agentTurn.completeCodexTurn({
           pool, turnUuid: codexCtx.turnUuid,
           status: failed ? 'failed' : 'completed',
@@ -9765,7 +9778,7 @@ path: /another/changed/view
       // (review P1): completing after the first dispatch would 409 the
       // headless retry that reuses the same turn token.
       if (codexCtx?.turnUuid) {
-        const failed = !!(result?.fatalError || result?.ccIsError);
+        const failed = !!(result?.fatalError || result?.ccIsError || (result?.agentExit != null && result?.agentExit !== 0) || (result?.exitCode != null && result?.exitCode > 0));
         await agentTurn.completeCodexTurn({
           pool, turnUuid: codexCtx.turnUuid,
           status: failed ? 'failed' : 'completed',
