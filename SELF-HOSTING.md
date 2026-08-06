@@ -1033,6 +1033,58 @@ clone routinely accessible through dev-chat preview):**
   `/api/teardown-staging`). It cannot escape to the parent prod
   origin.
 
+## Host-side deployer (primary deploy path)
+
+Production deploys used to depend on a GitHub Actions runner picking up
+the push to `main`. During the 2026-08-06 GHA outage, merged self-app
+PRs sat undeployed for hours with the workflow queued — the platform's
+own merge loop was hostage to a third-party CI queue.
+
+The primary path is now a systemd service on the VPS:
+
+- **`scripts/usernode-deployer.sh`** polls `github.com` (git data plane
+  only — the same dependency `rollback.sh` already has, no Actions) every
+  30 s for a new head of `main`. On a new sha it checks the commit out
+  into `/opt/usernode-src`, rsyncs it over `/opt/usernode` with the same
+  exclude list the workflow uses (`.env`, `runtime/`, `.platform-env*`,
+  `data/` survive), computes the node/caddy change filters with
+  `git diff`, and runs `scripts/deploy.sh`.
+- **`scripts/deploy.sh`** is the single copy of the deploy logic
+  (formerly inlined in `deploy.yml`'s ssh step): archive-refresh gating,
+  platform-env materialization, pg_dump wait, health gate with automatic
+  rollback. Both callers serialize on `runtime/deploy.lock`, and
+  `SKIP_IF_CURRENT` turns the loser of a workflow/poller race into a
+  no-op.
+- **The Deploy workflow stays** for two jobs only: rotating secrets
+  (only a runner can read GitHub secrets; it composes `.env` and
+  forwards it as `BASE_ENV_B64` — the poller never touches `.env` beyond
+  patching `GIT_SHA`) and manual force-redeploys via `workflow_dispatch`.
+
+Failure behavior: a sha that fails the health gate is rolled back by
+`deploy.sh`, then the poller backs off on that sha (30 min) instead of
+thrashing build → rollback; any new commit on `main` deploys
+immediately. If `github.com` is unreachable, the poller just keeps
+retrying — the running platform is untouched.
+
+One-time install (as root on the VPS; afterwards every deploy refreshes
+the mirrored copies automatically):
+
+```bash
+install -d -o deploy -g deploy -m 755 /opt/usernode-tools
+install -m 755 /opt/usernode/scripts/usernode-deployer.sh /opt/usernode-tools/
+install -m 644 /opt/usernode/scripts/usernode-deployer.service /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now usernode-deployer
+```
+
+Operations:
+
+```bash
+systemctl status usernode-deployer          # is it alive
+journalctl -u usernode-deployer -f          # live deploy output
+cat /opt/usernode/runtime/deploy-last.log   # last deploy transcript
+grep ^GIT_SHA= /opt/usernode/.env           # what is deployed
+```
+
 ## Sequencing summary
 
 ```mermaid
