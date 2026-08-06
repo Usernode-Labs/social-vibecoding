@@ -339,8 +339,13 @@ test('native.css: .un-panel does not clip its filler or restrict input', () => {
   const block = cssBlock('.un-panel');
   assert.ok(!/overflow:\s*hidden/.test(block),
     'overflow:hidden on .un-panel would clip the overshoot filler away (cf. .un-sheet)');
-  assert.match(block, /padding-top:\s*env\(safe-area-inset-top/,
-    'rows must clear the status bar / notch');
+  // #970: the forwarded custom property first, env() as the standalone
+  // fallback — bare env() is 0px inside a Usernode app frame.
+  assert.match(
+    block,
+    /padding-top:\s*var\(--un-safe-inset-top,\s*env\(safe-area-inset-top/,
+    'rows must clear the status bar / notch, embedded as well as standalone'
+  );
   assert.ok(!/transition:\s*[^;]*transform/.test(block),
     'translateX is JS-owned (entrance/exit springs) — a CSS transition on transform would fight it');
   // With no drag gesture there is nothing to take capability away for:
@@ -362,8 +367,11 @@ test('native.css: the drawer ships no grabber affordance', () => {
 test('native.css: the panel body absorbs the keyboard without stacking the safe area', () => {
   const body = cssBlock('.un-panel-body');
   assert.match(body, /overflow-y:\s*auto/, 'the body is the drawer scroller');
-  assert.match(body, /env\(safe-area-inset-bottom/,
-    'the last row must clear the home indicator');
+  assert.match(
+    body,
+    /var\(--un-safe-inset-bottom,\s*env\(safe-area-inset-bottom/,
+    'the last row must clear the home indicator (#970: forwarded property first)'
+  );
   assert.match(body, /var\(--un-kb-inset/,
     'a full-height panel cannot ride above the keyboard — it pads for it instead');
   const kb = cssBlock('html.un-kb .un-panel-body');
@@ -432,8 +440,11 @@ test('native.css: .un-ptr-layer clips the puck to below its anchor line', () => 
 test('native.css: window-mode puck layer stacks under .un-navbar', () => {
   const layer = cssBlock('.un-ptr-layer.un-ptr-layer-fixed');
   assert.match(layer, /position:\s*fixed/);
-  assert.match(layer, /top:\s*env\(safe-area-inset-top/,
-    'with no anchor element the puck emerges from under the status bar, not the viewport top');
+  assert.match(
+    layer,
+    /top:\s*var\(--un-safe-inset-top,\s*env\(safe-area-inset-top/,
+    'with no anchor element the puck emerges from under the status bar, not the viewport top'
+  );
   const layerZ = Number(/z-index:\s*(\d+)/.exec(layer)[1]);
   const navZ = Number(/z-index:\s*(\d+)/.exec(cssBlock('.un-navbar'))[1]);
   assert.ok(layerZ < navZ,
@@ -822,6 +833,216 @@ test('gridDropSide: the ~90% width threshold separates the two regimes', () => {
   // …while 90%+ is treated as full-width (y decides).
   const wide = { left: 0, top: 0, width: 900, height: 100 };
   assert.equal(gridDropSide(wide, 1000, 300, 90), 'after', 'bottom y wins despite left x');
+});
+
+// ── attachGridPlacement (free-form placement) ──────────────────────────
+//
+// A SIBLING of attachReorder's grid mode, not a flag on it. attachReorder
+// speaks in a dense index space (onReorder(from, to, item) over a list where
+// every position is occupied) and enforces that by moving the real item
+// through the DOM live while siblings FLIP aside. Free placement has no such
+// index — a layout with holes is not an ordering — and must leave every
+// other item exactly where it is.
+
+test('attachGridPlacement is exported and documented beside attachReorder', () => {
+  assert.match(NATIVE_JS, /attachGridPlacement: attachGridPlacement,/);
+  assert.match(NATIVE_JS, /\*\s+unNative\.attachGridPlacement\(listEl, opts\)/,
+    'the header surface list names it');
+  // Nothing about the drop is decided by the kit: the host answers "which
+  // cell is this point in", which keeps the kit free of any assumption about
+  // row heights, gaps or grid-template-columns.
+  const fn = NATIVE_JS.slice(
+    NATIVE_JS.indexOf('function attachGridPlacement(listEl, options) {'),
+    NATIVE_JS.indexOf('/* ────────────────────────────────────────────────────────────────────\n   * Page transitions'));
+  assert.ok(fn.length > 1000, 'located attachGridPlacement');
+  assert.match(fn, /opts\.cellFromPoint\(drag\.lastX, drag\.lastY, ghostInfo\(\)\)/,
+    'the pointer stays the first two arguments; the tile’s geometry rides along');
+  assert.match(fn, /opts\.canPlace\(drag\.item, cell\)/);
+  assert.match(fn, /opts\.onPlace\(item, cell\)/);
+  // The real item never moves during the drag — that is the whole
+  // difference from displacement mode.
+  assert.doesNotMatch(fn, /insertBefore|gridFlip/);
+  // The ghost must not occlude the host's own elementFromPoint hit-test.
+  assert.match(fn, /ghost\.style\.pointerEvents = 'none'/);
+});
+
+// The finger is not the tile. The ghost tracks the pointer from wherever the
+// item was grabbed, so a host that resolves its target from x/y puts the
+// tile's TOP-LEFT under the finger — for a multi-cell item the highlight then
+// sits a whole tile away from the block the user is holding. The kit can't fix
+// that itself (it computes no cells) but it is the only party that knows where
+// the ghost actually is, so it reports that geometry and the doc tells hosts
+// to use the centroid.
+test('cellFromPoint is handed the dragged TILE’s live geometry, not just the finger', () => {
+  const fn = NATIVE_JS.slice(
+    NATIVE_JS.indexOf('function attachGridPlacement(listEl, options) {'),
+    NATIVE_JS.indexOf('/* ────────────────────────────────────────────────────────────────────\n   * Page transitions'));
+
+  const info = fn.slice(fn.indexOf('function ghostInfo() {'), fn.indexOf('function update() {'));
+  assert.ok(info.length > 100, 'located ghostInfo()');
+
+  // The ghost is position:fixed, so its viewport rect is the lift rect plus
+  // the live translate — pure arithmetic. A getBoundingClientRect() here would
+  // put a forced layout on the pointermove path.
+  assert.match(info, /var left = drag\.ghostLeft \+ drag\.gx;/);
+  assert.match(info, /var top = drag\.ghostTop \+ drag\.gy;/);
+  assert.doesNotMatch(info, /getBoundingClientRect/);
+  const update = fn.slice(fn.indexOf('function update() {'), fn.indexOf('function autoScrollFrame() {'));
+  assert.doesNotMatch(update, /getBoundingClientRect/);
+
+  // Size comes from the lift measurement, so the rect is complete.
+  assert.match(fn, /drag\.ghostW = rect\.width;/);
+  assert.match(fn, /drag\.ghostH = rect\.height;/);
+  assert.match(info, /width: drag\.ghostW, height: drag\.ghostH/);
+
+  // The dragged item rides along (mirroring canPlace/onHover), and so does the
+  // CENTRE — the thing a host needs to place a footprint under the tile.
+  assert.match(info, /item: drag\.item,/);
+  assert.match(info, /centerX: left \+ drag\.ghostW \/ 2,/);
+  assert.match(info, /centerY: top \+ drag\.ghostH \/ 2,/);
+  // x/y keep their meaning, so a host that ignores info is unaffected.
+  assert.match(info, /pointerX: drag\.lastX,/);
+  assert.match(info, /pointerY: drag\.lastY,/);
+
+  // And the contract says which one to answer from.
+  const doc = NATIVE_JS.slice(
+    NATIVE_JS.indexOf('// attachGridPlacement(listEl, {'),
+    NATIVE_JS.indexOf('function attachGridPlacement(listEl, options) {'));
+  assert.match(doc, /cellFromPoint\(x, y, info\)/);
+  assert.match(doc, /CENTROID/, 'the doc block names the rule hosts should follow');
+});
+
+test('attachGridPlacement never throws on bad input', () => {
+  // Same contract attachReorder carries: a bad call logs a warning and
+  // returns a no-op handle, so a host that wires it defensively is never the
+  // reason a page dies.
+  const fn = NATIVE_JS.slice(
+    NATIVE_JS.indexOf('function attachGridPlacement(listEl, options) {'),
+    NATIVE_JS.indexOf('/* ────────────────────────────────────────────────────────────────────\n   * Page transitions'));
+  assert.match(fn, /var noop = \{ detach: function \(\) \{\} \};/);
+  assert.match(fn, /if \(!listEl \|\| listEl\.nodeType !== 1\) \{[\s\S]*?console\.warn[\s\S]*?return noop;/);
+  // cellFromPoint is the one REQUIRED option — without it the kit has no way
+  // to resolve a drop at all, so it disables itself rather than guessing.
+  assert.match(fn, /typeof opts\.cellFromPoint !== 'function'[\s\S]*?console\.warn[\s\S]*?return noop;/);
+});
+
+test('attachGridPlacement fires onSettle on every teardown path', () => {
+  // A mid-lift detach never reaches release(), so onSettle has to fire from
+  // detach() too — otherwise a host deferral flag set in onLift (the guard
+  // that stops a WS event replacing the grid) gets stuck on forever.
+  const fn = NATIVE_JS.slice(
+    NATIVE_JS.indexOf('function attachGridPlacement(listEl, options) {'),
+    NATIVE_JS.indexOf('/* ────────────────────────────────────────────────────────────────────\n   * Page transitions'));
+  const detach = fn.slice(fn.indexOf('detach: function () {'));
+  assert.match(detach, /if \(wasLifted && opts\.onSettle\)/);
+  assert.match(detach, /pendingFinish/, 'a ghost settle stopped mid-spring still owes its callbacks');
+});
+
+// ── The release glide ──────────────────────────────────────────────────
+//
+// One release must read as ONE motion: from wherever the ghost is under the
+// finger, to the cell the tile lands in. Three separate things broke that,
+// and each is pinned below.
+
+test('the ghost glide runs in the PIXEL domain, not on 0→1 progress', () => {
+  // isAtRest's thresholds are absolute — REST_DELTA px, REST_VELOCITY px/ms.
+  // Drive a spring over a normalized 0→1 progress value through them and
+  // "rest" fires while the progress is still REST_DELTA short of 1, i.e. at
+  // ~66% of the travel: the ghost teleports the last third of the way. That
+  // is not a tuning nit, it is the difference between landing and snapping.
+  const norm = simulateSpring(0, 1, 0, PRESETS.stiff);
+  assert.ok(norm.x < 0.7,
+    `a normalized stiff spring quits at ${norm.x.toFixed(3)} of the travel`);
+
+  // The same preset over the same journey expressed in pixels arrives.
+  const dist = 300;
+  const px = simulateSpring(dist, 0, 0, PRESETS.stiff);
+  assert.ok(Math.abs(px.x) < physics.REST_DELTA, `pixel-domain spring arrives: ${px.x}`);
+  assert.ok(px.durationMs > norm.durationMs,
+    'and it takes longer, because it actually finishes the trip');
+
+  // glideGhost is that spring, shared by both ghost drops.
+  assert.match(NATIVE_JS, /function glideGhost\(ghost, gx, gy, tx, ty, onRest\) \{/);
+  const glide = NATIVE_JS.slice(
+    NATIVE_JS.indexOf('function glideGhost(ghost, gx, gy, tx, ty, onRest) {'),
+    NATIVE_JS.indexOf('Swipe-to-act rows'));
+  assert.match(glide, /from: dist, to: 0/, 'counts remaining DISTANCE down to zero');
+  assert.doesNotMatch(glide, /from: 0, to: 1/);
+  // Interpolates both axes off that one scalar, so the flight is a straight
+  // line rather than two springs racing.
+  assert.match(glide, /1 - remaining \/ dist/);
+  assert.match(glide, /translate\('\s*\+\s*\n?\s*\(gx \+ dx \* p\) \+ 'px, ' \+ \(gy \+ dy \* p\) \+ 'px\)'/);
+
+  // Neither drop site may hand-roll it again.
+  assert.equal(NATIVE_JS.match(/activeSpring = glideGhost\(ghost, gx, gy, tx, ty,/g).length, 2,
+    'both the reorder drop and the placement drop use it');
+  assert.doesNotMatch(NATIVE_JS, /from: 0, to: 1, velocity: 0, preset: 'stiff'/,
+    'no normalized ghost settle survives anywhere in the kit');
+});
+
+test('the placement glide STARTS at the ghost’s live offset and ENDS on the landing cell', () => {
+  const fn = NATIVE_JS.slice(
+    NATIVE_JS.indexOf('function attachGridPlacement(listEl, options) {'),
+    NATIVE_JS.indexOf('/* ────────────────────────────────────────────────────────────────────\n   * Page transitions'));
+  const release = fn.slice(fn.indexOf('function release(cancelled) {'),
+    fn.indexOf('function onPointerDown(e) {'));
+  assert.ok(release.length > 500, 'located release()');
+
+  // ORIGIN: the ghost's own live translate under the finger. Re-deriving it
+  // from the pointer would drop the lift offset and jump on the first frame.
+  assert.match(release, /var gx = drag\.gx;\n\s*var gy = drag\.gy;/);
+
+  // TARGET: the host's landing rect for a COMMITTED drop. The real item never
+  // moves during a placement drag, so its own rect is still the ORIGIN cell —
+  // settling there flies the tile back to where it was picked up and only
+  // then lets the re-render pop it into the drop cell.
+  assert.match(release, /if \(placed && typeof opts\.rectForCell === 'function'\)/);
+  assert.match(release, /target = opts\.rectForCell\(item, cell\)/);
+  assert.match(release, /var tx = target\.left - drag\.ghostLeft;/);
+  assert.match(release, /var ty = target\.top - drag\.ghostTop;/);
+  // A host that omits it, or returns something unmeasurable, still gets a
+  // glide rather than NaN.
+  assert.match(release, /if \(!target \|\| typeof target\.left !== 'number'[\s\S]*?target = item\.getBoundingClientRect\(\);/);
+  assert.match(release, /catch \(err\) \{ target = null; \}/);
+  // A refused or cancelled drop lands nowhere, so it never asks the host and
+  // springs back to the item instead — `placed` is what gates it, and it is
+  // false for both.
+  assert.match(release, /var placed = !cancelled && !!cell && drag\.ok;/);
+  assert.equal(release.match(/opts\.rectForCell\(/g).length, 1,
+    'one call, behind the placed gate');
+});
+
+test('nothing swaps into place until the glide finishes', () => {
+  const fn = NATIVE_JS.slice(
+    NATIVE_JS.indexOf('function attachGridPlacement(listEl, options) {'),
+    NATIVE_JS.indexOf('/* ────────────────────────────────────────────────────────────────────\n   * Page transitions'));
+  const release = fn.slice(fn.indexOf('function release(cancelled) {'),
+    fn.indexOf('function onPointerDown(e) {'));
+  const finish = release.slice(release.indexOf('function finish() {'),
+    release.indexOf('listEl.classList.remove(\'un-reordering\')'));
+
+  // The host's re-render is driven from onPlace, and the origin slot and
+  // ghost come off, all inside finish() — which the spring's onRest calls.
+  for (const owed of [/opts\.onPlace\(item, cell\)/, /removeChild\(ghost\)/,
+    /item\.classList\.remove\('un-reorder-slot'\)/, /opts\.onSettle\(placed\)/]) {
+    assert.match(finish, owed);
+  }
+  assert.match(release, /activeSpring = glideGhost\(ghost, gx, gy, tx, ty, function \(\) \{\n\s*activeSpring = null;\n\s*finish\(\);/,
+    'finish() is the glide’s onRest, not something release() runs itself');
+  // …and nothing above finish() may do any of it early.
+  const beforeFinish = release.slice(0, release.indexOf('function finish() {'));
+  assert.doesNotMatch(beforeFinish, /onPlace|removeChild|un-reorder-slot/);
+
+  // The displacement preview is part of the same motion: clearing hover at
+  // release would snap the displaced occupants back to their old cells while
+  // the tile is still in the air, then move them a second time on the
+  // re-render. A committed drop tears it down in finish(); a REFUSED one
+  // clears at once, because nothing is landing.
+  assert.match(release, /if \(!placed\) hover\(null, false\);/);
+  assert.match(finish, /if \(placed && opts\.onHover\)[\s\S]*?opts\.onHover\(item, null, false\)/);
+  // Ordering inside finish(): the preview comes off in the same task as the
+  // re-render onPlace triggers, so both land in one paint.
+  assert.ok(finish.indexOf('onHover') < finish.indexOf('onPlace'));
 });
 
 // ── Reorder edge auto-scroll ───────────────────────────────────────────

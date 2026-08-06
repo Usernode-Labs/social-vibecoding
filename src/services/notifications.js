@@ -249,7 +249,7 @@ async function hydrateAndPush(pool, row) {
               cm.content AS message_content,
               cm.thread_type, cm.thread_ref,
               n.session_id,
-              cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
+              cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
               su.username AS source_username,
               n.detail
        FROM notifications n
@@ -493,7 +493,7 @@ async function listForUser(pool, userId, { limit = 100, before = null } = {}) {
             cm.content AS message_content,
             cm.thread_type, cm.thread_ref,
             n.session_id,
-            cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
+            cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
             su.username AS source_username,
             n.detail
      FROM notifications n
@@ -508,6 +508,31 @@ async function listForUser(pool, userId, { limit = 100, before = null } = {}) {
     params
   );
   return rows;
+}
+
+// Fetch one notification through the same ownership and hydration boundary as
+// the dropdown list. Native push carries only this opaque id; all private
+// content is resolved here after the Social web session is authenticated.
+async function getForUser(pool, userId, id) {
+  const { rows } = await pool.query(
+    `SELECT n.id, n.kind, n.read_at, n.created_at,
+            n.app_id, a.slug AS app_slug, a.name AS app_name,
+            n.chat_message_id,
+            cm.content AS message_content,
+            cm.thread_type, cm.thread_ref,
+            n.session_id,
+            cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
+            su.username AS source_username,
+            n.detail
+       FROM notifications n
+       LEFT JOIN apps a ON a.id = n.app_id
+       LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
+       LEFT JOIN chat_sessions cs ON cs.id = n.session_id
+       LEFT JOIN users su ON su.id = n.source_user_id
+      WHERE n.id = $1 AND n.user_id = $2`,
+    [id, userId]
+  );
+  return rows[0] || null;
 }
 
 async function countUnread(pool, userId) {
@@ -684,9 +709,9 @@ async function markRead(pool, userId, { id, all = false, kinds = null, excludeKi
 // Keeps the wire format identical whether the notif is fresh (over WS) or
 // loaded from history (`GET /api/notifications`).
 //
-// Kudos extension: sessionId / prTitle / prNumber ride along whenever the
-// row carries a session reference. The FE renderer keys off `kind` to
-// decide which fields to use — kudos rows ignore chatMessageId /
+// Kudos extension: sessionId / sessionTitle / prTitle / prNumber ride along
+// whenever the row carries a session reference. The FE renderer keys off
+// `kind` to decide which fields to use — kudos rows ignore chatMessageId /
 // messageContent, mention rows ignore sessionId / prTitle.
 function serialize(row) {
   return {
@@ -704,11 +729,16 @@ function serialize(row) {
     threadType: row.thread_type || null,
     threadRef: row.thread_ref != null ? row.thread_ref : null,
     sessionId: row.session_id,
+    // #971: the session's display name (schema.sql #249 — set from the first
+    // interactive message, refreshed pre-PR, mirrored from pr_title once a PR
+    // exists). Session-scoped renderers prefer it so a titled session never
+    // shows its machine-generated branch name.
+    sessionTitle: row.session_title,
     prTitle: row.pr_title,
     prNumber: row.pr_number,
-    // #161: auto_solve_done rows route back to their issue row; the
-    // session_done renderer falls back to the branch name when the
-    // session has no LLM-generated PR title yet.
+    // #161: auto_solve_done rows route back to their issue row. branchName is
+    // the last-resort label for session-scoped rows — only reached when the
+    // session has neither a session title nor a PR title yet.
     headlessIssueNumber: row.headless_issue_number,
     branchName: row.branch_name,
     sourceUsername: row.source_username,
@@ -738,6 +768,7 @@ module.exports = {
   markApproverInviteNotificationsRead,
   filterToCollaborators,
   listForUser,
+  getForUser,
   countUnread,
   markRead,
   markReadForSession,

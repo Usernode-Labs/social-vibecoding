@@ -255,6 +255,50 @@ test('user_activities span multiple challenges with the challenge_completion rep
   assert.ok(challengeIds.size >= 6, 'activities reference a variety of distinct challenges');
 });
 
+// The home-screen Challenges card (#911) can draw four states, and a seed
+// that omits one leaves it unreviewable — nobody can approve a state that
+// never renders. The finished NUMERIC one (900514) is the newest and the
+// easiest to lose: it only reads as finished if the ledger credits it all
+// the way to its target, so the row count here is load-bearing.
+test('the open challenge fixtures cover every state the home card can draw', () => {
+  const start = body.indexOf('OPEN challenges for the home-screen');
+  const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
+  for (const id of ['900510', '900511', '900512', '900513', '900514']) {
+    assert.match(block, new RegExp(`\\(${id}, \\$1,`), `challenge ${id} must be seeded open`);
+  }
+  // Open means enabled AND NOT organiser-completed AND inside the window.
+  assert.equal((block.match(/TRUE, 1\d, FALSE,/g) || []).length, 5,
+    'all five are enabled and not organiser-completed');
+  assert.equal((block.match(/NOW\(\) - INTERVAL '5 days', NOW\(\) \+ INTERVAL '10 days'/g) || []).length, 5,
+    'all five sit inside their schedule window');
+
+  // 900514 hangs off the numeric template whose target the viewer loop
+  // credits in full.
+  assert.match(block, /\(900514, \$1, 900507,/);
+  const templates = body.slice(body.indexOf('INSERT INTO challenge_templates', body.indexOf('#911')));
+  assert.match(templates, /\(900507,[\s\S]*?'count', 5, 'Proposals voted'/);
+});
+
+test("the viewer loop credits the finished numeric all the way to its target", () => {
+  const start = body.indexOf('INSERT INTO user_activities', body.indexOf('const VIEWER_USERNAMES'));
+  const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
+  // Five rows on 900514 — one short and the bar stops at 4/5 and the glyph
+  // stays a hollow ring, which is the state that is ALREADY covered.
+  assert.equal((block.match(/, 900514\)/g) || []).length, 5,
+    'a target of five needs five ledger rows to read as done');
+  // …and the other two numeric fixtures stay part-filled, so "in progress"
+  // and "finished" are both on screen.
+  assert.equal((block.match(/, 900512\)/g) || []).length, 3, '900512 stays at 3 of 8');
+  assert.equal((block.match(/, 900513\)/g) || []).length, 3, '900513 stays at 3 of 5');
+  // Every id must stay inside the viewer's own block — base+14..base+19 is
+  // the remaining slack, and overflowing into the next viewer's block is
+  // swallowed by ON CONFLICT (id) rather than failing.
+  const offsets = (block.match(/\$\{base \+ (\d+)\}/g) || [])
+    .map((m) => Number(m.match(/\d+/)[0]));
+  assert.ok(Math.max(...offsets) < 20, 'the viewer id block is 20 wide');
+  assert.match(body, /const base = 900520 \+ slot \* 20;/);
+});
+
 test('epoch_stats: 3 epochs x 3 wallets, including one wallet-only (user_id NULL) row per epoch', () => {
   const start = body.indexOf('INSERT INTO epoch_stats');
   const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));

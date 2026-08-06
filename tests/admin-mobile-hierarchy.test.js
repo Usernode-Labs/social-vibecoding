@@ -140,10 +140,17 @@ test('the back button has both icons and one named toggle', () => {
   assert.match(body, /back-icon-arrow/, 'it toggles the arrow icon');
   assert.match(body, /aria-label/, 'and relabels the button for screen readers');
   // Leaving the console must hand the button back, or every later screen
-  // inherits a chevron that means "home".
+  // inherits a chevron that means "home" — but NOT from _exitAdminConsole
+  // itself: that ran before the outgoing page had been captured by the
+  // View Transition (#979). The shared screen-swap primitive resets it
+  // inside the transition callback instead, so every screen entry (and
+  // going home) hands the chevron back on exactly one code path.
   const exit = appJs.slice(appJs.indexOf('  _exitAdminConsole() {'));
-  assert.match(exit.slice(0, 600), /App\.setBackIcon\('home'\)/,
-    '_exitAdminConsole restores the home icon');
+  assert.ok(!exit.slice(0, exit.indexOf('\n  },')).includes('setBackIcon'),
+    '_exitAdminConsole leaves the icon to _showOnlyScreen');
+  const swap = appJs.slice(appJs.indexOf('  _showOnlyScreen(revealId, keepAlso) {'));
+  assert.match(swap.slice(0, swap.indexOf('\n  },')), /App\.setBackIcon\('home'\)/,
+    '_showOnlyScreen restores the home icon on every screen swap');
 });
 
 test('the admin gate runs before the already-open route() shortcut', () => {

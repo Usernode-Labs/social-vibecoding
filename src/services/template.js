@@ -141,15 +141,92 @@ dependencies"; etc.)_
     },
     {
       path: 'Dockerfile',
-      content: `FROM node:22-alpine
+      content: `# Stage 1 — compile this app's Tailwind stylesheet.
+#
+# Runs on every image build (production deploys AND staging previews), so
+# public/tailwind.css is always generated from the markup in THIS commit.
+# That is why there is no committed CSS artifact to keep in sync and no
+# rebuild step for you to remember: add a class, push, it is in the next
+# build. tailwindcss lives only in this stage, so the runtime image below
+# stays exactly as small as it was.
+FROM node:22-alpine AS css
+WORKDIR /build
+COPY tailwind.config.js ./
+COPY styles ./styles
+COPY public ./public
+RUN npm install tailwindcss@3.4.17 --no-audit --no-fund \\
+ && ./node_modules/.bin/tailwindcss \\
+      -c tailwind.config.js -i styles/tailwind-input.css \\
+      -o public/tailwind.css --minify
+
+# Stage 2 — the app itself (unchanged apart from the one COPY at the end).
+FROM node:22-alpine
 WORKDIR /app
 COPY package.json ./
 RUN npm install --production
 COPY . .
+# After COPY . . so the compiled stylesheet is not overwritten by the
+# source tree (which deliberately does not contain one).
+COPY --from=css /build/public/tailwind.css ./public/tailwind.css
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \\
   CMD wget -qO- http://localhost:3000/health || exit 1
 CMD ["node", "server.js"]
+`,
+    },
+    {
+      path: 'tailwind.config.js',
+      content: `// Tailwind config for this app's precompiled stylesheet.
+//
+// The Dockerfile's builder stage runs the Tailwind CLI over the globs below
+// and writes public/tailwind.css, which public/index.html links as
+// /tailwind.css. Nothing is committed — every image build regenerates it.
+//
+// To build it locally (optional; the image build does this for you):
+//   npm install --no-save tailwindcss@3.4.17
+//   npx tailwindcss -c tailwind.config.js -i styles/tailwind-input.css \\
+//     -o public/tailwind.css --minify
+module.exports = {
+  // Every file that can contain a class name. Tailwind's extractor is a
+  // regex over source text, so it finds class names written as whole
+  // literals — including ones inside JS strings in these files.
+  content: [
+    './public/**/*.html',
+    './public/**/*.js',
+  ],
+
+  // Classes this app builds dynamically (if it ever does) go here, since the
+  // extractor cannot see them. Prefer whole literals in the markup instead.
+  safelist: [],
+
+  // Matches the <html class="dark"> in public/index.html: dark: variants key
+  // off that class rather than the OS colour-scheme preference.
+  darkMode: 'class',
+
+  // Stops hover: styles sticking after a tap on touch screens. Required by
+  // the usernode-native UI kit and harmless without it.
+  future: { hoverOnlyWhenSupported: true },
+
+  theme: { extend: {} },
+  plugins: [],
+};
+`,
+    },
+    {
+      path: 'styles/tailwind-input.css',
+      content: `/* Input stylesheet for this app's Tailwind build.
+ *
+ * Deliberately OUTSIDE public/ so it is never served — the @tailwind lines
+ * are build-time directives and mean nothing to a browser. The Dockerfile
+ * compiles this to public/tailwind.css.
+ *
+ * "base" is the preflight layer (the cross-browser reset). Keep all three
+ * layers, in this order; dropping base changes every heading, list and form
+ * control.
+ */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 `,
     },
     {
@@ -352,8 +429,19 @@ start().catch(err => { console.error(err); process.exit(1); });
   ${DEV_CONSOLE_FORWARDER}
   <title>${escapeHtml(appName)}</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%237c3aed'/><circle cx='50' cy='50' r='18' fill='white'/></svg>">
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>tailwind.config = { darkMode: 'class' }</script>
+  <!-- Tailwind, PRECOMPILED for this app (was cdn.tailwindcss.com's
+       in-browser engine plus an inline tailwind.config here). The config
+       moved to tailwind.config.js in the repo root; the Dockerfile's builder
+       stage compiles it to public/tailwind.css on every image build, so the
+       stylesheet is regenerated from THIS commit's markup every deploy and
+       can never drift behind the code. ~7 KB of CSS instead of a ~400 KB
+       engine, and no flash of unstyled content.
+       Writing class names as whole literals is what keeps this working — a
+       class assembled from fragments at runtime (e.g. "bg-" + tone + "-500")
+       is invisible to the compiler. If you genuinely need runtime-generated
+       classes, swap this link for the platform-hosted engine instead:
+       <script src="${PLATFORM_BASE_URL}/usernode-tailwind/v1/tailwind.js"></script> -->
+  <link rel="stylesheet" href="/tailwind.css">
 </head>
 <body class="bg-zinc-950 text-zinc-100 min-h-screen flex flex-col items-center justify-center gap-8 p-4">
   <h1 class="text-2xl font-bold">${escapeHtml(appName)}</h1>

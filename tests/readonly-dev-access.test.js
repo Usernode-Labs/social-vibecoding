@@ -148,6 +148,26 @@ test('ws: a member chat message still reaches the insert', async () => {
   assert.equal(pool.queries.some((q) => /INSERT INTO chat_messages/.test(q)), true);
 });
 
+test('ws: an access-check failure is distinct from a permission denial', async () => {
+  const pool = {
+    queries: [],
+    async query(sql) {
+      this.queries.push(String(sql));
+      if (/FROM apps WHERE id/.test(sql)) throw new Error('database unavailable');
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  const client = {
+    ws: { send() {}, readyState: 1 },
+    user: { id: 5, username: 'member' },
+    appId: 10,
+    appSlug: 'inv',
+  };
+  const result = await handleMessage(pool, client, { type: 'chat', content: 'hello' });
+  assert.deepEqual(result, { ok: false, code: 'write_access_failed' });
+  assert.equal(pool.queries.some((q) => /INSERT|UPDATE|DELETE/i.test(q)), false);
+});
+
 // ── 4. Source guards for the per-route downgrades ───────────────────────
 
 const src = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
@@ -185,6 +205,7 @@ test("session/proposal/issue/board list routes read at 'view' level", () => {
 
 test('mutating slug routes keep their collab gate', () => {
   const cases = [
+    ['src/routes/chat.js', "router.post('/api/apps/:slug/messages'"],
     ['src/routes/sessions.js', "router.post('/api/apps/:slug/sessions'"],
     ['src/routes/issues.js', "router.post('/api/apps/:slug/issues'"],
     ['src/routes/board-order.js', "router.post('/api/apps/:slug/board-order'"],

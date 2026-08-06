@@ -27,15 +27,21 @@ function stagingMockNotifications() {
     threadType: null,
     threadRef: null,
     sourceUsername: null,
+    sessionTitle: null,
     branchName: null,
     detail: null,
   };
   return [
+    // #971: the issue's exact case — a session that finished BEFORE it was
+    // promoted, so it has a session title but no PR title. The row must show
+    // the title, never the `dev/…` branch name beside it.
     {
       ...base,
       id: 990201, kind: 'session_done',
       createdAt: new Date(now - 4 * 60 * 1000).toISOString(),
-      sessionId: 990101, prTitle: '[Mock] Finished dev session',
+      sessionId: 990101,
+      sessionTitle: '[Mock] Session titled but not yet proposed',
+      prTitle: null, branchName: 'dev/mockuser-1700000000000',
       prNumber: null, headlessIssueNumber: null,
     },
     {
@@ -49,15 +55,31 @@ function stagingMockNotifications() {
       ...base,
       id: 990203, kind: 'stale_pr',
       createdAt: new Date(now - 40 * 60 * 1000).toISOString(),
-      sessionId: 990103, prTitle: '[Mock] Stale proposal going quiet',
+      sessionId: 990103,
+      sessionTitle: '[Mock] Stale proposal going quiet',
+      prTitle: '[Mock] Stale proposal going quiet',
       prNumber: 9901, headlessIssueNumber: null,
     },
     {
       ...base,
       id: 990204, kind: 'check_failed',
       createdAt: new Date(now - 55 * 60 * 1000).toISOString(),
-      sessionId: 990104, prTitle: "[Mock] Proposal whose preview won't boot",
+      sessionId: 990104,
+      sessionTitle: "[Mock] Proposal whose preview won't boot",
+      prTitle: "[Mock] Proposal whose preview won't boot",
       prNumber: 9902, headlessIssueNumber: null,
+    },
+    // #971: the untitled tail of the ladder — a session that finished before
+    // its title was generated still falls back to the branch name, so the row
+    // can never render blank.
+    {
+      ...base,
+      id: 990205, kind: 'session_done',
+      createdAt: new Date(now - 70 * 60 * 1000).toISOString(),
+      sessionId: 990105,
+      sessionTitle: null, prTitle: null,
+      branchName: 'dev/mockuser-1700000000001',
+      prNumber: null, headlessIssueNumber: null,
     },
   ];
 }
@@ -148,6 +170,35 @@ function notificationsRoutes(config) {
     } catch (err) {
       log.error('notifications', 'list failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Native push carries no notification copy or route, only an opaque id.
+  // Resolve that id through the authenticated Social session and deliberately
+  // return the same 404 for an absent row and another user's row.
+  router.get('/api/notifications/:id', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    res.set('Cache-Control', 'no-store');
+    const rawId = String(req.params.id || '');
+    if (!/^[1-9]\d{0,9}$/.test(rawId)) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+    const id = Number(rawId);
+    if (!Number.isSafeInteger(id) || id > 2147483647) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+    try {
+      const row = await notifications.getForUser(pool, req.user.id, id);
+      if (!row) {
+        return res.status(404).json({ error: 'Notification not found' });
+      }
+      return res.json({ notification: notifications.serialize(row) });
+    } catch (err) {
+      log.error('notifications', 'exact lookup failed', {
+        id,
+        message: err.message,
+      });
+      return res.status(500).json({ error: 'Internal server error' });
     }
   });
 

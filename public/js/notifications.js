@@ -138,6 +138,43 @@ const Notifications = {
     }
   },
 
+  // Native foreground push is only an invalidation signal. Re-read the
+  // authenticated notification feed; no notification copy crosses the
+  // WebView bridge.
+  async refreshAfterInvalidation() {
+    if (!window.App || !App.user) return false;
+    await Notifications.refresh();
+    return true;
+  },
+
+  // Resolve a native push's opaque id through the current Social session,
+  // then reuse the existing click router and mark-read behavior. The exact
+  // endpoint is ownership-scoped and intentionally returns no route from the
+  // untrusted push payload.
+  async openById(rawId) {
+    const id = Number(rawId);
+    if (!Number.isSafeInteger(id) || id <= 0 || id > 2147483647) return false;
+    let item = Notifications.items.find((candidate) => candidate.id === id);
+    if (!item) {
+      try {
+        const res = await fetch(`/api/notifications/${id}`, {
+          credentials: 'same-origin',
+          cache: 'no-store',
+        });
+        if (!res.ok) return false;
+        const data = await res.json();
+        item = data && data.notification;
+        if (!item || item.id !== id) return false;
+        Notifications.items.unshift(item);
+      } catch (err) {
+        console.warn('[notifications] exact lookup failed', err);
+        return false;
+      }
+    }
+    Notifications._onItemClick(id);
+    return true;
+  },
+
   async loadMore() {
     if (Notifications.loading || !Notifications.hasMore || !Notifications.nextBefore) return;
     Notifications.loading = true;
@@ -988,8 +1025,9 @@ function completionAlertInfo(n) {
       body,
     };
   }
-  // session_done
-  const label = n.prTitle || n.branchName || 'your session';
+  // session_done — #971: the session's own title first, then the PR title,
+  // and only then the machine-generated branch name.
+  const label = n.sessionTitle || n.prTitle || n.branchName || 'your session';
   return {
     kind: 'session_done',
     appSlug: n.appSlug || null,
@@ -1079,11 +1117,15 @@ function renderRow(n) {
 
   // Stale-PR rows are system warnings (no source user): the author's
   // promoted PR has gone quiet and is heading for auto-archive. Lead with
-  // a ⏳ and show the PR title so it's actionable at a glance.
+  // a ⏳ and show the PR title so it's actionable at a glance. #971: these
+  // rows are about a PROPOSAL, so the PR title still leads; the session
+  // title is only a fallback ahead of the bare "PR #N".
   if (n.kind === 'stale_pr') {
     const prLabel = n.prTitle
       ? escapeHtml(n.prTitle)
-      : (n.prNumber ? `PR #${n.prNumber}` : 'your PR');
+      : (n.sessionTitle
+        ? escapeHtml(n.sessionTitle)
+        : (n.prNumber ? `PR #${n.prNumber}` : 'your PR'));
     return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
       <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1">
         ${dot}
@@ -1100,11 +1142,15 @@ function renderRow(n) {
   // Check-failed rows are system warnings (no source user): the owner's
   // promoted proposal can't merge because its staging preview failed to
   // boot, so automated checks never ran. Lead with ⚠️ and show the PR
-  // title; clicking lands on the proposal so they can push a fix.
+  // title; clicking lands on the proposal so they can push a fix. #971: PR
+  // title leads (this is a proposal row); the session title is a fallback
+  // ahead of the bare "PR #N".
   if (n.kind === 'check_failed') {
     const prLabel = n.prTitle
       ? escapeHtml(n.prTitle)
-      : (n.prNumber ? `PR #${n.prNumber}` : 'your proposal');
+      : (n.sessionTitle
+        ? escapeHtml(n.sessionTitle)
+        : (n.prNumber ? `PR #${n.prNumber}` : 'your proposal'));
     return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
       <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1">
         ${dot}
@@ -1140,10 +1186,17 @@ function renderRow(n) {
 
   // #161: dev-session completion — the owner left mid-turn and it
   // finished. Clicking deep-links straight into the dev session.
+  // #971: label precedence is sessionTitle → prTitle → branchName. The
+  // session title is the canonical display name (schema.sql #249) and is
+  // mirrored from pr_title once a PR exists, so a promoted session reads
+  // exactly as it did before; a pre-PR session now shows its real title
+  // instead of `dev/<user>-<epoch>`.
   if (n.kind === 'session_done') {
-    const sessionLabel = n.prTitle
-      ? escapeHtml(n.prTitle)
-      : (n.branchName ? escapeHtml(n.branchName) : 'your session');
+    const sessionLabel = n.sessionTitle
+      ? escapeHtml(n.sessionTitle)
+      : (n.prTitle
+        ? escapeHtml(n.prTitle)
+        : (n.branchName ? escapeHtml(n.branchName) : 'your session'));
     return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
       <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1 flex-wrap">
         ${dot}
@@ -1193,12 +1246,14 @@ function renderRow(n) {
   // (#86) Private spec share: someone sent this user a spec version.
   // Clicking opens the app's group chat with the read-only spec panel
   // showing that exact version (see _onItemClick). Second line prefers
-  // the session's PR title / branch name (already joined server-side);
-  // the spec's own H1 appears as soon as the panel loads.
+  // the session's title / PR title / branch name (already joined
+  // server-side); the spec's own H1 appears as soon as the panel loads.
   if (n.kind === 'spec_shared') {
-    const specLabel = n.prTitle
-      ? escapeHtml(n.prTitle)
-      : (n.branchName ? escapeHtml(n.branchName) : `Spec v${escapeHtml(n.detail || '?')}`);
+    const specLabel = n.sessionTitle
+      ? escapeHtml(n.sessionTitle)
+      : (n.prTitle
+        ? escapeHtml(n.prTitle)
+        : (n.branchName ? escapeHtml(n.branchName) : `Spec v${escapeHtml(n.detail || '?')}`));
     return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
       <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1 flex items-center gap-1 flex-wrap">
         ${dot}

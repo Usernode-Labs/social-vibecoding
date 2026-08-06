@@ -158,6 +158,19 @@ const chatLimiter = makeLimiter({
   message: 'Too many chat messages — slow down for a minute.',
 });
 
+// Native app/group-chat JSON writes: 60 / minute / user. Browser clients
+// normally use the WebSocket path, while CLI/MCP clients use
+// POST /api/apps/:slug/messages. Keep this bucket separate from chatLimiter:
+// posting native discussion replies must not consume the budget for agent
+// turns (which can incur an LLM spend), or vice versa.
+const groupChatWriteLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 60,
+  name: 'group-chat-write',
+  keyByUser: true,
+  message: 'Too many discussion messages — slow down for a minute.',
+});
+
 // #556: live title previews for the feedback modal (POST /api/feedback/
 // title). Same sizing rationale as chatLimiter — each call is a Haiku
 // spend against the daily LLM budget, so this must not become a faster
@@ -211,6 +224,22 @@ const issueScreenshotLimiter = makeLimiter({
   message: 'Too many screenshot uploads — slow down for a few minutes.',
 });
 
+// Profile customization writes (issue #982): PATCH /api/me/profile plus
+// the avatar upload/delete pair share ONE bucket at 20 / minute / user.
+// Honest editing is a handful of saves per sitting — even fiddling with a
+// display name and re-cropping a photo a few times stays well under it —
+// while a scripted loop of ≤1 MB bytea upserts bounces off quickly. Shared
+// rather than split because the avatar write is the expensive one and a
+// caller who is rate-limited on it has no business hammering the text
+// fields either. Per-user keyed for shared-NAT fairness.
+const profileWriteLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 20,
+  name: 'profile-write',
+  keyByUser: true,
+  message: 'Too many profile updates — slow down for a minute.',
+});
+
 // Priority / assignee attribute votes: 60 / minute / user. Loose enough
 // that switching your pick a few times never bumps it, tight enough to
 // stop a scripted vote-spam loop. Per-user keyed for shared-NAT fairness.
@@ -232,6 +261,45 @@ const boardOrderLimiter = makeLimiter({
   name: 'board-order',
   keyByUser: true,
   message: 'Too many reorder updates — slow down for a minute.',
+});
+
+// #911: per-user show/hide of a home-screen panel. A checkbox flip is a
+// single small write and nobody legitimately toggles one more than a few
+// times a minute; per-user keyed, mirroring boardOrderLimiter.
+const homePanelPrefLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 30,
+  name: 'home-panel-pref',
+  keyByUser: true,
+  message: 'Too many changes — slow down for a minute.',
+});
+
+// Free-form home-grid placement: one PUT per completed drag, and a drag is a
+// deliberate gesture rather than a keystroke. The ceiling is much higher than
+// the panel-pref limiter above because rearranging a home screen is genuinely
+// bursty — someone tidying their grid can easily land twenty drops in a
+// minute, and each also has to survive a breakpoint switch re-persisting.
+// Per-user keyed; the layout is per-user by definition.
+const homeLayoutLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 120,
+  name: 'home-layout',
+  keyByUser: true,
+  message: 'Too many layout changes — slow down for a minute.',
+});
+
+// #940: saved dev-chat drafts, now server-backed. One write per deliberate
+// save / trash / send, plus a burst when a device that was offline flushes
+// its local mirror on reconcile (bounded by MAX_SAVED_DRAFTS = 20 posts +
+// its tombstones). 60/min per user clears that flush with room to spare and
+// still bounds a runaway client. Per-user keyed, mirroring boardOrderLimiter
+// — drafts belong to the account, not to an IP.
+const draftWriteLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 60,
+  name: 'chat-drafts',
+  keyByUser: true,
+  message: 'Too many draft updates — slow down for a minute.',
 });
 
 // Platform database export tickets: 3 / 24h / full admin. Each ticket
@@ -283,6 +351,17 @@ const topochainMobileAuthLimiter = makeLimiter({
   message: 'Too many requests — slow down for a minute.',
 });
 
+// Authenticated device-state synchronization. Normal lifecycle traffic is a
+// handful of writes; this prevents a stolen bearer from churning encrypted
+// registrations and delivery FKs in a tight loop.
+const topochainMobilePushRegistrationLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 60,
+  name: 'topochain-mobile-push-registration',
+  keyByUser: true,
+  message: 'Too many push registration updates — slow down for a minute.',
+});
+
 // Public waitlist join: 5 / 15 min / IP. Anonymous write endpoint on the
 // landing page — tight enough to stop bulk email harvesting/spam, loose
 // enough that a genuine visitor retrying a typo never hits it.
@@ -293,4 +372,4 @@ const waitlistJoinLimiter = makeLimiter({
   message: 'Too many signups from this address — try again in a few minutes.',
 });
 
-module.exports = { dbExportLimiter, authLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, topochainMobileAuthLimiter, waitlistJoinLimiter };
+module.exports = { dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, waitlistJoinLimiter };

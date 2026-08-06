@@ -29,6 +29,8 @@ const { appErrorRoutes } = require('./src/routes/app-error');
 const { visualsRoutes } = require('./src/routes/visuals');
 const { appIconRoutes } = require('./src/routes/app-icons');
 const { issueImageRoutes } = require('./src/routes/issue-images');
+const { avatarRoutes } = require('./src/routes/avatars');
+const { profileRoutes } = require('./src/routes/profile');
 const { appFileServeRoutes, appFileShellRoutes } = require('./src/routes/app-files');
 const appStorageRoutes = require('./src/routes/app-storage');
 const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
@@ -38,6 +40,9 @@ const { llmGrantsRoutes } = require('./src/routes/llm-grants');
 const { userAgentFilesRoutes } = require('./src/routes/user-agent-files');
 const { topicAttributeRoutes } = require('./src/routes/topic-attributes');
 const { boardOrderRoutes } = require('./src/routes/board-order');
+const { homePanelRoutes } = require('./src/routes/home-panels');
+const { homeLayoutRoutes } = require('./src/routes/home-layout');
+const { chatDraftsRoutes } = require('./src/routes/chat-drafts');
 const { pmOrderRoutes } = require('./src/routes/pm-order');
 const { debugRoutes } = require('./src/routes/debug');
 const { galleryRoutes } = require('./src/routes/gallery');
@@ -77,6 +82,7 @@ const chainPoller = require('./src/services/chain-poller');
 const genesisAccounts = require('./src/services/genesis-accounts');
 const nodeStatus = require('./src/services/node-status');
 const statusService = require('./src/services/status');
+const mobilePush = require('./src/services/mobile-push');
 const { getActiveWorkerCount } = require('./src/routes/sessions');
 const { sweepStuckCreatingApps } = require('./src/routes/apps');
 const appAccess = require('./src/services/app-access');
@@ -412,6 +418,12 @@ app.use(appIconRoutes(config));
 // control is the unguessable 32-hex screenshot id.
 app.use(issueImageRoutes(config));
 
+// Profile pictures (#982). Public for the same reason as app-icons: the
+// profile screen and the hamburger drawer load them with plain <img>
+// tags; access control is the unguessable 32-hex avatar id, and the image
+// is published to other users by design.
+app.use(avatarRoutes(config));
+
 // App-stored user files (#752). Public for the same reason as app-icons:
 // app pages load them with plain <img> tags from their own subdomains.
 // visibility='public' rows are guarded by the unguessable 32-hex id;
@@ -489,6 +501,22 @@ app.use(llmGrantsRoutes(config));
 app.use(userAgentFilesRoutes(config));
 app.use(topicAttributeRoutes(config));
 app.use(boardOrderRoutes(config));
+// Home-screen panels (#911): the challenges card's data + its per-user
+// show/hide. Me-scoped reads, so it sits behind authMiddleware like the
+// ordering routes above.
+app.use(homePanelRoutes(config));
+// Free-form home-grid placement: where each app tile and widget sits, per
+// breakpoint. Me-scoped like the panels route above.
+app.use(homeLayoutRoutes(config));
+// Profile customization (#982): the display name / bio / handle write, the
+// avatar upload-delete pair, and the viewer's own completed challenges.
+// Me-scoped, so behind authMiddleware — the avatar READ side is the
+// separate public avatarRoutes mounted above.
+app.use(profileRoutes(config));
+// #940: saved dev-chat drafts, now server-backed so they follow a user
+// across devices. Owner-scoped per session, like the /api/sessions/* family
+// in routes/sessions.js.
+app.use(chatDraftsRoutes(config));
 app.use(pmOrderRoutes(config));
 app.use(debugRoutes(config));
 app.use(galleryRoutes(config));
@@ -684,6 +712,7 @@ app.get('*', (req, res) => {
 
 async function start() {
   await migrate(config);
+  await mobilePush.initialize(config);
 
   // Credential rows deliberately outlive their active period for settings
   // and audit correlation, then age out on the documented schedule.
@@ -799,6 +828,7 @@ async function start() {
   shutdownPool = getPool(config);
 
   ws.attach(server, config);
+  mobilePush.start();
   chainPoller.start(config);
   genesisAccounts.start();
   nodeStatus.start({ nodeRpcUrl: process.env.NODE_RPC_URL });
@@ -3748,6 +3778,13 @@ async function cleanup() {
   if (cleanupStarted) return;
   cleanupStarted = true;
   lifecycle.setShuttingDown();
+  // Stop claiming push jobs immediately. The bounded drain runs in
+  // parallel with HTTP/session draining and is awaited before pool close.
+  const pushStop = mobilePush.stop({ timeoutMs: DRAIN_TIMEOUT_MS }).catch((err) => {
+    log.warn('server', 'Mobile push shutdown failed', {
+      code: typeof err?.code === 'string' ? err.code : 'unknown',
+    });
+  });
 
   // Stop accepting BEFORE draining. Caddy's apex proxy and the wildcard
   // forward_auth gate both hold-and-retry a refused dial for 30s
@@ -3799,6 +3836,7 @@ async function cleanup() {
   } else if (startingCount > 0) {
     log.info('server', 'All handlers drained; worker containers persist across restart');
   }
+  await pushStop;
 
   // Close the pg pool so in-flight queries settle instead of being severed
   // by process.exit(). Bounded: a pool that won't drain must not hold the

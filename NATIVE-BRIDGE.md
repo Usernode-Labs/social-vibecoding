@@ -44,6 +44,15 @@ version:
 - `sessionBoundAuthStatus`: auth snapshots include `participantId` and
   identity `epoch`, and node starts can be bound to both values.
 
+One additive **widget** capability extends v4 the same way:
+
+- `homeScreenShortcutDarkIcon`: the shell stores a SECOND icon per
+  homescreen shortcut and the iOS widget selects between them per system
+  appearance. Advertise it only once that is true end to end — SV reads
+  it as "sending a dark icon has a visible effect" and re-sends every
+  pinned canvas tile the first time it appears. See the homescreen
+  shortcuts section below for the contract it unlocks.
+
 ## Methods
 
 ### Wallet / transactions (pre-existing, v1)
@@ -70,6 +79,41 @@ canonical `/react/apps/<slug>/open` target. Native adoption of those additional
 identity fields is tracked separately; their presence does not imply that an
 existing Flutter build persists or compares them.
 
+#### Per-appearance icons (additive; `homeScreenShortcutDarkIcon`)
+
+`addHomeScreenShortcut` takes
+`{ name, url, icon_url, icon_url_dark?, silent? }`:
+
+- `icon_url` — required-in-practice primary asset. When a pair is sent it
+  is the **light**-appearance asset.
+- `icon_url_dark` — **optional** dark-appearance asset. Absent, null or
+  empty means "single icon", i.e. exactly the pre-existing behaviour. A
+  re-add without it **clears** the dark slot (a re-add of the same URL is
+  an in-place refresh — that is what `silent: true` is for).
+- Either field may be an `https` URL **or** a `data:image/png;base64,…`
+  URI. SV sends data URIs for its canvas-rendered emoji/letter tiles, so
+  both fields must go through the same fetch/decode path.
+- `version` stays **4**: this is purely additive, and shells that don't
+  know the field ignore it like any other unknown key in `args`.
+
+`getHomeScreenShortcuts()` items carry `{ id, name, url, pinnedAtMs }`
+plus two icon-presence flags: `has_icon` (SV treats `false` as "the PNG
+never landed" and silently re-sends) and `has_icon_dark` (same, for the
+second asset). Report `has_icon_dark: true` only once the dark asset is
+actually stored; SV tests it with a strict `=== false`, so a build that
+omits the key entirely is safe.
+
+**Why this exists, and why the flag must not be advertised early.** A
+stored PNG cannot restyle itself, and SV cannot repaint one while the app
+is closed — which is exactly when the system flips light/dark (#948).
+Without the capability, SV bakes the single face matching the current
+system appearance and re-sends it when it notices a flip, so the
+correction always waits for the next app open. With it, SV sends both
+faces and the widget flips natively with SV closed. A shell that accepts
+and stores `icon_url_dark` but does not select on `colorScheme` must NOT
+advertise the capability: SV would send an asset nobody renders and would
+have given up the repaint-on-flip fallback for nothing.
+
 ### Chrome data (v2 — the app-as-SV-chrome surface)
 
 #### `getBridgeInfo()` → `{ version, capabilities }`
@@ -77,6 +121,50 @@ existing Flutter build persists or compares them.
 Instant, side-effect free. The bridge wrapper resolves
 `{ version: 0, capabilities: [] }` on old builds / outside the app, so
 callers can always `await` it and gate UI on capabilities.
+
+**A probe that FAILS inside the app resolves that same empty shape plus
+`degraded: true`** (the wrapper's own marker — native never sends it).
+Reading `capabilities` needs no change; **a caller that CACHES or LATCHES
+a negative conclusion from a probe MUST check `degraded` and re-probe
+instead.** `version: 0` from inside the app means "don't know", not "this
+build has no capabilities": treating a 4s timeout as the latter is how one
+cold-start hiccup disabled every privileged call for a whole document and
+made Settings → Usernode app unloadable until the app was force-closed
+(issue #978). The two in-repo consumers of this rule are the bridge's own
+privileged-capability negotiation and `NativeChrome.getInfo()`, which
+shares its in-flight promise but never memoises a degraded answer.
+
+#### Why a read came back empty — `getLastNativeReadError(method)`
+
+Every chrome read **resolves a safe fallback rather than rejecting**, so
+callers can `await` and render "unavailable" (see the note at the top of
+this section). That deliberately loses the reason, so the wrapper parks it
+beside the read: `usernode.getLastNativeReadError("getSettingsState")`
+returns the most recent FAILED read of that method, or `null` when its
+last read succeeded or it was never called.
+
+```json
+{ "method": "getSettingsState", "kind": "timeout",
+  "message": "getSettingsState did not respond within 12000ms",
+  "at": 1780000000000 }
+```
+
+`kind` is one of:
+
+| `kind` | Meaning |
+|---|---|
+| `timeout` | the app did not answer inside the wrapper's budget for that method |
+| `rejected` | the app answered with an error (`message` is native's own text) |
+| `no-transport` | no channel to the app from this frame at all |
+| `not-native` | called outside the app (or on a build without the method) |
+| `probe-inconclusive` | the privileged handshake could not be negotiated because `getBridgeInfo` itself came back degraded |
+
+The record carries a method name plus native's own error string only — the
+privileged capability lives in a closure and never reaches an error
+message — and each frame keeps its own map, so a frame can only read
+failures of calls it made itself. `NativeChrome.lastReadError(method)`
+forwards to it for SV chrome; SV's Settings screen renders the mapped
+reason instead of a bare "could not load".
 
 #### `getNodeStatus()` → snapshot object
 
@@ -207,6 +295,14 @@ foreground keep-alive service was deleted; iOS block production is off).
 
 Permission probes can take a few seconds on a fresh app start; the bridge
 wrapper uses a longer (12s) timeout for this method.
+
+Like every chrome read it resolves `null` rather than rejecting on failure,
+and the reason is available from
+`getLastNativeReadError("getSettingsState")` (see above). SV's Settings →
+Usernode app section renders that reason with a retry, and keeps the blocks
+that don't need this snapshot (activity notifications, block production,
+terms, FAQ, the native diagnostics screens) on screen, so a failed read is
+recoverable rather than a dead end.
 
 #### Setters — each resolves the refreshed settings snapshot
 

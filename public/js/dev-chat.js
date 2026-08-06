@@ -835,6 +835,9 @@ const DevChat = {
       DevChat._heartbeatVisHandler = () => {
         if (document.visibilityState !== 'visible') return;
         beat();
+        // #940: catch up on drafts saved elsewhere while this tab was
+        // backgrounded, and flush anything this device failed to upload.
+        if (DevChat.currentSession) DevChat._reconcileDrafts(DevChat.currentSession.id, null);
         if (DevChat.currentSession && DevChat.currentSession.status === 'paused') return;
         DevChat._resumeCurrentSessionIfPaused({ silent: true });
       };
@@ -896,7 +899,7 @@ const DevChat = {
     try {
       const res = await fetch(`/api/sessions/${sessionId}`);
       if (!res.ok) return;
-      const { session, messages } = await res.json();
+      const { session, messages, drafts } = await res.json();
 
       // Auto-resume on open: opening a paused session transparently
       // resumes it (the backend applies the per-user LRU + global cap
@@ -918,6 +921,14 @@ const DevChat = {
       }
 
       DevChat.currentSession = session;
+      // #940: reconcile this session's saved drafts against the server copy
+      // — the cross-device sync AND the migration of drafts that only ever
+      // existed in this browser. Deliberately NOT awaited: the list paints
+      // from the local mirror in renderChatView below, and the reconcile
+      // repaints when it lands, so opening a session never waits on it.
+      // `drafts` is null when the session payload's best-effort field
+      // failed, which makes _reconcileDrafts fetch the list itself.
+      DevChat._reconcileDrafts(session.id, drafts);
       DevChat._startHeartbeat();
       // Drop any streaming title marker carried over from the previous
       // session. If THIS session is mid-run, the busy check below
@@ -1087,7 +1098,7 @@ const DevChat = {
       try {
         const statusRes = await fetch(`/api/sessions/${sessionId}/status`);
         if (statusRes.ok) {
-          const { busy, progress, phase, sync, stopping } = await statusRes.json();
+          const { busy, progress, phase, sync, stopping, stopRequestedAt } = await statusRes.json();
           // #252: reload recovery for the sync banner. A MODE=sync turn
           // also flips `busy` (it holds the worker), so check it first
           // and don't arm the chat-turn streaming UI for a sync.
@@ -1138,6 +1149,21 @@ const DevChat = {
               if (m.ccOutput || m.progressLog || m.stagingUrl || m.ccLog) continue;
               m._active = true;
               break;
+            }
+            // #937: rebuild the stopping row and its escalation ladder from
+            // the server's `stopRequestedAt`. Before this, a reload during a
+            // stuck stop painted a calm "Stopping…" button with no history —
+            // so the escalation and the Force stop button, the user's only
+            // way out, could never appear in the reloaded tab. Seeding the
+            // clock from the server means a tab that joins 90s in lands
+            // straight on the stuck rung instead of restarting at zero.
+            //
+            // Resurrecting the transient row is safe: it stays flagged
+            // `_stopping`, so _clearStoppingState filters it out when the
+            // stop lands and the persisted "…stopped by @user." row is
+            // still the only thing that survives.
+            if (stopping) {
+              DevChat._enterStoppingState({ stopRequestedAt: stopRequestedAt || null });
             }
             // Hook into the resumable event stream so we get *live*
             // updates from this tab (tokens, status transitions, PR
@@ -1368,7 +1394,7 @@ const DevChat = {
               case 'stopping':
                 // #889: a stop was requested for this session — by this tab
                 // (echoed back) or by another viewer. Idempotent.
-                DevChat._enterStoppingState({ by: data.by });
+                DevChat._enterStoppingState({ by: data.by, stopRequestedAt: data.stopRequestedAt || null });
                 break;
               case 'stopped':
                 DevChat._flushStreamingFinal();
@@ -1843,7 +1869,7 @@ const DevChat = {
         // #889: mirrors the primary POST-SSE handler. Replayed off the
         // resumable channel this is how a tab that reconnected mid-stop
         // learns the turn is being killed.
-        DevChat._enterStoppingState({ by: data.by });
+        DevChat._enterStoppingState({ by: data.by, stopRequestedAt: data.stopRequestedAt || null });
         break;
       case 'stopped': {
         DevChat._removeSpinner();
@@ -2228,26 +2254,131 @@ const DevChat = {
   // stop actually lands. Persisting both would double up on refresh.
   _stopping: false,
   _stoppingSlowTimer: null,
+  // #937: the escalation ladder's state. `_stoppingSince` is the epoch ms
+  // of the stop REQUEST (server-supplied where possible, so a reload or a
+  // second tab rebuilds the ladder at the right rung instead of restarting
+  // a calm "Stopping…" that never escalates). `_stopRetried` makes the 15s
+  // re-POST fire at most once per stop, however many `stopping` events
+  // arrive (POST SSE + WS + a bus replay all deliver one).
+  _stoppingSince: null,
+  _stoppingStuckTimer: null,
+  _stopRetried: false,
 
   // How long a stop may take before the transcript row admits something is
   // wrong. With the server-side fix a stop lands in ~1-2s, so crossing this
-  // means a genuinely stuck worker, not a slow one.
-  STOPPING_SLOW_MS: 30000,
+  // means a genuinely stuck worker, not a slow one. #937 lowered this from
+  // 30s (where the wording was the ONLY thing that ever changed, and it
+  // changed too late to be useful) and paired it with a silent re-POST.
+  STOPPING_SLOW_MS: 15000,
+
+  // #937: past this the stop is not coming on its own. The row says so
+  // plainly and offers Force stop.
+  STOPPING_STUCK_MS: 40000,
 
   _stoppingRow() {
     return DevChat.messages.find((m) => m && m._stopping) || null;
+  },
+
+  // #937: (re-)arm the escalation ladder from `_stoppingSince`. Split out
+  // of _enterStoppingState so a tab that learns the stop's true age from
+  // the server — a reload's status poll, or a `stopping` event from
+  // another tab — can jump straight to the rung it should already be on
+  // rather than starting the clock over.
+  _armStoppingLadder() {
+    if (DevChat._stoppingSlowTimer) clearTimeout(DevChat._stoppingSlowTimer);
+    if (DevChat._stoppingStuckTimer) clearTimeout(DevChat._stoppingStuckTimer);
+    DevChat._stoppingSlowTimer = null;
+    DevChat._stoppingStuckTimer = null;
+
+    const since = DevChat._stoppingSince || Date.now();
+    const elapsed = Math.max(0, Date.now() - since);
+
+    // Rung 1 — the stop is taking longer than it should. Say so, and
+    // quietly ask again: the server treats a repeat stop as idempotent
+    // (it re-issues the kill), so this is a free self-heal for the case
+    // where the first request's kill found nothing to kill.
+    const slow = () => {
+      const row = DevChat._stoppingRow();
+      if (!row) return;
+      row.content = `${row.content.replace(/ \(taking longer than usual\)$/, '')} (taking longer than usual)`;
+      DevChat._retryStopRequest();
+      DevChat.renderMessages();
+    };
+    // Rung 2 — it isn't coming. Offer the way out.
+    const stuck = () => {
+      const row = DevChat._stoppingRow();
+      if (!row) return;
+      row.content = 'Still stopping — the agent isn’t responding.';
+      row._forceOffered = true;
+      DevChat.renderMessages();
+    };
+
+    if (elapsed >= DevChat.STOPPING_SLOW_MS) slow();
+    else DevChat._stoppingSlowTimer = setTimeout(slow, DevChat.STOPPING_SLOW_MS - elapsed);
+
+    if (elapsed >= DevChat.STOPPING_STUCK_MS) stuck();
+    else DevChat._stoppingStuckTimer = setTimeout(stuck, DevChat.STOPPING_STUCK_MS - elapsed);
+  },
+
+  // #937: the one-shot re-POST behind rung 1. Deliberately silent — if it
+  // works the turn just unwinds, and if it doesn't rung 2 is seconds away.
+  _retryStopRequest() {
+    if (DevChat._stopRetried) return;
+    DevChat._stopRetried = true;
+    const sessionId = DevChat.currentSession?.id;
+    if (!sessionId) return;
+    fetch(`/api/sessions/${sessionId}/stop`, { method: 'POST' })
+      .catch((err) => console.warn('[dc] stop retry failed', err));
+  },
+
+  // #937: Force stop. Only reachable from rung 2, i.e. after an ordinary
+  // stop has been pending ~40s — the server enforces the same ordering and
+  // 409s a force with no stop pending.
+  async _forceStopTurn(btn) {
+    const sessionId = DevChat.currentSession?.id;
+    if (!sessionId) return;
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Forcing…';
+    }
+    let res;
+    try {
+      res = await fetch(`/api/sessions/${sessionId}/stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: true }),
+      });
+    } catch (err) {
+      console.warn('[dc] force stop failed', err);
+      return DevChat._stopRequestFailed();
+    }
+    if (Number(sessionId) !== Number(DevChat.currentSession?.id)) return;
+    if (!res.ok) {
+      console.warn('[dc] force stop rejected', res.status);
+      return DevChat._stopRequestFailed();
+    }
+    // The server emits `stopped` + `done` itself on the force path, so the
+    // ordinary teardown handles the UI from here.
   },
 
   // Enter (or re-enter) the stopping state. Idempotent by design: the tab
   // that clicked Stop calls this directly AND receives the server's echoed
   // `stopping` event, possibly twice over (POST SSE + WS + a bus replay).
   // All of those must collapse into one row.
-  _enterStoppingState({ by = null } = {}) {
+  _enterStoppingState({ by = null, stopRequestedAt = null } = {}) {
     if (!DevChat.isStreaming) return;
     if (DevChat._stoppingRow()) {
       // Already showing. Repaint the button in case this arrived before
       // the flag was set (a `stopping` event from another tab).
       DevChat._stopping = true;
+      // #937: a server-supplied timestamp is authoritative over the
+      // optimistic local one — it's how a tab that clicked Stop and a tab
+      // that only heard about it converge on the same rung. Re-arm only
+      // when it actually moves the clock.
+      if (stopRequestedAt && stopRequestedAt !== DevChat._stoppingSince) {
+        DevChat._stoppingSince = stopRequestedAt;
+        DevChat._armStoppingLadder();
+      }
       DevChat._setStreamingUI(true, DevChat._streamingPhase);
       return;
     }
@@ -2268,14 +2399,12 @@ const DevChat = {
       _stopping: true,
     });
     DevChat._stopping = true;
-
-    if (DevChat._stoppingSlowTimer) clearTimeout(DevChat._stoppingSlowTimer);
-    DevChat._stoppingSlowTimer = setTimeout(() => {
-      const row = DevChat._stoppingRow();
-      if (!row) return;
-      row.content = `${row.content.replace(/ \(taking longer than usual\)$/, '')} (taking longer than usual)`;
-      DevChat.renderMessages();
-    }, DevChat.STOPPING_SLOW_MS);
+    // #937: prefer the server's stamp so every tab (and this one after a
+    // reload) escalates off the same clock; fall back to now for the tab
+    // that just clicked, whose POST hasn't answered yet.
+    DevChat._stoppingSince = stopRequestedAt || Date.now();
+    DevChat._stopRetried = false;
+    DevChat._armStoppingLadder();
 
     DevChat._setStreamingUI(true, DevChat._streamingPhase);
     DevChat.renderMessages();
@@ -2291,10 +2420,19 @@ const DevChat = {
   // or paint something else in its place.
   _clearStoppingState() {
     DevChat._stopping = false;
+    // #937: the whole ladder is torn down together — both rungs' timers
+    // plus the clock and the retry latch they read. Leaving any of them
+    // armed would escalate a stop that has already landed.
     if (DevChat._stoppingSlowTimer) {
       clearTimeout(DevChat._stoppingSlowTimer);
       DevChat._stoppingSlowTimer = null;
     }
+    if (DevChat._stoppingStuckTimer) {
+      clearTimeout(DevChat._stoppingStuckTimer);
+      DevChat._stoppingStuckTimer = null;
+    }
+    DevChat._stoppingSince = null;
+    DevChat._stopRetried = false;
     const before = DevChat.messages.length;
     DevChat.messages = DevChat.messages.filter((m) => !(m && m._stopping));
     return DevChat.messages.length !== before;
@@ -3547,6 +3685,18 @@ const DevChat = {
         // build step.
         if (msg.billingSwitch) {
           return `<div class="dc-status-line" style="opacity:0.8"><span class="dc-status-icon" aria-hidden="true">&#128273;</span> ${escapeHtml(msg.content)}${tsSpan}</div>`;
+        }
+
+        // #937: the stop-escalation row. Once the stop has been pending
+        // long enough that it is clearly not landing (the ladder's 40s
+        // rung sets `_forceOffered`), the row grows a Force stop button —
+        // the user's only way out of what was otherwise a permanent
+        // "Stopping…". Same inline-onclick shape as the other in-row
+        // actions (the platform-issue draft card above).
+        if (msg._stopping && msg._forceOffered) {
+          return `<div class="dc-status-line">${iconHtml} ${escapeHtml(msg.content)} ${elapsedHtml}`
+            + '<button class="dc-force-stop-btn" onclick="DevChat._forceStopTurn(this)">Force stop</button>'
+            + `${tsSpan}</div>`;
         }
 
         return `<div class="dc-status-line">${iconHtml} ${msg.content} ${elapsedHtml}${tsSpan}</div>`;
@@ -4937,7 +5087,7 @@ const DevChat = {
       // leaving the session closes a docked preview with it.
       if (DevChat.stagingPanel.open) DevChat._resetStagingPanel();
       content.innerHTML = `
-        <div id="dc-session-list" class="divide-y divide-zinc-800" style="flex:1;overflow-y:auto;min-height:0"></div>`;
+        <div id="dc-session-list" class="divide-y divide-zinc-800 platform-safe-scroll" style="flex:1;overflow-y:auto;min-height:0"></div>`;
       DevChat.renderSessionList();
       return;
     }
@@ -4983,7 +5133,14 @@ const DevChat = {
       <div class="dc-session-body flex-1 flex min-h-0">
         <div id="dc-tab-chat" class="dc-chat-pane flex-1 flex flex-col min-h-0">
           <div id="dc-messages" class="dc-messages-container flex-1 overflow-y-auto py-2"></div>
-          <div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2">
+          <!-- platform-safe-bar (app.css): this block is the bottom of
+               the screen on a phone, so it carries the home-indicator
+               inset on top of its own p-2 — the strip below the Send row
+               is part of this bar rather than dead space under it. The
+               message scroller above keeps the height that used to be
+               reserved on #app-view. (No backticks in this comment: it
+               lives inside a template literal, and one would close it.) -->
+          <div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2 platform-safe-bar">
             <div class="flex items-center gap-2 mb-2">
               <label class="text-xs text-zinc-500">Model:</label>
               <select id="dc-model-select" class="rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-violet-500">
@@ -5067,8 +5224,10 @@ const DevChat = {
     );
     DevChat._setupAttachments();
     DevChat._restoreDraft();
-    // #798: saved drafts render above the composer and survive re-renders
-    // (they live in localStorage, keyed by session id).
+    // #798: saved drafts render above the composer and survive re-renders.
+    // #940: painted from the localStorage MIRROR so there is no wait; the
+    // reconcile kicked off in openSession repaints when the server copy
+    // lands.
     DevChat._renderSavedDrafts();
     DevChat._wireSavedDrafts();
     DevChat._syncSaveDraftBtn();
@@ -5489,11 +5648,30 @@ const DevChat = {
   // sending is always a deliberate tap, and the tap is refused while a
   // turn is streaming (the row's Send button renders disabled).
   //
-  // Storage is deliberately client-side only — no schema, no endpoints:
-  // one localStorage key per session id, same shape and lifetime as the
-  // single-composer draft above (`_draftKey`), so drafts survive reloads,
-  // tab switches and session hops but never leave the browser.
+  // #940: storage is now the ACCOUNT's, not the browser's. Drafts live in
+  // `chat_session_drafts` (owner-scoped; see routes/chat-drafts.js) so a
+  // thought parked on a laptop is there on the phone, and clearing site
+  // data no longer loses it.
+  //
+  // localStorage stays in the loop deliberately, as a MIRROR — not a second
+  // source of truth:
+  //   - instant paint. The list renders from the mirror on open, before the
+  //     server round trip lands, so there is no spinner and no blank flash.
+  //   - offline buffer. A save whose POST fails still shows in the list and
+  //     is flushed by the next reconcile, so text is never lost to a flaky
+  //     network.
+  // Mirror value shape (v2): { v: 2, drafts: [{ id, text, savedAt, synced }],
+  // tombstones: [{ id, at }] }. `synced: false` = "the server hasn't
+  // confirmed this yet, upload it on reconcile"; a tombstone = "deleted
+  // here, delete it there too". A LEGACY BARE ARRAY (everything written
+  // before this change) is still read, with every entry treated as unsynced
+  // — that is the whole migration for drafts already in users' browsers.
   MAX_SAVED_DRAFTS: 20,
+
+  // Bounded so an offline device can't grow the mirror without limit. A
+  // device offline long enough to overflow this can resurrect a draft it
+  // deleted; the user can simply trash it again.
+  MAX_DRAFT_TOMBSTONES: 50,
 
   _savedDraftsKey(sessionId) {
     return `usernode:dc-saved-drafts:${sessionId}`;
@@ -5536,40 +5714,277 @@ const DevChat = {
     return !!DevChat.isStreaming || DevChat._wantsBusyShot();
   },
 
-  _getSavedDrafts(sessionId) {
-    if (!sessionId) return [];
-    let raw = null;
-    try { raw = localStorage.getItem(DevChat._savedDraftsKey(sessionId)); }
-    catch { return []; }
-    if (raw == null) {
-      return DevChat._wantsDemoDrafts()
-        ? DevChat._DEMO_SAVED_DRAFTS.map((d) => ({ ...d }))
-        : [];
-    }
-    try {
-      const list = JSON.parse(raw);
-      if (!Array.isArray(list)) return [];
-      return list
-        .filter((d) => d && typeof d.text === 'string' && d.text.trim())
-        .map((d) => ({ id: String(d.id || ''), text: d.text, savedAt: d.savedAt || null }))
-        .filter((d) => d.id);
-    } catch { return []; }
+  // Normalize one stored/wire draft. Anything without an id or with blank
+  // text is dropped — a malformed row must never reach the renderer.
+  _normalizeDraft(d) {
+    if (!d || typeof d.text !== 'string' || !d.text.trim()) return null;
+    const id = String(d.id || '');
+    if (!id) return null;
+    return { id, text: d.text, savedAt: d.savedAt || null, synced: !!d.synced };
   },
 
-  _setSavedDrafts(sessionId, list) {
+  // Read the RAW mirror: drafts plus their sync bookkeeping. Accepts both
+  // the v2 object and the LEGACY BARE ARRAY (pre-#940), which is reported
+  // with every entry `synced: false` so the first reconcile uploads it.
+  // `present` distinguishes "no key at all" (demo seed may apply) from "an
+  // explicitly emptied list" (it must stay empty).
+  _readDraftMirror(sessionId) {
+    const empty = { drafts: [], tombstones: [], present: false };
+    if (!sessionId) return empty;
+    let raw = null;
+    try { raw = localStorage.getItem(DevChat._savedDraftsKey(sessionId)); }
+    catch { return empty; }
+    if (raw == null) return empty;
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch { return { ...empty, present: true }; }
+
+    // Legacy: a bare array of {id, text, savedAt} with no sync state.
+    if (Array.isArray(parsed)) {
+      return {
+        drafts: parsed.map((d) => DevChat._normalizeDraft({ ...d, synced: false })).filter(Boolean),
+        tombstones: [],
+        present: true,
+      };
+    }
+    if (!parsed || typeof parsed !== 'object') return { ...empty, present: true };
+    const drafts = Array.isArray(parsed.drafts)
+      ? parsed.drafts.map(DevChat._normalizeDraft).filter(Boolean)
+      : [];
+    const tombstones = Array.isArray(parsed.tombstones)
+      ? parsed.tombstones
+        .map((t) => ({ id: String(t && t.id || ''), at: (t && t.at) || null }))
+        .filter((t) => t.id)
+      : [];
+    return { drafts, tombstones, present: true };
+  },
+
+  _writeDraftMirror(sessionId, { drafts, tombstones }) {
     if (!sessionId) return;
     // Always WRITE the key, even for an empty list — its presence is how
     // an emptied list stays empty (see _getSavedDrafts / demo seed).
     try {
       localStorage.setItem(
         DevChat._savedDraftsKey(sessionId),
-        JSON.stringify((list || []).slice(0, DevChat.MAX_SAVED_DRAFTS)),
+        JSON.stringify({
+          v: 2,
+          drafts: (drafts || []).slice(0, DevChat.MAX_SAVED_DRAFTS),
+          tombstones: (tombstones || []).slice(-DevChat.MAX_DRAFT_TOMBSTONES),
+        }),
       );
     } catch {}
   },
 
+  // The list the renderer and every mutator read. Synchronous by design —
+  // the server round trip is a background reconcile, never something the
+  // paint waits on.
+  _getSavedDrafts(sessionId) {
+    if (!sessionId) return [];
+    const mirror = DevChat._readDraftMirror(sessionId);
+    if (!mirror.present && !mirror.drafts.length) {
+      return DevChat._wantsDemoDrafts()
+        ? DevChat._DEMO_SAVED_DRAFTS.map((d) => ({ ...d }))
+        : [];
+    }
+    return mirror.drafts;
+  },
+
+  // Replace the visible list, preserving the tombstones the mirror carries
+  // (they belong to the sync layer, not to the list the user sees).
+  _setSavedDrafts(sessionId, list) {
+    if (!sessionId) return;
+    const { tombstones } = DevChat._readDraftMirror(sessionId);
+    DevChat._writeDraftMirror(sessionId, {
+      drafts: (list || []).map(DevChat._normalizeDraft).filter(Boolean),
+      tombstones,
+    });
+  },
+
+  // Mark one draft's sync state in the mirror without disturbing the rest.
+  _markDraftSynced(sessionId, id, synced) {
+    const mirror = DevChat._readDraftMirror(sessionId);
+    let touched = false;
+    const drafts = mirror.drafts.map((d) => {
+      if (d.id !== id || d.synced === synced) return d;
+      touched = true;
+      return { ...d, synced };
+    });
+    if (!touched) return;
+    DevChat._writeDraftMirror(sessionId, { drafts, tombstones: mirror.tombstones });
+  },
+
+  _addDraftTombstone(sessionId, id) {
+    const mirror = DevChat._readDraftMirror(sessionId);
+    if (mirror.tombstones.some((t) => t.id === id)) return;
+    mirror.tombstones.push({ id, at: new Date().toISOString() });
+    DevChat._writeDraftMirror(sessionId, mirror);
+  },
+
+  _dropDraftTombstone(sessionId, id) {
+    const mirror = DevChat._readDraftMirror(sessionId);
+    const tombstones = mirror.tombstones.filter((t) => t.id !== id);
+    if (tombstones.length === mirror.tombstones.length) return;
+    DevChat._writeDraftMirror(sessionId, { drafts: mirror.drafts, tombstones });
+  },
+
   _newDraftId() {
     return `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+  },
+
+  // ── #940 sync layer ────────────────────────────────────────────────
+  //
+  // Every mutator writes the mirror and renders FIRST (optimistic), then
+  // calls one of these. Failures are deliberately SILENT: the text is
+  // already safe locally and the next reconcile retries, so a transient
+  // blip must not spend a toast on something the user needn't act on.
+
+  // Upload one draft. `POST` is idempotent on (session, draft id), so a
+  // reconcile flush can re-send freely.
+  async _pushDraftAdd(sessionId, draft) {
+    if (!sessionId || !draft) return false;
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/drafts`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: draft.id, text: draft.text, savedAt: draft.savedAt }),
+      });
+      if (!res.ok) {
+        // The cap is the one failure worth naming — the server refused, so
+        // the user's mirror and the server have genuinely diverged.
+        if (res.status === 409) {
+          const data = await res.json().catch(() => ({}));
+          if (data && data.error) DevChat._toast(data.error);
+        }
+        return false;
+      }
+      DevChat._markDraftSynced(sessionId, draft.id, true);
+      return true;
+    } catch { return false; }
+  },
+
+  // Delete one draft. A tombstone is recorded first by the caller so an
+  // offline delete still replays; success drops it again.
+  async _pushDraftDelete(sessionId, id) {
+    if (!sessionId || !id) return false;
+    try {
+      const res = await fetch(
+        `/api/sessions/${sessionId}/drafts/${encodeURIComponent(id)}`,
+        { method: 'DELETE' }
+      );
+      if (!res.ok) return false;
+      DevChat._dropDraftTombstone(sessionId, id);
+      return true;
+    } catch { return false; }
+  },
+
+  // Reconcile the local mirror against the server's list. This is BOTH the
+  // cross-device sync and the one-time migration of drafts that existed
+  // only in this browser before #940.
+  //
+  //   1. union server + local by id
+  //   2. anything tombstoned locally is dropped and DELETEd server-side
+  //   3. anything local-and-unsynced is POSTed (the migration/offline flush)
+  //   4. tombstones the server no longer knows about are discarded
+  //   5. sort oldest-first; keep the OLDEST MAX_SAVED_DRAFTS, matching the
+  //      existing cap rule (a full list refuses new saves, it never evicts)
+  //
+  // `serverList` may be null ("unknown" — e.g. the session payload's
+  // best-effort field failed), in which case we fetch it ourselves. A null
+  // after that means the network is down: keep the mirror exactly as-is.
+  async _reconcileDrafts(sessionId, serverList) {
+    if (!sessionId) return;
+    let server = serverList;
+    if (!Array.isArray(server)) {
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}/drafts`);
+        if (!res.ok) return;
+        const data = await res.json();
+        server = Array.isArray(data.drafts) ? data.drafts : [];
+      } catch { return; }
+    }
+
+    const mirror = DevChat._readDraftMirror(sessionId);
+    const tombstoned = new Set(mirror.tombstones.map((t) => t.id));
+    const serverById = new Map();
+    for (const raw of server) {
+      const d = DevChat._normalizeDraft({ ...raw, synced: true });
+      if (d) serverById.set(d.id, d);
+    }
+
+    // (2) replay deletes the server still doesn't know about, and forget
+    // tombstones it has already honoured.
+    const deletes = [];
+    for (const t of mirror.tombstones) {
+      if (serverById.has(t.id)) deletes.push(DevChat._pushDraftDelete(sessionId, t.id));
+      else DevChat._dropDraftTombstone(sessionId, t.id);
+    }
+
+    // (1) union, minus tombstones. A server row wins on text (it is the
+    // authoritative copy); a local-only row survives to be uploaded.
+    const union = new Map();
+    for (const d of mirror.drafts) {
+      if (!tombstoned.has(d.id)) union.set(d.id, d);
+    }
+    for (const [id, d] of serverById) {
+      if (!tombstoned.has(id)) union.set(id, d);
+    }
+
+    // (5) oldest-first, capped. Dropping is loud — the user typed these.
+    let merged = Array.from(union.values()).sort(DevChat._compareDrafts);
+    const dropped = Math.max(0, merged.length - DevChat.MAX_SAVED_DRAFTS);
+    if (dropped) merged = merged.slice(0, DevChat.MAX_SAVED_DRAFTS);
+
+    // The session may have changed under us while the fetch was in flight
+    // (the same guard openSession applies to the spec viewer) — writing
+    // then would leak this session's drafts into another's mirror.
+    if (!DevChat.currentSession || Number(DevChat.currentSession.id) !== Number(sessionId)) return;
+
+    // Never CREATE the key just to record "still empty". Key presence is
+    // what suppresses the ?shot demo seed (see _getSavedDrafts), so a
+    // reconcile that finds nothing anywhere must leave the key absent —
+    // otherwise merely opening a session would kill the screenshot deep
+    // link, in production as well as staging. A real save/trash writes the
+    // key itself, and that is what makes an emptied list stay empty.
+    const nothingToRecord = !merged.length && !mirror.present && !mirror.tombstones.length;
+    if (!nothingToRecord) {
+      DevChat._writeDraftMirror(sessionId, {
+        drafts: merged,
+        tombstones: DevChat._readDraftMirror(sessionId).tombstones,
+      });
+    }
+    DevChat._renderSavedDrafts();
+
+    // (3) flush anything the server hasn't got. After the paint, so an
+    // offline device still shows the right list immediately.
+    const uploads = merged
+      .filter((d) => !serverById.has(d.id))
+      .map((d) => DevChat._pushDraftAdd(sessionId, d));
+
+    if (dropped) {
+      DevChat._toast(
+        `That's ${DevChat.MAX_SAVED_DRAFTS} saved drafts — ${dropped} newer `
+        + `${dropped === 1 ? 'draft was' : 'drafts were'} dropped. Send or delete one first.`
+      );
+    }
+    await Promise.all([...deletes, ...uploads]);
+  },
+
+  // Oldest first ("newest last" in the list), id as the tiebreak because
+  // two devices can stamp the same second. Mirrors the server's
+  // `ORDER BY saved_at ASC, draft_id ASC`.
+  _compareDrafts(a, b) {
+    const ta = Date.parse(a.savedAt || '') || 0;
+    const tb = Date.parse(b.savedAt || '') || 0;
+    if (ta !== tb) return ta - tb;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  },
+
+  // WS `session_drafts_changed` from another device of the SAME user.
+  // No-op unless that session is the one on screen; the next open or
+  // visibility-return reconciles anyway, so a dropped socket costs nothing.
+  applyDraftsUpdate(sessionId) {
+    if (!DevChat.currentSession) return;
+    if (Number(DevChat.currentSession.id) !== Number(sessionId)) return;
+    DevChat._reconcileDrafts(DevChat.currentSession.id, null);
   },
 
   _toast(msg) {
@@ -5651,7 +6066,7 @@ const DevChat = {
       : ' title="Send this draft now"';
     box.innerHTML = `
       <div class="dc-drafts-head">
-        <span>Saved drafts (${drafts.length})</span>
+        <span>Saved drafts (${drafts.length}) <span class="dc-drafts-hint">· on all your devices</span></span>
         ${busy ? '<span class="dc-drafts-hint">sending unlocks when Claude finishes</span>' : ''}
       </div>
       ${drafts.map((d) => `
@@ -5719,8 +6134,12 @@ const DevChat = {
       DevChat._toast(`That's ${DevChat.MAX_SAVED_DRAFTS} saved drafts — send or delete one first`);
       return;
     }
-    drafts.push({ id: DevChat._newDraftId(), text, savedAt: new Date().toISOString() });
+    const saved = { id: DevChat._newDraftId(), text, savedAt: new Date().toISOString(), synced: false };
+    drafts.push(saved);
     DevChat._setSavedDrafts(session.id, drafts);
+    // #940: optimistic — the list is already written and painted below; the
+    // upload marks it synced when it lands, and reconcile retries if not.
+    DevChat._pushDraftAdd(session.id, saved);
     input.value = '';
     input.style.height = 'auto';
     DevChat._setDraft(session.id, '');
@@ -5748,6 +6167,10 @@ const DevChat = {
       return;
     }
     DevChat._setSavedDrafts(session.id, drafts.filter((d) => d.id !== id));
+    // #940: a send removes the draft everywhere, not just here. Tombstone
+    // first so an offline send still replays the delete on reconcile.
+    DevChat._addDraftTombstone(session.id, id);
+    DevChat._pushDraftDelete(session.id, id);
     DevChat._renderSavedDrafts();
     DevChat.sendMessage(draft.text);
   },
@@ -5765,10 +6188,17 @@ const DevChat = {
     if (!draft) return;
     let next = drafts.filter((d) => d.id !== id);
     const parked = input.value.trim();
+    let parkedDraft = null;
     if (parked && next.length < DevChat.MAX_SAVED_DRAFTS) {
-      next.push({ id: DevChat._newDraftId(), text: parked, savedAt: new Date().toISOString() });
+      parkedDraft = { id: DevChat._newDraftId(), text: parked, savedAt: new Date().toISOString(), synced: false };
+      next.push(parkedDraft);
     }
     DevChat._setSavedDrafts(session.id, next);
+    // #940: taking the draft back into the box removes it everywhere; the
+    // text it displaced (if any) is uploaded as a new draft in its place.
+    DevChat._addDraftTombstone(session.id, id);
+    DevChat._pushDraftDelete(session.id, id);
+    if (parkedDraft) DevChat._pushDraftAdd(session.id, parkedDraft);
     input.value = draft.text;
     input.style.height = 'auto';
     input.style.height = Math.min(input.scrollHeight, 120) + 'px';
@@ -5790,6 +6220,10 @@ const DevChat = {
     const drafts = DevChat._getSavedDrafts(session.id);
     if (!drafts.some((d) => d.id === id)) return;
     DevChat._setSavedDrafts(session.id, drafts.filter((d) => d.id !== id));
+    // #940: trashing here trashes it on every device. Tombstone first so an
+    // offline delete still replays rather than being undone by reconcile.
+    DevChat._addDraftTombstone(session.id, id);
+    DevChat._pushDraftDelete(session.id, id);
     DevChat._renderSavedDrafts();
     DevChat._toast('Draft deleted');
   },

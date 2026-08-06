@@ -10,6 +10,9 @@ const docker = require('../services/docker');
 const statusSvc = require('../services/status');
 const debugAccess = require('../services/debug-access');
 const github = require('../services/github');
+// #945: the issue's Usernode-side Discussion thread, merged into the
+// by-number issue response the worker's usernode-issues CLI prints.
+const threadContext = require('../services/thread-context');
 const { USERNODE_DOMAIN } = require('../services/caddy');
 const appAccess = require('../services/app-access');
 const { broadcastGlobal } = require('../services/ws');
@@ -438,14 +441,18 @@ function internalRoutes(_config) {
   );
 
   // Read-only: fetch ONE GitHub issue with its FULL (untruncated) body and
-  // its comment thread (#396). Backs the worker's `usernode-issues <number>`
-  // CLI form — the escape hatch for bodies the list route clips (#158) and
-  // the discussion the original post doesn't carry. Same auth posture as
-  // the list route (session-scoped ISSUES_JWT, both scout and build).
-  // Always 200 with `{ ok: true, issue, comments, commentsTruncated, note?,
-  // commentsNote? }` once the session checks pass — both fetchers never
-  // throw and resolve every failure to a well-formed shape, so the CLI
-  // always prints parseable JSON.
+  // BOTH of its discussion surfaces — the GitHub comment thread (#396) and
+  // the issue's Usernode-side Discussion thread (#945). Backs the worker's
+  // `usernode-issues <number>` CLI form — the escape hatch for bodies the
+  // list route clips (#158) and the discussion the original post doesn't
+  // carry. Same auth posture as the list route (session-scoped ISSUES_JWT,
+  // both scout and build), and the session_mismatch guard is what scopes
+  // the thread read to the agent's OWN app.
+  // Always 200 with `{ ok: true, issue, comments, commentsTruncated,
+  // usernodeThread?, usernodeThreadTruncated?, note?, commentsNote? }` once
+  // the session checks pass — every fetcher/loader never throws and
+  // resolves failure to a well-formed shape, so the CLI always prints
+  // parseable JSON.
   router.get(
     '/api/internal/sessions/:sessionId/issues/:number',
     internalAuth,
@@ -463,9 +470,10 @@ function internalRoutes(_config) {
       }
 
       let repoUrl = '';
+      let appId = null;
       try {
         const { rows } = await pool.query(
-          `SELECT a.repo_url
+          `SELECT a.repo_url, cs.app_id
              FROM chat_sessions cs
              JOIN apps a ON a.id = cs.app_id
             WHERE cs.id = $1`,
@@ -475,14 +483,23 @@ function internalRoutes(_config) {
           return res.status(404).json({ ok: false, code: 'session_not_found' });
         }
         repoUrl = rows[0].repo_url || '';
+        appId = rows[0].app_id;
       } catch (err) {
         log.error('internal-api', 'Issue session lookup failed', { sessionId, err: err.message });
         return res.status(500).json({ ok: false, code: 'db_error' });
       }
 
+      // #945: the platform-side Discussion thread is keyed on the app, not
+      // the repo — so it resolves even for a session whose app has no
+      // parseable GitHub remote.
+      const thread = await threadContext.loadIssueThread(pool, appId, req.params.number);
+      const threadFields = thread.messages.length
+        ? { usernodeThread: thread.messages, usernodeThreadTruncated: thread.truncated }
+        : {};
+
       const parsed = repoUrl.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
       if (!parsed) {
-        return res.json({ ok: true, issue: null, note: 'no repo' });
+        return res.json({ ok: true, issue: null, ...threadFields, note: 'no repo' });
       }
       const [, owner, repo] = parsed;
       // fetchPublicIssue validates the number itself ('bad issue number').
@@ -500,6 +517,7 @@ function internalRoutes(_config) {
         issue,
         comments,
         commentsTruncated: truncated,
+        ...threadFields,
         ...(note ? { note } : {}),
         ...(rawComments.note ? { commentsNote: rawComments.note } : {}),
       });

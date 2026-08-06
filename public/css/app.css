@@ -17,6 +17,70 @@
   --accent: #7c3aed;
   --accent-light: #8b5cf6;
   --accent-tint: rgba(124, 58, 237, 0.08);
+
+  /* ── Safe-area tokens ────────────────────────────────────
+     THE single source of truth for the shell's own safe-area
+     arithmetic. Every rule in this file that needs an inset reads one
+     of these two — never bare env() — so there is exactly one place to
+     change if the source ever moves.
+
+     Written as `var(--un-safe-inset-X, env(safe-area-inset-X, 0px))`,
+     the kit's convention (see the "Safe areas" block in
+     public/usernode-native/v1/native.css). The shell is a top-level
+     document, so nothing sets the custom property and env() supplies
+     the real value; writing it this way means the shell would also
+     honour a forwarded inset if it were ever framed, and it is what
+     lets `?shot=safe-bottom` (public/js/app.js) paint the whole shell
+     — kit `.un-safe-*` classes included — as if it were on a notched
+     phone. */
+  --platform-safe-bottom: var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px));
+  --platform-safe-top: var(--un-safe-inset-top, env(safe-area-inset-top, 0px));
+}
+
+/* ── Safe-area utilities ─────────────────────────────────
+   The platform's half of "backgrounds extend into the bottom inset,
+   interactive content insets itself":
+
+   .platform-safe-scroll — a scroll container whose content ends at the
+     bottom of the screen. Block-end padding is part of a scroller's
+     scrollable overflow, so the last row becomes reachable AND the
+     scroller's own background still paints through the strip.
+   .platform-safe-bar — a pinned bottom bar (every composer block) that
+     already carries Tailwind `p-2`. The 8px base gap is preserved and
+     the inset is added below it.
+
+   `!important` is load-bearing, not laziness: /css/tailwind.css is
+   linked AFTER /css/app.css (index.html — and the inline probe there
+   enforces that order), so a plain class here loses the specificity
+   tie against `p-2` / `p-4` on the same element purely on source
+   order. The kit's own `.un-safe-*` helpers carry `!important` for
+   exactly this reason.
+
+   Deliberately NOT the kit's `.un-safe-bottom`: that one REPLACES the
+   element's own bottom padding with the bare inset (a composer would
+   lose its 8px gap) and has no keyboard-up suppression. These wrap the
+   kit's token rather than forking its CSS. */
+.platform-safe-scroll {
+  padding-bottom: var(--platform-safe-bottom) !important;
+}
+
+.platform-safe-bar {
+  padding-bottom: calc(0.5rem + var(--platform-safe-bottom)) !important;
+}
+
+/* Keyboard up: the home-indicator strip sits BEHIND the on-screen
+   keyboard, so reserving it there is pure dead space above the
+   keyboard. Same suppression the kit applies to its own surfaces
+   (`html.un-kb .un-panel-body` / `.un-action-sheet` / `.un-kb-avoid`
+   in native.css). The bar keeps its 8px base gap; a scroller that also
+   carries the kit's `.un-kb-avoid` gets the keyboard inset from the
+   kit instead. */
+html.un-kb .platform-safe-scroll {
+  padding-bottom: 0 !important;
+}
+
+html.un-kb .platform-safe-bar {
+  padding-bottom: 0.5rem !important;
 }
 
 .dark {
@@ -201,6 +265,51 @@ html, body {
 .app-card { transition: background-color 150ms; }
 .app-card:hover { background-color: var(--bg-card); }
 
+/* THE TILE LABEL — iOS-homescreen sized (#951).
+   11px on a 13px line, TWO lines, ellipsised on overflow. The old label
+   was one 14px/20px line with `truncate`, which cut most real app names
+   after ~12 characters; at this size and two lines a tile shows roughly
+   three times as much of a long name.
+
+   The lane is a FIXED 26px (2 x 13), not min-height: a one-line title and
+   a two-line title must occupy exactly the same box or the caption below
+   it — and the tile's whole content height — would shift per tile, and
+   the grid's rows are a fixed --home-cell-h with the cards top-aligned
+   (`align-self: start`), so a taller card paints over its neighbour.
+   Together with the tightened caption lane below, the 124px budget in
+   the --home-cell-h derivation is unchanged.
+
+   -webkit-line-clamp is the only cross-browser way to ellipsise at a
+   line COUNT (the standard `line-clamp` is listed alongside it for the
+   engines that have shipped it unprefixed); it needs the -webkit-box
+   display, which is why this is a class rather than Tailwind's
+   `truncate`. overflow-wrap: anywhere keeps a single long unbroken word
+   (a slug-style name) inside the tile instead of overflowing it. */
+.app-card-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  width: 100%;
+  height: 1.625rem; /* 26px — exactly two lines */
+  font-size: 0.6875rem; /* 11px */
+  line-height: 0.8125rem; /* 13px */
+  font-weight: 500;
+  text-align: center;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* The status caption ("Spinning up…" / "Awaiting secrets" / "Error")
+   steps down with it: 11px on a 12px line, no top margin, so the two
+   text lanes together are 26 + 12 = 38px — the same as the old
+   20 (title) + 16 (caption) + 2 (mt-0.5) budget. */
+.app-card-status {
+  font-size: 0.6875rem; /* 11px */
+  line-height: 0.75rem; /* 12px */
+}
+
 /* ── App icon tiles ────────────────────────────────────────
    The single treatment for every homescreen-style app icon tile:
    home cards, the widget strip, the landing (unauthed) grid, and
@@ -326,6 +435,838 @@ html, body {
   margin-right: auto;
 }
 
+/* ── Home-screen panels (#911) ──────────────────────────────
+   The widget area between the "Your apps" grid and "Featured apps" is a
+   STACK of separate bordered blocks, one per widget, so a second panel
+   lands as its own distinct box rather than another row inside a shared
+   card. Each block is a plain full-width child of #home-panels — the
+   column above is the only width bound (see .home-column).
+
+   HEIGHT — "about two rows of app icons", derived from the app tile's
+   own tokens rather than measured at runtime. #922 deleted exactly that
+   kind of measure-on-render loop (Home.alignSections publishing
+   --home-section-indent), so this stays a constant that a reader can
+   check by hand:
+
+     one app row  --home-cell-h              = 7.75rem (124px)
+     #app-list    gap-2         0.5rem between rows
+                  two app rows  7.75 + 0.5 + 7.75 = 16rem (256px)
+
+   The row height is --home-cell-h now (declared above, with the .app-card
+   token derivation that produces it), so this cap is literally "two cells
+   plus the gap between them" and the two can no longer drift apart. The
+   PHONE variant is smaller — a 116px cell and a 6px gap = 238px — and is
+   applied in the media query below, since every widget is 2 rows tall at
+   both widths.
+
+   If any of .app-card's own tokens changes, update --home-cell-h and this
+   constant together — tests/home-panels-render.test.js pins both sides so
+   a drift in one without the other fails rather than silently mis-sizing
+   the block.
+
+   WHAT THAT NUMBER MEANS DEPENDS ON THE BREAKPOINT (#947, #968). The
+   challenges widget is the same markup at both widths and two different
+   things:
+
+     PHONE (<640px, 4 columns) — the widget spans the FULL grid width and is
+     ONE CELL TALL (registry `sizes` 4: [4, 1]), so this two-cell constant
+     does not apply there at all: the phone media block at the bottom of this
+     file redefines --home-panel-max-h as one --home-cell-h. #947 made the
+     block draw at its CONTENT height (`.home-panel--fit`, same block) but
+     left the footprint at two rows, so the height it gave up became a band of
+     blank grid between the widget and the first row of app icons — a ~68px
+     box inside a 238px reservation between seasons. #968 cut the footprint
+     to one row and reshaped the CONTENT to fit it:
+
+       border 2 + title bar 27 + 2 rows x --home-panel-row-h (40) = 109px
+
+     against the 116px phone cell — ~7px of headroom. No footer: a
+     .home-panel-footer is 27px more and that IS the second row, so the way
+     off this screen rides in the title bar instead — the leaderboard link of
+     #980, which is Discover's browse control in the same place for the same
+     reason (#949) — the rows themselves still open the Challenges tab, and
+     expand-in-place is a desktop-only state. The empty state is 69px of the
+     same cell. See HomePanels.renderChallengesPanel's compact branch.
+
+     DESKTOP (>=640px, 5 columns) — the widget is a TILE in a grid of app
+     icons. Shrinking it would leave a notch beside the tiles it shares rows
+     with, so the constant is the DRAWN height, always, and the widget fills
+     whatever the challenge rows don't use with a LEADERBOARD section (see
+     .home-panel-fill). Row budget inside the 16rem tile:
+
+       256 - border 2 - title bar 25.5 - footer 27           = 201.5px
+       a row is --home-panel-row-h (40); the fill label is 16
+       => fillRows = 4 - max(challengeRows, 1)
+
+     which is 3 rows at zero or one challenge, 2 at two, 1 at three, and 0 at
+     four — a 40px row plus its 16px label does not fit in the ~41px the
+     four-row state leaves, so that one state keeps its slack.
+
+   The cap is enforced by flexbox, not arithmetic: the title bar is
+   flex: none and the body takes the remainder with min-height: 0 +
+   overflow: hidden, so content clips at the cap instead of growing the
+   block. Budget inside 14rem, counting every band the collapsed block
+   actually draws:
+
+     border            1px top + 1px bottom          =   2px
+     title bar         py-1 8 + 16.5 line + 1 rule   =  25.5px
+     rows              4 x --home-panel-row-h (40)   = 160px
+     footer            26px min-height + 1 rule      =  27px
+                                                       -------
+                                                        214.5px
+
+   The block deliberately spends LESS than the cap — the cap is the
+   ceiling that stops it pushing "Featured apps" off the fold, but a
+   widget that merely fits under a ceiling still reads tall. ~215px
+   against a 224px cap leaves ~9px of headroom, which is also what
+   absorbs a slightly larger system text size before the rows list
+   starts to clip. Growing the row past 40px spends that headroom
+   directly: at 42px the four rows plus chrome are 222.5px and one more
+   pixel of text anywhere clips the last row.
+
+   WIDTH CAP — half the home column, and derived from it the same way:
+
+     .home-column  max-width  64rem (1024px)
+                              ------
+                   half        32rem (512px)
+
+   A widget is not a section. The trailing sections ("Featured apps",
+   "Create an app") are full-width because their CONTENT is full-width —
+   a horizontal strip of app tiles, a wide call to action. A challenges
+   row is one short line of text plus two small chips, so stretching it
+   to 1024px left most of the block as empty space with a lonely reward
+   chip pinned to the far right, and the eye had to travel the whole
+   column to connect a goal to its points.
+
+   Left-aligned, not centred: the block is a member of the app grid (it
+   is a col-span-full item inside #app-list), so its left edge must line
+   up with the first column of app icons or the grid reads as broken.
+   max-width on a block-level article does that for free — no auto
+   margins, which would centre it. Below 512px the cap is a no-op and
+   the block is as wide as the phone, which is what a phone wants. */
+:root {
+  /* ONE APP-GRID ROW. Every other height on the home screen is derived from
+     it: the grid's own grid-auto-rows, the drag overlay's cells (which must
+     line up with real tiles to the pixel), and --home-panel-max-h below.
+
+     Desktop (>= 640px), from .app-card's own tokens in home.js renderAppCard:
+       p-3        0.75rem x 2  = 1.5rem
+       w-14 h-14  3.5rem       = 3.5rem
+       gap-1.5    0.375rem     = 0.375rem
+       title      2 x 13px     = 1.625rem  <- .app-card-title, two lines
+       caption    12px line    = 0.75rem   <- .app-card-status, see below
+                                --------
+                                7.75rem   (124px)
+
+     #951 shrank the label from one 14px/20px line to two 11px/13px lines
+     and tightened the icon->label gap and the caption line to match, so
+     the total is UNCHANGED and nothing derived from --home-cell-h moved.
+     Both text lanes are fixed heights, so a one-line and a two-line title
+     produce identical tiles.
+     The phone variant is 116px: index.html tightens the tile to `p-2`
+     (0.5rem x 2), which is 8px less. Four 56px icons per row only read as a
+     home screen at that density.
+
+     THE CAPTION LANE IS NOT OPTIONAL. Most tiles are running apps and draw
+     nothing there, so it looks like dead space — but the status dot is gone
+     from the tile face, which makes "Spinning up…" / "Awaiting secrets" /
+     "Error" the ONLY status signal a tile has. Rows are a FIXED height (the
+     8-row canvas and the drag overlay both depend on it), so a caption with
+     no room doesn't push the row taller — it paints over the tile below.
+     Budgeting for it is what keeps an errored app legible instead of
+     bleeding into its neighbour. */
+  --home-cell-h: 7.75rem; /* 124px — see the derivation above */
+  /* ONE EMPTY ROW on a phone (#975). Half a cell — 58px against the phone's
+     116px — so a row the viewer left empty keeps its place in the arrangement
+     without reserving a whole tile to be empty. DERIVED from the cell rather
+     than written out, so the two can never drift.
+
+     Emitted by Home.rowTemplate for the rows HomeLayout.blankRows names, and
+     only at four columns; the :root value here (62px) is never used, since a
+     desktop grid gets no inline template at all. A variable and not an inline
+     calc() because every track in that template has to stay a single
+     space-free token — see rowTemplate. */
+  --home-blank-row-h: calc(var(--home-cell-h) / 2);
+  --home-panel-max-h: 16rem; /* two cells + the gap — see --home-cell-h */
+  --home-panel-max-w: 32rem; /* half of .home-column's 64rem */
+  --home-panel-row-h: 2.5rem; /* 40px — see the budget above */
+  /* The METER LANE: the strip along the bottom of every row in a panel
+     that has at least one progress bar. The bar lives in it and the row's
+     text is pushed clear of it (padding-bottom on the row, so the flex
+     centring happens in what's left). Before this, the text was centred in
+     the whole row and the bar was jammed underneath it — half a pixel of
+     line-box clearance, three pixels to the divider — which read as one
+     cramped smear rather than "a goal, and how far along it is". */
+  --home-panel-meter-lane: 0.875rem; /* 14px */
+  --home-panel-bar-h: 0.5625rem;     /* 9px — the bar itself */
+  --home-panel-bar-gap: 0.3125rem;   /* 5px — bar to the row divider */
+}
+
+.home-panel {
+  display: flex;
+  flex-direction: column;
+  max-height: var(--home-panel-max-h);
+  max-width: var(--home-panel-max-w);
+}
+
+/* THE WHOLE TITLE BAR IS THE DRAG HANDLE (#911). No ⠿ grip: the drag
+   surface has always been the whole grid item, so a dedicated grabber
+   beside a bar that is itself grabbable advertised the opposite — "only
+   this glyph moves it" — which is how the widget got reported as
+   undraggable in the first place.
+
+   There is no `handle:` option on the kit's attachReorder call, and that
+   is deliberate: `handle` is declared per LIST, and #app-list's other
+   items are the app cards, which must keep long-press-to-lift on touch
+   and drag-from-anywhere on desktop. With no handle the kit already gives
+   this bar exactly what was asked for — a desktop drag lifts as soon as
+   it passes the slop, a touch drag lifts on the long press — and a touch
+   that merely rests here still scrolls the feed, which an immediate-lift
+   grabber spanning a full-width 28px bar would have broken.
+
+   The cursor is scoped to the IN-GRID host: in the #home-panels fallback
+   section (search view, or before the grid has painted) there is no
+   reorder wiring at all, so a grab cursor there would be a lie. */
+.home-panel-bar {
+  user-select: none;
+  -webkit-user-select: none;
+}
+[data-panel-slot] .home-panel-bar {
+  cursor: grab;
+}
+/* The kit puts .un-reordering on the LIST for the duration of a lift, and
+   the slot is one of #app-list's children. */
+.un-reordering [data-panel-slot] .home-panel-bar {
+  cursor: grabbing;
+}
+/* …but a control is a control. The ⋮ menu is excluded from the drag in JS
+   (home-panels.js _wire stops its pointerdown), so it must not wear the
+   handle's cursor either. */
+.home-panel-bar button {
+  cursor: pointer;
+}
+
+/* The rows list must be allowed to SHRINK below its content height —
+   min-height: 0 is what makes overflow: hidden clip instead of the flex
+   item refusing to compress and pushing the article past the cap. */
+.home-panel-rows {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* The challenges widget's BODY (#947): the rows list plus, on the desktop
+   tile, the LEADERBOARD fill under it. It is the flex child that takes the
+   article's remaining height and clips — the job .home-panel-rows used to do
+   alone, moved out one level so the two stacked blocks inside it keep their
+   natural heights.
+
+   That is the whole reason this wrapper exists: with `flex: 1 1 auto` still
+   on the rows list, the surplus would be absorbed BETWEEN the challenge rows
+   and the leaderboard label, splitting the tile with a gap down its middle.
+   Pinning both children to their content height collects the leftover at the
+   BOTTOM of the tile, where it reads as ordinary padding.
+
+   Scoped to the challenges panel; discover and create keep their markup, and
+   the existing descendant selectors (`.home-panel .home-panel-rows--metered
+   .home-panel-row`, asserted in dapp.json) still match through it. */
+.home-panel-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.home-panel-body > .home-panel-rows {
+  flex: 0 0 auto;
+}
+
+/* The LEADERBOARD fill. Its rows carry .home-panel-row too, so they get the
+   same 40px single-line geometry as a challenge row — which is what makes the
+   two lists line up instead of reading as two lists jammed together. They sit
+   OUTSIDE .home-panel-rows, so a metered challenge list never pushes its
+   14px meter lane onto them. */
+.home-panel-fill {
+  flex: 0 0 auto;
+}
+/* 16px including its own hairline — the figure the row budget above spends. */
+.home-panel-fill-label {
+  height: 1rem;
+}
+
+/* 44px rows: the native kit's minimum touch target, and the whole row is
+   a tap target into the Challenges screen. Uniform height is what makes
+   the 4-slot budget above exact, which is why a numeric row's progress
+   bar rides the row's bottom EDGE (absolutely positioned) instead of
+   taking a second line. */
+/* STRICTLY ONE LINE PER ROW. `nowrap` here is the belt to the per-element
+   `whitespace-nowrap` braces in home-panels.js: a fixed-height row HIDES a
+   wrap (the second line just overflows the box and gets clipped by the
+   panel), so relying on the goal's `truncate` alone and on flex to keep
+   the chips honest is how a two-line row ships unnoticed. Declaring it on
+   the row means every present and future child inherits it, and
+   `overflow: hidden` clips rather than letting a chip spill over the
+   neighbouring row.
+
+   40px, not 44: the whole row is the tap target and it spans the column
+   (~366px on a phone), so its hit AREA is far past what the 44px
+   minimum-dimension guideline protects — that rule is about small icon
+   controls, and the one of those here (the ⋮ menu) keeps
+   .un-touch-target. */
+.home-panel-row {
+  position: relative;
+  height: var(--home-panel-row-h);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.home-panel-row + .home-panel-row {
+  border-top: 1px solid var(--border-light);
+}
+
+/* The meter lane is reserved on EVERY row of a metered panel, not only on
+   the rows that draw a bar, so all the goals sit on one baseline — rows
+   whose text floated 7px lower than their neighbours' read as a rendering
+   slip, not as "this one has no bar". It is scoped to the panel (the
+   class goes on the rows list, from renderChallengesPanel) so an
+   all-binary widget keeps plain centring instead of reserving a lane
+   nothing will ever fill. */
+.home-panel-rows--metered .home-panel-row {
+  padding-bottom: var(--home-panel-meter-lane);
+}
+/* The bar's own geometry lives here rather than in utility classes so it
+   is derived from the lane it sits in: 5px + 9px fills the 14px lane
+   exactly, which is what puts the bar's top edge at the bottom of the
+   text's box rather than under it. The visible gap above the bar is then
+   the row's own centring slack — ~3px of line box, ~7px of ink — and the
+   gap below it is the 5px to the divider.
+
+   Horizontally it spans the row's TEXT column — its left edge is the
+   goal's (px-2.5 10 + glyph 10 + gap-2 8 = 28px), and it stops 12px short
+   on the right so it clears the reward chip's edge rather than running
+   flush into the row's corner. */
+.home-panel-bar-track {
+  left: 1.75rem;   /* 28px — the goal text's left edge */
+  right: 0.75rem;  /* 12px */
+  bottom: var(--home-panel-bar-gap);
+  height: var(--home-panel-bar-h);
+}
+
+/* The footer bar: the expand/collapse toggle and the way out to the
+   Challenges screen. Same height family as the title bar so the block
+   reads as chrome-rows-around-content. */
+.home-panel-footer {
+  min-height: 1.625rem; /* 26px */
+}
+
+/* EXPANDED: the cap is lifted so the block grows to fit every challenge,
+   including the organiser-finished ones the collapsed view filters out.
+   The rows list stops clipping too — the whole point of expanding is to
+   see past the cap, and the same control collapses it again. Deliberately
+   NOT a scroll container: a nested scroller inside the page scroller is
+   the touch trap this widget has avoided from the start. */
+.home-panel--expanded {
+  max-height: none;
+}
+.home-panel--expanded .home-panel-rows {
+  overflow: visible;
+}
+
+/* The in-grid drag host (#911). It spans real cells — `col-span-2
+   md:row-span-2` in home.js, derived there — so app icons flow around it,
+   the iOS widget idiom, and it can be dropped beside a card as well as
+   between rows. It carries no visuals of its own: the bordered .home-panel
+   article inside it is the widget.
+
+   NO margin here, deliberately: a margin-bottom (which this had while the
+   slot was a col-span-full row break) adds to the item's outer height, so a
+   row-span-2 item would demand 224px + margin from two 108px rows and
+   stretch every card sharing them. The grid's own gap-2 is the spacing.
+
+   The width cap is kept as a backstop, above the widest span (496px at lg
+   vs the 512px cap), so it never binds in the grid but still bounds the
+   #home-panels fallback host and the kit's lift ghost. min-width: 0 keeps
+   a long goal from pushing the item past its cells. */
+.home-panel-slot {
+  max-width: var(--home-panel-max-w);
+  min-width: 0;
+  /* The slot IS its cells: the bordered .home-panel article inside it
+     stretches to fill whatever rectangle the layout gave it, rather than
+     sitting at its natural height in the top-left of a 2x2 block.
+
+     THAT IS A DESKTOP CONTRACT (#947), not a universal one. At five columns
+     the widget is a tile among app icons and a short block would leave a
+     visible notch beside its neighbours — so it stretches, and the challenges
+     widget fills the surplus with its LEADERBOARD section rather than blank
+     space. At four columns the widget spans the whole width, so there is no
+     neighbour to leave a notch beside and shrinking costs nothing: the phone
+     media block at the bottom of this file releases `.home-panel--fit` from
+     this stretch. Do not move that rule out of the media query — desktop
+     depends on the stretch, and `align-items` here would take the create
+     widget's `h-full` 1x1 tile down with it.
+
+     Releasing the stretch is only half of "shrinks", though (#968), and the
+     half that the reader of this rule cannot see: the slot is a grid item, so
+     what it releases is space INSIDE its own rectangle. Two things size that
+     rectangle, and BOTH had to move before the page got anything back —
+     a short block in a slot that still owns 238px of grid gives its height to
+     whitespace, not to the viewer:
+
+       * the footprint. Every widget's phone `sizes` entry is one row, so the
+         rectangle is one cell rather than two.
+       * the TRACK. Home.rowTemplate gives the row a fit widget owns outright
+         a content-sized track, so the cell is as tall as the widget draws —
+         see #app-list above.
+
+     This rule is what makes the second one visible rather than redundant: in
+     a content-sized track it is a no-op (the track already equals the
+     content), but it is still what keeps the article honest on any row that
+     is NOT a fit row — a hole-adjacent full-height row, the desktop tile's
+     sibling breakpoint, or the frame before a re-render lands. */
+  display: flex;
+  min-height: 0;
+}
+.home-panel-slot > .home-panel,
+.home-panel-slot > .home-create-widget {
+  width: 100%;
+}
+
+/* ── The launcher grid ──────────────────────────────────────
+   Free-form placement: every child is positioned at an explicit
+   (column, row) by an inline `grid-column` / `grid-row` from
+   Home.renderGridItem. Rows are a FIXED height so eight of them are a
+   deterministic canvas and so the drag overlay's cells line up with real
+   tiles to the pixel — `auto` rows would size to content and the overlay
+   would drift the moment one tile had a status line and another didn't.
+
+   position: relative anchors that overlay (below).
+
+   The SEARCH view is exempt: it is a flat, transient list, and its "N
+   results" header and empty-state line would each claim a whole tile row
+   under a fixed height. Home.render() stamps data-view on the grid.
+
+   ON A PHONE THIS IS THE DEFAULT ROW HEIGHT, NOT EVERY ROW'S (#968, #975).
+   Home.render() writes an inline `grid-template-rows` below 640px — one
+   entry per occupied row, `var(--home-cell-h)` for most of them plus two
+   exceptions:
+
+     * a content-sized `minmax(floor, auto)` for a row a FIT widget owns
+       outright (HomeLayout.fitRows; challenges only today). Without it the
+       between-seasons widget drew a ~68px box inside a 116px reservation and
+       handed the other ~48px to nobody: a grid item cannot shrink a fixed
+       track, so shrinking the BOX was never going to shrink the PAGE.
+     * `var(--home-blank-row-h)` — half a cell — for a row with NOTHING in it
+       (HomeLayout.blankRows). Same reasoning one step further: an empty row
+       was spending a whole tile's height on nothing, and on the default phone
+       arrangement there are two of them between the app tiles and the lower
+       widgets.
+
+   Note what shrinking a blank row is NOT: nothing re-packs, nothing collapses,
+   nothing is tidied away. The row keeps its index, keeps its place in the
+   arrangement and stays a drop target — a hole is still an arrangement the
+   viewer chose. Only its pixel height changes, and only on a phone.
+
+   Two things the rule deliberately does not do: it never shrinks a row
+   holding an app tile (a card with no status caption is ~100px, and that lane
+   is load-bearing — see --home-cell-h), which is also why a PARTLY empty row
+   stays full; and it never emits more entries than there are occupied rows (an
+   explicit grid exists whether or not anything is in it, so eight entries
+   would pad a three-app home screen out to ~950px — which is likewise why the
+   trailing empty rows below the last tile are not in the template and have
+   nothing to shrink). Desktop gets no template at all and this token is still
+   the whole story there. */
+#app-list {
+  position: relative;
+  grid-auto-rows: var(--home-cell-h);
+}
+#app-list[data-view="search"] {
+  grid-auto-rows: auto;
+}
+
+/* ── The drag-time grid overlay ─────────────────────────────
+   While something is lifted, the grid it snaps to is drawn underneath it —
+   every cell of the canvas outlined, including the empty ones, so "you can
+   drop this anywhere" is visible rather than something to discover.
+
+   It is a real GRID sharing #app-list's own gap and row height (the column
+   template is set inline, since the column count is a JS-side decision), and
+   it is inset by the grid's own padding. That is what makes it align with
+   zero arithmetic: it is laid out by the same engine, with the same numbers,
+   as the tiles it sits behind.
+
+   The row height below is the DEFAULT and the padding for rows past the
+   content (#968, #975). Since a phone row can now be shorter than a cell —
+   content-sized for a fit widget, half a cell for an empty row —
+   Home._showGridOverlay copies #app-list's USED tracks
+   (getComputedStyle → "116px 67.5px 58px …") onto this element inline and pads
+   them out to the eight-row canvas with this token. The padded rows stay a
+   FULL cell on purpose: they are past the template, so they are the drag-only
+   region below the content, where there is no page height to reclaim and a big
+   drop target is worth more. Copied rather than
+   re-derived on purpose: one element decides the row heights and the other
+   reads its answer, so the two grids cannot disagree. In pixels, too — the
+   cells here are empty divs, so a content-sized track would collapse to
+   nothing.
+
+   The inset must track that padding EXACTLY, including the tighter top —
+   #app-list is `p-2 pt-1.5 sm:p-3 sm:pt-2`, so a uniform inset sits the whole
+   overlay 2px (phone) / 4px (desktop) low. That is not just a cosmetic drift
+   in the tint: Home._rectForCell measures these cells to find where a
+   committed drop lands, so any offset here becomes a jump at the end of the
+   release glide, exactly where the motion is supposed to be seamless.
+
+   It doubles as the drag's HIT-TEST surface (Home._cellFromPoint), which is
+   why the layer disables pointer events but the cells re-enable them: a hit
+   must land on a cell, not on a tile behind it. The kit's ghost is
+   pointer-events:none, so it never occludes them either. */
+.home-grid-overlay {
+  position: absolute;
+  /* #app-list's p-2 pt-1.5 on a phone */
+  inset: 0.375rem 0.5rem 0.5rem;
+  display: grid;
+  gap: 0.375rem;            /* gap-1.5, matching the phone grid */
+  grid-auto-rows: var(--home-cell-h);
+  pointer-events: none;
+  z-index: 0;
+}
+.home-grid-cell {
+  position: relative;
+  pointer-events: auto;
+  border: 1px dashed var(--border-light);
+  border-radius: 0.75rem;   /* rounded-xl, same as a tile */
+  transition: background-color 120ms, border-color 120ms;
+}
+/* The cell's HIT AREA bleeds into the surrounding gap. The overlay is a real
+   grid, so the gap between cells belongs to no cell — and a pointer resting
+   there would resolve to nothing, dropping the highlight and making a
+   release over a gap spring the item back. A pseudo-element hit-tests as its
+   originating cell, so half the gap in each direction closes the seams with
+   no arithmetic. Adjacent areas overlap by a pixel or two; elementFromPoint
+   takes the later cell in DOM order, which is deterministic. */
+.home-grid-cell::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+}
+/* The cells the drop would land in. A widget tints its whole footprint, so
+   "this doesn't fit here" is legible before releasing; an ILLEGAL cell is
+   left plain rather than tinted red — the absence of the affordance is the
+   clearer signal, and it matches the ghost springing back. */
+.home-grid-cell--on {
+  background-color: rgba(139, 92, 246, 0.14);
+  border-color: rgba(139, 92, 246, 0.75);
+  border-style: solid;
+}
+@media (prefers-reduced-motion: reduce) {
+  .home-grid-cell { transition: none; }
+}
+
+/* ── The live displacement preview ──────────────────────────
+   While something hovers a target, the items it WOULD push move to the cells
+   they'd land in. The flow reorder this replaced gave that away for free
+   (everything shuffled as you dragged); free placement has to show it
+   deliberately, because only the items that actually collide move at all —
+   without it a drop onto an occupied cell is a guess.
+
+   The transform is set inline from the plan (a measured delta between two of
+   the overlay's own cells); this rule only supplies the MOTION, so it matches
+   the kit's FLIP family — 200ms ease, the same as attachReorder's gridFlip.
+   z-index keeps a sliding tile above its stationary neighbours instead of
+   disappearing behind the one it is passing. */
+.home-item-displaced {
+  transition: transform 200ms ease;
+  z-index: 2;
+}
+
+/* Pushed clean off the canvas into the dense overflow rows below it. There is
+   no overlay cell to slide to, so the tile says so where it stands: dimmed,
+   with a downward chevron. Better than sliding it to a position that does not
+   exist yet, and better than moving it silently. */
+.home-item-to-overflow {
+  position: relative;
+  opacity: 0.45;
+}
+.home-item-to-overflow::after {
+  content: '↓';
+  position: absolute;
+  right: 0.25rem;
+  bottom: 0.25rem;
+  width: 1.125rem;
+  height: 1.125rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  line-height: 1;
+  color: #fff;
+  background-color: rgba(139, 92, 246, 0.9);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The new POSITION is the information, so the tiles still move — only the
+     tween goes. */
+  .home-item-displaced { transition: none; }
+}
+
+/* Tiles and widgets sit ABOVE the overlay. Without this the overlay's cells
+   would paint over the icons they are supposed to sit behind. */
+#app-list > .app-card,
+#app-list > .home-panel-slot {
+  position: relative;
+  z-index: 1;
+}
+
+/* ...but they must be TRANSPARENT TO HIT-TESTING for the duration of a drag.
+   This is load-bearing, not a polish detail. The overlay's cells are what
+   Home._cellFromPoint resolves a pointer to, and they sit BELOW the tiles
+   (they have to — a dashed outline painted over an app icon would be
+   nonsense). So while the tiles keep their pointer events, elementFromPoint
+   under the finger returns a TILE for every occupied cell, cellFromPoint
+   returns null, and the drop is treated as "not over the grid":
+
+     • dropping onto another app or widget did nothing at all — the target
+       was never even resolvable, so displacement could not be reached;
+     • and a widget could not be moved to any position overlapping its OWN
+       footprint, because its own drop slot swallowed the hit-test.
+
+   The kit puts .un-reordering on the list for exactly the span of a lift, so
+   scoping it there means normal taps are untouched. */
+#app-list.un-reordering > .app-card,
+#app-list.un-reordering > .home-panel-slot {
+  pointer-events: none;
+}
+
+/* ── Discover widget ────────────────────────────────────────
+   ONE SHAPE PER BREAKPOINT (#949 — registry sizes 4x1 / 2x2 in
+   src/routes/home-panels.js). The block is ~366px wide on a phone and
+   ~397px on a wide desktop.
+
+   PHONE — one grid row, spent on the title bar and one lane:
+
+     border            1px top + 1px bottom          =   2px
+     title bar         py-1 8 + 18 line + 1 rule     =  27px
+     tile lane         8 + 40 icon + 4 gap + 12 name + 8
+                                                     =  72px
+                                                       -------
+                                                        101px
+
+   against --home-cell-h 7.25rem (116px) — ~15px of headroom, which is what
+   absorbs a larger system text size before the lane starts to clip. That
+   27px title bar is why Discover's browse control lives IN the bar and it
+   draws no footer: a .home-panel-footer is 27px more and the lane has
+   nowhere to give it.
+
+   DESKTOP — two rows, unchanged from before the issue, with the second one
+   earned rather than trimmed:
+
+     border 2 + title bar 27 + lane 72
+     + divider/"Popular" caption (1 rule + ~18)      =  19px
+     + second lane                                   =  72px
+                                                       -------
+                                                        192px
+
+   against --home-panel-max-h 16rem (256px) = two cells plus the gap. The
+   64px of slack is deliberately NOT a void at the bottom: both lanes are
+   `flex: 1 1 0`, so they split it into equal halves and each centres its
+   single row of tiles in its own band.
+
+   tests/home-panels-render.test.js pins both budgets against those tokens,
+   so don't move one number without the other.
+
+   SIX EXPLICIT TRACKS, NOT auto-fill. Each lane must be exactly one row:
+   with a lane budgeted at one row, anything that wraps is clipped by
+   .home-panel-rows' overflow and silently disappears. auto-fill made the
+   track count follow the pixel width — 6 tracks on a phone and on a wide
+   desktop, but only 3-4 in a 640-800px window, where a full six tiles
+   wrapped. Six is Home.FEATURED_LIMIT / Home.POPULAR_LIMIT, so there is
+   exactly one track per tile either lane can ever produce.
+
+   The icon is FLUID for the same reason: the narrowest 5-column lane gives
+   a track ~32px, and a fixed 40px box would overflow it. It fills its track
+   up to the 40px it has always drawn at, so a phone and a wide desktop are
+   unchanged and a narrow desktop window shrinks instead of clipping. */
+.home-discover-tiles {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0.375rem;
+  padding: 0.5rem 0.625rem;
+  /* One row inside a band that is taller than it needs: centre it rather
+     than hanging it off the top edge. */
+  align-content: center;
+}
+/* Both lanes share the leftover height evenly instead of the first one
+   taking it all — `1 1 0` rather than .home-panel-rows' own `1 1 auto`, so
+   the basis is the band and not the content. */
+.home-discover-lane {
+  flex: 1 1 0;
+}
+/* .app-card buys these tiles their tap/drag behaviour, but NOT its padding:
+   that class is the 56px launcher tile, and its 8px (phone) / 12px (desktop)
+   inset is sized for a card that owns a whole grid cell. Inherited here it
+   added 16px to every tile, which put the phone widget at 116px of a 116px
+   cell — no headroom at all, so the first reader with larger system text
+   would have had the captions clipped. The lane's own padding is the inset;
+   the tile just holds the icon and its name.
+
+   Two classes deep on purpose: .app-card's own padding is declared LATER in
+   this file (in the phone-density block), so an equal-specificity rule here
+   would lose to it at exactly the width where it matters most. */
+.home-discover-tiles .home-discover-tile {
+  min-width: 0;
+  padding: 0;
+}
+/* THE CAP LIVES ON THE WRAPPER, NOT THE ICON. The icon's own box is a flex
+   item of a `flex-col items-center` tile, so it is shrink-to-fit: a
+   `width: 100%` on it resolves against a parent whose width comes from its
+   content, which is circular — the icons collapsed to whatever their glyph
+   happened to measure (a 12px emoji, a 30px image) instead of a uniform
+   40px. Giving the WRAPPER a definite width (the track, capped at 40px)
+   breaks the cycle: the icon then fills a box that is already decided, and
+   the +/✓ badge, which is positioned against this wrapper, keeps tracking
+   the icon's real edges at every size. */
+.home-discover-icon-wrap {
+  width: 100%;
+  max-width: 2.5rem;   /* 40px — the size the tile has always drawn at */
+  margin-inline: auto;
+}
+.home-discover-icon {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+}
+/* The "Popular" caption sits on its own hairline row between the lanes. */
+.home-discover-divider {
+  min-height: 1.125rem; /* 18px */
+}
+/* The empty state: no tile lane at all, one centred line in its place, so
+   the block reads as a compact strip rather than a mostly-blank box. */
+.home-discover-empty {
+  padding: 0.5rem 0.625rem;
+}
+
+/* ── Create-app widget ──────────────────────────────────────
+   A 1x1 tile: the whole thing is the button, since a single cell has no
+   room for chrome around one.
+
+   Two states, and the DISABLED one is the majority rendering — most accounts
+   carry no app quota — so it has to read as "locked", not "broken". Enabled
+   keeps the violet dashed outline the old create tile had; disabled steps
+   both the outline and the glyph down to the neutral hairline/faint tokens
+   and drops the hover lift. Nothing about it is inert, though: it still
+   drags, still hides, and still explains itself on tap (a `disabled`
+   attribute would have swallowed the pointer events all three need). */
+.home-create-widget {
+  min-width: 0;
+}
+/* "Create app" wraps to two lines rather than truncating: in the narrowest
+   shape the tile takes (ONE cell, ~150px on desktop) a truncated "Create …"
+   would read as a rendering bug, the way an app tile's truncated name reads
+   as a long name. Two 16px lines fit the cell's budget (16 padding + 56 icon
+   + 8 gap + 32), which is what the caption lane an app tile spends on its
+   status buys back here — a widget has no status line. Below 640px the
+   widget is a 4x1 full-width row and the label sits BESIDE the icon with
+   room to spare, so the clamp is a backstop there, not the layout. */
+.home-create-label {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.home-create-widget .home-create-tile {
+  background-color: rgba(139, 92, 246, 0.02);
+}
+.dark .home-create-widget .home-create-tile {
+  background-color: rgba(139, 92, 246, 0.04);
+}
+.home-create-widget--disabled .home-create-tile {
+  background-color: transparent;
+  /* Same SVG-outline trick as .home-create-tile above (a data-URL SVG can't
+     inherit currentColor, so each colour is its own image) — stepped to the
+     neutral hairline so the slot reads as present-but-locked. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%23d4d4d8' stroke-opacity='0.9' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+}
+.home-create-widget--disabled .home-create-tile:hover {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%23d4d4d8' stroke-opacity='0.9' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+}
+.dark .home-create-widget--disabled .home-create-tile,
+.dark .home-create-widget--disabled .home-create-tile:hover {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' fill='none'%3E%3Crect width='100%25' height='100%25' rx='12' ry='12' stroke='%232e2e50' stroke-opacity='0.95' stroke-width='2' stroke-dasharray='10 6'/%3E%3C/svg%3E");
+}
+.home-create-widget--disabled .app-icon-tile--empty {
+  color: var(--text-faint);
+}
+
+/* ── Phone density ──────────────────────────────────────────
+   Below 640px the grid is 4 columns with a tighter tile, so the cell is 8px
+   shorter (p-2 instead of p-3) and the gap is 6px instead of 8. Both the
+   overlay's inset/gap and the two-row widget cap follow from that — kept
+   here, in one block, so the three can't drift.
+
+   640px IS the breakpoint: it is Tailwind's `sm` on #app-list's
+   `grid-cols-4 sm:grid-cols-5`, and HomeLayout.BREAKPOINT_PX in
+   public/js/home-layout.js. All three must agree or the JS lays out against
+   a column count the CSS isn't rendering. */
+@media (max-width: 639.98px) {
+  :root {
+    /* 116px — p-2 (16) + icon 56 + gap-1.5 (6) + title 26 + caption 12 */
+    --home-cell-h: 7.25rem;
+    /* ONE CELL (#968). Every widget's phone footprint is one row now
+       (PANEL_REGISTRY `sizes` 4: [4, 1] for all three), so the cap is the
+       cell they each own rather than the two rows Challenges used to claim.
+       It is a CEILING, not the drawn height — `.home-panel--fit` below is
+       what lets a block end sooner — and its job is to make an oversized
+       system text size CLIP inside the widget rather than paint the article
+       over the app tiles in the row below, which is what a 238px cap in a
+       116px cell would have allowed. */
+    --home-panel-max-h: var(--home-cell-h);
+  }
+  .home-grid-overlay { gap: 0.375rem; }
+  /* The doubled class is deliberate. This rule is what makes the phone
+     cell 116px rather than 124px, but the card element carries Tailwind's
+     own `p-3`, and tailwind.css is linked AFTER app.css in index.html — so
+     at equal specificity the utility won and this tightening never applied
+     (the cell budget above said p-2 while tiles rendered at p-3, which is
+     how a captioned tile came to overflow its row). `.app-card.app-card`
+     is the same element, one specificity step up, so the intended phone
+     padding lands without an !important or a #app-list scope that would
+     miss the landing grid's tiles. It also buys the label 8px of extra
+     line width, which at 11px is roughly two more characters per line. */
+  .app-card.app-card { padding: 0.5rem; }
+
+  /* SIZE TO CONTENT, phone only (#947, #968). The widget is full-width here,
+     so a shorter block just ends sooner — no neighbour to leave a notch
+     beside, nothing to re-pack.
+
+     #947 shrank the drawn box, #968 shrank the FOOTPRINT to one grid row to
+     match, and then shrank the ROW ITSELF: Home.rowTemplate gives the row a
+     fit widget owns a content-sized track (see #app-list), so the height a
+     short block gives up is not reserved anywhere at all. There is no
+     leftover quantization to live with — the between-seasons state costs the
+     page ~68px, not a 116px cell holding a ~68px box.
+
+     Deciding this in CSS rather than JS is deliberate: a window dragged
+     across 640px resizes the block immediately, before the resize listener's
+     re-render lands. --home-panel-max-h stays as the ceiling above. */
+  .home-panel-slot > .home-panel--fit {
+    align-self: flex-start;
+  }
+}
+@media (min-width: 640px) {
+  .home-grid-overlay {
+    /* #app-list's sm:p-3 sm:pt-2 */
+    inset: 0.5rem 0.75rem 0.75rem;
+    gap: 0.5rem;      /* sm:gap-2 */
+  }
+}
+
+/* App tiles sit at the TOP of their row rather than stretching to fill it.
+   Rows are 108px tall whenever cards alone define them, so this changes
+   nothing on its own — it only matters in the rows the panel slot spans,
+   where an expanded widget makes the row taller than a card and a stretched
+   tile would grow a pool of dead space under its title. */
+#app-list > .app-card {
+  align-self: start;
+}
+
 /* The feed body is a full-height flex COLUMN so the trailing sections can
    be bottom-anchored on a tall screen.
 
@@ -349,17 +1290,15 @@ html, body {
   display: flex;
   flex-direction: column;
   min-height: 100%;
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-bottom: var(--platform-safe-bottom);
 }
 
-/* Bottom-anchors this section AND everything after it: `margin-top:auto`
-   on a flex item absorbs all the column's free space above it. When the
-   feed is taller than the viewport there is no free space, so the margin
-   resolves to 0 and the sections flow normally right below "Your apps" —
-   no gap, no clipping, no media query, no measurement. */
-.home-bottom-anchor {
-  margin-top: auto;
-}
+/* NOTE: .home-bottom-anchor is gone with the two trailing sections it
+   existed for ("Featured apps" and "Create an app", which pushed to the
+   bottom of a short feed). Both are widgets in the grid now, so there is
+   nothing below the grid left to anchor. .home-body-fill above stays — its
+   min-height is what keeps the hidden search bar pullable on a short page,
+   which was always a separate job. */
 
 /* ── Browse screen rows / boxes ─────────────────────────────
    The #apps screen renders ONE row markup (icon · name+meta · Add
@@ -478,6 +1417,42 @@ html, body {
 /* ── App iframe ────────────────────────────────────────── */
 
 #app-content { position: relative; }
+
+/* Surface-dependent bottom safe area (#970, extended).
+   #app-view used to carry the kit's `un-safe-bottom` unconditionally, so
+   its padding was subtracted from the flex height of EVERY surface inside
+   #app-content — the running app included. On a phone that left the app
+   ~34px short of the screen's rounded bottom edge, with the body
+   background showing through the gap, while the shell itself painted
+   edge-to-edge. #970 gated that padding on the PLATFORM surface.
+
+   NEITHER SURFACE CARRIES PADDING ANY MORE. Gating it was only half the
+   fix: on a platform surface the padding still sat on the OUTER box, so
+   every Dev-mode surface was shrunk by the inset and the strip below it
+   was dead background — the dev-chat composer floated above an empty
+   band and the chat lost that height. The inset moved INWARD to the
+   innermost thing that needs it (each scroller's content padding, each
+   composer bar's own padding, via .platform-safe-scroll /
+   .platform-safe-bar above), so Dev mode now paints edge-to-edge like
+   the app surface does and only its content is held clear.
+
+   What these two rules do is publish the TOKEN, so the surface contract
+   stays stated where it is read and tested:
+   - platform: restate the real inset (identical to :root — explicit
+     here because this is the boundary the contract is about);
+   - app: ZERO it, so no shared class can ever reserve the strip over an
+     app frame. The frame keeps reaching the true bottom edge and the
+     insets are forwarded INTO the app instead (AppView.broadcastSafeArea
+     → the bridge's --un-safe-inset-*), which is what lets an app inset
+     its own bottom chrome rather than being clipped by ours.
+   No `!important` needed: nothing competes with either rule. */
+#app-view[data-app-surface="platform"] {
+  --platform-safe-bottom: var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px));
+}
+
+#app-view[data-app-surface="app"] {
+  --platform-safe-bottom: 0px;
+}
 
 #app-iframe {
   position: absolute;
@@ -2335,6 +3310,31 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
    it barely moves. */
 .dc-btn-stopping-label { color: var(--text-secondary); font-size: 12px; }
 
+/* Force stop (#937): the escape hatch offered inside the stopping status
+   row once an ordinary stop has been pending ~40s and clearly isn't
+   landing. Red like .dc-btn-stop — this is the same destructive intent,
+   escalated — but sized for a transcript row rather than the composer,
+   and it sits before the row's timestamp span (which claims margin-left:
+   auto), so a plain inline-block with a little breathing room is enough. */
+.dc-force-stop-btn {
+  background: #dc2626;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 2px 8px;
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.dc-force-stop-btn:hover { background: #b91c1c; }
+.dc-force-stop-btn:disabled {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  cursor: not-allowed;
+}
+
 .dc-send-spinner {
   width: 16px; height: 16px;
   border: 2px solid var(--border);
@@ -2646,11 +3646,20 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 
 /* Narrow viewports: fullscreen modal that floats over the chat. The
    inline `width` set by JS from the previous side-panel drag is
-   overridden by `width: auto` so the modal still fills the screen. */
+   overridden by `width: auto` so the modal still fills the screen.
+
+   `inset: 0` means this panel covers the WHOLE screen — it escapes
+   #app-view and the platform header alike — so it owns both insets
+   itself. padding-top keeps the header row (version picker, the two
+   Share buttons, ✕) out from under the status bar and the notch; the
+   bottom half is carried by .dc-spec-viewer-body-wrap /
+   .dc-spec-viewer-build-hint below, which need it in the side-panel
+   layout too. */
 @media (max-width: 1023px) {
   .dc-spec-viewer.dc-spec-viewer-open {
     position: fixed;
     inset: 0;
+    padding-top: var(--platform-safe-top);
     width: auto !important;
     max-width: none;
     z-index: 50;
@@ -2732,6 +3741,14 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   border-left: 1px solid var(--border, rgba(255,255,255,0.12));
 }
 
+/* Fullscreen, the overlay is `inset: 0` — it covers the status bar, so
+   its own chrome bar has to clear the notch. Docked, it is pinned over
+   the in-page slot by the geometry sync and needs no inset at all,
+   hence the :not(). */
+#staging-overlay:not(.staging-overlay-docked) .staging-chrome-bar {
+  padding-top: calc(0.5rem + var(--platform-safe-top));
+}
+
 /* Docked chrome: "Back to session" makes no sense beside the still-
    visible session — the ×-close (.staging-dock-only) replaces it. */
 #staging-overlay.staging-overlay-docked #staging-back { display: none; }
@@ -2801,6 +3818,19 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   padding: 12px;
 }
 
+/* The bottom inset belongs to whichever of these two is LAST — the
+   build hint is conditional (only a non-empty latest version renders
+   it, see _renderSpecViewer), so both need a rule and neither may
+   double up. `:last-child` is what picks the right one: with the footer
+   present the scroller keeps its plain 12px and the footer's own
+   background fills the strip; with no footer the scroller carries it.
+   Unconditional, not inside the fullscreen media query: since #app-view
+   stopped padding, the side-panel layout reaches the true bottom edge
+   too. */
+.dc-spec-viewer-body-wrap:last-child {
+  padding-bottom: calc(12px + var(--platform-safe-bottom));
+}
+
 /* #196: two-half spec tabs (User-facing / Technical). Rendered only
    when the doc contains both marker headings — legacy specs keep the
    single untabbed body (see public/js/spec-sections.js). */
@@ -2848,7 +3878,10 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
    rendered while viewing a non-empty draft (see _renderSpecViewer). */
 .dc-spec-viewer-build-hint {
   flex-shrink: 0;
-  padding: 8px 12px;
+  /* Last element in the panel when it renders, so it owns the bottom
+     inset — and it has a background of its own, which is what makes the
+     strip read as an extension of the footer rather than a gap. */
+  padding: 8px 12px calc(8px + var(--platform-safe-bottom));
   font-size: 12px;
   line-height: 1.4;
   color: var(--text-secondary, #a1a1aa);
@@ -3211,7 +4244,10 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .gc-spec-panel-body {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 14px 16px;
+  /* Last (and only) child of the panel, so it carries the bottom inset.
+     Below 1024px the panel is `position: absolute; inset: 0` over
+     .gc-tab-body, whose bottom edge is now the screen's. */
+  padding: 14px 16px calc(14px + var(--platform-safe-bottom));
   overflow-y: auto;
   font-size: 13px;
   line-height: 1.6;

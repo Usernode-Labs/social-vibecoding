@@ -429,7 +429,10 @@ const Kudos = {
       }
       const remaining = s.remaining;
       const limit = s.limit;
-      // Click navigates to the Leaderboard screen (Kudos tab). Tooltip
+      // Click navigates to the Leaderboard screen's KUDOS tab — named
+      // explicitly (#leaderboard/prs, its Top PRs sub-view and the place
+      // you actually give kudos), because the bare #leaderboard hash opens
+      // the primary standings tab, which this meter is not about. Tooltip
       // explains the weekly cap + reset boundary.
       const tip = `${remaining} of ${limit} kudos left this week. Resets Monday 00:00 UTC.`;
       const tone = remaining === 0
@@ -445,7 +448,7 @@ const Kudos = {
       // No HeaderLayout.refresh() either: the header's centred title no
       // longer has to account for this slot's width.
       slot.innerHTML = `
-        <a href="#leaderboard" class="drawer-meter ${tone}" title="${escapeAttr(tip)}">
+        <a href="#leaderboard/prs" class="drawer-meter ${tone}" title="${escapeAttr(tip)}">
           <span class="drawer-meter-part"><span class="drawer-meter-strong">${remaining}</span><span class="drawer-meter-dim"> of ${limit} left</span></span>
         </a>`;
     },

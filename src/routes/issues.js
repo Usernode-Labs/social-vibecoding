@@ -13,6 +13,7 @@ const { encrypt, decrypt } = require('../services/secrets');
 const { issueKindLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
 const { weekStartUtc, countWeeklyAllowanceUsed, WEEKLY_KUDOS_LIMIT } = require('./kudos');
+const { placeBounty } = require('../services/bounties');
 const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
 const topicAttrs = require('../services/topic-attributes');
@@ -1228,6 +1229,26 @@ function issueRoutes(config) {
             issue.created_by_username = req.user.username;
           }
         }
+        // #964: `issue_bounties` is staging:private, so it arrives
+        // schema-only and EVERY row in a preview shows a bounty count of 0 —
+        // the ★ pill and the "★ Bountied" button state would be unreviewable,
+        // and the Send Feedback dialog's new create-with-bounty checkbox
+        // couldn't be seen to have done anything (staging also has no
+        // GITHUB_BOT_TOKEN, so no issue is really filed there). Attach
+        // synthetic bounty state to two dedicated [Mock] rows — only where no
+        // real row already claimed the number, so prod-cloned data is never
+        // overridden. Request-time, read-only, no-op in production.
+        const mockBounties = new Map([
+          [900002, { bounty_count: 2, my_bounty: false }],
+          [900004, { bounty_count: 1, my_bounty: true }],
+        ]);
+        for (const issue of issues) {
+          const b = mockBounties.get(issue.number);
+          if (b && !issue.bounty_count) {
+            issue.bounty_count = b.bounty_count;
+            issue.my_bounty = b.my_bounty;
+          }
+        }
         // "In progress" chip states on dedicated [Mock] rows, so every
         // variant is reviewable in a preview — only where no real data
         // claimed the number. 900001/900002/900009 are deliberately left
@@ -1549,9 +1570,14 @@ function issueRoutes(config) {
   //
   // Place a "Give kudos" bounty on a GitHub issue. A bounty is a symbolic
   // off-chain pledge (no tokens) that debits the giver's SHARED weekly kudos
-  // allowance (the same 5/week cap PR kudos uses, counted across both
-  // ledgers). When a merged PR closes this issue, the open bounty is awarded
-  // to that PR's author (see routes/votes.js checkAndMerge).
+  // allowance (the same WEEKLY_KUDOS_LIMIT cap PR kudos uses, counted across
+  // both ledgers). When a merged PR closes this issue, the open bounty is
+  // awarded to that PR's author (see routes/votes.js checkAndMerge).
+  //
+  // The same pledge can also be made at issue-CREATION time, from the Send
+  // Feedback dialog's "Put a kudos bounty on this" checkbox — both surfaces
+  // run services/bounties.js placeBounty, so the ledger row, the chat posts
+  // and the WS broadcast are identical whichever one was used.
   //
   // Status codes:
   //   200 ok        — bounty recorded; body carries { remaining, limit }
@@ -1600,67 +1626,32 @@ function issueRoutes(config) {
         });
       }
 
-      const weekStart = weekStartUtc();
-
-      // Shared weekly allowance check. Same bounded race as the PR-kudos
-      // give path (two parallel POSTs could each pass and overshoot by ≤1);
-      // not security-critical, documented there.
-      const used = await countWeeklyAllowanceUsed(pool, req.user.id, weekStart);
-      if (used >= WEEKLY_KUDOS_LIMIT) {
-        return res.status(429).json({
-          error: `Weekly kudos quota exceeded (${WEEKLY_KUDOS_LIMIT}/week). Resets every Monday 00:00 UTC.`,
-          remaining: 0,
-          limit: WEEKLY_KUDOS_LIMIT,
-        });
-      }
-
-      let inserted;
-      try {
-        const { rows } = await pool.query(
-          `INSERT INTO issue_bounties (app_id, github_issue_number, giver_user_id, week_start, status)
-           VALUES ($1, $2, $3, $4, 'open')
-           RETURNING id, created_at`,
-          [app.id, issueNumber, req.user.id, weekStart]
-        );
-        inserted = rows[0];
-      } catch (err) {
-        // Partial unique index on open bounties → already pledged.
-        if (err.code === '23505') {
-          return res.status(409).json({ error: 'You already placed a bounty on this issue' });
+      // Ledger + side effects live in services/bounties.js, shared with the
+      // Send Feedback dialog's create-with-bounty path (POST /api/feedback).
+      // This route keeps what is ITS OWN: the collab gate and the
+      // open-issue verification above, plus the status-code mapping below.
+      const result = await placeBounty(pool, {
+        app, user: req.user, issueNumber,
+      });
+      if (!result.ok) {
+        const status = result.code === 'quota' ? 429 : 409;
+        const body = { error: result.error };
+        // The quota response has always carried the budget figures; the
+        // duplicate one never did. Keep both shapes exactly as they were.
+        if (result.code === 'quota') {
+          body.remaining = result.remaining;
+          body.limit = result.limit;
         }
-        throw err;
+        return res.status(status).json(body);
       }
 
-      events.record(pool, {
-        type: events.EVENT_TYPES.BOUNTY_CREATED,
-        userId: req.user.id,
-        appId: app.id,
-        metadata: { issueNumber },
+      res.json({
+        ok: true,
+        bountyId: result.bountyId,
+        bountyCount: result.bountyCount,
+        remaining: result.remaining,
+        limit: result.limit,
       });
-
-      // Open-bounty count for this issue after the insert, for live FE update.
-      const { rows: countRows } = await pool.query(
-        `SELECT COUNT(*)::int AS c FROM issue_bounties
-          WHERE app_id = $1 AND github_issue_number = $2 AND status = 'open'`,
-        [app.id, issueNumber]
-      );
-      const bountyCount = countRows[0]?.c || 0;
-
-      const bountyMsg = `${req.user.username} placed a bounty (kudos) on issue #${issueNumber}`;
-      await sendSystemMessage(pool, app.id, bountyMsg, 'system')
-        .catch((err) => log.warn('issues', 'Bounty chat message failed', { err: err.message }));
-      // Dual-post into the issue's thread (lifecycle in context).
-      await sendSystemMessage(pool, app.id, bountyMsg, 'system',
-        null, { type: 'issue', ref: issueNumber }).catch(() => {});
-
-      pushIssueUpdate({
-        action: 'bounty', appSlug: app.slug, appId: app.id,
-        issueNumber, bountyCount,
-      });
-
-      const remaining = Math.max(0, WEEKLY_KUDOS_LIMIT - (used + 1));
-      log.info('issues', 'Bounty created', { appId: app.id, issueNumber, giverId: req.user.id, remaining });
-      res.json({ ok: true, bountyId: inserted.id, bountyCount, remaining, limit: WEEKLY_KUDOS_LIMIT });
     } catch (err) {
       log.error('issues', 'Bounty create failed', { issueNumber, message: err.message });
       res.status(500).json({ error: 'Internal server error' });

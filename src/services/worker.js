@@ -236,6 +236,16 @@ function parseLine(line, onProgress, state) {
       else if (k === 'sha') state.sha = v || null;
       else if (k === 'push_ok') state.pushOk = v === '1';
       else if (k === 'sync_result') state.syncResult = v || null;
+      // Backend-neutral antelope (plan.md §4-PR1): Codex/OpenRouter turns
+      // (PR5+) emit these fields in __USERNODE_RESULT__ alongside the
+      // legacy cc_* fields. Parsing them here keeps worker.js the single
+      // place that understands the terminal result line, with the legacy
+      // cc_exit alias still honored during the migration window.
+      else if (k === 'agent_backend') state.agentBackend = v || null;
+      else if (k === 'agent_provider') state.agentProvider = v || null;
+      else if (k === 'agent_model') state.agentModel = v || null;
+      else if (k === 'agent_thread_id') state.agentThreadId = v || null;
+      else if (k === 'agent_exit') state.agentExit = parseInt(v, 10);
       // #361: comma-delimited conflicted file paths (MODE=sync). Empty
       // string → no conflicts. Threaded out as result.conflictFiles so
       // sync-main.js can persist the merge-conflict snapshot.
@@ -285,6 +295,14 @@ function newWatchState() {
     initSessionId: null,
     ccIsError: false,
     ccExit: null,
+    // Backend-neutral terminal-result fields (plan.md §4-PR1). PR5's
+    // codex_openrouter runner emits these; claude_code leaves them null
+    // and callers keep using ccExit/cc_session_id during migration.
+    agentBackend: null,
+    agentProvider: null,
+    agentModel: null,
+    agentThreadId: null,
+    agentExit: null,
     ahead: 0,
     // #8: how many commits the branch is behind origin/main, parsed from
     // run-cc.sh's __USERNODE_RESULT__ line. Persisted to
@@ -990,6 +1008,31 @@ async function execInWorker(sessionId, {
   }
   const containerName = meta.containerName;
 
+  // #937: honour a stop that was requested while this turn was still
+  // spinning up. Historically the dispatch upsert below cleared
+  // `stopRequestedAt` — it could not tell a previous turn's leftover from
+  // a stop aimed at THIS turn seconds ago — so a stop clicked during
+  // ensureWorker/syncUserAgentFiles was erased by the very dispatch it was
+  // meant to prevent, and the agent ran to completion (production session
+  // 2974: 17m51s of agent time after the click). The flag is now cleared
+  // only at a real new-turn boundary via clearPendingStop(), so reading it
+  // here is authoritative.
+  //
+  // Checked FIRST, ahead of the JWT mint and the prompt-file write, so a
+  // stop that has already landed costs nothing at all — and returns the
+  // shape a genuinely killed turn produces, so every downstream consumer
+  // (the caller's stopped branch, the tail, the watchdog) behaves exactly
+  // as it does for a real in-flight kill.
+  if (getPendingStop(sessionId)) {
+    log.info('worker', 'Dispatch skipped — stop requested during spin-up', {
+      sessionId, containerName, mode,
+    });
+    const stopped = newWatchState();
+    stopped.execExitSeen = true;
+    stopped.exitCode = 143;
+    return stopped;
+  }
+
   // Re-mint the JWT on every turn so the worker's auth always has at
   // least WORKER_JWT_TTL left, regardless of how long the warm
   // container has been alive. This avoids edge cases where a session
@@ -1104,10 +1147,9 @@ async function execInWorker(sessionId, {
   // #664: fresh per-turn BYOK spillover counters — see noteTurnByokSpend.
   // `journal` is recorded so stopTurn() can append the exit marker to the
   // turn's own journal (#889) instead of leaving the consumer to discover
-  // the kill via its 10s liveness watchdog. `stopRequestedAt: null` resets
-  // any flag a previous turn left behind.
+  // the kill via its 10s liveness watchdog.
   _registryUpsert(sessionId, {
-    inFlight: true, activeTurnMode: mode, journal, stopRequestedAt: null,
+    inFlight: true, activeTurnMode: mode, journal,
     turnByokCents: 0, turnByokSwitched: false,
   });
   await _persistActiveTurn(sessionId, {
@@ -1138,6 +1180,20 @@ async function execInWorker(sessionId, {
       try { onChild(null); } catch {}
     }
 
+    // #937: belt-and-braces re-arm. The pre-dispatch gate above closes the
+    // spin-up window, but a stop can still land in the milliseconds while
+    // `docker exec -d` is in flight — and that kill would have found no
+    // turn process to match. Now that the registry knows THIS turn's
+    // journal path, re-issuing the kill lands the TERM/KILL plus the
+    // `__USERNODE_EXIT__ 143` marker, so the consumer below resolves on
+    // its next journal read (~1s) instead of on the 10s watchdog.
+    if (getPendingStop(sessionId)) {
+      log.info('worker', 'Stop landed during dispatch — re-issuing kill', {
+        sessionId, containerName, journal,
+      });
+      await stopTurn(sessionId).catch(() => {});
+    }
+
     const state = newWatchState();
     execState = state;
     const progress = typeof onProgress === 'function' ? onProgress : () => {};
@@ -1157,9 +1213,13 @@ async function execInWorker(sessionId, {
     }
     return state;
   } finally {
+    // #937: `stopRequestedAt` deliberately survives this teardown. The
+    // turn's own tail (post-run stopped-check, force-stop bookkeeping)
+    // still needs to know a stop was requested; clearPendingStop() at the
+    // next turn's boundary is what resets it.
     _registryUpsert(sessionId, {
       inFlight: false, lastUsedMs: Date.now(), activeTurnMode: null,
-      journal: null, stopRequestedAt: null,
+      journal: null,
       // Remembered for finishTurn so the caller's `finally` doesn't have
       // to thread the journal path back through its own scope.
       ...(holdTurnRecord ? { finishedJournal: journal } : {}),
@@ -1535,6 +1595,30 @@ async function stopTurn(sessionId) {
   log.info('worker', 'Stop signal sent (in-container kill + journal exit marker)', {
     containerName, sessionId, journal: meta?.journal || '(discovered in-container)',
   });
+}
+
+// #937: the pending-stop record. `stopRequestedAt` is stamped by
+// stopTurn() and read by three consumers — the journal consumer's
+// tightened liveness cadence, execInWorker's pre-dispatch gate, and its
+// post-dispatch re-arm. It must therefore OUTLIVE the dispatch it guards,
+// which is why neither execInWorker's upsert nor its finally touches it
+// anymore.
+//
+// These two functions are the only places it is read/reset from outside,
+// so the "when does a pending stop expire?" rule lives in exactly one
+// place: a stop is pending until a genuinely NEW turn begins. Callers:
+// the chat handler when it registers a fresh stop handle, and sync-main
+// before its own dispatch (a stale flag must never block a sync turn).
+function clearPendingStop(sessionId) {
+  const sid = Number(sessionId);
+  if (!_warmRegistry.has(sid)) return;
+  _registryUpsert(sid, { stopRequestedAt: null });
+}
+
+// Epoch ms of the pending stop for this session, or null when none is
+// pending. Synchronous by design — the dispatch gate reads it inline.
+function getPendingStop(sessionId) {
+  return _warmRegistry.get(Number(sessionId))?.stopRequestedAt || null;
 }
 
 // #460: materialize the dispatching user's personal agent files into the
@@ -1948,6 +2032,9 @@ module.exports = {
   ensureWorker,
   execInWorker,
   stopTurn,
+  // #937: pending-stop record (survives the dispatch it guards)
+  clearPendingStop,
+  getPendingStop,
   syncUserAgentFiles,
   resumeTurnFromJournal,
   clearActiveTurn,

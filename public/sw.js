@@ -16,25 +16,16 @@
 // .test.js loads this file in Node (module.exports branch at the bottom)
 // and pins the bypass list without a browser.
 
-const SW_VERSION = 'v5';
+// v6: the shell has no cross-origin assets left (Tailwind is compiled into
+// /css/tailwind.css and marked/DOMPurify/qrcodejs are vendored under
+// /vendor/), so the CDN cache and its stale-while-revalidate strategy are
+// gone. The activate handler prunes any `usernode-*` cache not listed in
+// ALL_CACHES, which retires the old usernode-cdn-v5 entries automatically.
+const SW_VERSION = 'v6';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const API_CACHE = `usernode-api-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
-const CDN_CACHE = `usernode-cdn-${SW_VERSION}`;
-const ALL_CACHES = [SHELL_CACHE, API_CACHE, IMMUTABLE_CACHE, CDN_CACHE];
-const LEGACY_CACHE_PREFIXES = [
-  'usernode-shell-',
-  'usernode-api-',
-  'usernode-immutable-',
-  'usernode-cdn-',
-];
-
-// Cache ownership is explicit: the root worker may retire only its own cache
-// families. The separately-scoped React worker owns usernode-react-shell-*.
-function isStaleLegacyCache(name) {
-  return LEGACY_CACHE_PREFIXES.some((prefix) => name.startsWith(prefix))
-    && !ALL_CACHES.includes(name);
-}
+const ALL_CACHES = [SHELL_CACHE, API_CACHE, IMMUTABLE_CACHE];
 
 // API-cache hygiene knobs.
 const API_CACHE_MAX_ENTRIES = 300;
@@ -44,24 +35,22 @@ const SESSION_EPOCH_HEADER = 'x-usernode-session-epoch';
 const SESSION_BOUNDARY_CACHE = 'usernode-session-boundary-v1';
 const SESSION_BOUNDARY_PATH = '/__usernode/session-boundary';
 
-// Cross-origin script URLs the shell's <script> tags load. Kept in sync
-// with index.html by tests/pwa-shell-wiring.test.js.
-const CDN_ASSETS = [
-  'https://cdn.tailwindcss.com',
-  'https://cdn.jsdelivr.net/gh/davidshimjs/qrcodejs/qrcode.min.js',
-  'https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js',
-  'https://cdn.jsdelivr.net/npm/dompurify@3.4.4/dist/purify.min.js',
-];
-
 // Same-origin shell assets precached on install so the very next offline
 // load works even for screens the session never touched. Must list every
 // local script/stylesheet index.html references — the precache-list sync
-// test enforces that. (login.html etc. are redirect stubs into the SPA's
+// test enforces that, and also enforces that index.html loads NOTHING
+// cross-origin, so this list is now the complete set of assets the shell
+// needs to render. (login.html etc. are redirect stubs into the SPA's
 // hash routes now — fold-auth-pages-into-SPA — so index.html is the one
 // document to precache.)
 const SHELL_ASSETS = [
   '/index.html',
+  '/css/tailwind.css',
   '/css/app.css',
+  // Vendored third-party libs (public/vendor/README.md records provenance).
+  '/vendor/qrcode-1.0.0.min.js',
+  '/vendor/marked-15.0.12.min.js',
+  '/vendor/purify-3.4.4.min.js',
   '/usernode-native/v1/native.css',
   '/usernode-native/v1/native.js',
   '/usernode-bridge.js',
@@ -94,6 +83,8 @@ const SHELL_ASSETS = [
   '/js/group-chat.js',
   '/js/header-layout.js',
   '/js/home.js',
+  '/js/home-layout.js',
+  '/js/home-panels.js',
   '/js/kudos.js',
   '/js/ai-credit.js',
   '/js/leaderboard.js',
@@ -101,6 +92,7 @@ const SHELL_ASSETS = [
   '/js/native-chrome.js',
   '/js/node-pill.js',
   '/js/notifications.js',
+  '/js/social-push.js',
   '/js/offline.js',
   '/js/profile.js',
   '/js/screenshot-select.js',
@@ -142,20 +134,19 @@ const NO_FALLBACK_PAGES = [
 //                cached SPA shell (index.html).
 //   'shell'    — same-origin HTML/JS/CSS/manifest/icons: network-first.
 //   'api'      — GET /api/* JSON: network-first, cache 200s for offline.
-//   'immutable'— content-addressed images (/app-icons, /visuals): cache-first.
-//   'cdn'      — known cross-origin shell scripts: stale-while-revalidate.
+//   'immutable'— content-addressed images (/app-icons, /visuals, /avatars):
+//                cache-first.
 function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   if (method !== 'GET') return 'bypass';
 
   let u;
   try { u = new URL(url, selfOrigin); } catch { return 'bypass'; }
 
-  // Cross-origin: only the known CDN scripts are handled.
-  if (u.origin !== selfOrigin) {
-    const bare = u.origin + u.pathname;
-    return CDN_ASSETS.some((a) => a === bare || a === u.href || a + '/' === bare)
-      ? 'cdn' : 'bypass';
-  }
+  // Cross-origin is never intercepted. The shell loads no cross-origin
+  // assets at all now, so anything off-origin is a child-app subdomain, an
+  // outbound link or a user-supplied image — all of which the browser should
+  // handle itself.
+  if (u.origin !== selfOrigin) return 'bypass';
 
   const p = u.pathname;
 
@@ -181,7 +172,11 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   if (p.startsWith('/api/')) return 'api';
 
   // Content-addressed, already served with a year-long immutable header.
-  if (p.startsWith('/app-icons/') || p.startsWith('/visuals/')) return 'immutable';
+  // /avatars/ joins them (#982): the id rotates whenever the bytes change
+  // (POST /api/me/avatar upserts a fresh one), so a cached entry can never
+  // be stale — a replaced id simply 404s.
+  if (p.startsWith('/app-icons/') || p.startsWith('/visuals/')
+      || p.startsWith('/avatars/')) return 'immutable';
 
   // The shell's own static assets (incl. /usernode-bridge/v1/... versions).
   if (/\.(?:html|js|css|webmanifest)$/i.test(p)) return 'shell';
@@ -199,8 +194,6 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     classifyRequest,
     SHELL_ASSETS,
-    CDN_ASSETS,
-    isStaleLegacyCache,
     NO_FALLBACK_PAGES,
     SESSION_BOUNDARY_CACHE,
     SESSION_BOUNDARY_PATH,
@@ -365,41 +358,14 @@ if (typeof module !== 'undefined' && module.exports) {
     return res;
   }
 
-  async function staleWhileRevalidateCdn(event) {
-    const cache = await caches.open(CDN_CACHE);
-    const hit = await cache.match(event.request);
-    const refresh = fetch(event.request).then((res) => {
-      // Opaque (no-cors) responses have status 0 — still cacheable and
-      // still valid for a plain <script src> load.
-      if (res && (res.ok || res.type === 'opaque')) {
-        cache.put(event.request, res.clone()).catch(() => {});
-      }
-      return res;
-    });
-    if (hit) {
-      event.waitUntil(refresh.catch(() => {}));
-      return hit;
-    }
-    return refresh;
-  }
-
   self.addEventListener('install', (event) => {
     event.waitUntil((async () => {
       const shell = await caches.open(SHELL_CACHE);
       // Per-asset, best-effort: one 404 must not brick the whole install.
+      // Every asset the shell needs is same-origin now, so a completed
+      // install is enough to render offline — there is no second,
+      // cross-origin precache pass that can partially fail any more.
       await Promise.allSettled(SHELL_ASSETS.map((path) => shell.add(path)));
-      const cdn = await caches.open(CDN_CACHE);
-      await Promise.allSettled(CDN_ASSETS.map(async (url) => {
-        // Try a CORS fetch first (jsdelivr sends ACAO:*; needed so the
-        // integrity-checked <script crossorigin> tags can verify the
-        // cached bytes); fall back to an opaque no-cors copy.
-        try {
-          const res = await fetch(url, { mode: 'cors' });
-          if (res.ok) return cdn.put(url, res);
-        } catch { /* fall through to no-cors */ }
-        const res = await fetch(url, { mode: 'no-cors' });
-        return cdn.put(url, res);
-      }));
       await self.skipWaiting();
     })());
   });
@@ -409,7 +375,7 @@ if (typeof module !== 'undefined' && module.exports) {
       // Drop caches from older SW versions.
       const names = await caches.keys();
       await Promise.all(names
-        .filter(isStaleLegacyCache)
+        .filter((n) => n.startsWith('usernode-') && !ALL_CACHES.includes(n))
         .map((n) => caches.delete(n)));
       await pruneStaleApiEntries();
       await self.clients.claim();
@@ -449,7 +415,6 @@ if (typeof module !== 'undefined' && module.exports) {
       case 'shell': event.respondWith(networkFirstShell(event)); break;
       case 'api': event.respondWith(networkFirstApi(event)); break;
       case 'immutable': event.respondWith(cacheFirstImmutable(event)); break;
-      case 'cdn': event.respondWith(staleWhileRevalidateCdn(event)); break;
       default: /* bypass — browser default network handling */ break;
     }
   });

@@ -91,11 +91,19 @@ function loadSessions(mockPool, overrides = {}) {
     ...(overrides.worker || {}),
   };
 
+  // #945: the headless question path dual-posts into the issue's
+  // Discussion thread via ws.sendSystemMessage. Captured so tests can
+  // assert the thread scoping (and, via an override, make it throw).
+  const systemMessages = [];
   const originals = [
     [paths.pool, stubModule(paths.pool, { getPool: () => mockPool })],
     [paths.ws, stubModule(paths.ws, {
       broadcastGlobal: () => {},
       pushNotificationToUser: () => 0,
+      sendSystemMessage: async (_pool, appId, content, msgType, metadata, thread) => {
+        if (overrides.sendSystemMessageThrows) throw new Error('ws down');
+        systemMessages.push({ appId, content, msgType, thread });
+      },
     })],
     [paths.github, stubModule(paths.github, githubStub)],
     [paths.llm, stubModule(paths.llm, llmStub)],
@@ -133,7 +141,7 @@ function loadSessions(mockPool, overrides = {}) {
     delete require.cache[paths.sessions];
     delete require.cache[paths.notifications];
   };
-  return { subject, github: githubStub, restore };
+  return { subject, github: githubStub, systemMessages, restore };
 }
 
 // ── In-memory mock pool ─────────────────────────────────────────────────
@@ -148,12 +156,21 @@ function makeMockPool(initial = {}) {
     terminal: null,    // { status, outcome } once the run finishes
     specMd: '',        // chat_sessions.spec_md written by the scout
     nextId: 1000,
+    // #945: rows the issue/proposal Discussion-thread loader returns —
+    // { content, created_at, username }, oldest-first, as the real query
+    // projects them.
+    threadRows: (initial.threadRows || []).slice(),
   };
   const calls = [];
 
   async function query(sql, params = []) {
     const s = String(sql);
     calls.push({ sql: s, params });
+
+    // #945: the Discussion-thread loader (services/thread-context).
+    if (/FROM chat_messages/i.test(s) && /thread_type/i.test(s) && /msg_type = 'message'/i.test(s)) {
+      return { rows: state.threadRows.slice() };
+    }
 
     // Blocking query — evaluate the SQL's own semantics over the rows so
     // the test proves the question-exclusion clause is really there.
@@ -253,7 +270,7 @@ test('buildHeadlessSeed: no comments → title + body only', () => {
       5, { title: 'Fix the thing', body: 'It is broken.' }, [], 'usernode-bot'
     );
     assert.equal(seed, 'Please work on GitHub issue #5: "Fix the thing".\n\nIt is broken.');
-    assert.ok(!seed.includes('ISSUE COMMENTS'));
+    assert.ok(!seed.includes('DISCUSSION ON'));
   } finally {
     loaded.restore();
   }
@@ -291,9 +308,9 @@ test('buildHeadlessSeed: appends comments oldest-first and tags bot-authored one
       { author: 'usernode-bot', body: '1. Which screen?', createdAt: '2026-06-01T00:00:00Z' },
       { author: 'reporter', body: 'The home screen.', createdAt: '2026-06-02T00:00:00Z' },
     ], 'usernode-bot');
-    assert.ok(seed.includes('ISSUE COMMENTS (oldest first):'));
-    assert.ok(seed.includes('[bot — earlier proposal questions, 2026-06-01] 1. Which screen?'));
-    assert.ok(seed.includes('[reporter, 2026-06-02] The home screen.'));
+    assert.ok(seed.includes('DISCUSSION ON ISSUE #5 (oldest first;'));
+    assert.ok(seed.includes('[bot — earlier proposal questions, 2026-06-01, github] 1. Which screen?'));
+    assert.ok(seed.includes('[reporter, 2026-06-02, github] The home screen.'));
     // Bot questions come before the reporter's answer (oldest first).
     assert.ok(seed.indexOf('Which screen?') < seed.indexOf('The home screen.'));
   } finally {
@@ -308,7 +325,7 @@ test('buildHeadlessSeed: tolerates the GitHub `[bot]` actor suffix', () => {
     const seed = loaded.subject.buildHeadlessSeed(5, { title: 'T', body: '' }, [
       { author: 'usernode-bot[bot]', body: 'Q?', createdAt: '2026-06-01T00:00:00Z' },
     ], 'usernode-bot');
-    assert.ok(seed.includes('[bot — earlier proposal questions, 2026-06-01] Q?'));
+    assert.ok(seed.includes('[bot — earlier proposal questions, 2026-06-01, github] Q?'));
   } finally {
     loaded.restore();
   }
@@ -326,13 +343,64 @@ test('buildHeadlessSeed: truncates long comments and caps to the most recent 20'
     const seed = loaded.subject.buildHeadlessSeed(5, { title: 'T', body: '' }, comments, null);
 
     // Only the most recent 20 survive, with the omission marker first.
-    assert.ok(seed.includes('[earlier comments omitted]'));
+    assert.ok(seed.includes('[earlier messages omitted]'));
     assert.ok(!seed.includes('comment 5'));
     assert.ok(seed.includes('comment 6'));
     assert.ok(seed.includes('comment 24'));
     // Per-comment truncation at ~2000 chars.
     assert.ok(seed.includes('x'.repeat(2000) + '… [truncated]'));
     assert.ok(!seed.includes('x'.repeat(2001)));
+  } finally {
+    loaded.restore();
+  }
+});
+
+// #945: the Usernode-side Discussion thread joins the GitHub comments in
+// ONE chronological list, each entry labelled with the surface it came
+// from — so answers left on either surface are read.
+test('buildHeadlessSeed: interleaves the Usernode thread with GitHub comments by time', () => {
+  const pool = makeMockPool();
+  const loaded = loadSessions(pool);
+  try {
+    const seed = loaded.subject.buildHeadlessSeed(
+      5, { title: 'T', body: 'B' },
+      [
+        { author: 'usernode-bot', body: '1. Which screen?', createdAt: '2026-06-01T00:00:00Z' },
+        { author: 'reporter', body: 'Late GitHub note.', createdAt: '2026-06-04T00:00:00Z' },
+      ],
+      'usernode-bot',
+      [
+        { author: 'evan', body: 'The app view header.', createdAt: '2026-06-02T00:00:00Z' },
+        { author: 'zura', body: 'And keep dark mode readable.', createdAt: '2026-06-03T00:00:00Z' },
+      ]
+    );
+
+    assert.ok(seed.includes('[bot — earlier proposal questions, 2026-06-01, github] 1. Which screen?'));
+    assert.ok(seed.includes('[evan, 2026-06-02, usernode thread] The app view header.'));
+    assert.ok(seed.includes('[zura, 2026-06-03, usernode thread] And keep dark mode readable.'));
+    assert.ok(seed.includes('[reporter, 2026-06-04, github] Late GitHub note.'));
+
+    // Strict chronological order across BOTH surfaces — the platform-side
+    // answer must land between the bot's question and the later comment.
+    const at = (needle) => seed.indexOf(needle);
+    assert.ok(at('Which screen?') < at('The app view header.'));
+    assert.ok(at('The app view header.') < at('And keep dark mode readable.'));
+    assert.ok(at('And keep dark mode readable.') < at('Late GitHub note.'));
+  } finally {
+    loaded.restore();
+  }
+});
+
+test('buildHeadlessSeed: a Usernode thread alone still produces the discussion block', () => {
+  const pool = makeMockPool();
+  const loaded = loadSessions(pool);
+  try {
+    const seed = loaded.subject.buildHeadlessSeed(
+      7, { title: 'T', body: 'B' }, [], 'usernode-bot',
+      [{ author: 'evan', body: 'Answers: 1. yes 2. no', createdAt: '2026-06-02T00:00:00Z' }]
+    );
+    assert.ok(seed.includes('DISCUSSION ON ISSUE #7 (oldest first;'));
+    assert.ok(seed.includes('[evan, 2026-06-02, usernode thread] Answers: 1. yes 2. no'));
   } finally {
     loaded.restore();
   }
@@ -432,9 +500,9 @@ test('pure-text phase-1 turn posts the questions to the issue exactly once', asy
     // …and the seed the run saw carries the comments, bot-tagged.
     const seedMsg = pool.state.messages.find((m) => m.role === 'user');
     assert.ok(seedMsg, 'seed user message persisted');
-    assert.ok(seedMsg.content.includes('ISSUE COMMENTS (oldest first):'));
-    assert.ok(seedMsg.content.includes('[bot — earlier proposal questions, 2026-06-01] Old question?'));
-    assert.ok(seedMsg.content.includes('[reporter, 2026-06-02] An answer.'));
+    assert.ok(seedMsg.content.includes('DISCUSSION ON ISSUE #5 (oldest first;'));
+    assert.ok(seedMsg.content.includes('[bot — earlier proposal questions, 2026-06-01, github] Old question?'));
+    assert.ok(seedMsg.content.includes('[reporter, 2026-06-02, github] An answer.'));
   } finally {
     await srv.close();
     loaded.restore();
@@ -460,7 +528,92 @@ test('a throwing createIssueComment does not change the run terminal state', asy
     await waitFor(() => pool.state.terminal !== null);
     // Still ready/question — the failed post is swallowed.
     assert.deepEqual(pool.state.terminal, { status: 'ready', outcome: 'question' });
-    // And no "posted" status was written.
+    // #945: the platform-side dual-post is a SEPARATE surface, so the
+    // questions still reached the reporter and the status is still
+    // honest. (The both-surfaces-down case is covered below.)
+    assert.equal(loaded.systemMessages.length, 1);
+    assert.ok(pool.state.messages.some(
+      (m) => /Posted clarifying questions/.test(m.content || '')
+    ));
+  } finally {
+    await srv.close();
+    loaded.restore();
+  }
+});
+
+// #945: the questions are dual-posted into the issue's Discussion thread
+// on the platform — the surface people actually read, and now the one
+// their answers are read back from.
+test('the question path dual-posts into the issue Discussion thread', async () => {
+  const pool = makeMockPool();
+  const loaded = loadSessions(pool);
+  const srv = await startTestServer(loaded);
+  try {
+    const res = await fetch(`${srv.baseUrl}/api/apps/my-app/issues/5/headless-session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    assert.equal(res.status, 201);
+
+    await waitFor(() => pool.state.terminal !== null);
+    assert.deepEqual(pool.state.terminal, { status: 'ready', outcome: 'question' });
+
+    // Exactly one thread post, scoped to THIS issue's thread.
+    assert.equal(loaded.systemMessages.length, 1);
+    const posted = loaded.systemMessages[0];
+    assert.deepEqual(posted.thread, { type: 'issue', ref: 5 });
+    assert.equal(posted.msgType, 'system');
+    assert.ok(posted.content.startsWith('1. Which screen? (default: home)'));
+    // Its footer points at the thread the reader is already looking at.
+    assert.ok(posted.content.includes('Answer right here in this thread'));
+  } finally {
+    await srv.close();
+    loaded.restore();
+  }
+});
+
+test('a throwing thread dual-post does not change the run terminal state', async () => {
+  const pool = makeMockPool();
+  const loaded = loadSessions(pool, { sendSystemMessageThrows: true });
+  const srv = await startTestServer(loaded);
+  try {
+    const res = await fetch(`${srv.baseUrl}/api/apps/my-app/issues/5/headless-session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    assert.equal(res.status, 201);
+
+    await waitFor(() => pool.state.terminal !== null);
+    assert.deepEqual(pool.state.terminal, { status: 'ready', outcome: 'question' });
+    // The GitHub comment still landed, so the status still reads true.
+    assert.ok(pool.state.messages.some(
+      (m) => /Posted clarifying questions/.test(m.content || '')
+    ));
+  } finally {
+    await srv.close();
+    loaded.restore();
+  }
+});
+
+test('both post surfaces failing leaves the run ready with no "posted" status', async () => {
+  const pool = makeMockPool();
+  const loaded = loadSessions(pool, {
+    sendSystemMessageThrows: true,
+    github: { createIssueComment: async () => { throw new Error('github down'); } },
+  });
+  const srv = await startTestServer(loaded);
+  try {
+    const res = await fetch(`${srv.baseUrl}/api/apps/my-app/issues/5/headless-session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    assert.equal(res.status, 201);
+
+    await waitFor(() => pool.state.terminal !== null);
+    assert.deepEqual(pool.state.terminal, { status: 'ready', outcome: 'question' });
     assert.ok(!pool.state.messages.some(
       (m) => /Posted clarifying questions/.test(m.content || '')
     ));

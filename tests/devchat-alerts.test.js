@@ -161,6 +161,22 @@ test('systemNotify (native) posts a well-formed notify message over the bridge',
   assert.equal(calls.notifications.length, 0);
 });
 
+test('active remote delivery suppresses only the duplicate native bridge alert', () => {
+  const { DevAlerts, calls } = makeEnv({ isNative: true });
+  const info = {
+    kind: 'session_done', appSlug: 'demo', sessionId: 9,
+    title: 'Session ready', body: 'all done',
+  };
+
+  DevAlerts.setRemoteDeliveryActive(true);
+  DevAlerts.systemNotify(info);
+  assert.equal(calls.bridge.length, 0);
+
+  DevAlerts.setRemoteDeliveryActive(false);
+  DevAlerts.systemNotify(info);
+  assert.equal(calls.bridge.length, 1);
+});
+
 test('systemNotify (browser) constructs a Notification only when permission is granted', () => {
   const granted = makeEnv({ isNative: false, permission: 'granted' });
   granted.DevAlerts.systemNotify({ kind: 'session_done', title: 'Dev session finished', body: 'x', sessionId: 5 });

@@ -376,7 +376,7 @@ html.un-android .un-switch:checked:active::before {
    header, never over it. */
 .un-ptr-layer.un-ptr-layer-fixed {
   position: fixed;
-  top: env(safe-area-inset-top, 0px);
+  top: var(--un-safe-inset-top, env(safe-area-inset-top, 0px));
   z-index: 90;
 }
 
@@ -567,7 +567,7 @@ html.un-android .un-switch:checked:active::before {
   background: var(--un-sheet-bg);
   border-radius: 14px 14px 0 0;
   box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.22);
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-bottom: var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px));
   transform: translateY(100%);
   transition: bottom 250ms ease-out;
   touch-action: none;
@@ -643,19 +643,19 @@ html.un-kb .un-sheet {
   width: var(--un-panel-width);
   max-width: 100vw;
   background: var(--un-panel-bg);
-  padding-top: env(safe-area-inset-top, 0px);
+  padding-top: var(--un-safe-inset-top, env(safe-area-inset-top, 0px));
   will-change: transform;
 }
 .un-panel[data-un-side="right"] {
   right: 0;
   /* Landscape notch on the trailing edge must not clip the rows. */
-  padding-right: env(safe-area-inset-right, 0px);
+  padding-right: var(--un-safe-inset-right, env(safe-area-inset-right, 0px));
   box-shadow: -8px 0 32px rgba(0, 0, 0, 0.22);
   transform: translateX(100%);
 }
 .un-panel[data-un-side="left"] {
   left: 0;
-  padding-left: env(safe-area-inset-left, 0px);
+  padding-left: var(--un-safe-inset-left, env(safe-area-inset-left, 0px));
   box-shadow: 8px 0 32px rgba(0, 0, 0, 0.22);
   transform: translateX(-100%);
 }
@@ -695,7 +695,7 @@ html.un-kb .un-sheet {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--un-kb-inset, 0px));
+  padding-bottom: calc(var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px)) + var(--un-kb-inset, 0px));
 }
 /* Keyboard up: the home-indicator safe area sits behind the keyboard —
    don't stack its padding on top of the inset. */
@@ -713,7 +713,7 @@ html.un-kb .un-panel-body {
   right: 0;
   bottom: var(--un-kb-inset, 0px);
   z-index: 9991;
-  padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px));
+  padding: 8px 8px calc(8px + var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px)));
   transform: translateY(100%);
   transition: bottom 250ms ease-out;
   will-change: transform;
@@ -923,7 +923,7 @@ html.un-kb .un-action-sheet {
   z-index: 9992;
   width: min(480px, calc(100vw - 32px));
   max-height: calc(100vh - 32px);
-  max-height: calc(100dvh - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - var(--un-kb-inset, 0px));
+  max-height: calc(100dvh - 32px - var(--un-safe-inset-top, env(safe-area-inset-top, 0px)) - var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px)) - var(--un-kb-inset, 0px));
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-y: contain;
@@ -969,7 +969,7 @@ html.un-kb .un-kb-avoid {
 .un-toast {
   position: fixed;
   left: 50%;
-  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  bottom: calc(16px + var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px)));
   z-index: 9995; /* above sheets/alerts: feedback fired from overlays shows */
   display: flex;
   align-items: center;
@@ -1054,7 +1054,7 @@ html.un-android .un-toast.un-in {
   align-items: center;
   gap: 8px;
   min-height: 44px;
-  padding: env(safe-area-inset-top, 0px) 12px 0;
+  padding: var(--un-safe-inset-top, env(safe-area-inset-top, 0px)) 12px 0;
   background: var(--un-navbar-bg);
   backdrop-filter: blur(20px) saturate(1.8);
   -webkit-backdrop-filter: blur(20px) saturate(1.8);
@@ -1212,24 +1212,39 @@ html.un-desktop[data-un-vt="pop"]::view-transition-new(root) {
    Opt-in helpers for fixed bars on pages that set viewport-fit=cover.
    Inside the Flutter shell env() reports whatever the WebView exposes —
    if the shell already insets the WebView these resolve to 0 and are
-   no-ops, so they are safe in both hosts. */
+   no-ops, so they are safe in both hosts.
+
+   EVERY safe-area value in this stylesheet is written
+   `var(--un-safe-inset-X, env(safe-area-inset-X, 0px))` (issue #970), not
+   bare env(). Reason: env() resolves to 0px inside a cross-origin iframe,
+   so in a Usernode app frame — where most kit consumers run — every one
+   of these rules was silently inert, and the platform shell had to reserve
+   the home-indicator strip on the app's behalf (which is what cut apps off
+   at a phone's rounded bottom edge). The hosted bridge now receives the
+   real insets from the shell and publishes them as those custom properties
+   on <html>, so these rules finally do their job inside an app. The env()
+   fallback keeps them exact in a top-level document — the platform shell
+   itself, or an app opened standalone — where nothing sets the property.
+
+   The @supports condition below stays bare env() on purpose: it is a
+   syntax-support probe, and wrapping it would test the wrong thing. */
 
 @supports (padding: env(safe-area-inset-top)) {
   .un-safe-top {
-    padding-top: calc(env(safe-area-inset-top)) !important;
+    padding-top: calc(var(--un-safe-inset-top, env(safe-area-inset-top, 0px))) !important;
   }
   .un-safe-top-extend {
-    padding-top: calc(0.75rem + env(safe-area-inset-top)) !important;
+    padding-top: calc(0.75rem + var(--un-safe-inset-top, env(safe-area-inset-top, 0px))) !important;
   }
   .un-safe-bottom {
-    padding-bottom: calc(env(safe-area-inset-bottom)) !important;
+    padding-bottom: calc(var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px))) !important;
   }
   .un-safe-bottom-extend {
-    padding-bottom: calc(0.75rem + env(safe-area-inset-bottom)) !important;
+    padding-bottom: calc(0.75rem + var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px))) !important;
   }
   .un-safe-x {
-    padding-left: calc(env(safe-area-inset-left)) !important;
-    padding-right: calc(env(safe-area-inset-right)) !important;
+    padding-left: calc(var(--un-safe-inset-left, env(safe-area-inset-left, 0px))) !important;
+    padding-right: calc(var(--un-safe-inset-right, env(safe-area-inset-right, 0px))) !important;
   }
 }
 

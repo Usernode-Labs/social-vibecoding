@@ -7,7 +7,7 @@
 //      throwaway Express app, swap getPool() out for an in-memory mock
 //      that intercepts pool.query() calls, and assert on HTTP status +
 //      response body for the five paths the plan calls out:
-//        - quota cap (5 succeed, 6th = 429)
+//        - quota cap (WEEKLY_KUDOS_LIMIT succeed, the next = 429)
 //        - self-kudos blocked (403)
 //        - dupe-per-PR (409 via PG unique_violation)
 //        - eligibility state filter (404 for 'active' / 'paused')
@@ -24,6 +24,14 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const express = require('express');
+
+// The weekly allowance, read from the source of truth rather than pinned
+// to a literal here. #964 raised it from 5 to 20 and every hardcoded `5`
+// in this file had to be found and changed by hand — deriving the numbers
+// instead means the next change to the cap can't leave the suite asserting
+// a stale one. The single test that asserts the VALUE is deliberate and
+// lives just below; everything else scales off this binding.
+const { WEEKLY_KUDOS_LIMIT } = require('../src/routes/kudos');
 
 // ─── Freeze the clock for the route-handler integration tests ────
 //
@@ -268,14 +276,15 @@ function makeMockPool(initial = {}) {
         const received = state.kudos.filter(
           (k) => authored.includes(k.session_id) && inWindow(k)
         );
-        // Given-side: group this user's kudos by week, cap each at 5.
+        // Given-side: group this user's kudos by week, cap each at the
+        // weekly allowance (mirrors the real query's LEAST(COUNT(*), limit)).
         const byWeek = {};
         for (const k of state.kudos) {
           if (k.giver_user_id !== uid || !inWindow(k)) continue;
           byWeek[k.week_start] = (byWeek[k.week_start] || 0) + 1;
         }
         const kudos_given = {};
-        for (const wk of Object.keys(byWeek)) kudos_given[wk] = Math.min(byWeek[wk], 5);
+        for (const wk of Object.keys(byWeek)) kudos_given[wk] = Math.min(byWeek[wk], WEEKLY_KUDOS_LIMIT);
 
         rows.push({
           user_id: uid,
@@ -366,27 +375,39 @@ test('weekStartUtc: crossing month/year boundary', () => {
 
 // ─── 2. Route handler integration tests with mock pool ────────
 
-test('POST kudos: succeeds 5 times, 6th hits 429 quota', async () => {
+// The one place the actual number is asserted. Everything else in this
+// file scales off WEEKLY_KUDOS_LIMIT, so this is the single line to edit
+// if the allowance ever moves again — and it fails loudly if the constant
+// drifts from what the product copy promises (#964 raised it 5 → 20).
+test('WEEKLY_KUDOS_LIMIT is 20', () => {
+  assert.equal(WEEKLY_KUDOS_LIMIT, 20);
+  // routes/kudos.js must keep re-exporting both names after the move into
+  // services/bounties.js — src/routes/issues.js imports them from here.
+  const kudosRoute = require('../src/routes/kudos');
+  assert.equal(typeof kudosRoute.countWeeklyAllowanceUsed, 'function');
+});
+
+test('POST kudos: succeeds WEEKLY_KUDOS_LIMIT times, the next hits 429 quota', async () => {
+  // One session per allowed give, plus one more to be refused. Built from
+  // the constant so raising the cap can't quietly turn this into a test
+  // that stops short of it and never reaches the 429 at all.
+  const ids = Array.from({ length: WEEKLY_KUDOS_LIMIT + 1 }, (_, i) => 10 + i);
   const pool = makeMockPool({
-    sessions: [
-      [10, { id: 10, user_id: 999, status: 'merged', app_id: 1 }],
-      [11, { id: 11, user_id: 999, status: 'merged', app_id: 1 }],
-      [12, { id: 12, user_id: 999, status: 'merged', app_id: 1 }],
-      [13, { id: 13, user_id: 999, status: 'merged', app_id: 1 }],
-      [14, { id: 14, user_id: 999, status: 'merged', app_id: 1 }],
-      [15, { id: 15, user_id: 999, status: 'merged', app_id: 1 }],
-    ],
+    sessions: ids.map((id) => [id, { id, user_id: 999, status: 'merged', app_id: 1 }]),
   });
   const { baseUrl, close } = await startTestServer(pool, { id: 1, username: 'alice' });
   try {
-    for (let i = 10; i <= 14; i++) {
-      const r = await fetch(`${baseUrl}/api/sessions/${i}/kudos`, { method: 'POST' });
-      assert.equal(r.status, 200, `kudos #${i - 9} should succeed`);
+    for (let n = 0; n < WEEKLY_KUDOS_LIMIT; n++) {
+      const r = await fetch(`${baseUrl}/api/sessions/${ids[n]}/kudos`, { method: 'POST' });
+      assert.equal(r.status, 200, `kudos #${n + 1} should succeed`);
     }
-    const sixth = await fetch(`${baseUrl}/api/sessions/15/kudos`, { method: 'POST' });
-    assert.equal(sixth.status, 429);
-    const body = await sixth.json();
+    const overQuota = await fetch(`${baseUrl}/api/sessions/${ids[WEEKLY_KUDOS_LIMIT]}/kudos`, { method: 'POST' });
+    assert.equal(overQuota.status, 429);
+    const body = await overQuota.json();
     assert.match(body.error, /quota/i);
+    // The message quotes the live cap, so it can never promise a number
+    // the server does not actually enforce.
+    assert.match(body.error, new RegExp(String(WEEKLY_KUDOS_LIMIT)));
   } finally {
     await close();
   }
@@ -486,12 +507,12 @@ test('GET kudos-budget reports remaining count', async () => {
   try {
     let budget = await (await fetch(`${baseUrl}/api/me/kudos-budget`)).json();
     assert.equal(budget.given_this_week, 0);
-    assert.equal(budget.remaining, 5);
-    assert.equal(budget.limit, 5);
+    assert.equal(budget.remaining, WEEKLY_KUDOS_LIMIT);
+    assert.equal(budget.limit, WEEKLY_KUDOS_LIMIT);
     await fetch(`${baseUrl}/api/sessions/10/kudos`, { method: 'POST' });
     budget = await (await fetch(`${baseUrl}/api/me/kudos-budget`)).json();
     assert.equal(budget.given_this_week, 1);
-    assert.equal(budget.remaining, 4);
+    assert.equal(budget.remaining, WEEKLY_KUDOS_LIMIT - 1);
   } finally {
     await close();
   }
@@ -517,14 +538,14 @@ test('DELETE kudos: removes the row, refunds the slot, cleans the notification',
     assert.equal(r.status, 200);
     const body = await r.json();
     assert.equal(body.ok, true);
-    assert.equal(body.remaining, 5, 'current-week slot is refunded');
-    assert.equal(body.limit, 5);
+    assert.equal(body.remaining, WEEKLY_KUDOS_LIMIT, 'current-week slot is refunded');
+    assert.equal(body.limit, WEEKLY_KUDOS_LIMIT);
     assert.equal(pool.state.kudos.length, 0, 'pr_kudos row is gone');
     assert.equal(pool.state.notifications.length, 0, 'author notification cleaned up');
 
     const budget = await (await fetch(`${baseUrl}/api/me/kudos-budget`)).json();
     assert.equal(budget.given_this_week, 0);
-    assert.equal(budget.remaining, 5);
+    assert.equal(budget.remaining, WEEKLY_KUDOS_LIMIT);
   } finally {
     await close();
   }
@@ -571,28 +592,25 @@ test('DELETE kudos: give → retract → give again succeeds (no 409)', async ()
   }
 });
 
-test('DELETE kudos: quota refund lets a 6th give through after a retract', async () => {
+test('DELETE kudos: quota refund lets one more give through after a retract', async () => {
+  // One session per allowed give, plus a spare (`extra`) that the quota
+  // refuses until the retract frees a slot.
+  const ids = Array.from({ length: WEEKLY_KUDOS_LIMIT }, (_, i) => 10 + i);
+  const extra = 10 + WEEKLY_KUDOS_LIMIT;
   const pool = makeMockPool({
-    sessions: [
-      [10, { id: 10, user_id: 999, status: 'merged', app_id: 1 }],
-      [11, { id: 11, user_id: 999, status: 'merged', app_id: 1 }],
-      [12, { id: 12, user_id: 999, status: 'merged', app_id: 1 }],
-      [13, { id: 13, user_id: 999, status: 'merged', app_id: 1 }],
-      [14, { id: 14, user_id: 999, status: 'merged', app_id: 1 }],
-      [15, { id: 15, user_id: 999, status: 'merged', app_id: 1 }],
-    ],
+    sessions: [...ids, extra].map((id) => [id, { id, user_id: 999, status: 'merged', app_id: 1 }]),
   });
   const { baseUrl, close } = await startTestServer(pool, { id: 1, username: 'alice' });
   try {
-    for (let i = 10; i <= 14; i++) {
-      assert.equal((await fetch(`${baseUrl}/api/sessions/${i}/kudos`, { method: 'POST' })).status, 200);
+    for (const id of ids) {
+      assert.equal((await fetch(`${baseUrl}/api/sessions/${id}/kudos`, { method: 'POST' })).status, 200);
     }
-    assert.equal((await fetch(`${baseUrl}/api/sessions/15/kudos`, { method: 'POST' })).status, 429,
+    assert.equal((await fetch(`${baseUrl}/api/sessions/${extra}/kudos`, { method: 'POST' })).status, 429,
       'quota exhausted before the retract');
-    const retract = await fetch(`${baseUrl}/api/sessions/10/kudos`, { method: 'DELETE' });
+    const retract = await fetch(`${baseUrl}/api/sessions/${ids[0]}/kudos`, { method: 'DELETE' });
     assert.equal(retract.status, 200);
     assert.equal((await retract.json()).remaining, 1);
-    assert.equal((await fetch(`${baseUrl}/api/sessions/15/kudos`, { method: 'POST' })).status, 200,
+    assert.equal((await fetch(`${baseUrl}/api/sessions/${extra}/kudos`, { method: 'POST' })).status, 200,
       'freed slot is spendable on another PR');
   } finally {
     await close();
@@ -600,33 +618,34 @@ test('DELETE kudos: quota refund lets a 6th give through after a retract', async
 });
 
 test('DELETE kudos: retracting a previous-week kudos does not refund this week', async () => {
+  // Enough sessions to spend the whole current-week allowance, plus a
+  // well-separated one (#900) carrying the prior-week kudos this test
+  // retracts — it must not collide with the current-week range, or the
+  // exhausting loop would double-give on it and 409.
+  const currentWeekIds = Array.from({ length: WEEKLY_KUDOS_LIMIT }, (_, i) => 10 + i);
+  const priorWeekId = 900;
   const pool = makeMockPool({
-    sessions: [
-      [10, { id: 10, user_id: 999, status: 'merged', app_id: 1 }],
-      [11, { id: 11, user_id: 999, status: 'merged', app_id: 1 }],
-      [12, { id: 12, user_id: 999, status: 'merged', app_id: 1 }],
-      [13, { id: 13, user_id: 999, status: 'merged', app_id: 1 }],
-      [14, { id: 14, user_id: 999, status: 'merged', app_id: 1 }],
-      [20, { id: 20, user_id: 999, status: 'merged', app_id: 1 }],
-    ],
+    sessions: [...currentWeekIds, priorWeekId].map(
+      (id) => [id, { id, user_id: 999, status: 'merged', app_id: 1 }]
+    ),
   });
   // A kudos given in the PRIOR week bucket, seeded directly.
   pool.state.kudos.push({
-    id: 9000, session_id: 20, giver_user_id: 1,
+    id: 9000, session_id: priorWeekId, giver_user_id: 1,
     week_start: '2026-05-11', created_at: '2026-05-12T00:00:00.000Z',
   });
   const { baseUrl, close } = await startTestServer(pool, { id: 1, username: 'alice' });
   try {
     // Exhaust the current week.
-    for (let i = 10; i <= 14; i++) {
-      assert.equal((await fetch(`${baseUrl}/api/sessions/${i}/kudos`, { method: 'POST' })).status, 200);
+    for (const id of currentWeekIds) {
+      assert.equal((await fetch(`${baseUrl}/api/sessions/${id}/kudos`, { method: 'POST' })).status, 200);
     }
-    const retract = await fetch(`${baseUrl}/api/sessions/20/kudos`, { method: 'DELETE' });
+    const retract = await fetch(`${baseUrl}/api/sessions/${priorWeekId}/kudos`, { method: 'DELETE' });
     assert.equal(retract.status, 200, 'old-week kudos is still retractable');
     assert.equal((await retract.json()).remaining, 0,
       'expired-week slot does not come back to the current week');
     const budget = await (await fetch(`${baseUrl}/api/me/kudos-budget`)).json();
-    assert.equal(budget.given_this_week, 5);
+    assert.equal(budget.given_this_week, WEEKLY_KUDOS_LIMIT);
     assert.equal(budget.remaining, 0);
   } finally {
     await close();
@@ -702,9 +721,11 @@ function seedGivenPool() {
       [3, { username: 'carol' }],
     ],
   });
-  // bob (id 2) gave 3 kudos in the prior week and 6 in the current week
-  // (one above the cap, to prove it's clamped to 5). carol (id 3) gave
-  // nothing.
+  // bob (id 2) gave 3 kudos in the prior week and one MORE than the weekly
+  // allowance in the current week, to prove the current week is clamped to
+  // the cap (the give path can overshoot by one under a race, so the
+  // leaderboard's LEAST(COUNT(*), limit) is what hides it). carol (id 3)
+  // gave nothing.
   const prior = '2026-05-11';
   const current = '2026-05-18';
   let sid = 100;
@@ -712,14 +733,14 @@ function seedGivenPool() {
     pool.state.kudos.push({ id: sid, session_id: sid, giver_user_id: 2, week_start: prior, created_at: '2026-05-12T00:00:00.000Z' });
     sid++;
   }
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < WEEKLY_KUDOS_LIMIT + 1; i++) {
     pool.state.kudos.push({ id: sid, session_id: sid, giver_user_id: 2, week_start: current, created_at: '2026-05-19T00:00:00.000Z' });
     sid++;
   }
   return pool;
 }
 
-test('leaderboard/users: kudos_given is a multi-week map (window=all), capped at 5', async () => {
+test('leaderboard/users: kudos_given is a multi-week map (window=all), capped at the weekly allowance', async () => {
   const pool = seedGivenPool();
   const { baseUrl, close } = await startTestServer(pool);
   try {
@@ -727,7 +748,7 @@ test('leaderboard/users: kudos_given is a multi-week map (window=all), capped at
     assert.equal(data.window, 'all');
     assert.equal(data.weekStart, null);
     const bob = data.items.find((r) => r.username === 'bob');
-    assert.deepEqual(bob.kudos_given, { '2026-05-11': 3, '2026-05-18': 5 });
+    assert.deepEqual(bob.kudos_given, { '2026-05-11': 3, '2026-05-18': WEEKLY_KUDOS_LIMIT });
   } finally {
     await close();
   }
@@ -742,7 +763,7 @@ test('leaderboard/users: kudos_given holds at most the current week (window=week
     assert.equal(data.weekStart, '2026-05-18');
     const bob = data.items.find((r) => r.username === 'bob');
     // Only the current week bucket survives the window filter; still capped.
-    assert.deepEqual(bob.kudos_given, { '2026-05-18': 5 });
+    assert.deepEqual(bob.kudos_given, { '2026-05-18': WEEKLY_KUDOS_LIMIT });
   } finally {
     await close();
   }

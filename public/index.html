@@ -4,15 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>dApps</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>tailwind.config = {
-    darkMode: 'class',
-    future: { hoverOnlyWhenSupported: true },
-    theme: { extend: { colors: {
-      zinc: { 50:'#f6f6fb',100:'#eeeef6',200:'#d4d4e4',300:'#b0b0c8',400:'#9898b0',500:'#6e6e8a',600:'#4e4e6a',700:'#484870',800:'#2e2e50',900:'#1a1a30',950:'#08080f' },
-      violet: { 400:'#a78bfa',500:'#8b5cf6',600:'#7c3aed',700:'#6d28d9' },
-    } } },
-  }</script>
   <script>
     if (localStorage.theme === 'light' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: light)').matches)) {
       document.documentElement.classList.remove('dark');
@@ -33,12 +24,16 @@
       document.documentElement.classList.add('in-native-webview');
     }
   </script>
-  <script src="https://cdn.jsdelivr.net/gh/davidshimjs/qrcodejs/qrcode.min.js"></script>
-  <!-- marked + DOMPurify power renderMarkdown() in dev-chat.js. SRI hashes
-       below verified against the pinned npm dist files (sha384). If either
-       script fails to load, renderMarkdown falls back to a raw <pre> view. -->
-  <script src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js" integrity="sha384-948ahk4ZmxYVYOc+rxN1H2gM1EJ2Duhp7uHtZ4WSLkV4Vtx5MUqnV+l7u9B+jFv+" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.4/dist/purify.min.js" integrity="sha384-ljaibG+rFiOlF9Y2x5ulbWhmu7GWQMKeAPHRiLXj0iozfwSIrIs1Ud1WeQ0Z+FqY" crossorigin="anonymous"></script>
+  <!-- Third-party browser libs, vendored into public/vendor/ by
+       `npm run vendor:assets` (was cdn.jsdelivr.net). Version-stamped
+       filenames ARE the pin; sha384 provenance lives in
+       public/vendor/README.md, since same-origin tags can't use SRI. Same
+       order as before: QR first, then marked + DOMPurify, which power
+       renderMarkdown() in dev-chat.js — if either fails to load,
+       renderMarkdown still falls back to a raw <pre> view. -->
+  <script src="/vendor/qrcode-1.0.0.min.js"></script>
+  <script src="/vendor/marked-15.0.12.min.js"></script>
+  <script src="/vendor/purify-3.4.4.min.js"></script>
   <!-- usernode-native kit: the platform dogfoods its own hosted kit
        (same-origin absolute path — the canonical copy this server
        serves to every app). Loaded before app.css so the platform's
@@ -46,6 +41,68 @@
   <link rel="stylesheet" href="/usernode-native/v1/native.css">
   <script src="/usernode-native/v1/native.js"></script>
   <link rel="stylesheet" href="/css/app.css">
+  <!-- Tailwind, COMPILED and served by this app (was cdn.tailwindcss.com's
+       in-browser JIT plus an inline `tailwind.config` here). The config moved
+       verbatim to tailwind.config.js at the repo root; the build is
+       `npm run build:css` (scripts/build-tailwind.js) and the output is
+       committed, because the runtime image has no devDependencies to compile
+       with.
+
+       POSITION MATTERS — KEEP THIS LINK LAST, after native.css and app.css.
+       The Play CDN did NOT inject its <style> up where its <script> tag sat:
+       it compiled asynchronously (it awaits PostCSS) and then ran
+       `document.head.append(...)`, so the generated stylesheet always landed
+       at the END of <head>, i.e. after both of those links. Utilities
+       therefore won every equal-specificity conflict against them, and
+       app.css was written against exactly that cascade. Linking the compiled
+       file first inverted it and silently broke every such collision —
+       `.attr-chip { font: inherit; background: none }` in app.css, for one,
+       started beating `text-[0.65rem] font-medium bg-zinc-500/10` and blew up
+       the "Set priority" / "Set category" / "Unassigned" chips on the dev
+       screen (#938 fallout). tests/tailwind-build.test.js asserts this
+       ordering so it cannot regress again. -->
+  <link rel="stylesheet" href="/css/tailwind.css">
+  <script>
+    // Cascade self-check. The source-order contract above is asserted at build
+    // time by tests/tailwind-build.test.js, but that only sees THIS file — it
+    // cannot see a stale service-worker precache, a proxy that reorders, or a
+    // deploy that ships a half-built stylesheet. So verify the outcome in the
+    // browser: probe the exact trio that regressed (an app.css `.attr-chip`
+    // shorthand vs. the utilities it collides with) and report if a utility
+    // lost. The only cost on a healthy load is one detached span.
+    //
+    // console.error is the point, not a side effect: the dev console forwards
+    // it, and the platform's proposal checks fail any route that logs one — so
+    // a reordered stylesheet blocks the merge instead of shipping a screen of
+    // 16px unstyled chips.
+    // Runs on DOMContentLoaded, not inline: a probe appended while <body> is
+    // still unparsed has no layout box, and getComputedStyle returns empty
+    // strings for it.
+    document.addEventListener('DOMContentLoaded', function () {
+      try {
+        var probe = document.createElement('span');
+        probe.className = 'attr-chip text-[0.65rem] font-medium bg-zinc-500/10';
+        probe.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none';
+        document.body.appendChild(probe);
+        // Read everything BEFORE detaching — getComputedStyle is live, and a
+        // removed element resolves back to empty strings.
+        var s = getComputedStyle(probe);
+        var fontSize = s.fontSize;
+        var size = parseFloat(fontSize);
+        var weight = s.fontWeight;
+        var bg = s.backgroundColor;
+        probe.remove();
+        var tinted = bg && !/^(transparent|rgba\(0, 0, 0, 0\))$/.test(bg);
+        if (!(size > 0 && size < 12) || weight !== '500' || !tinted) {
+          console.error(
+            '[tailwind] compiled utilities are losing the cascade to app.css — '
+            + '/css/tailwind.css must be the LAST stylesheet in <head>. Probe got '
+            + 'font-size:' + fontSize + ' font-weight:' + weight
+            + ' background:' + bg + ' (expected ~10.4px / 500 / a tint).');
+        }
+      } catch (e) { /* never let a self-check break the shell */ }
+    });
+  </script>
   <!-- PWA (#487): installable shell + read-only offline mode. The service
        worker is registered by /js/offline.js (loaded with the app bundle
        below). -->
@@ -374,15 +431,25 @@
          the screen works in any browser. Real anchor (like Challenges)
          so hash navigation drives the screen. The former native-push
          Profile / App Settings rows are gone: App Settings merged into
-         the Settings modal as capability-gated sections (settings.js). -->
+         the Settings modal as capability-gated sections (settings.js).
+
+         #982: when the viewer has set a profile picture, it REPLACES the
+         generic person glyph here — App.applyUserAvatar (public/js/app.js)
+         swaps which of the two is `hidden` from App.user.avatarUrl, so the
+         row shows the same face the profile screen does. The <img> ships
+         hidden with no src: a signed-out shell and a user with no picture
+         both keep the glyph, and nothing requests /avatars/ until there is
+         something to request. -->
     <a id="drawer-row-profile" href="#profile"
        class="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800">
-      <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
+      <svg id="drawer-profile-glyph" class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
+      <img id="drawer-avatar" alt="" class="hidden w-5 h-5 shrink-0 rounded-full object-cover bg-zinc-100 dark:bg-zinc-800">
       <span class="text-sm font-medium">Profile</span>
     </a>
-    <!-- Leaderboard — the one entry point for shared progress: the Kudos
-         leaderboard, the Topochain standings and the season's challenges,
-         three tabs on a single screen. This row replaces the header
+    <!-- Leaderboard — the one entry point for shared progress: the
+         Topochain standings (the primary tab, and what the bare
+         #leaderboard hash opens), the Kudos leaderboard and the season's
+         challenges, three tabs on a single screen. This row replaces the header
          trophy (#leaderboard-btn), the old
          #drawer-row-topochain-leaderboard, and the separate Challenges /
          Topochain-seasons rows that used to sit under it. Keeps the
@@ -504,6 +571,11 @@
        the latter swaps in after PLATFORM_UPDATE_TIMEOUT_MS so a botched
        deploy doesn't trap the tab forever.
 
+       A REAL MERGE IS THE ONLY TRIGGER (#962). The retired #239
+       "resolving merge conflicts" variant used to share this element
+       for background branch-sync work that usually merged nothing;
+       that state now lives on the proposal's own badge instead.
+
        The banner only signals; the actual write-blocking happens in
        App's wrapped fetch() (rejects non-GET while the flag is up).
        Read-only browsing keeps working. -->
@@ -514,15 +586,8 @@
     <span id="platform-updating-spinner" class="inline-block w-4 h-4 rounded-full border-2 border-current border-t-transparent animate-spin" aria-hidden="true"></span>
     <span id="platform-updating-text">Platform updating&hellip; sit tight, write actions are paused.</span>
     <button id="platform-updating-reload" type="button"
-            class="hidden ml-2 px-2 py-0.5 rounded border border-current text-xs font-semibold hover:bg-current/10"
+            class="hidden ml-2 px-2 py-0.5 rounded border border-current text-xs font-semibold hover:bg-black/10 dark:hover:bg-white/10"
             onclick="location.reload()">Reload</button>
-    <!-- #239: shown only in the resolving banner's red "resolution
-         failed" terminal state — that variant has no SHA flip or
-         reload coming, so the user dismisses it by hand (it also
-         auto-hides after ~20s). -->
-    <button id="platform-updating-dismiss" type="button"
-            class="hidden ml-2 px-2 py-0.5 rounded border border-current text-xs font-semibold hover:bg-current/10"
-            onclick="App.PlatformUpdating.dismissResolveFailure()">Dismiss</button>
   </div>
 
   <!-- Home screen: app list. Rendered as a responsive grid of compact
@@ -564,74 +629,78 @@
     <!-- .home-body-fill (app.css) makes this a min-height:100% flex column:
          the min-height guarantees the scroller can always be scrolled by at
          least the search bar's height, even with an empty "Your apps" — a
-         short page would otherwise leave the bar permanently on screen — and
-         the flex column lets the trailing sections carry
-         .home-bottom-anchor (margin-top:auto) so they sit at the BOTTOM of
-         the visible page when the feed is shorter than the viewport, and
-         flow normally right after "Your apps" when it isn't. -->
+         short page would otherwise leave the bar permanently on screen.
+         (It used to do double duty as the flex context for
+         .home-bottom-anchor on the two trailing sections; those are widgets
+         in the grid now, so nothing below the grid is anchored any more.) -->
     <div id="home-body" class="home-column home-body-fill">
-      <div id="app-list" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 p-3 pt-2"></div>
+      <!-- iOS in-app only: the "Usernode widget" editing strip, mirroring
+           the pinned grid the homescreen widget renders. It lives ABOVE the
+           launcher grid rather than inside it — a full-width flow item
+           cannot coexist with the explicit cell placement #app-list now
+           uses. Filled + wired by Home.renderWidgetSection /
+           _wireWidgetStrip; empty everywhere but the iOS app. -->
+      <section id="home-widget-strip-section" class="hidden px-3 pt-2"></section>
 
-      <!-- Find more apps: admin-curated featured tiles + the way into the
-           #apps browse screen. Populated by Home.renderFindMore(). -->
-      <!-- Featured apps: same section shape as "Your apps" above and
-           "Create an app" below — a .home-section-header, then the
-           content — so the three read as one consistent stack. The
-           heading sits OUTSIDE the card for that reason.
+      <!-- THE LAUNCHER GRID. Every child is placed at an explicit
+           (column, row) cell by Home.render() — app tiles and widgets
+           alike — so a viewer's arrangement can have holes in it, exactly
+           like a phone home screen. Nothing here flows.
 
-           The card is a plain FULL-WIDTH child of the section: the whole
-           feed is already capped and centred by .home-column on
-           #home-body, so the card spans the column's gutters and lines up
-           with the "Your apps" grid's own edges.
+           4 columns on a phone, 5 from `sm` (640px) up, and never more:
+           the canvas is capped at 5 x 8. That 640px boundary is mirrored
+           in HomeLayout.BREAKPOINT_PX (public/js/home-layout.js) — the JS
+           has to lay out against the same column count the CSS renders,
+           and tests/home-layout-model.test.js pins the pair.
 
-           .home-bottom-anchor pushes this section — and "Create an app"
-           after it — to the bottom of the visible page whenever the whole
-           feed is shorter than the viewport. It is a plain
-           `margin-top:auto` inside #home-body's flex column, so a feed
-           that fills or overflows the screen has no free space to absorb
-           and the section flows normally right below the grid. -->
-      <section id="home-find-more" class="home-bottom-anchor px-3 pb-3">
-        <div class="home-section-header">Featured apps</div>
-        <!-- ONE contained card: the featured tiles and the browse action
-             sit on the same rounded surface, with the browse row as the
-             card's footer — separated by a hairline rather than a gap, so
-             it stays visibly attached (and is the whole reason the footer
-             is a full-width row rather than a floating pill). -->
-        <div class="home-find-more-card rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/50 overflow-hidden">
-          <div class="px-3 pt-3">
-            <div id="home-featured-list" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 pb-3"></div>
-            <!-- Shown in place of the tiles when nothing is left to feature,
-                 so the card never collapses to a bare footer. -->
-            <p id="home-featured-empty" class="hidden pb-3 text-sm text-zinc-500 dark:text-zinc-400">
-              Nothing featured right now — browse the full directory to find apps to add.
-            </p>
-          </div>
-          <button type="button" id="home-browse-btn" class="w-full flex items-center justify-between gap-2 px-3 py-3 border-t border-zinc-200 dark:border-zinc-800 text-sm font-medium text-violet-600 dark:text-violet-400 hover:bg-violet-500/[0.06] dark:hover:bg-violet-500/10 transition-colors">
-            <span class="flex items-center gap-2">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-              Browse all apps
-            </span>
-            <svg class="w-4 h-4 shrink-0 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-          </button>
-        </div>
-      </section>
+           Tighter gutters and gaps below `sm` than the old 2-column grid
+           had: four 56px icons only read as a home screen at phone
+           density. `grid-auto-rows` and `position: relative` (needed by
+           the drag-time grid overlay) live in app.css. -->
+      <div id="app-list" class="grid grid-cols-4 sm:grid-cols-5 gap-1.5 sm:gap-2 p-2 pt-1.5 sm:p-3 sm:pt-2"></div>
 
-      <!-- Create an app: the former in-grid create tile ("Build your own
-           app"), now its own trailing section. Home.renderCreateSection()
-           fills it with either that tile or the "ask an admin" hint.
-           Same heading-outside / full-width-box shape as the featured
-           section above. -->
-      <section id="home-create-section" class="px-3 pb-4">
-        <div class="home-section-header">Create an app</div>
-        <div id="home-create-body"></div>
-      </section>
+      <!-- Home-screen widgets (#911) — the FALLBACK host.
+
+           Widgets normally live IN the launcher grid above, each at its own
+           (column, row) cell: home.js plants a `[data-panel-slot]` host per
+           widget for HomePanels.render() to paint into. This section is
+           where they go when there is no grid to ride in — an active search
+           (a transient view with no layout to place against), and the moment
+           before the first grid paint. Without it a widget would vanish
+           whenever the grid did.
+
+           Deliberately OUTSIDE #app-list, like the search bar above: the
+           grid's innerHTML is replaced on every WS app event and every
+           search keystroke, which would otherwise destroy these blocks and
+           their listeners.
+
+           HomePanels fills it with a STACK of sibling bordered
+           <article class="home-panel"> blocks — one per widget, each
+           carrying its own title bar and ⋮ menu. The blocks are plain
+           FULL-WIDTH children: .home-column on #home-body bounds and centres
+           the feed, so don't wrap them in a per-box width bound (see
+           app.css .home-column).
+
+           NOTE "panel" ≠ the "Usernode widget" strip above the grid — that
+           is the iOS home-screen widget's pinned app list. -->
+      <section id="home-panels" class="hidden px-3 pb-3"></section>
+
+      <!-- NOTE: #home-find-more ("Featured apps" + its "Browse all apps"
+           footer) and #home-create-section ("Create an app") used to sit
+           here as fixed, unmovable trailing sections below the grid. Both
+           are WIDGETS in the grid above now — `discover` and `create` — so
+           they can be placed anywhere the viewer likes, alongside their app
+           tiles, instead of being pinned under everything. See
+           PANEL_REGISTRY in src/routes/home-panels.js and the renderers
+           (renderDiscoverPanel / renderCreatePanel) in
+           public/js/home-panels.js. -->
     </div>
   </main>
 
   <!-- Browse-all-apps screen (#apps). Sibling of #home-screen: every app
        this viewer may see, featured first, with per-tile add/remove badges.
        Owned by public/js/browse.js; mounted by App.navigateToBrowse. -->
-  <main id="browse-screen" class="hidden flex-1 overflow-y-auto" style="position:relative">
+  <main id="browse-screen" class="hidden flex-1 overflow-y-auto platform-safe-scroll" style="position:relative">
     <div id="browse-search-bar" class="sticky top-0 z-20 px-3 pt-3 pb-2 bg-white dark:bg-zinc-950">
       <div class="relative max-w-xl">
         <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
@@ -658,32 +727,36 @@
   </main>
 
   <!-- Leaderboard screen (hidden by default): the one place the group's
-       shared progress lives — the Kudos leaderboard, the Topochain
-       standings and the season's challenges, as a three-tab strip.
-       Hash routes #leaderboard[/prs|users|history|users/<name>] (Kudos),
-       #leaderboard/topochain (standings) and #leaderboard/challenges.
-       The legacy #topochain/leaderboard hash aliases onto the standings
-       tab; #challenges and #topochain/seasons alias onto the challenges
-       tab. Mounted by App.navigateToLeaderboard.
+       shared progress lives — the Topochain standings, the Kudos
+       leaderboard and the season's challenges, as a three-tab strip.
+       Hash routes #leaderboard (the STANDINGS — the primary tab, labelled
+       simply "Leaderboard"), #leaderboard/[prs|users|history|users/<name>]
+       (Kudos) and #leaderboard/challenges.
+       The legacy #topochain/leaderboard and #leaderboard/topochain hashes
+       alias onto the standings tab and self-heal to the bare
+       #leaderboard; #challenges and #topochain/seasons alias onto the
+       challenges tab. Mounted by App.navigateToLeaderboard.
 
        Three panes, one visible at a time, each owned by its own module:
-       #leaderboard-root by public/js/leaderboard.js (which also renders
-       the tab strip and owns Leaderboard.section),
-       #topochain-leaderboard-root by public/js/topochain-leaderboard.js,
-       and #challenges-root by public/js/topochain-challenges.js. The two
-       Topochain-domain panes share one event selection, rendered into
-       #leaderboard-event-bar by public/js/topochain-event-context.js and
-       hidden while the Kudos tab is active.
+       #topochain-leaderboard-root by public/js/topochain-leaderboard.js
+       (the DEFAULT pane, so it and the event bar are the two that ship
+       visible), #leaderboard-root by public/js/leaderboard.js (the Kudos
+       pane — that module also renders the tab strip and owns
+       Leaderboard.section), and #challenges-root by
+       public/js/topochain-challenges.js. The two Topochain-domain panes
+       share one event selection, rendered into #leaderboard-event-bar by
+       public/js/topochain-event-context.js and hidden while the Kudos tab
+       is active.
 
        The wrapper is max-w-5xl for the Topochain table's sake; the Kudos
        pane keeps its narrower max-w-3xl reading column. -->
-  <main id="leaderboard-screen" class="hidden flex-1 overflow-y-auto" style="position:relative">
+  <main id="leaderboard-screen" class="hidden flex-1 overflow-y-auto platform-safe-scroll" style="position:relative">
     <div class="max-w-5xl mx-auto p-4 w-full">
       <h2 class="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mb-3">Leaderboard</h2>
       <div id="standings-tabs" class="flex gap-2 border-b border-zinc-200 dark:border-zinc-800 mb-4"></div>
-      <div id="leaderboard-event-bar" class="hidden w-full mb-4"></div>
-      <div id="leaderboard-root" class="max-w-3xl"></div>
-      <div id="topochain-leaderboard-root" class="hidden w-full"></div>
+      <div id="leaderboard-event-bar" class="w-full mb-4"></div>
+      <div id="leaderboard-root" class="hidden max-w-3xl"></div>
+      <div id="topochain-leaderboard-root" class="w-full"></div>
       <div id="challenges-root" class="hidden w-full"></div>
     </div>
   </main>
@@ -703,7 +776,7 @@
        platform session server-side (the bridge's getProfileInfo
        participant id is no longer consulted). Hash route #profile;
        mounted by App.navigateToProfile. -->
-  <main id="profile-screen" class="hidden flex-1 overflow-y-auto" style="position:relative">
+  <main id="profile-screen" class="hidden flex-1 overflow-y-auto platform-safe-scroll" style="position:relative">
     <div id="profile-root" class="max-w-3xl mx-auto p-4"></div>
   </main>
 
@@ -723,7 +796,7 @@
        status and Analytics sections were built for a wide column — the
        status summary is a 6-across tile grid and the analytics charts are
        640px-wide SVGs. -->
-  <main id="admin-screen" class="hidden flex-1 overflow-y-auto" style="position:relative">
+  <main id="admin-screen" class="hidden flex-1 overflow-y-auto platform-safe-scroll" style="position:relative">
     <div id="admin-root" class="max-w-7xl mx-auto p-4 w-full"></div>
   </main>
 
@@ -747,7 +820,7 @@
 
        max-w-5xl (not the admin console's 7xl): every section here is a
        form column, none is a wide chart grid. -->
-  <main id="settings-screen" class="hidden flex-1 overflow-y-auto" style="position:relative">
+  <main id="settings-screen" class="hidden flex-1 overflow-y-auto platform-safe-scroll" style="position:relative">
     <div id="settings-root" class="max-w-5xl mx-auto p-4 w-full">
       <div class="md:flex md:items-start md:gap-6">
         <!-- Desktop sidebar menu. Below md there is no nav here at all:
@@ -1021,6 +1094,25 @@
               </div>
             </div>
 
+            <div data-settings-section="home-panels" class="hidden">
+              <!-- #911: which home-screen cards ("widgets" to the user,
+                   panels in the code) are shown. Every registry entry is
+                   on by default — users.home_panels_hidden lists only the
+                   ones this viewer dismissed from the card's own ⋮ menu
+                   ("Hide widget"), so an unticked box here is the way to
+                   get one back. Rows are rendered by settings.js
+                   _renderHomePanelsSection() from GET /api/home-panels's
+                   `registry` + `hidden`. -->
+              <div id="settings-home-panels-section">
+                <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Home screen widgets</h3>
+                <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
+                  Cards shown on your home screen below your apps. Untick one to hide it — the same as pressing the &times; on the card itself.
+                </p>
+                <div id="settings-home-panels-list" class="space-y-2"></div>
+                <p id="settings-home-panels-status" class="text-xs mt-2 hidden"></p>
+              </div>
+            </div>
+
             <div data-settings-section="cli" class="hidden">
               <!-- Global CLI/coding-agent credentials. The server returns only a short token
                    hint and non-secret metadata; raw bearer values never enter the
@@ -1129,11 +1221,11 @@
 
   <!-- The Topochain leaderboard used to be its own <main> screen here
        (#topochain-leaderboard-screen, Task 14). The header slim-down
-       merged it into the Leaderboard screen above as the second tab:
-       #topochain-leaderboard-root now lives inside #leaderboard-screen
-       and TopochainLeaderboard renders into it unchanged. The legacy
-       #topochain/leaderboard hash still works — the router replaceStates
-       it to #leaderboard/topochain. -->
+       merged it into the Leaderboard screen above, where it is now the
+       PRIMARY (default) tab: #topochain-leaderboard-root lives inside
+       #leaderboard-screen and TopochainLeaderboard renders into it
+       unchanged. The legacy #topochain/leaderboard hash still works —
+       the router replaceStates it to the bare #leaderboard. -->
 
   <!-- The Topochain seasons/events screen used to be its own <main> here
        (#topochain-seasons-screen, Task 14). Its event hero moved up into
@@ -1210,7 +1302,7 @@
          overlay stays put as an opaque backstop and this wrapper takes
          the gesture. flex-1/min-h-0, not h-full: it's a flex child under
          the header now, and h-full would overflow by the header's height. -->
-    <div id="auth-landing-scroll" class="flex-1 min-h-0 overflow-y-auto">
+    <div id="auth-landing-scroll" class="flex-1 min-h-0 overflow-y-auto platform-safe-scroll">
     <div class="max-w-3xl mx-auto px-6 py-12">
       <div class="text-center mb-10">
         <h1 class="text-3xl font-bold mb-2">Usernode Social Vibecoding</h1>
@@ -1278,7 +1370,7 @@
 
   <!-- Login screen (also hosts the #signup email-code sub-view and the
        forgot-password recovery sub-view) -->
-  <main id="auth-login-screen" class="hidden fixed inset-0 z-40 overflow-y-auto bg-white dark:bg-zinc-950">
+  <main id="auth-login-screen" class="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll bg-white dark:bg-zinc-950">
     <a href="#" data-auth-back class="fixed left-4 z-10 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400" style="top: calc(env(safe-area-inset-top, 0px) + 1rem)">&larr; Back</a>
     <div class="min-h-full flex items-center justify-center">
       <div class="w-full max-w-sm px-6 py-16">
@@ -1452,7 +1544,7 @@
   </main>
 
   <!-- Register screen (activation-code flow) -->
-  <main id="auth-register-screen" class="hidden fixed inset-0 z-40 overflow-y-auto bg-white dark:bg-zinc-950">
+  <main id="auth-register-screen" class="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll bg-white dark:bg-zinc-950">
     <a href="#" data-auth-back class="fixed left-4 z-10 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400" style="top: calc(env(safe-area-inset-top, 0px) + 1rem)">&larr; Back</a>
     <div class="min-h-full flex items-center justify-center">
       <div class="w-full max-w-sm px-6 py-16">
@@ -1496,7 +1588,7 @@
        alignment): an authed session without hasPlatformAccess lands
        here; polls /api/auth/me and boots the full shell in place when
        access is granted. -->
-  <main id="auth-waiting-screen" class="hidden fixed inset-0 z-40 overflow-y-auto bg-white dark:bg-zinc-950">
+  <main id="auth-waiting-screen" class="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll bg-white dark:bg-zinc-950">
     <div class="min-h-full flex items-center justify-center">
       <div class="w-full max-w-sm px-6 py-16 text-center">
         <h1 class="text-2xl font-bold mb-1">You're in the queue</h1>
@@ -1534,7 +1626,7 @@
        over a narrow scrolling column. Deliberately NOT a <header> element —
        header-layout.js measures document.querySelector('header') and must
        keep resolving to #platform-header. -->
-  <main id="auth-waitlist-screen" class="hidden fixed inset-0 z-40 overflow-y-auto bg-white dark:bg-zinc-950">
+  <main id="auth-waitlist-screen" class="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll bg-white dark:bg-zinc-950">
     <a href="#landing" data-auth-back class="fixed left-4 z-10 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400" style="top: calc(env(safe-area-inset-top, 0px) + 1rem)">&larr; Back</a>
     <div class="max-w-2xl mx-auto px-6 py-16">
       <h1 class="text-2xl font-bold">Join the waitlist</h1>
@@ -1644,7 +1736,7 @@
        questions optional; answers merge server-side so the form is
        re-openable from the join email. GitHub / X verify via the
        /waitlist/connect OAuth round-trip when the platform has creds. -->
-  <main id="auth-more-screen" class="hidden fixed inset-0 z-40 overflow-y-auto bg-white dark:bg-zinc-950">
+  <main id="auth-more-screen" class="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll bg-white dark:bg-zinc-950">
     <a href="#landing" class="fixed left-4 z-10 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400" style="top: calc(env(safe-area-inset-top, 0px) + 1rem)">&larr; Back</a>
     <div class="max-w-2xl mx-auto px-6 py-16">
       <p class="text-xs font-semibold uppercase tracking-widest text-violet-600 dark:text-violet-400">Optional — moves you up the list</p>
@@ -1751,12 +1843,24 @@
        the platform header. The full-width tab-bar nav that used to live
        here at the foot of this column is gone.
 
-       `un-safe-bottom` moved onto this element from that nav: the bar was
-       the only thing keeping app content clear of the iOS home indicator,
-       and every surface inside #app-content now reaches the true bottom
-       of the viewport. App.setChromeless() strips the class so a
-       chromeless share link still renders edge-to-edge. -->
-  <div id="app-view" class="hidden flex flex-col un-safe-bottom" style="flex:1;min-height:0;height:0">
+       The bottom safe-area inset is SURFACE-DEPENDENT (#970), which is
+       why this element no longer carries a blanket `un-safe-bottom`.
+       That class moved here from the deleted tab bar and reserved the
+       home-indicator strip for EVERY surface inside #app-content —
+       including the running app's iframe, which is how apps ended up
+       cut off short of the screen's rounded bottom edge while the shell
+       around them ran edge-to-edge.
+
+       `data-app-surface` is the switch: AppView._setSurface() sets it to
+       `app` wherever an app iframe / launch cover is mounted (no inset —
+       the app fills the screen and receives the insets over the
+       __usernode_safe_area bridge instead) and to `platform` for every
+       platform-rendered surface (Dev mode, status placeholders), which
+       keeps its clearance via the rule in app.css. It defaults to
+       `platform` so a first paint before any render behaves as before,
+       and chromeless needs no special case any more — it always lands on
+       an app surface. -->
+  <div id="app-view" class="hidden flex flex-col" data-app-surface="platform" style="flex:1;min-height:0;height:0">
     <div id="app-content" class="flex-1" style="min-height:0;overflow:hidden">
       <!-- Tab content renders here -->
     </div>
@@ -1821,7 +1925,14 @@
 
   <!-- Staging preview (fullscreen overlay) -->
   <div id="staging-overlay" class="hidden fixed inset-0 z-40 bg-zinc-950 flex flex-col">
-    <div class="flex items-center gap-3 px-4 py-2 border-b border-zinc-800 shrink-0">
+    <!-- `staging-chrome-bar` is a STYLE HOOK, not decoration: fullscreen,
+         this overlay is `inset: 0` and covers the status bar, so app.css
+         adds the top safe-area inset to this bar (and only in the
+         non-docked state — a docked panel is pinned mid-page and needs
+         none). The bar's bottom edge needs nothing: everything below it
+         is the staging iframe, which reaches the true bottom edge and
+         receives the real insets over the safe-area bridge. -->
+    <div class="staging-chrome-bar flex items-center gap-3 px-4 py-2 border-b border-zinc-800 shrink-0">
       <button id="staging-back" class="text-zinc-400 hover:text-zinc-100 text-sm flex items-center gap-1">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
         Back to session
@@ -2344,6 +2455,21 @@
           <span class="text-xs text-zinc-600 dark:text-zinc-400"><span class="font-medium text-zinc-700 dark:text-zinc-300">Include app state</span> &mdash; this app can attach a snapshot of its current state to help debugging</span>
         </label>
       </div>
+      <!-- #964: opt-in kudos bounty on the issue this dialog is about to
+           file. Starts UNCHECKED on every open (app.js openFeedbackModal) —
+           filing feedback must never quietly spend someone's weekly
+           allowance. The note under it carries the viewer's live remaining
+           figure, and the checkbox is disabled at zero; the server is the
+           real gate either way, and a bounty that can't be placed never
+           costs the user their filed issue. Same utility classes as
+           #feedback-state-row above, so no new Tailwind names appear. -->
+      <div id="feedback-bounty-row" class="hidden mt-2">
+        <label class="flex items-start gap-2 cursor-pointer select-none">
+          <input id="feedback-bounty-checkbox" type="checkbox"
+            class="accent-violet-500 w-4 h-4 mt-0.5">
+          <span class="text-xs text-zinc-600 dark:text-zinc-400"><span class="font-medium text-zinc-700 dark:text-zinc-300">Put a kudos bounty on this</span> &mdash; pledges 1 of your weekly kudos to whoever's merged proposal closes this issue<br><span id="feedback-bounty-note" class="text-zinc-500 dark:text-zinc-500"></span></span>
+        </label>
+      </div>
       <div id="feedback-status" class="text-sm mt-2 hidden"></div>
       <div class="flex gap-3 mt-4">
         <button id="feedback-cancel" class="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>
@@ -2436,6 +2562,7 @@
        before notifications.js / dev-chat.js, which both reference DevAlerts. -->
   <script src="/js/dev-alerts.js"></script>
   <script src="/js/notifications.js"></script>
+  <script src="/js/social-push.js"></script>
   <!-- Webview-safe replacement for window.confirm(). Loaded before any
        feature script that wants a "really?" gate (dev-chat archive,
        future settings/home destructive actions). -->
@@ -2495,7 +2622,8 @@
   <!-- Topochain-domain panes of the Leaderboard screen (Task 14, public
        screens; merged into one screen by the leaderboard merge). The
        Leaderboard module mounts these lazily when their tab is first
-       shown — #leaderboard/topochain -> TopochainLeaderboard.open(),
+       shown — #leaderboard -> TopochainLeaderboard.open() (the default
+       tab, so this one mounts on the screen's first open),
        #leaderboard/challenges -> TopochainChallenges.open() — and both
        read the event selection from TopochainEventContext, which owns
        the shared picker + hero. Loaded before app.js. -->
@@ -2533,6 +2661,13 @@
        Loaded before app.js so the modal wiring can gate the attach
        button on ScreenshotSelect.isSupported(). -->
   <script src="/js/screenshot-select.js"></script>
+  <!-- Home-screen panels (#911): the Challenges card between the launcher
+       grid and "Featured apps". Loaded BEFORE home.js, whose load() /
+       render() call into HomePanels. -->
+  <!-- Grid geometry (pure functions over the layout model) before the two
+       modules that lay out against it. -->
+  <script src="/js/home-layout.js"></script>
+  <script src="/js/home-panels.js"></script>
   <script src="/js/home.js"></script>
   <!-- Browse-all-apps screen (#apps). After home.js: it reuses
        Home.renderAppCard / Home.isYours / Home.matchesQuery so the two

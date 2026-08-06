@@ -957,7 +957,7 @@
     _buildLandingAppTile(app, el) {
       const gated = !!app.requires_login;
       const tile = el('div',
-        'app-card relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-2 cursor-pointer'
+        'app-card relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-1.5 cursor-pointer'
         + (gated ? ' opacity-50 grayscale' : ''));
       tile.setAttribute('data-slug', app.slug || '');
       tile.setAttribute('data-gated', gated ? 'true' : 'false');
@@ -994,21 +994,19 @@
       }
       tile.appendChild(iconWrap);
 
-      // Name row + active-users badge (same sticky-10-day count as the
-      // authed home cards; always rendered, 0 included).
+      // Name row. This is deliberately the SAME launcher tile the authed
+      // home screen renders, so it lost the active-users badge with it —
+      // an icon and a label, nothing else. The count still shows in the
+      // Browse-all directory, which is a ranked list where it is the point.
+      // The label is .app-card-title (app.css) — iOS-sized 11px/13px type
+      // clamped to two lines in a fixed-height lane, same as the authed
+      // grid (#951), so both launchers show the same amount of a name.
       const body = el('div', 'w-full min-w-0');
-      const nameRow = el('div', 'flex items-center justify-center gap-1.5 min-w-0 max-w-full');
-      nameRow.appendChild(el('span', 'font-medium text-sm truncate min-w-0', app.name || app.slug));
-      const activeUsers = parseInt(app.active_users, 10) || 0;
-      const usersBadge = el('span',
-        'inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium bg-zinc-500/10 text-zinc-500 dark:text-zinc-400 shrink-0');
-      usersBadge.title = `${activeUsers} active user${activeUsers === 1 ? '' : 's'}`;
-      usersBadge.innerHTML = '<svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>';
-      usersBadge.appendChild(document.createTextNode(String(activeUsers)));
-      nameRow.appendChild(usersBadge);
-      body.appendChild(nameRow);
+      const name = el('div', 'app-card-title', app.name || app.slug);
+      name.title = app.name || app.slug || '';
+      body.appendChild(name);
       if (gated) {
-        body.appendChild(el('p', 'text-xs mt-0.5 text-zinc-400 dark:text-zinc-500', 'Account required'));
+        body.appendChild(el('p', 'app-card-status text-zinc-400 dark:text-zinc-500', 'Account required'));
       }
       tile.appendChild(body);
 

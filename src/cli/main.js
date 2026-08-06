@@ -1854,7 +1854,7 @@ async function runMcp(args, launcherPath) {
   }));
 
   server.registerTool('social_vibecoding.api_write', {
-    description: 'Call a mutating Usernode JSON API in the app/platform context. It never calls GitHub directly. Proposal promotion is the one exception: always use proposal_promote so Codex can require manual approval. Use production unless the user explicitly says local.',
+    description: 'Call a mutating Usernode JSON API in the app/platform context. It never calls GitHub directly. Reply to a native issue thread with POST /api/apps/:slug/messages and body { content, thread_type: "issue", thread_ref: number }; this is not a GitHub comment. Proposal promotion is the one exception: always use proposal_promote so Codex can require manual approval. Use production unless the user explicitly says local.',
     inputSchema: {
       method: z.enum(['POST', 'PUT', 'PATCH', 'DELETE']),
       path: z.string(),

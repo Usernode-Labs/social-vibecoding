@@ -10,10 +10,17 @@ const genesisAccounts = require('../services/genesis-accounts');
 const waitlist = require('../services/waitlist');
 const events = require('../services/events');
 const { validatePassword } = require('../services/password-policy');
+// One shape for the profile block, shared with PATCH /api/me/profile so
+// /api/auth/me and the write echo identical objects (#982).
+const { shapeProfile } = require('./profile');
 const {
   accountRecovery,
   withTransaction,
 } = require('../services/cli-auth');
+// The SAME predicate the CLI 404 gates use (routes/cli-auth.js), so the
+// capability this route advertises can never disagree with what that
+// surface actually serves.
+const { isCliSurfaceEnabled } = require('./cli-auth');
 
 const SESSION_DAYS = 7;
 
@@ -205,6 +212,12 @@ function authRoutes(config) {
     let hasApiKey = false;
     let keyLast4 = null;
     let usernodePubkey = null;
+    // Profile customization (#982): the editable identity fields plus the
+    // content-addressed avatar URL. Read HERE rather than in
+    // middleware/auth.js's per-request session hydration — this endpoint
+    // already does one users lookup, and every request paying for a join
+    // it never renders would be the wrong trade.
+    let profile = { displayName: null, bio: null, avatarUrl: null, links: { github: null, x: null } };
     // Derived app-creation affordance: admins always can; everyone else
     // can iff their live (non-errored) app count is below their quota
     // (see users.app_quota in schema.sql). Computing the count here keeps
@@ -213,7 +226,11 @@ function authRoutes(config) {
     let canCreateApps = !!req.user.isAdmin;
     try {
       const { rows } = await pool.query(
-        'SELECT anthropic_key_enc, anthropic_key_last4, usernode_pubkey FROM users WHERE id = $1',
+        `SELECT u.anthropic_key_enc, u.anthropic_key_last4, u.usernode_pubkey,
+                u.display_name, u.bio, u.github, u.x, av.id AS avatar_id
+           FROM users u
+           LEFT JOIN user_avatars av ON av.user_id = u.id
+          WHERE u.id = $1`,
         [req.user.id]
       );
       if (rows[0]?.anthropic_key_enc) {
@@ -221,6 +238,7 @@ function authRoutes(config) {
         keyLast4 = rows[0].anthropic_key_last4 || null;
       }
       usernodePubkey = rows[0]?.usernode_pubkey || null;
+      profile = shapeProfile(rows[0]);
     } catch {}
     if (!canCreateApps) {
       try {
@@ -266,6 +284,24 @@ function authRoutes(config) {
         keyLast4,
         usernodePubkey,
         walletLinkEnabled: !!config.usernodeAppPubkey,
+        // Profile customization (#982). `username` stays the permanent
+        // sign-in handle and is NOT editable anywhere on the platform;
+        // `displayName` is the settable name other people see (it already
+        // feeds the standings' resolveDisplayName chain). `avatarUrl` is
+        // the content-addressed /avatars/<id> path, or null.
+        displayName: profile.displayName,
+        bio: profile.bio,
+        avatarUrl: profile.avatarUrl,
+        links: profile.links,
+        // Whether the CLI-credentials surface exists in this deployment.
+        // The whole /api/me/cli-tokens + /api/cli/* family is 404'd in a
+        // staging preview (unreviewed code must not mint CLI tokens), so
+        // Settings has to know NOT TO ASK: a 404 the client swallows is
+        // still an error line in the page console, which fails the
+        // proposal checks. Same shape as walletLinkEnabled above — the
+        // client renders what the server reports, it never sniffs the
+        // environment itself.
+        cliAuthEnabled: isCliSurfaceEnabled(config),
       },
     });
   });
@@ -334,15 +370,17 @@ function authRoutes(config) {
       return res.status(400).json({ error: msg });
     }
 
-    const secrets = require('../services/secrets');
-    const encrypted = secrets.encrypt(clean, config.dataEncryptionKey);
-    const last4 = clean.slice(-4);
-
     try {
-      await pool.query(
-        `UPDATE users SET anthropic_key_enc = $1, anthropic_key_last4 = $2 WHERE id = $3`,
-        [encrypted, last4, req.user.id]
-      );
+      // #30 dual-write (plan.md PR2): persist through the generic
+      // credential store, which also mirrors into the legacy
+      // users.anthropic_key_* columns during the migration window. Same
+      // envelope, same verification — behavior unchanged, but the key now
+      // also lives in user_ai_credentials for the openrouter era.
+      const credentialStore = require('../services/credential-store');
+      const saved = await credentialStore.writeAnthropicCodingAgent({
+        pool, userId: req.user.id, apiKey: clean, dataKey: config.dataEncryptionKey,
+      });
+      const last4 = saved?.secret_last4 || clean.slice(-4);
       log.info('byok', 'API key saved', { userId: req.user.id });
       res.json({ ok: true, keyLast4: last4 });
     } catch (err) {
@@ -354,10 +392,8 @@ function authRoutes(config) {
   router.delete('/api/me/api-key', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     try {
-      await pool.query(
-        `UPDATE users SET anthropic_key_enc = NULL, anthropic_key_last4 = NULL WHERE id = $1`,
-        [req.user.id]
-      );
+      const credentialStore = require('../services/credential-store');
+      await credentialStore.deleteAnthropicCodingAgent({ pool, userId: req.user.id });
       log.info('byok', 'API key removed', { userId: req.user.id });
       res.json({ ok: true });
     } catch (err) {

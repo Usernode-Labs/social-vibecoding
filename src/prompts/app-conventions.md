@@ -1510,6 +1510,52 @@ Expected app behavior:
 - `null` means "no preference set", NOT "English" — keep it
   distinguishable so device-language auto-detection still works.
 
+## Safe-area insets inside the app frame
+
+On a phone with a notch or a home indicator, the platform shell runs
+edge to edge and so does your app's iframe — it reaches the true bottom
+of the screen, past the rounded corners. **But `env(safe-area-inset-*)`
+resolves to `0px` inside a cross-origin iframe in every browser**, so an
+embedded app cannot see those insets on its own: any safe-area CSS it
+writes is silently inert, and bottom-anchored chrome would sit under the
+home indicator.
+
+The platform therefore forwards the insets **that apply to your frame's
+rectangle** (the shell's own header already covers the status bar, so
+your top inset is normally `0` and becomes the real one only in the
+chromeless full-screen view). The hosted bridge publishes them three
+ways — no app-side plumbing, just the bridge `<script>`:
+
+- **CSS custom properties on `<html>`** — `--un-safe-inset-top`,
+  `--un-safe-inset-right`, `--un-safe-inset-bottom`,
+  `--un-safe-inset-left`, in `px`. **This is the one to reach for.** Write
+  every safe-area value as
+  `var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px))`: the
+  property wins inside the platform frame, and the `env()` fallback keeps
+  it exact when the app is opened standalone (where the property is
+  deliberately left unset). The usernode-native kit's own CSS already
+  uses this form, so **kit bars, sheets, action sheets, modals, toasts
+  and nav bars inset themselves correctly with no change to your app.**
+- **`usernode.safeAreaInsets`** — `{ top, right, bottom, left }` in px
+  (all zeros until the first value arrives), for layout you compute in
+  JS rather than CSS.
+- **`usernode:safe-area-changed`** — a `CustomEvent` on `window` whose
+  `detail` is that same object. The shell pushes a new value on rotation,
+  on keyboard/toolbar moves, and whenever your frame's rect shifts;
+  listen if your app re-measures in JS.
+
+Notes:
+
+- These are the **safe area only**. On-screen keyboard clearance is a
+  separate concern your app already sees correctly through
+  `visualViewport` (and the kit's `--un-kb-inset` / `attachKeyboardAvoidance`).
+- Values are `0` on desktop and on devices with no notch — every branch
+  collapses to today's behaviour, so the `var(..., env(...))` form is
+  safe to adopt unconditionally.
+- Your app's own viewport meta does **not** need `viewport-fit=cover` for
+  the forwarded properties to work (it is still required for bare `env()`
+  to work standalone).
+
 ## Native-feel UI kit — centrally hosted (`usernode-native`)
 
 An **opt-in** CSS + JS kit that makes an app's mobile UI feel native on
@@ -1609,6 +1655,58 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   swipe actions first, then reorder on the container — the items are
   the `.un-swipe` wrappers) and with pull-to-refresh via the gesture
   arbiter. Returns `{ detach() }`; never throws on bad input.
+- **Free-form grid placement (the homescreen model).**
+  `unNative.attachGridPlacement(listEl, { cellFromPoint, itemSelector?,
+  handle?, longPressMs?, canPlace?, onLift?, onHover?, rectForCell?,
+  onPlace?, onSettle? })`. Reach for this instead of `attachReorder` when
+  your grid
+  is a CANVAS rather than a list — when a tile should be droppable in any
+  cell, gaps included, and nothing should re-pack behind it. Same physics
+  as reorder's grid mode (long-press lift on touch, drag past the slop on
+  desktop, a fixed ghost tracking the finger on both axes, edge
+  auto-scroll, haptics, spring settle, gesture arbiter), but the real item
+  holds its cell as a dashed slot and siblings never move. **The kit owns
+  the gesture; you own the geometry**: it never computes a cell, it calls
+  your `cellFromPoint(x, y, info)` (returning `{ col, row }` or `null`), asks
+  `canPlace(item, cell)` on each cell change, calls `onHover(item, cell,
+  ok)` so you can paint the target highlight, and finally
+  `onPlace(item, cell)` on a committed drop. **Resolve the target from the
+  dragged TILE, not from the finger.** `x`/`y` are the pointer, and the ghost
+  tracks it from wherever the tile was grabbed — so answering from `x`/`y`
+  puts the tile's top-left corner under the finger and the highlight a
+  grab-offset away from the tile the user is looking at (a whole tile's worth
+  for a multi-cell item). The third argument carries the tile's live geometry
+  — `{ item, rect: { left, top, width, height }, centerX, centerY, pointerX,
+  pointerY }` — so take `centerX`/`centerY` and subtract half the item's own
+  footprint: the **centroid** rule, which puts the highlight under the tile
+  whichever corner it was picked up by. Note an even-width footprint centres
+  exactly on a cell seam, so derive the column as a rounded fraction of the
+  cell pitch rather than hit-testing the centre and subtracting `floor(w/2)`.
+  `x`/`y` keep their meaning, so a host that ignores `info` behaves as
+  before. **If your drop displaces
+  occupants rather than refusing, preview that in `onHover`** — move the
+  items that would be pushed to the cells they'd land in. A flow reorder
+  shows that for free (everything shuffles as you drag); free placement
+  only moves what actually collides, so without the preview an occupied
+  target is a guess. Compute the plan once in `canPlace` and reuse it in
+  `onHover`, or the highlight and the drop can disagree. **Give it
+  `rectForCell(item, cell)` too** — return where a committed drop lands
+  (`{ left, top }` in viewport coords; the target cell's own
+  `getBoundingClientRect()` is the natural answer) and the release glide
+  settles there. Omit it and the ghost settles on the dragged element's own
+  rect, which in this mode is still the cell it was picked up from: the tile
+  flies away from the finger, back to its origin, and only then pops into the
+  drop cell. Answer from the same plan the highlight used, so the glide lands
+  where the highlight promised even when the plan nudged the item to fit.
+  Everything else — the ghost, the origin slot, the highlight, your
+  `onPlace` re-render — is held until that glide finishes, so the whole
+  release reads as one motion. `onLift` / `onSettle` carry
+  the same deferral contract as `attachReorder` (hold a re-render flag in
+  the first, flush it in the second — it fires on drops, cancels and
+  detach alike). Rendering the grid as real cell elements while dragging
+  makes `cellFromPoint` a one-line `elementFromPoint(...).closest(...)`
+  and gives the user the drop target for free. Returns `{ detach() }`;
+  never throws on bad input.
 - **Bottom sheet.** `unNative.presentSheet({ content | contentEl,
   onDismiss })` — grabber, spring presentation, 1:1 drag-to-dismiss
   with momentum commit (a touch mid-spring inherits position and
@@ -1784,9 +1882,17 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   combined mutation. Push/pop remain the default for plain screen
   navigation.
 - **Safe areas.** Opt-in helpers `.un-safe-top` / `.un-safe-top-extend`
-  / `.un-safe-bottom` / `.un-safe-bottom-extend` / `.un-safe-x` apply
-  `env(safe-area-inset-*)` padding to fixed bars. They require
+  / `.un-safe-bottom` / `.un-safe-bottom-extend` / `.un-safe-x` inset
+  fixed bars from the notch and the home indicator. They require
   `viewport-fit=cover` in the page's viewport meta.
+  **Inside the platform app frame, bare `env(safe-area-inset-*)` is
+  always `0px`** — browsers only expose safe areas to the top-level
+  document, so an iframed app can't see them. The platform forwards the
+  real values instead (see "Safe-area insets inside the app frame"
+  below) and the kit helpers already read them, so the helpers above
+  work in both hosts. Your own fixed chrome should follow the same
+  pattern — `var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px))`
+  rather than bare `env()` — which is correct embedded *and* standalone.
 - **Spring engine.** `unNative.spring(elOrCallback, { from, to,
   velocity, preset })` — the kit's own rAF damped-spring integrator,
   available for custom gestures so they match the kit's motion family.
@@ -1844,10 +1950,15 @@ apps.
 1. Add the two hosted tags above to the HTML shell's `<head>`.
 2. Add `viewport-fit=cover` to the viewport meta; put `.un-safe-top` /
    `.un-safe-bottom` (or the `-extend` variants) on fixed headers /
-   bottom bars.
-3. Add `future: { hoverOnlyWhenSupported: true }` to the page's inline
-   `tailwind.config` so `hover:` styles stop sticking after taps on
-   touch screens.
+   bottom bars. For fixed chrome the helpers don't cover, write
+   `var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px))` —
+   bare `env()` is `0px` inside the platform frame (see "Safe-area
+   insets inside the app frame").
+3. Add `future: { hoverOnlyWhenSupported: true }` so `hover:` styles stop
+   sticking after taps on touch screens — in `tailwind.config.js` on the
+   precompiled path (the scaffold already sets it), or in the page's inline
+   `tailwind.config` for an app still on the hosted runtime. See the
+   Tailwind section below for which path an app is on.
 4. Swap checkbox-style toggles to `class="un-switch"`.
 5. Wire `attachSwipeActions` on list rows with row-level actions
    (delete / archive / mark read), `attachPullToRefresh` on
@@ -1859,6 +1970,90 @@ apps.
    (`'push'`/`'pop'`; `'zoom-in'`/`'zoom-out'` for tile/card → detail);
    leave tabs/menus/panels instant.
 7. Optionally override `--un-*` variables to match the app's branding.
+
+## Tailwind — precompiled per app, runtime centrally hosted
+
+Every app on this platform styles itself with Tailwind. There are two ways
+to get it, and **the precompiled one is the default for new and edited
+apps**:
+
+### 1. Precompiled (default) — no styling script at all
+
+The scaffold ships a `tailwind.config.js`, a `styles/tailwind-input.css`,
+and a **builder stage in the app's Dockerfile** that compiles them to
+`public/tailwind.css`. The HTML just links it:
+
+```html
+<link rel="stylesheet" href="/tailwind.css">
+```
+
+Why this is the default: it is ~7 KB of finished CSS instead of a ~400 KB
+in-browser compiler, it paints instantly with no flash of unstyled content,
+and the visitor's device does no styling work.
+
+**There is no artifact to keep in sync and no rebuild step to remember.**
+The compile runs during `docker build`, which the platform does on a fresh
+clone for every production deploy *and* every staging preview — so the
+stylesheet is always generated from the markup in that exact commit.
+Nothing is committed to the repo; `public/tailwind.css` exists only inside
+the image.
+
+The one rule this path asks of you:
+
+- **Write class names as whole literals.** Tailwind's extractor is a regex
+  over your source text, so `class="bg-violet-600"` and
+  `cls = isError ? 'bg-red-500' : 'bg-zinc-500'` both work, including
+  inside JS strings. A name *assembled* at runtime —
+  `'bg-' + tone + '-500'` — is invisible to the compiler and will not be
+  styled. Pick whole strings out of a map or ternary instead; that is how
+  the platform's own shell does it.
+- Need a Tailwind plugin (`forms`, `typography`)? Add it to
+  `tailwind.config.js` `plugins` — strictly better than the CDN's
+  `?plugins=` query, which this path does not use.
+
+### 2. The centrally-hosted runtime — the escape hatch and migration target
+
+For an app that genuinely must generate class names at runtime, and as the
+one-line migration target for apps still pointing at the third-party CDN,
+the platform serves a pinned copy of the Tailwind browser engine from its
+own origin — exactly like the bridge and the native UI kit:
+
+```
+https://social-vibecoding.usernodelabs.org/usernode-tailwind/v1/tailwind.js
+```
+
+Canonical source: `social-vibecoding/public/usernode-tailwind/v1/tailwind.js`.
+
+```html
+<script src="https://social-vibecoding.usernodelabs.org/usernode-tailwind/v1/tailwind.js"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+```
+
+Rules:
+
+- **Migrating off `cdn.tailwindcss.com` is a one-line change.** These are
+  byte-for-byte the same bytes that CDN serves (Tailwind 3.4.17, digest
+  recorded in `public/vendor/README.md`), and the inline `tailwind.config`
+  beside the tag keeps working untouched — so the swap is
+  behaviour-identical, with no visual difference and no rebuild.
+- **Why bother:** the CDN is one outside dependency shared by the entire
+  fleet. When that host is blocked or down, *every* app it serves loads
+  unstyled, not just one. Same reasoning as the bridge.
+- **`no-cache, must-revalidate`**, so a patch bump inside `/v1/` reaches
+  every app on its next page load (304s when unchanged).
+- **Versioning.** `/v1/` is OUR contract, not Tailwind's. A future Tailwind
+  major changes utility semantics and would ship at `/usernode-tailwind/v2/`,
+  with `/v1/` staying live until the last consumer moves.
+- **Rollback.** Revert in `social-vibecoding/` and redeploy the platform;
+  every app recovers on its next page load, no per-app redeploy.
+- **Expect one console warning.** The bundle logs Tailwind's own "should not
+  be used in production" notice. It is a `warn`, not an error, so it does
+  not affect proposal checks — it is kept because the file is verbatim
+  upstream, which is what makes its digest verifiable. Nothing to chase.
+- **Self-hosting caveat.** Fleet apps hard-code the
+  `social-vibecoding.usernodelabs.org` host; newly scaffolded apps derive
+  the platform origin from the deployment's own `USERNODE_DOMAIN`, so forks
+  get their own. See [SELF-HOSTING.md](../../SELF-HOSTING.md).
 
 ## Vendored shared files
 

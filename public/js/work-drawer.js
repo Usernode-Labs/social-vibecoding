@@ -89,6 +89,23 @@ const WorkDrawer = {
     } catch { return ''; }
   },
 
+  // Screenshot-state deep link (`?shot=work-drawer`): the drawer only
+  // exists behind a click on the header cog, so the capture pipeline and
+  // any dapp.json test would otherwise only ever see the home feed. Same
+  // idiom as ?shot=secrets-new / ?shot=card-menu. Pair it with ?demo=1 in
+  // staging so the "Needs attention" section has mock rows to render.
+  // Once per page load — reopening after a manual dismiss would fight the
+  // user, and refresh() runs on a timer.
+  _shotOpened: false,
+  _maybeShotOpen() {
+    if (WorkDrawer._shotOpened || WorkDrawer.open) return;
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch { /* ignore */ }
+    if (shot !== 'work-drawer') return;
+    WorkDrawer._shotOpened = true;
+    WorkDrawer.show();
+  },
+
   async refresh() {
     const demoQS = WorkDrawer._demoQS();
     const [sessionsRes, proposalsRes] = await Promise.all([
@@ -112,6 +129,9 @@ const WorkDrawer = {
     WorkDrawer._renderCog();
     if (WorkDrawer.open) WorkDrawer._renderList();
     WorkDrawer._syncPolling();
+    // After the first populated refresh, so the deep-linked drawer opens
+    // onto real rows rather than an empty-state flash.
+    WorkDrawer._maybeShotOpen();
   },
 
   // "The machine is doing something for you right now": an AI turn in

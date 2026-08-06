@@ -400,6 +400,12 @@ function load() {
     // error table row for this exact condition) until an operator sets
     // TOPOCHAIN_ZK_BRIDGE_URL. See src/services/topochain/zk-bridge.js.
     topochainZkBridgeUrl: process.env.TOPOCHAIN_ZK_BRIDGE_URL || '',
+    // Mobile activity push defaults off. PUSH_ENV is a trusted server
+    // partition and is never accepted from a mobile request.
+    mobilePushEnabled: process.env.MOBILE_PUSH_ENABLED === 'true',
+    mobilePushEnvironment: process.env.PUSH_ENV || '',
+    firebaseProjectId: process.env.FIREBASE_PROJECT_ID || '',
+    firebaseServiceAccountJsonB64: process.env.FIREBASE_SERVICE_ACCOUNT_JSON_B64 || '',
     // Topochain outbound mail. `mailer.js` has always had a transport hook
     // (`config.topochainMailTransport`) and nothing ever filled it, so BOTH
     // its callers — the shell's email login codes and the onboarding
@@ -487,6 +493,9 @@ function load() {
   console.log(`  TOPOCHAIN_PARTNER_API_KEY=${config.topochainPartnerApiKey ? mask(config.topochainPartnerApiKey) : '(not set — partner API returns 500)'}`);
   console.log(`  TOPOCHAIN_INGEST_API_KEY=${config.topochainIngestApiKey ? mask(config.topochainIngestApiKey) : '(not set — ingest writes return 500)'}`);
   console.log(`  TOPOCHAIN_ZK_BRIDGE_URL=${config.topochainZkBridgeUrl || '(not set — zkpassport/complete returns 500)'}`);
+  console.log(`  MOBILE_PUSH=${config.mobilePushEnabled ? 'enabled' : 'disabled'} PUSH_ENV=${config.mobilePushEnvironment || '(not set)'}`);
+  console.log(`  FIREBASE_PROJECT_ID=${config.firebaseProjectId || '(not set)'}`);
+  console.log(`  FIREBASE_SERVICE_ACCOUNT=${config.firebaseServiceAccountJsonB64 ? '(set)' : '(not set)'}`);
   console.log(`  TOPOCHAIN_MAIL=${config.topochainMailTransport
     ? 'configured'
     : '(not set — OTP login codes and waitlist confirmations are NOT delivered)'}`);

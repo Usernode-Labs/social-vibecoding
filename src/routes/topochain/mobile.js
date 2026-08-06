@@ -60,6 +60,7 @@ const {
 } = require('./helpers');
 const { computeStandings, assignSharedRanks } = require('../../services/topochain/standings');
 const { topochainMobileAuthRoutes, computeLevel } = require('./mobile-auth');
+const { mobilePushRegistrationRoutes } = require('./mobile-push-registration');
 const { verifyCompletion, ZkBridgeError } = require('../../services/topochain/zk-bridge');
 const { readDelegationState, setDelegationState } = require('../../services/topochain/delegations');
 
@@ -739,6 +740,7 @@ function topochainMobileRoutes(config) {
 
   // Task 8: the six auth endpoints (their own throttle/token gating).
   router.use(topochainMobileAuthRoutes(config));
+  router.use(mobilePushRegistrationRoutes(config));
 
   // ── GET /me (SPEC 1748-1767) ─────────────────────────────────────────
   router.get('/api/v4/mobile/me', mobileTokenAuth(config), async (req, res) => {

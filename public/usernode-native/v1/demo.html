@@ -5,12 +5,17 @@
   <!-- viewport-fit=cover per the kit's safe-area adoption contract -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>usernode-native v1 — demo</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>tailwind.config = {
-    darkMode: 'class',
-    future: { hoverOnlyWhenSupported: true },
-  }</script>
+  <!-- The platform's own compiled Tailwind (absolute path — same origin as
+       this page). Was cdn.tailwindcss.com with an inline config; the shell's
+       tailwind.config.js scans this file too, so demo-only classes are
+       included. One consequence, accepted deliberately: this page now
+       inherits the platform's zinc/violet ramps instead of stock Tailwind's,
+       which is a marginally different grey on a dev/tuning page.
+       Linked AFTER native.css for the same reason as in the shell's
+       index.html: the Play CDN appended its generated <style> to the end of
+       <head>, so utilities outranked the kit on equal-specificity ties. -->
   <link rel="stylesheet" href="./native.css">
+  <link rel="stylesheet" href="/css/tailwind.css">
   <script src="./native.js"></script>
 </head>
 <body class="bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100" style="min-height:100dvh">

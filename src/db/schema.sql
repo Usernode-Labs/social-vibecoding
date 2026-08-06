@@ -79,6 +79,31 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_limit_cents INTEGER;
 -- POST /api/me/ai-progress-estimate.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_progress_estimate BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- Home-screen panels the viewer has dismissed (issue #911) — the keys of
+-- the cards that sit on the home screen next to the app grid ('challenges'
+-- today; see PANEL_REGISTRY in src/routes/home-panels.js, the only reader
+-- and writer of this column). ABSENCE MEANS VISIBLE: an empty array — the
+-- default for every existing and future row — means every panel in the
+-- registry shows, which is what makes the challenges card default-on for
+-- everyone with no backfill. Written only through
+-- POST /api/home-panels/:key/visibility, which validates the key against
+-- the registry, so the array can never accumulate unknown values. Called
+-- "panels" and not "widgets" deliberately: public/js/home.js already uses
+-- "widget" for the iOS home-screen widget's pinned app grid.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panels_hidden TEXT[] NOT NULL DEFAULT '{}';
+
+-- RETIRED — superseded by the `user_home_layout` table (free-form home-grid
+-- placement). It used to hold an iOS-homescreen-style drag position per
+-- panel key ({ "challenges": 4 } = four app cards above the block), which
+-- only ever expressed "which flow slot" — the home grid now stores real
+-- (column, row) cells per breakpoint instead, and holes are a first-class
+-- concept a card-count can't represent.
+--
+-- The column is LEFT IN PLACE, unread and unwritten: this file is
+-- append-only (it has no DROP COLUMN anywhere) and a dead JSONB default of
+-- '{}' costs nothing. Nothing may read it — see user_home_layout below.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panel_positions JSONB NOT NULL DEFAULT '{}';
+
 -- Platform-level user language preference (issue #757). A BCP-47 language
 -- tag ("id", "pt-BR", …) or NULL for "unset/auto — use device language".
 -- Set from Settings → Language via POST /api/me/locale; exposed to apps as
@@ -1366,6 +1391,39 @@ CREATE INDEX IF NOT EXISTS idx_pr_votes_user ON pr_votes (user_id, created_at DE
 -- their next promote, vote, or merge reconciliation. Append-only; safe on boot.
 ALTER TABLE pr_votes ADD COLUMN IF NOT EXISTS head_sha VARCHAR(40);
 
+-- #955: provenance for commits the PLATFORM itself pushed onto a proposal
+-- branch (today only the MODE=sync "merge origin/main" turn — clean or
+-- Claude-resolved). A proposal's votes are pinned to the exact reviewed
+-- commit, so without this record the platform's own conflict-resolution
+-- commit is indistinguishable from an author push and wipes the tally.
+--
+-- Authenticity comes from "we pushed this SHA", never from commit message,
+-- author identity, or merge-commit shape — all of which an author can
+-- reproduce locally, which would turn vote preservation into a governance
+-- bypass. first_parent_sha lets the reconciler walk a chain of stacked
+-- platform commits back to the reviewed head without re-reading GitHub;
+-- prior_reviewed_head_sha records what the review was pinned to at push
+-- time (audit only). Append-only; rows cascade with the session.
+--
+-- Deliberately NOT tagged 'staging:private': it holds no user content and no
+-- credential — just commit ids the platform authored. It still arrives empty
+-- in a staging clone, as a transitive FK child of the private chat_sessions
+-- (db-manager.js truncates those CASCADE and its recursive discovery finds
+-- this table automatically), exactly like its sibling pr_votes.
+CREATE TABLE IF NOT EXISTS session_platform_pushes (
+  id                      SERIAL PRIMARY KEY,
+  session_id              INTEGER REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  sha                     VARCHAR(40) NOT NULL,
+  first_parent_sha        VARCHAR(40),
+  prior_reviewed_head_sha VARCHAR(40),
+  kind                    VARCHAR(24) NOT NULL DEFAULT 'sync_main',
+  sync_result             VARCHAR(16),
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(session_id, sha)
+);
+CREATE INDEX IF NOT EXISTS idx_session_platform_pushes_session
+  ON session_platform_pushes (session_id, sha);
+
 -- Community-voted "priority" + "assigned person" on issues and PR
 -- proposals. ONE unified table because both fields share identical
 -- voting mechanics (one movable vote per user per field per card; the
@@ -1687,9 +1745,11 @@ COMMENT ON COLUMN apps.db_password IS 'staging:private';
 -- to anyone the staging clone would be spun up for.
 
 -- PR kudos. A platform-wide appreciation signal that's orthogonal to
--- `pr_votes` (which is a yes/no merge gate). Every user gets 5 kudos
--- per week, can give at most 1 per PR, can't give to their own PR, and
--- can't take a kudos back. Eligibility lives in src/routes/kudos.js:
+-- `pr_votes` (which is a yes/no merge gate). Every user gets a weekly
+-- allowance (WEEKLY_KUDOS_LIMIT in src/services/bounties.js, currently
+-- 20, shared with issue bounties), can give at most 1 per PR, can't give
+-- to their own PR, and can't take a kudos back.
+-- Eligibility lives in src/routes/kudos.js:
 -- only chat_sessions in status ('promoted','merging','merged') can
 -- receive kudos.
 --
@@ -1806,6 +1866,73 @@ ALTER TABLE app_favorites ADD COLUMN IF NOT EXISTS sort_order INTEGER;
 -- insert/delete (see POST /api/apps/:slug/favorite in
 -- src/routes/apps.js).
 ALTER TABLE app_favorites ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Free-form per-user home-screen layout: where every app tile and widget
+-- sits on the launcher grid, as a real (column, row) CELL rather than a
+-- position in a flow. This is what makes holes possible — an arrangement
+-- with an empty row and one app alone in the bottom-right corner is
+-- expressible here and is not expressible as an ordering.
+--
+-- ONE LAYOUT PER COLUMN COUNT. `cols` is the breakpoint discriminator: the
+-- home grid is 4 columns on a phone and 5 above 640px, and a layout with
+-- intentional holes has no round-trip between the two widths. Storing one
+-- arrangement per width is what lets a phone drag be remembered without
+-- silently rewriting the desktop arrangement (and vice versa). A width with
+-- NO rows means "never dragged at this width" — the client derives that
+-- view by reflowing the other one (or from app_favorites.sort_order flow
+-- order) and only persists once the user actually drags there. That is why
+-- this table needs no backfill: every existing account keeps today's
+-- arrangement as a derivation.
+--
+-- A table rather than a JSONB column on `users` (the retired
+-- home_panel_positions above was the latter) precisely for the app FK:
+-- ON DELETE CASCADE means a deleted app vacates its cell for free, where a
+-- blob would accumulate dead ids that every home paint would have to filter.
+--
+-- Cells only, never sizes: a widget's footprint (w x h, per column count)
+-- comes from PANEL_REGISTRY in src/routes/home-panels.js, so a widget can
+-- be resized in code without migrating anyone's stored layout. The client's
+-- HomeLayout.repair() resolves any overlap that a size change introduces.
+--
+-- Widget rows are NEVER conditional on the viewer's permissions — notably
+-- the 'create' widget is stored for every account regardless of app quota;
+-- whether it is tappable is a render-time read of the derived canCreateApps
+-- boolean. Nothing about quota reaches this table, so gaining or losing it
+-- can never move or drop anyone's tiles.
+--
+-- Not staging:private: a home-screen arrangement is a display preference
+-- with no sensitive content, and staging previews are far more useful with
+-- real layouts in them.
+CREATE TABLE IF NOT EXISTS user_home_layout (
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  -- 4 (phone) or 5 (>= 640px). Kept in step with HomeLayout.columnsForWidth
+  -- in public/js/home-layout.js and the grid classes on #app-list.
+  cols        SMALLINT NOT NULL,
+  item_type   TEXT NOT NULL,
+  app_id      INTEGER REFERENCES apps(id) ON DELETE CASCADE,
+  widget_key  TEXT,
+  grid_col    SMALLINT NOT NULL,
+  grid_row    SMALLINT NOT NULL,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT user_home_layout_kind CHECK (
+    (item_type = 'app' AND app_id IS NOT NULL AND widget_key IS NULL)
+    OR (item_type = 'widget' AND widget_key IS NOT NULL AND app_id IS NULL)
+  ),
+  CONSTRAINT user_home_layout_cols CHECK (cols IN (4, 5)),
+  CONSTRAINT user_home_layout_col CHECK (grid_col >= 0 AND grid_col < cols),
+  -- 8 rows is the free-PLACEMENT canvas, not a capacity cap: items that
+  -- don't fit render as dense overflow rows below it (client-side) and are
+  -- simply not stored until they're dragged back onto the canvas.
+  CONSTRAINT user_home_layout_row CHECK (grid_row >= 0 AND grid_row < 8)
+);
+-- One cell per item per width. Partial indexes rather than a composite PK
+-- because exactly one of app_id / widget_key is set on any row.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_home_layout_app
+  ON user_home_layout(user_id, cols, app_id) WHERE app_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_home_layout_widget
+  ON user_home_layout(user_id, cols, widget_key) WHERE widget_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_user_home_layout_read
+  ON user_home_layout(user_id, cols);
 
 -- Admin-curated "Find more apps" row on the home screen. Global (one
 -- ordered list for everyone — no per-user targeting), display-only, and
@@ -2428,6 +2555,53 @@ CREATE INDEX IF NOT EXISTS idx_chat_session_attachments_orphan
 -- with their own dev session only. Schema-only in staging clones;
 -- migrate.js seeds a demo fixture so the UI is exercisable there.
 COMMENT ON TABLE chat_session_attachments IS 'staging:private';
+
+-- Saved dev-chat drafts (#940). The composer's save icon parks typed text
+-- as a DRAFT while a turn runs (#798, #810); until this table existed those
+-- drafts lived only in the localStorage of the browser that typed them, so
+-- a thought parked on a laptop was invisible on a phone and clearing site
+-- data lost it silently. Now they belong to the ACCOUNT: the client keeps
+-- localStorage as an instant-paint mirror + offline buffer and reconciles
+-- against these rows on every session open.
+--
+-- draft_id is CLIENT-generated (DevChat._newDraftId, `d<base36><rand>`) and
+-- validated against ^[A-Za-z0-9_-]{1,32}$ in the route. That is what makes
+-- an upload idempotent (ON CONFLICT DO NOTHING) and lets two devices
+-- recognise the same draft without a round trip; it is only ever a bound
+-- parameter, never interpolated, and is always paired with session_id in
+-- the primary key.
+--
+-- saved_at is the ordering key ("newest last", matching the render order),
+-- with draft_id as the tiebreak because two devices can stamp the same
+-- second. A client-supplied saved_at is clamped to [NOW() - 30 days, NOW()]
+-- in the route so a device with a wrong clock can't pin a draft to the top
+-- or to the far future.
+--
+-- Retention follows the parent session (ON DELETE CASCADE), bounded by a
+-- 20-drafts-per-session cap enforced at insert time.
+CREATE TABLE IF NOT EXISTS chat_session_drafts (
+  session_id INTEGER     NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  -- Always the session owner. Stored so the ownership check and any
+  -- per-user query is a single predicate on this table.
+  user_id    INTEGER     NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  draft_id   VARCHAR(32) NOT NULL,
+  content    TEXT        NOT NULL CHECK (length(content) BETWEEN 1 AND 10000),
+  saved_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (session_id, draft_id)
+);
+CREATE INDEX IF NOT EXISTS idx_chat_session_drafts_session
+  ON chat_session_drafts(session_id, saved_at, draft_id);
+CREATE INDEX IF NOT EXISTS idx_chat_session_drafts_user
+  ON chat_session_drafts(user_id);
+
+-- Private like its parent chat_sessions — forced, not a preference: this
+-- table FKs chat_sessions (public-FK-to-private is the combination the
+-- clone's FK-closure discovery forbids), and the rows are unsent private
+-- chat content in their own right. Schema-only in staging clones;
+-- migrate.js seeds a demo fixture (session 990402) so the DB-backed path
+-- is exercisable there.
+COMMENT ON TABLE chat_session_drafts IS 'staging:private';
 
 -- Fallback-title marker for the title auto-heal sweeper (services/
 -- title-heal.js). TRUE when the PR's title came from the LLM-unavailable
@@ -3422,6 +3596,154 @@ CREATE TABLE IF NOT EXISTS mobile_auth_tokens (
 );
 CREATE INDEX IF NOT EXISTS idx_mobile_auth_tokens_user ON mobile_auth_tokens (user_id);
 
+-- Database-owned sender identity and activation boundary. Same-identity sender
+-- restarts retain this cutoff so queued work survives ordinary deployments.
+-- Initial activation, re-enabling, and deployment identity changes establish
+-- a fresh cutoff so incompatible or disabled-period work is not delivered.
+CREATE TABLE IF NOT EXISTS mobile_push_deployment_state (
+  environment         VARCHAR(32) PRIMARY KEY,
+  firebase_project_id VARCHAR(128) NOT NULL CHECK (BTRIM(firebase_project_id) <> ''),
+  send_enabled        BOOLEAN NOT NULL DEFAULT FALSE,
+  send_not_before     TIMESTAMPTZ,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (BTRIM(environment) <> ''),
+  CHECK (NOT send_enabled OR send_not_before IS NOT NULL)
+);
+
+-- Mobile push registrations belong to a platform user and app installation.
+-- The bearer authorizes registration changes; only its expiry is copied as a
+-- bounded lifetime. Provider registrations are encrypted with
+-- DATA_ENCRYPTION_KEY; the hash is used only for uniqueness/rebinding and is
+-- never returned or logged.
+-- The installation mutation row deliberately survives logout/deletion so a
+-- delayed request cannot resurrect an older registration state.
+CREATE TABLE IF NOT EXISTS mobile_push_installation_mutations (
+  environment              VARCHAR(32) NOT NULL,
+  installation_id          UUID NOT NULL,
+  latest_mutation_revision BIGINT NOT NULL CHECK (latest_mutation_revision > 0),
+  latest_mutation_kind     VARCHAR(8) NOT NULL
+                             CHECK (latest_mutation_kind IN ('put', 'delete')),
+  created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (environment, installation_id),
+  CHECK (BTRIM(environment) <> '')
+);
+
+CREATE TABLE IF NOT EXISTS mobile_push_registrations (
+  id                 BIGSERIAL PRIMARY KEY,
+  user_id            INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  environment        VARCHAR(32) NOT NULL,
+  installation_id    UUID NOT NULL,
+  provider           VARCHAR(16) NOT NULL DEFAULT 'fcm' CHECK (provider = 'fcm'),
+  registration_hash  VARCHAR(64) NOT NULL CHECK (registration_hash ~ '^[0-9a-f]{64}$'),
+  registration_enc   TEXT NOT NULL CHECK (BTRIM(registration_enc) <> ''),
+  platform           VARCHAR(16) NOT NULL CHECK (platform IN ('android', 'ios')),
+  permission_status  VARCHAR(24) NOT NULL CHECK (
+                         permission_status IN (
+                           'authorized', 'provisional', 'denied', 'not_determined'
+                         )
+                       ),
+  session_expires_at TIMESTAMPTZ NOT NULL,
+  last_seen_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (environment, installation_id),
+  UNIQUE (environment, registration_hash),
+  CHECK (BTRIM(environment) <> '')
+);
+CREATE INDEX IF NOT EXISTS idx_mobile_push_registrations_user
+  ON mobile_push_registrations (user_id, environment);
+
+-- Durable notification outbox. No provider token is copied here. `attempts`
+-- tracks retry backoff within the single Social sender.
+CREATE TABLE IF NOT EXISTS mobile_push_deliveries (
+  id                BIGSERIAL PRIMARY KEY,
+  notification_id   INTEGER NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+  registration_id   BIGINT REFERENCES mobile_push_registrations(id) ON DELETE SET NULL,
+  environment       VARCHAR(32) NOT NULL CHECK (BTRIM(environment) <> ''),
+  installation_id   UUID NOT NULL,
+  status            VARCHAR(16) NOT NULL DEFAULT 'pending'
+                      CHECK (status IN ('pending', 'sending', 'sent', 'dead', 'cancelled')),
+  attempts          INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  available_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at        TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '24 hours'),
+  sent_at           TIMESTAMPTZ,
+  last_error_code   VARCHAR(96),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (notification_id, environment, installation_id)
+);
+CREATE INDEX IF NOT EXISTS idx_mobile_push_deliveries_claim
+  ON mobile_push_deliveries (environment, available_at, id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_mobile_push_deliveries_registration
+  ON mobile_push_deliveries (registration_id) WHERE registration_id IS NOT NULL;
+
+COMMENT ON TABLE mobile_push_deployment_state IS 'staging:private';
+COMMENT ON TABLE mobile_push_installation_mutations IS 'staging:private';
+COMMENT ON TABLE mobile_push_registrations IS 'staging:private';
+COMMENT ON TABLE mobile_push_deliveries IS 'staging:private';
+
+-- Capture the push outbox in the same transaction as the canonical
+-- notification. The allowlist is intentionally explicit: adding a new
+-- notification kind does not automatically make it a lock-screen event.
+CREATE OR REPLACE FUNCTION enqueue_mobile_push_deliveries()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.read_at IS NOT NULL
+     OR NEW.kind NOT IN ('session_done', 'auto_solve_done') THEN
+    RETURN NEW;
+  END IF;
+
+  -- Project changes lock deployment state before deleting registrations.
+  -- Take the same lock order here so outbox capture cannot deadlock with that
+  -- transition or commit an old-project registration behind it.
+  PERFORM environment
+    FROM mobile_push_deployment_state
+   ORDER BY environment
+   FOR KEY SHARE;
+
+  WITH eligible AS MATERIALIZED (
+    SELECT r.id, r.environment, r.installation_id
+      FROM mobile_push_registrations r
+      JOIN mobile_push_deployment_state s ON s.environment = r.environment
+     WHERE r.user_id = NEW.user_id
+       AND r.session_expires_at > NOW()
+       AND r.permission_status IN ('authorized', 'provisional')
+       AND s.send_enabled
+       AND s.send_not_before IS NOT NULL
+       AND COALESCE(NEW.created_at, NOW()) >= s.send_not_before
+     ORDER BY r.id
+     FOR KEY SHARE OF r
+  )
+  INSERT INTO mobile_push_deliveries (
+    notification_id, registration_id, environment, installation_id, expires_at
+  )
+  SELECT NEW.id, id, environment, installation_id,
+         COALESCE(NEW.created_at, NOW()) + INTERVAL '24 hours'
+    FROM eligible
+  ON CONFLICT (notification_id, environment, installation_id) DO NOTHING;
+
+  RETURN NEW;
+END;
+$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+     WHERE tgname = 'notifications_enqueue_mobile_push_deliveries'
+       AND tgrelid = 'notifications'::regclass
+       AND NOT tgisinternal
+  ) THEN
+    CREATE TRIGGER notifications_enqueue_mobile_push_deliveries
+      AFTER INSERT ON notifications
+      FOR EACH ROW EXECUTE FUNCTION enqueue_mobile_push_deliveries();
+  END IF;
+END $$;
+
 -- ═══════════════════════════════════════════════════════════════════════
 -- Topochain Task 2 — `users` columns, `platform_settings` seed, staging
 -- privacy (plan Task 2; SPEC §8.5 users columns 3283-3294, §3.5 settings
@@ -3623,3 +3945,203 @@ INSERT INTO platform_settings (key, value, description) VALUES
   ('onboarding_gate_grandfathered', 'true',
     'Marker: the one-time platform-access grandfather + waitlist backfill has run. Do not delete — deleting re-grants access to every account on next boot.')
 ON CONFLICT (key) DO NOTHING;
+
+-- ── Generic agent backend (Codex/OpenRouter BYOK; plan.md PR1) ───────
+-- chat_sessions today pins Claude continuity via cc_session_id. To add a
+-- second coding-agent backend (codex_openrouter) without breaking the
+-- Claude path, we generalize the session's agent configuration into its
+-- own columns. Each field is nullable / defaulted so legacy rows stay on
+-- claude_code with zero migration work; cc_session_id remains the source
+-- of truth for existing Claude threads until PR8's legacy cleanup.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS agent_backend            VARCHAR(32) NOT NULL DEFAULT 'claude_code';
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS agent_provider           VARCHAR(32);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS agent_model              VARCHAR(255);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS agent_reasoning_effort   VARCHAR(16);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS agent_thread_id          VARCHAR(128);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS agent_config_version     INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS agent_context_reset_at   TIMESTAMPTZ;
+
+-- Backfill: every existing session is a Claude session. Carry the Claude
+-- continuity id into the generic agent_thread_id so backend-neutral code
+-- can read one field for both backends, while cc_session_id remains
+-- readable during the migration window (plan.md §5.4).
+--
+-- Gated with `agent_thread_id IS DISTINCT FROM cc_session_id` instead of
+-- the old `agent_thread_id IS NULL`: rows whose thread already equals the
+-- cc_session_id are skipped entirely, so a NULL->NULL rewrite (locks, WAL,
+-- dead tuples) no longer happens on every boot.
+UPDATE chat_sessions
+SET agent_backend = 'claude_code',
+    agent_provider = 'anthropic',
+    agent_thread_id = cc_session_id
+WHERE agent_backend = 'claude_code'
+  AND (
+    agent_thread_id IS DISTINCT FROM cc_session_id
+    OR agent_provider IS DISTINCT FROM 'anthropic'
+  );
+
+-- ── Generic user AI credentials (plan.md PR2) ────────────────────────
+-- Generalization of users.anthropic_key_enc/_last4 so a second provider
+-- (openrouter) can be stored without stacking another pair of columns.
+--
+-- provider:  anthropic | openrouter
+-- purpose:   coding_agent | app_llm
+-- For this feature we add provider='openrouter', purpose='coding_agent'.
+-- The encryption envelope is unchanged (secrets.js AES-256-GCM), so
+-- existing Anthropic ciphertext can be copied in without decrypting.
+--
+-- On deletion we keep a tombstone row (status='revoked', secret_enc
+-- cleared, revision incremented, revoked_at set) so session/audit
+-- references stay safe; we never physically delete the row.
+-- Credentials live in a dedicated PRIVATE schema (not `public`). The
+-- prod-debug role bootstrap (src/services/debug-access.js) only sweeps
+-- `public` (REVOKE/GRANT ALL TABLES IN SCHEMA public), so rolled-back
+-- (old) code cannot re-grant SELECT on this table — the schema boundary
+-- is rollback-persistent DB state, independent of the JS deny-list.
+CREATE SCHEMA IF NOT EXISTS credentials;
+CREATE TABLE IF NOT EXISTS credentials.user_ai_credentials (
+  id                   BIGSERIAL PRIMARY KEY,
+  user_id              BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider             VARCHAR(32) NOT NULL,
+  purpose              VARCHAR(32) NOT NULL,
+  secret_enc           TEXT,
+  secret_last4         VARCHAR(8),
+  secret_fingerprint   VARCHAR(64),
+  status               VARCHAR(16) NOT NULL DEFAULT 'unverified',
+  revision             INTEGER NOT NULL DEFAULT 1,
+  verified_at          TIMESTAMPTZ,
+  last_used_at         TIMESTAMPTZ,
+  last_error_code      VARCHAR(64),
+  revoked_at           TIMESTAMPTZ,
+  metadata             JSONB NOT NULL DEFAULT '{}',
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT user_ai_credentials_provider_check
+    CHECK (provider IN ('anthropic', 'openrouter')),
+  CONSTRAINT user_ai_credentials_purpose_check
+    CHECK (purpose IN ('coding_agent', 'app_llm')),
+  -- status/verified_at coupling: a usable ('valid') row must carry a
+  -- verified_at timestamp; non-valid rows must not claim verification.
+  CONSTRAINT user_ai_credentials_valid_verified_check
+    CHECK (
+      (status = 'valid' AND verified_at IS NOT NULL)
+      OR (status <> 'valid' AND verified_at IS NULL)
+    )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS user_ai_credentials_unique_provider_purpose
+  ON credentials.user_ai_credentials (user_id, provider, purpose);
+
+-- Backfill existing Anthropic BYOK keys into the generic store. Because
+-- the encryption envelope is unchanged we copy the existing ciphertext
+-- as-is (no decrypt/re-encrypt). Seeds verified status; a key stored
+-- on-file was verified at save time.
+--
+-- Rollback reconciliation (plan.md review F2): during the migration
+-- window the LEGACY users.anthropic_key_* columns remain the source of
+-- truth for the Anthropic coding-agent credential, because rolled-back
+-- (old) code can only ever write those columns. Re-deriving the generic
+-- row from legacy on every schema run guarantees rollback survival:
+--
+--   1. Where legacy ciphertext exists, we OVERWRITE the generic row from
+--      it — even if the existing generic row is 'valid'. This reconciles a
+--      stale generic key that a legacy-only replace changed during a
+--      rollback (a plain `ON CONFLICT DO NOTHING`, or a guard that skips
+--      valid rows, would keep the obsolete key usable).
+--   2. Where legacy is NULL but a generic row is 'valid', the legacy side
+--      (a delete during rollback, or a first-save that was never mirrored)
+--      is authoritative: we REVOKE the generic row so a deleted key can
+--      never be resurrected. Non-valid generic rows without legacy
+--      (e.g. an unverified key kept generic-only) are left as non-usable
+--      pending rows.
+INSERT INTO credentials.user_ai_credentials
+  (user_id, provider, purpose, secret_enc, secret_last4, status, verified_at, revision)
+SELECT id, 'anthropic', 'coding_agent', anthropic_key_enc, anthropic_key_last4,
+       'valid', NOW(), 1
+FROM users
+WHERE anthropic_key_enc IS NOT NULL
+ON CONFLICT (user_id, provider, purpose) DO UPDATE SET
+  secret_enc = EXCLUDED.secret_enc,
+  secret_last4 = EXCLUDED.secret_last4,
+  secret_fingerprint = NULL,
+  status = EXCLUDED.status,
+  verified_at = EXCLUDED.verified_at,
+  revoked_at = NULL,
+  revision = credentials.user_ai_credentials.revision + 1,
+  updated_at = NOW()
+-- Only touch the generic row when the legacy value actually differs, so
+-- we never reset fingerprint / verified_at / revision on an unchanged
+-- credential every restart (review F2).
+WHERE credentials.user_ai_credentials.secret_enc IS DISTINCT FROM EXCLUDED.secret_enc;
+
+-- Legacy delete must win over a previously-valid generic row: revoke any
+-- generic anthropic/coding_agent row that is 'valid' while the legacy
+-- column is absent (rolled-back delete, or a key that was never mirrored
+-- to legacy). Non-valid rows (unverified/invalid/revoked) are untouched.
+UPDATE credentials.user_ai_credentials g
+SET secret_enc = NULL,
+    secret_last4 = NULL,
+    secret_fingerprint = NULL,
+    status = 'revoked',
+    -- valid_verified requires non-valid rows to carry verified_at NULL,
+    -- so the tombstone must clear it or the UPDATE fails (breaking
+    -- roll-forward after a rollback deletion).
+    verified_at = NULL,
+    revoked_at = NOW(),
+    revision = g.revision + 1,
+    updated_at = NOW()
+WHERE g.provider = 'anthropic'
+  AND g.purpose = 'coding_agent'
+  AND g.status = 'valid'
+  AND NOT EXISTS (
+    SELECT 1 FROM users u
+    WHERE u.id = g.user_id
+      AND u.anthropic_key_enc IS NOT NULL
+  );
+
+-- Mark credential-bearing columns for the staging:private scrubber
+-- (same treatment the legacy users.anthropic_key_enc already gets).
+COMMENT ON TABLE  credentials.user_ai_credentials IS 'staging:private';
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- Profile customization (issue #982) — the editable half of the #profile
+-- screen: a short bio and a profile picture.
+-- ═══════════════════════════════════════════════════════════════════════
+
+-- User-authored public bio, shown on the viewer's own #profile screen and
+-- (once the follow-up lands) on their public builder page. Plain text, NOT
+-- markdown — nothing renders it through marked/DOMPurify, so it is always
+-- inserted as a text node. The ≤280-char cap is enforced in
+-- src/routes/profile.js rather than as a DB constraint, matching how every
+-- other user-authored text column on this table is handled. Deliberately
+-- not `staging:private`: it is content the user publishes to other users.
+--
+-- `display_name`, `github` and `x` — the other three fields the profile
+-- editor writes — already exist on this table (topochain Task 2 block
+-- above) and are reused as-is; only the bio is new.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS bio TEXT;
+
+-- Profile pictures, modelled column-for-column on `app_icons` above and
+-- served the same way: GET /avatars/:id is mounted BEFORE authMiddleware
+-- (src/routes/avatars.js) so a plain <img> renders with no auth dance, and
+-- the unguessable 32-hex id is the only access control — an avatar
+-- discloses only itself, and it is published to other users by design.
+--
+-- ONE ROW PER USER (user_id UNIQUE) and the id ROTATES on every upload:
+-- POST /api/me/avatar upserts with `ON CONFLICT (user_id) DO UPDATE SET
+-- id = EXCLUDED.id, …`, so the content-addressed URL changes whenever the
+-- bytes do and the year-long immutable cache header stays safe. That also
+-- means there is never an orphan row to sweep (contrast issue_screenshots,
+-- which needs the 24h GC) — the UNIQUE + ON DELETE CASCADE cover it.
+--
+-- NOT staging:private, for the same reason as app_icons: avatars render on
+-- shared surfaces and should survive into staging clones.
+CREATE TABLE IF NOT EXISTS user_avatars (
+  id           VARCHAR(32) PRIMARY KEY,
+  user_id      INTEGER UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  content_type VARCHAR(32) NOT NULL,
+  size_bytes   INTEGER     NOT NULL,
+  data         BYTEA       NOT NULL,
+  sha256       VARCHAR(64) NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

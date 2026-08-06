@@ -35,12 +35,23 @@
 // PERSONALIZATION: on top of the public grid, a second fetch to
 // GET /challenges-api/challenges?season_event_id=<id> (session-cookie authed,
 // src/routes/topochain/mobile.js) supplies the viewer's own per-challenge
-// points plus `featured` / `completed`, keyed by the same challenges.id the
-// public endpoint returns. It is strictly DECORATIVE: a 401/422/network
-// failure leaves the public grid exactly as it rendered, with no error banner.
-// Note `completed` is a column on the challenges row — an organiser flag about
-// the CHALLENGE, not a per-user completion. The per-user signal is
-// activities_total.
+// points plus `featured`, keyed by the same challenges.id the public endpoint
+// returns. It is strictly DECORATIVE: a 401/422/network failure leaves the
+// public grid exactly as it rendered, with no error banner.
+//
+// COMPLETION (#981): `completed` is a column on the challenges row — an
+// organiser flag about the CHALLENGE ("this one is over"), not a per-user
+// completion. The per-user signal is activities_total. This pane is now the
+// HOME for that flag: the profile screen used to list the season's finished
+// challenges and no longer does (see public/js/profile.js's header), so the
+// grid groups them, counts them in a summary line and dims them.
+//
+// That is why `completed` is read from the PUBLIC row rather than from the
+// personalization map it used to come from: the chip, the grouping and the
+// count are all correct on FIRST PAINT and for an ANONYMOUS visitor, neither
+// of which held while the flag arrived only with the session-authed pass.
+// (`featured` still comes from that pass, so the featured lift can still
+// re-sort once it lands — pre-existing behaviour, deliberately unchanged.)
 'use strict';
 
 const TopochainChallenges = {
@@ -55,9 +66,18 @@ const TopochainChallenges = {
   _mine: new Map(),
   // Unsubscribe handle from TopochainEventContext.onChange.
   _unsub: null,
+  // The event id `_challenges` was last loaded for. `undefined` until the
+  // first load, which is deliberately distinct from the `null` a pane with
+  // no resolvable event settles on.
+  _loadedEventId: undefined,
   // True once the ?shot=challenge-detail deep link has fired, so a later
   // re-render (event switch, personalization landing) doesn't reopen it.
   _shotFired: false,
+  // Pending #leaderboard/challenges/<eventId>/<challengeId> request (#982),
+  // as { eventId, challengeId }, or null. Held rather than acted on
+  // immediately because the router registers it before the pane has
+  // mounted, let alone fetched the event's challenge list.
+  _pendingDeepLink: null,
 
   // Challenge detail overlay state. `_detailChallenge` is the clicked
   // challenge-grid item (already carries card_preview/detail_modal); the
@@ -121,10 +141,18 @@ const TopochainChallenges = {
   open() {
     TopochainChallenges._open = true;
     TopochainChallenges._renderShell();
-    // The event bar owns the selection; re-render whenever it changes.
+    // The event bar owns the selection; re-render whenever it CHANGES.
+    // Not on every notification: the bar also notifies once at the end of
+    // its own initial loadEvents(), and that one carries the same event
+    // this pane already loaded. Treating it as a change tore down whatever
+    // was on top of the grid a beat after it opened — which is how the
+    // #982 deep link ended up rendering the right detail panel and then
+    // closing it unprompted, and would do the same to an overlay the user
+    // opened by hand.
     if (window.TopochainEventContext?.onChange) {
       TopochainChallenges._unsub = TopochainEventContext.onChange(() => {
         if (!TopochainChallenges._open) return;
+        if (TopochainChallenges._eventId() === TopochainChallenges._loadedEventId) return;
         TopochainChallenges.closeChallengeDetail();
         TopochainChallenges.closeUserProfile();
         TopochainChallenges.loadChallenges();
@@ -137,6 +165,10 @@ const TopochainChallenges = {
     TopochainChallenges._open = false;
     TopochainChallenges._detailChallenge = null;
     TopochainChallenges._profileUserId = null;
+    // An unresolved deep link dies with the screen. Keeping it would make a
+    // much later, unrelated visit to this pane pop an overlay the user
+    // never asked for.
+    TopochainChallenges._pendingDeepLink = null;
     if (TopochainChallenges._unsub) {
       TopochainChallenges._unsub();
       TopochainChallenges._unsub = null;
@@ -179,6 +211,10 @@ const TopochainChallenges = {
 
   async loadChallenges() {
     const eventId = TopochainChallenges._eventId();
+    // The event `_challenges` reflects (or is being fetched for). The
+    // onChange subscriber above compares against it to tell a real event
+    // switch apart from a redundant re-notification.
+    TopochainChallenges._loadedEventId = eventId;
     if (eventId == null) {
       TopochainChallenges._challenges = [];
       TopochainChallenges._challengesLoading = false;
@@ -235,15 +271,29 @@ const TopochainChallenges = {
 
   // ── Challenge grid ───────────────────────────────────────────────────
 
-  // Featured challenges lift to the top, then display_order — the ordering
-  // the retired #challenges screen used. The public endpoint already sorts by
-  // display_order and carries no `featured`, so the lift only applies once
-  // the personalization pass has landed; until then the public order stands.
+  // Is this challenge organiser-FINISHED? The public row is the source of
+  // truth (see the file header's COMPLETION note); the personalization row
+  // is only a fallback, so a stale/older public payload still gets the chip
+  // for a signed-in viewer rather than silently losing it.
+  _isDone(c) {
+    if (c && c.completed === true) return true;
+    const m = TopochainChallenges._mine.get(Number(c && c.id)) || null;
+    return !!(m && m.completed === true);
+  },
+
+  // Unfinished challenges first, then organiser-featured, then display_order
+  // — the retired #challenges screen's ordering with the completed split
+  // added in front of it (#981). The not-completed key comes from the PUBLIC
+  // row, so the split is final on first paint; `featured` still arrives with
+  // the personalization pass, so that lift alone can still re-sort later.
   _ordered() {
     const mine = TopochainChallenges._mine;
     return TopochainChallenges._challenges
       .map((c, i) => ({ c, i, m: mine.get(Number(c.id)) || null }))
       .sort((a, b) => {
+        const ad = TopochainChallenges._isDone(a.c) ? 1 : 0;
+        const bd = TopochainChallenges._isDone(b.c) ? 1 : 0;
+        if (ad !== bd) return ad - bd;
         const af = a.m && a.m.featured === true ? 1 : 0;
         const bf = b.m && b.m.featured === true ? 1 : 0;
         if (af !== bf) return bf - af;
@@ -261,7 +311,13 @@ const TopochainChallenges = {
       host.innerHTML = '<p class="text-sm text-zinc-500">Loading challenges…</p>';
       return;
     }
+    // Both terminal empty states retire a pending deep link (#982) on the
+    // way out, via the same guards the populated path uses — an empty
+    // `ordered` simply matches nothing. Neither state can ever resolve one,
+    // and leaving it armed would fire it against whatever event the viewer
+    // picks next.
     if (TopochainChallenges._challengesError) {
+      TopochainChallenges._maybeDeepLink([]);
       host.innerHTML = `
         <div class="rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 text-red-700 dark:text-red-300 px-4 py-3 text-sm">
           ${esc(TopochainChallenges._challengesError)}
@@ -269,25 +325,34 @@ const TopochainChallenges = {
       return;
     }
     if (!TopochainChallenges._challenges.length) {
+      TopochainChallenges._maybeDeepLink([]);
       host.innerHTML = '<p class="text-sm text-zinc-500 py-8 text-center">No challenges for this event yet.</p>';
       return;
     }
 
     const ordered = TopochainChallenges._ordered();
+    // `ordered` stays ONE flat array whatever the grouping below does: both
+    // the cards' `data-idx` and _maybeShot index into it, so splitting it in
+    // two would desynchronise every click from the card it was made for.
+    const firstDone = ordered.findIndex((c) => TopochainChallenges._isDone(c));
+    const doneCount = firstDone === -1 ? 0 : ordered.length - firstDone;
+
     const cards = ordered.map((c, i) => {
       const cp = c.card_preview || {};
       const m = TopochainChallenges._mine.get(Number(c.id)) || null;
       const featured = !!(m && m.featured === true);
-      // Organiser-set flag on the challenge row — "this challenge is
-      // finished", NOT "you finished it".
-      const done = !!(m && m.completed === true);
+      const done = TopochainChallenges._isDone(c);
       const mineTotal = m && Number(m.activities_total) > 0
         ? Number(m.activities_total) : 0;
       const doneChip = done
         ? `<span class="shrink-0 inline-block px-2 py-0.5 rounded-full text-[0.65rem] font-semibold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">Completed</span>`
         : '';
+      // A finished challenge is DIMMED, not hidden: its detail overlay and
+      // participant breakdown are the interesting part of it, so the card
+      // stays fully clickable — the opacity only takes it out of the way of
+      // whatever is still open.
       return `
-        <div class="tc-se-card bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 cursor-pointer hover:border-violet-400 dark:hover:border-violet-600 transition-colors${featured ? ' ring-1 ring-violet-500/40' : ''}" data-idx="${esc(i)}">
+        <div class="tc-se-card bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 cursor-pointer hover:border-violet-400 dark:hover:border-violet-600 transition-colors${featured ? ' ring-1 ring-violet-500/40' : ''}${done ? ' opacity-60' : ''}" data-idx="${esc(i)}">
           <div class="flex items-start justify-between gap-2 mb-1">
             <div class="text-[10px] uppercase tracking-wide text-violet-600 dark:text-violet-400 font-semibold">${esc(cp.label || '')}</div>
             ${doneChip}
@@ -297,9 +362,24 @@ const TopochainChallenges = {
           ${cp.reward ? `<p class="text-xs text-violet-500 mt-2 font-medium">${esc(cp.reward)}</p>` : ''}
           ${mineTotal ? `<p class="text-xs text-emerald-600 dark:text-emerald-400 mt-2 font-medium">You&rsquo;ve contributed ${esc(mineTotal)} pts</p>` : ''}
         </div>`;
-    }).join('');
+    });
 
-    host.innerHTML = `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">${cards}</div>
+    const GRID_CLASS = 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3';
+    // The "Completed" subheading only earns its row when there is something
+    // on BOTH sides of it. Every public event in production is currently
+    // 100% completed, and a heading over the entire grid says nothing.
+    const gridsHtml = (firstDone > 0 && doneCount > 0)
+      ? `<div class="${GRID_CLASS}">${cards.slice(0, firstDone).join('')}</div>
+        <div class="text-sm font-semibold text-zinc-500 dark:text-zinc-400 mt-6 mb-2">Completed</div>
+        <div class="${GRID_CLASS}">${cards.slice(firstDone).join('')}</div>`
+      : `<div class="${GRID_CLASS}">${cards.join('')}</div>`;
+
+    // Always rendered when the grid has rows (including "0 of 8" and
+    // "8 of 8"), so the declared dapp.json check can anchor on it whatever
+    // the selected event's data happens to be.
+    host.innerHTML = `
+      <p id="tc-se-challenge-summary" class="text-sm text-zinc-500 dark:text-zinc-400 mb-3">${esc(doneCount)} of ${esc(ordered.length)} challenges completed</p>
+      ${gridsHtml}
       <div class="mt-4 text-center">
         <button id="tc-se-to-standings"
           class="text-sm font-medium text-violet-600 dark:text-violet-400 hover:underline">See where the season stands &rarr;</button>
@@ -318,12 +398,15 @@ const TopochainChallenges = {
     });
 
     TopochainChallenges._maybeShot(ordered);
+    TopochainChallenges._maybeDeepLink(ordered);
   },
 
   // Screenshot-state deep link (`?shot=challenge-detail`): the detail overlay
   // is interaction-gated, so before/after captures and the declared dapp.json
   // check can't reach it by URL alone. Opens the first card once, right after
-  // the grid first paints. Scoped to that one param value so a real user's
+  // the grid first paints — since #981 that is the first UNFINISHED card when
+  // the event has one, which is the better capture either way. Scoped to that
+  // one param value so a real user's
   // grid never auto-opens an overlay. Pure UI state — no writes, no env gate.
   _maybeShot(ordered) {
     if (TopochainChallenges._shotFired) return;
@@ -335,6 +418,53 @@ const TopochainChallenges = {
     if (shot !== 'challenge-detail') return;
     TopochainChallenges._shotFired = true;
     TopochainChallenges.openChallengeDetail(ordered[0]);
+  },
+
+  // ── Challenge deep link (#982) ───────────────────────────────────────
+
+  // Entry point for #leaderboard/challenges/<eventId>[/<challengeId>], the
+  // address the profile's completed-challenge rows link to. Called by
+  // App._routeLeaderboard BEFORE the pane mounts, so it can only record the
+  // intent and point the shared event bar at the right event; the detail
+  // overlay opens later, from the render that first paints that event's
+  // grid. A bare eventId (no challenge) is a valid, useful address too —
+  // it just selects the event.
+  openFromHash(eventId, challengeId) {
+    const ev = Number.isInteger(eventId) ? eventId : null;
+    const ch = Number.isInteger(challengeId) ? challengeId : null;
+    if (ev == null && ch == null) return;
+    if (ch != null) TopochainChallenges._pendingDeepLink = { eventId: ev, challengeId: ch };
+    // select() is a no-op when the event is already the selected one, so
+    // this neither reloads nor re-renders in the common "already looking at
+    // this event" case — which is exactly why the grid below may already be
+    // painted and needs resolving here rather than waiting for a render
+    // that will never come.
+    if (ev != null && window.TopochainEventContext?.select) {
+      TopochainEventContext.select(ev);
+    }
+    if (TopochainChallenges._open) {
+      TopochainChallenges._maybeDeepLink(TopochainChallenges._ordered());
+    }
+  },
+
+  // Resolve a pending deep link against a freshly painted grid. Consumed
+  // ONCE, whether or not the challenge is there: an id that doesn't exist
+  // (deleted challenge, hand-edited hash, wrong event) leaves the viewer on
+  // the grid with no overlay and no error, which is the honest answer —
+  // the challenges they CAN open are all on screen.
+  _maybeDeepLink(ordered) {
+    const want = TopochainChallenges._pendingDeepLink;
+    if (!want) return;
+    // Mid-reload the grid still holds the PREVIOUS event's rows (see
+    // loadChallenges), and matching against those could open the wrong
+    // event's challenge — or, worse, silently burn the link on a list the
+    // target was never in. Wait for the render that belongs to it.
+    if (TopochainChallenges._challengesLoading) return;
+    if (want.eventId != null
+        && TopochainChallenges._eventId() !== want.eventId) return;
+    TopochainChallenges._pendingDeepLink = null;
+    const match = ordered.find((c) => c && Number(c.id) === want.challengeId);
+    if (match) TopochainChallenges.openChallengeDetail(match);
   },
 
   // ── Challenge detail overlay ─────────────────────────────────────────

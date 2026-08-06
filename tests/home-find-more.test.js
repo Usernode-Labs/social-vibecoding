@@ -24,10 +24,46 @@ const vm = require('node:vm');
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const HOME_SRC = read('public/js/home.js');
 const INDEX = read('public/index.html');
+const PANELS_SRC = read('public/js/home-panels.js');
+const CSS = read('public/css/app.css');
+const ROUTE = read('src/routes/home-panels.js');
+
+// A HomePanels in a vm sandbox, with the Home surface its renderers call
+// into stubbed — the create widget asks Home.canCreate(), the discover
+// widget asks Home.featuredApps().
+function makePanels({ canCreate = true, featured = [] } = {}) {
+  const sandbox = {
+    console,
+    App: { user: { id: 1 } },
+    Home: {
+      canCreate: () => canCreate,
+      featuredApps: () => featured,
+      isYours: () => false,
+      CREATE_DISABLED_HINT: 'Ask an admin to enable app creation for your account.',
+    },
+    document: {
+      getElementById: () => null,
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      addEventListener: () => {},
+    },
+    fetch: async () => ({ ok: false, json: async () => ({}) }),
+    setTimeout, clearTimeout, URLSearchParams, Date,
+    location: { search: '', hash: '' },
+    addEventListener: () => {},
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(`${PANELS_SRC}\n;globalThis.__HP = HomePanels;`, sandbox);
+  return { HP: sandbox.__HP, sandbox };
+}
 const SCHEMA = read('src/db/schema.sql');
 const APPS_ROUTE = read('src/routes/apps.js');
 
-function makeHome() {
+// `search` drives the screenshot-state deep links the module reads off
+// location (?shot=create-disabled, ?shot=discover-empty).
+function makeHome({ search = '' } = {}) {
   const sandbox = {
     console,
     App: { user: { id: 1, canCreateApps: true } },
@@ -54,7 +90,7 @@ function makeHome() {
     fetch: async () => ({ ok: true, json: async () => ({}) }),
     setTimeout, clearTimeout, setInterval, clearInterval,
     URLSearchParams,
-    location: { search: '' },
+    location: { search },
     addEventListener: () => {},
     removeEventListener: () => {},
   };
@@ -142,23 +178,98 @@ test('featuredApps: empty / missing input is safe', () => {
   assert.equal(Home.featuredApps([app()]).length, 0, 'nothing featured');
 });
 
+// The screenshot-state deep link for the compact "nothing featured" state
+// (#949). Without it that rendering — what a viewer sees once they have
+// added the featured apps — is unreachable by URL, so the before/after
+// screenshots and every declared check would show the populated widget.
+test('featuredApps: ?shot=discover-empty forces the empty state', () => {
+  const apps = [app({ slug: 'f', featured: true, featured_order: 0 })];
+  assert.equal(makeHome().featuredApps(apps).length, 1, 'normally populated');
+  const shot = makeHome({ search: '?shot=discover-empty' });
+  assert.equal(shot.featuredApps(apps).length, 0, 'the deep link empties it');
+  // Paint-only: a DIFFERENT shot value must not touch this list.
+  assert.equal(makeHome({ search: '?shot=create-disabled' }).featuredApps(apps).length, 1);
+});
+
+// ── popularApps selection (#949) ──────────────────────────────────
+//
+// The desktop widget's second lane: what everyone else is using, from the
+// `active_users` count GET /api/apps already serves. The ranking mirrors
+// Browse.sortApps' non-featured tail so the widget and the directory can't
+// disagree about what is popular.
+
+const pop = (over) => app({ active_users: 3, ...over });
+
+test('popularApps: ranks non-featured apps by active users, most first', () => {
+  const Home = makeHome();
+  const apps = [
+    pop({ slug: 'few', active_users: 2 }),
+    pop({ slug: 'most', active_users: 11 }),
+    pop({ slug: 'some', active_users: 5 }),
+  ];
+  assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), ['most', 'some', 'few']);
+});
+
+test('popularApps: the count is coerced — the API sends it as a string', () => {
+  const Home = makeHome();
+  // Postgres COUNT(*) is a bigint, so the serializer hands the client "9",
+  // not 9. A lexicographic sort would rank "9" above "10".
+  const apps = [pop({ slug: 'nine', active_users: '9' }), pop({ slug: 'ten', active_users: '10' })];
+  assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), ['ten', 'nine']);
+  assert.deepEqual(Home.popularApps([pop({ slug: 'n', active_users: 4 })]).map((a) => a.slug),
+    ['n'], 'and a real number works too');
+});
+
+test('popularApps: ties keep the order the server returned', () => {
+  const Home = makeHome();
+  const apps = ['a', 'b', 'c'].map((slug) => pop({ slug, active_users: 4 }));
+  assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), ['a', 'b', 'c']);
+});
+
+test('popularApps: excludes featured, yours, errored, self-hosted and unused apps', () => {
+  const Home = makeHome();
+  const apps = [
+    pop({ slug: 'keep', active_users: 9 }),
+    pop({ slug: 'featured', featured: true, active_users: 20 }),
+    pop({ slug: 'mine', is_favorited: true, active_users: 20 }),
+    pop({ slug: 'broken', status: 'error', active_users: 20 }),
+    pop({ slug: 'platform', self_hosted: true, active_users: 20 }),
+    pop({ slug: 'unused', active_users: 0 }),
+    pop({ slug: 'never-counted', active_users: null }),
+  ];
+  assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), ['keep']);
+});
+
+test('popularApps: capped at POPULAR_LIMIT; empty / missing input is safe', () => {
+  const Home = makeHome();
+  assert.equal(Home.POPULAR_LIMIT, 6);
+  const many = Array.from({ length: 20 }, (_, i) => pop({
+    slug: `p${i}`, active_users: 100 - i,
+  }));
+  assert.deepEqual(Home.popularApps(many).map((a) => a.slug),
+    ['p0', 'p1', 'p2', 'p3', 'p4', 'p5'], 'the six most-used');
+  assert.equal(Home.popularApps([]).length, 0);
+  assert.equal(Home.popularApps(undefined).length, 0);
+});
+
 // ── The row hides itself when there is nothing to show ───────────
 
-test('renderFindMore swaps the tile row for a note, never an empty card', () => {
-  const src = HOME_SRC.slice(
-    HOME_SRC.indexOf('renderFindMore(apps) {'),
-    HOME_SRC.indexOf('renderCreateSection(canCreate) {')
-  );
-  assert.ok(src.length > 200, 'located renderFindMore');
-  assert.match(src, /listEl\.classList\.toggle\('hidden', featured\.length === 0\)/);
-  // The two toggles are complements: exactly one of the grid and the note
-  // shows, so the card never collapses to a heading on top of a button.
-  assert.match(src, /home-featured-empty/);
-  assert.match(src, /emptyEl\.classList\.toggle\('hidden', featured\.length > 0\)/);
-  // The footer is static markup and always present — it is the discovery
-  // path, so it must not depend on curation existing.
+test('the Discover widget swaps its tile row for a note, never an empty box', () => {
+  const src = PANELS_SRC.slice(
+    PANELS_SRC.indexOf('renderDiscoverPanel(panel) {'),
+    PANELS_SRC.indexOf('renderDiscoverTile(app) {'));
+  assert.ok(src.length > 200, 'located renderDiscoverPanel');
+  // Tiles OR a one-line note — never a bare bar over an empty lane.
+  assert.match(src, /featured\.length/);
+  assert.match(src, /Nothing featured right now/);
+  // The browse control always renders: it is THE discovery path, so it must
+  // not depend on curation existing. It lives in the title bar now (#949),
+  // not in a footer — see the block test below.
   assert.match(src, /home-browse-btn/);
-  assert.match(src, /location\.hash = '#apps'/);
+  assert.match(src, /Browse all apps/);
+  // ...and the widget derives its tiles from the SAME per-viewer flags the
+  // old row did, rather than issuing a second query.
+  assert.match(src, /Home\.featuredApps\(/);
 });
 
 // ── Card mode: discovery tiles carry an add badge, not a "…" menu ──
@@ -177,13 +288,26 @@ test('renderAppCard: discovery mode leads with the add badge', () => {
   assert.match(withMenu, /card-menu-btn/, 'browse opts in');
 });
 
-test('renderFindMore renders featured tiles without opting into the menu', () => {
-  const src = HOME_SRC.slice(
-    HOME_SRC.indexOf('renderFindMore(apps) {'),
-    HOME_SRC.indexOf('renderCreateSection(canCreate) {')
-  );
-  assert.match(src, /\{ mode: 'featured' \}/);
-  assert.doesNotMatch(src, /menu: true/);
+test('Discover tiles are the compact treatment, wired like the old row', () => {
+  const src = PANELS_SRC.slice(
+    PANELS_SRC.indexOf('renderDiscoverTile(app) {'),
+    PANELS_SRC.indexOf('renderCreatePanel(panel) {'));
+  // The block is ~366px wide on a phone across six tracks — a 56px launcher
+  // card does not fit, so the widget uses the 40px widget-strip tile. The
+  // size lives in CSS now (#949): the icon fills its track up to that same
+  // 40px, because the narrowest 5-column lane gives it only ~32px and a
+  // fixed box there would overflow and be clipped.
+  assert.match(src, /class="app-icon-tile home-discover-icon/);
+  assert.doesNotMatch(src, /w-14 h-14/);
+  // The cap sits on the wrapper, whose width is definite; see the sizing
+  // note in app.css and the budget test in home-panels-render.test.js.
+  assert.match(CSS, /\.home-discover-icon-wrap \{[^}]*max-width: 2\.5rem/);
+  // It still carries .app-card + data-slug, which is what lets it reuse
+  // Home._wireDiscoveryCards wholesale (tap opens, badge toggles) so the
+  // widget cannot drift from the row it replaced.
+  assert.match(src, /class="app-card home-discover-tile/);
+  assert.match(src, /card-add-btn/);
+  assert.match(PANELS_SRC, /Home\._wireDiscoveryCards\(tiles\)/);
 });
 
 test('renderAppCard: an already-added app renders the ✓ state', () => {
@@ -203,44 +327,42 @@ test('renderAppCard: home mode is unchanged (default, menu badge)', () => {
 
 // ── index.html section shells ────────────────────────────────────
 
-test('index.html carries the two new sections inside the home scroller', () => {
-  const main = INDEX.slice(
-    INDEX.indexOf('<main id="home-screen"'),
-    INDEX.indexOf('<main id="browse-screen"')
-  );
-  assert.ok(main.includes('id="home-find-more"'));
-  assert.ok(main.includes('>Featured apps<'), 'the section names itself explicitly');
-  assert.doesNotMatch(main, />Find more apps</, 'the vaguer old heading is gone');
-  assert.ok(main.includes('id="home-featured-list"'));
-  assert.ok(main.includes('id="home-featured-empty"'));
-  assert.ok(main.includes('Browse all apps'));
-  assert.ok(main.includes('id="home-create-section"'));
-  assert.ok(main.includes('>Create an app<'));
-  assert.ok(main.includes('id="home-create-body"'));
+test('index.html retires the two trailing sections for in-grid widgets', () => {
+  // Both are widgets now — placeable anywhere in the grid rather than
+  // pinned below everything — so their section shells are gone.
+  for (const id of ['home-find-more', 'home-create-section',
+    'home-featured-list', 'home-featured-empty', 'home-create-body']) {
+    assert.equal(INDEX.indexOf(`id="${id}"`), -1, `#${id} should be gone`);
+  }
+  // The grid and the fallback widget host remain, in that order.
+  const grid = INDEX.indexOf('id="app-list"');
+  const panels = INDEX.indexOf('id="home-panels"');
+  assert.ok(grid > 0 && panels > grid);
+  // And the iOS widget-editing strip moved ABOVE the grid: a full-width
+  // flow item cannot coexist with explicit cell placement.
+  const strip = INDEX.indexOf('id="home-widget-strip-section"');
+  assert.ok(strip > 0 && strip < grid);
 });
 
-test('the featured tiles + browse action are ONE contained card', () => {
-  const section = INDEX.slice(
-    INDEX.indexOf('<section id="home-find-more"'),
-    INDEX.indexOf('<section id="home-create-section"')
-  );
-  const card = section.match(/<div class="home-find-more-card[^"]*"/);
-  assert.ok(card, 'the card wrapper exists');
-  // A rounded surface with its own border/background is what visually
-  // separates this unit from the user's own grid above it.
-  assert.match(card[0], /rounded-xl/);
-  assert.match(card[0], /border/);
-  assert.match(card[0], /bg-zinc-50\/70|bg-zinc/);
-  // Tiles and footer live INSIDE that wrapper. Sliced from the wrapper
-  // onward so the explanatory comment above it can't satisfy these.
-  const inner = section.slice(section.indexOf('home-find-more-card'));
-  for (const inside of ['home-featured-list', 'home-featured-empty', 'home-browse-btn']) {
-    assert.ok(inner.includes(inside), `${inside} is inside the card`);
-  }
-  // The HEADING is outside it, so the section matches Your apps / Create
-  // an app rather than burying its label in the card.
-  assert.ok(!inner.includes('>Featured apps<'), 'the heading labels the card from outside');
-  assert.ok(section.indexOf('>Featured apps<') < section.indexOf('home-find-more-card'));
+test('Discover is one bordered block: lanes under a bar that carries the browse link', () => {
+  // Same shell as every other widget, so the three read as one family and
+  // the drag handle is in the same place — but Discover passes NO footer
+  // (#949). A .home-panel-footer is 27px, which on a phone is the whole
+  // difference between a tile lane that fits its one cell and one that
+  // clips.
+  assert.match(PANELS_SRC,
+    /renderDiscoverPanel\(panel\) \{[\s\S]*?_panelShell\(panel\.key, titleHtml, featuredHtml \+ popularHtml, null,/);
+  const src = PANELS_SRC.slice(
+    PANELS_SRC.indexOf('renderDiscoverPanel(panel) {'),
+    PANELS_SRC.indexOf('renderDiscoverTile(app) {'));
+  assert.doesNotMatch(src, /home-panel-footer/, 'no footer of its own');
+  // The browse control rides in the TITLE BAR instead, and it is still the
+  // same #home-browse-btn the old footer carried.
+  assert.match(src, /titleHtml = `[\s\S]*?id="home-browse-btn"[\s\S]*?`;/);
+  assert.match(src, /home-panel-browse/);
+  // The second lane is separated by a hairline, so it reads as part of the
+  // same block rather than a second card.
+  assert.match(src, /home-discover-divider[^`]*border-t/);
 });
 
 // The width bound is on the FEED, not on each box: #home-body is a
@@ -248,20 +370,20 @@ test('the featured tiles + browse action are ONE contained card', () => {
 // edge to edge (inside the section's own px-3 gutter) and share their
 // left edge with the "Your apps" grid above. The heading stays a plain
 // sibling above the card.
-test('both trailing sections share the section shape, full-width in the column', () => {
-  const main = INDEX.slice(
-    INDEX.indexOf('<main id="home-screen"'),
-    INDEX.indexOf('<main id="browse-screen"')
-  );
-  for (const id of ['home-find-more', 'home-create-section']) {
-    const section = main.slice(main.indexOf(`<section id="${id}"`));
-    const head = section.slice(0, section.indexOf('</section>'));
-    assert.match(head, /class="home-section-header"/, `${id} uses the shared heading`);
-    // No per-box width bound any more — that was the narrower, icon-indented
-    // block this replaced. The column is the only cap.
-    assert.doesNotMatch(head, /home-section-block/,
-      `${id}'s box is full width inside the column, not separately bounded`);
-  }
+test('every widget is one bordered block, sized by the cells it occupies', () => {
+  // The widget's box fills whatever rectangle the layout gave it, rather
+  // than sitting at its natural height in the top-left of a 2x2 block.
+  assert.match(CSS, /\.home-panel-slot \{[^}]*display: flex/);
+  assert.match(CSS, /\.home-panel-slot > \.home-panel,[\s\S]*?width: 100%/);
+  // Footprints come from the server registry, per column count. Challenges
+  // is ASYMMETRIC (#968): one row on a phone, where a two-row footprint made
+  // its content-height block hand its height to whitespace instead of to the
+  // page; its original two on desktop, where it is a tile among app icons.
+  assert.match(ROUTE, /sizes: \{ 4: \[4, 1\], 5: \[2, 2\] \}/);   // challenges
+  // Discover is ASYMMETRIC (#949) the same way, and for the same reason.
+  assert.match(ROUTE, /sizes: \{ 4: \[4, 1\], 5: \[2, 2\] \}/);
+  // The create widget is a single desktop cell and a full-width phone ROW.
+  assert.match(ROUTE, /sizes: \{ 4: \[4, 1\], 5: \[1, 1\] \}/);   // create
 });
 
 // Short feed on a tall screen: the trailing sections sit at the BOTTOM of
@@ -270,39 +392,17 @@ test('both trailing sections share the section shape, full-width in the column',
 // section carries margin-top:auto, which also means a feed taller than the
 // viewport has no free space to absorb and the sections flow normally right
 // below the grid (no gap, no clipping, no measurement, no media query).
-test('the trailing sections bottom-anchor on a tall screen', () => {
-  const css = read('public/css/app.css');
-
-  const body = INDEX.match(/<div id="home-body"[^>]*>/)[0];
-  assert.match(body, /class="[^"]*\bhome-body-fill\b/, '#home-body is the flex column');
-  const fill = css.match(/\.home-body-fill \{[^}]*\}/)[0];
-  assert.match(fill, /display:\s*flex/);
-  assert.match(fill, /flex-direction:\s*column/);
-  // The floor that makes "bottom of the box" == "bottom of the page" at the
-  // search bar's resting scroll position (see home-search-reveal.test.js).
-  assert.match(fill, /min-height:\s*100%/);
-  // A bottom-anchored section must clear the iPhone home indicator.
-  assert.match(fill, /padding-bottom:\s*env\(safe-area-inset-bottom/);
-  assert.doesNotMatch(fill, /(^|[^-])height:\s*100%/,
-    'height must stay auto so a long feed grows instead of clipping');
-
-  // The anchor is on the FIRST trailing section, so it carries the one
-  // after it down too — no wrapper element needed.
-  const main = INDEX.slice(
-    INDEX.indexOf('<main id="home-screen"'),
-    INDEX.indexOf('<main id="browse-screen"')
-  );
-  const findMore = main.match(/<section id="home-find-more"[^>]*>/)[0];
-  assert.match(findMore, /class="[^"]*\bhome-bottom-anchor\b/);
-  assert.match(css.match(/\.home-bottom-anchor \{[^}]*\}/)[0], /margin-top:\s*auto/);
-  // Only one anchor: a second one on the create section would strand it
-  // at the bottom on its own, leaving a gap between the two cards.
-  const create = main.match(/<section id="home-create-section"[^>]*>/)[0];
-  assert.doesNotMatch(create, /home-bottom-anchor/);
-  assert.ok(
-    main.indexOf('id="home-find-more"') < main.indexOf('id="home-create-section"'),
-    'the anchor precedes the create section, which rides down with it'
-  );
+test('the feed column survives the sections it used to bottom-anchor', () => {
+  // .home-body-fill still guarantees the scroller can be pulled by at least
+  // the hidden search bar's height — that is why it outlives the two
+  // anchored sections it was introduced alongside.
+  assert.match(CSS, /\.home-body-fill \{[^}]*min-height: 100%/);
+  assert.match(INDEX, /id="home-body" class="home-column home-body-fill"/);
+  // Nothing is bottom-anchored any more: the grid is the whole feed. Matched
+  // as a class ATTRIBUTE, so the comment explaining why it went doesn't
+  // count as a use.
+  assert.doesNotMatch(INDEX, /class="[^"]*home-bottom-anchor/);
+  assert.doesNotMatch(CSS, /^\.home-bottom-anchor \{/m);
 });
 
 // The column itself: 1024px max, centred, and applied BOTH to the content
@@ -334,47 +434,59 @@ test('the home feed is a 1024px centred column', () => {
     'the measured icon indent went away with the centred column');
 });
 
-test('the browse action is an attached footer row of that card', () => {
-  const section = INDEX.slice(
-    INDEX.indexOf('<section id="home-find-more"'),
-    INDEX.indexOf('<section id="home-create-section"')
-  );
-  const btn = section.match(/<button type="button" id="home-browse-btn"[^>]*>/);
-  assert.ok(btn, 'the browse button exists');
-  // Full-width row divided by a hairline — the treatment that makes it read
-  // as part of the card rather than a separate pill floating below it.
-  assert.match(btn[0], /w-full/);
-  assert.match(btn[0], /border-t/);
-  assert.doesNotMatch(btn[0], /rounded-full/, 'no longer a detached pill');
-  // The card clips it so the footer's corners follow the card's radius.
-  assert.match(section, /home-find-more-card[^"]*overflow-hidden/);
+test('the browse action routes through the hash for a real history entry', () => {
+  // The OS/browser back gesture has to return to home, so this navigates by
+  // hash rather than calling the router directly.
+  assert.match(PANELS_SRC, /home-panel-browse[\s\S]*?location\.hash = '#apps'/);
+  // ...and it is reachable from the widget's ⋮ menu too.
+  assert.match(PANELS_SRC, /label: 'Browse all apps'/);
 });
 
-test('the create tile invites you to build your own app', () => {
-  const Home = makeHome();
-  const tile = Home.renderCreateTile();
-  assert.match(tile, /Build your own app/);
-  assert.doesNotMatch(tile, /Your app here/, 'old placeholder copy is gone');
-  // The button itself is unchanged — wireCreateButtons keys off this class.
-  assert.match(tile, /home-create-btn/);
-  assert.match(tile, /Create new app/);
+test('the create widget renders in both states, and only one is tappable', () => {
+  const { HP, sandbox } = makePanels();
+
+  sandbox.Home.canCreate = () => true;
+  const on = HP.renderCreatePanel({ key: 'create' });
+  assert.match(on, /data-create-enabled="true"/);
+  assert.match(on, /home-create-btn/, 'wireCreateButtons keys off this class');
+  assert.match(on, /Create app/);
+  assert.doesNotMatch(on, /aria-disabled/);
+
+  sandbox.Home.canCreate = () => false;
+  const off = HP.renderCreatePanel({ key: 'create' });
+  // Still a real widget in a real cell — dimmed, not absent.
+  assert.ok(off.length > 100, 'the widget renders for a viewer with no quota');
+  assert.match(off, /data-create-enabled="false"/);
+  assert.match(off, /home-create-widget--disabled/);
+  assert.match(off, /aria-disabled="true"/);
+  assert.match(off, /Ask an admin to enable app creation/, 'the hint is its tooltip');
+  // NOT the disabled ATTRIBUTE: that swallows pointer events, which would
+  // kill the explanatory toast AND the widget's own drag.
+  assert.doesNotMatch(off, /<button[^>]*\sdisabled/);
 });
 
-test('the create tile is no longer rendered inside #app-list', () => {
-  const render = HOME_SRC.slice(
-    HOME_SRC.indexOf('\n  render() {'),
-    HOME_SRC.indexOf('\n  renderFindMore(')
-  );
-  assert.doesNotMatch(render, /renderCreateTile/,
-    'the create tile lives in its own section now');
-  // It is still rendered — just from the section renderer.
-  assert.match(HOME_SRC, /host\.innerHTML = Home\.renderCreateTile\(\)/);
+test('the create widget IS in the grid, for every account', () => {
+  // The inverse of the old assertion: it used to be banished from the grid
+  // into a trailing section, and it is a first-class grid item again.
+  assert.match(PANELS_SRC, /renderCreatePanel\(panel\) \{/);
+  assert.match(HOME_SRC, /data-panel-slot="\$\{escapeHtml\(item\.key\)\}"/);
+  // The server places it unconditionally: no viewer argument reaches the
+  // registry, so app quota can never decide whether it exists.
+  const registry = ROUTE.match(/const PANEL_REGISTRY = \[[\s\S]*?\n\];/)[0];
+  assert.match(registry, /key: 'create'/);
+  assert.doesNotMatch(registry, /canCreateApps|quota/i);
 });
 
-test('non-creators get the ask-an-admin hint in the create section', () => {
-  const src = HOME_SRC.slice(HOME_SRC.indexOf('renderCreateSection(canCreate) {'));
-  assert.match(src, /CREATE_DISABLED_HINT/);
-  assert.match(HOME_SRC, /Ask an admin to enable app creation/);
+test('a viewer with no quota gets the hint on tap, not a dead tile', () => {
+  // One constant, three surfaces: the tooltip, the toast, and the inert
+  // note in the widget's ⋮ menu.
+  assert.match(HOME_SRC, /CREATE_DISABLED_HINT: 'Ask an admin to enable app creation for your account\.'/);
+  const wire = PANELS_SRC.match(/_wire\(section\) \{[\s\S]*?\n {2}\},/)[0];
+  assert.match(wire, /createEnabled === 'true'/);
+  assert.match(wire, /wireCreateButtons\(\)/, 'the enabled tile opens the create modal');
+  assert.match(wire, /PlatformUI\.toast\(hint\)/, 'the disabled one explains itself');
+  // The menu carries the same sentence as an inert row.
+  assert.match(PANELS_SRC, /key === 'create' && window\.Home[\s\S]*?CREATE_DISABLED_HINT/);
 });
 
 // ── Server side: the featured flags this row is built from ────────

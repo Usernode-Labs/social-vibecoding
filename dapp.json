@@ -241,6 +241,28 @@
       "description": "Base URL of the external zkPassport bridge service that verifies proofs for POST /api/v4/mobile/zkpassport/complete (src/services/topochain/zk-bridge.js). Unset doesn't block boot — every zkpassport/complete call returns 500 'The zkPassport bridge is not configured.' until it is set. Not secret, so it stays visible in the console for is-it-pointed-at-the-right-host checks."
     },
     {
+      "key": "MOBILE_PUSH_ENABLED",
+      "group": "Mobile push",
+      "default": "false",
+      "description": "Allows authenticated mobile users to register encrypted FCM destinations and starts the durable activity-notification sender. Requires PUSH_ENV plus matching Firebase credentials."
+    },
+    {
+      "key": "PUSH_ENV",
+      "group": "Mobile push",
+      "description": "Trusted environment partition embedded in every push payload and checked by Flutter, for example production or staging. It must match the mobile build exactly."
+    },
+    {
+      "key": "FIREBASE_PROJECT_ID",
+      "group": "Mobile push",
+      "description": "Authoritative Firebase project ID returned to mobile registration clients and expected in the service-account document. Required while mobile push is enabled; sending fails closed when the credential differs."
+    },
+    {
+      "key": "FIREBASE_SERVICE_ACCOUNT_JSON_B64",
+      "group": "Mobile push",
+      "private": true,
+      "description": "Complete Firebase Admin service-account JSON encoded as base64 on one line. Required only while MOBILE_PUSH_ENABLED is true; never forwarded to child apps."
+    },
+    {
       "key": "TOPOCHAIN_MAIL_API_URL",
       "group": "Topochain mail",
       "description": "HTTPS send endpoint of the mail provider (Resend: https://api.resend.com/emails). POSTed as JSON with a bearer token; body shape lives in src/services/topochain/mail-transport.js. All three TOPOCHAIN_MAIL_* keys must be set together — a partial config sends nothing. Unset never blocks boot: both mail flows still report success while delivering nothing. See Admin → Topochain → Settings."
@@ -274,9 +296,58 @@
   ],
   "tests": [
     {
-      "name": "Platform variables panel renders on the platform app (#826 folded into app secrets)",
-      "path": "/?shot=secrets#app/usernode-2d5619/dev",
-      "expectSelector": "#app-secrets-list code"
+      "name": "Profile: an editable identity card above completions that link out (#982)",
+      "path": "/#profile",
+      "expectSelector": "a[data-completed-challenge][href^='#leaderboard/challenges/']",
+      "expectText": "Edit profile"
+    },
+    {
+      "name": "Edit profile opens with the username read-only (#982)",
+      "path": "/?shot=profile-edit#profile",
+      "expectSelector": "#profile-edit-sheet #profile-edit-username[disabled]"
+    },
+    {
+      "name": "A sidebar tap lands on the destination with no competing screen animation (#977)",
+      "path": "/?shot=menu-nav&un-platform=ios",
+      "expectSelector": "#leaderboard-screen:not(.hidden)[data-entered=\"none\"]"
+    },
+    {
+      "name": "Challenges tab summarises the completed set (#981)",
+      "path": "/#leaderboard/challenges",
+      "expectSelector": "#leaderboard-screen:not(.hidden) #challenges-root:not(.hidden) #tc-se-grid #tc-se-challenge-summary"
+    },
+    {
+      "name": "Standings tab cross-links to the challenges tab (#981)",
+      "path": "/#leaderboard",
+      "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"]) #topochain-leaderboard-root:not(.hidden) #tc-lb-challenge-link #tc-lb-to-challenges"
+    },
+    {
+      "name": "Work notifications show a session's title, not its dev name (#971)",
+      "path": "/?shot=work-drawer&demo=1",
+      "expectSelector": "#work-drawer-panel:not(.hidden) #work-drawer-list",
+      "expectText": "[Mock] Session titled but not yet proposed"
+    },
+    {
+      "name": "Send Feedback offers a kudos bounty, unchecked by default (#964)",
+      "path": "/?shot=feedback",
+      "expectSelector": "#feedback-bounty-row:not(.hidden) #feedback-bounty-checkbox:not(:checked):not(:disabled)"
+    },
+    {
+      "name": "The bounty checkbox is disabled once the weekly allowance is spent (#964)",
+      "path": "/?shot=feedback-spent",
+      "expectSelector": "#feedback-bounty-row:not(.hidden) #feedback-bounty-checkbox:disabled"
+    },
+    {
+      "name": "Challenges widget: metered rows plus the title bar's leaderboard link (#911, #980)",
+      "path": "/?demo=1",
+      "expectSelector": "#home-body.home-column article.home-panel:has(.home-panel-bar .home-panel-lb-browse[aria-label=\"Open leaderboard\"]) .home-panel-rows--metered .home-panel-row .home-panel-bar-track[role=progressbar] .home-panel-bar-fill",
+      "expectText": "Open leaderboard"
+    },
+    {
+      "name": "Challenges widget: with nothing running it says so, and fills the rest (#947)",
+      "path": "/?demo=1&challenges=none",
+      "expectSelector": "#app-list [data-panel-slot=\"challenges\"] article.home-panel[data-rows=\"0\"][data-fill=\"3\"] .home-panel-lb-row",
+      "expectText": "No challenges are running right now"
     },
     {
       "name": "Tapping an app shows its icon and name while it loads, not a blank window (#931)",
@@ -297,46 +368,86 @@
       "expectText": "staging-demo-lead"
     },
     {
-      "name": "Home ends with the \"Create an app\" section (create tile out of the grid)",
-      "path": "/",
-      "expectSelector": "#home-create-section #home-create-body .home-create-btn",
-      "expectText": "Build your own app"
+      "name": "Challenges widget: the fill previews the Topochain standings (#962)",
+      "path": "/?demo=1&challenges=none",
+      "expectSelector": "#app-list [data-panel-slot=\"challenges\"] article.home-panel .home-panel-fill[data-fill-kind=\"topochain\"] .home-panel-lb-row[data-lb-kind=\"topochain\"]",
+      "expectText": "staging-demo-validator"
     },
     {
-      "name": "The featured row renders admin-curated tiles (staging seed + ?demo=1)",
+      "name": "The sidebar is fully gone and restored to <body> after a sidebar tap (#977)",
+      "path": "/?shot=menu-nav&un-platform=ios",
+      "expectSelector": "body:not(:has(.un-panel)) > #header-menu-panel:not(.platform-panel-adopted)"
+    },
+    {
+      "name": "The desktop slide-over suppresses the screen fade too (#977)",
+      "path": "/?shot=menu-nav",
+      "expectSelector": "#leaderboard-screen:not(.hidden)[data-entered=\"none\"]"
+    },
+    {
+      "name": "Challenges widget: with no standings at all the fill falls back to the Kudos board (#962)",
+      "path": "/?demo=1&challenges=none&board=kudos",
+      "expectSelector": "#app-list [data-panel-slot=\"challenges\"] article.home-panel .home-panel-fill[data-fill-kind=\"kudos\"] .home-panel-lb-row[data-lb-kind=\"kudos\"]"
+    },
+    {
+      "name": "Bare #leaderboard renders all three tabs and opens on the standings (#962)",
+      "path": "/#leaderboard",
+      "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"]) #topochain-leaderboard-root:not(.hidden) #tc-lb-body table"
+    },
+    {
+      "name": "The Create app widget sits in the grid and opens the create flow",
       "path": "/?demo=1",
-      "expectSelector": "#home-featured-list .app-card"
+      "expectSelector": "#app-list [data-panel-slot=\"create\"][data-create-enabled=\"true\"] .home-create-btn[class*=\"sm:flex-col\"]",
+      "expectText": "Create app"
     },
     {
-      "name": "Home feed sits in the 1024px centred column, featured card full width in it",
+      "name": "The Create app widget is present but locked without app quota",
+      "path": "/?demo=1&shot=create-disabled",
+      "expectSelector": "#app-list [data-panel-slot=\"create\"][data-create-enabled=\"false\"] .home-create-btn[aria-disabled=\"true\"]",
+      "expectText": "Create app"
+    },
+    {
+      "name": "Discover renders both lanes: curated tiles, then Popular (#949)",
       "path": "/?demo=1",
-      "expectSelector": "#home-body.home-column #home-find-more > .home-find-more-card"
+      "expectSelector": "#app-list [data-panel-slot=\"discover\"] .home-panel .home-discover-popular .app-card:not(:has(.users-badge))",
+      "expectText": "Browse all apps"
     },
     {
-      "name": "Create-an-app box is a full-width child of its section in that column",
+      "name": "With nothing featured, Discover shows its compact note (?shot=discover-empty)",
+      "path": "/?demo=1&shot=discover-empty",
+      "expectSelector": "#app-list [data-panel-slot=\"discover\"][data-featured=\"0\"] .home-panel-browse",
+      "expectText": "Nothing featured right now"
+    },
+    {
+      "name": "App tiles are placed at explicit grid cells, with iOS-sized two-line labels (#951)",
       "path": "/?demo=1",
-      "expectSelector": "#home-body.home-column #home-create-section > #home-create-body .home-create-btn"
+      "expectSelector": "#app-list .app-card[data-yours=\"true\"][style*=\"grid-row\"] .app-card-title",
+      "expectText": "Staging demo photo album and journal"
     },
     {
-      "name": "Trailing sections bottom-anchor in the full-height feed column",
+      "name": "Dragging shows the grid and previews what gets pushed (?shot=home-grid)",
+      "path": "/?demo=1&shot=home-grid",
+      "expectSelector": "#app-list.un-reordering .home-item-displaced[style*=\"translate\"]"
+    },
+    {
+      "name": "App tiles carry no user count and no status dot",
       "path": "/?demo=1",
-      "expectSelector": "#home-body.home-body-fill > #home-find-more.home-bottom-anchor"
+      "expectSelector": "#app-list .app-card:not(:has(.users-badge)):not(:has(.status-dot))"
     },
     {
-      "name": "Create-an-app rides down with the anchor (no second anchor of its own)",
-      "path": "/?demo=1",
-      "expectSelector": "#home-body.home-body-fill > #home-create-section:not(.home-bottom-anchor)"
-    },
-    {
-      "name": "The hidden search bar is revealed by a pull (?shot=home-search)",
-      "path": "/?shot=home-search",
-      "expectSelector": "#home-search-bar[data-revealed=\"true\"] #home-search-input"
+      "name": "Platform variables panel renders on the platform app (#826 folded into app secrets)",
+      "path": "/?shot=secrets#app/usernode-2d5619/dev",
+      "expectSelector": "#app-secrets-list code"
     },
     {
       "name": "Browse renders app-store rows with an Add button (no \"…\" menu)",
       "path": "/#apps",
       "expectSelector": "#browse-list .browse-row .browse-add-btn",
       "expectText": "All apps"
+    },
+    {
+      "name": "The hidden search bar is revealed by a pull (?shot=home-search)",
+      "path": "/?shot=home-search",
+      "expectSelector": "#home-search-bar[data-revealed=\"true\"] #home-search-input"
     },
     {
       "name": "Admins get a Featured apps console section",
@@ -399,6 +510,17 @@
       "name": "Custom category chip renders on a Dev card (#780)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectText": "Staging demo perf"
+    },
+    {
+      "name": "Dev board renders the Set priority / Set category / Unassigned metadata chips",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "button.attr-chip[data-attr-field=\"priority\"]",
+      "expectText": "Set priority"
+    },
+    {
+      "name": "Dev board metadata chips keep their compiled utility styling (no console error from the cascade self-check)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "button.attr-chip[data-attr-field=\"assignee\"] .attr-avatar-empty"
     },
     {
       "name": "Restart-recovery pill fixtures are seeded (#786)",
@@ -584,7 +706,7 @@
     },
     {
       "name": "Leaderboard screen renders with the Kudos Top-users tab",
-      "path": "/leaderboard",
+      "path": "/#leaderboard/users",
       "expectText": "Top users"
     },
     {
@@ -830,6 +952,18 @@
       "expectText": "Staging demo draft: also make the header sticky when scrolling."
     },
     {
+      "name": "Saved-drafts header says the list follows you across devices (#940)",
+      "path": "/?shot=drafts#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-drafts.dc-drafts-active .dc-drafts-head",
+      "expectText": "on all your devices"
+    },
+    {
+      "name": "Saved drafts render from the database, with no ?shot param (#940)",
+      "path": "/#app/usernode-2d5619/dev/sessions/990402",
+      "expectSelector": "#dc-drafts.dc-drafts-active .dc-draft-row .dc-draft-send",
+      "expectText": "Staging demo draft: also make the header sticky when scrolling."
+    },
+    {
       "name": "Dev session start screen keeps the original starter suggestions (#785)",
       "path": "/#app/usernode-2d5619/dev/sessions/990401",
       "expectText": "Fix something that's broken"
@@ -965,7 +1099,7 @@
     {
       "name": "Drawer status pane renders the kudos budget as inline text",
       "path": "/",
-      "expectSelector": "#drawer-row-kudos #kudos-budget-slot a[href=\"#leaderboard\"].drawer-meter"
+      "expectSelector": "#drawer-row-kudos #kudos-budget-slot a[href=\"#leaderboard/prs\"].drawer-meter"
     },
     {
       "name": "Theme selector ships its 3-segment track and caret",
@@ -1240,11 +1374,6 @@
       "expectSelector": "#leaderboard-screen:not(.hidden) #topochain-leaderboard-root:not(.hidden) #tc-lb-body"
     },
     {
-      "name": "Leaderboard renders all three tabs at #leaderboard",
-      "path": "/#leaderboard",
-      "expectSelector": "#standings-tabs [data-standings-tab=\"challenges\"]"
-    },
-    {
       "name": "Legacy #topochain/seasons lands on the Leaderboard screen's Challenges tab",
       "path": "/#topochain/seasons",
       "expectSelector": "#leaderboard-screen:not(.hidden) #challenges-root:not(.hidden) #tc-se-grid"
@@ -1375,6 +1504,16 @@
       "path": "/?shot=preview-rebuilding#app/usernode-2d5619/dev",
       "expectSelector": "#staging-overlay:not(.hidden) #staging-loader-title",
       "expectText": "Spinning the preview back up…"
+    },
+    {
+      "name": "The bounty row states the weekly kudos allowance (#964)",
+      "path": "/?shot=feedback",
+      "expectText": "pledges 1 of your weekly kudos"
+    },
+    {
+      "name": "A spent allowance says so instead of showing a count (#964)",
+      "path": "/?shot=feedback-spent",
+      "expectText": "resets Monday 00:00 UTC"
     }
   ],
   "governance": {
