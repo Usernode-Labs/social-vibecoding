@@ -4,7 +4,7 @@
 
 const progress = new Map();
 
-function set(sessionId, text, { model } = {}) {
+function set(sessionId, text, { model, backend, provider } = {}) {
   if (!sessionId) return;
   const prev = progress.get(sessionId);
   progress.set(sessionId, {
@@ -12,6 +12,11 @@ function set(sessionId, text, { model } = {}) {
     at: new Date().toISOString(),
     startedAt: prev?.startedAt || new Date().toISOString(),
     model: model || prev?.model || null,
+    // Backend-neutral metadata (plan.md PR1): which coding agent is
+    // running. Null for claude_code today; populated for codex_openrouter
+    // in PR5. Keeps /status and the progress card backend-agnostic.
+    backend: backend || prev?.backend || null,
+    provider: provider || prev?.provider || null,
     estimate: prev?.estimate || null,
   });
 }
@@ -65,6 +70,8 @@ function setEstimate(sessionId, value) {
       at: new Date().toISOString(),
       startedAt: new Date().toISOString(),
       model: null,
+      backend: null,
+      provider: null,
       estimate,
     });
     return;

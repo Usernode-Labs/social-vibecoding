@@ -66,6 +66,7 @@ const DENIED_TABLES = new Set([
   'mcp_authorization_codes',  // hosted-connector PKCE codes (hashed, short-lived)
   'mcp_tokens',               // hosted-connector bearer hashes and hints
   'mcp_auth_audit_events',    // security audit trail for connector credentials
+  'user_ai_credentials', // per-user AI/LLM provider keys (encrypted blobs, still deny)
 ]);
 
 const DENIED_COLUMNS = {
