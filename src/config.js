@@ -353,12 +353,14 @@ function load() {
     platformRepoUrl: (process.env.USERNODE_PLATFORM_REPO || 'https://github.com/Usernode-Labs/social-vibecoding').replace(/\/$/, ''),
     selfAppSlug: SELF_APP_SLUG,
     selfAppDbName: SELF_APP_DB_NAME,
-    // The platform's own container name on the shared docker network.
-    // Child apps run as `usernode-app-<slug>`, but the platform itself is
-    // the compose service `container_name: usernode` (docker-compose.yml)
-    // — the before/after capture pipeline (services/visuals.js) needs this
-    // to shoot a real "before" of the production platform for self-app
-    // sessions. Overridable for forks whose compose names differ.
+    // The platform's own DNS name on the shared docker network. Child
+    // apps run as `usernode-app-<slug>`, but the platform itself runs as
+    // the blue-green pair usernode-blue/-green, BOTH carrying the
+    // `usernode` network alias (docker-compose.yml) — so this default
+    // resolves to whichever color(s) are up. The before/after capture
+    // pipeline (services/visuals.js) needs this to shoot a real "before"
+    // of the production platform for self-app sessions. Overridable for
+    // forks whose compose names differ.
     selfAppContainer: process.env.SELF_APP_CONTAINER || 'usernode',
     // SELF-HOSTING.md Phase 4: in-app vote-to-merge for the self-
     // app. ON by default — all authenticated users can see the self-

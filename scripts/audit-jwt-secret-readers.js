@@ -44,7 +44,7 @@
  * From the platform container (it needs DATABASE_URL and the GitHub App
  * credentials, i.e. the platform's own .env):
  *
- *   docker compose exec usernode node scripts/audit-jwt-secret-readers.js
+ *   docker compose exec usernode-blue node scripts/audit-jwt-secret-readers.js  # (or -green, whichever is live)
  *
  * Exit codes: 0 when the audit completed (whether or not readers were
  * found — "12 apps still read it" is a successful audit), 1 when it could

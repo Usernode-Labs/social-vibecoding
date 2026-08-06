@@ -103,8 +103,14 @@ test('deploy.sh is single-flight and signals /status on every exit path', () => 
 test('deploy.sh skips an already-deployed healthy sha only when asked to', () => {
   const skip = deploySh.slice(deploySh.indexOf('SKIP_IF_CURRENT:-0'));
   assert.match(skip.slice(0, 500), /\[ "\$PREV_SHA" = "\$DEPLOY_SHA" \]/);
-  assert.match(skip.slice(0, 500), /wget -qO- http:\/\/localhost:3000\/health/,
+  assert.match(skip.slice(0, 500), /platform_healthy/,
     'sha equality alone is not enough — a recorded sha with a dead container must redeploy');
+  // The probe helper has to check what actually serves under blue-green:
+  // the live color first, the legacy single container as migration fallback.
+  const helper = deploySh.slice(deploySh.indexOf('platform_healthy()'));
+  assert.match(helper.slice(0, 300), /docker exec "usernode-\$\(live_color\)" wget -qO- http:\/\/localhost:3000\/health/);
+  assert.match(helper.slice(0, 300), /docker exec usernode wget/,
+    'during the one-time blue-green migration the legacy container is what serves');
   assert.match(deploySh, /exit 0/, 'the skip is a success, not a failure');
 });
 

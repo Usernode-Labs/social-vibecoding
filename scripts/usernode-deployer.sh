@@ -173,6 +173,7 @@ tick() {
     --exclude=.env \
     --exclude=.platform-env\* \
     --exclude=runtime \
+    --exclude=caddy/active \
     "$SRC_DIR/" "$DEPLOY_DIR/"
 
   log "running deploy.sh for $target (node_changed=$node_changed caddy_changed=$caddy_changed)"

@@ -304,7 +304,7 @@ jobs:
           # platform variables; without the exclude, --delete would wipe
           # it on every deploy and the fallback would have nothing to
           # fall back to.
-          ARGS: "-avz --delete --exclude=.git --exclude=.github --exclude=node_modules --exclude=data --exclude=.env --exclude=.platform-env* --exclude=runtime"
+          ARGS: "-avz --delete --exclude=.git --exclude=.github --exclude=node_modules --exclude=data --exclude=.env --exclude=.platform-env* --exclude=runtime --exclude=caddy/active"
 
       - name: Write .env and run docker compose
         uses: appleboy/ssh-action@v1

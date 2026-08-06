@@ -82,10 +82,34 @@ PREV_SHA=$(grep -m1 '^GIT_SHA=' .env 2>/dev/null | cut -d= -f2- || true)
 echo "==> Previous GIT_SHA: ${PREV_SHA:-(none)}"
 echo "==> Target   GIT_SHA: $DEPLOY_SHA"
 
+# ----------------------------------------------------------------------
+# Blue-green helpers. The platform runs as usernode-blue / usernode-green
+# (docker-compose.yml anchor); exactly one color serves at a time, and
+# caddy/active/platform-upstream.caddy — host-managed state, rewritten by
+# scripts/platform-rollout.sh on every flip, EXCLUDED from every deploy
+# rsync — records which. live_color() must stay in lockstep with the
+# same-named function in platform-rollout.sh.
+# ----------------------------------------------------------------------
+ACTIVE_FILE="caddy/active/platform-upstream.caddy"
+live_color() {
+  if grep -q 'usernode-green:3000' "$ACTIVE_FILE" 2>/dev/null; then
+    echo green
+  else
+    echo blue
+  fi
+}
+# Probe whatever is actually serving: the live color, or (during the
+# one-time migration off the single-container layout) the legacy
+# `usernode` container.
+platform_healthy() {
+  docker exec "usernode-$(live_color)" wget -qO- http://localhost:3000/health >/dev/null 2>&1 \
+    || docker exec usernode wget -qO- http://localhost:3000/health >/dev/null 2>&1
+}
+
 # Already deployed? (The losing side of a workflow/deployer race lands
 # here after the winner releases the lock.)
 if [ "${SKIP_IF_CURRENT:-0}" = "1" ] && [ "$PREV_SHA" = "$DEPLOY_SHA" ]; then
-  if docker compose exec -T usernode wget -qO- http://localhost:3000/health >/dev/null 2>&1; then
+  if platform_healthy; then
     echo "==> $DEPLOY_SHA is already deployed and healthy; nothing to do."
     exit 0
   fi
@@ -134,6 +158,16 @@ else
   mv .env.deploy.tmp .env
   chmod 600 .env
 fi
+
+# ----------------------------------------------------------------------
+# Seed the blue-green active-color file on a fresh host. It's excluded
+# from every deploy rsync (host-managed state, same as .env), so a
+# green-field install — or the first deploy after the blue-green
+# migration — has to materialize the bootstrap (blue) here, BEFORE the
+# caddy container (re)starts, or the Caddyfile's import fails to parse.
+# Existing file = the rollout owns it; never touch it from here.
+# ----------------------------------------------------------------------
+bash scripts/platform-rollout.sh --ensure-active-file
 
 # ----------------------------------------------------------------------
 # Pull non-buildable images first so we can detect upstream node image
@@ -346,8 +380,10 @@ else
       -U usernode -O usernode "$NEW_DB"
   else
     # Stop the harness so no concurrent writes can land in SRC_DB
-    # between the dump and the cutover.
-    docker compose stop usernode
+    # between the dump and the cutover. Both colors, plus the legacy
+    # single `usernode` container if this host predates blue-green.
+    docker compose stop usernode-blue usernode-green
+    docker stop usernode 2>/dev/null || true
 
     TS=$(date -u +%Y%m%dT%H%M%SZ)
     DUMP_PATH="/tmp/usernode-pre-rename-$TS.sql"
@@ -394,12 +430,14 @@ fi
 # ----------------------------------------------------------------------
 # Build first, separately from `up`, so the freshly-built image can
 # resolve the admin-console platform variables into .env BEFORE the
-# platform container starts with it. caddy is deliberately NOT rebuilt
-# on routine deploys (#711) — xcaddy builds are not reproducible, so an
-# unscoped `up -d --build` could recreate caddy (a full edge outage) on
-# a deploy that didn't touch it.
+# platform container starts with it. Both colors share one image tag
+# (usernode-platform:latest), so building either service builds it; the
+# rollout's own build below is then a cache no-op. caddy is deliberately
+# NOT rebuilt on routine deploys (#711) — xcaddy builds are not
+# reproducible, so an unscoped `up -d --build` could recreate caddy (a
+# full edge outage) on a deploy that didn't touch it.
 # ----------------------------------------------------------------------
-docker compose build usernode
+docker compose build usernode-blue
 
 # ----------------------------------------------------------------------
 # Materialize the platform variables an admin set in the console. They
@@ -415,7 +453,9 @@ docker compose build usernode
 # rather than failing the deploy or silently truncating the platform's
 # configuration.
 # ----------------------------------------------------------------------
-RAW_ENV=$(docker compose run --rm --no-deps -T usernode \
+# (Either color service works here — `compose run` ignores
+# container_name, so this never collides with a running color.)
+RAW_ENV=$(docker compose run --rm --no-deps -T usernode-blue \
   node scripts/dump-platform-env.js 2>/dev/null || true)
 if echo "$RAW_ENV" | grep -q '^#__PLATFORM_ENV_END__$'; then
   # `|| true`: a complete-but-empty block (no console-set variables yet)
@@ -477,25 +517,63 @@ elif [ "$DUMP_WAITED" -gt 0 ]; then
   echo "==> Platform-DB dump(s) finished after ${DUMP_WAITED}s; cutting over."
 fi
 
-docker compose up -d usernode
-docker compose up -d --remove-orphans
+# ----------------------------------------------------------------------
+# Infra up first — everything EXCEPT the platform colors, which the
+# rollout script starts one at a time (a plain unscoped `up -d` would
+# boot BOTH colors at once). No --remove-orphans: on the one-time
+# migration deploy the legacy single `usernode` container must keep
+# serving until the rollout replaces it — the rollout removes it itself
+# at the right moment.
+# ----------------------------------------------------------------------
+docker compose up -d usernode-db usernode-node usernode-minio acme-dns caddy
 
 # ----------------------------------------------------------------------
-# Post-deploy health gate. A platform variable that is declared, unset,
-# and read at boot is exactly the failure the pre-merge check tries to
-# prevent — but the check can be skipped (force-merge, a value cleared
-# after the merge, a GitHub outage that made it fail open), so the
-# deploy needs its own answer to "did it actually come up?".
+# Zero-downtime cutover (scripts/platform-rollout.sh): boot the idle
+# color, health-gate it, flip Caddy's active-color import + graceful
+# reload, drain and stop the old color.
 #
-# Two CONSECUTIVE successes: a container mid-boot can answer once and
-# then exit, and a single 200 from a process that is about to crash is
-# worse than no signal at all.
+# Failure semantics differ from the old single-container gate: a failed
+# rollout leaves the PREVIOUS color untouched and still serving, so no
+# rollback is needed — only the .env GIT_SHA patch has to be reverted so
+# on-disk state keeps describing what is actually running (otherwise the
+# next SKIP_IF_CURRENT probe would see target-sha + healthy-old-color
+# and wrongly skip the redeploy).
 # ----------------------------------------------------------------------
+if ! bash scripts/platform-rollout.sh; then
+  echo "::error::Rollout of ${DEPLOY_SHA:-(unknown sha)} failed"
+  if platform_healthy; then
+    echo "==> Previous color is still live and healthy; restoring GIT_SHA=${PREV_SHA:-(none)} in .env (no rollback needed)."
+    if [ -n "$PREV_SHA" ]; then
+      awk -v sha="$PREV_SHA" 'BEGIN{FS=OFS="="} /^GIT_SHA=/ {$2=sha} {print}' \
+        .env > .env.deploy.tmp
+      mv .env.deploy.tmp .env
+      chmod 600 .env
+    fi
+  elif [ -n "$PREV_SHA" ] && [ -x /opt/usernode-tools/rollback.sh ]; then
+    echo "==> Nothing is serving; rolling back to $PREV_SHA"
+    /opt/usernode-tools/rollback.sh "$PREV_SHA" || \
+      echo "::error::Rollback to $PREV_SHA also failed — manual intervention required"
+  else
+    echo "::error::No previous sha or rollback script available; leaving the stack as-is"
+  fi
+  exit 1
+fi
+
+# ----------------------------------------------------------------------
+# Post-cutover confirmation gate. The rollout only flips traffic to a
+# color that answered /health, but a process can answer mid-boot and
+# then crash — and by now the OLD color is already stopped, so a dying
+# new color means nothing is serving. Two CONSECUTIVE successes over up
+# to 120s, then the full rollback path on failure — same rationale as
+# the pre-blue-green gate (platform variables declared-but-unset, a
+# skipped pre-merge check, etc.).
+# ----------------------------------------------------------------------
+LIVE_COLOR=$(live_color)
 HEALTH_OK=0
 HEALTH_STREAK=0
 HEALTH_WAITED=0
 while [ "$HEALTH_WAITED" -lt 120 ]; do
-  if docker compose exec -T usernode wget -qO- http://localhost:3000/health >/dev/null 2>&1; then
+  if docker exec "usernode-$LIVE_COLOR" wget -qO- http://localhost:3000/health >/dev/null 2>&1; then
     HEALTH_STREAK=$((HEALTH_STREAK + 1))
     if [ "$HEALTH_STREAK" -ge 2 ]; then HEALTH_OK=1; break; fi
   else
@@ -506,9 +584,9 @@ while [ "$HEALTH_WAITED" -lt 120 ]; do
 done
 
 if [ "$HEALTH_OK" -ne 1 ]; then
-  echo "::error::Platform did not become healthy within 120s of deploying ${DEPLOY_SHA:-(unknown sha)}"
+  echo "::error::Platform (usernode-$LIVE_COLOR) did not stay healthy within 120s of deploying ${DEPLOY_SHA:-(unknown sha)}"
   echo "==> Last 200 log lines from the unhealthy container:"
-  docker compose logs --tail 200 usernode || true
+  docker logs --tail 200 "usernode-$LIVE_COLOR" || true
   if [ -n "$PREV_SHA" ] && [ -x /opt/usernode-tools/rollback.sh ]; then
     echo "==> Rolling back to $PREV_SHA"
     /opt/usernode-tools/rollback.sh "$PREV_SHA" || \
@@ -518,7 +596,7 @@ if [ "$HEALTH_OK" -ne 1 ]; then
   fi
   exit 1
 fi
-echo "==> Platform healthy after ${HEALTH_WAITED}s"
+echo "==> Platform healthy (usernode-$LIVE_COLOR) after ${HEALTH_WAITED}s"
 
 if [ "${CADDY_FILES_CHANGED:-false}" = "true" ]; then
   echo "==> caddy.Dockerfile changed; rebuilding + recreating caddy"

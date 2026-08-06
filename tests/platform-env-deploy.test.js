@@ -195,19 +195,33 @@ test('the health probe requires two consecutive successes', () => {
   assert.match(deploySh, /HEALTH_STREAK=0/, 'the streak resets on any failure');
 });
 
-test('the probe hits /health from inside the container, on an interval, with a cap', () => {
-  assert.match(deploySh, /docker compose exec -T usernode wget -qO- http:\/\/localhost:3000\/health/);
+test('the probe hits /health from inside the live color, on an interval, with a cap', () => {
+  assert.match(deploySh, /docker exec "usernode-\$LIVE_COLOR" wget -qO- http:\/\/localhost:3000\/health/);
   assert.match(deploySh, /sleep 5/);
   assert.match(deploySh, /HEALTH_WAITED" -lt 120/);
 });
 
 test('failure dumps logs, rolls back to PREV_SHA, and fails the job', () => {
   const gate = deploySh.slice(atSh('if [ "$HEALTH_OK" -ne 1 ]', 'health gate'));
-  assert.match(gate.slice(0, 1400), /docker compose logs --tail 200 usernode/,
+  assert.match(gate.slice(0, 1400), /docker logs --tail 200 "usernode-\$LIVE_COLOR"/,
     'the logs are the only artifact left after a rollback');
   assert.match(gate.slice(0, 1400), /\/opt\/usernode-tools\/rollback\.sh "\$PREV_SHA"/);
   assert.match(gate.slice(0, 1400), /::error::/, 'the job must go red, not just log');
   assert.match(gate.slice(0, 1400), /exit 1/);
+});
+
+test('a failed rollout with a healthy old color restores GIT_SHA instead of rolling back', () => {
+  // Blue-green failure semantics: platform-rollout.sh leaves the previous
+  // color serving when the new one never gets healthy, so deploy.sh must
+  // NOT tear the stack down — it reverts the .env sha (so SKIP_IF_CURRENT
+  // can't wrongly skip the retry) and exits red.
+  const gate = deploySh.slice(atSh('if ! bash scripts/platform-rollout.sh; then', 'rollout gate'));
+  assert.match(gate.slice(0, 1600), /if platform_healthy; then/,
+    'rollback is reserved for the nothing-is-serving case');
+  assert.match(gate.slice(0, 1600), /awk -v sha="\$PREV_SHA"/,
+    'GIT_SHA must be restored so on-disk state describes what actually runs');
+  assert.match(gate.slice(0, 1600), /elif \[ -n "\$PREV_SHA" \] && \[ -x \/opt\/usernode-tools\/rollback\.sh \]/);
+  assert.match(gate.slice(0, 1600), /exit 1/);
 });
 
 test('an empty PREV_SHA does not roll back to nothing', () => {
