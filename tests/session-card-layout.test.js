@@ -54,7 +54,12 @@ function makeCtx(over) {
 }
 
 function makeAppView() {
-  return makeCtx().__AppView;
+  const AppView = makeCtx().__AppView;
+  AppView.appData = {
+    can_collaborate: true,
+    repo_url: 'https://github.com/acme/widget',
+  };
+  return AppView;
 }
 
 const mySess = (over) => ({
@@ -141,14 +146,51 @@ test('shared card, read-only viewer: pill requires a live staging_url', () => {
   assert.match(live, /swapToStagingForSession\(71, 'https:\/\/example\.invalid'\)/);
 });
 
-test('own card: Preview pill gated on pr_number (a PR exists once changes are pushed)', () => {
+test('own browser-session card: PR number enables Changes and Preview', () => {
   const AppView = makeAppView();
   AppView._sharedById = {};
   const withPr = AppView._renderMySessionCard(mySess({ pr_number: 123 }));
+  assert.match(withPr, />Changes<\/a>/);
+  assert.match(withPr, /pull\/123\/files/);
   assert.match(withPr, /Preview<\/button>/);
   assert.match(withPr, /swapToStagingForSession\(51, ''\)/);
   const noPr = AppView._renderMySessionCard(mySess({ pr_number: null }));
   assert.doesNotMatch(noPr, /Preview<\/button>/);
+});
+
+test('own draft card: uploaded CLI changes get Changes and Preview without a PR', () => {
+  const AppView = makeAppView();
+  AppView._sharedById = {};
+  const html = AppView._renderMySessionCard(mySess({
+    branch_name: 'dev/cli-draft', can_review_changes: true,
+  }));
+  assert.match(html, /href="https:\/\/github\.com\/acme\/widget\/compare\/main\.\.\.dev\/cli-draft"/);
+  assert.match(html, />Changes<\/a>/);
+  assert.match(html, />Preview<\/button>/);
+});
+
+test('own untouched draft card has no Changes or Preview action', () => {
+  const AppView = makeAppView();
+  AppView._sharedById = {};
+  const html = AppView._renderMySessionCard(mySess({
+    branch_name: 'dev/empty', can_review_changes: false, pr_number: null,
+  }));
+  assert.doesNotMatch(html, />Changes<\/a>/);
+  assert.doesNotMatch(html, />Preview<\/button>/);
+});
+
+test('shared draft card exposes Changes to read-only viewers without enabling rebuild', () => {
+  const AppView = makeAppView();
+  AppView.appData = {
+    can_collaborate: false,
+    repo_url: 'https://github.com/acme/widget',
+  };
+  const html = AppView._renderSharedSessionCard(sharedSess({
+    branch_name: 'dev/shared-draft', can_preview: true, staging_url: null,
+  }));
+  assert.match(html, />Changes<\/a>/);
+  assert.match(html, /compare\/main\.\.\.dev\/shared-draft/);
+  assert.doesNotMatch(html, />Preview<\/button>/);
 });
 
 // ── "Open chat" on visible own sessions ─────────────────────────────────────

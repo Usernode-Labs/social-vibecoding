@@ -518,6 +518,7 @@ function sessionRoutes(config) {
         `SELECT cs.id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title,
                 cs.session_title, cs.status, cs.linked_issues, cs.shared_at,
                 cs.transcript_shared_at, cs.created_at,
+                (cs.pr_number IS NOT NULL OR cs.handoff_uploaded_sha IS NOT NULL) AS can_review_changes,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
                 a.slug AS app_slug, a.name AS app_name
          FROM chat_sessions cs
@@ -714,9 +715,9 @@ function sessionRoutes(config) {
   //   open the owner's dev chat" is enforced by authorization, not just
   //   missing UI. staging_url IS included (same exposure /promoted
   //   already grants proposals) so viewers get a Preview affordance,
-  //   plus a derived can_preview boolean (#689: pr_number IS NOT NULL,
-  //   i.e. the branch has pushed changes) so the card can offer an
-  //   on-demand rebuild via ensure-staging even after the idle staging
+  //   plus a derived can_preview boolean (#689 plus CLI handoff support:
+  //   a PR exists or an uploaded handoff commit exists) so the card can
+  //   offer an on-demand rebuild via ensure-staging even after the idle staging
   //   GC has nulled staging_url. pr_number itself stays withheld.
   //   chat_count / last_message_at mirror the /promoted subqueries: the
   //   discussion thread is the same chat_messages ('session', id) key
@@ -742,7 +743,8 @@ function sessionRoutes(config) {
 
       const { rows } = await pool.query(
         `SELECT cs.id, cs.session_title, cs.pr_title, cs.branch_name, cs.status,
-                cs.staging_url, (cs.pr_number IS NOT NULL) AS can_preview,
+                cs.staging_url,
+                (cs.pr_number IS NOT NULL OR cs.handoff_uploaded_sha IS NOT NULL) AS can_preview,
                 cs.linked_issues,
                 (cs.transcript_shared_at IS NOT NULL) AS transcript_shared,
                 (SELECT COUNT(*)::int FROM chat_session_messages m

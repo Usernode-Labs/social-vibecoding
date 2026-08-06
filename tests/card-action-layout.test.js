@@ -52,6 +52,10 @@ function makeAppView(userId, opts) {
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
+  AppView.appData = {
+    can_collaborate: true,
+    repo_url: 'https://github.com/acme/widget',
+  };
   AppView._proposalsCtx = { majority: 1 };
   AppView._mergedCtx = { majority: 1 };
   AppView._visualsOpen = new Set();
@@ -131,6 +135,7 @@ test('issue card: question-outcome rerun "Generate proposal" stays inline', () =
 
 const baseProposal = (over) => ({
   id: 7, pr_number: 700, pr_title: 'Tidy the header', username: 'me',
+  pr_url: 'https://github.com/acme/widget/pull/700',
   user_id: 999, status: 'promoted', yes_count: 0, no_count: 0,
   created_at: '2026-06-01T00:00:00Z', ...over,
 });
@@ -141,6 +146,7 @@ test('proposal card: vote pair keeps its yes/no colours, all actions inline', ()
   assert.match(html, /gc-vote-btn-yes[^>]*castVote\(7, 'yes'\)/);
   assert.match(html, /gc-vote-btn-no[^>]*castVote\(7, 'no'\)/);
   assert.match(html, /gc-card-actions/, 'shared action row present');
+  assert.match(html, /href="https:\/\/github\.com\/acme\/widget\/pull\/700\/files"[^>]*>Changes<\/a>/);
   assertNoOverflowMachinery(html);
 });
 
@@ -194,6 +200,7 @@ test('gov card: non-admin non-creator sees only yes/no (others gated off, as tod
 
 const baseMerged = (over) => ({
   id: 8, pr_number: 800, pr_title: 'Ship it', username: 'someone', user_id: 999,
+  pr_url: 'https://github.com/acme/widget/pull/800',
   status: 'merged', yes_count: 3, no_count: 1, chat_count: 0,
   created_at: '2026-06-01T00:00:00Z', ...over,
 });
@@ -202,6 +209,7 @@ test('merged card: voted box, Undo, kudos, Explore pill all inline in the shared
   const AppView = makeAppView(ME);
   const html = AppView._renderMergedCard(baseMerged({ my_vote: 'yes' }), 1);
   assert.match(html, /gc-card-actions/, 'shared action row present');
+  assert.match(html, /href="https:\/\/github\.com\/acme\/widget\/pull\/800\/files"[^>]*>Changes<\/a>/);
   assert.match(html, /gc-vote-voted-box-yes[^>]*>You voted Yes</, '"You voted Yes" indicator present in the action row');
   assert.match(html, /undoPr\(8\)/, 'Undo present');
   assert.match(html, /gc-explore-chat-btn/, 'Explore in dev chat present');

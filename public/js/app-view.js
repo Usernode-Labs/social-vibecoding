@@ -1989,6 +1989,48 @@ const AppView = {
     return inner ? `<div class="gc-card-actions">${inner}</div>` : '';
   },
 
+  // A single, read-only file review affordance across the Dev lifecycle.
+  // Proposals point at GitHub's PR Files tab; unpromoted sessions have no
+  // public PR yet, so they point at the branch-vs-main compare view. All
+  // inputs come from API rows and are validated before entering an href.
+  _githubRepoBase(rawUrl) {
+    const repo = String(rawUrl || '').trim().replace(/\/+$/, '').replace(/\.git$/i, '');
+    return /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/i.test(repo)
+      ? repo : '';
+  },
+
+  _proposalChangesUrl(pr) {
+    const row = pr || {};
+    const direct = String(row.pr_url || '').trim().replace(/\/+$/, '');
+    if (/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+$/i.test(direct)) {
+      return `${direct}/files`;
+    }
+    const number = parseInt(row.pr_number, 10);
+    const repo = AppView._githubRepoBase(AppView.appData && AppView.appData.repo_url);
+    return repo && number > 0 ? `${repo}/pull/${number}/files` : '';
+  },
+
+  _sessionChangesUrl(session) {
+    const row = session || {};
+    const proposalUrl = AppView._proposalChangesUrl(row);
+    if (proposalUrl) return proposalUrl;
+    // The server derives can_review_changes without exposing the uploaded
+    // commit SHA. can_preview/staging_url preserve compatibility with rows
+    // returned by older servers and the shared-session demo fixtures.
+    if (!row.can_review_changes && !row.can_preview && !row.staging_url) return '';
+    const repo = AppView._githubRepoBase(row.repo_url
+      || (AppView.appData && AppView.appData.repo_url));
+    const branch = String(row.branch_name || '').trim();
+    if (!repo || !branch) return '';
+    const encodedBranch = branch.split('/').map((part) => encodeURIComponent(part)).join('/');
+    return `${repo}/compare/main...${encodedBranch}`;
+  },
+
+  _changesActionHtml(url) {
+    if (!url) return '';
+    return `<a href="${escapeAttr(url)}" target="_blank" rel="noopener" class="gc-vote-btn" title="Review file-by-file changes on GitHub">Changes</a>`;
+  },
+
   EXPLORE_CHAT_TITLE: 'Open a dev chat with a message about this PR ready to edit and send',
 
   // #827: the closing paragraph of every exploration seed. Load-bearing —
@@ -4497,11 +4539,13 @@ const AppView = {
     // may not be in _sharedById yet (background refresh pending) — the
     // button still renders, with the count at 0.
     const sh = shared ? (AppView._sharedById || {})[s.id] : null;
-    // #689: a PR exists once the first commit is pushed, so pr_number set
-    // means there is something to preview. The owner is always authorized
-    // on ensure-staging, which rebuilds the preview if the idle GC
-    // reclaimed it — same ensure-then-open path the shared card uses.
-    const previewBtn = s.pr_number
+    // A browser-authored session has pr_number after its first push; a CLI
+    // handoff can instead report can_review_changes while it is still a
+    // draft. Both have a real uploaded revision that can be reviewed and
+    // previewed. The owner is authorized to rebuild an idle preview.
+    const hasChanges = !!(s.pr_number || s.can_review_changes);
+    const changesBtn = AppView._changesActionHtml(AppView._sessionChangesUrl(s));
+    const previewBtn = hasChanges
       ? `<button type="button" class="gc-vote-btn gc-vote-btn-preview" title="Open this session's staging preview (rebuilds it if it went to sleep)" onclick="AppView.swapToStagingForSession(${s.id}, '')">Preview</button>`
       : '';
     const chatBtn = shared
@@ -4536,6 +4580,7 @@ const AppView = {
       <div class="${AppView.SESSION_CARD_ACTIONS_CLS}">
         ${statusTag}
         ${AppView.issueChipsHtml(s.linked_issues)}
+        ${changesBtn}
         ${previewBtn}
         ${chatBtn}
         ${chatShareBtn}
@@ -4561,6 +4606,7 @@ const AppView = {
     const owner = escapeHtml(s.username || 'someone');
     const statusTag = AppView._sessionStatusTagHtml(s);
     const canPreview = s.staging_url || (s.can_preview && !AppView.readOnly);
+    const changesBtn = AppView._changesActionHtml(AppView._sessionChangesUrl(s));
     const preview = canPreview
       ? `<button type="button" class="gc-vote-btn gc-vote-btn-preview" title="Open this session's staging preview${s.staging_url ? '' : ' (rebuilds it if it went to sleep)'}" onclick="AppView.swapToStagingForSession(${s.id}, '${s.staging_url || ''}')">Preview</button>`
       : '';
@@ -4588,6 +4634,7 @@ const AppView = {
         ${AppView.issueChipsHtml(s.linked_issues)}
         ${AppView._devChatBadge(s.chat_count)}
         ${readChat}
+        ${changesBtn}
         ${preview}
       </div>
     </div>`;
@@ -5276,6 +5323,7 @@ const AppView = {
     const archiveBtn = (mine && !isMerged && !isMerging && pr.status === 'promoted')
       ? `<button class="gc-vote-btn" title="Withdraw this proposal (closes the PR, removes it from the vote panel)" onclick="AppView.withdrawProposal(${pr.id})">Withdraw</button>`
       : '';
+    const changesBtn = AppView._changesActionHtml(AppView._proposalChangesUrl(pr));
     // #313/#827: "Explore in dev chat", surfaced on the card for proposals
     // the viewer does NOT own. Owners reach the Mayor via "Open session" on
     // their own PR, so it's omitted on own cards.
@@ -5298,8 +5346,8 @@ const AppView = {
     // (topic-view fallback) drop the live vote buttons — the vote is settled;
     // kudos stays open.
     const actions = isMerged
-      ? AppView._cardActionsHtml([kudosBtn, sessionBtn, exploreBtn, visualsBtn])
-      : AppView._cardActionsHtml([AppView.voteButtonsHtml(pr), kudosBtn, sessionBtn, archiveBtn, exploreBtn, visualsBtn]);
+      ? AppView._cardActionsHtml([changesBtn, kudosBtn, sessionBtn, exploreBtn, visualsBtn])
+      : AppView._cardActionsHtml([changesBtn, AppView.voteButtonsHtml(pr), kudosBtn, sessionBtn, archiveBtn, exploreBtn, visualsBtn]);
 
     return `
       <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''} data-ref-pr="${pr.pr_number || pr.id}"${visualTiles ? ' data-visuals-scope="1"' : ''}${noNav ? '' : ` data-proposal-row="${pr.id}" title="Open this proposal's discussion"`}>
@@ -7541,6 +7589,7 @@ const AppView = {
     // proposals the viewer does not own (parallel to the live feed cards).
     const mine = !!(App.user && pr.user_id === App.user.id);
     const exploreBtn = !mine ? AppView._exploreChatBtnHtml(pr) : '';
+    const changesBtn = AppView._changesActionHtml(AppView._proposalChangesUrl(pr));
 
     // #16: undo is a single direct action — clicking Undo opens a
     // revert PR (like proposing a change) which then needs the
@@ -7589,7 +7638,7 @@ const AppView = {
               ${AppView._attrChipsHtml('proposal', pr.id, pr, { readonly: true })}
               ${AppView._devChatBadge(parseInt(pr.chat_count) || 0)}
             </div>
-            ${AppView._cardActionsHtml([AppView.voteButtonsHtml(pr, { collapseVoted: true }), undoUI, kudosBtn, exploreBtn])}
+            ${AppView._cardActionsHtml([changesBtn, AppView.voteButtonsHtml(pr, { collapseVoted: true }), undoUI, kudosBtn, exploreBtn])}
           </div>
           ${AppView.DEV_CARD_CHEVRON}
         </div>`;

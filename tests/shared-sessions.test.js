@@ -147,14 +147,16 @@ test('shared-sessions WHERE clause is the privacy contract', async () => {
     // Card data: owner name + discussion stats ride along…
     assert.match(q.sql, /u\.username/);
     assert.match(q.sql, /chat_count/);
-    // #689: can_preview is DERIVED from pr_number (a PR exists once the
-    // first commit is pushed) so the card can offer an on-demand rebuild…
-    assert.match(q.sql, /\(cs\.pr_number IS NOT NULL\) AS can_preview/);
+    // can_preview is a derived boolean for both browser PR pushes and CLI
+    // handoff uploads, so the card can offer review/rebuild without leaking
+    // either the PR number or commit SHA.
+    assert.match(q.sql, /\(cs\.pr_number IS NOT NULL OR cs\.handoff_uploaded_sha IS NOT NULL\) AS can_preview/);
     // …but nothing that opens the owner's dev chat — pr_number itself is
     // never selected bare, only inside the boolean above.
     assert.doesNotMatch(q.sql, /pr_url/);
     assert.doesNotMatch(q.sql, /cc_session_id/);
     assert.doesNotMatch(q.sql, /cs\.pr_number,/);
+    assert.doesNotMatch(q.sql, /cs\.handoff_uploaded_sha,/);
     // Transcript sharing adds a BOOLEAN plus a count for the chip label —
     // never the transcript itself, and never the raw timestamp column
     // (the card only needs "is it readable?").

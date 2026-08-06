@@ -92,6 +92,10 @@ test('query is owner-scoped and excludes archived/headless rows', async () => {
     // shared_at rides along so the owner's pinned cards can render their
     // "Visible to everyone" / "Make visible" state.
     assert.match(q.sql, /cs\.shared_at/);
+    // CLI drafts have no PR number, so expose only a derived boolean proving
+    // an uploaded revision exists — never the handoff commit SHA itself.
+    assert.match(q.sql, /\(cs\.pr_number IS NOT NULL OR cs\.handoff_uploaded_sha IS NOT NULL\) AS can_review_changes/);
+    assert.doesNotMatch(q.sql, /cs\.handoff_uploaded_sha,/);
   } finally {
     server.close();
   }
