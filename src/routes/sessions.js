@@ -566,8 +566,22 @@ function sessionRoutes(config) {
             last_activity_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
             app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
           },
-          // Busy own session — exercises the "working…" two-row card
-          // layout (spinner + tag in the actions row, title uncrushed).
+          // Card-as-pointer revision: a PRIVATE session that already has a
+          // PR, so the muted/draft shell renders WITH the icon Preview
+          // affordance beside its ⋯. Both other private rows have
+          // pr_number: null, so without this one the muted-plus-preview
+          // combination is unreviewable in a preview.
+          {
+            id: 990107, branch_name: 'mock/my-session-private-pr', pr_number: 990107,
+            pr_url: null, pr_title: null,
+            session_title: '[Mock] Your private session with a preview',
+            status: 'active', linked_issues: [900011], shared_at: null,
+            created_at: new Date(Date.now() - 50 * 60 * 1000).toISOString(),
+            last_activity_at: new Date(Date.now() - 8 * 60 * 1000).toISOString(),
+            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+          },
+          // Busy own session — exercises the "working…" state (spinner tag
+          // beside the title, which the single-row shell keeps uncrushed).
           {
             id: 990102, branch_name: 'mock/my-session-busy', pr_number: null,
             pr_url: null, pr_title: null,

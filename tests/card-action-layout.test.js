@@ -1,12 +1,22 @@
-// #404: consolidated action-button layout on issue / proposal / governance /
-// merged cards (app-view.js). This is a LAYOUT-ONLY treatment: every action
-// button stays visible and inline (no overflow "⋯" menu, no primary-violet
-// emphasis), in its current colour/handler/order — they are simply routed
-// through one shared _cardActionsHtml composer that wraps them in a single
-// consistent, evenly-gapped row (.gc-card-actions). These tests pin that
-// contract: all actions render inline, the shared container is used, and none
-// of the removed overflow/primary machinery leaks into the markup. The
-// group-chat collapseVoted path through voteButtonsHtml is unchanged.
+// Card action contract (app-view.js) — the CARD-AS-POINTER budget.
+//
+// #404 routed every action through one flat .gc-card-actions row and
+// DELIBERATELY rejected an overflow menu; the original version of this file
+// pinned that by asserting the ABSENCE of gc-overflow-btn / gc-action-menu.
+// The card-as-pointer revision REVERSES that decision, so this file now pins
+// the opposite contract:
+//
+//   • at most AppView.ACTION_PRIMARY_MAX (2) text pills on the card face,
+//   • one icon-only Preview affordance (kept as an icon so a read-only
+//     viewer, who gets no vote buttons, still has a visible affordance),
+//   • one ⋯ trigger carrying every demoted action as a descriptor,
+//   • and NO ⋯ at all when a card has nothing to demote.
+//
+// assertNoOverflowMachinery is gone; assertCardActionContract replaces it.
+// Permission rules are unchanged — an action only ever MOVED between the card
+// face, the ⋯ menu and the detail view, so every per-viewer-role case from
+// the original file is preserved, just re-pointed at wherever the action now
+// lives.
 //
 // app-view.js is a plain browser script (`const AppView = {…}`); we load it
 // into a vm context, stub the globals it reaches, and assert on the returned
@@ -61,16 +71,69 @@ function makeAppView(userId, opts) {
 
 const ME = 42;
 
-// Assert none of the removed overflow/primary machinery appears in markup.
-function assertNoOverflowMachinery(html) {
-  assert.doesNotMatch(html, /gc-overflow-btn/, 'no ⋯ overflow trigger');
-  assert.doesNotMatch(html, /gc-action-menu/, 'no overflow menu');
-  assert.doesNotMatch(html, /gc-vote-btn-primary/, 'no primary-violet emphasis');
+// How many text pills the card face actually rendered. The overflow trigger
+// and the preview icon both carry .gc-vote-btn-icon, so they don't count.
+function primaryCount(html) {
+  const row = html.match(/<div class="gc-card-actions">([\s\S]*?)<\/div>/);
+  if (!row) return 0;
+  const buttons = row[1].match(/<button[^>]*>/g) || [];
+  return buttons.filter((b) => !/gc-vote-btn-icon/.test(b)).length;
+}
+
+// The ⋯ trigger's registry key, or null when the card rendered no menu.
+function menuKeyOf(html) {
+  const m = html.match(/data-card-menu="([^"]+)"/);
+  return m ? m[1] : null;
+}
+
+// The descriptor labels the card registered, in order.
+function menuLabels(AppView, html) {
+  const key = menuKeyOf(html);
+  if (!key) return [];
+  return (AppView._cardMenus[key] || []).map((it) => it.label);
+}
+
+// Does the registered menu carry an item whose label matches, and is it
+// actionable (has an `act` closure) unless we expected it disabled?
+function menuHas(AppView, html, re, opts) {
+  const key = menuKeyOf(html);
+  if (!key) return false;
+  const it = (AppView._cardMenus[key] || []).find((x) => re.test(x.label));
+  if (!it) return false;
+  if (opts && opts.disabled) return !!it.disabled;
+  return !!it.act;
+}
+
+// The card-as-pointer budget: at most 2 text pills, and a ⋯ trigger exactly
+// when there is something behind it.
+function assertCardActionContract(AppView, html, expect) {
+  const e = expect || {};
+  const n = primaryCount(html);
+  assert.ok(n <= AppView.ACTION_PRIMARY_MAX,
+    `at most ${AppView.ACTION_PRIMARY_MAX} text pills on the card face, saw ${n}`);
+  if (e.primary !== undefined) {
+    assert.equal(n, e.primary, `expected ${e.primary} primary pill(s), saw ${n}`);
+  }
+  const labels = menuLabels(AppView, html);
+  if (e.menu === false) {
+    assert.equal(menuKeyOf(html), null, 'no ⋯ trigger when nothing is demoted');
+  } else if (e.menu === true) {
+    assert.notEqual(menuKeyOf(html), null, '⋯ trigger present');
+    assert.ok(labels.length > 0, '⋯ menu carries at least one descriptor');
+  }
+  if (e.previewIcon !== undefined) {
+    const hasIcon = /gc-vote-btn-preview[^>]*gc-vote-btn-icon|gc-vote-btn-icon[^>]*gc-vote-btn-preview/.test(html);
+    assert.equal(hasIcon, e.previewIcon,
+      e.previewIcon ? 'icon-only Preview affordance present' : 'no Preview affordance');
+  }
+  // The demoted actions must NOT also sit on the card face.
+  assert.doesNotMatch(html, /gc-card-actions[\s\S]*?>Withdraw</, 'Withdraw is not a card pill');
+  assert.doesNotMatch(html, /gc-card-actions[\s\S]*?>Admin merge</, 'Admin merge is not a card pill');
 }
 
 // ── _cardActionsHtml composer (flat, layout-only) ─────────────────────────
 
-test('_cardActionsHtml: wraps a flat button list in one consistent row', () => {
+test('_cardActionsHtml: legacy array shape still wraps a flat button list', () => {
   const AppView = makeAppView(ME);
   const html = AppView._cardActionsHtml([
     '<button class="gc-vote-btn">A</button>',
@@ -80,7 +143,40 @@ test('_cardActionsHtml: wraps a flat button list in one consistent row', () => {
   assert.match(html, /^<div class="gc-card-actions">/, 'uses the shared container');
   assert.match(html, />A</);
   assert.match(html, />B</);
-  assertNoOverflowMachinery(html);
+});
+
+test('_cardActionsHtml: spec shape caps primaries and appends preview + ⋯', () => {
+  const AppView = makeAppView(ME);
+  const html = AppView._cardActionsHtml({
+    primary: [
+      '<button class="gc-vote-btn">A</button>',
+      '',
+      '<button class="gc-vote-btn">B</button>',
+      '<button class="gc-vote-btn">C</button>',
+    ],
+    preview: '<button class="gc-vote-btn gc-vote-btn-preview gc-vote-btn-icon">eye</button>',
+    menu: [{ label: 'Demoted', act: () => {} }],
+    menuKey: 'test:1',
+  });
+  assert.match(html, />A</);
+  assert.match(html, />B</);
+  assert.doesNotMatch(html, />C</, 'the third primary is dropped — it belongs in ⋯');
+  assert.equal(primaryCount(html), AppView.ACTION_PRIMARY_MAX);
+  assert.equal(menuKeyOf(html), 'test:1');
+  assert.equal(menuLabels(AppView, html).join('|'), 'Demoted');
+});
+
+test('_cardActionsHtml: an empty menu renders no ⋯ trigger', () => {
+  const AppView = makeAppView(ME);
+  const html = AppView._cardActionsHtml({
+    primary: ['<button class="gc-vote-btn">A</button>'],
+    menu: [],
+    menuKey: 'test:2',
+  });
+  assert.equal(menuKeyOf(html), null);
+  // …and neither does a menu whose entries were all conditioned away.
+  const all = AppView._cardActionsHtml({ menu: [null, false, undefined], menuKey: 'test:3' });
+  assert.equal(all, '');
 });
 
 test('_cardActionsHtml: empty / all-falsy input renders nothing', () => {
@@ -88,43 +184,86 @@ test('_cardActionsHtml: empty / all-falsy input renders nothing', () => {
   assert.equal(AppView._cardActionsHtml([]), '');
   assert.equal(AppView._cardActionsHtml(['', null, undefined]), '');
   assert.equal(AppView._cardActionsHtml(), '');
+  assert.equal(AppView._cardActionsHtml({ primary: [], menu: [] }), '');
 });
 
 // ── Issue card ───────────────────────────────────────────────────────────
 
 const baseIssue = (over) => ({ number: 5, title: 'Fix the thing', ...over });
 
-test('issue card: all actions inline in the shared row, no primary/overflow', () => {
+test('issue card: ONE state-driven primary; kudos / claim / close move to ⋯', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderIssueRow(baseIssue());
   assert.match(html, /gc-card-actions/, 'shared action row present');
-  assert.match(html, /giveIssueBounty\(5\)/, 'Pledge kudos present');
-  assert.match(html, /createPrForIssue\(5\)/, 'Create proposal present');
-  assert.match(html, /confirmAutoSession\(5\)/, 'Generate proposal present');
-  assert.match(html, />Create proposal</);
-  assert.match(html, />Generate proposal</);
-  assertNoOverflowMachinery(html);
+  // The single primary for a never-started issue.
+  assert.match(html, /createPrForIssue\(5\)[^>]*>Create proposal</);
+  assertCardActionContract(AppView, html, { primary: 1, menu: true, previewIcon: false });
+  // Generating a headless proposal spends the viewer's credits, so it is a
+  // chosen ⋯ action rather than the card's most prominent button.
+  assert.ok(menuHas(AppView, html, /^Generate proposal$/), 'Generate proposal in ⋯');
+  assert.ok(menuHas(AppView, html, /Pledge kudos/), 'Pledge kudos in ⋯');
+  assert.ok(menuHas(AppView, html, /Mark in progress/), 'Mark in progress in ⋯');
+  assert.ok(menuHas(AppView, html, /Propose to close/), 'Propose to close in ⋯');
+  assert.ok(menuHas(AppView, html, /Set priority/), 'Set priority… in ⋯');
+  // …and none of them on the card face.
+  assert.doesNotMatch(html, /giveIssueBounty/, 'no kudos pill');
+  assert.doesNotMatch(html, /markIssueInProgress/, 'no claim pill');
+  assert.doesNotMatch(html, /promptCloseIssue/, 'no close pill');
 });
 
-test('issue card: a ready headless run keeps its contextual label inline (no violet)', () => {
+test('issue card: a ready headless run IS the primary, replacing Create proposal', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderIssueRow(baseIssue({
     headless: { status: 'ready', outcome: 'spec', sessionId: 90 },
   }));
-  assert.match(html, /startFromAutoSession\(90\)[^>]*>Review spec/, 'contextual ready label present');
-  assert.match(html, />Create proposal</, 'Create proposal still present');
-  assert.match(html, /giveIssueBounty\(5\)/, 'kudos still present');
-  assertNoOverflowMachinery(html);
+  assert.match(html, /startFromAutoSession\(90\)[^>]*>Review spec/, 'contextual ready label is the primary');
+  assert.doesNotMatch(html, /createPrForIssue/, 'Create proposal is superseded, not stacked beside it');
+  assertCardActionContract(AppView, html, { primary: 1, menu: true });
+  assert.ok(menuHas(AppView, html, /Pledge kudos/), 'kudos still reachable, from ⋯');
 });
 
-test('issue card: question-outcome rerun "Generate proposal" stays inline', () => {
+test('issue card: a question outcome folds TWO competing pills into one primary', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderIssueRow(baseIssue({
     headless: { status: 'ready', outcome: 'question', sessionId: 91 },
   }));
-  assert.match(html, /startFromAutoSession\(91\)/, 'clone action present');
-  assert.match(html, /confirmAutoSession\(5\)/, 'rerun Generate proposal present');
-  assertNoOverflowMachinery(html);
+  // Previously this row rendered the clone action AND a second "Generate
+  // proposal" pill side by side. Now: one "Answer & regenerate" primary,
+  // with the re-run in ⋯.
+  assert.match(html, /Answer &amp; regenerate/, 'single folded primary');
+  assertCardActionContract(AppView, html, { primary: 1, menu: true });
+  assert.ok(menuHas(AppView, html, /^Generate proposal$/), 're-run reachable from ⋯');
+});
+
+test('issue card: a run the viewer already cloned offers no competing re-run', () => {
+  const AppView = makeAppView(ME);
+  const html = AppView._renderIssueRow(baseIssue({
+    headless: { status: 'ready', outcome: 'question', sessionId: 91, mySessionId: 92 },
+  }));
+  assert.match(html, /goToAutoSessionClone\(92\)[^>]*>Go to session</);
+  assert.ok(!menuHas(AppView, html, /^Generate proposal$/),
+    'no re-run beside "Go to session" — the proposal already exists (#150)');
+});
+
+test('issue card: a generating run disables the primary and hides Generate', () => {
+  const AppView = makeAppView(ME);
+  const html = AppView._renderIssueRow(baseIssue({
+    headless: { status: 'generating', sessionId: 93 },
+  }));
+  assert.match(html, /disabled[^>]*>Generating proposal/);
+  assert.ok(!menuHas(AppView, html, /^Generate proposal$/), 'nothing to generate while one runs');
+});
+
+test('issue card: read-only viewer gets no primary, keeps a read-safe ⋯', () => {
+  const AppView = makeAppView(ME);
+  AppView.appData = { slug: 'x', can_collaborate: false };
+  const html = AppView._renderIssueRow(baseIssue({ htmlUrl: 'https://github.com/o/r/issues/5' }));
+  assertCardActionContract(AppView, html, { primary: 0, menu: true });
+  // join(), not deepEqual: the vm context has its own Array prototype, so
+  // deepStrictEqual on a cross-realm array fails on the prototype alone.
+  assert.equal(menuLabels(AppView, html).join('|'), 'Open on GitHub',
+    'only the read-safe row survives for a read-only viewer');
+  AppView.appData = null;
 });
 
 // ── Proposal card ──────────────────────────────────────────────────────────
@@ -135,32 +274,45 @@ const baseProposal = (over) => ({
   created_at: '2026-06-01T00:00:00Z', ...over,
 });
 
-test('proposal card: vote pair keeps its yes/no colours, all actions inline', () => {
+test('proposal card: Yes/No are the two primaries and keep their colours', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderProposalCard(baseProposal());
   assert.match(html, /gc-vote-btn-yes[^>]*castVote\(7, 'yes'\)/);
   assert.match(html, /gc-vote-btn-no[^>]*castVote\(7, 'no'\)/);
-  assert.match(html, /gc-card-actions/, 'shared action row present');
-  assertNoOverflowMachinery(html);
+  assertCardActionContract(AppView, html, { primary: 2, menu: true });
 });
 
-test('proposal card (admin, not author): every action renders inline, none hidden', () => {
+test('proposal card: read-only viewer keeps the icon Preview and loses Yes/No', () => {
+  const AppView = makeAppView(ME);
+  AppView.appData = { slug: 'x', can_collaborate: false };
+  const html = AppView._renderProposalCard(baseProposal({ staging_url: 'https://stg.example' }));
+  assert.doesNotMatch(html, /castVote/, 'no vote buttons for a read-only viewer');
+  // The whole reason Preview is an icon: without it this card would carry no
+  // visible affordance at all for someone who cannot vote.
+  assertCardActionContract(AppView, html, { primary: 0, previewIcon: true });
+  assert.match(html, /aria-label="Open preview"/, 'the icon has a real accessible name');
+  AppView.appData = null;
+});
+
+test('proposal card (admin, not author): Admin merge / kudos / Explore all in ⋯', () => {
   const AppView = makeAppView(ME, { admin: true });
   const html = AppView._renderProposalCard(baseProposal({ staging_url: 'https://stg.example' }));
-  assert.match(html, /swapToStagingForSession\(7/, 'Preview present');
-  assert.match(html, />kudos</, 'kudos present');
-  assert.match(html, /castAdminMerge\(7\)/, 'Admin merge present');
-  assert.match(html, /gc-explore-chat-btn/, 'Explore in dev chat present');
-  assertNoOverflowMachinery(html);
+  assert.match(html, /swapToStagingForSession\(7/, 'Preview present, as the icon');
+  assertCardActionContract(AppView, html, { primary: 2, menu: true, previewIcon: true });
+  assert.ok(menuHas(AppView, html, /Admin merge/), 'Admin merge in ⋯');
+  assert.ok(menuHas(AppView, html, /kudos/i), 'kudos in ⋯');
+  assert.ok(menuHas(AppView, html, /Explore in dev chat/), 'Explore in dev chat in ⋯');
+  assert.doesNotMatch(html, /gc-explore-chat-btn/, 'no Explore pill on the card face');
 });
 
-test('proposal card (author): Open session + Withdraw render inline', () => {
+test('proposal card (author): Open session + Withdraw move to ⋯', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderProposalCard(baseProposal({ user_id: ME }));
-  assert.match(html, /openProposalSession\(7\)/, 'Open session present');
-  assert.match(html, /withdrawProposal\(7\)/, 'Withdraw present');
-  assert.doesNotMatch(html, /gc-explore-chat-btn/, 'no Explore pill on your own proposal');
-  assertNoOverflowMachinery(html);
+  assert.ok(menuHas(AppView, html, /Open session/), 'Open session in ⋯');
+  assert.ok(menuHas(AppView, html, /Withdraw/), 'Withdraw in ⋯');
+  assert.ok(!menuHas(AppView, html, /Explore in dev chat/),
+    'owners reach the Mayor via Open session, so no Explore row on their own PR');
+  assertCardActionContract(AppView, html, { primary: 2, menu: true });
 });
 
 // ── Governance card ──────────────────────────────────────────────────────
@@ -170,24 +322,34 @@ const baseGov = (over) => ({
   created_by: 999, created_at: '2026-06-01T00:00:00Z', ...over,
 });
 
-test('gov card: yes/no/admin/withdraw all inline in the shared row', () => {
+test('gov card: Yes/No are the primaries, Admin merge + Withdraw go to ⋯', () => {
   const AppView = makeAppView(ME, { admin: true });
   const html = AppView._renderGovCard(baseGov({ created_by: ME }));
   assert.match(html, /castIssueVote\(11, 'up'\)/);
   assert.match(html, /castIssueVote\(11, 'down'\)/);
-  assert.match(html, /castIssueAdminApply\(11\)/, 'Admin merge present');
-  assert.match(html, /withdrawGovProposal\(11\)/, 'Withdraw present');
-  assert.match(html, /gc-card-actions/);
-  assertNoOverflowMachinery(html);
+  assertCardActionContract(AppView, html, { primary: 2, menu: true });
+  assert.ok(menuHas(AppView, html, /Admin merge/), 'Admin merge in ⋯');
+  assert.ok(menuHas(AppView, html, /Withdraw/), 'Withdraw in ⋯');
 });
 
-test('gov card: non-admin non-creator sees only yes/no (others gated off, as today)', () => {
+test('gov card: a settled row renders the frozen pill and NO ⋯', () => {
+  const AppView = makeAppView(ME, { admin: true });
+  const html = AppView._renderGovCard(baseGov({
+    status: 'applied', payload: { issueNumber: 5, appliedAt: '2026-06-02T00:00:00Z', required: 3 },
+    kind: 'close_issue',
+  }));
+  assert.doesNotMatch(html, /castIssueVote/, 'the vote is history');
+  assertCardActionContract(AppView, html, { primary: 0, menu: false });
+});
+
+test('gov card: non-admin non-creator sees only yes/no, and no ⋯ at all', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderGovCard(baseGov());
   assert.match(html, /castIssueVote\(11, 'up'\)/);
-  assert.doesNotMatch(html, /castIssueAdminApply/, 'no admin merge for non-admin');
-  assert.doesNotMatch(html, /withdrawGovProposal/, 'no withdraw for non-creator');
-  assertNoOverflowMachinery(html);
+  assert.ok(!menuHas(AppView, html, /Admin merge/), 'no admin merge for non-admin');
+  assert.ok(!menuHas(AppView, html, /Withdraw/), 'no withdraw for non-creator');
+  // Nothing to demote → no dead ⋯ button.
+  assertCardActionContract(AppView, html, { primary: 2, menu: false });
 });
 
 // ── Merged card ────────────────────────────────────────────────────────────
@@ -198,24 +360,26 @@ const baseMerged = (over) => ({
   created_at: '2026-06-01T00:00:00Z', ...over,
 });
 
-test('merged card: voted box, Undo, kudos, Explore pill all inline in the shared row', () => {
+test('merged card: no text actions; Undo / kudos / Explore all in ⋯', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderMergedCard(baseMerged({ my_vote: 'yes' }), 1);
-  assert.match(html, /gc-card-actions/, 'shared action row present');
-  assert.match(html, /gc-vote-voted-box-yes[^>]*>You voted Yes</, '"You voted Yes" indicator present in the action row');
-  assert.match(html, /undoPr\(8\)/, 'Undo present');
-  assert.match(html, /gc-explore-chat-btn/, 'Explore in dev chat present');
-  assertNoOverflowMachinery(html);
+  // The "You voted X" box is gone from the card face — the pill's tooltip
+  // and the detail view's vote roster carry that now.
+  assert.doesNotMatch(html, /gc-vote-voted-box/, 'no "You voted X" box on the board');
+  assertCardActionContract(AppView, html, { primary: 0, menu: true });
+  assert.ok(menuHas(AppView, html, /Undo/), 'Undo in ⋯');
+  assert.ok(menuHas(AppView, html, /kudos/i), 'kudos in ⋯');
+  assert.ok(menuHas(AppView, html, /Explore in dev chat/), 'Explore in dev chat in ⋯');
 });
 
-test('merged card: revert-status link renders inline instead of an Undo button', () => {
+test('merged card: revert status reads on the META LINE, not as an action', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderMergedCard(baseMerged({
     revert_session_id: 9, revert_status: 'merged', revert_pr_number: 900,
   }), 1);
-  assert.match(html, /Undone by PR#900/, 'revert status link present');
-  assert.doesNotMatch(html, /undoPr/, 'no Undo button once a revert exists');
-  assertNoOverflowMachinery(html);
+  assert.match(html, /dev-card-headline-meta[\s\S]*?Undone by PR#900/,
+    'the revert relationship is a FACT about the change, so it lives in the meta line');
+  assert.ok(!menuHas(AppView, html, /^Undo$/), 'no Undo once a revert exists');
 });
 
 // ── voteButtonsHtml: group-chat collapsed-vote path unchanged ──────────────

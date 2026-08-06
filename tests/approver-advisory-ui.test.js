@@ -145,7 +145,9 @@ test('_renderGovCard: threads the qualified fields into the pill and buttons', (
     contested: false,
   }, {});
   assert.match(html, /0 of 1 approval/);
-  assert.match(html, /\+2 advisory/);
+  // The advisory surplus rides INSIDE the composite pill as a muted "+N"
+  // suffix now, rather than as a separate chip beside it.
+  assert.match(html, /gc-vote-count-suffix[^>]*>\+2</);
   assert.match(html, /Yes \(0✓ \+2\)/);
   assert.match(html, /No \(0✓\)/);
 });

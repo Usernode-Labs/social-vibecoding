@@ -71,7 +71,7 @@ test('console_check_state="errors" renders the amber warning badge with a count'
     console_check_state: 'errors',
     console_errors: [{ kind: 'pageerror', message: 'boom' }, { kind: 'console', message: 'splat' }],
   }));
-  assert.match(html, /gc-warning-badge/, 'warning badge class present');
+  assert.match(html, /gc-vote-count-attention/, 'advisory ATTENTION tone in the pill');
   assert.match(html, /Console errors · 2/, 'shows the error count');
   assert.match(html, /may break the app/, 'tooltip explains the risk');
 });
@@ -94,17 +94,50 @@ test('console_check_state="unknown" / missing renders NO warning badge', () => {
   );
 });
 
-test('warning badge renders ALONGSIDE a merge-state badge, not instead of it', () => {
+test('two reasons at once: the pill names the worst and counts the rest', () => {
   const AppView = makeAppView(ME);
-  // behind_main drives the amber "Behind main" badge; the console warning
-  // is independent and must also appear.
-  const html = AppView._renderProposalCard(baseProposal({
+  // This card used to render "Behind main · 3" AND "⚠ Console errors · 1"
+  // side by side, leaving the reader to work out that both applied. Now the
+  // pill names the most severe one and its tooltip says how many more there
+  // are; the detail view enumerates every one of them.
+  const pr = baseProposal({
     behind_main: 3,
     console_check_state: 'errors',
     console_errors: [{ kind: 'console', message: 'oops' }],
-  }));
-  assert.match(html, /Behind main · 3/, 'merge-state badge still present');
-  assert.match(html, /gc-warning-badge/, 'console warning present too');
+  });
+  const html = AppView._renderProposalCard(pr);
+  assert.match(html, /Behind main · 3/, 'the worst reason is the pill label');
+  assert.match(html, /and 1 more reason — open for details/, 'the rest are counted, not hidden');
+  assert.doesNotMatch(html, /gc-warning-badge/, 'no second badge stacked beside it');
+
+  // blockReasons is the shared source of truth for both.
+  const reasons = AppView.blockReasons(pr);
+  assert.equal(reasons.length, 2);
+  assert.equal(reasons.map((r) => r.key).join(','), 'behind,console_errors');
+
+  const detail = AppView._detailActionsHtml('proposal', pr);
+  assert.match(detail, /Worth knowing before you vote/, 'neither reason blocks, so the heading says so');
+  assert.match(detail, /Behind main · 3/);
+  assert.match(detail, /Console errors · 1/);
+});
+
+test('a HARD reason beside a soft one: the heading names the block', () => {
+  const AppView = makeAppView(ME);
+  const pr = baseProposal({
+    behind_main: 2,
+    check_state: 'failing',
+    test_results: [{ name: 'Feed', path: '/feed', status: 'fail' }],
+    console_check_state: 'errors',
+    console_errors: [{ kind: 'console', message: 'oops' }],
+  });
+  const html = AppView._renderProposalCard(pr);
+  assert.match(html, /Checks failing · 1/, 'the hard reason wins the label');
+  assert.match(html, /gc-vote-count-blocked/);
+  assert.match(html, /and 2 more reasons/);
+  const detail = AppView._detailActionsHtml('proposal', pr);
+  assert.match(detail, /Why this can’t merge yet/);
+  assert.match(detail, /Checks failing · 1[\s\S]*Behind main · 2[\s\S]*Console errors · 1/,
+    'enumerated severity-first');
 });
 
 test('the console-error detail block lists the captured messages', () => {

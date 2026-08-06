@@ -371,6 +371,34 @@
       "expectText": "No challenges are running right now"
     },
     {
+      "name": "Dev board: one composite status pill and a ⋯ menu per card (card-as-pointer)",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban .gc-vote-item .dev-status-pill ~ .dev-chat-badge, #dev-kanban .gc-vote-item [data-card-menu]",
+      "expectText": "Create proposal"
+    },
+    {
+      "name": "Dev board (mobile): the In-progress column shows section dividers, not grey captions",
+      "path": "/?demo=1&view=kanban&col=inprogress#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban-col-inprogress.dev-kanban-col-active .dev-col-divider .dev-col-divider-label",
+      "expectText": "Yours · private"
+    },
+    {
+      "name": "Dev board renders the Set priority / Set category / Unassigned metadata chips",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "button.attr-chip[data-attr-field=\"priority\"]",
+      "expectText": "Set priority"
+    },
+    {
+      "name": "Dev board metadata chips keep their compiled utility styling (no console error from the cascade self-check)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "button.attr-chip[data-attr-field=\"assignee\"] .attr-avatar-empty"
+    },
+    {
+      "name": "Dev board cards carry the Explore-in-dev-chat pill (#827)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": ".gc-explore-chat-btn[data-proposal-id]"
+    },
+    {
       "name": "Tapping an app shows its icon and name while it loads, not a blank window (#931)",
       "path": "/?shot=app-launching",
       "expectSelector": "#app-launch-cover .app-icon-tile",
@@ -513,9 +541,10 @@
       "expectText": "Create a new app"
     },
     {
-      "name": "Issue cards render the Mark-in-progress claim button",
+      "name": "Issue cards keep ONE primary action; the claim moves into the ⋯ menu",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectText": "Mark in progress"
+      "expectText": "Create proposal",
+      "expectSelector": "#dev-kanban-col-issues .gc-vote-item [data-card-menu], #dev-feed .gc-vote-item [data-card-menu]"
     },
     {
       "name": "Session/proposal cards render reverse #N issue chips",
@@ -531,17 +560,6 @@
       "name": "Custom category chip renders on a Dev card (#780)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectText": "Staging demo perf"
-    },
-    {
-      "name": "Dev board renders the Set priority / Set category / Unassigned metadata chips",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "button.attr-chip[data-attr-field=\"priority\"]",
-      "expectText": "Set priority"
-    },
-    {
-      "name": "Dev board metadata chips keep their compiled utility styling (no console error from the cascade self-check)",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "button.attr-chip[data-attr-field=\"assignee\"] .attr-avatar-empty"
     },
     {
       "name": "Restart-recovery pill fixtures are seeded (#786)",
@@ -810,11 +828,6 @@
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000001",
       "expectSelector": "#gc-thread-head .gc-explore-chat-btn[data-proposal-id='9000001']",
       "expectText": "Explore in dev chat"
-    },
-    {
-      "name": "Dev board cards carry the Explore-in-dev-chat pill (#827)",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": ".gc-explore-chat-btn[data-proposal-id]"
     },
     {
       "name": "At-least-approvals proposal renders the approvals pill (#646)",

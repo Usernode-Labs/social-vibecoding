@@ -185,6 +185,17 @@ function stagingMockIssues(repoUrl) {
       + 'the most recent and is NOT part of the saved drag order, so it '
       + 'must appear at the top of the Issues column, above the manually '
       + 'ordered cards.', 1),
+    // Card-as-pointer revision: a deliberately BARE issue — no attributes,
+    // no bounty, no claim, no headless run — so the "a card with no metadata
+    // carries no grey Set-priority / Set-category / Unassigned chips" rule is
+    // visible in a preview. Every other mock row is enriched by the
+    // staging-attributes block in GET /github-issues; this number is
+    // deliberately absent from that map (as is 900002, which keeps its own
+    // unset-dropdown demo).
+    mk(900011, '[Mock] Bare issue — no priority, no category, nobody assigned',
+      'Staging-only mock issue with NO community-voted attributes, so the '
+      + 'card renders with just its icon, title, meta line and one primary '
+      + 'action. Compare it against #900001, which has all three chips set.', 6),
     // #683: dedicated row for reviewing the inline screenshot embed in
     // the topic view. Real filed issues embed the public
     // /issue-images/:id URL; the mock points at an existing same-origin
@@ -260,6 +271,26 @@ function stagingMockGovernance() {
       approvals_required: 1,
       qualified_yes_count: 0,
       qualified_no_count: 0,
+    },
+    // Card-as-pointer revision: a SETTLED governance row. The vote is
+    // history, so it renders the frozen pill and — with nothing left to
+    // demote — no ⋯ trigger at all. Every other mock here is 'open', so
+    // without this row the "no dead ⋯ button" rule is invisible in a
+    // preview. (The Done column's own applied close-issue cards come from
+    // stagingMockCompletedCloseIssues in votes.js; this one exercises the
+    // gov card renderer's settled branch in the In-review column's shape.)
+    {
+      ...mk(9100005, 'close_issue',
+        '[Mock] Settled: closed issue #900003 by vote — pill only, no ⋯',
+        {
+          issueNumber: 900003,
+          issueTitle: '[Mock] Topic cards overflow on narrow phones',
+          reason: 'Fixed by the responsive rework.',
+          appliedAt: hoursAgo(2),
+          appliedBy: 'group-vote',
+          required: 2,
+        }, 20, 2, 0, { required: 2 }),
+      status: 'closed',
     },
   ];
 }

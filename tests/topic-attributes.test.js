@@ -751,8 +751,15 @@ test('card renderer emits the three chips (priority, category, assignee)', () =>
   const fe = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf-8');
   assert.match(fe, /_attrChipsHtml\('issue'/, 'issue rows render chips');
   assert.match(fe, /_attrChipsHtml\('proposal'/, 'proposal cards render chips');
+  // …and the BOARD passes omitUnset, so a card with no metadata carries no
+  // grey "Set priority / Set category / Unassigned" placeholders. The detail
+  // view (noNav) opts out — that page is where metadata gets set.
+  assert.match(fe, /omitUnset: !noNav/, 'the board omits unset chips, the detail view keeps them');
   assert.match(fe, /data-attr-chip/, 'chip carries the delegated-click hook');
-  assert.match(fe, /_attrChipHtml\('category'/, 'the category chip is rendered');
+  // The three fields are a table inside _attrChipsHtml now (priority,
+  // assignee, category — the badge-priority order) rather than three
+  // hand-written calls, so the omitUnset filter applies uniformly.
+  assert.match(fe, /\['category', it\.category\]/, 'the category chip is in the field table');
   assert.match(fe, /ATTR_CATEGORY_VALUES: \['feature', 'bug', 'improvement', 'design', 'docs', 'chore'\]/,
     'FE category vocabulary mirrors the service CATEGORY_VALUES');
 });

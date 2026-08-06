@@ -109,28 +109,35 @@ test('an unrecognised value falls back — it never prints itself', () => {
   assert.doesNotMatch(card, /onerror=/);
 });
 
-test('the card names the agent that built it', () => {
+// The card's provenance moved OFF the badge row and INTO the meta line: it
+// cost a badge slot and doesn't change what you'd do next. Lower-cased there
+// because it reads as prose beside the PR number and author, not as a chip.
+// externalAgentBadgeHtml itself is unchanged and still asserted above — the
+// closed vocabulary is what stops a provenance badge printing server data
+// verbatim, and other surfaces still render it.
+test('the card names the agent that built it, on the meta line', () => {
   const AppView = makeAppView(ME);
   const claude = AppView._renderProposalCard(connectorProposal());
-  assert.match(claude, /Built with Claude Code/);
+  assert.match(claude, /dev-card-headline-meta[^<]*[\s\S]{0,400}?built with Claude Code/);
   const codex = AppView._renderProposalCard(connectorProposal({ external_agent: 'codex' }));
-  assert.match(codex, /Built with Codex/);
-  assert.doesNotMatch(codex, /Built with Claude Code/);
+  assert.match(codex, /built with Codex/);
+  assert.doesNotMatch(codex, /Claude Code/);
 });
 
-test('the agent chip sits alongside "Imported PR", not instead of it', () => {
+test('the agent provenance reads alongside "imported", not instead of it', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderProposalCard(connectorProposal());
-  // Both badges render: one says how it got here, the other who built it.
-  assert.match(html, /Imported PR/);
-  assert.match(html, /Built with Claude Code/);
+  // Both facts survive: one says how it got here, the other who built it.
+  assert.match(html, /imported from GitHub/);
+  assert.match(html, /built with Claude Code/);
   assert.ok(
-    html.indexOf('Imported PR') < html.indexOf('Built with Claude Code'),
+    html.indexOf('imported from GitHub') < html.indexOf('built with Claude Code'),
     'provenance first, then authorship'
   );
-  // A distinct colour family from the imported (amber) and maintenance
-  // (sky) chips, so three informational badges stay legible together.
-  assert.match(html, /text-violet-600 dark:text-violet-400[^"]*"[^>]*>Built with/);
+  // Both sit in the meta line, ahead of the author and the timestamp, so the
+  // sentence reads 'PR#N · imported from GitHub (x) · built with Y · alice · 2d'.
+  assert.match(html, /dev-card-headline-meta/);
+  assert.doesNotMatch(html, /text-[0.65rem][^"]*">Built with/, 'no longer a badge chip');
 });
 
 test('a proposal built by a coding agent still behaves like an import', () => {

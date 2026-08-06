@@ -55,47 +55,82 @@ const baseProposal = (over) => ({
   ...over,
 });
 
-test('check_state="passing" renders a green checks-passing badge', () => {
+// The CARD folds checks into the composite status pill: green checks with a
+// vote still running reads as the vote state, not as a redundant "✓ Checks
+// passing" badge stacked beside the tally. The standalone badge helper is
+// unchanged and still asserted below — it's what other surfaces render.
+test('checksBadgeHtml: passing renders the OK-tone badge, not the merged violet', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal({ check_state: 'passing', test_results: [] }));
-  assert.match(html, /Checks passing/);
+  const badge = AppView.checksBadgeHtml(baseProposal({ check_state: 'passing', test_results: [] }));
+  assert.match(badge, /Checks passing/);
+  // Its own class: sharing .gc-merged-badge is what made the PASSING badge
+  // inherit the violet "Merged" colour.
+  assert.match(badge, /gc-checks-passing-badge/);
+  assert.doesNotMatch(badge, /gc-merged-badge/);
 });
 
-test('check_state="failing" renders an amber badge with the failing count', () => {
+test('card: green checks + an open vote surface the vote state in the pill', () => {
+  const AppView = makeAppView(ME);
+  const html = AppView._renderProposalCard(baseProposal({
+    check_state: 'passing', test_results: [], yes_count: 1, no_count: 0, my_vote: 'yes',
+  }));
+  assert.match(html, /dev-status-pill/, 'one composite pill');
+  assert.doesNotMatch(html, /Checks passing/, 'nothing left to warn about, so nothing is said');
+});
+
+test('card: check_state="failing" is a BLOCKED pill, never a plain tally', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderProposalCard(baseProposal({
     check_state: 'failing',
+    yes_count: 3, no_count: 0, votes_required: 3, my_vote: 'yes',
     test_results: [
       { name: 'Home', path: '/', status: 'pass' },
       { name: 'Feed', path: '/feed', status: 'fail', failureReason: 'boom' },
       { name: 'Board', path: '/board', status: 'fail', failureReason: 'missing' },
     ],
   }));
-  assert.match(html, /gc-warning-badge/);
+  // The whole point of the pill: even with the vote won, a proposal whose
+  // tests fail must not read as a neutral "3 / 3".
   assert.match(html, /Checks failing · 2/);
+  assert.match(html, /gc-vote-count-blocked/, 'blocked tone, not the advisory amber');
+  assert.doesNotMatch(html, /gc-vote-count-label">3 \/ 3/);
 });
 
-test('check_state="pending" renders a running badge', () => {
+test('checksBadgeHtml: failing carries the blocked tone (it gates the merge)', () => {
+  const AppView = makeAppView(ME);
+  const badge = AppView.checksBadgeHtml(baseProposal({
+    check_state: 'failing',
+    test_results: [{ name: 'Feed', path: '/feed', status: 'fail' }],
+  }));
+  assert.match(badge, /gc-blocked-badge/, 'failing blocks, so it is not the advisory amber');
+  assert.match(badge, /Checks failing · 1/);
+});
+
+test('card: check_state="pending" renders the running pill', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderProposalCard(baseProposal({ check_state: 'pending', test_results: [] }));
   assert.match(html, /Checks running/);
+  assert.match(html, /dc-status-spinner-arc/, 'spinner inside the pill');
 });
 
-test('check_state="error" renders a red "couldn\'t run" badge', () => {
+test('card: check_state="error" is a blocked pill naming the boot failure', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderProposalCard(baseProposal({ check_state: 'error', test_results: [] }));
-  assert.match(html, /Checks couldn/);
-  assert.match(html, /gc-conflict-badge/);
+  assert.match(html, /Preview won/, 'the pill names WHY checks could not run');
+  assert.match(html, /gc-vote-count-blocked/);
+  // The standalone helper keeps its own wording for the other surfaces.
+  assert.match(AppView.checksBadgeHtml(baseProposal({ check_state: 'error' })), /Checks couldn/);
 });
 
-test('a legacy row (no check_state) falls back to the advisory console badge', () => {
+test('a legacy row (no check_state) surfaces its console errors in the pill', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderProposalCard(baseProposal({
     console_check_state: 'errors',
     console_errors: [{ kind: 'console', message: 'oops' }],
   }));
-  assert.match(html, /gc-warning-badge/);
-  assert.match(html, /Console errors/);
+  assert.match(html, /Console errors · 1/);
+  // Advisory, so the ATTENTION tone — it never blocks the vote.
+  assert.match(html, /gc-vote-count-attention/);
 });
 
 test('the checks detail lists per-test rows with failure reasons', () => {
@@ -130,16 +165,27 @@ test('passing with no result detail renders nothing (the green badge is enough)'
 // #461: an explicit terminal 'skipped' verdict renders a grey, non-blocking
 // badge + detail carrying the recorded reason, with the manual re-run still
 // offered so an owner/admin can force a real run.
-test('check_state="skipped" renders a grey non-blocking badge with the reason', () => {
+test('checksBadgeHtml: "skipped" is grey, spinner-free and non-blocking', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal({
+  const badge = AppView.checksBadgeHtml(baseProposal({
     check_state: 'skipped', test_results: [],
     check_error_detail: 'branch has no commits beyond main — nothing to test',
   }));
-  assert.match(html, /Checks skipped/);
-  assert.match(html, /gc-checks-running-badge/);
-  assert.match(html, /does not block the merge/);
-  assert.doesNotMatch(html, /dc-status-spinner-arc.*Checks skipped/);
+  assert.match(badge, /Checks skipped/);
+  assert.match(badge, /gc-checks-running-badge/);
+  assert.match(badge, /does not block the merge/);
+  assert.doesNotMatch(badge, /dc-status-spinner-arc/);
+});
+
+test('card: a skipped verdict blocks nothing, so the pill shows the vote state', () => {
+  const AppView = makeAppView(ME);
+  const html = AppView._renderProposalCard(baseProposal({
+    check_state: 'skipped', test_results: [], my_vote: 'yes',
+    yes_count: 1, no_count: 0, votes_required: 2,
+    check_error_detail: 'branch has no commits beyond main — nothing to test',
+  }));
+  assert.match(html, /dev-status-pill/);
+  assert.match(html, /gc-vote-count-label">1 \/ 2/, 'skipped is terminal + non-blocking');
 });
 
 test('the checks detail shows a skipped block with the reason and the re-run button for the owner', () => {
@@ -157,11 +203,12 @@ test('the checks detail shows a skipped block with the reason and the re-run but
 // #607: a fresh proposal with NOTHING recorded yet (no check_state, no
 // console snapshot — the first run hasn't stamped 'pending') shows an
 // explicit in-progress state instead of silence / a bare re-run button.
-test('a fresh row with no verdict renders the "Checks starting…" spinner badge', () => {
+test('card: a fresh row with no verdict renders the "Checks starting…" pill', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderProposalCard(baseProposal({}));
   assert.match(html, /Checks starting/);
   assert.match(html, /dc-status-spinner-arc/);
+  assert.match(html, /dev-status-pill/, 'one pill, not a badge stacked beside a tally');
 });
 
 test('a fresh-NULL detail shows "Checks are starting…" with NO re-run button', () => {
