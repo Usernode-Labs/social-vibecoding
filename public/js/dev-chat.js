@@ -6721,6 +6721,16 @@ const DevChat = {
       ? `<button class="dc-spec-action-btn" disabled title="No spec version to share yet">Share to group</button>`
       : `<button id="dc-spec-viewer-share" class="dc-spec-action-btn" ${alreadyShared ? 'disabled' : ''} title="${alreadyShared ? 'Already shared to group chat' : 'Post a card linking to this spec in the group chat'}">${alreadyShared ? 'Shared' : 'Share to group'}</button>`;
 
+    // (#1012) Copy the WHOLE selected version as raw markdown — both
+    // halves and the marker headings, regardless of which tab is open
+    // (see the click handler below). Disabled with the same posture as
+    // the share buttons while there is nothing to copy; the lazy
+    // frozen-version fetch at the bottom of this method re-renders and
+    // enables it once older content lands.
+    const copyBtnHtml = isEmpty
+      ? `<button class="dc-spec-action-btn dc-spec-copy-btn" disabled title="No spec to copy yet">Copy markdown</button>`
+      : `<button id="dc-spec-viewer-copy" class="dc-spec-action-btn dc-spec-copy-btn" title="Copy the whole spec (both sections) as markdown">Copy markdown</button>`;
+
     // (#86) Private share: send this version to ONE person, who gets a
     // notification deep-linking to the read-only spec panel. Repeatable
     // (no alreadyShared disabling — the owner can share with several
@@ -6779,6 +6789,7 @@ const DevChat = {
         <select id="dc-spec-viewer-version" class="text-xs rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1" ${hasVersions ? '' : 'disabled'}>
           ${hasVersions ? versionOptions : '<option>No versions yet</option>'}
         </select>
+        ${copyBtnHtml}
         ${shareUserBtnHtml}
         ${shareBtnHtml}
         <button id="dc-spec-viewer-close" class="dc-spec-viewer-close" aria-label="Close spec viewer">×</button>
@@ -6804,6 +6815,24 @@ const DevChat = {
 
     const closeBtn = pane.querySelector('#dc-spec-viewer-close');
     if (closeBtn) closeBtn.addEventListener('click', () => DevChat.closeSpecViewer());
+
+    // (#1012) Copy the ENTIRE document: displayContent is the raw
+    // markdown of the selected version, so the copy deliberately ignores
+    // `split` and `activeTab` — "copy the whole thing" means both halves
+    // plus their marker headings, verbatim, with nothing added.
+    // The label flash is fire-and-forget: a spec_updated re-render can
+    // replace this button mid-flash, leaving the restore timer pointed at
+    // a detached node. Harmless (the fresh button renders with the
+    // default label), so it needs no bookkeeping.
+    const copyBtn = pane.querySelector('#dc-spec-viewer-copy');
+    if (copyBtn) {
+      copyBtn.addEventListener('click', async () => {
+        const ok = await PlatformUI.copyText(displayContent);
+        copyBtn.textContent = ok ? 'Copied!' : 'Copy failed';
+        if (!ok) PlatformUI.toast('Couldn\'t copy — select the text and copy it manually');
+        setTimeout(() => { copyBtn.textContent = 'Copy markdown'; }, 1500);
+      });
+    }
 
     const shareBtn = pane.querySelector('#dc-spec-viewer-share');
     if (shareBtn && selectedVersion) shareBtn.addEventListener('click', () => DevChat._shareSpecVersion(selectedVersion.version));
