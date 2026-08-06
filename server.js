@@ -2797,6 +2797,15 @@ async function resumeDetachedTurnInner({
     });
   } catch (err) {
     log.warn('server', 'Detached-turn resume failed', { sessionId, err: err.message });
+    // Fail the Codex ledger row on a resume failure too (review P1c): the
+    // success path terminalizes, but a thrown resume also must not leave
+    // the row 'running' / the token usable until expiry.
+    if (activeTurn?.backend === 'codex_openrouter' && activeTurn?.turnUuid) {
+      const agentTurn = require('./src/services/agent-turn');
+      await agentTurn.completeCodexTurn({
+        pool, turnUuid: activeTurn.turnUuid, status: 'failed',
+      }).catch(() => {});
+    }
     await worker.clearActiveTurn(sessionId);
     // Terminal marker: the card must not stay frozen on the last line
     // the journal managed to deliver before the resume died. When the

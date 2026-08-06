@@ -6684,7 +6684,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
     if (activeTurn.backend === 'codex_openrouter' && activeTurn.turnUuid) {
       const failed = !!(result.fatalError || result.ccIsError
         || (result.agentExit != null && result.agentExit !== 0)
-        || (result.exitCode != null && result.exitCode > 0));
+        || (result.exitCode != null && result.exitCode !== 0));
       await agentTurn.completeCodexTurn({
         pool, turnUuid: activeTurn.turnUuid,
         status: failed ? 'failed' : 'completed',
@@ -8462,11 +8462,12 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
     };
 
     let result;
+    let codexCtx = null;
     try {
       // Resolve the Codex/OpenRouter turn context (scoped relay token +
       // ledger row) for codex_openrouter sessions; null for Claude
       // (legacy path unchanged). plan.md PR5/PR6.
-      const codexCtx = await agentTurn.resolveCodexTurn({
+      codexCtx = await agentTurn.resolveCodexTurn({
         pool, session, userId: req.user.id,
         model: turnModel,
         resumeThreadId: (isCodexSession ? (session.agent_thread_id || null) : (session.cc_session_id || null)),
@@ -9731,8 +9732,9 @@ path: /another/changed/view
     };
 
     let result;
+    let codexCtx = null;
     try {
-      const codexCtx = await agentTurn.resolveCodexTurn({
+      codexCtx = await agentTurn.resolveCodexTurn({
         pool, session, userId: req.user.id,
         model: turnModel,
         resumeThreadId: (isCodexSession ? (session.agent_thread_id || null) : (session.cc_session_id || null)),
