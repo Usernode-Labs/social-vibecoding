@@ -379,6 +379,109 @@ test('the standings pane cross-links to the challenges tab without ever painting
     'the link goes through the router, so the shared event selection survives');
 });
 
+// ─── Season aggregate vs per-event board (#999) ──────────────────────────
+//
+// The standings pane renders two DIFFERENT datasets through one table: one
+// event's stored snapshots (`event.type === 'regular'`), or the whole
+// season's aggregate (`'season'`, resolved server-side through
+// computeStandings). The season path has no per-EVENT breakdown to report —
+// the server hard-codes event_success_rate and friends to 0 — so a "Success
+// rate" column there can only print "0%", indistinguishable from a real zero.
+//
+// Behavioural, not regex: render the real _renderBody against both payloads
+// with a stub host and diff the HTML it produces.
+function renderStandings(payload) {
+  const host = { innerHTML: '', querySelectorAll: () => [] };
+  const sandbox = {
+    window: {},
+    document: {
+      getElementById: (id) => (id === 'tc-lb-body' ? host : null),
+    },
+    console,
+  };
+  sandbox.window.document = sandbox.document;
+  // Classic script: evaluate it with the globals it closes over, then drive
+  // the real object. A fresh evaluation per call keeps the module's own
+  // state from leaking between the two payloads.
+  const TL = new Function('window', 'document', 'module',
+    `${topoJs}\nreturn TopochainLeaderboard;`)(sandbox.window, sandbox.document, undefined);
+  TL._open = true;
+  TL._loading = false;
+  TL._data = payload;
+  TL._meta = { page: 1, per_page: 25, total: 1, total_pages: 1 };
+  TL._renderBody();
+  return host.innerHTML;
+}
+
+const SEASON_ROW = {
+  rank: 1, is_non_podium: false, display_name: 'Ocank14', identifier: 'oca***',
+  total_points: 67973.66, extra_points: 0, event_total_produced_blocks: 42,
+  event_success_rate: 0, wallet_address: null, bech32m: null, discord: 'ocank14',
+};
+
+test('the standings table drops the Success rate column on a season board', () => {
+  const seasonHtml = renderStandings({
+    event: { id: 7, name: 'Season 1', display_leaderboard: true, type: 'season' },
+    leaderboard: [SEASON_ROW],
+  });
+  assert.doesNotMatch(seasonHtml, /Success rate/,
+    'the season aggregate has no per-event success rate to report');
+  assert.doesNotMatch(seasonHtml, /0%/,
+    'and must not print the hard-coded 0 as if it were measured');
+  // The points and blocks columns are real on both paths and must survive.
+  assert.match(seasonHtml, /67973\.66/, 'the season total is the headline number');
+  assert.match(seasonHtml, /Blocks produced/, 'blocks IS a real season-wide sum');
+  assert.match(seasonHtml, /Season points/, 'the column says which total it is');
+});
+
+test('the standings table keeps the Success rate column on a per-event board', () => {
+  const eventHtml = renderStandings({
+    event: { id: 8, name: 'Season 1 Beta', display_leaderboard: true, type: 'regular' },
+    leaderboard: [{ ...SEASON_ROW, total_points: 1900, event_success_rate: 80 }],
+  });
+  assert.match(eventHtml, /Success rate/, 'a single event measures it');
+  assert.match(eventHtml, /80%/);
+  assert.match(eventHtml, />Points</, 'and the points column is unqualified');
+  // Header cell count must match the body cell count, or the table skews.
+  const headers = (eventHtml.match(/<th /g) || []).length;
+  const cells = (eventHtml.match(/<td /g) || []).length;
+  assert.equal(headers, 5);
+  assert.equal(cells, 5, 'a dropped <th> without its <td> misaligns every row');
+});
+
+test('the season board and the per-event board stay column-aligned', () => {
+  const seasonHtml = renderStandings({
+    event: { id: 7, name: 'Season 1', display_leaderboard: true, type: 'season' },
+    leaderboard: [SEASON_ROW],
+  });
+  const headers = (seasonHtml.match(/<th /g) || []).length;
+  const cells = (seasonHtml.match(/<td /g) || []).length;
+  assert.equal(headers, 4, 'rank, user, season points, blocks');
+  assert.equal(cells, 4, 'header and body must drop the SAME column');
+});
+
+test('the season caption replaces the "nothing is running" caption', () => {
+  // The season event has usually ENDED by the time it is the default
+  // (production's closed 2026-06-30), so hasEnded() is true for it and the
+  // old caption would read "Nothing is running right now" above the very
+  // board the screen exists to show. The two flags are mutually exclusive.
+  assert.match(ctxJs, /_endedFallback\s*=\s*\n?\s*!TopochainEvents\.isSeasonAggregate\(pick\)/,
+    'a season pick suppresses the ended-event caption rather than stacking with it');
+  assert.match(ctxJs, /Whole-season standings/, 'the season caption exists');
+  // The caption must key off the SELECTION, not off "pickDefault landed
+  // here": the standings pane's first fetch resolves the default server-side
+  // and writes the id back silently, usually before this module's list lands,
+  // so pickDefault never runs on most real loads. Keying off a flag set in
+  // that branch left the caption missing exactly when it was needed.
+  assert.match(ctxJs, /\$\{isSeason \? `\s*\n\s*<p id="tc-ev-season-note"/,
+    'the caption renders from isSeasonSelected(), not from a default-pick flag');
+  assert.ok(!/_seasonDefault/.test(ctxJs),
+    'the default-pick flag is gone — the selection is the single source of truth');
+  // The picker and the hero must not label the season event "(past)".
+  assert.match(ctxJs, /isSeason \? ' \(season\)'/, 'the option reads (season)');
+  assert.match(ctxJs, /const statusLabel = isSeason \? 'season'/, 'so does the hero badge');
+});
+
 test('both #981 checks survive app-manifest\'s MAX_TESTS cap', () => {
   // The declared checks are a CAPPED resource: src/services/app-manifest.js
   // keeps only the first MAX_TESTS (10) entries and this repo declares 200+,
@@ -401,6 +504,15 @@ test('both #981 checks survive app-manifest\'s MAX_TESTS cap', () => {
   // to the top of the array silently weakens what the older ones pinned.
   assert.match(crossLink.expectSelector, /\[data-standings-tab="challenges"\]/,
     'the shadowing /#leaderboard check must still assert the three-tab strip');
+
+  // #999 rides on this SAME entry rather than declaring its own. The cap is
+  // full of load-bearing checks — every one of the ten is pinned by a suite
+  // like this — so two new entries at the top would have silently pushed the
+  // #911 and #947 home-panel checks out of the parse window and broken their
+  // guards. Same route, one more assertion, nothing displaced: the default
+  // /#leaderboard board must be the whole-season one.
+  assert.equal(crossLink.expectText, 'Whole-season standings',
+    'the /#leaderboard check must also assert the season board is the default');
   assert.match(summary.expectSelector, /#challenges-root:not\(\.hidden\)/,
     'and the shadowing /#leaderboard/challenges check the revealed pane');
 });

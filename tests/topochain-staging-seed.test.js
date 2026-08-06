@@ -144,12 +144,20 @@ test('every INSERT INTO in the seeder has a matching ON CONFLICT guard (idempote
 });
 
 test('fixed ids used throughout live in the obviously-fake 900500+ range', () => {
-  // Every literal 6-digit numeric id in the body should start with 9005,
-  // matching this platform's staging-demo numbering convention.
+  // Every literal 6-digit numeric id in the body should sit in the 900500+
+  // range this block documents for itself (a slice of the platform-wide
+  // 900xxx staging-demo convention — see seedStagingWalletUsers et al).
+  //
+  // The window is 900500-900999, not 9005xx: the per-viewer id blocks start
+  // at 900520 and reserve 20 EACH with no upper bound, so a fourth tester
+  // identity would take 900580-900599. Fixture blocks added after the
+  // viewers therefore have to sit above 900599 to stay clear of that growth
+  // (the season-event snapshots are at 900600+), and pinning 9005xx would
+  // push them back into the collision they were moved out of.
   const sixDigitIds = body.match(/\b9\d{5}\b/g) || [];
   assert.ok(sixDigitIds.length > 20, 'a substantial number of fixed ids are used');
   for (const id of sixDigitIds) {
-    assert.match(id, /^9005\d\d$/, `id ${id} should be in the 900500-900599 staging-demo range`);
+    assert.match(id, /^900[5-9]\d\d$/, `id ${id} should be in the 900500-900999 staging-demo range`);
   }
 });
 
@@ -177,6 +185,56 @@ test('3 season_events: regular (current), type=\'season\', and a fully-past one'
   assert.match(block, /NOW\(\) - INTERVAL '120 days', NOW\(\) - INTERVAL '90 days'/,
     'the third event is entirely in the past');
   assert.match(block, /Finished Sprint/);
+});
+
+test("the type='season' event has STARTED, so it is the default in a preview", () => {
+  // #999: the leaderboard now opens on the season aggregate
+  // (DEFAULT_PUBLIC_EVENT_SQL step 1), which is guarded on
+  // `starts_at <= NOW()`. This fixture used to start at NOW() + 15 days, so
+  // the guard skipped it and a staging preview kept defaulting to the
+  // regular event — i.e. the new default was unreviewable, and a tester
+  // would have seen no change at all. It now spans the season, like
+  // production's own season event.
+  const start = body.indexOf('INSERT INTO season_events');
+  const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
+  // Slice from the fixture's NAME to the end of that VALUES row (the next
+  // row starts with `($4,`) — the row's own description mentions "type=",
+  // so keying off that would match inside the prose.
+  const seasonRow = block.slice(block.indexOf('Season Standings'), block.indexOf('($4, $3,'));
+  assert.match(seasonRow,
+    /NOW\(\) - INTERVAL '60 days', NOW\(\) \+ INTERVAL '30 days'/,
+    'the season event must already have started for the default rule to pick it');
+  assert.doesNotMatch(block, /NOW\(\) \+ INTERVAL '15 days', NOW\(\) \+ INTERVAL '30 days'/,
+    'the old future-only window must be gone');
+});
+
+test('the season event carries its own leaderboard snapshots', () => {
+  // Without rows on the season event the aggregate is just
+  // EVENT_REGULAR + EVENT_ENDED, whose ordering matches the regular event's
+  // own board — so a tester could not tell the season path from the
+  // per-event path, which is exactly the bug being fixed.
+  const blocks = body.split('INSERT INTO leaderboard_snapshots').slice(1);
+  const seasonBlock = blocks.find((b) => b.includes('$7, $6, 1, 4200'));
+  assert.ok(seasonBlock, 'a snapshot block must target the season event');
+  const rows = seasonBlock.slice(0, seasonBlock.indexOf('ON CONFLICT'));
+
+  // Two snapshot times, so the "latest snapshot per (user, event)" rule the
+  // aggregate depends on (standings.js's DISTINCT ON) is genuinely
+  // exercised on this event — the earlier totals are strictly lower, so a
+  // rule that picked the wrong row would visibly under-count. Both times
+  // reuse the regular block's own interpolated constants.
+  assert.equal((rows.match(/\$\{EARLIER_SNAPSHOT\}/g) || []).length, 6);
+  assert.equal((rows.match(/\$\{LATER_SNAPSHOT\}/g) || []).length, 6);
+
+  // The podium-EXCLUDED fixture user leads on POINTS (4600 -> 5200 season
+  // total) so the "—" rank, the non-podium tag and the home widget's
+  // podium-skip all stay reachable on the DEFAULT board, not just on the
+  // regular event's.
+  assert.match(rows, /\$7, \$1, 1, 4600/,
+    'seasonWide1 (exclude_podium) must top the season board on points');
+  // ...and `mixed`, third on the regular event, tops the season podium — so
+  // "the default board changed" is provable from the preview alone.
+  assert.match(rows, /\$7, \$6, 1, 4200/);
 });
 
 test('4 challenge_kinds', () => {

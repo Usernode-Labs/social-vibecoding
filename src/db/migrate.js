@@ -8282,9 +8282,9 @@ async function seedStagingTopochain(pool, config) {
           '{"metrics": [], "offchain_weight": 1}'::jsonb, 100, 130, FALSE, TRUE,
           NOW() - INTERVAL '45 days', NOW() + INTERVAL '15 days', FALSE,
           'staging-demo-chain-1', TRUE, 'regular', NOW(), NOW()),
-         ($2, $3, 'Staging Demo Event — Season Wrap-up',
-          'type=''season'' event fixture (season-level wrap-up, not epoch-scored).',
-          NOW() + INTERVAL '15 days', NOW() + INTERVAL '30 days', TRUE,
+         ($2, $3, 'Staging Demo Event — Season Standings',
+          'type=''season'' event fixture: its standings are the WHOLE season''s aggregate (computeStandings), not one event''s snapshots. Spans the season like production''s own season event, so it is the DEFAULT the leaderboard opens on — see DEFAULT_PUBLIC_EVENT_SQL step 1.',
+          NOW() - INTERVAL '60 days', NOW() + INTERVAL '30 days', TRUE,
           '{"metrics": [], "offchain_weight": 1}'::jsonb, NULL, NULL, FALSE, TRUE,
           NULL, NULL, FALSE, NULL, FALSE, 'season', NOW(), NOW()),
          ($4, $3, 'Staging Demo Event — Finished Sprint',
@@ -8605,6 +8605,67 @@ async function seedStagingTopochain(pool, config) {
        USERS.eventB1, USERS.mixed, EVENT_REGULAR_ID, SEASON_ID, EVENT_ENDED_ID]
     );
 
+    // ─── Leaderboard snapshots for the SEASON event (2 snapshot times x 6
+    // users) ────────────────────────────────────────────────────────────
+    //
+    // Why this block exists (issue #999): the leaderboard now DEFAULTS to
+    // the season-level aggregate (DEFAULT_PUBLIC_EVENT_SQL step 1), so the
+    // season board is the first thing a staging preview paints. Without
+    // rows here the aggregate was just EVENT_REGULAR + EVENT_ENDED, whose
+    // ordering matches the regular event's own board — a tester could not
+    // tell the season path from the per-event path, which is precisely the
+    // bug being fixed.
+    //
+    // The numbers are chosen so the preview proves three things at a glance:
+    //
+    //   1. THE SEASON BOARD IS A DIFFERENT BOARD. `mixed` sits third on
+    //      EVENT_REGULAR (200 pts) and tops the season board (4700) —
+    //      so "the default changed" is visible without opening the picker.
+    //   2. SEASON TOTALS DWARF ANY SINGLE EVENT'S. Four figures here
+    //      against three on every per-event board, mirroring production
+    //      (67973.66 season vs 1900.00 on one sub-event).
+    //   3. THE PODIUM-EXCLUDED ROW STILL BEHAVES. `seasonWide1`
+    //      (exclude_podium = TRUE) leads on POINTS (5200) but must render
+    //      with a "—" rank and the non-podium tag, and the home widget's
+    //      fill must skip it when picking its three podium rows. Seeded
+    //      high for the same reason it is seeded high on EVENT_REGULAR:
+    //      mid-table, neither behaviour is reachable by looking.
+    //
+    // Two snapshot times, like the regular event's block above, so the
+    // "latest snapshot per (user, event)" rule the aggregate depends on
+    // (standings.js's DISTINCT ON) is genuinely exercised on this event —
+    // the EARLIER totals below are strictly lower, so a rule that picked
+    // the wrong row would visibly under-count.
+    //
+    // ids: 900500-900516 is used above, and the viewer blocks below start at
+    // 900520 with 20 reserved PER VIEWER — an open-ended range (a fourth
+    // tester identity would take 900580-900599). So this block sits clear of
+    // it at 900600-900611 rather than immediately after today's last viewer,
+    // which a new viewer would silently grow into and ON CONFLICT (id) would
+    // swallow.
+    await pool.query(
+      `INSERT INTO leaderboard_snapshots
+         (id, season_event_id, user_id, rank, total_points, extra_points,
+          snapshot_at, season_id, created_at, updated_at)
+       VALUES
+         (900600, $7, $6, 1, 2100, 0, ${EARLIER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900601, $7, $4, 2, 1200, 0, ${EARLIER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900602, $7, $3, 3, 1100, 0, ${EARLIER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900603, $7, $5, 4,  400, 0, ${EARLIER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900604, $7, $2, 5,  150, 0, ${EARLIER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900605, $7, $1, 1, 2300, 0, ${EARLIER_SNAPSHOT}, $8, NOW(), NOW()),
+         -- Later snapshot: the one the aggregate actually sums.
+         (900606, $7, $6, 1, 4200, 0, ${LATER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900607, $7, $4, 2, 2500, 0, ${LATER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900608, $7, $3, 3, 2400, 0, ${LATER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900609, $7, $5, 4,  900, 0, ${LATER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900610, $7, $2, 5,  300, 0, ${LATER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900611, $7, $1, 1, 4600, 0, ${LATER_SNAPSHOT}, $8, NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`,
+      [USERS.seasonWide1, USERS.seasonWide2, USERS.eventA1, USERS.eventA2,
+       USERS.eventB1, USERS.mixed, EVENT_SEASON_ID, SEASON_ID]
+    );
+
     // ─── Epoch stats (3 epochs x 3 wallets = 9 rows) — one wallet per
     // linked user (eventA1, eventB1), plus one wallet-only row (user_id
     // NULL, matching the unassigned account 900503's address) proving the
@@ -8746,7 +8807,10 @@ async function seedStagingTopochain(pool, config) {
     // another identity appears or disappears between boots — that would
     // re-insert its rows under fresh ids and defeat ON CONFLICT (id).
     // 900500-900516 is fully used above, so the viewers start at 900520
-    // with a 20-wide block each. Twenty, not ten: the home-panel fixtures
+    // with a 20-wide block each — three names, so through 900579, and the
+    // range is deliberately open-ended. (The season-event snapshot block
+    // above sits at 900600+, clear of any viewer growth, for that reason.)
+    // Twenty, not ten: the home-panel fixtures
     // below need fourteen user_activities rows per viewer (five of them
     // just to credit the 5-of-5 challenge), and a block that overflows into
     // its neighbour is silently swallowed by ON CONFLICT (id) rather than
