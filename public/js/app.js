@@ -3009,7 +3009,20 @@ const App = {
         const profileUser = parts[1] === 'users' && parts[2]
           ? decodeURIComponent(parts[2])
           : null;
-        App.navigateToLeaderboard(parts[1], profileUser);
+        // #leaderboard/challenges/<eventId>[/<challengeId>] (#982) — the
+        // address the profile's completed-challenge rows link to. The
+        // event id is part of the path because a challenge id alone is
+        // meaningless: the challenge list is fetched per season event, so
+        // without it the router would have to guess which event to load.
+        // Non-numeric segments resolve to null and the whole target is
+        // dropped, leaving a plain #leaderboard/challenges navigation.
+        const challengeTarget = parts[1] === 'challenges' && parts[2]
+          ? {
+            eventId: App._numericSegment(parts[2]),
+            challengeId: App._numericSegment(parts[3]),
+          }
+          : null;
+        App.navigateToLeaderboard(parts[1], profileUser, challengeTarget);
         return;
       }
       if (parts[0] === 'challenges') {
@@ -3397,7 +3410,17 @@ const App = {
   // primary standings tab), 'kudos' and 'challenges' select a whole
   // section instead. `profileUser` (#60) opens the per-user PR profile
   // drill-in instead of a plain tab.
-  navigateToLeaderboard(sub, profileUser) {
+  // A hash segment that must be a positive integer id, or nothing. Returns
+  // null for anything else (empty, '12abc', '-1', a username) so a
+  // hand-typed or truncated address degrades to the plain screen rather
+  // than sending NaN into a fetch URL.
+  _numericSegment(raw) {
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isInteger(n) && n > 0 ? n : null;
+  },
+
+  navigateToLeaderboard(sub, profileUser, challengeTarget) {
     // Already mounted: an in-screen change (a tab, the deep-linked
     // section, a user drill-in), not a screen entry — hand it to the
     // module instead of replaying the whole swap. Same idiom as
@@ -3410,7 +3433,7 @@ const App = {
     // page is captured, which is exactly how the incoming screen ended
     // up painted behind its own entry animation.
     if (App._inLeaderboard && window.Leaderboard?.isOpen?.()) {
-      App._routeLeaderboard(sub, profileUser);
+      App._routeLeaderboard(sub, profileUser, challengeTarget);
       if (window.Leaderboard?.open) Leaderboard.open();
       return;
     }
@@ -3437,7 +3460,7 @@ const App = {
       App.setHeaderTitle('Leaderboard');
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
     App._inLeaderboard = true;
-    App._routeLeaderboard(sub, profileUser);
+    App._routeLeaderboard(sub, profileUser, challengeTarget);
     if (window.Leaderboard?.open) Leaderboard.open();
   },
 
@@ -3447,11 +3470,21 @@ const App = {
   // _setSub clears profile state and would replaceState the profile hash
   // away. When the screen is already open they re-render in place; the
   // open() each caller runs afterwards dedupes the in-flight load.
-  _routeLeaderboard(sub, profileUser) {
+  _routeLeaderboard(sub, profileUser, challengeTarget) {
     if (profileUser && window.Leaderboard?.openProfile) {
       Leaderboard.openProfile(profileUser);
     } else if ((sub === 'topochain' || sub === 'kudos' || sub === 'challenges')
                && window.Leaderboard?._setSection) {
+      // Register the challenge deep link BEFORE the section mounts (#982).
+      // Selecting the event first means the pane's very first fetch is
+      // already for the right event — ordering it after _setSection would
+      // load the default event, then throw that list away and reload.
+      if (sub === 'challenges' && challengeTarget
+          && window.TopochainChallenges?.openFromHash) {
+        TopochainChallenges.openFromHash(
+          challengeTarget.eventId, challengeTarget.challengeId
+        );
+      }
       Leaderboard._setSection(sub);
     } else if (sub && window.Leaderboard?._setSub) {
       Leaderboard._setSub(sub);

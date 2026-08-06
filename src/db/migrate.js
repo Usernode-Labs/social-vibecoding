@@ -8083,26 +8083,28 @@ async function seedStagingArchiveProposalFixtures(pool, config) {
 async function seedStagingTopochain(pool, config) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
+  // ─── IDs (one constant block per table; see header comment) ──────────
+  // Declared at function scope, not inside the try below, because the two
+  // sections that follow are separate failure domains and both need them.
+  const SEASON_ID = 900500;
+  const EVENT_REGULAR_ID = 900500; // season_events — type 'regular'
+  const EVENT_SEASON_ID = 900501;  // season_events — type 'season'
+  // Fully-past event. The two above both span "now", so without this one
+  // the between-events fallback (public/js/topochain-events.js) can never
+  // fire in a preview — pick it from the leaderboard's event picker to
+  // see the "Nothing is running right now" state.
+  const EVENT_ENDED_ID = 900502;
+
+  const USERS = {
+    seasonWide1: 900500, // exclude_podium = TRUE
+    seasonWide2: 900501,
+    eventA1: 900502,
+    eventA2: 900503,
+    eventB1: 900504,
+    mixed: 900505, // event-scoped AND season-wide enrollment; real password
+  };
+
   try {
-    // ─── IDs (one constant block per table; see header comment) ──────
-    const SEASON_ID = 900500;
-    const EVENT_REGULAR_ID = 900500; // season_events — type 'regular'
-    const EVENT_SEASON_ID = 900501;  // season_events — type 'season'
-    // Fully-past event. The two above both span "now", so without this one
-    // the between-events fallback (public/js/topochain-events.js) can never
-    // fire in a preview — pick it from the leaderboard's event picker to
-    // see the "Nothing is running right now" state.
-    const EVENT_ENDED_ID = 900502;
-
-    const USERS = {
-      seasonWide1: 900500, // exclude_podium = TRUE
-      seasonWide2: 900501,
-      eventA1: 900502,
-      eventA2: 900503,
-      eventB1: 900504,
-      mixed: 900505, // event-scoped AND season-wide enrollment; real password
-    };
-
     // ─── Users (6) ─────────────────────────────────────────────────────
     // Sentinel password for five of the six (never-login fixtures, same
     // idiom as seedStagingWalletUsers); the sixth gets a real bcrypt hash
@@ -8530,21 +8532,35 @@ async function seedStagingTopochain(pool, config) {
     );
 
     // ─── App version config (1 per OS) ─────────────────────────────────
+    // The only table in this seed whose natural key can already be taken by
+    // CLONED PRODUCTION DATA: `app_version_configs.os` is UNIQUE, and a real
+    // deployment has an 'ios'/'android' row under its own serial id. Every
+    // other fixture here is keyed on a value nothing but this seed invents
+    // (900500+ ids, 'staging-demo-*' names), so `ON CONFLICT (id)` covers
+    // them. Here it does not: the conflict fires on os, not on id, and an
+    // unhandled one aborts the whole seed — which is exactly what happened
+    // in staging, silently emptying every viewer-facing topochain surface
+    // seeded after this point. So skip the row when the OS is already
+    // configured, and keep the id arbiter for the plain re-boot case.
     await pool.query(
       `INSERT INTO app_version_configs
          (id, os, min_build_number, recommended_build_number, current_version,
           is_active, should_update_message, update_url, created_at, updated_at)
-       VALUES
+       SELECT v.id, v.os, v.min_build, v.rec_build, v.version, v.is_active,
+              v.message, v.url, NOW(), NOW()
+         FROM (VALUES
          (900500, 'ios', 100, 110, '1.4.0', TRUE,
-          'A new version is available.', 'https://staging-demo.example.invalid/ios',
-          NOW(), NOW()),
+          'A new version is available.', 'https://staging-demo.example.invalid/ios'),
          -- Deliberately INACTIVE: with no active row for an OS the version
          -- gate is off for it (every build is told it is up to date), and
          -- the admin screen's "No active version rule for Android" warning
          -- is only reviewable in a preview if one OS is left in that state.
          (900501, 'android', 90, 95, '1.4.0', FALSE,
-          'A new version is available.', 'https://staging-demo.example.invalid/android',
-          NOW(), NOW())
+          'A new version is available.', 'https://staging-demo.example.invalid/android')
+              ) AS v(id, os, min_build, rec_build, version, is_active, message, url)
+        WHERE NOT EXISTS (
+                SELECT 1 FROM app_version_configs x WHERE x.os = v.os
+              )
        ON CONFLICT (id) DO NOTHING`
     );
 
@@ -8571,6 +8587,19 @@ async function seedStagingTopochain(pool, config) {
       [USERS.eventA1, USERS.eventA2, USERS.mixed, SEASON_ID]
     );
 
+    log.info('db', 'Topochain staging fixtures seeded', { seasonId: SEASON_ID });
+  } catch (err) {
+    log.warn('db', 'Topochain staging fixtures seeding failed', { message: err.message });
+  }
+
+  // A SECOND failure domain, deliberately. Everything above is a catalogue
+  // nobody signs in as; everything below is what the SIGNED-IN tester sees.
+  // Sharing one try/catch made a single conflicting catalogue row (see the
+  // app_version_configs note above) empty the viewer's profile, leaderboard
+  // and challenge screens all at once, and the only trace was one warn line
+  // — the screens themselves just looked like an unfinished feature. Split,
+  // a catalogue failure costs the fixture users and nothing else.
+  try {
     // ─── The staging VIEWER's own topochain rows ───────────────────────
     // Everything above belongs to six fixture users nobody logs in as. The
     // #profile screen renders the SIGNED-IN user (the /challenges-api/me/*
@@ -8747,9 +8776,13 @@ async function seedStagingTopochain(pool, config) {
       );
     }
 
-    log.info('db', 'Topochain staging fixtures seeded', { seasonId: SEASON_ID });
+    log.info('db', 'Topochain staging viewer credits seeded', {
+      viewers: viewerRows.length,
+    });
   } catch (err) {
-    log.warn('db', 'Topochain staging fixtures seeding failed', { message: err.message });
+    log.warn('db', 'Topochain staging viewer-credit seeding failed', {
+      message: err.message,
+    });
   }
 }
 

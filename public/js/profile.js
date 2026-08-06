@@ -426,8 +426,10 @@ const Profile = {
     for (const c of rows) {
       // A real anchor, not a click handler: this is a navigation, so it
       // gets middle-click, long-press-to-copy and the back gesture for
-      // free. The target lands on the Challenges tab today and opens that
-      // specific challenge once the deep-link follow-up ships.
+      // free. The event id rides in the path because the Challenges pane
+      // fetches per season event — see App._routeLeaderboard and
+      // TopochainChallenges.openFromHash, which select that event and then
+      // open this challenge's detail overlay once its grid paints.
       const card = Profile._el('a',
         'rounded-xl border border-zinc-200 dark:border-zinc-800 p-3 mb-2 ' +
         'flex items-center gap-3 hover:bg-zinc-50 dark:hover:bg-zinc-900 ' +

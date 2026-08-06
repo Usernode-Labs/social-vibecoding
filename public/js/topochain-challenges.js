@@ -66,9 +66,18 @@ const TopochainChallenges = {
   _mine: new Map(),
   // Unsubscribe handle from TopochainEventContext.onChange.
   _unsub: null,
+  // The event id `_challenges` was last loaded for. `undefined` until the
+  // first load, which is deliberately distinct from the `null` a pane with
+  // no resolvable event settles on.
+  _loadedEventId: undefined,
   // True once the ?shot=challenge-detail deep link has fired, so a later
   // re-render (event switch, personalization landing) doesn't reopen it.
   _shotFired: false,
+  // Pending #leaderboard/challenges/<eventId>/<challengeId> request (#982),
+  // as { eventId, challengeId }, or null. Held rather than acted on
+  // immediately because the router registers it before the pane has
+  // mounted, let alone fetched the event's challenge list.
+  _pendingDeepLink: null,
 
   // Challenge detail overlay state. `_detailChallenge` is the clicked
   // challenge-grid item (already carries card_preview/detail_modal); the
@@ -132,10 +141,18 @@ const TopochainChallenges = {
   open() {
     TopochainChallenges._open = true;
     TopochainChallenges._renderShell();
-    // The event bar owns the selection; re-render whenever it changes.
+    // The event bar owns the selection; re-render whenever it CHANGES.
+    // Not on every notification: the bar also notifies once at the end of
+    // its own initial loadEvents(), and that one carries the same event
+    // this pane already loaded. Treating it as a change tore down whatever
+    // was on top of the grid a beat after it opened — which is how the
+    // #982 deep link ended up rendering the right detail panel and then
+    // closing it unprompted, and would do the same to an overlay the user
+    // opened by hand.
     if (window.TopochainEventContext?.onChange) {
       TopochainChallenges._unsub = TopochainEventContext.onChange(() => {
         if (!TopochainChallenges._open) return;
+        if (TopochainChallenges._eventId() === TopochainChallenges._loadedEventId) return;
         TopochainChallenges.closeChallengeDetail();
         TopochainChallenges.closeUserProfile();
         TopochainChallenges.loadChallenges();
@@ -148,6 +165,10 @@ const TopochainChallenges = {
     TopochainChallenges._open = false;
     TopochainChallenges._detailChallenge = null;
     TopochainChallenges._profileUserId = null;
+    // An unresolved deep link dies with the screen. Keeping it would make a
+    // much later, unrelated visit to this pane pop an overlay the user
+    // never asked for.
+    TopochainChallenges._pendingDeepLink = null;
     if (TopochainChallenges._unsub) {
       TopochainChallenges._unsub();
       TopochainChallenges._unsub = null;
@@ -190,6 +211,10 @@ const TopochainChallenges = {
 
   async loadChallenges() {
     const eventId = TopochainChallenges._eventId();
+    // The event `_challenges` reflects (or is being fetched for). The
+    // onChange subscriber above compares against it to tell a real event
+    // switch apart from a redundant re-notification.
+    TopochainChallenges._loadedEventId = eventId;
     if (eventId == null) {
       TopochainChallenges._challenges = [];
       TopochainChallenges._challengesLoading = false;
@@ -286,7 +311,13 @@ const TopochainChallenges = {
       host.innerHTML = '<p class="text-sm text-zinc-500">Loading challenges…</p>';
       return;
     }
+    // Both terminal empty states retire a pending deep link (#982) on the
+    // way out, via the same guards the populated path uses — an empty
+    // `ordered` simply matches nothing. Neither state can ever resolve one,
+    // and leaving it armed would fire it against whatever event the viewer
+    // picks next.
     if (TopochainChallenges._challengesError) {
+      TopochainChallenges._maybeDeepLink([]);
       host.innerHTML = `
         <div class="rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 text-red-700 dark:text-red-300 px-4 py-3 text-sm">
           ${esc(TopochainChallenges._challengesError)}
@@ -294,6 +325,7 @@ const TopochainChallenges = {
       return;
     }
     if (!TopochainChallenges._challenges.length) {
+      TopochainChallenges._maybeDeepLink([]);
       host.innerHTML = '<p class="text-sm text-zinc-500 py-8 text-center">No challenges for this event yet.</p>';
       return;
     }
@@ -366,6 +398,7 @@ const TopochainChallenges = {
     });
 
     TopochainChallenges._maybeShot(ordered);
+    TopochainChallenges._maybeDeepLink(ordered);
   },
 
   // Screenshot-state deep link (`?shot=challenge-detail`): the detail overlay
@@ -385,6 +418,53 @@ const TopochainChallenges = {
     if (shot !== 'challenge-detail') return;
     TopochainChallenges._shotFired = true;
     TopochainChallenges.openChallengeDetail(ordered[0]);
+  },
+
+  // ── Challenge deep link (#982) ───────────────────────────────────────
+
+  // Entry point for #leaderboard/challenges/<eventId>[/<challengeId>], the
+  // address the profile's completed-challenge rows link to. Called by
+  // App._routeLeaderboard BEFORE the pane mounts, so it can only record the
+  // intent and point the shared event bar at the right event; the detail
+  // overlay opens later, from the render that first paints that event's
+  // grid. A bare eventId (no challenge) is a valid, useful address too —
+  // it just selects the event.
+  openFromHash(eventId, challengeId) {
+    const ev = Number.isInteger(eventId) ? eventId : null;
+    const ch = Number.isInteger(challengeId) ? challengeId : null;
+    if (ev == null && ch == null) return;
+    if (ch != null) TopochainChallenges._pendingDeepLink = { eventId: ev, challengeId: ch };
+    // select() is a no-op when the event is already the selected one, so
+    // this neither reloads nor re-renders in the common "already looking at
+    // this event" case — which is exactly why the grid below may already be
+    // painted and needs resolving here rather than waiting for a render
+    // that will never come.
+    if (ev != null && window.TopochainEventContext?.select) {
+      TopochainEventContext.select(ev);
+    }
+    if (TopochainChallenges._open) {
+      TopochainChallenges._maybeDeepLink(TopochainChallenges._ordered());
+    }
+  },
+
+  // Resolve a pending deep link against a freshly painted grid. Consumed
+  // ONCE, whether or not the challenge is there: an id that doesn't exist
+  // (deleted challenge, hand-edited hash, wrong event) leaves the viewer on
+  // the grid with no overlay and no error, which is the honest answer —
+  // the challenges they CAN open are all on screen.
+  _maybeDeepLink(ordered) {
+    const want = TopochainChallenges._pendingDeepLink;
+    if (!want) return;
+    // Mid-reload the grid still holds the PREVIOUS event's rows (see
+    // loadChallenges), and matching against those could open the wrong
+    // event's challenge — or, worse, silently burn the link on a list the
+    // target was never in. Wait for the render that belongs to it.
+    if (TopochainChallenges._challengesLoading) return;
+    if (want.eventId != null
+        && TopochainChallenges._eventId() !== want.eventId) return;
+    TopochainChallenges._pendingDeepLink = null;
+    const match = ordered.find((c) => c && Number(c.id) === want.challengeId);
+    if (match) TopochainChallenges.openChallengeDetail(match);
   },
 
   // ── Challenge detail overlay ─────────────────────────────────────────
