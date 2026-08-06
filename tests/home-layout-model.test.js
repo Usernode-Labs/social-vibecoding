@@ -37,7 +37,7 @@ const SCHEMA = read('src/db/schema.sql');
 
 // The registry the server serves, mirroring PANEL_REGISTRY.
 const REGISTRY = [
-  { key: 'challenges', title: 'Challenges', removable: true, sizes: { 4: [4, 2], 5: [2, 2] } },
+  { key: 'challenges', title: 'Challenges', removable: true, sizes: { 4: [4, 1], 5: [2, 2] } },
   { key: 'discover', title: 'Discover', removable: false, sizes: { 4: [4, 1], 5: [2, 2] } },
   { key: 'create', title: 'Create app', removable: true, sizes: { 4: [4, 1], 5: [1, 1] } },
 ];
@@ -83,13 +83,146 @@ test('the module is loaded before its consumers and precached', () => {
 test('sizeOf reads the registry per column count; apps are always 1x1', () => {
   assert.deepEqual(HomeLayout.sizeOf(A('a', 0, 0), 5), [1, 1]);
   assert.deepEqual(HomeLayout.sizeOf(W('challenges', 0, 0), 5), [2, 2]);
-  assert.deepEqual(HomeLayout.sizeOf(W('challenges', 0, 0), 4), [4, 2], 'full width on a phone');
+  assert.deepEqual(HomeLayout.sizeOf(W('challenges', 0, 0), 4), [4, 1],
+    'full width, and one row tall, on a phone (#968)');
   assert.deepEqual(HomeLayout.sizeOf(W('create', 0, 0), 5), [1, 1], 'one cell on desktop');
   assert.deepEqual(HomeLayout.sizeOf(W('create', 0, 0), 4), [4, 1],
     'a full-width row of its own on a phone');
   // A widget this client has never heard of degrades to a small tile rather
   // than throwing — a server may ship a new widget before the client knows it.
   assert.deepEqual(HomeLayout.sizeOf(W('from-the-future', 0, 0), 5), [1, 1]);
+});
+
+// ── Fit rows (#968) ───────────────────────────────────────────────────
+//
+// Which rows may size to their CONTENT rather than to one app-grid cell.
+// Pure geometry over the layout: no DOM, no CSS, no measurement — the caller
+// turns the answer into track sizes. The model itself is untouched by this,
+// which is exactly what keeps occupancy/repair/reflow/the server's overlap
+// check working in whole cells.
+
+test('the challenges row fits on a phone, and only on a phone', () => {
+  const layout = [W('challenges', 0, 0), A('a', 0, 1)];
+  assert.deepEqual([...HomeLayout.fitRows(layout, 4)], [0]);
+  assert.deepEqual([...HomeLayout.fitRows(layout, 5)], [],
+    'at five columns it is a tile among app icons and a short row is a notch');
+});
+
+test('a row holding an app tile never fits, even beside a fit widget', () => {
+  // The guard that matters: a card with no status caption is ~100px, so a
+  // content-sized track would shrink the row under it — and that caption lane
+  // is the only status signal an errored tile has.
+  assert.deepEqual([...HomeLayout.fitRows([A('a', 0, 0)], 4)], []);
+  // A hypothetical narrow fit widget sharing its row with a tile: the row is
+  // disqualified whichever order they appear in.
+  const shared = [W('challenges', 0, 0), A('a', 0, 0)];
+  assert.deepEqual([...HomeLayout.fitRows(shared, 4)], []);
+  assert.deepEqual([...HomeLayout.fitRows(shared.slice().reverse(), 4)], []);
+});
+
+test('a hole is not a fit row — it has no content to size to', () => {
+  // Scoped to fitRows: an empty row has nothing to measure, so it is never
+  // reported here. Its height is blankRows' business (#975, below) — and even
+  // there it only shrinks, never moves: an empty row is an arrangement the
+  // viewer chose and a cell they can still drop into.
+  const layout = [W('challenges', 0, 0), A('a', 0, 3)];
+  assert.deepEqual([...HomeLayout.fitRows(layout, 4)], [0], 'rows 1 and 2 are not fit rows');
+});
+
+test('a non-fit widget disqualifies the rows it covers', () => {
+  const layout = [W('discover', 0, 0), W('challenges', 0, 1)];
+  assert.deepEqual([...HomeLayout.fitRows(layout, 4)], [1]);
+  assert.ok(!HomeLayout.FIT_KEYS.has('discover'),
+    'Discover opts out for now — its lane is sized against a definite band');
+});
+
+test('an overflow item is off-canvas and cannot fit a row', () => {
+  const layout = [{ type: 'widget', key: 'challenges', col: 0, row: HomeLayout.MAX_ROWS }];
+  assert.deepEqual([...HomeLayout.fitRows(layout, 4)], []);
+  assert.equal(HomeLayout.lastOccupiedRow(layout, 4), -1);
+});
+
+// ── Blank rows (#975) ─────────────────────────────────────────────────
+//
+// Which rows draw at half a cell because there is nothing in them. Same
+// containment as fit rows: a pixel height for one grid track, phone only, with
+// the model answering in whole cells throughout.
+
+test('an empty row between items is blank on a phone, and only on a phone', () => {
+  const layout = [W('challenges', 0, 0), A('a', 0, 1), A('b', 0, 3)];
+  assert.deepEqual([...HomeLayout.blankRows(layout, 4)], [2]);
+  assert.deepEqual([...HomeLayout.blankRows(layout, 5)], [],
+    'at five columns a row is shared with app icons and a short one is a notch');
+});
+
+test('blank rows stop at the last occupied row — trailing rows are not tracks', () => {
+  // rowTemplate emits entries 0..lastOccupiedRow. Naming a row past that could
+  // only push it into declaring the whole eight-row canvas, which is what pads
+  // a three-app home screen out with a tail of empty tracks.
+  const layout = [A('a', 0, 0), A('b', 0, 2)];
+  assert.deepEqual([...HomeLayout.blankRows(layout, 4)], [1]);
+  assert.equal(HomeLayout.lastOccupiedRow(layout, 4), 2);
+});
+
+test('a PARTLY empty row is not blank — the tile in it needs its whole cell', () => {
+  // One tile and three gaps is a full row: a card with no status caption is
+  // ~100px and that caption lane is load-bearing.
+  assert.deepEqual([...HomeLayout.blankRows([A('a', 0, 0), A('b', 0, 2)], 4)], [1]);
+  assert.deepEqual([...HomeLayout.blankRows([A('a', 2, 0)], 4)], [],
+    'a single tile in column 2 still owns its row');
+});
+
+test('an empty canvas has no blank rows — there is no template at all', () => {
+  assert.deepEqual([...HomeLayout.blankRows([], 4)], []);
+  assert.deepEqual([...HomeLayout.blankRows([A('a', 0, 0)], 4)], []);
+  // Overflow items are off-canvas, so a layout of nothing but overflow is an
+  // empty canvas as far as this is concerned.
+  const overflow = [{ type: 'app', slug: 'a', col: 0, row: HomeLayout.MAX_ROWS }];
+  assert.deepEqual([...HomeLayout.blankRows(overflow, 4)], []);
+});
+
+test('a widget taller than one row covers the rows it spans', () => {
+  // Desktop footprints are 2 rows, so this is really a statement about the
+  // spanning arithmetic: sizeOf's height, not just item.row, decides occupancy.
+  const layout = [W('challenges', 0, 0), A('a', 0, 3)];
+  assert.deepEqual([...HomeLayout.blankRows(layout, 4)], [1, 2],
+    'one row tall on a phone, so rows 1 and 2 are both empty');
+});
+
+test('blankRows and fitRows are disjoint, always', () => {
+  // By construction — a fit row needs at least one item, a blank row needs
+  // none — and rowTemplate reads both, so an overlap would be an ambiguous
+  // track. Checked over an assortment rather than argued about in a comment.
+  const layouts = [
+    [W('challenges', 0, 0), A('a', 0, 1), A('b', 0, 4)],
+    [W('discover', 0, 0), W('challenges', 0, 2)],
+    [A('a', 0, 0), A('b', 3, 0), W('create', 0, 5)],
+    [W('challenges', 0, 3)],
+    [],
+  ];
+  for (const layout of layouts) {
+    const fit = HomeLayout.blankRows(layout, 4);
+    for (const row of HomeLayout.fitRows(layout, 4)) {
+      assert.ok(!fit.has(row), `row ${row} cannot be both fit and blank`);
+    }
+  }
+});
+
+test('PHONE_COLS is the one number both short-row rules gate on', () => {
+  assert.equal(HomeLayout.PHONE_COLS, 4);
+  assert.equal(HomeLayout.PHONE_COLS, HomeLayout.columnsForWidth(390),
+    'and it is the count a phone actually renders');
+});
+
+test('lastOccupiedRow bounds the template to the rows that exist', () => {
+  // Home.rowTemplate emits exactly this many entries. One more and the rows
+  // become EXPLICIT tracks, which exist whether or not anything is in them —
+  // a three-app home screen would grow a tail of empty rows.
+  assert.equal(HomeLayout.lastOccupiedRow([], 4), -1);
+  assert.equal(HomeLayout.lastOccupiedRow([W('challenges', 0, 0)], 4), 0);
+  assert.equal(HomeLayout.lastOccupiedRow([W('challenges', 0, 0), A('a', 0, 5)], 4), 5);
+  // A 2x2 widget on desktop occupies the row below its own cell too.
+  assert.equal(HomeLayout.lastOccupiedRow([W('challenges', 0, 3)], 5), 4);
 });
 
 // ── deriveDefault ─────────────────────────────────────────────────────

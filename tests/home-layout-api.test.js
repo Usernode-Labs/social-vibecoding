@@ -261,9 +261,17 @@ test('PUT rejects a footprint that runs off the canvas', async () => {
     { cols: 5, items: [W('challenges', 4, 0)] })).status, 400);
   assert.equal((await put(app, '/api/home-layout',
     { cols: 5, items: [W('challenges', 3, 0)] })).status, 200);
-  // ...and 4x2 at four columns can only start at 0, on rows 0-6.
+  // ...and the HEIGHT overhang is checked the same way: 2x2 on row 7 needs a
+  // ninth row the canvas does not have.
   assert.equal((await put(app, '/api/home-layout',
-    { cols: 4, items: [W('challenges', 0, 7)] })).status, 400);
+    { cols: 5, items: [W('challenges', 3, 7)] })).status, 400);
+  // At four columns challenges is 4x1 (#968), so column 0 is the only column
+  // it can start in — and the LAST row is now a legal home for it, which the
+  // two-row footprint's own last row never was.
+  assert.equal((await put(app, '/api/home-layout',
+    { cols: 4, items: [W('challenges', 1, 0)] })).status, 400);
+  assert.equal((await put(app, '/api/home-layout',
+    { cols: 4, items: [W('challenges', 0, 7)] })).status, 200);
 });
 
 // The server checks overlap against ITS OWN footprints, so a patched client

@@ -32,6 +32,14 @@
     _infoPromise: null,
 
     // Resolves { version, capabilities: [...] } — never rejects.
+    //
+    // Concurrent callers share ONE in-flight probe, but a DEGRADED answer
+    // (the bridge's marker for a probe that timed out or errored inside
+    // the app) is never memoised: caching it would hide every
+    // capability-gated row — the Settings → Usernode app section included —
+    // for the rest of the document over one cold-start hiccup (issue #978).
+    // Same discipline prepareWebLogout() already applies to a version-0
+    // probe below.
     getInfo() {
       if (NativeChrome._infoPromise) return NativeChrome._infoPromise;
       const bridge = window.usernode;
@@ -39,18 +47,42 @@
           typeof bridge.getBridgeInfo !== 'function') {
         NativeChrome._infoPromise =
           Promise.resolve({ version: 0, capabilities: [] });
-      } else {
-        NativeChrome._infoPromise = bridge.getBridgeInfo().catch(() => (
-          { version: 0, capabilities: [] }
-        ));
+        return NativeChrome._infoPromise;
       }
-      return NativeChrome._infoPromise;
+      const probe = bridge.getBridgeInfo().catch(() => (
+        { version: 0, capabilities: [], degraded: true }
+      )).then((info) => {
+        if (info && info.degraded === true &&
+            NativeChrome._infoPromise === probe) {
+          NativeChrome._infoPromise = null;
+        }
+        return info;
+      });
+      NativeChrome._infoPromise = probe;
+      return probe;
     },
 
     async has(capability) {
       const info = await NativeChrome.getInfo();
       return Array.isArray(info.capabilities) &&
         info.capabilities.includes(capability);
+    },
+
+    // Why the last native chrome read of `method` came back empty. The
+    // bridge's reads resolve a fallback instead of rejecting (so callers
+    // can always await and render "unavailable"), and park the reason
+    // here: { method, kind, message, at } or null. One accessor so
+    // settings.js and maybeShowFirstRunPermissions report identically.
+    lastReadError(method) {
+      const bridge = window.usernode;
+      if (!bridge || typeof bridge.getLastNativeReadError !== 'function') {
+        return null;
+      }
+      try {
+        return bridge.getLastNativeReadError(method) || null;
+      } catch (_) {
+        return null;
+      }
     },
 
     async _initDrawerRows() {
@@ -470,7 +502,15 @@
 
       let state = null;
       try { state = await window.usernode.getSettingsState(); } catch (_) {}
-      if (!state) return;
+      if (!state) {
+        // Silent skip (the permanent Settings rows are the fallback), but
+        // name the reason from the shared record so this and the Settings
+        // section agree on why the read came back empty.
+        const why = NativeChrome.lastReadError('getSettingsState');
+        console.warn('[native-chrome] first-run permissions skipped:',
+          why ? `${why.kind}: ${why.message || 'no message'}` : 'no settings state');
+        return;
+      }
       const perms = state.permissions || {};
       const isAndroid = perms.platform === 'android';
       const needsAlarm = !perms.exactAlarmGranted;

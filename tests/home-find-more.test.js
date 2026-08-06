@@ -375,10 +375,12 @@ test('every widget is one bordered block, sized by the cells it occupies', () =>
   // than sitting at its natural height in the top-left of a 2x2 block.
   assert.match(CSS, /\.home-panel-slot \{[^}]*display: flex/);
   assert.match(CSS, /\.home-panel-slot > \.home-panel,[\s\S]*?width: 100%/);
-  // Footprints come from the server registry, per column count.
-  assert.match(ROUTE, /sizes: \{ 4: \[4, 2\], 5: \[2, 2\] \}/);   // challenges
-  // Discover is ASYMMETRIC (#949): one row on a phone where it is full
-  // width, its original two on desktop where the second is the Popular lane.
+  // Footprints come from the server registry, per column count. Challenges
+  // is ASYMMETRIC (#968): one row on a phone, where a two-row footprint made
+  // its content-height block hand its height to whitespace instead of to the
+  // page; its original two on desktop, where it is a tile among app icons.
+  assert.match(ROUTE, /sizes: \{ 4: \[4, 1\], 5: \[2, 2\] \}/);   // challenges
+  // Discover is ASYMMETRIC (#949) the same way, and for the same reason.
   assert.match(ROUTE, /sizes: \{ 4: \[4, 1\], 5: \[2, 2\] \}/);
   // The create widget is a single desktop cell and a full-width phone ROW.
   assert.match(ROUTE, /sizes: \{ 4: \[4, 1\], 5: \[1, 1\] \}/);   // create

@@ -583,7 +583,13 @@ function topochainPublicRoutes(config) {
       if (!event || event.internal) return fail(res, 404, 'Event not found.');
 
       const { rows } = await pool.query(
+        // `c.completed` is the organiser's "this challenge is over" flag.
+        // The `c.enabled = TRUE` filter below deliberately does NOT exclude
+        // it — a finished challenge is still an enabled row and still
+        // belongs in the list; the flag rides along so the client can group
+        // and count them (buildChallengeListItem publishes it).
         `SELECT c.id, c.season_event_id, c.challenge_template_id, c.enabled,
+                c.completed,
                 c.goal, c.task, c.reward, c.description, c.requirements,
                 c.schedule_start, c.schedule_end, c.reward_logic,
                 c.cta_button, c.cta_label, c.cta_link,

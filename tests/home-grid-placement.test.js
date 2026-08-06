@@ -41,7 +41,7 @@ const LAYOUT_SRC = read('public/js/home-layout.js');
 
 // The registry the server serves, as the client sees it.
 const REGISTRY = [
-  { key: 'challenges', title: 'Challenges', removable: true, sizes: { 4: [4, 2], 5: [2, 2] } },
+  { key: 'challenges', title: 'Challenges', removable: true, sizes: { 4: [4, 1], 5: [2, 2] } },
   { key: 'discover', title: 'Discover', removable: false, sizes: { 4: [4, 1], 5: [2, 2] } },
   { key: 'create', title: 'Create app', removable: true, sizes: { 4: [4, 1], 5: [1, 1] } },
 ];
@@ -387,6 +387,35 @@ test('canPlace accepts occupied targets and self-overlap', () => {
 const CELL_W = 100;
 const CELL_H = 120;
 
+// THE ROW TABLE (#968). Rows are uniform CELL_H unless a test says otherwise:
+// `setRowHeights([120, 60, 120, …])` installs a canvas with a short row in it,
+// the way a phone with a fit row actually renders. Everything that resolves a
+// row — the fake cell rects, the elementFromPoint stub, the assertions — reads
+// this one table, so a test can't accidentally describe two different grids.
+// No gap: tops are the running sum, which keeps the uniform case exactly the
+// arithmetic every existing test in this file was written against.
+let ROW_HEIGHTS = null;
+function setRowHeights(heights) { ROW_HEIGHTS = heights ? heights.slice() : null; }
+function rowHeight(row) {
+  return ROW_HEIGHTS && ROW_HEIGHTS[row] != null ? ROW_HEIGHTS[row] : CELL_H;
+}
+function rowTop(row) {
+  let top = 0;
+  for (let r = 0; r < row; r++) top += rowHeight(r);
+  return top;
+}
+// Which row contains this y, or -1 above/below the canvas.
+function rowAt(y) {
+  for (let r = 0; r < 8; r++) {
+    const top = rowTop(r);
+    if (y >= top && y < top + rowHeight(r)) return r;
+  }
+  return -1;
+}
+// Every test starts on the uniform canvas; a test that installs a table is
+// responsible for nothing else.
+test.beforeEach(() => { setRowHeights(null); });
+
 function makeGridDom(items) {
   const cells = new Map();
   const nodes = new Map();
@@ -408,7 +437,19 @@ function makeGridDom(items) {
         remove: (c) => cell._cls.delete(c),
         contains: (c) => cell._cls.has(c),
       };
-      cell.getBoundingClientRect = () => ({ left: col * CELL_W, top: row * CELL_H });
+      // Rows read their geometry from the table so a NON-UNIFORM canvas can
+      // be exercised (#968): a fit row is as tall as the widget in it, and
+      // _targetCellFor now measures rows rather than assuming one pitch.
+      // `height`/`bottom` are what it measures; the default table is the
+      // uniform grid every other test in this file was written against.
+      cell.getBoundingClientRect = () => {
+        const top = rowTop(row);
+        const height = rowHeight(row);
+        return {
+          left: col * CELL_W, top, height, bottom: top + height,
+          width: CELL_W, right: col * CELL_W + CELL_W,
+        };
+      };
       cells.set(`${col},${row}`, cell);
     }
   }
@@ -743,7 +784,9 @@ test('cellFromPoint reads the overlay’s own cells, never grid arithmetic', () 
 function hitTestCells(h, cols = 5) {
   h.sandbox.document.elementFromPoint = (x, y) => {
     const col = Math.floor(x / CELL_W);
-    const row = Math.floor(y / CELL_H);
+    // Not `Math.floor(y / CELL_H)`: with a fit row on the canvas the rows are
+    // not one pitch apart, so the boundary walk in rowAt IS the hit test.
+    const row = rowAt(y);
     const cell = (col >= 0 && col < cols && row >= 0 && row < 8)
       ? h.dom.cells.get(`${col},${row}`) : null;
     return { closest: (sel) => (sel === '[data-cell]' && cell ? cell : null) };
@@ -804,18 +847,337 @@ test('a 2x2 widget grabbed at its bottom-right lands under the TILE, not the fin
 });
 
 test('a phone-width widget follows the tile’s row, not the finger’s', () => {
-  // 4 columns: Challenges is full-width by two rows, so only the ROW is a real
-  // choice — and dropping a row lower than the tile is the whole bug report.
+  // 4 columns: Challenges is full-width and one row tall (#968), so only the
+  // ROW is a real choice — and dropping a row lower than the tile is the whole
+  // bug report. The finger holds the tile's bottom edge, which is inside the
+  // row BELOW the one the tile is sitting in.
   const layout = [{ type: 'widget', key: 'challenges', col: 0, row: 1 }];
   const h = makePreview(layout, { cols: 4, width: 390 });
   hitTestCells(h, 4);
   const el = h.dom.nodes.get('widget:challenges');
-  const info = ghostInfo(el, { left: 0, top: CELL_H, w: 4, h: 2, grabX: 0.5, grabY: 0.95 });
+  const info = ghostInfo(el, { left: 0, top: CELL_H, w: 4, h: 1, grabX: 0.5, grabY: 1 });
 
   assert.equal(h.Home._cellFromPoint(info.pointerX, info.pointerY).row, 2,
     'the finger is in the tile’s lower row');
   assert.deepEqual({ ...h.Home._targetCellFor(info.pointerX, info.pointerY, info, 4) },
     { col: 0, row: 1 }, 'the block stays where the tile is');
+});
+
+// ── The row template (#968, #975) ─────────────────────────────────────
+//
+// The tracks Home.render writes onto #app-list. Everything about the model is
+// unchanged — this is purely how many pixels one row is given.
+
+// A stand-in for #app-list, which makeHome's document does not have (every
+// other test here drives the geometry directly). Permissive on purpose: the
+// subject is `style.gridTemplateRows`, not the rest of the render.
+function installListEl(h) {
+  const el = {
+    dataset: {}, style: {}, innerHTML: '',
+    classList: { add: () => {}, remove: () => {}, toggle: () => {}, contains: () => false },
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    appendChild: () => {},
+    removeChild: () => {},
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 390, height: 800 }),
+  };
+  h.sandbox.document.getElementById = (id) => (id === 'app-list' ? el : null);
+  return el;
+}
+
+test('the phone template fits the challenges row and leaves the rest alone', () => {
+  const { Home } = makeHome({ width: 390 });
+  const layout = [
+    { type: 'widget', key: 'challenges', col: 0, row: 0 },
+    { type: 'app', slug: 'a', col: 0, row: 1 },
+    { type: 'app', slug: 'b', col: 1, row: 1 },
+  ];
+  const tracks = Home.rowTemplate(layout, 4).split(' ');
+  assert.equal(tracks.length, 2, 'one entry per OCCUPIED row, and no more');
+  assert.match(tracks[0], /^minmax\(4\.25rem,auto\)$|^minmax\(4\.25rem, auto\)$/);
+  assert.equal(tracks[1], 'var(--home-cell-h)', 'the app row keeps its cell');
+});
+
+test('the template stops at the last occupied row, not at the canvas', () => {
+  // Eight entries would make the rows EXPLICIT, and an explicit grid exists
+  // whether or not anything is in it: a three-app home screen would grow a
+  // ~950px tail of empty rows.
+  const { Home } = makeHome({ width: 390 });
+  const layout = [
+    { type: 'widget', key: 'challenges', col: 0, row: 0 },
+    { type: 'app', slug: 'a', col: 0, row: 2 },
+  ];
+  assert.equal(Home.rowTemplate(layout, 4).split(' ').length, 3);
+});
+
+test('no template on desktop or for a canvas with no short row at all', () => {
+  const { Home } = makeHome({ width: 390 });
+  const withWidget = [{ type: 'widget', key: 'challenges', col: 0, row: 0 }];
+  assert.equal(Home.rowTemplate(withWidget, 5), '', 'five columns is untouched');
+  assert.equal(Home.rowTemplate([{ type: 'app', slug: 'a', col: 0, row: 0 }], 4), '',
+    'one full row: nothing to fit, nothing blank, so no template at all');
+  assert.equal(Home.rowTemplate([], 4), '');
+  // A blank row at 5 columns is not short either — the whole rule is phone-only.
+  const gapped = [{ type: 'app', slug: 'a', col: 0, row: 0 },
+    { type: 'app', slug: 'b', col: 0, row: 2 }];
+  assert.equal(Home.rowTemplate(gapped, 5), '');
+});
+
+test('an empty row gets the half-cell track (#975)', () => {
+  const { Home } = makeHome({ width: 390 });
+  const layout = [
+    { type: 'widget', key: 'challenges', col: 0, row: 0 },
+    { type: 'app', slug: 'a', col: 0, row: 1 },
+    { type: 'app', slug: 'b', col: 0, row: 3 },
+  ];
+  assert.deepEqual(Home.rowTemplate(layout, 4).split(' '), [
+    'minmax(4.25rem,auto)',   // the fit widget's own row
+    'var(--home-cell-h)',     // an app tile keeps its whole cell
+    'var(--home-blank-row-h)', // row 2 holds nothing
+    'var(--home-cell-h)',
+  ]);
+});
+
+test('a blank row alone produces a template where there used to be none', () => {
+  // The one behaviour reversal: before #975 a phone layout with no Challenges
+  // widget got no inline template at all, so its gaps were full cells.
+  const { Home } = makeHome({ width: 390 });
+  const layout = [{ type: 'app', slug: 'a', col: 0, row: 0 },
+    { type: 'app', slug: 'b', col: 0, row: 2 }];
+  assert.equal(Home.rowTemplate(layout, 4),
+    'var(--home-cell-h) var(--home-blank-row-h) var(--home-cell-h)');
+});
+
+test('trailing empty rows are not tracks, so they cannot be shrunk', () => {
+  // The grid ends at the last placed item; declaring the whole eight-row canvas
+  // would pad a small home screen out with a tail of empty tracks.
+  const { Home } = makeHome({ width: 390 });
+  const layout = [{ type: 'app', slug: 'a', col: 0, row: 0 },
+    { type: 'app', slug: 'b', col: 0, row: 1 }];
+  assert.equal(Home.rowTemplate(layout, 4), '', 'nothing between them, nothing after');
+  const gapped = [{ type: 'app', slug: 'a', col: 0, row: 0 },
+    { type: 'app', slug: 'b', col: 0, row: 2 }];
+  assert.equal(Home.rowTemplate(gapped, 4).split(' ').length, 3,
+    'three entries — rows 3..7 stay implicit');
+});
+
+test('the default phone arrangement halves both of its gaps', () => {
+  // The shape most accounts actually see (Challenges, one app row, two empty
+  // rows, Discover, Create app) — the ~116px this issue is about.
+  const { Home } = makeHome({ width: 390 });
+  const layout = [
+    { type: 'widget', key: 'challenges', col: 0, row: 0 },
+    { type: 'app', slug: 'a', col: 0, row: 1 },
+    { type: 'widget', key: 'discover', col: 0, row: 4 },
+    { type: 'widget', key: 'create', col: 0, row: 5 },
+  ];
+  const tracks = Home.rowTemplate(layout, 4).split(' ');
+  assert.equal(tracks.length, 6);
+  assert.deepEqual(tracks.slice(2, 4),
+    ['var(--home-blank-row-h)', 'var(--home-blank-row-h)']);
+  assert.deepEqual(tracks.slice(4), ['var(--home-cell-h)', 'var(--home-cell-h)'],
+    'Discover and Create app keep their cells');
+});
+
+test('every track stays a single space-free token', () => {
+  // The overlay's mirror and these tests split the template on whitespace, so
+  // a track containing a space (an inline `calc(a / 2)`, say) would be read as
+  // two rows. That is why the half height is a CSS variable.
+  const { Home } = makeHome({ width: 390 });
+  const layout = [
+    { type: 'widget', key: 'challenges', col: 0, row: 0 },
+    { type: 'app', slug: 'a', col: 0, row: 2 },
+  ];
+  const template = Home.rowTemplate(layout, 4);
+  assert.equal(template.split(' ').length, 3);
+  for (const track of template.split(' ')) assert.doesNotMatch(track, /\s/);
+});
+
+test('the half-cell token is declared and derived from the cell', () => {
+  // Derived, so 116px phone cell → 58px empty row with no second literal to
+  // drift. rowTemplate emits the name; app.css has to define it.
+  const CSS = read('public/css/app.css');
+  assert.match(CSS, /--home-blank-row-h:\s*calc\(var\(--home-cell-h\)\s*\/\s*2\)/);
+});
+
+test('render writes the template at 4 columns and clears it otherwise', () => {
+  const h = makeHome({ width: 390 });
+  const { Home } = h;
+  const listEl = installListEl(h);
+  Home._apps = [app('a')];
+  Home._layouts = {
+    4: [{ type: 'widget', key: 'challenges', col: 0, row: 0 },
+      { type: 'app', slug: 'a', col: 0, row: 1 }],
+    5: [],
+  };
+  Home._layoutFetchedAt = Date.now();
+  Home.render();
+  assert.match(listEl.style.gridTemplateRows, /minmax\(4\.25rem,\s*auto\) var\(--home-cell-h\)/);
+
+  // The search view is a flat list with no placement: a stale template would
+  // give its "N results" header a fit row's height.
+  Home._query = 'a';
+  Home.render();
+  assert.equal(listEl.style.gridTemplateRows, '');
+});
+
+// ── The overlay mirrors the tracks (#968, #975) ───────────────────────
+
+test('the overlay copies the grid’s used row sizes and pads to the canvas', () => {
+  const h = makeHome({ width: 390 });
+  const { Home, sandbox } = h;
+  const listEl = installListEl(h);
+  sandbox.getComputedStyle = () => ({ gridTemplateRows: '116px 67.5px 116px' });
+  assert.equal(Home._overlayRowTemplate(listEl),
+    ['116px', '67.5px', '116px', ...Array(5).fill('var(--home-cell-h)')].join(' '),
+    'the real rows, then the cell token for the rest of the eight-row canvas');
+});
+
+test('a half-height blank row is mirrored too, and the padding stays full', () => {
+  // The used value of var(--home-blank-row-h) is plain pixels by the time
+  // getComputedStyle reports it, so the mirror needs no knowledge of the token.
+  // The rows PAST the template are empty as well but keep the full cell: they
+  // are below the content, so they cost the page nothing and a big drop target
+  // is worth more there.
+  const h = makeHome({ width: 390 });
+  const { Home, sandbox } = h;
+  const listEl = installListEl(h);
+  sandbox.getComputedStyle = () => ({ gridTemplateRows: '116px 58px 116px' });
+  assert.equal(Home._overlayRowTemplate(listEl),
+    ['116px', '58px', '116px', ...Array(5).fill('var(--home-cell-h)')].join(' '));
+});
+
+test('a grid with no template leaves the overlay’s own row sizing alone', () => {
+  // Desktop and the search view: `none` is what getComputedStyle reports for a
+  // grid whose rows are all implicit, and the overlay must fall back to its
+  // stylesheet grid-auto-rows rather than writing "none" over it.
+  const h = makeHome();
+  const { Home, sandbox } = h;
+  const listEl = installListEl(h);
+  sandbox.getComputedStyle = () => ({ gridTemplateRows: 'none' });
+  assert.equal(Home._overlayRowTemplate(listEl), '');
+  sandbox.getComputedStyle = () => ({ gridTemplateRows: '' });
+  assert.equal(Home._overlayRowTemplate(listEl), '');
+});
+
+// ── Non-uniform rows (#968) ───────────────────────────────────────────
+//
+// A phone row a fit widget owns is as tall as the widget draws, so the canvas
+// no longer has one row pitch. _targetCellFor used to derive the row by
+// dividing by the 0→1 pitch, which stops describing row 5 the moment row 1 is
+// short; it measures the rows now. These pin that it lands on the right one —
+// the uniform cases above go through the same code path, so they are the other
+// half of this guard.
+//
+// The table: row 1 is a ~68px fit row (an empty Challenges widget), the rest
+// are full 120px cells. Tops: 0, 120, 188, 308, 428…
+const FIT_TABLE = [CELL_H, 68, CELL_H, CELL_H, CELL_H, CELL_H, CELL_H, CELL_H];
+
+test('a tile centred over a SHORT row lands in it, not one derived from pitch', () => {
+  setRowHeights(FIT_TABLE);
+  const layout = [{ type: 'app', slug: 'a', col: 0, row: 4 }];
+  const h = makePreview(layout, { cols: 4, width: 390 });
+  hitTestCells(h, 4);
+  const el = h.dom.nodes.get('app:a');
+  // The ghost sits squarely over row 1 — top 120, height 68, so centre 154.
+  const info = ghostInfo(el, { left: 0, top: 120, w: 1, h: 1, grabX: 0.5, grabY: 0.5 });
+  info.rect.height = 68;
+  info.centerY = 154;
+
+  assert.equal(rowAt(info.centerY), 1, 'the centre really is in the short row');
+  assert.deepEqual({ ...h.Home._targetCellFor(info.pointerX, info.pointerY, info, 4) },
+    { col: 0, row: 1 });
+});
+
+test('a short row shifts the rows under it, and the target follows', () => {
+  // The regression the pitch arithmetic actually had. Row 1 is 52px short, so
+  // every row below it sits 52px higher than a uniform canvas would put it.
+  // Row 3's real band is 308–428 (centre 368); a ghost centred at 310 is
+  // inside it and nearest its centre, but dividing by the 0→1 pitch gives
+  // round(310/120 - 0.5) = 2 and drops the tile a row short.
+  setRowHeights(FIT_TABLE);
+  const layout = [{ type: 'app', slug: 'a', col: 0, row: 0 }];
+  const h = makePreview(layout, { cols: 4, width: 390 });
+  hitTestCells(h, 4);
+  const el = h.dom.nodes.get('app:a');
+  const info = ghostInfo(el, { left: 0, top: 250, w: 1, h: 1, grabX: 0.5, grabY: 0.5 });
+
+  assert.equal(info.centerY, 310);
+  assert.equal(rowAt(info.centerY), 3, 'the centre really is in row 3');
+  assert.equal(Math.round(info.centerY / CELL_H - 0.5), 2,
+    'and a single pitch would have said row 2 — this is the bug');
+  assert.deepEqual({ ...h.Home._targetCellFor(info.pointerX, info.pointerY, info, 4) },
+    { col: 0, row: 3 });
+});
+
+test('a multi-row footprint spanning a short row centres on the real rectangle', () => {
+  setRowHeights(FIT_TABLE);
+  // A 2x2 widget at five columns, over rows 1-2: that rectangle runs from
+  // 120 to 308, so its centre is 214 — NOT the 240 a uniform grid would give.
+  const layout = [{ type: 'widget', key: 'challenges', col: 0, row: 3 }];
+  const h = makePreview(layout, { cols: 5 });
+  hitTestCells(h);
+  const el = h.dom.nodes.get('widget:challenges');
+  const info = ghostInfo(el, { left: 0, top: 120, w: 2, h: 2 });
+  info.centerY = 214;
+
+  assert.deepEqual({ ...h.Home._targetCellFor(info.pointerX, info.pointerY, info, 5) },
+    { col: 0, row: 1 }, 'the span starts at the short row');
+});
+
+// A blank row is the second source of short rows (#975): 58px against the
+// 116px phone cell. Same measured code path as a fit row, so what this pins is
+// that a HALF-height row is still hittable and still the nearest target when
+// the ghost is over it — a tile can be dropped into a gap exactly as before.
+const BLANK_TABLE = [CELL_H, 58, CELL_H, CELL_H, CELL_H, CELL_H, CELL_H, CELL_H];
+
+test('a tile centred over a half-height blank row lands in that row', () => {
+  setRowHeights(BLANK_TABLE);
+  // Row 1 is the empty one: top 120, height 58, so its band is 120–178.
+  const layout = [{ type: 'app', slug: 'a', col: 0, row: 0 },
+    { type: 'app', slug: 'b', col: 0, row: 2 }];
+  const h = makePreview(layout, { cols: 4, width: 390 });
+  hitTestCells(h, 4);
+  const el = h.dom.nodes.get('app:a');
+  const info = ghostInfo(el, { left: 0, top: 120, w: 1, h: 1, grabX: 0.5, grabY: 0.5 });
+  info.rect.height = CELL_H;
+  info.centerY = 149; // the blank row's own centre
+
+  assert.equal(rowAt(info.centerY), 1, 'the centre really is in the blank row');
+  assert.deepEqual({ ...h.Home._targetCellFor(info.pointerX, info.pointerY, info, 4) },
+    { col: 0, row: 1 }, 'so the gap is a drop target, not a row to skip over');
+});
+
+test('a blank row shifts the rows under it, and the target follows', () => {
+  // The same guard as the fit-row case: row 1 is 58px short, so row 3's real
+  // band is 294–414 (centre 354) while a single 0→1 pitch would put the ghost
+  // a row short.
+  setRowHeights(BLANK_TABLE);
+  const layout = [{ type: 'app', slug: 'a', col: 0, row: 0 }];
+  const h = makePreview(layout, { cols: 4, width: 390 });
+  hitTestCells(h, 4);
+  const el = h.dom.nodes.get('app:a');
+  const info = ghostInfo(el, { left: 0, top: 240, w: 1, h: 1, grabX: 0.5, grabY: 0.5 });
+
+  assert.equal(info.centerY, 300);
+  assert.equal(rowAt(info.centerY), 3, 'the centre really is in row 3');
+  assert.equal(Math.round(info.centerY / CELL_H - 0.5), 2,
+    'and a single pitch would have said row 2');
+  assert.deepEqual({ ...h.Home._targetCellFor(info.pointerX, info.pointerY, info, 4) },
+    { col: 0, row: 3 });
+});
+
+test('_rowNearest falls back to the pitch when a rect reports no height', () => {
+  // A host that mocks only { left, top } must degrade to the uniform
+  // assumption rather than treating every row as zero-tall and collapsing
+  // every answer to row 0.
+  const h = makePreview([{ type: 'app', slug: 'a', col: 0, row: 0 }]);
+  for (const cell of h.dom.cells.values()) {
+    const { left, top } = cell.getBoundingClientRect();
+    cell.getBoundingClientRect = () => ({ left, top });
+  }
+  assert.equal(h.Home._rowNearest(h.dom.overlay, 3 * CELL_H + CELL_H / 2, 1, CELL_H), 3);
+  assert.equal(h.Home._rowNearest(h.dom.overlay, CELL_H / 2, 1, CELL_H), 0);
 });
 
 test('a tile snaps once it is more than halfway into the next column', () => {
@@ -1251,10 +1613,17 @@ test('the row-height token switches at the SAME 640px boundary', () => {
   assert.match(CSS, /--home-cell-h: 7\.75rem;/, 'the desktop row height is a token');
   // The phone override and the overlay's phone gap share one block, keyed
   // to the same boundary (639.98 is the standard non-overlapping spelling
-  // of "below 640").
-  assert.match(CSS, /@media \(max-width: 639\.98px\) \{[\s\S]{0,400}--home-cell-h: 7\.25rem;/,
+  // of "below 640"). Sliced to that block rather than matched within a
+  // character window of its opening brace: the window made the assertion a
+  // function of how much PROSE the block carries, so a comment growing by a
+  // line failed a test about geometry.
+  const at = CSS.indexOf('@media (max-width: 639.98px)');
+  assert.ok(at > -1, 'the phone block exists');
+  const end = CSS.indexOf('@media (min-width: 640px)', at);
+  const phoneBlock = CSS.slice(at, end > -1 ? end : CSS.length);
+  assert.match(phoneBlock, /--home-cell-h: 7\.25rem;/,
     'the row height flips at 640px, the same boundary as grid-cols-4 sm:grid-cols-5');
-  assert.match(CSS, /@media \(max-width: 639\.98px\) \{[\s\S]{0,600}\.home-grid-overlay \{ gap: 0\.375rem; \}/,
+  assert.match(phoneBlock, /\.home-grid-overlay \{ gap: 0\.375rem; \}/,
     'and the drag overlay flips with it, so its cells stay aligned to the tiles');
   assert.equal(HomeLayoutBreakpoint(), 640,
     'and the JS agrees, or it lays out against a count the CSS is not rendering');

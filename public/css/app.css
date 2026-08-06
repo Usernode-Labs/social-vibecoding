@@ -17,6 +17,70 @@
   --accent: #7c3aed;
   --accent-light: #8b5cf6;
   --accent-tint: rgba(124, 58, 237, 0.08);
+
+  /* ── Safe-area tokens ────────────────────────────────────
+     THE single source of truth for the shell's own safe-area
+     arithmetic. Every rule in this file that needs an inset reads one
+     of these two — never bare env() — so there is exactly one place to
+     change if the source ever moves.
+
+     Written as `var(--un-safe-inset-X, env(safe-area-inset-X, 0px))`,
+     the kit's convention (see the "Safe areas" block in
+     public/usernode-native/v1/native.css). The shell is a top-level
+     document, so nothing sets the custom property and env() supplies
+     the real value; writing it this way means the shell would also
+     honour a forwarded inset if it were ever framed, and it is what
+     lets `?shot=safe-bottom` (public/js/app.js) paint the whole shell
+     — kit `.un-safe-*` classes included — as if it were on a notched
+     phone. */
+  --platform-safe-bottom: var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px));
+  --platform-safe-top: var(--un-safe-inset-top, env(safe-area-inset-top, 0px));
+}
+
+/* ── Safe-area utilities ─────────────────────────────────
+   The platform's half of "backgrounds extend into the bottom inset,
+   interactive content insets itself":
+
+   .platform-safe-scroll — a scroll container whose content ends at the
+     bottom of the screen. Block-end padding is part of a scroller's
+     scrollable overflow, so the last row becomes reachable AND the
+     scroller's own background still paints through the strip.
+   .platform-safe-bar — a pinned bottom bar (every composer block) that
+     already carries Tailwind `p-2`. The 8px base gap is preserved and
+     the inset is added below it.
+
+   `!important` is load-bearing, not laziness: /css/tailwind.css is
+   linked AFTER /css/app.css (index.html — and the inline probe there
+   enforces that order), so a plain class here loses the specificity
+   tie against `p-2` / `p-4` on the same element purely on source
+   order. The kit's own `.un-safe-*` helpers carry `!important` for
+   exactly this reason.
+
+   Deliberately NOT the kit's `.un-safe-bottom`: that one REPLACES the
+   element's own bottom padding with the bare inset (a composer would
+   lose its 8px gap) and has no keyboard-up suppression. These wrap the
+   kit's token rather than forking its CSS. */
+.platform-safe-scroll {
+  padding-bottom: var(--platform-safe-bottom) !important;
+}
+
+.platform-safe-bar {
+  padding-bottom: calc(0.5rem + var(--platform-safe-bottom)) !important;
+}
+
+/* Keyboard up: the home-indicator strip sits BEHIND the on-screen
+   keyboard, so reserving it there is pure dead space above the
+   keyboard. Same suppression the kit applies to its own surfaces
+   (`html.un-kb .un-panel-body` / `.un-action-sheet` / `.un-kb-avoid`
+   in native.css). The bar keeps its 8px base gap; a scroller that also
+   carries the kit's `.un-kb-avoid` gets the keyboard inset from the
+   kit instead. */
+html.un-kb .platform-safe-scroll {
+  padding-bottom: 0 !important;
+}
+
+html.un-kb .platform-safe-bar {
+  padding-bottom: 0.5rem !important;
 }
 
 .dark {
@@ -400,15 +464,29 @@ html, body {
    a drift in one without the other fails rather than silently mis-sizing
    the block.
 
-   WHAT THAT NUMBER MEANS DEPENDS ON THE BREAKPOINT (#947). The challenges
-   widget is the same markup at both widths and two different things:
+   WHAT THAT NUMBER MEANS DEPENDS ON THE BREAKPOINT (#947, #968). The
+   challenges widget is the same markup at both widths and two different
+   things:
 
-     PHONE (<640px, 4 columns) — the widget spans the FULL grid width, so a
-     shorter block simply ends sooner: nothing sits beside it and nothing has
-     to move. There the constant is a CEILING and the block draws at its
-     CONTENT height (`.home-panel--fit`, in the phone media block at the
-     bottom of this file). A two-challenge season is ~135px, not 238px, and
-     the between-seasons state is a ~68px title-bar-plus-one-line block.
+     PHONE (<640px, 4 columns) — the widget spans the FULL grid width and is
+     ONE CELL TALL (registry `sizes` 4: [4, 1]), so this two-cell constant
+     does not apply there at all: the phone media block at the bottom of this
+     file redefines --home-panel-max-h as one --home-cell-h. #947 made the
+     block draw at its CONTENT height (`.home-panel--fit`, same block) but
+     left the footprint at two rows, so the height it gave up became a band of
+     blank grid between the widget and the first row of app icons — a ~68px
+     box inside a 238px reservation between seasons. #968 cut the footprint
+     to one row and reshaped the CONTENT to fit it:
+
+       border 2 + title bar 27 + 2 rows x --home-panel-row-h (40) = 109px
+
+     against the 116px phone cell — ~7px of headroom. No footer: a
+     .home-panel-footer is 27px more and that IS the second row, so the way
+     off this screen rides in the title bar instead — the leaderboard link of
+     #980, which is Discover's browse control in the same place for the same
+     reason (#949) — the rows themselves still open the Challenges tab, and
+     expand-in-place is a desktop-only state. The empty state is 69px of the
+     same cell. See HomePanels.renderChallengesPanel's compact branch.
 
      DESKTOP (>=640px, 5 columns) — the widget is a TILE in a grid of app
      icons. Shrinking it would leave a notch beside the tiles it shares rows
@@ -498,6 +576,17 @@ html, body {
      Budgeting for it is what keeps an errored app legible instead of
      bleeding into its neighbour. */
   --home-cell-h: 7.75rem; /* 124px — see the derivation above */
+  /* ONE EMPTY ROW on a phone (#975). Half a cell — 58px against the phone's
+     116px — so a row the viewer left empty keeps its place in the arrangement
+     without reserving a whole tile to be empty. DERIVED from the cell rather
+     than written out, so the two can never drift.
+
+     Emitted by Home.rowTemplate for the rows HomeLayout.blankRows names, and
+     only at four columns; the :root value here (62px) is never used, since a
+     desktop grid gets no inline template at all. A variable and not an inline
+     calc() because every track in that template has to stay a single
+     space-free token — see rowTemplate. */
+  --home-blank-row-h: calc(var(--home-cell-h) / 2);
   --home-panel-max-h: 16rem; /* two cells + the gap — see --home-cell-h */
   --home-panel-max-w: 32rem; /* half of .home-column's 64rem */
   --home-panel-row-h: 2.5rem; /* 40px — see the budget above */
@@ -713,7 +802,26 @@ html, body {
      media block at the bottom of this file releases `.home-panel--fit` from
      this stretch. Do not move that rule out of the media query — desktop
      depends on the stretch, and `align-items` here would take the create
-     widget's `h-full` 1x1 tile down with it. */
+     widget's `h-full` 1x1 tile down with it.
+
+     Releasing the stretch is only half of "shrinks", though (#968), and the
+     half that the reader of this rule cannot see: the slot is a grid item, so
+     what it releases is space INSIDE its own rectangle. Two things size that
+     rectangle, and BOTH had to move before the page got anything back —
+     a short block in a slot that still owns 238px of grid gives its height to
+     whitespace, not to the viewer:
+
+       * the footprint. Every widget's phone `sizes` entry is one row, so the
+         rectangle is one cell rather than two.
+       * the TRACK. Home.rowTemplate gives the row a fit widget owns outright
+         a content-sized track, so the cell is as tall as the widget draws —
+         see #app-list above.
+
+     This rule is what makes the second one visible rather than redundant: in
+     a content-sized track it is a no-op (the track already equals the
+     content), but it is still what keeps the article honest on any row that
+     is NOT a fit row — a hole-adjacent full-height row, the desktop tile's
+     sibling breakpoint, or the frame before a re-render lands. */
   display: flex;
   min-height: 0;
 }
@@ -734,7 +842,38 @@ html, body {
 
    The SEARCH view is exempt: it is a flat, transient list, and its "N
    results" header and empty-state line would each claim a whole tile row
-   under a fixed height. Home.render() stamps data-view on the grid. */
+   under a fixed height. Home.render() stamps data-view on the grid.
+
+   ON A PHONE THIS IS THE DEFAULT ROW HEIGHT, NOT EVERY ROW'S (#968, #975).
+   Home.render() writes an inline `grid-template-rows` below 640px — one
+   entry per occupied row, `var(--home-cell-h)` for most of them plus two
+   exceptions:
+
+     * a content-sized `minmax(floor, auto)` for a row a FIT widget owns
+       outright (HomeLayout.fitRows; challenges only today). Without it the
+       between-seasons widget drew a ~68px box inside a 116px reservation and
+       handed the other ~48px to nobody: a grid item cannot shrink a fixed
+       track, so shrinking the BOX was never going to shrink the PAGE.
+     * `var(--home-blank-row-h)` — half a cell — for a row with NOTHING in it
+       (HomeLayout.blankRows). Same reasoning one step further: an empty row
+       was spending a whole tile's height on nothing, and on the default phone
+       arrangement there are two of them between the app tiles and the lower
+       widgets.
+
+   Note what shrinking a blank row is NOT: nothing re-packs, nothing collapses,
+   nothing is tidied away. The row keeps its index, keeps its place in the
+   arrangement and stays a drop target — a hole is still an arrangement the
+   viewer chose. Only its pixel height changes, and only on a phone.
+
+   Two things the rule deliberately does not do: it never shrinks a row
+   holding an app tile (a card with no status caption is ~100px, and that lane
+   is load-bearing — see --home-cell-h), which is also why a PARTLY empty row
+   stays full; and it never emits more entries than there are occupied rows (an
+   explicit grid exists whether or not anything is in it, so eight entries
+   would pad a three-app home screen out to ~950px — which is likewise why the
+   trailing empty rows below the last tile are not in the template and have
+   nothing to shrink). Desktop gets no template at all and this token is still
+   the whole story there. */
 #app-list {
   position: relative;
   grid-auto-rows: var(--home-cell-h);
@@ -753,6 +892,20 @@ html, body {
    it is inset by the grid's own padding. That is what makes it align with
    zero arithmetic: it is laid out by the same engine, with the same numbers,
    as the tiles it sits behind.
+
+   The row height below is the DEFAULT and the padding for rows past the
+   content (#968, #975). Since a phone row can now be shorter than a cell —
+   content-sized for a fit widget, half a cell for an empty row —
+   Home._showGridOverlay copies #app-list's USED tracks
+   (getComputedStyle → "116px 67.5px 58px …") onto this element inline and pads
+   them out to the eight-row canvas with this token. The padded rows stay a
+   FULL cell on purpose: they are past the template, so they are the drag-only
+   region below the content, where there is no page height to reclaim and a big
+   drop target is worth more. Copied rather than
+   re-derived on purpose: one element decides the row heights and the other
+   reads its answer, so the two grids cannot disagree. In pixels, too — the
+   cells here are empty divs, so a content-sized track would collapse to
+   nothing.
 
    The inset must track that padding EXACTLY, including the tighter top —
    #app-list is `p-2 pt-1.5 sm:p-3 sm:pt-2`, so a uniform inset sits the whole
@@ -1056,8 +1209,15 @@ html, body {
   :root {
     /* 116px — p-2 (16) + icon 56 + gap-1.5 (6) + title 26 + caption 12 */
     --home-cell-h: 7.25rem;
-    /* Two cells plus the phone gap: 116 + 6 + 116. */
-    --home-panel-max-h: 14.875rem; /* 238px */
+    /* ONE CELL (#968). Every widget's phone footprint is one row now
+       (PANEL_REGISTRY `sizes` 4: [4, 1] for all three), so the cap is the
+       cell they each own rather than the two rows Challenges used to claim.
+       It is a CEILING, not the drawn height — `.home-panel--fit` below is
+       what lets a block end sooner — and its job is to make an oversized
+       system text size CLIP inside the widget rather than paint the article
+       over the app tiles in the row below, which is what a 238px cap in a
+       116px cell would have allowed. */
+    --home-panel-max-h: var(--home-cell-h);
   }
   .home-grid-overlay { gap: 0.375rem; }
   /* The doubled class is deliberate. This rule is what makes the phone
@@ -1072,11 +1232,16 @@ html, body {
      line width, which at 11px is roughly two more characters per line. */
   .app-card.app-card { padding: 0.5rem; }
 
-  /* SIZE TO CONTENT, phone only (#947). The widget is full-width here, so a
-     shorter block just ends sooner — no neighbour to leave a notch beside,
-     nothing to re-pack. The footprint is unchanged (still two rows of the
-     grid); only the drawn box shrinks, and the leftover is ordinary grid
-     whitespace on a surface that is hole-bearing by design.
+  /* SIZE TO CONTENT, phone only (#947, #968). The widget is full-width here,
+     so a shorter block just ends sooner — no neighbour to leave a notch
+     beside, nothing to re-pack.
+
+     #947 shrank the drawn box, #968 shrank the FOOTPRINT to one grid row to
+     match, and then shrank the ROW ITSELF: Home.rowTemplate gives the row a
+     fit widget owns a content-sized track (see #app-list), so the height a
+     short block gives up is not reserved anywhere at all. There is no
+     leftover quantization to live with — the between-seasons state costs the
+     page ~68px, not a 116px cell holding a ~68px box.
 
      Deciding this in CSS rather than JS is deliberate: a window dragged
      across 640px resizes the block immediately, before the resize listener's
@@ -1125,7 +1290,7 @@ html, body {
   display: flex;
   flex-direction: column;
   min-height: 100%;
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-bottom: var(--platform-safe-bottom);
 }
 
 /* NOTE: .home-bottom-anchor is gone with the two trailing sections it
@@ -1252,6 +1417,42 @@ html, body {
 /* ── App iframe ────────────────────────────────────────── */
 
 #app-content { position: relative; }
+
+/* Surface-dependent bottom safe area (#970, extended).
+   #app-view used to carry the kit's `un-safe-bottom` unconditionally, so
+   its padding was subtracted from the flex height of EVERY surface inside
+   #app-content — the running app included. On a phone that left the app
+   ~34px short of the screen's rounded bottom edge, with the body
+   background showing through the gap, while the shell itself painted
+   edge-to-edge. #970 gated that padding on the PLATFORM surface.
+
+   NEITHER SURFACE CARRIES PADDING ANY MORE. Gating it was only half the
+   fix: on a platform surface the padding still sat on the OUTER box, so
+   every Dev-mode surface was shrunk by the inset and the strip below it
+   was dead background — the dev-chat composer floated above an empty
+   band and the chat lost that height. The inset moved INWARD to the
+   innermost thing that needs it (each scroller's content padding, each
+   composer bar's own padding, via .platform-safe-scroll /
+   .platform-safe-bar above), so Dev mode now paints edge-to-edge like
+   the app surface does and only its content is held clear.
+
+   What these two rules do is publish the TOKEN, so the surface contract
+   stays stated where it is read and tested:
+   - platform: restate the real inset (identical to :root — explicit
+     here because this is the boundary the contract is about);
+   - app: ZERO it, so no shared class can ever reserve the strip over an
+     app frame. The frame keeps reaching the true bottom edge and the
+     insets are forwarded INTO the app instead (AppView.broadcastSafeArea
+     → the bridge's --un-safe-inset-*), which is what lets an app inset
+     its own bottom chrome rather than being clipped by ours.
+   No `!important` needed: nothing competes with either rule. */
+#app-view[data-app-surface="platform"] {
+  --platform-safe-bottom: var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px));
+}
+
+#app-view[data-app-surface="app"] {
+  --platform-safe-bottom: 0px;
+}
 
 #app-iframe {
   position: absolute;
@@ -3445,11 +3646,20 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 
 /* Narrow viewports: fullscreen modal that floats over the chat. The
    inline `width` set by JS from the previous side-panel drag is
-   overridden by `width: auto` so the modal still fills the screen. */
+   overridden by `width: auto` so the modal still fills the screen.
+
+   `inset: 0` means this panel covers the WHOLE screen — it escapes
+   #app-view and the platform header alike — so it owns both insets
+   itself. padding-top keeps the header row (version picker, the two
+   Share buttons, ✕) out from under the status bar and the notch; the
+   bottom half is carried by .dc-spec-viewer-body-wrap /
+   .dc-spec-viewer-build-hint below, which need it in the side-panel
+   layout too. */
 @media (max-width: 1023px) {
   .dc-spec-viewer.dc-spec-viewer-open {
     position: fixed;
     inset: 0;
+    padding-top: var(--platform-safe-top);
     width: auto !important;
     max-width: none;
     z-index: 50;
@@ -3531,6 +3741,14 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   border-left: 1px solid var(--border, rgba(255,255,255,0.12));
 }
 
+/* Fullscreen, the overlay is `inset: 0` — it covers the status bar, so
+   its own chrome bar has to clear the notch. Docked, it is pinned over
+   the in-page slot by the geometry sync and needs no inset at all,
+   hence the :not(). */
+#staging-overlay:not(.staging-overlay-docked) .staging-chrome-bar {
+  padding-top: calc(0.5rem + var(--platform-safe-top));
+}
+
 /* Docked chrome: "Back to session" makes no sense beside the still-
    visible session — the ×-close (.staging-dock-only) replaces it. */
 #staging-overlay.staging-overlay-docked #staging-back { display: none; }
@@ -3600,6 +3818,19 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   padding: 12px;
 }
 
+/* The bottom inset belongs to whichever of these two is LAST — the
+   build hint is conditional (only a non-empty latest version renders
+   it, see _renderSpecViewer), so both need a rule and neither may
+   double up. `:last-child` is what picks the right one: with the footer
+   present the scroller keeps its plain 12px and the footer's own
+   background fills the strip; with no footer the scroller carries it.
+   Unconditional, not inside the fullscreen media query: since #app-view
+   stopped padding, the side-panel layout reaches the true bottom edge
+   too. */
+.dc-spec-viewer-body-wrap:last-child {
+  padding-bottom: calc(12px + var(--platform-safe-bottom));
+}
+
 /* #196: two-half spec tabs (User-facing / Technical). Rendered only
    when the doc contains both marker headings — legacy specs keep the
    single untabbed body (see public/js/spec-sections.js). */
@@ -3647,7 +3878,10 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
    rendered while viewing a non-empty draft (see _renderSpecViewer). */
 .dc-spec-viewer-build-hint {
   flex-shrink: 0;
-  padding: 8px 12px;
+  /* Last element in the panel when it renders, so it owns the bottom
+     inset — and it has a background of its own, which is what makes the
+     strip read as an extension of the footer rather than a gap. */
+  padding: 8px 12px calc(8px + var(--platform-safe-bottom));
   font-size: 12px;
   line-height: 1.4;
   color: var(--text-secondary, #a1a1aa);
@@ -4010,7 +4244,10 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .gc-spec-panel-body {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 14px 16px;
+  /* Last (and only) child of the panel, so it carries the bottom inset.
+     Below 1024px the panel is `position: absolute; inset: 0` over
+     .gc-tab-body, whose bottom edge is now the screen's. */
+  padding: 14px 16px calc(14px + var(--platform-safe-bottom));
   overflow-y: auto;
   font-size: 13px;
   line-height: 1.6;

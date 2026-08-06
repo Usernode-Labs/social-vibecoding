@@ -431,10 +431,19 @@
          the screen works in any browser. Real anchor (like Challenges)
          so hash navigation drives the screen. The former native-push
          Profile / App Settings rows are gone: App Settings merged into
-         the Settings modal as capability-gated sections (settings.js). -->
+         the Settings modal as capability-gated sections (settings.js).
+
+         #982: when the viewer has set a profile picture, it REPLACES the
+         generic person glyph here — App.applyUserAvatar (public/js/app.js)
+         swaps which of the two is `hidden` from App.user.avatarUrl, so the
+         row shows the same face the profile screen does. The <img> ships
+         hidden with no src: a signed-out shell and a user with no picture
+         both keep the glyph, and nothing requests /avatars/ until there is
+         something to request. -->
     <a id="drawer-row-profile" href="#profile"
        class="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800">
-      <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
+      <svg id="drawer-profile-glyph" class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
+      <img id="drawer-avatar" alt="" class="hidden w-5 h-5 shrink-0 rounded-full object-cover bg-zinc-100 dark:bg-zinc-800">
       <span class="text-sm font-medium">Profile</span>
     </a>
     <!-- Leaderboard — the one entry point for shared progress: the
@@ -691,7 +700,7 @@
   <!-- Browse-all-apps screen (#apps). Sibling of #home-screen: every app
        this viewer may see, featured first, with per-tile add/remove badges.
        Owned by public/js/browse.js; mounted by App.navigateToBrowse. -->
-  <main id="browse-screen" class="hidden flex-1 overflow-y-auto" style="position:relative">
+  <main id="browse-screen" class="hidden flex-1 overflow-y-auto platform-safe-scroll" style="position:relative">
     <div id="browse-search-bar" class="sticky top-0 z-20 px-3 pt-3 pb-2 bg-white dark:bg-zinc-950">
       <div class="relative max-w-xl">
         <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
@@ -741,7 +750,7 @@
 
        The wrapper is max-w-5xl for the Topochain table's sake; the Kudos
        pane keeps its narrower max-w-3xl reading column. -->
-  <main id="leaderboard-screen" class="hidden flex-1 overflow-y-auto" style="position:relative">
+  <main id="leaderboard-screen" class="hidden flex-1 overflow-y-auto platform-safe-scroll" style="position:relative">
     <div class="max-w-5xl mx-auto p-4 w-full">
       <h2 class="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mb-3">Leaderboard</h2>
       <div id="standings-tabs" class="flex gap-2 border-b border-zinc-200 dark:border-zinc-800 mb-4"></div>
@@ -767,7 +776,7 @@
        platform session server-side (the bridge's getProfileInfo
        participant id is no longer consulted). Hash route #profile;
        mounted by App.navigateToProfile. -->
-  <main id="profile-screen" class="hidden flex-1 overflow-y-auto" style="position:relative">
+  <main id="profile-screen" class="hidden flex-1 overflow-y-auto platform-safe-scroll" style="position:relative">
     <div id="profile-root" class="max-w-3xl mx-auto p-4"></div>
   </main>
 
@@ -787,7 +796,7 @@
        status and Analytics sections were built for a wide column — the
        status summary is a 6-across tile grid and the analytics charts are
        640px-wide SVGs. -->
-  <main id="admin-screen" class="hidden flex-1 overflow-y-auto" style="position:relative">
+  <main id="admin-screen" class="hidden flex-1 overflow-y-auto platform-safe-scroll" style="position:relative">
     <div id="admin-root" class="max-w-7xl mx-auto p-4 w-full"></div>
   </main>
 
@@ -811,7 +820,7 @@
 
        max-w-5xl (not the admin console's 7xl): every section here is a
        form column, none is a wide chart grid. -->
-  <main id="settings-screen" class="hidden flex-1 overflow-y-auto" style="position:relative">
+  <main id="settings-screen" class="hidden flex-1 overflow-y-auto platform-safe-scroll" style="position:relative">
     <div id="settings-root" class="max-w-5xl mx-auto p-4 w-full">
       <div class="md:flex md:items-start md:gap-6">
         <!-- Desktop sidebar menu. Below md there is no nav here at all:
@@ -1293,7 +1302,7 @@
          overlay stays put as an opaque backstop and this wrapper takes
          the gesture. flex-1/min-h-0, not h-full: it's a flex child under
          the header now, and h-full would overflow by the header's height. -->
-    <div id="auth-landing-scroll" class="flex-1 min-h-0 overflow-y-auto">
+    <div id="auth-landing-scroll" class="flex-1 min-h-0 overflow-y-auto platform-safe-scroll">
     <div class="max-w-3xl mx-auto px-6 py-12">
       <div class="text-center mb-10">
         <h1 class="text-3xl font-bold mb-2">Usernode Social Vibecoding</h1>
@@ -1361,7 +1370,7 @@
 
   <!-- Login screen (also hosts the #signup email-code sub-view and the
        forgot-password recovery sub-view) -->
-  <main id="auth-login-screen" class="hidden fixed inset-0 z-40 overflow-y-auto bg-white dark:bg-zinc-950">
+  <main id="auth-login-screen" class="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll bg-white dark:bg-zinc-950">
     <a href="#" data-auth-back class="fixed left-4 z-10 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400" style="top: calc(env(safe-area-inset-top, 0px) + 1rem)">&larr; Back</a>
     <div class="min-h-full flex items-center justify-center">
       <div class="w-full max-w-sm px-6 py-16">
@@ -1535,7 +1544,7 @@
   </main>
 
   <!-- Register screen (activation-code flow) -->
-  <main id="auth-register-screen" class="hidden fixed inset-0 z-40 overflow-y-auto bg-white dark:bg-zinc-950">
+  <main id="auth-register-screen" class="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll bg-white dark:bg-zinc-950">
     <a href="#" data-auth-back class="fixed left-4 z-10 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400" style="top: calc(env(safe-area-inset-top, 0px) + 1rem)">&larr; Back</a>
     <div class="min-h-full flex items-center justify-center">
       <div class="w-full max-w-sm px-6 py-16">
@@ -1579,7 +1588,7 @@
        alignment): an authed session without hasPlatformAccess lands
        here; polls /api/auth/me and boots the full shell in place when
        access is granted. -->
-  <main id="auth-waiting-screen" class="hidden fixed inset-0 z-40 overflow-y-auto bg-white dark:bg-zinc-950">
+  <main id="auth-waiting-screen" class="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll bg-white dark:bg-zinc-950">
     <div class="min-h-full flex items-center justify-center">
       <div class="w-full max-w-sm px-6 py-16 text-center">
         <h1 class="text-2xl font-bold mb-1">You're in the queue</h1>
@@ -1617,7 +1626,7 @@
        over a narrow scrolling column. Deliberately NOT a <header> element —
        header-layout.js measures document.querySelector('header') and must
        keep resolving to #platform-header. -->
-  <main id="auth-waitlist-screen" class="hidden fixed inset-0 z-40 overflow-y-auto bg-white dark:bg-zinc-950">
+  <main id="auth-waitlist-screen" class="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll bg-white dark:bg-zinc-950">
     <a href="#landing" data-auth-back class="fixed left-4 z-10 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400" style="top: calc(env(safe-area-inset-top, 0px) + 1rem)">&larr; Back</a>
     <div class="max-w-2xl mx-auto px-6 py-16">
       <h1 class="text-2xl font-bold">Join the waitlist</h1>
@@ -1727,7 +1736,7 @@
        questions optional; answers merge server-side so the form is
        re-openable from the join email. GitHub / X verify via the
        /waitlist/connect OAuth round-trip when the platform has creds. -->
-  <main id="auth-more-screen" class="hidden fixed inset-0 z-40 overflow-y-auto bg-white dark:bg-zinc-950">
+  <main id="auth-more-screen" class="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll bg-white dark:bg-zinc-950">
     <a href="#landing" class="fixed left-4 z-10 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400" style="top: calc(env(safe-area-inset-top, 0px) + 1rem)">&larr; Back</a>
     <div class="max-w-2xl mx-auto px-6 py-16">
       <p class="text-xs font-semibold uppercase tracking-widest text-violet-600 dark:text-violet-400">Optional — moves you up the list</p>
@@ -1834,12 +1843,24 @@
        the platform header. The full-width tab-bar nav that used to live
        here at the foot of this column is gone.
 
-       `un-safe-bottom` moved onto this element from that nav: the bar was
-       the only thing keeping app content clear of the iOS home indicator,
-       and every surface inside #app-content now reaches the true bottom
-       of the viewport. App.setChromeless() strips the class so a
-       chromeless share link still renders edge-to-edge. -->
-  <div id="app-view" class="hidden flex flex-col un-safe-bottom" style="flex:1;min-height:0;height:0">
+       The bottom safe-area inset is SURFACE-DEPENDENT (#970), which is
+       why this element no longer carries a blanket `un-safe-bottom`.
+       That class moved here from the deleted tab bar and reserved the
+       home-indicator strip for EVERY surface inside #app-content —
+       including the running app's iframe, which is how apps ended up
+       cut off short of the screen's rounded bottom edge while the shell
+       around them ran edge-to-edge.
+
+       `data-app-surface` is the switch: AppView._setSurface() sets it to
+       `app` wherever an app iframe / launch cover is mounted (no inset —
+       the app fills the screen and receives the insets over the
+       __usernode_safe_area bridge instead) and to `platform` for every
+       platform-rendered surface (Dev mode, status placeholders), which
+       keeps its clearance via the rule in app.css. It defaults to
+       `platform` so a first paint before any render behaves as before,
+       and chromeless needs no special case any more — it always lands on
+       an app surface. -->
+  <div id="app-view" class="hidden flex flex-col" data-app-surface="platform" style="flex:1;min-height:0;height:0">
     <div id="app-content" class="flex-1" style="min-height:0;overflow:hidden">
       <!-- Tab content renders here -->
     </div>
@@ -1904,7 +1925,14 @@
 
   <!-- Staging preview (fullscreen overlay) -->
   <div id="staging-overlay" class="hidden fixed inset-0 z-40 bg-zinc-950 flex flex-col">
-    <div class="flex items-center gap-3 px-4 py-2 border-b border-zinc-800 shrink-0">
+    <!-- `staging-chrome-bar` is a STYLE HOOK, not decoration: fullscreen,
+         this overlay is `inset: 0` and covers the status bar, so app.css
+         adds the top safe-area inset to this bar (and only in the
+         non-docked state — a docked panel is pinned mid-page and needs
+         none). The bar's bottom edge needs nothing: everything below it
+         is the staging iframe, which reaches the true bottom edge and
+         receives the real insets over the safe-area bridge. -->
+    <div class="staging-chrome-bar flex items-center gap-3 px-4 py-2 border-b border-zinc-800 shrink-0">
       <button id="staging-back" class="text-zinc-400 hover:text-zinc-100 text-sm flex items-center gap-1">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
         Back to session

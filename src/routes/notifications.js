@@ -27,15 +27,21 @@ function stagingMockNotifications() {
     threadType: null,
     threadRef: null,
     sourceUsername: null,
+    sessionTitle: null,
     branchName: null,
     detail: null,
   };
   return [
+    // #971: the issue's exact case — a session that finished BEFORE it was
+    // promoted, so it has a session title but no PR title. The row must show
+    // the title, never the `dev/…` branch name beside it.
     {
       ...base,
       id: 990201, kind: 'session_done',
       createdAt: new Date(now - 4 * 60 * 1000).toISOString(),
-      sessionId: 990101, prTitle: '[Mock] Finished dev session',
+      sessionId: 990101,
+      sessionTitle: '[Mock] Session titled but not yet proposed',
+      prTitle: null, branchName: 'dev/mockuser-1700000000000',
       prNumber: null, headlessIssueNumber: null,
     },
     {
@@ -49,15 +55,31 @@ function stagingMockNotifications() {
       ...base,
       id: 990203, kind: 'stale_pr',
       createdAt: new Date(now - 40 * 60 * 1000).toISOString(),
-      sessionId: 990103, prTitle: '[Mock] Stale proposal going quiet',
+      sessionId: 990103,
+      sessionTitle: '[Mock] Stale proposal going quiet',
+      prTitle: '[Mock] Stale proposal going quiet',
       prNumber: 9901, headlessIssueNumber: null,
     },
     {
       ...base,
       id: 990204, kind: 'check_failed',
       createdAt: new Date(now - 55 * 60 * 1000).toISOString(),
-      sessionId: 990104, prTitle: "[Mock] Proposal whose preview won't boot",
+      sessionId: 990104,
+      sessionTitle: "[Mock] Proposal whose preview won't boot",
+      prTitle: "[Mock] Proposal whose preview won't boot",
       prNumber: 9902, headlessIssueNumber: null,
+    },
+    // #971: the untitled tail of the ladder — a session that finished before
+    // its title was generated still falls back to the branch name, so the row
+    // can never render blank.
+    {
+      ...base,
+      id: 990205, kind: 'session_done',
+      createdAt: new Date(now - 70 * 60 * 1000).toISOString(),
+      sessionId: 990105,
+      sessionTitle: null, prTitle: null,
+      branchName: 'dev/mockuser-1700000000001',
+      prNumber: null, headlessIssueNumber: null,
     },
   ];
 }

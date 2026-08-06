@@ -38,20 +38,25 @@
 // also use — carries them. The whole title bar is the handle; the ⋮ button
 // and the widgets' own controls are excluded from it (_wire).
 //
-// DENSITY — the block is capped at two app-grid rows (--home-panel-max-h,
-// derived in app.css) and spends that budget on a ~26px title bar, FOUR
-// 40px single-line rows and a ~27px footer. Overflow is handled by
-// rendering fewer rows and the footer's expand toggle — never an inner
-// scroller (a nested scroll region inside the page scroller is a touch
-// trap) and never a horizontal pager (invisible to the screenshot capture
-// and to dapp.json checks, which can only navigate). That mirrors the
-// removed mobile Challenges tab, which paged by navigation: it was a
-// plain vertical list of bordered cards on a screen of its own.
+// DENSITY — the DESKTOP tile is capped at two app-grid rows
+// (--home-panel-max-h, derived in app.css) and spends that budget on a
+// ~26px title bar, FOUR 40px single-line rows and a ~27px footer. The PHONE
+// block owns ONE cell (#968) and spends it on a ~27px title bar carrying its
+// own leaderboard link plus TWO rows — no footer, which is what buys the
+// second row. Overflow is handled by rendering fewer rows (and, on desktop,
+// the footer's expand toggle) — never an inner scroller (a nested scroll
+// region inside the page scroller is a touch trap) and never a horizontal
+// pager (invisible to the screenshot capture and to dapp.json checks, which
+// can only navigate). That mirrors the removed mobile Challenges tab, which
+// paged by navigation: it was a plain vertical list of bordered cards on a
+// screen of its own.
 //
-// UNDERFLOW is the other half, and it splits by breakpoint (#947). On a
-// PHONE the widget is full-width, so a short list just ends sooner and the
-// block draws at its content height — that half is pure CSS (the
-// `home-panel--fit` rule inside app.css's phone media block). On DESKTOP it
+// UNDERFLOW is the other half, and it splits by breakpoint (#947, #968). On
+// a PHONE the widget is full-width and ONE ROW TALL, so a short list ends
+// sooner AND the page moves up with it: the block draws at its content
+// height (the `home-panel--fit` rule inside app.css's phone media block) and
+// its footprint is a single cell, so what it doesn't draw is a row of the
+// grid nobody reserved. On DESKTOP it
 // is a tile among app icons, where shrinking would leave a notch, so it
 // keeps its exact two-row height and spends the leftover on a LEADERBOARD
 // section: the top few rows of the same board the Leaderboard screen's
@@ -86,25 +91,41 @@ const HomePanels = {
   // quietly eat the fold forever.
   _expanded: Object.create(null),
 
-  // How many row slots fit under the height cap. The server returns at
-  // most this many challenges; when more are open, the last slot becomes
-  // the "See all N" link instead of a fourth challenge.
+  // How many row slots fit under the DESKTOP tile's height cap. The server
+  // returns at most this many challenges (CHALLENGE_ROW_LIMIT, kept in step
+  // with it); when more are open, the footer reads "See all N".
   ROW_SLOTS: 4,
 
-  // ── The breakpoint split (#947) ────────────────────────────────────
+  // …and how many fit the PHONE's single cell (#968). The server still sends
+  // four — it has no idea what viewport is asking — so a window dragged
+  // across 640px repaints the desktop shape from the same cache with no
+  // refetch. This is a DRAW budget, not a fetch one.
+  PHONE_ROW_SLOTS: 2,
+
+  // ── The breakpoint split (#947, #968) ──────────────────────────────
   //
-  // PHONE (4 columns): the widget spans the full grid width, so a shorter
-  // block just ends sooner — nothing sits beside it, nothing has to move.
-  // It draws at its CONTENT height. That half is pure CSS: the article
-  // always carries `home-panel--fit`, and the `align-self: flex-start` rule
-  // lives inside app.css's `@media (max-width: 639.98px)` block, so a window
-  // dragged across the breakpoint resizes instantly, before any re-render.
+  // PHONE (4 columns): the widget spans the full grid width and is ONE cell
+  // tall (registry `sizes` 4: [4, 1]), so a shorter block ends sooner and
+  // nothing beneath it is left holding blank space. It draws at its CONTENT
+  // height — that half is pure CSS: the article always carries
+  // `home-panel--fit`, and the `align-self: flex-start` rule lives inside
+  // app.css's `@media (max-width: 639.98px)` block, so a window dragged
+  // across the breakpoint resizes instantly, before any re-render.
+  //
+  // The CONTENT has to fit that one cell, and that half is decided here (see
+  // the compact branch of renderChallengesPanel). Budget, against
+  // --home-cell-h 7.25rem (116px) on a phone:
+  //   border 2 + title bar 27 + 2 rows x --home-panel-row-h (40) = 109px
+  // ~7px of headroom. The 14px meter lane is padding INSIDE the 40px row
+  // (border-box), so a metered list costs no extra height. There is no
+  // footer: a .home-panel-footer is 27px more and that is the second row.
+  // The way out lives in the title bar instead, exactly as Discover's browse
+  // control does for the same reason (#949).
   //
   // DESKTOP (5 columns): the widget is a TILE in a grid of app icons —
   // shrinking it would leave a notch — so it keeps its exact two-row height
   // and spends whatever the challenge rows don't use on a LEADERBOARD
-  // section (top builders + the viewer's own rank). THAT half is decided
-  // here, because it changes what markup exists.
+  // section (top builders + the viewer's own rank).
   //
   // The row budget, from app.css's own tokens:
   //   tile 256 - border 2 - title bar 25.5 - footer 27  = 201.5px
@@ -189,21 +210,31 @@ const HomePanels = {
   },
 
   // How many rows to draw. Collapsed spends the height cap on at most
-  // ROW_SLOTS rows; the overflow affordance is the footer's expand toggle
-  // now, so it no longer costs a row slot (it used to take the fourth).
+  // `slots` rows (ROW_SLOTS on the desktop tile, PHONE_ROW_SLOTS in the
+  // phone's single cell); the overflow affordance is the footer's expand
+  // toggle on desktop and, on a phone, tapping any row (every one of them
+  // opens the Challenges tab), so it no longer costs a row slot (it used to
+  // take the fourth).
   // Expanded draws everything the server sent and the CSS cap lifts.
+  //
+  // `expanded` is only ever honoured for the caller that HAS an expanded
+  // state — the phone branch passes `collapsed: true`, because growing past
+  // the cell is exactly what its footprint no longer allows (#968).
   //
   // `link` stays in the return shape as a compatibility flag for anything
   // still reading it, but it is always false: the footer owns overflow.
-  visibleSlots(panel) {
+  visibleSlots(panel, opts) {
     const rows = HomePanels.orderRows(panel && panel.challenges);
     const total = Number(panel && panel.total) || 0;
     const key = panel && panel.key;
-    if (key && HomePanels._expanded[key]) {
+    const slots = Number(opts && opts.slots) > 0
+      ? Number(opts.slots) : HomePanels.ROW_SLOTS;
+    const collapsed = !!(opts && opts.collapsed);
+    if (!collapsed && key && HomePanels._expanded[key]) {
       return { rows, link: false, total, expanded: true };
     }
     return {
-      rows: rows.slice(0, HomePanels.ROW_SLOTS),
+      rows: rows.slice(0, slots),
       link: false, total, expanded: false,
     };
   },
@@ -425,14 +456,19 @@ const HomePanels = {
   // Empty string = render nothing at all (the section is hidden).
   //
   // NOT in the grid, so there is no fixed-height rectangle to fill: this host
-  // always gets the COMPACT rendering, at any width. (The article is a plain
-  // block-level flex container here, so it already sizes to its content.)
+  // never draws the desktop leaderboard fill, at any width. (The article is a
+  // plain block-level flex container here, so it already sizes to its
+  // content.) That is `inGrid: false`, which is all the fill is gated on —
+  // `cols` is the REAL viewport now (#968), because it also decides the
+  // challenges widget's phone SHAPE, and a desktop search view must not be
+  // handed the two-row phone rendering.
   renderAll() {
     if (!window.App || !App.user) return '';
     if (!HomePanels._data) return '';
+    const cols = HomePanels.currentCols();
     const blocks = HomePanels.gridSlotKeys()
       .map((k) => HomePanels.panelFor(k))
-      .map((p) => (p ? HomePanels.renderPanel(p, { inGrid: false, cols: 4 }) : ''))
+      .map((p) => (p ? HomePanels.renderPanel(p, { inGrid: false, cols }) : ''))
       .filter(Boolean);
     if (!blocks.length) return '';
     // space-y-2 between blocks: each widget reads as its own box.
@@ -475,14 +511,21 @@ const HomePanels = {
   // on to), and Discover's plain `{ name: value }` bag (its two lane counts,
   // which _stampState mirrors onto the [data-panel-slot] host so one selector
   // can ask for the slot AND the state).
+  //
+  // `stamps.collapsed` forces the article to render un-expanded whatever the
+  // per-visit `_expanded` flag says — the phone branch's contract (#968): its
+  // one-cell footprint has nowhere to grow, and `_expanded` survives a
+  // desktop→phone resize, so honouring it there would drop every row of an
+  // expanded season into a 116px cell.
   _panelShell(key, titleHtml, bodyHtml, footerHtml, stamps) {
     const esc = HomePanels.esc;
-    const expanded = !!HomePanels._expanded[key];
+    const expanded = !(stamps && stamps.collapsed) && !!HomePanels._expanded[key];
     const extraCls = (stamps && stamps.cls) ? ` ${stamps.cls}` : '';
     const extra = (stamps && typeof stamps.attrs === 'string')
       ? ` ${stamps.attrs}`
       : Object.entries(stamps || {})
-        .filter(([name]) => name !== 'cls')
+        // `cls` and `collapsed` are shell CONTROLS, not data attributes.
+        .filter(([name]) => name !== 'cls' && name !== 'collapsed')
         .map(([name, value]) => ` ${name}="${esc(value)}"`).join('');
     return `
       <article class="home-panel home-panel-card${expanded ? ' home-panel--expanded' : ''}${extraCls} rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/50 overflow-hidden" data-panel="${esc(key)}"${extra}>
@@ -499,15 +542,45 @@ const HomePanels = {
       </article>`;
   },
 
+  // THE LEADERBOARD LINK (#980). The Challenges widget's standing door to the
+  // Leaderboard screen, and it is Discover's browse control verbatim — same
+  // violet 12px link, same icon-then-label shape, same place in the TITLE BAR,
+  // same real hash navigation — because it answers the same question ("where
+  // is the full version of this?") on the same home screen. Discover's is the
+  // shell's only door to the app directory; before this the Challenges widget
+  // had NO door to the leaderboard at all unless the season happened to be
+  // empty (see _fillFooter) — the rows and the footer both went to the
+  // Challenges TAB instead.
+  //
+  // It renders in EVERY branch and at EVERY breakpoint, for Discover's reason:
+  // a discovery path that depends on there being content to discover is not a
+  // path. On a phone it is the bar's ONE control (it replaced the "See all"
+  // this widget used to carry there — see renderChallengesPanel), so the
+  // one-cell footprint from #968 is unchanged: still no footer, still two rows.
+  //
+  // `compact` only shortens the LABEL. Beside a title that already reads
+  // "CHALLENGES · 1 of 6", "Leaderboard" is what fits without truncating the
+  // counter away; the aria-label stays the full sentence in both shapes.
+  _leaderboardLink(compact) {
+    return `
+      <button type="button" class="home-panel-lb-browse shrink-0 flex items-center gap-1 text-[12px] font-medium text-violet-600 dark:text-violet-400 hover:underline whitespace-nowrap"
+        title="Open the Leaderboard screen" aria-label="Open leaderboard">
+        <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 18.75h-9m9 0a3 3 0 013 3h-15a3 3 0 013-3m9 0v-3.375c0-.621-.503-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.007 0H9.497m5.007 0a7.454 7.454 0 01-.982-3.172M9.497 14.25a7.454 7.454 0 00.981-3.172M5.25 4.236c-.982.143-1.954.317-2.916.52A6.003 6.003 0 007.73 9.728M5.25 4.236V4.5c0 2.108.966 3.99 2.48 5.228M5.25 4.236V2.721C7.456 2.41 9.71 2.25 12 2.25c2.291 0 4.545.16 6.75.47v1.516M7.73 9.728a6.726 6.726 0 002.748 1.35m8.272-7.322c.983.143 1.954.317 2.916.52a6.003 6.003 0 01-5.395 4.972m0 0a6.726 6.726 0 01-2.749 1.35m0 0a6.772 6.772 0 01-3.044 0"/></svg>
+        <span class="whitespace-nowrap">${compact ? 'Leaderboard' : 'Open leaderboard'}</span>
+      </button>`;
+  },
+
   // The footer bar: the expand/collapse toggle on the LEFT (it grows the
   // block past its cap in place, and the same control collapses it), and
   // the way out to the full Challenges screen on the RIGHT.
   //
-  // That right-hand control says "Go to leaderboard", not "Open": it
-  // navigates to #leaderboard/challenges — a DIFFERENT screen — while the
-  // control beside it opens this same block in place. Two adjacent
-  // affordances both reading as "open" left it to the reader to work out
-  // which one left the home screen; naming the destination settles it.
+  // That right-hand control says "Open challenges", not "Go to leaderboard"
+  // (#980): it navigates to #leaderboard/challenges, and the title bar now
+  // carries a control that goes to the bare #leaderboard. Two affordances one
+  // card apart, both reading "leaderboard", landing on DIFFERENT tabs is worse
+  // than the ambiguity this label was written to fix — so each one names the
+  // screen it actually opens, and "Open challenges" is the wording the ⋮
+  // menu's row for the same destination already used.
   _panelFooter(key, total, expanded) {
     const esc = HomePanels.esc;
     const label = expanded
@@ -522,8 +595,8 @@ const HomePanels = {
           <span class="whitespace-nowrap">${label}</span>
         </button>
         <button type="button" class="home-panel-open flex items-center gap-1 text-[12px] font-medium text-zinc-500 dark:text-zinc-400 hover:text-violet-600 dark:hover:text-violet-400 whitespace-nowrap"
-          title="Go to the Challenges tab on the Leaderboard screen" aria-label="Go to leaderboard">
-          <span class="whitespace-nowrap">Go to leaderboard</span>
+          title="Go to the Challenges tab on the Leaderboard screen" aria-label="Open challenges">
+          <span class="whitespace-nowrap">Open challenges</span>
           <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
         </button>
       </div>`;
@@ -531,8 +604,12 @@ const HomePanels = {
 
   // The footer for the ZERO-challenge desktop tile: there is nothing to
   // expand and nothing to count, so the expand toggle would be a control
-  // that does nothing. One way out instead, and it names where it goes —
-  // the rows above it are leaderboard rows, so it goes to the leaderboard.
+  // that does nothing. One way out instead, and it names THE BOARD ABOVE IT
+  // rather than "the leaderboard" (#980): the title bar's link already goes to
+  // the Leaderboard screen, so a footer repeating that word one card away —
+  // and, for the kudos fallback, landing on a different tab — would read as
+  // two doors to one place. This control belongs to the fill block, so it says
+  // which board it is the full version of.
   // `kind` follows the rows: the standings go to the Leaderboard screen's
   // primary tab, the kudos fallback to the Kudos tab's Top users view.
   _fillFooter(kind) {
@@ -541,12 +618,13 @@ const HomePanels = {
     const title = k === 'kudos'
       ? 'Go to the Top users view on the Leaderboard screen’s Kudos tab'
       : 'Go to the Leaderboard screen';
+    const label = k === 'kudos' ? 'See full kudos board' : 'See full standings';
     return `
       <div class="home-panel-footer flex-none flex items-center justify-end gap-2 px-2.5 border-t border-zinc-200 dark:border-zinc-800">
         <button type="button" class="home-panel-lb-open flex items-center gap-1 text-[12px] font-medium text-zinc-500 dark:text-zinc-400 hover:text-violet-600 dark:hover:text-violet-400 whitespace-nowrap"
           data-lb-kind="${esc(k)}"
-          title="${esc(title)}" aria-label="See full leaderboard">
-          <span class="whitespace-nowrap">See full leaderboard</span>
+          title="${esc(title)}" aria-label="${esc(label)}">
+          <span class="whitespace-nowrap">${label}</span>
           <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
         </button>
       </div>`;
@@ -662,16 +740,27 @@ const HomePanels = {
     const esc = HomePanels.esc;
     const total = Number(panel.total) || 0;
     const title = esc(panel.title || 'Challenges');
-    const expanded = !!HomePanels._expanded[panel.key];
-    // The desktop tile is the only place with a fixed height to fill.
     const inGrid = !!(opts && opts.inGrid);
     const cols = Number(opts && opts.cols) || 4;
-    const canFill = inGrid && cols >= HomePanels.DESKTOP_COLS && !expanded;
+    // THE PHONE SHAPE (#968). Below five columns the widget owns ONE grid
+    // cell, so its content is reshaped to fit: two rows, the way out in the
+    // title bar, no footer, and never expanded. Keyed on the REAL column
+    // count, which is why renderAll() passes currentCols() rather than a
+    // hardcoded 4 — a desktop search view is not a phone.
+    const compact = cols < HomePanels.DESKTOP_COLS;
+    // …and expansion is a desktop-only state now, so the flag only counts
+    // there. It survives a resize (it is per-visit client state), and
+    // honouring it on a phone would drop every row of an expanded season
+    // into a 116px cell.
+    const expanded = !compact && !!HomePanels._expanded[panel.key];
+    // The desktop tile is the only place with a fixed height to fill.
+    const canFill = inGrid && !compact && !expanded;
     // `home-panel--fit` is stamped in BOTH branches; app.css only honours it
     // below 640px, which is what keeps the desktop tile a fixed 2x2.
     const rowsOf = (n, fillRows) => ({
       cls: 'home-panel--fit',
       attrs: `data-rows="${n}" data-fill="${fillRows}"`,
+      collapsed: compact,
     });
 
     // Nothing open. The block STAYS — for everyone, admins included — and
@@ -694,8 +783,12 @@ const HomePanels = {
         panel.key,
         // flex-1 so the ⋮ menu sits at the right edge, same as the populated
         // branch — this state is on every home screen now, so its chrome has
-        // to match the one beside it.
-        `<span class="home-panel-title min-w-0 flex-1 truncate whitespace-nowrap text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${title}</span>`,
+        // to match the one beside it. The leaderboard link rides along (#980):
+        // between seasons the standings are the ONLY thing this widget has to
+        // point at, and on a phone this branch draws no footer at all, so the
+        // bar is where the door has to be.
+        `<span class="home-panel-title min-w-0 flex-1 truncate whitespace-nowrap text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${title}</span>${
+          HomePanels._leaderboardLink(compact)}`,
         `<div class="home-panel-body">${noteHtml}${fillHtml}</div>`,
         // Nothing to expand, nothing to count: the phone block ends at the
         // note, and the desktop tile offers the one destination its rows
@@ -705,13 +798,19 @@ const HomePanels = {
       );
     }
 
-    const { rows } = HomePanels.visibleSlots(panel);
+    const { rows } = HomePanels.visibleSlots(panel, {
+      slots: compact ? HomePanels.PHONE_ROW_SLOTS : HomePanels.ROW_SLOTS,
+      collapsed: compact,
+    });
     const summary = esc(HomePanels.summaryLine(panel));
     // truncate (which carries white-space: nowrap) + an explicit nowrap on
     // the inner span: the counter must never push the title onto a second
-    // line, it gets clipped with an ellipsis instead.
+    // line, it gets clipped with an ellipsis instead. The leaderboard link
+    // sits beside it as a shrink-0 sibling, so a long summary truncates
+    // rather than pushing the control off the bar.
     const titleHtml = `
-      <span class="home-panel-title min-w-0 flex-1 truncate whitespace-nowrap text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${title}<span class="normal-case tracking-normal whitespace-nowrap"> · ${summary}</span></span>`;
+      <span class="home-panel-title min-w-0 flex-1 truncate whitespace-nowrap text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${title}<span class="normal-case tracking-normal whitespace-nowrap"> · ${summary}</span></span>${
+      HomePanels._leaderboardLink(compact)}`;
 
     const rowsHtml = rows.map((c) => HomePanels.renderChallengeRow(c)).join('');
     // The meter lane is a property of the LIST, not of the row that draws
@@ -727,7 +826,12 @@ const HomePanels = {
 
     return HomePanels._panelShell(panel.key, titleHtml,
       `<div class="home-panel-body"><div class="home-panel-rows${metered ? ' home-panel-rows--metered' : ''}">${rowsHtml}</div>${fillHtml}</div>`,
-      HomePanels._panelFooter(panel.key, total, expanded),
+      // NO FOOTER on a phone: its 27px is the widget's second row, and both
+      // of its controls are accounted for — the title bar's leaderboard link
+      // is the way off this screen, tapping a row still opens the Challenges
+      // tab, and expanding in place is a state a one-cell footprint cannot
+      // hold.
+      compact ? '' : HomePanels._panelFooter(panel.key, total, expanded),
       rowsOf(rows.length, fillRows));
   },
 
@@ -776,9 +880,10 @@ const HomePanels = {
   // THE BROWSE CONTROL RIDES IN THE TITLE BAR, not in a footer of its own.
   // A .home-panel-footer costs 27px, which on a phone is exactly the
   // difference between a tile lane that fits its one cell and one that clips
-  // its captions. Challenges keeps _panelFooter (it has an expand toggle and
-  // a second destination to name); Discover has ONE destination, so it
-  // belongs beside the title. _wire() needs no change for this: its
+  // its captions. Discover has ONE destination, so it belongs beside the
+  // title. (Challenges keeps _panelFooter on desktop for its expand toggle,
+  // and #980 moved its leaderboard door up here for the same reasons this one
+  // lives here.) _wire() needs no change for this: its
   // pointerdown guard is on `.home-panel button` generally, so the button is
   // excluded from the drag handle the bar otherwise is.
   //
@@ -1064,6 +1169,17 @@ const HomePanels = {
         HomePanels.goToLeaderboard(btn.dataset.lbKind);
       });
     });
+    // The title bar's leaderboard link (#980) — the Challenges widget's
+    // counterpart to Discover's browse control, and wired the same way: no
+    // `data-lb-kind`, so it lands on the bare #leaderboard whatever the fill
+    // below it happened to preview. It is the widget's door to the SCREEN, not
+    // to one board on it.
+    section.querySelectorAll('.home-panel-lb-browse').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        HomePanels.goToLeaderboard();
+      });
+    });
     section.querySelectorAll('.home-panel-expand').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1140,6 +1256,9 @@ const HomePanels = {
     // still gets a working menu rather than a row that goes nowhere.
     if (key === 'challenges') {
       items.push({ label: 'Open challenges', handler: () => { HomePanels.goToChallenges(); } });
+      // Both of the widget's destinations, named the same way its two visible
+      // controls name them (#980) — the bar's link and the footer's button.
+      items.push({ label: 'Open leaderboard', handler: () => { HomePanels.goToLeaderboard(); } });
     }
     if (key === 'discover') {
       items.push({ label: 'Browse all apps', handler: () => { location.hash = '#apps'; } });
