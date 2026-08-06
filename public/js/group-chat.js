@@ -2155,7 +2155,7 @@ const GroupChat = {
         title: previewTitle,
       });
       try {
-        const resp = await fetch(`/api/sessions/${sessionId}/specs/${version}`);
+        const resp = await fetch(`/api/sessions/${sessionId}/specs/${version}${GroupChat._specDemoQS()}`);
         // After #6, the server allows any authed user to read a spec
         // version that was explicitly shared into the group chat. A
         // 404 here therefore means the share was withdrawn or the
@@ -2195,7 +2195,13 @@ const GroupChat = {
     });
   },
 
-  _showSpecPanel({ title, version, content, builtAt, prNumber, isError }) {
+  // (#1012) Raw markdown currently displayed in the spec panel, kept in
+  // JS state because the panel rewrites its own innerHTML and nothing
+  // else retains `content`. Deliberately NOT a data- attribute: a spec
+  // is multi-KB markdown full of quotes and newlines.
+  _specPanelRaw: null,
+
+  _showSpecPanel({ title, version, content, builtAt, prNumber, isError, canCopy = true }) {
     // Populates the side-panel slot rendered inside the group-chat
     // tab body (see app-view.js renderGroupChatTab). The same panel
     // markup serves both responsive layouts — CSS switches between
@@ -2210,6 +2216,8 @@ const GroupChat = {
     // tab because the slot lives in the layout, not in body.
     const panel = document.getElementById('gc-spec-side-panel');
     if (!panel) return;
+
+    GroupChat._specPanelRaw = content == null ? '' : String(content);
 
     if (!panel._gcKeyHandler) {
       const onKey = (e) => {
@@ -2240,12 +2248,21 @@ const GroupChat = {
           ? DevChat.renderMarkdown(content)
           : escapeHtml(content));
 
+    // (#1012) Copy the whole document as raw markdown. Suppressed for an
+    // error body (a 404 message is not a spec) and for a caller that
+    // opted out via canCopy — the reload-restore skeleton, whose
+    // placeholder "Loading…" must never be copyable.
+    const copyBtnHtml = (canCopy && !isError && content)
+      ? `<button class="gc-spec-panel-copy" aria-label="Copy the whole spec as markdown" title="Copy the whole spec as markdown">Copy markdown</button>`
+      : '';
+
     panel.innerHTML = `
       <div class="gc-spec-panel-header">
         <div class="gc-spec-panel-titlewrap">
           <div class="gc-spec-panel-title">${escapeHtml(title)}</div>
           ${subtitle ? `<div class="gc-spec-panel-subtitle">${escapeHtml(subtitle)}</div>` : ''}
         </div>
+        ${copyBtnHtml}
         <button class="gc-spec-panel-close" aria-label="Close spec panel">×</button>
       </div>
       <div class="gc-spec-panel-body">${bodyHtml}</div>`;
@@ -2256,6 +2273,16 @@ const GroupChat = {
     if (handle) handle.classList.add('gc-spec-resizer-open');
 
     panel.querySelector('.gc-spec-panel-close').addEventListener('click', () => GroupChat._closeSpecPanel());
+
+    const copyBtn = panel.querySelector('.gc-spec-panel-copy');
+    if (copyBtn) {
+      copyBtn.addEventListener('click', async () => {
+        const ok = await PlatformUI.copyText(GroupChat._specPanelRaw);
+        copyBtn.textContent = ok ? 'Copied!' : 'Copy failed';
+        if (!ok) PlatformUI.toast('Couldn\'t copy — select the text and copy it manually');
+        setTimeout(() => { copyBtn.textContent = 'Copy markdown'; }, 1500);
+      });
+    }
   },
 
   _closeSpecPanel() {
@@ -2263,6 +2290,8 @@ const GroupChat = {
     if (!panel) return;
     panel.classList.remove('gc-spec-side-panel-open');
     panel.innerHTML = '';
+    // Don't leave a closed panel's document copyable.
+    GroupChat._specPanelRaw = null;
     if (panel._gcKeyHandler) {
       document.removeEventListener('keydown', panel._gcKeyHandler);
       panel._gcKeyHandler = null;
@@ -2285,6 +2314,20 @@ const GroupChat = {
 
   _SPEC_PANEL_WIDTH_KEY: 'gc-spec-panel-width-v1',
   _SPEC_PANEL_OPEN_KEY_PREFIX: 'gc-spec-panel-open-v1:',
+
+  // (#1012) ?demo=1 passthrough for the spec-version fetch, same shape as
+  // Notifications' and Browse's. chat_session_specs is staging:private, so
+  // on a prod-cloned staging DB the cloned spec_share cards in group chat
+  // have no content to load and the panel only ever renders its error
+  // branch. With demo=1 on the page URL the server answers a mock version
+  // (see stagingMockSpecVersion in src/routes/sessions.js) so the panel —
+  // and its copy button — are reviewable in a staging preview. Honoured by
+  // the server ONLY in staging; a no-op in production.
+  _specDemoQS() {
+    try {
+      return new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : '';
+    } catch { return ''; }
+  },
 
   _readSpecPanelWidth() {
     try {
@@ -2409,10 +2452,13 @@ const GroupChat = {
       title: previewTitle,
       version,
       content: 'Loading…',
+      // (#1012) The placeholder is not a document — no copy button until
+      // the real content lands and replaces this render.
+      canCopy: false,
     });
 
     try {
-      const resp = await fetch(`/api/sessions/${sessionId}/specs/${version}`);
+      const resp = await fetch(`/api/sessions/${sessionId}/specs/${version}${GroupChat._specDemoQS()}`);
       // If the user navigated away during the fetch, don't clobber
       // whatever's on screen.
       if (GroupChat.appSlug !== appSlug) return;

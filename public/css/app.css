@@ -4055,6 +4055,14 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   cursor: not-allowed;
 }
 
+/* (#1012) The copy button's label swaps to "Copied!" / "Copy failed" for
+   1.5s. Reserve the wider label's width so the flash can't reflow — or
+   re-wrap, on a phone-width header — the row around it. */
+.dc-spec-copy-btn {
+  min-width: 108px;
+  text-align: center;
+}
+
 /* (#86) "Share to user" popover, anchored under the spec-viewer header. */
 .dc-spec-viewer-header {
   position: relative;
@@ -4364,6 +4372,25 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   flex-shrink: 0;
 }
 .gc-spec-panel-close:hover { color: var(--text-primary, #e4e4e7); }
+
+/* (#1012) "Copy markdown" in the shared-spec panel header. Matches
+   .dc-spec-action-btn so the two spec surfaces read as one family; the
+   min-width reserves room for the "Copy failed" label flash. */
+.gc-spec-panel-copy {
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border, rgba(255,255,255,0.12));
+  background: var(--bg-secondary, #18181b);
+  color: var(--text-primary, #e4e4e7);
+  cursor: pointer;
+  flex-shrink: 0;
+  min-width: 108px;
+  text-align: center;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.gc-spec-panel-copy:hover { border-color: rgb(139 92 246); }
 
 .gc-spec-panel-body {
   flex: 1 1 auto;
