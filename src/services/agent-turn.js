@@ -79,3 +79,26 @@ async function resolveCodexTurn({ pool, session, userId, model, reasoningEffort,
 }
 
 module.exports = { backendForSession, resolveCodexTurn };
+
+// Mark a Codex turn's ledger row terminal when the worker dispatch
+// finishes (review P3). The relay intentionally does NOT close the turn on
+// any single Responses stream (tool loops make many); completion belongs
+// to the worker lifecycle. Call this once, when execInWorker resolves.
+async function completeCodexTurn({ pool, turnUuid, status = 'completed', errorDetail = null, errorCode = null }) {
+  if (!turnUuid) return;
+  try {
+    await pool.query(
+      `UPDATE agent_turns SET
+         status = $2,
+         completed_at = COALESCE(completed_at, NOW()),
+         error_detail = COALESCE($3, error_detail),
+         error_code = COALESCE($4, error_code)
+       WHERE id = $1 AND status = 'running'`,
+      [turnUuid, status, errorDetail, errorCode],
+    );
+  } catch (err) {
+    log.warn('agent-turn', 'completeCodexTurn failed', { turnUuid, err: err.message });
+  }
+}
+
+module.exports = { backendForSession, resolveCodexTurn, completeCodexTurn };

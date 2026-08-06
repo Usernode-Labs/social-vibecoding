@@ -45,7 +45,7 @@ function openrouterProxyRoutes(config) {
     try {
       // ── Re-check claims against live DB state ──────────────────────
       const { rows: sessRows } = await pool.query(
-        `SELECT user_id, agent_backend, status FROM chat_sessions WHERE id = $1`,
+        `SELECT user_id, agent_backend, status, agent_config_version FROM chat_sessions WHERE id = $1`,
         [c.sessionId],
       );
       const sess = sessRows[0];
@@ -53,6 +53,14 @@ function openrouterProxyRoutes(config) {
       if (sess.user_id !== c.userId) return res.status(403).json({ error: { message: 'session/user mismatch' } });
       if (sess.agent_backend !== 'codex_openrouter') return res.status(403).json({ error: { message: 'backend mismatch' } });
       if (sess.status === 'archived' || sess.status === 'merged') return res.status(409).json({ error: { message: 'session is closed' } });
+      // Honor context resets (review P3): compare the token's version
+      // against the LIVE session version — reset-agent-context bumps
+      // agent_config_version, so a stale pre-reset token must be refused.
+      // The immutable turn snapshot alone is not enough (it never changes
+      // after creation).
+      if (c.agentConfigVersion != null && sess.agent_config_version !== c.agentConfigVersion) {
+        return res.status(409).json({ error: { message: 'agent config version mismatch (context was reset)' } });
+      }
 
       const meta = await credentialStore.readMetadata({
         pool, userId: c.userId, provider: 'openrouter', purpose: 'coding_agent',
@@ -74,9 +82,6 @@ function openrouterProxyRoutes(config) {
       if (turn.status === 'completed' || turn.status === 'failed') {
         return res.status(409).json({ error: { message: 'turn already finished' } });
       }
-      if (c.agentConfigVersion != null && turn.agent_config_version !== c.agentConfigVersion) {
-        return res.status(409).json({ error: { message: 'agent config version mismatch (context was reset)' } });
-      }
       userKey = await credentialStore.readSecret({
         pool, userId: c.userId, provider: 'openrouter', purpose: 'coding_agent',
         dataKey: config.dataEncryptionKey,
@@ -94,6 +99,32 @@ function openrouterProxyRoutes(config) {
         body.max_output_tokens = MAX_OUT;
       }
       const stream = body.stream !== false;
+
+      // ── Cost ceiling resolution + entry check (review P4) ──────────
+      const turnId = c.turnId;
+      // Effective cap = MIN(global operator cap, user preference cap).
+      // A positive global cap must not bypass a lower user cap.
+      let effectiveMaxCost = config.openrouterMaxTurnCostUsd || 0;
+      const { rows: prefRows } = await pool.query(
+        `SELECT max_turn_cost_usd FROM user_agent_preferences
+         WHERE user_id = $1 AND backend = 'codex_openrouter'`,
+        [c.userId],
+      );
+      const userCap = parseFloat(prefRows[0]?.max_turn_cost_usd || '0') || 0;
+      if (userCap > 0 && (effectiveMaxCost === 0 || userCap < effectiveMaxCost)) {
+        effectiveMaxCost = userCap;
+      }
+      // Entry check: reject a NEW upstream call once the turn has already
+      // reached the ceiling, before we spend anything.
+      if (effectiveMaxCost > 0) {
+        const { rows: costRows } = await pool.query(
+          'SELECT actual_cost_usd FROM agent_turns WHERE id = $1', [turnId],
+        );
+        if (parseFloat(costRows[0]?.actual_cost_usd || 0) >= effectiveMaxCost) {
+          log.warn('openrouter-proxy', 'turn cost ceiling reached before forwarding', { turnId, effectiveMaxCost });
+          return res.status(429).json({ error: { message: 'turn cost ceiling reached' } });
+        }
+      }
 
       // ── Forward to OpenRouter ──────────────────────────────────────
       const headers = {
@@ -115,22 +146,10 @@ function openrouterProxyRoutes(config) {
       const ct = upstream.headers.get('content-type');
       if (ct) res.setHeader('Content-Type', ct);
 
-      const turnId = c.turnId;
       // settle is declared here (before the non-streaming branch) so BOTH
       // the non-streaming and streaming paths can use it (review P7).
       const settle = async (u) => {
         if (!u || !u.requestId) return;
-        // Read the per-user cost limit (review P7): the stored preference
-        // must be enforced, not just recorded.
-        let maxCost = config.openrouterMaxTurnCostUsd;
-        if (maxCost <= 0) {
-          const { rows: prefRows } = await pool.query(
-            `SELECT max_turn_cost_usd FROM user_agent_preferences
-             WHERE user_id = $1 AND backend = 'codex_openrouter'`,
-            [c.userId],
-          );
-          maxCost = parseFloat(prefRows[0]?.max_turn_cost_usd || '0') || 0;
-        }
         try {
           // ATOMIC insert + aggregate (review P7): run both in one
           // transaction so we never split the two, and only aggregate when
@@ -173,13 +192,14 @@ function openrouterProxyRoutes(config) {
           } finally {
             client.release();
           }
-          // Enforce the cost ceiling after aggregation.
-          if (maxCost > 0) {
+          // Enforce the cost ceiling after aggregation (post-hoc defense —
+          // the entry check above already prevents most overruns).
+          if (effectiveMaxCost > 0) {
             const { rows: costRows } = await pool.query(
               'SELECT actual_cost_usd FROM agent_turns WHERE id = $1', [turnId]
             );
-            if (parseFloat(costRows[0]?.actual_cost_usd || 0) >= maxCost) {
-              log.warn('openrouter-proxy', 'turn cost ceiling exceeded', { turnId, maxCost });
+            if (parseFloat(costRows[0]?.actual_cost_usd || 0) >= effectiveMaxCost) {
+              log.warn('openrouter-proxy', 'turn cost ceiling exceeded', { turnId, effectiveMaxCost });
               ctrl.abort();
             }
           }

@@ -4823,6 +4823,10 @@ CREATE TABLE IF NOT EXISTS agent_turns (
 );
 CREATE INDEX IF NOT EXISTS idx_agent_turns_session
   ON agent_turns (session_id, started_at);
+-- Idempotent upgrade (review P7): an environment that already applied a
+-- preceding PR revision has agent_turns without agent_config_version, and
+-- CREATE TABLE IF NOT EXISTS is a no-op there. This ALTER covers that path.
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS agent_config_version INTEGER NOT NULL DEFAULT 1;
 
 -- Per-request proxy diagnostics. Uniqueness on (turn_id,
 -- upstream_request_id) prevents double-settlement from SSE replays.

@@ -66,9 +66,42 @@ fi
 # would wipe rollout/thread state after any normal eviction. Keeping it
 # under /home/node/.claude/codex-home means codex session state resumes
 # across worker churn.
-CODEX_HOME=/home/node/.claude/codex-home
+export CODEX_HOME=/home/node/.claude/codex-home
 mkdir -p "$CODEX_HOME"
+toml_escape() {
+  # Escape a value for a double-quoted TOML string (review P2): model/
+  # provider/relay values interpolate into config.toml, so backslashes,
+  # quotes and newlines must be escaped to prevent injecting extra TOML
+  # sections (e.g. an attacker model id like `x"\n[[mcp_servers.evil]]`).
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e ':a;N;$!ba;s/\n/\\n/g'
+}
+ESCAPED_MODEL=$(toml_escape "$AGENT_MODEL")
+ESCAPED_RELAY=$(toml_escape "$USERNODE_AGENT_RELAY")
+if [ -n "$AGENT_REASONING_EFFORT" ]; then
+  ESCAPED_EFFORT=$(toml_escape "$AGENT_REASONING_EFFORT")
+fi
 cat > "$CODEX_HOME/config.toml" <<EOF
+model_provider = "usernode_openrouter"
+model = "$ESCAPED_MODEL"
+${ESCAPED_EFFORT:+model_reasoning_effort = "$ESCAPED_EFFORT"}
+
+# Sandbox + approval live HERE (not -s/-c flags) because `codex exec resume`
+# does not accept -s and would reject it as an unexpected argument (review).
+# Build turns need workspace-write (default read-only would make the commit
+# a no-op); scout stays read-only.
+sandbox_mode = "$([ "$MODE" = "build" ] && echo workspace-write || echo read-only)"
+approval_policy = "never"
+
+[agents]
+enabled = false
+
+[model_providers.usernode_openrouter]
+name = "Usernode OpenRouter"
+base_url = "$ESCAPED_RELAY"
+wire_api = "responses"
+env_key = "USERNODE_AGENT_TOKEN"
+EOF
+
 model_provider = "usernode_openrouter"
 model = "$AGENT_MODEL"
 ${AGENT_REASONING_EFFORT:+model_reasoning_effort = "$AGENT_REASONING_EFFORT"}
@@ -104,31 +137,33 @@ export OPENROUTER_API_KEY=""
 
 CODEX_EXIT=0
 AGENT_THREAD_OUT="$AGENT_THREAD_ID"
-SANDBOX_FLAG="-s $([ "$MODE" = "build" ] && echo workspace-write || echo read-only)"
-APPROVAL_FLAG='-c approval_policy=never'
+# Sandbox + approval are set in config.toml (review): `codex exec resume`
+# rejects -s as an unexpected argument, so they cannot be CLI flags. The
+# prompt is fed via stdin redirect `< "$PROMPT_FILE"` — a detached
+# `docker exec -d` has no inherited stdin, so piping `cat | codex -` would
+# leave codex with an empty prompt ("No prompt provided via stdin").
 TMP_JSONL=$(mktemp /home/node/.usernode/turn-codex-XXXX.jsonl 2>/dev/null || mktemp)
 
-# run_codex <codex args...> — captures codex's own exit code (not tee's),
-# leaves the JSONL in $TMP_JSONL, and streams it to stdout at the end.
+# run_codex <codex args...> — feeds the prompt file on stdin, captures
+# codex's own exit code (dash has no PIPESTATUS), leaves the JSONL in
+# $TMP_JSONL, and streams it to stdout (the turn journal) at the end.
 run_codex() {
-  "$@" > "$TMP_JSONL" 2>&1
+  "$@" < "$PROMPT_FILE" > "$TMP_JSONL" 2>&1
   CODEX_EXIT=$?
   cat "$TMP_JSONL"
 }
 
 if [ -n "$AGENT_THREAD_ID" ]; then
   echo "__USERNODE_PHASE__ codex (resume $AGENT_THREAD_ID, mode $MODE)"
-  # sandbox flag on resume too (review P6): without it, a resumed build
-  # defaults to read-only and cannot edit the checkout.
-  run_codex codex exec resume "$AGENT_THREAD_ID" - --json $APPROVAL_FLAG $SANDBOX_FLAG
+  run_codex codex exec resume "$AGENT_THREAD_ID" - --json
   if [ "$CODEX_EXIT" -ne 0 ]; then
     echo "__USERNODE_WARN__ codex resume failed (exit $CODEX_EXIT); retrying fresh"
-    run_codex codex exec - --json $APPROVAL_FLAG $SANDBOX_FLAG -p usernode-build
+    run_codex codex exec - --json -p usernode-build
     AGENT_THREAD_OUT=""
   fi
 else
   echo "__USERNODE_PHASE__ codex (mode $MODE)"
-  run_codex codex exec - --json $APPROVAL_FLAG $SANDBOX_FLAG -p usernode-build
+  run_codex codex exec - --json -p usernode-build
 fi
 
 # Extract the thread id from thread.started (review F5): codex emits

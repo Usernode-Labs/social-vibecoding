@@ -161,8 +161,12 @@ function credentialRoutes(config) {
     // Validate the model against the user's permitted catalog (review P1) —
     // model ids become executable Codex config.toml, so arbitrary strings
     // (with quotes/newlines) could inject TOML/MCP sections. Only allow
-    // a model the user's key can actually access.
+    // a model the user's key can actually access. Wrapped in try/catch
+    // (review P6): listOpenRouterModels rethrows on failure, and Express 4
+    // does not catch rejected async handlers — a transient catalog outage
+    // must become a clean 400, never an unhandled rejection.
     if (backend === 'codex_openrouter' && model) {
+      try {
       const meta = await credentialStore.readMetadata({
         pool, userId: req.user.id, provider: 'openrouter', purpose: 'coding_agent',
       });
@@ -181,6 +185,10 @@ function credentialRoutes(config) {
       const allowed = catalog.models.some((m) => m.id === model);
       if (!allowed) {
         return res.status(400).json({ error: 'That model is not available under your OpenRouter key.' });
+      }
+      } catch (err) {
+        log.warn('credentials', 'model validation failed; rejecting safe', { userId: req.user.id, err: err.message });
+        return res.status(400).json({ error: 'Could not validate that model right now; try again.' });
       }
     }
     try {

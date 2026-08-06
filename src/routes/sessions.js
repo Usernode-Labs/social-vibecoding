@@ -1997,6 +1997,13 @@ function sessionRoutes(config) {
       const sessionId = parseInt(req.params.id, 10);
       const { backend, model, reasoningEffort } = req.body || {};
       try { registry.resolveBackend(backend || ''); } catch { return res.status(400).json({ error: 'Unknown backend' }); }
+      // Validate reasoning effort + model (review P2): both are
+      // interpolated into the Codex config.toml, so arbitrary values must
+      // be rejected (effort against the enumerated set; model against the
+      // user's permitted OpenRouter catalog).
+      if (reasoningEffort != null && !['minimal', 'low', 'medium', 'high', 'xhigh'].includes(reasoningEffort)) {
+        return res.status(400).json({ error: 'Invalid reasoning effort' });
+      }
       if (activeWorkers.has(sessionId) || worker.isInFlight(sessionId)) {
         return res.status(409).json({ error: 'Session is busy; stop the current turn first.' });
       }
@@ -2011,11 +2018,27 @@ function sessionRoutes(config) {
       }
       if (backend === 'codex_openrouter') {
         const credentialStore = require('../services/credential-store');
+        const agentModels = require('../services/agent-models');
         const meta = await credentialStore.readMetadata({
           pool, userId: req.user.id, provider: 'openrouter', purpose: 'coding_agent',
         });
         if (!meta || meta.status !== 'valid') {
           return res.status(400).json({ error: 'Add your OpenRouter API key in Settings first.' });
+        }
+        if (model) {
+          const apiKey = await credentialStore.readSecret({
+            pool, userId: req.user.id, provider: 'openrouter', purpose: 'coding_agent',
+            dataKey: config.dataEncryptionKey,
+          });
+          if (apiKey) {
+            const catalog = await agentModels.listOpenRouterModels({
+              pool, userId: req.user.id, credentialRevision: meta.revision,
+              apiKey, config, forceRefresh: false,
+            });
+            if (!catalog.models.some((m) => m.id === model)) {
+              return res.status(400).json({ error: 'That model is not available under your OpenRouter key.' });
+            }
+          }
         }
       }
       await pool.query(
@@ -2025,6 +2048,7 @@ function sessionRoutes(config) {
            agent_model = $4,
            agent_reasoning_effort = $5,
            agent_thread_id = NULL,
+           cc_session_id = NULL,
            agent_config_version = agent_config_version + 1,
            agent_context_reset_at = NOW()
          WHERE id = $1`,
@@ -6642,6 +6666,17 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
       broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'cc_progress', text: headlessTerminal });
     }
     flushProgress();
+    // Persist a recovered Codex thread id so the next turn can resume it
+    // (review: recovered Codex thread IDs were discarded because the live
+    // dispatch persists agent_thread_id but the recovery path did not).
+    const recoveredThreadId = result.agentThreadId || null;
+    if (recoveredThreadId && recoveredThreadId !== session.agent_thread_id) {
+      await pool.query(
+        'UPDATE chat_sessions SET agent_thread_id = $1 WHERE id = $2',
+        [recoveredThreadId, session.id],
+      ).catch(() => {});
+      session.agent_thread_id = recoveredThreadId;
+    }
     // Release the record AND the journal it points at (the resume above
     // consumed it, and holdTurnRecord callers no longer delete it in
     // execInWorker's finally).
@@ -8445,6 +8480,15 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
         onProgress: onScoutProgress,
       });
       result = runLocally ? await dispatchLocalScout() : await dispatchScout();
+      // Complete the Codex ledger turn when the worker dispatch finishes
+      // (review P3); the relay never closes the turn per-stream so this is
+      // the authoritative terminal state.
+      if (codexCtx?.turnUuid) {
+        await agentTurn.completeCodexTurn({
+          pool, turnUuid: codexCtx.turnUuid,
+          status: result?.isError ? 'failed' : 'completed',
+        });
+      }
       // Headless auto-retry: a markerless turn that produced no spec text
       // gets exactly one re-dispatch (the retry wraps the call site, not
       // execInWorker, so active_turn bookkeeping stays per-attempt).
@@ -9690,6 +9734,15 @@ path: /another/changed/view
         onProgress: onAgentProgress,
       });
       result = runLocally ? await dispatchLocalBuild() : await dispatchBuild();
+      // Complete the Codex ledger turn when the worker dispatch finishes
+      // (review P3); the relay never closes the turn per-stream so this is
+      // the authoritative terminal state.
+      if (codexCtx?.turnUuid) {
+        await agentTurn.completeCodexTurn({
+          pool, turnUuid: codexCtx.turnUuid,
+          status: result?.isError ? 'failed' : 'completed',
+        });
+      }
       // Headless auto-retry: a markerless turn that committed nothing
       // gets exactly one re-dispatch (the retry wraps the call site, not
       // execInWorker, so active_turn bookkeeping stays per-attempt).

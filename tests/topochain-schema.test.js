@@ -58,21 +58,23 @@ const TABLES = [
   'slot_outcome_reports', 'mobile_logs', 'mobile_otp_codes',
   'app_version_configs', 'terms_versions', 'user_terms_consents',
   'mobile_auth_tokens',
+  'mobile_push_deployment_state', 'mobile_push_installation_mutations',
+  'mobile_push_registrations', 'mobile_push_deliveries',
 ];
 
-// ─── All 22 tables exist, idempotently ─────────────────────────────
+// ─── All 26 tables exist, idempotently ─────────────────────────────
 
-test('all 22 topochain tables are declared as CREATE TABLE IF NOT EXISTS', () => {
-  assert.equal(TABLES.length, 22, 'the 21 SPEC §3.4 tables plus mobile_auth_tokens');
+test('all 26 topochain tables are declared as CREATE TABLE IF NOT EXISTS', () => {
+  assert.equal(TABLES.length, 26, 'the 21 SPEC §3.4 tables + mobile auth + mobile push tables');
   for (const name of TABLES) {
     assert.match(block, new RegExp(`CREATE TABLE IF NOT EXISTS ${name} \\(`),
       `${name} must be created idempotently`);
   }
 });
 
-test('exactly 22 CREATE TABLE statements were added in this block (no accidental duplicates)', () => {
+test('exactly 26 CREATE TABLE statements were added in this block (no accidental duplicates)', () => {
   const matches = block.match(/CREATE TABLE IF NOT EXISTS/g) || [];
-  assert.equal(matches.length, 22);
+  assert.equal(matches.length, 26);
 });
 
 // ─── Dependency order (FK targets declared before their referencing table) ──
@@ -347,11 +349,14 @@ test('every JSON-shaped column in the new block is JSONB, never JSON', () => {
 
 test('spot-check: every surrogate PK in the new block is BIGSERIAL (except the two documented exceptions)', () => {
   // Every table except challenge_kinds and vrf_obligations_sync_state
-  // uses a BIGSERIAL surrogate `id` PK.
+  // uses a BIGSERIAL surrogate `id` PK. The mobile_push_* tables also use
+  // non-surrogate PKs: deployment_state keys on `environment` and
+  // installation_mutations uses a composite (environment, installation_id).
   const surrogateTables = TABLES.filter(
     (n) => n !== 'challenge_kinds' && n !== 'vrf_obligations_sync_state'
+      && n !== 'mobile_push_deployment_state' && n !== 'mobile_push_installation_mutations'
   );
-  assert.ok(surrogateTables.length >= 19);
+  assert.ok(surrogateTables.length >= 21);
   for (const name of surrogateTables) {
     assert.match(tableText(name), /id\s+BIGSERIAL PRIMARY KEY/, `${name}.id is BIGSERIAL`);
   }
