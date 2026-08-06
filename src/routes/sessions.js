@@ -1139,13 +1139,36 @@ function sessionRoutes(config) {
       }
 
       const { rows } = await pool.query(
-        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, created_from_issue_number)
-         VALUES ($1, $2, $3, 'active', $4)
-         RETURNING *`,
-        [app.id, req.user.id, branchName, issueNumber]
+       `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, created_from_issue_number)
+        VALUES ($1, $2, $3, 'active', $4)
+        RETURNING *`,
+       [app.id, req.user.id, branchName, issueNumber]
       );
 
       log.info('sessions', 'Session created', { sessionId: rows[0].id, branch: branchName });
+      // Copy the user's default coding-agent preferences into the session
+      // (review F6): without this, preferences are written but never
+      // consumed and every session gets the claude_code schema default.
+      try {
+        const { rows: prefRows } = await pool.query(
+          `SELECT backend, model_id, reasoning_effort
+           FROM user_agent_preferences
+           WHERE user_id = $1 AND is_default = TRUE`,
+          [req.user.id],
+        );
+        const pref = prefRows[0];
+        if (pref) {
+          await pool.query(
+            `UPDATE chat_sessions SET
+               agent_backend = $2, agent_provider = $3,
+               agent_model = $4, agent_reasoning_effort = $5
+             WHERE id = $1`,
+            [rows[0].id, pref.backend,
+             pref.backend === 'codex_openrouter' ? 'openrouter' : 'anthropic',
+             pref.model_id, pref.reasoning_effort],
+          );
+        }
+      } catch {}
       events.record(pool, {
         type: events.EVENT_TYPES.DEV_SESSION_STARTED,
         userId: req.user.id,
@@ -2926,6 +2949,17 @@ function sessionRoutes(config) {
       // GET /api/models, so there's no drift between what the UI
       // offers and what the server accepts.
       const selectedModel = models.resolve(model);
+
+      // Backend-aware model + secret resolution (review F2, F10):
+      // For codex_openrouter the session-pinned OpenRouter model is
+      // authoritative â€” the Claude allowlist must NOT coerce it to a
+      // Claude model. And the Mayor's Anthropic BYOK key must NEVER
+      // enter a Codex worker (Codex uses the relay token, not an
+      // Anthropic key; leaking the Anthropic key into the worker lets
+      // repository code exfiltrate it).
+      const isCodexSession = registry.resolveBackend(session.agent_backend) === 'codex_openrouter';
+      const turnModel = isCodexSession ? (session.agent_model || selectedModel) : selectedModel;
+      const turnApiKey = isCodexSession ? null : (userApiKey || null);
 
       // SSE response
       res.writeHead(200, {
@@ -8028,6 +8062,11 @@ async function runScoutTool({
   // statuses, so the dev-chat "(took Xm Ys)" suffix survives reloads.
   const turnStartedMs = Date.now();
   const modelLabel = prettyModelLabel(selectedModel);
+  // Backend-aware model + secret (review F2, F10). Codex sessions use
+  // the pinned OpenRouter model and NO Anthropic key.
+  const isCodexSession = registry.resolveBackend(session.agent_backend) === 'codex_openrouter';
+  const turnModel = isCodexSession ? (session.agent_model || selectedModel) : selectedModel;
+  const turnApiKey = isCodexSession ? null : (userApiKey || null);
 
   // #937: the single way this tool ends on a stop, used by every
   // pre-dispatch gate below AND by the post-run branch, so the two can't
@@ -8209,10 +8248,13 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
     repoOwner,
     repoName,
     branchName: session.branch_name,
-    anthropicApiKey: userApiKey || null,
+    anthropicApiKey: turnApiKey,
     onProgress: (text) => {
       send('cc_progress', { text });
-      workerProgress.set(session.id, text, { model: selectedModel });
+      workerProgress.set(session.id, text, {
+        model: turnModel,
+        backend: session.agent_backend,
+      });
     },
   });
 
@@ -8377,7 +8419,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
       // (legacy path unchanged). plan.md PR5/PR6.
       const codexCtx = await agentTurn.resolveCodexTurn({
         pool, session, userId: req.user.id,
-        model: selectedModel,
+        model: turnModel,
         resumeThreadId: session.cc_session_id || session.agent_thread_id || null,
       });
       if (codexCtx?.error === 'credential_required') {
@@ -8387,11 +8429,11 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
       const dispatchScout = () => worker.execInWorker(session.id, {
         mode: 'scout',
         prompt: scoutPrompt,
-        model: selectedModel,
+        model: turnModel,
         commitMsg: '',
-        resumeSessionId: session.cc_session_id || null,
+        resumeSessionId: session.cc_session_id || session.agent_thread_id || null,
         branchName: session.branch_name,
-        anthropicApiKey: userApiKey || null,
+        anthropicApiKey: turnApiKey,
         ...(codexCtx || {}),
         prodDebug,
         // Hold the durable turn record through this tool's own tail
@@ -8425,6 +8467,17 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
         [newCcId, session.id]
       ).catch(() => {});
       session.cc_session_id = newCcId;
+    }
+    // Persist the Codex thread id for resume on the next turn (review F5).
+    // For Codex the thread id comes from __USERNODE_RESULT__ agent_thread_id
+    // (parsed by worker.js parseLine into state.agentThreadId).
+    const newAgentThreadId = result.agentThreadId || null;
+    if (newAgentThreadId && newAgentThreadId !== session.agent_thread_id) {
+      await pool.query(
+        'UPDATE chat_sessions SET agent_thread_id = $1 WHERE id = $2',
+        [newAgentThreadId, session.id]
+      ).catch(() => {});
+      session.agent_thread_id = newAgentThreadId;
     }
 
     // #937: the post-run stop, now sharing stoppedResult() with the five
@@ -8827,6 +8880,11 @@ async function runClaudeCodeTool({
   // Without this, the only place the model is surfaced is the cost
   // line, which lands much later (fixes #33).
   const modelLabel = prettyModelLabel(selectedModel);
+  // Backend-aware model + secret (review F2, F10). Codex sessions use
+  // the pinned OpenRouter model and NO Anthropic key.
+  const isCodexSession = registry.resolveBackend(session.agent_backend) === 'codex_openrouter';
+  const turnModel = isCodexSession ? (session.agent_model || selectedModel) : selectedModel;
+  const turnApiKey = isCodexSession ? null : (userApiKey || null);
 
   // #937: the single way this tool ends on a stop â€” used by all five
   // pre-dispatch gates below AND by the post-run branch, so wording,
@@ -9595,7 +9653,7 @@ path: /another/changed/view
     try {
       const codexCtx = await agentTurn.resolveCodexTurn({
         pool, session, userId: req.user.id,
-        model: selectedModel,
+        model: turnModel,
         resumeThreadId: session.cc_session_id || session.agent_thread_id || null,
       });
       if (codexCtx?.error === 'credential_required') {
@@ -9605,11 +9663,11 @@ path: /another/changed/view
       const dispatchBuild = () => worker.execInWorker(session.id, {
         mode: 'build',
         prompt: claudePrompt,
-        model: selectedModel,
+        model: turnModel,
         commitMsg,
-        resumeSessionId: session.cc_session_id || null,
+        resumeSessionId: session.cc_session_id || session.agent_thread_id || null,
         branchName: session.branch_name,
-        anthropicApiKey: userApiKey || null,
+        anthropicApiKey: turnApiKey,
         ...(codexCtx || {}),
         prodDebug,
         // Hold the durable turn record through the tail below (push heal â†’
@@ -9676,6 +9734,16 @@ path: /another/changed/view
         [newCcId, session.id]
       ).catch(() => {});
       session.cc_session_id = newCcId;
+    }
+
+    // Persist the Codex thread id for resume on the next turn (review F5).
+    const buildAgentThreadId = result.agentThreadId || null;
+    if (buildAgentThreadId && buildAgentThreadId !== session.agent_thread_id) {
+      await pool.query(
+        'UPDATE chat_sessions SET agent_thread_id = $1 WHERE id = $2',
+        [buildAgentThreadId, session.id]
+      ).catch(() => {});
+      session.agent_thread_id = buildAgentThreadId;
     }
 
     // If the user stopped mid-run we want to BAIL before push/PR/staging

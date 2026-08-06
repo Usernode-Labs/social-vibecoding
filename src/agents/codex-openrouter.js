@@ -104,6 +104,17 @@ function normalizeCodexLine(line, state) {
   if (ev.type === 'item.completed' || ev.type === 'item_result') {
     const item = ev.item || ev;
     const t = item.type || item.kind;
+    // agent_message: the agent's final text output (review F3). Without
+    // this the UI shows empty progress because 0.146.0 emits the agent
+    // message inside item.completed, not as a top-level message event.
+    if (t === 'agent_message') {
+      const txt = item.message || item.content || item.text || '';
+      if (txt) return { kind: 'agent_message', text: String(txt).slice(0, 300) };
+    }
+    if (t === 'error') {
+      const msg = item.message || item.error || 'Codex error';
+      return { kind: 'error', text: `[agent_failed] ${String(msg).slice(0, 200)}` };
+    }
     if (t === 'command_execution' || t === 'command' || t === 'function_call') {
       const summary = summarizeResult(item.output || item.result || item.content);
       return { kind: 'command_completed', text: `  ⎿ ${summary}` };

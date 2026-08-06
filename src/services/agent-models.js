@@ -22,8 +22,13 @@ function cacheKey(userId, credentialRevision) {
 // Static minimums a model must meet to even be "experimental" for Codex.
 function meetsStaticMinimums(m) {
   if (!m) return false;
-  const params = m.supported_parameters || m.parameters || {};
-  const supportsTools = Array.isArray(params.tools) ? params.tools.includes('required') : params.tools !== false;
+  // OpenRouter documents `supported_parameters` as an ARRAY of strings
+  // (e.g. ["tools","tool_choice","reasoning"]), not an object. Handle
+  // both shapes defensively (review P2).
+  const params = m.supported_parameters || m.parameters || [];
+  const paramList = Array.isArray(params) ? params : Object.keys(params);
+  const supportsTools = paramList.includes('tools') || paramList.includes('tool_choice');
+  const supportsReasoning = paramList.includes('reasoning');
   // Context length: Codex turns carry large repo context.
   const ctx = m.context_length || m.top_provider?.context_length || 0;
   return supportsTools && ctx >= 32000;

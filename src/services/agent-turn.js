@@ -36,6 +36,11 @@ async function resolveCodexTurn({ pool, session, userId, model, reasoningEffort,
   }
 
   const turnId = crypto.randomUUID();
+  // IMPORTANT (review F9): the ledger row is the authoritative state
+  // machine the relay checks on every request. If creating it fails we
+  // MUST fail closed — the relay rejects requests for turns it cannot
+  // find, so continuing with a missing ledger row would mint tokens that
+  // can never be used (worse: silently turn the turn "unbillable").
   try {
     await pool.query(
       `INSERT INTO agent_turns
@@ -49,7 +54,8 @@ async function resolveCodexTurn({ pool, session, userId, model, reasoningEffort,
        meta.id, meta.revision, resumeThreadId || session.agent_thread_id || null],
     );
   } catch (err) {
-    log.warn('agent-turn', 'agent_turns insert failed', { sessionId: session.id, err: err.message });
+    log.error('agent-turn', 'agent_turns insert failed; refusing to start turn', { sessionId: session.id, err: err.message });
+    throw err;
   }
 
   const token = platformJwt.signAgentProxyToken({

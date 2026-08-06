@@ -1800,7 +1800,7 @@
       try {
         const r = await fetch('/api/me/coding-agent', { credentials: 'same-origin' });
         const prefs = r.ok ? await r.json() : {};
-        const isBeta = !!(prefs.backends?.codex_openrouter);
+        const isBeta = !!prefs.codexAvailable;
         if (betaGate) betaGate.classList.toggle('hidden', isBeta);
         if (!isBeta) { if (modelsWrap) modelsWrap.classList.add('hidden'); return; }
       } catch {}
@@ -1841,10 +1841,17 @@
         const cat = await r.json();
         const models = cat.models || [];
         if (!models.length) { if (wrap) wrap.classList.add('hidden'); return; }
-        sel.innerHTML = models.map((m) => {
+        // Build options with DOM methods, NOT innerHTML (review P2):
+        // OpenRouter model IDs/names are untrusted catalog data and
+        // could inject markup into the authenticated Settings page.
+        sel.innerHTML = '';
+        for (const m of models) {
           const tag = m.compatibility === 'verified' ? ' ✓' : (m.compatibility === 'experimental' ? ' (experimental)' : '');
-          return `<option value="${m.id}">${m.name}${tag}</option>`;
-        }).join('');
+          const opt = document.createElement('option');
+          opt.value = m.id;
+          opt.textContent = m.name + tag;
+          sel.appendChild(opt);
+        }
         // Restore the previously-saved model/effort if any.
         const prefs = await (await fetch('/api/me/coding-agent', { credentials: 'same-origin' })).json();
         const saved = prefs.backends?.codex_openrouter;

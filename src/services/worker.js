@@ -287,7 +287,24 @@ function parseLine(line, onProgress, state) {
   }
   try {
     const event = JSON.parse(line);
-    applyStreamEvent(event, onProgress, state);
+    // Backend-aware event routing (plan.md review F3): Codex turns emit
+    // JSONL with a different event schema than Claude's stream-json. The
+    // Codex adapter (src/agents/codex-openrouter.js) normalizes them to
+    // the same progress vocabulary. Claude turns keep the legacy parser.
+    if (state.agentBackend === 'codex_openrouter') {
+      const codex = require('../agents/codex-openrouter');
+      const ev = codex.normalizeCodexLine(line, state);
+      if (ev) {
+        if (ev.threadId) state.agentThreadId = ev.threadId;
+        if (ev.kind === 'usage') {
+          state.costUsd = ev.usage?.cost || state.costUsd;
+          state.lastResultText = ev.text;
+        }
+        if (ev.text) onProgress(ev.text);
+      }
+    } else {
+      applyStreamEvent(event, onProgress, state);
+    }
   } catch {
     // Plain log line (git output, shell echo, etc.).
     if (line.length < 500) onProgress(line);
@@ -1841,7 +1858,11 @@ async function listOrphanWorkers() {
 // the worker image (node:22-bookworm-slim) does NOT ship procps, so
 // pgrep/pkill exit 127 in there. The old `pgrep ... && busy || idle`
 // one-liner silently reported "idle" for every container, busy or not.
-const TURN_PROC_RE = '(^|[ /])(claude|run-cc\\.sh)( |$)';
+// Match a turn process for EITHER backend (review F4): the Claude runner
+// (run-cc.sh + claude) or the Codex runner (run-codex-agent.sh + codex).
+// Without the codex terms, long Codex turns look idle (watchdog abandons)
+// and Stop appends a fake marker without killing the process.
+const TURN_PROC_RE = '(^|[ /])(claude|run-cc\\.sh|codex|run-codex-agent\\.sh)( |$)';
 const TURN_PROC_PROBE_SCRIPT =
   'busy=0; for d in /proc/[0-9]*; do '
   + '[ "$d" = "/proc/$$" ] && continue; '

@@ -61,6 +61,22 @@ function openrouterProxyRoutes(config) {
       if (c.credentialRevision != null && meta.revision !== c.credentialRevision) {
         return res.status(401).json({ error: { message: 'credential revision mismatch (key replaced or revoked)' } });
       }
+      // Verify the claimed turnId against a LIVE ledger row (review F9):
+      // the relay must not accept a token for a turn that doesn't exist,
+      // already completed, or belongs to a different session/user.
+      const { rows: turnRows } = await pool.query(
+        `SELECT id, status, agent_config_version FROM agent_turns
+         WHERE id = $1 AND session_id = $2 AND user_id = $3`,
+        [c.turnId, c.sessionId, c.userId],
+      );
+      const turn = turnRows[0];
+      if (!turn) return res.status(404).json({ error: { message: 'turn not found' } });
+      if (turn.status === 'completed' || turn.status === 'failed') {
+        return res.status(409).json({ error: { message: 'turn already finished' } });
+      }
+      if (c.agentConfigVersion != null && turn.agent_config_version !== c.agentConfigVersion) {
+        return res.status(409).json({ error: { message: 'agent config version mismatch (context was reset)' } });
+      }
       userKey = await credentialStore.readSecret({
         pool, userId: c.userId, provider: 'openrouter', purpose: 'coding_agent',
         dataKey: config.dataEncryptionKey,
@@ -101,6 +117,16 @@ function openrouterProxyRoutes(config) {
 
       if (!stream || !upstream.ok || !upstream.body) {
         const text = await upstream.text();
+        // Non-streaming response (review F8): parse the JSON body for
+        // usage and settle it — never skip settlement just because the
+        // client didn't request streaming.
+        if (upstream.ok) {
+          try {
+            const body = JSON.parse(text);
+            const u = extractUsage(body.type || 'response.completed', body);
+            if (u) await settle(u);
+          } catch {}
+        }
         return res.send(text);
       }
       res.setHeader('Cache-Control', 'no-cache');
@@ -111,36 +137,54 @@ function openrouterProxyRoutes(config) {
       let settled = false;
       const reader = upstream.body.getReader();
       const turnId = c.turnId;
-      const settle = async (u) => {
-        if (settled || !u || !u.requestId) return;
-        settled = true;
-        try {
-          await pool.query(
-            `INSERT INTO agent_api_calls
-               (id, turn_id, upstream_request_id, requested_model, routed_model,
-                routed_provider, input_tokens, output_tokens, actual_cost_usd, status)
-             VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, 'completed')
-             ON CONFLICT (turn_id, upstream_request_id) DO NOTHING`,
-            [turnId, u.requestId, c.model, u.model, u.routedProvider,
-             u.inputTokens, u.outputTokens, u.cost || 0],
-          );
-          await pool.query(
-            `UPDATE agent_turns SET
-               routed_model = COALESCE($2, routed_model),
-               routed_provider = COALESCE($3, routed_provider),
-               input_tokens = $4, cached_input_tokens = $5,
-               output_tokens = $6, reasoning_output_tokens = $7,
-               actual_cost_usd = $8, cost_source = 'openrouter_usage',
-               billed_by = 'user_openrouter', status = 'completed',
-               completed_at = NOW()
-             WHERE id = $1`,
-            [turnId, u.model, u.routedProvider, u.inputTokens,
-             u.cachedInputTokens, u.outputTokens, u.reasoningOutputTokens, u.cost || 0],
-          );
-        } catch (err) {
-          log.warn('openrouter-proxy', 'usage settlement failed', { turnId, err: err.message });
-        }
-      };
+     const settle = async (u) => {
+       if (!u || !u.requestId) return;
+       try {
+         await pool.query(
+           `INSERT INTO agent_api_calls
+              (id, turn_id, upstream_request_id, requested_model, routed_model,
+               routed_provider, input_tokens, output_tokens, actual_cost_usd, status)
+            VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, 'completed')
+            ON CONFLICT (turn_id, upstream_request_id) DO NOTHING`,
+           [turnId, u.requestId, c.model, u.model, u.routedProvider,
+            u.inputTokens, u.outputTokens, u.cost || 0],
+         );
+         // Aggregate (review F11): ADD this call's tokens/cost to the
+         // turn totals instead of overwriting — tool loops make multiple
+         // Responses calls and each must accumulate. Do NOT mark the
+         // turn complete here; only the stream end (or worker completion)
+         // closes it.
+         await pool.query(
+           `UPDATE agent_turns SET
+              routed_model = COALESCE($2, routed_model),
+              routed_provider = COALESCE($3, routed_provider),
+              input_tokens = input_tokens + $4,
+              cached_input_tokens = cached_input_tokens + $5,
+              output_tokens = output_tokens + $6,
+              reasoning_output_tokens = reasoning_output_tokens + $7,
+              actual_cost_usd = actual_cost_usd + $8,
+              cost_source = 'openrouter_usage',
+              billed_by = 'user_openrouter'
+            WHERE id = $1`,
+           [turnId, u.model, u.routedProvider, u.inputTokens,
+            u.cachedInputTokens, u.outputTokens, u.reasoningOutputTokens, u.cost || 0],
+         );
+         // Enforce the cost ceiling (review F11): if the turn's
+         // accumulated cost exceeds the configured max, abort.
+         const maxCost = config.openrouterMaxTurnCostUsd;
+         if (maxCost > 0) {
+           const { rows: costRows } = await pool.query(
+             'SELECT actual_cost_usd FROM agent_turns WHERE id = $1', [turnId]
+           );
+           if (parseFloat(costRows[0]?.actual_cost_usd || 0) >= maxCost) {
+             log.warn('openrouter-proxy', 'turn cost ceiling exceeded', { turnId, maxCost });
+             ctrl.abort();
+           }
+         }
+       } catch (err) {
+         log.warn('openrouter-proxy', 'usage settlement failed', { turnId, err: err.message });
+       }
+     };
 
       try {
         for (;;) {
@@ -161,11 +205,21 @@ function openrouterProxyRoutes(config) {
           const parsed = parseSseFrames(buf + '\n\n');
           for (const ev of parsed.events) { const u = extractUsage(ev.event, ev.data); if (u) settle(u); }
         }
-      } catch (err) {
-        if (err.name !== 'AbortError') log.warn('openrouter-proxy', 'stream error', { turnId, err: err.message });
-      } finally {
-        try { res.end(); } catch {}
-      }
+     } catch (err) {
+       if (err.name !== 'AbortError') log.warn('openrouter-proxy', 'stream error', { turnId, err: err.message });
+     } finally {
+       // Close the turn only when the stream ends (review F11), not on
+       // every settle call — tool loops make multiple Responses calls
+       // within one turn.
+       try {
+         await pool.query(
+           `UPDATE agent_turns SET status = 'completed', completed_at = NOW()
+            WHERE id = $1 AND status = 'running'`,
+           [turnId]
+         );
+       } catch {}
+       try { res.end(); } catch {}
+     }
     } catch (err) {
       log.error('openrouter-proxy', 'relay failure', { turnId: c?.turnId, err: err.message });
       if (!res.headersSent) res.status(500).json({ error: { message: 'relay failure' } });

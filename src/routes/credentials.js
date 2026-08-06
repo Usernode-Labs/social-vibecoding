@@ -140,7 +140,7 @@ function credentialRoutes(config) {
       }
       const defaultBackend = rows.find((r) => r.is_default)?.backend
         || (backends.claude_code ? 'claude_code' : registry.DEFAULT_BACKEND);
-      res.json({ defaultBackend, backends });
+      res.json({ defaultBackend, backends, codexAvailable: betaAllowed(req.user.id) });
     } catch (err) {
       log.error('credentials', 'coding-agent prefs read failed', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -159,10 +159,22 @@ function credentialRoutes(config) {
       return res.status(400).json({ error: 'Invalid reasoning effort' });
     }
     try {
+      // Clear other defaults BEFORE the upsert (review P2): the partial
+      // unique index `user_agent_preferences_one_default` (one
+      // is_default=TRUE per user) would reject the upsert if another
+      // backend is already the default, because the ON CONFLICT fires
+      // after the INSERT attempts a second is_default=TRUE row.
+      if (defaultBackend) {
+        await pool.query(
+          `UPDATE user_agent_preferences SET is_default = FALSE
+           WHERE user_id = $1 AND is_default = TRUE AND backend <> $2`,
+          [req.user.id, backend],
+        );
+      }
       await pool.query(
         `INSERT INTO user_agent_preferences
            (user_id, backend, model_id, reasoning_effort, max_turn_cost_usd, is_default)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (user_id, backend) DO UPDATE SET
            model_id = EXCLUDED.model_id,
            reasoning_effort = EXCLUDED.reasoning_effort,
@@ -171,13 +183,6 @@ function credentialRoutes(config) {
            updated_at = NOW()`,
         [req.user.id, backend, model || null, reasoningEffort || null, maxTurnCostUsd || null, !!defaultBackend],
       );
-      if (defaultBackend) {
-        // Only one default per user.
-        await pool.query(
-          `UPDATE user_agent_preferences SET is_default = (backend = $2) WHERE user_id = $1`,
-          [req.user.id, backend],
-        );
-      }
       res.json({ ok: true });
     } catch (err) {
       log.error('credentials', 'coding-agent prefs write failed', { userId: req.user.id, err: err.message });

@@ -115,6 +115,24 @@ test('normalizeCodexLine maps turn.failed to an error event', () => {
   assert.match(ev.text, /\[agent_failed\]/);
 });
 
+test('normalizeCodexLine maps item.completed with agent_message (real 0.146.0)', () => {
+  const state = codex.newCodexState();
+  const ev = codex.normalizeCodexLine(JSON.stringify({
+    type: 'item.completed', item: { id: 'item_0', type: 'agent_message', message: 'I edited the file.' },
+  }), state);
+  assert.equal(ev.kind, 'agent_message');
+  assert.equal(ev.text, 'I edited the file.');
+});
+
+test('normalizeCodexLine maps item.completed with error type (real 0.146.0)', () => {
+  const state = codex.newCodexState();
+  const ev = codex.normalizeCodexLine(JSON.stringify({
+    type: 'item.completed', item: { id: 'item_0', type: 'error', message: '401 Unauthorized' },
+  }), state);
+  assert.equal(ev.kind, 'error');
+  assert.match(ev.text, /401/);
+});
+
 // ── Resume-error classification ───────────────────────────────────────
 test('classifyResumeError: thread-missing is retry-fresh; auth/credit/rate are not', () => {
   assert.equal(codex.classifyResumeError('thread not found', 1).retryFresh, true);
@@ -125,23 +143,37 @@ test('classifyResumeError: thread-missing is retry-fresh; auth/credit/rate are n
 });
 
 // ── OpenRouter SSE parser ─────────────────────────────────────────────
-test('parseSseFrames handles frames split across chunks', () => {
-  const a = parseSseFrames('event: response.created\ndata: {"id":"r1"}\n\nevent: response.co');
+test('parseSseFrames handles data-only frames split across chunks', () => {
+  // OpenRouter uses data-only frames (no event: header). The type is
+  // inside the JSON payload.
+  const a = parseSseFrames('data: {"type":"response.created","response":{"id":"r1"}}\n\ndata: {"type":"response.do');
   assert.equal(a.events.length, 1);
   assert.equal(a.events[0].event, 'response.created');
-  assert.equal(a.rest, 'event: response.co');
-  const b = parseSseFrames(a.rest + 'mpleted\ndata: {"id":"r1","usage":{}}\n\n');
+  assert.equal(a.rest, 'data: {"type":"response.do');
+  const b = parseSseFrames(a.rest + 'ne","response":{"id":"r1","usage":{}}}\n\n');
   assert.equal(b.events.length, 1);
-  assert.equal(b.events[0].event, 'response.completed');
+  assert.equal(b.events[0].event, 'response.done');
 });
 
-test('extractUsage pulls tokens + cost from response.completed', () => {
-  const data = JSON.stringify({
-    id: 'req-123', model: 'openai/gpt-5.3-codex', provider: 'openai',
-    usage: { input_tokens: 200, output_tokens: 80, output_tokens_details: { reasoning_tokens: 30 } },
-    cost: 0.0142,
-  });
-  const u = extractUsage('response.completed', data);
+test('parseSseFrames handles the [DONE] terminator', () => {
+  const r = parseSseFrames('data: [DONE]\n\n');
+  assert.equal(r.events.length, 1);
+  assert.equal(r.events[0].event, 'done');
+  assert.equal(r.events[0].data, null);
+});
+
+test('extractUsage pulls tokens + cost from response.done (real format)', () => {
+  // Real OpenRouter format: usage lives inside response.usage on the
+  // response.done frame, not at the top level.
+  const data = {
+    type: 'response.done',
+    response: {
+      id: 'req-123', model: 'openai/gpt-5.3-codex', provider: 'openai',
+      usage: { input_tokens: 200, output_tokens: 80, output_tokens_details: { reasoning_tokens: 30 } },
+      cost: 0.0142,
+    },
+  };
+  const u = extractUsage('response.done', data);
   assert.equal(u.requestId, 'req-123');
   assert.equal(u.inputTokens, 200);
   assert.equal(u.outputTokens, 80);
@@ -151,5 +183,9 @@ test('extractUsage pulls tokens + cost from response.completed', () => {
 });
 
 test('extractUsage returns null for non-usage events', () => {
-  assert.equal(extractUsage('response.output_text.delta', '{"delta":"hi"}'), null);
+  assert.equal(extractUsage('response.output_text.delta', { delta: 'hi' }), null);
+});
+
+test('extractUsage returns null for null data', () => {
+  assert.equal(extractUsage('done', null), null);
 });

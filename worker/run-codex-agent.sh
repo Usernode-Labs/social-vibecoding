@@ -82,24 +82,47 @@ export USERNODE_AGENT_TOKEN
 export OPENROUTER_API_KEY=""
 
 # Invoke Codex non-interactively. --json emits JSON Lines the host parser
-# tolerates (unknown events ignored). Fresh turn vs resume by thread id.
+# (worker.js parseLine → codex-openrouter.js normalizeCodexLine) handles.
+#
+# Sandbox (review F1): build turns MUST be workspace-write (the default
+# read-only sandbox makes commit/push a no-op). Scout stays read-only.
+# Non-interactive approval is via -c approval_policy=never (matches the
+# pinned 0.146.0 config keys). --profile is NOT valid on `resume` so it
+# is only passed to the fresh `exec` form.
 CODEX_EXIT=0
 AGENT_THREAD_OUT="$AGENT_THREAD_ID"
+SANDBOX_FLAG="-s $([ "$MODE" = "build" ] && echo workspace-write || echo read-only)"
+APPROVAL_FLAG='-c approval_policy=never'
+# Tee the raw output so we can extract the thread id from thread.started
+# (review F5): the host's parseLine already sees it, but persisting it
+# in __USERNODE_RESULT__ lets the recovery path re-resume.
+TMP_JSONL=$(mktemp /home/node/.usernode/turn-codex-XXXX.jsonl 2>/dev/null || mktemp)
 if [ -n "$AGENT_THREAD_ID" ]; then
   echo "__USERNODE_PHASE__ codex (resume $AGENT_THREAD_ID, mode $MODE)"
-  cat "$PROMPT_FILE" | codex exec resume "$AGENT_THREAD_ID" - --json --profile usernode-build 2>&1
-  CODEX_EXIT=$?
+  cat "$PROMPT_FILE" | codex exec resume "$AGENT_THREAD_ID" - --json $APPROVAL_FLAG 2>&1 | tee "$TMP_JSONL"
+  CODEX_EXIT=${PIPESTATUS[0]:-$?}
   if [ "$CODEX_EXIT" -ne 0 ]; then
     echo "__USERNODE_WARN__ codex resume failed (exit $CODEX_EXIT); retrying fresh"
-    cat "$PROMPT_FILE" | codex exec - --json --profile usernode-build 2>&1
-    CODEX_EXIT=$?
+    cat "$PROMPT_FILE" | codex exec - --json $APPROVAL_FLAG $SANDBOX_FLAG -p usernode-build 2>&1 | tee "$TMP_JSONL"
+    CODEX_EXIT=${PIPESTATUS[0]:-$?}
     AGENT_THREAD_OUT=""
   fi
 else
   echo "__USERNODE_PHASE__ codex (mode $MODE)"
-  cat "$PROMPT_FILE" | codex exec - --json --profile usernode-build 2>&1
-  CODEX_EXIT=$?
+  cat "$PROMPT_FILE" | codex exec - --json $APPROVAL_FLAG $SANDBOX_FLAG -p usernode-build 2>&1 | tee "$TMP_JSONL"
+  CODEX_EXIT=${PIPESTATUS[0]:-$?}
 fi
+
+# Extract the thread id from thread.started (review F5): codex emits
+# {"type":"thread.started","thread_id":"019f..."} on the first line.
+# For a resume, keep the original; for a fresh turn, capture the new one.
+if [ -z "$AGENT_THREAD_OUT" ]; then
+  EXTRACTED=$(grep -o '"type":"thread.started","thread_id":"[^"]*"' "$TMP_JSONL" | head -1 | sed 's/.*"thread_id":"//;s/"$//')
+  if [ -n "$EXTRACTED" ]; then
+    AGENT_THREAD_OUT="$EXTRACTED"
+  fi
+fi
+rm -f "$TMP_JSONL" 2>/dev/null
 
 if [ "$MODE" = "scout" ]; then
   echo "__USERNODE_PHASE__ done"
