@@ -88,6 +88,24 @@ test('pills are dropped when a dispatch or scout tool co-occurs', () => {
   }
 });
 
+// #1001: the dispatch-preamble row now KEEPS the Mayor's pills, so the
+// phase-1 call site opts in with { allowWithDispatch: true }. Nothing goes
+// stale — the phase-2 wrap-up row is newer and the client's backward scan
+// finds it first — and a turn that dies mid-dispatch is left with
+// conversation-specific pills instead of the client's generic default.
+test('allowWithDispatch keeps a preamble\'s pills, and the default does not', () => {
+  for (const dispatchName of ['dispatch_claude_code', 'dispatch_scout']) {
+    const calls = [REPLIES_CALL, { name: dispatchName, input: { prompt: 'go' } }];
+    // Default: byte-identical to the pre-#1001 behaviour.
+    assert.equal(resolveQuickReplies(calls), null);
+    assert.equal(resolveQuickReplies(calls, {}), null);
+    assert.equal(resolveQuickReplies(calls, { allowWithDispatch: false }), null);
+    // Opted in: the sanitized set survives.
+    assert.deepEqual(resolveQuickReplies(calls, { allowWithDispatch: true }),
+      ['Preview the change', 'Propose it to the group']);
+  }
+});
+
 test('pills are dropped when suggest_answers co-occurs (answer chips win)', () => {
   assert.equal(
     resolveQuickReplies([
@@ -96,6 +114,18 @@ test('pills are dropped when suggest_answers co-occurs (answer chips win)', () =
     ]),
     null
   );
+});
+
+// The clarifying-question exclusion is NOT relaxed by allowWithDispatch —
+// answer chips own their turn's affordance under both modes.
+test('answer chips beat pills even with allowWithDispatch', () => {
+  const calls = [
+    REPLIES_CALL,
+    { name: 'suggest_answers', input: { questions: [{ question: 'Which?', answers: ['a'] }] } },
+    { name: 'dispatch_claude_code', input: { prompt: 'go' } },
+  ];
+  assert.equal(resolveQuickReplies(calls, { allowWithDispatch: true }), null);
+  assert.equal(resolveQuickReplies(calls), null);
 });
 
 test('read-only issue data tools do not drop pills', () => {
@@ -156,4 +186,61 @@ test('a dispatch turn gets NO fallback (phase-2 owns its pills)', () => {
   }
   // Null entries in the tool list must not throw.
   assert.equal(shouldFallbackQuickReplies(null, null, [null, undefined, {}]), true);
+});
+
+// ── isGenericPillSet — the #1001 all-boilerplate detector ────────────
+//
+// The trigger for enforcement. Deliberately narrow: it rejects a set only
+// when NOTHING in it names anything about the conversation. "Propose it to
+// the group" really is the right first pill after a build, so a mixed set
+// must pass — otherwise the detector would fight the composition rule it
+// exists to enforce.
+
+const { isGenericPillSet, normalizePill, RECOVERY_PILLS: POLICY_SETS } =
+  require('../src/services/recovery-pills.js');
+
+test('an all-boilerplate set is generic', () => {
+  assert.equal(isGenericPillSet(
+    ['Preview the change', 'Propose it to the group', 'Make another tweak']), true,
+  'the most-parroted production set');
+  assert.equal(isGenericPillSet(
+    ['Build it', 'Revise the spec', 'What will this change?']), true);
+  assert.equal(isGenericPillSet(
+    ['Make a change', "What issues are open right now?", "What's the current state?"]), true);
+  // Every set the platform itself ships is by definition generic.
+  for (const [kind, pills] of Object.entries(POLICY_SETS)) {
+    assert.equal(isGenericPillSet([...pills]), true, `RECOVERY_PILLS.${kind}`);
+  }
+});
+
+test('one specific pill is enough to pass', () => {
+  assert.equal(isGenericPillSet(
+    ['Preview the Season 1 default', 'Propose it to the group', 'Make another tweak']), false,
+  'a set that names the change is not generic, even with two generic siblings');
+  assert.equal(isGenericPillSet(['Build the avatar upload flow']), false);
+  assert.equal(isGenericPillSet(['Propose it to the group', 'Also fix the sub-event tabs']), false);
+});
+
+test('detection ignores case and trailing punctuation', () => {
+  assert.equal(isGenericPillSet(['build it', 'REVISE THE SPEC']), true);
+  assert.equal(isGenericPillSet(['Build it.', 'Revise the spec!']), true);
+  assert.equal(isGenericPillSet(["What's the current state"]), true,
+    'the same phrase without its question mark is still boilerplate');
+  assert.equal(isGenericPillSet(['  Propose it to the group  ']), true);
+});
+
+test('an empty or absent set is "missing", not "generic"', () => {
+  // Callers already handle missing pills as their own case; conflating the
+  // two would make the ladder skip rung 1 for a reason that doesn't apply.
+  assert.equal(isGenericPillSet([]), false);
+  assert.equal(isGenericPillSet(null), false);
+  assert.equal(isGenericPillSet(undefined), false);
+  assert.equal(isGenericPillSet('Build it'), false);
+});
+
+test('normalizePill is total over junk input', () => {
+  assert.equal(normalizePill(null), '');
+  assert.equal(normalizePill(undefined), '');
+  assert.equal(normalizePill(42), '42');
+  assert.equal(normalizePill('  a   b  '), 'a b');
 });

@@ -572,6 +572,24 @@
       "expectText": "Revise the spec"
     },
     {
+      "name": "Assistant-authored pills name the change (#1001)",
+      "path": "/#app/usernode-2d5619/dev/sessions/900805",
+      "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
+      "expectText": "Preview the Season 1 default"
+    },
+    {
+      "name": "Pills from a forced retry render identically (#1001)",
+      "path": "/#app/usernode-2d5619/dev/sessions/900806",
+      "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
+      "expectText": "Build the avatar upload flow"
+    },
+    {
+      "name": "A wrap-up's pills supersede the dispatch preamble's (#1001)",
+      "path": "/#app/usernode-2d5619/dev/sessions/900807",
+      "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
+      "expectText": "Preview the half-height rows"
+    },
+    {
       "name": "An interrupted turn's tail finishes itself: Changes-ready card lands",
       "path": "/#app/usernode-2d5619/dev/sessions/900820",
       "expectSelector": "#dc-pr-card .dc-pr-card-actions .dc-pr-btn-promote",

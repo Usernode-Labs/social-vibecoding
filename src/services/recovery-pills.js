@@ -77,6 +77,36 @@ const RECOVERY_PILLS = Object.freeze({
   turn_failed: Object.freeze(['Try that again', 'What went wrong?']),
 });
 
+// #1001 — the ONE source of truth for how a good pill set is composed.
+//
+// Interpolated verbatim into all FOUR surfaces that ask a model for
+// pills, so they cannot drift apart:
+//   1. the Mayor system prompt's SUGGESTED QUICK REPLIES block
+//      (getMayorSystemPrompt in routes/sessions.js);
+//   2. SUGGEST_REPLIES_TOOL.description (a tool description IS prompt);
+//   3. the forced pills-only enforcement call (llm.requireQuickReplies);
+//   4. the Haiku contextual backstop (llm.generateQuickReplies).
+//
+// Why this text reads the way it does: production measurement on 30 days
+// of live sessions found HALF of all rendered pill sets were byte-identical
+// to the illustrative examples the old prompt listed ("Preview the change" /
+// "Propose it to the group" / "Make another tweak" alone accounted for 101
+// sessions). Teaching by literal example taught literal copying. So this
+// constant states the COMPOSITION RULE and names the copied strings as
+// forbidden output rather than offering a triple to imitate.
+//
+// Lives here (a pure, dependency-free service) rather than in the route so
+// both llm.js and routes/sessions.js can read it without a services→routes
+// cycle.
+const QUICK_REPLY_RULES_TEXT = `Each pill must be a complete first-person message the user could send verbatim, under 80 characters. 2-3 of them, most likely first.
+
+COMPOSITION RULE — at most ONE pill may be a generic platform action ("Propose it to the group", "Build it", "Preview the change"). EVERY other pill must name the concrete subject of THIS turn: the feature, screen, component, issue number, or the specific thing just built, planned or discussed. A set where every pill would fit any conversation is a failed set.
+Good, because they name the subject: after a build that made a leaderboard default to Season 1 — "Preview the Season 1 default" / "Propose it to the group" / "Also fix the sub-event tabs". Note only the middle one is generic.
+These are shapes, not strings — never send these words verbatim.
+NEVER emit any of these exact sets, or a set made only of these phrases: "Preview the change" / "Propose it to the group" / "Make another tweak"; "Build it" / "Revise the spec" / "What will this change?"; "Propose it to the group" / "Make a tweak" / "What did it change?"; "Make a change" / "What issues are open right now?" / "What's the current state?"; "Try that again" / "What went wrong?".
+If you cannot make a pill specific, emit TWO pills instead of three — a short specific set beats a padded generic one.
+Write the pills in the SAME LANGUAGE the conversation is in, not always English.`;
+
 // The breadcrumb text for a Mayor turn that died before it could persist
 // any reply. Exported so the backfill sweep and its tests agree on the
 // exact string (the sweep also uses it to detect its own prior row).
@@ -186,6 +216,16 @@ function buildRecoveryQuickReplies(kind, ctx = {}) {
 //   'attach_assistant'       — attach derived pills to that assistant row.
 //   'breadcrumb_unanswered'  — the turn died before replying; post the
 //                              breadcrumb + resend pills.
+//
+// #1001 interaction — a DISPATCH PREAMBLE row now carries the Mayor's own
+// pills (routes/sessions.js persists them and lets the newer phase-2 row
+// supersede them by recency), so a turn that died mid-dispatch reaches this
+// sweep with a pill-bearing assistant row and gets 'skip' where it used to
+// get 'attach_assistant'. That is CORRECT, not a regression: server.js's
+// recovery paths post their breadcrumbs as NEWER `system` rows that carry
+// their own pills, and the client's backward scan finds those first. Don't
+// "fix" this by ignoring preamble pills here — it would replace a
+// conversation-specific set with a state-derived one.
 function classifyMissingPills({ lastRow } = {}) {
   if (!lastRow || !lastRow.role) return 'skip';
   const meta = lastRow.metadata || {};
@@ -251,10 +291,75 @@ function turnFallbackQuickReplies(ctx = {}) {
   return buildRecoveryQuickReplies(fallbackKindForTurn(ctx));
 }
 
+// ── #1001 genericness detection ──────────────────────────────────────
+//
+// Normalise a pill for comparison: lowercase, collapse whitespace, drop
+// trailing sentence punctuation. "What's the current state?" and
+// "what's the current state" must compare equal, because a model that
+// re-punctuates the boilerplate has still emitted boilerplate.
+function normalizePill(text) {
+  return String(text == null ? '' : text)
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[?.!,;:]+$/, '')
+    .trim();
+}
+
+// Every phrase that carries no information about the conversation.
+//
+// Deliberately a SUPERSET of the platform's own static wording — every
+// string in RECOVERY_PILLS above, every client STARTER_QUICK_REPLIES
+// entry (public/js/dev-chat.js), every FORK_FOLLOWUP_REPLIES entry
+// (services/transcript-share.js) — plus the phrasings production showed
+// the model parroting out of the old prompt examples. Those two client/
+// service lists cannot be required from here (one is browser code, and
+// keeping this module dependency-free is the point), so
+// tests/quick-reply-fallback.test.js asserts the superset property
+// instead: adding a static pill anywhere without adding it here fails.
+//
+// This is a HEURISTIC, not a truth: "Propose it to the group" really is
+// the right first pill after a build. That is exactly why
+// isGenericPillSet below only rejects a set where NOTHING is specific.
+const BANNED_GENERIC_PILLS = Object.freeze(new Set([
+  // RECOVERY_PILLS, every kind.
+  'propose it to the group', 'make a tweak', 'what did it change',
+  'build it', 'revise the spec', 'what will this change',
+  'try that again', 'what went wrong',
+  "what's the current state", 'make a change',
+  "how's it going", 'stop this build',
+  // Client STARTER_QUICK_REPLIES.
+  'what issues are open right now', 'change the colors',
+  'add a new feature', "fix something that's broken",
+  // FORK_FOLLOWUP_REPLIES.
+  'explain where this got to', 'continue this work',
+  'take it a different way',
+  // Parroted out of the pre-#1001 prompt examples, observed in production.
+  'preview the change', 'make another tweak', 'preview the staging build',
+  'make another adjustment', 'what will this change do',
+  'what happens next', 'make a change to the app',
+].map(normalizePill)));
+
+// True when a pill set is entirely boilerplate — i.e. NOT ONE entry names
+// anything about this conversation. A mixed set (one generic action plus
+// at least one specific pill) passes: that is the shape the composition
+// rule in QUICK_REPLY_RULES_TEXT actually asks for.
+//
+// An empty/absent set is NOT "generic" — it is "missing", which callers
+// already handle as its own case.
+function isGenericPillSet(replies) {
+  if (!Array.isArray(replies) || !replies.length) return false;
+  return replies.every((r) => BANNED_GENERIC_PILLS.has(normalizePill(r)));
+}
+
 module.exports = {
   QR_MAX_REPLIES,
   QR_MAX_REPLY_LEN,
   RECOVERY_PILLS,
+  QUICK_REPLY_RULES_TEXT,
+  BANNED_GENERIC_PILLS,
+  normalizePill,
+  isGenericPillSet,
   UNANSWERED_BREADCRUMB,
   LEGACY_UNANSWERED_BREADCRUMBS,
   isUnansweredBreadcrumb,
