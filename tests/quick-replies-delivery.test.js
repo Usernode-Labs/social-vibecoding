@@ -160,6 +160,11 @@ function loadCurrentQuickReplies() {
     isStreaming: !!opts.isStreaming,
     messages,
     STARTER_QUICK_REPLIES: ['Change the colors', 'Add a new feature', "Fix something that's broken"],
+    // #1001: the starter set is now resolved through a helper so a session
+    // started from an issue can lead with that issue. Stubbed like the
+    // fallback below — its own wording is covered in
+    // tests/quick-reply-fallback.test.js.
+    _starterQuickReplies: () => STARTER_SENTINEL,
     // #894: an assistant reply with no pills now falls back to a
     // state-derived default instead of an empty bar. Stubbed with a
     // recognisable sentinel so these tests assert the RESOLUTION rule
@@ -170,6 +175,7 @@ function loadCurrentQuickReplies() {
 }
 
 const FALLBACK_SENTINEL = ['<fallback>'];
+const STARTER_SENTINEL = ['<starter-1>', '<starter-2>', '<starter-3>'];
 
 const currentQuickReplies = loadCurrentQuickReplies();
 
@@ -284,8 +290,10 @@ test('#786 an assistant reply with pills still wins (unchanged behaviour)', () =
 
 test('#786 starters, streaming and non-interactive gates are unchanged', () => {
   // Fresh session (nothing but a status row, or nothing at all) → starters.
-  assert.deepEqual(currentQuickReplies([]).length, 3);
-  assert.deepEqual(currentQuickReplies([{ role: 'system', content: 'Thinking about your request...' }]).length, 3);
+  assert.deepEqual(currentQuickReplies([]), STARTER_SENTINEL);
+  assert.deepEqual(
+    currentQuickReplies([{ role: 'system', content: 'Thinking about your request...' }]),
+    STARTER_SENTINEL);
   // Streaming hides the bar even when a breadcrumb carries pills.
   assert.equal(currentQuickReplies(
     [{ role: 'system', content: 'recovered', quickReplies: ['Make a tweak'] }],
