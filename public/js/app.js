@@ -227,6 +227,7 @@ const App = {
     }));
     App.restoreFromHash();
     App._applyMenuShot();
+    App._applyMenuNavShot();
     App._applyLaunchShot();
     App._applyFeedbackShot();
 
@@ -276,6 +277,35 @@ const App = {
     // fetches repaint their pills in place whenever they land.
     setTimeout(() => {
       try { App.HeaderMenu.open(); } catch (err) { /* ignore */ }
+    }, 50);
+  },
+
+  // Screenshot-state deep link `?shot=menu-nav` (#977): open the drawer
+  // and TAP a navigation row, so the single-motion rule — the drawer's
+  // exit is the only animation, the destination screen is swapped
+  // underneath it with no push — is reachable by URL. The defect it
+  // fixes lives entirely inside the ~400ms both animations used to
+  // overlap, which no still frame and no plain route can reach; the
+  // dapp.json checks assert the resulting state (the destination screen
+  // carrying data-entered="none", the drawer fully torn down).
+  //
+  // Ungated for the same reason as ?shot=menu above: pure UI state, no
+  // writes, and an env-gated link would starve the production "before"
+  // shot forever. The row is a real anchor, so .click() follows its href
+  // and the whole hash → restoreFromHash → navigate* path is exercised
+  // exactly as a finger would.
+  _applyMenuNavShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'menu-nav') return;
+    setTimeout(() => {
+      try { App.HeaderMenu.open(); } catch (err) { /* ignore */ }
+      // After the entrance spring has settled, so the tap lands on a
+      // presented drawer rather than one still sliding in.
+      setTimeout(() => {
+        const row = document.getElementById('drawer-row-leaderboard');
+        if (row) row.click();
+      }, 200);
     }, 50);
   },
 
@@ -1697,11 +1727,78 @@ const App = {
   // menu — #645.)
   HeaderMenu: {
     _panel: null,
+
+    // ── Presentation state (#977) ───────────────────────────────────
+    // The drawer's exit is the ONE motion a sidebar-originated
+    // navigation is allowed to show, so App._entryTransition has to be
+    // able to ask "is this drawer on screen (or still animating out)?"
+    // and "did a link inside it just start this navigation?".
+    //
+    // _closingAt exists only for the LEGACY (desktop / kit-missing)
+    // path: close() strips [data-open] synchronously while the 200ms
+    // CSS slide still has to run, so the attribute alone reports the
+    // drawer as gone while it is visibly still there. The kit path
+    // needs no timestamp — _panel is cleared in the onDismiss teardown,
+    // i.e. only once the exit spring has come to rest.
+    _closingAt: 0,
+    _navArmedAt: 0,
+    // Callers waiting for the drawer to be fully gone (close()'s
+    // completion promise — see close()).
+    _dismissWaiters: [],
+    LEGACY_CLOSE_MS: 200,
+    // The legacy slide plus a frame of margin.
+    CLOSING_WINDOW_MS: 260,
+    // Generous, because it is CONSUMED on first read: only a link that
+    // produced no navigation at all can leave it to expire.
+    NAV_ARM_TTL_MS: 600,
+    // Backstop for the completion promise, so a teardown that never
+    // fires (a kit that vanished, a superseded handle) can't strand a
+    // caller that chained its own presentation behind it.
+    DISMISS_SAFETY_MS: 500,
+
+    _now() {
+      return (typeof performance !== 'undefined' && performance.now)
+        ? performance.now()
+        : Date.now();
+    },
+
+    // True while the drawer surface is on screen OR still animating out.
+    isPresenting() {
+      if (App.HeaderMenu._panel) return true;
+      const panel = document.getElementById('header-menu-panel');
+      if (panel && panel.hasAttribute('data-open')) return true;
+      return App.HeaderMenu._closingAt > 0
+        && (App.HeaderMenu._now() - App.HeaderMenu._closingAt)
+          < App.HeaderMenu.CLOSING_WINDOW_MS;
+    },
+
+    // One-shot: a link inside the drawer armed this immediately before
+    // close(), and the navigation it triggered is the next thing to ask.
+    // Consumed on read so it can never apply to a second navigation.
+    consumeNavPending() {
+      const at = App.HeaderMenu._navArmedAt;
+      if (!at) return false;
+      App.HeaderMenu._navArmedAt = 0;
+      return (App.HeaderMenu._now() - at) < App.HeaderMenu.NAV_ARM_TTL_MS;
+    },
+
+    _resolveDismissWaiters() {
+      const waiters = App.HeaderMenu._dismissWaiters;
+      if (!waiters.length) return;
+      App.HeaderMenu._dismissWaiters = [];
+      for (const resolve of waiters) {
+        try { resolve(); } catch (err) { /* ignore */ }
+      }
+    },
+
     open() {
       const panel = document.getElementById('header-menu-panel');
       const overlay = document.getElementById('header-menu-overlay');
       const btn = document.getElementById('header-menu-btn');
       if (!panel) return;
+      // A fresh presentation ends any "still sliding out" window the
+      // legacy path was counting down (#977).
+      App.HeaderMenu._closingAt = 0;
       // #555: the AI-credit row only ever renders in this drawer, so
       // opening it is exactly when its number matters. The refresh is
       // throttled inside AiCredit, so this is cheap on every open —
@@ -1725,6 +1822,11 @@ const App = {
           contentEl: panel,
           side: 'right',
           onDismiss: () => {
+            // The drawer this handle owned has left the screen, so anyone
+            // who chained a presentation behind close() may go — resolved
+            // BEFORE the ownership guard below, or a superseded teardown
+            // would strand them until the safety cap (#977).
+            App.HeaderMenu._resolveDismissWaiters();
             // Teardown is deferred behind the exit spring, so a tap on the
             // hamburger during that window can re-adopt the drawer into a
             // NEW kit panel before this fires. Restoring it to <body> then
@@ -1798,21 +1900,47 @@ const App = {
         track.style.setProperty('--theme-caret-index', String(idx));
       }
     },
+    // Returns a promise that resolves once the drawer is actually GONE —
+    // the kit teardown on the touch path, the CSS slide's end on the
+    // legacy one, immediately when nothing was open (#977). Callers that
+    // present a surface of their own (the Node / Wallet sheets, the Share
+    // dialog) chain it so only one surface moves at a time; every other
+    // caller can keep ignoring the return value.
     close() {
       if (App.HeaderMenu._panel) {
+        const done = App.HeaderMenu._afterDismiss();
+        App.HeaderMenu._closingAt = App.HeaderMenu._now();
         App.HeaderMenu._panel.dismiss();
-        return;
+        return done;
       }
       const panel = document.getElementById('header-menu-panel');
       const overlay = document.getElementById('header-menu-overlay');
       const btn = document.getElementById('header-menu-btn');
-      if (!panel) return;
+      if (!panel) return Promise.resolve();
+      const wasOpen = panel.hasAttribute('data-open');
+      if (wasOpen) App.HeaderMenu._closingAt = App.HeaderMenu._now();
       panel.removeAttribute('data-open');
       overlay.removeAttribute('data-open');
       btn.setAttribute('aria-expanded', 'false');
       btn.setAttribute('aria-label', 'Open menu');
+      if (!wasOpen) return Promise.resolve();
+      const done = App.HeaderMenu._afterDismiss();
       // Hide overlay after the slide-out transition finishes.
-      setTimeout(() => overlay.classList.add('hidden'), 200);
+      setTimeout(() => {
+        overlay.classList.add('hidden');
+        App.HeaderMenu._resolveDismissWaiters();
+      }, App.HeaderMenu.LEGACY_CLOSE_MS);
+      return done;
+    },
+
+    // The completion promise itself: settled by whichever exit path runs,
+    // with a hard safety cap so a teardown that never fires can't hang a
+    // chained presentation forever.
+    _afterDismiss() {
+      return new Promise((resolve) => {
+        App.HeaderMenu._dismissWaiters.push(resolve);
+        setTimeout(resolve, App.HeaderMenu.DISMISS_SAFETY_MS);
+      });
     },
     init() {
       const btn = document.getElementById('header-menu-btn');
@@ -1832,6 +1960,41 @@ const App = {
           if (panel && panel.hasAttribute('data-open')) App.HeaderMenu.close();
         }
       });
+      // Every LINK inside the drawer, in one rule (#977). Two jobs:
+      //
+      //   1. Arm the single-motion rule. A same-document hash link is
+      //      about to navigate the shell, and the drawer's own exit is
+      //      the only motion that navigation may show — so stamp
+      //      _navArmedAt and let App._entryTransition downgrade the
+      //      screen animation to 'none'. External links (the GitHub row,
+      //      whose href is an absolute repo URL) animate nothing in this
+      //      document, so they only close.
+      //   2. Close the drawer for links that never had a handler of
+      //      their own: the Kudos meter in the status pane
+      //      (#leaderboard/prs, rendered by kudos.js) and the footer's
+      //      "Forked from" line (#app/<slug>, rendered by app-view.js)
+      //      used to navigate with the drawer left wide open.
+      //
+      // Registered on the panel element itself, so it rides along when
+      // the panel is adopted into the kit drawer — same reason the
+      // per-row listeners below survive adoption. Those per-row
+      // handlers are now redundant with this one, and harmlessly so:
+      // both close paths are idempotent (the kit's dismiss() returns
+      // early once closed).
+      const drawerPanel = document.getElementById('header-menu-panel');
+      if (drawerPanel) {
+        drawerPanel.addEventListener('click', (e) => {
+          const link = e.target.closest ? e.target.closest('a[href]') : null;
+          if (!link || !drawerPanel.contains(link)) return;
+          // getAttribute, not .href: the property resolves to an absolute
+          // URL, which would make every in-page hash link look external.
+          const href = link.getAttribute('href') || '';
+          if (href.startsWith('#')) {
+            App.HeaderMenu._navArmedAt = App.HeaderMenu._now();
+          }
+          App.HeaderMenu.close();
+        });
+      }
       // Drawer row actions — each closes the menu after triggering its action.
       document.getElementById('drawer-row-github')
         .addEventListener('click', () => App.HeaderMenu.close());
@@ -1842,10 +2005,13 @@ const App = {
       // beside it are gone; they're tabs of this one screen now.
       document.getElementById('drawer-row-leaderboard')
         ?.addEventListener('click', () => App.HeaderMenu.close());
+      // Share — a dialog of its own, so it waits for the drawer to be
+      // gone rather than fading in across the drawer's exit (#977).
       document.getElementById('drawer-row-share')
         .addEventListener('click', () => {
-          App.HeaderMenu.close();
-          if (window.AppView) AppView.openShareModal();
+          Promise.resolve(App.HeaderMenu.close()).then(() => {
+            if (window.AppView) AppView.openShareModal();
+          });
         });
       // Settings — the #settings screen (settings-modal-to-screen
       // conversion). Same real-anchor idiom as Challenges / Profile above:
@@ -3066,6 +3232,37 @@ const App = {
     if (link && link.parentNode) link.parentNode.removeChild(link);
   },
 
+  // The single decision point for "what animation does entering this
+  // screen get?" (#977). Every navigate* method passes the type it WANTS
+  // and takes back the type it gets.
+  //
+  // One rule: a screen swap that begins while the slide-out drawer is on
+  // screen — or that a link inside the drawer just started — runs with no
+  // animation at all. The drawer's own exit spring is already a motion in
+  // flight, and the kit's push/pop is a View Transition over the whole
+  // document root: it snapshots the open drawer and parallaxes that
+  // snapshot away while the live panel springs the other way, which is
+  // the two-competing-motions bug. Cutting the screen swap leaves exactly
+  // one motion — the drawer leaving, revealing the destination behind it.
+  // (It also matches the kit's own guidance that panels and other
+  // high-frequency UI must use type:'none'.)
+  //
+  // The resolved type is stamped on the screen element as `data-entered`,
+  // mirroring the kit's own data-un-vt. Nothing reads it at runtime — it
+  // exists so the dapp.json checks can assert an ordering that is
+  // otherwise only observable mid-animation.
+  _entryTransition(preferred, screenEl) {
+    const menu = App.HeaderMenu;
+    // consumeNavPending() FIRST and unconditionally — it is one-shot, so
+    // letting isPresenting() short-circuit it would leave the flag armed
+    // for whatever navigation came next.
+    const fromDrawer = !!menu && menu.consumeNavPending();
+    const suppress = fromDrawer || (!!menu && menu.isPresenting());
+    const type = suppress ? 'none' : preferred;
+    if (screenEl && screenEl.setAttribute) screenEl.setAttribute('data-entered', type);
+    return type;
+  },
+
   // ── Screen swap — THE ORDERING RULE (issue #979) ────────────────────
   // The mutually exclusive full-screen roots. Exactly one of these is
   // visible at a time (they are `flex-1` siblings in the body column, so
@@ -3164,12 +3361,13 @@ const App = {
     if (App._inBrowse) App._exitBrowse();
     // Screen reveal + chrome, all inside the transition callback so the
     // outgoing page is snapshotted as it actually looked (#979).
+    const screen = document.getElementById('leaderboard-screen');
     PlatformUI.transition(() => {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('leaderboard-screen');
       App._enterScreenChrome();
       App.setHeaderTitle('Leaderboard');
-    }, { type: fromIframe ? 'none' : 'push' });
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
     App._inLeaderboard = true;
     App._routeLeaderboard(sub, profileUser);
     if (window.Leaderboard?.open) Leaderboard.open();
@@ -3229,12 +3427,13 @@ const App = {
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
+    const screen = document.getElementById('profile-screen');
     PlatformUI.transition(() => {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('profile-screen');
       App._enterScreenChrome();
       App.setHeaderTitle('Profile');
-    }, { type: fromIframe ? 'none' : 'push' });
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
     App._inProfile = true;
     if (window.Profile?.open) Profile.open();
   },
@@ -3272,6 +3471,7 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
+    const screen = document.getElementById('browse-screen');
     App._inBrowse = true;
     // Renders into the still-hidden screen; `chrome: false` holds back its
     // level-dependent title/back-icon so the header only changes inside
@@ -3285,7 +3485,7 @@ const App = {
       // Browse owns the header title / back icon for whichever level the
       // slug selected, so its sync runs after setHeaderTitle above.
       if (window.Browse?.syncChrome) Browse.syncChrome();
-    }, { type: fromIframe ? 'none' : 'push' });
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
 
   // State-only (#979) — see _exitLeaderboard. The back chevron the detail
@@ -3343,6 +3543,7 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
+    const screen = document.getElementById('admin-screen');
     App._inAdmin = true;
     // Renders into the still-hidden screen; `chrome: false` holds its
     // section title / back arrow back for the callback below (#979).
@@ -3355,7 +3556,7 @@ const App = {
       App._enterScreenChrome();
       App.setHeaderTitle(publicMode ? 'Platform status' : 'Admin & moderation');
       if (window.AdminConsole?.syncChrome) AdminConsole.syncChrome();
-    }, { type: fromIframe ? 'none' : 'push' });
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
 
   // State-only (#979) — see _exitLeaderboard. The back chevron the mobile
@@ -3390,6 +3591,7 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inBrowse) App._exitBrowse();
+    const screen = document.getElementById('settings-screen');
     App._inSettings = true;
     // Renders every section into the still-hidden screen — invisible, so
     // it may stay synchronous (which keeps Settings.isOpen() truthful for
@@ -3406,7 +3608,7 @@ const App = {
       // the header ends up showing the section's name rather than
       // "Settings".
       if (window.Settings?.syncChrome) Settings.syncChrome();
-    }, { type: fromIframe ? 'none' : 'push' });
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
 
   // State-only (#979) — see _exitLeaderboard. The back chevron the mobile
@@ -3874,6 +4076,10 @@ const App = {
     // too: either way it runs exactly when #app-view is revealed.
     // The departing screen stays visible beneath the zoom (fn reveals,
     // `after` conceals — kit contract).
+    // #977: reachable from the drawer too (the footer's "Forked from"
+    // link opens the source app), so the zoom goes through the same
+    // single-motion gate — 'none' still runs fn + after as one mutation.
+    const appViewEl = document.getElementById('app-view');
     PlatformUI.transition(() => {
       document.getElementById('app-view').classList.remove('hidden');
       document.getElementById('back-btn').classList.remove('hidden');
@@ -3882,7 +4088,7 @@ const App = {
       // demo cards, non-running apps, an explicit non-app tab, offline.
       try { AppView.beginLaunch(slug, tab); } catch (err) { /* fall back to the plain path */ }
     }, {
-      type: 'zoom-in',
+      type: App._entryTransition('zoom-in', appViewEl),
       el: document.getElementById('app-view'),
       fromEl: () => App._tileFor(slug),
       // The outgoing screen: the kit hides it while measuring the
@@ -3993,7 +4199,7 @@ const App = {
       App.DrawerStatus.setAppOpen(false);
       App.setHeaderTitle('dApps');
     }, {
-      type: 'zoom-out',
+      type: App._entryTransition('zoom-out', av),
       el: av,
       fromEl: () => (leavingSlug ? App._tileFor(leavingSlug) : null),
       fallback: fallbackType,
