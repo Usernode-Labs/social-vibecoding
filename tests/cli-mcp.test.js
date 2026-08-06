@@ -60,7 +60,9 @@ test('proposal guidance requires a shallow checkout pinned to the exact base SHA
 });
 
 test('MCP initializes without credentials and returns the external login contract', async () => {
-  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-mcp-'));
+  // realpath: on macOS os.tmpdir() sits under /var → /private/var, and the
+  // CLI's config-path safety check rejects symlinked path components.
+  const home = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-mcp-')));
   await fs.chmod(home, 0o700);
   const checkout = path.resolve(__dirname, '..');
   const launcher = path.join(checkout, 'tools', 'social-vibecoding');
@@ -169,8 +171,12 @@ test('MCP initializes without credentials and returns the external login contrac
   }
 });
 
-test('sandboxed MCP native-store failures return an exact host API vector without retrying', async () => {
-  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-mcp-host-api-'));
+// Linux-only: the faked secret-tool below exercises the Linux native-store
+// branch of nativeRecord(); on macOS/Windows that branch is unreachable
+// (keytar-or-file only) and the fake binary is never invoked.
+test('sandboxed MCP native-store failures return an exact host API vector without retrying',
+  { skip: process.platform !== 'linux' }, async () => {
+  const home = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-mcp-host-api-')));
   await fs.chmod(home, 0o700);
   const directory = path.join(home, '.config', 'social-vibecoding');
   const fakeBin = path.join(home, 'bin');
@@ -266,7 +272,7 @@ test('sandboxed MCP native-store failures return an exact host API vector withou
 });
 
 test('generic MCP API calls classify 429 and 5xx responses as retryable service errors', async () => {
-  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-mcp-transient-'));
+  const home = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-mcp-transient-')));
   await fs.chmod(home, 0o700);
   const directory = path.join(home, '.config', 'social-vibecoding');
   await fs.mkdir(directory, { recursive: true, mode: 0o700 });
@@ -348,7 +354,7 @@ test('generic MCP API calls classify 429 and 5xx responses as retryable service 
 });
 
 test('proposal MCP tools call the native handoff lifecycle and gate promotion on ready status', async () => {
-  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-mcp-proposal-'));
+  const home = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-mcp-proposal-')));
   await fs.chmod(home, 0o700);
   const directory = path.join(home, '.config', 'social-vibecoding');
   await fs.mkdir(directory, { recursive: true, mode: 0o700 });
@@ -551,7 +557,7 @@ test('proposal MCP tools call the native handoff lifecycle and gate promotion on
 });
 
 test('whoami reports an insufficient environment grant as a restart-required override', async () => {
-  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-mcp-env-scope-'));
+  const home = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-mcp-env-scope-')));
   await fs.chmod(home, 0o700);
   const directory = path.join(home, '.config', 'social-vibecoding');
   await fs.mkdir(directory, { recursive: true, mode: 0o700 });
