@@ -317,9 +317,10 @@
       "expectSelector": "#leaderboard-screen:not(.hidden) #challenges-root:not(.hidden) #tc-se-grid #tc-se-challenge-summary"
     },
     {
-      "name": "Standings tab cross-links to the challenges tab (#981)",
+      "name": "Standings tab cross-links to the challenges tab (#981), on the season board (#999)",
       "path": "/#leaderboard",
-      "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"]) #topochain-leaderboard-root:not(.hidden) #tc-lb-challenge-link #tc-lb-to-challenges"
+      "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"]) #topochain-leaderboard-root:not(.hidden) #tc-lb-challenge-link #tc-lb-to-challenges",
+      "expectText": "Whole-season standings"
     },
     {
       "name": "Work notifications show a session's title, not its dev name (#971)",

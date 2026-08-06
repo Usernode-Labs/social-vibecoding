@@ -56,6 +56,7 @@ const { computeStandings } = require('../../services/topochain/standings');
 // one of a display name, shared by the routes and the widget.
 const {
   resolveIdentifier, maskIdentifier, resolveDisplayName, fetchEventLeaderboardRows,
+  resolveDefaultPublicEvent,
 } = require('../../services/topochain/event-standings');
 const {
   ok, fail, iso, num, paginate, meta, ValidationError,
@@ -228,21 +229,43 @@ function topochainPublicRoutes(config) {
         event = rows[0];
         if (!event || event.internal) return fail(res, 404, 'Event not found.');
       } else {
-        // "current" (SPEC 910) is read as temporally ongoing — starts_at
-        // has passed and ends_at has not — rather than merely `is_active`
-        // (an admin on/off switch that says nothing about timing): an
-        // upcoming event with is_active=TRUE should not outrank one that
-        // is actually running right now.
-        const { rows } = await pool.query(
-          `SELECT id, name, disclaimer, display_leaderboard, starts_at, ends_at,
-                  internal, season_id, type
-             FROM season_events
-            WHERE internal = FALSE AND is_active = TRUE
-              AND starts_at <= NOW() AND ends_at >= NOW()
-            ORDER BY starts_at DESC, id DESC
-            LIMIT 1`
-        );
-        event = rows[0];
+        // The default event is resolved by the SHARED rule
+        // (resolveDefaultPublicEvent, src/services/topochain/
+        // event-standings.js) rather than by a strict reading of SPEC 910's
+        // "current" (temporally ongoing AND is_active). DO NOT "restore"
+        // the strict query — three things depend on this being the shared
+        // rule:
+        //
+        //   1. It is what the season default of issue #999 means. The
+        //      shared rule prefers the season's own `type = 'season'`
+        //      event, so a caller that asks for "the leaderboard" with no
+        //      id gets the whole-season standings, not whichever sub-event
+        //      started last.
+        //   2. It stops this endpoint 404ing between events — production's
+        //      normal state. The client already overrides the strict rule
+        //      (public/js/topochain-events.js exists for exactly that), so
+        //      the strict answer was only ever visible as a flash of "No
+        //      events have been published yet." on first paint, before the
+        //      picker's list landed and the pane refetched with an id.
+        //   3. The home-screen widget already resolves its board this way
+        //      (home-panels.js -> eventStandingsBoard), so the two agreed
+        //      on the event only by accident before.
+        //
+        // The 404 below now means what it says: there is no public event
+        // with standings at all.
+        event = await resolveDefaultPublicEvent(pool);
+        if (event) {
+          // resolveDefaultPublicEvent selects the columns its own callers
+          // need; this endpoint additionally serializes `disclaimer` /
+          // `display_leaderboard`, so re-read the row by id.
+          const { rows } = await pool.query(
+            `SELECT id, name, disclaimer, display_leaderboard, starts_at, ends_at,
+                    internal, season_id, type
+               FROM season_events WHERE id = $1`,
+            [event.id]
+          );
+          event = rows[0];
+        }
         if (!event) return fail(res, 404, 'No active event found. Please specify a season_event_id.');
       }
 
@@ -257,6 +280,12 @@ function topochainPublicRoutes(config) {
         has_started: hasStarted,
         has_ended: hasEnded,
         status,
+        // Additive to the v1 shape, for the same reason `display_leaderboard`
+        // is additive on /season-events: `type = 'season'` means these rows
+        // are the WHOLE season's aggregate (fetchEventLeaderboardRows routes
+        // them through computeStandings), so the pane must be able to say so
+        // and to drop the per-event-only columns that can only read 0.
+        type: event.type,
       };
 
       // SPEC 961: display_leaderboard=false -> identical envelope, empty
@@ -499,7 +528,7 @@ function topochainPublicRoutes(config) {
       const where = includePast ? 'internal = FALSE' : 'internal = FALSE AND is_active = TRUE';
       const { rows } = await pool.query(
         `SELECT id, name, description, starts_at, ends_at, start_epoch, end_epoch,
-                is_active, display_activities, display_leaderboard
+                is_active, display_activities, display_leaderboard, type, season_id
            FROM season_events WHERE ${where} ORDER BY starts_at DESC`
       );
 
@@ -520,6 +549,13 @@ function topochainPublicRoutes(config) {
         // one whose leaderboard is switched off and looks empty. See
         // public/js/topochain-events.js#pickDefault.
         display_leaderboard: r.display_leaderboard,
+        // Additive for the same reason (issue #999): `type = 'season'`
+        // identifies the event whose standings are the WHOLE season's
+        // aggregate, which is the dataset pickDefault must prefer and the
+        // one the picker should not label "(past)". `season_id` rides along
+        // so a client can label the season without a second round trip.
+        type: r.type,
+        season_id: r.season_id != null ? Number(r.season_id) : null,
       }));
 
       return ok(res, { data });
