@@ -1239,6 +1239,9 @@ function mergedRowSelect() {
            -- GitHub-maintained note (kept visible on merged rows too).
            cs.source, cs.imported_pr_author, cs.imported_pr_head_sha,
            cs.reviewed_head_sha,
+           -- #967: which external coding agent wrote it, for the "built
+           -- with …" chip. Kept on merged rows for the same post-hoc read.
+           cs.external_agent,
            -- #381: console-error check snapshot so the warning + detail
            -- block stay visible on a merged proposal for post-hoc review.
            cs.console_check_state, cs.console_errors, cs.console_checked_at,
@@ -2529,6 +2532,11 @@ function voteRoutes(config) {
            -- dev-side controls for externally-authored proposals.
            cs.source, cs.imported_pr_author, cs.imported_pr_head_sha,
            cs.reviewed_head_sha,
+           -- #967: which external coding agent wrote it, when the proposal
+           -- came in through the hosted MCP connector ('claude-code' |
+           -- 'codex' | 'external'). NULL for everything else. Drives the
+           -- "built with …" chip beside the imported badge.
+           cs.external_agent,
            -- #361: persisted merge-conflict snapshot for the card badge +
            -- detail block (state, conflicting file paths, last-checked).
            cs.merge_conflict_state, cs.behind_main, cs.conflict_files, cs.conflict_checked_at,
@@ -3350,9 +3358,17 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
           [result.containerId, sha || null, session.pr_number || null, app.id]
         );
       } else {
-        log.info('votes', 'Self-app PR merged; GitHub Actions auto-deploy will roll', {
+        log.info('votes', 'Self-app PR merged; host deployer will roll the harness', {
           appId: app.id, prNumber: session.pr_number,
         });
+        // Skip the deployer's ~2-min baseline poll: tell it main just
+        // moved so it fetches within seconds. Best-effort by design —
+        // if the nudge mount is missing (local dev, pre-deployer host)
+        // the baseline poll still delivers the deploy.
+        try {
+          const { nudgeHostDeployer } = require('../services/deploy-nudge');
+          nudgeHostDeployer({ sha: mergeCommitSha, prNumber: session.pr_number });
+        } catch (_) { /* never fail a merge over a hint */ }
       }
       // Let every tab watching this app refresh its commit pill without
       // polling. The existing vote_update event already fires on merge

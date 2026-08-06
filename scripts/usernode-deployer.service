@@ -1,0 +1,30 @@
+# Host-side deployer for the Usernode platform.
+#
+# Polls github.com for a new head of main and deploys it via
+# scripts/deploy.sh — no GitHub Actions runner in the loop (see
+# scripts/usernode-deployer.sh for the full story and the install
+# steps). Installed to /etc/systemd/system/ once by hand; subsequent
+# deploys refresh the unit file automatically (daemon-reload only —
+# changes take effect on the next manual restart).
+
+[Unit]
+Description=Usernode platform host deployer
+Documentation=https://github.com/Usernode-Labs/social-vibecoding
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deploy
+Group=deploy
+ExecStart=/opt/usernode-tools/usernode-deployer.sh
+# The poller loop is supposed to run forever; any exit (crash, the
+# self-update re-exec failing, OOM) should bring it straight back.
+Restart=always
+RestartSec=10
+# deploy.sh writes docker + tool output; keep it all in the journal.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

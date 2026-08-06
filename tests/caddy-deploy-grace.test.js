@@ -152,8 +152,13 @@ test('app stop grace stays above the drain deadline the conventions prescribe', 
     `(${graceMs}ms) or a draining app is force-killed`);
 });
 
-test('deploy workflow no longer rebuilds caddy on routine deploys', () => {
-  const deploy = fs.readFileSync(
+test('the deploy no longer rebuilds caddy on routine deploys', () => {
+  // The remote deploy logic lives in scripts/deploy.sh (shared by the
+  // Deploy workflow and the host deployer), so the compose-command pins
+  // point there; the paths-filter that feeds CADDY_FILES_CHANGED is
+  // still the workflow's.
+  const deploy = fs.readFileSync(path.join(root, 'scripts', 'deploy.sh'), 'utf8');
+  const workflow = fs.readFileSync(
     path.join(root, '.github', 'workflows', 'deploy.yml'), 'utf8'
   );
   // The build and the recreate are two commands rather than one
@@ -173,6 +178,6 @@ test('deploy workflow no longer rebuilds caddy on routine deploys', () => {
     'the unscoped no-build up must still ensure the rest of the stack is running');
   assert.match(deploy, /CADDY_FILES_CHANGED/,
     'caddy rebuilds must be gated on the caddy paths-filter');
-  assert.match(deploy, /caddy:\n\s+- 'caddy\.Dockerfile'/,
+  assert.match(workflow, /caddy:\n\s+- 'caddy\.Dockerfile'/,
     'paths-filter must watch caddy.Dockerfile');
 });

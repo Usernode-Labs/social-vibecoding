@@ -36,6 +36,7 @@ async function migrate(config) {
   await seedStagingMergedPrs(pool, config);
   await seedStagingMyOpenPr(pool, config);
   await seedStagingImportedPrProposal(pool, config);
+  await seedStagingExternalAgentProposal(pool, config);
   await seedStagingRestartEligibleMerge(pool, config);
   await seedStagingOtherUserProposal(pool, config);
   await seedStagingTopicScrollThreads(pool, config);
@@ -7522,6 +7523,128 @@ async function seedStagingImportedPrProposal(pool, config) {
   });
 }
 
+// #967 (hosted MCP connector, pass 2): staging fixtures for a proposal that
+// arrived through the connector — the user asked Claude Code on the web (or
+// Codex) to build it, their own agent pushed to their own fork on their own
+// subscription, and submit_work turned that branch into an ordinary imported
+// proposal. Nothing about the row is special except chat_sessions
+// .external_agent, so these fixtures exist to make the provenance surfaces
+// reviewable in a staging preview without a real GitHub fork round-trip:
+//
+//   1. claude-code — "Built with Claude Code" chip on the vote card, and the
+//      "on their own coding-agent subscription, from a branch in their GitHub
+//      fork" line in the proposal detail, alongside the "Imported PR" badge.
+//   2. codex — the same surfaces with the other agent, proving the label is
+//      driven by the column rather than hardcoded, and that two agent chips
+//      can sit side by side in one vote panel.
+//
+// source stays exactly 'imported': the connector adds an author, not a new
+// kind of proposal, and every downstream imported-PR behaviour (no in-app dev
+// session, head-change vote reset, GitHub-maintained note) must still apply.
+// Idempotent on branch name, obviously-fake "[staging fixture]" content,
+// strict no-op outside staging.
+async function seedStagingExternalAgentProposal(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1', [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging external-agent fixture skipped: self-app row missing', { slug: config.selfAppSlug });
+    return;
+  }
+
+  const { rows: users } = await pool.query(
+    `SELECT id, username FROM users ORDER BY is_admin DESC, id ASC LIMIT 3`
+  );
+  if (!users.length) {
+    log.warn('db', 'Staging external-agent fixture skipped: no users');
+    return;
+  }
+  const proposer = users[0];
+  const votesRequired = Math.max(1, Math.ceil(users.length / 2));
+
+  // The fork the work order would have pointed the agent at. Fake owner, so
+  // the GitHub links are obviously non-resolving like the rest of the
+  // imported fixtures.
+  const forkOwner = `${proposer.username || 'someone'}-fixture`;
+
+  const rows = [
+    {
+      branch: 'staging-fixture/external-agent-claude-code',
+      prNumber: 9320,
+      headSha: 'b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8',
+      agent: 'claude-code',
+      title: '[staging fixture] Built with Claude Code — keyboard shortcuts for the vote panel',
+      summary: 'In plain terms: a member asked Claude Code on the web to build this. Their own coding agent wrote the code in their GitHub fork, and Usernode opened the pull request so the group can vote on it.',
+    },
+    {
+      branch: 'staging-fixture/external-agent-codex',
+      prNumber: 9321,
+      headSha: 'd2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3',
+      agent: 'codex',
+      title: '[staging fixture] Built with Codex — remember the last tab you were on',
+      summary: 'In plain terms: a member asked Codex to build this from their ChatGPT account. Their own coding agent wrote the code in their GitHub fork, and Usernode opened the pull request so the group can vote on it.',
+    },
+  ];
+
+  const seeded = {};
+  for (const row of rows) {
+    const { rows: have } = await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+      [appId, row.branch]
+    );
+    let id = have[0]?.id;
+    if (!id) {
+      const { rows: ins } = await pool.query(
+        `INSERT INTO chat_sessions
+           (app_id, user_id, branch_name, pr_number, pr_url, pr_title, pr_summary_md,
+            status, source, external_agent, imported_pr_head_sha, imported_pr_author,
+            check_state, test_results, checks_commit_sha, checks_checked_at,
+            votes_required, promoted_at, created_at)
+         VALUES
+           ($1, $2, $3, $4, $5, $6, $7,
+            'promoted', 'imported', $8, $9, $10,
+            'passing', '[{"name":"loads with no console errors","status":"pass"}]'::jsonb,
+            $9, NOW() - INTERVAL '6 minutes',
+            $11, NOW() - INTERVAL '7 minutes', NOW() - INTERVAL '7 minutes')
+         RETURNING id`,
+        [appId, proposer.id, row.branch, row.prNumber,
+         `https://github.com/example/example/pull/${row.prNumber}`,
+         row.title, row.summary, row.agent, row.headSha, forkOwner, votesRequired]
+      );
+      id = ins[0].id;
+    } else {
+      // Re-stamp the provenance columns on every boot so an older fixture row
+      // from before this pass picks up external_agent instead of quietly
+      // rendering without the chip the fixture exists to show.
+      await pool.query(
+        `UPDATE chat_sessions
+            SET source = 'imported', external_agent = $2,
+                imported_pr_head_sha = $3, imported_pr_author = $4,
+                check_state = 'passing', checks_commit_sha = $3,
+                checks_checked_at = NOW()
+          WHERE id = $1`,
+        [id, row.agent, row.headSha, forkOwner]
+      );
+    }
+    // One yes vote so the tally pill renders next to the chip rather than an
+    // empty slot; the second row stays unvoted so the "Vote" nudge shows too.
+    if (row.agent === 'claude-code') {
+      await pool.query(
+        `INSERT INTO pr_votes (session_id, user_id, vote, created_at)
+         VALUES ($1, $2, 'yes', NOW() - INTERVAL '5 minutes')
+         ON CONFLICT (session_id, user_id) DO NOTHING`,
+        [id, proposer.id]
+      );
+    }
+    seeded[row.agent] = id;
+  }
+
+  log.info('db', 'Staging external-agent proposal fixtures seeded', { appId, ...seeded });
+}
+
 // #390: fixtures for the boot-time auto-merge reconcile sweep. Auto-merge
 // used to fire only in the background of a live vote, so a proposal that
 // crossed the vote-majority threshold while the platform was down stayed
@@ -8159,9 +8282,9 @@ async function seedStagingTopochain(pool, config) {
           '{"metrics": [], "offchain_weight": 1}'::jsonb, 100, 130, FALSE, TRUE,
           NOW() - INTERVAL '45 days', NOW() + INTERVAL '15 days', FALSE,
           'staging-demo-chain-1', TRUE, 'regular', NOW(), NOW()),
-         ($2, $3, 'Staging Demo Event — Season Wrap-up',
-          'type=''season'' event fixture (season-level wrap-up, not epoch-scored).',
-          NOW() + INTERVAL '15 days', NOW() + INTERVAL '30 days', TRUE,
+         ($2, $3, 'Staging Demo Event — Season Standings',
+          'type=''season'' event fixture: its standings are the WHOLE season''s aggregate (computeStandings), not one event''s snapshots. Spans the season like production''s own season event, so it is the DEFAULT the leaderboard opens on — see DEFAULT_PUBLIC_EVENT_SQL step 1.',
+          NOW() - INTERVAL '60 days', NOW() + INTERVAL '30 days', TRUE,
           '{"metrics": [], "offchain_weight": 1}'::jsonb, NULL, NULL, FALSE, TRUE,
           NULL, NULL, FALSE, NULL, FALSE, 'season', NOW(), NOW()),
          ($4, $3, 'Staging Demo Event — Finished Sprint',
@@ -8482,6 +8605,67 @@ async function seedStagingTopochain(pool, config) {
        USERS.eventB1, USERS.mixed, EVENT_REGULAR_ID, SEASON_ID, EVENT_ENDED_ID]
     );
 
+    // ─── Leaderboard snapshots for the SEASON event (2 snapshot times x 6
+    // users) ────────────────────────────────────────────────────────────
+    //
+    // Why this block exists (issue #999): the leaderboard now DEFAULTS to
+    // the season-level aggregate (DEFAULT_PUBLIC_EVENT_SQL step 1), so the
+    // season board is the first thing a staging preview paints. Without
+    // rows here the aggregate was just EVENT_REGULAR + EVENT_ENDED, whose
+    // ordering matches the regular event's own board — a tester could not
+    // tell the season path from the per-event path, which is precisely the
+    // bug being fixed.
+    //
+    // The numbers are chosen so the preview proves three things at a glance:
+    //
+    //   1. THE SEASON BOARD IS A DIFFERENT BOARD. `mixed` sits third on
+    //      EVENT_REGULAR (200 pts) and tops the season board (4700) —
+    //      so "the default changed" is visible without opening the picker.
+    //   2. SEASON TOTALS DWARF ANY SINGLE EVENT'S. Four figures here
+    //      against three on every per-event board, mirroring production
+    //      (67973.66 season vs 1900.00 on one sub-event).
+    //   3. THE PODIUM-EXCLUDED ROW STILL BEHAVES. `seasonWide1`
+    //      (exclude_podium = TRUE) leads on POINTS (5200) but must render
+    //      with a "—" rank and the non-podium tag, and the home widget's
+    //      fill must skip it when picking its three podium rows. Seeded
+    //      high for the same reason it is seeded high on EVENT_REGULAR:
+    //      mid-table, neither behaviour is reachable by looking.
+    //
+    // Two snapshot times, like the regular event's block above, so the
+    // "latest snapshot per (user, event)" rule the aggregate depends on
+    // (standings.js's DISTINCT ON) is genuinely exercised on this event —
+    // the EARLIER totals below are strictly lower, so a rule that picked
+    // the wrong row would visibly under-count.
+    //
+    // ids: 900500-900516 is used above, and the viewer blocks below start at
+    // 900520 with 20 reserved PER VIEWER — an open-ended range (a fourth
+    // tester identity would take 900580-900599). So this block sits clear of
+    // it at 900600-900611 rather than immediately after today's last viewer,
+    // which a new viewer would silently grow into and ON CONFLICT (id) would
+    // swallow.
+    await pool.query(
+      `INSERT INTO leaderboard_snapshots
+         (id, season_event_id, user_id, rank, total_points, extra_points,
+          snapshot_at, season_id, created_at, updated_at)
+       VALUES
+         (900600, $7, $6, 1, 2100, 0, ${EARLIER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900601, $7, $4, 2, 1200, 0, ${EARLIER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900602, $7, $3, 3, 1100, 0, ${EARLIER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900603, $7, $5, 4,  400, 0, ${EARLIER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900604, $7, $2, 5,  150, 0, ${EARLIER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900605, $7, $1, 1, 2300, 0, ${EARLIER_SNAPSHOT}, $8, NOW(), NOW()),
+         -- Later snapshot: the one the aggregate actually sums.
+         (900606, $7, $6, 1, 4200, 0, ${LATER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900607, $7, $4, 2, 2500, 0, ${LATER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900608, $7, $3, 3, 2400, 0, ${LATER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900609, $7, $5, 4,  900, 0, ${LATER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900610, $7, $2, 5,  300, 0, ${LATER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900611, $7, $1, 1, 4600, 0, ${LATER_SNAPSHOT}, $8, NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`,
+      [USERS.seasonWide1, USERS.seasonWide2, USERS.eventA1, USERS.eventA2,
+       USERS.eventB1, USERS.mixed, EVENT_SEASON_ID, SEASON_ID]
+    );
+
     // ─── Epoch stats (3 epochs x 3 wallets = 9 rows) — one wallet per
     // linked user (eventA1, eventB1), plus one wallet-only row (user_id
     // NULL, matching the unassigned account 900503's address) proving the
@@ -8623,7 +8807,10 @@ async function seedStagingTopochain(pool, config) {
     // another identity appears or disappears between boots — that would
     // re-insert its rows under fresh ids and defeat ON CONFLICT (id).
     // 900500-900516 is fully used above, so the viewers start at 900520
-    // with a 20-wide block each. Twenty, not ten: the home-panel fixtures
+    // with a 20-wide block each — three names, so through 900579, and the
+    // range is deliberately open-ended. (The season-event snapshot block
+    // above sits at 900600+, clear of any viewer growth, for that reason.)
+    // Twenty, not ten: the home-panel fixtures
     // below need fourteen user_activities rows per viewer (five of them
     // just to credit the 5-of-5 challenge), and a block that overflows into
     // its neighbour is silently swallowed by ON CONFLICT (id) rather than

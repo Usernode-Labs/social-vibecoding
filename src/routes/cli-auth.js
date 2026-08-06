@@ -34,6 +34,10 @@ const {
   assertNoDuplicateJsonKeys,
 } = require('../services/cli-auth');
 const { isCliApiPath } = require('../services/cli-api-policy');
+const {
+  READ_SCOPE: CONNECTOR_READ_SCOPE,
+  WRITE_SCOPE: CONNECTOR_WRITE_SCOPE,
+} = require('../services/mcp-connect-constants');
 const { clientIp } = require('../services/client-ip');
 const log = require('../services/logger');
 
@@ -270,6 +274,101 @@ function bearerIpGuard(pool, namespace = 'rpc-ip') {
   };
 }
 
+// Is this request carrying a HOSTED CONNECTOR bearer (svmcp_…) rather than
+// a CLI one (svcli_…)? The two credentials live in different tables with
+// different policies, so the entry point routes on the token's shape.
+function looksLikeConnectorBearer(req) {
+  for (let i = 0; i < req.rawHeaders.length; i += 2) {
+    if (String(req.rawHeaders[i]).toLowerCase() !== 'authorization') continue;
+    if (/^Bearer svmcp_/i.test(String(req.rawHeaders[i + 1] || ''))) return true;
+  }
+  return false;
+}
+
+// Connector chain. Deliberately NOT the CLI's `api:access` denylist: a token
+// held by a third-party chat product gets an exhaustive, fail-closed
+// allowlist of (method, path) pairs instead, so a new platform endpoint can
+// never silently widen it.
+//
+// The tool handlers in services/mcp-tools.js reach the platform's ordinary
+// routes through here over loopback, replaying the caller's own token —
+// which is what makes "a connector can only do what this user can do" true
+// by construction rather than by review.
+function connectorApiBearerChain(config) {
+  const pool = getPool(config);
+  const { authenticateConnector, readConnectorBearer } = require('./mcp-remote');
+  const { isConnectorApiRequest } = require('../services/cli-api-policy');
+  // The tool handlers call these same routes over loopback, and every such
+  // call arrives from the platform container's own address — so bucketing
+  // them by IP would make one busy connector throttle every other one. Those
+  // requests already paid a per-token budget at the /mcp edge, so the guard
+  // is skipped for them and applied to everyone else. A direct external
+  // caller holding a stolen token is bucketed normally.
+  //
+  // The check is on the real socket peer, never on a header: `trust proxy`
+  // is off and only the configured proxy may supply req.clientIp, so a
+  // request cannot claim to be loopback.
+  const isInternalPeer = (req) => {
+    const peer = (req.socket && req.socket.remoteAddress) || '';
+    return peer === '127.0.0.1' || peer === '::1' || peer === '::ffff:127.0.0.1'
+      || (!!req.socket && peer === req.socket.localAddress);
+  };
+
+  return async (req, res, next) => {
+    if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+      return res.status(405).json({ error: 'method_not_allowed' });
+    }
+    if (!isInternalPeer(req)) {
+      // enforceBucket answers the response itself on refusal (429 with
+      // Retry-After) or on limiter failure (503) and returns false.
+      const allowed = await enforceBucket(pool, res, {
+        namespace: 'connector-ip',
+        subject: clientIp(req),
+        ratePerMinute: 300,
+        capacity: 300,
+      });
+      if (!allowed) return undefined;
+    }
+    if (!isConnectorApiRequest(req.method, req.path)) {
+      return res.status(403).json({ error: 'insufficient_scope' });
+    }
+    const bearer = readConnectorBearer(req);
+    if (bearer.error) {
+      res.setHeader('WWW-Authenticate', `Bearer error="${bearer.error}"`);
+      return res.status(401).json({ error: bearer.error });
+    }
+    let auth;
+    try {
+      auth = await authenticateConnector(pool, bearer.token);
+    } catch (err) {
+      log.error('cli-auth', 'connector token lookup failed', { message: err.message });
+      return res.status(503).json({ error: 'temporarily_unavailable' });
+    }
+    if (auth.error) {
+      res.setHeader('WWW-Authenticate', `Bearer error="${auth.error}"`);
+      return res.status(401).json({ error: auth.error });
+    }
+    // Writes need the write scope; reads need only the read scope. The
+    // per-token request budget is enforced once, at the /mcp edge — these
+    // loopback calls are downstream of a request that already paid it.
+    const needsWrite = req.method !== 'GET';
+    if (needsWrite && !auth.scopes.includes(CONNECTOR_WRITE_SCOPE)) {
+      return res.status(403).json({ error: 'insufficient_scope' });
+    }
+    if (!needsWrite && !auth.scopes.includes(CONNECTOR_READ_SCOPE)) {
+      return res.status(403).json({ error: 'insufficient_scope' });
+    }
+    req.user = auth.user;
+    // The existing req.cliAuthenticated guards (issues.js's secret_change
+    // refusal, the credential-management session check, the archive/vote
+    // paths) all express "this is an automated non-browser caller", which
+    // is exactly true here — so a connector inherits every one of them.
+    req.cliAuthenticated = true;
+    req.connectorClientId = auth.clientId;
+    return next();
+  };
+}
+
 function cliApiBearerAuth(config) {
   const pool = getPool(config);
   const chain = [
@@ -286,6 +385,7 @@ function cliApiBearerAuth(config) {
       (req) => req.path
     ),
   ];
+  const connectorChain = [connectorApiBearerChain(config)];
   return (req, res, next) => {
     const hasAuthorization = req.rawHeaders.some(
       (value, index) => index % 2 === 0
@@ -296,11 +396,12 @@ function cliApiBearerAuth(config) {
       res.setHeader('Cache-Control', 'no-store');
       return res.status(404).json({ error: 'not_found' });
     }
+    const active = looksLikeConnectorBearer(req) ? connectorChain : chain;
     const dispatch = (index, err) => {
       if (err) return next(err);
-      if (index >= chain.length) return next();
+      if (index >= active.length) return next();
       try {
-        const result = chain[index](req, res, (nextError) => {
+        const result = active[index](req, res, (nextError) => {
           dispatch(index + 1, nextError);
         });
         if (result && typeof result.catch === 'function') result.catch(next);

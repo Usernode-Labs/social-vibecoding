@@ -87,14 +87,22 @@ test('no interpolated block scalar comes anywhere near the 21000-char expression
   }
 });
 
-test('the long remote deploy script carries no interpolations at all', () => {
+test('the remote step stays a tiny expression-free delegator to scripts/deploy.sh', () => {
+  // The deploy logic itself now lives in scripts/deploy.sh (shared with
+  // the host deployer), so the ssh step should never grow back into a
+  // multi-hundred-line script that could approach the cap — it only
+  // exports the forwarded inputs and delegates.
   const deploy = workflows.find((w) => w.file === 'deploy.yml').src;
-  const big = blockScalars(deploy).filter((b) => b.chars > BUDGET);
-  assert.ok(big.length >= 1, 'expected the remote script to still be the long one');
-  for (const b of big) {
-    assert.strictEqual(b.exprs, 0,
-      `deploy.yml:${b.line} (${b.key}) is ${b.chars} chars — it must stay expression-free`);
-  }
+  assert.match(deploy, /^\s*bash scripts\/deploy\.sh\s*$/m,
+    'the ssh step must delegate to the shared deploy script');
+  const start = deploy.indexOf('- name: Write .env and run docker compose');
+  const end = deploy.indexOf('- name: Signal deploy finished');
+  assert.ok(start !== -1 && end > start);
+  const step = deploy.slice(start, end);
+  const script = step.slice(step.indexOf('script: |'));
+  assert.ok(script.length < 1000,
+    `the ssh script block is ${script.length} chars — deploy logic belongs in scripts/deploy.sh, not here`);
+  assert.ok(!/\$\{\{/.test(script), 'the remote script must stay expression-free');
 });
 
 test('every ${{ }} in deploy.yml is balanced on its own line', () => {
@@ -144,13 +152,19 @@ test('the ssh step forwards the blob and the target sha into the remote shell', 
   }
 });
 
-test('the remote script refuses to truncate .env when the blob is missing', () => {
-  const deploy = workflows.find((w) => w.file === 'deploy.yml').src;
-  const guard = deploy.indexOf('if [ -z "${BASE_ENV_B64:-}" ]');
-  const write = deploy.indexOf('echo "$BASE_ENV_B64" | base64 -d > .env');
-  assert.notStrictEqual(guard, -1, 'a missing blob must fail loudly, not blank the .env');
+test('the deploy script never truncates .env unless the blob is present', () => {
+  // The guard moved into scripts/deploy.sh when the remote logic did —
+  // and its meaning widened: a missing blob is now the host-deployer
+  // path (keep .env, patch GIT_SHA), and only a missing blob AND a
+  // missing .env is a hard failure.
+  const deploySh = fs.readFileSync(path.join(root, 'scripts/deploy.sh'), 'utf8');
+  const guard = deploySh.indexOf('if [ -n "${BASE_ENV_B64:-}" ]');
+  const write = deploySh.indexOf('echo "$BASE_ENV_B64" | base64 -d > .env');
+  assert.notStrictEqual(guard, -1, 'the rewrite must be conditional on the blob existing');
   assert.notStrictEqual(write, -1);
   assert.ok(guard < write, 'the guard has to run before the redirect truncates .env');
+  assert.match(deploySh, /No BASE_ENV_B64 and no existing \.env/,
+    'blob-less with no .env on disk must fail loudly, not boot unconfigured');
 });
 
 test('the .env keys the platform cannot boot without are still all written', () => {

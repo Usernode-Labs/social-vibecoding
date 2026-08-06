@@ -1725,6 +1725,130 @@ html, body {
   transition: background 150ms;
 }
 
+/* ── Out-of-credits card ────────────────────────────────────────────────
+   Rendered in the message stream in place of an assistant bubble when a
+   send is refused with code 'budget_exceeded'. Markup comes from
+   public/js/credit-options.js, which also builds the compact button row
+   inside the red #dc-credits-banner. Deliberately NOT red-alarm styled:
+   it is an offer of three ways forward, not an error. */
+.dc-credits-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  padding: 12px 14px;
+  margin: 6px 0;
+}
+
+.dc-credits-card-lead {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dc-credits-card-detail {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.dc-credits-card-intro {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 8px;
+}
+
+.dc-credits-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.dc-credits-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-primary);
+}
+
+.dc-credits-option-text { flex: 1 1 220px; min-width: 0; }
+
+.dc-credits-option-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dc-credits-option-blurb {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+/* The per-option CTA. Shares .dc-pr-btn's geometry; the first option is
+   the primary route so every button reads equally actionable. */
+.dc-credits-go {
+  background: #7c3aed;
+  color: white;
+  flex: 0 0 auto;
+}
+.dc-credits-go:hover { background: #6d28d9; }
+
+/* Banner variant: three small buttons inside the red exhausted banner.
+   The row wraps onto its own line under the message on a phone (the
+   banner itself is flex-wrap, and the message keeps a min-width), rather
+   than squeezing the text into a sliver and running the buttons off the
+   right edge. */
+.dc-credits-banner-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.dc-credits-banner-btn {
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid rgb(252 165 165);
+  background: transparent;
+  color: rgb(153 27 27);
+  transition: background 150ms;
+}
+.dc-credits-banner-btn:hover { background: rgb(254 226 226); }
+.dc-credits-banner-btn-primary {
+  background: rgb(220 38 38);
+  border-color: rgb(220 38 38);
+  color: white;
+}
+.dc-credits-banner-btn-primary:hover { background: rgb(239 68 68); }
+
+.dark .dc-credits-banner-btn {
+  border-color: rgb(153 27 27);
+  color: rgb(254 202 202);
+}
+.dark .dc-credits-banner-btn:hover { background: rgb(69 10 10); }
+.dark .dc-credits-banner-btn-primary {
+  background: rgb(220 38 38);
+  border-color: rgb(220 38 38);
+  color: white;
+}
+
+/* Modal variant: the same three options rendered by the Generate-proposal
+   flow when the headless route refuses for the same reason. */
+.dc-credits-modal-card .dc-credits-card {
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+}
+
 .dc-pr-btn-preview {
   background: var(--bg-secondary);
   color: var(--accent);

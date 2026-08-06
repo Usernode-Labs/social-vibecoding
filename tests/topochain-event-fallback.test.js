@@ -54,6 +54,83 @@ test('pickDefault: prefers the event running right now', () => {
     'a running event must not trigger the "nothing is running" caption');
 });
 
+// ─── (a2) the season aggregate outranks every single event (#999) ───────
+//
+// The bug: production's public events were Testnet Phase 0/1, the
+// `type='season'` "Season 1" event (started 2026-03-16) and "Season 1 Beta"
+// (started 2026-03-18). With nothing running, step (b) below picked the
+// newest STARTED event — Beta, by a 48-hour margin — so the leaderboard
+// opened on a three-week slice showing 1900.00 for the person the season
+// had at 67973.66. A season's standings are the dataset "the leaderboard"
+// means; individual events stay in the picker.
+
+test('pickDefault: a started season event beats a more recently started regular one', () => {
+  // The exact production shape, in list order (starts_at DESC).
+  const beta = ev(8, -140, -118);                     // "Season 1 Beta"
+  const season = ev(7, -143, -37, { type: 'season' }); // "Season 1"
+  const phase1 = ev(3, -204, -188);
+  const picked = TopochainEvents.pickDefault([beta, season, phase1]);
+  assert.equal(picked.id, 7, 'the season aggregate, not the newest sub-event');
+});
+
+test('pickDefault: the season aggregate outranks an event running right now', () => {
+  // Deliberate: the season board already includes the running event's
+  // latest snapshots, and the picker offers the event-only view one click
+  // away. Landing on the sub-event is what hid the season totals.
+  const running = ev(2, -5, 5);
+  const season = ev(1, -60, 60, { type: 'season' });
+  assert.equal(TopochainEvents.pickDefault([running, season]).id, 1);
+});
+
+test('pickDefault: an UNSTARTED season event does not hijack the board', () => {
+  // An organiser creating next season's wrap-up event in advance must not
+  // move today's default onto a board whose hero reads "upcoming".
+  const future = ev(2, 15, 30, { type: 'season' });
+  const running = ev(1, -5, 5);
+  assert.equal(TopochainEvents.pickDefault([future, running]).id, 1,
+    'falls through to the pre-#999 rule');
+});
+
+test('pickDefault: the season step still respects requireLeaderboard', () => {
+  const hiddenSeason = ev(2, -30, 30, { type: 'season', display_leaderboard: false });
+  const shown = ev(1, -120, -90);
+  assert.equal(TopochainEvents.pickDefault([hiddenSeason, shown], { requireLeaderboard: true }).id, 1,
+    'a season event whose standings are switched off is skipped like any other');
+  assert.equal(TopochainEvents.pickDefault([hiddenSeason, shown]).id, 2,
+    'without the option it wins, and the standings pane shows its own copy');
+});
+
+test('pickDefault: a payload with no `type` key behaves exactly as before', () => {
+  // /challenges-api/seasons carries no `type`, and neither does a server
+  // predating the field — the helper must not read absent as "season".
+  const newest = ev(2, -30, -10);
+  const older = ev(1, -120, -90);
+  assert.equal(TopochainEvents.pickDefault([newest, older]).id, 2);
+  assert.equal(TopochainEvents.isSeasonAggregate(newest), false);
+  assert.equal(TopochainEvents.isSeasonAggregate(null), false);
+  assert.equal(TopochainEvents.isSeasonAggregate({ type: 'season' }), true);
+});
+
+test('the server-side twin orders the season step FIRST and guards on started', () => {
+  // pickDefault (client) and DEFAULT_PUBLIC_EVENT_SQL (server) are two
+  // hand-kept copies of one rule; the home widget resolves its board
+  // through the SQL one, so a drift shows up as the home screen and the
+  // leaderboard disagreeing about which board they mean.
+  const { DEFAULT_PUBLIC_EVENT_SQL } = require('../src/services/topochain/event-standings');
+  const seasonKey = DEFAULT_PUBLIC_EVENT_SQL.indexOf("type = 'season'");
+  const runningKey = DEFAULT_PUBLIC_EVENT_SQL.indexOf('is_active = TRUE');
+  assert.ok(seasonKey > -1, 'the SQL must prefer the season-type event');
+  assert.ok(runningKey > -1, 'and still keep the running-event key');
+  assert.ok(seasonKey < runningKey,
+    'the season key must sort BEFORE the running-event key, or a live sub-event wins');
+  // The guard, on the season key specifically (the ORDER BY's first line).
+  const firstKey = DEFAULT_PUBLIC_EVENT_SQL.slice(seasonKey).split('\n')[0];
+  assert.match(firstKey, /starts_at <= NOW\(\)/,
+    'an unstarted season event must not be preferred');
+  // Scope is unchanged: internal events and switched-off standings never win.
+  assert.match(DEFAULT_PUBLIC_EVENT_SQL, /internal = FALSE AND display_leaderboard = TRUE/);
+});
+
 // ─── (b) none is current → newest ENDED public event ────────────────────
 
 test('pickDefault: with nothing running, picks the most recent ended event', () => {

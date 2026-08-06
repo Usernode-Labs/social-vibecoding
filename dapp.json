@@ -279,6 +279,26 @@
       "description": "Envelope From address for platform mail, e.g. 'Usernode <no-reply@usernodelabs.org>'. Must be a sender the provider has verified for your domain or every send is rejected upstream. Not secret."
     },
     {
+      "key": "MCP_CONNECTOR_REDIRECT_HOSTS",
+      "group": "Chat connectors",
+      "required": false,
+      "default": "claude.ai,claude.com,chatgpt.com,openai.com",
+      "description": "Comma-separated hosts whose https redirect URIs a chat product may register against the /mcp connector (subdomains match too). This is what keeps dynamic client registration from being an open redirect registry: only widen it to a host you would hand a consent screen to. An explicit value REPLACES the default rather than extending it. Loopback is accepted only in local-development mode."
+    },
+    {
+      "key": "GITHUB_LINK_CLIENT_ID",
+      "group": "Chat connectors",
+      "required": false,
+      "description": "Client ID of the GitHub OAuth app that links a Usernode account to a GitHub one (scope `public_repo`), so the connector can fork an app into the user's own account for their coding agent to push to. Falls back to WAITLIST_GITHUB_CLIENT_ID. Unset: the link routes 404, Settings says so, and prepare_work answers github_link_unavailable and names the platform-build fallback."
+    },
+    {
+      "key": "GITHUB_LINK_CLIENT_SECRET",
+      "group": "Chat connectors",
+      "required": false,
+      "private": true,
+      "description": "Client secret paired with GITHUB_LINK_CLIENT_ID. Private: it can mint GitHub authorizations for this deployment, so it is encrypted at rest and never returned by any API. Falls back to WAITLIST_GITHUB_CLIENT_SECRET. Both halves must be set together — an id without a secret counts as unconfigured and degrades exactly as described on GITHUB_LINK_CLIENT_ID."
+    },
+    {
       "key": "USERNODE_DOMAIN",
       "group": "Managed by the deploy",
       "description": "Apex domain the platform and every app subdomain live under. Set from a GitHub repo variable by the deploy and listed here for documentation only — changing it needs the DNS and certificate change to land in the same breath, so it is deliberately not editable in the console."
@@ -317,9 +337,10 @@
       "expectSelector": "#leaderboard-screen:not(.hidden) #challenges-root:not(.hidden) #tc-se-grid #tc-se-challenge-summary"
     },
     {
-      "name": "Standings tab cross-links to the challenges tab (#981)",
+      "name": "Standings tab cross-links to the challenges tab (#981), on the season board (#999)",
       "path": "/#leaderboard",
-      "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"]) #topochain-leaderboard-root:not(.hidden) #tc-lb-challenge-link #tc-lb-to-challenges"
+      "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"]) #topochain-leaderboard-root:not(.hidden) #tc-lb-challenge-link #tc-lb-to-challenges",
+      "expectText": "Whole-season standings"
     },
     {
       "name": "Work notifications show a session's title, not its dev name (#971)",
@@ -1514,6 +1535,18 @@
       "name": "A spent allowance says so instead of showing a count (#964)",
       "path": "/?shot=feedback-spent",
       "expectText": "resets Monday 00:00 UTC"
+    },
+    {
+      "name": "Out of daily credits: the chat offers all three ways to keep building (#967)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
+      "expectSelector": "[data-credits-card] [data-credits-hash=\"#settings/connectors\"]",
+      "expectText": "Three ways to keep building right now"
+    },
+    {
+      "name": "Settings has a Claude & ChatGPT connectors section with the connector URL (#967)",
+      "path": "/?demo=1#settings/connectors",
+      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connectors-section:not(.hidden) #connector-url",
+      "expectText": "Claude — claude.ai"
     }
   ],
   "governance": {

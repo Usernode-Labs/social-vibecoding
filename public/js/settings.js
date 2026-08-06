@@ -48,6 +48,9 @@
     _cliTokenCursor: null,
     _cliTokensLoading: false,
     _cliTokenLoadId: 0,
+    _connectors: [],
+    _connectorLoadId: 0,
+    _githubLink: null,
 
     // ── Screen state ─────────────────────────────────────────────────────
     _open: false,
@@ -95,6 +98,10 @@
     // always offered.
     SECTIONS: [
       { key: 'api-key', label: 'Anthropic API key', group: 'AI & agents' },
+      // Own section (not folded into 'cli') so the out-of-credits card can
+      // deep-link #settings/connectors as one of its three routes; see
+      // public/js/credit-options.js.
+      { key: 'connectors', label: 'Claude & ChatGPT connectors', group: 'AI & agents' },
       { key: 'app-ai', label: 'App AI permissions', group: 'AI & agents' },
       { key: 'agent-files', label: 'Agent instructions & skills', group: 'AI & agents' },
 
@@ -139,6 +146,25 @@
       if (logoutBtn) logoutBtn.addEventListener('click', () => this.logout());
       const cliMore = document.getElementById('cli-tokens-more');
       if (cliMore) cliMore.addEventListener('click', () => this._loadCliTokens(false));
+
+      // Copy the connector URL — the one thing the user has to carry over
+      // into Claude.ai / ChatGPT by hand.
+      const connectorCopy = document.getElementById('connector-url-copy');
+      if (connectorCopy) {
+        connectorCopy.addEventListener('click', async () => {
+          const field = document.getElementById('connector-url');
+          if (!field) return;
+          try {
+            await navigator.clipboard.writeText(field.value);
+          } catch {
+            // Clipboard permission denied / insecure context: select the
+            // text so the user can copy it themselves.
+            field.select();
+          }
+          connectorCopy.textContent = 'Copied';
+          setTimeout(() => { connectorCopy.textContent = 'Copy'; }, 1500);
+        });
+      }
 
       // Change password (issue #282) → POST /api/me/password.
       const cpSave = document.getElementById('cp-save');
@@ -315,6 +341,8 @@
       this._refreshSpend();
       this._renderLlmGrants();
       this._loadCliTokens(true);
+      this._loadConnectors();
+      this._loadGithubLink();
       this._renderAgentFilesSection();
       this._renderWalletSection();
       this._renderChangePasswordSection();
@@ -869,6 +897,231 @@
       try {
         return new URLSearchParams(window.location.search).get('demo') === '1';
       } catch { return false; }
+    },
+
+    // ── Claude & ChatGPT connectors ──────────────────────────────────────
+    //
+    // Same shape as the CLI-credentials block below: a load-generation
+    // guard so a slow response can't repaint stale credential state over a
+    // fresh one, and the page's ?demo=1 passed through (mcp_tokens is
+    // staging:private, so a staging clone would render an empty panel).
+
+    async _loadConnectors() {
+      const section = document.getElementById('connectors-section');
+      const list = document.getElementById('connectors-list');
+      const status = document.getElementById('connectors-status');
+      if (!section || !list || !status) return;
+
+      // The connector URL is derived from the origin the SPA is served
+      // from, so a self-hosted fork shows its own.
+      const urlField = document.getElementById('connector-url');
+      if (urlField) urlField.value = `${window.location.origin}/mcp`;
+
+      this._connectorLoadId = (this._connectorLoadId || 0) + 1;
+      const loadId = this._connectorLoadId;
+      list.textContent = 'Loading connections…';
+      status.classList.add('hidden');
+
+      try {
+        const demoQ = this._cliTokensDemo() ? '?demo=1' : '';
+        const response = await fetch(`/api/me/connectors${demoQ}`, {
+          credentials: 'same-origin',
+          cache: 'no-store',
+        });
+        if (loadId !== this._connectorLoadId) return;
+        if (response.status === 404) {
+          // The connector surface is production-only; hide rather than
+          // showing a section that can't work here.
+          section.classList.add('hidden');
+          return;
+        }
+        if (!response.ok) throw new Error('Could not load your connections.');
+        const data = await response.json();
+        if (!data || !Array.isArray(data.connectors)) {
+          throw new Error('The connections response was invalid.');
+        }
+        section.classList.remove('hidden');
+        this._connectors = data.connectors;
+        this._renderConnectors();
+      } catch (err) {
+        if (loadId !== this._connectorLoadId) return;
+        list.textContent = '';
+        status.textContent = err.message || 'Could not load your connections.';
+        status.classList.remove('hidden', 'text-emerald-500');
+        status.classList.add('text-red-500');
+      }
+    },
+
+    _renderConnectors() {
+      const list = document.getElementById('connectors-list');
+      if (!list) return;
+      list.textContent = '';
+      const connectors = this._connectors || [];
+      if (!connectors.length) {
+        const empty = document.createElement('p');
+        empty.className = 'text-xs text-zinc-500 dark:text-zinc-400';
+        empty.textContent = 'No chat products connected yet.';
+        list.appendChild(empty);
+        return;
+      }
+      for (const connector of connectors) {
+        const card = document.createElement('div');
+        card.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2';
+
+        const top = document.createElement('div');
+        top.className = 'flex items-start justify-between gap-3';
+        const text = document.createElement('div');
+        text.className = 'min-w-0';
+        const title = document.createElement('div');
+        title.className = 'text-sm font-medium text-zinc-800 dark:text-zinc-200';
+        title.textContent = connector.client_name || 'Connected client';
+        const detail = document.createElement('div');
+        detail.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
+        const connected = Number.isFinite(Date.parse(connector.connected_at))
+          ? new Date(connector.connected_at).toLocaleString() : 'unknown date';
+        const used = connector.last_used_at && Number.isFinite(Date.parse(connector.last_used_at))
+          ? ` · last used ${new Date(connector.last_used_at).toLocaleString()}`
+          : ' · never used';
+        detail.textContent = `connected ${connected}${used}`;
+        text.append(title, detail);
+
+        const disconnect = document.createElement('button');
+        disconnect.type = 'button';
+        disconnect.className = 'shrink-0 rounded-md border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors';
+        disconnect.textContent = 'Disconnect';
+        disconnect.addEventListener('click', () => this._disconnectConnector(connector.id, disconnect));
+
+        top.append(text, disconnect);
+        card.appendChild(top);
+        list.appendChild(card);
+      }
+    },
+
+    async _disconnectConnector(id, button) {
+      const status = document.getElementById('connectors-status');
+      if (button) button.disabled = true;
+      try {
+        const response = await fetch(`/api/me/connectors/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+          credentials: 'same-origin',
+          cache: 'no-store',
+        });
+        if (!response.ok && response.status !== 404) {
+          throw new Error('Could not disconnect. Try again.');
+        }
+        await this._loadConnectors();
+        if (status) {
+          status.textContent = 'Disconnected.';
+          status.classList.remove('hidden', 'text-red-500');
+          status.classList.add('text-emerald-500');
+        }
+      } catch (err) {
+        if (button) button.disabled = false;
+        if (status) {
+          status.textContent = err.message || 'Could not disconnect.';
+          status.classList.remove('hidden', 'text-emerald-500');
+          status.classList.add('text-red-500');
+        }
+      }
+    },
+
+    // ── Verified GitHub account link ─────────────────────────────────────
+
+    async _loadGithubLink() {
+      const section = document.getElementById('github-link-section');
+      const body = document.getElementById('github-link-body');
+      if (!section || !body) return;
+      body.textContent = 'Loading…';
+      try {
+        const demoQ = this._cliTokensDemo() ? '?demo=1' : '';
+        const response = await fetch(`/api/me/github${demoQ}`, {
+          credentials: 'same-origin',
+          cache: 'no-store',
+        });
+        if (response.status === 404 || !response.ok) {
+          section.classList.add('hidden');
+          return;
+        }
+        const data = await response.json();
+        section.classList.remove('hidden');
+        this._githubLink = data || { linked: false };
+        this._renderGithubLink();
+      } catch {
+        section.classList.add('hidden');
+      }
+    },
+
+    _renderGithubLink() {
+      const body = document.getElementById('github-link-body');
+      const status = document.getElementById('github-link-status');
+      if (!body) return;
+      body.textContent = '';
+      if (status) status.classList.add('hidden');
+      const link = this._githubLink || { linked: false };
+
+      // No OAuth app configured on this deployment: say so plainly rather
+      // than offering a button that 404s.
+      if (link.available === false) {
+        const note = document.createElement('p');
+        note.className = 'text-xs text-zinc-500 dark:text-zinc-400';
+        note.textContent = 'GitHub linking is not configured on this deployment.';
+        body.appendChild(note);
+        return;
+      }
+
+      if (link.linked) {
+        const row = document.createElement('div');
+        row.className = 'flex items-center justify-between gap-3 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2';
+        const text = document.createElement('div');
+        text.className = 'min-w-0';
+        const login = document.createElement('div');
+        login.className = 'text-sm font-mono text-zinc-800 dark:text-zinc-200';
+        login.textContent = link.login || 'linked';
+        const when = document.createElement('div');
+        when.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
+        when.textContent = link.linkedAt && Number.isFinite(Date.parse(link.linkedAt))
+          ? `linked ${new Date(link.linkedAt).toLocaleString()}`
+          : 'linked';
+        text.append(login, when);
+
+        const unlink = document.createElement('button');
+        unlink.type = 'button';
+        unlink.className = 'shrink-0 rounded-md border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors';
+        unlink.textContent = 'Disconnect';
+        unlink.addEventListener('click', () => this._unlinkGithub(unlink));
+        row.append(text, unlink);
+        body.appendChild(row);
+        return;
+      }
+
+      // A full-page navigation, not fetch: the GitHub consent screen has to
+      // be shown to the user in a top-level document.
+      const connect = document.createElement('a');
+      connect.href = '/api/me/github/connect';
+      connect.className = 'inline-block rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors';
+      connect.textContent = 'Connect GitHub';
+      body.appendChild(connect);
+    },
+
+    async _unlinkGithub(button) {
+      const status = document.getElementById('github-link-status');
+      if (button) button.disabled = true;
+      try {
+        const response = await fetch('/api/me/github', {
+          method: 'DELETE',
+          credentials: 'same-origin',
+          cache: 'no-store',
+        });
+        if (!response.ok) throw new Error('Could not disconnect GitHub.');
+        await this._loadGithubLink();
+      } catch (err) {
+        if (button) button.disabled = false;
+        if (status) {
+          status.textContent = err.message || 'Could not disconnect GitHub.';
+          status.classList.remove('hidden', 'text-emerald-500');
+          status.classList.add('text-red-500');
+        }
+      }
     },
 
     async _loadCliTokens(reset) {
