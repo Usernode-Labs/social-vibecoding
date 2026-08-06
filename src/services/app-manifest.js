@@ -56,7 +56,11 @@ const MANIFEST_FILENAME = 'dapp.json';
 // staging route and asserts load + no-console-errors (+ optional
 // selector/text). Extras over the cap are dropped and logged, never
 // silently truncated.
-const MAX_TESTS = 10;
+// 12: eleven checks are pinned in-cap by node tests (profile ×2, menu-nav,
+// leaderboard ×2, work-drawer, feedback ×2, challenges-widget ×2, secrets
+// panel) — a cap of 10 made the slots over-subscribed and silently dropped
+// whichever pinned check sat past the cut. One spare slot of headroom.
+const MAX_TESTS = 12;
 const MAX_TEST_NAME_LEN = 120;
 const MAX_TEST_SELECTOR_LEN = 256;
 const MAX_TEST_TEXT_LEN = 256;

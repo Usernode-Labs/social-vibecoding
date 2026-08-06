@@ -315,6 +315,16 @@ function load() {
     // How often the stale-PR / archived-GC sweeper runs. These actions
     // are day-scale, so it polls infrequently. Default 1h.
     staleSweepIntervalMs: parseInt(process.env.STALE_SWEEP_INTERVAL_MS || String(60 * 60 * 1000), 10),
+    // #1010: how often the FAST governance-apply ticker runs. The hourly
+    // sweeper above also applies window-elapsed governance proposals, but an
+    // hour of dead air after a close proposal's countdown reaches zero is
+    // exactly the "did my vote do anything?" confusion this ticker removes —
+    // and it is what makes the client's derived "Closing issue…" spinner
+    // honest rather than a promise nothing keeps. Deliberately gate-first and
+    // DB-only (no GitHub traffic for rows that aren't ready), and on its own
+    // knob so it can't be silently disabled along with the stale-PR sweeper.
+    // Default 60s; set to 0 to disable (the hourly catch-all still runs).
+    governanceApplyTickMs: parseInt(process.env.GOVERNANCE_APPLY_TICK_MS || String(60 * 1000), 10),
     // Demand-driven global-cap eviction. When a new session is needed but
     // the platform is at maxGlobalSessions, we pause the globally least-
     // recently-active session that has been idle longer than this grace

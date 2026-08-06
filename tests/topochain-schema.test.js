@@ -27,12 +27,17 @@ const schema = fs.readFileSync(path.join(root, 'src/db/schema.sql'), 'utf8');
 // can't accidentally match unrelated platform tables earlier in the file.
 const blockStart = schema.indexOf('Topochain (testnet competition) — SPEC §3.4 schema');
 assert.ok(blockStart > 0, 'the topochain schema block header exists');
-// The onboarding-flow-alignment section (waitlist_signups etc.) follows
-// the topochain block in schema.sql; bound the slice at its header so the
+// Later sections (mobile push notifications from #844, then the
+// onboarding-flow-alignment block) follow the topochain block in
+// schema.sql; bound the slice at whichever header comes first so the
 // table-count and TIMESTAMPTZ pins below keep asserting over the
 // topochain block alone.
-const blockEnd = schema.indexOf('Onboarding flow alignment —', blockStart);
-const block = blockEnd > 0 ? schema.slice(blockStart, blockEnd) : schema.slice(blockStart);
+const blockEnd = [
+  schema.indexOf('Mobile push notifications —', blockStart),
+  schema.indexOf('Onboarding flow alignment —', blockStart),
+].filter((i) => i > 0).reduce((a, b) => Math.min(a, b), Infinity);
+const block = Number.isFinite(blockEnd)
+  ? schema.slice(blockStart, blockEnd) : schema.slice(blockStart);
 
 // Extracts the full `CREATE TABLE IF NOT EXISTS <name> ( ... );` text for
 // one table, so column assertions can't bleed across table boundaries.

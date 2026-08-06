@@ -3596,6 +3596,13 @@ CREATE TABLE IF NOT EXISTS mobile_auth_tokens (
 );
 CREATE INDEX IF NOT EXISTS idx_mobile_auth_tokens_user ON mobile_auth_tokens (user_id);
 
+-- Mobile push notifications — sender identity, registrations, deliveries (#844)
+--
+-- This header also bounds the topochain block above for
+-- tests/topochain-schema.test.js: the four mobile_push_* tables below are
+-- NOT part of the SPEC §3.4 topochain migration and must not count toward
+-- its 22-table pin.
+
 -- Database-owned sender identity and activation boundary. Same-identity sender
 -- restarts retain this cutoff so queued work survives ordinary deployments.
 -- Initial activation, re-enabling, and deployment identity changes establish

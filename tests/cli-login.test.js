@@ -19,7 +19,9 @@ const {
 } = require('../src/services/cli-auth-constants');
 
 test('API command automatically logs in, waits for approval, then retries the request', async () => {
-  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-login-'));
+  // realpath: on macOS os.tmpdir() sits under /var → /private/var, and the
+  // CLI's config-path safety check rejects symlinked path components.
+  const home = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-login-')));
   await fs.chmod(home, 0o700);
   const directory = path.join(home, '.config', 'social-vibecoding');
   await fs.mkdir(directory, { recursive: true, mode: 0o700 });
@@ -136,7 +138,7 @@ test('API command automatically logs in, waits for approval, then retries the re
 });
 
 test('login retains a valid legacy credential until explicit logout', async () => {
-  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-legacy-login-'));
+  const home = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-legacy-login-')));
   await fs.chmod(home, 0o700);
   const directory = path.join(home, '.config', 'social-vibecoding');
   await fs.mkdir(directory, { recursive: true, mode: 0o700 });

@@ -917,6 +917,11 @@ async function becomeLeader() {
   // window elapses. Day-scale, so it polls on its own slow interval.
   startStalePrSweeper(config);
 
+  // #1010: fast, gate-first governance applies (minute-scale). Complements
+  // the hourly sweeper's Pass 0b, which keeps ownership of the close-issue
+  // superseded sweep (its GitHub fetch is too costly to run per minute).
+  startGovernanceApplyTicker(config);
+
   // Reconcile open PR sessions ('promoted'/'merging') against GitHub's
   // actual merge state. Heals sessions that merged on GitHub but whose
   // post-merge step (prod rebuild, etc.) failed — those would otherwise
@@ -3520,6 +3525,94 @@ function startSessionAutoPauseSweeper(config) {
   }, config.sessionSweepIntervalMs).unref();
 }
 
+let governanceApplyTickerHandle = null;
+
+// #1010: FAST governance-apply ticker.
+//
+// A governance proposal (rename / secret_change / close_issue /
+// maintenance_campaign) can become mergeable purely through the passage of
+// time — the threshold is met and the minimum visibility window runs out with
+// no further vote to drive the apply. Before this ticker the ONLY thing that
+// noticed was the hourly stale-PR sweeper's Pass 0b, so a close proposal whose
+// countdown reached zero sat visibly decided-but-open for up to an hour. That
+// is the dead air issue #1010 is about, and it is also what would make the
+// client's derived "Closing issue…" spinner a lie — so the indicator and this
+// ticker ship together.
+//
+// Deliberately narrower than Pass 0b in one way that matters: it is
+// **gate-first for every kind**, including close_issue. Pass 0b dispatches
+// close_issue rows UNCONDITIONALLY because maybeApplyCloseIssueProposal's
+// superseded guard doubles as the catch-all for issues closed by hand on
+// GitHub — and that guard costs a `fetchPublicIssues` per app. Replicating it
+// at 60s cadence would mean a GitHub fetch per app per minute, so the
+// superseded sweep STAYS hourly and this ticker only touches rows whose gate
+// already says "apply me". Cost here is one small query plus a DB-only
+// governedGate per open governance row.
+//
+// Its own interval + own enable knob (GOVERNANCE_APPLY_TICK_MS, 0 disables)
+// so it is not silently switched off along with the stale-PR sweeper, which
+// disables itself entirely when both PR_STALE_NOTIFY_MS and
+// ARCHIVED_RETENTION_MS are zero.
+function startGovernanceApplyTicker(config) {
+  if (governanceApplyTickerHandle) return;
+  const intervalMs = config.governanceApplyTickMs;
+  if (!(intervalMs > 0)) {
+    log.info('server', 'Governance-apply ticker disabled');
+    return;
+  }
+  const pool = getPool(config);
+  const issuesModule = require('./src/routes/issues');
+  const governance = require('./src/services/governance');
+  log.info('server', 'Governance-apply ticker started', { intervalMs });
+  governanceApplyTickerHandle = setInterval(async () => {
+    if (lifecycle.isShuttingDown()) return;
+    try {
+      const { rows } = await pool.query(
+        `SELECT i.*, a.slug AS app_slug, a.repo_url,
+                (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'up')   AS up_count,
+                (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'down') AS down_count
+           FROM issues i JOIN apps a ON a.id = i.app_id
+          WHERE i.status = 'open' AND i.kind IN ('rename', 'secret_change', 'close_issue', 'maintenance_campaign')
+          LIMIT 100`
+      );
+      for (const issue of rows) {
+        try {
+          // Gate-first for EVERY kind — see the header comment.
+          const gate = await governance.governedGate(pool, issue.app_id, {
+            kind: 'issue', id: issue.id, openedAt: issue.created_at,
+          });
+          if (!gate.mergeable) continue;
+          // The apply helpers re-check the gate and lock the issue row
+          // atomically, so this can never double-apply against a concurrent
+          // vote, the hourly sweep, or another color's ticker.
+          let result;
+          if (issue.kind === 'close_issue') {
+            result = await issuesModule.maybeApplyCloseIssueProposal(pool, issue);
+          } else if (issue.kind === 'rename') {
+            result = await issuesModule.maybeApplyRenameProposal(pool, issue);
+          } else if (issue.kind === 'maintenance_campaign') {
+            result = await issuesModule.maybeApplyMaintenanceCampaignProposal(config, pool, issue);
+          } else {
+            result = await issuesModule.maybeApplySecretChangeProposal(config, pool, issue);
+          }
+          if (result && (result.applied || result.superseded)) {
+            log.info('server', 'Governance proposal applied by ticker', {
+              issueId: issue.id, appId: issue.app_id, kind: issue.kind,
+              applied: !!result.applied, superseded: !!result.superseded,
+            });
+          }
+        } catch (err) {
+          log.warn('server', 'Governance-apply tick failed for row', {
+            issueId: issue.id, kind: issue.kind, err: err.message,
+          });
+        }
+      }
+    } catch (err) {
+      log.warn('server', 'Governance-apply tick failed', { err: err.message });
+    }
+  }, intervalMs).unref();
+}
+
 let stalePrSweeperHandle = null;
 
 // Stale-promoted-PR policy + reversible-archive hard GC.
@@ -3875,6 +3968,10 @@ async function cleanup() {
   if (stalePrSweeperHandle) {
     clearInterval(stalePrSweeperHandle);
     stalePrSweeperHandle = null;
+  }
+  if (governanceApplyTickerHandle) {
+    clearInterval(governanceApplyTickerHandle);
+    governanceApplyTickerHandle = null;
   }
 
   const startingCount = getActiveWorkerCount();
