@@ -130,10 +130,15 @@ test('the folded-in admin pages fall back to the cached shell', () => {
 });
 
 test('standalone server pages never fall back to the SPA shell', () => {
-  // /cli/authorize is the last genuine standalone server page: a pre-auth
-  // device-authorisation flow deliberately outside the app shell.
-  assert.deepEqual(NO_FALLBACK_PAGES, ['/cli/authorize']);
+  // The two genuine standalone server pages, both pre-auth consent flows
+  // deliberately outside the app shell with their own stylesheets:
+  //   /cli/authorize     — the CLI / local coding-agent device flow
+  //   /connect/authorize — the hosted MCP connector (Claude.ai, ChatGPT)
+  // Serving either from the cached SPA shell would show a page that looks
+  // signed in but cannot approve anything.
+  assert.deepEqual(NO_FALLBACK_PAGES, ['/cli/authorize', '/connect/authorize']);
   assert.equal(classify('GET', '/cli/authorize', 'text/html', 'navigate'), 'bypass');
+  assert.equal(classify('GET', '/connect/authorize', 'text/html', 'navigate'), 'bypass');
 });
 
 test('unparseable URLs are bypassed', () => {

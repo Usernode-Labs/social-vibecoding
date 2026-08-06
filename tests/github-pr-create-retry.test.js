@@ -185,3 +185,60 @@ test('describeGithubError: long string bodies are truncated for the log', () => 
   const d = github.describeGithubError(requestError(502, { body: 'x'.repeat(5000) }));
   assert.ok(d.data.length <= 300);
 });
+
+// ── #967: cross-fork head ──────────────────────────────────────────────
+//
+// The hosted MCP connector opens the pull request from a branch in the
+// USER'S fork, so createPR grew an explicit `head`. The two properties that
+// matter: an explicit head is passed through verbatim (GitHub needs the
+// `owner:branch` form for a cross-repository PR), and every pre-existing
+// caller — which passes only `branch` — is byte-for-byte unaffected.
+
+test('an explicit head is passed to GitHub verbatim (cross-fork PR)', async () => {
+  const calls = [];
+  withScript([{ number: 12, html_url: 'https://example/pr/12' }], calls);
+  try {
+    const pr = await github.createPR('usernode-bot', 'recipe-box', {
+      branch: 'usernode/recipe-box-issue-4-a1b2c3',
+      head: 'someuser:usernode/recipe-box-issue-4-a1b2c3',
+      title: 't',
+      body: 'b',
+    });
+    assert.equal(pr.number, 12);
+    assert.equal(calls[0].head, 'someuser:usernode/recipe-box-issue-4-a1b2c3');
+    assert.equal(calls[0].owner, 'usernode-bot', 'the PR still targets the app repo');
+    assert.equal(calls[0].base, 'main');
+  } finally {
+    cleanup();
+  }
+});
+
+test('callers that pass only branch still send the bare branch as head', async () => {
+  const calls = [];
+  withScript([{ number: 13, html_url: 'https://example/pr/13' }], calls);
+  try {
+    await github.createPR('acme', 'app', { branch: 'feat/x', title: 't', body: 'b' });
+    assert.equal(calls[0].head, 'feat/x', 'same-repo callers are unchanged');
+  } finally {
+    cleanup();
+  }
+});
+
+test('a cross-fork no_commits error names the fork branch, not owner:branch', async () => {
+  const calls = [];
+  withScript([
+    () => { throw requestError(422, { message: 'Validation Failed: No commits between main and someuser:feat/x' }); },
+  ], calls);
+  try {
+    await assert.rejects(
+      github.createPR('acme', 'app', { branch: 'feat/x', head: 'someuser:feat/x', title: 't', body: 'b' }),
+      (err) => {
+        assert.equal(err.code, 'no_commits');
+        assert.match(err.message, /someuser:feat\/x/);
+        return true;
+      }
+    );
+  } finally {
+    cleanup();
+  }
+});

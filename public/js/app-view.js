@@ -5245,6 +5245,12 @@ const AppView = {
     const maintenanceBadge = (pr.source === 'maintenance')
       ? '<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-600 dark:text-sky-400 shrink-0" title="Opened automatically by an approved platform maintenance campaign. Review and vote like any proposal — or a platform admin can merge it once checks pass.">Platform maintenance</span>'
       : '';
+    // #967: which coding agent wrote it, when the proposal came in through
+    // the hosted MCP connector — the code was written by the proposer's own
+    // Claude Code or Codex, on their subscription, in their fork. Sits
+    // beside "Imported PR" (such a proposal is an import) rather than
+    // replacing it: one says how it got here, the other says who built it.
+    const agentBadge = AppView.externalAgentBadgeHtml(pr.external_agent);
     // #405: the merge-state slot is now driven by the shared MergeStatus
     // lifecycle helper so labels/colours match the home strip and the dev
     // session header exactly. It renders the merge-pipeline / conflict /
@@ -5317,6 +5323,7 @@ const AppView = {
             </div>
             ${fallbackChip}
             ${importedBadge}
+            ${agentBadge}
             ${maintenanceBadge}
             ${unvotedBadge}
             ${AppView.voteCountPill(pr, majority)}
@@ -5356,6 +5363,14 @@ const AppView = {
     // would otherwise be discovered.
     const importedNote = imported
       ? `<div class="text-xs text-amber-600 dark:text-amber-400 mt-1">Imported pull request${pr.imported_pr_author ? ` — authored by <span class="font-medium">${escapeHtml(pr.imported_pr_author)}</span>` : ''}. The code is maintained on GitHub; there's no in-app dev session for it. Voting and checks work the same as any proposal.</div>`
+      : '';
+    // #967: for a connector-authored proposal, say plainly who wrote the
+    // code and on whose account — an imported proposal that arrived this
+    // way was built by the proposer's own agent, not by a stranger and not
+    // out of the platform's credits.
+    const agentName = AppView.externalAgentName(pr.external_agent);
+    const agentNote = agentName
+      ? `<div class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Built with <span class="font-medium">${escapeHtml(agentName)}</span> by <span class="font-medium">${escapeHtml(pr.username || 'the proposer')}</span>, on their own coding-agent subscription, from a branch in their GitHub fork.</div>`
       : '';
     // #866: say in prose what the Preview slot says in a pill, so the
     // detail view explains why there's no Preview button yet (or why there
@@ -5405,6 +5420,7 @@ const AppView = {
       <div class="text-xs text-zinc-500 dark:text-zinc-400 mt-2 px-1">
         <div>${details.join(' · ')}${helpBtn}</div>
         ${importedNote}
+        ${agentNote}
         ${previewNote}
         ${chips ? `<div class="mt-1 flex flex-wrap gap-1 items-center"><span>Linked issues:</span> ${chips}</div>` : ''}
         ${AppView._mergeConflictDetailHtml(pr)}
@@ -7890,6 +7906,15 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
+        // Out of daily credits is not an ordinary error — it has three real
+        // ways forward (own API key, a coding tool on your computer, a
+        // connected Claude.ai / ChatGPT subscription). Show the same card
+        // the dev chat shows instead of a one-line toast the user can only
+        // read and dismiss. Every other failure keeps the toast.
+        if (data.code === 'budget_exceeded') {
+          AppView._showCreditOptionsModal(data.error);
+          return;
+        }
         PlatformUI.toast(data.error || `Couldn't start generating the proposal (HTTP ${resp.status}).`);
         return;
       }
@@ -7902,6 +7927,54 @@ const AppView = {
     } catch (err) {
       PlatformUI.toast(`Couldn't start generating the proposal: ${err.message}`);
     }
+  },
+
+  // Out-of-credits popup for the Generate-proposal path. Same scrim/card
+  // chrome as _showAutoSessionModal below; the body is the shared card from
+  // public/js/credit-options.js, so the copy and the three Settings
+  // destinations are identical to the dev-chat card and the red banner.
+  // Choosing a route is a hash navigation, which unmounts this screen —
+  // so the modal only has to handle explicit dismissal.
+  _showCreditOptionsModal(errorText) {
+    const existing = document.getElementById('credit-options-modal');
+    if (existing) existing.remove();
+    if (!window.CreditOptions) {
+      PlatformUI.toast(errorText || "You're out of today's free AI credits.");
+      return;
+    }
+    const root = document.createElement('div');
+    root.id = 'credit-options-modal';
+    root.className = 'fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/60';
+    const state = {
+      error: errorText || '',
+      hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
+      // The headless route refuses on the user's own allowance the same way
+      // the chat does; the shared-budget wording is reachable through the
+      // budget meter, which this modal doesn't read.
+      globalOut: false,
+    };
+    root.innerHTML = `
+      <div class="min-h-full flex items-center justify-center p-4">
+        <div class="dc-credits-modal-card w-full max-w-lg rounded-xl bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 shadow-xl p-4">
+          ${CreditOptions.cardHtml(state)}
+          <div class="flex justify-end mt-3">
+            <button type="button" data-credits-close
+              class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Not now</button>
+          </div>
+        </div>
+      </div>`;
+    const close = () => {
+      root.remove();
+      document.removeEventListener('keydown', onKey);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    root.addEventListener('click', (e) => {
+      if (e.target === root) close();
+      if (e.target.closest('[data-credits-close]')) close();
+    });
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(root);
+    CreditOptions.wire(root);
   },
 
   // Singleton confirm popup for Generate proposal. Same scrim/card styling as
@@ -8285,6 +8358,35 @@ const AppView = {
     const n = parseInt(pr.behind_main, 10) || 0;
     const label = n ? `Behind main · ${n}` : 'Behind main';
     return `<span class="gc-behind-badge" title="This proposal is behind main but still merges cleanly">${escapeHtml(label)}</span>`;
+  },
+
+  // #967: the "built with …" provenance chip for a proposal that arrived
+  // through the hosted MCP connector — the code was written by the
+  // proposer's OWN coding agent (Claude Code on the web, or Codex), on
+  // their subscription, in their own GitHub fork.
+  //
+  // The vocabulary is closed on purpose. chat_sessions.external_agent is
+  // written only by services/external-agent-tasks.js from a fixed set, and
+  // an unrecognised value renders the generic label rather than whatever
+  // string reached the row — a provenance badge that prints server data
+  // verbatim is a provenance badge worth spoofing.
+  EXTERNAL_AGENT_NAMES: {
+    'claude-code': 'Claude Code',
+    codex: 'Codex',
+    external: 'an external coding agent',
+  },
+
+  externalAgentName(value) {
+    if (!value) return '';
+    return AppView.EXTERNAL_AGENT_NAMES[value] || AppView.EXTERNAL_AGENT_NAMES.external;
+  },
+
+  externalAgentBadgeHtml(value) {
+    const name = AppView.externalAgentName(value);
+    if (!name) return '';
+    const label = (value === 'claude-code' || value === 'codex')
+      ? `Built with ${name}` : 'Built with a coding agent';
+    return `<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-600 dark:text-violet-400 shrink-0" title="${escapeHtml('The code was written by the proposer’s own coding agent (' + name + ') on their subscription, in their GitHub fork. Usernode opened the pull request; the group still votes on it.')}">${escapeHtml(label)}</span>`;
   },
 
   // #381: advisory "may break the app" warning. Shown alongside (not

@@ -22,10 +22,19 @@ const debugAccess = require('../src/services/debug-access');
 
 // Isolate the Task 2 block so column/index assertions can't accidentally
 // match unrelated platform tables (e.g. the platform's own `users` table
-// definition, or other staging:private tags) earlier in the file.
+// definition, or other staging:private tags) elsewhere in the file.
+//
+// The block is bounded at BOTH ends. It used to run to end-of-file, which
+// silently depended on Task 2 being the last thing in schema.sql — so the
+// next feature to append a table (the hosted MCP connector) started
+// inflating this file's counts. The end bound is the next top-level
+// section header, so later additions land outside the block where they
+// belong.
 const blockStart = schema.indexOf('Topochain Task 2 — `users` columns');
 assert.ok(blockStart > 0, 'the Task 2 block header exists');
-const block = schema.slice(blockStart);
+const afterStart = schema.slice(blockStart);
+const nextSection = afterStart.search(/\n-- ── /);
+const block = nextSection > 0 ? afterStart.slice(0, nextSection) : afterStart;
 
 // ─── users columns ──────────────────────────────────────────────────
 

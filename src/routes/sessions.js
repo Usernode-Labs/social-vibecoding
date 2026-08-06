@@ -4342,6 +4342,25 @@ function sessionRoutes(config) {
 
   // Get current user's budget
   router.get('/api/budget', async (req, res) => {
+    // Staging mock data: the out-of-credits state (red meter + the
+    // three-route credits banner + the in-chat card) is unreachable on a
+    // staging preview without actually burning a real daily allowance, so
+    // a reviewer would only ever see the healthy state. ?demo=1 fabricates
+    // an exhausted snapshot without touching the database — same idiom as
+    // GET /api/me/ai-budget (routes/auth.js) and GET /api/me/cli-tokens.
+    // Strictly a no-op in production. `demo: true` is what the client keys
+    // its one-off card injection off (public/js/dev-chat.js).
+    if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
+      return res.json({
+        spentCents: 2000,
+        limitCents: 2000,
+        globalSpentCents: 4000,
+        globalLimitCents: 100000,
+        byokSpentCents: 0,
+        aiEnabled: true,
+        demo: true,
+      });
+    }
     try {
       const userLimit = await limits.getEffectiveUserLimitCents(pool, req.user.id);
       const globalLimit = await limits.getGlobalLimitCents(pool);
