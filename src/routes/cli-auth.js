@@ -56,11 +56,29 @@ function isCliSurface(req) {
     || pathname.startsWith('/api/me/cli-tokens/');
 }
 
+// Is the CLI surface reachable at all in this deployment?
+//
+// THE ONE predicate — the two 404 gates below and the `cliAuthEnabled`
+// capability flag on GET /api/auth/me all call it, so what the shell is
+// told can never drift from what the server actually serves. That
+// matters: the flag exists precisely so the Settings screen doesn't
+// REQUEST a surface that is gated off (a 404 the client swallows is
+// still a console error in the page, which fails proposal checks).
+//
+// Staging is deliberately excluded: a preview runs unreviewed PR code,
+// and device-authorization / CLI token minting must not be reachable
+// there. `config.cliAuthEnabled` carries the same exclusion (src/config.js
+// derives it as `!staging`) plus the canonical-origin requirement; the
+// explicit USERNODE_ENV check stays as defence in depth.
+function isCliSurfaceEnabled(config) {
+  return process.env.USERNODE_ENV !== 'staging' && !!config.cliAuthEnabled;
+}
+
 function cliAuthGate(config) {
   return (req, res, next) => {
     if (!isCliSurface(req)) return next();
     res.setHeader('Cache-Control', 'no-store');
-    if (process.env.USERNODE_ENV === 'staging' || !config.cliAuthEnabled) {
+    if (!isCliSurfaceEnabled(config)) {
       return res.status(404).json({ error: 'not_found' });
     }
     return next();
@@ -274,7 +292,7 @@ function cliApiBearerAuth(config) {
         && String(value).toLowerCase() === 'authorization'
     );
     if (!hasAuthorization || !isCliApiPath(req.path)) return next();
-    if (process.env.USERNODE_ENV === 'staging' || !config.cliAuthEnabled) {
+    if (!isCliSurfaceEnabled(config)) {
       res.setHeader('Cache-Control', 'no-store');
       return res.status(404).json({ error: 'not_found' });
     }
@@ -979,6 +997,7 @@ module.exports = {
   cliPreAuthRoutes,
   cliBrowserRoutes,
   isCliSurface,
+  isCliSurfaceEnabled,
   json4kb,
   readBearer,
   decodeCursor,
