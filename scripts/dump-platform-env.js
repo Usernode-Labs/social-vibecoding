@@ -7,7 +7,7 @@
  * Run as a ONE-OFF container during the deploy, after .env has been
  * written from GitHub secrets/vars but before the platform is rebuilt:
  *
- *   docker compose run --rm --no-deps --entrypoint node usernode \
+ *   docker compose run --rm --no-deps --entrypoint node usernode-blue \
  *     scripts/dump-platform-env.js
  *
  * It connects to the platform database, decrypts every writable value in

@@ -11,6 +11,134 @@
 
 name: usernode
 
+# ── Platform container (blue-green) ──────────────────────────────────
+# The platform runs as two interchangeable colors (usernode-blue /
+# usernode-green) for zero-downtime deploys: the new color boots and
+# health-checks alongside the live one, Caddy is flipped to it via a
+# graceful reload, then the old color drains and stops. See
+# scripts/platform-rollout.sh (invoked from scripts/deploy.sh). Both
+# colors share this config via the YAML anchor and differ only in name.
+#
+# Both carry the `usernode` network alias so in-network consumers —
+# PLATFORM_INTERNAL_URL=http://usernode:3000 (worker LLM proxies, child
+# apps), the Caddy wildcard `default` row, and the error-handler
+# fallback — resolve to whichever color(s) are running. Those endpoints
+# are stateless, so round-robin across both colors during the brief
+# rollout overlap is fine. The apex + access-gate upstreams instead cut
+# over atomically via caddy/active/platform-upstream.caddy because they
+# carry turn-scoped SSE/WebSocket streams.
+x-usernode-platform: &usernode-platform
+  build:
+    context: .
+    dockerfile: Dockerfile
+    args:
+      GIT_SHA: ${GIT_SHA:-dev}
+  # Shared image tag: building either color tags this same image, so the
+  # rollout builds once and both color services reference it.
+  image: usernode-platform:latest
+  restart: unless-stopped
+  # Explicit SIGTERM→SIGKILL budget (#711). server.js's cleanup() drains
+  # in-flight handlers for up to DRAIN_TIMEOUT_MS (5s) before exiting;
+  # this must stay comfortably above that so the drain can finish instead
+  # of being SIGKILLed mid-flush. On a blue-green cutover the rollout
+  # passes its own (longer) stop grace to `compose stop -t` — this value
+  # governs plain restarts. tests/caddy-deploy-grace.test.js pins
+  # DRAIN_TIMEOUT_MS <= this value.
+  stop_grace_period: 10s
+  networks:
+    usernode-net:
+      aliases:
+        - usernode
+    # Internal network shared with ONLY the MinIO sidecar (#752): app
+    # and staging containers live on usernode-net and must never be
+    # able to reach the object store directly — all bytes flow
+    # through platform routes.
+    usernode-storage: {}
+  expose:
+    - "3000"
+  env_file:
+    - ./.env
+  environment:
+    # Tell the platform which Docker network to spawn child apps on so
+    # Caddy can reach them by container name (the Caddyfile's wildcard
+    # site maps each hostname to a container name on this network).
+    # Read by src/services/{docker,worker}.js. Override DATABASE_URL
+    # inline to point at the in-compose Postgres service instead of
+    # project-usernode-db. DB_CONTAINER is the name `db-manager.js`
+    # `docker exec`'s into to spawn per-app databases — must match the
+    # usernode-db service's container_name below.
+    DOCKER_NETWORK: usernode-net
+    DB_CONTAINER: usernode-db
+    # Where the platform reads ambient host-state from — currently
+    # just deploy-status.json, written by the deploy script so the
+    # /status page can render an in-progress banner. See
+    # services/status.js + scripts/deploy.sh.
+    USERNODE_RUNTIME_PATH: /var/lib/usernode/runtime
+    # Per Phase 2d (SELF-HOSTING.md), the platform's own data
+    # lives in `app_usernode_<hex>` instead of the bare `usernode`
+    # database. Same `app_<slug>` convention every child app
+    # follows, with the hex suffix avoiding a collision with a
+    # hypothetical child app slugged `usernode`. The hex is frozen
+    # in src/config.js (SELF_APP_DB_NAME) and must match this URL.
+    # The bare `usernode` database stays around as the postgres-
+    # bookkeeping target db-manager.js issues `CREATE DATABASE`
+    # from when it spawns child-app DBs.
+    DATABASE_URL: postgres://usernode:${USERNODE_DB_PASSWORD}@usernode-db:5432/app_usernode_2d5619
+    NODE_RPC_URL: http://usernode-node:3000
+    # App file storage (#752): the MinIO sidecar, reachable only
+    # over the internal usernode-storage network. Credentials
+    # (MINIO_ROOT_USER / MINIO_ROOT_PASSWORD) arrive via env_file.
+    MINIO_ENDPOINT: http://usernode-minio:9000
+    # Elect a single leader across the two colors so singleton background
+    # work (worker adoption, headless resume, recovery, sweepers, drift
+    # poller) never double-runs during the rollout overlap. See
+    # src/services/leadership.js. Unset in dev/tests → leader immediately.
+    PLATFORM_LEADER_LOCK: "1"
+  volumes:
+    # Required: the platform spawns child-app containers via the
+    # host Docker daemon. Standard Usernode pattern.
+    - /var/run/docker.sock:/var/run/docker.sock
+    # Read-only host bind for deploy signals (see scripts/deploy.sh).
+    # The deploy user on the host writes /opt/usernode/runtime/
+    # deploy-status.json; the platform reads it from in-container.
+    - /opt/usernode/runtime:/var/lib/usernode/runtime:ro
+    # The ONE writable exception, scoped to a subdirectory: after a
+    # self-app merge the platform touches a nudge file here and the
+    # host deployer (scripts/usernode-deployer.sh) runs its git poll
+    # immediately instead of waiting out its ~2-min baseline. A hint,
+    # not an authority — the deployer still deploys only what
+    # github.com says main points at (src/services/deploy-nudge.js).
+    # Either color may write it (whichever served the merge request).
+    - /opt/usernode/runtime/deploy-nudge:/var/lib/usernode/deploy-nudge
+  depends_on:
+    usernode-db:
+      condition: service_healthy
+    usernode-node:
+      condition: service_started
+    # service_started, NOT service_healthy: a wedged MinIO must
+    # degrade file uploads to a clear storage_unavailable error, never
+    # block the whole platform from booting. The storage service
+    # lazily (re)ensures its bucket per call. See services/app-files.js.
+    usernode-minio:
+      condition: service_started
+  healthcheck:
+    test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+    interval: 30s
+    timeout: 5s
+    retries: 3
+  deploy:
+    resources:
+      # The single platform process is the funnel for ALL HTTP, every
+      # SSE chat stream (Mayor token relay + CC progress), all WebSocket
+      # fan-out, and Docker orchestration. Both colors briefly run
+      # together during a rollout (~2x peak), which the box has headroom
+      # for. Sized for the ~50-concurrent-user target; see scaling notes.
+      limits:
+        memory: 3g
+        cpus: "4"
+  security_opt:
+    - no-new-privileges:true
+
 services:
   caddy:
     # Custom build: stock caddy ships no DNS plugins, and DNS-01 issuance of
@@ -28,6 +156,11 @@ services:
       - "443:443/udp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Blue/green active-color snippet imported by the Caddyfile.
+      # Rewritten on the host by scripts/platform-rollout.sh and picked
+      # up via a graceful `caddy reload` on each zero-downtime deploy.
+      # Read-only in the container — only the deploy (host side) writes it.
+      - ./caddy/active:/etc/caddy/active:ro
       # caddy-data holds the on-demand-issued certs + ACME account state
       # (ZeroSSL primary, Let's Encrypt fallback). Persist it so
       # restarts/deploys reuse existing certs instead of re-issuing (which
@@ -109,106 +242,23 @@ services:
           memory: 64m
           cpus: "0.25"
 
-  usernode:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        GIT_SHA: ${GIT_SHA:-dev}
-    container_name: usernode
-    restart: unless-stopped
-    # Explicit SIGTERM→SIGKILL budget for deploys (#711). server.js's
-    # cleanup() drains in-flight handlers for up to DRAIN_TIMEOUT_MS (5s)
-    # before exiting; this must stay comfortably above that so the drain
-    # can finish instead of being SIGKILLed mid-flush, and low so the
-    # deploy cutover (old exit → new listen) stays short. tests/
-    # caddy-deploy-grace.test.js pins DRAIN_TIMEOUT_MS <= this value.
-    stop_grace_period: 10s
-    networks:
-      - usernode-net
-      # Internal network shared with ONLY the MinIO sidecar (#752): app
-      # and staging containers live on usernode-net and must never be
-      # able to reach the object store directly — all bytes flow
-      # through platform routes.
-      - usernode-storage
-    expose:
-      - "3000"
-    env_file:
-      - ./.env
-    environment:
-      # Tell the platform which Docker network to spawn child apps on so
-      # Caddy can reach them by container name (the Caddyfile's wildcard
-      # site maps each hostname to a container name on this network).
-      # Read by src/services/{docker,worker}.js. Override DATABASE_URL
-      # inline to point at the in-compose Postgres service instead of
-      # project-usernode-db. DB_CONTAINER is the name `db-manager.js`
-      # `docker exec`'s into to spawn per-app databases — must match the
-      # usernode-db service's container_name below.
-      DOCKER_NETWORK: usernode-net
-      DB_CONTAINER: usernode-db
-      # Where the platform reads ambient host-state from — currently
-      # just deploy-status.json, written by the deploy workflow so the
-      # /status page can render an in-progress banner. See
-      # services/status.js + .github/workflows/deploy.yml.
-      USERNODE_RUNTIME_PATH: /var/lib/usernode/runtime
-      # Per Phase 2d (SELF-HOSTING.md), the platform's own data
-      # lives in `app_usernode_<hex>` instead of the bare `usernode`
-      # database. Same `app_<slug>` convention every child app
-      # follows, with the hex suffix avoiding a collision with a
-      # hypothetical child app slugged `usernode`. The hex is frozen
-      # in src/config.js (SELF_APP_DB_NAME) and must match this URL.
-      # The bare `usernode` database stays around as the postgres-
-      # bookkeeping target db-manager.js issues `CREATE DATABASE`
-      # from when it spawns child-app DBs.
-      DATABASE_URL: postgres://usernode:${USERNODE_DB_PASSWORD}@usernode-db:5432/app_usernode_2d5619
-      NODE_RPC_URL: http://usernode-node:3000
-      # App file storage (#752): the MinIO sidecar below, reachable only
-      # over the internal usernode-storage network. Credentials
-      # (MINIO_ROOT_USER / MINIO_ROOT_PASSWORD) arrive via env_file.
-      MINIO_ENDPOINT: http://usernode-minio:9000
-    volumes:
-      # Required: the platform spawns child-app containers via the
-      # host Docker daemon. Standard Usernode pattern.
-      - /var/run/docker.sock:/var/run/docker.sock
-      # Read-only host bind for deploy signals (see deploy workflow).
-      # The deploy user on the host writes /opt/usernode/runtime/
-      # deploy-status.json; the platform reads it from in-container.
-      - /opt/usernode/runtime:/var/lib/usernode/runtime:ro
-      # The ONE writable exception, scoped to a subdirectory: after a
-      # self-app merge the platform touches a nudge file here and the
-      # host deployer (scripts/usernode-deployer.sh) runs its git poll
-      # immediately instead of waiting out its ~2-min baseline. A hint,
-      # not an authority — the deployer still deploys only what
-      # github.com says main points at (src/services/deploy-nudge.js).
-      - /opt/usernode/runtime/deploy-nudge:/var/lib/usernode/deploy-nudge
-    depends_on:
-      usernode-db:
-        condition: service_healthy
-      usernode-node:
-        condition: service_started
-      # service_started, NOT service_healthy: a wedged MinIO must
-      # degrade file uploads to a clear storage_unavailable error, never
-      # block the whole platform from booting. The storage service
-      # lazily (re)ensures its bucket per call. See services/app-files.js.
-      usernode-minio:
-        condition: service_started
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-    deploy:
-      resources:
-        # The single platform process is the funnel for ALL HTTP, every
-        # SSE chat stream (Mayor token relay + CC progress), all WebSocket
-        # fan-out, and Docker orchestration. The old 512m/1-CPU cap was the
-        # real ceiling for concurrent dev sessions on an otherwise huge box.
-        # Raised for the ~50-concurrent-user target; see scaling notes.
-        limits:
-          memory: 3g
-          cpus: "4"
-    security_opt:
-      - no-new-privileges:true
+  # Platform colors. See the x-usernode-platform anchor above for the full
+  # (shared) config — the two services differ only in name. Exactly one is
+  # normally running; both run briefly during a zero-downtime rollout,
+  # which is driven by scripts/platform-rollout.sh (NOT a plain
+  # `compose up`, which would start both at once — deploy.sh brings infra
+  # up with an explicit service list for exactly that reason). `hostname`
+  # makes the leader-election logs (os.hostname() in
+  # services/leadership.js) say which color is talking.
+  usernode-blue:
+    <<: *usernode-platform
+    container_name: usernode-blue
+    hostname: usernode-blue
+
+  usernode-green:
+    <<: *usernode-platform
+    container_name: usernode-green
+    hostname: usernode-green
 
   usernode-db:
     image: postgres:17-alpine

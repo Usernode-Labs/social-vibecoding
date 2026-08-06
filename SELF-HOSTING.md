@@ -1055,14 +1055,20 @@ The primary path is now a systemd service on the VPS:
   `github.com` says `main` points at. On a new sha it checks the commit
   out into `/opt/usernode-src`, rsyncs it over `/opt/usernode` with the
   same exclude list the workflow uses (`.env`, `runtime/`,
-  `.platform-env*`, `data/` survive), computes the node/caddy change
-  filters with `git diff`, and runs `scripts/deploy.sh`.
+  `.platform-env*`, `caddy/active/`, `data/` survive), computes the
+  node/caddy change filters with `git diff`, and runs
+  `scripts/deploy.sh`.
 - **`scripts/deploy.sh`** is the single copy of the deploy logic
   (formerly inlined in `deploy.yml`'s ssh step): archive-refresh gating,
-  platform-env materialization, pg_dump wait, health gate with automatic
-  rollback. Both callers serialize on `runtime/deploy.lock`, and
-  `SKIP_IF_CURRENT` turns the loser of a workflow/poller race into a
-  no-op.
+  platform-env materialization, pg_dump wait, then the blue-green
+  cutover via `scripts/platform-rollout.sh` (build → start idle color →
+  health gate → flip `caddy/active/platform-upstream.caddy` + graceful
+  Caddy reload → drain old color) and a post-cutover confirmation gate
+  with automatic rollback. A failed rollout leaves the previous color
+  serving and only reverts `GIT_SHA` in `.env`; the full
+  `rollback.sh` path is reserved for the nothing-is-serving case. Both
+  callers serialize on `runtime/deploy.lock`, and `SKIP_IF_CURRENT`
+  turns the loser of a workflow/poller race into a no-op.
 - **The Deploy workflow stays** for two jobs only: rotating secrets
   (only a runner can read GitHub secrets; it composes `.env` and
   forwards it as `BASE_ENV_B64` — the poller never touches `.env` beyond

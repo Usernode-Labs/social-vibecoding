@@ -193,11 +193,12 @@ function selfAppHashPath(p) {
   return '/#' + path.slice(1);
 }
 
-// "Before" (production) target container for an app. Child apps run as
-// `usernode-app-<slug>`; the platform itself runs as the compose service
-// named by config.selfAppContainer (default 'usernode'), NOT as
-// `usernode-app-<selfAppSlug>` — which is why self-app sessions used to
-// get no "before" image at all (#195 follow-up).
+// "Before" (production) target hostname for an app. Child apps run as
+// `usernode-app-<slug>`; the platform itself is reached via
+// config.selfAppContainer (default 'usernode' — under blue-green that's
+// the shared network ALIAS both colors carry, not a container name), NOT
+// as `usernode-app-<selfAppSlug>` — which is why self-app sessions used
+// to get no "before" image at all (#195 follow-up).
 function beforeContainerName(config, slug) {
   return slug === config.selfAppSlug
     ? (config.selfAppContainer || 'usernode')

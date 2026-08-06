@@ -115,27 +115,24 @@
 		HTML 503
 }
 
+# Active blue/green platform color for the apex + access-gate upstreams.
+# Defines the (platform_upstream) and (platform_gate) snippets used below.
+# Rewritten + gracefully reloaded by scripts/platform-rollout.sh on every
+# zero-downtime deploy so the apex/gate cut over cleanly to the new color.
+import /etc/caddy/active/platform-upstream.caddy
+
 # ── Main platform ────────────────────────────────────────────────
 {$USERNODE_DOMAIN} {
 	import acmedns_tls
 
-	# Hold-and-retry across platform restarts (#711). Every deploy
-	# recreates the usernode container; the process itself boots in ~4s,
-	# so the hard-down window is roughly 5-10s. Instead of 502ing every
-	# request in that window, hold the connection and retry the dial
-	# until the new container is listening — deploys then read as a
-	# brief latency bump, not an outage. 30s covers the measured window
-	# with generous margin; dial_timeout keeps a dial against a
-	# just-removed container IP failing fast so each retry re-resolves
-	# via Docker DNS. Retrying is safe for non-idempotent requests:
-	# Caddy only retries requests it never managed to send upstream.
-	reverse_proxy usernode:3000 {
-		lb_try_duration 30s
-		lb_try_interval 250ms
-		transport http {
-			dial_timeout 2s
-		}
-	}
+	# The active blue/green color (import platform_upstream, from
+	# caddy/active/platform-upstream.caddy). The snippet keeps the #711
+	# hold-and-retry: blue-green makes deploys themselves zero-downtime,
+	# but a color crash-restarting outside a rollout still boots in ~4s,
+	# and holding the dial reads as a latency bump instead of a 502.
+	# Retrying is safe for non-idempotent requests: Caddy only retries
+	# requests it never managed to send upstream.
+	import platform_upstream
 
 	encode gzip
 
@@ -207,18 +204,12 @@
 	# "simplifying" either side; tests/ws-upgrade-redispatch.test.js
 	# guards the platform half.
 	#
-	# Hold-and-retry (#711): the gate rides through platform restarts the
-	# same way the apex proxy does — a deploy recreating the usernode
-	# container must not 502 every app subdomain for the duration. Same
-	# sizing rationale as the apex block above.
-	forward_auth usernode:3000 {
-		uri /__caddy/access
-		lb_try_duration 30s
-		lb_try_interval 250ms
-		transport http {
-			dial_timeout 2s
-		}
-	}
+	# Upstream is the active blue/green color (import platform_gate, from
+	# caddy/active/platform-upstream.caddy) so the gate flips together
+	# with the apex on a zero-downtime deploy. The snippet keeps the #711
+	# hold-and-retry so a color crash-restart doesn't 502 every app
+	# subdomain for the boot window.
+	import platform_gate
 
 	# Chromeless-view rescue for direct/shared links (issue: bare
 	# "Not authenticated" on app subdomains). Child apps auth via the

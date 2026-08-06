@@ -97,6 +97,7 @@ const { sweepStuckCreatingApps } = require('./src/routes/apps');
 const appAccess = require('./src/services/app-access');
 const platformJwt = require('./src/services/platform-jwt');
 const { getPool } = require('./src/db/pool');
+const { createLeadership, withMigrationLock } = require('./src/services/leadership');
 const { trustedProxyClientIp } = require('./src/services/client-ip');
 const { currentVotePredicateSql } = require('./src/services/pr-vote-revision');
 
@@ -721,9 +722,24 @@ app.get('*', (req, res) => {
   }
 });
 
-async function start() {
-  await migrate(config);
-  await mobilePush.initialize(config);
+// Leadership coordinator for blue-green deploys (assigned in start()).
+// During a rollout both colors serve HTTP, but singleton background work
+// is gated to the leader so it never double-runs. See services/leadership.js.
+let leadership = null;
+
+// Leader-only singleton work. Runs exactly once per cluster — at boot for
+// the leader / the single-instance case (PLATFORM_LEADER_LOCK unset), or at
+// promotion for a follower whose old leader has exited (blue-green handoff).
+// EVERYTHING here either mutates shared cluster state (worker containers,
+// PR/merge rows, staging, Postgres roles, GitHub) or is a singleton
+// poller/sweeper that must never double-run across the two colors. The
+// follower serves HTTP from boot; the couple of leader-scoped capabilities
+// (prod-debug SQL, whose role password lives in the leader's memory) degrade
+// to a clean 503 on the follower for the seconds until promotion.
+async function becomeLeader() {
+  log.info('server', 'Running leader duties (role bootstraps, recovery, sweepers)', {
+    identity: leadership && leadership.identity,
+  });
 
   // Credential rows deliberately outlive their active period for settings
   // and audit correlation, then age out on the documented schedule.
@@ -782,9 +798,6 @@ async function start() {
     });
   });
 
-  await github.init(config);
-  await llm.init(config);
-
   // Any app stuck in 'creating' from a previous process crash gets flipped
   // to 'error' so the creator can retry instead of staring at a spinner.
   await sweepStuckCreatingApps(getPool(config)).catch(() => {});
@@ -825,28 +838,9 @@ async function start() {
     log.warn('server', 'Campaign resume failed', { err: err.message });
   });
 
-  worker.ensureWorkerImage().catch((err) => {
-    log.warn('server', 'Worker image build deferred', { err: err.message });
-  });
-
-  // Module-scoped so cleanup() can close it on SIGTERM (#767) — a
-  // function-local handle left the listener accepting new connections
-  // for the entire drain, then exited from under them.
-  const server = app.listen(config.port, () => {
-    log.info('server', `Listening on :${config.port}`);
-  });
-  httpServer = server;
-  shutdownPool = getPool(config);
-
-  ws.attach(server, config);
+  // The push SENDER claims queued jobs — a singleton. Enqueueing (HTTP
+  // side) works on every color; only the leader drains the queue.
   mobilePush.start();
-  chainPoller.start(config);
-  genesisAccounts.start();
-  nodeStatus.start({ nodeRpcUrl: process.env.NODE_RPC_URL });
-  // Warm the /api/status cache so the first dashboard load doesn't have
-  // to wait 1-2s on `docker stats`. Subsequent loads are served from
-  // cache via stale-while-revalidate (see services/status.js).
-  statusService.start(config);
   // Periodically check imported / bot-owned repos for new commits on
   // `main` we didn't make ourselves and redeploy via the same path
   // that the dev-chat merge flow uses. See main-drift-poller.js.
@@ -1017,6 +1011,58 @@ async function start() {
   // unavailable (services/title-heal.js). Bounded, non-overlapping, no-op
   // while the LLM stays disabled.
   startTitleHealSweeper(config);
+}
+
+async function start() {
+  // Schema migration is serialized across colors with an advisory lock so
+  // two booting platform containers can't run DDL concurrently during a
+  // blue-green rollout. No-op wrapper in single-instance mode. Orthogonal
+  // to the lock_timeout retry INSIDE migrate() (applySchemaWithLockRetry):
+  // this serializes the two colors against each other; that one survives
+  // lock contention with pg_dump'ing staging clones.
+  await withMigrationLock(getPool(config), () => migrate(config));
+  await mobilePush.initialize(config);
+  await github.init(config);
+  await llm.init(config);
+
+  worker.ensureWorkerImage().catch((err) => {
+    log.warn('server', 'Worker image build deferred', { err: err.message });
+  });
+
+  // ── Per-instance services ────────────────────────────────────────────
+  // Started on EVERY color so a follower can serve traffic the moment the
+  // rollout cuts over to it. These are request-serving / in-memory read
+  // caches — safe (just briefly redundant) to run in both colors during
+  // the rollout overlap.
+  //
+  // Module-scoped so cleanup() can close it on SIGTERM (#767) — a
+  // function-local handle left the listener accepting new connections
+  // for the entire drain, then exited from under them.
+  const server = app.listen(config.port, () => {
+    log.info('server', `Listening on :${config.port}`);
+  });
+  httpServer = server;
+  shutdownPool = getPool(config);
+
+  ws.attach(server, config);
+  chainPoller.start(config);
+  genesisAccounts.start();
+  nodeStatus.start({ nodeRpcUrl: process.env.NODE_RPC_URL });
+  // Warm the /api/status cache so the first dashboard load doesn't have
+  // to wait 1-2s on `docker stats`. Subsequent loads are served from
+  // cache via stale-while-revalidate (see services/status.js).
+  statusService.start(config);
+
+  // ── Leader-only singleton work ───────────────────────────────────────
+  // Elect a single leader across the colors. The leader runs becomeLeader()
+  // immediately; a follower serves HTTP now and runs it later, once the old
+  // leader exits and frees the advisory lock. Single-instance / dev / tests
+  // (PLATFORM_LEADER_LOCK unset) become leader instantly — identical to the
+  // pre-blue-green boot path.
+  leadership = createLeadership({ databaseUrl: config.databaseUrl });
+  leadership.start(becomeLeader).catch((err) => {
+    log.error('server', 'Leadership coordinator failed', { err: err.message });
+  });
 
   return server;
 }
@@ -3873,6 +3919,16 @@ async function cleanup() {
     } finally {
       if (poolTimer) clearTimeout(poolTimer);
     }
+  }
+
+  // Release the leader advisory lock LAST — only after draining — so the
+  // standby color promotes and runs recovery (incl. orphan worker adoption)
+  // against a quiesced process, not one still finishing a turn. Uses its
+  // own dedicated pg connection, so the pool close above doesn't affect
+  // it. (Process exit would release the session lock anyway; doing it
+  // explicitly just hands off promptly.)
+  if (leadership) {
+    await leadership.stop().catch(() => {});
   }
 
   process.exit(0);
