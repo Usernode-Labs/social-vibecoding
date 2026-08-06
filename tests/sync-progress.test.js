@@ -581,7 +581,10 @@ test('GET /status: exposes the merge lifecycle status for banner restore verific
   // merge behind it is still in flight (an aborted merge has no SHA
   // flip coming — see PlatformUpdating.verifyMergeStillInFlight).
   poolQueryHandler = async (sql) => {
-    if (/SELECT status FROM chat_sessions/.test(sql)) {
+    // #907 widened this read to fetch last_turn_runner/local_agent_label in
+    // the same round-trip (it is a 3s poll), so match the column list loosely
+    // — what this test is about is the `status` field reaching the payload.
+    if (/SELECT status[\s\S]*?FROM chat_sessions/.test(sql)) {
       return { rows: [{ status: 'promoted' }] };
     }
     return { rows: [] };

@@ -637,7 +637,10 @@ test('the usernode read is retried once on readiness and never leaks a listener'
   const close = settingsJs.slice(settingsJs.indexOf('    close() {'));
   assert.match(close.slice(0, 500), /_clearUsernodeAuthStatusRetry\(\)/,
     'leaving Settings stops listening');
-  const open = settingsJs.slice(settingsJs.indexOf('    open(section) {'));
+  // Pre-existing drift, unrelated to #907: open() grew an `opts` argument and
+  // this anchor stopped matching, so the assertion below was slicing from -1
+  // and silently passing over an empty string.
+  const open = settingsJs.slice(settingsJs.indexOf('    open(section, opts) {'));
   assert.match(open.slice(0, 900), /_usernodeAuthRetryUsed = false/,
     'the one re-attempt is offered again on the next visit');
 });
@@ -651,4 +654,90 @@ test('only the newest usernode read attempt paints', () => {
     'each attempt is tagged');
   assert.match(section, /if \(token !== this\._usernodeRenderToken\) return;/,
     'a stale 12s read cannot overwrite a fresher result');
+});
+
+// ── #907: the "Local coding agent" block ───────────────────────────────────
+
+test('the local-agent block lives in Experimental and ships hidden', () => {
+  // Experimental, not the CLI section: this is a preview of the same feature
+  // the dev chat's "Run on" selector exposes, and a lease is not a credential
+  // — revoking a token is a security action, detaching a machine is a
+  // routing one, and putting them side by side would blur that.
+  const experimental = html.slice(
+    html.indexOf('data-settings-section="experimental"'),
+    html.indexOf('data-settings-section="experimental"') + 12000
+  );
+  assert.match(experimental, /id="settings-local-agents-section"/);
+  assert.match(experimental, /id="settings-local-agents-list"/);
+  assert.match(experimental, /id="settings-local-agents-status"/);
+  // Hidden by default and only revealed when the user actually has one,
+  // so it costs nothing for the overwhelming majority who never run the CLI.
+  assert.match(experimental, /id="settings-local-agents-section" class="hidden/);
+  assert.match(experimental, /Local coding agent/);
+  // The copy has to answer "what still happens on Usernode?", because
+  // "runs on your machine" otherwise reads as "Usernode stops working".
+  assert.match(experimental, /Usernode still opens the pull request/);
+});
+
+test('the machine list is built as DOM nodes, never innerHTML', () => {
+  const render = settingsJs.slice(
+    settingsJs.indexOf('_renderLocalAgentsSection()'),
+    settingsJs.indexOf('_detachLocalAgent(')
+  );
+  // The label is free text typed on someone's own laptop and arrives here
+  // verbatim. This section follows the screen's MOVE-DON'T-REWRITE rule too:
+  // it only ever writes into its own list host.
+  assert.ok(!/innerHTML\s*=\s*`/.test(render), 'no template-literal innerHTML');
+  assert.match(render, /createElement\(/);
+  assert.match(render, /\.textContent = /);
+  assert.match(render, /list\.textContent = '';/, 'the list host is emptied, not rewritten');
+});
+
+test('the machine list hides itself when there is nothing to list', () => {
+  const render = settingsJs.slice(
+    settingsJs.indexOf('_renderLocalAgentsSection()'),
+    settingsJs.indexOf('_detachLocalAgent(')
+  );
+  assert.match(render, /section\.classList\.toggle\('hidden', agents\.length === 0\)/);
+  // The status line starts hidden on every pass, so a stale error from a
+  // previous attempt cannot survive a successful one.
+  assert.match(render, /status\.classList\.add\('hidden'\);/);
+  assert.match(render, /status\.classList\.remove\('hidden'/);
+  // A read failure leaves `agents` empty, which hides the block rather than
+  // leaving a half-painted list up.
+  assert.match(render, /\} catch \{\}/);
+});
+
+test('the machine list reads the account route, not the CLI surface', () => {
+  assert.match(settingsJs, /\/api\/me\/local-agents/);
+  // Staging demo rows come from the same request-time ?demo=1 convention the
+  // token list uses, so a staging clone can review this block at all.
+  const render = settingsJs.slice(
+    settingsJs.indexOf('_renderLocalAgentsSection()'),
+    settingsJs.indexOf('_detachLocalAgent(')
+  );
+  assert.match(render, /_cliTokensDemo\(\) \? '\?demo=1' : ''/);
+  assert.match(render, /Demo data/);
+});
+
+test('detaching is confirmed, and an already-gone lease is not an error', () => {
+  const detach = settingsJs.slice(
+    settingsJs.indexOf('_detachLocalAgent('),
+    settingsJs.indexOf('_detachLocalAgent(') + 1800
+  );
+  assert.match(detach, /method: 'DELETE'/);
+  assert.match(detach, /204|404/);
+  assert.match(detach, /confirm/i);
+  // Demo rows have no Detach button at all — there is nothing to detach.
+  const card = settingsJs.slice(
+    settingsJs.indexOf('_localAgentCard('),
+    settingsJs.indexOf('_detachLocalAgent(')
+  );
+  assert.match(card, /!agent\.demo/);
+});
+
+test('the Experimental toggle still gates the whole section', () => {
+  // The block is painted from _renderExperimentalSection, so it inherits the
+  // existing preview gate rather than inventing a second one.
+  assert.match(settingsJs, /_renderExperimentalSection\(\)[\s\S]{0,4000}_renderLocalAgentsSection\(\)/);
 });

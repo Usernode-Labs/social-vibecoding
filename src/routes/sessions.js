@@ -39,6 +39,12 @@ const transcriptShare = require('../services/transcript-share');
 const appAccess = require('../services/app-access');
 const userAgentFiles = require('../services/user-agent-files');
 const debugAccess = require('../services/debug-access');
+// #907: a coding agent running on the user's own machine, holding a lease on
+// this session. When one is attached, runClaudeCodeTool dispatches the turn to
+// it instead of to a worker container; everything after the commit — PR,
+// staging, checks, visuals — is the same tail.
+const localAgent = require('../services/local-agent');
+const localAgentDemo = require('../services/local-agent-demo');
 // #945: Usernode-side issue / proposal discussion threads as agent
 // context. Every loader here degrades to an empty result, so a failed
 // lookup drops the block rather than failing the turn.
@@ -4098,13 +4104,40 @@ function sessionRoutes(config) {
     // aborted (head moved, revision unverifiable) has no SHA flip coming
     // and would otherwise hold the tab read-only until the stuck timer.
     let mergeStatus = null;
+    // #907: which runner owns this session. `runner` is where the LAST turn
+    // ran ('local' | 'platform' | null); `localAgent` is non-null only while
+    // a machine is currently attached, and is what the dev-chat "Running on
+    // your machine" chip and the Run-on selector restore themselves from
+    // after a reload.
+    let runner = null;
+    let runnerLabel = null;
+    let attached = null;
     try {
       const { rows } = await pool.query(
-        `SELECT status FROM chat_sessions WHERE id = $1`,
+        `SELECT status, last_turn_runner, local_agent_label
+           FROM chat_sessions WHERE id = $1`,
         [sessionId]
       );
       mergeStatus = rows[0]?.status || null;
+      runner = rows[0]?.last_turn_runner || null;
+      // The name of the machine the LAST turn ran on, which outlives the
+      // lease. Without it, a session whose laptop has since detached can
+      // only say "your machine" — and the whole point of the past-tense
+      // chip is telling the user which one.
+      runnerLabel = rows[0]?.local_agent_label || null;
     } catch {}
+    try {
+      attached = localAgent.publicLease(await localAgent.activeLease(pool, sessionId));
+    } catch {}
+    // Staging mock data: session_agent_leases is `staging:private`, so no
+    // clone ever has a lease and the chip/selector review as dead controls.
+    // Request-time only, no write, strict no-op outside USERNODE_ENV=staging.
+    if (localAgentDemo.isStagingDemo(req)) {
+      const demo = localAgentDemo.demoSessionRunner(sessionId);
+      runner = demo.runner;
+      runnerLabel = demo.localAgent.label;
+      attached = demo.localAgent;
+    }
 
     // #252: in-flight sync-with-main state ({ phase, startedAt } |
     // null) — the dev-chat sync banner's reload recovery and poll
@@ -4120,6 +4153,7 @@ function sessionRoutes(config) {
       resolving: isResolving(sessionId),
       sync: syncMainSvc.getSyncState(sessionId),
       status: mergeStatus,
+      runner, runnerLabel, localAgent: attached,
     });
   });
 
@@ -4161,6 +4195,9 @@ function sessionRoutes(config) {
     if (action === 'force_orphan') {
       // The turn already ended, but its bookkeeping may not have — this is
       // how a client whose turn died without unwinding gets it cleaned up.
+      // #907: that bookkeeping now includes a local turn row, which is what
+      // a machine that went to sleep mid-turn leaves behind.
+      await localAgent.requestStop(pool, { sessionId, userId: null }).catch(() => {});
       await forceStopSession(pool, sessionId, req.user.username, null);
       return res.json({ ok: true, stopped: true, forced: true, phase: null });
     }
@@ -4219,7 +4256,22 @@ function sessionRoutes(config) {
       [sessionId]
     ).catch((err) => log.warn('sessions', 'stop disarm failed', { sessionId, err: err.message }));
 
-    if (stopPolicy.killsWorkerInPhase(handle.phase)) {
+    // #907: if this turn was handed to a machine of the user's, the thing to
+    // stop is not in a container here — it is a `claude` process on their
+    // laptop. Mark the turn stopped: awaitTurnResult unblocks immediately
+    // (so the tail below unwinds at the same speed as a container kill), and
+    // the CLI learns about it on its next progress POST, which now 409s.
+    // The confirm loop below is skipped for these: it probes a worker
+    // container this turn never had, so every probe would report "idle" and
+    // the log line would claim a kill it never sent.
+    if (handle.localTurnId) {
+      await localAgent.requestStop(pool, { sessionId, userId: null })
+        .catch((err) => log.warn('sessions', 'Local agent stop failed', {
+          sessionId, err: err.message,
+        }));
+    }
+
+    if (!handle.localTurnId && stopPolicy.killsWorkerInPhase(handle.phase)) {
       // Detached-turn path: the CC turn runs as a detached exec with no
       // host-side child to signal, so kill run-cc.sh + claude inside
       // the container directly. The warm wrapper (sleep infinity)
@@ -7688,9 +7740,35 @@ async function runClaudeCodeTool({
       sessionId: session.id, err: err.message,
     });
   }
-  await sendStatus(`Spinning up coding agent (${modelLabel}${prodDebug ? ' · prod debug' : ''}${discussionBlock ? ' · with issue & proposal discussion' : ''})...`);
+  // #907: is a coding agent on the user's own machine holding this session?
+  //
+  // Never for headless turns: those run unattended, on a schedule, with
+  // nobody watching — offering them to a laptop that may be shut, asleep, or
+  // simply not running the CLI would turn a reliable background build into a
+  // 90-second offer timeout. Headless always uses a worker container.
+  //
+  // A lookup failure means "no local agent", never a failed turn.
+  let lease = null;
+  if (!headless) {
+    try {
+      lease = await localAgent.activeLease(pool, session.id);
+    } catch (err) {
+      log.warn('sessions', 'Local agent lease lookup failed (using worker)', {
+        sessionId: session.id, err: err.message,
+      });
+    }
+  }
+  const runLocally = !!lease;
+  await sendStatus(
+    runLocally
+      ? `Handing this turn to ${lease.label} — your machine, your Claude subscription${discussionBlock ? ' · with issue & proposal discussion' : ''}...`
+      : `Spinning up coding agent (${modelLabel}${prodDebug ? ' · prod debug' : ''}${discussionBlock ? ' · with issue & proposal discussion' : ''})...`,
+    runLocally ? { runner: 'local', localAgentLabel: lease.label } : undefined
+  );
 
-  await worker.ensureWorkerImage();
+  // A local run needs no worker image, no warm container and no volume: the
+  // checkout, the model call and the tests all happen on the user's machine.
+  if (!runLocally) await worker.ensureWorkerImage();
 
   // #937 gate 2 of 5 — after the image pull. This is where the reported
   // stop landed: 1.2s after the "Spinning up coding agent…" row.
@@ -7735,9 +7813,14 @@ rule (auth, public/private tables, etc.).`
   // after ensureWorker below. The prompt note is only added when files
   // exist so everyone else's prompt stays byte-identical. Failures are
   // non-fatal: the build proceeds without personal files.
+  //
+  // Skipped entirely for a local run (#907): the user's personal agent files
+  // already live at ~/.claude on the machine about to run this turn. Pushing
+  // the platform's stored copy at it would be both pointless and rude — that
+  // is their filesystem, not ours.
   let personalFiles = [];
   try {
-    if (session.user_id) {
+    if (session.user_id && !runLocally) {
       personalFiles = await userAgentFiles.loadAllForUser(pool, session.user_id);
     }
   } catch (err) {
@@ -7878,7 +7961,12 @@ path: /another/changed/view
   // src/services/worker.js and src/routes/anthropic-proxy.js).
   // execInWorker re-asserts these per-exec, so a key flip mid-session
   // takes effect on the next turn without needing a re-warm.
-  const containerName = await worker.ensureWorker(session.id, {
+  //
+  // #907: no container at all for a local run. The platform holds no model
+  // credential for it either — the user's own `claude` login on their own
+  // machine does the work, so neither their BYOK key nor the platform's proxy
+  // JWT is created, sent, or needed on this path.
+  const containerName = runLocally ? null : await worker.ensureWorker(session.id, {
     repoOwner,
     repoName,
     branchName: session.branch_name,
@@ -7905,7 +7993,7 @@ path: /another/changed/view
   // every dispatch — runs even when the list is empty so a deletion in
   // Settings takes effect on the very next turn. Never fails the build.
   try {
-    await worker.syncUserAgentFiles(session.id, personalFiles);
+    if (!runLocally) await worker.syncUserAgentFiles(session.id, personalFiles);
   } catch (err) {
     log.warn('sessions', 'Personal agent files sync failed (continuing without)', { sessionId: session.id, err: err.message });
   }
@@ -8220,6 +8308,125 @@ path: /another/changed/view
       }, 60_000);
     }
 
+    // One progress sink for both runners (#907). A local run's lines arrive
+    // over HTTP instead of over a container journal, but everything
+    // downstream of "a line happened" — the live SSE tab, the persisted
+    // progress log, the phase marker, the estimator — must not be able to
+    // tell the difference.
+    const onAgentProgress = (text) => {
+      send('cc_progress', { text });
+      workerProgress.set(session.id, text, { model: selectedModel });
+      {
+        const phaseMatch = String(text).trim().match(/^\[([^\]]+)\]$/);
+        if (phaseMatch) lastPhase = phaseMatch[1];
+      }
+      if (estimatorEnabled) {
+        liveProgressLines.push(text);
+        if (turnWatchdog.TERMINAL_PROGRESS_LINES.includes(String(text).trim())) {
+          stopEstimator('terminal_marker');
+        }
+      }
+      pool.query(
+        `UPDATE chat_session_messages SET metadata = jsonb_set(
+          metadata, '{progressLog}',
+          (COALESCE(metadata->'progressLog', '[]'::jsonb) || $1::jsonb)
+        ) WHERE id = $2`,
+        [JSON.stringify([text]), progressMsgId]
+      ).catch(() => {});
+    };
+
+    // #907: offer the turn to the attached machine and wait for its verdict,
+    // then shape the answer like an execInWorker result so the entire tail
+    // below — push heal, PR metadata, checks, staging, visuals, the
+    // completion card, the Mayor wrap-up — runs byte-identically. The one
+    // structural difference is `pushOk: true`: a local agent has no push
+    // access by design, so its commits reached the branch through the
+    // platform's own GitHub App (POST /api/cli/agent/turns/:id/commit) and
+    // there is nothing left to push.
+    let seenLocalLines = 0;
+    const dispatchLocalBuild = async () => {
+      const baseSha = session.checks_commit_sha || null;
+      const queued = await localAgent.enqueueTurn(pool, {
+        sessionId: session.id,
+        userId: session.user_id,
+        prompt: claudePrompt,
+        baseSha,
+        branchName: session.branch_name,
+      });
+      // The lease lapsed in the moment between the routing decision above
+      // and here (the laptop closed mid-sentence). Nothing was dispatched, so
+      // report it as the disconnect it is rather than dereferencing null.
+      if (!queued) {
+        return {
+          sha: null,
+          ahead: 0,
+          behind: session.behind_main || 0,
+          pushOk: true,
+          exitCode: 1,
+          ccIsError: true,
+          fatalError: `${lease.label} disconnected before this turn started`,
+          lastResultText: '',
+          rawStderr: '',
+          sessionId: null,
+          initSessionId: null,
+          markerlessCause: null,
+          localTurnId: null,
+          localOutcome: 'abandoned',
+        };
+      }
+      const turnId = queued.turn.id;
+      if (stopHandle) stopHandle.localTurnId = String(turnId);
+      let announcedAccepted = false;
+      const { outcome, turn: finished } = await localAgent.awaitTurnResult(pool, turnId, {
+        onProgress: (row) => {
+          if (!announcedAccepted && row.status !== 'queued' && row.status !== 'offered') {
+            announcedAccepted = true;
+            onAgentProgress(`[${lease.label} accepted the turn]`);
+          }
+          const lines = Array.isArray(row.progress) ? row.progress : [];
+          for (const line of lines.slice(seenLocalLines)) onAgentProgress(line);
+          seenLocalLines = Math.max(seenLocalLines, lines.length);
+        },
+      });
+      const headSha = finished?.head_sha || null;
+      // 'declined' and 'abandoned' are the two outcomes that are nobody's
+      // fault: the checkout was dirty / on the wrong commit, or the laptop
+      // went away mid-turn. Both are reported as an honest error rather than
+      // as a silent no-op, because the user is sitting in front of the
+      // machine that just refused and can act on the reason.
+      //
+      // The full set awaitTurnResult can return is completed / failed /
+      // declined / stopped / abandoned / missing / aborted. 'completed' needs
+      // no explanation and 'failed' already carries the runtime's own words
+      // in error_detail, so both are left to the shared tail.
+      const explain = {
+        declined: `${lease.label} declined this turn`,
+        abandoned: `${lease.label} disconnected before finishing this turn`,
+        stopped: 'Stopped',
+        missing: 'The local turn record disappeared',
+        aborted: `${lease.label} was interrupted`,
+      }[outcome] || null;
+      const detail = finished?.error_detail ? ` — ${finished.error_detail}` : '';
+      return {
+        sha: headSha,
+        ahead: headSha ? 1 : 0,
+        // Nothing local was fetched, so the platform's existing count is the
+        // best answer; do not let a local turn reset it to zero.
+        behind: session.behind_main || 0,
+        pushOk: true,
+        exitCode: outcome === 'completed' ? 0 : 1,
+        ccIsError: outcome !== 'completed',
+        fatalError: explain ? `${explain}${detail}` : null,
+        lastResultText: finished?.summary || '',
+        rawStderr: finished?.error_detail || '',
+        sessionId: null,
+        initSessionId: null,
+        markerlessCause: null,
+        localTurnId: String(turnId),
+        localOutcome: outcome,
+      };
+    };
+
     let result;
     try {
       const dispatchBuild = () => worker.execInWorker(session.id, {
@@ -8241,40 +8448,12 @@ path: /another/changed/view
         // function; every tail step stamps its milestone so a resumed tail
         // redoes none of them.
         holdTurnRecord: true,
-        onProgress: (text) => {
-          send('cc_progress', { text });
-          workerProgress.set(session.id, text, { model: selectedModel });
-          // #892: track the newest `[phase]` marker for the estimator prompt
-          // and the completion-claim gate. Outside the estimatorEnabled
-          // branch on purpose — it is cheap, and keeping it unconditional
-          // means the value is never subtly stale for a run whose toggle
-          // state changed.
-          {
-            const phaseMatch = String(text).trim().match(/^\[([^\]]+)\]$/);
-            if (phaseMatch) lastPhase = phaseMatch[1];
-          }
-          if (estimatorEnabled) {
-            liveProgressLines.push(text);
-            // #891: the earliest honest "coding is finished" signal. run-cc.sh
-            // emits [done] / [push_failed] as its last line and the recovery
-            // paths append [interrupted], so this fires while the worker is
-            // still flushing — ahead of PR creation, the staging build and the
-            // Mayor wrap-up, which is exactly the window where the stale
-            // "nearly done, just wrapping up" guess used to live on.
-            if (turnWatchdog.TERMINAL_PROGRESS_LINES.includes(String(text).trim())) {
-              stopEstimator('terminal_marker');
-            }
-          }
-          pool.query(
-            `UPDATE chat_session_messages SET metadata = jsonb_set(
-              metadata, '{progressLog}',
-              (COALESCE(metadata->'progressLog', '[]'::jsonb) || $1::jsonb)
-            ) WHERE id = $2`,
-            [JSON.stringify([text]), progressMsgId]
-          ).catch(() => {});
-        },
+        // #892 (phase marker), #891 (terminal-marker estimator teardown) and
+        // the persisted progress log all live in onAgentProgress above, which
+        // the local runner shares.
+        onProgress: onAgentProgress,
       });
-      result = await dispatchBuild();
+      result = runLocally ? await dispatchLocalBuild() : await dispatchBuild();
       // Headless auto-retry: a markerless turn that committed nothing
       // gets exactly one re-dispatch (the retry wraps the call site, not
       // execInWorker, so active_turn bookkeeping stays per-attempt).
@@ -8883,6 +9062,23 @@ path: /another/changed/view
     // this record. The window is seconds, and re-issuing a wrap-up is the
     // benign direction to fail in.
     await worker.finishTurn(session.id).catch(() => {});
+    // #907: remember where this turn ran so the dev-chat "Running on your
+    // machine" chip survives a reload, and record the outcome for analytics.
+    // Both are best-effort and neither can fail the turn — and both run
+    // AFTER finishTurn so nothing can delay releasing the held record.
+    await localAgent.recordTurnRunner(
+      pool, session.id, runLocally ? 'local' : 'platform', lease?.label
+    );
+    if (runLocally) {
+      localAgent.recordTurnEvent(pool, {
+        userId: session.user_id,
+        appId: session.app_id,
+        sessionId: session.id,
+        outcome: isError ? 'failed' : (commitHash ? 'completed' : 'no_changes'),
+        runtime: lease.runtime,
+        durationMs: Date.now() - turnStartedMs,
+      });
+    }
     // Turn completion counts as activity: a fresh idle window so the
     // auto-pause sweeper can't pause the session moments after a long
     // build finishes (its last_activity_at is otherwise still the user

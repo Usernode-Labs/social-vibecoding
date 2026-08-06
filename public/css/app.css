@@ -5472,3 +5472,53 @@ html:not(.dark) #admin-node-root {
     transition: none;
   }
 }
+
+/* ── Dev-chat "Run on" runner controls (#907) ─────────────────────────────
+   The selector + chip that appear in the composer's status row when a
+   local coding agent has attached to this session. Painted by
+   DevChat._renderRunnerControls(); the host span is always in the markup
+   and is empty (and therefore invisible, no gap, no min-height) for every
+   session that has never had a machine attached. */
+.dc-runner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.dc-runner:empty { display: none; }
+
+/* Green so it reads as "connected", not as a warning: a turn running on
+   the user's own machine is the state they asked for. */
+.dc-runner-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(34, 197, 94, 0.35);
+  background: rgba(34, 197, 94, 0.12);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.dc-runner-chip::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #22c55e;
+  flex: none;
+}
+
+/* The machine has gone. Same shape, drained of colour, and the dot stops
+   claiming something live is happening. */
+.dc-runner-chip-past {
+  border-color: var(--border);
+  background: var(--bg-code);
+  color: var(--text-muted);
+}
+.dc-runner-chip-past::before { background: var(--text-faint); }

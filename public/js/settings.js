@@ -48,6 +48,8 @@
     _cliTokenCursor: null,
     _cliTokensLoading: false,
     _cliTokenLoadId: 0,
+    // #907: machines currently attached to one of this account's sessions.
+    _localAgents: [],
 
     // ── Screen state ─────────────────────────────────────────────────────
     _open: false,
@@ -729,6 +731,115 @@
       if (toggle) toggle.checked = !!this.state.aiProgressEstimate;
       const status = document.getElementById('ai-progress-estimate-status');
       if (status) { status.classList.add('hidden'); status.textContent = ''; }
+      this._renderLocalAgentsSection();
+    },
+
+    // #907: the machines currently attached to one of this account's dev
+    // sessions. GET /api/me/local-agents is deliberately NOT part of the CLI
+    // token surface — a lease is routing state, not a credential — so unlike
+    // the token list above it answers on staging too.
+    //
+    // The block hides itself outright when nothing is attached. An empty
+    // "Local coding agent — none" panel would be noise on every account that
+    // has never used the CLI, which is nearly all of them.
+    async _renderLocalAgentsSection() {
+      const section = document.getElementById('settings-local-agents-section');
+      const list = document.getElementById('settings-local-agents-list');
+      const status = document.getElementById('settings-local-agents-status');
+      if (!section || !list) return;
+      if (status) { status.classList.add('hidden'); status.textContent = ''; }
+
+      let agents = [];
+      try {
+        const query = this._cliTokensDemo() ? '?demo=1' : '';
+        const r = await fetch(`/api/me/local-agents${query}`, { credentials: 'same-origin' });
+        if (r.ok) {
+          const j = await r.json();
+          if (Array.isArray(j.agents)) agents = j.agents;
+        }
+      } catch {}
+
+      this._localAgents = agents;
+      section.classList.toggle('hidden', agents.length === 0);
+      list.textContent = '';
+      for (const agent of agents) {
+        list.appendChild(this._localAgentCard(agent));
+      }
+      if (status && agents.some((a) => a.demo)) {
+        status.textContent = 'Demo data — changes are not saved.';
+        status.classList.remove('hidden', 'text-red-500', 'text-emerald-500');
+      }
+    },
+
+    // Built with DOM calls rather than innerHTML: the label is free text the
+    // user typed on their own machine and arrives here verbatim.
+    _localAgentCard(agent) {
+      const card = document.createElement('div');
+      card.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2';
+
+      const top = document.createElement('div');
+      top.className = 'flex items-start justify-between gap-3';
+      const text = document.createElement('div');
+      text.className = 'min-w-0';
+
+      const title = document.createElement('div');
+      title.className = 'text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate';
+      title.textContent = agent.label || 'Unnamed machine';
+
+      const where = document.createElement('div');
+      where.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1 truncate';
+      const app = agent.appName || agent.appSlug || 'an app';
+      where.textContent = agent.sessionTitle
+        ? `${app} · ${agent.sessionTitle}` : String(app);
+
+      const detail = document.createElement('div');
+      detail.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-0.5';
+      const seen = Number.isFinite(Date.parse(agent.lastSeenAt))
+        ? new Date(agent.lastSeenAt).toLocaleTimeString() : 'unknown';
+      detail.textContent = `${agent.runtime || 'claude-code'} · last seen ${seen}`;
+
+      text.append(title, where, detail);
+      top.appendChild(text);
+
+      // Demo rows (staging ?demo=1) are fabricated per request and own no
+      // lease, so there is nothing for a button to release.
+      if (!agent.demo && agent.leaseId) {
+        const detach = document.createElement('button');
+        detach.type = 'button';
+        detach.className = 'shrink-0 rounded border border-zinc-400 dark:border-zinc-600 px-2 py-1 text-xs font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors';
+        detach.textContent = 'Detach';
+        detach.addEventListener('click', () => this._detachLocalAgent(agent, detach));
+        top.appendChild(detach);
+      }
+      card.appendChild(top);
+      return card;
+    },
+
+    // Releasing from here must not need the machine to cooperate: the common
+    // case is a laptop that was closed or lost its network, and the whole
+    // point is to get the session's turns back without waiting out the lease.
+    async _detachLocalAgent(agent, button) {
+      const label = agent.label || 'this machine';
+      if (!window.confirm(`Detach ${label}?\n\nIts session's coding turns go back to running on Usernode. Anything it already committed stays on the branch.`)) return;
+      const status = document.getElementById('settings-local-agents-status');
+      button.disabled = true;
+      try {
+        const r = await fetch(`/api/me/local-agents/${encodeURIComponent(agent.leaseId)}`, {
+          method: 'DELETE',
+          credentials: 'same-origin',
+        });
+        // 404 means it already went away (it detached itself, or the sweeper
+        // expired it) — the user's intent is satisfied either way.
+        if (r.status !== 204 && r.status !== 404) throw new Error('Could not detach that machine.');
+        await this._renderLocalAgentsSection();
+      } catch (err) {
+        button.disabled = false;
+        if (status) {
+          status.textContent = err.message || 'Could not detach that machine.';
+          status.classList.remove('hidden', 'text-emerald-500');
+          status.classList.add('text-red-500');
+        }
+      }
     },
 
     // #911: one checkbox per home-screen panel, built from

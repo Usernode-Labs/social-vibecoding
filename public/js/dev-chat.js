@@ -229,6 +229,110 @@ const DevChat = {
     DevChat._renderModelNote();
   },
 
+  // ── #907: where the next coding turn runs ────────────────────────────
+  //
+  // The platform, not this page, decides: if a machine holds a lease on the
+  // session, runClaudeCodeTool hands the turn to it. So these controls are a
+  // readout plus one action, never a preference. `_runner` is where the LAST
+  // turn ran; `_localAgent` is the machine attached right now (null when
+  // none is). Both come from GET /api/sessions/:id/status.
+  _runner: null,
+  _localAgent: null,
+  _runnerLabel: null,
+
+  // #907: the page's ?demo=1 rides along on the /status read so a staging
+  // preview can show the Run-on selector and the "Running on your machine"
+  // chip. Server-side the injection is gated on IS_STAGING && ?demo=1 — same
+  // pass-through as home.js/settings.js. Wrapped because a status read must
+  // never be skipped over a query-string parse; `busy` restoration rides on
+  // the same request and losing it would leave a live turn showing Send.
+  _demoQS() {
+    try {
+      return new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : '';
+    } catch { return ''; }
+  },
+
+  // Fold a status payload into the runner state and repaint if it changed.
+  // Called from every place that reads /status — opening a session, the
+  // during-turn poll, and the idle poll — so all three agree.
+  _applyRunnerState(data) {
+    if (!data) return;
+    const nextRunner = data.runner || null;
+    const next = data.localAgent || null;
+    // runnerLabel outlives the lease: it is the name of the machine the last
+    // turn ran on, which is what the past-tense chip needs after that machine
+    // has detached and `localAgent` has gone null.
+    const nextLabel = data.runnerLabel || null;
+    const sameAgent = (next?.leaseId || null) === (DevChat._localAgent?.leaseId || null)
+      && (next?.label || null) === (DevChat._localAgent?.label || null);
+    if (sameAgent && nextRunner === DevChat._runner && nextLabel === DevChat._runnerLabel) return;
+    DevChat._runner = nextRunner;
+    DevChat._runnerLabel = nextLabel;
+    DevChat._localAgent = next;
+    DevChat._renderRunnerControls();
+  },
+
+  // Paint the "Run on" selector and, when a turn is going to (or did) run
+  // elsewhere, the chip that says so. Deliberately silent — renders nothing
+  // at all — for the overwhelmingly common case of a session with no machine
+  // attached that has never run one, so the composer row is unchanged for
+  // everyone not using this.
+  _renderRunnerControls() {
+    const host = document.getElementById('dc-runner');
+    if (!host) return;
+    const agent = DevChat._localAgent;
+    if (!agent && DevChat._runner !== 'local') {
+      host.innerHTML = '';
+      return;
+    }
+    const label = agent?.label || DevChat._runnerLabel || 'your machine';
+    if (!agent) {
+      // A previous turn ran locally but that machine has since detached, so
+      // the next one comes back here. Say so rather than leaving the chip up
+      // and implying work is still going somewhere it isn't.
+      host.innerHTML = `<span class="dc-runner-chip dc-runner-chip-past" title="The last turn ran on ${escapeHtml(label)}. That machine has detached, so the next turn runs on Usernode.">Last turn: ${escapeHtml(label)}</span>`;
+      return;
+    }
+    host.innerHTML = `
+      <label class="text-xs text-zinc-500" for="dc-runner-select">Run on:</label>
+      <select id="dc-runner-select" class="rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-violet-500">
+        <option value="local" selected>${escapeHtml(label)}</option>
+        <option value="platform">Usernode</option>
+      </select>
+      <span class="dc-runner-chip" title="Coding turns in this session run on ${escapeHtml(label)}, using its own Claude subscription. Usernode still opens the PR, builds the preview and runs the checks.">Running on your machine</span>
+    `;
+    const select = document.getElementById('dc-runner-select');
+    if (select) {
+      select.addEventListener('change', (event) => {
+        if (event.target.value !== 'platform') return;
+        event.target.value = 'local';
+        DevChat._handBackToUsernode();
+      });
+    }
+  },
+
+  // Release the lease from the browser. This is the escape hatch for the
+  // machine that was closed without detaching: it must not need that machine
+  // to cooperate, which is why it goes through the account route rather than
+  // asking the agent to stand down.
+  async _handBackToUsernode() {
+    const agent = DevChat._localAgent;
+    if (!agent || agent.demo) return;
+    const label = agent.label || 'your machine';
+    if (!confirm(`Hand coding turns back to Usernode?\n\n${label} stops receiving turns for this session. Anything it already committed stays on the branch.`)) return;
+    try {
+      const res = await fetch(`/api/me/local-agents/${encodeURIComponent(agent.leaseId)}`, {
+        method: 'DELETE',
+        credentials: 'same-origin',
+      });
+      if (res.status !== 204 && res.status !== 404) throw new Error('detach failed');
+      DevChat._localAgent = null;
+      DevChat._renderRunnerControls();
+    } catch {
+      alert('Could not hand the session back. Try again in a moment.');
+    }
+  },
+
   // Guard against a persisted model id that's no longer in MODELS
   // (e.g. we removed an old model). Without this the dropdown would
   // fall back to the first option visually while `selectedModel` held
@@ -1094,11 +1198,23 @@ const DevChat = {
         DevChat._stopSyncPolling();
       }
 
+      // #907: runner state is per-session too. Clear it before the status
+      // read below re-establishes it, so a session with no machine attached
+      // can never inherit the previous session's chip.
+      DevChat._runner = null;
+      DevChat._runnerLabel = null;
+      DevChat._localAgent = null;
+
       // Check if Claude Code is running for this session
       try {
-        const statusRes = await fetch(`/api/sessions/${sessionId}/status`);
+        const statusRes = await fetch(`/api/sessions/${sessionId}/status${DevChat._demoQS()}`);
         if (statusRes.ok) {
-          const { busy, progress, phase, sync, stopping, stopRequestedAt } = await statusRes.json();
+          const statusPayload = await statusRes.json();
+          const { busy, progress, phase, sync, stopping, stopRequestedAt } = statusPayload;
+          // #907: restore the Run-on selector / chip from the server, so a
+          // reload of a session with a machine attached does not silently
+          // claim the next turn runs on Usernode.
+          DevChat._applyRunnerState(statusPayload);
           // #252: reload recovery for the sync banner. A MODE=sync turn
           // also flips `busy` (it holds the worker), so check it first
           // and don't arm the chat-turn streaming UI for a sync.
@@ -2562,7 +2678,10 @@ const DevChat = {
       try {
         const res = await fetch(`/api/sessions/${sessionId}/status`);
         if (!res.ok) return;
-        const { busy, progress, estimate, stopping } = await res.json();
+        const payload = await res.json();
+        const { busy, progress, estimate, stopping } = payload;
+        // #907: a machine can attach or detach mid-turn; keep the chip honest.
+        DevChat._applyRunnerState(payload);
 
         if (progress?.length) {
           DevChat._replaceProgressLog(progress);
@@ -3017,7 +3136,11 @@ const DevChat = {
 
     const checkState = String(session.check_state || '').toLowerCase();
     const terminalCheck = ['passing', 'skipped', 'failing', 'error'].includes(checkState);
-    const submittedCliHead = session.source === 'cli_handoff'
+    // #907: a turn run on the user's own machine reaches the same place — a
+    // head the platform accepted, a terminal verdict, and possibly no preview
+    // if staging failed. It is a native session, so `source` stays
+    // 'anthropic'; `last_turn_runner` is what distinguishes it.
+    const submittedCliHead = (session.source === 'cli_handoff' || session.last_turn_runner === 'local')
       && !!(session.handoff_head_sha || session.checks_commit_sha);
     if (!session.staging_url && !(submittedCliHead && terminalCheck)) return messages;
 
@@ -5144,6 +5267,11 @@ const DevChat = {
                 class="dc-attach-btn rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-900 text-zinc-500 hover:text-violet-400 hover:border-violet-500 px-1.5 py-1 shrink-0 transition-colors">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
               </button>
+              <!-- #907: where the next coding turn runs. Painted empty and
+                   filled by _renderRunnerControls() from the session status
+                   poll, so a reload lands on the truth rather than on a
+                   guess the page made before it asked. -->
+              <span id="dc-runner" class="dc-runner"></span>
               <span class="flex-1"></span>
               <span id="dc-budget" class="text-xs font-mono"></span>
             </div>
@@ -5232,6 +5360,10 @@ const DevChat = {
 
     // #800: caption describing the selected model, kept in sync below.
     DevChat._renderModelNote();
+    // #907: repaint from whatever the last status poll told us. The poll
+    // itself runs a beat later; painting here means a re-render of an already
+    // open session doesn't drop the chip for a second.
+    DevChat._renderRunnerControls();
 
     document.getElementById('dc-model-select').addEventListener('change', (e) => {
       DevChat.selectedModel = e.target.value;
