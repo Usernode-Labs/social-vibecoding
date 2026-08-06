@@ -23,6 +23,10 @@ const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'dev-chat.js'),
   'utf8'
 );
+const CREDIT_OPTIONS_SRC = fs.readFileSync(
+  path.join(__dirname, '..', 'public', 'js', 'credit-options.js'),
+  'utf8'
+);
 
 function makeDevChat({ hasApiKey = false } = {}) {
   let budgetHtml = '';
@@ -59,6 +63,10 @@ function makeDevChat({ hasApiKey = false } = {}) {
   sandbox.window.addEventListener = () => {};
   sandbox.Settings = { state: { hasApiKey, keyLast4: hasApiKey ? '1234' : null } };
   vm.createContext(sandbox);
+  // credit-options.js owns the banner's CTA row (and the same routes the
+  // in-chat card and the Generate-proposal modal render). index.html loads
+  // it before dev-chat.js, so the sandbox does too.
+  vm.runInContext(CREDIT_OPTIONS_SRC, sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   return {
     DevChat: sandbox.__DevChat,
@@ -74,15 +82,21 @@ const budget = (over) => ({
   ...over,
 });
 
-test('allowance spent + no key → banner renders with the Add API key CTA', () => {
+test('allowance spent + no key → banner offers all three ways to keep going', () => {
   const { DevChat } = makeDevChat();
   DevChat.budget = budget({ spentCents: 2500 });
   assert.equal(DevChat._creditsExhausted(), true);
   const html = DevChat._renderCreditsBannerHtml();
   assert.match(html, /dc-credits-banner/, 'banner element present');
   assert.match(html, /free AI credits/, 'names the actual problem');
-  assert.match(html, /dc-credits-add-key/, 'Add API key button present');
-  assert.match(html, /Add API key/, 'CTA label present');
+  // BYOK is no longer the only escape hatch: a coding tool on the user's
+  // own machine and a connected Claude.ai / ChatGPT subscription both
+  // bypass the allowance too, so the banner offers all three.
+  assert.match(html, /dc-credits-add-key/, 'the API-key CTA keeps its stable id');
+  assert.match(html, /Add API key/, 'own-key CTA label present');
+  assert.match(html, /#settings\/api-key/, 'deep-links the API-key section');
+  assert.match(html, /#settings\/cli/, 'deep-links the local coding-tool section');
+  assert.match(html, /#settings\/connectors/, 'deep-links the Claude/ChatGPT connectors section');
 });
 
 test('exhausted meter keeps the $spent/$limit pair, styled red', () => {
@@ -121,7 +135,10 @@ test('global cap spent (user under) → banner with the shared-budget copy', () 
   assert.equal(DevChat._creditsExhausted(), true);
   const html = DevChat._renderCreditsBannerHtml();
   assert.match(html, /shared daily AI budget/, 'global-cap copy variant');
+  // All three routes bypass the shared cap, so all three stay on offer.
   assert.match(html, /dc-credits-add-key/, 'CTA still offered — BYOK bypasses the global cap');
+  assert.match(html, /#settings\/cli/, 'a local coding tool bypasses it too');
+  assert.match(html, /#settings\/connectors/, 'so does a connected chat subscription');
 });
 
 test('no budget fetched yet → stays quiet', () => {

@@ -50,6 +50,15 @@ const {
   cliPreAuthRoutes,
   cliBrowserRoutes,
 } = require('./src/routes/cli-auth');
+// Hosted MCP connector (Claude.ai / ChatGPT). Same three-way split as the
+// CLI surface above: a hard staging/enablement gate, then the public +
+// bearer routes before cookie auth, then the browser-session management
+// routes after it.
+const {
+  mcpConnectGate,
+  mcpPreAuthRoutes,
+  mcpBrowserRoutes,
+} = require('./src/routes/mcp-remote');
 // Topochain v4 (plan Task 3): public/partner/ingest/mobile carry their own
 // auth and mount BEFORE authMiddleware; admin reuses the platform's own
 // admin auth and mounts AFTER it (architecture decision #2 — see the mount
@@ -108,6 +117,14 @@ app.use(trustedProxyClientIp({ hostname: config.trustedProxyHost }));
 // session semantics.
 app.use(cliAuthGate(config));
 app.use(cliPreAuthRoutes(config));
+
+// The hosted MCP connector gets the same treatment for the same reason: a
+// staging preview's browser identity comes from an iframe token, so a
+// connector credential must never be mintable or usable there. POST /mcp
+// authenticates with its own OAuth bearer and must never see a cookie, so
+// it mounts here rather than behind authMiddleware.
+app.use(mcpConnectGate(config));
+app.use(mcpPreAuthRoutes(config));
 
 // ── Explorer API passthrough ───────────────────────────────────────────────
 // The mobile app's in-webview "Transaction Log" panel resolves the explorer
@@ -463,6 +480,11 @@ app.use(topochainMobileRoutes(config));
 app.use(cliApiBearerAuth(config));
 app.use(authMiddleware(config));
 app.use(cliBrowserRoutes(config));
+// Connector consent decision + Settings management (connected chat
+// products, GitHub account link). These need a real platform session, so
+// they mount after authMiddleware — the consent POST must never be
+// satisfiable by a bearer token approving itself.
+app.use(mcpBrowserRoutes(config));
 app.use(authRoutes(config));
 app.use(appRoutes(config));
 // Shell relay for usernode.uploadFile()/deleteFile()/getStorageUsage()

@@ -21,7 +21,7 @@
 // /vendor/), so the CDN cache and its stale-while-revalidate strategy are
 // gone. The activate handler prunes any `usernode-*` cache not listed in
 // ALL_CACHES, which retires the old usernode-cdn-v5 entries automatically.
-const SW_VERSION = 'v6';
+const SW_VERSION = 'v7';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const API_CACHE = `usernode-api-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
@@ -91,6 +91,7 @@ const SHELL_ASSETS = [
   '/js/notifications.js',
   '/js/social-push.js',
   '/js/offline.js',
+  '/js/credit-options.js',
   '/js/profile.js',
   '/js/screenshot-select.js',
   '/js/session-transcript.js',
@@ -122,6 +123,11 @@ const SHELL_ASSETS = [
 // stylesheet, deliberately outside the app shell.
 const NO_FALLBACK_PAGES = [
   '/cli/authorize',
+  // The hosted-connector consent page. Same reasoning as /cli/authorize: a
+  // standalone pre-auth server page with its own stylesheet, outside the
+  // app shell. Serving the cached SPA shell for it offline would show a
+  // page that looks signed in but cannot approve anything.
+  '/connect/authorize',
 ];
 
 // Pure request classifier — the single source of truth for what the fetch
@@ -161,6 +167,16 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   if (p === '/api/me/cli-tokens' || p.startsWith('/api/me/cli-tokens/')) {
     return 'bypass';
   }
+  // Hosted MCP connector: the endpoint itself, its OAuth surfaces, and the
+  // credential-bearing management reads. Same hard bypass as the CLI's, for
+  // the same reason — none of this may ever be answered from a cache.
+  if (p === '/mcp') return 'bypass';
+  if (p.startsWith('/api/connect/')) return 'bypass';
+  if (p === '/api/me/connectors' || p.startsWith('/api/me/connectors/')) {
+    return 'bypass';
+  }
+  if (p === '/api/me/github' || p.startsWith('/api/me/github/')) return 'bypass';
+  if (p.startsWith('/.well-known/oauth-')) return 'bypass';
   // Auth endpoints are online-only — EXCEPT /api/auth/me, which is cached
   // so the SPA's boot check succeeds offline for a logged-in user.
   if (p.startsWith('/api/auth/') && p !== '/api/auth/me') return 'bypass';

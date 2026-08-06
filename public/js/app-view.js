@@ -7822,6 +7822,15 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
+        // Out of daily credits is not an ordinary error — it has three real
+        // ways forward (own API key, a coding tool on your computer, a
+        // connected Claude.ai / ChatGPT subscription). Show the same card
+        // the dev chat shows instead of a one-line toast the user can only
+        // read and dismiss. Every other failure keeps the toast.
+        if (data.code === 'budget_exceeded') {
+          AppView._showCreditOptionsModal(data.error);
+          return;
+        }
         PlatformUI.toast(data.error || `Couldn't start generating the proposal (HTTP ${resp.status}).`);
         return;
       }
@@ -7834,6 +7843,54 @@ const AppView = {
     } catch (err) {
       PlatformUI.toast(`Couldn't start generating the proposal: ${err.message}`);
     }
+  },
+
+  // Out-of-credits popup for the Generate-proposal path. Same scrim/card
+  // chrome as _showAutoSessionModal below; the body is the shared card from
+  // public/js/credit-options.js, so the copy and the three Settings
+  // destinations are identical to the dev-chat card and the red banner.
+  // Choosing a route is a hash navigation, which unmounts this screen —
+  // so the modal only has to handle explicit dismissal.
+  _showCreditOptionsModal(errorText) {
+    const existing = document.getElementById('credit-options-modal');
+    if (existing) existing.remove();
+    if (!window.CreditOptions) {
+      PlatformUI.toast(errorText || "You're out of today's free AI credits.");
+      return;
+    }
+    const root = document.createElement('div');
+    root.id = 'credit-options-modal';
+    root.className = 'fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/60';
+    const state = {
+      error: errorText || '',
+      hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
+      // The headless route refuses on the user's own allowance the same way
+      // the chat does; the shared-budget wording is reachable through the
+      // budget meter, which this modal doesn't read.
+      globalOut: false,
+    };
+    root.innerHTML = `
+      <div class="min-h-full flex items-center justify-center p-4">
+        <div class="dc-credits-modal-card w-full max-w-lg rounded-xl bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 shadow-xl p-4">
+          ${CreditOptions.cardHtml(state)}
+          <div class="flex justify-end mt-3">
+            <button type="button" data-credits-close
+              class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Not now</button>
+          </div>
+        </div>
+      </div>`;
+    const close = () => {
+      root.remove();
+      document.removeEventListener('keydown', onKey);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    root.addEventListener('click', (e) => {
+      if (e.target === root) close();
+      if (e.target.closest('[data-credits-close]')) close();
+    });
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(root);
+    CreditOptions.wire(root);
   },
 
   // Singleton confirm popup for Generate proposal. Same scrim/card styling as

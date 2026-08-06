@@ -3945,3 +3945,147 @@ INSERT INTO platform_settings (key, value, description) VALUES
   ('onboarding_gate_grandfathered', 'true',
     'Marker: the one-time platform-access grandfather + waitlist backfill has run. Do not delete — deleting re-grants access to every account on next boot.')
 ON CONFLICT (key) DO NOTHING;
+
+-- ── Hosted MCP connector: OAuth 2.1 authorization server ────────────────
+--
+-- Claude.ai and ChatGPT connect to the platform's remote MCP endpoint
+-- (POST /mcp) as PUBLIC OAuth clients: dynamic client registration, the
+-- authorization-code grant with mandatory PKCE S256, and rotating refresh
+-- tokens. These are deliberately SEPARATE tables from the CLI's
+-- cli_access_tokens / cli_auth_audit_events family, whose CHECK
+-- constraints pin client_id to the single first-party CLI identity and
+-- scopes to that flow's two values — a third-party connector fits neither.
+--
+-- All three are staging:private: they hold (hashed) credential material
+-- and a staging clone must never carry a live grant. The Settings section
+-- that lists them therefore renders from a ?demo=1 fixture in staging.
+
+CREATE TABLE IF NOT EXISTS mcp_clients (
+  id               BIGSERIAL PRIMARY KEY,
+  client_id        TEXT NOT NULL UNIQUE,
+  client_name      TEXT NOT NULL,
+  -- Every entry is https (or loopback in explicit local-dev mode) and its
+  -- host is on the deployment's connector allowlist; the registration
+  -- route is the enforcement point.
+  redirect_uris    TEXT[] NOT NULL CHECK (cardinality(redirect_uris) BETWEEN 1 AND 10),
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  disabled_at      TIMESTAMPTZ,
+  CHECK (char_length(client_name) BETWEEN 1 AND 128)
+);
+COMMENT ON TABLE mcp_clients IS 'staging:private';
+
+-- Authorization codes. Single-use, 60s TTL, bound to client + redirect +
+-- PKCE challenge, stored hashed. The consumed_at/expires_at pairing is
+-- expressed as constraints so an inconsistent row cannot be written.
+CREATE TABLE IF NOT EXISTS mcp_authorization_codes (
+  id             BIGSERIAL PRIMARY KEY,
+  code_hash      TEXT NOT NULL UNIQUE CHECK (code_hash ~ '^[0-9a-f]{64}$'),
+  client_id      TEXT NOT NULL,
+  user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  scopes         TEXT[] NOT NULL
+    CHECK (
+      cardinality(scopes) BETWEEN 1 AND 2
+      AND scopes <@ ARRAY['usernode:apps:read', 'usernode:proposals:write']::TEXT[]
+    ),
+  redirect_uri   TEXT NOT NULL,
+  code_challenge TEXT NOT NULL CHECK (code_challenge ~ '^[A-Za-z0-9_-]{43}$'),
+  grant_id       TEXT NOT NULL,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at     TIMESTAMPTZ NOT NULL,
+  consumed_at    TIMESTAMPTZ,
+  CHECK (expires_at > created_at),
+  CHECK (consumed_at IS NULL OR consumed_at >= created_at)
+);
+COMMENT ON TABLE mcp_authorization_codes IS 'staging:private';
+
+-- Access + refresh tokens. grant_id groups everything minted from one
+-- consent so Settings → Disconnect revokes the whole chain in one write;
+-- rotated_from records refresh rotation so reuse of a consumed refresh
+-- token can be detected and the chain killed.
+CREATE TABLE IF NOT EXISTS mcp_tokens (
+  id           BIGSERIAL PRIMARY KEY,
+  token_hash   TEXT NOT NULL UNIQUE CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+  token_hint   TEXT NOT NULL,
+  kind         TEXT NOT NULL CHECK (kind IN ('access', 'refresh')),
+  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  client_id    TEXT NOT NULL,
+  grant_id     TEXT NOT NULL,
+  scopes       TEXT[] NOT NULL
+    CHECK (
+      cardinality(scopes) BETWEEN 1 AND 2
+      AND scopes <@ ARRAY['usernode:apps:read', 'usernode:proposals:write']::TEXT[]
+    ),
+  rotated_from BIGINT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_used_at TIMESTAMPTZ,
+  expires_at   TIMESTAMPTZ NOT NULL,
+  revoked_at   TIMESTAMPTZ,
+  CHECK (expires_at > created_at),
+  CHECK (last_used_at IS NULL OR last_used_at >= created_at),
+  CHECK (revoked_at IS NULL OR revoked_at >= created_at)
+);
+COMMENT ON TABLE mcp_tokens IS 'staging:private';
+
+CREATE INDEX IF NOT EXISTS mcp_tokens_user_idx
+  ON mcp_tokens (user_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS mcp_tokens_grant_idx
+  ON mcp_tokens (grant_id);
+CREATE INDEX IF NOT EXISTS mcp_tokens_expiry_idx
+  ON mcp_tokens (expires_at);
+CREATE INDEX IF NOT EXISTS mcp_authorization_codes_expiry_idx
+  ON mcp_authorization_codes (expires_at);
+
+-- Connector auth audit. Same event vocabulary and same
+-- metadata-allowlist discipline as cli_auth_audit_events, but with a free
+-- client_id (a third-party connector is not the first-party CLI) and the
+-- connector scope set.
+CREATE TABLE IF NOT EXISTS mcp_auth_audit_events (
+  id              BIGSERIAL PRIMARY KEY,
+  event_type      TEXT NOT NULL
+    CHECK (event_type IN (
+      'authorization_approved', 'authorization_rejected',
+      'token_issued', 'token_used', 'token_revoked'
+    )),
+  occurred_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  user_id         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  actor_user_id   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  access_token_id BIGINT,
+  client_id       TEXT NOT NULL,
+  scopes          TEXT[] NOT NULL
+    CHECK (
+      cardinality(scopes) <= 2
+      AND scopes <@ ARRAY['usernode:apps:read', 'usernode:proposals:write']::TEXT[]
+    ),
+  outcome         TEXT NOT NULL DEFAULT 'success'
+    CHECK (
+      (event_type = 'token_used'
+       AND outcome IN ('scope_authorized', 'insufficient_scope'))
+      OR (event_type <> 'token_used' AND outcome = 'success')
+    ),
+  metadata        JSONB NOT NULL DEFAULT '{}'
+    CHECK (jsonb_typeof(metadata) = 'object')
+);
+COMMENT ON TABLE mcp_auth_audit_events IS 'staging:private';
+
+CREATE INDEX IF NOT EXISTS mcp_auth_audit_events_user_idx
+  ON mcp_auth_audit_events (user_id, occurred_at DESC);
+
+-- ── Verified GitHub account link ────────────────────────────────────────
+-- Distinct from the self-declared `users.github` profile string above,
+-- which is unverified display text and must NEVER be used for
+-- authorization. These three are written only by the OAuth round-trip in
+-- src/services/github-link.js. The token carries `public_repo` and its
+-- only privileged use is forking an app repo into the user's own account
+-- on their behalf.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS github_login             VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS github_oauth_token_enc   TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS github_linked_at         TIMESTAMPTZ;
+COMMENT ON COLUMN users.github_oauth_token_enc IS 'staging:private';
+
+-- Which external coding agent produced a proposal, for the "built with
+-- Claude Code" / "built with Codex" badge. Deliberately a SEPARATE column
+-- rather than a new `source` value: `source = 'imported'` is compared for
+-- exact equality in ~10 places (sync-main, staging-recovery, pr-vote-
+-- revision, the chat-turn guard, …) and every one of those behaviours is
+-- wanted for an externally-authored branch.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS external_agent   TEXT;

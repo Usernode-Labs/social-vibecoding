@@ -871,6 +871,49 @@
               <div id="settings-status" class="text-sm mt-3 hidden"></div>
             </div>
 
+            <!-- Hosted MCP connector: connect Claude.ai / ChatGPT so their
+                 built-in coding agent (Claude Code on the web, Codex) can do
+                 the work on the user's own subscription. Also holds the
+                 verified GitHub account link, because that link exists only
+                 to serve this flow (it forks an app repo into the user's own
+                 account so their agent has somewhere it may push).
+                 Rendered by Settings._renderConnectors() /
+                 _renderGithubLink() from GET /api/me/connectors and
+                 GET /api/me/github (?demo=1 passthrough in staging — both
+                 tables are staging:private, so a staging clone is empty). -->
+            <div data-settings-section="connectors" class="hidden">
+              <div id="connectors-section">
+                <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Claude &amp; ChatGPT connectors</h3>
+                <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
+                  Connect Usernode to Claude.ai or ChatGPT and you can browse apps, file requests and turn finished work into proposals from the chat you already have open &mdash; with the coding done by Claude Code or Codex on your own plan, not your Usernode daily allowance.
+                </p>
+
+                <label class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1" for="connector-url">Connector URL</label>
+                <div class="flex gap-2 mb-2">
+                  <input id="connector-url" type="text" readonly spellcheck="false"
+                    class="flex-1 min-w-0 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 font-mono focus:outline-none focus:ring-2 focus:ring-violet-500" />
+                  <button id="connector-url-copy" type="button"
+                    class="shrink-0 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Copy</button>
+                </div>
+                <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-4 leading-relaxed">
+                  In Claude.ai: Settings &rarr; Connectors &rarr; Add custom connector. In ChatGPT: Settings &rarr; Connectors. Paste the URL above, then approve the connection in the browser page that opens. You can disconnect here at any time.
+                </p>
+
+                <h4 class="text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-2">Connected</h4>
+                <div id="connectors-list" class="space-y-2"></div>
+                <div id="connectors-status" class="text-xs mt-2 hidden"></div>
+              </div>
+
+              <div id="github-link-section" class="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
+                <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">GitHub account</h3>
+                <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
+                  Linking GitHub lets Usernode make your own copy (a fork) of an app's repository, so Claude Code or Codex has somewhere it's allowed to write. Usernode asks only for access to public repositories, never pushes code as you, and never touches your other repositories.
+                </p>
+                <div id="github-link-body" class="space-y-2"></div>
+                <div id="github-link-status" class="text-xs mt-2 hidden"></div>
+              </div>
+            </div>
+
             <div data-settings-section="app-ai" class="hidden">
               <!-- App AI permissions (issue #34). Lists every app the user has
                    granted access to their daily AI budget: today's spend vs the
@@ -2539,6 +2582,10 @@
        feature script that wants a "really?" gate (dev-chat archive,
        future settings/home destructive actions). -->
   <script src="/js/confirm-modal.js"></script>
+  <!-- Shared "you're out of daily AI credits — here's how to keep building"
+       copy + destinations, used by the dev-chat card, the credits banner and
+       the Generate-proposal modal. Loaded before its three consumers. -->
+  <script src="/js/credit-options.js"></script>
   <script src="/js/settings.js"></script>
   <script src="/js/group-chat.js"></script>
   <!-- Pure two-half spec splitter (#196). Must load BEFORE dev-chat.js,

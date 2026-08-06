@@ -1471,6 +1471,18 @@
       "name": "A spent allowance says so instead of showing a count (#964)",
       "path": "/?shot=feedback-spent",
       "expectText": "resets Monday 00:00 UTC"
+    },
+    {
+      "name": "Out of daily credits: the chat offers all three ways to keep building (#967)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
+      "expectSelector": "[data-credits-card] [data-credits-hash=\"#settings/connectors\"]",
+      "expectText": "Three ways to keep building right now"
+    },
+    {
+      "name": "Settings has a Claude & ChatGPT connectors section with the connector URL (#967)",
+      "path": "/?demo=1#settings/connectors",
+      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connectors-section:not(.hidden) #connector-url",
+      "expectText": "Claude — claude.ai"
     }
   ],
   "governance": {
