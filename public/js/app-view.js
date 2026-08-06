@@ -1989,31 +1989,31 @@ const AppView = {
     return inner ? `<div class="gc-card-actions">${inner}</div>` : '';
   },
 
-  // A single, read-only file review affordance across the Dev lifecycle.
-  // Proposals point at GitHub's PR Files tab; unpromoted sessions have no
-  // public PR yet, so they point at the branch-vs-main compare view. All
-  // inputs come from API rows and are validated before entering an href.
+  // GitHub references shown in the metadata line beneath a card title.
+  // Proposals already use a compact PR#N link there; session cards mirror
+  // that treatment instead of adding another action pill. A CLI draft may
+  // genuinely have no PR yet, in which case its honest equivalent is a
+  // branch-vs-main comparison labeled "Compare branch".
   _githubRepoBase(rawUrl) {
     const repo = String(rawUrl || '').trim().replace(/\/+$/, '').replace(/\.git$/i, '');
     return /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/i.test(repo)
       ? repo : '';
   },
 
-  _proposalChangesUrl(pr) {
+  _proposalReviewUrl(pr) {
     const row = pr || {};
     const direct = String(row.pr_url || '').trim().replace(/\/+$/, '');
     if (/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+$/i.test(direct)) {
-      return `${direct}/files`;
+      return direct;
     }
     const number = parseInt(row.pr_number, 10);
     const repo = AppView._githubRepoBase(AppView.appData && AppView.appData.repo_url);
-    return repo && number > 0 ? `${repo}/pull/${number}/files` : '';
+    return repo && number > 0 ? `${repo}/pull/${number}` : '';
   },
 
-  _sessionChangesUrl(session) {
+  _sessionCompareUrl(session) {
     const row = session || {};
-    const proposalUrl = AppView._proposalChangesUrl(row);
-    if (proposalUrl) return proposalUrl;
+    if (AppView._proposalReviewUrl(row)) return '';
     // The server derives can_review_changes without exposing the uploaded
     // commit SHA. can_preview/staging_url preserve compatibility with rows
     // returned by older servers and the shared-session demo fixtures.
@@ -2026,9 +2026,20 @@ const AppView = {
     return `${repo}/compare/main...${encodedBranch}`;
   },
 
-  _changesActionHtml(url) {
-    if (!url) return '';
-    return `<a href="${escapeAttr(url)}" target="_blank" rel="noopener" class="gc-vote-btn" title="Review file-by-file changes on GitHub">Changes</a>`;
+  _sessionReviewRefHtml(session) {
+    const row = session || {};
+    const prUrl = AppView._proposalReviewUrl(row);
+    if (prUrl) {
+      const match = prUrl.match(/\/pull\/(\d+)$/);
+      const number = parseInt(row.pr_number, 10) || (match ? parseInt(match[1], 10) : 0);
+      if (number > 0) {
+        return `<a href="${escapeAttr(prUrl)}" target="_blank" rel="noopener" class="font-mono text-violet-400 hover:underline" title="Open pull request #${number} on GitHub">PR#${number}</a>`;
+      }
+    }
+    const compareUrl = AppView._sessionCompareUrl(row);
+    return compareUrl
+      ? `<a href="${escapeAttr(compareUrl)}" target="_blank" rel="noopener" class="font-mono text-violet-400 hover:underline" title="Compare this draft branch with main on GitHub">Compare branch</a>`
+      : '';
   },
 
   EXPLORE_CHAT_TITLE: 'Open a dev chat with a message about this PR ready to edit and send',
@@ -4544,7 +4555,7 @@ const AppView = {
     // draft. Both have a real uploaded revision that can be reviewed and
     // previewed. The owner is authorized to rebuild an idle preview.
     const hasChanges = !!(s.pr_number || s.can_review_changes);
-    const changesBtn = AppView._changesActionHtml(AppView._sessionChangesUrl(s));
+    const reviewRef = AppView._sessionReviewRefHtml(s);
     const previewBtn = hasChanges
       ? `<button type="button" class="gc-vote-btn gc-vote-btn-preview" title="Open this session's staging preview (rebuilds it if it went to sleep)" onclick="AppView.swapToStagingForSession(${s.id}, '')">Preview</button>`
       : '';
@@ -4573,14 +4584,13 @@ const AppView = {
         ${AppView._devCardIcon('session')}
         <span class="flex-1 min-w-0">
           <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200 break-words">${label}</span>
-          <span class="block text-xs text-zinc-500 dark:text-zinc-400 truncate">${subtitle}</span>
+          <span class="block text-xs text-zinc-500 dark:text-zinc-400 truncate">${subtitle}${reviewRef ? ` · ${reviewRef}` : ''}</span>
         </span>
         ${AppView.DEV_CARD_CHEVRON}
       </div>
       <div class="${AppView.SESSION_CARD_ACTIONS_CLS}">
         ${statusTag}
         ${AppView.issueChipsHtml(s.linked_issues)}
-        ${changesBtn}
         ${previewBtn}
         ${chatBtn}
         ${chatShareBtn}
@@ -4606,7 +4616,7 @@ const AppView = {
     const owner = escapeHtml(s.username || 'someone');
     const statusTag = AppView._sessionStatusTagHtml(s);
     const canPreview = s.staging_url || (s.can_preview && !AppView.readOnly);
-    const changesBtn = AppView._changesActionHtml(AppView._sessionChangesUrl(s));
+    const reviewRef = AppView._sessionReviewRefHtml(s);
     const preview = canPreview
       ? `<button type="button" class="gc-vote-btn gc-vote-btn-preview" title="Open this session's staging preview${s.staging_url ? '' : ' (rebuilds it if it went to sleep)'}" onclick="AppView.swapToStagingForSession(${s.id}, '${s.staging_url || ''}')">Preview</button>`
       : '';
@@ -4625,7 +4635,7 @@ const AppView = {
         ${AppView._devCardIcon('session')}
         <span class="flex-1 min-w-0">
           <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200 break-words">${label}</span>
-          <span class="block text-xs text-zinc-500 dark:text-zinc-400 truncate">${owner} is working on this</span>
+          <span class="block text-xs text-zinc-500 dark:text-zinc-400 truncate">${owner} is working on this${reviewRef ? ` · ${reviewRef}` : ''}</span>
         </span>
         ${chevron}
       </div>
@@ -4634,7 +4644,6 @@ const AppView = {
         ${AppView.issueChipsHtml(s.linked_issues)}
         ${AppView._devChatBadge(s.chat_count)}
         ${readChat}
-        ${changesBtn}
         ${preview}
       </div>
     </div>`;
@@ -5323,7 +5332,6 @@ const AppView = {
     const archiveBtn = (mine && !isMerged && !isMerging && pr.status === 'promoted')
       ? `<button class="gc-vote-btn" title="Withdraw this proposal (closes the PR, removes it from the vote panel)" onclick="AppView.withdrawProposal(${pr.id})">Withdraw</button>`
       : '';
-    const changesBtn = AppView._changesActionHtml(AppView._proposalChangesUrl(pr));
     // #313/#827: "Explore in dev chat", surfaced on the card for proposals
     // the viewer does NOT own. Owners reach the Mayor via "Open session" on
     // their own PR, so it's omitted on own cards.
@@ -5346,8 +5354,8 @@ const AppView = {
     // (topic-view fallback) drop the live vote buttons — the vote is settled;
     // kudos stays open.
     const actions = isMerged
-      ? AppView._cardActionsHtml([changesBtn, kudosBtn, sessionBtn, exploreBtn, visualsBtn])
-      : AppView._cardActionsHtml([changesBtn, AppView.voteButtonsHtml(pr), kudosBtn, sessionBtn, archiveBtn, exploreBtn, visualsBtn]);
+      ? AppView._cardActionsHtml([kudosBtn, sessionBtn, exploreBtn, visualsBtn])
+      : AppView._cardActionsHtml([AppView.voteButtonsHtml(pr), kudosBtn, sessionBtn, archiveBtn, exploreBtn, visualsBtn]);
 
     return `
       <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''} data-ref-pr="${pr.pr_number || pr.id}"${visualTiles ? ' data-visuals-scope="1"' : ''}${noNav ? '' : ` data-proposal-row="${pr.id}" title="Open this proposal's discussion"`}>
@@ -7589,7 +7597,6 @@ const AppView = {
     // proposals the viewer does not own (parallel to the live feed cards).
     const mine = !!(App.user && pr.user_id === App.user.id);
     const exploreBtn = !mine ? AppView._exploreChatBtnHtml(pr) : '';
-    const changesBtn = AppView._changesActionHtml(AppView._proposalChangesUrl(pr));
 
     // #16: undo is a single direct action — clicking Undo opens a
     // revert PR (like proposing a change) which then needs the
@@ -7638,7 +7645,7 @@ const AppView = {
               ${AppView._attrChipsHtml('proposal', pr.id, pr, { readonly: true })}
               ${AppView._devChatBadge(parseInt(pr.chat_count) || 0)}
             </div>
-            ${AppView._cardActionsHtml([changesBtn, AppView.voteButtonsHtml(pr, { collapseVoted: true }), undoUI, kudosBtn, exploreBtn])}
+            ${AppView._cardActionsHtml([AppView.voteButtonsHtml(pr, { collapseVoted: true }), undoUI, kudosBtn, exploreBtn])}
           </div>
           ${AppView.DEV_CARD_CHEVRON}
         </div>`;

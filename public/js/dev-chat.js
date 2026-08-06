@@ -3044,7 +3044,7 @@ const DevChat = {
   // author can read commits and file-by-file changes before deciding to
   // promote. Keep this deliberately URL-only: opening the comparison must
   // not create a PR or otherwise change the session lifecycle.
-  _draftChangesUrl(session) {
+  _draftCompareUrl(session) {
     if (!session || session.pr_url || session.pr_number
         || ['promoted', 'merging', 'merged', 'archived'].includes(session.status)) return null;
     const appRepo = (window.AppView && window.AppView.appData
@@ -3595,7 +3595,7 @@ const DevChat = {
           // out even before the session refetch lands).
           const prUrl = session?.pr_url || msg.prUrl || null;
           const prNumber = session?.pr_number || msg.prNumber || null;
-          const draftChangesUrl = prUrl ? null : DevChat._draftChangesUrl(session);
+          const draftCompareUrl = prUrl ? null : DevChat._draftCompareUrl(session);
           const draftChecksBadge = DevChat._draftChecksBadgeHtml(session);
           // #195: before/after capture tiles. Visuals are latest-set-per-
           // session, so only the NEWEST staging card carries them — older
@@ -3628,7 +3628,11 @@ const DevChat = {
             <div class="dc-status-line"><span class="dc-status-icon dc-status-check" aria-hidden="true">&#10003;</span> ${msg.content} <span style="font-size:9px;opacity:0.4;margin-left:auto">${stgId} ${stgTs}</span></div>
             <div class="dc-pr-card" id="dc-pr-card">
               <div class="dc-pr-card-header">
-                ${prUrl ? `<a href="${prUrl}" target="_blank" rel="noopener" class="dc-pr-link">PR #${prNumber}</a>` : '<span style="color:var(--text-muted)">Changes ready</span>'}
+                ${prUrl
+                  ? `<a href="${prUrl}" target="_blank" rel="noopener" class="dc-pr-link">PR #${prNumber}</a>`
+                  : (draftCompareUrl
+                    ? `<a href="${escapeHtml(draftCompareUrl)}" target="_blank" rel="noopener" class="dc-pr-link" title="Compare this draft branch with main on GitHub">Compare branch</a>`
+                    : '<span style="color:var(--text-muted)">Changes ready</span>')}
                 ${(session?.session_title || session?.pr_title) ? `<span class="dc-pr-title">${escapeHtml(session.session_title || session.pr_title)}</span>` : ''}
                 ${window.AppView ? AppView.closesPillHtml(session) : ''}
                 ${draftChecksBadge}
@@ -3638,7 +3642,6 @@ const DevChat = {
               <div class="dc-pr-card-actions">
                 ${previewBtnHtml}
                 ${testBtn}
-                ${draftChangesUrl ? `<a href="${escapeHtml(draftChangesUrl)}" target="_blank" rel="noopener" class="dc-pr-btn dc-pr-btn-preview" style="text-decoration:none" title="Review commits and file-by-file changes before proposing">Changes</a>` : ''}
                 ${prUrl ? `<a href="${prUrl}" target="_blank" rel="noopener" class="dc-pr-btn dc-pr-btn-preview" style="text-decoration:none">View on GitHub</a>` : ''}
                 ${session?.status === 'active' ? `<button class="dc-pr-btn dc-pr-btn-promote" onclick="DevChat.promotePR(this)">Propose to group</button>` : ''}
                 ${cardStatusHtml}

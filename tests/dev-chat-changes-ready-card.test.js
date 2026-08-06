@@ -254,7 +254,7 @@ test('stagingUrl renders the FULL card with a live Preview + Propose', () => {
   assert.doesNotMatch(html, /disabled[^>]*>Preview staging</, 'Preview is NOT disabled when a URL exists');
 });
 
-test('an unpromoted draft links to its encoded GitHub compare view', () => {
+test('an unpromoted draft shows its encoded comparison in the PR metadata position', () => {
   const { render, setAppRepo } = makeDevChat();
   setAppRepo('https://github.com/acme/demo.git');
   const html = render([
@@ -265,14 +265,15 @@ test('an unpromoted draft links to its encoded GitHub compare view', () => {
     check_state: 'passing',
   }));
 
-  assert.match(html, />Changes<\/a>/, 'draft Changes action is visible');
+  assert.match(html, />Compare branch<\/a>/, 'draft comparison reference is visible');
+  assert.doesNotMatch(html, />Changes<\/a>/, 'there is no redundant Changes action');
   assert.match(html, /github\.com\/acme\/demo\/compare\/main\.\.\.dev\/alice%20review/,
     'compare link preserves branch path separators and encodes each component');
   assert.match(html, /rel="noopener"/, 'external compare link cannot retain an opener');
   assert.match(html, /✓ Checks passing/, 'the draft check result is visible before proposing');
 });
 
-test('promoted cards keep the PR action and do not duplicate the draft Changes action', () => {
+test('promoted cards keep the PR reference and do not duplicate it with Changes', () => {
   const { render } = makeDevChat();
   const html = render([
     { role: 'system', content: 'Staging deployed!', changesReady: true,
@@ -287,11 +288,11 @@ test('promoted cards keep the PR action and do not duplicate the draft Changes a
   assert.match(html, /pull\/9/, 'the pull-request URL remains authoritative');
 });
 
-test('draft Changes action is omitted without a valid GitHub repository or branch', () => {
+test('draft comparison reference is omitted without a valid GitHub repository or branch', () => {
   const { render } = makeDevChat();
   const msg = [{ role: 'system', content: 'Changes ready!', changesReady: true, _slug: 'compare003' }];
-  assert.doesNotMatch(render(msg, activeSession({ repo_url: 'https://example.com/acme/demo', branch_name: 'dev/a' })), />Changes<\/a>/);
-  assert.doesNotMatch(render(msg, activeSession({ repo_url: 'https://github.com/acme/demo', branch_name: '' })), />Changes<\/a>/);
+  assert.doesNotMatch(render(msg, activeSession({ repo_url: 'https://example.com/acme/demo', branch_name: 'dev/a' })), />Compare branch<\/a>/);
+  assert.doesNotMatch(render(msg, activeSession({ repo_url: 'https://github.com/acme/demo', branch_name: '' })), />Compare branch<\/a>/);
 });
 
 test('draft check badges cover pending, failing, error, and skipped without merge-gate copy', () => {

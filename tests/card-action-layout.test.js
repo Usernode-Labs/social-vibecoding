@@ -146,7 +146,9 @@ test('proposal card: vote pair keeps its yes/no colours, all actions inline', ()
   assert.match(html, /gc-vote-btn-yes[^>]*castVote\(7, 'yes'\)/);
   assert.match(html, /gc-vote-btn-no[^>]*castVote\(7, 'no'\)/);
   assert.match(html, /gc-card-actions/, 'shared action row present');
-  assert.match(html, /href="https:\/\/github\.com\/acme\/widget\/pull\/700\/files"[^>]*>Changes<\/a>/);
+  assert.match(html, /href="https:\/\/github\.com\/acme\/widget\/pull\/700"[^>]*>PR#700<\/a>/,
+    'the title metadata remains the single PR link');
+  assert.doesNotMatch(html, />Changes<\/a>/, 'no redundant Changes action');
   assertNoOverflowMachinery(html);
 });
 
@@ -209,7 +211,9 @@ test('merged card: voted box, Undo, kudos, Explore pill all inline in the shared
   const AppView = makeAppView(ME);
   const html = AppView._renderMergedCard(baseMerged({ my_vote: 'yes' }), 1);
   assert.match(html, /gc-card-actions/, 'shared action row present');
-  assert.match(html, /href="https:\/\/github\.com\/acme\/widget\/pull\/800\/files"[^>]*>Changes<\/a>/);
+  assert.match(html, /href="https:\/\/github\.com\/acme\/widget\/pull\/800"[^>]*>PR#800<\/a>/,
+    'the title metadata remains the single PR link');
+  assert.doesNotMatch(html, />Changes<\/a>/, 'no redundant Changes action');
   assert.match(html, /gc-vote-voted-box-yes[^>]*>You voted Yes</, '"You voted Yes" indicator present in the action row');
   assert.match(html, /undoPr\(8\)/, 'Undo present');
   assert.match(html, /gc-explore-chat-btn/, 'Explore in dev chat present');
