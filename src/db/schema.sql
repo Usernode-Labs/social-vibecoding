@@ -1718,6 +1718,9 @@ COMMENT ON TABLE chat_session_spec_user_shares IS 'staging:private';
 COMMENT ON TABLE llm_usage              IS 'staging:private';
 COMMENT ON TABLE notifications          IS 'staging:private';
 COMMENT ON TABLE app_secrets            IS 'staging:private';
+-- `mail_deliveries` is tagged too, but its COMMENT lives beside its
+-- CREATE TABLE further down this file — the table doesn't exist yet at
+-- this point, and a COMMENT ON a missing table aborts the whole re-apply.
 
 -- Column-level on `users`: rows survive cloning so FK-targeted
 -- attribution (chat_messages.user_id, apps.created_by, …) keeps
@@ -3906,6 +3909,60 @@ ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS more_token VARCHAR(64);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_waitlist_signups_more_token
   ON waitlist_signups (more_token) WHERE more_token IS NOT NULL;
 COMMENT ON COLUMN waitlist_signups.more_token IS 'staging:private';
+
+-- Email confirmation. Set the first time the signer follows the confirm
+-- link in their join mail (GET /api/public/waitlist/confirm/:token, which
+-- then lands them on the stage-2 survey). Idempotent — a second visit
+-- keeps the original timestamp. A NULL here after a join means the
+-- address never proved it can receive mail, which is exactly what an
+-- admin wants to see before releasing a row.
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ;
+
+-- Outbound mail log (src/services/mail/). Every send attempt lands here
+-- with its outcome, and it is the ONLY place an operator can see what
+-- happened: the endpoints that trigger mail are always-200 by contract
+-- (SPEC 1667) so they cannot report a delivery failure to the user, and a
+-- non-delivery was historically invisible for exactly that reason.
+--
+-- It is also the throttle's state: src/services/mail/rate-limit.js counts
+-- the `sent` / `skipped_staging` rows for a recipient to cap how much mail
+-- one address can be made to receive, and counts them globally to bound
+-- the provider bill.
+--
+-- `status` is one of:
+--   sent                  delivered to the provider
+--   skipped_staging       rendered to the log by a staging preview
+--   failed                the provider refused or timed out (`error` says)
+--   suppressed_rate_limit the throttle declined it (`error` says why)
+--   no_transport          nothing was configured to send it
+-- `error` holds a bounded provider complaint. It NEVER holds the message
+-- body, so a login code cannot end up in this table.
+CREATE TABLE IF NOT EXISTS mail_deliveries (
+  id         BIGSERIAL PRIMARY KEY,
+  kind       VARCHAR(64) NOT NULL,
+  recipient  VARCHAR(255) NOT NULL,
+  provider   VARCHAR(32),
+  status     VARCHAR(24) NOT NULL,
+  error      TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- The throttle's read path: newest rows for one recipient and kind.
+CREATE INDEX IF NOT EXISTS idx_mail_deliveries_recipient
+  ON mail_deliveries (recipient, kind, created_at DESC);
+-- The global hourly count, the admin card's "recent activity", and the
+-- retention sweep all walk the table by time.
+CREATE INDEX IF NOT EXISTS idx_mail_deliveries_created
+  ON mail_deliveries (created_at DESC);
+-- Staging privacy (see the convention block earlier in this file): a log
+-- of who the platform emailed and when is private user content, so a
+-- staging clone starts empty and gets obviously-fake seed rows instead
+-- (seedStagingPlatformMail in src/db/migrate.js).
+--
+-- Deliberately NOT added to the prod-debug deny lists in
+-- src/services/debug-access.js: this table holds no password, key or
+-- token, and "did that user's login code actually go out" is precisely the
+-- question an admin debugging session needs to be able to answer.
+COMMENT ON TABLE mail_deliveries IS 'staging:private';
 
 -- Access + block-production state on the user. `has_platform_access`
 -- gates the SV platform surfaces (home/social/build) — NOT login-required

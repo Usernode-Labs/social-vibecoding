@@ -263,20 +263,55 @@
       "description": "Complete Firebase Admin service-account JSON encoded as base64 on one line. Required only while MOBILE_PUSH_ENABLED is true; never forwarded to child apps."
     },
     {
+      "key": "PLATFORM_MAIL_PROVIDER",
+      "group": "Platform mail",
+      "default": "auto",
+      "description": "Which transport sends platform mail: auto (default), gmail, http, or log. auto tries Gmail, then the generic HTTP API, and in production sends nothing rather than printing login codes into the log. Naming a provider explicitly means a missing key is reported as broken, not silently downgraded. A staging preview ALWAYS logs instead of delivering, whatever this says."
+    },
+    {
+      "key": "PLATFORM_MAIL_FROM",
+      "group": "Platform mail",
+      "default": "Usernode <no-reply@usernodelabs.org>",
+      "description": "The From address on every platform mail. Defaults to Usernode <no-reply@usernodelabs.org>, which is the single sender for all platform mail, so a fresh deploy needs no edit here. The mailbox behind GMAIL_OAUTH_* must be authorised to send as this address (a Workspace alias or a 'send mail as' identity) or every send is rejected upstream. Not secret — it is in the header of every mail we send."
+    },
+    {
+      "key": "GMAIL_OAUTH_CLIENT_ID",
+      "group": "Platform mail",
+      "description": "OAuth2 client ID of the Google Cloud 'Desktop app' credential used to send platform mail through the Gmail API. All three GMAIL_OAUTH_* keys must be set together — a partial config sends nothing. Unset never blocks boot: the mail flows still report success while delivering nothing, which is why Admin → Topochain → Settings shows an explicit mail card."
+    },
+    {
+      "key": "GMAIL_OAUTH_CLIENT_SECRET",
+      "group": "Platform mail",
+      "private": true,
+      "description": "OAuth2 client secret paired with GMAIL_OAUTH_CLIENT_ID. Private: encrypted at rest and never returned by any API."
+    },
+    {
+      "key": "GMAIL_OAUTH_REFRESH_TOKEN",
+      "group": "Platform mail",
+      "private": true,
+      "description": "Long-lived refresh token minted once for the sending mailbox with the https://www.googleapis.com/auth/gmail.send scope. Private: it can send mail as your domain indefinitely, so it is encrypted at rest and never returned by any API. Note the platform-variable value constraints (src/services/platform-env.js): no single quote, no CR, no NUL, 8192 characters max."
+    },
+    {
+      "key": "PLATFORM_MAIL_MAX_PER_HOUR",
+      "group": "Platform mail",
+      "default": "300",
+      "description": "Global ceiling on outbound mail per rolling hour, across all recipients and kinds. Bounds the provider bill and the sender-reputation damage from a runaway loop or an abusive burst; per-recipient caps (5 login codes/hour, 1 waitlist confirmation/day) are fixed in code. Sends over the ceiling are recorded as suppressed_rate_limit and visible in the admin mail card."
+    },
+    {
       "key": "TOPOCHAIN_MAIL_API_URL",
-      "group": "Topochain mail",
-      "description": "HTTPS send endpoint of the mail provider (Resend: https://api.resend.com/emails). POSTed as JSON with a bearer token; body shape lives in src/services/topochain/mail-transport.js. All three TOPOCHAIN_MAIL_* keys must be set together — a partial config sends nothing. Unset never blocks boot: both mail flows still report success while delivering nothing. See Admin → Topochain → Settings."
+      "group": "Platform mail",
+      "description": "HTTPS send endpoint for the generic HTTP mail provider — used when PLATFORM_MAIL_PROVIDER is http, or when auto finds no Gmail config (Resend: https://api.resend.com/emails). POSTed as JSON with a bearer token; body shape lives in src/services/mail/transports/http-api.js. All three TOPOCHAIN_MAIL_* keys must be set together — a partial config sends nothing."
     },
     {
       "key": "TOPOCHAIN_MAIL_API_KEY",
-      "group": "Topochain mail",
+      "group": "Platform mail",
       "private": true,
-      "description": "Bearer credential for TOPOCHAIN_MAIL_API_URL. Private: it can send mail as your domain, so it is encrypted at rest and never returned by any API. Unset means mobile email-login codes and onboarding waitlist confirmations are generated and dropped."
+      "description": "Bearer credential for TOPOCHAIN_MAIL_API_URL. Private: it can send mail as your domain, so it is encrypted at rest and never returned by any API. Only used by the http transport — one of several providers."
     },
     {
       "key": "TOPOCHAIN_MAIL_FROM",
-      "group": "Topochain mail",
-      "description": "Envelope From address for platform mail, e.g. 'Usernode <no-reply@usernodelabs.org>'. Must be a sender the provider has verified for your domain or every send is rejected upstream. Not secret."
+      "group": "Platform mail",
+      "description": "Legacy sender address, kept as a fallback for deploys configured before PLATFORM_MAIL_FROM existed. Prefer PLATFORM_MAIL_FROM; this is only consulted when that is unset. Not secret."
     },
     {
       "key": "USERNODE_DOMAIN",

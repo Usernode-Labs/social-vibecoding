@@ -25,7 +25,15 @@ const debugAccess = require('../src/services/debug-access');
 // definition, or other staging:private tags) earlier in the file.
 const blockStart = schema.indexOf('Topochain Task 2 — `users` columns');
 assert.ok(blockStart > 0, 'the Task 2 block header exists');
-const block = schema.slice(blockStart);
+// Bound the slice at the header of the section that follows, the same way
+// tests/topochain-schema.test.js bounds the §3.4 block. Without an end the
+// slice ran to EOF, so the exact-count assertions below ("exactly eight
+// table-level staging:private tags") silently counted tags belonging to
+// every later, unrelated section too — adding one staging:private table
+// anywhere further down schema.sql broke a test about Task 2.
+const blockEnd = schema.indexOf('Topochain Task 8 — mobile auth', blockStart);
+assert.ok(blockEnd > blockStart, 'the section after the Task 2 block exists');
+const block = schema.slice(blockStart, blockEnd);
 
 // ─── users columns ──────────────────────────────────────────────────
 
