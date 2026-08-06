@@ -1225,6 +1225,7 @@ async function execInWorker(sessionId, {
     mode,
     journal,
     backend: agentBackend,
+    turnUuid: turnUuid || undefined,
     model: models.resolve(model),
     startedAt: new Date().toISOString(),
     // #174: billing context for restart-resume — the resume paths debit

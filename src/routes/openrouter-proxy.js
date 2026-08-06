@@ -115,14 +115,34 @@ function openrouterProxyRoutes(config) {
         effectiveMaxCost = userCap;
       }
       // Entry check: reject a NEW upstream call once the turn has already
-      // reached the ceiling, before we spend anything.
+      // reached the ceiling, before we spend anything. Serialized with
+      // FOR UPDATE (review P2): concurrent requests must not all read the
+      // same below-cap balance and pass together. A conservative estimate
+      // of this request's potential cost reserves headroom so a single
+      // expensive call can't blow past the cap.
       if (effectiveMaxCost > 0) {
-        const { rows: costRows } = await pool.query(
-          'SELECT actual_cost_usd FROM agent_turns WHERE id = $1', [turnId],
-        );
-        if (parseFloat(costRows[0]?.actual_cost_usd || 0) >= effectiveMaxCost) {
-          log.warn('openrouter-proxy', 'turn cost ceiling reached before forwarding', { turnId, effectiveMaxCost });
-          return res.status(429).json({ error: { message: 'turn cost ceiling reached' } });
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          const { rows: costRows } = await client.query(
+            'SELECT actual_cost_usd FROM agent_turns WHERE id = $1 FOR UPDATE', [turnId],
+          );
+          const spent = parseFloat(costRows[0]?.actual_cost_usd || 0);
+          // Conservative reservation: assume the request uses its full
+          // max_output_tokens budget at ~$2/M output + $1/M input.
+          const outBudget = (body.max_output_tokens || 128000) * (2 / 1000000);
+          const reserve = outBudget + 0.01;
+          if (spent + reserve >= effectiveMaxCost) {
+            await client.query('COMMIT').catch(() => {});
+            log.warn('openrouter-proxy', 'turn cost ceiling would be exceeded', { turnId, effectiveMaxCost, spent });
+            return res.status(429).json({ error: { message: 'turn cost ceiling reached' } });
+          }
+          await client.query('COMMIT');
+        } catch (e) {
+          await client.query('ROLLBACK').catch(() => {});
+          throw e;
+        } finally {
+          client.release();
         }
       }
 
@@ -204,7 +224,12 @@ function openrouterProxyRoutes(config) {
             }
           }
         } catch (err) {
-          log.warn('openrouter-proxy', 'usage settlement failed', { turnId, err: err.message });
+          // Fail closed (review P2): if settlement accounting fails, abort
+          // the upstream so spend does not continue unrecorded. The caller
+          // (stream loop) catches this and stops the relay.
+          log.error('openrouter-proxy', 'usage settlement failed; aborting', { turnId, err: err.message });
+          ctrl.abort();
+          throw err;
         }
       };
 

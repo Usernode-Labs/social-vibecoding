@@ -8457,7 +8457,16 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
         pool, session, userId: req.user.id,
         model: turnModel,
         resumeThreadId: (isCodexSession ? (session.agent_thread_id || null) : (session.cc_session_id || null)),
+        config,
       });
+      if (codexCtx?.error === 'backend_disabled' || codexCtx?.error === 'backend_not_available') {
+        await sendStatus('Codex/OpenRouter is not available for your account right now.');
+        return res.json({ ok: false, error: 'Codex/OpenRouter is not available.' });
+      }
+      if (codexCtx?.error === 'model_required') {
+        await sendStatus('Pick a Codex model in Settings for this session.');
+        return res.json({ ok: false, error: 'A Codex model is required.' });
+      }
       if (codexCtx?.error === 'credential_required') {
         await sendStatus('Add your OpenRouter API key in Settings to use Codex.');
         return res.json({ ok: false, error: 'OpenRouter API key required' });
@@ -8480,15 +8489,6 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
         onProgress: onScoutProgress,
       });
       result = runLocally ? await dispatchLocalScout() : await dispatchScout();
-      // Complete the Codex ledger turn when the worker dispatch finishes
-      // (review P3); the relay never closes the turn per-stream so this is
-      // the authoritative terminal state.
-      if (codexCtx?.turnUuid) {
-        await agentTurn.completeCodexTurn({
-          pool, turnUuid: codexCtx.turnUuid,
-          status: result?.isError ? 'failed' : 'completed',
-        });
-      }
       // Headless auto-retry: a markerless turn that produced no spec text
       // gets exactly one re-dispatch (the retry wraps the call site, not
       // execInWorker, so active_turn bookkeeping stays per-attempt).
@@ -8496,6 +8496,16 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
         await sendStatus('The coding step failed unexpectedly â€” retrying onceâ€¦');
         await waitForTurnStopped(session.id, containerName);
         result = await dispatchScout();
+      }
+      // Complete the Codex ledger turn ONLY after the final attempt
+      // (review P1): completing after the first dispatch would 409 the
+      // headless retry that reuses the same turn token.
+      if (codexCtx?.turnUuid) {
+        const failed = !!(result?.fatalError || result?.ccIsError);
+        await agentTurn.completeCodexTurn({
+          pool, turnUuid: codexCtx.turnUuid,
+          status: failed ? 'failed' : 'completed',
+        });
       }
     } finally {
       clearInterval(heartbeat);
@@ -9703,7 +9713,16 @@ path: /another/changed/view
         pool, session, userId: req.user.id,
         model: turnModel,
         resumeThreadId: (isCodexSession ? (session.agent_thread_id || null) : (session.cc_session_id || null)),
+        config,
       });
+      if (codexCtx?.error === 'backend_disabled' || codexCtx?.error === 'backend_not_available') {
+        await sendStatus('Codex/OpenRouter is not available for your account right now.');
+        return res.json({ ok: false, error: 'Codex/OpenRouter is not available.' });
+      }
+      if (codexCtx?.error === 'model_required') {
+        await sendStatus('Pick a Codex model in Settings for this session.');
+        return res.json({ ok: false, error: 'A Codex model is required.' });
+      }
       if (codexCtx?.error === 'credential_required') {
         await sendStatus('Add your OpenRouter API key in Settings to use Codex.');
         return res.json({ ok: false, error: 'OpenRouter API key required' });
@@ -9734,15 +9753,6 @@ path: /another/changed/view
         onProgress: onAgentProgress,
       });
       result = runLocally ? await dispatchLocalBuild() : await dispatchBuild();
-      // Complete the Codex ledger turn when the worker dispatch finishes
-      // (review P3); the relay never closes the turn per-stream so this is
-      // the authoritative terminal state.
-      if (codexCtx?.turnUuid) {
-        await agentTurn.completeCodexTurn({
-          pool, turnUuid: codexCtx.turnUuid,
-          status: result?.isError ? 'failed' : 'completed',
-        });
-      }
       // Headless auto-retry: a markerless turn that committed nothing
       // gets exactly one re-dispatch (the retry wraps the call site, not
       // execInWorker, so active_turn bookkeeping stays per-attempt).
@@ -9750,6 +9760,16 @@ path: /another/changed/view
         await sendStatus('The coding step failed unexpectedly â€” retrying onceâ€¦');
         await waitForTurnStopped(session.id, containerName);
         result = await dispatchBuild();
+      }
+      // Complete the Codex ledger turn ONLY after the final attempt
+      // (review P1): completing after the first dispatch would 409 the
+      // headless retry that reuses the same turn token.
+      if (codexCtx?.turnUuid) {
+        const failed = !!(result?.fatalError || result?.ccIsError);
+        await agentTurn.completeCodexTurn({
+          pool, turnUuid: codexCtx.turnUuid,
+          status: failed ? 'failed' : 'completed',
+        });
       }
     } finally {
       clearInterval(heartbeat);

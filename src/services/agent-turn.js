@@ -25,14 +25,33 @@ function backendForSession(session) {
 // execInWorker params, or null for Claude turns (caller uses the legacy
 // path). Never throws on a missing/invalid credential — returns a
 // structured error the caller surfaces as an actionable UI state.
-async function resolveCodexTurn({ pool, session, userId, model, reasoningEffort, resumeThreadId }) {
+async function resolveCodexTurn({ pool, session, userId, model, reasoningEffort, resumeThreadId, config = {} }) {
   if (registry.resolveBackend(session?.agent_backend) !== 'codex_openrouter') return null;
+
+  // Enforce availability at EXECUTION (review P3): the feature flag and
+  // beta allowlist must gate dispatch too, not just Settings save. If
+  // access was disabled after a user configured Codex, refuse the turn.
+  if (!config.codexOpenrouterEnabled) return { error: 'backend_disabled' };
+  if (config.openrouterBetaUserIds?.length
+      && !config.openrouterBetaUserIds.includes(String(userId))) {
+    return { error: 'backend_not_available' };
+  }
 
   const meta = await credentialStore.readMetadata({
     pool, userId, provider: 'openrouter', purpose: 'coding_agent',
   });
   if (!meta || meta.status !== 'valid') {
     return { error: 'credential_required' };
+  }
+
+  // A model is REQUIRED and must be the session-pinned OpenRouter model
+  // (review P3): never fall back to a Claude model (the caller's
+  // selectedModel) and pin it into OpenRouter. Null → actionable error.
+  // We deliberately ignore the `model` param here (it may already carry a
+  // Claude fallback) and require session.agent_model to be the authority.
+  const resolvedModel = session.agent_model || null;
+  if (!resolvedModel) {
+    return { error: 'model_required' };
   }
 
   const turnId = crypto.randomUUID();
@@ -49,7 +68,7 @@ async function resolveCodexTurn({ pool, session, userId, model, reasoningEffort,
           agent_thread_id, agent_config_version, status)
        VALUES ($1, $2, $3, 'codex_openrouter', 'openrouter', $4,
                $5, $6, $7, $8, $9, 'running')`,
-      [turnId, session.id, userId, model || session.agent_model || null,
+      [turnId, session.id, userId, resolvedModel,
        reasoningEffort || session.agent_reasoning_effort || null,
        meta.id, meta.revision, resumeThreadId || session.agent_thread_id || null,
        session.agent_config_version || 1],
@@ -64,14 +83,14 @@ async function resolveCodexTurn({ pool, session, userId, model, reasoningEffort,
     userId,
     turnId,
     backend: 'codex_openrouter',
-    model: model || session.agent_model,
+    model: resolvedModel,
     credentialRevision: meta.revision,
     agentConfigVersion: session.agent_config_version || 1,
   });
 
   return {
     agentBackend: 'codex_openrouter',
-    agentModel: model || session.agent_model,
+    agentModel: resolvedModel,
     agentReasoningEffort: reasoningEffort || session.agent_reasoning_effort || null,
     agentProxyToken: token,
     turnUuid: turnId,

@@ -3,9 +3,7 @@
 # container. Sibling of run-cc.sh — identical __USERNODE_* output contract
 # so the host's journal consumer (worker.js parseLine) is unchanged:
 #   __USERNODE_PHASE__  <phase>
-#   __USERNODE_RESULT__ cc_exit=N ahead=N behind=N sha=… push_ok=N mode=… \
-#                       agent_backend=codex_openrouter agent_model=… \
-#                       agent_thread_id=… agent_exit=N
+#   __USERNODE_RESULT__ cc_exit=N ... agent_backend=codex_openrouter ...
 #   __USERNODE_WARN__   <msg>
 #   __USERNODE_ERROR__  <msg>
 #
@@ -14,11 +12,9 @@
 # with the per-turn scoped token in USERNODE_AGENT_TOKEN. The relay
 # decrypts the user key server-side.
 #
-# Required env (passed via -e on `docker exec`):
-#   PROMPT_FILE, BRANCH, WORKER_JWT, SESSION_ID, PLATFORM_URL,
+# Required env: PROMPT_FILE, BRANCH, WORKER_JWT, SESSION_ID, PLATFORM_URL,
 #   USERNODE_AGENT_TOKEN, USERNODE_AGENT_RELAY, AGENT_MODEL
-# Optional:
-#   MODE (build|scout), AGENT_REASONING_EFFORT, AGENT_THREAD_ID (resume),
+# Optional: MODE (build|scout), AGENT_REASONING_EFFORT, AGENT_THREAD_ID,
 #   COMMIT_MSG, TURN_UUID
 
 set -u
@@ -43,7 +39,8 @@ die() {
 : "${COMMIT_MSG:=Changes via Usernode (Codex)}"
 : "${TURN_UUID:=}"
 
-cd /home/node/workspace || die "no /home/node/workspace"
+WORKSPACE_DIR="${WORKSPACE_DIR:-/home/node/workspace}"
+cd "$WORKSPACE_DIR" || die "no workspace: $WORKSPACE_DIR"
 
 # Pre-exec hygiene: start from a known-good tree (same as run-cc.sh).
 echo "__USERNODE_PHASE__ refresh"
@@ -57,22 +54,15 @@ elif [ "$MODE" = "build" ]; then
   die "branch missing upstream: origin/$BRANCH"
 fi
 
-# Platform-owned Codex config. The relay base URL is the platform's
-# internal endpoint; the env_key USERNODE_AGENT_TOKEN carries the scoped
-# bearer. Multi-agent is disabled in the first release.
-# Codex home lives INSIDE the persistent Claude volume (review P6b): the
-# CC volume is the only long-lived, eviction-surviving storage. Pointing
-# CODEX_HOME at /home/node/.codex (a fresh container filesystem path)
-# would wipe rollout/thread state after any normal eviction. Keeping it
-# under /home/node/.claude/codex-home means codex session state resumes
-# across worker churn.
-export CODEX_HOME=/home/node/.claude/codex-home
+# Codex home lives INSIDE the persistent Claude volume so session/rollout
+# state survives worker eviction. Export it so Codex reads the relay config
+# and persistent rollout dir.
+export CODEX_HOME="${CODEX_HOME:-/home/node/.claude/codex-home}"
 mkdir -p "$CODEX_HOME"
+
+# TOML-safe escaping (quotes/backslashes/newlines) so attacker-controlled
+# model strings cannot inject extra TOML/MCP sections into config.toml.
 toml_escape() {
-  # Escape a value for a double-quoted TOML string (review P2): model/
-  # provider/relay values interpolate into config.toml, so backslashes,
-  # quotes and newlines must be escaped to prevent injecting extra TOML
-  # sections (e.g. an attacker model id like `x"\n[[mcp_servers.evil]]`).
   printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e ':a;N;$!ba;s/\n/\\n/g'
 }
 ESCAPED_MODEL=$(toml_escape "$AGENT_MODEL")
@@ -80,16 +70,19 @@ ESCAPED_RELAY=$(toml_escape "$USERNODE_AGENT_RELAY")
 if [ -n "$AGENT_REASONING_EFFORT" ]; then
   ESCAPED_EFFORT=$(toml_escape "$AGENT_REASONING_EFFORT")
 fi
+# sandbox + approval mode; build needs workspace-write.
+SANDBOX_MODE=$([ "$MODE" = "build" ] && echo workspace-write || echo read-only)
+
+# NOTE: this heredoc is UNQUOTED so we can interpolate the escaped model/
+# relay/effort and the computed sandbox mode. There are NO backticks or
+# $(...) in the TOML body itself — command substitution is only used on
+# the interpolation lines' values, which are pre-escaped above.
 cat > "$CODEX_HOME/config.toml" <<EOF
 model_provider = "usernode_openrouter"
 model = "$ESCAPED_MODEL"
 ${ESCAPED_EFFORT:+model_reasoning_effort = "$ESCAPED_EFFORT"}
 
-# Sandbox + approval live HERE (not -s/-c flags) because `codex exec resume`
-# does not accept -s and would reject it as an unexpected argument (review).
-# Build turns need workspace-write (default read-only would make the commit
-# a no-op); scout stays read-only.
-sandbox_mode = "$([ "$MODE" = "build" ] && echo workspace-write || echo read-only)"
+sandbox_mode = "$SANDBOX_MODE"
 approval_policy = "never"
 
 [agents]
@@ -102,73 +95,63 @@ wire_api = "responses"
 env_key = "USERNODE_AGENT_TOKEN"
 EOF
 
-model_provider = "usernode_openrouter"
-model = "$AGENT_MODEL"
-${AGENT_REASONING_EFFORT:+model_reasoning_effort = "$AGENT_REASONING_EFFORT"}
-
-[agents]
-enabled = false
-
-[model_providers.usernode_openrouter]
-name = "Usernode OpenRouter"
-base_url = "$USERNODE_AGENT_RELAY"
-wire_api = "responses"
-env_key = "USERNODE_AGENT_TOKEN"
-EOF
 export USERNODE_AGENT_TOKEN
-# Keep the token out of any subshell env that agent code controls beyond
-# the codex process itself — it is already scoped to this turn.
 export OPENROUTER_API_KEY=""
-
-# Invoke Codex non-interactively. --json emits JSON Lines the host parser
-# (worker.js parseLine → codex-openrouter.js normalizeCodexLine) handles.
-#
-# Sandbox (review F1): build turns MUST be workspace-write (the default
-# read-only sandbox makes commit/push a no-op). Scout stays read-only.
-# Non-interactive approval is via -c approval_policy=never (matches the
-# pinned 0.146.0 config keys). --profile is NOT valid on `resume` so it
-# is only passed to the fresh `exec` form.
-#
-# POSIX-safe exit capture (review P3): the runner runs under dash (#!/bin/sh),
-# which has no PIPESTATUS. So we run codex with output redirected to a temp
-# JSONL file, capture $? directly, then stream the file to stdout (the turn
-# journal). Real-time progress is sacrificed for correctness/dash-compat; the
-# thread id and terminal marker still flow to the host either way.
 
 CODEX_EXIT=0
 AGENT_THREAD_OUT="$AGENT_THREAD_ID"
-# Sandbox + approval are set in config.toml (review): `codex exec resume`
-# rejects -s as an unexpected argument, so they cannot be CLI flags. The
-# prompt is fed via stdin redirect `< "$PROMPT_FILE"` — a detached
-# `docker exec -d` has no inherited stdin, so piping `cat | codex -` would
-# leave codex with an empty prompt ("No prompt provided via stdin").
 TMP_JSONL=$(mktemp /home/node/.usernode/turn-codex-XXXX.jsonl 2>/dev/null || mktemp)
 
-# run_codex <codex args...> — feeds the prompt file on stdin, captures
-# codex's own exit code (dash has no PIPESTATUS), leaves the JSONL in
-# $TMP_JSONL, and streams it to stdout (the turn journal) at the end.
-run_codex() {
+# The prompt is fed on stdin (a detached docker exec has no inherited
+# stdin). Dash has no PIPESTATUS, so we run codex buffered to a temp JSONL
+# file, capture its exit code via a plain $?, then stream the file out to
+# the turn journal. This is correct and dash-compatible; it does not stream
+# live line-by-line, but the host journal tailer still sees every line once
+# emitted. The raw JSONL is also kept for thread-id extraction and
+# resume-failure classification.
+
+CODEX_RUN_EXIT=0
+start_codex() {
+  # shellcheck disable=SC2086
   "$@" < "$PROMPT_FILE" > "$TMP_JSONL" 2>&1
-  CODEX_EXIT=$?
+  CODEX_RUN_EXIT=$?
+}
+
+stream_jsonl() {
   cat "$TMP_JSONL"
 }
 
 if [ -n "$AGENT_THREAD_ID" ]; then
   echo "__USERNODE_PHASE__ codex (resume $AGENT_THREAD_ID, mode $MODE)"
-  run_codex codex exec resume "$AGENT_THREAD_ID" - --json
-  if [ "$CODEX_EXIT" -ne 0 ]; then
-    echo "__USERNODE_WARN__ codex resume failed (exit $CODEX_EXIT); retrying fresh"
-    run_codex codex exec - --json -p usernode-build
-    AGENT_THREAD_OUT=""
+  start_codex codex exec resume "$AGENT_THREAD_ID" - --json
+  if [ "$CODEX_RUN_EXIT" -ne 0 ]; then
+    # Only retry fresh for a genuinely missing/stale thread (review P4):
+    # auth/credit/rate-limit/unknown failures must NOT re-run (they'd
+    # repeat billed work against a partially modified tree). We already
+    # got the JSONL in $TMP_JSONL (which the runner emits below), so
+    # decide here from its error content.
+    if grep -qiE 'thread not found|session not found|local rollout unavailable' "$TMP_JSONL"; then
+      echo "__USERNODE_WARN__ codex thread missing (exit $CODEX_RUN_EXIT); retrying fresh"
+      start_codex codex exec - --json -p usernode-build
+      AGENT_THREAD_OUT=""
+    else
+      echo "__USERNODE_WARN__ codex resume failed (exit $CODEX_RUN_EXIT); NOT retrying fresh"
+      stream_jsonl
+      CODEX_EXIT=$CODEX_RUN_EXIT
+      AGENT_THREAD_OUT=""
+      # Emit a terminal result so the host doesn't wait forever, then bail.
+      echo "__USERNODE_RESULT__ cc_exit=$CODEX_RUN_EXIT ahead=0 behind=0 sha= push_ok=0 mode=$MODE agent_backend=codex_openrouter agent_model=$AGENT_MODEL agent_thread_id= agent_exit=$CODEX_RUN_EXIT"
+      exit "$CODEX_RUN_EXIT"
+    fi
   fi
 else
   echo "__USERNODE_PHASE__ codex (mode $MODE)"
-  run_codex codex exec - --json -p usernode-build
+  start_codex codex exec - --json -p usernode-build
 fi
+CODEX_EXIT=$CODEX_RUN_EXIT
+stream_jsonl
 
-# Extract the thread id from thread.started (review F5): codex emits
-# {"type":"thread.started","thread_id":"019f..."} on the first line.
-# For a resume, keep the original; for a fresh turn, capture the new one.
+# Extract the thread id from thread.started for resume on the next turn.
 if [ -z "$AGENT_THREAD_OUT" ]; then
   EXTRACTED=$(grep -o '"type":"thread.started","thread_id":"[^"]*"' "$TMP_JSONL" | head -1 | sed 's/.*"thread_id":"//;s/"$//')
   if [ -n "$EXTRACTED" ]; then
