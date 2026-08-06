@@ -1260,6 +1260,127 @@ on deploy; both are operator-invoked. There is no continuous
 topochain→platform replication — writes arrive through the ingest and
 mobile groups above.
 
+## Chat connector (Claude.ai / ChatGPT) operations
+
+The hosted MCP connector lets a user chatting in Claude.ai or ChatGPT
+browse apps, file a request, hand the work to **their own** Claude Code
+on the web / Codex subscription, and turn the pushed branch into an
+ordinary imported proposal. The platform spends no model credits on it.
+Everything is served in-process at `POST /mcp` plus the OAuth routes
+under `/api/connect/`; there is no sidecar.
+
+**The connector is production-only.** Every route 404s when
+`config.cliAuthEnabled` is false, which is exactly `USERNODE_ENV=staging`
+— the same gate the CLI device flow uses. Review the consent page and the
+GitHub round-trip in local mode (`USERNODE_LOCAL_DEV=1`), never in a
+staging preview.
+
+### Configuration
+
+Three settings, all `required: false`, all declared in `dapp.json`'s
+`platform_env` under the **Chat connectors** group. None blocks boot or a
+merge; each disables exactly one thing. Set them in the platform's
+**Platform variables** panel (a full admin sets directly; anyone else
+proposes by vote), and note they take effect on the platform's **next
+deploy**, not immediately.
+
+- `MCP_CONNECTOR_REDIRECT_HOSTS` — defaults to
+  `claude.ai,claude.com,chatgpt.com,openai.com`. Only touch it to *add* a
+  chat product or to narrow the surface; an explicit value **replaces**
+  the default rather than extending it, so re-list the hosts you still
+  want. Loopback is added automatically in local mode only.
+- `GITHUB_LINK_CLIENT_ID` / `GITHUB_LINK_CLIENT_SECRET` — the GitHub
+  OAuth app used for account linking. Both fall back to
+  `WAITLIST_GITHUB_CLIENT_ID` / `_SECRET`, so one OAuth app can serve both
+  flows if its callback list carries this one's URL. Both halves must be
+  set together: an id without a secret counts as unconfigured.
+
+**Unset is a supported state, not a broken one.** With no OAuth app:
+`GET /api/me/github/connect` and `/callback` return 404, Settings →
+*Claude & ChatGPT connectors* says "GitHub linking is not configured on
+this deployment" instead of offering a dead button, and `prepare_work` /
+`submit_work` answer `github_link_unavailable` naming
+`start_platform_build` — the platform-billed fallback, which needs no
+GitHub link — rather than sending the user to Settings. The connector
+itself, every read-only tool and the out-of-credits card are unaffected.
+`tests/connector-config-unset.test.js` pins all of that.
+
+### Creating the GitHub OAuth app
+
+An **OAuth app** (Settings → Developer settings → OAuth Apps → New),
+*not* a GitHub App — this flow uses the classic authorize/token
+round-trip, same shape as `src/routes/waitlist-connect.js`.
+
+- **Authorization callback URL:** `https://<your-domain>/api/me/github/callback`
+  — exactly what `githubRedirectUri()` in `src/routes/mcp-remote.js` builds from
+  `config.cliAuthOrigin`. A mismatch fails at GitHub's own redirect check,
+  before any platform code runs.
+- **Scope:** the platform requests `public_repo` and nothing else, hard-coded
+  as `githubLink.SCOPE`. It is the smallest scope that can create a fork.
+  Never widen it to `repo` — app repos are public (`createRepo` sets
+  `private: false`), so `repo` would buy nothing and reach every private
+  repository the user owns.
+- The token's **only** privileged use is `POST /repos/{owner}/{repo}/forks`
+  on the user's behalf. Fork reads are unauthenticated, and the pull request
+  is opened with the platform's own bot credentials against the base repo.
+- Store the client secret as `GITHUB_LINK_CLIENT_SECRET`; it is declared
+  `private: true`, so it is encrypted at rest and never returned by any API.
+
+### Verifying end to end
+
+Do this once after the deploy that carries the values. It exercises the
+whole path and each step has a distinguishable failure.
+
+1. **Connect the chat product.** In Claude.ai: Settings → Connectors → Add
+   custom connector, URL `https://<your-domain>/mcp`. The 401 challenge
+   carries `WWW-Authenticate: Bearer resource_metadata=…`, which is what
+   starts the OAuth dance. A redirect host outside the allowlist is
+   rejected at registration — that is `MCP_CONNECTOR_REDIRECT_HOSTS`
+   doing its job, not a bug.
+2. **Approve on the consent page** at `/connect/authorize`. Check that it
+   names the client *and* the redirect origin — the origin is the
+   load-bearing fact, since a client name is attacker-chosen.
+3. **Link GitHub.** Settings → *Claude & ChatGPT connectors* → Connect
+   GitHub. If that row says "not configured", the values did not reach the
+   running container: confirm the deploy that picked them up has actually
+   landed.
+4. **Ask the assistant to set up work on an app** (`prepare_work`). Success
+   returns a fork, a branch and a paste-ready brief. The refusals worth
+   recognising: `github_not_linked` (this user hasn't pressed Connect —
+   step 3), `github_link_unavailable` (the deployment has no OAuth app —
+   configuration), `fork_name_conflict` (the user already has a repo of
+   that name that is not a fork of the app; the platform refuses to guess
+   rather than touching it), `fork_pending` (GitHub forks asynchronously —
+   retry in a few seconds).
+5. **Run the coding agent.** Point Claude Code on the web at the fork,
+   paste the brief, let it push the branch. It should *not* open a pull
+   request — the platform does that.
+6. **Ask the assistant to submit it** (`submit_work`, which requires an
+   explicit `confirm: true` so a stray tool call can't start a vote).
+   Usernode opens the cross-fork PR with bot credentials and runs it
+   through `POST /api/apps/:slug/pr-import`, producing an ordinary
+   `source='imported'` proposal with a SHA-pinned staging preview, proposal
+   checks and a group vote — carrying a "Built with Claude Code" chip.
+   `fork_mismatch` here means the PR is not headed by the caller's own
+   verified fork; the connector is deliberately stricter than the browser's
+   import button, which lets any collaborator import any open PR.
+
+### Caps worth knowing before you debug one
+
+Per user: 5 connector-opened proposals per rolling 24h, 3 `prepare_work`
+reservations per hour, 10 open work orders at once, and the fallback runs
+are capped at 2 in flight / 10 per day (`src/services/connector-limits.js`).
+Rate limits at the `/mcp` edge are 60/min per token and 300/min per IP.
+Every limiter **fails closed** — if it cannot read its own state it
+refuses rather than waving the write through, so a limiter refusal during
+a database incident is expected behaviour, not a stuck cap.
+
+`submit_work` additionally re-checks the promoted-session cap that
+`POST /api/apps/:slug/pr-import` never enforced, with the same bound and
+wording as the promote route. That asymmetry is deliberate: importing used
+to be a one-at-a-time human action, and the browser button's behaviour is
+out of scope here.
+
 ## Cross-references
 
 - [EXTRACT-PLAN.md](./EXTRACT-PLAN.md) — the standalone-deploy

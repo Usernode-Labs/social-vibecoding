@@ -1,0 +1,937 @@
+'use strict';
+
+// Hosted MCP connector — transport, OAuth 2.1 server, and the browser-facing
+// management surfaces.
+//
+// Three routers, mounted at different points in server.js because they have
+// three different authentication contracts:
+//
+//   mcpConnectGate(config)      — hard staging / enablement 404, before any
+//                                 body parser or credential lookup.
+//   mcpPreAuthRoutes(config)    — public metadata, dynamic client
+//                                 registration, the token + revocation
+//                                 endpoints, the consent page SHELL, and
+//                                 POST /mcp itself (bearer, never cookie).
+//                                 Mounts BEFORE the cookie middleware.
+//   mcpBrowserRoutes(config)    — the parts that need a platform session:
+//                                 the consent decision, the connected-apps
+//                                 list, disconnect, and the GitHub link
+//                                 round-trip. Mounts AFTER authMiddleware.
+//
+// The split matters: /mcp must never fall back to an ambient cookie (that
+// would let a logged-in browser tab drive the connector), and the consent
+// POST must never accept a bearer (that would let a token approve itself).
+
+const path = require('path');
+const express = require('express');
+const { getPool } = require('../db/pool');
+const log = require('../services/logger');
+const { clientIp } = require('../services/client-ip');
+const {
+  READ_SCOPE,
+  WRITE_SCOPE,
+  SUPPORTED_SCOPES,
+  TOKEN_PREFIX,
+  REFRESH_PREFIX,
+  MCP_PATH,
+  CONSENT_PATH,
+  TOKEN_RATE_PER_MINUTE,
+  IP_RATE_PER_MINUTE,
+  REGISTER_RATE_PER_MINUTE,
+  SERVER_NAME,
+  SERVER_VERSION,
+} = require('../services/mcp-connect-constants');
+const mcpOauth = require('../services/mcp-oauth');
+const mcpTools = require('../services/mcp-tools');
+const githubLink = require('../services/github-link');
+const { consumeSharedTokenBucket } = require('../services/cli-auth');
+
+const CONSENT_CSP = [
+  "default-src 'none'",
+  "script-src 'self'",
+  "style-src 'self'",
+  "img-src 'self'",
+  "connect-src 'self'",
+  "base-uri 'none'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
+
+// Every path this feature owns. The gate below 404s all of them wholesale
+// on staging, before anything reads a body or a credential. The predicate
+// itself lives in services/mcp-oauth.js so it carries no Express dependency
+// and is unit-testable on its own.
+function isConnectorSurface(req) {
+  return mcpOauth.isConnectorSurfacePath(req.path);
+}
+
+// A staging preview derives its browser identity from an iframe token; if
+// the connector existed there, a staging session could mint a credential
+// good against production-shaped state. So the whole surface is production
+// (or explicit local-dev) only, gated on validated deployment configuration
+// rather than on the request's Host header.
+function mcpConnectGate(config) {
+  return (req, res, next) => {
+    if (!isConnectorSurface(req)) return next();
+    const staging = process.env.USERNODE_ENV === 'staging';
+    // The two read-only Settings status reads survive on staging so the
+    // section is reviewable there from its ?demo=1 fixture; they never
+    // touch real credential state (see the staging branches in their
+    // handlers). Everything else — minting, presenting, revoking — is
+    // dead. `!cliAuthEnabled` still 404s the whole surface.
+    if (staging && mcpOauth.isStagingReadableConnectorPath(req.method, req.path)) {
+      return next();
+    }
+    if (staging || !config.cliAuthEnabled) {
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(404).json({ error: 'not_found' });
+    }
+    return next();
+  };
+}
+
+// Where the tool handlers' loopback calls go.
+//
+// In a real deployment that is the platform's own in-cluster address
+// (PLATFORM_INTERNAL_URL, the same one services/worker.js uses to reach the
+// internal API). In local development there is no `usernode` service name to
+// resolve, so fall back to the deployment's configured canonical origin —
+// which local mode has already validated as loopback. Production keeps the
+// in-cluster address and never takes this branch.
+function platformBaseUrl(config) {
+  if (process.env.PLATFORM_INTERNAL_URL) return process.env.PLATFORM_INTERNAL_URL;
+  if (config.cliAuthLocalMode && config.cliAuthOrigin) return config.cliAuthOrigin;
+  return undefined; // services/mcp-tools.js applies the in-cluster default
+}
+
+function noStore(_req, res, next) {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  next();
+}
+
+async function enforceBucket(pool, res, options) {
+  try {
+    const state = await consumeSharedTokenBucket(pool, options);
+    if (!state.allowed) {
+      res.setHeader('Retry-After', String(state.retryAfter));
+      res.status(429).json({ error: 'rate_limited' });
+      return false;
+    }
+    return true;
+  } catch {
+    // The limiter is a control, not an optimisation: if it cannot run, the
+    // request does not run either.
+    res.status(503).json({ error: 'temporarily_unavailable' });
+    return false;
+  }
+}
+
+function jsonBody(limit) {
+  return (req, res, next) => {
+    express.json({ limit, strict: true })(req, res, (err) => {
+      if (err) return res.status(400).json({ error: 'invalid_request' });
+      return next();
+    });
+  };
+}
+
+// Same-origin check for the browser-session endpoints, mirroring
+// routes/cli-auth.js's browserCsrf. The comparison is against the
+// deployment's CONFIGURED canonical origin, never a request header.
+function browserCsrf(config, req, res) {
+  if (req.headers.origin !== config.cliAuthOrigin) {
+    res.status(403).json({ error: 'forbidden' });
+    return false;
+  }
+  const fetchSite = req.headers['sec-fetch-site'];
+  if (fetchSite != null && fetchSite !== 'same-origin') {
+    res.status(403).json({ error: 'forbidden' });
+    return false;
+  }
+  return true;
+}
+
+// Exactly one syntactically valid Bearer credential (implementation in
+// services/mcp-oauth.js, so it is testable without Express).
+function readConnectorBearer(req) {
+  return mcpOauth.readBearerFromRawHeaders(req.rawHeaders);
+}
+
+function resourceMetadataUrl(config) {
+  return `${config.cliAuthOrigin}/.well-known/oauth-protected-resource${MCP_PATH}`;
+}
+
+// The 401 that makes Claude.ai / ChatGPT start the OAuth dance: without the
+// resource_metadata pointer they have nowhere to discover the authorization
+// server from.
+function bearerChallenge(config, res, error) {
+  res.setHeader(
+    'WWW-Authenticate',
+    `Bearer error="${error}", resource_metadata="${resourceMetadataUrl(config)}"`
+  );
+  res.status(401).json({ error });
+}
+
+// Resolve a connector access token to a live user. Structurally the twin of
+// activeTokenMiddleware in routes/cli-auth.js: reject revoked/expired, load
+// the user from `users` (never trust anything carried on the token itself),
+// write the audit row BEFORE dispatching, and update last_used_at
+// monotonically as non-authoritative metadata.
+async function authenticateConnector(pool, token) {
+  const { rows } = await pool.query(
+    `SELECT t.id, t.user_id, t.client_id, t.grant_id, t.scopes,
+            t.expires_at, t.revoked_at, c.client_name,
+            clock_timestamp() AS now
+       FROM mcp_tokens t
+       LEFT JOIN mcp_clients c ON c.client_id = t.client_id
+      WHERE t.token_hash = $1 AND t.kind = 'access'`,
+    [mcpOauth.hashSecret(token)]
+  );
+  if (!rows.length) return { error: 'invalid_token' };
+  const row = rows[0];
+  if (row.revoked_at) return { error: 'revoked_token' };
+  if (new Date(row.now) >= new Date(row.expires_at)) return { error: 'expired_token' };
+
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username, is_admin, admin_readonly, app_quota, locale
+       FROM users WHERE id = $1`,
+    [row.user_id]
+  );
+  if (!userRows.length) return { error: 'invalid_token' };
+  const user = userRows[0];
+
+  return {
+    tokenId: row.id,
+    grantId: row.grant_id,
+    clientId: row.client_id,
+    clientName: row.client_name || 'Unknown client',
+    scopes: row.scopes,
+    now: new Date(row.now),
+    user: {
+      id: user.id,
+      username: user.username,
+      isAdmin: !!user.is_admin,
+      adminReadonly: !!user.admin_readonly,
+      canAdminWrite: !!user.is_admin && !user.admin_readonly,
+      appQuota: user.app_quota ?? 0,
+      locale: user.locale || null,
+    },
+  };
+}
+
+// ── Router 1: gate + public/bearer surfaces ────────────────────────────
+
+function mcpPreAuthRoutes(config) {
+  const router = express.Router({ strict: true, caseSensitive: true });
+  const pool = getPool(config);
+
+  router.use([
+    MCP_PATH,
+    CONSENT_PATH,
+    '/api/connect',
+    '/api/connect/*',
+    '/api/me/connectors',
+    '/api/me/connectors/*',
+    '/api/me/github',
+    '/api/me/github/*',
+    '/.well-known/oauth-authorization-server',
+    '/.well-known/oauth-protected-resource',
+    '/.well-known/oauth-protected-resource/*',
+  ], noStore);
+
+  // ── RFC 9728: protected-resource metadata ────────────────────────────
+  // Served at both the bare path and the resource-suffixed path, because
+  // clients differ on which they probe.
+  const protectedResourceMetadata = (_req, res) => {
+    res.json({
+      resource: `${config.cliAuthOrigin}${MCP_PATH}`,
+      authorization_servers: [config.cliAuthOrigin],
+      scopes_supported: SUPPORTED_SCOPES,
+      bearer_methods_supported: ['header'],
+      resource_name: 'Usernode',
+      resource_documentation: `${config.cliAuthOrigin}/`,
+    });
+  };
+  router.get('/.well-known/oauth-protected-resource', protectedResourceMetadata);
+  router.get(`/.well-known/oauth-protected-resource${MCP_PATH}`, protectedResourceMetadata);
+
+  // ── RFC 8414: authorization-server metadata ──────────────────────────
+  // S256 only and no implicit/password grants: this advertises exactly what
+  // the token endpoint will actually accept.
+  router.get('/.well-known/oauth-authorization-server', (_req, res) => {
+    res.json({
+      issuer: config.cliAuthOrigin,
+      authorization_endpoint: `${config.cliAuthOrigin}${CONSENT_PATH}`,
+      token_endpoint: `${config.cliAuthOrigin}/api/connect/oauth/token`,
+      registration_endpoint: `${config.cliAuthOrigin}/api/connect/oauth/register`,
+      revocation_endpoint: `${config.cliAuthOrigin}/api/connect/oauth/revoke`,
+      scopes_supported: SUPPORTED_SCOPES,
+      response_types_supported: ['code'],
+      grant_types_supported: ['authorization_code', 'refresh_token'],
+      code_challenge_methods_supported: ['S256'],
+      token_endpoint_auth_methods_supported: ['none'],
+      service_documentation: `${config.cliAuthOrigin}/`,
+    });
+  });
+
+  // ── RFC 7591: dynamic client registration ────────────────────────────
+  //
+  // Open to any caller but ALLOWLISTED by redirect host, and rate-limited
+  // per IP. The platform is not trying to be a general-purpose OAuth
+  // provider; the consent screen's only real defence against a lookalike
+  // client is showing a redirect origin the user recognises, which only
+  // works if unrecognisable ones are refused outright.
+  router.post('/api/connect/oauth/register', jsonBody('4kb'), async (req, res) => {
+    const ok = await enforceBucket(pool, res, {
+      namespace: 'mcp-register-ip',
+      subject: clientIp(req),
+      ratePerMinute: REGISTER_RATE_PER_MINUTE,
+      capacity: REGISTER_RATE_PER_MINUTE,
+    });
+    if (!ok) return undefined;
+
+    const body = req.body || {};
+    const redirectUris = Array.isArray(body.redirect_uris) ? body.redirect_uris : null;
+    if (!redirectUris || !redirectUris.length || redirectUris.length > 10) {
+      return res.status(400).json({
+        error: 'invalid_redirect_uri',
+        error_description: 'redirect_uris must be a non-empty array of at most 10 URIs.',
+      });
+    }
+    for (const uri of redirectUris) {
+      if (!mcpOauth.isAllowedRedirectUri(uri, config)) {
+        return res.status(400).json({
+          error: 'invalid_redirect_uri',
+          error_description: 'Redirect URI host is not permitted by this deployment.',
+        });
+      }
+    }
+    const rawName = typeof body.client_name === 'string' ? body.client_name.trim() : '';
+    const clientName = (rawName || 'MCP client').slice(0, 128);
+
+    try {
+      const client = await mcpOauth.registerClient(pool, { clientName, redirectUris });
+      return res.status(201).json({
+        client_id: client.client_id,
+        client_name: client.client_name,
+        redirect_uris: client.redirect_uris,
+        // Public client: no secret is issued, and PKCE is what binds the
+        // code to the requester.
+        token_endpoint_auth_method: 'none',
+        grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'],
+        client_id_issued_at: Math.floor(new Date(client.created_at).getTime() / 1000),
+      });
+    } catch (err) {
+      log.error('mcp-remote', 'client registration failed', { message: err.message });
+      return res.status(503).json({ error: 'temporarily_unavailable' });
+    }
+  });
+
+  // ── Consent page shell ───────────────────────────────────────────────
+  //
+  // Publicly reachable so the chat product can redirect to it, but it
+  // serves ONLY the shell: request details need a platform session and come
+  // from the session-authenticated route in the browser router below.
+  router.get(CONSENT_PATH, (_req, res) => {
+    res.setHeader('Content-Security-Policy', CONSENT_CSP);
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.sendFile(path.join(__dirname, '../../public/connect-authorize.html'));
+  });
+
+  // ── Token endpoint ───────────────────────────────────────────────────
+  //
+  // Accepts form encoding (what OAuth clients send) as well as JSON.
+  router.post(
+    '/api/connect/oauth/token',
+    express.urlencoded({ extended: false, limit: '4kb' }),
+    jsonBody('4kb'),
+    async (req, res) => {
+      const ok = await enforceBucket(pool, res, {
+        namespace: 'mcp-token-ip',
+        subject: clientIp(req),
+        ratePerMinute: IP_RATE_PER_MINUTE,
+        capacity: IP_RATE_PER_MINUTE,
+      });
+      if (!ok) return undefined;
+
+      const body = req.body || {};
+      const grantType = body.grant_type;
+      const clientId = body.client_id;
+
+      const client = await mcpOauth.loadClient(pool, clientId).catch(() => null);
+      if (!client) return res.status(400).json({ error: 'invalid_client' });
+
+      if (grantType === 'authorization_code') {
+        const code = body.code;
+        const redirectUri = body.redirect_uri;
+        const verifier = body.code_verifier;
+        if (typeof code !== 'string' || typeof redirectUri !== 'string') {
+          return res.status(400).json({ error: 'invalid_request' });
+        }
+        try {
+          const outcome = await mcpOauth.withTransaction(pool, async (dbClient) => {
+            const consumed = await mcpOauth.consumeAuthorizationCode(dbClient, {
+              code, clientId, redirectUri,
+            });
+            if (consumed.error) {
+              // A replayed code means the code leaked: kill everything
+              // minted from that consent rather than only refusing here.
+              if (consumed.replay && consumed.row) {
+                await mcpOauth.revokeGrant(dbClient, consumed.row.grant_id);
+              }
+              return { error: consumed.error };
+            }
+            const row = consumed.row;
+            if (!mcpOauth.verifyPkce(verifier, row.code_challenge)) {
+              return { error: 'invalid_grant' };
+            }
+            const issued = await mcpOauth.issueTokenPair(dbClient, {
+              userId: row.user_id,
+              clientId,
+              grantId: row.grant_id,
+              scopes: row.scopes,
+            });
+            await mcpOauth.insertAudit(dbClient, {
+              eventType: 'token_issued',
+              occurredAt: new Date(),
+              userId: row.user_id,
+              actorUserId: row.user_id,
+              accessTokenId: issued.accessTokenId,
+              clientId,
+              scopes: row.scopes,
+              metadata: { grant: 'authorization_code' },
+            });
+            return { issued, scopes: row.scopes };
+          });
+          if (outcome.error) return res.status(400).json({ error: outcome.error });
+          return res.json({
+            access_token: outcome.issued.accessToken,
+            token_type: 'Bearer',
+            expires_in: outcome.issued.expiresIn,
+            refresh_token: outcome.issued.refreshToken,
+            scope: outcome.scopes.join(' '),
+          });
+        } catch (err) {
+          log.error('mcp-remote', 'code exchange failed', { message: err.message });
+          return res.status(503).json({ error: 'temporarily_unavailable' });
+        }
+      }
+
+      if (grantType === 'refresh_token') {
+        const refreshToken = body.refresh_token;
+        if (!mcpOauth.isCanonicalSecret(refreshToken, REFRESH_PREFIX)) {
+          return res.status(400).json({ error: 'invalid_grant' });
+        }
+        try {
+          const outcome = await mcpOauth.rotateRefreshToken(pool, { refreshToken, clientId });
+          if (outcome.error) return res.status(400).json({ error: outcome.error });
+          return res.json({
+            access_token: outcome.issued.accessToken,
+            token_type: 'Bearer',
+            expires_in: outcome.issued.expiresIn,
+            refresh_token: outcome.issued.refreshToken,
+            scope: outcome.scopes.join(' '),
+          });
+        } catch (err) {
+          log.error('mcp-remote', 'refresh failed', { message: err.message });
+          return res.status(503).json({ error: 'temporarily_unavailable' });
+        }
+      }
+
+      return res.status(400).json({ error: 'unsupported_grant_type' });
+    }
+  );
+
+  // ── RFC 7009: revocation ─────────────────────────────────────────────
+  // Revokes the whole grant chain: a client asking to forget one credential
+  // means the connection is over, and leaving the sibling alive would be a
+  // surprise.
+  router.post(
+    '/api/connect/oauth/revoke',
+    express.urlencoded({ extended: false, limit: '4kb' }),
+    jsonBody('4kb'),
+    async (req, res) => {
+      const ok = await enforceBucket(pool, res, {
+        namespace: 'mcp-token-ip',
+        subject: clientIp(req),
+        ratePerMinute: IP_RATE_PER_MINUTE,
+        capacity: IP_RATE_PER_MINUTE,
+      });
+      if (!ok) return undefined;
+      const token = (req.body && req.body.token) || '';
+      const isAccess = mcpOauth.isCanonicalSecret(token, TOKEN_PREFIX);
+      const isRefresh = mcpOauth.isCanonicalSecret(token, REFRESH_PREFIX);
+      // RFC 7009: an unknown or malformed token is still a 200 — the client
+      // asked for it to be gone and it is gone.
+      if (!isAccess && !isRefresh) return res.status(200).end();
+      try {
+        await mcpOauth.withTransaction(pool, async (dbClient) => {
+          const { rows } = await dbClient.query(
+            'SELECT grant_id, user_id, client_id, scopes FROM mcp_tokens WHERE token_hash = $1',
+            [mcpOauth.hashSecret(token)]
+          );
+          if (!rows.length) return;
+          await mcpOauth.revokeGrant(dbClient, rows[0].grant_id);
+          await mcpOauth.insertAudit(dbClient, {
+            eventType: 'token_revoked',
+            occurredAt: new Date(),
+            userId: rows[0].user_id,
+            actorUserId: rows[0].user_id,
+            clientId: rows[0].client_id,
+            scopes: rows[0].scopes,
+            metadata: { reason: 'client_revocation' },
+          });
+        });
+      } catch (err) {
+        log.error('mcp-remote', 'revocation failed', { message: err.message });
+      }
+      return res.status(200).end();
+    }
+  );
+
+  // ── The MCP endpoint ─────────────────────────────────────────────────
+  //
+  // Stateless Streamable HTTP: a fresh McpServer + transport per request,
+  // closed with the response. One platform process, restart-safe, and no
+  // server-initiated notifications are needed because every long operation
+  // in this design is poll-based.
+  router.post(MCP_PATH, jsonBody('512kb'), async (req, res) => {
+    const ipOk = await enforceBucket(pool, res, {
+      namespace: 'mcp-ip',
+      subject: clientIp(req),
+      ratePerMinute: IP_RATE_PER_MINUTE,
+      capacity: IP_RATE_PER_MINUTE,
+    });
+    if (!ipOk) return undefined;
+
+    const bearer = readConnectorBearer(req);
+    if (bearer.error) return bearerChallenge(config, res, bearer.error);
+
+    let auth;
+    try {
+      auth = await authenticateConnector(pool, bearer.token);
+    } catch (err) {
+      log.error('mcp-remote', 'token lookup failed', { message: err.message });
+      return res.status(503).json({ error: 'temporarily_unavailable' });
+    }
+    if (auth.error) return bearerChallenge(config, res, auth.error);
+
+    const tokenOk = await enforceBucket(pool, res, {
+      namespace: 'mcp-token',
+      subject: String(auth.tokenId),
+      ratePerMinute: TOKEN_RATE_PER_MINUTE,
+      capacity: TOKEN_RATE_PER_MINUTE,
+    });
+    if (!tokenOk) return undefined;
+
+    // The authorization decision is durably recorded BEFORE anything is
+    // dispatched. An audit we cannot write is an authorization we do not
+    // grant.
+    try {
+      await mcpOauth.withTransaction(pool, async (dbClient) => {
+        await mcpOauth.insertAudit(dbClient, {
+          eventType: 'token_used',
+          occurredAt: auth.now,
+          userId: auth.user.id,
+          actorUserId: auth.user.id,
+          accessTokenId: auth.tokenId,
+          clientId: auth.clientId,
+          scopes: auth.scopes,
+          outcome: 'scope_authorized',
+          metadata: { method: 'POST', route: MCP_PATH },
+        });
+      });
+    } catch (err) {
+      log.error('mcp-remote', 'audit insert failed', { message: err.message });
+      return res.status(503).json({ error: 'temporarily_unavailable' });
+    }
+
+    pool.query(
+      `UPDATE mcp_tokens
+          SET last_used_at = GREATEST(COALESCE(last_used_at, created_at), clock_timestamp())
+        WHERE id = $1`,
+      [auth.tokenId]
+    ).catch((err) => {
+      log.warn('mcp-remote', 'last_used_at update failed', { message: err.message });
+    });
+
+    let transport;
+    try {
+      const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
+      const {
+        StreamableHTTPServerTransport,
+      } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
+
+      const server = new McpServer(
+        { name: SERVER_NAME, version: SERVER_VERSION },
+        { instructions: mcpTools.SERVER_INSTRUCTIONS }
+      );
+      mcpTools.registerTools(server, {
+        accessToken: bearer.token,
+        scopes: auth.scopes,
+        user: auth.user,
+        clientName: auth.clientName,
+        clientId: auth.clientId,
+        origin: config.cliAuthOrigin,
+        baseUrl: platformBaseUrl(config),
+        pool,
+        config,
+      });
+
+      transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+      res.on('close', () => {
+        transport.close().catch(() => {});
+        server.close().catch(() => {});
+      });
+      await server.connect(transport);
+      await transport.handleRequest(req, res, req.body);
+    } catch (err) {
+      log.error('mcp-remote', 'MCP dispatch failed', { message: err.message });
+      if (!res.headersSent) {
+        res.status(500).json({
+          jsonrpc: '2.0',
+          error: { code: -32603, message: 'Internal server error' },
+          id: null,
+        });
+      }
+    }
+    return undefined;
+  });
+
+  // Stateless mode has no server-to-client stream and no session to delete.
+  router.all(MCP_PATH, (_req, res) => {
+    res.status(405).json({
+      jsonrpc: '2.0',
+      error: { code: -32000, message: 'Method not allowed. This MCP endpoint is POST-only.' },
+      id: null,
+    });
+  });
+
+  return router;
+}
+
+// ── Router 2: browser-session surfaces ─────────────────────────────────
+
+function mcpBrowserRoutes(config) {
+  const router = express.Router({ strict: true, caseSensitive: true });
+  const pool = getPool(config);
+
+  router.use([
+    '/api/connect/authorization',
+    '/api/connect/oauth/authorize',
+    '/api/me/connectors',
+    '/api/me/connectors/*',
+    '/api/me/github',
+    '/api/me/github/*',
+  ], noStore);
+
+  const userRate = async (req, res, next) => {
+    const ok = await enforceBucket(pool, res, {
+      namespace: 'mcp-user',
+      subject: String((req.user && req.user.id) || clientIp(req)),
+      ratePerMinute: 60,
+      capacity: 60,
+    });
+    if (ok) next();
+  };
+
+  // ── Consent: request details ─────────────────────────────────────────
+  //
+  // The consent page asks for this after the user is signed in. It echoes
+  // back only what the page must display: the registered client name, the
+  // REDIRECT ORIGIN (the load-bearing fact — a name is attacker-chosen, an
+  // origin is not) and the scopes in plain language.
+  router.get('/api/connect/authorization', userRate, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'not_authenticated' });
+    const clientId = req.query.client_id;
+    const redirectUri = req.query.redirect_uri;
+    const client = await mcpOauth.loadClient(pool, clientId).catch(() => null);
+    if (!client) return res.status(404).json({ error: 'invalid_or_unknown_client' });
+    if (typeof redirectUri !== 'string' || !client.redirect_uris.includes(redirectUri)) {
+      return res.status(404).json({ error: 'invalid_or_unknown_client' });
+    }
+    const scopes = mcpOauth.normalizeScopes(req.query.scope);
+    if (!scopes) return res.status(400).json({ error: 'invalid_scope' });
+    let origin = '';
+    try { origin = new URL(redirectUri).origin; } catch { origin = ''; }
+    return res.json({
+      client_name: client.client_name,
+      redirect_origin: origin,
+      username: req.user.username,
+      scopes: scopes.map((scope) => ({
+        id: scope,
+        label: scope === READ_SCOPE ? 'See your apps' : 'Propose changes',
+        detail: scope === READ_SCOPE
+          ? 'The apps you can already build on, their open requests, and your proposals.'
+          : 'File requests, prepare work for a coding agent, and turn finished work into a proposal for the group vote.',
+      })),
+    });
+  });
+
+  // ── Consent: the decision ────────────────────────────────────────────
+  //
+  // Session-authenticated and CSRF-checked; the authorization is bound to
+  // req.user.id, never to anything the request carries.
+  router.post('/api/connect/oauth/authorize', userRate, jsonBody('4kb'), async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'not_authenticated' });
+    if (!browserCsrf(config, req, res)) return undefined;
+
+    const body = req.body || {};
+    const client = await mcpOauth.loadClient(pool, body.client_id).catch(() => null);
+    if (!client) return res.status(404).json({ error: 'invalid_or_unknown_client' });
+    const redirectUri = body.redirect_uri;
+    if (typeof redirectUri !== 'string' || !client.redirect_uris.includes(redirectUri)) {
+      return res.status(404).json({ error: 'invalid_or_unknown_client' });
+    }
+    const scopes = mcpOauth.normalizeScopes(body.scope);
+    if (!scopes) return res.status(400).json({ error: 'invalid_scope' });
+    const challenge = body.code_challenge;
+    if (body.code_challenge_method !== 'S256'
+        || typeof challenge !== 'string'
+        || !mcpOauth.CODE_CHALLENGE_RE.test(challenge)) {
+      return res.status(400).json({ error: 'invalid_request' });
+    }
+    const state = typeof body.state === 'string' ? body.state.slice(0, 512) : '';
+
+    if (body.decision !== 'approve') {
+      const url = new URL(redirectUri);
+      url.searchParams.set('error', 'access_denied');
+      if (state) url.searchParams.set('state', state);
+      return res.json({ redirect_to: url.toString() });
+    }
+
+    try {
+      const { code } = await mcpOauth.issueAuthorizationCode(pool, {
+        clientId: client.client_id,
+        userId: req.user.id,
+        scopes,
+        redirectUri,
+        codeChallenge: challenge,
+      });
+      await mcpOauth.withTransaction(pool, async (dbClient) => {
+        await mcpOauth.insertAudit(dbClient, {
+          eventType: 'authorization_approved',
+          occurredAt: new Date(),
+          userId: req.user.id,
+          actorUserId: req.user.id,
+          clientId: client.client_id,
+          scopes,
+          metadata: { client_name: client.client_name },
+        });
+      });
+      const url = new URL(redirectUri);
+      url.searchParams.set('code', code);
+      if (state) url.searchParams.set('state', state);
+      log.info('mcp-remote', 'Connector authorized', {
+        userId: req.user.id, clientId: client.client_id,
+      });
+      return res.json({ redirect_to: url.toString() });
+    } catch (err) {
+      log.error('mcp-remote', 'authorization failed', { message: err.message });
+      return res.status(503).json({ error: 'temporarily_unavailable' });
+    }
+  });
+
+  // ── Settings: connected chat products ────────────────────────────────
+  router.get('/api/me/connectors', userRate, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'not_authenticated' });
+
+    // Staging mock data: mcp_tokens is staging:private (schema.sql), so a
+    // staging clone always has an empty list and the Settings section would
+    // review as a blank panel. ?demo=1 fabricates two rows without touching
+    // the DB — same pattern as GET /api/me/cli-tokens, and a strict no-op
+    // in production.
+    if (process.env.USERNODE_ENV === 'staging') {
+      return res.json(
+        req.query.demo === '1'
+          ? { connectors: demoConnectors(), demo: true }
+          // No credential can exist on staging (the surface that mints one
+          // is 404 there), so the honest answer without the flag is "none".
+          : { connectors: [] }
+      );
+    }
+
+    try {
+      // One row per GRANT (a consent), not per token: rotation mints a new
+      // pair on every refresh, and a user does not think in tokens.
+      const { rows } = await pool.query(
+        `SELECT t.grant_id,
+                MIN(t.created_at)  AS connected_at,
+                MAX(t.last_used_at) AS last_used_at,
+                MAX(c.client_name)  AS client_name,
+                BOOL_OR(t.revoked_at IS NULL
+                        AND t.expires_at > clock_timestamp()) AS active
+           FROM mcp_tokens t
+           LEFT JOIN mcp_clients c ON c.client_id = t.client_id
+          WHERE t.user_id = $1
+          GROUP BY t.grant_id
+          ORDER BY MIN(t.created_at) DESC
+          LIMIT 50`,
+        [req.user.id]
+      );
+      return res.json({
+        connectors: rows
+          .filter((row) => row.active)
+          .map((row) => ({
+            id: row.grant_id,
+            client_name: row.client_name || 'Unknown client',
+            connected_at: new Date(row.connected_at).toISOString(),
+            last_used_at: row.last_used_at ? new Date(row.last_used_at).toISOString() : null,
+            status: 'connected',
+          })),
+      });
+    } catch (err) {
+      log.error('mcp-remote', 'connector list failed', { message: err.message });
+      return res.status(503).json({ error: 'temporarily_unavailable' });
+    }
+  });
+
+  // Disconnect: revokes every token minted from that one consent, in one
+  // transaction, and audits it. Takes effect immediately.
+  router.delete('/api/me/connectors/:id', userRate, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'not_authenticated' });
+    if (!browserCsrf(config, req, res)) return undefined;
+    const grantId = req.params.id;
+    if (!mcpOauth.GRANT_ID_RE.test(grantId || '')) {
+      return res.status(400).json({ error: 'invalid_request' });
+    }
+    try {
+      const found = await mcpOauth.withTransaction(pool, async (dbClient) => {
+        const { rows } = await dbClient.query(
+          `SELECT grant_id, client_id, scopes FROM mcp_tokens
+            WHERE grant_id = $1 AND user_id = $2 LIMIT 1`,
+          [grantId, req.user.id]
+        );
+        if (!rows.length) return false;
+        await mcpOauth.revokeGrant(dbClient, grantId);
+        await mcpOauth.insertAudit(dbClient, {
+          eventType: 'token_revoked',
+          occurredAt: new Date(),
+          userId: req.user.id,
+          actorUserId: req.user.id,
+          clientId: rows[0].client_id,
+          scopes: rows[0].scopes,
+          metadata: { reason: 'settings' },
+        });
+        return true;
+      });
+      return found ? res.status(204).end() : res.status(404).json({ error: 'not_found' });
+    } catch (err) {
+      log.error('mcp-remote', 'disconnect failed', { message: err.message });
+      return res.status(503).json({ error: 'temporarily_unavailable' });
+    }
+  });
+
+  // ── GitHub account link ──────────────────────────────────────────────
+
+  function githubRedirectUri() {
+    return `${config.cliAuthOrigin}/api/me/github/callback`;
+  }
+
+  router.get('/api/me/github', userRate, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'not_authenticated' });
+    // Same staging fixture reasoning as the connector list: the token
+    // column is staging:private, so the connected layout would never be
+    // reviewable there. Never reads the real column on staging.
+    if (process.env.USERNODE_ENV === 'staging') {
+      return res.json(
+        req.query.demo === '1'
+          ? { ...githubLink.demoLinkStatus(), available: true }
+          : { linked: false, login: null, linkedAt: null, available: true }
+      );
+    }
+    const status = await githubLink.linkStatus(pool, req.user.id);
+    return res.json({ ...status, available: githubLink.isEnabled(config) });
+  });
+
+  router.get('/api/me/github/connect', userRate, (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'not_authenticated' });
+    if (!githubLink.isEnabled(config)) return res.status(404).json({ error: 'not_found' });
+    const url = githubLink.authorizeUrl(config, {
+      userId: req.user.id,
+      redirectUri: githubRedirectUri(),
+    });
+    if (!url) return res.status(404).json({ error: 'not_found' });
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    return res.redirect(302, url);
+  });
+
+  router.get('/api/me/github/callback', userRate, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'not_authenticated' });
+    if (!githubLink.isEnabled(config)) return res.status(404).json({ error: 'not_found' });
+    const backTo = `${config.cliAuthOrigin}/#settings/connectors`;
+    // The state binds this callback to the session that STARTED the flow;
+    // failure lands back in Settings with a flag rather than reflecting
+    // GitHub's error text into the page.
+    const state = githubLink.verifyState(config, req.query.state, req.user.id);
+    if (!state || typeof req.query.code !== 'string') {
+      return res.redirect(302, `${backTo}?github=error`);
+    }
+    try {
+      const linked = await githubLink.exchangeCode(config, {
+        code: req.query.code,
+        redirectUri: githubRedirectUri(),
+      });
+      if (!linked) return res.redirect(302, `${backTo}?github=error`);
+      await githubLink.saveLink(pool, config, req.user.id, linked);
+      log.info('mcp-remote', 'GitHub account linked', { userId: req.user.id });
+      return res.redirect(302, `${backTo}?github=linked`);
+    } catch (err) {
+      log.error('mcp-remote', 'GitHub link failed', { message: err.message });
+      return res.redirect(302, `${backTo}?github=error`);
+    }
+  });
+
+  router.delete('/api/me/github', userRate, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'not_authenticated' });
+    if (!browserCsrf(config, req, res)) return undefined;
+    try {
+      await githubLink.clearLink(pool, req.user.id);
+      return res.status(204).end();
+    } catch (err) {
+      log.error('mcp-remote', 'GitHub unlink failed', { message: err.message });
+      return res.status(503).json({ error: 'temporarily_unavailable' });
+    }
+  });
+
+  return router;
+}
+
+// Staging mock data for the Settings → connectors list. Obviously fake,
+// written nowhere, and only ever returned in staging with ?demo=1.
+function demoConnectors() {
+  const day = 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const iso = (ms) => new Date(ms).toISOString();
+  return [
+    {
+      id: 'staging-demo-connector-1',
+      client_name: 'Claude — claude.ai',
+      connected_at: iso(now - 6 * day),
+      last_used_at: iso(now - 20 * 60 * 1000),
+      status: 'connected',
+      demo: true,
+    },
+    {
+      id: 'staging-demo-connector-2',
+      client_name: 'ChatGPT — chatgpt.com',
+      connected_at: iso(now - 2 * day),
+      last_used_at: null,
+      status: 'connected',
+      demo: true,
+    },
+  ];
+}
+
+module.exports = {
+  mcpConnectGate,
+  mcpPreAuthRoutes,
+  mcpBrowserRoutes,
+  isConnectorSurface,
+  readConnectorBearer,
+  authenticateConnector,
+  demoConnectors,
+};
