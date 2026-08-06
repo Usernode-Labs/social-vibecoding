@@ -1083,6 +1083,18 @@
           ? `linked ${new Date(link.linkedAt).toLocaleString()}`
           : 'linked';
         text.append(login, when);
+        // The whole point of the identity-only link: say plainly that no
+        // credential is held, rather than leaving the user to infer it from
+        // the consent screen they saw once. Driven by the server's `access`
+        // field so a future shape can render differently instead of this
+        // line quietly lying.
+        if (link.access === 'identity') {
+          const noToken = document.createElement('div');
+          noToken.id = 'github-link-no-token';
+          noToken.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
+          noToken.textContent = 'Usernode holds no GitHub access token for your account.';
+          text.appendChild(noToken);
+        }
 
         const unlink = document.createElement('button');
         unlink.type = 'button';
@@ -1091,6 +1103,7 @@
         unlink.addEventListener('click', () => this._unlinkGithub(unlink));
         row.append(text, unlink);
         body.appendChild(row);
+        body.appendChild(this._githubAuditNote());
         return;
       }
 
@@ -1101,6 +1114,27 @@
       connect.className = 'inline-block rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors';
       connect.textContent = 'Connect GitHub';
       body.appendChild(connect);
+      body.appendChild(this._githubAuditNote());
+    },
+
+    // "Don't take our word for it": GitHub's own page lists what every
+    // authorized OAuth app can reach, so the claim above is checkable in one
+    // click. Deliberately a top-level link (target=_blank + noopener) — the
+    // shell is framed, and github.com refuses to be framed.
+    _githubAuditNote() {
+      const note = document.createElement('p');
+      note.id = 'github-link-audit-note';
+      note.className = 'text-xs text-zinc-500 dark:text-zinc-500 mt-2';
+      note.appendChild(document.createTextNode('You can check what Usernode is allowed to do at '));
+      const anchor = document.createElement('a');
+      anchor.href = 'https://github.com/settings/applications';
+      anchor.target = '_blank';
+      anchor.rel = 'noopener noreferrer';
+      anchor.className = 'text-violet-600 dark:text-violet-400 hover:underline';
+      anchor.textContent = 'github.com/settings/applications';
+      note.appendChild(anchor);
+      note.appendChild(document.createTextNode('.'));
+      return note;
     },
 
     async _unlinkGithub(button) {
