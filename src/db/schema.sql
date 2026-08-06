@@ -4132,3 +4132,46 @@ CREATE UNIQUE INDEX IF NOT EXISTS external_agent_tasks_open_branch_idx
   WHERE status = 'open';
 CREATE INDEX IF NOT EXISTS external_agent_tasks_user_idx
   ON external_agent_tasks (user_id, created_at DESC);
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- Profile customization (issue #982) — the editable half of the #profile
+-- screen: a short bio and a profile picture.
+-- ═══════════════════════════════════════════════════════════════════════
+
+-- User-authored public bio, shown on the viewer's own #profile screen and
+-- (once the follow-up lands) on their public builder page. Plain text, NOT
+-- markdown — nothing renders it through marked/DOMPurify, so it is always
+-- inserted as a text node. The ≤280-char cap is enforced in
+-- src/routes/profile.js rather than as a DB constraint, matching how every
+-- other user-authored text column on this table is handled. Deliberately
+-- not `staging:private`: it is content the user publishes to other users.
+--
+-- `display_name`, `github` and `x` — the other three fields the profile
+-- editor writes — already exist on this table (topochain Task 2 block
+-- above) and are reused as-is; only the bio is new.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS bio TEXT;
+
+-- Profile pictures, modelled column-for-column on `app_icons` above and
+-- served the same way: GET /avatars/:id is mounted BEFORE authMiddleware
+-- (src/routes/avatars.js) so a plain <img> renders with no auth dance, and
+-- the unguessable 32-hex id is the only access control — an avatar
+-- discloses only itself, and it is published to other users by design.
+--
+-- ONE ROW PER USER (user_id UNIQUE) and the id ROTATES on every upload:
+-- POST /api/me/avatar upserts with `ON CONFLICT (user_id) DO UPDATE SET
+-- id = EXCLUDED.id, …`, so the content-addressed URL changes whenever the
+-- bytes do and the year-long immutable cache header stays safe. That also
+-- means there is never an orphan row to sweep (contrast issue_screenshots,
+-- which needs the 24h GC) — the UNIQUE + ON DELETE CASCADE cover it.
+--
+-- NOT staging:private, for the same reason as app_icons: avatars render on
+-- shared surfaces and should survive into staging clones.
+CREATE TABLE IF NOT EXISTS user_avatars (
+  id           VARCHAR(32) PRIMARY KEY,
+  user_id      INTEGER UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  content_type VARCHAR(32) NOT NULL,
+  size_bytes   INTEGER     NOT NULL,
+  data         BYTEA       NOT NULL,
+  sha256       VARCHAR(64) NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

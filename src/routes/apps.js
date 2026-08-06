@@ -183,6 +183,17 @@ function demoIconApps() {
       featured: true,
       featured_order: 1,
     },
+    // A deliberately LONG name (#951). The tile label is two 11px lines
+    // clamped with an ellipsis, and the only way a reviewer can see that
+    // working — here and in the before/after screenshots — is a name that
+    // actually overflows one line at phone width.
+    {
+      ...base,
+      id: 900012,
+      slug: 'staging-demo-long-name',
+      name: 'Staging demo photo album and journal',
+      icon_emoji: '📔',
+    },
     // Four more featured rows so the Discover widget's curated lane is
     // reviewable AT ITS CAP (#949): the lane holds six tiles — one per
     // Home.FEATURED_LIMIT slot — and the whole point of the six-track grid

@@ -737,7 +737,24 @@ const PANEL_REGISTRY = [
     key: 'challenges',
     title: 'Challenges',
     removable: true,
-    sizes: { 4: [4, 2], 5: [2, 2] },
+    // ASYMMETRIC ON PURPOSE (#968), for exactly the reason Discover's is
+    // below. #947 made the phone block draw at its CONTENT height, but the
+    // footprint stayed two rows — so the height it gave up became a band of
+    // blank grid between the widget and the first row of app icons rather
+    // than space handed back to the page. The between-seasons state was a
+    // ~68px box inside a 238px reservation.
+    //
+    //   4 columns (phone): [4, 1] — full width, so the row it gives back is
+    //     a clean full-width gap rather than a notch mid-grid. The client
+    //     reshapes the CONTENT to fit that one 116px cell (title bar with the
+    //     leaderboard link, up to two rows, no footer) — see
+    //     HomePanels.renderChallengesPanel's compact branch.
+    //   5 columns (desktop): [2, 2] — UNCHANGED, so no stored desktop
+    //     arrangement moves and the tile keeps its four rows, its footer and
+    //     the leaderboard fill that spends the leftover height.
+    //
+    // At four columns all three widgets are one row tall now.
+    sizes: { 4: [4, 1], 5: [2, 2] },
     build: buildChallengesPanel,
     demo: demoChallengesPanel,
   },
@@ -937,6 +954,17 @@ module.exports = {
   parseRewardPoints,
   resolveProgress,
   buildChallengeRow,
+  // The per-user done-ness rule, in both languages, plus the scope
+  // predicate — exported so the #profile screen's completed-challenges
+  // endpoint (src/routes/profile.js, issue #982) asks the SAME question
+  // this widget asks instead of becoming a third, drifting copy. See
+  // resolveProgress's own comment: when a real per-user progress feed
+  // lands, that function is still the single place to replace.
+  DONE_EXPR,
+  MY_COUNT_SQL,
+  MY_BLOCKS_SQL,
+  OPEN_CHALLENGE_WHERE,
+  ALL_CHALLENGE_WHERE,
   // The desktop LEADERBOARD fill (exported for tests; the cache reset keeps a
   // memoised ranking or board from leaking between cases).
   buildTopochainFill,

@@ -296,6 +296,38 @@
   ],
   "tests": [
     {
+      "name": "Profile: an editable identity card above completions that link out (#982)",
+      "path": "/#profile",
+      "expectSelector": "a[data-completed-challenge][href^='#leaderboard/challenges/']",
+      "expectText": "Edit profile"
+    },
+    {
+      "name": "Edit profile opens with the username read-only (#982)",
+      "path": "/?shot=profile-edit#profile",
+      "expectSelector": "#profile-edit-sheet #profile-edit-username[disabled]"
+    },
+    {
+      "name": "A sidebar tap lands on the destination with no competing screen animation (#977)",
+      "path": "/?shot=menu-nav&un-platform=ios",
+      "expectSelector": "#leaderboard-screen:not(.hidden)[data-entered=\"none\"]"
+    },
+    {
+      "name": "Challenges tab summarises the completed set (#981)",
+      "path": "/#leaderboard/challenges",
+      "expectSelector": "#leaderboard-screen:not(.hidden) #challenges-root:not(.hidden) #tc-se-grid #tc-se-challenge-summary"
+    },
+    {
+      "name": "Standings tab cross-links to the challenges tab (#981)",
+      "path": "/#leaderboard",
+      "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"]) #topochain-leaderboard-root:not(.hidden) #tc-lb-challenge-link #tc-lb-to-challenges"
+    },
+    {
+      "name": "Work notifications show a session's title, not its dev name (#971)",
+      "path": "/?shot=work-drawer&demo=1",
+      "expectSelector": "#work-drawer-panel:not(.hidden) #work-drawer-list",
+      "expectText": "[Mock] Session titled but not yet proposed"
+    },
+    {
       "name": "Send Feedback offers a kudos bounty, unchecked by default (#964)",
       "path": "/?shot=feedback",
       "expectSelector": "#feedback-bounty-row:not(.hidden) #feedback-bounty-checkbox:not(:checked):not(:disabled)"
@@ -304,6 +336,18 @@
       "name": "The bounty checkbox is disabled once the weekly allowance is spent (#964)",
       "path": "/?shot=feedback-spent",
       "expectSelector": "#feedback-bounty-row:not(.hidden) #feedback-bounty-checkbox:disabled"
+    },
+    {
+      "name": "Challenges widget: metered rows plus the title bar's leaderboard link (#911, #980)",
+      "path": "/?demo=1",
+      "expectSelector": "#home-body.home-column article.home-panel:has(.home-panel-bar .home-panel-lb-browse[aria-label=\"Open leaderboard\"]) .home-panel-rows--metered .home-panel-row .home-panel-bar-track[role=progressbar] .home-panel-bar-fill",
+      "expectText": "Open leaderboard"
+    },
+    {
+      "name": "Challenges widget: with nothing running it says so, and fills the rest (#947)",
+      "path": "/?demo=1&challenges=none",
+      "expectSelector": "#app-list [data-panel-slot=\"challenges\"] article.home-panel[data-rows=\"0\"][data-fill=\"3\"] .home-panel-lb-row",
+      "expectText": "No challenges are running right now"
     },
     {
       "name": "Tapping an app shows its icon and name while it loads, not a blank window (#931)",
@@ -324,22 +368,20 @@
       "expectText": "staging-demo-lead"
     },
     {
-      "name": "Challenges widget: metered rows, expand toggle and the leaderboard link (#911)",
-      "path": "/?demo=1",
-      "expectSelector": "#home-body.home-column article.home-panel .home-panel-rows--metered .home-panel-row .home-panel-bar-track[role=progressbar] .home-panel-bar-fill",
-      "expectText": "Go to leaderboard"
-    },
-    {
-      "name": "Challenges widget: with nothing running it says so, and fills the rest (#947)",
-      "path": "/?demo=1&challenges=none",
-      "expectSelector": "#app-list [data-panel-slot=\"challenges\"] article.home-panel[data-rows=\"0\"][data-fill=\"3\"] .home-panel-lb-row",
-      "expectText": "No challenges are running right now"
-    },
-    {
       "name": "Challenges widget: the fill previews the Topochain standings (#962)",
       "path": "/?demo=1&challenges=none",
       "expectSelector": "#app-list [data-panel-slot=\"challenges\"] article.home-panel .home-panel-fill[data-fill-kind=\"topochain\"] .home-panel-lb-row[data-lb-kind=\"topochain\"]",
       "expectText": "staging-demo-validator"
+    },
+    {
+      "name": "The sidebar is fully gone and restored to <body> after a sidebar tap (#977)",
+      "path": "/?shot=menu-nav&un-platform=ios",
+      "expectSelector": "body:not(:has(.un-panel)) > #header-menu-panel:not(.platform-panel-adopted)"
+    },
+    {
+      "name": "The desktop slide-over suppresses the screen fade too (#977)",
+      "path": "/?shot=menu-nav",
+      "expectSelector": "#leaderboard-screen:not(.hidden)[data-entered=\"none\"]"
     },
     {
       "name": "Challenges widget: with no standings at all the fill falls back to the Kudos board (#962)",
@@ -376,9 +418,10 @@
       "expectText": "Nothing featured right now"
     },
     {
-      "name": "App tiles are placed at explicit grid cells, with holes allowed",
+      "name": "App tiles are placed at explicit grid cells, with iOS-sized two-line labels (#951)",
       "path": "/?demo=1",
-      "expectSelector": "#app-list .app-card[data-yours=\"true\"][style*=\"grid-row\"]"
+      "expectSelector": "#app-list .app-card[data-yours=\"true\"][style*=\"grid-row\"] .app-card-title",
+      "expectText": "Staging demo photo album and journal"
     },
     {
       "name": "Dragging shows the grid and previews what gets pushed (?shot=home-grid)",

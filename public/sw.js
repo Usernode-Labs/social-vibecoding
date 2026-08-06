@@ -137,7 +137,8 @@ const NO_FALLBACK_PAGES = [
 //                cached SPA shell (index.html).
 //   'shell'    — same-origin HTML/JS/CSS/manifest/icons: network-first.
 //   'api'      — GET /api/* JSON: network-first, cache 200s for offline.
-//   'immutable'— content-addressed images (/app-icons, /visuals): cache-first.
+//   'immutable'— content-addressed images (/app-icons, /visuals, /avatars):
+//                cache-first.
 function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   if (method !== 'GET') return 'bypass';
 
@@ -184,7 +185,11 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   if (p.startsWith('/api/')) return 'api';
 
   // Content-addressed, already served with a year-long immutable header.
-  if (p.startsWith('/app-icons/') || p.startsWith('/visuals/')) return 'immutable';
+  // /avatars/ joins them (#982): the id rotates whenever the bytes change
+  // (POST /api/me/avatar upserts a fresh one), so a cached entry can never
+  // be stale — a replaced id simply 404s.
+  if (p.startsWith('/app-icons/') || p.startsWith('/visuals/')
+      || p.startsWith('/avatars/')) return 'immutable';
 
   // The shell's own static assets (incl. /usernode-bridge/v1/... versions).
   if (/\.(?:html|js|css|webmanifest)$/i.test(p)) return 'shell';

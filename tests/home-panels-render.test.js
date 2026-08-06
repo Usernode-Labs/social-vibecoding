@@ -161,6 +161,14 @@ function renderWith(data, opts) {
   return { HP, html: section.innerHTML, section };
 }
 
+// The FIVE-COLUMN width, for the shape that only exists there (#968): the
+// footer with its expand toggle, the four-row budget, expansion itself. The
+// harness has no innerWidth, so the column count is injected the way the
+// module actually reads it — through Home.currentCols() — which is also what
+// the in-grid helpers below do. Without it, currentCols() falls back to the
+// PHONE shape, which is the deliberately-safe default for an unknown width.
+const AT_DESKTOP = { home: { currentCols: () => 5 } };
+
 // ── formatReward ──────────────────────────────────────────────────
 
 test('formatReward: organiser prose verbatim, a bare number gets "pts"', () => {
@@ -487,7 +495,7 @@ test('render: the footer carries the expand toggle and the way out', () => {
   const four = Array.from({ length: 4 }, (_, i) => challenge({ id: i + 1 }));
   const { html } = renderWith({
     registry: [], hidden: [], panels: [panel({ total: 8, challenges: four })],
-  });
+  }, AT_DESKTOP);
   // Overflow now lives in the FOOTER, so all four row slots stay
   // challenges — the label carries the true total.
   assert.match(html, /home-panel-footer/);
@@ -496,18 +504,18 @@ test('render: the footer carries the expand toggle and the way out', () => {
   assert.equal((html.match(/home-panel-row\b(?!s)/g) || []).length, 4);
   assert.equal((html.match(/data-challenge-id/g) || []).length, 4);
   assert.doesNotMatch(html, /home-panel-more/, 'the old link ROW is gone');
-  // And the separate way out, bottom right. It NAMES its destination:
-  // "Open" sat beside a control that also opens something (this block, in
-  // place), leaving the reader to work out which one left the home screen.
+  // And the separate way out, bottom right. It NAMES its destination — the
+  // Challenges TAB, which is not where the title bar's leaderboard link goes
+  // (#980), so neither label may say only "leaderboard" or only "open".
   assert.match(html, /home-panel-open[^>]*title="Go to the Challenges tab on the Leaderboard screen"/);
-  assert.match(html, /home-panel-open[^>]*aria-label="Go to leaderboard"/);
+  assert.match(html, /home-panel-open[^>]*aria-label="Open challenges"/);
   assert.doesNotMatch(html, />Open<\/span>/, 'the bare "Open" label is gone');
   assert.match(html, /aria-expanded="false"/);
 });
 
 test('render: expanded lifts the cap, shows everything, and flips the toggle', () => {
   const nine = Array.from({ length: 9 }, (_, i) => challenge({ id: i + 1 }));
-  const { HP, section } = makeHomePanels();
+  const { HP, section } = makeHomePanels(AT_DESKTOP);
   HP._data = { registry: [], hidden: [], panels: [panel({ total: 9, challenges: nine })] };
   HP._expanded.challenges = true;
   HP.render();
@@ -696,20 +704,28 @@ test('every text node in a row is single-line — no wrapping anywhere', () => {
 });
 
 test('the title bar and the footer controls are single-line too', () => {
-  const { html } = renderWith({
+  const data = {
     registry: [], hidden: [],
     panels: [panel({ total: 9, done: 2, points_remaining: 24300 })],
-  });
+  };
+  const { html } = renderWith(data, AT_DESKTOP);
   // Title + counter: the counter must not push the title to a second line.
   assert.match(html, /home-panel-title[^"]*truncate whitespace-nowrap/);
   assert.match(html, /normal-case tracking-normal whitespace-nowrap/);
-  // Both footer labels — the expand toggle and the "Go to leaderboard"
-  // button. Neither may wrap: the footer is a fixed-height flex row, so a
-  // wrap would be clipped exactly like a wrapped row. The right-hand label
-  // is the longer of the two now, which is why this pin matters more than
-  // it did when it read "Open".
+  // The phone bar carries the way out BESIDE that title (#968, now the
+  // leaderboard link of #980), so it is the one place a long summary and a
+  // control compete for the same row: the control is shrink-0 and nowrap, and
+  // the title truncates around it. The compact label is the SHORT one, which
+  // is the whole reason _leaderboardLink takes the flag.
+  const phone = renderWith(data).html;
+  assert.match(phone, /home-panel-lb-browse shrink-0[^"]*whitespace-nowrap/);
+  assert.match(phone, /<span class="whitespace-nowrap">Leaderboard<\/span>/);
+  assert.match(phone, /home-panel-title[^"]*truncate whitespace-nowrap/);
+  // Both footer labels — the expand toggle and the "Open challenges" button.
+  // Neither may wrap: the footer is a fixed-height flex row, so a wrap would
+  // be clipped exactly like a wrapped row.
   assert.match(html, /<span class="whitespace-nowrap">See all 9 challenges<\/span>/);
-  assert.match(html, /<span class="whitespace-nowrap">Go to leaderboard<\/span>/);
+  assert.match(html, /<span class="whitespace-nowrap">Open challenges<\/span>/);
   assert.match(html, /home-panel-expand[^>]*whitespace-nowrap/);
   assert.match(html, /home-panel-open[^>]*whitespace-nowrap/);
 });
@@ -996,20 +1012,25 @@ test('the menu offers the destination and a deliberate hide', () => {
 
   const items = HP.menuItems('challenges');
   // Joined rather than deep-equalled: the module runs in a vm realm, so its
-  // arrays fail deepStrictEqual's prototype check.
-  assert.equal(labels(items), 'Open challenges | Hide widget');
-  assert.equal(items[1].destructive, true, 'hiding is the destructive row');
+  // arrays fail deepStrictEqual's prototype check. BOTH destinations are here
+  // (#980) — the widget has two, and each row names the screen it opens.
+  assert.equal(labels(items), 'Open challenges | Open leaderboard | Hide widget');
+  assert.equal(items[2].destructive, true, 'hiding is the destructive row');
   assert.ok(!items[0].destructive);
+  assert.ok(!items[1].destructive);
 
-  // Row 1 is a real hash navigation, so the device back gesture returns here.
+  // Both destination rows are real hash navigations, so the device back
+  // gesture returns here.
   items[0].handler();
   assert.equal(sandbox.location.hash, '#leaderboard/challenges');
+  items[1].handler();
+  assert.equal(sandbox.location.hash, '#leaderboard');
 
-  // Row 2 is exactly what the ✕ did — persisted, and still restorable from
-  // Settings → Home screen widgets.
+  // The last row is exactly what the ✕ did — persisted, and still restorable
+  // from Settings → Home screen widgets.
   const calls = [];
   sandbox.fetch = async (url) => { calls.push(url); return { ok: true, json: async () => ({}) }; };
-  items[1].handler();
+  items[2].handler();
   assert.equal(Array.from(HP._data.hidden).join(), 'challenges');
   assert.deepEqual(calls, ['/api/home-panels/challenges/visibility']);
 
@@ -1032,7 +1053,7 @@ test('openMenu goes through the kit\'s ADAPTIVE menu — one call site, both idi
   assert.equal(seen.length, 1);
   assert.equal(seen[0].anchorEl, anchor, 'the anchor is what makes it a popover on desktop');
   assert.equal(seen[0].title, 'Challenges', 'the sheet needs a heading; a popover ignores it');
-  assert.equal(labels(seen[0].items), 'Open challenges | Hide widget');
+  assert.equal(labels(seen[0].items), 'Open challenges | Open leaderboard | Hide widget');
   assert.match(read('public/js/platform-ui.js'), /unNative[\s\S]{0,400}?\.menu\(/);
 
   // Kit but no wrapper (a page that loads native.js directly).
@@ -1121,16 +1142,23 @@ test('the multi-row slot neither inflates its rows nor stretches its neighbours'
 });
 
 test('the cell height still matches the app tile it is derived from', () => {
-  // p-3 (0.75rem x 2) + 3.5rem icon + 0.5rem gap + 1.25rem name + 1rem
-  // caption lane = 7.75rem per cell; two cells + the grid's 0.5rem gap =
-  // 16rem. If any of these tokens moves, --home-cell-h and
-  // --home-panel-max-h have to move with it — that is the point of pinning
-  // both sides here.
+  // p-3 (0.75rem x 2) + 3.5rem icon + 0.375rem gap + 1.625rem name (two
+  // 13px lines, #951) + 0.75rem caption lane = 7.75rem per cell; two cells
+  // + the grid's 0.5rem gap = 16rem. If any of these tokens moves,
+  // --home-cell-h and --home-panel-max-h have to move with it — that is the
+  // point of pinning both sides here.
   const card = HOME.match(/<div class="app-card app-card-draggable[^"]*"/)[0];
   assert.match(card, /\bp-3\b/, 'app tile padding feeds the 1.5rem term');
-  assert.match(card, /\bgap-2\b/, 'app tile gap feeds the 0.5rem term');
+  assert.match(card, /\bgap-1\.5\b/, 'app tile gap feeds the 0.375rem term');
   assert.match(HOME, /class="app-icon-tile w-14 h-14/, 'icon feeds the 3.5rem term');
-  assert.match(HOME, /class="font-medium text-sm truncate/, 'name feeds the 1.25rem term');
+  assert.match(HOME, /class="app-card-title"/, 'name feeds the 1.625rem term');
+  // …and the two label lanes are FIXED heights in app.css, so a one-line
+  // and a two-line title produce identically sized tiles.
+  const titleRule = CSS.match(/\.app-card-title \{[^}]*\}/)[0];
+  assert.match(titleRule, /height:\s*1\.625rem/, 'the title lane is exactly two lines');
+  assert.match(titleRule, /line-height:\s*0\.8125rem/);
+  assert.match(titleRule, /-webkit-line-clamp:\s*2/, 'long names ellipsise at two lines');
+  assert.match(CSS.match(/\.app-card-status \{[^}]*\}/)[0], /line-height:\s*0\.75rem/);
   // THE CAPTION LANE IS LOAD-BEARING. The status dot is gone from the tile
   // face, so this line is a tile's only status signal — and rows are a
   // fixed height, so a caption with no budget paints over the tile below
@@ -1139,10 +1167,19 @@ test('the cell height still matches the app tile it is derived from', () => {
   assert.match(CSS, /THE CAPTION LANE IS NOT OPTIONAL/);
   const grid = INDEX.match(/<div id="app-list"[^>]*>/)[0];
   assert.match(grid, /\bsm:gap-2\b/, 'the grid gap feeds the between-rows 0.5rem term');
-  // The phone variant tightens the tile and shrinks the cell in step.
+  // The phone variant tightens the tile and shrinks the cell in step —
+  // and the tightening has to OUT-SPECIFY Tailwind's own p-3 utility,
+  // since tailwind.css is linked after app.css (see the rule's comment).
   assert.match(grid, /\bp-2\b/);
+  assert.match(CSS, /\.app-card\.app-card \{ padding: 0\.5rem; \}/);
   assert.match(CSS, /--home-cell-h: 7\.25rem/);
-  assert.match(CSS, /--home-panel-max-h: 14\.875rem/);
+  // …and the phone cap is that ONE cell (#968): every widget's phone
+  // footprint is a single row, so the two-cell figure this token used to
+  // carry (14.875rem / 238px) would let an oversized text size paint the
+  // article over the app tiles in the row below instead of clipping.
+  // Written as the token, not a duplicated number, so the cell and its cap
+  // provably cannot drift.
+  assert.match(CSS, /@media \(max-width: 639\.98px\)[\s\S]*?--home-panel-max-h: var\(--home-cell-h\)/);
 });
 
 // ── Source pins ───────────────────────────────────────────────────
@@ -1631,10 +1668,15 @@ test('desktop: the zero state leads with the note, then fills the tile', () => {
   assert.match(html, /No challenges are running right now/, 'same copy at both widths');
   assert.match(html, /data-rows="0"/);
   assert.match(html, /data-fill="3"/);
-  // Nothing to expand or count: one control, and it names where it goes.
+  // Nothing to expand or count: one footer control, and it names THE BOARD it
+  // is the full version of — the title bar's link is what says "leaderboard"
+  // now (#980), so the two must not read as the same door twice.
   assert.doesNotMatch(html, /home-panel-expand/);
   assert.match(html, /home-panel-lb-open/);
-  assert.match(html, /See full leaderboard/);
+  assert.match(html, /See full standings/);
+  assert.doesNotMatch(html, /See full leaderboard/);
+  // …and the bar carries the widget's leaderboard link in this state too.
+  assert.match(html, /home-panel-lb-browse[^>]*aria-label="Open leaderboard"/);
 });
 
 test('desktop: the viewer’s own row is last, marked, and never duplicated', () => {
@@ -1795,6 +1837,151 @@ test('the fill navigates to the tab that shows the board it previewed', () => {
     'the zero-state footer follows its rows');
   assert.match(read('public/js/home-panels.js'),
     /goToLeaderboard\((?:row|btn)\.dataset\.lbKind\)/);
+});
+
+// ── The phone shape (#968) ─────────────────────────────────────────
+//
+// Shrinking the drawn box (#947) did not shrink the SPACE: the footprint was
+// still two grid rows, so the height the block gave up became blank grid
+// between the widget and the first row of app icons. The footprint is one
+// row now, which means the CONTENT has to fit one 116px cell — and that is
+// markup, so it is decided in the renderer and asserted here.
+
+test('phone: two rows, the way out in the title bar, and no footer', () => {
+  const four = Array.from({ length: 4 }, (_, i) => challenge({ id: i + 1 }));
+  const { html } = makeDesktop({
+    registry: [], hidden: [], panels: [panel({ total: 8, challenges: four })],
+  }, { cols: 4 });
+
+  // TWO of the four rows the server sent — the phone cell's whole row budget.
+  assert.equal((html.match(/data-challenge-id/g) || []).length, 2);
+  assert.match(html, /data-rows="2"/, 'and data-rows reports what is DRAWN');
+
+  // No footer: its 27px is the second row. Its controls are accounted for —
+  // see below, the rows themselves, and the ⋮ menu's two destination rows.
+  assert.doesNotMatch(html, /home-panel-footer/);
+  assert.doesNotMatch(html, /home-panel-expand/);
+
+  // The way out rides in the title bar instead — the leaderboard link of
+  // #980, which is Discover's browse control in the same place for the same
+  // reason, so the phone shape keeps exactly ONE bar control.
+  assert.match(html, /home-panel-bar[\s\S]*?home-panel-lb-browse[\s\S]*?home-panel-menu/,
+    'inside the bar, before the ⋮ menu');
+  assert.match(html, /home-panel-lb-browse[^>]*title="Open the Leaderboard screen"/);
+  assert.match(html, /home-panel-lb-browse[^>]*aria-label="Open leaderboard"/);
+  assert.doesNotMatch(html, /home-panel-open/,
+    'and NOT a second violet link beside it — the bar has room for one');
+  assert.match(read('public/js/home-panels.js'),
+    /querySelectorAll\('\.home-panel-lb-browse'\)/, 'and that class is wired');
+});
+
+test('phone: the empty state is the bar plus its one note row', () => {
+  const { html } = makeDesktop({
+    registry: [], hidden: [],
+    panels: [panel({ total: 0, done: 0, challenges: [], leaderboard: fill() })],
+  }, { cols: 4 });
+  assert.match(html, /No challenges are running right now/, 'it still says why');
+  assert.match(html, /data-rows="0"/);
+  // No leaderboard fill (that spends the DESKTOP tile's leftover) and no
+  // footer, so the block is 2 + 25.5 + 40 = ~69px of its 116px cell.
+  assert.equal((html.match(/home-panel-lb-row/g) || []).length, 0);
+  assert.match(html, /data-fill="0"/);
+  assert.doesNotMatch(html, /home-panel-footer/);
+});
+
+test('phone: an expansion carried across a resize is not honoured', () => {
+  // _expanded is per-visit CLIENT state, so it survives a desktop→phone
+  // resize. Honouring it here would drop every row of an expanded season —
+  // and a lifted height cap — into a cell that is one app-icon row tall.
+  const nine = Array.from({ length: 9 }, (_, i) => challenge({ id: i + 1 }));
+  const slot = makeSlot('challenges');
+  const { HP } = makeHomePanels({ slots: [slot], home: { currentCols: () => 4 } });
+  HP._expanded.challenges = true;
+  HP._data = { registry: [], hidden: [], panels: [panel({ total: 9, challenges: nine })] };
+  HP.render();
+  assert.doesNotMatch(slot.innerHTML, /home-panel--expanded/,
+    'the class app.css hangs max-height: none on must not reach the phone');
+  assert.equal((slot.innerHTML.match(/data-challenge-id/g) || []).length, 2);
+});
+
+test('desktop keeps all four rows, its footer and its toggle', () => {
+  // The other side of the same branch: nothing about the phone shape may
+  // reach five columns, where the widget is a tile among app icons.
+  const four = Array.from({ length: 4 }, (_, i) => challenge({ id: i + 1 }));
+  const { html } = makeDesktop({
+    registry: [], hidden: [], panels: [panel({ total: 8, challenges: four })],
+  });
+  assert.equal((html.match(/data-challenge-id/g) || []).length, 4);
+  assert.match(html, /data-rows="4"/);
+  assert.match(html, /home-panel-footer/);
+  assert.match(html, /home-panel-expand[^>]*data-panel-key="challenges"/);
+  assert.match(html, /See all 8 challenges/);
+  assert.match(html, /home-panel-open[^>]*aria-label="Open challenges"/,
+    'the footer keeps the Challenges-tab door; the bar carries the leaderboard');
+  // …and the bar's leaderboard link is on BOTH shapes, with the long label
+  // here where there is room for it (#980).
+  assert.match(html, /home-panel-lb-browse[^>]*aria-label="Open leaderboard"/);
+  assert.match(html, /<span class="whitespace-nowrap">Open leaderboard<\/span>/);
+});
+
+// The fallback host (#home-panels, the search view) has no grid cell — but
+// it is still on somebody's screen at somebody's width, and the phone shape
+// is a WIDTH decision. It used to hardcode cols: 4, which is the right
+// default for "unknown" and the wrong answer for a desktop search.
+test('the search-view host follows the real width, not a hardcoded 4', () => {
+  const four = Array.from({ length: 4 }, (_, i) => challenge({ id: i + 1 }));
+  const data = { registry: [], hidden: [], panels: [panel({ total: 8, challenges: four })] };
+  assert.match(renderWith(data, AT_DESKTOP).html, /home-panel-footer/,
+    'a desktop search view is not a phone');
+  assert.doesNotMatch(renderWith(data).html, /home-panel-footer/,
+    'and an unknown width still gets the compact shape');
+  assert.match(read('public/js/home-panels.js'),
+    /renderPanel\(p, \{ inGrid: false, cols \}\)/);
+});
+
+// The budget the phone shape is designed against, derived by hand in app.css
+// and pinned here exactly as the Discover one above is — a token moved on one
+// side without the other mis-sizes the widget silently.
+test('the phone shape fits the one cell its footprint buys', () => {
+  const css = read('public/css/app.css');
+  const rem = (re) => parseFloat(css.match(re)[1]) * 16;
+  const phoneCell = rem(/@media \(max-width: 639\.98px\)[\s\S]*?--home-cell-h: ([\d.]+)rem/);
+  const rowPx = rem(/--home-panel-row-h:\s*([\d.]+)rem/);
+  const bar = 27;   // py-1 8 + 18 line (the 12px control) + 1px rule
+  const slots = Number(read('public/js/home-panels.js')
+    .match(/PHONE_ROW_SLOTS:\s*(\d+)/)[1]);
+  assert.equal(slots, 2);
+  assert.ok(2 + bar + slots * rowPx <= phoneCell,
+    `phone budget ${2 + bar + slots * rowPx}px must fit the ${phoneCell}px cell`);
+  // …and a FOOTER would not, which is why the way out is in the bar.
+  const footerPx = rem(/\.home-panel-footer \{[^}]*min-height:\s*([\d.]+)rem/) + 1;
+  assert.ok(2 + bar + slots * rowPx + footerPx > phoneCell,
+    'the footer is exactly the row it would cost');
+  // The footprint that makes the cell one cell in the first place.
+  assert.match(read('src/routes/home-panels.js'),
+    /key: 'challenges'[\s\S]*?sizes: \{ 4: \[4, 1\], 5: \[2, 2\] \}/);
+});
+
+// The row a fit widget owns is sized by the BROWSER (an `auto` track), so
+// nothing here can drift — except the floor, which is a hand-written constant
+// and therefore the one number that can. It must equal the smallest block the
+// widget ever draws: any larger and it reserves space a real state does not
+// use, which is the whole bug this issue is about.
+test('the fit-row floor is the empty block’s own height, not a guess', () => {
+  const css = read('public/css/app.css');
+  const home = read('public/js/home.js');
+  const rowPx = parseFloat(css.match(/--home-panel-row-h:\s*([\d.]+)rem/)[1]) * 16;
+  const floorPx = parseFloat(home.match(/FIT_ROW_FLOOR: '([\d.]+)rem'/)[1]) * 16;
+  // border 2 + title bar 25.5 (the empty state's bar carries no control) +
+  // one note row, which is a .home-panel-row like any other.
+  const emptyBlock = 2 + 25.5 + rowPx;
+  assert.ok(floorPx >= emptyBlock && floorPx < emptyBlock + 1,
+    `the floor (${floorPx}px) must be the empty block (${emptyBlock}px), rounded up`);
+  // …and comfortably under the cell, or it would be a reservation rather than
+  // a guard against a slot that rendered nothing.
+  const phoneCell = parseFloat(
+    css.match(/@media \(max-width: 639\.98px\)[\s\S]*?--home-cell-h: ([\d.]+)rem/)[1]) * 16;
+  assert.ok(floorPx < phoneCell);
 });
 
 test('the challenges article always carries home-panel--fit', () => {

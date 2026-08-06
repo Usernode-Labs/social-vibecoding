@@ -339,8 +339,13 @@ test('native.css: .un-panel does not clip its filler or restrict input', () => {
   const block = cssBlock('.un-panel');
   assert.ok(!/overflow:\s*hidden/.test(block),
     'overflow:hidden on .un-panel would clip the overshoot filler away (cf. .un-sheet)');
-  assert.match(block, /padding-top:\s*env\(safe-area-inset-top/,
-    'rows must clear the status bar / notch');
+  // #970: the forwarded custom property first, env() as the standalone
+  // fallback — bare env() is 0px inside a Usernode app frame.
+  assert.match(
+    block,
+    /padding-top:\s*var\(--un-safe-inset-top,\s*env\(safe-area-inset-top/,
+    'rows must clear the status bar / notch, embedded as well as standalone'
+  );
   assert.ok(!/transition:\s*[^;]*transform/.test(block),
     'translateX is JS-owned (entrance/exit springs) — a CSS transition on transform would fight it');
   // With no drag gesture there is nothing to take capability away for:
@@ -362,8 +367,11 @@ test('native.css: the drawer ships no grabber affordance', () => {
 test('native.css: the panel body absorbs the keyboard without stacking the safe area', () => {
   const body = cssBlock('.un-panel-body');
   assert.match(body, /overflow-y:\s*auto/, 'the body is the drawer scroller');
-  assert.match(body, /env\(safe-area-inset-bottom/,
-    'the last row must clear the home indicator');
+  assert.match(
+    body,
+    /var\(--un-safe-inset-bottom,\s*env\(safe-area-inset-bottom/,
+    'the last row must clear the home indicator (#970: forwarded property first)'
+  );
   assert.match(body, /var\(--un-kb-inset/,
     'a full-height panel cannot ride above the keyboard — it pads for it instead');
   const kb = cssBlock('html.un-kb .un-panel-body');
@@ -432,8 +440,11 @@ test('native.css: .un-ptr-layer clips the puck to below its anchor line', () => 
 test('native.css: window-mode puck layer stacks under .un-navbar', () => {
   const layer = cssBlock('.un-ptr-layer.un-ptr-layer-fixed');
   assert.match(layer, /position:\s*fixed/);
-  assert.match(layer, /top:\s*env\(safe-area-inset-top/,
-    'with no anchor element the puck emerges from under the status bar, not the viewport top');
+  assert.match(
+    layer,
+    /top:\s*var\(--un-safe-inset-top,\s*env\(safe-area-inset-top/,
+    'with no anchor element the puck emerges from under the status bar, not the viewport top'
+  );
   const layerZ = Number(/z-index:\s*(\d+)/.exec(layer)[1]);
   const navZ = Number(/z-index:\s*(\d+)/.exec(cssBlock('.un-navbar'))[1]);
   assert.ok(layerZ < navZ,

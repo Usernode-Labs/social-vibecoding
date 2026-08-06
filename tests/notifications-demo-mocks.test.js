@@ -1,9 +1,10 @@
 // Route tests for the staging (?demo=1) session-notification mocks and
 // the kind-scoped mark-all on POST /api/notifications/read.
 //
-// GET /api/notifications?demo=1 in staging injects four unread mock rows
+// GET /api/notifications?demo=1 in staging injects five unread mock rows
 // — one per session-related kind (session_done / auto_solve_done /
-// stale_pr / check_failed) — so the header cog's pinned "Needs
+// stale_pr / check_failed) plus a second session_done covering the #971
+// untitled tail of the label ladder — so the header cog's pinned "Needs
 // attention" section, its green badge, and the bell's EXCLUSION of
 // these kinds are reviewable in a staging preview. Per the "Staging
 // mock data" convention the injection is request-time only, first page
@@ -90,7 +91,7 @@ function startServer(mod) {
 
 const SESSION_KINDS = ['session_done', 'auto_solve_done', 'stale_pr', 'check_failed'];
 
-test('staging + ?demo=1: four unread mock session-kind rows prepend and bump unread', async () => {
+test('staging + ?demo=1: five unread mock session-kind rows prepend and bump unread', async () => {
   const pool = makeMockPool();
   const mod = loadRoutes('staging', pool);
   const { server, port } = await startServer(mod);
@@ -100,11 +101,15 @@ test('staging + ?demo=1: four unread mock session-kind rows prepend and bump unr
     const body = await res.json();
 
     const mocks = body.notifications.filter((n) => n.id >= 990000);
-    assert.equal(mocks.length, 4, 'exactly four mock rows injected');
+    assert.equal(mocks.length, 5, 'exactly five mock rows injected');
     assert.deepEqual(
-      mocks.map((n) => n.kind).sort(),
+      [...new Set(mocks.map((n) => n.kind))].sort(),
       [...SESSION_KINDS].sort(),
-      'one mock per session-related kind'
+      'every session-related kind is covered'
+    );
+    assert.equal(
+      mocks.filter((n) => n.kind === 'session_done').length, 2,
+      '#971: two session_done rows — one titled, one untitled'
     );
     assert.ok(mocks.every((n) => !n.readAt), 'mock rows are unread (they feed the cog badge)');
     assert.ok(mocks.every((n) => n.appSlug === 'staging-demo'), 'obviously-fake app attribution');
@@ -115,7 +120,7 @@ test('staging + ?demo=1: four unread mock session-kind rows prepend and bump unr
     // Real rows survive after the mocks; unread bumped by the mock count
     // so the client's red-badge subtraction stays honest.
     assert.ok(body.notifications.some((n) => n.id === 1), 'real rows still present');
-    assert.equal(body.unread, 2 + 4);
+    assert.equal(body.unread, 2 + 5);
   } finally {
     server.close();
   }
@@ -159,15 +164,35 @@ test('stagingMockNotifications rows carry the fields the shared row renderers re
   const pool = makeMockPool();
   const mod = loadRoutes('staging', pool);
   const rows = mod.stagingMockNotifications();
-  assert.equal(rows.length, 4);
+  assert.equal(rows.length, 5);
   for (const r of rows) {
     assert.ok(r.id >= 990000 && r.id < 1000000, 'ids sit in the 99xxxx mock range');
     assert.equal(r.readAt, null);
     assert.ok(r.createdAt, 'timestamp present for relativeTime');
     assert.equal(r.appName, 'Staging demo app');
+    assert.ok('sessionTitle' in r, '#971: every mock row carries the sessionTitle field');
   }
-  const sessionDone = rows.find((r) => r.kind === 'session_done');
-  assert.match(sessionDone.prTitle, /^\[Mock\]/, 'mock titles are obviously fake');
+
+  // #971: the titled session_done row is the issue's exact case — a session
+  // that has a title but no PR yet. It must carry BOTH so a preview shows the
+  // title winning over the dev name.
+  const titled = rows.find((r) => r.kind === 'session_done' && r.sessionTitle);
+  assert.match(titled.sessionTitle, /^\[Mock\]/, 'mock titles are obviously fake');
+  assert.equal(titled.prTitle, null, 'no PR title — the pre-promotion case');
+  assert.match(titled.branchName, /^dev\//, 'a dev name is present to be beaten');
+
+  // ...and the untitled one proves the branch-name fallback survives.
+  const untitled = rows.find((r) => r.kind === 'session_done' && !r.sessionTitle);
+  assert.equal(untitled.sessionTitle, null);
+  assert.equal(untitled.prTitle, null);
+  assert.match(untitled.branchName, /^dev\//, 'falls back to the dev name');
+
+  for (const kind of ['stale_pr', 'check_failed']) {
+    const row = rows.find((r) => r.kind === kind);
+    assert.match(row.prTitle, /^\[Mock\]/, `${kind} row keeps its PR title`);
+    assert.match(row.sessionTitle, /^\[Mock\]/, `${kind} row carries a session title too`);
+  }
+
   const autoSolve = rows.find((r) => r.kind === 'auto_solve_done');
   assert.ok(autoSolve.headlessIssueNumber, 'auto-solve row points at an issue number');
 });

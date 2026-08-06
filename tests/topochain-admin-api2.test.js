@@ -852,6 +852,9 @@ test('D6: index returns the public-shaped mapping (overrides/effective/card_prev
     assert.equal(item.effective.task, 'Template task'); // falls back to template
     assert.equal(item.card_preview.goal, 'Override goal');
     assert.equal(item.activity_type.id, 950);
+    // #981 added `completed` to the shared mapper, so this payload carries it
+    // too — additively, from the `SELECT c.*` this route already does.
+    assert.equal(item.completed, false);
   } finally { server.close(); }
 });
 

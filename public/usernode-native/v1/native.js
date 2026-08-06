@@ -2484,6 +2484,14 @@
    * Transition. Re-entrant: a navigation during an active transition
    * skips animation, never queues.
    *
+   * PUT THE WHOLE MUTATION IN `fn`. A View Transition captures the OLD
+   * state at the next rendering opportunity, not at the
+   * startViewTransition() call, so DOM changes a caller makes
+   * synchronously AFTER calling transition() — but before `fn` runs —
+   * land in the ::view-transition-old(root) snapshot: the animation then
+   * slides out a "previous page" that already carries the incoming
+   * screen's chrome (or none of the outgoing screen's content at all).
+   *
    * 'zoom-in'/'zoom-out' play the iOS-homescreen expand/collapse out of
    * a tile ({ el, fromEl | fromRect, after?, fallback?, outEl? }). No
    * View Transition is involved: the LIVE screen element (opts.el) is

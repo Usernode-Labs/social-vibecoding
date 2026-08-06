@@ -731,6 +731,42 @@ const AppView = {
     AppView._launchTimers.length = 0;
   },
 
+  // ── App-view surface flag (#970) ────────────────────────────────────
+  //
+  // Which KIND of thing is mounted in #app-content right now:
+  //   'app'      — a running app's iframe (or its launch cover), which
+  //                must reach the true bottom edge of the screen. The
+  //                shell reserves no home-indicator strip; the insets are
+  //                forwarded into the app instead (see the safe-area
+  //                section near the bottom of this file).
+  //   'platform' — anything WE render (Dev mode and all its sub-views,
+  //                the creating / awaiting-secrets / error / offline
+  //                placeholders), which keeps its clearance above the
+  //                home indicator.
+  //
+  // The bottom padding itself lives in app.css, keyed on the attribute
+  // this sets — see `#app-view[data-app-surface="platform"]`. Every place
+  // that owns #app-content's contents calls this, so the flag can never
+  // drift from what is actually on screen. Changing surface also changes
+  // the frame's rect, so a change re-broadcasts the insets.
+  // Purely presentational, and called from the middle of every render —
+  // so it must never be able to throw one. Feature-detected rather than
+  // assumed: #app-view may be absent (a sub-page that never mounts it) or
+  // a partial stub (the node-side render tests), and neither is a reason
+  // to fail the surface it was about to paint.
+  _setSurface(kind) {
+    const view = typeof document !== 'undefined' && document.getElementById
+      ? document.getElementById('app-view') : null;
+    if (!view || typeof view.setAttribute !== 'function') return;
+    const next = kind === 'app' ? 'app' : 'platform';
+    if (typeof view.getAttribute === 'function'
+        && view.getAttribute('data-app-surface') === next) {
+      return;
+    }
+    view.setAttribute('data-app-surface', next);
+    AppView.scheduleSafeAreaBroadcast();
+  },
+
   // Abandon any in-flight launch: bump the generation (so pending callbacks
   // go inert), drop the adoption offer, stop the timers. Does NOT touch the
   // DOM — callers either replace #app-content wholesale or are hiding it.
@@ -843,6 +879,9 @@ const AppView = {
         ${AppView._appIframeHtml({ hidden: true })}
         ${AppView._launchCoverHtml(rec)}
       </div>`;
+    // #970: an app frame is on screen from this moment — the shell stops
+    // reserving the home-indicator strip and forwards it to the app.
+    AppView._setSurface('app');
 
     const iframe = document.getElementById('app-iframe');
     if (!iframe) return false;
@@ -897,6 +936,8 @@ const AppView = {
       if (!iframe.getAttribute('src')) return;
       if (!current()) return;
       if (iframeId === 'app-iframe') AppView.iframeFocused = true;
+      // #970: the app's document is up — hand it this frame's insets.
+      AppView.scheduleSafeAreaBroadcast();
       reveal();
     };
     iframe.onerror = () => {
@@ -1013,6 +1054,9 @@ const AppView = {
       <div class="app-launch-host w-full h-full">
         ${AppView._launchCoverHtml(rec, { pinned: true })}
       </div>`;
+    // #970: the shot stands in for a real launch, so it gets the same
+    // full-bleed geometry the launch it depicts would have.
+    AppView._setSurface('app');
     document.getElementById('app-launch-cover-spinner')?.classList.remove('hidden');
     document.getElementById('home-screen')?.classList.add('hidden');
     document.getElementById('app-view')?.classList.remove('hidden');
@@ -1081,6 +1125,9 @@ const AppView = {
         <div class="flex flex-col items-center justify-center h-full text-zinc-500 dark:text-zinc-400 gap-2 p-4 text-center">
           ${inner}
         </div>`;
+      // #970: platform-rendered status text, not an app — keep the
+      // home-indicator clearance.
+      AppView._setSurface('platform');
       // The "Configure secrets" button is wired here rather than via a
       // delegated handler because this branch re-renders on every
       // status change and the listener would otherwise re-attach.
@@ -1107,6 +1154,8 @@ const AppView = {
         <div class="flex flex-col items-center justify-center h-full text-zinc-500 dark:text-zinc-400 gap-2 p-4 text-center">
           <p class="text-sm">This app needs a connection — reconnect to open it.</p>
         </div>`;
+      // #970: our placeholder, not the app — keep the clearance.
+      AppView._setSurface('platform');
       const retry = (ev) => {
         if (ev.detail && ev.detail.offline) return;
         window.removeEventListener('usernode:offline-change', retry);
@@ -1133,16 +1182,25 @@ const AppView = {
         && document.getElementById('app-iframe')) {
       // Same app, same URL, frame already loading (or loaded) — touching
       // the DOM here would restart the document load and undo the whole
-      // point of the eager launch.
+      // point of the eager launch. The surface flag still has to be
+      // asserted (#970): beginLaunch set it, but a render that adopts must
+      // not depend on that, or an adopted launch could keep a stale flag.
+      AppView._setSurface('app');
       return;
     }
     AppView._teardownLaunch();
 
     content.innerHTML = AppView._appIframeHtml({ src: iframeSrc });
+    // #970: full-bleed frame; the insets go to the app instead.
+    AppView._setSurface('app');
 
     const iframe = document.getElementById('app-iframe');
     iframe.addEventListener('load', () => {
       AppView.iframeFocused = true;
+      // #970: the app's document is up — hand it the insets that apply to
+      // this frame's rect. Also covers the token-refresh re-src, which
+      // reloads the frame without re-rendering.
+      AppView.scheduleSafeAreaBroadcast();
     });
   },
 
@@ -1333,6 +1391,11 @@ const AppView = {
     const content = document.getElementById('app-content');
     if (!content) return;
 
+    // #970: every Dev sub-view below is platform-rendered (card list,
+    // chat, session, topic) and wants clearance above the home indicator.
+    // Set once here rather than per branch — they all replace #app-content.
+    AppView._setSurface('platform');
+
     // Capture the Dev list's scroll position before any branch below
     // overwrites #app-content. #dev-forum-scroll only exists when the
     // outgoing view was the card list, so this is a no-op for
@@ -1443,7 +1506,7 @@ const AppView = {
 
         <!-- The card list: locked notice, general-chat card, session
              rows, the intermixed feed, and the Completed section. -->
-        <div id="dev-forum-scroll" class="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+        <div id="dev-forum-scroll" class="flex-1 min-h-0 overflow-y-auto overscroll-contain platform-safe-scroll">
           <div id="dev-locked-notice" class="px-3 pt-2 hidden"></div>
           <div class="px-3 pt-2">
             <button id="dev-chat-card" class="${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}"
@@ -2496,8 +2559,13 @@ const AppView = {
             <!-- Typing indicator -->
             <div id="gc-typing" class="px-3 text-xs text-zinc-500 h-5 shrink-0"></div>
 
-            <!-- Input (#621: read-only viewers get a notice instead) -->
-            <div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2">
+            <!-- Input (#621: read-only viewers get a notice instead).
+                 platform-safe-bar (app.css) adds the home-indicator
+                 inset to this bar's own p-2 — it wraps both the composer
+                 and the read-only notice, so both clear the indicator.
+                 (No backticks in this comment: it lives inside a template
+                 literal, and one would close it.) -->
+            <div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2 platform-safe-bar">
               ${AppView.readOnly ? `
               <div class="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400 text-center">You're viewing this app's dev space read-only — only collaborators can post.</div>
               ` : `
@@ -10223,6 +10291,10 @@ const AppView = {
     btn.title = docked
       ? 'Expand the preview to fill the screen'
       : 'Dock the preview back beside the chat';
+    // #970: docking / un-docking moves the preview frame's rect, so the
+    // insets that apply to it change (a docked panel is nowhere near the
+    // home indicator; a fullscreen one sits right on it).
+    AppView.scheduleSafeAreaBroadcast();
   },
 
   // #127: per-render registry of { md, path } testing guidance keyed by
@@ -11722,6 +11794,195 @@ const AppView = {
     });
   },
 
+  // ── Safe-area inset forwarding (issue #970) ────────────────────────
+  //
+  // WHY THIS EXISTS. `env(safe-area-inset-*)` resolves to 0px inside a
+  // cross-origin iframe in every engine, so an embedded app has no way to
+  // learn where the notch and the home indicator are. The shell used to
+  // paper over that by reserving the bottom strip itself
+  // (`un-safe-bottom` on #app-view) — which is exactly what cut apps off
+  // short of the screen's rounded bottom edge. Now the frame runs
+  // edge-to-edge and we TELL the app the insets instead; the bridge turns
+  // them into `--un-safe-inset-*` custom properties on the app's <html>,
+  // which the native kit's CSS reads. Note this also fixes something that
+  // never worked: every kit safe-area rule was inert inside app frames.
+  //
+  // The forwarded values are the insets that apply to the FRAME'S RECT,
+  // not the page's — see _frameInsets. That is what keeps the header's
+  // already-consumed top inset from being counted twice.
+
+  // The zero value, and the shape every path here produces.
+  _zeroInsets() {
+    return { top: 0, right: 0, bottom: 0, left: 0 };
+  },
+
+  // Raw page insets. JS cannot read env() directly, so mount one hidden
+  // probe whose padding IS the four env() values and read it back. The
+  // probe is created once and reused; `position:fixed` + zero size +
+  // `visibility:hidden` keep it out of layout and off the a11y tree.
+  _safeAreaProbe: null,
+
+  _readRootInsets() {
+    if (typeof document === 'undefined' || typeof getComputedStyle !== 'function') {
+      return AppView._zeroInsets();
+    }
+    let probe = AppView._safeAreaProbe;
+    if (!probe || !probe.isConnected) {
+      probe = document.createElement('div');
+      probe.id = 'safe-area-probe';
+      probe.setAttribute('aria-hidden', 'true');
+      probe.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;'
+        + 'visibility:hidden;pointer-events:none;'
+        + 'padding-top:env(safe-area-inset-top,0px);'
+        + 'padding-right:env(safe-area-inset-right,0px);'
+        + 'padding-bottom:env(safe-area-inset-bottom,0px);'
+        + 'padding-left:env(safe-area-inset-left,0px);';
+      document.body.appendChild(probe);
+      AppView._safeAreaProbe = probe;
+    }
+    const px = (v) => {
+      const n = parseFloat(v);
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    };
+    try {
+      const cs = getComputedStyle(probe);
+      return {
+        top: px(cs.paddingTop),
+        right: px(cs.paddingRight),
+        bottom: px(cs.paddingBottom),
+        left: px(cs.paddingLeft),
+      };
+    } catch {
+      return AppView._zeroInsets();
+    }
+  },
+
+  // PURE. Which part of each raw inset still lies under the frame.
+  // Anything the shell's own chrome already covers is subtracted: with the
+  // platform header over the frame's top edge the app's top inset is 0,
+  // and it becomes the real status-bar inset the moment the header is
+  // hidden (chromeless). Same on the other three edges, so a docked
+  // staging panel, the anonymous viewer and desktop all fall out of the
+  // same arithmetic.
+  //
+  // Clamped to [0, raw] per edge and rounded. Both bounds matter: a frame
+  // that doesn't reach an edge subtracts past zero, and a frame OVERHANGING
+  // the viewport (which happens transiently — the launch zoom pins the view
+  // as a fixed overlay) subtracts a negative, which would otherwise forward
+  // an inset LARGER than the screen's own. The unsafe strip under a frame
+  // can never exceed the unsafe strip of the display. Sub-pixel rects are
+  // normal and a fractional px in a CSS var buys nothing.
+  //
+  // `rect` is a DOMRect-alike in viewport coordinates; `viewport` is
+  // { width, height } of the layout viewport.
+  _frameInsets(raw, rect, viewport) {
+    const zero = AppView._zeroInsets();
+    if (!raw || !rect || !viewport) return zero;
+    const w = Number(viewport.width);
+    const h = Number(viewport.height);
+    if (!Number.isFinite(w) || !Number.isFinite(h)) return zero;
+    const clamp = (n, max) => {
+      if (!Number.isFinite(n) || n <= 0) return 0;
+      const cap = Number.isFinite(max) && max > 0 ? max : 0;
+      return Math.round(Math.min(n, cap));
+    };
+    return {
+      top: clamp(raw.top - rect.top, raw.top),
+      right: clamp(raw.right - (w - rect.right), raw.right),
+      bottom: clamp(raw.bottom - (h - rect.bottom), raw.bottom),
+      left: clamp(raw.left - rect.left, raw.left),
+    };
+  },
+
+  // Every frame this shell owns and forwards insets to.
+  SAFE_AREA_FRAME_IDS: ['app-iframe', 'app-viewer-frame', 'staging-iframe'],
+
+  // Last value posted per frame id, so an unchanged recompute posts
+  // nothing (a rotation is one message per frame, not a stream).
+  _safeAreaSent: {},
+  _safeAreaRaf: null,
+
+  // The insets for one frame, or null when it isn't on screen.
+  safeAreaForFrame(id) {
+    if (typeof document === 'undefined' || typeof window === 'undefined') return null;
+    const iframe = document.getElementById(id);
+    if (!iframe || !iframe.isConnected || typeof iframe.getBoundingClientRect !== 'function') {
+      return null;
+    }
+    const rect = iframe.getBoundingClientRect();
+    // A hidden frame (display:none / not yet laid out) has a 0×0 rect,
+    // which would read as "flush against every edge" and forward the full
+    // page insets. Skip it; the next real layout re-broadcasts.
+    if (!rect.width || !rect.height) return null;
+    return AppView._frameInsets(
+      AppView._readRootInsets(),
+      rect,
+      { width: window.innerWidth, height: window.innerHeight }
+    );
+  },
+
+  // Post the current insets into every owned frame whose value changed.
+  broadcastSafeArea() {
+    if (typeof document === 'undefined') return;
+    AppView.SAFE_AREA_FRAME_IDS.forEach((id) => {
+      const iframe = document.getElementById(id);
+      if (!iframe || !iframe.contentWindow) {
+        delete AppView._safeAreaSent[id];
+        return;
+      }
+      const value = AppView.safeAreaForFrame(id);
+      if (!value) return;
+      const key = `${value.top},${value.right},${value.bottom},${value.left}`;
+      if (AppView._safeAreaSent[id] === key) return;
+      AppView._safeAreaSent[id] = key;
+      try {
+        iframe.contentWindow.postMessage(
+          { __usernode_safe_area: 'changed', value },
+          '*'
+        );
+      } catch {}
+    });
+  },
+
+  // rAF-coalesced entry point — everything that can move a frame's rect
+  // calls this rather than broadcastSafeArea directly, so a burst of
+  // resize/orientation events collapses into one recompute per frame.
+  scheduleSafeAreaBroadcast() {
+    if (typeof window === 'undefined' || typeof requestAnimationFrame !== 'function') {
+      AppView.broadcastSafeArea();
+      return;
+    }
+    if (AppView._safeAreaRaf !== null) return;
+    AppView._safeAreaRaf = requestAnimationFrame(() => {
+      AppView._safeAreaRaf = null;
+      AppView.broadcastSafeArea();
+    });
+  },
+
+  // The bridge asks once at startup, so an app never has to wait for a
+  // resize to learn its insets (and can't miss a `changed` posted before
+  // its listener was installed). Same source gate as the locale family.
+  handleSafeAreaBridgeMessage(e) {
+    const data = e.data;
+    if (!data || !data.id || data.__usernode_safe_area !== 'get') return;
+
+    const match = AppView.SAFE_AREA_FRAME_IDS.find((id) => {
+      const iframe = document.getElementById(id);
+      return iframe && e.source === iframe.contentWindow;
+    });
+    if (!match) return;
+
+    const value = AppView.safeAreaForFrame(match) || AppView._zeroInsets();
+    // Record it so the next broadcast doesn't re-post the same numbers.
+    AppView._safeAreaSent[match] = `${value.top},${value.right},${value.bottom},${value.left}`;
+    try {
+      e.source.postMessage(
+        { __usernode_safe_area: 'response', id: data.id, value },
+        '*'
+      );
+    } catch {}
+  },
+
   // ── App LLM access consent flow (issue #34) ────────────────────────
   //
   // The bridge's usernode.requestLlmAccess()/getLlmAccess()/
@@ -12105,7 +12366,22 @@ if (typeof window !== 'undefined') {
     try { AppView.handleStorageBridgeMessage(e); } catch {}
     // #757: usernode.getUserLocale() reads from the app iframe.
     try { AppView.handleLocaleBridgeMessage(e); } catch {}
+    // #970: the bridge's startup request for this frame's safe-area insets.
+    try { AppView.handleSafeAreaBridgeMessage(e); } catch {}
   });
+
+  // #970: anything that can change a frame's rect relative to the page's
+  // safe area re-broadcasts. Rotation and window resizes change the insets
+  // themselves; the visualViewport resize covers the on-screen keyboard
+  // and iOS toolbar collapse, which move the layout viewport's bottom
+  // edge. All three funnel through the rAF-coalesced, value-deduplicated
+  // scheduler, so the cost of a burst is one recompute per frame.
+  const onViewportChange = () => AppView.scheduleSafeAreaBroadcast();
+  window.addEventListener('resize', onViewportChange, { passive: true });
+  window.addEventListener('orientationchange', onViewportChange, { passive: true });
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', onViewportChange, { passive: true });
+  }
 }
 
 // Small helpers used by the #21 version pill. Kept local so app-view
