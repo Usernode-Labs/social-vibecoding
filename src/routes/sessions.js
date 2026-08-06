@@ -144,6 +144,51 @@ const recheckInFlight = new Set();
 // exercises the real allowlist rather than a hand-written "safe" payload.
 const STAGING_MOCK_TRANSCRIPT_IDS = new Set([990002]);
 
+// (#1012) Read-only mock spec version for the group-chat spec panel. Same
+// convention as stagingMockTranscript above: request-time only, never
+// persisted, and a strict no-op outside staging — the caller gates on
+// USERNODE_ENV === 'staging' && ?demo=1 AND on the real lookup finding
+// nothing, so a genuine row always wins.
+//
+// Why it's needed: chat_session_specs is staging:private, so a
+// prod-cloned staging DB has ZERO spec content while chat_messages (and
+// therefore the cloned spec_share cards in group chat) IS copied. Without
+// this, every "View full spec" in a staging preview renders the 404 error
+// branch and the panel's real layout — including its copy button — can't
+// be reviewed.
+//
+// The document deliberately conforms to the platform's two-half spec
+// convention (both marker headings), so a reviewer also exercises the
+// dev-chat viewer's tab split and can confirm that "Copy markdown" yields
+// the WHOLE document rather than the open tab's half.
+const STAGING_MOCK_SPEC_MD = [
+  '# [Mock] Readable cards on narrow screens',
+  '',
+  'Staging demo spec — the cards get a two-row layout so the title stops being crushed.',
+  '',
+  '## User-facing changes',
+  '',
+  '- Each card shows its title on its own line.',
+  '- The action buttons wrap underneath instead of squeezing the title.',
+  '',
+  '## Technical implementation',
+  '',
+  '- Split the card renderer into a title row and an actions row.',
+  '- The actions row wraps at narrow widths; no change above 640px.',
+  '',
+].join('\n');
+
+function stagingMockSpecVersion(version) {
+  return {
+    version,
+    content: STAGING_MOCK_SPEC_MD,
+    built_at: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
+    commit_sha: null,
+    pr_number: 9301,
+    shared_to_group_at: new Date(Date.now() - 40 * 60 * 1000).toISOString(),
+  };
+}
+
 function stagingMockTranscript(sessionId) {
   if (!STAGING_MOCK_TRANSCRIPT_IDS.has(sessionId)) return null;
   const t = (minsAgo) => new Date(Date.now() - minsAgo * 60 * 1000).toISOString();
@@ -3793,7 +3838,17 @@ function sessionRoutes(config) {
                 ))`,
         [sessionId, version, req.user.id]
       );
-      if (!rows.length) return res.status(404).json({ error: 'Spec version not found' });
+      if (!rows.length) {
+        // (#1012) Staging-only demo fallback (?demo=1): chat_session_specs
+        // is staging:private, so cloned group-chat spec cards have nothing
+        // to load. Read-path only, gated on staging + the explicit demo
+        // flag, and reached only when no real row matched — production and
+        // any real spec are untouched.
+        if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
+          return res.json({ spec: stagingMockSpecVersion(version) });
+        }
+        return res.status(404).json({ error: 'Spec version not found' });
+      }
       res.json({ spec: rows[0] });
     } catch (err) {
       log.error('sessions', 'Failed to get spec version', { message: err.message });
