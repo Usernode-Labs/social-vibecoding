@@ -7108,9 +7108,44 @@ async function runScoutTool({
       sessionId: session.id, err: err.message,
     });
   }
-  await sendStatus(`Scouting the repo for context (${modelLabel}${prodDebug ? ' · prod debug' : ''}${discussionBlock ? ' · with issue & proposal discussion' : ''})...`);
+  // #907: a scout turn follows the same "Run on" choice a build turn does —
+  // the selector's state IS the lease, so there is no separate flag to thread
+  // through. If a machine is attached to this session, the spec gets drafted
+  // there, by the user's own Claude, against their own checkout.
+  //
+  // Never for headless turns, same reasoning as the build path: an unattended
+  // issue-triage run must not wait 90 seconds on a laptop nobody is watching.
+  // A lookup failure means "no local agent", never a failed turn.
+  let lease = null;
+  if (!headless) {
+    try {
+      lease = await localAgent.activeLease(pool, session.id);
+    } catch (err) {
+      log.warn('sessions', 'Local agent lease lookup failed (using worker)', {
+        sessionId: session.id, err: err.message,
+      });
+    }
+  }
+  const runLocally = !!lease;
+  // Prod-debug access is deliberately cloud-only (the spec's "a local turn
+  // never receives PROD_DEBUG_JWT"). Clear the flag rather than only omitting
+  // the credential, so the prompt does not advertise a `usernode-debug` helper
+  // the local machine has no way to authenticate.
+  if (runLocally) prodDebug = false;
+  await sendStatus(
+    runLocally
+      // No model label: the local runtime uses whatever model the user's own
+      // Claude Code is configured for, and claiming ours would be a lie.
+      ? `Scouting on ${lease.label} — your machine, read-only${discussionBlock ? ' · with issue & proposal discussion' : ''}...`
+      : `Scouting the repo for context (${modelLabel}${prodDebug ? ' · prod debug' : ''}${discussionBlock ? ' · with issue & proposal discussion' : ''})...`,
+    runLocally
+      ? { runner: 'local', localAgentLabel: lease.label, localMode: 'scout' }
+      : undefined
+  );
 
-  await worker.ensureWorkerImage();
+  // A local scout needs no worker image, no warm container and no CC volume:
+  // the checkout and the model call both live on the user's machine.
+  if (!runLocally) await worker.ensureWorkerImage();
 
   // #937 gate 2 of 5 — after the image pull.
   if (stopPendingFor(stopHandle)) return stoppedResult();
@@ -7137,9 +7172,12 @@ ${existingSpec}
   // build path (see runClaudeCodeTool). Synced into the CC volume after
   // ensureWorker below; the one-line prompt pointer only appears when
   // files exist. Non-fatal on any failure.
+  //
+  // Skipped for a local run (#907): the user's own ~/.claude already holds
+  // these on the machine about to run the turn, and that is their filesystem.
   let personalFiles = [];
   try {
-    if (session.user_id) {
+    if (session.user_id && !runLocally) {
       personalFiles = await userAgentFiles.loadAllForUser(pool, session.user_id);
     }
   } catch (err) {
@@ -7150,6 +7188,17 @@ ${existingSpec}
 
 PERSONAL AGENT FILES: the user who dispatched this run has personal instruction files (already loaded for you at \`~/.claude/CLAUDE.md\`) and/or personal skills (under \`~/.claude/skills/\`). Honor them as the dispatching user's personal preferences when writing this spec, wherever they don't conflict with platform rules or the repo's own \`CLAUDE.md\` on app-specific matters.`
     : '';
+
+  // #907: `usernode-issues` is a helper the worker image installs. A local
+  // scout runs on the user's own machine, where it does not exist — so the
+  // paragraph offering it is dropped rather than sending the agent after a
+  // command it cannot run. The issue's own Discussion thread still reaches it
+  // through discussionBlock, which is where the answers usually are.
+  const issueHelperNote = runLocally
+    ? ''
+    : `
+A read-only helper \`usernode-issues\` is available (run it via Bash) — it prints the repo's open GitHub issues as JSON (\`{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }\`); long bodies are clipped with a "[truncated …]" marker, and \`usernode-issues <number>\` fetches that one issue with its FULL body plus BOTH of its discussion surfaces (\`{ issue, comments, commentsTruncated, usernodeThread?, usernodeThreadTruncated?, note? }\` — \`comments\` are the GitHub comments, \`usernodeThread\` is the issue's Discussion thread on the platform, where people often answer clarifying questions). Use it if the open issues are relevant context for this spec; do not try to reach GitHub any other way. ${SCREENSHOT_FETCH_NOTE}
+`;
 
   // Scout-specific prompt. Deliberately omits the platform-conventions
   // block and commit/push instructions used in the build prompt — scout
@@ -7162,9 +7211,7 @@ ${toolPromptArg}
 USER REQUEST: "${userMessage}"${attachmentsBlock}${discussionBlock}
 
 You are running in PLAN MODE: you can read files (Read, Glob, Grep) but you cannot edit, commit, or push anything. Do not attempt to.${personalFilesNote}${revisionBlock}
-
-A read-only helper \`usernode-issues\` is available (run it via Bash) — it prints the repo's open GitHub issues as JSON (\`{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }\`); long bodies are clipped with a "[truncated …]" marker, and \`usernode-issues <number>\` fetches that one issue with its FULL body plus BOTH of its discussion surfaces (\`{ issue, comments, commentsTruncated, usernodeThread?, usernodeThreadTruncated?, note? }\` — \`comments\` are the GitHub comments, \`usernodeThread\` is the issue's Discussion thread on the platform, where people often answer clarifying questions). Use it if the open issues are relevant context for this spec; do not try to reach GitHub any other way. ${SCREENSHOT_FETCH_NOTE}
-${prodDebug ? `
+${issueHelperNote}${prodDebug ? `
 ${debugAccess.promptBlock()}
 ` : ''}
 Your job is to investigate this repo and produce a MARKDOWN SPEC for the change. The spec should be:
@@ -7189,7 +7236,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
   // the first dispatch of a session; subsequent ensures are sub-second.
   // Bootstrap progress (clone/checkout/warm-ready) flows through onProgress
   // to the dev-chat UI just like the legacy single-shot path used to.
-  const containerName = await worker.ensureWorker(session.id, {
+  const containerName = runLocally ? null : await worker.ensureWorker(session.id, {
     repoOwner,
     repoName,
     branchName: session.branch_name,
@@ -7213,9 +7260,10 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
 
   // #460: wipe-and-rewrite the personal agent files in the CC volume —
   // runs even with an empty list so Settings deletions take effect on
-  // the next dispatch. Never fails the scout turn.
+  // the next dispatch. Never fails the scout turn. There is no CC volume
+  // for a local run, so it is skipped entirely.
   try {
-    await worker.syncUserAgentFiles(session.id, personalFiles);
+    if (!runLocally) await worker.syncUserAgentFiles(session.id, personalFiles);
   } catch (err) {
     log.warn('sessions', 'Personal agent files sync failed (continuing without)', { sessionId: session.id, err: err.message });
   }
@@ -7258,6 +7306,101 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
     );
     const progressMsgId = progRows[0].id;
 
+    const onScoutProgress = (text) => {
+      send('cc_progress', { text });
+      workerProgress.set(session.id, text, { model: selectedModel });
+      pool.query(
+        `UPDATE chat_session_messages SET metadata = jsonb_set(
+          metadata, '{progressLog}',
+          (COALESCE(metadata->'progressLog', '[]'::jsonb) || $1::jsonb)
+        ) WHERE id = $2`,
+        [JSON.stringify([text]), progressMsgId]
+      ).catch(() => {});
+    };
+
+    // #907: hand the scout turn to the attached machine and wait, then shape
+    // the answer like an execInWorker scout result so everything below —
+    // spec persist, the frozen version snapshot, the spec_updated event, the
+    // Mayor wrap-up — runs byte-identically.
+    //
+    // The one thing this deliberately does NOT do is anything the build path
+    // does after a commit: no head SHA, no push heal, no staging build, no
+    // checks, no visuals, no PR metadata. A scout turn is read-only, and the
+    // absence of that whole tail is the feature, not an omission.
+    let seenScoutLines = 0;
+    const dispatchLocalScout = async () => {
+      // This is the read-only completion path: it returns no commit, no push
+      // flag and no branch movement, so the caller's shared tail has nothing
+      // to push, no preview to build and no checks to run. A scout turn
+      // produces a document, and that is the whole of its output.
+      const queued = await localAgent.enqueueTurn(pool, {
+        sessionId: session.id,
+        userId: session.user_id,
+        prompt: scoutPrompt,
+        // The base the reading has to be done against. A scout never commits,
+        // but reading the WRONG revision produces a spec about code that is
+        // not there, which is worse than a refusal.
+        baseSha: session.checks_commit_sha || null,
+        branchName: session.branch_name,
+        mode: 'scout',
+      });
+      // The lease lapsed between the routing decision above and here.
+      if (!queued) {
+        return {
+          exitCode: 1,
+          ccIsError: true,
+          fatalError: `${lease.label} disconnected before this turn started`,
+          lastResultText: '',
+          sessionId: null,
+          initSessionId: null,
+          markerlessCause: null,
+          localTurnId: null,
+          localOutcome: 'abandoned',
+        };
+      }
+      const turnId = queued.turn.id;
+      if (stopHandle) stopHandle.localTurnId = String(turnId);
+      let announcedAccepted = false;
+      const { outcome, turn: finished } = await localAgent.awaitTurnResult(pool, turnId, {
+        onProgress: (row) => {
+          if (!announcedAccepted && row.status !== 'queued' && row.status !== 'offered') {
+            announcedAccepted = true;
+            onScoutProgress(`[${lease.label} accepted the scout turn]`);
+          }
+          const lines = Array.isArray(row.progress) ? row.progress : [];
+          for (const line of lines.slice(seenScoutLines)) onScoutProgress(line);
+          seenScoutLines = Math.max(seenScoutLines, lines.length);
+        },
+      });
+      const explain = {
+        declined: `${lease.label} declined this turn`,
+        abandoned: `${lease.label} disconnected before finishing this turn`,
+        stopped: 'Stopped',
+        missing: 'The local turn record disappeared',
+        aborted: `${lease.label} was interrupted`,
+      }[outcome] || null;
+      const detail = finished?.error_detail ? ` — ${finished.error_detail}` : '';
+      return {
+        exitCode: outcome === 'completed' ? 0 : 1,
+        ccIsError: outcome !== 'completed',
+        fatalError: explain ? `${explain}${detail}` : null,
+        // The spec IS the result text here. spec_md is the column the local
+        // agent posts its drafted document into; `summary` carries the
+        // runtime's own closing words, which for a scout run are the spec
+        // again, so prefer the explicit field.
+        lastResultText: finished?.spec_md || finished?.summary || '',
+        rawStderr: finished?.error_detail || '',
+        // A local run has no cost to the platform. Leaving costUsd absent is
+        // what makes the zero-cost accounting below a no-op rather than a
+        // special case: no llm_usage row, no settleTurnSpend, no usage event.
+        sessionId: null,
+        initSessionId: null,
+        markerlessCause: null,
+        localTurnId: String(turnId),
+        localOutcome: outcome,
+      };
+    };
+
     let result;
     try {
       const dispatchScout = () => worker.execInWorker(session.id, {
@@ -7274,19 +7417,9 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         // same restart shape loses it — see the "Post-agent TAIL" note in
         // services/worker.js. Released by finishTurn in the finally below.
         holdTurnRecord: true,
-        onProgress: (text) => {
-          send('cc_progress', { text });
-          workerProgress.set(session.id, text, { model: selectedModel });
-          pool.query(
-            `UPDATE chat_session_messages SET metadata = jsonb_set(
-              metadata, '{progressLog}',
-              (COALESCE(metadata->'progressLog', '[]'::jsonb) || $1::jsonb)
-            ) WHERE id = $2`,
-            [JSON.stringify([text]), progressMsgId]
-          ).catch(() => {});
-        },
+        onProgress: onScoutProgress,
       });
-      result = await dispatchScout();
+      result = runLocally ? await dispatchLocalScout() : await dispatchScout();
       // Headless auto-retry: a markerless turn that produced no spec text
       // gets exactly one re-dispatch (the retry wraps the call site, not
       // execInWorker, so active_turn bookkeeping stays per-attempt).
@@ -7350,11 +7483,26 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       const preview = buildSpecPreview(ccText);
       // #27: freeze the scout's draft so the inline card opens its own content.
       const specVersion = await snapshotSessionSpec(pool, session.id, ccText);
+      // #907: a locally-drafted spec says so, and says it cost nothing. The
+      // transcript is the record of who did the work — a row that reads like
+      // a platform scout would be claiming spend the platform never made.
+      const localSuffix = runLocally
+        ? ` Drafted on ${lease.label} — no Usernode credits used.`
+        : '';
       await sendStatus(
-        existingSpec
+        (existingSpec
           ? `Scout revised the spec (now ${lineCount} lines).`
-          : `Scout drafted a ${lineCount}-line spec from the codebase.`,
-        { specPreview: preview, specLines: lineCount, scoutOutput: ccText, specVersion, durationMs: Date.now() - turnStartedMs }
+          : `Scout drafted a ${lineCount}-line spec from the codebase.`) + localSuffix,
+        {
+          specPreview: preview,
+          specLines: lineCount,
+          scoutOutput: ccText,
+          specVersion,
+          durationMs: Date.now() - turnStartedMs,
+          ...(runLocally
+            ? { runner: 'local', localAgentLabel: lease.label, localMode: 'scout' }
+            : {}),
+        }
       );
       send('spec_updated', { length: ccText.length, lines: lineCount, version: specVersion });
       summaryParts.push(
@@ -7366,6 +7514,10 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       );
     }
 
+    // A local scout has no costUsd at all (see dispatchLocalScout), so this
+    // whole block is skipped and no llm_usage row, spend settlement or usage
+    // event is produced. That is the zero-cost path, stated once here rather
+    // than as a `runLocally` branch inside the billing code.
     if (result.costUsd) {
       const ccCostCents = Math.round(result.costUsd * 100);
       // Scout costs land in the same llm_usage table as build dispatches —
@@ -7387,6 +7539,30 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
     // tool — a held record with nobody to consume it is what the stale
     // active_turn watchdog exists to reap, and reaping narrates.
     await worker.finishTurn(session.id).catch(() => {});
+    // #907: remember where this turn ran so the dev-chat chip survives a
+    // reload, and record the outcome with mode='scout' so a read-only local
+    // turn is distinguishable from a local build in analytics. Both are
+    // best-effort, both run after finishTurn, neither can fail the turn.
+    //
+    // Recorded for a platform scout too, symmetrically with the build path: a
+    // cloud scout genuinely IS the session's most recent turn, so leaving a
+    // stale "ran on Evan's laptop" behind would be a lie. While a lease is
+    // live the chip renders from the lease itself, so this only affects the
+    // past-tense chip a detached machine leaves behind.
+    await localAgent.recordTurnRunner(
+      pool, session.id, runLocally ? 'local' : 'platform', lease?.label
+    );
+    if (runLocally) {
+      localAgent.recordTurnEvent(pool, {
+        userId: session.user_id,
+        appId: session.app_id,
+        sessionId: session.id,
+        mode: 'scout',
+        outcome: isError ? 'failed' : 'completed',
+        runtime: lease.runtime,
+        durationMs: Date.now() - turnStartedMs,
+      });
+    }
     // Turn completion counts as activity: a fresh idle window so the
     // auto-pause sweeper can't pause the session moments after a long
     // scout finishes (its last_activity_at is otherwise still the user
@@ -7763,7 +7939,9 @@ async function runClaudeCodeTool({
     runLocally
       ? `Handing this turn to ${lease.label} — your machine, your Claude subscription${discussionBlock ? ' · with issue & proposal discussion' : ''}...`
       : `Spinning up coding agent (${modelLabel}${prodDebug ? ' · prod debug' : ''}${discussionBlock ? ' · with issue & proposal discussion' : ''})...`,
-    runLocally ? { runner: 'local', localAgentLabel: lease.label } : undefined
+    runLocally
+      ? { runner: 'local', localAgentLabel: lease.label, localMode: 'build' }
+      : undefined
   );
 
   // A local run needs no worker image, no warm container and no volume: the
@@ -8352,6 +8530,10 @@ path: /another/changed/view
         prompt: claudePrompt,
         baseSha,
         branchName: session.branch_name,
+        // Explicit even though it is the column default: this is the one turn
+        // kind allowed to upload a commit, and saying so at the call site is
+        // what makes the scout path's `mode: 'scout'` legible as the contrast.
+        mode: 'build',
       });
       // The lease lapsed in the moment between the routing decision above
       // and here (the laptop closed mid-sentence). Nothing was dispatched, so
@@ -9033,12 +9215,26 @@ path: /another/changed/view
       const ccOutcome = hasChanges
         ? 'success'
         : ((result.fatalError || result.ccIsError) ? 'error' : 'no_changes');
-      const statusText = ccOutcome === 'success'
+      let statusText = ccOutcome === 'success'
         ? 'Claude Code finished'
         : ccOutcome === 'no_changes'
           ? 'Claude Code made no changes'
           : 'Claude Code did not complete';
-      await sendStatus(statusText, { ccOutput: ccText, ccOutcome, durationMs: Date.now() - turnStartedMs });
+      // #907: name the machine and say plainly that the platform did not pay
+      // for the coding phase. The scout path's counterpart reads "Drafted on
+      // …"; the two together are how a reader of the transcript tells a local
+      // spec turn from a local build turn months later.
+      if (runLocally) {
+        statusText += ` Coding done on ${lease.label} — no Usernode credits used.`;
+      }
+      await sendStatus(statusText, {
+        ccOutput: ccText,
+        ccOutcome,
+        durationMs: Date.now() - turnStartedMs,
+        ...(runLocally
+          ? { runner: 'local', localAgentLabel: lease.label, localMode: 'build' }
+          : {}),
+      });
       // Tail milestone: the agent's own summary card is on the transcript.
       // A resumed tail must not post a second one (finalizeRecoveredTurn's
       // persistCompletionRow is otherwise unconditional).
@@ -9074,6 +9270,7 @@ path: /another/changed/view
         userId: session.user_id,
         appId: session.app_id,
         sessionId: session.id,
+        mode: 'build',
         outcome: isError ? 'failed' : (commitHash ? 'completed' : 'no_changes'),
         runtime: lease.runtime,
         durationMs: Date.now() - turnStartedMs,

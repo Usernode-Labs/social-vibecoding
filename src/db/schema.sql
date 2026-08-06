@@ -1074,6 +1074,13 @@ CREATE TABLE IF NOT EXISTS local_agent_turns (
       'queued', 'offered', 'accepted', 'declined',
       'running', 'completed', 'failed', 'stopped', 'abandoned'
     )),
+  -- Which KIND of turn this is. 'build' writes code and produces a commit;
+  -- 'scout' is read-only and produces the session's spec document instead.
+  -- The distinction is load-bearing rather than cosmetic: it drives the
+  -- read-only invariant below, the runtime's permission mode on the user's
+  -- machine, and whether the platform runs the staging/checks tail at all.
+  mode VARCHAR(16) NOT NULL DEFAULT 'build'
+    CHECK (mode IN ('build', 'scout')),
   -- The Mayor's dispatch prompt plus the platform context blocks. Bounded so
   -- a runaway spec cannot turn this table into a document store.
   prompt TEXT NOT NULL CHECK (char_length(prompt) <= 262144),
@@ -1089,6 +1096,12 @@ CREATE TABLE IF NOT EXISTS local_agent_turns (
   -- existing exact-tree commit-upload endpoint, and the agent's own summary.
   head_sha VARCHAR(40) CHECK (head_sha IS NULL OR head_sha ~ '^[0-9a-f]{40}$'),
   summary TEXT CHECK (summary IS NULL OR char_length(summary) <= 32768),
+  -- A scout turn's actual product: the markdown spec document the local agent
+  -- drafted, which the platform writes to chat_sessions.spec_md exactly as it
+  -- does for a worker-container scout. Separate from `summary` because it is
+  -- the deliverable, not a description of one, and it is bounded like `prompt`
+  -- rather than like a summary.
+  spec_md TEXT CHECK (spec_md IS NULL OR char_length(spec_md) <= 262144),
   error_detail TEXT CHECK (error_detail IS NULL OR char_length(error_detail) <= 4096),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   offered_at TIMESTAMPTZ,
@@ -1104,7 +1117,14 @@ CREATE TABLE IF NOT EXISTS local_agent_turns (
      AND finished_at IS NOT NULL)
     OR (status IN ('queued', 'offered', 'accepted', 'running')
      AND finished_at IS NULL)
-  )
+  ),
+  -- THE read-only invariant, in the schema rather than only in the route: a
+  -- scout turn can never carry a commit, and a build turn can never carry a
+  -- spec. The protocol validates both too, but a scout turn that smuggled a
+  -- head SHA would reach the staging/checks tail and put unreviewed code on
+  -- the managed branch — so the database refuses it as well.
+  CHECK (mode = 'build' OR head_sha IS NULL),
+  CHECK (mode = 'scout' OR spec_md IS NULL)
 );
 
 -- At most one live turn per session. Same reasoning as the lease index: the
@@ -1117,6 +1137,29 @@ CREATE INDEX IF NOT EXISTS local_agent_turns_lease_idx
   ON local_agent_turns (lease_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS local_agent_turns_session_idx
   ON local_agent_turns (session_id, created_at DESC);
+
+-- Scout support, added after the table already existed on some databases.
+-- CREATE TABLE IF NOT EXISTS skips the whole definition above once the table
+-- is there, so the two columns and their invariants need explicit migrations.
+ALTER TABLE local_agent_turns
+  ADD COLUMN IF NOT EXISTS mode VARCHAR(16) NOT NULL DEFAULT 'build';
+ALTER TABLE local_agent_turns ADD COLUMN IF NOT EXISTS spec_md TEXT;
+DO $$
+BEGIN
+  ALTER TABLE local_agent_turns DROP CONSTRAINT IF EXISTS local_agent_turns_mode_check;
+  ALTER TABLE local_agent_turns ADD CONSTRAINT local_agent_turns_mode_check
+    CHECK (mode IN ('build', 'scout'));
+  ALTER TABLE local_agent_turns DROP CONSTRAINT IF EXISTS local_agent_turns_spec_len_check;
+  ALTER TABLE local_agent_turns ADD CONSTRAINT local_agent_turns_spec_len_check
+    CHECK (spec_md IS NULL OR char_length(spec_md) <= 262144);
+  -- The read-only invariant again, for databases that predate it. Named so a
+  -- re-run replaces rather than duplicates it (an unnamed CHECK added by the
+  -- CREATE TABLE above gets a generated name and is left alone, which is
+  -- fine — the two express the same rule).
+  ALTER TABLE local_agent_turns DROP CONSTRAINT IF EXISTS local_agent_turns_readonly_check;
+  ALTER TABLE local_agent_turns ADD CONSTRAINT local_agent_turns_readonly_check
+    CHECK ((mode = 'build' OR head_sha IS NULL) AND (mode = 'scout' OR spec_md IS NULL));
+END $$;
 
 -- Both tables describe a specific person's machine and the prompts sent to
 -- it, so a staging clone must never carry them. See tools/clone-db.

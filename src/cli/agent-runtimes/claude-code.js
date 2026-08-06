@@ -34,6 +34,15 @@ const DEFAULT_BINARY = 'claude';
 // stopping short of the worker's --dangerously-skip-permissions. `agent run
 // --dangerously-skip-permissions` opts into the worker's behavior explicitly.
 const DEFAULT_PERMISSION_MODE = 'acceptEdits';
+// A scout / spec turn is read-only, and that is enforced by how the binary is
+// invoked rather than by trusting the prompt to be obeyed. `plan` is Claude
+// Code's own read-only mode; the disallowed-tools list is the second lock, so
+// a future permission-mode rename cannot silently re-enable editing on
+// someone's own checkout.
+const READ_ONLY_PERMISSION_MODE = 'plan';
+const READ_ONLY_DISALLOWED_TOOLS = Object.freeze([
+  'Edit', 'Write', 'MultiEdit', 'NotebookEdit',
+]);
 
 function probe(binary = DEFAULT_BINARY) {
   const result = spawnSync(binary, ['--version'], {
@@ -155,6 +164,7 @@ function lineSplitter(onLine) {
  * @param {string} [options.binary]    Which executable to spawn.
  * @param {string} [options.permissionMode]
  * @param {boolean} [options.skipPermissions]
+ * @param {boolean} [options.readOnly] Run in plan mode with editing tools off.
  * @param {(line: string) => void} [options.onProgress]
  * @param {AbortSignal} [options.signal] Aborting kills the child.
  * @returns {Promise<{exitCode:number,isError:boolean,summary:string,stderr:string}>}
@@ -166,13 +176,24 @@ function run({
   binary = DEFAULT_BINARY,
   permissionMode = DEFAULT_PERMISSION_MODE,
   skipPermissions = false,
+  readOnly = false,
   onProgress = () => {},
   signal,
 } = {}) {
   const state = { lastText: '', isError: false, sessionId: null, toolUses: new Map() };
   const args = ['--print', '--verbose', '--output-format', 'stream-json'];
-  if (skipPermissions) args.push('--dangerously-skip-permissions');
-  else args.push('--permission-mode', permissionMode);
+  // readOnly wins over skipPermissions unconditionally. The caller already
+  // drops the flag for a read-only turn; this makes it impossible to combine
+  // them by mistake from anywhere else, because the combination would let a
+  // turn the platform declared read-only write to the user's files.
+  if (readOnly) {
+    args.push('--permission-mode', READ_ONLY_PERMISSION_MODE);
+    args.push('--disallowedTools', READ_ONLY_DISALLOWED_TOOLS.join(','));
+  } else if (skipPermissions) {
+    args.push('--dangerously-skip-permissions');
+  } else {
+    args.push('--permission-mode', permissionMode);
+  }
   if (model) args.push('--model', model);
 
   return new Promise((resolve, reject) => {
@@ -261,6 +282,8 @@ module.exports = {
   RUNTIME_ID,
   DEFAULT_BINARY,
   DEFAULT_PERMISSION_MODE,
+  READ_ONLY_PERMISSION_MODE,
+  READ_ONLY_DISALLOWED_TOOLS,
   probe,
   toolLabel,
   summarizeToolResult,

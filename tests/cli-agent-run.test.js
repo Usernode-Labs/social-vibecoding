@@ -150,7 +150,7 @@ test('a stopped turn posts no result — the platform already owns that row', as
     },
   };
   await agent.runOneTurn(api, { turnId: '11', prompt: 'go' }, {
-    repo: root, leaseId: '7', runtime, binary: 'claude',
+    repo: root, leaseId: '7', runtime, binary: 'claude', ask: async () => 'y',
   }, io);
   assert.equal(api.calls.some((c) => c.pathname.includes('/result')), false);
   assert.equal(api.calls.some((c) => c.pathname.includes('/commit')), false);
@@ -162,11 +162,224 @@ test('a turn the machine can no longer claim is skipped, not crashed on', async 
   const io = fakeIo();
   let ran = false;
   await agent.runOneTurn(api, { turnId: '11', prompt: 'go' }, {
-    repo: root, leaseId: '7', binary: 'claude',
+    repo: root, leaseId: '7', binary: 'claude', ask: async () => 'y',
     runtime: { RUNTIME_ID: 'claude-code', async run() { ran = true; return {}; } },
   }, io);
   assert.equal(ran, false, 'never spend the user\'s subscription on a turn we do not hold');
   assert.match(io.stderr.join(''), /no longer waiting/i);
+});
+
+// ── Per-turn consent ───────────────────────────────────────────────────────
+
+test('nothing runs until the operator says yes at their own keyboard', async () => {
+  const api = fakeApi({ '/decline': { status: 200, data: {} } });
+  const io = fakeIo();
+  let ran = false;
+  const runtime = { RUNTIME_ID: 'claude-code', async run() { ran = true; return {}; } };
+
+  for (const answer of ['n', '', 'sure', 'Y E S', 'yep']) {
+    api.calls.length = 0;
+    // eslint-disable-next-line no-await-in-loop
+    await agent.runOneTurn(api, { turnId: '11', prompt: 'go', mode: 'build' }, {
+      repo: root, leaseId: '7', runtime, binary: 'claude', ask: async () => answer,
+    }, io);
+    assert.equal(ran, false, `"${answer}" must not start a turn`);
+    // Not accepted, and the platform is told WHY so the chat can say
+    // "Declined on your machine" rather than sitting on an offer timeout.
+    assert.equal(api.calls.some((c) => c.pathname.includes('/accept')), false, answer);
+    const declined = api.calls.find((c) => c.pathname.includes('/decline'));
+    assert.ok(declined, `"${answer}" reports the decline`);
+    assert.match(declined.body.reason, /Declined at the terminal/);
+  }
+
+  // Only an explicit yes runs it — and the confirmation happens BEFORE the
+  // accept, because accepting is what makes the web page say "your machine is
+  // working on it".
+  api.calls.length = 0;
+  await agent.runOneTurn(api, { turnId: '11', prompt: 'go', mode: 'build' }, {
+    repo: root, leaseId: '7', runtime, binary: 'claude', ask: async () => ' YES \n',
+  }, io);
+  assert.equal(ran, true);
+  assert.match(api.calls[0].pathname, /\/accept$/);
+});
+
+test('a terminal with no interactive stdin is a decline, never an implied yes', async () => {
+  // main.js's io.ask resolves null when process.stdin is not a TTY. That must
+  // read as "nobody could confirm", because the alternative is Usernode
+  // starting a process on a machine with nobody watching.
+  const api = fakeApi({ '/decline': { status: 200, data: {} } });
+  const io = fakeIo();
+  let ran = false;
+  await agent.runOneTurn(api, { turnId: '11', prompt: 'go', mode: 'build' }, {
+    repo: root, leaseId: '7', binary: 'claude', ask: async () => null,
+    runtime: { RUNTIME_ID: 'claude-code', async run() { ran = true; return {}; } },
+  }, io);
+  assert.equal(ran, false);
+  assert.match(
+    api.calls.find((c) => c.pathname.includes('/decline')).body.reason,
+    /no interactive terminal/
+  );
+
+  // …and so is a context with no `ask` wired at all.
+  api.calls.length = 0;
+  await agent.runOneTurn(api, { turnId: '11', prompt: 'go', mode: 'build' }, {
+    repo: root, leaseId: '7', binary: 'claude',
+    runtime: { RUNTIME_ID: 'claude-code', async run() { ran = true; return {}; } },
+  }, io);
+  assert.equal(ran, false);
+});
+
+test('the confirmation shows what is being agreed to, bounded', async () => {
+  const io = fakeIo();
+  const asked = [];
+  const consent = await agent.confirmTurn(
+    { turnId: '11', prompt: `CODING TASK\n${'x'.repeat(5000)}\nlast line` },
+    agent.MODES.build,
+    { repo: '/home/dev/app', ask: async (q) => { asked.push(q); return 'n'; } },
+    io
+  );
+  assert.equal(consent.ok, false);
+  assert.match(asked[0], /\[y\/N\]/);
+  const shown = io.stdout.join('');
+  assert.match(shown, /Turn 11/);
+  assert.match(shown, /coding turn/);
+  assert.match(shown, /\/home\/dev\/app/, 'the operator sees WHICH checkout');
+  assert.ok(
+    shown.length < agent.CONFIRM_PREVIEW_CHARS + 800,
+    'a 5000-char prompt is previewed, not dumped over the terminal'
+  );
+});
+
+test('the confirmation says plainly which kind of turn it is', async () => {
+  for (const [mode, wording] of [
+    [agent.MODES.build, /write code in/],
+    [agent.MODES.scout, /read \(no edits, no commits\) in/],
+  ]) {
+    const io = fakeIo();
+    // eslint-disable-next-line no-await-in-loop
+    await agent.confirmTurn({ turnId: '4', prompt: 'p' }, mode,
+      { repo: '/r', ask: async () => 'n' }, io);
+    assert.match(io.stdout.join(''), wording);
+  }
+});
+
+// ── Scout / read-only turns ────────────────────────────────────────────────
+
+// A read-only turn checks (and if necessary restores) the working tree, so it
+// must never be pointed at this repo. One throwaway git repo, shared.
+function tempRepo() {
+  const os = require('node:os');
+  const { execFileSync } = require('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'un-scout-'));
+  const run = (...args) => execFileSync('git', ['-C', dir, ...args], { stdio: 'pipe' });
+  run('init', '-q');
+  run('config', 'user.email', 'test@example.com');
+  run('config', 'user.name', 'Test');
+  fs.writeFileSync(path.join(dir, 'README.md'), 'hello\n');
+  run('add', '-A');
+  run('commit', '-q', '-m', 'base');
+  return { dir, run };
+}
+
+test('a scout turn runs the runtime read-only and never uploads a commit', async () => {
+  const { dir } = tempRepo();
+  const api = fakeApi({ '/accept': { status: 200, data: {} }, '/result': { status: 200, data: {} } });
+  const io = fakeIo();
+  let sawOptions = null;
+  const spec = '# Sticky header\n\n## User-facing changes\n\nIt sticks.\n';
+  const runtime = {
+    RUNTIME_ID: 'claude-code',
+    async run(options) {
+      sawOptions = options;
+      return { exitCode: 0, isError: false, summary: spec, stderr: '' };
+    },
+  };
+  await agent.runOneTurn(api, { turnId: '11', prompt: 'draft it', mode: 'scout' }, {
+    repo: dir, leaseId: '7', runtime, binary: 'claude', ask: async () => 'y',
+    // Even an operator who asked for the worker's posture does not get it on a
+    // turn the platform declared read-only.
+    skipPermissions: true,
+  }, io);
+
+  assert.equal(sawOptions.readOnly, true, 'the adapter is told to run read-only');
+  assert.equal(sawOptions.skipPermissions, false, 'and the opt-in is dropped for it');
+
+  assert.equal(api.calls.some((c) => c.pathname.includes('/commit')), false,
+    'a read-only turn never uploads a commit');
+  const result = api.calls.find((c) => c.pathname.includes('/result'));
+  assert.equal(result.body.status, 'completed');
+  assert.equal(result.body.headSha, null, 'and never claims one');
+  assert.equal(result.body.specMd, spec, 'the drafted spec is the product');
+  assert.match(io.stdout.join(''), /drafted a \d+-line spec/);
+});
+
+test('a scout run that produced no spec text is a failure, not a silent success', async () => {
+  const { dir } = tempRepo();
+  const api = fakeApi({ '/accept': { status: 200, data: {} }, '/result': { status: 200, data: {} } });
+  const io = fakeIo();
+  await agent.runOneTurn(api, { turnId: '11', prompt: 'draft it', mode: 'scout' }, {
+    repo: dir, leaseId: '7', binary: 'claude', ask: async () => 'y',
+    runtime: {
+      RUNTIME_ID: 'claude-code',
+      async run() { return { exitCode: 0, isError: false, summary: '  \n ', stderr: '' }; },
+    },
+  }, io);
+  const result = api.calls.find((c) => c.pathname.includes('/result'));
+  assert.equal(result.body.status, 'failed');
+  assert.equal(result.body.specMd, null);
+  assert.match(result.body.error, /no spec text/);
+});
+
+test('a read-only turn that leaves the tree dirty restores it and never uploads it', async () => {
+  const { dir, run } = tempRepo();
+  const api = fakeApi({ '/accept': { status: 200, data: {} }, '/result': { status: 200, data: {} } });
+  const io = fakeIo();
+  await agent.runOneTurn(api, { turnId: '11', prompt: 'draft it', mode: 'scout' }, {
+    repo: dir, leaseId: '7', binary: 'claude', ask: async () => 'y',
+    runtime: {
+      RUNTIME_ID: 'claude-code',
+      async run() {
+        // A tool that ignored the permission mode, or a stray temp file.
+        fs.writeFileSync(path.join(dir, 'README.md'), 'edited by a read-only run\n');
+        fs.writeFileSync(path.join(dir, 'scratch.txt'), 'oops\n');
+        return { exitCode: 0, isError: false, summary: '# spec', stderr: '' };
+      },
+    },
+  }, io);
+  assert.equal(
+    String(run('status', '--porcelain')).trim(), '',
+    'the tree is restored rather than carried into a commit'
+  );
+  assert.equal(fs.readFileSync(path.join(dir, 'README.md'), 'utf8'), 'hello\n');
+  assert.equal(api.calls.some((c) => c.pathname.includes('/commit')), false);
+  assert.match(io.stderr.join(''), /read-only turn left/i);
+});
+
+test('the read-only mode is enforced by how the binary is invoked, not by the prompt', () => {
+  // A prompt saying "do not edit" is a request. `plan` plus a disallowed-tools
+  // list is the actual lock, and there are two of them so a permission-mode
+  // rename cannot silently re-enable editing on someone's own checkout.
+  assert.equal(claudeCode.READ_ONLY_PERMISSION_MODE, 'plan');
+  assert.deepEqual(claudeCode.READ_ONLY_DISALLOWED_TOOLS,
+    ['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+  assert.match(runtimeSource, /if \(readOnly\) \{[\s\S]{0,200}READ_ONLY_PERMISSION_MODE/);
+  assert.match(runtimeSource, /--disallowedTools/);
+  // readOnly is checked FIRST, so it can never be combined with
+  // --dangerously-skip-permissions from any call site.
+  const order = runtimeSource.indexOf('if (readOnly) {');
+  assert.ok(order > 0 && order < runtimeSource.indexOf("'--dangerously-skip-permissions'"));
+});
+
+test('MODES covers exactly the wire values, and an unknown one falls back to build', () => {
+  assert.deepEqual(Object.keys(agent.MODES).sort(), ['build', 'scout']);
+  const localAgent = require('../src/services/local-agent');
+  assert.deepEqual([...localAgent.TURN_MODES].sort(), Object.keys(agent.MODES).sort());
+  assert.equal(agent.MODES.scout.readOnly, true);
+  assert.equal(agent.MODES.build.readOnly, false);
+  // An older CLI meeting a newer platform must not treat an unrecognised mode
+  // as read-only-by-accident or writable-by-accident: it runs it as a build,
+  // and the platform's own mode guards refuse anything inappropriate.
+  assert.match(agentSource, /MODES\[turn\.mode\] \|\| MODES\.build/);
 });
 
 test('error codes are translated into something a person can act on', () => {

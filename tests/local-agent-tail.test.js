@@ -51,19 +51,21 @@ test('pushOk is true because the commits already went through the GitHub App', (
 test('a local turn is never routed for a headless run', () => {
   // A scheduled turn has nobody watching. Offering it to a machine that may
   // be asleep converts a reliable background build into a 90s offer timeout.
-  const gate = sessions.slice(
-    sessions.indexOf('#907: is a coding agent on the user'),
-    sessions.indexOf('const runLocally =')
-  );
+  // Anchored FROM the build gate's own comment: runScoutTool now has its own
+  // `const runLocally =` earlier in the file, so a bare indexOf would slice
+  // backwards and silently match nothing.
+  const at = sessions.indexOf('#907: is a coding agent on the user');
+  const gate = sessions.slice(at, sessions.indexOf('const runLocally =', at));
   assert.match(gate, /if \(!headless\)/);
   assert.match(sessions, /const runLocally = !!lease;/);
 });
 
 test('a lease lookup failure downgrades to a worker rather than failing the turn', () => {
-  const gate = sessions.slice(
-    sessions.indexOf('#907: is a coding agent on the user'),
-    sessions.indexOf('const runLocally =')
-  );
+  // Anchored FROM the build gate's own comment: runScoutTool now has its own
+  // `const runLocally =` earlier in the file, so a bare indexOf would slice
+  // backwards and silently match nothing.
+  const at = sessions.indexOf('#907: is a coding agent on the user');
+  const gate = sessions.slice(at, sessions.indexOf('const runLocally =', at));
   assert.match(gate, /catch \(err\)/);
   assert.match(gate, /using worker/i);
 });
@@ -131,6 +133,122 @@ test('the status endpoint answers with the runner and the attached machine', () 
   assert.match(sessions, /last_turn_runner/);
   assert.match(sessions, /localAgent\.publicLease\(await localAgent\.activeLease/);
   assert.match(sessions, /localAgentDemo\.isStagingDemo\(req\)/);
+});
+
+// ── scout / read-only turns ────────────────────────────────────────────────
+
+// The block of runScoutTool that dispatches a local scout turn.
+const scoutDispatch = sessions.slice(
+  sessions.indexOf('const dispatchLocalScout = async ()'),
+  sessions.indexOf('let result;', sessions.indexOf('const dispatchLocalScout = async ()'))
+);
+
+test('the local scout dispatch returns every field the scout tail reads', () => {
+  assert.ok(scoutDispatch.length > 200, 'found the dispatchLocalScout block');
+  for (const field of [
+    'exitCode', 'ccIsError', 'fatalError', 'lastResultText',
+    'sessionId', 'initSessionId', 'markerlessCause',
+  ]) {
+    assert.match(scoutDispatch, new RegExp(`\\b${field}:`), `missing ${field}`);
+  }
+  assert.match(scoutDispatch, /mode: 'scout'/, 'the turn is enqueued as a scout turn');
+});
+
+test('a local scout invokes NONE of the commit or staging machinery', () => {
+  // This is the read-only completion path stated as an absence. A scout turn
+  // that reached any of these would be putting unreviewed code on the managed
+  // branch, or building a preview of a commit that does not exist.
+  //
+  // Comments are stripped first: a comment EXPLAINING that a step is absent
+  // must not read as the step being present.
+  const code = scoutDispatch.split('\n')
+    .filter((line) => !/^\s*\/\//.test(line))
+    .join('\n');
+  for (const forbidden of [
+    'sha:', 'ahead:', 'pushOk:', 'head_sha',
+    'runStaging', 'captureForSession', 'applyPrMetadata', 'createProposalCommit',
+  ]) {
+    assert.equal(
+      code.includes(forbidden), false,
+      `the scout dispatch must not touch ${forbidden}`
+    );
+  }
+  // And it says so, so the absence reads as deliberate to the next person.
+  assert.match(scoutDispatch, /read-only/);
+});
+
+test('a local scout writes the spec back exactly as a cloud scout does', () => {
+  // The tail below the dispatch is untouched: it reads lastResultText, strips
+  // the wrapper fence, writes spec_md, snapshots a frozen version and emits
+  // spec_updated. Feeding the drafted markdown in through lastResultText is
+  // what makes all of that run byte-identically.
+  assert.match(scoutDispatch, /lastResultText: finished\?\.spec_md/);
+  const tail = sessions.slice(
+    sessions.indexOf('const ccText = stripSpecWrapperFence'),
+    sessions.indexOf("send('spec_updated'")
+  );
+  assert.match(tail, /UPDATE chat_sessions SET spec_md = \$1/);
+  assert.match(tail, /snapshotSessionSpec\(pool, session\.id, ccText\)/);
+});
+
+test('a local scout skips the worker image, the container and the volume too', () => {
+  const scout = sessions.slice(
+    sessions.indexOf('async function runScoutTool'),
+    sessions.indexOf('function describeMarkerlessExit')
+  );
+  assert.match(scout, /if \(!runLocally\) await worker\.ensureWorkerImage\(\);/);
+  assert.match(scout, /const containerName = runLocally \? null : await worker\.ensureWorker/);
+  assert.match(scout, /if \(!runLocally\) await worker\.syncUserAgentFiles/);
+  // A local scout never gets prod-debug: the credential is cloud-only, so the
+  // prompt must not advertise a helper the machine cannot authenticate.
+  assert.match(scout, /if \(runLocally\) prodDebug = false;/);
+  // …nor the worker-image-only issues helper.
+  assert.match(scout, /const issueHelperNote = runLocally/);
+});
+
+test('a local scout is never routed for a headless run', () => {
+  // Same reasoning as the build path: an unattended issue-triage run must not
+  // wait out a 90-second offer timeout on a laptop nobody is watching.
+  const scout = sessions.slice(
+    sessions.indexOf('async function runScoutTool'),
+    sessions.indexOf('function describeMarkerlessExit')
+  );
+  const gate = scout.slice(
+    scout.indexOf('#907: a scout turn follows'),
+    scout.indexOf('const runLocally =')
+  );
+  assert.match(gate, /if \(!headless\) \{/);
+  assert.match(gate, /catch \(err\)/, 'and a lookup failure downgrades to a worker');
+});
+
+test('both scout and build report their mode, and both name the machine', () => {
+  assert.match(sessions, /mode: 'scout',[\s\S]{0,200}recordTurnEvent|recordTurnEvent\(pool, \{[\s\S]{0,200}mode: 'scout'/);
+  assert.match(sessions, /recordTurnEvent\(pool, \{[\s\S]{0,200}mode: 'build'/);
+  // The transcript rows are how a reader tells the two apart months later,
+  // and both state that the platform did not pay for the work.
+  assert.match(sessions, /Drafted on \$\{lease\.label\} — no Usernode credits used/);
+  assert.match(sessions, /Coding done on \$\{lease\.label\} — no Usernode credits used/);
+});
+
+test('the local scout produces no cost at all, rather than a zeroed one', () => {
+  // costUsd is simply absent from the local result, so the settle/usage block
+  // is skipped entirely. A `runLocally ? 0 : cost` would still write an
+  // llm_usage row claiming the platform spent nothing on a real call.
+  assert.equal(/\bcostUsd:/.test(scoutDispatch), false);
+  const scout = sessions.slice(
+    sessions.indexOf('async function runScoutTool'),
+    sessions.indexOf('function describeMarkerlessExit')
+  );
+  assert.match(scout, /if \(result\.costUsd\) \{/);
+  assert.equal(/runLocally \? 0 :/.test(scout), false);
+});
+
+test('stopping a local scout uses the same cooperative signal as a build', () => {
+  // stopHandle.localTurnId is what the stop route keys on, and it is
+  // mode-agnostic — so scout inherits stop, abandon and the watchdog with no
+  // second code path to keep in sync.
+  assert.match(scoutDispatch, /stopHandle\.localTurnId = String\(turnId\)/);
+  assert.match(dispatch, /stopHandle\.localTurnId = String\(turnId\)/);
 });
 
 test('the handoff pipeline is shared, not forked', () => {

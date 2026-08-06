@@ -46,8 +46,9 @@ const db = {
     };
     this.turn = {
       id: '11', session_id: 42, lease_id: '7', user_id: 5, status: 'running',
+      mode: 'build',
       prompt: 'add a button', base_sha: null, branch_name: 'dev/x',
-      head_sha: null, summary: null, error_detail: null,
+      head_sha: null, summary: null, error_detail: null, spec_md: null,
       created_at: new Date(), updated_at: new Date(), finished_at: null,
     };
     this.session = {
@@ -315,6 +316,119 @@ test('result requires every key and rejects a bogus head SHA', async () => {
     ...full, headSha: 'HEAD',
   });
   assert.equal(badSha.status, 400);
+});
+
+// ── scout / read-only turns ────────────────────────────────────────────────
+
+test('a read-only turn cannot upload a commit, and is refused before GitHub', async () => {
+  db.turn.mode = 'scout';
+  db.turn.status = 'accepted';
+  const r = await call('POST', '/api/cli/agent/turns/11/commit', {
+    leaseId: '7',
+    // A payload that PASSES parseCommitUploadBody, so the refusal is provably
+    // about the turn's mode rather than about the body failing validation on
+    // its way in. (A malformed body 400s earlier and would prove nothing.)
+    schemaVersion: 1,
+    localCommitSha: 'd'.repeat(40),
+    parentSha: 'a'.repeat(40),
+    parentTreeSha: 'b'.repeat(40),
+    treeSha: 'c'.repeat(40),
+    message: 'sneaky',
+    authoredAt: '2026-08-06T00:00:00Z',
+    committedAt: '2026-08-06T00:00:00Z',
+    files: [{ path: 'x.js', mode: '100644', contentBase64: 'eA==' }],
+  });
+  assert.equal(r.status, 409);
+  assert.equal(r.json.error, 'read_only_turn');
+  // The whole point: nothing was written and nothing reached the commit
+  // machinery. A row-advancing UPDATE here would mean the read-only turn had
+  // a head SHA, which is what the staging tail keys off.
+  assert.equal(db.updated, null, 'the turn row was not advanced');
+});
+
+test('a read-only result may not carry a head SHA, and a build result may not carry a spec', async () => {
+  db.turn.mode = 'scout';
+  const withHead = await call('POST', '/api/cli/agent/turns/11/result', {
+    leaseId: '7', status: 'completed', headSha: 'a'.repeat(40),
+    summary: '', error: null, specMd: '# spec',
+  });
+  assert.equal(withHead.status, 409);
+  assert.equal(withHead.json.error, 'read_only_turn');
+
+  // …and the mirror image, so the two payload shapes cannot be mixed up in
+  // either direction. A build turn quietly accepting a spec would write a
+  // spec doc from a run that was writing code.
+  db.turn.mode = 'build';
+  const withSpec = await call('POST', '/api/cli/agent/turns/11/result', {
+    leaseId: '7', status: 'completed', headSha: null,
+    summary: 'built it', error: null, specMd: '# not mine',
+  });
+  assert.equal(withSpec.status, 400);
+  assert.equal(withSpec.json.error, 'invalid_request');
+});
+
+test('a scout result carries the drafted spec through to the turn row', async () => {
+  db.turn.mode = 'scout';
+  const spec = `# Sticky header\n\n## User-facing changes\n\nIt sticks.\n`;
+  const r = await call('POST', '/api/cli/agent/turns/11/result', {
+    leaseId: '7', status: 'completed', headSha: null,
+    summary: '', error: null, specMd: spec,
+  });
+  assert.equal(r.status, 200);
+  assert.ok(db.updated, 'the turn row was written');
+  assert.ok(
+    db.updated.params.includes(spec),
+    'the spec markdown reaches the row verbatim — newlines and all, because a '
+    + 'human reads it in the spec viewer'
+  );
+});
+
+test('a maximal spec fits the result body, and one char more is a 400', async () => {
+  db.turn.mode = 'scout';
+  const localAgent = require('../src/services/local-agent');
+
+  // The bound has to be REACHABLE, not just declared: the result endpoint's
+  // body limit is sized for a full 256 KiB spec plus JSON escaping. If this
+  // 413s, a legitimate long spec silently becomes "your turn never finished".
+  const atLimit = await call('POST', '/api/cli/agent/turns/11/result', {
+    leaseId: '7', status: 'completed', headSha: null, summary: '', error: null,
+    specMd: `# spec\n${'x'.repeat(localAgent.MAX_SPEC_CHARS - 8)}`,
+  });
+  assert.equal(atLimit.status, 200, 'a maximal spec is accepted, not 413ed');
+
+  const tooBig = await call('POST', '/api/cli/agent/turns/11/result', {
+    leaseId: '7', status: 'completed', headSha: null, summary: '', error: null,
+    specMd: 'x'.repeat(localAgent.MAX_SPEC_CHARS + 1),
+  });
+  assert.equal(tooBig.status, 400, 'and one character past it is refused by us');
+
+  const wrongType = await call('POST', '/api/cli/agent/turns/11/result', {
+    leaseId: '7', status: 'completed', headSha: null, summary: '', error: null,
+    specMd: { md: 'nope' },
+  });
+  assert.equal(wrongType.status, 400);
+});
+
+test('specMd is optional, so a build-only client keeps working unchanged', async () => {
+  // The pre-scout CLI posts five keys. Adding a sixth to the exact-key set
+  // would have made every older machine's result a 400 — which is a silent
+  // "your turn never finished" in the chat.
+  const r = await call('POST', '/api/cli/agent/turns/11/result', {
+    leaseId: '7', status: 'completed', headSha: null, summary: 'done', error: null,
+  });
+  assert.equal(r.status, 200);
+});
+
+test('the offered turn tells the machine which mode it is', async () => {
+  // The CLI branches on this one field to pick read-only vs editing
+  // permissions, so it has to be on the wire, not inferred.
+  db.turn.mode = 'scout';
+  const localAgent = require('../src/services/local-agent');
+  assert.equal(localAgent.publicTurn(db.turn).mode, 'scout');
+  // An older row with no mode column value reads as a build turn rather than
+  // as undefined, so a partially-migrated database cannot produce a turn the
+  // CLI does not know how to run.
+  assert.equal(localAgent.publicTurn({ ...db.turn, mode: null }).mode, 'build');
 });
 
 test('progress rejects non-string lines and 409s once the turn is no longer running', async () => {

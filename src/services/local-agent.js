@@ -60,7 +60,15 @@ const TURN_TIMEOUT_MS = 60 * 60 * 1000;
 const MAX_PROGRESS_LINES = 500;
 const MAX_PROGRESS_LINE_CHARS = 2000;
 const MAX_LABEL_CHARS = 64;
+// A scout turn's product is a whole spec document, so it gets the prompt's
+// bound rather than the summary's. Matches the column's CHECK.
+const MAX_SPEC_CHARS = 262144;
 const RUNTIMES = Object.freeze(['claude-code']);
+// 'build' writes code and hands back a commit; 'scout' is read-only and hands
+// back the session's spec document. Everything downstream — the runtime's
+// permission mode on the user's machine, whether a commit upload is even
+// accepted, whether the staging/checks tail runs — keys off this one value.
+const TURN_MODES = Object.freeze(['build', 'scout']);
 const LIVE_TURN_STATUSES = Object.freeze(['queued', 'offered', 'accepted', 'running']);
 const TERMINAL_TURN_STATUSES = Object.freeze([
   'declined', 'completed', 'failed', 'stopped', 'abandoned',
@@ -131,6 +139,10 @@ function isValidLabel(value) {
 
 function isValidRuntime(value) {
   return RUNTIMES.includes(value);
+}
+
+function isValidMode(value) {
+  return TURN_MODES.includes(value);
 }
 
 function isSha(value) {
@@ -388,20 +400,27 @@ async function liveTurnForSession(pool, sessionId) {
   return rows[0] || null;
 }
 
-// Queue a coding turn for the machine holding this session's lease.
+// Queue a turn for the machine holding this session's lease.
 // Returns null when the lease lapsed between the routing decision and here —
 // the caller falls back to a platform worker, which is always safe because
 // nothing has been dispatched yet.
-async function enqueueTurn(pool, { sessionId, userId, prompt, baseSha, branchName }) {
+//
+// `mode` is 'build' (write code, produce a commit) or 'scout' (read-only,
+// produce the spec). Both travel the identical lease → offer → confirm →
+// progress → result path; only the shape of the answer differs.
+async function enqueueTurn(pool, {
+  sessionId, userId, prompt, baseSha, branchName, mode = 'build',
+}) {
+  if (!isValidMode(mode)) throw new Error(`Unsupported turn mode: ${mode}`);
   const lease = await activeLease(pool, sessionId);
   if (!lease || lease.user_id !== userId) return null;
   try {
     const { rows } = await pool.query(
       `INSERT INTO local_agent_turns
-         (session_id, lease_id, user_id, prompt, base_sha, branch_name)
-       VALUES ($1, $2, $3, $4, $5, $6)
+         (session_id, lease_id, user_id, prompt, base_sha, branch_name, mode)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [sessionId, lease.id, userId, prompt, baseSha || null, branchName || null]
+      [sessionId, lease.id, userId, prompt, baseSha || null, branchName || null, mode]
     );
     notifyTurn(sessionId);
     return { turn: rows[0], lease };
@@ -502,6 +521,10 @@ async function recordTurnHead(pool, { turnId, leaseId, headSha }) {
             status = CASE WHEN status = 'accepted' THEN 'running' ELSE status END,
             updated_at = NOW()
       WHERE id = $1 AND lease_id = $2 AND status IN ('accepted', 'running')
+        -- A scout turn is read-only. The route refuses the upload before it
+        -- ever reaches GitHub; this is the second lock, so no future caller
+        -- can advance a read-only turn's head by going around it.
+        AND mode = 'build'
       RETURNING *`,
     [turnId, leaseId, String(headSha).toLowerCase()]
   );
@@ -509,17 +532,26 @@ async function recordTurnHead(pool, { turnId, leaseId, headSha }) {
   return rows[0] || null;
 }
 
-// Terminal transition reported by the local agent. `completed` additionally
-// requires a head SHA: a run that changed nothing reports 'completed' with a
-// null head, and the platform tail renders that as an honest "no changes"
-// turn rather than trying to build a preview of nothing.
-async function finishTurn(pool, { turnId, leaseId, status, headSha, summary, errorDetail }) {
+// Terminal transition reported by the local agent. A build turn's `completed`
+// carries the head SHA the platform minted for it (a run that changed nothing
+// reports 'completed' with a null head, and the tail renders that as an honest
+// "no changes" turn rather than building a preview of nothing). A scout turn's
+// `completed` carries `specMd` instead and can never carry a head — the
+// `mode = 'build'` guard on head_sha below is the same rule the column's own
+// CHECK enforces, applied here so a mismatched pair is a silent no-write
+// rather than a constraint violation surfacing as a 500.
+async function finishTurn(pool, {
+  turnId, leaseId, status, headSha, summary, errorDetail, specMd,
+}) {
   if (!TERMINAL_TURN_STATUSES.includes(status)) {
     throw new Error(`Unsupported terminal status: ${status}`);
   }
   const { rows } = await pool.query(
     `UPDATE local_agent_turns
-        SET status = $3, head_sha = $4, summary = $5, error_detail = $6,
+        SET status = $3,
+            head_sha = CASE WHEN mode = 'build' THEN $4 ELSE NULL END,
+            summary = $5, error_detail = $6,
+            spec_md = CASE WHEN mode = 'scout' THEN $8 ELSE NULL END,
             finished_at = NOW(), updated_at = NOW()
       WHERE id = $1 AND lease_id = $2 AND status = ANY($7::TEXT[])
       RETURNING *`,
@@ -528,6 +560,9 @@ async function finishTurn(pool, { turnId, leaseId, status, headSha, summary, err
       isSha(headSha) ? String(headSha).toLowerCase() : null,
       summary || null, errorDetail || null,
       LIVE_TURN_STATUSES,
+      typeof specMd === 'string' && specMd.trim()
+        ? specMd.slice(0, MAX_SPEC_CHARS)
+        : null,
     ]
   );
   if (rows[0]) notifyTurn(rows[0].session_id);
@@ -622,11 +657,16 @@ async function recordTurnRunner(pool, sessionId, runner, label) {
   }));
 }
 
-function recordTurnEvent(pool, { userId, appId, sessionId, outcome, runtime, durationMs }) {
+// `mode` is carried into the analytics row so a local scout turn is
+// distinguishable from a local build turn: they are different amounts of
+// work, and only one of them can produce a commit.
+function recordTurnEvent(pool, {
+  userId, appId, sessionId, outcome, runtime, durationMs, mode = 'build',
+}) {
   return events.record(pool, {
     type: events.EVENT_TYPES.LOCAL_AGENT_TURN,
     userId, appId, sessionId,
-    metadata: { outcome, runtime, durationMs },
+    metadata: { outcome, runtime, durationMs, mode },
   });
 }
 
@@ -653,6 +693,9 @@ function publicTurn(turn) {
     turnId: String(turn.id),
     sessionId: Number(turn.session_id),
     status: turn.status,
+    // The CLI branches on this: a 'scout' turn runs the local runtime in
+    // read-only mode and posts a spec back instead of uploading commits.
+    mode: turn.mode || 'build',
     prompt: turn.prompt,
     baseSha: turn.base_sha,
     branch: turn.branch_name,
@@ -672,12 +715,15 @@ module.exports = {
   TURN_TIMEOUT_MS,
   MAX_PROGRESS_LINES,
   MAX_LABEL_CHARS,
+  MAX_SPEC_CHARS,
   RUNTIMES,
+  TURN_MODES,
   LIVE_TURN_STATUSES,
   TERMINAL_TURN_STATUSES,
   LeaseConflictError,
   isValidLabel,
   isValidRuntime,
+  isValidMode,
   isSha,
   normalizeProgress,
   activeLease,

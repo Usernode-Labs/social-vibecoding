@@ -299,7 +299,7 @@ const DevChat = {
         <option value="local" selected>${escapeHtml(label)}</option>
         <option value="platform">Usernode</option>
       </select>
-      <span class="dc-runner-chip" title="Coding turns in this session run on ${escapeHtml(label)}, using its own Claude subscription. Usernode still opens the PR, builds the preview and runs the checks.">Running on your machine</span>
+      <span class="dc-runner-chip" title="Spec and coding turns in this session run on ${escapeHtml(label)}, using its own Claude subscription. A spec turn is read-only; after a coding turn Usernode still opens the PR, builds the preview and runs the checks.">Running on your machine</span>
     `;
     const select = document.getElementById('dc-runner-select');
     if (select) {

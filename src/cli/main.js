@@ -2142,6 +2142,7 @@ function usage() {
     '  social-vibecoding api <GET|POST|PUT|PATCH|DELETE> <path> [--profile <name>] [--data <json>]',
     '  social-vibecoding proposal push --session <id> --commit <sha> [--repo <path>] [--profile <name>]',
     '  social-vibecoding agent run --session <id> [--repo <path>] [--label <name>] [--model <name>] [--once]',
+    '      takes both spec (read-only) and coding turns; each one asks in this terminal first',
     '  social-vibecoding agent status [--profile <name>]',
     '  social-vibecoding agent detach --lease <id> [--profile <name>]',
     '  social-vibecoding codex setup [--profile <name>] [--forward-env-token]',
@@ -2158,6 +2159,22 @@ async function main(argv, {
   const io = {
     out: (text) => stdout.write(text),
     err: (text) => stderr.write(text),
+    // #907: one line read from the operator's own terminal. `agent run` uses
+    // it for the per-turn "Run this turn here? [y/N]" confirmation — the rule
+    // that Usernode can never start a process on someone's machine by itself
+    // is enforced here, at the keyboard, not by anything server-side.
+    //
+    // Resolves null when there is no interactive stdin, which the caller must
+    // treat as "no consent given" rather than as a default yes.
+    ask: (question) => new Promise((resolve) => {
+      if (!process.stdin.isTTY) { resolve(null); return; }
+      stdout.write(question);
+      // eslint-disable-next-line global-require
+      const readline = require('node:readline');
+      const rl = readline.createInterface({ input: process.stdin, output: stdout, terminal: true });
+      rl.once('line', (line) => { rl.close(); resolve(String(line)); });
+      rl.once('close', () => resolve(null));
+    }),
   };
   const [command, ...rest] = argv;
   try {

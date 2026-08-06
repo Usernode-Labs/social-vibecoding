@@ -65,6 +65,12 @@ function demoLocalAgents() {
 // machine, attached to whichever session is being viewed. This is what turns
 // the dev-chat "Run on" selector into something with a second option and
 // lights the "Running on your machine" chip.
+//
+// Scout turns need nothing extra here. A lease is mode-agnostic — the same
+// attached machine takes both spec and coding turns — so what changed for
+// scout support is the copy on the chip and in the Settings block, which is
+// static markup already visible through this injection. Adding a
+// `lastTurnMode` field nothing reads would be decoration, not seed data.
 function demoSessionRunner(sessionId) {
   const [laptop] = demoLocalAgents();
   return {

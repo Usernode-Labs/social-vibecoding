@@ -72,10 +72,16 @@ function cliAgentRoutes(config, { pool = getPool(config), auth } = {}) {
   // parent (which requires this one).
   const { jsonBody, activeTokenMiddleware, bearerIpGuard } = auth;
   const json4kb = jsonBody('4kb');
-  // Progress batches and run summaries are the only genuinely variable-size
-  // payloads in the protocol. 256kb is far more than a well-behaved runtime
+  // Progress batches are the only genuinely variable-size payload the machine
+  // sends while a turn runs. 256kb is far more than a well-behaved runtime
   // sends and far less than a body worth streaming.
   const json256kb = jsonBody('256kb');
+  // The result body has to be bigger, because a scout turn's result IS a
+  // document: MAX_SPEC_CHARS is 256 KiB on its own, so a maximal spec plus
+  // JSON escaping and the summary would 413 against a 256kb cap — the bound
+  // would be unreachable rather than enforced, and a legitimate long spec
+  // would come back as "your turn never finished".
+  const json768kb = jsonBody('768kb');
 
   const authenticated = [
     bearerIpGuard(pool, 'agent-ip'),
@@ -332,6 +338,13 @@ function cliAgentRoutes(config, { pool = getPool(config), auth } = {}) {
       if (!['accepted', 'running'].includes(turn.status)) {
         return res.status(409).json({ error: 'turn_not_running' });
       }
+      // A scout turn is read-only, and this is the boundary where that is
+      // actually enforced: no commit reaches GitHub, so no unreviewed code
+      // reaches the managed branch, even if the machine on the other end is
+      // buggy or hostile. Checked BEFORE the GitHub call, not after.
+      if (turn.mode !== 'build') {
+        return res.status(409).json({ error: 'read_only_turn' });
+      }
 
       const { rows } = await pool.query(
         `SELECT cs.id, cs.branch_name, a.repo_url
@@ -390,8 +403,11 @@ function cliAgentRoutes(config, { pool = getPool(config), auth } = {}) {
   );
 
   // --- result -------------------------------------------------------------
-  router.post('/turns/:id/result', json256kb, ...authenticated, async (req, res) => {
-    if (!exactKeys(req.body, ['leaseId', 'status', 'headSha', 'summary', 'error'])) {
+  router.post('/turns/:id/result', json768kb, ...authenticated, async (req, res) => {
+    // `specMd` is optional so a build-only client (or an older CLI) keeps
+    // working unchanged; a scout turn that omits it is reported as producing
+    // no spec, which is exactly what the worker-container scout does too.
+    if (!exactKeys(req.body, ['leaseId', 'status', 'headSha', 'summary', 'error', 'specMd'])) {
       return res.status(400).json({ error: 'invalid_request' });
     }
     const { status } = req.body;
@@ -409,10 +425,28 @@ function cliAgentRoutes(config, { pool = getPool(config), auth } = {}) {
     if (summary === undefined || errorDetail === undefined) {
       return res.status(400).json({ error: 'invalid_request' });
     }
+    // The spec is markdown a human will read in the spec viewer, so unlike a
+    // progress line it must keep its newlines — hence a length/type check
+    // here rather than boundedText's control-character scrub. It goes through
+    // the same sanitising render path every other spec does.
+    if (req.body.specMd != null
+        && (typeof req.body.specMd !== 'string'
+          || req.body.specMd.length > localAgent.MAX_SPEC_CHARS)) {
+      return res.status(400).json({ error: 'invalid_request' });
+    }
     const lease = await requireLease(req, res, req.body.leaseId);
     if (!lease) return undefined;
     const turn = await requireOwnTurn(req, res, lease, req.params.id);
     if (!turn) return undefined;
+    // Cross-check the payload against the turn's mode rather than quietly
+    // dropping the mismatched half: a client that thinks it just uploaded a
+    // commit for a read-only turn is confused about something that matters.
+    if (turn.mode === 'scout' && req.body.headSha != null) {
+      return res.status(409).json({ error: 'read_only_turn' });
+    }
+    if (turn.mode === 'build' && req.body.specMd != null) {
+      return res.status(400).json({ error: 'invalid_request' });
+    }
     const finished = await localAgent.finishTurn(pool, {
       turnId: turn.id,
       leaseId: lease.id,
@@ -420,10 +454,12 @@ function cliAgentRoutes(config, { pool = getPool(config), auth } = {}) {
       headSha: req.body.headSha,
       summary,
       errorDetail,
+      specMd: req.body.specMd,
     });
     if (!finished) return res.status(409).json({ error: 'turn_not_running' });
     log.info('cli-agent', 'Local agent reported turn result', {
-      sessionId: Number(turn.session_id), turnId: String(turn.id), status,
+      sessionId: Number(turn.session_id), turnId: String(turn.id),
+      mode: turn.mode || 'build', status,
     });
     return res.json({ turn: localAgent.publicTurn(finished) });
   });

@@ -48,6 +48,26 @@ const PROGRESS_FLUSH_MS = 2000;
 const PROGRESS_FLUSH_LINES = 25;
 const DEFAULT_COMMIT_MESSAGE = 'Changes via Usernode';
 const MAX_LABEL_CHARS = 64;
+// How much of the dispatch prompt to show in the confirmation, so the operator
+// is agreeing to something specific rather than to "a turn".
+const CONFIRM_PREVIEW_CHARS = 700;
+
+// What each turn mode means to this process. The platform picks the mode; the
+// CLI's job is to run it with the right permissions and hand back the right
+// kind of answer. Read-only turns never commit, never upload, and never leave
+// the tree different from how they found it.
+const MODES = {
+  build: {
+    label: 'coding turn',
+    readOnly: false,
+    verb: 'write code in',
+  },
+  scout: {
+    label: 'read-only spec turn',
+    readOnly: true,
+    verb: 'read (no edits, no commits) in',
+  },
+};
 
 function defaultLabel() {
   const host = String(os.hostname() || 'this machine').split('.')[0];
@@ -126,6 +146,7 @@ function describeError(response) {
     lease_lost: 'This machine\'s lease expired or was released. Run `agent run` again to re-attach.',
     turn_not_offered: 'That turn is no longer waiting for this machine.',
     turn_not_running: 'That turn already ended (it may have been stopped from the web page).',
+    read_only_turn: 'That turn is read-only — it drafts a spec and cannot carry a commit.',
     insufficient_scope: 'This credential predates local coding agents. Run `social-vibecoding login` to re-authorize.',
     branch_moved: 'The branch moved underneath this turn. Re-run it.',
     tree_mismatch: 'The reconstructed commit did not match the local tree; nothing was pushed.',
@@ -216,8 +237,55 @@ async function uploadTurnCommits(api, { repo, turnId, leaseId, startSha, commitM
   return { headSha, count: list.length };
 }
 
+// Ask the operator, at their own keyboard, before anything runs. This is the
+// per-turn consent the whole design rests on: the platform can queue a turn,
+// but it can never start a process on someone's machine. A terminal with no
+// interactive stdin gets no consent — never an implied yes.
+//
+// Returns true to run, false to decline (with a reason for the chat).
+async function confirmTurn(turn, mode, context, io) {
+  const ask = context.ask;
+  const preview = String(turn.prompt || '')
+    .split('\n')
+    .filter((line) => line.trim())
+    .slice(0, 12)
+    .join('\n')
+    .slice(0, CONFIRM_PREVIEW_CHARS);
+  io.out(
+    `\n┌─ Turn ${turn.turnId} — ${mode.label}\n`
+    + `│  Usernode wants to ${mode.verb} ${context.repo}\n`
+    + `│\n${preview.split('\n').map((line) => `│  ${line}`).join('\n')}\n`
+    + `└─\n`
+  );
+  const answer = ask ? await ask('Run this turn here? [y/N] ') : null;
+  if (answer == null) {
+    return {
+      ok: false,
+      reason: 'This machine has no interactive terminal, so nobody could confirm the turn.',
+    };
+  }
+  if (/^y(es)?$/i.test(answer.trim())) return { ok: true };
+  return { ok: false, reason: 'Declined at the terminal.' };
+}
+
 async function runOneTurn(api, turn, context, io) {
   const { repo, runtime, model, binary, skipPermissions, commitMessage } = context;
+  const mode = MODES[turn.mode] || MODES.build;
+
+  // Confirm BEFORE accepting: accepting is what tells the platform to start
+  // streaming "your machine is working on it", and it must not say that about
+  // a turn the operator has not agreed to.
+  const consent = await confirmTurn(turn, mode, context, io);
+  if (!consent.ok) {
+    io.out(`Declined turn ${turn.turnId}.\n`);
+    const declined = await api.call(
+      'POST', `/api/cli/agent/turns/${turn.turnId}/decline`,
+      { leaseId: context.leaseId, reason: consent.reason }
+    );
+    if (!declined.ok) io.err(`Could not report the decline: ${describeError(declined)}\n`);
+    return;
+  }
+
   const accepted = await api.call(
     'POST', `/api/cli/agent/turns/${turn.turnId}/accept`, { leaseId: context.leaseId }
   );
@@ -225,7 +293,8 @@ async function runOneTurn(api, turn, context, io) {
     io.err(`Skipping turn ${turn.turnId}: ${describeError(accepted)}\n`);
     return;
   }
-  io.out(`\n▶ Turn ${turn.turnId} — running ${runtime.RUNTIME_ID} in ${repo}\n`);
+  io.out(`\n▶ Turn ${turn.turnId} — running ${runtime.RUNTIME_ID} in ${repo}`
+    + `${mode.readOnly ? ' (read-only)' : ''}\n`);
 
   const reporter = progressReporter(api, { turnId: turn.turnId, leaseId: context.leaseId });
   const startSha = git(repo, ['rev-parse', 'HEAD']).trim();
@@ -236,7 +305,13 @@ async function runOneTurn(api, turn, context, io) {
       cwd: repo,
       model,
       binary,
-      skipPermissions,
+      // A read-only turn runs the runtime in its own read-only mode — the
+      // adapter's job, not something enforced by hoping the prompt is obeyed.
+      readOnly: mode.readOnly,
+      // …and the operator's --dangerously-skip-permissions opt-in is ignored
+      // for it. That flag exists to let a build edit freely; letting it also
+      // unlock a turn the platform declared read-only would defeat the point.
+      skipPermissions: mode.readOnly ? false : skipPermissions,
       signal: reporter.signal,
       onProgress: (line) => {
         io.out(`  ${line}\n`);
@@ -251,6 +326,7 @@ async function runOneTurn(api, turn, context, io) {
       headSha: null,
       summary: '',
       error: err.message.slice(0, 400),
+      specMd: null,
     }).catch(() => {});
     throw err;
   }
@@ -261,6 +337,47 @@ async function runOneTurn(api, turn, context, io) {
     // No result post: the platform already moved this turn to 'stopped' and
     // would reject the write. Any commits already uploaded stay on the branch,
     // which is the same thing a stopped worker turn leaves behind.
+    return;
+  }
+
+  // --- read-only turns end here ------------------------------------------
+  //
+  // No commit, no upload, no branch change. The product is the drafted spec,
+  // which the platform writes to the session's spec doc exactly as it does
+  // for a worker-container scout. If the runtime left the tree dirty anyway
+  // (a stray temp file, a tool that ignored the permission mode) that is
+  // reported and the tree is restored — never uploaded.
+  if (mode.readOnly) {
+    let dirtyNote = '';
+    const dirty = git(repo, ['status', '--porcelain']).trim();
+    if (dirty) {
+      io.err(`Read-only turn left ${dirty.split('\n').length} changed path(s); restoring the tree.\n`);
+      try {
+        git(repo, ['checkout', '--', '.']);
+        git(repo, ['clean', '-fd']);
+      } catch (err) {
+        dirtyNote = ` (the tree was left dirty and could not be restored: ${err.message})`;
+      }
+    }
+    const specMd = String(outcome.summary || '');
+    const failed = outcome.isError || !specMd.trim();
+    const result = await api.call('POST', `/api/cli/agent/turns/${turn.turnId}/result`, {
+      leaseId: context.leaseId,
+      status: failed ? 'failed' : 'completed',
+      // Structurally impossible for a read-only turn — the platform refuses a
+      // non-null head on one — and stated here so it stays that way.
+      headSha: null,
+      summary: '',
+      error: (outcome.isError
+        ? (outcome.stderr || `claude exited ${outcome.exitCode}`)
+        : (specMd.trim() ? '' : 'The run produced no spec text.')
+      ).slice(0, 400) + dirtyNote || null,
+      specMd: specMd.trim() ? specMd : null,
+    });
+    if (!result.ok) io.err(`Could not report the turn result: ${describeError(result)}\n`);
+    io.out(failed
+      ? `✗ Turn ${turn.turnId} failed.\n`
+      : `✓ Turn ${turn.turnId} done — drafted a ${specMd.split('\n').length}-line spec.\n`);
     return;
   }
 
@@ -283,6 +400,7 @@ async function runOneTurn(api, turn, context, io) {
     error: (uploadError
       || (outcome.isError ? (outcome.stderr || `claude exited ${outcome.exitCode}`) : '')
     ).slice(0, 400) || null,
+    specMd: null,
   });
   if (!result.ok) io.err(`Could not report the turn result: ${describeError(result)}\n`);
   io.out(failed
@@ -376,9 +494,15 @@ async function agentRun(args, io, deps) {
     model: options.model,
     skipPermissions,
     commitMessage: DEFAULT_COMMIT_MESSAGE,
+    // The keyboard the per-turn confirmation is read from. Injectable so tests
+    // can drive it; in production it is main.js's readline wrapper.
+    ask: deps.ask || io.ask,
   };
 
-  io.out(`Waiting for a turn. Type in the Dev chat with "Run on: ${label}" selected. Ctrl-C to detach.\n`);
+  io.out(
+    `Waiting for a turn. Type in the Dev chat with "Run on: ${label}" selected. Ctrl-C to detach.\n`
+    + 'Both spec (read-only) and coding turns come here, and each one asks before it runs.\n'
+  );
   let failures = 0;
   try {
     while (running) {
@@ -478,12 +602,15 @@ module.exports = {
   HEARTBEAT_MS,
   POLL_DEADLINE_MS,
   PROGRESS_FLUSH_LINES,
+  CONFIRM_PREVIEW_CHARS,
   DEFAULT_COMMIT_MESSAGE,
   RUNTIMES,
+  MODES,
   defaultLabel,
   describeError,
   prepareCheckout,
   progressReporter,
+  confirmTurn,
   uploadTurnCommits,
   runOneTurn,
   agentCommand,

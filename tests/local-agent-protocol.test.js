@@ -57,6 +57,33 @@ const TURN = {
   finished_at: null,
 };
 
+test('the read-only invariant is in the schema, not only in the code', () => {
+  // Application guards can be gone around; a CHECK constraint cannot. A scout
+  // row with a head SHA would reach the staging/checks tail and put unreviewed
+  // code on the managed branch, so the database refuses it too.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const schema = fs.readFileSync(
+    path.join(__dirname, '../src/db/schema.sql'), 'utf8'
+  );
+  const block = schema.slice(
+    schema.indexOf('CREATE TABLE IF NOT EXISTS local_agent_turns'),
+    schema.indexOf("COMMENT ON TABLE local_agent_turns")
+  );
+  assert.match(block, /mode VARCHAR\(16\) NOT NULL DEFAULT 'build'/);
+  assert.match(block, /CHECK \(mode IN \('build', 'scout'\)\)/);
+  assert.match(block, /CHECK \(mode = 'build' OR head_sha IS NULL\)/);
+  assert.match(block, /CHECK \(mode = 'scout' OR spec_md IS NULL\)/);
+  // …and reachable on a database that already had the table, since
+  // CREATE TABLE IF NOT EXISTS skips the definition above entirely.
+  assert.match(block, /ADD COLUMN IF NOT EXISTS mode VARCHAR\(16\)/);
+  assert.match(block, /ADD COLUMN IF NOT EXISTS spec_md TEXT/);
+  assert.match(block, /local_agent_turns_readonly_check/);
+  // The bound the service clips to and the column's own bound must agree, or
+  // one of them is decorative.
+  assert.match(block, new RegExp(`char_length\\(spec_md\\) <= ${localAgent.MAX_SPEC_CHARS}`));
+});
+
 test('the two status sets are disjoint and cover the schema', () => {
   const live = localAgent.LIVE_TURN_STATUSES;
   const done = localAgent.TERMINAL_TURN_STATUSES;
@@ -95,7 +122,36 @@ test('enqueueTurn carries the base commit and branch to the machine', async () =
   assert.equal(result.turn.id, '11');
   assert.equal(result.lease.id, '7');
   const insert = pool.last();
-  assert.deepEqual(insert.params, [42, '7', 5, 'add a button', 'b'.repeat(40), 'dev/x']);
+  assert.deepEqual(
+    insert.params,
+    [42, '7', 5, 'add a button', 'b'.repeat(40), 'dev/x', 'build'],
+    'and defaults to a build turn when the caller does not say'
+  );
+});
+
+test('enqueueTurn dispatches scout turns down the same path, and rejects nonsense modes', async () => {
+  const pool = makePool([
+    [/FROM session_agent_leases/, [{ id: '7', session_id: 42, user_id: 5 }]],
+    [/INSERT INTO local_agent_turns/, [{ ...TURN, mode: 'scout', status: 'queued' }]],
+  ]);
+  const result = await localAgent.enqueueTurn(pool, {
+    sessionId: 42, userId: 5, prompt: 'draft a spec',
+    baseSha: 'b'.repeat(40), branchName: 'dev/x', mode: 'scout',
+  });
+  assert.equal(result.turn.mode, 'scout');
+  assert.equal(pool.last().params[6], 'scout');
+  // A scout turn still carries a base SHA. It never commits, but reading the
+  // WRONG revision produces a spec about code that is not there.
+  assert.equal(pool.last().params[4], 'b'.repeat(40));
+
+  // Rejected at the service boundary, not left to the column's CHECK: an
+  // unknown mode reaching the machine is a turn the CLI cannot run at all.
+  await assert.rejects(() => localAgent.enqueueTurn(pool, {
+    sessionId: 42, userId: 5, prompt: 'x', mode: 'sudo',
+  }), /Unsupported turn mode/);
+  assert.deepEqual(localAgent.TURN_MODES, ['build', 'scout']);
+  assert.equal(localAgent.isValidMode('scout'), true);
+  assert.equal(localAgent.isValidMode('Scout'), false);
 });
 
 test('claimNextTurn takes the oldest queued turn for this lease only', async () => {
@@ -180,6 +236,44 @@ test('recordTurnHead insists on a real commit SHA', async () => {
   assert.equal(localAgent.isSha('a'.repeat(40)), true);
   assert.equal(localAgent.isSha('a'.repeat(39)), false);
   assert.equal(localAgent.isSha('g'.repeat(40)), false);
+  // The read-only second lock: even given a perfectly valid SHA, the UPDATE
+  // can only match a build turn. The route refuses a scout commit first, but
+  // this is what makes "a scout turn can never have a head" true of the
+  // service rather than only of one endpoint.
+  assert.match(pool.last().sql, /AND mode = 'build'/);
+});
+
+test('finishTurn writes a spec for a scout turn and a head for a build turn, never both', async () => {
+  const pool = makePool([[/UPDATE local_agent_turns/, [TURN]]]);
+  await localAgent.finishTurn(pool, {
+    turnId: '11', leaseId: '7', status: 'completed',
+    headSha: 'a'.repeat(40), specMd: '# a spec', summary: 'done',
+  });
+  const { sql, params } = pool.last();
+  // Both values are bound, and SQL decides which one survives from the row's
+  // own mode — so a caller that passes the wrong pair writes nothing odd
+  // instead of tripping the column CHECK and surfacing as a 500.
+  assert.match(sql, /head_sha = CASE WHEN mode = 'build' THEN \$4 ELSE NULL END/);
+  assert.match(sql, /spec_md = CASE WHEN mode = 'scout' THEN \$8 ELSE NULL END/);
+  assert.equal(params[3], 'a'.repeat(40));
+  assert.equal(params[7], '# a spec');
+
+  // A whitespace-only spec is no spec. Otherwise a runtime that printed a
+  // blank line would "complete" a scout turn with an empty spec doc, wiping
+  // whatever the session had before.
+  await localAgent.finishTurn(pool, {
+    turnId: '11', leaseId: '7', status: 'completed', specMd: '   \n  ',
+  });
+  assert.equal(pool.last().params[7], null);
+
+  // And a spec longer than the column allows is clipped rather than rejected
+  // here — the route already 400s an oversized one, so reaching this path at
+  // all means something internal built it.
+  await localAgent.finishTurn(pool, {
+    turnId: '11', leaseId: '7', status: 'completed',
+    specMd: 'x'.repeat(localAgent.MAX_SPEC_CHARS + 500),
+  });
+  assert.equal(pool.last().params[7].length, localAgent.MAX_SPEC_CHARS);
 });
 
 test('finishTurn refuses statuses the machine is not allowed to declare', async () => {
@@ -255,8 +349,11 @@ test('publicTurn is the wire shape and carries no lease or user id', () => {
   const view = localAgent.publicTurn(TURN);
   assert.deepEqual(Object.keys(view).sort(), [
     'baseSha', 'branch', 'createdAt', 'error', 'finishedAt', 'headSha',
-    'prompt', 'sessionId', 'status', 'summary', 'turnId',
+    'mode', 'prompt', 'sessionId', 'status', 'summary', 'turnId',
   ]);
+  // Deliberately absent: spec_md. The machine WROTE the spec, so sending it
+  // back would be pointless, and the column can hold 256 KiB.
+  assert.equal('specMd' in view, false);
   assert.equal('lease_id' in view, false);
   assert.equal('user_id' in view, false);
   assert.equal('progress' in view, false);
