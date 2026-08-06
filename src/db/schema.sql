@@ -3946,6 +3946,163 @@ INSERT INTO platform_settings (key, value, description) VALUES
     'Marker: the one-time platform-access grandfather + waitlist backfill has run. Do not delete — deleting re-grants access to every account on next boot.')
 ON CONFLICT (key) DO NOTHING;
 
+-- ── Generic agent backend (Codex/OpenRouter BYOK; plan.md PR1) ───────
+-- chat_sessions today pins Claude continuity via cc_session_id. To add a
+-- second coding-agent backend (codex_openrouter) without breaking the
+-- Claude path, we generalize the session's agent configuration into its
+-- own columns. Each field is nullable / defaulted so legacy rows stay on
+-- claude_code with zero migration work; cc_session_id remains the source
+-- of truth for existing Claude threads until PR8's legacy cleanup.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS agent_backend            VARCHAR(32) NOT NULL DEFAULT 'claude_code';
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS agent_provider           VARCHAR(32);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS agent_model              VARCHAR(255);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS agent_reasoning_effort   VARCHAR(16);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS agent_thread_id          VARCHAR(128);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS agent_config_version     INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS agent_context_reset_at   TIMESTAMPTZ;
+
+-- Backfill: every existing session is a Claude session. Carry the Claude
+-- continuity id into the generic agent_thread_id so backend-neutral code
+-- can read one field for both backends, while cc_session_id remains
+-- readable during the migration window (plan.md §5.4).
+--
+-- Gated with `agent_thread_id IS DISTINCT FROM cc_session_id` instead of
+-- the old `agent_thread_id IS NULL`: rows whose thread already equals the
+-- cc_session_id are skipped entirely, so a NULL->NULL rewrite (locks, WAL,
+-- dead tuples) no longer happens on every boot.
+UPDATE chat_sessions
+SET agent_backend = 'claude_code',
+    agent_provider = 'anthropic',
+    agent_thread_id = cc_session_id
+WHERE agent_backend = 'claude_code'
+  AND (
+    agent_thread_id IS DISTINCT FROM cc_session_id
+    OR agent_provider IS DISTINCT FROM 'anthropic'
+  );
+
+-- ── Generic user AI credentials (plan.md PR2) ────────────────────────
+-- Generalization of users.anthropic_key_enc/_last4 so a second provider
+-- (openrouter) can be stored without stacking another pair of columns.
+--
+-- provider:  anthropic | openrouter
+-- purpose:   coding_agent | app_llm
+-- For this feature we add provider='openrouter', purpose='coding_agent'.
+-- The encryption envelope is unchanged (secrets.js AES-256-GCM), so
+-- existing Anthropic ciphertext can be copied in without decrypting.
+--
+-- On deletion we keep a tombstone row (status='revoked', secret_enc
+-- cleared, revision incremented, revoked_at set) so session/audit
+-- references stay safe; we never physically delete the row.
+-- Credentials live in a dedicated PRIVATE schema (not `public`). The
+-- prod-debug role bootstrap (src/services/debug-access.js) only sweeps
+-- `public` (REVOKE/GRANT ALL TABLES IN SCHEMA public), so rolled-back
+-- (old) code cannot re-grant SELECT on this table — the schema boundary
+-- is rollback-persistent DB state, independent of the JS deny-list.
+CREATE SCHEMA IF NOT EXISTS credentials;
+CREATE TABLE IF NOT EXISTS credentials.user_ai_credentials (
+  id                   BIGSERIAL PRIMARY KEY,
+  user_id              BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider             VARCHAR(32) NOT NULL,
+  purpose              VARCHAR(32) NOT NULL,
+  secret_enc           TEXT,
+  secret_last4         VARCHAR(8),
+  secret_fingerprint   VARCHAR(64),
+  status               VARCHAR(16) NOT NULL DEFAULT 'unverified',
+  revision             INTEGER NOT NULL DEFAULT 1,
+  verified_at          TIMESTAMPTZ,
+  last_used_at         TIMESTAMPTZ,
+  last_error_code      VARCHAR(64),
+  revoked_at           TIMESTAMPTZ,
+  metadata             JSONB NOT NULL DEFAULT '{}',
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT user_ai_credentials_provider_check
+    CHECK (provider IN ('anthropic', 'openrouter')),
+  CONSTRAINT user_ai_credentials_purpose_check
+    CHECK (purpose IN ('coding_agent', 'app_llm')),
+  -- status/verified_at coupling: a usable ('valid') row must carry a
+  -- verified_at timestamp; non-valid rows must not claim verification.
+  CONSTRAINT user_ai_credentials_valid_verified_check
+    CHECK (
+      (status = 'valid' AND verified_at IS NOT NULL)
+      OR (status <> 'valid' AND verified_at IS NULL)
+    )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS user_ai_credentials_unique_provider_purpose
+  ON credentials.user_ai_credentials (user_id, provider, purpose);
+
+-- Backfill existing Anthropic BYOK keys into the generic store. Because
+-- the encryption envelope is unchanged we copy the existing ciphertext
+-- as-is (no decrypt/re-encrypt). Seeds verified status; a key stored
+-- on-file was verified at save time.
+--
+-- Rollback reconciliation (plan.md review F2): during the migration
+-- window the LEGACY users.anthropic_key_* columns remain the source of
+-- truth for the Anthropic coding-agent credential, because rolled-back
+-- (old) code can only ever write those columns. Re-deriving the generic
+-- row from legacy on every schema run guarantees rollback survival:
+--
+--   1. Where legacy ciphertext exists, we OVERWRITE the generic row from
+--      it — even if the existing generic row is 'valid'. This reconciles a
+--      stale generic key that a legacy-only replace changed during a
+--      rollback (a plain `ON CONFLICT DO NOTHING`, or a guard that skips
+--      valid rows, would keep the obsolete key usable).
+--   2. Where legacy is NULL but a generic row is 'valid', the legacy side
+--      (a delete during rollback, or a first-save that was never mirrored)
+--      is authoritative: we REVOKE the generic row so a deleted key can
+--      never be resurrected. Non-valid generic rows without legacy
+--      (e.g. an unverified key kept generic-only) are left as non-usable
+--      pending rows.
+INSERT INTO credentials.user_ai_credentials
+  (user_id, provider, purpose, secret_enc, secret_last4, status, verified_at, revision)
+SELECT id, 'anthropic', 'coding_agent', anthropic_key_enc, anthropic_key_last4,
+       'valid', NOW(), 1
+FROM users
+WHERE anthropic_key_enc IS NOT NULL
+ON CONFLICT (user_id, provider, purpose) DO UPDATE SET
+  secret_enc = EXCLUDED.secret_enc,
+  secret_last4 = EXCLUDED.secret_last4,
+  secret_fingerprint = NULL,
+  status = EXCLUDED.status,
+  verified_at = EXCLUDED.verified_at,
+  revoked_at = NULL,
+  revision = credentials.user_ai_credentials.revision + 1,
+  updated_at = NOW()
+-- Only touch the generic row when the legacy value actually differs, so
+-- we never reset fingerprint / verified_at / revision on an unchanged
+-- credential every restart (review F2).
+WHERE credentials.user_ai_credentials.secret_enc IS DISTINCT FROM EXCLUDED.secret_enc;
+
+-- Legacy delete must win over a previously-valid generic row: revoke any
+-- generic anthropic/coding_agent row that is 'valid' while the legacy
+-- column is absent (rolled-back delete, or a key that was never mirrored
+-- to legacy). Non-valid rows (unverified/invalid/revoked) are untouched.
+UPDATE credentials.user_ai_credentials g
+SET secret_enc = NULL,
+    secret_last4 = NULL,
+    secret_fingerprint = NULL,
+    status = 'revoked',
+    -- valid_verified requires non-valid rows to carry verified_at NULL,
+    -- so the tombstone must clear it or the UPDATE fails (breaking
+    -- roll-forward after a rollback deletion).
+    verified_at = NULL,
+    revoked_at = NOW(),
+    revision = g.revision + 1,
+    updated_at = NOW()
+WHERE g.provider = 'anthropic'
+  AND g.purpose = 'coding_agent'
+  AND g.status = 'valid'
+  AND NOT EXISTS (
+    SELECT 1 FROM users u
+    WHERE u.id = g.user_id
+      AND u.anthropic_key_enc IS NOT NULL
+  );
+
+-- Mark credential-bearing columns for the staging:private scrubber
+-- (same treatment the legacy users.anthropic_key_enc already gets).
+COMMENT ON TABLE  credentials.user_ai_credentials IS 'staging:private';
+
 -- ═══════════════════════════════════════════════════════════════════════
 -- Profile customization (issue #982) — the editable half of the #profile
 -- screen: a short bio and a profile picture.

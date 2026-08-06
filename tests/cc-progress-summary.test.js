@@ -212,6 +212,9 @@ test('summarizeCcProgress: maps phase markers to friendly labels', () => {
   assert.equal(summarizeCcProgress(['[refresh]']).currentLabel, 'Syncing branch');
   assert.equal(summarizeCcProgress(['[claude (mode build)]']).currentLabel, 'Claude is working');
   assert.equal(summarizeCcProgress(['[claude (resume abc123, mode scout)]']).currentLabel, 'Claude is working');
+  assert.equal(summarizeCcProgress(['[codex (mode build)]']).currentLabel, 'Codex is working');
+  assert.equal(summarizeCcProgress(['[codex (resume thr-0199, mode scout)]']).currentLabel, 'Codex is working');
+  assert.equal(summarizeCcProgress(['[agent (mode build)]']).currentLabel, 'Coding agent is working');
   assert.equal(summarizeCcProgress(['[commit]']).currentLabel, 'Committing');
   assert.equal(summarizeCcProgress(['[push]']).currentLabel, 'Pushing');
   assert.equal(summarizeCcProgress(['[sync_merge]']).currentLabel, 'Syncing with main');
