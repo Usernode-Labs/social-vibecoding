@@ -50,17 +50,43 @@ const { validatePath } = require('./testing-notes');
 
 const MANIFEST_FILENAME = 'dapp.json';
 
-// #47: per-app automated tests (the "CI for proposals" framework). Bounds
-// mirror the testing-block path cap so a proposal can't queue an unbounded
-// suite against the time-boxed capture container. Each test navigates one
-// staging route and asserts load + no-console-errors (+ optional
-// selector/text). Extras over the cap are dropped and logged, never
-// silently truncated.
-// 12: eleven checks are pinned in-cap by node tests (profile ×2, menu-nav,
-// leaderboard ×2, work-drawer, feedback ×2, challenges-widget ×2, secrets
-// panel) — a cap of 10 made the slots over-subscribed and silently dropped
-// whichever pinned check sat past the cut. One spare slot of headroom.
+// #47: per-app automated tests (the "CI for proposals" framework). Each
+// test navigates one staging route and asserts load + no-console-errors
+// (+ optional selector/text) inside the time-boxed capture container, so
+// the per-RUN count must stay bounded. #998 restructured the bounds from
+// one hard cut into three tiers:
+//
+//   MAX_TESTS (12)            — the always-run HEAD: the first 12 declared
+//                               entries run on every proposal. Eleven are
+//                               pinned in-head by node tests (profile ×2,
+//                               menu-nav, leaderboard ×2, work-drawer,
+//                               feedback ×2, challenges-widget ×2, secrets
+//                               panel) + one spare slot.
+//   TEST_ROTATION_SLOTS (8)   — extra per-run slots filled by a
+//                               deterministic rotation over the TAIL
+//                               (everything past the head), seeded by the
+//                               commit SHA. Every declared check runs
+//                               within a few builds instead of dying
+//                               silently past the cut. Per-run budget is
+//                               therefore 20 navigations (~5s each), well
+//                               inside visuals' 240s capture box. Rotated
+//                               failures are ADVISORY (recorded + visible,
+//                               non-gating) — see the annotation pass in
+//                               visuals.captureForSession — because the
+//                               tail spent months never executing and
+//                               must not start failing bystander
+//                               proposals on its first-ever run.
+//   MAX_DECLARED_TESTS (300)  — the validation ceiling readTests keeps.
+//                               Entries past it ARE silently dead, so
+//                               visuals fails a proposal that pushes the
+//                               declared count beyond it (see
+//                               overCeilingCheckRow in visuals.js). Sized
+//                               for the platform's own manifest (234
+//                               distinct checks as of #998) plus growth
+//                               headroom.
 const MAX_TESTS = 12;
+const TEST_ROTATION_SLOTS = 8;
+const MAX_DECLARED_TESTS = 300;
 const MAX_TEST_NAME_LEN = 120;
 const MAX_TEST_SELECTOR_LEN = 256;
 const MAX_TEST_TEXT_LEN = 256;
@@ -71,10 +97,11 @@ const MAX_TEST_TEXT_LEN = 256;
 // path. `expectSelector` / `expectText` are optional presence assertions;
 // `allowConsoleErrors` opts a test out of the baseline no-console-errors
 // rule (for a route that legitimately logs errors). Invalid entries are
-// dropped, duplicate (name+path) pairs collapse, the list is capped. A
-// non-array / absent block resolves to [] — exactly the legacy behaviour
-// (no declared tests → the orchestrator synthesizes the baseline). Never
-// throws.
+// dropped, duplicate (name+path) pairs collapse, the list is capped at the
+// MAX_DECLARED_TESTS validation ceiling (per-run selection is
+// selectTestsForRun's job, not this reader's). A non-array / absent block
+// resolves to [] — exactly the legacy behaviour (no declared tests → the
+// orchestrator synthesizes the baseline). Never throws.
 function readTests(parsed) {
   const raw = Array.isArray(parsed?.tests) ? parsed.tests : [];
   const out = [];
@@ -89,7 +116,7 @@ function readTests(parsed) {
       : p;
     const dedupeKey = `${name}${p}`;
     if (seen.has(dedupeKey)) continue;
-    if (out.length >= MAX_TESTS) { dropped++; continue; }
+    if (out.length >= MAX_DECLARED_TESTS) { dropped++; continue; }
     seen.add(dedupeKey);
     out.push({
       name,
@@ -102,9 +129,41 @@ function readTests(parsed) {
     });
   }
   if (dropped > 0) {
-    log.warn('app-manifest', 'Dropped invalid/over-cap test entries', { dropped, kept: out.length, cap: MAX_TESTS });
+    log.warn('app-manifest', 'Dropped invalid/over-ceiling test entries', { dropped, kept: out.length, cap: MAX_DECLARED_TESTS });
   }
   return out;
+}
+
+// #998: pick which declared tests actually run in ONE capture pass. The
+// first MAX_TESTS entries (the head — where node tests pin their
+// load-bearing checks) always run; when more are declared, the remaining
+// TEST_ROTATION_SLOTS are filled by a contiguous window over the tail
+// whose offset is derived from `seed` (the commit SHA). Deterministic:
+// the same commit always runs the same subset, so a re-run reproduces a
+// failure instead of dodging it — while across commits the window slides,
+// so every declared check runs within ⌈tail/8⌉ builds.
+//
+// Returns { selected, declared, rotated }: `selected` preserves head
+// order then window order, `declared` is the input length, `rotated` says
+// whether a rotation happened (for logging / the checks trace). Window
+// entries are copies carrying `rotating: true` so the orchestrator can
+// treat their failures as advisory (non-gating) — head entries carry no
+// flag and gate exactly as before.
+function selectTestsForRun(tests, seed) {
+  const list = Array.isArray(tests) ? tests : [];
+  const budget = MAX_TESTS + TEST_ROTATION_SLOTS;
+  if (list.length <= budget) {
+    return { selected: list.slice(), declared: list.length, rotated: false };
+  }
+  const head = list.slice(0, MAX_TESTS);
+  const tail = list.slice(MAX_TESTS);
+  const digest = crypto.createHash('sha256').update(String(seed || '')).digest();
+  const offset = digest.readUInt32BE(0) % tail.length;
+  const window = [];
+  for (let i = 0; i < TEST_ROTATION_SLOTS; i++) {
+    window.push({ ...tail[(offset + i) % tail.length], rotating: true });
+  }
+  return { selected: head.concat(window), declared: list.length, rotated: true };
 }
 
 // Reserved keys the platform owns. A manifest entry using one of these
@@ -1447,6 +1506,9 @@ module.exports = {
   PLATFORM_ENV_UNWRITABLE,
   MAX_PLATFORM_ENV,
   MAX_TESTS,
+  TEST_ROTATION_SLOTS,
+  MAX_DECLARED_TESTS,
+  selectTestsForRun,
   MAX_APP_ADMINS,
   MAX_ADMIN_USERNAME_LENGTH,
   MAX_ICON_EMOJI_LENGTH,

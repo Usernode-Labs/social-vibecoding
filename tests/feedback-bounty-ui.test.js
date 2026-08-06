@@ -170,14 +170,18 @@ test('dapp.json checks both shot links and the unchecked/disabled states', () =>
   }
 });
 
-test('the two shot checks are inside app-manifest\'s MAX_TESTS cap', () => {
-  // dapp.json carries far more declared tests than the reader keeps, so a
-  // check appended to the end of the array is silently dropped and never
-  // runs against the staging preview. These two must stay near the top.
+test('the two shot checks are inside app-manifest\'s MAX_TESTS head', () => {
+  // Since #998, everything declared in dapp.json eventually runs — but only
+  // the first MAX_TESTS entries run on EVERY build (the tail rotates and its
+  // failures are advisory). These two are merge-gating locks, so they must
+  // stay inside the always-run head.
   const appManifest = require('../src/services/app-manifest');
-  const kept = appManifest.read(root).tests.filter((t) => /shot=feedback/.test(t.path));
-  assert.equal(kept.length, 2,
-    'both bounty-row checks must survive the cap — keep them at the top of dapp.json\'s tests array');
+  const head = appManifest.read(root).tests.slice(0, appManifest.MAX_TESTS);
+  const inHead = head.filter((t) => /shot=feedback/.test(t.path));
+  assert.ok(inHead.some((t) => /#feedback-bounty-row:not\(\.hidden\)/.test(t.expectSelector || '')),
+    'the bounty-row check must stay in the always-run head of dapp.json\'s tests array');
+  assert.ok(inHead.some((t) => /#feedback-bounty-checkbox:disabled/.test(t.expectSelector || '')),
+    'the spent-allowance check must stay in the always-run head of dapp.json\'s tests array');
 });
 
 // ── The 5 → 20 sweep ─────────────────────────────────────────────────

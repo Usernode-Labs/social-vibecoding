@@ -1227,9 +1227,23 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // errors" test per capture path — so every proposal gets at least the
     // #381 coverage. Each test's route is resolved to the same staging
     // origin + token (and self-app hash normalisation) as the after target.
-    const declaredTests = await resolveDeclaredTests(repoOwner, repoName, gitRef);
-    const tests = (declaredTests.length
-      ? declaredTests
+    //
+    // #998: when more tests are declared than one run can hold, the head
+    // always runs and the rest rotate deterministically by commit SHA —
+    // see appManifest.selectTestsForRun. `declaredRawCount` (the raw array
+    // length BEFORE validation/ceiling) feeds the over-ceiling check after
+    // the run.
+    const { tests: declaredTests, rawCount: declaredRawCount } =
+      await resolveDeclaredTests(repoOwner, repoName, gitRef);
+    const testSelection = appManifest.selectTestsForRun(declaredTests, commitHash || gitRef || '');
+    if (testSelection.rotated) {
+      log.info('visuals', 'Rotating declared tests into the run budget', {
+        sessionId: session.id, declared: testSelection.declared,
+        running: testSelection.selected.length,
+      });
+    }
+    const tests = (testSelection.selected.length
+      ? testSelection.selected
       : capturePaths.map((p) => ({ name: `Loads ${p}`, path: p, expectSelector: '', expectText: '', allowConsoleErrors: false }))
     ).map((t, index) => {
       const visitPath = isSelfApp ? selfAppHashPath(t.path) : t.path;
@@ -1243,6 +1257,10 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         expectSelector: t.expectSelector || '',
         expectText: t.expectText || '',
         allowConsoleErrors: !!t.allowConsoleErrors,
+        // #998: rotated tail checks are advisory — the capture container
+        // ignores the extra field; the annotation pass below reads it back
+        // by index.
+        rotating: !!t.rotating,
       };
     });
 
@@ -1350,6 +1368,39 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // The advisory console_* columns are dual-written from the same run for
     // one release so a rolling deploy's old readers stay coherent.
     const checksResult = classifyTests(parseTests(stdout), tests.length);
+    // #998: rotated tail checks are advisory. They spent months never
+    // executing (everything past the old cap was silently dropped), so
+    // their first-ever runs must not block bystander proposals — a rotated
+    // failure is annotated and kept visible in the results card, but only
+    // HEAD failures flip the verdict. Alignment note: with every frame
+    // present (the only way state !== 'error'), results[i] describes
+    // tests[i]; the length guard skips the pass when TEST_MAX_RESULTS
+    // truncated anything.
+    if (checksResult.state === 'failing' && checksResult.results.length === tests.length) {
+      let gatingFail = false;
+      checksResult.results.forEach((r, i) => {
+        if (r.status === 'pass') return;
+        if (tests[i] && tests[i].rotating) {
+          r.name = `(advisory) ${r.name}`;
+          r.failureReason = `Rotating check — does not block this merge, but needs fixing (or removing from dapp.json). ${r.failureReason || ''}`.trim();
+        } else {
+          gatingFail = true;
+        }
+      });
+      if (!gatingFail) checksResult.state = 'passing';
+    }
+    // #998: a manifest grown past the declared-tests ceiling silently loses
+    // coverage — surface it as a failing check on the proposal that did the
+    // growing. Skipped on 'error' verdicts (a crashed run keeps its
+    // fail-closed semantics untouched).
+    if (checksResult.state !== 'error') {
+      const overRow = await overCeilingCheckRow(repoOwner, repoName, declaredRawCount)
+        .catch(() => null);
+      if (overRow) {
+        checksResult.results.push(overRow);
+        checksResult.state = 'failing';
+      }
+    }
     const failingCount = checksResult.results.filter((r) => r.status !== 'pass').length;
     traceStatus = checksResult.state;
     traceStep('tests', `Suite verdict: ${checksResult.state}`, {
@@ -1546,22 +1597,58 @@ async function captureForSession(config, session, app, commitHash, stagingResult
 // staging clone is gone by now) and normalise via the manifest reader.
 // `ref` is anything getFileContent accepts — a branch for native rows, a
 // head SHA for imported (possibly fork-headed) ones, see sessionGitRef.
-// Returns [] when GitHub is disabled, the file is absent, or anything goes
-// wrong — the caller then synthesizes the baseline suite.
+// Returns { tests: [], rawCount: 0 } when GitHub is disabled, the file is
+// absent, or anything goes wrong — the caller then synthesizes the
+// baseline suite. `rawCount` is the raw declared-array length BEFORE
+// validation and the MAX_DECLARED_TESTS ceiling, so the over-ceiling
+// check (#998) can see entries the reader dropped.
 async function resolveDeclaredTests(repoOwner, repoName, ref) {
-  if (!github.isEnabled() || !repoOwner || !repoName || !ref) return [];
+  const empty = { tests: [], rawCount: 0 };
+  if (!github.isEnabled() || !repoOwner || !repoName || !ref) return empty;
   try {
     const raw = await github.getFileContent(repoOwner, repoName, appManifest.MANIFEST_FILENAME, ref);
-    if (!raw) return [];
+    if (!raw) return empty;
     let parsed;
-    try { parsed = JSON.parse(raw); } catch { return []; }
-    return appManifest.readTests(parsed);
+    try { parsed = JSON.parse(raw); } catch { return empty; }
+    return {
+      tests: appManifest.readTests(parsed),
+      rawCount: Array.isArray(parsed?.tests) ? parsed.tests.length : 0,
+    };
   } catch (err) {
     log.warn('visuals', 'Declared-test fetch failed — using baseline', {
       repo: `${repoOwner}/${repoName}`, ref, err: err.message,
     });
-    return [];
+    return empty;
   }
+}
+
+// #998: the over-ceiling guard. Entries past MAX_DECLARED_TESTS never run
+// (readTests drops them), which is exactly how the manifest silently
+// accumulated 200+ dead checks. When the HEAD manifest declares more than
+// the ceiling, fail the proposal that made it worse: compare against the
+// base (main) manifest and return a synthetic failing result row only when
+// this branch GREW the raw count past the ceiling. A branch that merely
+// inherits an over-ceiling manifest is left alone — failing every
+// bystander proposal would make the signal noise. Returns null when
+// nothing should be injected; never throws.
+async function overCeilingCheckRow(repoOwner, repoName, headRawCount) {
+  const ceiling = appManifest.MAX_DECLARED_TESTS;
+  if (!(headRawCount > ceiling)) return null;
+  let baseRawCount = null;
+  try {
+    ({ rawCount: baseRawCount } = await resolveDeclaredTests(repoOwner, repoName, 'main'));
+  } catch { /* fall through — treat the base as unknown */ }
+  if (baseRawCount != null && headRawCount <= baseRawCount) return null;
+  return {
+    name: `dapp.json declares ${headRawCount} checks — entries past ${ceiling} never run`,
+    path: appManifest.MANIFEST_FILENAME,
+    status: 'fail',
+    consoleErrors: [],
+    failureReason: `This change grows dapp.json's tests array to ${headRawCount} entries, `
+      + `but only the first ${ceiling} are kept (the first ${appManifest.MAX_TESTS} run every `
+      + `build; the rest rotate ${appManifest.TEST_ROTATION_SLOTS} per build). Remove or `
+      + 'consolidate test entries so every declared check can actually run.',
+  };
 }
 
 // Capture completes after staging_ready fired, so the staging card needs a
@@ -1668,6 +1755,7 @@ module.exports = {
   maybeAutoMergeAfterChecks,
   consoleSnapshotFromTests,
   resolveDeclaredTests,
+  overCeilingCheckRow,
   sessionGitRef,
   isFrontendFile,
   isUiAffecting,
