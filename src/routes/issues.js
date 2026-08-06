@@ -477,7 +477,17 @@ function issueRoutes(config) {
       if (kind === 'secret_change') {
         const key = typeof payload?.key === 'string' ? payload.key.trim() : '';
         const action = typeof payload?.action === 'string' ? payload.action : 'set';
-        const value = typeof payload?.value === 'string' ? payload.value : '';
+        // Trimmed HERE, at proposal creation, not at apply. The apply path
+        // for a child app writes app_secrets with raw SQL (see
+        // maybeApplySecretChangeProposal below) and never reaches
+        // appSecrets.setValue, so creation is the only boundary that covers
+        // both stores — and normalizing before encrypt/valueLast4 keeps the
+        // proposal card's preview identical to what will actually be stored.
+        // Both DAOs implement the identical rule, so either normalizeValue
+        // serves both scopes.
+        const value = platformEnv.normalizeValue(
+          typeof payload?.value === 'string' ? payload.value : ''
+        );
         if (!appManifest.KEY_RE.test(key)) {
           return res.status(400).json({ error: 'payload.key must be UPPER_SNAKE_CASE' });
         }
