@@ -1,14 +1,28 @@
 name: Deploy
 
-# Standalone deploy for Usernode Social Vibecoding.
+# Standalone deploy for Usernode Social Vibecoding — the FALLBACK path.
 #
-# Targets a dedicated VPS (see README — "Standalone deployment"). Code
-# is rsync'd to /opt/usernode, an `.env` is written from GitHub
-# secrets, then `docker compose up -d --build` brings the stack up.
+# The PRIMARY deploy path is the host-side deployer on the VPS
+# (scripts/usernode-deployer.sh, a systemd service), which polls
+# github.com for a new main head and runs scripts/deploy.sh directly —
+# no Actions runner in the loop, so a GHA outage (2026-08-06) cannot
+# stall production. This workflow remains for two jobs:
 #
-# Auto-deploys on every push to `main`. workflow_dispatch is kept for
-# manual re-runs (e.g. rolling forward without a new commit, or
-# replaying a deploy after rotating secrets).
+#   1. Secrets. Only a runner can read GitHub secrets, so it composes
+#      the .env (below) and forwards it. The host deployer never
+#      rewrites .env — it reuses the one written by the last run of
+#      this workflow. Rotate a secret => dispatch this workflow.
+#   2. A manual fallback / force-redeploy (workflow_dispatch).
+#
+# The push trigger stays so secret-bearing .env refreshes keep flowing
+# without operator action; SKIP_IF_CURRENT below makes the push run a
+# cheap no-op when the host deployer already deployed the commit (the
+# usual case — the poller wins the race against the Actions queue).
+# Both paths converge on scripts/deploy.sh under one flock.
+#
+# Code is rsync'd to /opt/usernode, an `.env` is written from GitHub
+# secrets, then scripts/deploy.sh builds, health-gates, and rolls back
+# on failure.
 
 on:
   push:
@@ -62,9 +76,12 @@ jobs:
         id: changes
         with:
           filters: |
+            # Keep this list in lockstep with NODE_FILTER in
+            # scripts/usernode-deployer.sh (the host deployer computes
+            # the same answer with git diff).
             node:
               - 'docker-compose.yml'
-              - '.github/workflows/deploy.yml'
+              - 'scripts/deploy.sh'
               - 'scripts/fetch-archive-snapshot.sh'
               - 'scripts/package-archive-snapshot.sh'
             # caddy is only rebuilt when its image inputs change (#711).
@@ -311,6 +328,13 @@ jobs:
           # The sha being deployed. Forwarded rather than interpolated for
           # the same reason — the script must stay expression-free.
           DEPLOY_SHA: ${{ github.sha }}
+          # On push events the host deployer has usually already deployed
+          # this commit (it polls every 30s; the Actions queue is slower).
+          # Skip the redundant rebuild entirely — the skip happens before
+          # deploy.sh touches .env, so a skipped run changes nothing.
+          # Rotating a secret therefore requires workflow_dispatch, which
+          # forces a full redeploy with a freshly composed .env.
+          SKIP_IF_CURRENT: ${{ github.event_name == 'push' && '1' || '0' }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: deploy
@@ -318,527 +342,28 @@ jobs:
           # Forward the gating flags into the remote shell — appleboy
           # /ssh-action only exports vars listed here, not the whole
           # job env.
-          envs: NODE_FILES_CHANGED,CADDY_FILES_CHANGED,FORCE_ARCHIVE_REFRESH,GH_PLATFORM_ENV_B64,BASE_ENV_B64,DEPLOY_SHA
+          envs: NODE_FILES_CHANGED,CADDY_FILES_CHANGED,FORCE_ARCHIVE_REFRESH,GH_PLATFORM_ENV_B64,BASE_ENV_B64,DEPLOY_SHA,SKIP_IF_CURRENT
           # Archive fetch can take several minutes on a fresh seed; bump
           # the action's default 10m ceiling so it doesn't kill the deploy
           # mid-tar.
           command_timeout: 30m
+          # The deploy logic itself lives in scripts/deploy.sh (versioned,
+          # shared with the host deployer, testable) — this step only
+          # forwards the inputs. Keeping it tiny also keeps it far away
+          # from GitHub's 21,000-char expression cap; see
+          # tests/deploy-workflow-expression-limit.test.js.
           script: |
             set -e
             cd /opt/usernode
-
-            # The sha currently deployed, read from the .env we are about
-            # to overwrite. This is what the post-deploy health probe
-            # rolls back to if the new container never becomes healthy.
-            # Best-effort: on a green-field deploy there is no previous
-            # .env, PREV_SHA stays empty, and the probe reports the
-            # failure without attempting a rollback to nothing.
-            PREV_SHA=$(grep -m1 '^GIT_SHA=' .env 2>/dev/null | cut -d= -f2- || true)
-            echo "==> Previous GIT_SHA: ${PREV_SHA:-(none)}"
-
-            # Base .env, composed on the runner by the "Compose base .env"
-            # step above and handed over as ONE base64 blob. It used to be a
-            # `cat > .env <<'ENVEOF'` heredoc right here, and it cannot be:
-            # GitHub compiles any string carrying an interpolation into a
-            # single format() expression, and expressions are capped at
-            # 21,000 characters. Wrapping ~45 interpolated .env lines in
-            # ~500 lines of remote script pushed this scalar to ~30 KB and
-            # GitHub rejected the whole workflow ("Invalid workflow file …
-            # Exceeded max expression length 21000") — no run was created at
-            # all, so merges to main silently stopped reaching production.
-            # Keeping this script free of interpolations is what keeps it a
-            # plain literal, and therefore unbounded in length.
-            #
-            # Written (not appended): this is the authoritative base layer
-            # that the two platform-variable blocks below override.
-            if [ -z "${BASE_ENV_B64:-}" ]; then
-              echo "::error::BASE_ENV_B64 was not forwarded from the runner; refusing to truncate .env"
-              exit 1
-            fi
-            echo "$BASE_ENV_B64" | base64 -d > .env
-            chmod 600 .env
-
-            # GitHub-sourced values for manifest-declared platform
-            # variables (resolved on the runner above). Appended AFTER the
-            # heredoc so they override a committed default for the same
-            # key — docker compose's env-file parser takes the last
-            # occurrence. The admin-console values are appended after
-            # these and win over both.
-            if [ -n "${GH_PLATFORM_ENV_B64:-}" ]; then
-              echo "$GH_PLATFORM_ENV_B64" | base64 -d >> .env
-              echo "==> Applied $(echo "$GH_PLATFORM_ENV_B64" | base64 -d | grep -c . || true) GitHub-sourced platform variable(s)"
-            fi
-
-            # ----------------------------------------------------------
-            # Pull non-buildable images first so we can detect upstream
-            # node image bumps. `--ignore-buildable` skips services with
-            # a build context (the platform `usernode` image), so this
-            # only pulls caddy / postgres / usernode-node. The platform
-            # image is rebuilt below by `up -d --build`.
-            #
-            # We capture usernodelabs/usernode's image ID before+after
-            # so the gating block below can treat an upstream bump as
-            # equivalent to a node-affecting change — a new sidecar
-            # binary may have new archive-format expectations or bug
-            # fixes we want paired with a known-good archive.
-            # ----------------------------------------------------------
-            BEFORE_NODE_IMG=$(docker image inspect usernodelabs/usernode:latest --format '{{.Id}}' 2>/dev/null || echo "none")
-            docker compose pull --ignore-buildable
-            AFTER_NODE_IMG=$(docker image inspect usernodelabs/usernode:latest --format '{{.Id}}' 2>/dev/null || echo "none")
-
-            # ----------------------------------------------------------
-            # Decide whether to refresh the sidecar's archive snapshot
-            # and force-recreate the usernode-node container. Refresh is
-            # triggered when ANY of:
-            #   1. NODE_FILES_CHANGED=true: this commit modifies the
-            #      sidecar's compose definition or the archive-fetch
-            #      scripts (set by the dorny/paths-filter step).
-            #   2. FORCE_ARCHIVE_REFRESH=true: operator passed the
-            #      workflow_dispatch input as an explicit override.
-            #   3. The pulled usernodelabs/usernode:latest digest
-            #      differs from what was on disk before the pull.
-            #
-            # Otherwise (the common path: pure platform-code change),
-            # we leave the running sidecar alone. Its --archive flag
-            # self-maintains the on-disk snapshot at the configured
-            # interval, so the existing volume stays valid across
-            # arbitrarily many code-only deploys. Skipping the refresh
-            # avoids dropping every child-app's SSE stream on every
-            # push and saves ~1 min of cold-boot.
-            # ----------------------------------------------------------
-            SHOULD_REFRESH_NODE=0
-            if [ "${NODE_FILES_CHANGED:-false}" = "true" ]; then
-              SHOULD_REFRESH_NODE=1
-              echo "==> Node-related files changed in this commit; will refresh archive."
-            fi
-            if [ "${FORCE_ARCHIVE_REFRESH:-false}" = "true" ]; then
-              SHOULD_REFRESH_NODE=1
-              echo "==> Archive refresh forced via workflow_dispatch input."
-            fi
-            if [ "$BEFORE_NODE_IMG" != "$AFTER_NODE_IMG" ]; then
-              SHOULD_REFRESH_NODE=1
-              echo "==> Upstream usernodelabs/usernode image changed:"
-              echo "      before: $BEFORE_NODE_IMG"
-              echo "      after:  $AFTER_NODE_IMG"
-              echo "    Will refresh archive."
-            fi
-
-            if [ "$SHOULD_REFRESH_NODE" = "1" ]; then
-              # ----------------------------------------------------------
-              # Archive snapshot: fetch from testnet-seed1 directly from
-              # prod (reuses prod's existing seed SSH access — no
-              # GH-runner-side key needed). Why:
-              # PARTIAL_LEDGER_RECENT_TX_SOURCE_BUG — the sidecar's
-              # runtime `tracked_owner/add` calls (every child app fires
-              # one at boot) trip the wallet-seed shortcut into
-              # partial-ledger overlay by default. Booting from a full
-              # archive snapshot fixes it: node loads the full tree at
-              # startup and applies every subsequent block in full mode,
-              # so RecentTxEntry.source is authoritative and dapps
-              # actually see incoming txs on the SSE stream.
-              #
-              # Prereq on this VPS: ~deploy/.ssh/config must define
-              # `testnet-seed1` and the deploy user must have an
-              # authorized_keys entry on that seed. Verify with:
-              #   ssh -o BatchMode=yes -o ConnectTimeout=5 testnet-seed1 echo ok
-              # If that prints `ok` the fetch will succeed.
-              # ----------------------------------------------------------
-              STAGING_DIR="/tmp/usernode-archive-staging-$$"
-              ARCHIVE_VOLUME="usernode_usernode-node-archive"
-              FETCH_OK=0
-
-              echo "==> Fetching fresh archive snapshot from testnet-seed1..."
-              mkdir -p "$STAGING_DIR"
-              if ./scripts/fetch-archive-snapshot.sh testnet-seed1 "$STAGING_DIR" --replace; then
-                FETCH_OK=1
-                echo "==> Staged archive size:"
-                du -sh "$STAGING_DIR"
-              else
-                echo "==> WARNING: archive fetch from testnet-seed1 failed."
-              fi
-
-              if [ "$FETCH_OK" = "1" ]; then
-                echo "==> Streaming staged snapshot into docker volume $ARCHIVE_VOLUME..."
-                # One-shot alpine container that wipes the existing
-                # volume contents and unpacks the fresh snapshot in
-                # place. Volume is created lazily by docker run if it
-                # doesn't exist yet (first deploy after this workflow
-                # lands).
-                tar -czf - -C "$STAGING_DIR" . | docker run --rm -i \
-                  -v "$ARCHIVE_VOLUME:/archive" alpine \
-                  sh -c 'rm -rf /archive/* /archive/.[!.]* /archive/..?* 2>/dev/null; tar -xzf - -C /archive && echo "==> Volume populated: $(du -sh /archive | cut -f1)"'
-                rm -rf "$STAGING_DIR"
-                # Fresh snapshot landed in the volume — but compose only
-                # recreates containers when their *definition* changes,
-                # not when their *volume contents* change. Without an
-                # explicit recreate the running usernode-node would keep
-                # going on whatever in-memory state it loaded at its
-                # last boot, and the brand-new archive on disk would
-                # sit unused. Force a recreate so the sidecar reboots
-                # from the fresh snapshot.
-                #
-                # `--no-deps` keeps the recreate scoped to this one
-                # service (don't restart caddy / db / dapp containers
-                # as a side effect). The flag is set here on the
-                # success path *only*; on the fallback path we
-                # deliberately leave the running node alone since its
-                # existing archive is still valid.
-                echo "==> Recreating usernode-node so it picks up the fresh archive..."
-                docker compose up -d --no-deps --force-recreate usernode-node
-
-                # Child-app cache flush. Every dapp server keeps an
-                # in-memory raw-tx cache (createAppStateCache) that
-                # dedups by tx_id. If the sidecar was running in
-                # partial-ledger mode for any window before this
-                # recreate, those caches will hold rows with
-                # source=null, and the new full-mode SSE stream's
-                # re-deliveries (same tx_ids, source set) get dropped
-                # by the dedup. Result: dapp UI stays silently broken
-                # until each child container is restarted, even after
-                # the sidecar is healthy. Restart them all so they
-                # re-backfill from the now-authoritative sidecar.
-                #
-                # Cheap (<1s per container, parallel-safe), idempotent,
-                # and runs only on the success path where we just
-                # rotated the sidecar — pure platform-code deploys
-                # skip this entirely.
-                echo "==> Restarting child-app containers to flush stale source-null cache rows..."
-                docker ps --format '{{.Names}}' | grep '^usernode-app-' \
-                  | xargs -r -n 1 -P 8 docker restart \
-                  | sed 's/^/    restarted: /'
-              else
-                # Fetch failed. The sidecar's --archive flag will self-
-                # write new snapshots over time, so a non-empty existing
-                # volume is fine to reuse. But an EMPTY volume means the
-                # sidecar boots without an archive → wallet-seed
-                # shortcut → partial-ledger mode → silent dapp breakage.
-                # Fail loudly instead.
-                echo "==> Probing existing archive volume..."
-                ARCHIVE_SIZE=$(docker run --rm -v "$ARCHIVE_VOLUME:/archive" alpine du -sb /archive 2>/dev/null | cut -f1 || echo 0)
-                echo "==> Existing archive size: ${ARCHIVE_SIZE:-0} bytes"
-                # A live archive (chain_id + checkpoint binprots + blocks
-                # dir) is tens to hundreds of MB. Anything under 1 MB is
-                # effectively empty (likely just a stale chain_id stub).
-                if [ "${ARCHIVE_SIZE:-0}" -lt 1000000 ]; then
-                  echo "::error::Archive fetch from testnet-seed1 FAILED and prod has no usable existing archive (${ARCHIVE_SIZE:-0} bytes). Refusing to deploy a partial-ledger sidecar — that would silently break every dapp via PARTIAL_LEDGER_RECENT_TX_SOURCE_BUG. Fix prod's SSH access to testnet-seed1 (~deploy/.ssh/config) or pre-seed the volume manually, then re-run."
-                  rm -rf "$STAGING_DIR"
-                  exit 1
-                fi
-                echo "::warning::Archive fetch failed but prod has an existing archive (${ARCHIVE_SIZE} bytes from a previous deploy or self-write). Continuing with that snapshot — sidecar will boot in full mode."
-              fi
-            else
-              echo "==> No node-affecting changes (compose / scripts / upstream image / manual override); skipping archive refresh."
-              echo "==> Sidecar keeps running with its existing self-maintained archive."
-            fi
-
-            # Mirror scripts/rollback.sh into /opt/usernode-tools/ so the
-            # kill-switch is always at a stable path that survives
-            # rsync --delete (which scopes to /opt/usernode/ only). The
-            # rollback script must work even when the harness is on
-            # fire, so it lives outside the deploy tree intentionally —
-            # see scripts/rollback.sh and SELF-HOSTING.md Phase 1.
-            # `install -d -o deploy -g deploy` is idempotent and uses
-            # sudo only on first run (deploy has passwordless sudo per
-            # scripts/server-bootstrap.sh).
-            sudo install -d -o deploy -g deploy -m 755 /opt/usernode-tools
-            install -m 755 scripts/rollback.sh /opt/usernode-tools/rollback.sh
-
-            # ----------------------------------------------------------
-            # One-time platform DB rename (SELF-HOSTING.md sub-step
-            # 2d). The platform's own data moves from the bare `usernode`
-            # database to `app_usernode_2d5619`, matching the `app_<slug>`
-            # convention every child app follows.
-            #
-            # This step is idempotent: if the target DB already exists
-            # AND its row counts match the source, we skip silently. If
-            # the target DB doesn't exist, we stop the harness, dump
-            # `usernode`, create the target, restore into it, verify
-            # counts, then proceed. Any failure drops the partial target
-            # DB and aborts so the next attempt starts clean.
-            #
-            # The bare `usernode` DB stays in place permanently as the
-            # postgres-bookkeeping target db-manager.js issues
-            # `CREATE DATABASE` from when spawning child-app DBs.
-            #
-            # After the migration runs successfully once, this block
-            # becomes a 1-line "already exists" no-op for every future
-            # deploy. Removing it after a confidence window is safe but
-            # not required.
-            # ----------------------------------------------------------
-            SRC_DB="usernode"
-            NEW_DB="app_usernode_2d5619"
-            # Tables we expect to exist after schema.sql has run. We
-            # only require `users` to have at least one row (the seeded
-            # admin) — `apps` and `chat_messages` are legitimately
-            # empty on a fresh install and we don't want to false-fail
-            # there. The other tables are existence-only sanity checks.
-            DB_CHECK_TABLES=(users apps chat_messages)
-            DB_NONEMPTY_TABLE="users"
-
-            # `psql -lqt` lists databases; `cut -d\| -f1` extracts names.
-            # `grep -qw` is whole-word match so e.g. `app_usernode_2d5619_test`
-            # wouldn't satisfy this check.
-            if docker exec usernode-db psql -U usernode -lqt 2>/dev/null \
-                 | cut -d'|' -f1 | tr -d ' ' | grep -qx "$NEW_DB"; then
-              # Steady-state path. We don't compare against SRC_DB
-              # here because once the harness has been running on
-              # NEW_DB, SRC_DB is stale by definition (new writes only
-              # go to NEW_DB). Just sanity-check that NEW_DB has
-              # data — if it's empty, something went wrong on a prior
-              # run and the operator needs to look.
-              echo "==> $NEW_DB already exists; sanity-checking"
-              MIGRATED_OK=1
-              for tbl in "${DB_CHECK_TABLES[@]}"; do
-                TGT=$(docker exec usernode-db psql -U usernode -d "$NEW_DB" -tAc "SELECT count(*) FROM $tbl" 2>/dev/null || echo "missing")
-                if [ "$TGT" = "missing" ]; then
-                  echo "::error::table $tbl is missing in $NEW_DB"
-                  MIGRATED_OK=0
-                  break
-                fi
-                if [ "$tbl" = "$DB_NONEMPTY_TABLE" ] && [ "$TGT" -lt 1 ] 2>/dev/null; then
-                  echo "::error::$tbl in $NEW_DB is empty (count=$TGT)"
-                  MIGRATED_OK=0
-                  break
-                fi
-              done
-              if [ "$MIGRATED_OK" -ne 1 ]; then
-                echo "::error::$NEW_DB exists but appears unhealthy. Refusing to proceed."
-                echo "::error::Manual intervention required: drop $NEW_DB and re-run, or investigate."
-                exit 1
-              fi
-              echo "==> $NEW_DB looks healthy; skipping migration"
-            else
-              echo "==> One-time migration: $SRC_DB -> $NEW_DB"
-
-              # Pre-flight: source DB must exist with non-empty data,
-              # otherwise we have nothing to migrate from. (A truly
-              # green-field deploy where neither DB exists is also
-              # supported — schema.sql will populate the empty NEW_DB on
-              # first harness boot — but that's not the rename path.)
-              if ! docker exec usernode-db psql -U usernode -lqt 2>/dev/null \
-                   | cut -d'|' -f1 | tr -d ' ' | grep -qx "$SRC_DB"; then
-                echo "==> Source DB $SRC_DB does not exist either. Treating as fresh install:"
-                echo "==> creating empty $NEW_DB so schema.sql can populate it on first boot."
-                docker exec -u postgres usernode-db createdb \
-                  -U usernode -O usernode "$NEW_DB"
-              else
-                # Stop the harness so no concurrent writes can land in
-                # SRC_DB between the dump and the cutover. Caddy will
-                # 502 the platform vhost during this window; child apps
-                # are unaffected (they don't traverse the harness).
-                docker compose stop usernode
-
-                TS=$(date -u +%Y%m%dT%H%M%SZ)
-                DUMP_PATH="/tmp/usernode-pre-rename-$TS.sql"
-                echo "==> Dumping $SRC_DB to $DUMP_PATH"
-                if ! docker exec -i usernode-db pg_dump -U usernode "$SRC_DB" > "$DUMP_PATH"; then
-                  echo "::error::pg_dump failed; aborting before any DB-state changes"
-                  exit 1
-                fi
-                echo "==> Dump size: $(du -h "$DUMP_PATH" | cut -f1)"
-
-                echo "==> Creating $NEW_DB"
-                if ! docker exec -u postgres usernode-db createdb \
-                       -U usernode -O usernode "$NEW_DB"; then
-                  echo "::error::createdb failed; $NEW_DB may exist in a partial state"
-                  exit 1
-                fi
-
-                echo "==> Restoring dump into $NEW_DB"
-                if ! docker exec -i usernode-db psql -U usernode -d "$NEW_DB" -v ON_ERROR_STOP=1 < "$DUMP_PATH"; then
-                  echo "::error::Restore failed; dropping $NEW_DB so next attempt starts clean"
-                  docker exec -u postgres usernode-db dropdb -U usernode "$NEW_DB" || true
-                  exit 1
-                fi
-
-                echo "==> Verifying row counts match"
-                MISMATCH=0
-                for tbl in "${DB_CHECK_TABLES[@]}"; do
-                  SRC=$(docker exec usernode-db psql -U usernode -d "$SRC_DB" -tAc "SELECT count(*) FROM $tbl")
-                  TGT=$(docker exec usernode-db psql -U usernode -d "$NEW_DB" -tAc "SELECT count(*) FROM $tbl")
-                  echo "    $tbl: $SRC_DB=$SRC, $NEW_DB=$TGT"
-                  if [ "$SRC" != "$TGT" ]; then
-                    MISMATCH=1
-                  fi
-                done
-                if [ "$MISMATCH" -eq 1 ]; then
-                  echo "::error::Row counts do not match. Dropping $NEW_DB; aborting."
-                  docker exec -u postgres usernode-db dropdb -U usernode "$NEW_DB" || true
-                  exit 1
-                fi
-                echo "==> Migration complete; counts match"
-              fi
-            fi
-
-            # ----------------------------------------------------------
-            # Bring the stack up WITHOUT rebuilding caddy on routine
-            # deploys (#711). The old unscoped `up -d --build` rebuilt
-            # every buildable image, including usernode-caddy:acmedns —
-            # and xcaddy builds are not reproducible, so any build-cache
-            # eviction on the VPS minted a new image ID and compose
-            # recreated caddy: a full edge outage (TLS drop, every
-            # SSE/WS stream cut) on a deploy that didn't touch caddy at
-            # all.
-            #
-            # 1. Scoped `up usernode`: rebuild is required on every
-            #    deploy — the platform image bakes in `COPY . .`, so a
-            #    rebuild is how new code gets in. Recreates only the
-            #    platform container (and starts its depends_on services
-            #    if they're stopped). If the migration block above
-            #    stopped usernode, this restarts it pointed at the new
-            #    DB; if the archive-refresh branch already recreated
-            #    usernode-node, this is a no-op for that service.
-            # 2. Unscoped `up` WITHOUT --build: ensures caddy/acme-dns/
-            #    db/node are running and prunes orphans. Images are only
-            #    built here if they don't exist at all (green-field
-            #    first deploy), so an existing caddy container is never
-            #    recreated by this step.
-            # 3. caddy is rebuilt only when caddy.Dockerfile changed
-            #    (CADDY_FILES_CHANGED via the paths-filter step; empty
-            #    on workflow_dispatch → treated as false). Caddyfile
-            #    changes need no rebuild — the `caddy reload` below
-            #    applies them to the running container.
-            # ----------------------------------------------------------
-            # Build first, separately from `up`, so the freshly-built
-            # image can resolve the admin-console platform variables into
-            # .env BEFORE the platform container starts with it. (This
-            # was `up -d --build usernode`; splitting it is what makes
-            # the step below possible on the same deploy that introduces
-            # a variable, rather than one deploy later.)
-            docker compose build usernode
-
-            # ----------------------------------------------------------
-            # Materialize the platform variables an admin set in the
-            # console. They live encrypted in the platform's own
-            # database, so something with the DB credentials has to
-            # decrypt them — and /opt/usernode/runtime is mounted :ro,
-            # so the running platform cannot write the snapshot itself.
-            # A throwaway container off the image we just built has the
-            # credentials already via env_file and needs no new mount,
-            # port, or auth surface. --no-deps because usernode-db is
-            # already up from the previous deploy; -T so stdout and
-            # stderr stay separate streams.
-            #
-            # Failure is non-fatal by design: `|| true` plus the sentinel
-            # check means a DB hiccup reuses the previous run's cached
-            # .platform-env rather than failing the deploy or silently
-            # truncating the platform's configuration. Losing an
-            # override for one deploy is cheaper than a failed deploy.
-            # ----------------------------------------------------------
-            RAW_ENV=$(docker compose run --rm --no-deps -T usernode \
-              node scripts/dump-platform-env.js 2>/dev/null || true)
-            if echo "$RAW_ENV" | grep -q '^#__PLATFORM_ENV_END__$'; then
-              # `|| true`: a complete-but-empty block (no console-set
-              # variables yet) makes grep -v exit 1, which under set -e
-              # killed the whole deploy with no output — first hit on the
-              # first deploy after the platform_env tables existed.
-              echo "$RAW_ENV" \
-                | sed -n '/^#__PLATFORM_ENV_BEGIN__$/,/^#__PLATFORM_ENV_END__$/p' \
-                | { grep -v '^#__PLATFORM_ENV_' || true; } > .platform-env.new
-              mv .platform-env.new .platform-env
-              chmod 600 .platform-env
-              echo "==> Resolved $(grep -c . .platform-env || true) console-set platform variable(s)"
-            else
-              echo "==> WARNING: platform-env resolution produced no complete block; reusing cache"
-            fi
-            if [ -s .platform-env ]; then
-              cat .platform-env >> .env
-            fi
-
-            # ----------------------------------------------------------
-            # Don't cut over while a pg_dump of the platform database is
-            # in flight. Every staging-preview build of the self-app dumps
-            # $NEW_DB from *inside* the usernode-db container, so the dump
-            # survives the platform container being recreated — and its
-            # ACCESS SHARE locks on every table block the new container's
-            # boot migrations (ALTER TABLE needs ACCESS EXCLUSIVE), eating
-            # the whole 120s health gate and triggering a spurious
-            # rollback (2026-07-30 incident, run 30578204174).
-            #
-            # 10-minute cap: a dump of the ~10 GB platform DB finishes in
-            # single-digit minutes. If one is somehow stuck we proceed
-            # anyway — migrate.js's lock_timeout+retry loop and the health
-            # gate below are the second line of defense.
-            # ----------------------------------------------------------
-            DUMP_WAITED=0
-            while [ "$DUMP_WAITED" -lt 600 ]; do
-              ACTIVE_DUMPS=$(docker exec usernode-db psql -U usernode -d postgres -Atc \
-                "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'pg_dump' AND datname = '$NEW_DB'" \
-                2>/dev/null || echo 0)
-              if [ "${ACTIVE_DUMPS:-0}" = "0" ]; then break; fi
-              if [ "$DUMP_WAITED" -eq 0 ]; then
-                echo "==> Waiting for $ACTIVE_DUMPS in-flight pg_dump(s) of $NEW_DB (staging clone) to finish before cutover..."
-              fi
-              sleep 10
-              DUMP_WAITED=$((DUMP_WAITED + 10))
-            done
-            if [ "$DUMP_WAITED" -ge 600 ]; then
-              echo "==> WARNING: platform-DB pg_dump still running after ${DUMP_WAITED}s; proceeding anyway."
-            elif [ "$DUMP_WAITED" -gt 0 ]; then
-              echo "==> Platform-DB dump(s) finished after ${DUMP_WAITED}s; cutting over."
-            fi
-
-            docker compose up -d usernode
-            docker compose up -d --remove-orphans
-
-            # ----------------------------------------------------------
-            # Post-deploy health gate. A platform variable that is
-            # declared, unset, and read at boot is exactly the failure
-            # this feature's pre-merge check tries to prevent — but the
-            # check can be skipped (force-merge, a value cleared after
-            # the merge, a GitHub outage that made it fail open), so the
-            # deploy needs its own answer to "did it actually come up?".
-            #
-            # Two CONSECUTIVE successes: a container mid-boot can answer
-            # once and then exit, and a single 200 from a process that
-            # is about to crash is worse than no signal at all.
-            # ----------------------------------------------------------
-            HEALTH_OK=0
-            HEALTH_STREAK=0
-            HEALTH_WAITED=0
-            while [ "$HEALTH_WAITED" -lt 120 ]; do
-              if docker compose exec -T usernode wget -qO- http://localhost:3000/health >/dev/null 2>&1; then
-                HEALTH_STREAK=$((HEALTH_STREAK + 1))
-                if [ "$HEALTH_STREAK" -ge 2 ]; then HEALTH_OK=1; break; fi
-              else
-                HEALTH_STREAK=0
-              fi
-              sleep 5
-              HEALTH_WAITED=$((HEALTH_WAITED + 5))
-            done
-
-            if [ "$HEALTH_OK" -ne 1 ]; then
-              echo "::error::Platform did not become healthy within 120s of deploying ${DEPLOY_SHA:-(unknown sha)}"
-              echo "==> Last 200 log lines from the unhealthy container:"
-              docker compose logs --tail 200 usernode || true
-              if [ -n "$PREV_SHA" ] && [ -x /opt/usernode-tools/rollback.sh ]; then
-                echo "==> Rolling back to $PREV_SHA"
-                /opt/usernode-tools/rollback.sh "$PREV_SHA" || \
-                  echo "::error::Rollback to $PREV_SHA also failed — manual intervention required"
-              else
-                echo "::error::No previous sha or rollback script available; leaving the stack as-is"
-              fi
-              exit 1
-            fi
-            echo "==> Platform healthy after ${HEALTH_WAITED}s"
-
-            if [ "${CADDY_FILES_CHANGED:-false}" = "true" ]; then
-              echo "==> caddy.Dockerfile changed; rebuilding + recreating caddy"
-              docker compose build caddy
-              docker compose up -d caddy
-            fi
-
-            # Caddyfile is a read-only mount, so a rebuild of usernode
-            # alone won't restart caddy. Force a config reload so any
-            # Caddyfile changes from this deploy take effect. `|| true`
-            # because on the very first deploy caddy may not be fully
-            # up yet (it's racing with TLS issuance).
-            docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile || true
+            export NODE_FILES_CHANGED CADDY_FILES_CHANGED FORCE_ARCHIVE_REFRESH
+            export GH_PLATFORM_ENV_B64 BASE_ENV_B64 DEPLOY_SHA SKIP_IF_CURRENT
+            bash scripts/deploy.sh
 
       # Always clear the deploy-in-progress flag so the /status banner goes
       # away even when the deploy itself failed or was cancelled.
-      # `if: always()` runs on success/failure/cancel, so this is the
-      # closest we get to a guaranteed cleanup.
+      # `if: always()` runs on success/failure/cancel — deploy.sh's own EXIT
+      # trap already clears the flag on every path it reaches, so this is
+      # the backstop for failures BEFORE deploy.sh runs (rsync, ssh).
       - name: Signal deploy finished
         if: always()
         uses: appleboy/ssh-action@v1

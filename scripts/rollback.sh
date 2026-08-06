@@ -108,6 +108,7 @@ rsync -av --delete \
   --exclude=node_modules \
   --exclude=data \
   --exclude=.env \
+  --exclude=.platform-env\* \
   --exclude=runtime \
   "$STAGING/" "$DEPLOY_DIR/"
 
