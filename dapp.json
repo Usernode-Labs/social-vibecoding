@@ -316,6 +316,11 @@
   ],
   "tests": [
     {
+      "name": "Platform variables panel renders on the platform app (#826 folded into app secrets)",
+      "path": "/?shot=secrets#app/usernode-2d5619/dev",
+      "expectSelector": "#app-secrets-list code"
+    },
+    {
       "name": "Profile: an editable identity card above completions that link out (#982)",
       "path": "/#profile",
       "expectSelector": "a[data-completed-challenge][href^='#leaderboard/challenges/']",
@@ -453,11 +458,6 @@
       "name": "App tiles carry no user count and no status dot",
       "path": "/?demo=1",
       "expectSelector": "#app-list .app-card:not(:has(.users-badge)):not(:has(.status-dot))"
-    },
-    {
-      "name": "Platform variables panel renders on the platform app (#826 folded into app secrets)",
-      "path": "/?shot=secrets#app/usernode-2d5619/dev",
-      "expectSelector": "#app-secrets-list code"
     },
     {
       "name": "Browse renders app-store rows with an Add button (no \"…\" menu)",
