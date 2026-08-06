@@ -64,6 +64,30 @@ const UNSAFE_VALUE_RE = /['\r\u0000]/;
 const UNSAFE_VALUE_MESSAGE =
   "Values can't contain a single quote or a carriage return — they wouldn't survive being written to the platform's .env file.";
 
+// Surrounding whitespace on a pasted value is invisible in the panel (a
+// private value shows only "set"; a non-private one renders as plain
+// text) and survives every hop after this one: the .env line is
+// single-quoted, so ` ABC` reaches the process intact and only fails
+// inside whatever third party the value was for, hours later, with no
+// error of ours to go on. That happened for real — a GitHub OAuth client
+// id stored with a leading space made the Connect-GitHub redirect land on
+// GitHub's own 404 page, because URLSearchParams form-encoded the space.
+// So normalize at the write boundary. TRIM ONLY: interior whitespace and
+// interior newlines are preserved, non-strings pass through untouched so
+// the type guards below keep producing their own errors, and a
+// whitespace-only value collapses to '' and is then refused by
+// validateValue() rather than stored.
+//
+// Same rule as app-secrets.normalizeValue — deliberately duplicated
+// rather than shared, like computeLast4 below, so the two DAOs stay
+// segregated (see the module header).
+function normalizeValue(value) {
+  return typeof value === 'string' ? value.trim() : value;
+}
+
+// Deliberately PURE — scripts/dump-platform-env.js re-runs this on the
+// deploy's read path, where a validator that mutated its input would be a
+// surprise. Normalization is normalizeValue()'s job, called explicitly.
 function validateValue(value) {
   if (typeof value !== 'string' || !value.length) {
     return 'A non-empty value is required.';
@@ -245,6 +269,12 @@ function computeLast4(value, isPrivate) {
  * above holds unchanged.
  */
 async function setValue(pool, appId, key, value, { userId = null, dataKey, privateHint } = {}) {
+  // FIRST statement: every caller — the admin route, the declare route,
+  // the vote apply, pending-secrets, the app forker — gets normalization
+  // for free, so no future call site can bypass it. Routes normalize too,
+  // but only so a whitespace-only value is a 400 there rather than a throw
+  // caught into a 500 here.
+  value = normalizeValue(value);
   if (!isWritableKey(key)) {
     throw new Error(`platform-env.setValue: key is not writable: ${key}`);
   }
@@ -298,6 +328,7 @@ module.exports = {
   deleteValue,
   isWritableKey,
   validateValue,
+  normalizeValue,
   computeLast4,
   MAX_VALUE_LEN,
 };

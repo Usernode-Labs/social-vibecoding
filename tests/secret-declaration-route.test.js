@@ -100,6 +100,23 @@ test("a platform value is checked for .env representability at the boundary", ()
     'a single quote or CR must be refused now, not silently dropped by a deploy days later');
 });
 
+test('the value is trimmed before any rule looks at it', () => {
+  // Surrounding whitespace on a pasted value is invisible in the panel and
+  // would otherwise survive into the stored value (and into /opt/usernode/.env
+  // for a platform variable, since the line is single-quoted). Normalizing
+  // here — not just in the DAO — is what makes every rule below agree with
+  // what is actually stored: the length cap, "a required variable needs a
+  // value", and .env representability all see the trimmed string.
+  assert.match(route, /platformEnv\.normalizeValue\(/);
+  const norm = route.indexOf('platformEnv.normalizeValue(');
+  assert.ok(norm > 0 && norm < route.indexOf('value.length > MAX_DECLARED_VALUE_LENGTH'),
+    'normalize before the length cap');
+  assert.ok(norm < route.indexOf('required && !value.length && !defaultValue'),
+    'a value of only spaces must not satisfy "a required variable needs a value"');
+  assert.ok(norm < route.indexOf('platformEnv.validateValue(value)'),
+    'representability is checked on the value that will actually be stored');
+});
+
 test('GitHub preconditions match the other manifest-PR routes', () => {
   assert.match(route, /!github\.isEnabled\(\) \|\| !process\.env\.GITHUB_BOT_TOKEN/);
   assert.match(route, /res\.status\(503\)/);
