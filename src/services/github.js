@@ -992,8 +992,15 @@ function _setCreatePrRetryDelaysForTests(delays) {
   createPrRetryDelaysMs = delays || [2000, 8000];
 }
 
-async function createPR(owner, repo, { branch, title, body }) {
+// `head` is optional and defaults to `branch` — the same-repo shape every
+// pre-existing caller uses. The hosted MCP connector passes an explicit
+// `owner:branch` instead: app repos are bot-owned, so work written by a
+// user's own coding agent lives on a branch in THEIR fork and the PR is
+// cross-fork. Everything below (the retry schedule, the typed no_commits /
+// pr_exists / github_unavailable errors) is identical either way.
+async function createPR(owner, repo, { branch, title, body, head }) {
   const octokit = await getOctokit(owner);
+  const headRef = head || branch;
   const attempts = createPrRetryDelaysMs.length + 1;
   let data;
   for (let attempt = 1; ; attempt++) {
@@ -1002,7 +1009,7 @@ async function createPR(owner, repo, { branch, title, body }) {
         owner, repo,
         title: safeMention(title),
         body: safeMention(body),
-        head: branch,
+        head: headRef,
         base: 'main',
       }));
       break;
@@ -1015,7 +1022,7 @@ async function createPR(owner, repo, { branch, title, body }) {
       const detail = err && (err.message || '') +
         ' ' + JSON.stringify(err?.response?.data?.errors || err?.response?.data || '');
       if (err && err.status === 422 && /No commits between/i.test(detail)) {
-        const e = new Error(`No commits between main and ${branch} — the branch has no pushed commits.`);
+        const e = new Error(`No commits between main and ${headRef} — the branch has no pushed commits.`);
         e.code = 'no_commits';
         throw e;
       }
@@ -1025,7 +1032,7 @@ async function createPR(owner, repo, { branch, title, body }) {
       // pr_number to the DB (session 2262, 2026-07-14). Type it so callers can
       // look the existing PR up and adopt it instead of failing forever.
       if (err && err.status === 422 && /pull request already exists/i.test(detail)) {
-        const e = new Error(`A pull request already exists for ${owner}:${branch}.`);
+        const e = new Error(`A pull request already exists for ${head ? headRef : `${owner}:${branch}`}.`);
         e.code = 'pr_exists';
         throw e;
       }
@@ -1047,7 +1054,7 @@ async function createPR(owner, repo, { branch, title, body }) {
         // truth — GitHub-side, wait and retry — instead of the generic
         // "re-run your request in the session".
         const e = new Error(
-          `GitHub failed to create the PR for ${owner}:${branch} after ${attempts} attempts `
+          `GitHub failed to create the PR for ${head ? headRef : `${owner}:${branch}`} after ${attempts} attempts `
           + `(${desc.status ? `HTTP ${desc.status}` : 'network error'}`
           + `${desc.requestId ? `, request id ${desc.requestId}` : ''}).`
         );
@@ -1063,14 +1070,16 @@ async function createPR(owner, repo, { branch, title, body }) {
   return data;
 }
 
-// Look up the open PR whose head is `branch` (same-repo branches — the
-// only shape this platform creates). Returns the PR data or null. Used by
+// Look up the open PR whose head is `branch`. Defaults to a same-repo head
+// (`owner:branch`) — the shape every pre-existing caller means. Used by
 // applyPrMetadata to adopt a PR that exists on GitHub but was never
-// persisted to the session row (createPR 422 'pr_exists').
-async function findOpenPrByBranch(owner, repo, branch) {
+// persisted to the session row (createPR 422 'pr_exists'), and by the MCP
+// connector with an explicit `headOwner` to find the cross-fork PR for a
+// branch in the user's own fork.
+async function findOpenPrByBranch(owner, repo, branch, { headOwner } = {}) {
   const octokit = await getOctokit(owner);
   const { data } = await octokit.rest.pulls.list({
-    owner, repo, head: `${owner}:${branch}`, state: 'open', per_page: 1,
+    owner, repo, head: `${headOwner || owner}:${branch}`, state: 'open', per_page: 1,
   });
   return (data && data[0]) || null;
 }

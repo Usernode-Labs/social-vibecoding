@@ -574,9 +574,11 @@ function mcpPreAuthRoutes(config) {
         scopes: auth.scopes,
         user: auth.user,
         clientName: auth.clientName,
+        clientId: auth.clientId,
         origin: config.cliAuthOrigin,
         baseUrl: platformBaseUrl(config),
         pool,
+        config,
       });
 
       transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });

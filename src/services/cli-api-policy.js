@@ -79,8 +79,11 @@ function isCliApiPath(pathname) {
 // Each entry is a method plus a path pattern where `:param` matches exactly
 // one non-empty segment.
 //
-// This slice ships the read-only tools plus create_request; the entries for
-// the fork/branch/import pipeline land with those tools.
+// Note what is NOT here and must not be added casually: nothing that votes,
+// merges, force-merges, withdraws, changes app settings or touches
+// membership. A connector may describe apps, file a request, hand work to
+// the user's own coding agent and turn the result into a proposal — the
+// group still decides whether it ships.
 const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'GET', pattern: '/api/apps' },
   { method: 'GET', pattern: '/api/apps/:slug' },
@@ -93,6 +96,14 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'GET', pattern: '/api/sessions/:id/status' },
   { method: 'GET', pattern: '/api/sessions/:id/spec' },
   { method: 'GET', pattern: '/api/me/active-sessions' },
+  // The proposal pipeline: submit_work turns a pushed branch into an
+  // ordinary imported proposal, and the platform-build fallback runs an
+  // unattended build and promotes its clone.
+  { method: 'GET', pattern: '/api/apps/:slug/pr-import/preview' },
+  { method: 'POST', pattern: '/api/apps/:slug/pr-import' },
+  { method: 'POST', pattern: '/api/apps/:slug/issues/:number/headless-session' },
+  { method: 'POST', pattern: '/api/sessions/:id/clone-headless' },
+  { method: 'POST', pattern: '/api/sessions/:id/promote' },
 ]);
 
 function matchesPattern(pathname, pattern) {

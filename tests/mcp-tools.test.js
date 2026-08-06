@@ -145,16 +145,19 @@ test('platform failures pass the platform’s own wording through', () => {
   assert.equal(budget.structuredContent.retryable, true);
 });
 
-test('this slice registers the read tools plus create_request only', () => {
+test('the registered tool surface is exactly this, and nothing more', () => {
   const registered = [...SRC.matchAll(/server\.registerTool\('([a-z_]+)'/g)].map((m) => m[1]);
   assert.deepEqual(registered.sort(), [
-    'create_request', 'get_app', 'get_proposal', 'list_apps',
-    'list_my_proposals', 'list_requests', 'whoami',
+    'answer_questions', 'create_request', 'get_app', 'get_platform_build',
+    'get_proposal', 'list_apps', 'list_my_proposals', 'list_requests',
+    'prepare_work', 'start_platform_build', 'submit_platform_build',
+    'submit_work', 'whoami',
   ]);
-  // The fork/branch/import pipeline is deliberately not here yet — a
-  // half-wired write tool would be worse than an absent one.
-  for (const later of ['prepare_work', 'submit_work', 'start_platform_build']) {
-    assert.ok(!registered.includes(later), `${later} is not registered in this slice`);
+  // Nothing that decides an app's future. The connector hands work to the
+  // user's own coding agent and puts the result to a vote; it does not vote,
+  // merge, withdraw, or touch settings, secrets or membership.
+  for (const never of ['vote', 'merge_proposal', 'set_secret', 'add_member', 'delete_app']) {
+    assert.ok(!registered.includes(never), `${never} must never be a connector tool`);
   }
 });
 
@@ -197,4 +200,126 @@ test('the server instructions tell the model what it is and is not', () => {
   assert.match(instructions, /never ask the user to run shell commands/i);
   assert.match(instructions, /group votes it in/i,
     'and that a proposal is not a shipped change');
+});
+
+// ── #967 pass 2: the write half ────────────────────────────────────────
+
+test('the build tools delegate rather than reimplement', () => {
+  // The fork/branch/attribution logic lives in one reviewable service, and
+  // the proposal itself is created by the platform's own import route
+  // reached over loopback with the caller's token. A tool that inlined
+  // either would be a second implementation of an authorization decision.
+  assert.match(SRC, /require\('\.\/external-agent-tasks'\)/);
+  assert.match(SRC, /require\('\.\/connector-limits'\)/);
+  assert.match(SRC, /externalAgentTasks\.prepareWork\(taskDeps\(\)/);
+  assert.match(SRC, /externalAgentTasks\.submitWork\(taskDeps\(\)/);
+  assert.match(SRC, /'POST', `\/api\/apps\/\$\{targetSlug\}\/pr-import`/);
+  // Still true after the write half: no direct database or GitHub access.
+  assert.doesNotMatch(SRC, /pool\.query\(/);
+  assert.doesNotMatch(SRC, /api\.github\.com/);
+});
+
+test('every write tool checks its scope before it does anything', () => {
+  const writeTools = [
+    'create_request', 'prepare_work', 'submit_work',
+    'start_platform_build', 'answer_questions', 'submit_platform_build',
+  ];
+  for (const name of writeTools) {
+    const idx = SRC.indexOf(`server.registerTool('${name}'`);
+    assert.ok(idx > 0, `${name} is registered`);
+    const body = SRC.slice(idx, SRC.indexOf('server.registerTool(', idx + 10) + 1 || undefined);
+    const guardIdx = body.indexOf('scopeGuard(WRITE_SCOPE)');
+    assert.ok(guardIdx > 0, `${name} requires the write scope`);
+    for (const sideEffect of ['callPlatform(', 'externalAgentTasks.', 'connectorLimits.']) {
+      const at = body.indexOf(sideEffect);
+      if (at > 0) {
+        assert.ok(guardIdx < at, `${name}: the scope check precedes ${sideEffect}`);
+      }
+    }
+    // And the annotation matches the behaviour, so a host that trusts the
+    // hints is not misled about which calls change something.
+    const meta = SRC.slice(idx, idx + 4000);
+    assert.match(meta, /annotations: writeAnnotations/, `${name} is annotated as a write`);
+  }
+});
+
+test('a request’s text stays wrapped all the way into the work order', () => {
+  // prepare_work's output is pasted verbatim into a second agent that has a
+  // shell. The title and body it embeds are written by other users, so they
+  // keep the untrusted envelope rather than being concatenated in raw.
+  const idx = SRC.indexOf("server.registerTool('prepare_work'");
+  const body = SRC.slice(idx, SRC.indexOf("server.registerTool('submit_work'"));
+  assert.match(body, /parts\.push\(untrusted\(match\.title, MAX_TITLE_CHARS\)\)/);
+  assert.match(body, /parts\.push\(untrusted\(match\.body, MAX_BODY_CHARS\)\)/);
+  assert.match(body, /parts\.push\(untrusted\(brief, MAX_BODY_CHARS\)\)/);
+  // The request must actually be open on this app — a number is not a
+  // capability, so it is looked up rather than trusted.
+  assert.match(body, /list\.find\(\(i\) => i\.number === issueNumber\)/);
+  // And the server instructions warn the receiving model about exactly this.
+  assert.match(tools.SERVER_INSTRUCTIONS, /WHAT TO BUILD section of a work order/);
+});
+
+test('the platform-build fallback is described as the second choice', () => {
+  const idx = SRC.indexOf("server.registerTool('start_platform_build'");
+  const desc = SRC.slice(idx, idx + 1200);
+  // Honest about whose money it spends, and about the better path.
+  assert.match(desc, /daily Usernode credits/);
+  assert.match(desc, /Prefer prepare_work/);
+  // Bounded before the platform is asked to start anything.
+  const body = SRC.slice(idx, SRC.indexOf("server.registerTool('get_platform_build'"));
+  const capIdx = body.indexOf('connectorLimits.checkFallbackStart');
+  const callIdx = body.indexOf('callPlatform(');
+  assert.ok(capIdx > 0 && capIdx < callIdx, 'the cap is checked before the build starts');
+  // Re-running after answers is the same start, so it is capped too.
+  const answerBody = SRC.slice(
+    SRC.indexOf("server.registerTool('answer_questions'"),
+    SRC.indexOf("server.registerTool('submit_platform_build'")
+  );
+  assert.match(answerBody, /connectorLimits\.checkFallbackStart/);
+});
+
+test('a build that stopped at a spec needs a person, and says so', () => {
+  // headless_outcome 'spec' means the run produced a written plan for a
+  // human to read and approve. Approving it on someone's behalf is exactly
+  // the decision this connector must not make, so there is no path past it
+  // — get_platform_build flags it and submit_platform_build refuses.
+  const getBody = SRC.slice(
+    SRC.indexOf("server.registerTool('get_platform_build'"),
+    SRC.indexOf("server.registerTool('answer_questions'")
+  );
+  assert.match(getBody, /needsHumanReview = ready && outcome === 'spec'/);
+  assert.match(getBody, /readyToSubmit = ready && \(outcome === 'code' \|\| outcome === 'spec_code'\)/);
+
+  const submitBody = SRC.slice(SRC.indexOf("server.registerTool('submit_platform_build'"));
+  assert.match(submitBody, /'not_ready'/);
+  assert.match(submitBody, /'needs_answers'/);
+  assert.match(submitBody, /'needs_human_review'/);
+  assert.match(submitBody, /will not approve it on their behalf/);
+  // The refusals come before the clone/promote calls, not after.
+  assert.ok(
+    submitBody.indexOf("'needs_human_review'") < submitBody.indexOf('clone-headless'),
+    'a spec-only build is refused before anything is cloned'
+  );
+});
+
+test('a build’s own output is treated as data', () => {
+  // The summary is a model's description of a repository it just read —
+  // the single most injection-prone string the connector returns.
+  const body = SRC.slice(
+    SRC.indexOf("server.registerTool('get_platform_build'"),
+    SRC.indexOf("server.registerTool('answer_questions'")
+  );
+  assert.match(body, /summary: untrusted\(lastAssistantText\(messages\), MAX_BODY_CHARS\)/);
+});
+
+test('the proposal a connector opens is an ordinary imported proposal', () => {
+  // source stays 'imported'; the agent identity lives in its own column, so
+  // every imported-PR behaviour downstream (no in-app dev session, vote
+  // reset on head change, the GitHub-maintained note) still applies.
+  assert.doesNotMatch(SRC, /source: '/);
+  const shaped = tools.shapeProposal(
+    { id: 5, app_slug: 'a', external_agent: 'claude-code' }, ORIGIN
+  );
+  assert.equal(shaped.externalAgent, 'claude-code');
+  assert.equal(tools.shapeProposal({ id: 5 }, ORIGIN).externalAgent, null);
 });

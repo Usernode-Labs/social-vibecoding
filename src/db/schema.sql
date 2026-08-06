@@ -4089,3 +4089,46 @@ COMMENT ON COLUMN users.github_oauth_token_enc IS 'staging:private';
 -- revision, the chat-turn guard, …) and every one of those behaviours is
 -- wanted for an externally-authored branch.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS external_agent   TEXT;
+
+-- ── External-agent work orders ──────────────────────────────────────────
+--
+-- One row per "the connector handed a task to the user's own coding agent
+-- and is waiting for the branch to come back". It is the server's memory of
+-- what prepare_work promised, so submit_work can check that the branch it
+-- is asked to import is the branch it reserved, in the fork it reserved,
+-- from the base commit it recorded — rather than trusting the three strings
+-- the model hands back.
+--
+-- `staging:private`: rows tie a Usernode account to a personal GitHub
+-- account and to in-flight, unpublished work. They carry no credential
+-- (the OAuth token lives encrypted on `users`), so they are not in the
+-- prod-debug deny list; they are simply not other people's business and
+-- must not ride along into a staging clone. This table references public
+-- tables, never the reverse.
+CREATE TABLE IF NOT EXISTS external_agent_tasks (
+  id            BIGSERIAL PRIMARY KEY,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  app_id        INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  issue_number  INTEGER,
+  fork_owner    TEXT NOT NULL,
+  fork_repo     TEXT NOT NULL,
+  branch_name   TEXT NOT NULL,
+  base_sha      TEXT NOT NULL,
+  brief         TEXT NOT NULL DEFAULT '',
+  client_id     TEXT,
+  status        TEXT NOT NULL DEFAULT 'open'
+    CHECK (status IN ('open', 'submitted', 'abandoned')),
+  session_id    INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at    TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '14 days'
+);
+COMMENT ON TABLE external_agent_tasks IS 'staging:private';
+
+-- At most one OPEN task per (user, app, branch): re-running prepare_work
+-- for the same branch adopts the existing reservation instead of minting a
+-- second one, and two connectors racing cannot both reserve it.
+CREATE UNIQUE INDEX IF NOT EXISTS external_agent_tasks_open_branch_idx
+  ON external_agent_tasks (user_id, app_id, branch_name)
+  WHERE status = 'open';
+CREATE INDEX IF NOT EXISTS external_agent_tasks_user_idx
+  ON external_agent_tasks (user_id, created_at DESC);

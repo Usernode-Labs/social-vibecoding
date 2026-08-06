@@ -5177,6 +5177,12 @@ const AppView = {
     const maintenanceBadge = (pr.source === 'maintenance')
       ? '<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-600 dark:text-sky-400 shrink-0" title="Opened automatically by an approved platform maintenance campaign. Review and vote like any proposal — or a platform admin can merge it once checks pass.">Platform maintenance</span>'
       : '';
+    // #967: which coding agent wrote it, when the proposal came in through
+    // the hosted MCP connector — the code was written by the proposer's own
+    // Claude Code or Codex, on their subscription, in their fork. Sits
+    // beside "Imported PR" (such a proposal is an import) rather than
+    // replacing it: one says how it got here, the other says who built it.
+    const agentBadge = AppView.externalAgentBadgeHtml(pr.external_agent);
     // #405: the merge-state slot is now driven by the shared MergeStatus
     // lifecycle helper so labels/colours match the home strip and the dev
     // session header exactly. It renders the merge-pipeline / conflict /
@@ -5249,6 +5255,7 @@ const AppView = {
             </div>
             ${fallbackChip}
             ${importedBadge}
+            ${agentBadge}
             ${maintenanceBadge}
             ${unvotedBadge}
             ${AppView.voteCountPill(pr, majority)}
@@ -5288,6 +5295,14 @@ const AppView = {
     // would otherwise be discovered.
     const importedNote = imported
       ? `<div class="text-xs text-amber-600 dark:text-amber-400 mt-1">Imported pull request${pr.imported_pr_author ? ` — authored by <span class="font-medium">${escapeHtml(pr.imported_pr_author)}</span>` : ''}. The code is maintained on GitHub; there's no in-app dev session for it. Voting and checks work the same as any proposal.</div>`
+      : '';
+    // #967: for a connector-authored proposal, say plainly who wrote the
+    // code and on whose account — an imported proposal that arrived this
+    // way was built by the proposer's own agent, not by a stranger and not
+    // out of the platform's credits.
+    const agentName = AppView.externalAgentName(pr.external_agent);
+    const agentNote = agentName
+      ? `<div class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Built with <span class="font-medium">${escapeHtml(agentName)}</span> by <span class="font-medium">${escapeHtml(pr.username || 'the proposer')}</span>, on their own coding-agent subscription, from a branch in their GitHub fork.</div>`
       : '';
     // #866: say in prose what the Preview slot says in a pill, so the
     // detail view explains why there's no Preview button yet (or why there
@@ -5337,6 +5352,7 @@ const AppView = {
       <div class="text-xs text-zinc-500 dark:text-zinc-400 mt-2 px-1">
         <div>${details.join(' · ')}${helpBtn}</div>
         ${importedNote}
+        ${agentNote}
         ${previewNote}
         ${chips ? `<div class="mt-1 flex flex-wrap gap-1 items-center"><span>Linked issues:</span> ${chips}</div>` : ''}
         ${AppView._mergeConflictDetailHtml(pr)}
@@ -8274,6 +8290,35 @@ const AppView = {
     const n = parseInt(pr.behind_main, 10) || 0;
     const label = n ? `Behind main · ${n}` : 'Behind main';
     return `<span class="gc-behind-badge" title="This proposal is behind main but still merges cleanly">${escapeHtml(label)}</span>`;
+  },
+
+  // #967: the "built with …" provenance chip for a proposal that arrived
+  // through the hosted MCP connector — the code was written by the
+  // proposer's OWN coding agent (Claude Code on the web, or Codex), on
+  // their subscription, in their own GitHub fork.
+  //
+  // The vocabulary is closed on purpose. chat_sessions.external_agent is
+  // written only by services/external-agent-tasks.js from a fixed set, and
+  // an unrecognised value renders the generic label rather than whatever
+  // string reached the row — a provenance badge that prints server data
+  // verbatim is a provenance badge worth spoofing.
+  EXTERNAL_AGENT_NAMES: {
+    'claude-code': 'Claude Code',
+    codex: 'Codex',
+    external: 'an external coding agent',
+  },
+
+  externalAgentName(value) {
+    if (!value) return '';
+    return AppView.EXTERNAL_AGENT_NAMES[value] || AppView.EXTERNAL_AGENT_NAMES.external;
+  },
+
+  externalAgentBadgeHtml(value) {
+    const name = AppView.externalAgentName(value);
+    if (!name) return '';
+    const label = (value === 'claude-code' || value === 'codex')
+      ? `Built with ${name}` : 'Built with a coding agent';
+    return `<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-600 dark:text-violet-400 shrink-0" title="${escapeHtml('The code was written by the proposer’s own coding agent (' + name + ') on their subscription, in their GitHub fork. Usernode opened the pull request; the group still votes on it.')}">${escapeHtml(label)}</span>`;
   },
 
   // #381: advisory "may break the app" warning. Shown alongside (not

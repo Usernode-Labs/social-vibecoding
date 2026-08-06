@@ -36,6 +36,7 @@ async function migrate(config) {
   await seedStagingMergedPrs(pool, config);
   await seedStagingMyOpenPr(pool, config);
   await seedStagingImportedPrProposal(pool, config);
+  await seedStagingExternalAgentProposal(pool, config);
   await seedStagingRestartEligibleMerge(pool, config);
   await seedStagingOtherUserProposal(pool, config);
   await seedStagingTopicScrollThreads(pool, config);
@@ -7516,6 +7517,128 @@ async function seedStagingImportedPrProposal(pool, config) {
   log.info('db', 'Staging imported-PR fixtures seeded', {
     appId, healthy: id1, headChanged: id2, justImported: id3,
   });
+}
+
+// #967 (hosted MCP connector, pass 2): staging fixtures for a proposal that
+// arrived through the connector — the user asked Claude Code on the web (or
+// Codex) to build it, their own agent pushed to their own fork on their own
+// subscription, and submit_work turned that branch into an ordinary imported
+// proposal. Nothing about the row is special except chat_sessions
+// .external_agent, so these fixtures exist to make the provenance surfaces
+// reviewable in a staging preview without a real GitHub fork round-trip:
+//
+//   1. claude-code — "Built with Claude Code" chip on the vote card, and the
+//      "on their own coding-agent subscription, from a branch in their GitHub
+//      fork" line in the proposal detail, alongside the "Imported PR" badge.
+//   2. codex — the same surfaces with the other agent, proving the label is
+//      driven by the column rather than hardcoded, and that two agent chips
+//      can sit side by side in one vote panel.
+//
+// source stays exactly 'imported': the connector adds an author, not a new
+// kind of proposal, and every downstream imported-PR behaviour (no in-app dev
+// session, head-change vote reset, GitHub-maintained note) must still apply.
+// Idempotent on branch name, obviously-fake "[staging fixture]" content,
+// strict no-op outside staging.
+async function seedStagingExternalAgentProposal(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1', [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging external-agent fixture skipped: self-app row missing', { slug: config.selfAppSlug });
+    return;
+  }
+
+  const { rows: users } = await pool.query(
+    `SELECT id, username FROM users ORDER BY is_admin DESC, id ASC LIMIT 3`
+  );
+  if (!users.length) {
+    log.warn('db', 'Staging external-agent fixture skipped: no users');
+    return;
+  }
+  const proposer = users[0];
+  const votesRequired = Math.max(1, Math.ceil(users.length / 2));
+
+  // The fork the work order would have pointed the agent at. Fake owner, so
+  // the GitHub links are obviously non-resolving like the rest of the
+  // imported fixtures.
+  const forkOwner = `${proposer.username || 'someone'}-fixture`;
+
+  const rows = [
+    {
+      branch: 'staging-fixture/external-agent-claude-code',
+      prNumber: 9320,
+      headSha: 'b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8',
+      agent: 'claude-code',
+      title: '[staging fixture] Built with Claude Code — keyboard shortcuts for the vote panel',
+      summary: 'In plain terms: a member asked Claude Code on the web to build this. Their own coding agent wrote the code in their GitHub fork, and Usernode opened the pull request so the group can vote on it.',
+    },
+    {
+      branch: 'staging-fixture/external-agent-codex',
+      prNumber: 9321,
+      headSha: 'd2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3',
+      agent: 'codex',
+      title: '[staging fixture] Built with Codex — remember the last tab you were on',
+      summary: 'In plain terms: a member asked Codex to build this from their ChatGPT account. Their own coding agent wrote the code in their GitHub fork, and Usernode opened the pull request so the group can vote on it.',
+    },
+  ];
+
+  const seeded = {};
+  for (const row of rows) {
+    const { rows: have } = await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+      [appId, row.branch]
+    );
+    let id = have[0]?.id;
+    if (!id) {
+      const { rows: ins } = await pool.query(
+        `INSERT INTO chat_sessions
+           (app_id, user_id, branch_name, pr_number, pr_url, pr_title, pr_summary_md,
+            status, source, external_agent, imported_pr_head_sha, imported_pr_author,
+            check_state, test_results, checks_commit_sha, checks_checked_at,
+            votes_required, promoted_at, created_at)
+         VALUES
+           ($1, $2, $3, $4, $5, $6, $7,
+            'promoted', 'imported', $8, $9, $10,
+            'passing', '[{"name":"loads with no console errors","status":"pass"}]'::jsonb,
+            $9, NOW() - INTERVAL '6 minutes',
+            $11, NOW() - INTERVAL '7 minutes', NOW() - INTERVAL '7 minutes')
+         RETURNING id`,
+        [appId, proposer.id, row.branch, row.prNumber,
+         `https://github.com/example/example/pull/${row.prNumber}`,
+         row.title, row.summary, row.agent, row.headSha, forkOwner, votesRequired]
+      );
+      id = ins[0].id;
+    } else {
+      // Re-stamp the provenance columns on every boot so an older fixture row
+      // from before this pass picks up external_agent instead of quietly
+      // rendering without the chip the fixture exists to show.
+      await pool.query(
+        `UPDATE chat_sessions
+            SET source = 'imported', external_agent = $2,
+                imported_pr_head_sha = $3, imported_pr_author = $4,
+                check_state = 'passing', checks_commit_sha = $3,
+                checks_checked_at = NOW()
+          WHERE id = $1`,
+        [id, row.agent, row.headSha, forkOwner]
+      );
+    }
+    // One yes vote so the tally pill renders next to the chip rather than an
+    // empty slot; the second row stays unvoted so the "Vote" nudge shows too.
+    if (row.agent === 'claude-code') {
+      await pool.query(
+        `INSERT INTO pr_votes (session_id, user_id, vote, created_at)
+         VALUES ($1, $2, 'yes', NOW() - INTERVAL '5 minutes')
+         ON CONFLICT (session_id, user_id) DO NOTHING`,
+        [id, proposer.id]
+      );
+    }
+    seeded[row.agent] = id;
+  }
+
+  log.info('db', 'Staging external-agent proposal fixtures seeded', { appId, ...seeded });
 }
 
 // #390: fixtures for the boot-time auto-merge reconcile sweep. Auto-merge
