@@ -884,12 +884,15 @@
                  built-in coding agent (Claude Code on the web, Codex) can do
                  the work on the user's own subscription. Also holds the
                  verified GitHub account link, because that link exists only
-                 to serve this flow (it forks an app repo into the user's own
-                 account so their agent has somewhere it may push).
+                 to serve this flow: it is IDENTITY ONLY (no OAuth scope, no
+                 stored token) and its whole job is attributing a submitted
+                 pull request to the account that verified it. The fork the
+                 agent pushes to is made by that agent, not by the platform.
                  Rendered by Settings._renderConnectors() /
                  _renderGithubLink() from GET /api/me/connectors and
-                 GET /api/me/github (?demo=1 passthrough in staging — both
-                 tables are staging:private, so a staging clone is empty). -->
+                 GET /api/me/github (?demo=1 passthrough in staging — mcp_tokens
+                 is staging:private and the link needs a real OAuth round-trip,
+                 so a staging clone has neither). -->
             <div data-settings-section="connectors" class="hidden">
               <div id="connectors-section">
                 <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Claude &amp; ChatGPT connectors</h3>
@@ -916,7 +919,7 @@
               <div id="github-link-section" class="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
                 <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">GitHub account</h3>
                 <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
-                  Linking GitHub lets Usernode make your own copy (a fork) of an app's repository, so Claude Code or Codex has somewhere it's allowed to write. Usernode asks only for access to public repositories, never pushes code as you, and never touches your other repositories.
+                  Linking GitHub proves which GitHub account is yours, so work built by your own coding agent can be submitted under your name. Usernode asks for <strong class="font-semibold text-zinc-600 dark:text-zinc-400">no access to your repositories</strong> &mdash; read-only public profile information only &mdash; and stores no GitHub token. Your coding agent (Claude Code or Codex) makes your fork of an app using its own GitHub connection.
                 </p>
                 <div id="github-link-body" class="space-y-2"></div>
                 <div id="github-link-status" class="text-xs mt-2 hidden"></div>

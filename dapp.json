@@ -382,6 +382,12 @@
       "expectText": "No challenges are running right now"
     },
     {
+      "name": "GitHub linking asks for no repository access, and holds no token",
+      "path": "/?demo=1#settings/connectors",
+      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #github-link-section #github-link-no-token",
+      "expectText": "no access to your repositories"
+    },
+    {
       "name": "Tapping an app shows its icon and name while it loads, not a blank window (#931)",
       "path": "/?shot=app-launching",
       "expectSelector": "#app-launch-cover .app-icon-tile",
