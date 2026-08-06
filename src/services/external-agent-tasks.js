@@ -62,6 +62,24 @@ function fail(code, message, extra = {}) {
   return { ok: false, code, message, ...extra };
 }
 
+// The fork route needs a GitHub OAuth app (GITHUB_LINK_CLIENT_ID/SECRET, or
+// the waitlist app's credentials) to exist on this deployment. When none is
+// configured, "connect your GitHub account" is the wrong answer — there is
+// no button to press, the link routes 404 by design, and telling the user to
+// go and find one is a dead end. Say the deployment cannot do it and name
+// the fallback that still works, which is the whole reason the fallback is
+// kept. Not retryable: nothing changes until an operator sets the value.
+function linkUnavailable() {
+  return fail(
+    'github_link_unavailable',
+    'This Usernode deployment has no GitHub OAuth app configured, so it cannot fork an app into your account '
+    + 'for your own coding agent to work in. Ask an admin to set GITHUB_LINK_CLIENT_ID and '
+    + 'GITHUB_LINK_CLIENT_SECRET in the platform variables panel. In the meantime, start_platform_build has '
+    + 'Usernode build the change itself out of your daily Usernode credits — that path needs no GitHub link.',
+    { retryable: false }
+  );
+}
+
 // ── GitHub calls made AS THE USER ──────────────────────────────────────
 //
 // Deliberately plain fetch rather than the platform's Octokit: that client
@@ -279,6 +297,11 @@ async function prepareWork(deps, params) {
     return fail('platform_unavailable', 'Usernode cannot reach GitHub right now. Try again shortly.', { retryable: true });
   }
 
+  // Unconfigured deployment vs. unlinked user: two different refusals. Check
+  // the deployment first — otherwise an operator's missing value is reported
+  // as the user's missing click.
+  if (!githubLink.isEnabled(config)) return linkUnavailable();
+
   const link = await githubLink.loadUserToken(pool, config, user.id);
   if (!link || !link.login) {
     return fail(
@@ -454,6 +477,12 @@ async function submitWork(deps, params) {
   if (!gh.isEnabled()) {
     return fail('platform_unavailable', 'Usernode cannot reach GitHub right now. Try again shortly.', { retryable: true });
   }
+
+  // Before anything is read: with no OAuth app there is no verified GitHub
+  // login to check the PR's head owner against, and the attribution gate is
+  // the reason this path is stricter than the browser's import button. The
+  // gate is never skipped — the submission is refused instead.
+  if (!githubLink.isEnabled(config)) return linkUnavailable();
 
   const task = taskId ? await loadOpenTask(pool, user.id, taskId) : null;
   if (taskId && !task) {

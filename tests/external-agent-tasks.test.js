@@ -95,7 +95,14 @@ function baseGh(overrides = {}) {
   };
 }
 
-const linkedAs = (login) => ({ loadUserToken: async () => ({ login, token: 'gho_fake' }) });
+// A deployment that HAS a GitHub OAuth app configured, with this user
+// linked through it. `isEnabled` is the deployment-level question asked
+// before the per-user one — see connector-config-unset.test.js for the
+// unconfigured deployment.
+const linkedAs = (login) => ({
+  isEnabled: () => true,
+  loadUserToken: async () => ({ login, token: 'gho_fake' }),
+});
 
 // ── Agent vocabulary ───────────────────────────────────────────────────
 
@@ -282,7 +289,7 @@ test('prepare_work refuses before any GitHub write when GitHub is not linked', a
     const result = await svc.prepareWork(
       {
         pool: fakePool([], queries), config: {}, gh: baseGh(),
-        githubLink: { loadUserToken: async () => null }, limits: okLimits,
+        githubLink: { isEnabled: () => true, loadUserToken: async () => null }, limits: okLimits,
       },
       { user: { id: 3 }, app: APP, brief: 'x', origin: 'https://usernode.example' }
     );
