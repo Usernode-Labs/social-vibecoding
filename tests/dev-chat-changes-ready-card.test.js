@@ -94,6 +94,13 @@ function makeDevChat() {
     DevChat,
     alerts: sandbox.__alerts,
     setFetch(fn) { sandbox.__fetchImpl = fn; },
+    setAppRepo(repoUrl) {
+      sandbox.AppView = {
+        appData: { repo_url: repoUrl },
+        closesPillHtml: () => '',
+        visualsTilesHtml: () => '',
+      };
+    },
     getHtml() { return captured; },
     render(messages, session) {
       DevChat.messages = messages;
@@ -245,6 +252,66 @@ test('stagingUrl renders the FULL card with a live Preview + Propose', () => {
   assert.match(html, /Propose to group/, 'Propose to group present');
   assert.match(html, /previewStaging\('https:\/\/preview\.example\.org', false\)/, 'live Preview button wired');
   assert.doesNotMatch(html, /disabled[^>]*>Preview staging</, 'Preview is NOT disabled when a URL exists');
+});
+
+test('an unpromoted draft links to its encoded GitHub compare view', () => {
+  const { render, setAppRepo } = makeDevChat();
+  setAppRepo('https://github.com/acme/demo.git');
+  const html = render([
+    { role: 'system', content: 'Staging deployed!', changesReady: true,
+      stagingUrl: 'https://preview.example.org', _slug: 'compare001' },
+  ], activeSession({
+    branch_name: 'dev/alice review',
+    check_state: 'passing',
+  }));
+
+  assert.match(html, />Changes<\/a>/, 'draft Changes action is visible');
+  assert.match(html, /github\.com\/acme\/demo\/compare\/main\.\.\.dev\/alice%20review/,
+    'compare link preserves branch path separators and encodes each component');
+  assert.match(html, /rel="noopener"/, 'external compare link cannot retain an opener');
+  assert.match(html, /✓ Checks passing/, 'the draft check result is visible before proposing');
+});
+
+test('promoted cards keep the PR action and do not duplicate the draft Changes action', () => {
+  const { render } = makeDevChat();
+  const html = render([
+    { role: 'system', content: 'Staging deployed!', changesReady: true,
+      stagingUrl: 'https://preview.example.org', _slug: 'compare002' },
+  ], activeSession({
+    status: 'promoted', repo_url: 'https://github.com/acme/demo',
+    branch_name: 'dev/alice', pr_url: 'https://github.com/acme/demo/pull/9', pr_number: 9,
+  }));
+
+  assert.match(html, /View on GitHub/, 'promoted card keeps its pull-request action');
+  assert.doesNotMatch(html, />Changes<\/a>/, 'promoted card has no redundant draft compare action');
+  assert.match(html, /pull\/9/, 'the pull-request URL remains authoritative');
+});
+
+test('draft Changes action is omitted without a valid GitHub repository or branch', () => {
+  const { render } = makeDevChat();
+  const msg = [{ role: 'system', content: 'Changes ready!', changesReady: true, _slug: 'compare003' }];
+  assert.doesNotMatch(render(msg, activeSession({ repo_url: 'https://example.com/acme/demo', branch_name: 'dev/a' })), />Changes<\/a>/);
+  assert.doesNotMatch(render(msg, activeSession({ repo_url: 'https://github.com/acme/demo', branch_name: '' })), />Changes<\/a>/);
+});
+
+test('draft check badges cover pending, failing, error, and skipped without merge-gate copy', () => {
+  const { DevChat } = makeDevChat();
+  const pending = DevChat._draftChecksBadgeHtml(activeSession({ check_state: 'pending' }));
+  const failing = DevChat._draftChecksBadgeHtml(activeSession({
+    check_state: 'failing', test_results: [{ status: 'fail' }, { status: 'pass' }],
+  }));
+  const error = DevChat._draftChecksBadgeHtml(activeSession({ check_state: 'error' }));
+  const skipped = DevChat._draftChecksBadgeHtml(activeSession({
+    check_state: 'skipped', check_error_detail: 'no tests declared',
+  }));
+
+  assert.match(pending, /Checks running/);
+  assert.match(failing, /Checks failing · 1/);
+  assert.match(error, /Checks couldn’t run/);
+  assert.match(skipped, /Checks skipped/);
+  for (const html of [pending, failing, error, skipped]) {
+    assert.doesNotMatch(html, /merge|vot/i, 'draft check copy does not claim proposal-only state');
+  }
 });
 
 test('a plain no-changes status line renders NO card', () => {

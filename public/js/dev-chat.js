@@ -3039,6 +3039,60 @@ const DevChat = {
     }];
   },
 
+  // A draft has no pull request yet, but its pushed branch is already a
+  // reviewable GitHub object. Link straight to GitHub's compare view so the
+  // author can read commits and file-by-file changes before deciding to
+  // promote. Keep this deliberately URL-only: opening the comparison must
+  // not create a PR or otherwise change the session lifecycle.
+  _draftChangesUrl(session) {
+    if (!session || session.pr_url || session.pr_number
+        || ['promoted', 'merging', 'merged', 'archived'].includes(session.status)) return null;
+    const appRepo = (window.AppView && window.AppView.appData
+      && window.AppView.appData.repo_url) || '';
+    const rawRepo = String(session.repo_url || appRepo).trim();
+    const repo = rawRepo.replace(/\/+$/, '').replace(/\.git$/i, '');
+    const match = repo.match(/^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/i);
+    const branch = String(session.branch_name || '').trim();
+    if (!match || !branch) return null;
+    const encodedBranch = branch.split('/').map((part) => encodeURIComponent(part)).join('/');
+    return `https://github.com/${match[1]}/${match[2]}/compare/main...${encodedBranch}`;
+  },
+
+  // Proposal cards already summarize automated checks, but their copy talks
+  // about the merge gate. A draft has no merge gate yet, so give its Changes
+  // ready card the same useful signal with draft-appropriate explanations.
+  _draftChecksBadgeHtml(session) {
+    if (!session || session.pr_url || session.pr_number
+        || ['promoted', 'merging', 'merged', 'archived'].includes(session.status)) return '';
+    const state = session.check_state;
+    if (!state) {
+      if (session.console_check_state) return '';
+      return '<span class="gc-checks-running-badge" title="The staging preview is being prepared, then automated tests will run against this draft."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks starting…</span>';
+    }
+    if (state === 'passing') {
+      return '<span class="gc-merged-badge" title="All automated tests passed on this draft’s staging build.">✓ Checks passing</span>';
+    }
+    if (state === 'failing') {
+      const n = Array.isArray(session.test_results)
+        ? session.test_results.filter((r) => r && r.status !== 'pass').length : 0;
+      const label = n ? `Checks failing · ${n}` : 'Checks failing';
+      const title = n
+        ? `${n} automated test${n === 1 ? '' : 's'} failed on this draft’s staging build. Review or fix them before proposing.`
+        : 'Automated tests failed on this draft’s staging build. Review or fix them before proposing.';
+      return `<span class="gc-warning-badge" title="${escapeHtml(title)}">⚠ ${escapeHtml(label)}</span>`;
+    }
+    if (state === 'error') {
+      return '<span class="gc-conflict-badge" title="The staging build or test run broke, so the platform could not verify this draft. Review or retry before proposing.">⚠ Checks couldn’t run</span>';
+    }
+    if (state === 'skipped') {
+      const reason = session.check_error_detail
+        ? ` — ${String(session.check_error_detail).slice(0, 280)}` : '';
+      const title = `Automated checks were skipped${reason}. You can still review and propose this draft.`;
+      return `<span class="gc-checks-running-badge" title="${escapeHtml(title)}">Checks skipped</span>`;
+    }
+    return '<span class="gc-checks-running-badge" title="Automated tests are running against this draft’s staging build."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks running…</span>';
+  },
+
   _deactivateLastStatus() {
     for (let i = DevChat.messages.length - 1; i >= 0; i--) {
       if (DevChat.messages[i]._active) {
@@ -3541,6 +3595,8 @@ const DevChat = {
           // out even before the session refetch lands).
           const prUrl = session?.pr_url || msg.prUrl || null;
           const prNumber = session?.pr_number || msg.prNumber || null;
+          const draftChangesUrl = prUrl ? null : DevChat._draftChangesUrl(session);
+          const draftChecksBadge = DevChat._draftChecksBadgeHtml(session);
           // #195: before/after capture tiles. Visuals are latest-set-per-
           // session, so only the NEWEST staging card carries them — older
           // cards from earlier turns would just repeat the same media. The
@@ -3572,16 +3628,18 @@ const DevChat = {
             <div class="dc-status-line"><span class="dc-status-icon dc-status-check" aria-hidden="true">&#10003;</span> ${msg.content} <span style="font-size:9px;opacity:0.4;margin-left:auto">${stgId} ${stgTs}</span></div>
             <div class="dc-pr-card" id="dc-pr-card">
               <div class="dc-pr-card-header">
-                ${prUrl ? `<a href="${prUrl}" target="_blank" class="dc-pr-link">PR #${prNumber}</a>` : '<span style="color:var(--text-muted)">Changes ready</span>'}
+                ${prUrl ? `<a href="${prUrl}" target="_blank" rel="noopener" class="dc-pr-link">PR #${prNumber}</a>` : '<span style="color:var(--text-muted)">Changes ready</span>'}
                 ${(session?.session_title || session?.pr_title) ? `<span class="dc-pr-title">${escapeHtml(session.session_title || session.pr_title)}</span>` : ''}
                 ${window.AppView ? AppView.closesPillHtml(session) : ''}
+                ${draftChecksBadge}
                 <span style="font-size:9px;opacity:0.4;margin-left:8px">${stgId} ${stgTs}</span>
               </div>
               ${visualsHtml ? `<div class="dc-pr-card-visuals" style="margin:6px 0 2px">${visualsHtml}</div>` : ''}
               <div class="dc-pr-card-actions">
                 ${previewBtnHtml}
                 ${testBtn}
-                ${prUrl ? `<a href="${prUrl}" target="_blank" class="dc-pr-btn dc-pr-btn-preview" style="text-decoration:none">View on GitHub</a>` : ''}
+                ${draftChangesUrl ? `<a href="${escapeHtml(draftChangesUrl)}" target="_blank" rel="noopener" class="dc-pr-btn dc-pr-btn-preview" style="text-decoration:none" title="Review commits and file-by-file changes before proposing">Changes</a>` : ''}
+                ${prUrl ? `<a href="${prUrl}" target="_blank" rel="noopener" class="dc-pr-btn dc-pr-btn-preview" style="text-decoration:none">View on GitHub</a>` : ''}
                 ${session?.status === 'active' ? `<button class="dc-pr-btn dc-pr-btn-promote" onclick="DevChat.promotePR(this)">Propose to group</button>` : ''}
                 ${cardStatusHtml}
               </div>
