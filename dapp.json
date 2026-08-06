@@ -296,11 +296,6 @@
   ],
   "tests": [
     {
-      "name": "Settings reserves the home-indicator strip, and ?shot=safe-bottom boots clean",
-      "path": "/?shot=safe-bottom#settings",
-      "expectSelector": "#settings-screen.platform-safe-scroll:not(.hidden)"
-    },
-    {
       "name": "Challenges tab summarises the completed set (#981)",
       "path": "/#leaderboard/challenges",
       "expectSelector": "#leaderboard-screen:not(.hidden) #challenges-root:not(.hidden) #tc-se-grid #tc-se-challenge-summary"

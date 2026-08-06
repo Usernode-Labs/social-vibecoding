@@ -469,8 +469,12 @@ test('the CLI credentials list has a staging ?demo=1 injection', () => {
 
 test('settings.js passes ?demo=1 through to the credentials list', () => {
   assert.match(settingsJs, /_cliTokensDemo\(\)\s*\{/, 'the passthrough helper exists');
+  // Scoped to _loadCliTokens, not the whole module — the point is that the
+  // passthrough is on the request this function builds. The window grew
+  // when the capability gate (_cliAuthAvailable — skip the fetch entirely
+  // where the CLI surface is 404'd) landed above the query construction.
   const load = settingsJs.slice(settingsJs.indexOf('    async _loadCliTokens(reset) {'));
-  assert.match(load.slice(0, 1600), /_cliTokensDemo\(\) \? '&demo=1' : ''/,
+  assert.match(load.slice(0, 2600), /_cliTokensDemo\(\) \? '&demo=1' : ''/,
     'the page-level ?demo=1 reaches the endpoint');
   assert.match(settingsJs, /!token\.demo/, 'Revoke is suppressed on demo rows');
 });
