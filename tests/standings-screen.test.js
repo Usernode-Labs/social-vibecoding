@@ -318,6 +318,91 @@ test('the challenges pane decorates the public grid with your own points', () =>
     'and that link goes through the router, so the shared event selection survives');
 });
 
+// ─── Completed challenges live here now (#981) ───────────────────────────
+//
+// The profile screen's season-wide completed-challenges list is gone; this
+// pane owns the flag, and the standings pane cross-links to it.
+
+test('the challenges pane reads `completed` from the PUBLIC row, not just the personalization map', () => {
+  // This is what makes the chip/grouping/count correct on first paint AND
+  // for a signed-out visitor. Reading it only from `_mine` (as it did before)
+  // meant an anonymous viewer saw no completion state at all.
+  const fn = chJs.slice(chJs.indexOf('  _isDone(c) {'), chJs.indexOf('  _ordered() {'));
+  assert.ok(fn.length > 0, '_isDone located');
+  assert.match(fn, /c\.completed === true/,
+    'the public row is the source of truth');
+  const publicFirst = fn.indexOf('c.completed === true');
+  const mineFallback = fn.indexOf('m.completed === true');
+  assert.ok(publicFirst > -1 && mineFallback > publicFirst,
+    'the personalization row is only a fallback, checked after the public one');
+});
+
+test('the challenges grid sorts unfinished challenges ahead of completed ones', () => {
+  const fn = chJs.slice(chJs.indexOf('  _ordered() {'), chJs.indexOf('  _renderGrid() {'));
+  assert.match(fn, /_isDone\(a\.c\)/);
+  assert.match(fn, /_isDone\(b\.c\)/);
+  // The completed split is the FIRST key, ahead of the featured lift.
+  assert.ok(fn.indexOf('ad !== bd') < fn.indexOf('af !== bf'),
+    'not-completed must outrank featured, or a featured finished challenge leads the grid');
+});
+
+test('the challenges grid summarises and groups the completed set', () => {
+  assert.match(chJs, /id="tc-se-challenge-summary"/,
+    'the summary line carries a stable id the dapp.json check anchors on');
+  assert.match(chJs, /challenges completed/, 'and states the tally in words');
+  assert.match(chJs, />Completed<\/div>/,
+    'the grouping subheading exists');
+  // Suppressed when everything (or nothing) is finished — every public event
+  // in production is currently 100% completed, where the heading says nothing.
+  const fn = chJs.slice(chJs.indexOf('const GRID_CLASS'),
+    chJs.indexOf('id="tc-se-challenge-summary"'));
+  assert.match(fn, /firstDone > 0 && doneCount > 0/,
+    'the subheading is gated on BOTH groups being non-empty');
+  assert.match(chJs, /opacity-60/, 'completed cards are dimmed');
+});
+
+test('the standings pane cross-links to the challenges tab without ever painting an error', () => {
+  const load = topoJs.slice(
+    topoJs.indexOf('  async _loadChallengeCounts(eventId) {'),
+    topoJs.indexOf('  // ── Rendering'));
+  assert.ok(load.length > 0, '_loadChallengeCounts located');
+  assert.ok(!/_error/.test(load),
+    'a failed tally must never paint a banner over the standings table');
+  assert.match(load, /_eventId\(\) !== eventId/,
+    'and a fast event switch must not paint one event\'s tally over another');
+  assert.match(topoJs, /id="tc-lb-challenge-link"/);
+  assert.match(topoJs, /counts\.total > 0/,
+    'no line at all when the event has no challenges (never "0 of 0")');
+  assert.match(topoJs, /window\.location\.hash = '#leaderboard\/challenges'/,
+    'the link goes through the router, so the shared event selection survives');
+});
+
+test('both #981 checks survive app-manifest\'s MAX_TESTS cap', () => {
+  // The declared checks are a CAPPED resource: src/services/app-manifest.js
+  // keeps only the first MAX_TESTS (10) entries and this repo declares 200+,
+  // so a check's POSITION in the array decides whether it ever runs. Appended
+  // at the bottom these two would be pure decoration — a declared check that
+  // never executes reads as coverage and isn't. Hence the top of the array,
+  // which costs the two unasserted #962 home-panel fill checks their slots.
+  const appManifest = require('../src/services/app-manifest');
+  const kept = appManifest.read(root).tests;
+  const summary = kept.find((t) => t.path === '/#leaderboard/challenges');
+  const crossLink = kept.find((t) => t.path === '/#leaderboard');
+  assert.ok(summary, 'the challenges-summary check is inside the parse cap');
+  assert.ok(crossLink, 'the standings cross-link check is inside the parse cap');
+  assert.match(summary.expectSelector, /#tc-se-challenge-summary/);
+  assert.match(crossLink.expectSelector, /#tc-lb-to-challenges/);
+
+  // Both of these paths already had a check, and two suites locate those by
+  // path with `.find()` — so ours, sitting earlier in the array, SHADOWS
+  // them. It therefore has to carry their assertions too, or moving a check
+  // to the top of the array silently weakens what the older ones pinned.
+  assert.match(crossLink.expectSelector, /\[data-standings-tab="challenges"\]/,
+    'the shadowing /#leaderboard check must still assert the three-tab strip');
+  assert.match(summary.expectSelector, /#challenges-root:not\(\.hidden\)/,
+    'and the shadowing /#leaderboard/challenges check the revealed pane');
+});
+
 test('the challenge-detail screenshot deep link is scoped to its one param', () => {
   const fn = chJs.slice(chJs.indexOf('  _maybeShot(ordered) {'), chJs.indexOf('  // ── Challenge detail overlay'));
   assert.ok(fn.length > 0, '_maybeShot located');

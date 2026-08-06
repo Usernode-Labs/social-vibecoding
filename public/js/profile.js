@@ -4,6 +4,16 @@
 // (picture / display name / bio / links), rank + points, token allocation
 // (with reveal), points breakdown, and the challenges THEY completed.
 //
+// It deliberately does NOT list completed challenges (#981). It used to,
+// from /challenges-api/challenges?season_id=…, and that section was wrong
+// on two counts: `challenges.completed` is an ORGANISER flag about the
+// challenge ("this one is over"), not "you finished it", so every user saw
+// the same list — and season-scoped it ran to ~32 cards, burying the rank,
+// token and breakdown blocks this screen actually exists for. That list now
+// lives on the Leaderboard screen's Challenges tab, grouped and counted
+// per event (public/js/topochain-challenges.js), which is where the rest of
+// the challenge UI already was.
+//
 // Identity comes from the platform session: since the topochain merge,
 // leaderboard participants ARE platform users, so the /me/* routes scope
 // to the signed-in session server-side. The bridge's getProfileInfo()

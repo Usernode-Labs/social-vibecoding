@@ -341,3 +341,16 @@ test('the fallback circle picks a letter, not whatever character is first', () =
   assert.match(fn, /u\.displayName, u\.username/, 'display name first, then the handle');
   assert.match(fn, /return '\?'/, 'and a last resort that is never blank');
 });
+
+test('the profile no longer fetches the season challenge list via the old route', () => {
+  // #981: this screen stops paying for the season-wide grid it used to
+  // filter client-side. /challenges-api/me/* and /challenges-api/seasons
+  // must survive; the retired /challenges-api/challenges read must not.
+  const body = profileJs.slice(profileJs.indexOf('const Profile'));
+  assert.doesNotMatch(body, /\/challenges-api\/challenges/,
+    'the old season-grid fetch must not come back');
+  assert.match(profileJs, /\/challenges-api\/seasons/,
+    'the season lookup stays — it scopes both /me/* reads and names the season');
+  assert.match(profileJs, /\/challenges-api\/me\/ranking/);
+  assert.match(profileJs, /\/challenges-api\/me\/breakdown/);
+});

@@ -768,15 +768,31 @@ test('navigateToBrowse / _exitBrowse follow the screen pattern', () => {
   );
   assert.match(nav, /setHeaderTitle\('All apps'\)/);
   assert.match(nav, /App\._inBrowse = true/);
-  assert.match(nav, /Browse\.open\(slug \|\| null\)/);
-  assert.match(nav, /getElementById\('home-screen'\)\.classList\.add\('hidden'\)/);
+  assert.match(nav, /Browse\.open\(slug \|\| null, \{ chrome: false \}\)/);
+  assert.match(nav, /App\._showOnlyScreen\('browse-screen'\)/);
   // Already mounted -> an in-screen LEVEL change, not a screen entry:
   // re-running the swap would replay the entry animation on a drill-in.
   assert.match(nav, /App\._inBrowse && window\.Browse\?\.isOpen\?\.\(\)/);
   assert.match(nav, /Browse\.route\(slug \|\| null\)/);
-  // Leaving the screen hands the back chevron back, like _exitAdminConsole.
+  // #979: the entry's visible mutations live inside the transition
+  // callback, so the outgoing page is snapshotted as it looked. Browse's
+  // own level chrome is deferred with it.
+  const preTransition = nav.slice(0, nav.indexOf('PlatformUI.transition('));
+  for (const forbidden of ['setHeaderTitle', 'setBackIcon', 'classList']) {
+    assert.ok(!preTransition.includes(forbidden),
+      `no ${forbidden} before the transition (it would land in the outgoing snapshot)`);
+  }
+  assert.match(nav, /Browse\.syncChrome\(\)/,
+    'the deferred level chrome is applied inside the callback');
+  // Leaving the screen is state-only now — the back chevron is handed back
+  // by the next screen's _showOnlyScreen.
   const exit = APP_SRC.slice(APP_SRC.indexOf('_exitBrowse() {'));
-  assert.match(exit.slice(0, 800), /App\.setBackIcon\('home'\)/);
+  const exitBody = exit.slice(0, exit.indexOf('\n  },'));
+  assert.ok(!exitBody.includes('setBackIcon'),
+    '_exitBrowse no longer touches the back icon (#979)');
+  assert.ok(!exitBody.includes('classList'),
+    '_exitBrowse no longer hides the screen (#979)');
+  assert.match(exitBody, /Browse\.close\(\)/);
 });
 
 test('the header back button consults Browse.handleBack', () => {
@@ -788,6 +804,12 @@ test('the header back button consults Browse.handleBack', () => {
 });
 
 test('every sibling screen hides #browse-screen and exits the flag', () => {
+  // One list of screen roots, hidden through one primitive (#979) — the
+  // per-navigation hand-rolled hide lists are gone, so what this test
+  // pins is (a) browse is in that list, (b) every sibling entry calls the
+  // primitive, and (c) the flag is still exited.
+  assert.match(APP_SRC, /SCREEN_IDS: \[[^\]]*'browse-screen'/,
+    '#browse-screen is one of the mutually exclusive screen roots');
   for (const fn of ['navigateToProfile', 'navigateToAdminConsole', 'navigateToSettings',
     'navigateToLeaderboard']) {
     // Anchor on the DEFINITION (two-space indent), not the many comment
@@ -796,25 +818,40 @@ test('every sibling screen hides #browse-screen and exits the flag', () => {
     assert.ok(start > 0, `${fn} exists`);
     const body = APP_SRC.slice(start, start + 2600);
     assert.match(body, /App\._inBrowse\) App\._exitBrowse\(\)/, `${fn} exits browse`);
-    assert.match(body, /getElementById\('browse-screen'\)/, `${fn} hides browse-screen`);
+    assert.match(body, /App\._showOnlyScreen\('[a-z-]+'\)/,
+      `${fn} hides every other root through _showOnlyScreen`);
   }
   // navigateHome must exit it too, or the grid stays mounted.
   const home = APP_SRC.slice(APP_SRC.indexOf('navigateHome() {'));
   assert.match(home.slice(0, 1200), /App\._inBrowse\) App\._exitBrowse\(\)/);
+  assert.match(home.slice(0, 2600), /App\._showOnlyScreen\('home-screen', \['app-view'\]\)/,
+    'going home reveals home and hides every root but the shrinking app card');
   // Bare "/" with the browse screen up resolves back home.
   assert.match(APP_SRC, /else if \(App\._inBrowse\) App\.navigateHome\(\);/);
 });
 
-test('the app-view zoom departs from whichever grid was tapped', () => {
+test('the app-view zoom departs from whichever screen was on top', () => {
   // Hard-coding #home-screen here left the browse grid painted behind the
-  // opened app.
+  // opened app. Since the _exitX helpers became state-only (#979) the
+  // settings / admin / profile / leaderboard roots are live at this point
+  // too, so the answer is read off the DOM rather than off _inBrowse.
   assert.match(APP_SRC, /_departingScreen\(\) \{/);
-  assert.match(APP_SRC, /App\._inBrowse \? 'browse-screen' : 'home-screen'/);
+  const dep = APP_SRC.slice(APP_SRC.indexOf('_departingScreen() {'));
+  const depBody = dep.slice(0, dep.indexOf('\n  },'));
+  assert.match(depBody, /for \(const id of App\.SCREEN_IDS\)/,
+    'it scans every screen root');
+  assert.match(depBody, /!el\.classList\.contains\('hidden'\)/,
+    'and returns the one that is actually visible');
+  assert.match(depBody, /return document\.getElementById\('home-screen'\)/,
+    'home is the fallback');
   const nav = APP_SRC.slice(APP_SRC.indexOf('async navigateToApp('));
-  const zoom = nav.slice(0, nav.indexOf("document.getElementById('back-btn')"));
+  const zoom = nav.slice(0, nav.indexOf('await AppView.open('));
   assert.match(zoom, /const departing = App\._departingScreen\(\)/);
+  assert.ok(zoom.indexOf('const departing') < zoom.indexOf('App._exitLeaderboard()'),
+    'resolved before the _exitX flags are cleared');
   assert.match(zoom, /outEl: departing/);
-  assert.match(zoom, /after: \(\) => \{ if \(departing\) departing\.classList\.add\('hidden'\); \}/);
+  assert.match(zoom, /after: \(\) => \{ App\._showOnlyScreen\('app-view'\); \}/,
+    'the conceal hook hides EVERY other root, not just `departing`');
 });
 
 test('_tileFor resolves tiles in the two grids that still HAVE tiles', () => {
