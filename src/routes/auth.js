@@ -17,6 +17,10 @@ const {
   accountRecovery,
   withTransaction,
 } = require('../services/cli-auth');
+// The SAME predicate the CLI 404 gates use (routes/cli-auth.js), so the
+// capability this route advertises can never disagree with what that
+// surface actually serves.
+const { isCliSurfaceEnabled } = require('./cli-auth');
 
 const SESSION_DAYS = 7;
 
@@ -289,6 +293,15 @@ function authRoutes(config) {
         bio: profile.bio,
         avatarUrl: profile.avatarUrl,
         links: profile.links,
+        // Whether the CLI-credentials surface exists in this deployment.
+        // The whole /api/me/cli-tokens + /api/cli/* family is 404'd in a
+        // staging preview (unreviewed code must not mint CLI tokens), so
+        // Settings has to know NOT TO ASK: a 404 the client swallows is
+        // still an error line in the page console, which fails the
+        // proposal checks. Same shape as walletLinkEnabled above — the
+        // client renders what the server reports, it never sniffs the
+        // environment itself.
+        cliAuthEnabled: isCliSurfaceEnabled(config),
       },
     });
   });

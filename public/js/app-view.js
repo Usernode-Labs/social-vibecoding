@@ -1506,7 +1506,7 @@ const AppView = {
 
         <!-- The card list: locked notice, general-chat card, session
              rows, the intermixed feed, and the Completed section. -->
-        <div id="dev-forum-scroll" class="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+        <div id="dev-forum-scroll" class="flex-1 min-h-0 overflow-y-auto overscroll-contain platform-safe-scroll">
           <div id="dev-locked-notice" class="px-3 pt-2 hidden"></div>
           <div class="px-3 pt-2">
             <button id="dev-chat-card" class="${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}"
@@ -2559,8 +2559,13 @@ const AppView = {
             <!-- Typing indicator -->
             <div id="gc-typing" class="px-3 text-xs text-zinc-500 h-5 shrink-0"></div>
 
-            <!-- Input (#621: read-only viewers get a notice instead) -->
-            <div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2">
+            <!-- Input (#621: read-only viewers get a notice instead).
+                 platform-safe-bar (app.css) adds the home-indicator
+                 inset to this bar's own p-2 — it wraps both the composer
+                 and the read-only notice, so both clear the indicator.
+                 (No backticks in this comment: it lives inside a template
+                 literal, and one would close it.) -->
+            <div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2 platform-safe-bar">
               ${AppView.readOnly ? `
               <div class="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400 text-center">You're viewing this app's dev space read-only — only collaborators can post.</div>
               ` : `
