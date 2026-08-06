@@ -8514,12 +8514,22 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
       // (review P1): completing after the first dispatch would 409 the
       // headless retry that reuses the same turn token.
       if (codexCtx?.turnUuid) {
-        const failed = !!(result?.fatalError || result?.ccIsError || (result?.agentExit != null && result?.agentExit !== 0) || (result?.exitCode != null && result?.exitCode > 0));
+        const failed = !!(result?.fatalError || result?.ccIsError || (result?.agentExit != null && result?.agentExit !== 0) || (result?.exitCode != null && result?.exitCode !== 0));
         await agentTurn.completeCodexTurn({
           pool, turnUuid: codexCtx.turnUuid,
           status: failed ? 'failed' : 'completed',
         });
       }
+    } catch (e) {
+      // A thrown dispatch must still terminalize the Codex ledger turn
+      // (review P1): without this the row stays 'running' and the token
+      // remains usable until expiry. Complete as failed, then rethrow.
+      if (codexCtx?.turnUuid) {
+        await agentTurn.completeCodexTurn({
+          pool, turnUuid: codexCtx.turnUuid, status: 'failed',
+        }).catch(() => {});
+      }
+      throw e;
     } finally {
       clearInterval(heartbeat);
     }
@@ -9778,12 +9788,22 @@ path: /another/changed/view
       // (review P1): completing after the first dispatch would 409 the
       // headless retry that reuses the same turn token.
       if (codexCtx?.turnUuid) {
-        const failed = !!(result?.fatalError || result?.ccIsError || (result?.agentExit != null && result?.agentExit !== 0) || (result?.exitCode != null && result?.exitCode > 0));
+        const failed = !!(result?.fatalError || result?.ccIsError || (result?.agentExit != null && result?.agentExit !== 0) || (result?.exitCode != null && result?.exitCode !== 0));
         await agentTurn.completeCodexTurn({
           pool, turnUuid: codexCtx.turnUuid,
           status: failed ? 'failed' : 'completed',
         });
       }
+    } catch (e) {
+      // A thrown dispatch must still terminalize the Codex ledger turn
+      // (review P1): mark it failed so the row isn't left 'running' / the
+      // token usable until expiry, then rethrow.
+      if (codexCtx?.turnUuid) {
+        await agentTurn.completeCodexTurn({
+          pool, turnUuid: codexCtx.turnUuid, status: 'failed',
+        }).catch(() => {});
+      }
+      throw e;
     } finally {
       clearInterval(heartbeat);
       // Belt-and-braces (#891): a markerless turn (fatal error, container

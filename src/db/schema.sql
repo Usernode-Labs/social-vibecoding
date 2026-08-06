@@ -4842,11 +4842,13 @@ CREATE TABLE IF NOT EXISTS agent_api_calls (
   input_tokens          BIGINT NOT NULL DEFAULT 0,
   output_tokens         BIGINT NOT NULL DEFAULT 0,
   actual_cost_usd       NUMERIC(18,8) NOT NULL DEFAULT 0,
+  reserved_cost_usd     NUMERIC(18,8) NOT NULL DEFAULT 0,
   status                VARCHAR(24) NOT NULL,
   started_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   completed_at         TIMESTAMPTZ,
   UNIQUE (turn_id, upstream_request_id)
 );
+ALTER TABLE agent_api_calls ADD COLUMN IF NOT EXISTS reserved_cost_usd NUMERIC(18,8) NOT NULL DEFAULT 0;
 
 -- Compatibility overlay: verified / experimental / blocked per model.
 CREATE TABLE IF NOT EXISTS agent_model_compatibility (

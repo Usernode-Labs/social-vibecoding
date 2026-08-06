@@ -116,7 +116,11 @@ async function completeCodexTurn({ pool, turnUuid, status = 'completed', errorDe
       [turnUuid, status, errorDetail, errorCode],
     );
   } catch (err) {
-    log.warn('agent-turn', 'completeCodexTurn failed', { turnUuid, err: err.message });
+    // Do NOT swallow (review P1): a terminalization failure would leave the
+    // ledger row 'running' and produce wrong audit status / a token-backed
+    // row that lingers until JWT expiry. Rethrow so callers surface it.
+    log.error('agent-turn', 'completeCodexTurn failed', { turnUuid, err: err.message });
+    throw err;
   }
 }
 

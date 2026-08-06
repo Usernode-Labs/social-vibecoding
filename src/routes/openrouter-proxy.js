@@ -24,6 +24,7 @@ const { agentProxyAuth } = require('../middleware/agent-proxy-auth');
 const credentialStore = require('../services/credential-store');
 const openrouterClient = require('../services/openrouter-client');
 const { parseSseFrames, extractUsage } = require('../services/openrouter-usage');
+const crypto = require('crypto');
 
 function openrouterProxyRoutes(config) {
   const router = Router();
@@ -66,9 +67,10 @@ function openrouterProxyRoutes(config) {
         pool, userId: c.userId, provider: 'openrouter', purpose: 'coding_agent',
       });
       if (!meta || meta.status !== 'valid') return res.status(401).json({ error: { message: 'credential not valid' } });
-      if (c.credentialRevision != null && meta.revision !== c.credentialRevision) {
-        return res.status(401).json({ error: { message: 'credential revision mismatch (key replaced or revoked)' } });
-      }
+      // The revision + secret are now read ATOMICALLY inside readSecret via
+      // expectedRevision (review P2): a revision-N token cannot race a key
+      // replacement and receive revision N+1's key. The separate
+      // readMetadata-then-readSecret gap is gone.
       // Verify the claimed turnId against a LIVE ledger row (review F9):
       // the relay must not accept a token for a turn that doesn't exist,
       // already completed, or belongs to a different session/user.
@@ -85,6 +87,7 @@ function openrouterProxyRoutes(config) {
       userKey = await credentialStore.readSecret({
         pool, userId: c.userId, provider: 'openrouter', purpose: 'coding_agent',
         dataKey: config.dataEncryptionKey,
+        expectedRevision: c.credentialRevision,
       });
       if (!userKey) return res.status(401).json({ error: { message: 'credential unavailable' } });
 
@@ -115,38 +118,57 @@ function openrouterProxyRoutes(config) {
         effectiveMaxCost = userCap;
       }
       // Entry check: reject a NEW upstream call once the turn has already
-      // reached the ceiling, before we spend anything. Serialized with
-      // FOR UPDATE (review P2): concurrent requests must not all read the
-      // same below-cap balance and pass together. A conservative estimate
-      // of this request's potential cost reserves headroom so a single
-      // expensive call can't blow past the cap.
+      // reached the ceiling, before we spend anything. Uses PER-REQUEST
+      // reservation records (review P1): each admitted request gets its
+      // own agent_api_calls row with a reserved_cost_usd, and the turn's
+      // reserved_cost_usd total is the SUM of active reservations. This
+      // lets concurrent requests each reserve independently, and lets one
+      // request's settlement release only ITS reservation (not wipe the
+      // others'). We serialize admission with FOR UPDATE on the turn.
+      let reservationId = null;
       if (effectiveMaxCost > 0) {
+        {
         const client = await pool.connect();
         try {
           await client.query('BEGIN');
           const { rows: costRows } = await client.query(
-            'SELECT actual_cost_usd, reserved_cost_usd FROM agent_turns WHERE id = $1 FOR UPDATE', [turnId],
+            'SELECT actual_cost_usd FROM agent_turns WHERE id = $1 FOR UPDATE', [turnId],
           );
           const spent = parseFloat(costRows[0]?.actual_cost_usd || 0);
-          const reserved = parseFloat(costRows[0]?.reserved_cost_usd || 0);
-          // Conservative reservation price, stored on the row so that a
-          // CONCURRENT request (which blocks on FOR UPDATE and then reads
-          // this row) sees the previous request's reservation and counts
-          // it against the cap (review P2). We over-estimate output cost;
-          // settlement swaps this reservation for the actual cost.
-          const estInput = 100000; // ~100k input tokens for repo context
+          // sum of currently-active per-request reservations
+          const { rows: resRows } = await client.query(
+            'SELECT COALESCE(SUM(reserved_cost_usd),0) s FROM agent_api_calls WHERE turn_id = $1 AND status = \'reserved\'',
+            [turnId],
+          );
+          const reserved = parseFloat(resRows[0]?.s || 0);
+          // Conservative reservation: over-estimate output cost. Stored per
+          // request; settlement reconciles THIS request's reservation only.
+          const estInput = 100000;
           const estOutput = body.max_output_tokens || 128000;
           const reserve = (estInput * 1 / 1000000) + (estOutput * 3 / 1000000) + 0.05;
           if (spent + reserved + reserve >= effectiveMaxCost) {
-            await client.query('COMMIT').catch(() => {});
+            await client.query('ROLLBACK').catch(() => {});
             log.warn('openrouter-proxy', 'turn cost ceiling would be exceeded', { turnId, effectiveMaxCost, spent, reserved });
             return res.status(429).json({ error: { message: 'turn cost ceiling reached' } });
           }
-          // Persist the reservation atomically with the check so concurrent
-          // requests account for it (review P2).
+          // Create a per-request reservation row (status=reserved). Its
+          // uuid is later used by settle to release exactly this request.
+          reservationId = crypto.randomUUID();
           await client.query(
-            'UPDATE agent_turns SET reserved_cost_usd = reserved_cost_usd + $2 WHERE id = $1',
-            [turnId, reserve],
+            `INSERT INTO agent_api_calls
+               (id, turn_id, requested_model, reserved_cost_usd, status)
+             VALUES ($1, $2, $3, $4, 'reserved')
+             ON CONFLICT (turn_id, upstream_request_id) DO NOTHING`,
+            [reservationId, turnId, c.model, reserve],
+          );
+          // Recompute turn-level reserved total from active reservations.
+          const { rows: totRows } = await client.query(
+            'SELECT COALESCE(SUM(reserved_cost_usd),0) s FROM agent_api_calls WHERE turn_id = $1 AND status = \'reserved\'',
+            [turnId],
+          );
+          await client.query(
+            'UPDATE agent_turns SET reserved_cost_usd = $2 WHERE id = $1',
+            [turnId, parseFloat(totRows[0]?.s || 0)],
           );
           await client.query('COMMIT');
         } catch (e) {
@@ -154,6 +176,7 @@ function openrouterProxyRoutes(config) {
           throw e;
         } finally {
           client.release();
+        }
         }
       }
 
@@ -182,24 +205,40 @@ function openrouterProxyRoutes(config) {
       const settle = async (u) => {
         if (!u || !u.requestId) return;
         try {
-          // ATOMIC insert + aggregate (review P7): run both in one
-          // transaction so we never split the two, and only aggregate when
-          // the INSERT actually inserted a NEW row (rowCount === 1). A
-          // duplicate upstream_request_id (SSE replay / retry) inserts
-          // nothing and must NOT re-increment turn totals.
           const client = await pool.connect();
           try {
             await client.query('BEGIN');
-            const ins = await client.query(
-              `INSERT INTO agent_api_calls
-                 (id, turn_id, upstream_request_id, requested_model, routed_model,
-                  routed_provider, input_tokens, output_tokens, actual_cost_usd, status)
-               VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, 'completed')
-               ON CONFLICT (turn_id, upstream_request_id) DO NOTHING`,
-              [turnId, u.requestId, c.model, u.model, u.routedProvider,
-               u.inputTokens, u.outputTokens, u.cost || 0],
-            );
-            if (ins.rowCount === 1) {
+            if (!reservationId) {
+              // No reservation was taken (no cap configured) — settle plainly
+              // with the actual cost if present.
+              await client.query(
+                `INSERT INTO agent_api_calls
+                   (id, turn_id, upstream_request_id, requested_model, routed_model,
+                    routed_provider, input_tokens, output_tokens, actual_cost_usd, status)
+                 VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, 'completed')
+                 ON CONFLICT (turn_id, upstream_request_id) DO NOTHING`,
+                [turnId, u.requestId, c.model, u.model, u.routedProvider,
+                 u.inputTokens, u.outputTokens, u.cost || 0],
+              );
+            } else if (u.cost != null) {
+              // Authoritative cost present (review P1): record the actual
+              // cost for THIS request, release ITS reservation (per-request,
+              // not the whole scalar), and add the cost to the turn totals.
+              await client.query(
+                `UPDATE agent_api_calls SET
+                   upstream_request_id = $2,
+                   routed_model = $3,
+                   routed_provider = $4,
+                   input_tokens = $5,
+                   output_tokens = $6,
+                   actual_cost_usd = $7,
+                   reserved_cost_usd = 0,
+                   status = 'completed',
+                   completed_at = NOW()
+                 WHERE id = $1`,
+                [reservationId, u.requestId, u.model, u.routedProvider,
+                 u.inputTokens, u.outputTokens, u.cost],
+              );
               await client.query(
                 `UPDATE agent_turns SET
                    routed_model = COALESCE($2, routed_model),
@@ -209,16 +248,50 @@ function openrouterProxyRoutes(config) {
                    output_tokens = output_tokens + $6,
                    reasoning_output_tokens = reasoning_output_tokens + $7,
                    actual_cost_usd = actual_cost_usd + $8,
-                   -- release the admitted reservation; the next admission
-                   -- re-reserves (review P2)
-                   reserved_cost_usd = 0,
                    cost_source = 'openrouter_usage',
                    billed_by = 'user_openrouter'
                  WHERE id = $1`,
                 [turnId, u.model, u.routedProvider, u.inputTokens,
                  u.cachedInputTokens, u.outputTokens, u.reasoningOutputTokens, u.cost || 0],
               );
+            } else {
+              // No authoritative cost (review P1): RETAIN this request's
+              // reservation as the conservative estimate (do not clear it)
+              // so the turn cannot repeat freely under the cap; still record
+              // the observed tokens for observability.
+              await client.query(
+                `UPDATE agent_api_calls SET
+                   upstream_request_id = $2,
+                   routed_model = $3,
+                   routed_provider = $4,
+                   input_tokens = $5,
+                   output_tokens = $6
+                 WHERE id = $1`,
+                [reservationId, u.requestId, u.model, u.routedProvider,
+                 u.inputTokens, u.outputTokens],
+              );
+              await client.query(
+                `UPDATE agent_turns SET
+                   routed_model = COALESCE($2, routed_model),
+                   routed_provider = COALESCE($3, routed_provider),
+                   input_tokens = input_tokens + $4,
+                   output_tokens = output_tokens + $5,
+                   cost_source = 'openrouter_usage'
+                 WHERE id = $1`,
+                [turnId, u.model, u.routedProvider, u.inputTokens, u.outputTokens],
+              );
             }
+            // Reconcile turn-level reserved total = SUM of still-active
+            // reservations (review P1): releasing this request must NOT
+            // erase the reservations of other in-flight requests.
+            const { rows: totRows } = await client.query(
+              "SELECT COALESCE(SUM(reserved_cost_usd),0) s FROM agent_api_calls WHERE turn_id = $1 AND status = 'reserved'",
+              [turnId],
+            );
+            await client.query(
+              'UPDATE agent_turns SET reserved_cost_usd = $2 WHERE id = $1',
+              [turnId, parseFloat(totRows[0]?.s || 0)],
+            );
             await client.query('COMMIT');
           } catch (e) {
             await client.query('ROLLBACK').catch(() => {});
@@ -226,21 +299,16 @@ function openrouterProxyRoutes(config) {
           } finally {
             client.release();
           }
-          // Enforce the cost ceiling after aggregation (post-hoc defense —
-          // the entry check above already prevents most overruns).
           if (effectiveMaxCost > 0) {
             const { rows: costRows } = await pool.query(
-              'SELECT actual_cost_usd FROM agent_turns WHERE id = $1', [turnId]
+              'SELECT actual_cost_usd, reserved_cost_usd FROM agent_turns WHERE id = $1', [turnId]
             );
-            if (parseFloat(costRows[0]?.actual_cost_usd || 0) >= effectiveMaxCost) {
+            if ((parseFloat(costRows[0]?.actual_cost_usd || 0) + parseFloat(costRows[0]?.reserved_cost_usd || 0)) >= effectiveMaxCost) {
               log.warn('openrouter-proxy', 'turn cost ceiling exceeded', { turnId, effectiveMaxCost });
               ctrl.abort();
             }
           }
         } catch (err) {
-          // Fail closed (review P2): if settlement accounting fails, abort
-          // the upstream so spend does not continue unrecorded. The caller
-          // (stream loop) catches this and stops the relay.
           log.error('openrouter-proxy', 'usage settlement failed; aborting', { turnId, err: err.message });
           ctrl.abort();
           throw err;
@@ -249,7 +317,7 @@ function openrouterProxyRoutes(config) {
 
       if (!stream || !upstream.ok || !upstream.body) {
         const text = await upstream.text();
-        // Non-streaming response (review F8): parse the JSON body for
+      // Non-streaming response (review F8): parse the JSON body for
         // usage and settle it — never skip settlement just because the
         // client didn't request streaming.
         if (upstream.ok) {

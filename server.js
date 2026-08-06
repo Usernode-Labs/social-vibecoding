@@ -2832,6 +2832,21 @@ async function resumeDetachedTurnInner({
   }
   flushProgress();
 
+  // Terminalize a recovered Codex ledger turn (review P1): interactive
+  // recovery must consume the persisted turnUuid (not just the headless
+  // path) so the row isn't left 'running'. activeTurn.backend is the
+  // backend persisted at dispatch.
+  if (activeTurn.backend === 'codex_openrouter' && activeTurn.turnUuid) {
+    const agentTurn = require('./src/services/agent-turn');
+    const failed = !!(result.fatalError || result.ccIsError
+      || (result.agentExit != null && result.agentExit !== 0)
+      || (result.exitCode != null && result.exitCode !== 0));
+    await agentTurn.completeCodexTurn({
+      pool, turnUuid: activeTurn.turnUuid,
+      status: failed ? 'failed' : 'completed',
+    }).catch(() => {});
+  }
+
   // #174: the journal replay rebuilt the turn's self-reported cost —
   // without this debit a restart silently drops the CC turn's spend from
   // both ledger buckets. active_turn rows persisted before the byok flag
