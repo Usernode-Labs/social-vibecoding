@@ -17,6 +17,8 @@ const visuals = require('../services/visuals');
 const docker = require('../services/docker');
 const caddy = require('../services/caddy');
 const worker = require('../services/worker');
+const agentTurn = require('../services/agent-turn');
+const registry = require('../agents/registry');
 const workerProgress = require('../services/worker-progress');
 const sessionLifecycle = require('../services/session-lifecycle');
 const stagingRecovery = require('../services/staging-recovery');
@@ -1956,6 +1958,60 @@ function sessionRoutes(config) {
       res.json({ ok: true });
     } catch (err) {
       log.error('sessions', 'Archive failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // POST /api/sessions/:id/reset-agent-context
+  //   Switch a session's coding-agent backend/model (plan.md §11.3).
+  //   Keeps the Git branch + working tree but starts a fresh agent
+  //   thread: clears agent_thread_id, bumps agent_config_version, evicts
+  //   the warm worker. Only allowed on an idle, owned, non-archived
+  //   session. For codex_openrouter the caller must have a valid
+  //   OpenRouter credential.
+  router.post('/api/sessions/:id/reset-agent-context', drainGuard, async (req, res) => {
+    try {
+      const sessionId = parseInt(req.params.id, 10);
+      const { backend, model, reasoningEffort } = req.body || {};
+      try { registry.resolveBackend(backend || ''); } catch { return res.status(400).json({ error: 'Unknown backend' }); }
+      if (activeWorkers.has(sessionId) || worker.isInFlight(sessionId)) {
+        return res.status(409).json({ error: 'Session is busy; stop the current turn first.' });
+      }
+      const { rows } = await pool.query(
+        `SELECT id, user_id, status FROM chat_sessions WHERE id = $1 AND user_id = $2`,
+        [sessionId, req.user.id],
+      );
+      const sess = rows[0];
+      if (!sess) return res.status(404).json({ error: 'Session not found' });
+      if (sess.status === 'archived' || sess.status === 'merged') {
+        return res.status(409).json({ error: 'Session is closed' });
+      }
+      if (backend === 'codex_openrouter') {
+        const credentialStore = require('../services/credential-store');
+        const meta = await credentialStore.readMetadata({
+          pool, userId: req.user.id, provider: 'openrouter', purpose: 'coding_agent',
+        });
+        if (!meta || meta.status !== 'valid') {
+          return res.status(400).json({ error: 'Add your OpenRouter API key in Settings first.' });
+        }
+      }
+      await pool.query(
+        `UPDATE chat_sessions SET
+           agent_backend = $2,
+           agent_provider = $3,
+           agent_model = $4,
+           agent_reasoning_effort = $5,
+           agent_thread_id = NULL,
+           agent_config_version = agent_config_version + 1,
+           agent_context_reset_at = NOW()
+         WHERE id = $1`,
+        [sessionId, backend, backend === 'codex_openrouter' ? 'openrouter' : 'anthropic',
+         model || null, reasoningEffort || null],
+      );
+      try { await worker.evictWorker(sessionId); } catch {}
+      res.json({ ok: true });
+    } catch (err) {
+      log.error('sessions', 'reset-agent-context failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -8316,6 +8372,18 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
 
     let result;
     try {
+      // Resolve the Codex/OpenRouter turn context (scoped relay token +
+      // ledger row) for codex_openrouter sessions; null for Claude
+      // (legacy path unchanged). plan.md PR5/PR6.
+      const codexCtx = await agentTurn.resolveCodexTurn({
+        pool, session, userId: req.user.id,
+        model: selectedModel,
+        resumeThreadId: session.cc_session_id || session.agent_thread_id || null,
+      });
+      if (codexCtx?.error === 'credential_required') {
+        await sendStatus('Add your OpenRouter API key in Settings to use Codex.');
+        return res.json({ ok: false, error: 'OpenRouter API key required' });
+      }
       const dispatchScout = () => worker.execInWorker(session.id, {
         mode: 'scout',
         prompt: scoutPrompt,
@@ -8324,6 +8392,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         resumeSessionId: session.cc_session_id || null,
         branchName: session.branch_name,
         anthropicApiKey: userApiKey || null,
+        ...(codexCtx || {}),
         prodDebug,
         // Hold the durable turn record through this tool's own tail
         // (spec persist + frozen version + Mayor wrap-up). Short, but the
@@ -9524,6 +9593,15 @@ path: /another/changed/view
 
     let result;
     try {
+      const codexCtx = await agentTurn.resolveCodexTurn({
+        pool, session, userId: req.user.id,
+        model: selectedModel,
+        resumeThreadId: session.cc_session_id || session.agent_thread_id || null,
+      });
+      if (codexCtx?.error === 'credential_required') {
+        await sendStatus('Add your OpenRouter API key in Settings to use Codex.');
+        return res.json({ ok: false, error: 'OpenRouter API key required' });
+      }
       const dispatchBuild = () => worker.execInWorker(session.id, {
         mode: 'build',
         prompt: claudePrompt,
@@ -9532,6 +9610,7 @@ path: /another/changed/view
         resumeSessionId: session.cc_session_id || null,
         branchName: session.branch_name,
         anthropicApiKey: userApiKey || null,
+        ...(codexCtx || {}),
         prodDebug,
         // Hold the durable turn record through the tail below (push heal →
         // PR → staging build → visuals → completion card → Mayor wrap-up).

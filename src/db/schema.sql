@@ -4765,3 +4765,89 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_expires_at TIMESTAMPTZ
 
 COMMENT ON COLUMN users.password_reset_token_hash IS 'staging:private';
 COMMENT ON COLUMN users.password_reset_expires_at IS 'staging:private';
+
+-- ── OpenRouter BYOK with Codex — full feature (plan.md PR3+) ────────
+-- All additions are idempotent and live alongside the merged foundation
+-- (PR #943: chat_sessions.agent_* + credentials.user_ai_credentials).
+
+-- Per-user per-backend agent preferences (model, reasoning effort, cost
+-- ceiling, which backend is the default). One row per (user_id, backend).
+CREATE TABLE IF NOT EXISTS user_agent_preferences (
+  user_id            BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  backend            VARCHAR(32) NOT NULL,
+  model_id           VARCHAR(255),
+  reasoning_effort   VARCHAR(16),
+  max_turn_cost_usd  NUMERIC(18,8),
+  is_default         BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, backend),
+  CONSTRAINT user_agent_preferences_backend_check
+    CHECK (backend IN ('claude_code', 'codex_openrouter')),
+  CONSTRAINT user_agent_preferences_reasoning_check
+    CHECK (reasoning_effort IS NULL
+           OR reasoning_effort IN ('minimal', 'low', 'medium', 'high', 'xhigh'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS user_agent_preferences_one_default
+  ON user_agent_preferences (user_id) WHERE is_default = TRUE;
+
+-- Durable per-turn ledger for multi-provider usage, retries, and proxy
+-- settlement. Idempotent settlement keys on the turn id.
+CREATE TABLE IF NOT EXISTS agent_turns (
+  id                       UUID PRIMARY KEY,
+  session_id               BIGINT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  user_id                  BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  backend                  VARCHAR(32) NOT NULL,
+  provider                 VARCHAR(32),
+  requested_model          VARCHAR(255),
+  routed_model             VARCHAR(255),
+  routed_provider          VARCHAR(128),
+  reasoning_effort         VARCHAR(16),
+  credential_id            BIGINT REFERENCES credentials.user_ai_credentials(id),
+  credential_revision      INTEGER,
+  agent_thread_id          VARCHAR(128),
+  status                   VARCHAR(24) NOT NULL,
+  input_tokens             BIGINT NOT NULL DEFAULT 0,
+  cached_input_tokens      BIGINT NOT NULL DEFAULT 0,
+  output_tokens            BIGINT NOT NULL DEFAULT 0,
+  reasoning_output_tokens  BIGINT NOT NULL DEFAULT 0,
+  actual_cost_usd          NUMERIC(18,8) NOT NULL DEFAULT 0,
+  cost_source              VARCHAR(24),
+  billed_by                VARCHAR(32),
+  error_code               VARCHAR(64),
+  error_detail             TEXT,
+  started_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at             TIMESTAMPTZ,
+  metadata                 JSONB NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_agent_turns_session
+  ON agent_turns (session_id, started_at);
+
+-- Per-request proxy diagnostics. Uniqueness on (turn_id,
+-- upstream_request_id) prevents double-settlement from SSE replays.
+CREATE TABLE IF NOT EXISTS agent_api_calls (
+  id                    UUID PRIMARY KEY,
+  turn_id               UUID NOT NULL REFERENCES agent_turns(id) ON DELETE CASCADE,
+  upstream_request_id  VARCHAR(255),
+  requested_model       VARCHAR(255),
+  routed_model          VARCHAR(255),
+  routed_provider       VARCHAR(128),
+  input_tokens          BIGINT NOT NULL DEFAULT 0,
+  output_tokens         BIGINT NOT NULL DEFAULT 0,
+  actual_cost_usd       NUMERIC(18,8) NOT NULL DEFAULT 0,
+  status                VARCHAR(24) NOT NULL,
+  started_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at         TIMESTAMPTZ,
+  UNIQUE (turn_id, upstream_request_id)
+);
+
+-- Compatibility overlay: verified / experimental / blocked per model.
+CREATE TABLE IF NOT EXISTS agent_model_compatibility (
+  backend             VARCHAR(32) NOT NULL,
+  model_id            VARCHAR(255) NOT NULL,
+  status              VARCHAR(16) NOT NULL,
+  minimum_cli_version VARCHAR(32),
+  note                TEXT,
+  checked_at          TIMESTAMPTZ,
+  PRIMARY KEY (backend, model_id)
+);

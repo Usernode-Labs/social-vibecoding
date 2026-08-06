@@ -20,7 +20,7 @@ test('returns a known backend unchanged', () => {
 });
 
 test('F6: fails CLOSED on unknown or typo backend ids (never silently Claude)', () => {
-  for (const bad of ['codex_openrouter', 'cluade_code', 'unknown-backend', ' ', 'CODE']) {
+  for (const bad of ['cluade_code', 'unknown-backend', ' ', 'CODE', 'claudecode']) {
     assert.throws(() => registry.resolveBackend(bad), /unknown backend/, `should reject '${bad}'`);
   }
 });
@@ -28,10 +28,11 @@ test('F6: fails CLOSED on unknown or typo backend ids (never silently Claude)', 
 test('getBackend resolves known and throws on unknown', () => {
   assert.equal(registry.getBackend('claude_code').provider, 'anthropic');
   assert.equal(registry.getBackend('claude_code').runner, '/usr/local/bin/run-cc.sh');
+  assert.equal(registry.getBackend('codex_openrouter').runner, '/usr/local/bin/run-codex-agent.sh');
   assert.throws(() => registry.getBackend('nope'), /unknown backend/);
 });
 
-test('listBackends exposes the single seeded backend', () => {
+test('listBackends exposes both seeded backends', () => {
   const all = registry.listBackends();
-  assert.deepEqual(all.map((b) => b.id), ['claude_code']);
+  assert.deepEqual(all.map((b) => b.id).sort(), ['claude_code', 'codex_openrouter']);
 });

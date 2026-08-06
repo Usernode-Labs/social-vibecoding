@@ -59,7 +59,7 @@ function mintProdDebugJwt(sessionId) {
 // Scout mode omits WORKER_JWT so usernode-push can't authenticate (see
 // the long comment in execInWorker); PROD_DEBUG_JWT rides along on
 // build + scout turns only — never sync (bookkeeping, no free-form CC).
-function buildTurnSecretEnv({ mode, workerJwt, anthropicApiKey, prodDebugJwt }) {
+function buildTurnSecretEnv({ mode, workerJwt, anthropicApiKey, prodDebugJwt, agentProxyToken }) {
   const useProxy = !anthropicApiKey;
   const env = mode === 'scout'
     ? {
@@ -73,6 +73,13 @@ function buildTurnSecretEnv({ mode, workerJwt, anthropicApiKey, prodDebugJwt }) 
       };
   if (prodDebugJwt && mode !== 'sync') {
     env.PROD_DEBUG_JWT = prodDebugJwt;
+  }
+  // Codex/OpenRouter: the relay token (NOT the raw key) rides as a
+  // secret env so Codex can present it as a bearer to the relay. The raw
+  // OpenRouter key never enters the worker.
+  if (agentProxyToken) {
+    env.USERNODE_AGENT_TOKEN = agentProxyToken;
+    env.WORKER_JWT = workerJwt; // commit/push helper still needs it
   }
   return env;
 }
@@ -986,6 +993,19 @@ async function execInWorker(sessionId, {
   resumeSessionId,
   branchName,
   anthropicApiKey,
+  // Backend selection (plan.md): when 'codex_openrouter', the turn is
+  // dispatched to the Codex runner with a scoped OpenRouter relay token
+  // instead of the Claude runner + Anthropic proxy. Defaults to
+  // claude_code (unchanged behavior).
+  agentBackend = 'claude_code',
+  // Codex/OpenRouter-specific turn context: the session-pinned model and
+  // reasoning effort, plus the per-turn scoped relay token minted by the
+  // caller. The raw OpenRouter key never enters the worker; Codex points
+  // at the relay with this token.
+  agentModel = null,
+  agentReasoningEffort = null,
+  agentProxyToken = null,
+  turnUuid = null,
   onProgress,
   // #616: when true (admin-owned session on the self-edit app — the
   // caller checks via debug-access.isEligible), the turn env gains
@@ -1093,6 +1113,7 @@ async function execInWorker(sessionId, {
     workerJwt,
     anthropicApiKey,
     prodDebugJwt: prodDebug && mode !== 'sync' ? mintProdDebugJwt(sessionId) : null,
+    agentProxyToken,
   });
   const safeEnv = {
     PROMPT_FILE: TURN_PROMPT_PATH,
@@ -1118,9 +1139,25 @@ async function execInWorker(sessionId, {
     // scout/sync. This is purely local app/browser config — distinct from
     // ANTHROPIC_BASE_URL, which only retargets the Anthropic SDK and is
     // never used by the local launch. See services/in-loop-browser.js.
-    ...inLoopBrowser.browserEnvForMode(mode),
-  };
-  // Journal transport: the turn runs DETACHED from this process. The
+   ...inLoopBrowser.browserEnvForMode(mode),
+ };
+  // Codex/OpenRouter backend (plan.md PR5): when the session is pinned to
+  // codex_openrouter, add the backend-specific env and select the Codex
+  // runner. The raw OpenRouter key is never present; Codex authenticates
+  // to the relay with the scoped agent-proxy token. The __USERNODE_*
+  // sentinel contract run-codex-agent.sh emits is identical to run-cc.sh,
+  // so the journal consumer below is unchanged.
+  const isCodex = agentBackend === 'codex_openrouter';
+  if (isCodex) {
+    safeEnv.AGENT_BACKEND = 'codex_openrouter';
+    safeEnv.AGENT_MODEL = agentModel || '';
+    safeEnv.AGENT_REASONING_EFFORT = agentReasoningEffort || '';
+    safeEnv.AGENT_THREAD_ID = resumeSessionId || '';
+    safeEnv.TURN_UUID = turnUuid || '';
+    safeEnv.USERNODE_AGENT_RELAY = `${PLATFORM_INTERNAL_URL}/api/internal/openrouter/v1`;
+  }
+  const runner = isCodex ? '/usr/local/bin/run-codex-agent.sh' : '/usr/local/bin/run-cc.sh';
+ // Journal transport: the turn runs DETACHED from this process. The
   // wrapper below redirects run-cc.sh's combined output to a journal
   // file in the CC volume and appends __USERNODE_EXIT__ <code> when it
   // finishes. We then tail the journal from line 0. If the platform
@@ -1146,7 +1183,7 @@ async function execInWorker(sessionId, {
     // reads it mid-turn) so a stale prompt can never be re-read by a
     // manual/errant exec.
     'rm -f /home/node/.claude/turn-*.log 2>/dev/null; '
-      + '/usr/local/bin/run-cc.sh > "$TURN_JOURNAL" 2>&1; '
+      + runner + ' > "$TURN_JOURNAL" 2>&1; '
       + 'echo "__USERNODE_EXIT__ $?" >> "$TURN_JOURNAL"; '
       + 'rm -f "$PROMPT_FILE" 2>/dev/null',
   ];

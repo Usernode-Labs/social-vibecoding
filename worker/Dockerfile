@@ -63,6 +63,15 @@ ARG CLAUDE_CODE_CACHE_BUST=unset
 RUN echo "claude-code cache bust: ${CLAUDE_CODE_CACHE_BUST}" \
   && npm install -g @anthropic-ai/claude-code
 
+# ── Codex CLI (codex_openrouter backend; plan.md PR5) ─────────────────
+# PINNED (not day-bumped) — bump deliberately. Codex runs non-interactively
+# (codex exec --json) against the Usernode OpenRouter relay; the raw
+# OpenRouter key never enters the container (a scoped per-turn bearer token
+# does). Keep the pin aligned with the JSONL event shapes src/agents/
+# codex-openrouter.js parses.
+ARG CODEX_VERSION=0.146.0
+RUN npm install -g @openai/codex@${CODEX_VERSION}
+
 # ── Optional in-loop browser (build-mode turns only) ───────────────────
 # The Playwright MCP server + a matching Chromium give the build-mode
 # agent first-class browser_navigate / browser_console / screenshot
@@ -93,6 +102,7 @@ RUN npm install -g @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} \
 
 COPY worker-run.sh   /usr/local/bin/worker-run.sh
 COPY run-cc.sh       /usr/local/bin/run-cc.sh
+COPY run-codex-agent.sh /usr/local/bin/run-codex-agent.sh
 # usernode-push is the worker's only path to writing anything back to
 # GitHub: it POSTs to the platform's internal push proxy, which runs
 # the actual `git push` from the host side with the bot token injected
