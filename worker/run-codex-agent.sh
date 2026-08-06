@@ -60,7 +60,13 @@ fi
 # Platform-owned Codex config. The relay base URL is the platform's
 # internal endpoint; the env_key USERNODE_AGENT_TOKEN carries the scoped
 # bearer. Multi-agent is disabled in the first release.
-CODEX_HOME=/home/node/.codex
+# Codex home lives INSIDE the persistent Claude volume (review P6b): the
+# CC volume is the only long-lived, eviction-surviving storage. Pointing
+# CODEX_HOME at /home/node/.codex (a fresh container filesystem path)
+# would wipe rollout/thread state after any normal eviction. Keeping it
+# under /home/node/.claude/codex-home means codex session state resumes
+# across worker churn.
+CODEX_HOME=/home/node/.claude/codex-home
 mkdir -p "$CODEX_HOME"
 cat > "$CODEX_HOME/config.toml" <<EOF
 model_provider = "usernode_openrouter"
@@ -89,28 +95,40 @@ export OPENROUTER_API_KEY=""
 # Non-interactive approval is via -c approval_policy=never (matches the
 # pinned 0.146.0 config keys). --profile is NOT valid on `resume` so it
 # is only passed to the fresh `exec` form.
+#
+# POSIX-safe exit capture (review P3): the runner runs under dash (#!/bin/sh),
+# which has no PIPESTATUS. So we run codex with output redirected to a temp
+# JSONL file, capture $? directly, then stream the file to stdout (the turn
+# journal). Real-time progress is sacrificed for correctness/dash-compat; the
+# thread id and terminal marker still flow to the host either way.
+
 CODEX_EXIT=0
 AGENT_THREAD_OUT="$AGENT_THREAD_ID"
 SANDBOX_FLAG="-s $([ "$MODE" = "build" ] && echo workspace-write || echo read-only)"
 APPROVAL_FLAG='-c approval_policy=never'
-# Tee the raw output so we can extract the thread id from thread.started
-# (review F5): the host's parseLine already sees it, but persisting it
-# in __USERNODE_RESULT__ lets the recovery path re-resume.
 TMP_JSONL=$(mktemp /home/node/.usernode/turn-codex-XXXX.jsonl 2>/dev/null || mktemp)
+
+# run_codex <codex args...> — captures codex's own exit code (not tee's),
+# leaves the JSONL in $TMP_JSONL, and streams it to stdout at the end.
+run_codex() {
+  "$@" > "$TMP_JSONL" 2>&1
+  CODEX_EXIT=$?
+  cat "$TMP_JSONL"
+}
+
 if [ -n "$AGENT_THREAD_ID" ]; then
   echo "__USERNODE_PHASE__ codex (resume $AGENT_THREAD_ID, mode $MODE)"
-  cat "$PROMPT_FILE" | codex exec resume "$AGENT_THREAD_ID" - --json $APPROVAL_FLAG 2>&1 | tee "$TMP_JSONL"
-  CODEX_EXIT=${PIPESTATUS[0]:-$?}
+  # sandbox flag on resume too (review P6): without it, a resumed build
+  # defaults to read-only and cannot edit the checkout.
+  run_codex codex exec resume "$AGENT_THREAD_ID" - --json $APPROVAL_FLAG $SANDBOX_FLAG
   if [ "$CODEX_EXIT" -ne 0 ]; then
     echo "__USERNODE_WARN__ codex resume failed (exit $CODEX_EXIT); retrying fresh"
-    cat "$PROMPT_FILE" | codex exec - --json $APPROVAL_FLAG $SANDBOX_FLAG -p usernode-build 2>&1 | tee "$TMP_JSONL"
-    CODEX_EXIT=${PIPESTATUS[0]:-$?}
+    run_codex codex exec - --json $APPROVAL_FLAG $SANDBOX_FLAG -p usernode-build
     AGENT_THREAD_OUT=""
   fi
 else
   echo "__USERNODE_PHASE__ codex (mode $MODE)"
-  cat "$PROMPT_FILE" | codex exec - --json $APPROVAL_FLAG $SANDBOX_FLAG -p usernode-build 2>&1 | tee "$TMP_JSONL"
-  CODEX_EXIT=${PIPESTATUS[0]:-$?}
+  run_codex codex exec - --json $APPROVAL_FLAG $SANDBOX_FLAG -p usernode-build
 fi
 
 # Extract the thread id from thread.started (review F5): codex emits

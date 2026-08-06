@@ -27,16 +27,25 @@ const crypto = require('crypto');
 // release (plan.md §8.6).
 function buildCodexConfig({ relayBaseUrl, model, reasoningEffort }) {
   const provider = 'usernode_openrouter';
-  return `model_provider = "${provider}"
-model = "${model}"
-${reasoningEffort ? `model_reasoning_effort = "${reasoningEffort}"` : ''}
+  // TOML-safe serialization (review P1): model/provider/relay values are
+  // interpolated into config.toml, so quotes, backslashes and newlines
+  // must be escaped or rejected to prevent injecting extra TOML sections
+  // (e.g. an attacker model id like `x"\n[[mcp_servers.malicious]]`).
+  const tomlStr = (v) => String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+  const safeModel = tomlStr(model);
+  const safeProvider = tomlStr(provider);
+  const safeRelay = tomlStr(relayBaseUrl.replace(/\/$/, ''));
+  const safeEffort = reasoningEffort ? tomlStr(reasoningEffort) : '';
+  return `model_provider = "${safeProvider}"
+model = "${safeModel}"
+${safeEffort ? `model_reasoning_effort = "${safeEffort}"` : ''}
 
 [agents]
 enabled = false
 
 [model_providers.${provider}]
 name = "Usernode OpenRouter"
-base_url = "${relayBaseUrl.replace(/\/$/, '')}"
+base_url = "${safeRelay}"
 wire_api = "responses"
 env_key = "USERNODE_AGENT_TOKEN"
 `;
@@ -109,7 +118,9 @@ function normalizeCodexLine(line, state) {
     // message inside item.completed, not as a top-level message event.
     if (t === 'agent_message') {
       const txt = item.message || item.content || item.text || '';
-      if (txt) return { kind: 'agent_message', text: String(txt).slice(0, 300) };
+      if (txt) {
+        return { kind: 'agent_message', text: String(txt).slice(0, 300), fullText: String(txt) };
+      }
     }
     if (t === 'error') {
       const msg = item.message || item.error || 'Codex error';
@@ -128,7 +139,7 @@ function normalizeCodexLine(line, state) {
   }
   if (ev.type === 'message' || ev.type === 'agent_message') {
     const txt = ev.content || ev.text || ev.message || '';
-    if (txt) return { kind: 'agent_message', text: String(txt).slice(0, 300) };
+    if (txt) return { kind: 'agent_message', text: String(txt).slice(0, 300), fullText: String(txt) };
   }
   if (ev.type === 'turn.completed') {
     const u = ev.usage || {};

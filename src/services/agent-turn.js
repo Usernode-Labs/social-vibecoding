@@ -46,12 +46,13 @@ async function resolveCodexTurn({ pool, session, userId, model, reasoningEffort,
       `INSERT INTO agent_turns
          (id, session_id, user_id, backend, provider, requested_model,
           reasoning_effort, credential_id, credential_revision,
-          agent_thread_id, status)
+          agent_thread_id, agent_config_version, status)
        VALUES ($1, $2, $3, 'codex_openrouter', 'openrouter', $4,
-               $5, $6, $7, $8, 'running')`,
+               $5, $6, $7, $8, $9, 'running')`,
       [turnId, session.id, userId, model || session.agent_model || null,
        reasoningEffort || session.agent_reasoning_effort || null,
-       meta.id, meta.revision, resumeThreadId || session.agent_thread_id || null],
+       meta.id, meta.revision, resumeThreadId || session.agent_thread_id || null,
+       session.agent_config_version || 1],
     );
   } catch (err) {
     log.error('agent-turn', 'agent_turns insert failed; refusing to start turn', { sessionId: session.id, err: err.message });

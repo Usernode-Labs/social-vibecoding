@@ -4806,6 +4806,7 @@ CREATE TABLE IF NOT EXISTS agent_turns (
   credential_id            BIGINT REFERENCES credentials.user_ai_credentials(id),
   credential_revision      INTEGER,
   agent_thread_id          VARCHAR(128),
+  agent_config_version     INTEGER NOT NULL DEFAULT 1,
   status                   VARCHAR(24) NOT NULL,
   input_tokens             BIGINT NOT NULL DEFAULT 0,
   cached_input_tokens      BIGINT NOT NULL DEFAULT 0,

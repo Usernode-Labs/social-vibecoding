@@ -296,10 +296,15 @@ function parseLine(line, onProgress, state) {
       const ev = codex.normalizeCodexLine(line, state);
       if (ev) {
         if (ev.threadId) state.agentThreadId = ev.threadId;
-        if (ev.kind === 'usage') {
+        // Store the final agent message as the turn result (review P4):
+        // scout persists this as the spec, and `[done]` (turn.completed)
+        // must never overwrite it.
+        if (ev.kind === 'agent_message' && ev.fullText != null) {
+          state.lastResultText = ev.fullText;
+        } else if (ev.kind === 'usage') {
           state.costUsd = ev.usage?.cost || state.costUsd;
-          state.lastResultText = ev.text;
         }
+        // Progress line: use the short display form (or any event text).
         if (ev.text) onProgress(ev.text);
       }
     } else {
@@ -1219,6 +1224,7 @@ async function execInWorker(sessionId, {
   await _persistActiveTurn(sessionId, {
     mode,
     journal,
+    backend: agentBackend,
     model: models.resolve(model),
     startedAt: new Date().toISOString(),
     // #174: billing context for restart-resume — the resume paths debit
@@ -1259,6 +1265,12 @@ async function execInWorker(sessionId, {
     }
 
     const state = newWatchState();
+    // Seed the backend BEFORE consuming the journal (review P4): parseLine
+    // routes JSON events to the Codex adapter only when
+    // state.agentBackend === 'codex_openrouter'. The runner emits
+    // agent_backend in __USERNODE_RESULT__ (too late for the events), so
+    // we seed it from the dispatch param up front.
+    state.agentBackend = agentBackend;
     execState = state;
     const progress = typeof onProgress === 'function' ? onProgress : () => {};
     await _consumeJournal(containerName, journal, progress, state, { sessionId });
@@ -1715,7 +1727,7 @@ async function syncUserAgentFiles(sessionId, files) {
 // post-turn processing and clearing chat_sessions.active_turn; this
 // just replays/follows the journal and returns the watch state, exactly
 // as if execInWorker had stayed attached the whole time.
-async function resumeTurnFromJournal(sessionId, { journal, onProgress, byokCentsSoFar = 0 } = {}) {
+async function resumeTurnFromJournal(sessionId, { journal, onProgress, byokCentsSoFar = 0, agentBackend = 'claude_code' } = {}) {
   if (!journal) throw new Error('resumeTurnFromJournal: journal path required');
   const meta = _registryGet(sessionId);
   const containerName = meta?.containerName || workerContainerName(sessionId);
@@ -1730,6 +1742,10 @@ async function resumeTurnFromJournal(sessionId, { journal, onProgress, byokCents
   });
   try {
     const state = newWatchState();
+    // Seed the backend so parseLine routes Codex JSONL correctly on
+    // recovery too (review P4). The caller passes the persisted
+    // session.agent_backend.
+    state.agentBackend = agentBackend;
     const progress = typeof onProgress === 'function' ? onProgress : () => {};
     await _consumeJournal(containerName, journal, progress, state, { sessionId });
     if (state.execExitSeen && !state.fatalError) {

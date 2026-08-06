@@ -115,6 +115,79 @@ function openrouterProxyRoutes(config) {
       const ct = upstream.headers.get('content-type');
       if (ct) res.setHeader('Content-Type', ct);
 
+      const turnId = c.turnId;
+      // settle is declared here (before the non-streaming branch) so BOTH
+      // the non-streaming and streaming paths can use it (review P7).
+      const settle = async (u) => {
+        if (!u || !u.requestId) return;
+        // Read the per-user cost limit (review P7): the stored preference
+        // must be enforced, not just recorded.
+        let maxCost = config.openrouterMaxTurnCostUsd;
+        if (maxCost <= 0) {
+          const { rows: prefRows } = await pool.query(
+            `SELECT max_turn_cost_usd FROM user_agent_preferences
+             WHERE user_id = $1 AND backend = 'codex_openrouter'`,
+            [c.userId],
+          );
+          maxCost = parseFloat(prefRows[0]?.max_turn_cost_usd || '0') || 0;
+        }
+        try {
+          // ATOMIC insert + aggregate (review P7): run both in one
+          // transaction so we never split the two, and only aggregate when
+          // the INSERT actually inserted a NEW row (rowCount === 1). A
+          // duplicate upstream_request_id (SSE replay / retry) inserts
+          // nothing and must NOT re-increment turn totals.
+          const client = await pool.connect();
+          try {
+            await client.query('BEGIN');
+            const ins = await client.query(
+              `INSERT INTO agent_api_calls
+                 (id, turn_id, upstream_request_id, requested_model, routed_model,
+                  routed_provider, input_tokens, output_tokens, actual_cost_usd, status)
+               VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, 'completed')
+               ON CONFLICT (turn_id, upstream_request_id) DO NOTHING`,
+              [turnId, u.requestId, c.model, u.model, u.routedProvider,
+               u.inputTokens, u.outputTokens, u.cost || 0],
+            );
+            if (ins.rowCount === 1) {
+              await client.query(
+                `UPDATE agent_turns SET
+                   routed_model = COALESCE($2, routed_model),
+                   routed_provider = COALESCE($3, routed_provider),
+                   input_tokens = input_tokens + $4,
+                   cached_input_tokens = cached_input_tokens + $5,
+                   output_tokens = output_tokens + $6,
+                   reasoning_output_tokens = reasoning_output_tokens + $7,
+                   actual_cost_usd = actual_cost_usd + $8,
+                   cost_source = 'openrouter_usage',
+                   billed_by = 'user_openrouter'
+                 WHERE id = $1`,
+                [turnId, u.model, u.routedProvider, u.inputTokens,
+                 u.cachedInputTokens, u.outputTokens, u.reasoningOutputTokens, u.cost || 0],
+              );
+            }
+            await client.query('COMMIT');
+          } catch (e) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw e;
+          } finally {
+            client.release();
+          }
+          // Enforce the cost ceiling after aggregation.
+          if (maxCost > 0) {
+            const { rows: costRows } = await pool.query(
+              'SELECT actual_cost_usd FROM agent_turns WHERE id = $1', [turnId]
+            );
+            if (parseFloat(costRows[0]?.actual_cost_usd || 0) >= maxCost) {
+              log.warn('openrouter-proxy', 'turn cost ceiling exceeded', { turnId, maxCost });
+              ctrl.abort();
+            }
+          }
+        } catch (err) {
+          log.warn('openrouter-proxy', 'usage settlement failed', { turnId, err: err.message });
+        }
+      };
+
       if (!stream || !upstream.ok || !upstream.body) {
         const text = await upstream.text();
         // Non-streaming response (review F8): parse the JSON body for
@@ -134,57 +207,7 @@ function openrouterProxyRoutes(config) {
 
       // Transparent passthrough + incremental SSE parser for settlement.
       let buf = '';
-      let settled = false;
       const reader = upstream.body.getReader();
-      const turnId = c.turnId;
-     const settle = async (u) => {
-       if (!u || !u.requestId) return;
-       try {
-         await pool.query(
-           `INSERT INTO agent_api_calls
-              (id, turn_id, upstream_request_id, requested_model, routed_model,
-               routed_provider, input_tokens, output_tokens, actual_cost_usd, status)
-            VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, 'completed')
-            ON CONFLICT (turn_id, upstream_request_id) DO NOTHING`,
-           [turnId, u.requestId, c.model, u.model, u.routedProvider,
-            u.inputTokens, u.outputTokens, u.cost || 0],
-         );
-         // Aggregate (review F11): ADD this call's tokens/cost to the
-         // turn totals instead of overwriting — tool loops make multiple
-         // Responses calls and each must accumulate. Do NOT mark the
-         // turn complete here; only the stream end (or worker completion)
-         // closes it.
-         await pool.query(
-           `UPDATE agent_turns SET
-              routed_model = COALESCE($2, routed_model),
-              routed_provider = COALESCE($3, routed_provider),
-              input_tokens = input_tokens + $4,
-              cached_input_tokens = cached_input_tokens + $5,
-              output_tokens = output_tokens + $6,
-              reasoning_output_tokens = reasoning_output_tokens + $7,
-              actual_cost_usd = actual_cost_usd + $8,
-              cost_source = 'openrouter_usage',
-              billed_by = 'user_openrouter'
-            WHERE id = $1`,
-           [turnId, u.model, u.routedProvider, u.inputTokens,
-            u.cachedInputTokens, u.outputTokens, u.reasoningOutputTokens, u.cost || 0],
-         );
-         // Enforce the cost ceiling (review F11): if the turn's
-         // accumulated cost exceeds the configured max, abort.
-         const maxCost = config.openrouterMaxTurnCostUsd;
-         if (maxCost > 0) {
-           const { rows: costRows } = await pool.query(
-             'SELECT actual_cost_usd FROM agent_turns WHERE id = $1', [turnId]
-           );
-           if (parseFloat(costRows[0]?.actual_cost_usd || 0) >= maxCost) {
-             log.warn('openrouter-proxy', 'turn cost ceiling exceeded', { turnId, maxCost });
-             ctrl.abort();
-           }
-         }
-       } catch (err) {
-         log.warn('openrouter-proxy', 'usage settlement failed', { turnId, err: err.message });
-       }
-     };
 
       try {
         for (;;) {
@@ -197,27 +220,23 @@ function openrouterProxyRoutes(config) {
           buf = parsed.rest;
           for (const ev of parsed.events) {
             const u = extractUsage(ev.event, ev.data);
-            if (u) settle(u);
+            if (u) await settle(u);
           }
         }
         // Best-effort final settle from any trailing buffered frame.
         if (buf.trim()) {
           const parsed = parseSseFrames(buf + '\n\n');
-          for (const ev of parsed.events) { const u = extractUsage(ev.event, ev.data); if (u) settle(u); }
+          for (const ev of parsed.events) { const u = extractUsage(ev.event, ev.data); if (u) await settle(u); }
         }
      } catch (err) {
        if (err.name !== 'AbortError') log.warn('openrouter-proxy', 'stream error', { turnId, err: err.message });
      } finally {
-       // Close the turn only when the stream ends (review F11), not on
-       // every settle call — tool loops make multiple Responses calls
-       // within one turn.
-       try {
-         await pool.query(
-           `UPDATE agent_turns SET status = 'completed', completed_at = NOW()
-            WHERE id = $1 AND status = 'running'`,
-           [turnId]
-         );
-       } catch {}
+       // Do NOT complete the turn here (review P5): a single Responses
+       // stream is ONE request in a tool loop — Codex makes many within
+       // one logical turn. Marking the turn completed on the first stream
+       // would 409 the next tool-loop request. Completion is owned by the
+       // worker dispatch lifecycle, which closes the ledger row when the
+       // runner finishes.
        try { res.end(); } catch {}
      }
     } catch (err) {

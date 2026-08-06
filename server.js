@@ -2782,6 +2782,7 @@ async function resumeDetachedTurnInner({
   try {
     result = await worker.resumeTurnFromJournal(sessionId, {
       journal: activeTurn.journal,
+      agentBackend: activeTurn.backend || 'claude_code',
       // #664: seed the per-turn BYOK tally from the persisted record so
       // post-restart switched calls accumulate on top of pre-restart ones.
       byokCentsSoFar: Number(activeTurn.byokCents || 0),

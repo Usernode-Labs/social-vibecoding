@@ -158,6 +158,31 @@ function credentialRoutes(config) {
     if (reasoningEffort != null && !['minimal', 'low', 'medium', 'high', 'xhigh'].includes(reasoningEffort)) {
       return res.status(400).json({ error: 'Invalid reasoning effort' });
     }
+    // Validate the model against the user's permitted catalog (review P1) —
+    // model ids become executable Codex config.toml, so arbitrary strings
+    // (with quotes/newlines) could inject TOML/MCP sections. Only allow
+    // a model the user's key can actually access.
+    if (backend === 'codex_openrouter' && model) {
+      const meta = await credentialStore.readMetadata({
+        pool, userId: req.user.id, provider: 'openrouter', purpose: 'coding_agent',
+      });
+      if (!meta || meta.status !== 'valid') {
+        return res.status(400).json({ error: 'Add your OpenRouter API key in Settings first.' });
+      }
+      const apiKey = await credentialStore.readSecret({
+        pool, userId: req.user.id, provider: 'openrouter', purpose: 'coding_agent',
+        dataKey: config.dataEncryptionKey,
+      });
+      if (!apiKey) return res.status(400).json({ error: 'OpenRouter key not available.' });
+      const catalog = await agentModels.listOpenRouterModels({
+        pool, userId: req.user.id, credentialRevision: meta.revision,
+        apiKey, config, forceRefresh: false,
+      });
+      const allowed = catalog.models.some((m) => m.id === model);
+      if (!allowed) {
+        return res.status(400).json({ error: 'That model is not available under your OpenRouter key.' });
+      }
+    }
     try {
       // Clear other defaults BEFORE the upsert (review P2): the partial
       // unique index `user_agent_preferences_one_default` (one

@@ -6614,6 +6614,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
     };
     const result = await worker.resumeTurnFromJournal(session.id, {
       journal: activeTurn.journal,
+      agentBackend: activeTurn.backend || 'claude_code',
       // #664: seed the per-turn BYOK tally from the persisted record so
       // post-restart switched calls accumulate on top of pre-restart ones.
       byokCentsSoFar: Number(activeTurn.byokCents || 0),
@@ -8420,7 +8421,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
       const codexCtx = await agentTurn.resolveCodexTurn({
         pool, session, userId: req.user.id,
         model: turnModel,
-        resumeThreadId: session.cc_session_id || session.agent_thread_id || null,
+        resumeThreadId: (isCodexSession ? (session.agent_thread_id || null) : (session.cc_session_id || null)),
       });
       if (codexCtx?.error === 'credential_required') {
         await sendStatus('Add your OpenRouter API key in Settings to use Codex.');
@@ -8431,7 +8432,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue â€
         prompt: scoutPrompt,
         model: turnModel,
         commitMsg: '',
-        resumeSessionId: session.cc_session_id || session.agent_thread_id || null,
+        resumeSessionId: (isCodexSession ? (session.agent_thread_id || null) : (session.cc_session_id || null)),
         branchName: session.branch_name,
         anthropicApiKey: turnApiKey,
         ...(codexCtx || {}),
@@ -9188,7 +9189,10 @@ path: /another/changed/view
     repoOwner,
     repoName,
     branchName: session.branch_name,
-    anthropicApiKey: userApiKey || null,
+    // Use the backend-aware key (review P8): Codex sessions must NOT pass
+    // the Mayor's Anthropic BYOK key into the long-lived container env,
+    // where repository code can read it. Codex uses the relay token only.
+    anthropicApiKey: turnApiKey,
     onProgress: (text) => {
       send('cc_progress', { text });
       workerProgress.set(session.id, text, { model: selectedModel });
@@ -9654,7 +9658,7 @@ path: /another/changed/view
       const codexCtx = await agentTurn.resolveCodexTurn({
         pool, session, userId: req.user.id,
         model: turnModel,
-        resumeThreadId: session.cc_session_id || session.agent_thread_id || null,
+        resumeThreadId: (isCodexSession ? (session.agent_thread_id || null) : (session.cc_session_id || null)),
       });
       if (codexCtx?.error === 'credential_required') {
         await sendStatus('Add your OpenRouter API key in Settings to use Codex.');
@@ -9665,7 +9669,7 @@ path: /another/changed/view
         prompt: claudePrompt,
         model: turnModel,
         commitMsg,
-        resumeSessionId: session.cc_session_id || session.agent_thread_id || null,
+        resumeSessionId: (isCodexSession ? (session.agent_thread_id || null) : (session.cc_session_id || null)),
         branchName: session.branch_name,
         anthropicApiKey: turnApiKey,
         ...(codexCtx || {}),
