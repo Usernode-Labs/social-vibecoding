@@ -1,15 +1,17 @@
-// Verified GitHub account link.
+// Verified GitHub account link — IDENTITY ONLY.
 //
-// This link exists for exactly one privileged operation — forking an app's
-// repo into the user's own account so their coding agent has somewhere it
-// may push — and it is the basis of an ATTRIBUTION decision later (only
-// work headed by the caller's own fork may be submitted under their name).
-// So the properties worth pinning are the ones that would let someone bind
-// the wrong GitHub identity to an account, or read the token back out:
+// This link exists for exactly one thing: an ATTRIBUTION decision later
+// (only work headed by the caller's own fork may be submitted under their
+// name). It asks GitHub for NO scope, and it keeps NO credential — the fork
+// it used to make on the user's behalf is now made by their own coding
+// agent. So the properties worth pinning are the ones that would let someone
+// bind the wrong GitHub identity to an account, or quietly reintroduce a
+// repository grant:
 //
 //   1. the OAuth `state` is signed, single-use in effect, time-limited and
 //      bound to the session that started the flow;
-//   2. the token is stored encrypted and never returned to a browser; and
+//   2. the authorize URL requests no scope at all, and the token that comes
+//      back is revoked rather than stored; and
 //   3. the pre-existing self-declared `users.github` profile string is left
 //      alone — it is unverified display text and must never be used for an
 //      authorization decision.
@@ -82,21 +84,115 @@ test('state expires', () => {
   assert.ok(githubLink.STATE_TTL_MS <= 15 * 60 * 1000, 'the window is short');
 });
 
-test('the authorize URL asks for public_repo and nothing more', () => {
+test('the authorize URL asks for NO scope at all', () => {
   const url = githubLink.authorizeUrl(
     { ...config, waitlistGithubClientId: 'cid', waitlistGithubClientSecret: 'secret' },
     { userId: 42, redirectUri: 'https://example.test/api/me/github/callback' }
   );
   assert.ok(url.startsWith('https://github.com/login/oauth/authorize?'));
   const params = new URL(url).searchParams;
-  assert.equal(params.get('scope'), 'public_repo',
-    'the smallest scope that can fork a public repo');
+  // The parameter is ABSENT, not empty: GitHub then issues a token with no
+  // scopes and its consent screen says "public data only". `public_repo`
+  // (the old value) reads on that screen as read/write access to code in
+  // every public repository the user can reach.
+  assert.equal(params.has('scope'), false, 'no scope parameter is sent');
+  assert.equal(githubLink.SCOPE, '');
+  assert.ok(!/[?&]scope=/.test(url), 'and none is smuggled in by hand');
   assert.equal(params.get('client_id'), 'cid');
   assert.equal(params.get('redirect_uri'), 'https://example.test/api/me/github/callback');
   assert.ok(params.get('state'), 'a state is always attached');
-  // Never the broad `repo` scope, which would reach private repositories.
-  assert.notEqual(params.get('scope'), 'repo');
-  assert.equal(githubLink.SCOPE, 'public_repo');
+  // The two scopes that could fork, neither of which may come back.
+  assert.doesNotMatch(SRC, /'public_repo'|"public_repo"/);
+  assert.doesNotMatch(SRC, /scope:\s*['"]repo['"]/);
+});
+
+test('the token is used once, revoked, and never persisted', async () => {
+  const calls = [];
+  const originalFetch = global.fetch;
+  global.fetch = async (url, init) => {
+    calls.push({ url: String(url), method: (init && init.method) || 'GET', init });
+    if (String(url).includes('/login/oauth/access_token')) {
+      return new Response(JSON.stringify({ access_token: 'gho_used_once' }), { status: 200 });
+    }
+    if (String(url) === 'https://api.github.com/user') {
+      return new Response(JSON.stringify({ login: 'octo-contributor' }), { status: 200 });
+    }
+    if (/\/applications\/cid\/token$/.test(String(url))) {
+      return new Response('', { status: 204 });
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  const creds = { ...config, waitlistGithubClientId: 'cid', waitlistGithubClientSecret: 'secret' };
+  try {
+    const linked = await githubLink.exchangeCode(creds, {
+      code: 'abc', redirectUri: 'https://example.test/api/me/github/callback',
+    });
+    // The login is the ONLY thing that comes back. A token in the return
+    // value is a token something downstream can store.
+    assert.deepEqual(linked, { login: 'octo-contributor' });
+
+    const revoke = calls.find((c) => /\/applications\/cid\/token$/.test(c.url));
+    assert.ok(revoke, 'the token is handed back to GitHub');
+    assert.equal(revoke.method, 'DELETE');
+    assert.match(revoke.init.headers.authorization, /^Basic /,
+      'revocation authenticates as the OAuth app, not as the user');
+    assert.deepEqual(JSON.parse(revoke.init.body), { access_token: 'gho_used_once' });
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('a failed revoke still links the account', async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async (url) => {
+    if (String(url).includes('/login/oauth/access_token')) {
+      return new Response(JSON.stringify({ access_token: 'gho_x' }), { status: 200 });
+    }
+    if (String(url) === 'https://api.github.com/user') {
+      return new Response(JSON.stringify({ login: 'octo-contributor' }), { status: 200 });
+    }
+    // GitHub refuses the revocation: the token has no scopes and is dropped
+    // on the floor either way, so the link must not fail over it.
+    throw new Error('network down');
+  };
+  try {
+    const linked = await githubLink.exchangeCode(
+      { ...config, waitlistGithubClientId: 'cid', waitlistGithubClientSecret: 'secret' },
+      { code: 'abc', redirectUri: 'https://example.test/api/me/github/callback' }
+    );
+    assert.deepEqual(linked, { login: 'octo-contributor' });
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('saveLink stores the login and NULLs the legacy token column', async () => {
+  const queries = [];
+  const pool = { query: async (sql, params) => { queries.push({ sql, params }); return { rows: [] }; } };
+  await githubLink.saveLink(pool, config, 7, { login: 'octo-contributor', token: 'gho_ignored' });
+  assert.equal(queries.length, 1);
+  assert.match(queries[0].sql, /github_oauth_token_enc = NULL/);
+  assert.deepEqual(queries[0].params, [7, 'octo-contributor']);
+  // Even when a caller passes one, no token reaches the database.
+  assert.equal(queries[0].params.includes('gho_ignored'), false);
+  // And the module cannot encrypt one: the secrets helper is gone from it.
+  assert.doesNotMatch(SRC, /secrets\.encrypt/);
+  assert.equal(typeof githubLink.loadUserToken, 'undefined',
+    'nothing can load a user token back out — the loader no longer exists');
+});
+
+test('the link status is the login alone, and says no token is held', async () => {
+  const pool = {
+    query: async () => ({ rows: [{ github_login: 'octo-contributor', github_linked_at: new Date(0) }] }),
+  };
+  const status = await githubLink.linkStatus(pool, 7);
+  assert.equal(status.linked, true, 'a login with no token IS a link now');
+  assert.equal(status.login, 'octo-contributor');
+  assert.equal(status.access, 'identity');
+  // The read must not depend on the legacy column: requiring a token would
+  // read every identity-only link as unlinked.
+  const statusFn = SRC.slice(SRC.indexOf('async function linkStatus'), SRC.indexOf('function demoLinkStatus'));
+  assert.doesNotMatch(statusFn, /github_oauth_token_enc/);
 });
 
 test('the link surface is absent when no OAuth app is configured', () => {
@@ -116,18 +212,28 @@ test('the link surface is absent when no OAuth app is configured', () => {
   assert.match(settingsSrc, /link\.available === false[\s\S]{0,300}not configured/);
 });
 
-test('the token is stored encrypted and never leaves the server', () => {
-  assert.match(SRC, /secrets\.encrypt\(token, config\.dataEncryptionKey\)/);
-  // The status shape returned to the browser carries presence, not value.
-  assert.match(SRC, /\(github_oauth_token_enc IS NOT NULL\) AS has_token/);
-  const statusFn = SRC.slice(SRC.indexOf('async function linkStatus'), SRC.indexOf('async function loadUserToken'));
-  assert.doesNotMatch(statusFn, /token_enc[^)]*\bAS\b(?! has_token)/);
-  assert.doesNotMatch(statusFn, /token:/);
-  // A decrypt failure reads as "not linked", matching how the BYOK key
-  // path tolerates the same case, rather than throwing mid-request.
-  assert.match(SRC, /token decryption failed; treating as unlinked/);
-  // The column is staging:private, so a staging clone carries no token.
+test('no user credential is stored, and the legacy column is swept', () => {
+  // The column stays in the schema (a rollback mid-deploy must not hit a
+  // missing column) and stays staging:private, but it is never written.
   assert.match(SCHEMA_SRC, /COMMENT ON COLUMN users\.github_oauth_token_enc IS 'staging:private'/);
+  assert.match(SCHEMA_SRC, /github_oauth_token_enc is LEGACY and always NULL/);
+
+  // A boot-time sweep hands back any token an older release stored. Nulling
+  // alone would not do: classic OAuth grants are cumulative, so the
+  // previously-granted public_repo survives re-authorizing with no scope and
+  // can only be handed back with the token itself.
+  const MIGRATE_SRC = fs.readFileSync(path.join(__dirname, '../src/db/migrate.js'), 'utf8');
+  assert.match(MIGRATE_SRC, /async function revokeLegacyGithubGrants\(pool, config\)/);
+  assert.match(MIGRATE_SRC, /await revokeLegacyGithubGrants\(pool, config\)/);
+  const sweep = MIGRATE_SRC.slice(
+    MIGRATE_SRC.indexOf('async function revokeLegacyGithubGrants'),
+    MIGRATE_SRC.indexOf('// One-shot, idempotent backfill that recovers chat_sessions.linked_issues')
+  );
+  assert.match(sweep, /revokeCredential\(config, token, 'grant'\)/);
+  // The column is cleared whether or not GitHub answered — otherwise a
+  // failing revoke means holding the credential forever.
+  assert.match(sweep, /UPDATE users SET github_oauth_token_enc = NULL WHERE id = \$1/);
+  assert.match(sweep, /LIMIT \$1/, 'the sweep is bounded');
 });
 
 test('unlink clears every part of the link', () => {
@@ -172,11 +278,36 @@ test('the callback fails to Settings, never reflecting GitHub’s error', () => 
   assert.doesNotMatch(callback.slice(0, 1500), /req\.query\.error/);
 });
 
+test('the Settings copy describes the grant it actually asks for', () => {
+  const html = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
+  const section = html.slice(
+    html.indexOf('id="github-link-section"'),
+    html.indexOf('id="github-link-status"')
+  );
+  assert.ok(section, 'the GitHub section is still there');
+  // The old copy promised "access to public repositories" — which is what
+  // GitHub's consent screen used to say, and no longer does.
+  assert.doesNotMatch(section, /access to public repositories/i);
+  assert.match(section, /no access to your repositories/i);
+  assert.match(section, /stores no GitHub token/i);
+
+  // And the connected row states it too, driven by the server's `access`
+  // field rather than a hardcoded claim.
+  const settingsSrc = fs.readFileSync(path.join(__dirname, '../public/js/settings.js'), 'utf8');
+  assert.match(settingsSrc, /link\.access === 'identity'/);
+  assert.match(settingsSrc, /holds no GitHub access token/);
+  assert.match(settingsSrc, /github\.com\/settings\/applications/);
+});
+
 test('staging gets a demo link so the connected layout is reviewable', () => {
   const demo = githubLink.demoLinkStatus();
   assert.equal(demo.linked, true);
   assert.equal(demo.login, 'octo-contributor');
   assert.equal(demo.demo, true);
+  // Without `access` the staging preview renders the connected row in its
+  // OLD shape and the "no token held" line — the whole point of the change —
+  // is unreviewable.
+  assert.equal(demo.access, 'identity');
   assert.ok(Number.isFinite(Date.parse(demo.linkedAt)));
   // Honoured only in staging, only with ?demo=1 — a no-op in production,
   // which never takes this branch and always reads the real link state.

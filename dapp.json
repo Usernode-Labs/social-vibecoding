@@ -382,6 +382,12 @@
       "expectText": "No challenges are running right now"
     },
     {
+      "name": "GitHub linking asks for no repository access, and holds no token",
+      "path": "/?demo=1#settings/connectors",
+      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #github-link-section #github-link-no-token",
+      "expectText": "no access to your repositories"
+    },
+    {
       "name": "Tapping an app shows its icon and name while it loads, not a blank window (#931)",
       "path": "/?shot=app-launching",
       "expectSelector": "#app-launch-cover .app-icon-tile",
@@ -576,6 +582,24 @@
       "path": "/#app/usernode-2d5619/dev/sessions/900802",
       "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
       "expectText": "Revise the spec"
+    },
+    {
+      "name": "Assistant-authored pills name the change (#1001)",
+      "path": "/#app/usernode-2d5619/dev/sessions/900805",
+      "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
+      "expectText": "Preview the Season 1 default"
+    },
+    {
+      "name": "Pills from a forced retry render identically (#1001)",
+      "path": "/#app/usernode-2d5619/dev/sessions/900806",
+      "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
+      "expectText": "Build the avatar upload flow"
+    },
+    {
+      "name": "A wrap-up's pills supersede the dispatch preamble's (#1001)",
+      "path": "/#app/usernode-2d5619/dev/sessions/900807",
+      "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
+      "expectText": "Preview the half-height rows"
     },
     {
       "name": "An interrupted turn's tail finishes itself: Changes-ready card lands",

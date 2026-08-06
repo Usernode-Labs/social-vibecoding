@@ -50,6 +50,49 @@
       return un.toast(String(message), opts || {});
     },
 
+    /** Copy text to the clipboard. Resolves true on success, false on
+        failure — NEVER throws, so callers can `await` it and branch on
+        the boolean rather than wrapping every call site in try/catch.
+
+        Deliberately NOT a kit seam: usernode-native exposes no clipboard
+        primitive, so this is plain DOM. It lives here anyway because
+        PlatformUI loads first (see index.html) and every screen already
+        has it, which is what makes one shared implementation of the
+        fallback possible. That fallback — an off-screen textarea driven
+        by the deprecated document.execCommand('copy') — covers contexts
+        where navigator.clipboard is missing or rejects (an insecure
+        http: origin, a permission-blocked webview); see the same
+        rationale at AppView.copyShareUrl. */
+    async copyText(text) {
+      const value = text == null ? '' : String(text);
+      if (!value) return false;
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(value);
+          return true;
+        }
+      } catch {}
+      // Fallback: a hidden textarea + execCommand. Off-screen rather
+      // than display:none — a non-rendered element can't be selected.
+      let ta = null;
+      try {
+        ta = document.createElement('textarea');
+        ta.value = value;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.top = '-9999px';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        ta.setSelectionRange(0, value.length);
+        return document.execCommand('copy');
+      } catch {
+        return false;
+      } finally {
+        if (ta && ta.parentNode) ta.parentNode.removeChild(ta);
+      }
+    },
+
     /** Blocking informational dialog. Resolves when dismissed. */
     alert(opts) {
       const o = typeof opts === 'string' ? { title: opts } : (opts || {});

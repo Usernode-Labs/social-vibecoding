@@ -115,6 +115,7 @@ async function migrate(config) {
   await backfillFenceWrappedSpecs(pool);
   await backfillOrphanedSpecDrafts(pool);
   await backfillLinkedIssuesFromPrBodies(pool);
+  await revokeLegacyGithubGrants(pool, config);
   await failOrphanedHeadlessRuns(pool);
   await migrateAppDbsToPerRole(pool, config);
 }
@@ -292,6 +293,87 @@ async function failOrphanedHeadlessRuns(pool) {
   } catch (err) {
     log.warn('db', 'Failed to reset orphaned headless runs', { err: err.message });
   }
+}
+
+// Forward-only, idempotent: hand back every GitHub OAuth token this platform
+// used to hold for a user, then clear the column.
+//
+// The GitHub link used to request the classic `public_repo` scope so the
+// platform could fork an app's repo into the user's account on their behalf.
+// GitHub describes that scope on its consent screen as read/write access to
+// code on EVERY public repository the user can reach — enormously more than
+// "make one fork". The fork is now made by the user's own coding agent and
+// the link is identity-only (services/github-link), so any stored token is
+// both unused and an unnecessary liability.
+//
+// Simply nulling the column would not be enough: classic OAuth
+// authorizations are CUMULATIVE, so a user who once granted `public_repo`
+// keeps that grant listed under github.com/settings/applications even after
+// re-authorizing with no scope — the only way to actually give it back is
+// DELETE /applications/{client_id}/grant, which needs the token we are about
+// to destroy. So: revoke first (best-effort, bounded), then NULL regardless
+// of whether GitHub answered. `github_login` / `github_linked_at` are
+// preserved, so those users stay linked and never see a re-consent prompt.
+//
+// Runs at most once per deployment in practice (the column is empty
+// afterwards, and nothing writes it again). A missing OAuth app, an
+// undecryptable value or a GitHub outage all still end with the column
+// cleared — leaving a token behind on a failure would mean retrying forever
+// while continuing to hold the credential.
+const LEGACY_GITHUB_TOKEN_BATCH = 500;
+
+async function revokeLegacyGithubGrants(pool, config) {
+  const githubLink = require('../services/github-link');
+  const { decrypt } = require('../services/secrets');
+
+  let rows;
+  try {
+    ({ rows } = await pool.query(
+      `SELECT id, github_oauth_token_enc
+         FROM users
+        WHERE github_oauth_token_enc IS NOT NULL
+        ORDER BY id
+        LIMIT $1`,
+      [LEGACY_GITHUB_TOKEN_BATCH]
+    ));
+  } catch (err) {
+    // Pre-schema database or a transient read failure: nothing to do, and
+    // never a reason to fail boot.
+    log.warn('db', 'Legacy GitHub token sweep skipped', { err: err.message });
+    return;
+  }
+  if (!rows.length) return;
+
+  const canRevoke = githubLink.isEnabled(config);
+  let revoked = 0;
+  let failed = 0;
+  for (const row of rows) {
+    let token = null;
+    try {
+      token = decrypt(row.github_oauth_token_enc, config.dataEncryptionKey);
+    } catch {
+      token = null;
+    }
+    if (canRevoke && token) {
+      // eslint-disable-next-line no-await-in-loop
+      const ok = await githubLink.revokeCredential(config, token, 'grant');
+      if (ok) revoked += 1; else failed += 1;
+    } else {
+      failed += 1;
+    }
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      await pool.query(
+        'UPDATE users SET github_oauth_token_enc = NULL WHERE id = $1',
+        [row.id]
+      );
+    } catch (err) {
+      log.warn('db', 'Legacy GitHub token clear failed', { userId: row.id, err: err.message });
+    }
+  }
+  log.info('db', 'Legacy GitHub OAuth tokens revoked and cleared', {
+    considered: rows.length, revoked, notRevoked: failed, oauthAppConfigured: canRevoke,
+  });
 }
 
 // One-shot, idempotent backfill that recovers chat_sessions.linked_issues for
@@ -5460,7 +5542,18 @@ async function seedStagingCloneSpecPills(pool, config) {
 
   // 2. The appended follow-up — last row, carrying the SPEC-outcome pills so
   // the above-box pill bar renders (the thing #330 fixes).
-  const quickReplies = ['Build it', 'Revise the spec', 'What will this change?'];
+  //
+  // #1001: these used to be the fixed triple ('Build it' / 'Revise the spec' /
+  // 'What will this change?'), which production showed 92 sessions opening on
+  // even though each auto run had produced a specific plan. The clone handler
+  // now asks the Mayor to author them from the auto run's own output, with the
+  // fixed set only as the fallback — so the fixture carries a set naming the
+  // issue and the spec, matching what the live path now produces.
+  const quickReplies = [
+    'Build the nicer header',
+    'What does the plan for #42 change?',
+    'Revise the spec first',
+  ];
   const followUpContent =
     'This session was cloned from an auto session that ran unattended on GitHub issue #42. '
     + "You're on your own branch (forked from the auto session's, so its commits carry over).\n\n"
@@ -5470,7 +5563,9 @@ async function seedStagingCloneSpecPills(pool, config) {
   await pool.query(
     `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
      VALUES ($1, 'assistant', $2, $3, NOW() - INTERVAL '13 minutes')`,
-    [sessionId, followUpContent, JSON.stringify({ quickReplies })]
+    [sessionId, followUpContent, JSON.stringify({
+      quickReplies, quickRepliesSource: 'enforced',
+    })]
   );
 
   log.info('db', 'Staging clone-spec-pills fixture seeded', {
@@ -5590,7 +5685,9 @@ async function seedStagingQuickReplyFallback(pool, config) {
       title: '[staging fixture] Staging demo: answer chips keep the pill bar empty',
       prNumber: null,
       specMd: '',
-      // Expect: NO pills above the box — the inline answer chips own this turn.
+      // Expect: NO pills above the box — the inline answer chips own this
+      // turn. #1001 preserves this exclusion exactly: a clarifying-question
+      // turn is asked for no pills at all, not even by the forced retry.
       rows: [
         ['user', 'Make the header better.', {}, 12],
         ['assistant', '1. Which header — the app shell or the dev chat?', {
@@ -5599,6 +5696,76 @@ async function seedStagingQuickReplyFallback(pool, config) {
             answers: ['The app shell header', 'The dev chat header', 'Both'],
           }],
         }, 10],
+      ],
+    },
+    // ── #1001 fixtures ────────────────────────────────────────────────
+    //
+    // The four above all demonstrate the FALLBACK — a reply with no pills of
+    // its own, filled in from a fixed list. These three demonstrate the
+    // change: pills the assistant authored about the actual conversation, and
+    // the row shapes the three non-fallback sources produce. They exist so a
+    // reviewer can see the before/after side by side in one staging preview
+    // rather than having to run a live turn.
+    {
+      id: 900805,
+      branch: 'staging-fixture/pills-assistant-authored',
+      title: '[staging fixture] Staging demo: assistant-authored pills after a build',
+      prNumber: 4243,
+      specMd,
+      // Expect: pills that NAME the change — only the middle one is generic.
+      // This is the composition rule QUICK_REPLY_RULES_TEXT asks for.
+      rows: [
+        ['user', 'Make the leaderboard open on the Season 1 standings by default.', {}, 14],
+        ['system', 'PR #4243 created', { prNumber: 4243 }, 13],
+        ['assistant', 'The leaderboard now defaults to the Season 1 season-type event on both '
+          + 'the client and the server default-pick rule, so a deep link with no event lands there.', {
+          quickReplies: ['Preview the Season 1 default', 'Propose it to the group', 'Also fix the sub-event tabs'],
+          quickRepliesSource: 'model',
+        }, 12],
+      ],
+    },
+    {
+      id: 900806,
+      branch: 'staging-fixture/pills-after-forced-retry',
+      title: '[staging fixture] Staging demo: pills after a forced retry',
+      prNumber: null,
+      specMd,
+      // Expect: pills indistinguishable from the 'model' row above. That IS
+      // the point — an enforced set renders identically, so the user never
+      // sees which rung produced it; only the telemetry column differs.
+      rows: [
+        ['user', 'Plan how avatar uploads should work before building anything.', {}, 14],
+        ['assistant', 'The scout drafted a spec for avatar uploads — it adds a user_avatars '
+          + 'table and a crop step, and it\'s in the spec viewer now.', {
+          quickReplies: ['Build the avatar upload flow', 'Drop the crop step from the plan', 'What does this add to the database?'],
+          quickRepliesSource: 'enforced',
+        }, 12],
+      ],
+    },
+    {
+      id: 900807,
+      branch: 'staging-fixture/pills-dispatch-preamble',
+      title: '[staging fixture] Staging demo: pills on a dispatch preamble',
+      prNumber: 4244,
+      specMd,
+      // Expect: the WRAP-UP's pills above the box, not the preamble's. Both
+      // rows carry pills now (#1001 stopped discarding a preamble's), and
+      // recency decides — the client's backward scan finds the newest
+      // pill-bearing row first. The preamble's set only ever surfaces if the
+      // turn dies before the wrap-up lands, which is exactly why it's kept.
+      rows: [
+        ['user', 'Fix the blank rows on the phone home screen.', {}, 16],
+        ['assistant', 'I\'ll have the coding agent make blank interior rows render at half height.', {
+          quickReplies: ['How\'s the home-screen fix going?', 'Stop this build'],
+          quickRepliesSource: 'enforced',
+          quickRepliesPreamble: true,
+        }, 15],
+        ['system', 'PR #4244 created', { prNumber: 4244 }, 13],
+        ['assistant', 'Blank interior rows on the phone home screen now render at half height '
+          + '(58px vs 116px), so the default arrangement no longer leaves a dead band.', {
+          quickReplies: ['Preview the half-height rows', 'Propose it to the group', 'Now tighten the tile labels'],
+          quickRepliesSource: 'model',
+        }, 12],
       ],
     },
   ];
@@ -6843,6 +7010,38 @@ async function seedStagingHeadlessFixtures(pool, config) {
     );
     sessionIds[f.branch] = rows[0].id;
     inserted++;
+
+    // #1001: the auto run's own final assistant row. In production these
+    // rows carried NO metadata at all, which made every one of the 94
+    // measured headless sessions resolve to the client's built-in generic
+    // default. They now get the deterministic set keyed off the outcome
+    // (headlessWrapUpMeta in routes/sessions.js) — a model call would be
+    // wasted here, since nobody reads an auto session's pill bar until it
+    // is cloned, and the clone path authors its own. The 'question' outcome
+    // stays pill-free: its answer chips own that turn.
+    const wrapUp = {
+      spec: {
+        text: '_Spec drafted — review it in the spec viewer after starting a session from this auto session._',
+        kind: 'spec_done',
+        pills: ['Build it', 'Revise the spec', 'What will this change?'],
+      },
+      code: {
+        text: '_Change committed and pushed — start a session from this auto session to open the PR._',
+        kind: 'code_done',
+        pills: ['Propose it to the group', 'Make a tweak', 'What did it change?'],
+      },
+    }[f.outcome];
+    if (wrapUp) {
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, model, metadata, created_at)
+         VALUES ($1, 'assistant', $2, 'claude-opus-5', $3, NOW() - INTERVAL '28 minutes')`,
+        [rows[0].id, wrapUp.text, JSON.stringify({
+          quickReplies: wrapUp.pills,
+          quickRepliesSource: 'static',
+          quickRepliesKind: wrapUp.kind,
+        })]
+      );
+    }
   }
 
   // Viewer-owned clone of the ready/spec headless session for issue 900004,
@@ -6892,8 +7091,14 @@ async function seedStagingHeadlessFixtures(pool, config) {
     const cloneSrc = { headless_issue_number: 900006, headless_outcome: 'code', spec_md: null };
     const followUp = buildHeadlessFollowUpMessage(cloneSrc);
     const followUpQuickReplies = buildHeadlessFollowUpQuickReplies(cloneSrc);
+    // #1001: the live clone path now authors these from the auto run's own
+    // output and keeps buildHeadlessFollowUpQuickReplies only as its
+    // fallback. The fixture reuses the builder (so its wording can't drift
+    // from the real fallback) and stamps the source the fallback rung writes.
     const followUpMeta = JSON.stringify(
-      followUpQuickReplies ? { quickReplies: followUpQuickReplies } : {}
+      followUpQuickReplies
+        ? { quickReplies: followUpQuickReplies, quickRepliesSource: 'static' }
+        : {}
     );
 
     // #647: the inherited Claude Code timeline. A real clone copies the auto

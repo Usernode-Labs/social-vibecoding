@@ -1374,16 +1374,54 @@ round-trip, same shape as `src/routes/waitlist-connect.js`.
   — exactly what `githubRedirectUri()` in `src/routes/mcp-remote.js` builds from
   `config.cliAuthOrigin`. A mismatch fails at GitHub's own redirect check,
   before any platform code runs.
-- **Scope:** the platform requests `public_repo` and nothing else, hard-coded
-  as `githubLink.SCOPE`. It is the smallest scope that can create a fork.
-  Never widen it to `repo` — app repos are public (`createRepo` sets
-  `private: false`), so `repo` would buy nothing and reach every private
-  repository the user owns.
-- The token's **only** privileged use is `POST /repos/{owner}/{repo}/forks`
-  on the user's behalf. Fork reads are unauthenticated, and the pull request
-  is opened with the platform's own bot credentials against the base repo.
+- **Scope: none.** `githubLink.SCOPE` is the empty string and
+  `authorizeUrl` omits the parameter entirely, so GitHub issues a token with
+  no scopes — its consent screen says "public data only" and the token can do
+  nothing but read public information. Never add one back (see below).
+- **No token is stored.** The token is used once, for the `GET /user` read
+  that resolves the login, then handed back with
+  `DELETE /applications/{client_id}/token` and dropped.
+  `users.github_oauth_token_enc` is written NULL on every link and exists
+  only as a legacy column; `migrate.js` revokes and clears any value a
+  previous release left behind.
+- The link's **only** purpose is the verified login, which the attribution
+  gate in `services/external-agent-tasks.js` compares against the head owner
+  of a submitted pull request. The fork and the branch are created by the
+  user's own coding agent; every GitHub read the connector makes about them
+  is public (`gh.publicApiHeaders`), and the pull request is opened with the
+  platform's own bot credentials against the base repo.
 - Store the client secret as `GITHUB_LINK_CLIENT_SECRET`; it is declared
   `private: true`, so it is encrypted at rest and never returned by any API.
+
+#### Why not `public_repo`, and why not a GitHub App
+
+Worth recording so it isn't re-litigated. The platform used to fork on the
+user's behalf, which needs `public_repo` — GitHub's own description is
+"read/write access to code, commit statuses, repository projects,
+collaborators, and deployment statuses for **public repositories and
+organizations**". No narrower classic scope can fork (`repo:status`,
+`repo_deployment`, `read:user` cannot), so the only way to shrink the grant
+was to stop forking server-side.
+
+Migrating to a **GitHub App** with fine-grained permissions looks like the
+obvious alternative and is worse:
+
+- `POST /repos/{owner}/{repo}/forks` requires **Administration: write**
+  (plus Contents: read) — a permission that reaches repository settings,
+  transfers and deletion, on the user's **private** repositories too.
+  `public_repo` at least cannot see anything private.
+- GitHub requires the App to be installed on the destination account **with
+  access to all repositories** to create a fork. The fork does not exist at
+  install time, so "only select repositories" cannot cover it — the one
+  benefit of a GitHub App is exactly what this endpoint refuses to allow.
+- User-to-server tokens intersect app access with user access, adding
+  failure modes (org installation restrictions, SSO) for no gain.
+- It costs a new App registration, an installation flow (not the
+  `authorize`/`callback` round-trip in `src/routes/mcp-remote.js`),
+  installation-id storage, token refresh, and re-consent for every linked
+  user.
+- Its one real advantage — expiring user tokens — is moot now that the
+  platform holds no user token at all.
 
 ### Verifying end to end
 
@@ -1400,22 +1438,25 @@ whole path and each step has a distinguishable failure.
    names the client *and* the redirect origin — the origin is the
    load-bearing fact, since a client name is attacker-chosen.
 3. **Link GitHub.** Settings → *Claude & ChatGPT connectors* → Connect
-   GitHub. If that row says "not configured", the values did not reach the
-   running container: confirm the deploy that picked them up has actually
+   GitHub. GitHub's consent screen must say **public data only** and list no
+   repository access; if it names public repositories, an older release is
+   still running. If the row says "not configured", the values did not reach
+   the running container: confirm the deploy that picked them up has actually
    landed.
 4. **Ask the assistant to set up work on an app** (`prepare_work`). Success
-   returns a fork, a branch and a paste-ready brief. The refusals worth
+   returns a branch name, a base commit and a paste-ready work order, plus
+   `forkStatus`: `ready` (they already have a fork), `missing` (the work
+   order's first command creates it), or `name_conflict` (a same-named repo
+   of theirs is in the way, so the work order forks under
+   `<repo>-usernode`). None of the three is a failure. The refusals worth
    recognising: `github_not_linked` (this user hasn't pressed Connect —
-   step 3), `github_link_unavailable` (the deployment has no OAuth app —
-   configuration), `fork_name_conflict` (the user already has a repo of
-   that name that is not a fork of the app; the platform refuses to guess
-   rather than touching it), `fork_pending` (GitHub forks asynchronously —
-   retry in a few seconds).
-5. **Run the coding agent.** Point Claude Code on the web at the fork,
-   paste the brief, let it push the branch. It should *not* open a pull
-   request — the platform does that.
-6. **Ask the assistant to submit it** (`submit_work`, which requires an
-   explicit `confirm: true` so a stray tool call can't start a vote).
+   step 3) and `github_link_unavailable` (the deployment has no OAuth app —
+   configuration).
+5. **Run the coding agent.** Paste the work order into Claude Code on the
+   web (or Codex) and let it fork, branch and push. It should *not* open a
+   pull request — the platform does that. If `gh repo fork` is unavailable
+   to it, the work order's fallback link creates the fork in one click.
+6. **Ask the assistant to submit it** (`submit_work`).
    Usernode opens the cross-fork PR with bot credentials and runs it
    through `POST /api/apps/:slug/pr-import`, producing an ordinary
    `source='imported'` proposal with a SHA-pinned staging preview, proposal
@@ -1427,7 +1468,7 @@ whole path and each step has a distinguishable failure.
 ### Caps worth knowing before you debug one
 
 Per user: 5 connector-opened proposals per rolling 24h, 3 `prepare_work`
-reservations per hour, 10 open work orders at once, and the fallback runs
+work orders per hour, 10 open work orders at once, and the fallback runs
 are capped at 2 in flight / 10 per day (`src/services/connector-limits.js`).
 Rate limits at the `/mcp` edge are 60/min per token and 300/min per IP.
 Every limiter **fails closed** — if it cannot read its own state it
