@@ -954,6 +954,17 @@ module.exports = {
   parseRewardPoints,
   resolveProgress,
   buildChallengeRow,
+  // The per-user done-ness rule, in both languages, plus the scope
+  // predicate — exported so the #profile screen's completed-challenges
+  // endpoint (src/routes/profile.js, issue #982) asks the SAME question
+  // this widget asks instead of becoming a third, drifting copy. See
+  // resolveProgress's own comment: when a real per-user progress feed
+  // lands, that function is still the single place to replace.
+  DONE_EXPR,
+  MY_COUNT_SQL,
+  MY_BLOCKS_SQL,
+  OPEN_CHALLENGE_WHERE,
+  ALL_CHALLENGE_WHERE,
   // The desktop LEADERBOARD fill (exported for tests; the cache reset keeps a
   // memoised ranking or board from leaking between cases).
   buildTopochainFill,

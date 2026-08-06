@@ -118,8 +118,10 @@ test('the hash router aliases both #topochain sub-routes onto the sections', () 
 });
 
 test('the Leaderboard screen carries no isAdmin gate', () => {
+  // Anchored on the name, not the full parameter list — the signature grew a
+  // third argument for the #982 challenge deep link and will grow again.
   const lbFn = appJs.slice(
-    appJs.indexOf('  navigateToLeaderboard(sub, profileUser)'),
+    appJs.indexOf('  navigateToLeaderboard(sub, profileUser'),
     appJs.indexOf('  _exitLeaderboard()')
   );
   assert.ok(lbFn.length > 0, 'navigateToLeaderboard exists in app.js');
@@ -185,7 +187,10 @@ test('TopochainChallenges defines the expected surface', () => {
   // The hero and the event list moved to the shared context module.
   assert.ok(!challengesJs.includes('_renderHero()'),
     'the challenges pane no longer renders an event hero of its own');
-  assert.ok(!challengesJs.includes('loadEvents()'),
+  // Same comment-stripping as the standings pane above: the subscriber in
+  // open() explains itself by naming the context module's initial
+  // loadEvents(), and prose about another module's method is not a call.
+  assert.ok(!challengesJs.replace(/\/\/[^\n]*/g, '').includes('loadEvents()'),
     'the challenges pane no longer loads the event list itself');
 });
 

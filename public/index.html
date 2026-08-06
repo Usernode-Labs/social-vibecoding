@@ -431,10 +431,19 @@
          the screen works in any browser. Real anchor (like Challenges)
          so hash navigation drives the screen. The former native-push
          Profile / App Settings rows are gone: App Settings merged into
-         the Settings modal as capability-gated sections (settings.js). -->
+         the Settings modal as capability-gated sections (settings.js).
+
+         #982: when the viewer has set a profile picture, it REPLACES the
+         generic person glyph here — App.applyUserAvatar (public/js/app.js)
+         swaps which of the two is `hidden` from App.user.avatarUrl, so the
+         row shows the same face the profile screen does. The <img> ships
+         hidden with no src: a signed-out shell and a user with no picture
+         both keep the glyph, and nothing requests /avatars/ until there is
+         something to request. -->
     <a id="drawer-row-profile" href="#profile"
        class="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800">
-      <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
+      <svg id="drawer-profile-glyph" class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
+      <img id="drawer-avatar" alt="" class="hidden w-5 h-5 shrink-0 rounded-full object-cover bg-zinc-100 dark:bg-zinc-800">
       <span class="text-sm font-medium">Profile</span>
     </a>
     <!-- Leaderboard — the one entry point for shared progress: the
