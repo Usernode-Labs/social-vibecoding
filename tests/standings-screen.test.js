@@ -143,8 +143,10 @@ test('_syncHash emits the canonical standings and challenges addresses', () => {
 // ─── Router ──────────────────────────────────────────────────────────────
 
 test('navigateToLeaderboard routes every section segment to the section', () => {
+  // Anchored on the name, not the full parameter list — the signature grew a
+  // third argument for the #982 challenge deep link and will grow again.
   const fn = appJs.slice(
-    appJs.indexOf('  navigateToLeaderboard(sub, profileUser)'),
+    appJs.indexOf('  navigateToLeaderboard(sub, profileUser'),
     appJs.indexOf('  _exitLeaderboard()')
   );
   assert.ok(fn.length > 0, 'navigateToLeaderboard located');

@@ -62,11 +62,16 @@ function registrySections() {
 // ── The screen host ────────────────────────────────────────────────────
 
 test('the settings screen ships hidden with its four render slots', () => {
-  assert.match(
-    html,
-    /<main id="settings-screen" class="hidden flex-1 overflow-y-auto"/,
-    'screen container ships hidden like its sibling screens',
-  );
+  // Matched per-class rather than as one closed string so an added
+  // utility (e.g. `platform-safe-scroll`, which reserves the
+  // home-indicator strip for the last row) doesn't fail this on a
+  // substring.
+  const openTag = /<main id="settings-screen"[^>]*>/.exec(html);
+  assert.ok(openTag, '#settings-screen is missing from the shell');
+  for (const cls of ['hidden', 'flex-1', 'overflow-y-auto']) {
+    assert.match(openTag[0], new RegExp(`(?:class="|\\s)${cls}(?:\\s|")`),
+      `screen container must keep ${cls} like its sibling screens`);
+  }
   for (const id of [
     'settings-root', 'settings-sidebar-col', 'settings-content-col',
     'settings-nav-desktop', 'settings-mobile-menu-host',
@@ -464,8 +469,12 @@ test('the CLI credentials list has a staging ?demo=1 injection', () => {
 
 test('settings.js passes ?demo=1 through to the credentials list', () => {
   assert.match(settingsJs, /_cliTokensDemo\(\)\s*\{/, 'the passthrough helper exists');
+  // Scoped to _loadCliTokens, not the whole module — the point is that the
+  // passthrough is on the request this function builds. The window grew
+  // when the capability gate (_cliAuthAvailable — skip the fetch entirely
+  // where the CLI surface is 404'd) landed above the query construction.
   const load = settingsJs.slice(settingsJs.indexOf('    async _loadCliTokens(reset) {'));
-  assert.match(load.slice(0, 1600), /_cliTokensDemo\(\) \? '&demo=1' : ''/,
+  assert.match(load.slice(0, 2600), /_cliTokensDemo\(\) \? '&demo=1' : ''/,
     'the page-level ?demo=1 reaches the endpoint');
   assert.match(settingsJs, /!token\.demo/, 'Revoke is suppressed on demo rows');
 });

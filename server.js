@@ -29,6 +29,8 @@ const { appErrorRoutes } = require('./src/routes/app-error');
 const { visualsRoutes } = require('./src/routes/visuals');
 const { appIconRoutes } = require('./src/routes/app-icons');
 const { issueImageRoutes } = require('./src/routes/issue-images');
+const { avatarRoutes } = require('./src/routes/avatars');
+const { profileRoutes } = require('./src/routes/profile');
 const { appFileServeRoutes, appFileShellRoutes } = require('./src/routes/app-files');
 const appStorageRoutes = require('./src/routes/app-storage');
 const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
@@ -416,6 +418,12 @@ app.use(appIconRoutes(config));
 // control is the unguessable 32-hex screenshot id.
 app.use(issueImageRoutes(config));
 
+// Profile pictures (#982). Public for the same reason as app-icons: the
+// profile screen and the hamburger drawer load them with plain <img>
+// tags; access control is the unguessable 32-hex avatar id, and the image
+// is published to other users by design.
+app.use(avatarRoutes(config));
+
 // App-stored user files (#752). Public for the same reason as app-icons:
 // app pages load them with plain <img> tags from their own subdomains.
 // visibility='public' rows are guarded by the unguessable 32-hex id;
@@ -500,6 +508,11 @@ app.use(homePanelRoutes(config));
 // Free-form home-grid placement: where each app tile and widget sits, per
 // breakpoint. Me-scoped like the panels route above.
 app.use(homeLayoutRoutes(config));
+// Profile customization (#982): the display name / bio / handle write, the
+// avatar upload-delete pair, and the viewer's own completed challenges.
+// Me-scoped, so behind authMiddleware — the avatar READ side is the
+// separate public avatarRoutes mounted above.
+app.use(profileRoutes(config));
 // #940: saved dev-chat drafts, now server-backed so they follow a user
 // across devices. Owner-scoped per session, like the /api/sessions/* family
 // in routes/sessions.js.

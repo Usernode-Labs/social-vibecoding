@@ -282,6 +282,11 @@
         this.state.walletLinkEnabled = !!j.user?.walletLinkEnabled;
         this.state.aiProgressEstimate = !!j.user?.aiProgressEstimate;
         this.state.locale = j.user?.locale || null;
+        // Same payload the CLI-credentials gate needs, so prime its memo
+        // rather than let it issue a second /api/auth/me. (It still
+        // fetches on its own when it runs first — the two orders both
+        // resolve to the same deployment-constant answer.)
+        this._cliAuthPromise = Promise.resolve(j.user?.cliAuthEnabled !== false);
         this._renderIndicator();
         // `walletLinkEnabled` decides whether the Usernode Wallet row is in
         // the menu at all, and it lands here — possibly AFTER a cold-boot
@@ -938,6 +943,37 @@
       if (status) { status.classList.add('hidden'); status.textContent = ''; }
     },
 
+    // Does the CLI-credentials surface exist in this deployment?
+    //
+    // The whole /api/me/cli-tokens + /api/cli/* family is 404'd in a
+    // staging preview (routes/cli-auth.js gates it — unreviewed PR code
+    // must never mint CLI tokens). The 404 branch in _loadCliTokens
+    // already handles that gracefully in JS, but the REQUEST ITSELF is
+    // the problem: a failed fetch is an error line in the page console
+    // no matter how the app handles it, and the proposal checks fail any
+    // route that logs one. So we ask first and skip the fetch entirely.
+    //
+    // Deployment-constant, so it resolves at most once per page load.
+    // Unknown / unreachable / a shell older than the flag all answer
+    // TRUE — the behaviour is then exactly what it was before this
+    // helper existed, with the 404 branch as the backstop. Only an
+    // explicit `false` from the server suppresses the request.
+    _cliAuthPromise: null,
+
+    _cliAuthAvailable() {
+      if (!this._cliAuthPromise) {
+        this._cliAuthPromise = (async () => {
+          try {
+            const r = await fetch('/api/auth/me', { credentials: 'same-origin' });
+            if (!r.ok) return true;
+            const j = await r.json();
+            return j.user?.cliAuthEnabled !== false;
+          } catch { return true; }
+        })();
+      }
+      return this._cliAuthPromise;
+    },
+
     // True when the page carries ?demo=1. The server only honours it in
     // staging (see routes/cli-auth.js), so this is safe to send always.
     _cliTokensDemo() {
@@ -952,6 +988,16 @@
       const more = document.getElementById('cli-tokens-more');
       const status = document.getElementById('cli-tokens-status');
       if (!section || !list || !more || !status) return;
+
+      // Don't ask for a surface this deployment doesn't serve — the 404
+      // would be a console error even though the code below handles it.
+      // Hiding the section is the same outcome the 404 branch produces,
+      // so staging and production differ only in whether the request is
+      // made at all.
+      if (!(await this._cliAuthAvailable())) {
+        section.classList.add('hidden');
+        return;
+      }
 
       // A reset is authoritative (opening Settings or refreshing after a
       // revocation), so let it supersede an older pagination request. The

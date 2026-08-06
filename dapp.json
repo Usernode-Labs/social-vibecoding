@@ -296,6 +296,22 @@
   ],
   "tests": [
     {
+      "name": "Profile: an editable identity card above completions that link out (#982)",
+      "path": "/#profile",
+      "expectSelector": "a[data-completed-challenge][href^='#leaderboard/challenges/']",
+      "expectText": "Edit profile"
+    },
+    {
+      "name": "Edit profile opens with the username read-only (#982)",
+      "path": "/?shot=profile-edit#profile",
+      "expectSelector": "#profile-edit-sheet #profile-edit-username[disabled]"
+    },
+    {
+      "name": "A sidebar tap lands on the destination with no competing screen animation (#977)",
+      "path": "/?shot=menu-nav&un-platform=ios",
+      "expectSelector": "#leaderboard-screen:not(.hidden)[data-entered=\"none\"]"
+    },
+    {
       "name": "Challenges tab summarises the completed set (#981)",
       "path": "/#leaderboard/challenges",
       "expectSelector": "#leaderboard-screen:not(.hidden) #challenges-root:not(.hidden) #tc-se-grid #tc-se-challenge-summary"
@@ -322,6 +338,18 @@
       "expectSelector": "#feedback-bounty-row:not(.hidden) #feedback-bounty-checkbox:disabled"
     },
     {
+      "name": "Challenges widget: metered rows plus the title bar's leaderboard link (#911, #980)",
+      "path": "/?demo=1",
+      "expectSelector": "#home-body.home-column article.home-panel:has(.home-panel-bar .home-panel-lb-browse[aria-label=\"Open leaderboard\"]) .home-panel-rows--metered .home-panel-row .home-panel-bar-track[role=progressbar] .home-panel-bar-fill",
+      "expectText": "Open leaderboard"
+    },
+    {
+      "name": "Challenges widget: with nothing running it says so, and fills the rest (#947)",
+      "path": "/?demo=1&challenges=none",
+      "expectSelector": "#app-list [data-panel-slot=\"challenges\"] article.home-panel[data-rows=\"0\"][data-fill=\"3\"] .home-panel-lb-row",
+      "expectText": "No challenges are running right now"
+    },
+    {
       "name": "Tapping an app shows its icon and name while it loads, not a blank window (#931)",
       "path": "/?shot=app-launching",
       "expectSelector": "#app-launch-cover .app-icon-tile",
@@ -340,22 +368,20 @@
       "expectText": "staging-demo-lead"
     },
     {
-      "name": "Challenges widget: metered rows plus the title bar's leaderboard link (#911, #980)",
-      "path": "/?demo=1",
-      "expectSelector": "#home-body.home-column article.home-panel:has(.home-panel-bar .home-panel-lb-browse[aria-label=\"Open leaderboard\"]) .home-panel-rows--metered .home-panel-row .home-panel-bar-track[role=progressbar] .home-panel-bar-fill",
-      "expectText": "Open leaderboard"
-    },
-    {
-      "name": "Challenges widget: with nothing running it says so, and fills the rest (#947)",
-      "path": "/?demo=1&challenges=none",
-      "expectSelector": "#app-list [data-panel-slot=\"challenges\"] article.home-panel[data-rows=\"0\"][data-fill=\"3\"] .home-panel-lb-row",
-      "expectText": "No challenges are running right now"
-    },
-    {
       "name": "Challenges widget: the fill previews the Topochain standings (#962)",
       "path": "/?demo=1&challenges=none",
       "expectSelector": "#app-list [data-panel-slot=\"challenges\"] article.home-panel .home-panel-fill[data-fill-kind=\"topochain\"] .home-panel-lb-row[data-lb-kind=\"topochain\"]",
       "expectText": "staging-demo-validator"
+    },
+    {
+      "name": "The sidebar is fully gone and restored to <body> after a sidebar tap (#977)",
+      "path": "/?shot=menu-nav&un-platform=ios",
+      "expectSelector": "body:not(:has(.un-panel)) > #header-menu-panel:not(.platform-panel-adopted)"
+    },
+    {
+      "name": "The desktop slide-over suppresses the screen fade too (#977)",
+      "path": "/?shot=menu-nav",
+      "expectSelector": "#leaderboard-screen:not(.hidden)[data-entered=\"none\"]"
     },
     {
       "name": "Challenges widget: with no standings at all the fill falls back to the Kudos board (#962)",

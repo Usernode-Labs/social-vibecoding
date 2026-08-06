@@ -5210,7 +5210,7 @@ const DevChat = {
       // leaving the session closes a docked preview with it.
       if (DevChat.stagingPanel.open) DevChat._resetStagingPanel();
       content.innerHTML = `
-        <div id="dc-session-list" class="divide-y divide-zinc-800" style="flex:1;overflow-y:auto;min-height:0"></div>`;
+        <div id="dc-session-list" class="divide-y divide-zinc-800 platform-safe-scroll" style="flex:1;overflow-y:auto;min-height:0"></div>`;
       DevChat.renderSessionList();
       return;
     }
@@ -5256,7 +5256,14 @@ const DevChat = {
       <div class="dc-session-body flex-1 flex min-h-0">
         <div id="dc-tab-chat" class="dc-chat-pane flex-1 flex flex-col min-h-0">
           <div id="dc-messages" class="dc-messages-container flex-1 overflow-y-auto py-2"></div>
-          <div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2">
+          <!-- platform-safe-bar (app.css): this block is the bottom of
+               the screen on a phone, so it carries the home-indicator
+               inset on top of its own p-2 — the strip below the Send row
+               is part of this bar rather than dead space under it. The
+               message scroller above keeps the height that used to be
+               reserved on #app-view. (No backticks in this comment: it
+               lives inside a template literal, and one would close it.) -->
+          <div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2 platform-safe-bar">
             <div class="flex items-center gap-2 mb-2">
               <label class="text-xs text-zinc-500">Model:</label>
               <select id="dc-model-select" class="rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-violet-500">

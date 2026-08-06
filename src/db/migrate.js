@@ -101,6 +101,10 @@ async function migrate(config) {
   // failing verdict onto an existing staging proposal.
   await seedStagingPlatformEnv(pool, config);
   await seedStagingTopochain(pool, config);
+  // Must run AFTER seedStagingTopochain (it decorates the same three viewer
+  // identities) and AFTER seedStagingLeaderboardProfile (it decorates that
+  // seed's 900001 / 900002 fixture accounts).
+  await seedStagingProfileCustomization(pool, config);
   await sweepInterruptedDbExports(pool);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
@@ -8079,26 +8083,28 @@ async function seedStagingArchiveProposalFixtures(pool, config) {
 async function seedStagingTopochain(pool, config) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
+  // ─── IDs (one constant block per table; see header comment) ──────────
+  // Declared at function scope, not inside the try below, because the two
+  // sections that follow are separate failure domains and both need them.
+  const SEASON_ID = 900500;
+  const EVENT_REGULAR_ID = 900500; // season_events — type 'regular'
+  const EVENT_SEASON_ID = 900501;  // season_events — type 'season'
+  // Fully-past event. The two above both span "now", so without this one
+  // the between-events fallback (public/js/topochain-events.js) can never
+  // fire in a preview — pick it from the leaderboard's event picker to
+  // see the "Nothing is running right now" state.
+  const EVENT_ENDED_ID = 900502;
+
+  const USERS = {
+    seasonWide1: 900500, // exclude_podium = TRUE
+    seasonWide2: 900501,
+    eventA1: 900502,
+    eventA2: 900503,
+    eventB1: 900504,
+    mixed: 900505, // event-scoped AND season-wide enrollment; real password
+  };
+
   try {
-    // ─── IDs (one constant block per table; see header comment) ──────
-    const SEASON_ID = 900500;
-    const EVENT_REGULAR_ID = 900500; // season_events — type 'regular'
-    const EVENT_SEASON_ID = 900501;  // season_events — type 'season'
-    // Fully-past event. The two above both span "now", so without this one
-    // the between-events fallback (public/js/topochain-events.js) can never
-    // fire in a preview — pick it from the leaderboard's event picker to
-    // see the "Nothing is running right now" state.
-    const EVENT_ENDED_ID = 900502;
-
-    const USERS = {
-      seasonWide1: 900500, // exclude_podium = TRUE
-      seasonWide2: 900501,
-      eventA1: 900502,
-      eventA2: 900503,
-      eventB1: 900504,
-      mixed: 900505, // event-scoped AND season-wide enrollment; real password
-    };
-
     // ─── Users (6) ─────────────────────────────────────────────────────
     // Sentinel password for five of the six (never-login fixtures, same
     // idiom as seedStagingWalletUsers); the sixth gets a real bcrypt hash
@@ -8526,21 +8532,35 @@ async function seedStagingTopochain(pool, config) {
     );
 
     // ─── App version config (1 per OS) ─────────────────────────────────
+    // The only table in this seed whose natural key can already be taken by
+    // CLONED PRODUCTION DATA: `app_version_configs.os` is UNIQUE, and a real
+    // deployment has an 'ios'/'android' row under its own serial id. Every
+    // other fixture here is keyed on a value nothing but this seed invents
+    // (900500+ ids, 'staging-demo-*' names), so `ON CONFLICT (id)` covers
+    // them. Here it does not: the conflict fires on os, not on id, and an
+    // unhandled one aborts the whole seed — which is exactly what happened
+    // in staging, silently emptying every viewer-facing topochain surface
+    // seeded after this point. So skip the row when the OS is already
+    // configured, and keep the id arbiter for the plain re-boot case.
     await pool.query(
       `INSERT INTO app_version_configs
          (id, os, min_build_number, recommended_build_number, current_version,
           is_active, should_update_message, update_url, created_at, updated_at)
-       VALUES
+       SELECT v.id, v.os, v.min_build, v.rec_build, v.version, v.is_active,
+              v.message, v.url, NOW(), NOW()
+         FROM (VALUES
          (900500, 'ios', 100, 110, '1.4.0', TRUE,
-          'A new version is available.', 'https://staging-demo.example.invalid/ios',
-          NOW(), NOW()),
+          'A new version is available.', 'https://staging-demo.example.invalid/ios'),
          -- Deliberately INACTIVE: with no active row for an OS the version
          -- gate is off for it (every build is told it is up to date), and
          -- the admin screen's "No active version rule for Android" warning
          -- is only reviewable in a preview if one OS is left in that state.
          (900501, 'android', 90, 95, '1.4.0', FALSE,
-          'A new version is available.', 'https://staging-demo.example.invalid/android',
-          NOW(), NOW())
+          'A new version is available.', 'https://staging-demo.example.invalid/android')
+              ) AS v(id, os, min_build, rec_build, version, is_active, message, url)
+        WHERE NOT EXISTS (
+                SELECT 1 FROM app_version_configs x WHERE x.os = v.os
+              )
        ON CONFLICT (id) DO NOTHING`
     );
 
@@ -8567,6 +8587,19 @@ async function seedStagingTopochain(pool, config) {
       [USERS.eventA1, USERS.eventA2, USERS.mixed, SEASON_ID]
     );
 
+    log.info('db', 'Topochain staging fixtures seeded', { seasonId: SEASON_ID });
+  } catch (err) {
+    log.warn('db', 'Topochain staging fixtures seeding failed', { message: err.message });
+  }
+
+  // A SECOND failure domain, deliberately. Everything above is a catalogue
+  // nobody signs in as; everything below is what the SIGNED-IN tester sees.
+  // Sharing one try/catch made a single conflicting catalogue row (see the
+  // app_version_configs note above) empty the viewer's profile, leaderboard
+  // and challenge screens all at once, and the only trace was one warn line
+  // — the screens themselves just looked like an unfinished feature. Split,
+  // a catalogue failure costs the fixture users and nothing else.
+  try {
     // ─── The staging VIEWER's own topochain rows ───────────────────────
     // Everything above belongs to six fixture users nobody logs in as. The
     // #profile screen renders the SIGNED-IN user (the /challenges-api/me/*
@@ -8743,9 +8776,163 @@ async function seedStagingTopochain(pool, config) {
       );
     }
 
-    log.info('db', 'Topochain staging fixtures seeded', { seasonId: SEASON_ID });
+    log.info('db', 'Topochain staging viewer credits seeded', {
+      viewers: viewerRows.length,
+    });
   } catch (err) {
-    log.warn('db', 'Topochain staging fixtures seeding failed', { message: err.message });
+    log.warn('db', 'Topochain staging viewer-credit seeding failed', {
+      message: err.message,
+    });
+  }
+}
+
+// Profile customization fixtures (issue #982).
+//
+// TWO of the three "missing in staging" categories apply here:
+//   1. `user_avatars` is a brand-new table — the boot migration creates it
+//      EMPTY in every staging clone, so without this seed the profile
+//      screen, the drawer row and the edit sheet all show the
+//      initial-circle fallback and the image path is never exercised.
+//   2. `users.bio` is new for the same reason, and `display_name` is null
+//      for most cloned accounts (production: 71 of 299), so the identity
+//      card would render as a bare @handle with nothing under it.
+//
+// The COMPLETED-CHALLENGES half needs no new activity rows:
+// seedStagingTopochain above already credits every viewer identity across
+// a deliberate mix — binary done (900500/900501/900511), numeric done
+// (900514, 5 of 5) and numeric NOT done (900512 at 3 of 8, 900513 at
+// 3 of 5) — which is exactly the regression coverage the per-user done
+// rule needs on screen. Those challenges sit on EVENT_REGULAR_ID inside
+// SEASON_ID, the season fetchProfileSeason resolves.
+//
+// Avatar bytes are inline base64 16x16 solid-colour PNGs (79 bytes each):
+// enough to prove GET /avatars/:id serves real image bytes with the right
+// content type, small enough to keep the migration cheap. Ids are fixed so
+// re-running the seed on every staging boot is a no-op.
+// The size/digest the real upload route records, derived from the same
+// bytes rather than hardcoded beside them — a fixture whose metadata
+// disagreed with its BYTEA would be a trap for whoever reads the table
+// next.
+function pngBytes(b64) {
+  return Buffer.from(b64, 'base64').length;
+}
+function pngSha256(b64) {
+  return crypto.createHash('sha256').update(Buffer.from(b64, 'base64')).digest('hex');
+}
+
+async function seedStagingProfileCustomization(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  // 16x16 solid PNGs. Distinct colours so three seeded viewers are
+  // visually distinguishable in a screenshot.
+  const PNG_VIOLET = 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mOosXpLEmIY1TCqYfhqAABPn6MQ2bsByAAAAABJRU5ErkJggg==';
+  const PNG_TEAL = 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mPgndJBEmIY1TCqYfhqAABqqikQLgE1SQAAAABJRU5ErkJggg==';
+  const PNG_AMBER = 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mO4Wc5GEmIY1TCqYfhqAACkxFYQZWitdgAAAABJRU5ErkJggg==';
+
+  try {
+    // ─── The viewer identities a tester's eyes look through ────────────
+    // Same three the topochain seed grants challenge activity to: the
+    // interactive admin login, plus the two capture identities
+    // (screenshots sign as usernode-capture, declared dapp.json tests as
+    // usernode-capture-admin — see services/visuals.js), so the /#profile
+    // check and the before/after shots both render the POPULATED card
+    // rather than the empty one.
+    //
+    // Resolved by username, not by fixed id, because these rows are
+    // created by seedAdmin() / the capture bootstrap with serial ids.
+    // Avatar ids are keyed off each name's POSITION in the list so a
+    // viewer's id never shifts when another identity appears or
+    // disappears between boots.
+    const VIEWER_USERNAMES = [
+      config.adminUsername, 'usernode-capture', 'usernode-capture-admin',
+    ];
+    const VIEWER_PNGS = [PNG_VIOLET, PNG_TEAL, PNG_AMBER];
+    // Fixed 32-hex ids in an obviously-synthetic block — the real route
+    // generates random ones, but a seed must be idempotent.
+    const VIEWER_AVATAR_IDS = [
+      'a0a0a0a0a0a0a0a0a0a0a0a0a0a05201',
+      'a0a0a0a0a0a0a0a0a0a0a0a0a0a05202',
+      'a0a0a0a0a0a0a0a0a0a0a0a0a0a05203',
+    ];
+
+    const { rows: viewerRows } = await pool.query(
+      'SELECT id, username FROM users WHERE username = ANY($1::text[])',
+      // Filtered for the lookup only — the slot arithmetic below still
+      // indexes into the unfiltered list, so an unset adminUsername
+      // shifts nobody's avatar id.
+      [VIEWER_USERNAMES.filter(Boolean)]
+    );
+
+    for (const viewer of viewerRows) {
+      const slot = VIEWER_USERNAMES.indexOf(viewer.username);
+      if (slot < 0) continue;
+      // COALESCE, not a bare assignment: a staging clone may already
+      // carry a real display name / handle from production, and the
+      // fixture must never clobber it.
+      await pool.query(
+        `UPDATE users
+            SET display_name = COALESCE(display_name, $2),
+                bio          = COALESCE(bio, $3),
+                github       = COALESCE(github, 'staging-demo'),
+                x            = COALESCE(x, 'staging_demo'),
+                updated_at   = NOW()
+          WHERE id = $1`,
+        [viewer.id, `[Staging demo] ${viewer.username}`,
+         '[Staging demo] Building the platform from inside the platform. ' +
+         'This bio is fixture text, not a real person’s words.']
+      );
+      const png = VIEWER_PNGS[slot];
+      await pool.query(
+        `INSERT INTO user_avatars (id, user_id, content_type, size_bytes, data, sha256)
+         VALUES ($1, $2, 'image/png', $4, decode($3, 'base64'), $5)
+         ON CONFLICT (user_id) DO NOTHING`,
+        [VIEWER_AVATAR_IDS[slot], viewer.id, png, pngBytes(png), pngSha256(png)]
+      );
+    }
+
+    // ─── The kudos-leaderboard fixture accounts ────────────────────────
+    // Keyed by USERNAME, not by a fixed id: seedStagingLeaderboardProfile
+    // declares staging-demo-author as id 900001, but 900001 is already
+    // taken by staging-demo-user (seedStagingDemoAppCard runs first), so
+    // its ON CONFLICT DO NOTHING leaves that row named staging-demo-user.
+    // Resolving by name means this fixture decorates whoever is actually
+    // there, and inserts nothing at all when the account is absent.
+    //
+    // staging-demo-user GETS a picture; staging-demo-giver deliberately
+    // does NOT, so the photo row and the initial-circle fallback are both
+    // on screen the moment the leaderboard surfaces land in the follow-up.
+    await pool.query(
+      `UPDATE users
+          SET display_name = COALESCE(display_name, '[Staging demo] Ada Author'),
+              bio          = COALESCE(bio, '[Staging demo] Ships small PRs, reviews smaller ones.'),
+              github       = COALESCE(github, 'staging-demo-author'),
+              updated_at   = NOW()
+        WHERE username = 'staging-demo-user'`
+    );
+    await pool.query(
+      `INSERT INTO user_avatars (id, user_id, content_type, size_bytes, data, sha256)
+       SELECT 'a0a0a0a0a0a0a0a0a0a0a0a0a0a05210', id, 'image/png', $2,
+              decode($1, 'base64'), $3
+         FROM users WHERE username = 'staging-demo-user'
+       ON CONFLICT (user_id) DO NOTHING`,
+      [PNG_TEAL, pngBytes(PNG_TEAL), pngSha256(PNG_TEAL)]
+    );
+    // staging-demo-giver keeps NO avatar on purpose — see above. It gets a
+    // display name only, so the fallback row still reads as a real person.
+    await pool.query(
+      `UPDATE users
+          SET display_name = COALESCE(display_name, '[Staging demo] Grace Giver'),
+              updated_at   = NOW()
+        WHERE username = 'staging-demo-giver'`
+    );
+
+    log.info('db', 'Profile-customization staging fixtures seeded', {
+      viewers: viewerRows.length,
+    });
+  } catch (err) {
+    log.warn('db', 'Profile-customization staging fixtures seeding failed', {
+      message: err.message,
+    });
   }
 }
 
@@ -8872,4 +9059,4 @@ async function migrateAppDbsToPerRole(pool, config) {
 // mock pool (idempotency/param-flow behaviour, not just a source-text
 // regex) without running the entire migrate() boot sequence. It is not
 // meant to be called from anywhere else in the app.
-module.exports = { migrate, seedStagingTopochain };
+module.exports = { migrate, seedStagingTopochain, seedStagingProfileCustomization };

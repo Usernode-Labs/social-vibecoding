@@ -53,10 +53,14 @@
       if (row) {
         row.classList.remove('hidden');
         row.addEventListener('click', () => {
-          if (window.App && App.HeaderMenu && App.HeaderMenu.close) {
-            App.HeaderMenu.close();
-          }
-          WalletSheet._openSheet();
+          // #977: same one-motion-at-a-time rule as the Node row — the
+          // sheet presents once the drawer has finished leaving, rather
+          // than rising across its exit. close() resolves immediately
+          // when nothing is open.
+          const closed = (window.App && App.HeaderMenu && App.HeaderMenu.close)
+            ? App.HeaderMenu.close()
+            : null;
+          Promise.resolve(closed).then(() => WalletSheet._openSheet());
         });
       }
 

@@ -599,9 +599,15 @@ const GroupChat = {
     // (the topic sub-view paints into #gc-thread-head after mount). Off by
     // default, so the general-chat path and any legacy caller are unaffected.
     const withHeader = fill && !!opts.withHeader;
+    // `platform-safe-bar` (app.css) on BOTH variants: in fill mode this
+    // block is the bottom of the screen, so it carries the
+    // home-indicator inset above its own padding. The read-only notice
+    // replaces the composer and needs the identical clearance. In the
+    // legacy boxed layout the bar isn't screen-bottom-anchored, so the
+    // inset is inert there — harmless, and it keeps one class per role.
     const composerHtml = opts.readOnly
-      ? `<div class="px-3 py-2 text-xs text-zinc-500 border-t border-zinc-200 dark:border-zinc-800 shrink-0">${escapeHtml(opts.notice || 'This thread is read-only.')}</div>`
-      : `<div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2">
+      ? `<div class="px-3 py-2 text-xs text-zinc-500 border-t border-zinc-200 dark:border-zinc-800 shrink-0 platform-safe-bar">${escapeHtml(opts.notice || 'This thread is read-only.')}</div>`
+      : `<div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2 platform-safe-bar">
           <div id="gc-thread-reply-preview" class="hidden"></div>
           <div id="gc-thread-attach-error" class="dc-attach-error hidden"></div>
           <div id="gc-thread-attachments" class="dc-attach-strip"></div>

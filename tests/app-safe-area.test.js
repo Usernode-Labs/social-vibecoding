@@ -8,9 +8,15 @@
 // edge.
 //
 // The fix has two halves, and this file pins both:
-//   1. The shell's bottom inset is SURFACE-DEPENDENT — reserved only for
-//      platform-rendered surfaces (`data-app-surface="platform"`), never
-//      for an app frame.
+//   1. The shell's bottom inset is SURFACE-DEPENDENT — `data-app-surface`
+//      distinguishes a platform-rendered surface from an app frame, and
+//      NEITHER gets padding on #app-view itself. (It originally gave the
+//      platform surface that padding; the follow-up moved the inset
+//      inward to each scroller / composer bar, because outer padding
+//      shrank every Dev-mode surface and left the strip below it dead.
+//      The attribute now publishes a TOKEN: real inset on a platform
+//      surface, zero on an app one. See
+//      tests/platform-safe-bottom.test.js for the inward half.)
 //   2. The insets are FORWARDED into the frame instead of eaten, over a
 //      `__usernode_safe_area` message family, and published by the bridge
 //      as `--un-safe-inset-*` custom properties that the native kit's CSS
@@ -45,15 +51,33 @@ test('#app-view no longer reserves the bottom inset for every surface', () => {
     + 'paint before any render keeps the old clearance');
 });
 
-test('app.css gates the bottom inset on the platform surface only', () => {
-  const m = /#app-view\[data-app-surface="platform"\]\s*\{([^}]*)\}/.exec(APP_CSS);
-  assert.ok(m, 'app.css must carry the surface-gated rule');
-  assert.match(m[1], /padding-bottom:\s*env\(safe-area-inset-bottom/,
-    'the platform surface keeps its home-indicator clearance');
-  // No rule may reserve the strip for an app surface — that would put the
-  // clipping straight back.
-  assert.ok(!/#app-view\[data-app-surface="app"\][^}]*padding-bottom/.test(APP_CSS),
-    'an app surface must reserve nothing');
+test('app.css gives #app-view no padding on EITHER surface', () => {
+  // The surface gate was only half the fix. On a platform surface the
+  // padding still sat on the OUTER box, so every Dev-mode surface was
+  // shrunk by the inset and the strip below it was dead background. The
+  // inset moved INWARD (.platform-safe-scroll / .platform-safe-bar on the
+  // innermost scroller / composer bar), so #app-view now reserves
+  // nothing on either surface — see tests/platform-safe-bottom.test.js
+  // for the utilities themselves.
+  for (const surface of ['platform', 'app']) {
+    const re = new RegExp(`#app-view\\[data-app-surface="${surface}"\\]\\s*\\{([^}]*)\\}`);
+    const m = re.exec(APP_CSS);
+    assert.ok(m, `app.css must carry the ${surface}-surface rule`);
+    assert.ok(!/padding-bottom/.test(m[1]),
+      `the ${surface} surface must not reserve the strip on #app-view itself — `
+      + 'padding there is subtracted from the flex height of everything inside');
+  }
+
+  // What the two rules DO carry: the surface contract, stated as the
+  // token every inset in the shell resolves through.
+  const platform = /#app-view\[data-app-surface="platform"\]\s*\{([^}]*)\}/.exec(APP_CSS)[1];
+  assert.match(platform, /--platform-safe-bottom:\s*var\(--un-safe-inset-bottom, env\(safe-area-inset-bottom, 0px\)\)/,
+    'the platform surface publishes the real inset');
+
+  const app = /#app-view\[data-app-surface="app"\]\s*\{([^}]*)\}/.exec(APP_CSS)[1];
+  assert.match(app, /--platform-safe-bottom:\s*0px/,
+    'an app surface must ZERO the token, so no shared class can ever '
+    + 'reserve the home-indicator strip over an app frame');
 });
 
 test('every #app-content mount point declares its surface', () => {
