@@ -3358,9 +3358,17 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
           [result.containerId, sha || null, session.pr_number || null, app.id]
         );
       } else {
-        log.info('votes', 'Self-app PR merged; GitHub Actions auto-deploy will roll', {
+        log.info('votes', 'Self-app PR merged; host deployer will roll the harness', {
           appId: app.id, prNumber: session.pr_number,
         });
+        // Skip the deployer's ~2-min baseline poll: tell it main just
+        // moved so it fetches within seconds. Best-effort by design —
+        // if the nudge mount is missing (local dev, pre-deployer host)
+        // the baseline poll still delivers the deploy.
+        try {
+          const { nudgeHostDeployer } = require('../services/deploy-nudge');
+          nudgeHostDeployer({ sha: mergeCommitSha, prNumber: session.pr_number });
+        } catch (_) { /* never fail a merge over a hint */ }
       }
       // Let every tab watching this app refresh its commit pill without
       // polling. The existing vote_update event already fires on merge

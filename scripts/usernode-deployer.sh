@@ -8,6 +8,15 @@
 # over /opt/usernode with the same exclude list the Deploy workflow
 # uses, and runs scripts/deploy.sh.
 #
+# Two triggers, one code path:
+#   - NUDGE (the fast path, seconds): after a self-app merge the
+#     platform touches runtime/deploy-nudge/nudge through its one
+#     writable runtime mount; the loop stats that file every
+#     NUDGE_CHECK_SECONDS and polls immediately on a change.
+#   - BASELINE (the safety net, ~2 min): a plain interval poll that
+#     catches direct pushes to main, merges that raced a platform
+#     crash, and hosts without the nudge mount.
+#
 # Why this exists: production deploys used to depend on a GitHub Actions
 # runner picking up the push. During the 2026-08-06 GHA outage, merges
 # landed on main and sat undeployed for hours with the workflow queued.
@@ -47,9 +56,22 @@ REPO_URL="${REPO_URL:-https://github.com/Usernode-Labs/social-vibecoding.git}"
 BRANCH="${BRANCH:-main}"
 DEPLOY_DIR="${DEPLOY_DIR:-/opt/usernode}"
 SRC_DIR="${SRC_DIR:-/opt/usernode-src}"
-POLL_SECONDS="${POLL_SECONDS:-30}"
+# Baseline git poll. Deliberately slow: on-platform merges (in practice,
+# all of them) arrive via the nudge file within NUDGE_CHECK_SECONDS, so
+# this only bounds the latency of direct pushes to main and covers the
+# case where the nudge mount is missing or the platform died mid-merge.
+POLL_SECONDS="${POLL_SECONDS:-120}"
+# How often to stat the nudge file. A stat of a local path is
+# effectively free, so this is the real reaction time to an on-platform
+# self-app merge.
+NUDGE_CHECK_SECONDS="${NUDGE_CHECK_SECONDS:-2}"
 RETRY_FAILED_SECONDS="${RETRY_FAILED_SECONDS:-1800}"
 STATE_FILE="$DEPLOY_DIR/runtime/deployer-state"
+# Touched by the platform after a self-app merge (one narrow writable
+# mount — see docker-compose.yml and src/services/deploy-nudge.js). The
+# nudge is a hint to poll NOW; the deploy target still comes only from
+# github.com, so a forged nudge buys an attacker one no-op git fetch.
+NUDGE_FILE="$DEPLOY_DIR/runtime/deploy-nudge/nudge"
 
 # File lists mirrored from the Deploy workflow's dorny/paths-filter step.
 # NODE_FILTER decides whether deploy.sh refreshes the sidecar archive
@@ -172,8 +194,26 @@ tick() {
   fi
 }
 
-log "starting (repo=$REPO_URL branch=$BRANCH poll=${POLL_SECONDS}s)"
+nudge_mtime() {
+  stat -c %Y "$NUDGE_FILE" 2>/dev/null || echo 0
+}
+
+log "starting (repo=$REPO_URL branch=$BRANCH poll=${POLL_SECONDS}s nudge-check=${NUDGE_CHECK_SECONDS}s)"
+LAST_SEEN_NUDGE=$(nudge_mtime)
+LAST_FULL_POLL=0
 while true; do
-  tick || log "tick failed: $?"
-  sleep "$POLL_SECONDS"
+  now=$(date +%s)
+  nudge=$(nudge_mtime)
+  if [ "$nudge" != "$LAST_SEEN_NUDGE" ]; then
+    # Consume the nudge BEFORE ticking: a second merge landing while
+    # this deploy runs moves the mtime again and triggers another tick.
+    LAST_SEEN_NUDGE="$nudge"
+    log "nudged by the platform (self-app merge); polling now"
+    LAST_FULL_POLL=$now
+    tick || log "tick failed: $?"
+  elif [ $((now - LAST_FULL_POLL)) -ge "$POLL_SECONDS" ]; then
+    LAST_FULL_POLL=$now
+    tick || log "tick failed: $?"
+  fi
+  sleep "$NUDGE_CHECK_SECONDS"
 done

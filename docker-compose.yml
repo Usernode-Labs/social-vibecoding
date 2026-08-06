@@ -174,6 +174,13 @@ services:
       # The deploy user on the host writes /opt/usernode/runtime/
       # deploy-status.json; the platform reads it from in-container.
       - /opt/usernode/runtime:/var/lib/usernode/runtime:ro
+      # The ONE writable exception, scoped to a subdirectory: after a
+      # self-app merge the platform touches a nudge file here and the
+      # host deployer (scripts/usernode-deployer.sh) runs its git poll
+      # immediately instead of waiting out its ~2-min baseline. A hint,
+      # not an authority — the deployer still deploys only what
+      # github.com says main points at (src/services/deploy-nudge.js).
+      - /opt/usernode/runtime/deploy-nudge:/var/lib/usernode/deploy-nudge
     depends_on:
       usernode-db:
         condition: service_healthy

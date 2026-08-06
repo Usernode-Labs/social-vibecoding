@@ -27,6 +27,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
@@ -38,6 +39,8 @@ const deployerSh = read('scripts/usernode-deployer.sh');
 const rollbackSh = read('scripts/rollback.sh');
 const unit = read('scripts/usernode-deployer.service');
 const deployYml = read('.github/workflows/deploy.yml');
+const composeYml = read('docker-compose.yml');
+const votesJs = read('src/routes/votes.js');
 
 // ── Syntax gates ──────────────────────────────────────────────────────
 
@@ -154,8 +157,68 @@ test('the poller self-updates by re-exec after a successful deploy', () => {
 test('an unreachable github.com degrades to a retry, never an exit', () => {
   assert.match(deployerSh, /git fetch failed; will retry/,
     'a git outage must leave the poller alive to catch the recovery');
-  assert.match(deployerSh, /while true; do\n  tick \|\|/,
+  assert.match(deployerSh, /tick \|\| log "tick failed/,
     'a tick failure must not break the loop');
+});
+
+// ── The merge-time nudge (fast path) ──────────────────────────────────
+
+test('a nudge triggers an immediate poll and is consumed before the tick', () => {
+  assert.match(deployerSh, /NUDGE_FILE="\$DEPLOY_DIR\/runtime\/deploy-nudge\/nudge"/);
+  assert.match(deployerSh, /NUDGE_CHECK_SECONDS="\$\{NUDGE_CHECK_SECONDS:-2\}"/,
+    'the nudge check IS the reaction time to an on-platform merge');
+  assert.match(deployerSh, /POLL_SECONDS="\$\{POLL_SECONDS:-120\}"/,
+    'with the nudge in place, the baseline git poll relaxes to ~2 min');
+  const loop = deployerSh.slice(deployerSh.indexOf('LAST_SEEN_NUDGE=$(nudge_mtime)'));
+  const consume = loop.indexOf('LAST_SEEN_NUDGE="$nudge"');
+  const tick = loop.indexOf('tick ||');
+  assert.ok(consume !== -1 && consume < tick,
+    'the mtime must be recorded BEFORE tick, so a merge landing mid-deploy re-triggers');
+  assert.match(loop, /LAST_FULL_POLL=\$now\n\s+tick/,
+    'a nudge-triggered poll also resets the baseline timer');
+});
+
+test('the nudge mount is the one writable exception under runtime/', () => {
+  assert.match(composeYml, /- \/opt\/usernode\/runtime:\/var\/lib\/usernode\/runtime:ro/,
+    'the broad runtime mount must stay read-only — the container cannot forge deploy state');
+  assert.match(composeYml,
+    /- \/opt\/usernode\/runtime\/deploy-nudge:\/var\/lib\/usernode\/deploy-nudge\n/,
+    'the nudge subdirectory is bind-mounted writable (no :ro suffix)');
+  assert.match(deploySh, /mkdir -p runtime runtime\/deploy-nudge/,
+    'deploy.sh pre-creates the dir so docker does not create it root-owned at mount time');
+});
+
+test('the self-app merge path fires the nudge, best-effort', () => {
+  const start = votesJs.indexOf('Self-app PR merged; host deployer will roll');
+  assert.ok(start !== -1, 'the self-hosted merge branch exists');
+  const branch = votesJs.slice(start, votesJs.indexOf('app_version_changed', start));
+  assert.match(branch, /nudgeHostDeployer\(\{ sha: mergeCommitSha, prNumber: session\.pr_number \}\)/);
+  assert.match(branch, /catch \(_\) \{ \/\* never fail a merge over a hint \*\//,
+    'a missing mount or fs error must never fail the merge that triggered it');
+});
+
+test('nudgeHostDeployer writes atomically and fails soft when the mount is absent', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nudge-'));
+  process.env.USERNODE_DEPLOY_NUDGE_PATH = dir;
+  delete require.cache[require.resolve('../src/services/deploy-nudge')];
+  const { nudgeHostDeployer } = require('../src/services/deploy-nudge');
+  try {
+    assert.equal(nudgeHostDeployer({ sha: 'abc123', prNumber: 42 }), true);
+    const written = JSON.parse(fs.readFileSync(path.join(dir, 'nudge'), 'utf8'));
+    assert.equal(written.sha, 'abc123');
+    assert.equal(written.prNumber, 42);
+    assert.ok(written.at, 'timestamp present so operators can eyeball staleness');
+    assert.ok(!fs.existsSync(path.join(dir, '.nudge.tmp')),
+      'write-then-rename: no half-written temp file left behind');
+
+    // Absent dir (local dev, pre-deployer host): false, no throw.
+    fs.rmSync(dir, { recursive: true, force: true });
+    assert.equal(nudgeHostDeployer({ sha: 'def456' }), false);
+  } finally {
+    delete process.env.USERNODE_DEPLOY_NUDGE_PATH;
+    delete require.cache[require.resolve('../src/services/deploy-nudge')];
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // ── systemd unit ──────────────────────────────────────────────────────

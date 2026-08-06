@@ -1043,12 +1043,20 @@ own merge loop was hostage to a third-party CI queue.
 The primary path is now a systemd service on the VPS:
 
 - **`scripts/usernode-deployer.sh`** polls `github.com` (git data plane
-  only — the same dependency `rollback.sh` already has, no Actions) every
-  30 s for a new head of `main`. On a new sha it checks the commit out
-  into `/opt/usernode-src`, rsyncs it over `/opt/usernode` with the same
-  exclude list the workflow uses (`.env`, `runtime/`, `.platform-env*`,
-  `data/` survive), computes the node/caddy change filters with
-  `git diff`, and runs `scripts/deploy.sh`.
+  only — the same dependency `rollback.sh` already has, no Actions) for a
+  new head of `main`. Two triggers share one code path: a **nudge** from
+  the platform (after a self-app merge, `src/services/deploy-nudge.js`
+  touches `runtime/deploy-nudge/nudge` through the one writable runtime
+  mount; the poller stats it every 2 s and polls immediately — so
+  on-platform merges deploy within seconds) and a **baseline** interval
+  poll every 2 min that catches direct pushes to `main` and covers a
+  missing nudge mount or a platform crash mid-merge. The nudge is a hint,
+  never an authority: the deploy target still comes only from what
+  `github.com` says `main` points at. On a new sha it checks the commit
+  out into `/opt/usernode-src`, rsyncs it over `/opt/usernode` with the
+  same exclude list the workflow uses (`.env`, `runtime/`,
+  `.platform-env*`, `data/` survive), computes the node/caddy change
+  filters with `git diff`, and runs `scripts/deploy.sh`.
 - **`scripts/deploy.sh`** is the single copy of the deploy logic
   (formerly inlined in `deploy.yml`'s ssh step): archive-refresh gating,
   platform-env materialization, pg_dump wait, health gate with automatic

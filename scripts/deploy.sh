@@ -55,7 +55,12 @@ if [ -z "${DEPLOY_SHA:-}" ]; then
   exit 1
 fi
 
-mkdir -p runtime
+# deploy-nudge/ is the platform's one writable runtime mount (compose
+# binds it rw so a self-app merge can nudge the host deployer). Created
+# here as the deploy user — if docker created it lazily at mount time it
+# would be root-owned, which still works (the container runs as root)
+# but leaves the host side unable to clean it up without sudo.
+mkdir -p runtime runtime/deploy-nudge
 
 # ----------------------------------------------------------------------
 # Single-flight lock. 30-minute wait matches the workflow's
