@@ -290,12 +290,13 @@ app.get('/api/version', (_req, res) => {
     // gates behaviour on it, and USERNODE_ENV is platform-injected (a
     // reserved key), so there's no new declaration to make.
     env: process.env.USERNODE_ENV || null,
-    // SELF-HOSTING.md Phase 2f / Phase 3: the platform's own slug
-    // in the apps table. Clients use this to recognize self-app
-    // surfaces (e.g. the "Platform updating…" banner cross-checks
-    // sessionStorage state against the live self-app slug). Cheap to
-    // include — already available in config; saves the client a second
-    // round-trip for any code path that needs it.
+    // SELF-HOSTING.md Phase 2f: the platform's own slug in the apps
+    // table, so a client can recognize self-app surfaces without
+    // guessing. No client reads it today — the "Platform updating…"
+    // banner that did was removed in #1015 — but it stays as the
+    // documented way to identify the self-app: cheap to include
+    // (already in config) and it saves a second round-trip for any
+    // future code path that needs it.
     selfAppSlug: config.selfAppSlug,
   });
 });

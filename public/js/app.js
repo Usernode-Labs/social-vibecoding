@@ -63,12 +63,6 @@ const App = {
   _isRestoring: false,
 
   async init() {
-    // Install fetch wrap and (if we were mid-restart on a previous load)
-    // restore the platform-updating banner state BEFORE any other init
-    // step that might fire a write. See PlatformUpdating below.
-    App.PlatformUpdating.installFetchWrap();
-    App.PlatformUpdating.restoreFromSessionStorage();
-
     // FIRST, before any screen paints: the synthetic-inset shot state.
     // Runs here rather than beside the other ?shot= handlers below
     // because it must cover the anonymous shell too (the landing / login
@@ -135,9 +129,9 @@ const App = {
       await NativeChrome.enterAnonymous();
     }
     // Capture the platform SHA this document booted with. The anonymous
-    // shell has no WS "platform updating" banner, so pull-to-refresh is
-    // its only recovery path after a deploy — and platformMovedOn()
-    // needs a boot-time baseline to compare against.
+    // shell has no drawer (so no stale-version pill), which makes
+    // pull-to-refresh its only recovery path after a deploy — and
+    // platformMovedOn() needs a boot-time baseline to compare against.
     App.loadVersion();
     if (window.AuthScreens) AuthScreens.enter();
   },
@@ -263,16 +257,11 @@ const App = {
     App._applyLaunchShot();
     App._applyFeedbackShot();
 
-    // Re-poll the platform version every 10s so the header pill flips to
-    // its "deploying" state within seconds of the deploy workflow signaling
-    // start, and back to "current" (or "stale") when it finishes. Cheap
-    // endpoint — just reads one tiny file off disk on the server.
-    //
-    // While the Phase 3 platform-updating banner is active we kick the
-    // cadence up to 2s (see PlatformUpdating.startFastPolling) so the
-    // banner clears within ~2s of the new container coming up. The slow
-    // interval is the steady-state baseline and remains scheduled
-    // unconditionally.
+    // Re-poll the platform version every 10s so the drawer's platform
+    // row flips to its "deploying" state within seconds of a deploy
+    // signaling start, and to "stale" (a tappable reload) once a new
+    // build is live and this tab is behind it. Cheap endpoint — just
+    // reads one tiny file off disk on the server.
     setInterval(App.loadVersion, 10_000);
   },
 
@@ -473,12 +462,6 @@ const App = {
       if (!App.loadedPlatformSha && info.sha && info.sha !== 'dev') {
         App.loadedPlatformSha = info.sha;
       }
-      // Phase 3: if we're in the platform-updating window, dismiss the
-      // banner the moment /api/version reports a SHA different from the
-      // one we recorded at trigger time. Independent of WebSocket health
-      // — this is exactly the path that recovers the tab after the WS
-      // dropped during the GHA rolling restart.
-      App.PlatformUpdating.observeVersion(info);
       App.renderPlatformVersionPill(info);
     } catch {}
   },
@@ -616,294 +599,6 @@ const App = {
     return String(s).replace(/[&<>"']/g, (c) => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
     })[c]);
-  },
-
-  // ─────────────────────────────────────────────────────────────────
-  // SELF-HOSTING.md Phase 3: "Platform updating…" banner.
-  //
-  // Lifecycle:
-  //   1. server broadcasts vote_update { merging:true, selfHosted:true }
-  //      when a self-app PR transitions promoted → merging.
-  //   2. handleVoteUpdate calls PlatformUpdating.begin(...).
-  //   3. begin() persists { fromSha, since } to sessionStorage, shows
-  //      the banner, kicks the version poll up to 2s, and arms a 5min
-  //      "stuck" timer that swaps the banner to its red+Reload variant.
-  //   4. App.loadVersion calls observeVersion(info) on every poll. As
-  //      soon as info.sha differs from fromSha (and isn't 'dev'),
-  //      end() clears state, hides the banner, and reloads the page —
-  //      the new server may ship new client code, so a hard reload
-  //      avoids version-skew bugs.
-  //   5. The wrapped fetch (installFetchWrap) rejects all non-GET
-  //      requests while the banner is up — this is the actual write
-  //      block; the banner is just the signal. GETs flow through so
-  //      the version poll, auth check, etc. still work.
-  //
-  // Page-load recovery: restoreFromSessionStorage() runs early in
-  // init() so a tab that loaded mid-restart (or was reloaded by the
-  // user) re-renders the banner immediately and re-arms the poll.
-  //
-  // ONE MODE ONLY (#962). This banner used to carry a second,
-  // non-blocking "resolving merge conflicts" state (#239), armed off
-  // the auto-conflict-resolver's vote_update { resolving:true }. That
-  // broadcast fires whenever an eligible proposal's branch needs a
-  // worker `git merge origin/main` — routine drift housekeeping that
-  // in production ended WITHOUT a merge about 7 times in 10 — so it
-  // announced a merge conflict and a retry to every signed-in person
-  // while nothing was merging and nothing was paused. The per-proposal
-  // signals (the "Resolving conflicts…" / "⚠ Conflict resolution
-  // failed" badges in merge-status.js, the dev-chat sync banner, the
-  // group-chat play-by-play) carry that state in context instead. The
-  // server still broadcasts `resolving` — those badges read it — this
-  // banner just no longer does.
-  // ─────────────────────────────────────────────────────────────────
-  PlatformUpdating: {
-    SS_KEY: 'usernode:platform_updating',
-    POLL_FAST_MS: 2000,
-    STUCK_AFTER_MS: 5 * 60 * 1000,
-
-    // Mutable runtime state. Persisted shape (in sessionStorage) is
-    // just { fromSha, since, appSlug, sessionId } — the timer ids and
-    // DOM refs are ephemeral and must be re-derived on page load.
-    fromSha: null,
-    since: null,
-    // Session whose merge armed the banner — lets restore / the stuck
-    // timer verify against /api/sessions/:id/status that the merge is
-    // still in flight (see verifyMergeStillInFlight).
-    sessionId: null,
-    fastPollTimer: null,
-    stuckTimer: null,
-    fetchWrapInstalled: false,
-
-    isActive() {
-      return !!this.fromSha;
-    },
-
-    begin({ appSlug, sessionId } = {}) {
-      // Idempotent: a second begin() (e.g. server resends the merging
-      // event) is a no-op. The fromSha must be captured at first entry
-      // — re-capturing on a duplicate call would defeat the SHA-flip
-      // dismissal if the new container had already booted in between.
-      if (this.isActive()) return;
-      const fromSha = App.loadedPlatformSha || null;
-      this.fromSha = fromSha;
-      this.since = Date.now();
-      this.sessionId = sessionId || null;
-      try {
-        sessionStorage.setItem(this.SS_KEY, JSON.stringify({
-          fromSha, since: this.since, appSlug: appSlug || null, sessionId: sessionId || null,
-        }));
-      } catch {}
-      this.show(/* stuck */ false);
-      this.startFastPolling();
-      this.armStuckTimer();
-      console.log('[platform-updating] banner armed', { fromSha, appSlug });
-    },
-
-    restoreFromSessionStorage() {
-      let raw = null;
-      try { raw = sessionStorage.getItem(this.SS_KEY); } catch {}
-      if (!raw) return;
-      let parsed = null;
-      try { parsed = JSON.parse(raw); } catch {}
-      if (!parsed || typeof parsed !== 'object') {
-        try { sessionStorage.removeItem(this.SS_KEY); } catch {}
-        return;
-      }
-      // #962: only a real merge payload can restore this banner. A tab
-      // that armed the retired #239 resolving mode before this build
-      // deployed still has its { mode:'resolving', … } payload here,
-      // and any payload without a usable fromSha has no dismissal
-      // condition (no SHA to flip away from) — so it could only ever
-      // sit until the stuck timer. Treat both as garbage.
-      if (parsed.mode === 'resolving' || !parsed.fromSha) {
-        try { sessionStorage.removeItem(this.SS_KEY); } catch {}
-        return;
-      }
-      this.fromSha = parsed.fromSha;
-      this.since = parsed.since || Date.now();
-      this.sessionId = parsed.sessionId || null;
-      const elapsed = Date.now() - this.since;
-      this.show(elapsed >= this.STUCK_AFTER_MS);
-      this.startFastPolling();
-      this.armStuckTimer();
-      console.log('[platform-updating] banner restored from session', { elapsedMs: elapsed });
-      // The restored merge may have aborted while this tab was
-      // reloading (its merging:false counter-event is gone for good) —
-      // verify before holding the tab read-only until the stuck timer.
-      this.verifyMergeStillInFlight();
-    },
-
-    observeVersion(info) {
-      if (!this.isActive()) return;
-      const sha = info && info.sha;
-      // Wait for a real, deploy-pinned SHA different from the one we
-      // captured. 'dev' means GIT_SHA wasn't set on the responding
-      // container — almost certainly a misconfigured rebuild rather
-      // than the legitimate post-restart steady state, so don't
-      // dismiss off it.
-      if (!sha || sha === 'dev' || sha === this.fromSha) return;
-      this.end({ newSha: sha });
-    },
-
-    // The merge behind this banner ended without merging — failed, head
-    // moved, or deferred (vote_update { merging:false, merged:false }).
-    // No new code is coming, so there's no SHA flip to wait for and no
-    // reason to reload — just clear the latch and lift the write block.
-    // Safe when the banner isn't armed (no-op).
-    cancel() {
-      if (!this.isActive()) return;
-      console.log('[platform-updating] cancelled (merge failed, no deploy)');
-      try { sessionStorage.removeItem(this.SS_KEY); } catch {}
-      this.fromSha = null;
-      this.since = null;
-      this.sessionId = null;
-      this.stopFastPolling();
-      this.disarmStuckTimer();
-      this.hide();
-    },
-
-    // Shared amber/red class swap for all banner variants. Swapping
-    // classes rather than re-rendering keeps the spinner animation
-    // uninterrupted when a variant flips mid-flight.
-    _setBannerTone(tone) {
-      const el = document.getElementById('platform-updating-banner');
-      if (!el) return;
-      const amber = ['bg-amber-100', 'text-amber-900', 'border-amber-300',
-        'dark:bg-amber-900/40', 'dark:text-amber-100', 'dark:border-amber-800/60'];
-      const red = ['bg-red-100', 'text-red-900', 'border-red-300',
-        'dark:bg-red-900/40', 'dark:text-red-100', 'dark:border-red-800/60'];
-      el.classList.remove(...(tone === 'red' ? amber : red));
-      el.classList.add(...(tone === 'red' ? red : amber));
-    },
-
-    end({ newSha } = {}) {
-      console.log('[platform-updating] dismissing', { fromSha: this.fromSha, newSha });
-      try { sessionStorage.removeItem(this.SS_KEY); } catch {}
-      this.fromSha = null;
-      this.since = null;
-      this.sessionId = null;
-      this.stopFastPolling();
-      this.disarmStuckTimer();
-      this.hide();
-      // Hard reload: the new server may ship new client code, so
-      // reusing the in-memory App / AppView / Home from the pre-restart
-      // SHA against a freshly-deployed backend is exactly the version-
-      // skew minefield the rest of this codebase tries to avoid (see
-      // the 'stale' pill in renderPlatformVersionPill — same design,
-      // different trigger). loadedPlatformSha is updated by the next
-      // load anyway, so a soft refresh + version-pill flip would also
-      // work, but reload is simpler and unambiguous.
-      try { location.reload(); } catch {}
-    },
-
-    show(stuck) {
-      const el = document.getElementById('platform-updating-banner');
-      if (!el) return;
-      el.classList.remove('hidden');
-      const reload = document.getElementById('platform-updating-reload');
-      const text = document.getElementById('platform-updating-text');
-      const spinner = document.getElementById('platform-updating-spinner');
-      if (stuck) {
-        // Swap to the red "stuck" variant (class swap keeps the
-        // animation uninterrupted if we flip mid-flight, e.g. on
-        // session-storage restore for a tab backgrounded >5 min).
-        this._setBannerTone('red');
-        if (text) text.textContent = 'Platform update is taking longer than expected. You can reload manually.';
-        if (spinner) spinner.classList.add('hidden');
-        if (reload) reload.classList.remove('hidden');
-      } else {
-        this._setBannerTone('amber');
-        if (text) text.textContent = 'Platform updating… sit tight, write actions are paused.';
-        if (spinner) spinner.classList.remove('hidden');
-        if (reload) reload.classList.add('hidden');
-      }
-    },
-
-    hide() {
-      const el = document.getElementById('platform-updating-banner');
-      if (el) el.classList.add('hidden');
-    },
-
-    startFastPolling() {
-      if (this.fastPollTimer != null) return;
-      this.fastPollTimer = setInterval(() => App.loadVersion(), this.POLL_FAST_MS);
-    },
-
-    stopFastPolling() {
-      if (this.fastPollTimer != null) {
-        clearInterval(this.fastPollTimer);
-        this.fastPollTimer = null;
-      }
-    },
-
-    armStuckTimer() {
-      this.disarmStuckTimer();
-      const remaining = Math.max(0, this.STUCK_AFTER_MS - (Date.now() - this.since));
-      this.stuckTimer = setTimeout(() => {
-        if (!this.isActive()) return;
-        this.show(/* stuck */ true);
-        // A banner this old usually means the merging:false
-        // counter-event was missed (WS drop). If the server says the
-        // merge is no longer in flight, unlatch instead of sitting red
-        // forever.
-        this.verifyMergeStillInFlight();
-      }, remaining);
-    },
-
-    // Missed-WS-event recovery: ask the server whether the merge that
-    // armed this banner is still on the merging → merged → deploy path.
-    // The merging:false counter-event un-latches live tabs, but a tab
-    // that was reloading (or whose WS had dropped) when it fired restores the
-    // banner from sessionStorage and would block writes forever — the
-    // dismissal condition (a /api/version SHA flip) never comes for an
-    // aborted merge. 'merged' keeps the banner: the GHA deploy and its
-    // SHA flip are still on the way. Fail-safe on any error or an older
-    // server without `status` in the payload: keep the banner armed.
-    verifyMergeStillInFlight() {
-      const sessionId = this.sessionId;
-      if (sessionId == null) return;
-      fetch(`/api/sessions/${sessionId}/status`)
-        .then((r) => (r.ok ? r.json() : null))
-        .then((data) => {
-          if (!this.isActive() || this.sessionId !== sessionId) return;
-          const status = data && typeof data.status === 'string' ? data.status : null;
-          if (status && status !== 'merging' && status !== 'merged') {
-            console.log('[platform-updating] merge no longer in flight — unlatching', { status });
-            this.cancel();
-          }
-        })
-        .catch(() => {});
-    },
-
-    disarmStuckTimer() {
-      if (this.stuckTimer != null) {
-        clearTimeout(this.stuckTimer);
-        this.stuckTimer = null;
-      }
-    },
-
-    // Wraps window.fetch to reject any non-GET (write) request while
-    // the banner is up. This is the actual block — the banner itself
-    // is purely a signal. GETs flow through unchanged so /api/version
-    // polling, the global events WS reconnect path, and any other
-    // read-only chrome can keep running.
-    //
-    // Idempotent: only installs once even if init() runs twice
-    // (defensive — DOMContentLoaded should fire exactly once but we
-    // don't want to double-wrap if a future flow triggers re-init).
-    installFetchWrap() {
-      if (this.fetchWrapInstalled) return;
-      this.fetchWrapInstalled = true;
-      const orig = window.fetch.bind(window);
-      const self = this;
-      window.fetch = function (resource, init) {
-        const method = (init && init.method ? String(init.method) : 'GET').toUpperCase();
-        if (self.isActive() && method !== 'GET' && method !== 'HEAD') {
-          return Promise.reject(new Error('Platform is updating — write actions paused. Try again in a few seconds.'));
-        }
-        return orig(resource, init);
-      };
-    },
   },
 
   // Per-app redeploy WS handler. Flips affected pills into / out of
@@ -1659,37 +1354,20 @@ const App = {
     }
   },
 
+  // #1015: a self-app merge no longer latches any platform-wide chrome.
+  // The "Platform updating… write actions are paused" banner (and its
+  // fetch write-block, 2s version poll, stuck timer and forced reload)
+  // existed because a self-app merge restarted the ONE platform
+  // container. Blue-green deploys (#1008, scripts/platform-rollout.sh)
+  // keep the live color serving until the new one is health-gated and
+  // cut over, so there is no downtime to announce and no reason to
+  // pause writes. `data.selfHosted` still rides along on these
+  // broadcasts (it's a cheap, honest fact) — this handler simply
+  // doesn't branch on it, and per-proposal state is carried by the
+  // proposal's own badges. A tab left open across a platform deploy is
+  // caught up by the drawer's stale-version pill
+  // (renderPlatformVersionPill) or by pull-to-refresh (_refreshOrReload).
   handleVoteUpdate(data) {
-    // Phase 3 trigger: when a self-hosted PR transitions promoted →
-    // merging, latch the "Platform updating…" banner. The dismissal
-    // (SHA flip on /api/version) happens via App.loadVersion's poll
-    // loop. Fires before the panel refresh so all open tabs (including
-    // ones not currently looking at this app) latch into the state.
-    if (data.merging && data.selfHosted) {
-      App.PlatformUpdating.begin({
-        appSlug: data.appSlug,
-        sessionId: data.sessionId,
-      });
-    }
-    // Counter-event: the self-app merge attempt ended without a merge
-    // (failed, head moved since review, revision unverifiable), so no
-    // SHA flip is coming — unlatch instead of holding the platform
-    // read-only until the stuck timer. `merging === false` (field
-    // present) + no merge is the terminal shape every abort path
-    // broadcasts; keying on it rather than just `mergeFailed` covers the
-    // head-moved / deferred aborts, which are deliberately not flagged
-    // as failures.
-    //
-    // #962: `data.resolving` is deliberately NOT consulted here (nor
-    // anywhere else in this handler). The banner tracks the merge and
-    // only the merge: when a merge attempt ends on a conflict we
-    // unlatch immediately, and if the auto-resolver's fix lands and a
-    // fresh merge is claimed, that merge's own `merging:true` re-arms
-    // us. The intervening 1–2 min of branch-sync work is carried by
-    // the proposal's own badges, not by platform-wide chrome.
-    if (data.merging === false && !data.merged && data.selfHosted) {
-      App.PlatformUpdating.cancel();
-    }
     // Refresh the proposals tab / inline chat vote state if we're in
     // this app's Dev view.
     if (App.currentApp === data.appSlug && App.currentTab === 'dev') {

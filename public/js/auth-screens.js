@@ -358,8 +358,8 @@
       // directory (probe results, active-user counts, new deploys) —
       // and, via App._refreshOrReload, hard-reloads when the platform
       // itself redeployed since this document loaded (the anonymous
-      // shell has no WS platform-updating banner, so this pull is its
-      // only recovery path to new client code).
+      // shell has no drawer, hence no stale-version pill, so this pull
+      // is its only recovery path to new client code).
       // Attached to the INNER scroller, never the fixed overlay: the
       // rubber-band translate on the overlay itself would expose the
       // authed shell's header behind it during the pull.

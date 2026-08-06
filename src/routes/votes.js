@@ -3338,11 +3338,12 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
       let sha = null;
       // SELF-HOSTING.md sub-step 2g (Guard B): for the self-app,
       // there's no platform-managed prod container to rebuild — the
-      // GitHub Actions deploy workflow rolls the harness when the merge
-      // lands on main. Skip rebuildProduction entirely, but keep the
-      // app_version_changed broadcast firing so Phase 3's banner has its
-      // hook. main_sha is refreshed by seedSelfApp() on the next boot,
-      // which clients pick up via /api/version.
+      // host-side deployer (nudged below) rolls the harness through a
+      // blue-green rollout when the merge lands on main. Skip
+      // rebuildProduction entirely, but keep the app_version_changed
+      // broadcast firing so the app's own commit pills refresh.
+      // main_sha is refreshed by seedSelfApp() on the next boot, which
+      // clients pick up via /api/version.
       if (!app.self_hosted) {
         dstep({ phase: 'prod_rebuild', message: 'Production rebuild started.' });
         const result = await staging.rebuildProduction(config, app);
@@ -3374,8 +3375,9 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
       // polling. The existing vote_update event already fires on merge
       // but is scoped to vote panel refreshes; a dedicated event keeps
       // the concerns separated and avoids over-broadcasting. Fires for
-      // self-hosted too (sha=null) so the future banner can detect
-      // "platform updating" without a sha to anchor to.
+      // self-hosted too (sha=null): the platform's own row refreshes
+      // from /api/version, which has no new SHA to report until the
+      // blue-green rollout cuts over.
       try {
         const { broadcastGlobalScoped } = require('../services/ws');
         broadcastGlobalScoped({
@@ -4063,14 +4065,14 @@ async function checkAndMerge(config, pool, session, options = {}) {
   // in flight"; the final `merged:true` broadcast fires below after the
   // GitHub merge + prod rebuild + staging teardown finish.
   //
-  // SELF-HOSTING.md Phase 3: `selfHosted` rides along so clients
-  // can latch into the "platform updating…" banner state at the moment
-  // the merge starts. We can't rely on the post-merge
-  // `app_version_changed` event for self-hosted apps because the GHA
-  // rolling restart that follows drops the WebSocket — clients persist
-  // the banner in sessionStorage on this event and dismiss it once
-  // /api/version reports a different SHA. See public/js/app.js
-  // (handleVoteUpdate / beginPlatformUpdating).
+  // `selfHosted` rides along as a cheap, honest fact about the merge:
+  // whether this proposal deploys the platform itself. It used to arm
+  // the platform-wide "Platform updating…" banner, which was removed in
+  // #1015 — blue-green deploys (#1008) keep the live color serving
+  // through a platform redeploy, so there is no downtime to announce
+  // and no reason for a client to pause writes. No client branches on
+  // the flag today; it stays on the payload for admin/debug parity and
+  // any future surface that wants to distinguish a platform merge.
   const { pushVoteUpdate } = require('../services/ws');
   pushVoteUpdate({
     sessionId: session.id,
@@ -4416,21 +4418,20 @@ async function checkAndMerge(config, pool, session, options = {}) {
       }
     }
 
-    // Un-latch clients. The `merging:true` broadcast above armed the
-    // Phase 3 "Platform updating…" banner on every tab for self-hosted
-    // apps — and that banner only dismisses on a /api/version SHA flip,
-    // which will never come if the GitHub merge itself failed (no
-    // deploy happens). Without this counter-event, a failed self-app
-    // merge leaves the whole platform read-only for everyone until the
-    // 5-minute stuck timer. mergeFailed:false-positives are harmless:
-    // the client just clears a banner that wasn't armed.
+    // Terminal counter-event to the `merging:true` broadcast above: this
+    // merge attempt is over and nothing merged. Every client surface
+    // that advanced to "Merging…" needs it to fall back — the vote
+    // panel, the session header pill, the proposal's own state badge —
+    // so the shape (`merging:false` + `merged:false`) is the contract,
+    // not an optimization. (It also un-latched the platform-wide
+    // "Platform updating…" banner until #1015 removed it.)
     //
     // #239: `resolving` rides along when the failure is a conflict AND
-    // the auto-resolver is about to be fired below — clients transition
-    // the banner in place (updating → resolving) instead of silently
-    // dismissing it while the resolver spends 1–2 minutes fixing the
-    // branch. The resolver's own start broadcast can lag by a few
-    // seconds (pollMergeable runs first), so this flag closes the gap.
+    // the auto-resolver is about to be fired below, so the proposal's
+    // badge reads "Resolving conflicts…" rather than a bare failure
+    // while the resolver spends 1–2 minutes fixing the branch. The
+    // resolver's own start broadcast can lag by a few seconds
+    // (pollMergeable runs first), so this flag closes the gap.
     try {
       const { pushVoteUpdate } = require('../services/ws');
       pushVoteUpdate({
