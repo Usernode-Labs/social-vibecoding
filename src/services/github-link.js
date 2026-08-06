@@ -1,35 +1,48 @@
 'use strict';
 
-// Verified GitHub account link.
+// Verified GitHub account link — IDENTITY ONLY.
 //
 // Shaped after routes/waitlist-connect.js's OAuth round-trip (authorize →
 // callback → GET /user), with three differences that matter:
 //
-//   1. It asks for the `public_repo` scope, because it has ONE privileged
-//      use: creating a fork of an app's repo into the user's own account on
-//      their behalf. App repos are public (services/github.js createRepo
-//      sets private:false), so reads of that fork need no credential and PR
-//      creation happens with the platform's bot token on the base repo.
-//   2. The resulting token is stored encrypted (services/secrets.js, the
-//      same AES-256-GCM envelope as users.anthropic_key_enc) and is never
-//      returned to a browser.
+//   1. It asks for NO SCOPE AT ALL. GitHub's narrowest classic scope that can
+//      fork a repository is `public_repo`, which grants read/write access to
+//      code on *every* public repository the user can reach — and the only
+//      reason this link ever wanted it was to create a fork on the user's
+//      behalf. That fork is now made by the user's OWN coding agent (or by
+//      one click on GitHub's fork page), so the platform needs nothing but
+//      the login: a no-scope token reads public profile data, which is all
+//      `GET /user` requires. Every other GitHub call in the fork path is
+//      either a PUBLIC read (app repos and their forks are public —
+//      services/github.js createRepo sets private:false) or a write made
+//      with the platform's own bot credentials on the base repo.
+//   2. NO TOKEN IS EVER STORED. The token that comes back from the code
+//      exchange is used once, for that one `GET /user`, then best-effort
+//      revoked and dropped on the floor. users.github_oauth_token_enc is
+//      written NULL and exists only until every deployment has migrated off
+//      it (see src/db/migrate.js revokeLegacyGithubGrants).
 //   3. The login it records is AUTHORIZATION-GRADE. The pre-existing
 //      `users.github` profile column is self-declared display text and must
-//      never be used for an ownership decision; this one may.
+//      never be used for an ownership decision; this one may. It is the ONLY
+//      thing this link produces, and the attribution gate in
+//      services/external-agent-tasks.js is the only thing that consumes it.
 //
 // The `state` parameter is a signed, single-use, session-bound nonce with a
 // short TTL — an attacker-supplied callback must not be able to bind their
 // GitHub identity to somebody else's Usernode account.
 
 const crypto = require('crypto');
-const secrets = require('./secrets');
 const log = require('./logger');
 
 const STATE_TTL_MS = 10 * 60 * 1000;
-const SCOPE = 'public_repo';
+// Deliberately empty: see (1) above. `authorizeUrl` omits the parameter
+// entirely rather than sending `scope=`, so GitHub's consent screen reads
+// "public data only" instead of naming repository write access.
+const SCOPE = '';
 const AUTHORIZE_URL = 'https://github.com/login/oauth/authorize';
 const TOKEN_URL = 'https://github.com/login/oauth/access_token';
 const USER_URL = 'https://api.github.com/user';
+const API_BASE = 'https://api.github.com';
 const LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
 
 // The OAuth app credentials. A deployment may either reuse the waitlist's
@@ -97,10 +110,12 @@ function authorizeUrl(config, { userId, redirectUri }) {
   const creds = oauthCredentials(config);
   if (!creds) return null;
   const state = makeState(config, userId);
+  // No `scope` parameter at all. GitHub then issues a token with no scopes,
+  // whose consent screen says "public data only" and which can do nothing
+  // but read public information — see (1) at the top of this file.
   const params = new URLSearchParams({
     client_id: creds.clientId,
     redirect_uri: redirectUri,
-    scope: SCOPE,
     state,
     allow_signup: 'false',
   });
@@ -115,9 +130,62 @@ async function fetchJson(url, options) {
   return { ok: resp.ok, status: resp.status, body };
 }
 
-// Exchange the callback code for a token and resolve the login it belongs
-// to. Returns { login, token } or null — the caller maps null onto a
-// generic failure page rather than reflecting GitHub's error text.
+// The OAuth app's own credential, for the two endpoints that are
+// authenticated as the APPLICATION rather than as a user (token/grant
+// revocation). Basic auth on client_id:client_secret, per
+// docs.github.com/en/rest/apps/oauth-applications.
+function appBasicAuth(creds) {
+  const raw = `${creds.clientId}:${creds.clientSecret}`;
+  return `Basic ${Buffer.from(raw, 'utf8').toString('base64')}`;
+}
+
+// Hand a credential back to GitHub. Both revocations are BEST-EFFORT: the
+// token has no scopes and is never stored, so a failure leaves nothing
+// dangerous behind — it must never fail the link (or the migration).
+//
+//   'token' — DELETE /applications/{client_id}/token, kills just this token
+//             and leaves the user's authorization record in place, so a
+//             later re-link does not need a second trip through consent.
+//   'grant' — DELETE /applications/{client_id}/grant, kills the whole
+//             authorization INCLUDING any scope it accumulated. This is what
+//             the legacy-token migration needs: a classic OAuth grant is
+//             cumulative, so a previously-granted `public_repo` survives
+//             re-authorizing with no scope and can only be handed back here.
+async function revokeCredential(config, token, kind = 'token') {
+  const creds = oauthCredentials(config);
+  if (!creds || typeof token !== 'string' || !token) return false;
+  const path = kind === 'grant' ? 'grant' : 'token';
+  try {
+    const resp = await fetch(
+      `${API_BASE}/applications/${encodeURIComponent(creds.clientId)}/${path}`,
+      {
+        method: 'DELETE',
+        headers: {
+          authorization: appBasicAuth(creds),
+          accept: 'application/vnd.github+json',
+          'content-type': 'application/json',
+          'user-agent': 'usernode-social-vibecoding',
+          'x-github-api-version': '2022-11-28',
+        },
+        body: JSON.stringify({ access_token: token }),
+      }
+    );
+    if (!resp.ok) {
+      log.warn('github-link', 'credential revoke refused', { kind, status: resp.status });
+      return false;
+    }
+    return true;
+  } catch (err) {
+    log.warn('github-link', 'credential revoke failed', { kind, err: err.message });
+    return false;
+  }
+}
+
+// Exchange the callback code for a token, resolve the login it belongs to,
+// and hand the token straight back to GitHub. Returns { login } or null —
+// the caller maps null onto a generic failure page rather than reflecting
+// GitHub's error text. The token is deliberately NOT returned: nothing
+// downstream of this function is allowed to hold a user credential.
 async function exchangeCode(config, { code, redirectUri }) {
   const creds = oauthCredentials(config);
   if (!creds) return null;
@@ -134,27 +202,41 @@ async function exchangeCode(config, { code, redirectUri }) {
   const token = tokenResp.body && tokenResp.body.access_token;
   if (!tokenResp.ok || typeof token !== 'string' || !token) return null;
 
-  const userResp = await fetchJson(USER_URL, {
-    headers: {
-      authorization: `Bearer ${token}`,
-      accept: 'application/vnd.github+json',
-      'user-agent': 'usernode-social-vibecoding',
-    },
-  });
-  const login = userResp.body && userResp.body.login;
-  if (!userResp.ok || typeof login !== 'string' || !LOGIN_RE.test(login)) return null;
-  return { login, token };
+  let verified = null;
+  try {
+    const userResp = await fetchJson(USER_URL, {
+      headers: {
+        authorization: `Bearer ${token}`,
+        accept: 'application/vnd.github+json',
+        'user-agent': 'usernode-social-vibecoding',
+      },
+    });
+    // Validated before it is trusted: this string becomes an ownership
+    // comparison in the attribution gate, so a malformed one is no login.
+    const login = userResp.body && userResp.body.login;
+    if (userResp.ok && typeof login === 'string' && LOGIN_RE.test(login)) {
+      verified = login;
+    }
+  } finally {
+    // Always, whether the login read worked or not: the token has done the
+    // only job it will ever have.
+    await revokeCredential(config, token, 'token');
+  }
+  if (!verified) return null;
+  return { login: verified };
 }
 
-async function saveLink(pool, config, userId, { login, token }) {
-  const enc = secrets.encrypt(token, config.dataEncryptionKey);
+// The link is the login. `token` is accepted and ignored so an older caller
+// cannot accidentally persist a credential; the column is written NULL on
+// every link, which also clears a legacy value on re-link.
+async function saveLink(pool, config, userId, { login }) {
   await pool.query(
     `UPDATE users
         SET github_login = $2,
-            github_oauth_token_enc = $3,
+            github_oauth_token_enc = NULL,
             github_linked_at = NOW()
       WHERE id = $1`,
-    [userId, login, enc]
+    [userId, login]
   );
 }
 
@@ -170,60 +252,42 @@ async function clearLink(pool, userId) {
 }
 
 // Non-secret status for the Settings row and the connector's `whoami`.
-// Never includes the token.
+// The link is `github_login` alone now — there is no token to be present,
+// so requiring one would read every identity-only link as unlinked.
+// `access` is what lets the Settings row state plainly that the platform
+// holds no credential, rather than the client inferring it.
 async function linkStatus(pool, userId) {
   try {
     const { rows } = await pool.query(
-      `SELECT github_login, github_linked_at,
-              (github_oauth_token_enc IS NOT NULL) AS has_token
-         FROM users WHERE id = $1`,
+      `SELECT github_login, github_linked_at FROM users WHERE id = $1`,
       [userId]
     );
-    if (!rows.length) return { linked: false, login: null, linkedAt: null };
+    if (!rows.length) return { linked: false, login: null, linkedAt: null, access: 'identity' };
     const row = rows[0];
     return {
-      linked: !!(row.github_login && row.has_token),
+      linked: !!row.github_login,
       login: row.github_login || null,
       linkedAt: row.github_linked_at ? new Date(row.github_linked_at).toISOString() : null,
+      access: 'identity',
     };
   } catch (err) {
     log.warn('github-link', 'link status read failed', { userId, err: err.message });
-    return { linked: false, login: null, linkedAt: null };
+    return { linked: false, login: null, linkedAt: null, access: 'identity' };
   }
 }
 
-// The user's decrypted OAuth token, for the ONE privileged operation
-// (forking an app repo into their account). A decrypt failure is treated as
-// "not linked", matching how limits.loadUserApiKey tolerates the same case.
-async function loadUserToken(pool, config, userId) {
-  try {
-    const { rows } = await pool.query(
-      'SELECT github_login, github_oauth_token_enc FROM users WHERE id = $1',
-      [userId]
-    );
-    if (!rows.length || !rows[0].github_oauth_token_enc) return null;
-    const token = secrets.decrypt(rows[0].github_oauth_token_enc, config.dataEncryptionKey);
-    if (!token) {
-      log.warn('github-link', 'token decryption failed; treating as unlinked', { userId });
-      return null;
-    }
-    return { login: rows[0].github_login, token };
-  } catch (err) {
-    log.warn('github-link', 'token load failed', { userId, err: err.message });
-    return null;
-  }
-}
-
-// Staging mock data: users.github_oauth_token_enc is staging:private, so a
-// staging clone always renders the unlinked state and the connected layout
-// (login + Disconnect) would never be reviewable. Honoured only in staging,
-// only with ?demo=1 — a strict no-op in production.
+// Staging mock data: users.github_login is only ever set by a real OAuth
+// round-trip, which a staging clone cannot carry out, so the connected
+// layout (login + "no token held" + Disconnect) would never be reviewable.
+// Honoured only in staging, only with ?demo=1 — a strict no-op in
+// production.
 function demoLinkStatus() {
   const day = 24 * 60 * 60 * 1000;
   return {
     linked: true,
     login: 'octo-contributor',
     linkedAt: new Date(Date.now() - 6 * day).toISOString(),
+    access: 'identity',
     demo: true,
   };
 }
@@ -238,9 +302,9 @@ module.exports = {
   verifyState,
   authorizeUrl,
   exchangeCode,
+  revokeCredential,
   saveLink,
   clearLink,
   linkStatus,
-  loadUserToken,
   demoLinkStatus,
 };

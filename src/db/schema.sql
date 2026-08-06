@@ -3596,6 +3596,13 @@ CREATE TABLE IF NOT EXISTS mobile_auth_tokens (
 );
 CREATE INDEX IF NOT EXISTS idx_mobile_auth_tokens_user ON mobile_auth_tokens (user_id);
 
+-- Mobile push notifications — sender identity, registrations, deliveries (#844)
+--
+-- This header also bounds the topochain block above for
+-- tests/topochain-schema.test.js: the four mobile_push_* tables below are
+-- NOT part of the SPEC §3.4 topochain migration and must not count toward
+-- its 22-table pin.
+
 -- Database-owned sender identity and activation boundary. Same-identity sender
 -- restarts retain this cutoff so queued work survives ordinary deployments.
 -- Initial activation, re-enabling, and deployment identity changes establish
@@ -4070,13 +4077,20 @@ COMMENT ON TABLE mcp_auth_audit_events IS 'staging:private';
 CREATE INDEX IF NOT EXISTS mcp_auth_audit_events_user_idx
   ON mcp_auth_audit_events (user_id, occurred_at DESC);
 
--- ── Verified GitHub account link ────────────────────────────────────────
+-- ── Verified GitHub account link (IDENTITY ONLY) ────────────────────────
 -- Distinct from the self-declared `users.github` profile string above,
 -- which is unverified display text and must NEVER be used for
--- authorization. These three are written only by the OAuth round-trip in
--- src/services/github-link.js. The token carries `public_repo` and its
--- only privileged use is forking an app repo into the user's own account
--- on their behalf.
+-- authorization. These are written only by the OAuth round-trip in
+-- src/services/github-link.js, which asks GitHub for NO SCOPE: the login
+-- is the whole link, and the platform holds no credential for the user.
+--
+-- github_oauth_token_enc is LEGACY and always NULL. It once held a
+-- `public_repo` token used to fork an app repo into the user's account on
+-- their behalf; that fork is now made by the user's own coding agent.
+-- saveLink writes NULL, and migrate.js's revokeLegacyGithubGrants hands
+-- any pre-existing token back to GitHub and clears it. Kept (rather than
+-- dropped) so a rollback to the previous release cannot hit a missing
+-- column mid-deploy; drop it once every deployment has migrated.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS github_login             VARCHAR(255);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS github_oauth_token_enc   TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS github_linked_at         TIMESTAMPTZ;

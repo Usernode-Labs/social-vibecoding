@@ -1,19 +1,27 @@
 // Hosted MCP connector — handing work to the user's own coding agent.
 //
-// This service is the only place the platform uses a USER'S GitHub token,
-// and the only place a proposal can be created without a human clicking
-// anything. The tests below are weighted accordingly:
+// This service is the only place a proposal can be created without a human
+// clicking anything, and it used to be the only place the platform used a
+// USER'S GitHub token. It no longer holds one at all: the fork and the
+// branch are made by the user's own coding agent, and everything this file
+// reads about them is public. The tests below are weighted accordingly:
 //
-//   1. The attribution gate. A proposal opened this way carries the
+//   1. NO user credential is used anywhere. The GitHub link is identity-only
+//      now (services/github-link), so a re-introduced `authorization: Bearer
+//      <user token>` header would silently re-widen the OAuth scope this
+//      whole design exists to avoid.
+//   2. The attribution gate. A proposal opened this way carries the
 //      caller's name and their agent's badge, so the pull request's head
 //      must live in a repository owned by the login THEY verified. This is
 //      checked on every path — created, adopted, and named-by-number — and
-//      it must refuse before the platform is asked to import anything.
-//   2. The caps are applied BEFORE a pull request is opened, so a refusal
+//      it must refuse before the platform is asked to import anything. Only
+//      the OWNER is checked: the fork's name is the agent's choice.
+//   3. The caps are applied BEFORE a pull request is opened, so a refusal
 //      never leaves a stray PR on someone's app.
-//   3. The work order is complete and carries no credential, and the
-//      user-written brief inside it stays marked as data.
-//   4. source stays 'imported'. The connector adds an author, not a new
+//   4. The work order is complete — it now has to create the fork and the
+//      branch too — carries no credential, and the user-written brief inside
+//      it stays marked as data.
+//   5. source stays 'imported'. The connector adds an author, not a new
 //      kind of proposal.
 //
 // Run with: node --test tests/external-agent-tasks.test.js
@@ -31,7 +39,7 @@ const SRC = fs.readFileSync(
 
 // ── Fakes ──────────────────────────────────────────────────────────────
 
-// A fetch stub for the GitHub-as-the-user calls. `routes` maps
+// A fetch stub for the service's PUBLIC GitHub reads. `routes` maps
 // "METHOD /path" to a response; anything unmatched is a hard failure so a
 // test can never pass by accidentally hitting a real network path.
 function fakeFetch(routes, calls) {
@@ -98,10 +106,11 @@ function baseGh(overrides = {}) {
 // A deployment that HAS a GitHub OAuth app configured, with this user
 // linked through it. `isEnabled` is the deployment-level question asked
 // before the per-user one — see connector-config-unset.test.js for the
-// unconfigured deployment.
+// unconfigured deployment. The link is a LOGIN and nothing else: there is no
+// token for a fake to hand out.
 const linkedAs = (login) => ({
   isEnabled: () => true,
-  loadUserToken: async () => ({ login, token: 'gho_fake' }),
+  linkStatus: async () => ({ linked: true, login, linkedAt: null, access: 'identity' }),
 });
 
 // ── Agent vocabulary ───────────────────────────────────────────────────
@@ -135,19 +144,28 @@ test('branch names are namespaced and derived from platform identifiers only', (
 
 // ── The work order ─────────────────────────────────────────────────────
 
-test('the work order is self-contained and carries no credential', () => {
-  const order = svc.buildWorkOrder({
+function orderFor(forkStatus, overrides = {}) {
+  return svc.buildWorkOrder({
     appName: 'Recipe Box',
     appSlug: 'recipe-box',
     upstreamUrl: 'https://github.com/usernode-bot/recipe-box',
+    upstreamSlug: 'usernode-bot/recipe-box',
     forkUrl: 'https://github.com/someuser/recipe-box',
     forkCloneUrl: 'https://github.com/someuser/recipe-box.git',
+    forkRepo: 'recipe-box',
+    forkPageUrl: 'https://github.com/usernode-bot/recipe-box/fork',
+    forkStatus,
     branch: 'usernode/recipe-box-issue-4-abc123',
     baseSha: 'deadbeef',
     issueNumber: 4,
     brief: '<untrusted-content>Add dark mode</untrusted-content>',
     webPath: 'https://usernode.example/#app/recipe-box',
+    ...overrides,
   });
+}
+
+test('the work order is self-contained and carries no credential', () => {
+  const order = orderFor('ready');
   // Everything the receiving agent needs: where to push, what branch, and
   // the commit it starts from.
   assert.match(order, /https:\/\/github\.com\/someuser\/recipe-box\.git/);
@@ -165,10 +183,54 @@ test('the work order is self-contained and carries no credential', () => {
   assert.doesNotMatch(order, /gho_|ghp_|Bearer |x-access-token/);
 });
 
+test('the work order creates the branch itself — the platform no longer does', () => {
+  // The branch used to be reserved server-side with the user's token. The
+  // agent cuts it now, at the commit the platform recorded, and pushes it.
+  for (const status of ['ready', 'missing', 'name_conflict']) {
+    const order = orderFor(status);
+    assert.match(order, /git fetch upstream/, `${status}: upstream is fetched`);
+    assert.match(
+      order, /git checkout -b usernode\/recipe-box-issue-4-abc123 deadbeef/,
+      `${status}: the branch is cut at the recorded base commit`
+    );
+    assert.match(order, /git push -u origin usernode\/recipe-box-issue-4-abc123/,
+      `${status}: and pushed`);
+    assert.match(order, /Usernode has no write access to your GitHub account/,
+      `${status}: and says why the agent has to do it`);
+  }
+});
+
+test('the work order forks when the fork is missing, and offers the one-click fallback', () => {
+  const missing = orderFor('missing');
+  assert.match(missing, /gh repo fork usernode-bot\/recipe-box --clone --remote/);
+  // The human fallback for an agent with no `gh`: GitHub's own fork page.
+  assert.match(missing, /https:\/\/github\.com\/usernode-bot\/recipe-box\/fork/);
+  assert.match(missing, /Create fork/);
+
+  // A fork that already exists is a plain clone — no pointless fork call
+  // first — but the fallback link stays, since our read is advisory.
+  const ready = orderFor('ready');
+  assert.match(ready, /git clone https:\/\/github\.com\/someuser\/recipe-box\.git/);
+  assert.doesNotMatch(ready, /gh repo fork/);
+  assert.match(ready, /https:\/\/github\.com\/usernode-bot\/recipe-box\/fork/);
+});
+
+test('a same-named repo in the way becomes a differently-named fork, never a refusal', () => {
+  const order = orderFor('name_conflict', {
+    forkRepo: 'recipe-box-usernode',
+    forkUrl: 'https://github.com/someuser/recipe-box-usernode',
+    forkCloneUrl: 'https://github.com/someuser/recipe-box-usernode.git',
+  });
+  assert.match(order, /--fork-name recipe-box-usernode/);
+  assert.match(order, /cd recipe-box-usernode/);
+  assert.match(order, /never touches that other repository/i);
+});
+
 test('a work order with no brief tells the agent to ask rather than guess', () => {
   const order = svc.buildWorkOrder({
-    appName: 'A', appSlug: 'a', upstreamUrl: 'u', forkUrl: 'f',
-    forkCloneUrl: 'f.git', branch: 'b', baseSha: 's', brief: '',
+    appName: 'A', appSlug: 'a', upstreamUrl: 'u', upstreamSlug: 'o/a', forkUrl: 'f',
+    forkCloneUrl: 'f.git', forkRepo: 'a', forkPageUrl: 'p', forkStatus: 'missing',
+    branch: 'b', baseSha: 's', brief: '',
   });
   assert.match(order, /ask the user what they want before writing code/);
 });
@@ -199,15 +261,35 @@ test('attribution: only a pull request from the caller’s own fork passes', () 
   assert.equal(svc.attributionError({ head: { repo: { owner: { login: '' } } } }, '').code, 'fork_mismatch');
 });
 
-// ── ensureFork ─────────────────────────────────────────────────────────
+// ── inspectFork ────────────────────────────────────────────────────────
+
+test('inspecting the fork is one PUBLIC read and never a write', async () => {
+  const calls = [];
+  await withFetch({
+    'GET /repos/someuser/recipe-box': {
+      status: 200,
+      body: { fork: true, name: 'recipe-box', parent: { full_name: 'usernode-bot/recipe-box' } },
+    },
+  }, calls, async () => {
+    const result = await svc.inspectFork('someuser', { owner: 'usernode-bot', repo: 'recipe-box' });
+    assert.equal(result.state, 'ready');
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].key, 'GET /repos/someuser/recipe-box');
+  // No user credential exists to send. The bot PAT may authenticate the read
+  // for rate-limit headroom, but nothing user-scoped is ever attached.
+  const auth = calls[0].headers.Authorization || calls[0].headers.authorization;
+  assert.ok(!auth || /^Bearer /.test(auth) === false || auth === `Bearer ${process.env.GITHUB_BOT_TOKEN}`,
+    'only the platform’s own public-read credential, if any');
+});
 
 test('a same-named repo that is not our fork is a named conflict, never touched', async () => {
   const calls = [];
   await withFetch({
     'GET /repos/someuser/recipe-box': { status: 200, body: { fork: false, name: 'recipe-box' } },
   }, calls, async () => {
-    const result = await svc.ensureFork('t', 'someuser', { owner: 'usernode-bot', repo: 'recipe-box' });
-    assert.equal(result.state, 'fork_name_conflict');
+    const result = await svc.inspectFork('someuser', { owner: 'usernode-bot', repo: 'recipe-box' });
+    assert.equal(result.state, 'name_conflict');
   });
   assert.equal(calls.length, 1, 'nothing is written to that repository');
 
@@ -218,40 +300,45 @@ test('a same-named repo that is not our fork is a named conflict, never touched'
       status: 200, body: { fork: true, name: 'recipe-box', parent: { full_name: 'elsewhere/recipe-box' } },
     },
   }, calls2, async () => {
-    const result = await svc.ensureFork('t', 'someuser', { owner: 'usernode-bot', repo: 'recipe-box' });
-    assert.equal(result.state, 'fork_name_conflict');
+    const result = await svc.inspectFork('someuser', { owner: 'usernode-bot', repo: 'recipe-box' });
+    assert.equal(result.state, 'name_conflict');
   });
 });
 
-test('a fork GitHub is still creating reports fork_pending, not failure', async () => {
-  const calls = [];
+test('a missing fork is `missing`, and an unreadable GitHub is `unknown`', async () => {
   await withFetch({
     'GET /repos/someuser/recipe-box': { status: 404, body: { message: 'Not Found' } },
-    'POST /repos/usernode-bot/recipe-box/forks': { status: 202, body: { name: 'recipe-box' } },
-  }, calls, async () => {
-    // The confirming re-read hits the same stubbed 404 (fork not visible yet).
-    const result = await svc.ensureFork('t', 'someuser', { owner: 'usernode-bot', repo: 'recipe-box' });
-    assert.equal(result.state, 'fork_pending');
+  }, [], async () => {
+    const result = await svc.inspectFork('someuser', { owner: 'usernode-bot', repo: 'recipe-box' });
+    assert.equal(result.state, 'missing');
   });
-  assert.equal(calls[1].body.default_branch_only, true, 'only the default branch is copied');
+
+  // A rate-limited or down GitHub must not become a refusal: the work
+  // order's fork command is a no-op when the fork already exists.
+  const original = global.fetch;
+  global.fetch = async () => { throw new Error('network down'); };
+  try {
+    const result = await svc.inspectFork('someuser', { owner: 'usernode-bot', repo: 'recipe-box' });
+    assert.equal(result.state, 'unknown');
+  } finally {
+    global.fetch = original;
+  }
 });
 
 // ── prepareWork ────────────────────────────────────────────────────────
 
-const PREPARE_ROUTES = {
+const FORK_READY = {
   'GET /repos/someuser/recipe-box': {
     status: 200,
     body: { fork: true, name: 'recipe-box', parent: { full_name: 'usernode-bot/recipe-box' } },
   },
-  'POST /repos/someuser/recipe-box/merge-upstream': { status: 200, body: {} },
-  'POST /repos/someuser/recipe-box/git/refs': { status: 201, body: {} },
 };
 
-test('prepare_work reserves the branch at the UPSTREAM base commit', async () => {
+test('prepare_work records the work order at the UPSTREAM base commit', async () => {
   const queries = [];
   const calls = [];
   const pool = fakePool([['INSERT INTO external_agent_tasks', [{ id: 31 }]]], queries);
-  const result = await withFetch(PREPARE_ROUTES, calls, () => svc.prepareWork(
+  const result = await withFetch(FORK_READY, calls, () => svc.prepareWork(
     { pool, config: {}, gh: baseGh(), githubLink: linkedAs('someuser'), limits: okLimits },
     {
       user: { id: 3 }, app: APP, issueNumber: 4,
@@ -263,24 +350,70 @@ test('prepare_work reserves the branch at the UPSTREAM base commit', async () =>
   assert.equal(result.ok, true);
   assert.equal(result.taskId, 31);
   assert.equal(result.forkOwner, 'someuser');
+  assert.equal(result.forkStatus, 'ready');
   assert.equal(result.baseSha, 'base00000000000000000000000000000000sha');
   assert.match(result.branch, /^usernode\/recipe-box-issue-4-/);
 
-  // The ref is created at the sha read from upstream with the platform's
-  // own credentials — never at whatever the fork happens to be at.
-  const refCall = calls.find((c) => c.key.endsWith('/git/refs'));
-  assert.equal(refCall.body.sha, 'base00000000000000000000000000000000sha');
-  assert.equal(refCall.body.ref, `refs/heads/${result.branch}`);
-  assert.match(refCall.headers.authorization, /^Bearer gho_fake$/,
-    'the fork is written with the USER’s token, not the bot’s');
+  // The base commit comes from UPSTREAM, read with the platform's own
+  // credentials — never from the fork, which may be stale or edited — and it
+  // is what the work order tells the agent to branch from.
+  assert.match(
+    result.workOrder,
+    new RegExp(`git checkout -b ${result.branch} base00000000000000000000000000000000sha`)
+  );
 
-  // The row records the reservation so submit_work can find it again.
+  // Nothing is written to GitHub at all: one read, no more.
+  assert.deepEqual(calls.map((c) => c.key), ['GET /repos/someuser/recipe-box']);
+  assert.equal(calls.filter((c) => c.body !== null).length, 0, 'no request has a body');
+
+  // The row records the work order so submit_work can find it again.
   const insert = queries.find((q) => q.sql.includes('INSERT INTO external_agent_tasks'));
   assert.deepEqual(insert.params.slice(0, 3), [3, 7, 4]);
   assert.equal(insert.params[5], result.branch);
 });
 
-test('prepare_work refuses before any GitHub write when GitHub is not linked', async () => {
+test('a missing fork still produces a work order — it is the agent’s job now', async () => {
+  const queries = [];
+  const pool = fakePool([['INSERT INTO external_agent_tasks', [{ id: 32 }]]], queries);
+  const result = await withFetch({
+    'GET /repos/someuser/recipe-box': { status: 404, body: { message: 'Not Found' } },
+  }, [], () => svc.prepareWork(
+    { pool, config: {}, gh: baseGh(), githubLink: linkedAs('someuser'), limits: okLimits },
+    { user: { id: 3 }, app: APP, brief: 'x', origin: 'https://usernode.example' }
+  ));
+
+  assert.equal(result.ok, true, 'a missing fork is not a refusal');
+  assert.equal(result.forkStatus, 'missing');
+  assert.equal(result.forkPageUrl, 'https://github.com/usernode-bot/recipe-box/fork');
+  assert.match(result.workOrder, /gh repo fork usernode-bot\/recipe-box/);
+  assert.match(result.workOrder, /https:\/\/github\.com\/usernode-bot\/recipe-box\/fork/);
+  // The reservation exists, so a retry after the user clicks "Create fork"
+  // needs no new task row.
+  assert.ok(queries.some((q) => q.sql.includes('INSERT INTO external_agent_tasks')));
+});
+
+test('a name conflict suggests another fork name instead of refusing', async () => {
+  const queries = [];
+  const pool = fakePool([['INSERT INTO external_agent_tasks', [{ id: 33 }]]], queries);
+  const result = await withFetch({
+    'GET /repos/someuser/recipe-box': { status: 200, body: { fork: false, name: 'recipe-box' } },
+  }, [], () => svc.prepareWork(
+    { pool, config: {}, gh: baseGh(), githubLink: linkedAs('someuser'), limits: okLimits },
+    { user: { id: 3 }, app: APP, brief: 'x', origin: 'https://usernode.example' }
+  ));
+
+  assert.equal(result.ok, true);
+  assert.equal(result.forkStatus, 'name_conflict');
+  assert.equal(result.forkRepo, 'recipe-box-usernode');
+  assert.match(result.workOrder, /--fork-name recipe-box-usernode/);
+  // The task row carries the suggested name as a HINT; the attribution gate
+  // still only checks the owner, so another name works too.
+  const insert = queries.find((q) => q.sql.includes('INSERT INTO external_agent_tasks'));
+  assert.equal(insert.params[4], 'recipe-box-usernode');
+  assert.equal(insert.params[3], 'someuser');
+});
+
+test('prepare_work refuses before touching GitHub when the account is not linked', async () => {
   const queries = [];
   let fetched = false;
   const original = global.fetch;
@@ -289,13 +422,20 @@ test('prepare_work refuses before any GitHub write when GitHub is not linked', a
     const result = await svc.prepareWork(
       {
         pool: fakePool([], queries), config: {}, gh: baseGh(),
-        githubLink: { isEnabled: () => true, loadUserToken: async () => null }, limits: okLimits,
+        githubLink: {
+          isEnabled: () => true,
+          linkStatus: async () => ({ linked: false, login: null, linkedAt: null, access: 'identity' }),
+        },
+        limits: okLimits,
       },
       { user: { id: 3 }, app: APP, brief: 'x', origin: 'https://usernode.example' }
     );
     assert.equal(result.ok, false);
     assert.equal(result.code, 'github_not_linked');
     assert.equal(result.settingsUrl, 'https://usernode.example/#settings/connectors');
+    // And it says what the link actually asks for, since that is the whole
+    // question a user hesitating over the button has.
+    assert.match(result.message, /no access to your repositories/);
     assert.equal(fetched, false);
     assert.equal(queries.length, 0, 'and nothing is recorded');
   } finally {
@@ -303,7 +443,7 @@ test('prepare_work refuses before any GitHub write when GitHub is not linked', a
   }
 });
 
-test('prepare_work is bounded before it forks anything', async () => {
+test('prepare_work is bounded before it records anything', async () => {
   const queries = [];
   let fetched = false;
   const original = global.fetch;
@@ -320,26 +460,10 @@ test('prepare_work is bounded before it forks anything', async () => {
     assert.equal(result.code, 'at_capacity');
     assert.equal(result.retryable, true);
     assert.equal(fetched, false, 'a rate-limited caller never reaches GitHub');
+    assert.equal(queries.length, 0);
   } finally {
     global.fetch = original;
   }
-});
-
-test('a diverged fork is reported honestly rather than force-branched', async () => {
-  const queries = [];
-  const calls = [];
-  const result = await withFetch({
-    ...PREPARE_ROUTES,
-    'POST /repos/someuser/recipe-box/git/refs': { status: 422, body: { message: 'Object does not exist' } },
-  }, calls, () => svc.prepareWork(
-    { pool: fakePool([], queries), config: {}, gh: baseGh(), githubLink: linkedAs('someuser'), limits: okLimits },
-    { user: { id: 3 }, app: APP, brief: 'x', origin: 'https://usernode.example' }
-  ));
-  assert.equal(result.code, 'fork_out_of_sync');
-  assert.match(result.message, /Sync it with the upstream repository/);
-  // Sync-and-retry was attempted once before giving up.
-  assert.equal(calls.filter((c) => c.key.endsWith('/git/refs')).length, 2);
-  assert.equal(queries.length, 0, 'no task row is left behind for a branch that does not exist');
 });
 
 // ── submitWork ─────────────────────────────────────────────────────────
@@ -488,25 +612,65 @@ test('the promoted-session cap is applied before a pull request is opened', asyn
   assert.equal(createdPr, false, 'a refused submit leaves no stray pull request behind');
 });
 
-test('an unpushed or empty branch is named precisely instead of failing at GitHub', async () => {
+test('a branch still at the base commit is named precisely, not left to GitHub', async () => {
   const gh = baseGh({ findOpenPrByBranch: async () => null, createPR: async () => ({ number: 1 }) });
-  const deps = () => ({
-    pool: submitPool([]), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits,
-  });
-  const params = { user: { id: 3 }, taskId: 31, importProposal: async () => ({ ok: true, body: {} }) };
-
-  const notPushed = await withFetch({
-    'GET /repos/someuser/recipe-box/branches/usernode%2Frecipe-box-issue-4-abc123': { status: 404, body: {} },
-  }, [], () => svc.submitWork(deps(), params));
-  assert.equal(notPushed.code, 'branch_not_found');
-  assert.equal(notPushed.retryable, true);
-
   const empty = await withFetch({
     'GET /repos/someuser/recipe-box/branches/usernode%2Frecipe-box-issue-4-abc123': {
       status: 200, body: { commit: { sha: TASK_ROW.base_sha } },
     },
-  }, [], () => svc.submitWork(deps(), params));
+  }, [], () => svc.submitWork(
+    { pool: submitPool([]), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
+    { user: { id: 3 }, taskId: 31, importProposal: async () => ({ ok: true, body: {} }) }
+  ));
   assert.equal(empty.code, 'no_commits');
+  assert.equal(empty.retryable, true);
+});
+
+test('the pre-push check is advisory: a fork under another name still submits', async () => {
+  // The agent may have forked under a name we did not predict, so our public
+  // read of the expected fork 404s while the branch exists perfectly well.
+  // That must not refuse — GitHub's own answer to createPR is authoritative.
+  const queries = [];
+  let created = false;
+  const gh = baseGh({
+    findOpenPrByBranch: async () => null,
+    createPR: async () => {
+      created = true;
+      return { number: 91, html_url: 'x', head: { repo: { owner: { login: 'someuser' } } } };
+    },
+  });
+  const result = await withFetch({
+    'GET /repos/someuser/recipe-box/branches/usernode%2Frecipe-box-issue-4-abc123': { status: 404, body: {} },
+  }, [], () => svc.submitWork(
+    { pool: submitPool(queries), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
+    { user: { id: 3 }, taskId: 31, importProposal: async () => ({ ok: true, status: 200, body: { sessionId: 61 } }) }
+  ));
+  assert.equal(created, true, 'GitHub gets the final word on whether the head exists');
+  assert.equal(result.ok, true);
+  assert.equal(result.prNumber, 91);
+});
+
+test('a head GitHub really cannot find is reported as the missing branch it is', async () => {
+  // GitHub answers an unknown head with an UNTYPED 422 ("invalid field:
+  // head"). Our own read already said the branch is not on the expected
+  // fork, so say the useful thing rather than "could not be opened".
+  const gh = baseGh({
+    findOpenPrByBranch: async () => null,
+    createPR: async () => {
+      const err = new Error('Validation Failed');
+      err.status = 422;
+      throw err;
+    },
+  });
+  const result = await withFetch({
+    'GET /repos/someuser/recipe-box/branches/usernode%2Frecipe-box-issue-4-abc123': { status: 404, body: {} },
+  }, [], () => svc.submitWork(
+    { pool: submitPool([]), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
+    { user: { id: 3 }, taskId: 31, importProposal: async () => ({ ok: true, body: {} }) }
+  ));
+  assert.equal(result.code, 'branch_not_found');
+  assert.equal(result.retryable, true);
+  assert.match(result.message, /someuser\/recipe-box/);
 });
 
 test('a task that is not the caller’s own is simply unknown', async () => {
@@ -547,20 +711,37 @@ test('a platform refusal to import is passed back with the platform’s own answ
 
 // ── Structural guarantees ──────────────────────────────────────────────
 
-test('the user’s GitHub token is used for their own account only', () => {
-  // Every githubAsUser call names a path under the user's own login or the
-  // fork endpoint; the bot's Octokit is what touches the app repository.
-  const paths = [...SRC.matchAll(/githubAsUser\([^,]+, '(\w+)', `([^`]+)`/g)].map((m) => m[2]);
-  assert.ok(paths.length >= 4);
-  for (const p of paths) {
-    assert.match(
-      p, /^\/repos\/\$\{(login|task\.fork_owner)\}\/|^\/repos\/\$\{owner\}\/\$\{repo\}\/forks$/,
-      `${p} touches only the user's own repositories (or forks the app into them)`
-    );
+test('NO user credential is used, and every direct GitHub call is a public read', () => {
+  // The load-bearing property of the identity-only link. A re-introduced
+  // user-token header here would mean the OAuth scope has to widen back to
+  // `public_repo` — read/write access to code in every public repository the
+  // user can reach — which is exactly what this design removed.
+  assert.doesNotMatch(SRC, /authorization:\s*`Bearer \$\{(token|link\.token|userToken)/);
+  assert.doesNotMatch(SRC, /loadUserToken/);
+  assert.doesNotMatch(SRC, /githubAsUser/);
+  // github-link exposes no token loader to call, either.
+  const LINK_SRC = fs.readFileSync(
+    path.join(__dirname, '../src/services/github-link.js'), 'utf8'
+  );
+  assert.doesNotMatch(LINK_SRC, /async function loadUserToken/);
+
+  // Direct fetches go through ONE helper, which builds its headers from the
+  // platform's own public-read builder and never takes a credential.
+  const helper = SRC.slice(
+    SRC.indexOf('async function githubPublic'),
+    SRC.indexOf('function sameRepo')
+  );
+  assert.match(helper, /githubService\.publicApiHeaders\(\)/);
+  assert.doesNotMatch(helper, /authorization/i);
+  const calls = [...SRC.matchAll(/githubPublic\(\s*\n?\s*'(\w+)'/g)].map((m) => m[1]);
+  assert.ok(calls.length >= 2, 'the fork read and the branch read');
+  for (const method of calls) {
+    assert.equal(method, 'GET', 'nothing this service sends directly is a write');
   }
-  // The fork endpoint is the one exception, and it is a create, not a write
-  // to the upstream repository.
-  assert.match(SRC, /'POST', `\/repos\/\$\{owner\}\/\$\{repo\}\/forks`/);
+  // No fork/ref/merge-upstream write anywhere.
+  assert.doesNotMatch(SRC, /\/forks`/);
+  assert.doesNotMatch(SRC, /merge-upstream/);
+  assert.doesNotMatch(SRC, /git\/refs/);
 });
 
 test('the service never opens a proposal itself', () => {

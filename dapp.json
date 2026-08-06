@@ -172,6 +172,12 @@
       "description": "How often the stale-proposal sweeper runs."
     },
     {
+      "key": "GOVERNANCE_APPLY_TICK_MS",
+      "group": "Proposals & retention",
+      "default": "60000",
+      "description": "How often the fast governance-apply ticker applies vote-passed rename / env-var / close-issue / campaign proposals whose merge window has elapsed. Set to 0 to disable it (the hourly stale-proposal sweeper still applies them)."
+    },
+    {
       "key": "CERT_WARM_TIMEOUT_MS",
       "group": "TLS",
       "default": "15000",
@@ -316,6 +322,11 @@
   ],
   "tests": [
     {
+      "name": "Platform variables panel renders on the platform app (#826 folded into app secrets)",
+      "path": "/?shot=secrets#app/usernode-2d5619/dev",
+      "expectSelector": "#app-secrets-list code"
+    },
+    {
       "name": "Profile: an editable identity card above completions that link out (#982)",
       "path": "/#profile",
       "expectSelector": "a[data-completed-challenge][href^='#leaderboard/challenges/']",
@@ -369,6 +380,12 @@
       "path": "/?demo=1&challenges=none",
       "expectSelector": "#app-list [data-panel-slot=\"challenges\"] article.home-panel[data-rows=\"0\"][data-fill=\"3\"] .home-panel-lb-row",
       "expectText": "No challenges are running right now"
+    },
+    {
+      "name": "GitHub linking asks for no repository access, and holds no token",
+      "path": "/?demo=1#settings/connectors",
+      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #github-link-section #github-link-no-token",
+      "expectText": "no access to your repositories"
     },
     {
       "name": "Tapping an app shows its icon and name while it loads, not a blank window (#931)",
@@ -453,11 +470,6 @@
       "name": "App tiles carry no user count and no status dot",
       "path": "/?demo=1",
       "expectSelector": "#app-list .app-card:not(:has(.users-badge)):not(:has(.status-dot))"
-    },
-    {
-      "name": "Platform variables panel renders on the platform app (#826 folded into app secrets)",
-      "path": "/?shot=secrets#app/usernode-2d5619/dev",
-      "expectSelector": "#app-secrets-list code"
     },
     {
       "name": "Browse renders app-store rows with an Add button (no \"…\" menu)",
@@ -855,6 +867,23 @@
       "name": "Explicit-approval proposal still shows the rejection countdown (#788)",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000032",
       "expectSelector": ".gc-reject-countdown"
+    },
+    {
+      "name": "A passed close proposal whose window elapsed shows the closing spinner (#1010)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "[data-gov-row='9100005'] .gc-merging-badge .dc-status-spinner-arc",
+      "expectText": "Closing issue #900011"
+    },
+    {
+      "name": "A long-stalled close proposal degrades to the retry copy, no spinner (#1010)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "[data-gov-row='9100006'] .gc-checks-running-badge",
+      "expectText": "Close pending — will retry automatically"
+    },
+    {
+      "name": "The closing state also renders on the proposal's own discussion page (#1010)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100005",
+      "expectSelector": "#gc-thread-head [data-gov-row='9100005'] .gc-merging-badge .dc-status-spinner-arc"
     },
     {
       "name": "App-admins section ships in the Members modal (#788)",

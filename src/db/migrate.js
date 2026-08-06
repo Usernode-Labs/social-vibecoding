@@ -115,6 +115,7 @@ async function migrate(config) {
   await backfillFenceWrappedSpecs(pool);
   await backfillOrphanedSpecDrafts(pool);
   await backfillLinkedIssuesFromPrBodies(pool);
+  await revokeLegacyGithubGrants(pool, config);
   await failOrphanedHeadlessRuns(pool);
   await migrateAppDbsToPerRole(pool, config);
 }
@@ -292,6 +293,87 @@ async function failOrphanedHeadlessRuns(pool) {
   } catch (err) {
     log.warn('db', 'Failed to reset orphaned headless runs', { err: err.message });
   }
+}
+
+// Forward-only, idempotent: hand back every GitHub OAuth token this platform
+// used to hold for a user, then clear the column.
+//
+// The GitHub link used to request the classic `public_repo` scope so the
+// platform could fork an app's repo into the user's account on their behalf.
+// GitHub describes that scope on its consent screen as read/write access to
+// code on EVERY public repository the user can reach — enormously more than
+// "make one fork". The fork is now made by the user's own coding agent and
+// the link is identity-only (services/github-link), so any stored token is
+// both unused and an unnecessary liability.
+//
+// Simply nulling the column would not be enough: classic OAuth
+// authorizations are CUMULATIVE, so a user who once granted `public_repo`
+// keeps that grant listed under github.com/settings/applications even after
+// re-authorizing with no scope — the only way to actually give it back is
+// DELETE /applications/{client_id}/grant, which needs the token we are about
+// to destroy. So: revoke first (best-effort, bounded), then NULL regardless
+// of whether GitHub answered. `github_login` / `github_linked_at` are
+// preserved, so those users stay linked and never see a re-consent prompt.
+//
+// Runs at most once per deployment in practice (the column is empty
+// afterwards, and nothing writes it again). A missing OAuth app, an
+// undecryptable value or a GitHub outage all still end with the column
+// cleared — leaving a token behind on a failure would mean retrying forever
+// while continuing to hold the credential.
+const LEGACY_GITHUB_TOKEN_BATCH = 500;
+
+async function revokeLegacyGithubGrants(pool, config) {
+  const githubLink = require('../services/github-link');
+  const { decrypt } = require('../services/secrets');
+
+  let rows;
+  try {
+    ({ rows } = await pool.query(
+      `SELECT id, github_oauth_token_enc
+         FROM users
+        WHERE github_oauth_token_enc IS NOT NULL
+        ORDER BY id
+        LIMIT $1`,
+      [LEGACY_GITHUB_TOKEN_BATCH]
+    ));
+  } catch (err) {
+    // Pre-schema database or a transient read failure: nothing to do, and
+    // never a reason to fail boot.
+    log.warn('db', 'Legacy GitHub token sweep skipped', { err: err.message });
+    return;
+  }
+  if (!rows.length) return;
+
+  const canRevoke = githubLink.isEnabled(config);
+  let revoked = 0;
+  let failed = 0;
+  for (const row of rows) {
+    let token = null;
+    try {
+      token = decrypt(row.github_oauth_token_enc, config.dataEncryptionKey);
+    } catch {
+      token = null;
+    }
+    if (canRevoke && token) {
+      // eslint-disable-next-line no-await-in-loop
+      const ok = await githubLink.revokeCredential(config, token, 'grant');
+      if (ok) revoked += 1; else failed += 1;
+    } else {
+      failed += 1;
+    }
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      await pool.query(
+        'UPDATE users SET github_oauth_token_enc = NULL WHERE id = $1',
+        [row.id]
+      );
+    } catch (err) {
+      log.warn('db', 'Legacy GitHub token clear failed', { userId: row.id, err: err.message });
+    }
+  }
+  log.info('db', 'Legacy GitHub OAuth tokens revoked and cleared', {
+    considered: rows.length, revoked, notRevoked: failed, oauthAppConfigured: canRevoke,
+  });
 }
 
 // One-shot, idempotent backfill that recovers chat_sessions.linked_issues for
