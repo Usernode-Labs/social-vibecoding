@@ -52,10 +52,15 @@
       if (row) {
         row.classList.remove('hidden');
         row.addEventListener('click', () => {
-          if (window.App && App.HeaderMenu && App.HeaderMenu.close) {
-            App.HeaderMenu.close();
-          }
-          NodePill._openSheet();
+          // #977: the sheet is a second surface, so it waits for the
+          // drawer to be fully gone — one motion at a time, instead of
+          // a sheet rising while the drawer is still sliding out.
+          // close() resolves immediately when nothing is open, and the
+          // guard keeps the sheet working with no HeaderMenu at all.
+          const closed = (window.App && App.HeaderMenu && App.HeaderMenu.close)
+            ? App.HeaderMenu.close()
+            : null;
+          Promise.resolve(closed).then(() => NodePill._openSheet());
         });
       }
 
