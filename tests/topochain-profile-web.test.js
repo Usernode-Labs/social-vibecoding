@@ -285,17 +285,22 @@ test('?shot=profile-edit opens the sheet for the screenshot capture', () => {
   // Pure UI state with no writes — an env gate would starve the "before"
   // side of the capture forever.
   assert.doesNotMatch(fn, /staging/i);
-  // The declared checks are a CAPPED resource: src/services/app-manifest.js
-  // keeps only the first MAX_TESTS (10) entries, so an entry's POSITION in
-  // the array decides whether it ever runs. Two things follow, and both are
-  // pinned here because both are easy to get silently wrong:
-  //   - new entries go at the TOP (one appended to the 225-long tail is
-  //     dropped and proves nothing);
-  //   - every slot spent EVICTS an older check, so this change spends two,
-  //     not one per assertion — the screen check carries its identity-card
-  //     assertion as `expectText` rather than buying a third slot.
+  // Declared checks used to be a CAPPED resource — the reader kept only the
+  // first MAX_TESTS entries, so an entry's POSITION decided whether it ever
+  // ran and each new one evicted an older. #1019 removed that cap: every
+  // declared check runs, and the only bound left is MAX_DECLARED_TESTS.
+  //
+  // The surviving invariant is that the reader actually KEEPS these entries
+  // (it still drops malformed ones) and that the manifest hasn't grown past
+  // the ceiling and started shedding its tail again.
   const appManifest = require('../src/services/app-manifest');
-  const live = appManifest.read(path.join(__dirname, '..')).tests;
+  const meta = appManifest.readTestsWithMeta(
+    JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'dapp.json'), 'utf8'))
+  );
+  assert.equal(meta.ceilingDropped, 0,
+    `dapp.json declares more than ${appManifest.MAX_DECLARED_TESTS} valid checks — `
+    + 'checks past the ceiling never run');
+  const live = meta.tests;
   assert.ok(live.some((t) => String(t.path).includes('shot=profile-edit')),
     'a state link that stops rendering must fail checks, not regress silently');
   const mine = live.filter((t) => t.name.includes('#982'));

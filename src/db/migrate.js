@@ -36,6 +36,7 @@ async function migrate(config) {
   await seedStagingMergedPrs(pool, config);
   await seedStagingMyOpenPr(pool, config);
   await seedStagingImportedPrProposal(pool, config);
+  await seedStagingChecksAdvisoryCard(pool, config);
   await seedStagingExternalAgentProposal(pool, config);
   await seedStagingRestartEligibleMerge(pool, config);
   await seedStagingOtherUserProposal(pool, config);
@@ -7726,6 +7727,193 @@ async function seedStagingImportedPrProposal(pool, config) {
 
   log.info('db', 'Staging imported-PR fixtures seeded', {
     appId, healthy: id1, headChanged: id2, justImported: id3,
+  });
+}
+
+// #1019: staging fixtures for the checks card at REALISTIC scale. Every
+// declared dapp.json check now runs on every build, so this repo's own card
+// went from ~12 rows to ~240 — and the rows stopped being equal in weight
+// (blocking vs advisory vs pass). None of that is reviewable from a staging
+// preview otherwise: a fresh staging DB's proposals have a handful of
+// synthesized baseline checks at most, so the folding, the ordering, the
+// advisory chip and the summary line all render on a sample too small to
+// show whether they work.
+//
+// Two rows:
+//   1. A big FAILING suite — 40 passes, one blocking failure with console
+//      errors, two advisory failures, and the collapsed "didn't finish in
+//      the run budget" row. Exercises ordering, the amber wrapper, the
+//      badge count (which must say 1, not 4), and the pass fold.
+//   2. A PASSING suite that still carries an advisory failure. This is the
+//      case that reads wrong if the card keys its heading off row status
+//      instead of the stored verdict: green wrapper, "every merge-blocking
+//      check passed", merge NOT blocked.
+// Also seeds the matching app_check_history so the Dev-side graduation
+// story is coherent with what the cards claim.
+// Idempotent (keyed on branch name), obviously-fake "[staging fixture]"
+// content, strict no-op outside staging.
+async function seedStagingChecksAdvisoryCard(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1', [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging checks-card fixture skipped: self-app row missing', { slug: config.selfAppSlug });
+    return;
+  }
+  const { rows: users } = await pool.query(
+    'SELECT id, username FROM users ORDER BY is_admin DESC, id ASC LIMIT 2'
+  );
+  if (!users.length) {
+    log.warn('db', 'Staging checks-card fixture skipped: no users');
+    return;
+  }
+  const author = users[0];
+  const votesRequired = Math.max(1, Math.ceil(users.length / 2));
+
+  const passRow = (i) => ({
+    index: i,
+    name: `[staging fixture] check ${i + 1} renders`,
+    path: `/fixture/route-${i + 1}`,
+    status: 'pass',
+    advisory: false,
+    consoleErrors: [],
+    failureReason: '',
+  });
+  const passes = [];
+  for (let i = 0; i < 40; i += 1) passes.push(passRow(i));
+
+  const blockingFailure = {
+    index: 40,
+    name: '[staging fixture] standings screen shows a ranked list',
+    path: '/standings',
+    status: 'fail',
+    advisory: false,
+    consoleErrors: [
+      { kind: 'console', message: 'TypeError: Cannot read properties of undefined (reading \'rank\')', source: '/js/standings.js:214' },
+      { kind: 'pageerror', message: 'Uncaught (in promise) TypeError: rows.map is not a function', source: '' },
+    ],
+    failureReason: 'Expected element "[data-standings-row]" was not found',
+  };
+  const advisoryFailures = [
+    {
+      index: 41,
+      name: '[staging fixture] legacy export screen loads',
+      path: '/export',
+      status: 'fail',
+      advisory: true,
+      consoleErrors: [{ kind: 'console', message: 'Failed to load resource: 404 (/api/export/manifest)', source: '' }],
+      failureReason: 'Page returned HTTP 404',
+    },
+    {
+      index: 42,
+      name: '[staging fixture] archive filter chips render',
+      path: '/archive',
+      status: 'fail',
+      advisory: true,
+      consoleErrors: [],
+      failureReason: 'Expected text "Filter" was not found on the page',
+    },
+  ];
+  const unfinishedRow = {
+    index: -1,
+    name: '3 checks did not finish in the run budget',
+    path: '',
+    status: 'fail',
+    advisory: true,
+    consoleErrors: [],
+    failureReason: 'These checks have never been observed passing, so they do not block the merge.',
+  };
+
+  const failingResults = [blockingFailure, ...advisoryFailures, unfinishedRow, ...passes];
+  const passingResults = [
+    ...passes,
+    {
+      index: 41,
+      name: '[staging fixture] legacy export screen loads',
+      path: '/export',
+      status: 'fail',
+      advisory: true,
+      consoleErrors: [],
+      failureReason: 'Page returned HTTP 404',
+    },
+  ];
+
+  const seedOne = async (branch, prNumber, title, checkState, results, sha) => {
+    const { rows: have } = await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+      [appId, branch]
+    );
+    if (have[0]?.id) {
+      await pool.query(
+        `UPDATE chat_sessions
+            SET check_state = $2, test_results = $3::jsonb,
+                checks_commit_sha = $4, checks_checked_at = NOW() - INTERVAL '6 minutes',
+                check_phase = NULL, check_error_detail = NULL
+          WHERE id = $1`,
+        [have[0].id, checkState, JSON.stringify(results), sha]
+      );
+      return have[0].id;
+    }
+    const { rows } = await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_number, pr_url, pr_title, pr_summary_md,
+          status, check_state, test_results, checks_commit_sha, checks_checked_at,
+          votes_required, promoted_at, created_at)
+       VALUES
+         ($1, $2, $3, $4, $5, $6,
+          'In plain terms: a fixture proposal that exists so the checks card can be reviewed at the row counts it now really sees.',
+          'promoted', $7, $8::jsonb, $9, NOW() - INTERVAL '6 minutes',
+          $10, NOW() - INTERVAL '8 minutes', NOW() - INTERVAL '8 minutes')
+       RETURNING id`,
+      [appId, author.id, branch, prNumber,
+       `https://github.com/example/example/pull/${prNumber}`, title,
+       checkState, JSON.stringify(results), sha, votesRequired]
+    );
+    return rows[0].id;
+  };
+
+  const failingId = await seedOne(
+    'staging-fixture/checks-advisory-failing', 9401,
+    '[staging fixture] Big check suite — one blocking failure, two advisory',
+    'failing', failingResults, '11223344556677889900aabbccddeeff00112233'
+  );
+  const passingId = await seedOne(
+    'staging-fixture/checks-advisory-passing', 9402,
+    '[staging fixture] Big check suite — passing, with an advisory failure',
+    'passing', passingResults, '445566778899aabbccddeeff0011223344556677'
+  );
+
+  // Matching history: the 40 passes and the blocking failure have all been
+  // observed passing at some point (so they gate), the advisory ones never
+  // have (first_passed_at NULL). Without these rows the cards would claim a
+  // graduation state the Dev-side data doesn't back up.
+  const crypto = require('crypto');
+  const key = (name, p) => crypto.createHash('sha256').update(`${name}\n${p}`).digest('hex');
+  const graduated = passes.concat([blockingFailure]);
+  for (const r of graduated) {
+    await pool.query(
+      `INSERT INTO app_check_history
+         (app_id, check_key, check_name, check_path, first_passed_at, last_passed_at, last_seen_at, pass_count)
+       VALUES ($1, $2, $3, $4, NOW() - INTERVAL '30 days', NOW() - INTERVAL '1 day', NOW(), 12)
+       ON CONFLICT (app_id, check_key) DO NOTHING`,
+      [appId, key(r.name, r.path), r.name, r.path]
+    );
+  }
+  for (const r of advisoryFailures) {
+    await pool.query(
+      `INSERT INTO app_check_history
+         (app_id, check_key, check_name, check_path, last_failed_at, last_seen_at, fail_count)
+       VALUES ($1, $2, $3, $4, NOW() - INTERVAL '1 day', NOW(), 5)
+       ON CONFLICT (app_id, check_key) DO NOTHING`,
+      [appId, key(r.name, r.path), r.name, r.path]
+    );
+  }
+
+  log.info('db', 'Staging checks-card fixtures seeded', {
+    appId, failing: failingId, passing: passingId, rows: failingResults.length,
   });
 }
 

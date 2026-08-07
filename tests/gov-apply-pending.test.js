@@ -577,11 +577,12 @@ test('the target issue row still reads "Close proposed" while the vote is open',
 // ── The ?demo=1 staging states, end to end ────────────────────────────────
 //
 // The TESTING block and dapp.json point at the ?demo=1 proposals screen for
-// these two states. dapp.json's `tests` array is capped at MAX_TESTS (10) by
-// app-manifest and every running slot is already pinned by another suite, so
-// the #1010 declarations there are currently capped out — this test is what
-// actually guards the states: the REAL stagingMockGovernance() rows through
-// the REAL renderer, asserting the same selectors those declarations use.
+// these two states. Those declarations used to be capped out — app-manifest
+// kept only the first MAX_TESTS entries and every slot was pinned by another
+// suite — and #1019 has since made them run for real. This test still earns
+// its place: it exercises the REAL stagingMockGovernance() rows through the
+// REAL renderer with the same selectors, so the states are guarded in unit
+// time rather than only once a staging preview has been built.
 function stagingMocks() {
   const src = fs.readFileSync(
     path.join(__dirname, '..', 'src', 'routes', 'issues.js'), 'utf8'

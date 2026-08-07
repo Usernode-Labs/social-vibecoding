@@ -562,6 +562,45 @@ CREATE TABLE IF NOT EXISTS app_activity (
   UNIQUE(app_id, user_id, date)
 );
 
+-- Per-check history: which of an app's declared dapp.json checks have ever
+-- been OBSERVED PASSING, and are therefore allowed to block a merge.
+--
+-- Background: the manifest reader used to keep only the first 12 declared
+-- checks, so this repo's own ~229 tail checks had never executed once. The
+-- capture container now runs every declared check on every build, and this
+-- table is what stops that from blocking the next proposal on hundreds of
+-- pre-existing failures it did not cause. A check is BLOCKING iff
+-- `first_passed_at IS NOT NULL` (derived, never stored as a flag); one that
+-- has never passed is ADVISORY — it runs and reports, but does not gate.
+-- There is no demotion: a graduated check that starts failing stays
+-- blocking, which is the whole point of graduating it.
+--
+-- `check_key` is sha256(name || '\n' || path) — the same (name+path) pair
+-- app-manifest.readTests de-duplicates on, so renaming a check mints a new
+-- key and drops it back to advisory (an edited check re-earns its status).
+--
+-- PUBLIC (no `staging:private` tag) and deliberately so: it holds check
+-- names and pass/fail timestamps for app code, which every viewer of a
+-- proposal's checks card can already see. No credentials, no user content.
+CREATE TABLE IF NOT EXISTS app_check_history (
+  id              BIGSERIAL PRIMARY KEY,
+  app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  check_key       VARCHAR(64) NOT NULL,
+  check_name      TEXT,
+  check_path      TEXT,
+  first_passed_at TIMESTAMPTZ,
+  last_passed_at  TIMESTAMPTZ,
+  last_failed_at  TIMESTAMPTZ,
+  last_seen_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  pass_count      INTEGER NOT NULL DEFAULT 0,
+  fail_count      INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (app_id, check_key)
+);
+CREATE INDEX IF NOT EXISTS idx_app_check_history_app ON app_check_history(app_id);
+-- The graduated-set load is the hot read (once per checks run).
+CREATE INDEX IF NOT EXISTS idx_app_check_history_graduated
+  ON app_check_history(app_id) WHERE first_passed_at IS NOT NULL;
+
 -- Group chat messages
 CREATE TABLE IF NOT EXISTS chat_messages (
   id         SERIAL PRIMARY KEY,

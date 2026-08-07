@@ -50,17 +50,33 @@ const { validatePath } = require('./testing-notes');
 
 const MANIFEST_FILENAME = 'dapp.json';
 
-// #47: per-app automated tests (the "CI for proposals" framework). Bounds
-// mirror the testing-block path cap so a proposal can't queue an unbounded
-// suite against the time-boxed capture container. Each test navigates one
-// staging route and asserts load + no-console-errors (+ optional
-// selector/text). Extras over the cap are dropped and logged, never
-// silently truncated.
-// 12: eleven checks are pinned in-cap by node tests (profile ×2, menu-nav,
-// leaderboard ×2, work-drawer, feedback ×2, challenges-widget ×2, secrets
-// panel) — a cap of 10 made the slots over-subscribed and silently dropped
-// whichever pinned check sat past the cut. One spare slot of headroom.
-const MAX_TESTS = 12;
+// #47: per-app automated tests (the "CI for proposals" framework). Each
+// test navigates one staging route and asserts load + no-console-errors
+// (+ optional selector/text).
+//
+// THE READER NO LONGER CAPS AT 12. It used to keep only the first
+// MAX_TESTS entries, which meant this repo's own 240-odd declared checks
+// were 12 real ones and 229 pieces of decoration — never parsed, never
+// run, never able to fail. The capture container now runs EVERY declared
+// check through a bounded parallel page pool (capture/capture.js), so the
+// only remaining bound is a validation ceiling that keeps a pathological
+// manifest from queueing an unbounded suite. Entries past the ceiling are
+// dropped and logged, and services/visuals.js turns "this proposal pushed
+// the list past the ceiling" into a blocking check row so the silent-drop
+// bug cannot come back.
+const MAX_DECLARED_TESTS = 300;
+
+// The pre-pool cap, kept for exactly one purpose: services/check-history.js
+// bootstraps an app with no recorded history by marking its first
+// LEGACY_GATING_HEAD declared checks as already-graduated, so the set of
+// checks that block a merge on the first build after this ships is exactly
+// the set that blocked one before it. Nothing else reads it, and no check
+// needs to sit near the top of the array any more.
+const LEGACY_GATING_HEAD = 12;
+// Deprecated alias — `MAX_TESTS` meant "the parse cap" and there is no
+// parse cap now. Exported so a stale reference resolves to something sane
+// rather than `undefined`.
+const MAX_TESTS = LEGACY_GATING_HEAD;
 const MAX_TEST_NAME_LEN = 120;
 const MAX_TEST_SELECTOR_LEN = 256;
 const MAX_TEST_TEXT_LEN = 256;
@@ -71,25 +87,33 @@ const MAX_TEST_TEXT_LEN = 256;
 // path. `expectSelector` / `expectText` are optional presence assertions;
 // `allowConsoleErrors` opts a test out of the baseline no-console-errors
 // rule (for a route that legitimately logs errors). Invalid entries are
-// dropped, duplicate (name+path) pairs collapse, the list is capped. A
-// non-array / absent block resolves to [] — exactly the legacy behaviour
-// (no declared tests → the orchestrator synthesizes the baseline). Never
-// throws.
-function readTests(parsed) {
+// dropped, duplicate (name+path) pairs collapse, the list is bounded by
+// MAX_DECLARED_TESTS. A non-array / absent block resolves to [] — exactly
+// the legacy behaviour (no declared tests → the orchestrator synthesizes
+// the baseline). Never throws.
+//
+// readTestsWithMeta is the same pass with its bookkeeping exposed, because
+// the over-ceiling guard has to compare LIKE WITH LIKE: the ceiling applies
+// to VALID, DE-DUPLICATED entries, so a manifest with 305 raw entries of
+// which 290 survive validation has dropped nothing for ceiling reasons and
+// must not be failed. `ceilingDropped` counts only the entries this pass
+// refused because the list was already full.
+function readTestsWithMeta(parsed) {
   const raw = Array.isArray(parsed?.tests) ? parsed.tests : [];
   const out = [];
   const seen = new Set();
-  let dropped = 0;
+  let invalidDropped = 0;
+  let ceilingDropped = 0;
   for (const t of raw) {
-    if (!t || typeof t !== 'object') { dropped++; continue; }
+    if (!t || typeof t !== 'object') { invalidDropped++; continue; }
     const p = validatePath(t.path);
-    if (!p) { dropped++; continue; }
+    if (!p) { invalidDropped++; continue; }
     const name = (typeof t.name === 'string' && t.name.trim())
       ? t.name.trim().slice(0, MAX_TEST_NAME_LEN)
       : p;
     const dedupeKey = `${name}${p}`;
     if (seen.has(dedupeKey)) continue;
-    if (out.length >= MAX_TESTS) { dropped++; continue; }
+    if (out.length >= MAX_DECLARED_TESTS) { ceilingDropped++; continue; }
     seen.add(dedupeKey);
     out.push({
       name,
@@ -101,10 +125,32 @@ function readTests(parsed) {
       allowConsoleErrors: !!t.allowConsoleErrors,
     });
   }
+  const dropped = invalidDropped + ceilingDropped;
   if (dropped > 0) {
-    log.warn('app-manifest', 'Dropped invalid/over-cap test entries', { dropped, kept: out.length, cap: MAX_TESTS });
+    log.warn('app-manifest', 'Dropped invalid/over-ceiling test entries', {
+      dropped, invalidDropped, ceilingDropped, kept: out.length, ceiling: MAX_DECLARED_TESTS,
+    });
   }
-  return out;
+  return { tests: out, rawCount: raw.length, ceilingDropped };
+}
+
+function readTests(parsed) {
+  return readTestsWithMeta(parsed).tests;
+}
+
+// The durable identity of one declared check, and the ONLY thing the
+// per-check history is keyed by (services/check-history.js). It is the
+// same (name + path) pair readTests already de-duplicates on, hashed so
+// the column is fixed-width regardless of how long a check's name is.
+//
+// Consequence, and it is deliberate: renaming or re-pathing a check mints
+// a NEW key, so the check drops back to advisory and has to be observed
+// passing again before it can block a merge. An edited check is a new
+// check as far as "has this ever actually worked?" is concerned.
+function checkKey(name, path) {
+  return crypto.createHash('sha256')
+    .update(`${String(name == null ? '' : name)}\n${String(path == null ? '' : path)}`)
+    .digest('hex');
 }
 
 // Reserved keys the platform owns. A manifest entry using one of these
@@ -1440,6 +1486,8 @@ module.exports = {
   readGovernance,
   readScreenshot,
   readTests,
+  readTestsWithMeta,
+  checkKey,
   readIcon,
   readAdmins,
   readPlatformEnv,
@@ -1447,6 +1495,8 @@ module.exports = {
   PLATFORM_ENV_UNWRITABLE,
   MAX_PLATFORM_ENV,
   MAX_TESTS,
+  MAX_DECLARED_TESTS,
+  LEGACY_GATING_HEAD,
   MAX_APP_ADMINS,
   MAX_ADMIN_USERNAME_LENGTH,
   MAX_ICON_EMOJI_LENGTH,
