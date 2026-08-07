@@ -1,8 +1,7 @@
 'use strict';
 // Tests for the OpenRouter BYOK / Codex server-side pieces (plan.md).
-// Covers: the Codex JSONL normalizer, the OpenRouter SSE usage parser,
-// the codex config builder, resume-error classification, and the registry
-// codex_openrouter entry.
+// Covers: the Codex JSONL normalizer, the codex config builder, resume-error
+// classification, and the registry codex_openrouter entry.
 //
 // Run with: node --test tests/openrouter-byok.test.js
 
@@ -10,7 +9,6 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const codex = require('../src/agents/codex-openrouter');
-const { parseSseFrames, extractUsage } = require('../src/services/openrouter-usage');
 const registry = require('../src/agents/registry');
 
 // ── Registry ──────────────────────────────────────────────────────────
@@ -139,54 +137,6 @@ test('classifyResumeError: thread-missing is retry-fresh; auth/credit/rate are n
   assert.equal(codex.classifyResumeError('402 insufficient credits', 1).retryFresh, false);
   assert.equal(codex.classifyResumeError('429 rate limit', 1).retryFresh, false);
   assert.equal(codex.classifyResumeError('something weird', 1).retryFresh, false);
-});
-
-// ── OpenRouter SSE parser ─────────────────────────────────────────────
-test('parseSseFrames handles data-only frames split across chunks', () => {
-  // OpenRouter uses data-only frames (no event: header). The type is
-  // inside the JSON payload.
-  const a = parseSseFrames('data: {"type":"response.created","response":{"id":"r1"}}\n\ndata: {"type":"response.do');
-  assert.equal(a.events.length, 1);
-  assert.equal(a.events[0].event, 'response.created');
-  assert.equal(a.rest, 'data: {"type":"response.do');
-  const b = parseSseFrames(a.rest + 'ne","response":{"id":"r1","usage":{}}}\n\n');
-  assert.equal(b.events.length, 1);
-  assert.equal(b.events[0].event, 'response.done');
-});
-
-test('parseSseFrames handles the [DONE] terminator', () => {
-  const r = parseSseFrames('data: [DONE]\n\n');
-  assert.equal(r.events.length, 1);
-  assert.equal(r.events[0].event, 'done');
-  assert.equal(r.events[0].data, null);
-});
-
-test('extractUsage pulls tokens + cost from response.done (real format)', () => {
-  // Real OpenRouter format: usage lives inside response.usage on the
-  // response.done frame, not at the top level.
-  const data = {
-    type: 'response.done',
-    response: {
-      id: 'req-123', model: 'openai/gpt-5.3-codex', provider: 'openai',
-      usage: { input_tokens: 200, output_tokens: 80, output_tokens_details: { reasoning_tokens: 30 } },
-      cost: 0.0142,
-    },
-  };
-  const u = extractUsage('response.done', data);
-  assert.equal(u.requestId, 'req-123');
-  assert.equal(u.inputTokens, 200);
-  assert.equal(u.outputTokens, 80);
-  assert.equal(u.reasoningOutputTokens, 30);
-  assert.equal(u.cost, 0.0142);
-  assert.equal(u.routedProvider, 'openai');
-});
-
-test('extractUsage returns null for non-usage events', () => {
-  assert.equal(extractUsage('response.output_text.delta', { delta: 'hi' }), null);
-});
-
-test('extractUsage returns null for null data', () => {
-  assert.equal(extractUsage('done', null), null);
 });
 
 // ── Canonical OpenRouter API base (Commit 2 / plan 4) ────────────────

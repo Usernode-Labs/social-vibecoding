@@ -65,10 +65,12 @@ RUN echo "claude-code cache bust: ${CLAUDE_CODE_CACHE_BUST}" \
 
 # ── Codex CLI (codex_openrouter backend; plan.md PR5) ─────────────────
 # PINNED (not day-bumped) — bump deliberately. Codex runs non-interactively
-# (codex exec --json) against the Usernode OpenRouter relay; the raw
-# OpenRouter key never enters the container (a scoped per-turn bearer token
-# does). Keep the pin aligned with the JSONL event shapes src/agents/
-# codex-openrouter.js parses.
+# (codex exec --json), DIRECTLY against the user's OpenRouter key, which is
+# injected per-turn as OPENROUTER_API_KEY into the specific
+# that needs it. The key is NOT placed in the warm-container bootstrap
+# environment (see worker.js buildTurnSecretEnv). There is NO OpenRouter
+# platform relay. Codex holds only narrow worker capabilities. Keep the pin
+# aligned with the JSONL event shapes src/agents/codex-openrouter.js parses.
 ARG CODEX_VERSION=0.146.0
 RUN npm install -g @openai/codex@${CODEX_VERSION}
 

@@ -4820,7 +4820,6 @@ CREATE TABLE IF NOT EXISTS agent_turns (
   output_tokens            BIGINT NOT NULL DEFAULT 0,
   reasoning_output_tokens  BIGINT NOT NULL DEFAULT 0,
   actual_cost_usd          NUMERIC(18,8) NOT NULL DEFAULT 0,
-  reserved_cost_usd        NUMERIC(18,8) NOT NULL DEFAULT 0,
   estimated_cost_usd       NUMERIC(18,8),
   cost_source              VARCHAR(32),
   billed_by                VARCHAR(32),
@@ -4844,7 +4843,6 @@ CREATE INDEX IF NOT EXISTS idx_agent_turns_session
 -- preceding PR revision has agent_turns without agent_config_version, and
 -- CREATE TABLE IF NOT EXISTS is a no-op there. This ALTER covers that path.
 ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS agent_config_version INTEGER NOT NULL DEFAULT 1;
-ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS reserved_cost_usd NUMERIC(18,8) NOT NULL DEFAULT 0;
 -- Commit 4 (plan §6): per-attempt + cumulative provider totals.
 ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS logical_turn_id UUID;
 ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS attempt_number INTEGER NOT NULL DEFAULT 1;
@@ -4872,26 +4870,6 @@ BEGIN
     );
   END IF;
 END$$;
-
--- Per-request proxy diagnostics. Uniqueness on (turn_id,
--- upstream_request_id) prevents double-settlement from SSE replays.
-CREATE TABLE IF NOT EXISTS agent_api_calls (
-  id                    UUID PRIMARY KEY,
-  turn_id               UUID NOT NULL REFERENCES agent_turns(id) ON DELETE CASCADE,
-  upstream_request_id  VARCHAR(255),
-  requested_model       VARCHAR(255),
-  routed_model          VARCHAR(255),
-  routed_provider       VARCHAR(128),
-  input_tokens          BIGINT NOT NULL DEFAULT 0,
-  output_tokens         BIGINT NOT NULL DEFAULT 0,
-  actual_cost_usd       NUMERIC(18,8) NOT NULL DEFAULT 0,
-  reserved_cost_usd     NUMERIC(18,8) NOT NULL DEFAULT 0,
-  status                VARCHAR(24) NOT NULL,
-  started_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  completed_at         TIMESTAMPTZ,
-  UNIQUE (turn_id, upstream_request_id)
-);
-ALTER TABLE agent_api_calls ADD COLUMN IF NOT EXISTS reserved_cost_usd NUMERIC(18,8) NOT NULL DEFAULT 0;
 
 -- Compatibility overlay: verified / experimental / blocked per model.
 CREATE TABLE IF NOT EXISTS agent_model_compatibility (

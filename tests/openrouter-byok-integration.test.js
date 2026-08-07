@@ -9,7 +9,6 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const worker = require('../src/services/worker');
-const { parseSseFrames, extractUsage } = require('../src/services/openrouter-usage');
 const { sanitizeModel } = require('../src/services/agent-models');
 
 // Authentic pinned-Codex 0.146.0 JSONL (captured from a real run).
@@ -63,44 +62,6 @@ test('vertical: authentic Codex JSONL → thread id + progress + final message',
   assert.ok(progress.some((t) => t.includes('I updated the test file')), 'agent message surfaces');
 });
 
-// Authentic OpenRouter Responses SSE — data-only frames, usage inside
-// response.usage on response.done.
-function authenticOpenRouterSse() {
-  return [
-    'data: {"type":"response.created","response":{"id":"gen_req_123","model":"openai/gpt-5.3-codex"}}',
-    '',
-    'data: {"type":"response.output_text.delta","delta":"Updating"}',
-    '',
-    'data: {"type":"response.output_text.delta","delta":" files..."}',
-    '',
-    'data: {"type":"response.completed","response":{"id":"gen_req_123","usage":{"input_tokens":412,"output_tokens":201}}}',
-    '',
-    'data: [DONE]',
-    '',
-  ].join('\n');
-}
-
-test('vertical: authentic OpenRouter SSE → usage parsed for settlement', () => {
-  const parsed = parseSseFrames(authenticOpenRouterSse());
-  const usageEvents = parsed.events
-    .map((e) => extractUsage(e.event, e.data))
-    .filter(Boolean);
-  assert.ok(usageEvents.length >= 1, 'terminal usage event parsed');
-  const u = usageEvents[usageEvents.length - 1];
-  assert.equal(u.requestId, 'gen_req_123');
-  assert.equal(u.inputTokens, 412);
-  assert.equal(u.outputTokens, 201);
-});
-
-test('vertical: response.done with response.usage + cost settles', () => {
-  const data = { type: 'response.done', response: { id: 'gen_req_456', model: 'm', usage: { input_tokens: 10, output_tokens: 5 }, cost: 0.02 } };
-  const u = extractUsage('response.done', data);
-  assert.equal(u.inputTokens, 10);
-  assert.equal(u.outputTokens, 5);
-  assert.equal(u.cost, 0.02);
-  assert.equal(u.requestId, 'gen_req_456');
-});
-
 test('streaming UTF-8 decoding preserves a character split across chunks', () => {
   const bytes = Buffer.from('data: {"delta":"€"}\r\n\r\n');
   const split = bytes.indexOf(Buffer.from('€')) + 1;
@@ -109,15 +70,6 @@ test('streaming UTF-8 decoding preserves a character split across chunks', () =>
     + decoder.decode(bytes.subarray(split), { stream: true })
     + decoder.decode();
   assert.equal(text, 'data: {"delta":"€"}\r\n\r\n');
-});
-
-test('parseSseFrames handles CRLF-separated frames', () => {
-  const parsed = parseSseFrames(
-    'data: {"type":"response.created"}\r\n\r\n'
-    + 'data: {"type":"response.done","response":{"id":"crlf","usage":{}}}\r\n\r\n',
-  );
-  assert.deepEqual(parsed.events.map((event) => event.event), ['response.created', 'response.done']);
-  assert.equal(parsed.rest, '');
 });
 
 test('sanitizeModel converts per-token prices and uses reasoning metadata', () => {

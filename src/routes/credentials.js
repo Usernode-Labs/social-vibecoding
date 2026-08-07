@@ -159,7 +159,7 @@ function credentialRoutes(config) {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     try {
       const { rows } = await pool.query(
-        `SELECT backend, model_id, reasoning_effort, max_turn_cost_usd, is_default
+        `SELECT backend, model_id, reasoning_effort, is_default
          FROM user_agent_preferences WHERE user_id = $1`,
         [req.user.id],
       );
@@ -167,7 +167,7 @@ function credentialRoutes(config) {
       for (const r of rows) {
         backends[r.backend] = {
           model: r.model_id, reasoningEffort: r.reasoning_effort,
-          maxTurnCostUsd: r.max_turn_cost_usd, isDefault: r.is_default,
+          isDefault: r.is_default,
         };
       }
       const defaultBackend = rows.find((r) => r.is_default)?.backend
@@ -181,8 +181,7 @@ function credentialRoutes(config) {
 
   router.patch('/api/me/coding-agent', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-    const { defaultBackend, model, reasoningEffort, maxTurnCostUsd } = req.body || {};
-    let parsedMaxTurnCostUsd;
+    const { defaultBackend, model, reasoningEffort } = req.body || {};
     let backend = defaultBackend || 'codex_openrouter';
     try { registry.resolveBackend(backend); } catch { return res.status(400).json({ error: 'Unknown backend' }); }
     if (backend === 'codex_openrouter' && !betaAllowed(req.user.id)) {
@@ -190,19 +189,6 @@ function credentialRoutes(config) {
     }
     if (reasoningEffort != null && !['minimal', 'low', 'medium', 'high', 'xhigh'].includes(reasoningEffort)) {
       return res.status(400).json({ error: 'Invalid reasoning effort' });
-    }
-    // Cost-ceiling validation (review #7): reject negative, non-finite, or
-    // malformed values up front (instead of letting PostgreSQL 500 on a
-    // broken constraint). `null` means "unchanged"; `0` legitimately clears
-    // the cap — so 0 must be preserved, not collapsed to null.
-    if (maxTurnCostUsd != null) {
-      const num = typeof maxTurnCostUsd === 'number' ? maxTurnCostUsd : Number(maxTurnCostUsd);
-      if (!Number.isFinite(num) || num < 0) {
-        return res.status(400).json({ error: 'Cost cap must be a non-negative number.' });
-      }
-      parsedMaxTurnCostUsd = num;
-    } else {
-      parsedMaxTurnCostUsd = null;
     }
     // Validate the model against the user's permitted catalog (review P1) —
     // model ids become executable Codex config.toml, so arbitrary strings
@@ -252,20 +238,14 @@ function credentialRoutes(config) {
       }
       await pool.query(
         `INSERT INTO user_agent_preferences
-           (user_id, backend, model_id, reasoning_effort, max_turn_cost_usd, is_default)
-        VALUES ($1, $2, $3, $4, $5, $6)
+           (user_id, backend, model_id, reasoning_effort, is_default)
+        VALUES ($1, $2, $3, $4, TRUE)
          ON CONFLICT (user_id, backend) DO UPDATE SET
            model_id = EXCLUDED.model_id,
            reasoning_effort = EXCLUDED.reasoning_effort,
-           -- Preserve the existing cost cap when the request omits it
-           -- (review P3): Settings' model/default save doesn't send
-           -- maxTurnCostUsd, so a plain overwrite would silently wipe the
-           -- user's safety limit. Only replace when explicitly provided.
-           max_turn_cost_usd = COALESCE(EXCLUDED.max_turn_cost_usd,
-             user_agent_preferences.max_turn_cost_usd),
            is_default = EXCLUDED.is_default,
            updated_at = NOW()`,
-        [req.user.id, backend, model || null, reasoningEffort || null, parsedMaxTurnCostUsd != null ? parsedMaxTurnCostUsd : null, !!defaultBackend],
+        [req.user.id, backend, model || null, reasoningEffort || null],
       );
       res.json({ ok: true });
     } catch (err) {

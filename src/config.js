@@ -238,7 +238,6 @@ function load() {
       .split(',').map((s) => s.trim()).filter(Boolean),
     openrouterExperimentalModels: String(process.env.OPENROUTER_EXPERIMENTAL_MODELS_ENABLED || 'false') === 'true',
     openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || '',
-    openrouterMaxTurnCostUsd: parseFloat(process.env.OPENROUTER_MAX_TURN_COST_USD || '0') || 0,
     openrouterApiBase,
     openrouterAllowInsecureBase: String(process.env.OPENROUTER_ALLOW_INSECURE_BASE || 'false') === 'true',
     openrouterOrigin: process.env.OPENROUTER_ORIGIN || 'https://usernode.dev',
