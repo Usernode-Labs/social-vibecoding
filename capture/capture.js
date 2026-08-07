@@ -176,15 +176,18 @@ const CONSOLE_ONLY_SETTLE_MS = 1500;
 // The suite used to be at most 12 checks run strictly one after another.
 // It is now every declared check — 240-odd for this repo — which at the
 // measured ~3.9s marginal cost per sequential check would be ~16 minutes,
-// four times the container's own timeout. So the checks run through a
-// bounded pool of concurrent pages instead.
+// four times the container's own timeout. Two mechanisms bring that down:
+// checks that share a URL share one navigation (groupTestsByUrl — this
+// repo's 241 checks hit ~110 distinct routes, and a benchmark against the
+// real manifest halved suite wall clock, 96s → 47s), and the groups run
+// through a bounded pool of concurrent pages.
 //
-// 8: production timings put a check at ~3.9s sequential, so 241 checks at
-// pool 8 is ~118s of ideal work; the staging preview (2 CPUs) is the real
-// serialising resource, so budget 55-70% efficiency → ~170-200s, well
-// inside the deadlines below. Raising this past ~16 buys nothing while the
-// preview is the bottleneck, and each live page costs 80-150 MB against
-// the container's 4g.
+// 8: production timings put a navigation at ~3.9s sequential, so ~110
+// groups at pool 8 is ~54s of ideal work; the staging preview (2 CPUs) is
+// the real serialising resource, so budget 55-70% efficiency → ~80-100s,
+// well inside the deadlines below. Raising this past ~16 buys nothing
+// while the preview is the bottleneck, and each live page costs 80-150 MB
+// against the container's 4g.
 function poolSize(env) {
   const raw = parseInt((env || {}).TEST_CONCURRENCY, 10);
   if (!Number.isFinite(raw) || raw < 1) return 8;
@@ -755,15 +758,38 @@ function resolveTests(env) {
   return out;
 }
 
-// #47: run one declared test against the staging build. Navigates the
-// test's route, collects console errors / uncaught exceptions / failed
-// loads (the #381 baseline, now per-test), then evaluates the optional
-// presence assertions. Emits exactly one __USERNODE_TEST__ frame. Never
-// throws — an unexpected error is itself reported as a failed test.
+// Group the declared suite by resolved URL, preserving first-appearance
+// order (and, within a group, declaration order). The manifest's checks
+// cluster heavily — this repo's 234 checks hit only ~106 distinct routes,
+// with 46 on the dev screen alone — and the navigation + settle sleeps are
+// where a check's wall clock actually goes. One navigation per URL, with
+// every assertion for that URL evaluated against the single loaded page,
+// halves the suite's real cost without touching what each check means:
+// every check still gets its own frame, verdict, and failure reason.
+//
+// The key is the RESOLVED url (route + token), not the declared path — two
+// checks only share a page when they'd have loaded byte-identical URLs.
+function groupTestsByUrl(tests) {
+  const byUrl = new Map();
+  for (const t of (Array.isArray(tests) ? tests : [])) {
+    if (!byUrl.has(t.url)) byUrl.set(t.url, []);
+    byUrl.get(t.url).push(t);
+  }
+  return Array.from(byUrl.values());
+}
+
+// #47: run the declared tests for ONE route against the staging build.
+// Navigates once, collects console errors / uncaught exceptions / failed
+// loads (the #381 baseline) for that load, then evaluates each check's
+// presence assertions against the same page. Emits exactly one
+// __USERNODE_TEST__ frame per check. Never throws — an unexpected error is
+// reported as a failed frame for every check that hasn't produced one yet.
 // `browser` may be a Browser or a BrowserContext (both expose newPage) —
 // main() passes the tests-only context so screenshot cookies can't bleed
 // into test navigations (see the isolation comment at the call site).
-async function runTest(browser, test) {
+async function runTestGroup(browser, group) {
+  const tests = Array.isArray(group) ? group : [group];
+  const lead = tests[0];
   const consoleErrors = [];
   const pushErr = (errKind, message, source) => {
     if (consoleErrors.length >= MAX_CONSOLE_ERRORS) return;
@@ -776,10 +802,20 @@ async function runTest(browser, test) {
       source: source ? String(source).slice(0, MAX_CONSOLE_MSG_LEN) : '',
     });
   };
+  const emitAll = (status, reasonFor) => {
+    for (const t of tests) {
+      const failureReason = reasonFor(t);
+      const pass = !failureReason;
+      emitTest(t.index, pass ? 'pass' : 'fail', status, {
+        name: t.name, path: t.path,
+        consoleErrors: t.allowConsoleErrors ? [] : consoleErrors,
+        failureReason: pass ? '' : failureReason,
+      });
+    }
+  };
 
   let page;
   let status = 0;
-  let failureReason = '';
   try {
     page = await browser.newPage();
     await page.setViewport(VIEWPORT);
@@ -799,89 +835,111 @@ async function runTest(browser, test) {
     });
 
     try {
-      const resp = await page.goto(test.url, { waitUntil: 'networkidle2', timeout: NAV_TIMEOUT_MS });
+      const resp = await page.goto(lead.url, { waitUntil: 'networkidle2', timeout: NAV_TIMEOUT_MS });
       status = resp ? resp.status() : 200;
     } catch (err) {
-      pushErr('load', `navigation failed: ${err.message}`, test.url);
-      emitTest(test.index, 'fail', 0, {
-        name: test.name, path: test.path, consoleErrors,
-        failureReason: `Page failed to load: ${err.message}`,
-      });
+      pushErr('load', `navigation failed: ${err.message}`, lead.url);
+      emitAll(0, () => `Page failed to load: ${err.message}`);
       await page.close().catch(() => {});
       return;
     }
 
     await sleep(SETTLE_MS);
+    let loadFailure = '';
     if (status >= 400) {
-      pushErr('load', `page returned HTTP ${status}`, test.url);
-      failureReason = `Page returned HTTP ${status}`;
+      pushErr('load', `page returned HTTP ${status}`, lead.url);
+      loadFailure = `Page returned HTTP ${status}`;
     }
     // Give deferred async errors a moment to fire before we judge.
     await sleep(CONSOLE_ONLY_SETTLE_MS);
 
-    // Presence assertions (only when the page loaded OK).
-    if (!failureReason && test.expectSelector) {
-      let found = false;
-      try { found = !!(await page.$(test.expectSelector)); } catch { found = false; }
-      if (!found) failureReason = `Expected element "${test.expectSelector}" was not found`;
-    }
-    if (!failureReason && test.expectText) {
-      let found = false;
-      try {
-        // innerText reflects RENDERED text, including CSS text-transform —
-        // a `text-transform: uppercase` header turns "Your apps" into
-        // "YOUR APPS" and a case-sensitive includes() can never match the
-        // human-written expectation. Compare case-insensitively: keeps the
-        // "visible on the page" semantics (hidden text still fails) while
-        // making the assertion robust to styling-only casing.
-        found = await page.evaluate(
-          (text) => (document.body ? document.body.innerText : '')
-            .toLowerCase().includes(String(text).toLowerCase()),
-          test.expectText
-        );
-      } catch { found = false; }
-      if (!found) failureReason = `Expected text "${test.expectText}" was not found on the page`;
+    // The console verdict is a property of the PAGE LOAD, shared by every
+    // check on this route. Freeze it here so a straggling async error that
+    // fires while the 30th assertion is being evaluated can't split one
+    // load into contradictory verdicts across the group.
+    const errorCount = consoleErrors.length;
+
+    // Per-check presence assertions against the one loaded page.
+    for (const t of tests) {
+      let failureReason = loadFailure;
+      if (!failureReason && t.expectSelector) {
+        let found = false;
+        try { found = !!(await page.$(t.expectSelector)); } catch { found = false; }
+        if (!found) failureReason = `Expected element "${t.expectSelector}" was not found`;
+      }
+      if (!failureReason && t.expectText) {
+        let found = false;
+        try {
+          // innerText reflects RENDERED text, including CSS text-transform —
+          // a `text-transform: uppercase` header turns "Your apps" into
+          // "YOUR APPS" and a case-sensitive includes() can never match the
+          // human-written expectation. Compare case-insensitively: keeps the
+          // "visible on the page" semantics (hidden text still fails) while
+          // making the assertion robust to styling-only casing.
+          found = await page.evaluate(
+            (text) => (document.body ? document.body.innerText : '')
+              .toLowerCase().includes(String(text).toLowerCase()),
+            t.expectText
+          );
+        } catch { found = false; }
+        if (!found) failureReason = `Expected text "${t.expectText}" was not found on the page`;
+      }
+      // Console errors fail the check unless it opted out. A failed load /
+      // missing assertion already set failureReason.
+      if (!failureReason && !t.allowConsoleErrors && errorCount > 0) {
+        failureReason = `${errorCount} console error${errorCount === 1 ? '' : 's'} on load`;
+      }
+      const pass = !failureReason;
+      emitTest(t.index, pass ? 'pass' : 'fail', status, {
+        name: t.name, path: t.path,
+        consoleErrors: t.allowConsoleErrors ? [] : consoleErrors,
+        failureReason: pass ? '' : failureReason,
+      });
     }
   } catch (err) {
-    failureReason = failureReason || `Test run error: ${err.message}`;
+    // emitTest de-duplicates by index, so checks that already reported are
+    // untouched and only the unreported remainder is failed.
+    emitAll(status, () => `Test run error: ${err.message}`);
   }
-
-  // Console errors fail the test unless the test opted out. A failed load
-  // / missing assertion already set failureReason.
-  const consoleFails = !test.allowConsoleErrors && consoleErrors.length > 0;
-  if (!failureReason && consoleFails) {
-    failureReason = `${consoleErrors.length} console error${consoleErrors.length === 1 ? '' : 's'} on load`;
-  }
-  const pass = !failureReason;
-  emitTest(test.index, pass ? 'pass' : 'fail', status, {
-    name: test.name, path: test.path,
-    consoleErrors: test.allowConsoleErrors ? [] : consoleErrors,
-    failureReason: pass ? '' : failureReason,
-  });
   if (page) await page.close().catch(() => {});
 }
 
+// Extra per-group deadline allowance for each check past the first. The
+// navigation + settle sleeps (the expensive part, ~2s+) are paid once per
+// group; each additional check is one page.$ and at most one evaluate —
+// milliseconds normally, so a second per check is generous headroom, and
+// keeping the allowance small preserves "one wedged page can't hold a
+// worker long" from the ungrouped design.
+const GROUP_EXTRA_CHECK_MS = 1000;
+
 // Run the whole declared suite against one browser context with a bounded
-// worker pool. Replaces the sequential loop that made a 241-check suite a
-// ~16-minute job; at concurrency 8 the same suite lands in ~3-4 minutes,
-// because a check spends nearly all of its wall clock waiting on the
-// network and on settle sleeps rather than on CPU.
+// worker pool. Two layers of batching:
+//
+//   * URL GROUPS (groupTestsByUrl): checks on the same resolved URL share
+//     one navigation and one settled page — this repo's suite is 234 checks
+//     over ~106 routes, so grouping halves the number of navigations, and
+//     navigation + settle is where nearly all of a check's wall clock goes.
+//   * THE POOL: groups run through `concurrency` workers. Replaces the
+//     sequential loop that made a 241-check suite a ~16-minute job.
 //
 // Three shapes matter here:
 //
-//  1. PRIMER. The first check runs alone. The context starts with an empty
+//  1. PRIMER. The first group runs alone. The context starts with an empty
 //     cookie jar and the first navigation is what exchanges the admin
 //     `?token=` for a session cookie (see main()'s isolation comment). Fan
-//     eight checks out into an empty jar and all eight race that exchange —
-//     seven of them render the "Admins only" gate and fail spuriously. One
-//     sequential navigation first, and the rest inherit the cookie.
-//  2. PER-CHECK DEADLINE. runTest already bounds its navigation, but the
+//     eight navigations out into an empty jar and all eight race that
+//     exchange — seven of them render the "Admins only" gate and fail
+//     spuriously. One sequential navigation first, and the rest inherit
+//     the cookie.
+//  2. PER-GROUP DEADLINE. runTestGroup bounds its navigation, but the
 //     settle sleeps and assertion evaluation are not bounded, and a page
 //     that keeps a socket open can hang `networkidle2` past its own
-//     timeout. A check that overruns is recorded as a failure and its slot
-//     is released, so one bad route can't hold a worker forever.
-//  3. GLOBAL DEADLINE. Workers stop PULLING new checks once the suite
-//     budget is spent (in-flight checks are allowed to finish). Whatever
+//     timeout. A group that overruns has its unreported checks recorded as
+//     failures and its slot released, so one bad route can't hold a worker
+//     forever. The budget scales gently with group size (see
+//     GROUP_EXTRA_CHECK_MS) because assertions are cheap but not free.
+//  3. GLOBAL DEADLINE. Workers stop PULLING new groups once the suite
+//     budget is spent (in-flight groups are allowed to finish). Whatever
 //     was never dispatched simply has no frame, and the sentinel says so —
 //     the platform reads `deadline=1` and reports those checks as unrun
 //     rather than as a crashed container.
@@ -898,58 +956,64 @@ async function runTests(context, tests, opts) {
     return { ran: 0, expected: 0, deadline: false };
   }
 
+  const groups = groupTestsByUrl(list);
   const startedAt = now();
   let ran = 0;
   let hitDeadline = false;
 
-  const runOne = async (test) => {
+  const runOne = async (group) => {
+    const groupBudgetMs = perTestMs + GROUP_EXTRA_CHECK_MS * (group.length - 1);
     let timer = null;
     const timeout = new Promise((resolve) => {
-      timer = setTimeout(() => resolve('timeout'), perTestMs);
+      timer = setTimeout(() => resolve('timeout'), groupBudgetMs);
       if (timer && typeof timer.unref === 'function') timer.unref();
     });
     let outcome;
     try {
       outcome = await Promise.race([
         Promise.resolve()
-          .then(() => runTest(context, test))
+          .then(() => runTestGroup(context, group))
           .then(() => 'done', (err) => `error:${(err && err.message) || err}`),
         timeout,
       ]);
     } finally {
       clearTimeout(timer);
     }
-    // emitTest de-duplicates by index, so this is a no-op when runTest
-    // already wrote its own frame.
+    // emitTest de-duplicates by index, so these are no-ops for any check in
+    // the group whose frame was already written before the overrun.
     if (outcome === 'timeout') {
-      emitTest(test.index, 'fail', 0, {
-        name: test.name, path: test.path, consoleErrors: [],
-        failureReason: `Check did not finish within ${Math.round(perTestMs / 1000)}s`,
-      });
+      for (const t of group) {
+        emitTest(t.index, 'fail', 0, {
+          name: t.name, path: t.path, consoleErrors: [],
+          failureReason: `Check did not finish within ${Math.round(groupBudgetMs / 1000)}s`,
+        });
+      }
     } else if (outcome !== 'done') {
-      emitTest(test.index, 'fail', 0, {
-        name: test.name, path: test.path, consoleErrors: [],
-        failureReason: `Test run error: ${String(outcome).slice(6) || 'unknown'}`,
-      });
+      for (const t of group) {
+        emitTest(t.index, 'fail', 0, {
+          name: t.name, path: t.path, consoleErrors: [],
+          failureReason: `Test run error: ${String(outcome).slice(6) || 'unknown'}`,
+        });
+      }
     }
-    ran += 1;
+    ran += group.length;
   };
 
   // 1. Primer, sequential.
-  await runOne(list[0]);
+  await runOne(groups[0]);
 
   // 2/3. Everything else through the pool.
   let cursor = 1;
   const worker = async () => {
     for (;;) {
-      if (cursor >= list.length) return;
+      if (cursor >= groups.length) return;
       if ((now() - startedAt) >= budgetMs) { hitDeadline = true; return; }
-      const test = list[cursor];
+      const group = groups[cursor];
       cursor += 1;
-      await runOne(test);
+      await runOne(group);
     }
   };
-  const lanes = Math.min(concurrency, Math.max(1, list.length - 1));
+  const lanes = Math.min(concurrency, Math.max(1, groups.length - 1));
   const workers = [];
   for (let i = 0; i < lanes; i += 1) workers.push(worker());
   await Promise.all(workers);
@@ -1000,9 +1064,9 @@ async function main() {
       }
     }
     // #47: run the declared test suite (assertions + per-test console
-    // check). A bounded pool, one page each; per-test failures stay
-    // independent and a thrown test is reported as a failed frame, never
-    // aborts the run.
+    // check). Checks are grouped by URL (one navigation per route) and the
+    // groups run through a bounded pool; per-test failures stay independent
+    // and a thrown test is reported as a failed frame, never aborts the run.
     //
     // Tests get their OWN browser context, isolated from the screenshot
     // pages above. The screenshot pass navigates with the NON-admin capture
@@ -1041,4 +1105,4 @@ if (require.main === module) {
 // file whose BEHAVIOUR (how many navigations it makes, whether it starts a
 // recording) is the thing under test, and it takes its page from the browser
 // it is handed, so a fake browser exercises it without Chromium.
-module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, mediaEnabled, resolveTests, captureTarget, runTests, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };
+module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, mediaEnabled, resolveTests, captureTarget, runTests, groupTestsByUrl, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };

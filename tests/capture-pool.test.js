@@ -36,14 +36,14 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  runTests, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink,
+  runTests, groupTestsByUrl, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink,
 } = require('../capture/capture');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Fake browser/context. Records page open/close so concurrency is
 // observable, and lets each test control how long a given check takes.
-function makeBrowser({ delays = {}, log = [], mode = 'fast' } = {}) {
+function makeBrowser({ delays = {}, log = [], mode = 'fast', missingSelectors = [] } = {}) {
   let open = 0;
   let peak = 0;
   return {
@@ -65,7 +65,7 @@ function makeBrowser({ delays = {}, log = [], mode = 'fast' } = {}) {
           if (mode === 'fast') throw new Error('fake: navigation refused');
           return { status: () => 200 };
         },
-        async $() { return {}; },
+        async $(sel) { return missingSelectors.includes(sel) ? null : {}; },
         async evaluate() { return true; },
         async close() {
           if (!closed) { closed = true; open -= 1; }
@@ -224,6 +224,92 @@ test('checks that load cleanly pass, through the pool', async () => {
   assert.deepEqual(frames.map((f) => f.status), ['pass', 'pass']);
   assert.equal(done.ran, '2');
   assert.equal(done.deadline, '0');
+});
+
+// ── URL grouping: one navigation per route, one frame per check ─────────
+
+test('checks on the same URL share one navigation but keep their own verdicts', async () => {
+  // The manifest clusters heavily (this repo: 234 checks over ~106 routes,
+  // 46 on the dev screen alone) and navigation + settle is where the wall
+  // clock goes. Grouping must not blur what each check means: same page,
+  // independent assertions, independent frames.
+  const read = collect();
+  const log = [];
+  const browser = makeBrowser({ log, mode: 'ok', missingSelectors: ['#gone'] });
+  const tests = [
+    { index: 0, name: 'a', path: '/shared', url: 'http://staging/shared', expectSelector: '#here' },
+    { index: 1, name: 'b', path: '/shared', url: 'http://staging/shared', expectSelector: '#gone' },
+    { index: 2, name: 'c', path: '/shared', url: 'http://staging/shared', expectText: 'welcome' },
+    { index: 3, name: 'd', path: '/other', url: 'http://staging/other' },
+  ];
+  const result = await runTests(browser, tests, { concurrency: 4, testTimeoutMs: 20000 });
+  const { frames, done } = read();
+  const gotos = log.filter((e) => e.call === 'goto');
+  assert.equal(gotos.length, 2, 'two distinct URLs, two navigations — not four');
+  assert.equal(frames.length, 4, 'but still one frame per check');
+  const byIndex = new Map(frames.map((f) => [f.index, f]));
+  assert.equal(byIndex.get(0).status, 'pass');
+  assert.equal(byIndex.get(1).status, 'fail', 'the missing selector fails only its own check');
+  assert.match(byIndex.get(1).failureReason, /#gone/);
+  assert.equal(byIndex.get(2).status, 'pass');
+  assert.equal(byIndex.get(3).status, 'pass');
+  assert.equal(result.ran, 4, 'the sentinel counts checks, not navigations');
+  assert.equal(done.ran, '4');
+  assert.equal(done.expected, '4');
+});
+
+test('a failed navigation fails every check that shared the URL', async () => {
+  const read = collect();
+  const browser = makeBrowser({ mode: 'fast' }); // every goto rejects
+  const tests = [
+    { index: 0, name: 'a', path: '/p', url: 'http://staging/p' },
+    { index: 1, name: 'b', path: '/p', url: 'http://staging/p', expectSelector: '#x' },
+  ];
+  await runTests(browser, tests, { concurrency: 2, testTimeoutMs: 5000 });
+  const { frames } = read();
+  assert.equal(frames.length, 2, 'both checks report');
+  for (const f of frames) {
+    assert.equal(f.status, 'fail');
+    assert.match(f.failureReason, /Page failed to load/,
+      'and the reason is the load, not a misattributed assertion');
+  }
+});
+
+test('a hung group fails all its unreported checks on the scaled deadline', async () => {
+  // The group deadline is testTimeoutMs + 1s per extra check (assertions
+  // are cheap but not free). Two checks share the slow URL, so the budget
+  // here is 120 + 1000 = 1120ms — the 2s hang must be cut off at that
+  // deadline, and BOTH slow-URL checks must get a "did not finish" frame.
+  const read = collect();
+  const browser = makeBrowser({ delays: { 'http://staging/slow': 2000 } });
+  const tests = [
+    { index: 0, name: 'a', path: '/fast', url: 'http://staging/fast' },
+    { index: 1, name: 'b', path: '/slow', url: 'http://staging/slow' },
+    { index: 2, name: 'c', path: '/slow', url: 'http://staging/slow' },
+  ];
+  const started = Date.now();
+  const result = await runTests(browser, tests, { concurrency: 2, testTimeoutMs: 120 });
+  const elapsed = Date.now() - started;
+  await sleep(2100); // let the abandoned navigation land before reading
+  const { frames } = read();
+  assert.ok(elapsed < 1600, `the suite must not wait out the hung group, took ${elapsed}ms`);
+  assert.equal(frames.length, 3, 'every check still gets exactly one frame');
+  for (const i of [1, 2]) {
+    const f = frames.find((x) => x.index === i);
+    assert.equal(f.status, 'fail');
+    assert.match(f.failureReason, /did not finish within/);
+  }
+  assert.equal(result.ran, 3);
+});
+
+test('groupTestsByUrl preserves declaration order within and across groups', () => {
+  const tests = [
+    { index: 0, url: 'u1' }, { index: 1, url: 'u2' },
+    { index: 2, url: 'u1' }, { index: 3, url: 'u3' },
+  ];
+  const groups = groupTestsByUrl(tests);
+  assert.deepEqual(groups.map((g) => g.map((t) => t.index)), [[0, 2], [1], [3]],
+    'first-appearance order across groups, declaration order within');
 });
 
 test('pool bounds come from env with sane defaults and a hard ceiling', () => {
