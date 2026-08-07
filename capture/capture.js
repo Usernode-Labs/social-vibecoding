@@ -734,8 +734,24 @@ function resolveTargets(env) {
 // unset / empty / unparseable TESTS yields [] — the run then falls back to
 // the legacy console-only behaviour on the "after" target (rolling-deploy
 // safety, same shape as resolveTargets' TARGETS-vs-scalar fallback).
-function resolveTests(env) {
-  const raw = (env.TESTS || '').trim();
+//
+// TESTS='@stdin' means the payload was too large to ride in a single env
+// string — a Linux exec caps any one argv/env string at 128KB
+// (MAX_ARG_STRLEN), and a manifest-scale suite (200+ checks, each with a
+// tokenized staging URL) blows through that: the platform's own proposals
+// died with `spawn E2BIG` before the container even started. The
+// orchestrator pipes the JSON through the container's stdin instead
+// (docker run -i), which has no such cap.
+function resolveTests(env, readStdin) {
+  let raw = (env.TESTS || '').trim();
+  if (raw === '@stdin') {
+    try {
+      raw = (readStdin ? readStdin() : fs.readFileSync(0, 'utf8')).trim();
+    } catch (err) {
+      process.stderr.write(`capture: failed to read TESTS from stdin: ${err.message}\n`);
+      return [];
+    }
+  }
   if (!raw) return [];
   let parsed;
   try { parsed = JSON.parse(raw); } catch { return []; }
