@@ -2701,10 +2701,14 @@
   <script src="/js/topochain-event-context.js"></script>
   <script src="/js/topochain-leaderboard.js"></script>
   <script src="/js/topochain-challenges.js"></script>
-  <!-- Topochain admin console screens (Task 15): the 'topochain' entry
-       in AdminConsole.SECTION_MODULES delegates to AdminTopochain.render(),
-       which owns its own sub-nav under #admin/topochain/<sub>. Loaded
-       after admin-console.js (which it extends) and before app.js. -->
+  <!-- Seasons, Events & Challenges admin console screens (Task 15): the
+       'seasons' entry in AdminConsole.SECTION_MODULES delegates to
+       AdminTopochain.render(), which owns its own sub-nav under
+       #admin/seasons/<sub> (the old #admin/topochain/<sub> address still
+       resolves and is rewritten to the canonical one). The file name and
+       the AdminTopochain global are historical — renaming them would
+       churn the service-worker precache list for no user-visible gain.
+       Loaded after admin-console.js (which it extends) and before app.js. -->
   <script src="/js/admin-topochain.js"></script>
   <!-- Folded-in admin console sections (#860): the seven standalone pages
        (/status, /node-status, /dashboard, /debug, /gallery, /admin,

@@ -127,19 +127,40 @@ const AdminConsole = {
     { key: 'featured-apps', label: 'Featured apps', group: 'Platform' },
     { key: 'db-export', label: 'Database export', group: 'Platform' },
     // Platform outbound mail: configuration, a test send, and the
-    // delivery ledger. Separate from Topochain → Settings (which keeps
-    // its own read-only status/activity card) because the audience is
-    // every mail flow, not the Topochain ones.
+    // delivery ledger. Separate from Seasons, Events & Challenges →
+    // Settings (which keeps its own read-only status/activity card)
+    // because the audience is every mail flow, not just that section's.
     { key: 'mail', label: 'Email delivery', group: 'Platform' },
-    // Topochain (Task 15, migration plan Global Constraint #8): ONE
-    // section, its own sub-nav under #admin/topochain/<sub> — see
-    // SECTION_MODULES below and public/js/admin-topochain.js,
-    // which owns that second hash level entirely on its own (mirrors
-    // leaderboard.js's _setSub/_syncHash pattern) rather than teaching
-    // this file general multi-level routing. Maintenance campaigns does
-    // the same for #admin/campaigns/<id>.
-    { key: 'topochain', label: 'Topochain', group: 'Platform' },
+    // Seasons, Events & Challenges (Task 15, migration plan Global
+    // Constraint #8): ONE section, its own sub-nav under
+    // #admin/seasons/<sub> — see SECTION_MODULES below and
+    // public/js/admin-topochain.js, which owns that second hash level
+    // entirely on its own (mirrors leaderboard.js's _setSub/_syncHash
+    // pattern) rather than teaching this file general multi-level
+    // routing. Maintenance campaigns does the same for
+    // #admin/campaigns/<id>.
+    //
+    // The section was called "Topochain" until the rename; the old key
+    // still resolves via LEGACY_SECTION_KEYS below so #admin/topochain
+    // bookmarks keep working. The module file name and the AdminTopochain
+    // global are historical and deliberately unchanged (the service
+    // worker precache list and the /api/v4/admin/* routes name them).
+    { key: 'seasons', label: 'Seasons, Events & Challenges', group: 'Platform' },
   ],
+
+  // Retired section keys that must keep resolving forever, so links and
+  // bookmarks minted before a rename don't 404 into the fallback section.
+  // Resolved at the two entry points (open/setSection) BEFORE visibility,
+  // module lookup, nav highlighting or hash writing see the key, so the
+  // rest of the file only ever deals in canonical keys. app.js rewrites
+  // the address bar itself so the bookmark self-heals.
+  LEGACY_SECTION_KEYS: {
+    topochain: 'seasons',
+  },
+
+  _canonicalSection(key) {
+    return (key && AdminConsole.LEGACY_SECTION_KEYS[key]) || key;
+  },
 
   isOpen() { return AdminConsole._open; },
 
@@ -215,6 +236,7 @@ const AdminConsole = {
     AdminConsole._chromeSuspended = !!(opts && opts.chrome === false);
     AdminConsole._menuScrollTop = 0;
     AdminConsole._ensureMediaListener();
+    section = AdminConsole._canonicalSection(section);
     const visible = AdminConsole._visibleSections();
     const valid = visible.some((s) => s.key === section);
     // In public mode, fall back to the first PUBLIC section rather than
@@ -567,6 +589,7 @@ const AdminConsole = {
   },
 
   setSection(key, opts) {
+    key = AdminConsole._canonicalSection(key);
     const visible = AdminConsole._visibleSections();
     if (!visible.some((s) => s.key === key)) {
       key = AdminConsole._publicMode() ? (visible[0]?.key || 'status') : 'overview';
@@ -590,7 +613,7 @@ const AdminConsole = {
   // Leaderboard._setSub pattern). Entering/leaving the page still gets a
   // real history entry via normal hash navigation.
   //
-  // Sections that own a second hash level (topochain, campaigns) are left
+  // Sections that own a second hash level (seasons, campaigns) are left
   // alone once we're already inside them, so their own replaceState isn't
   // fought over on every repaint.
   //
@@ -620,7 +643,7 @@ const AdminConsole = {
     merges: 'AdminMerges',
     gallery: 'AdminGallery',
     campaigns: 'AdminCampaigns',
-    topochain: 'AdminTopochain',
+    seasons: 'AdminTopochain',
     mail: 'AdminMail',
   },
 

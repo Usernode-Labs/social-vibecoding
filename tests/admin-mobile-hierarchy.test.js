@@ -76,7 +76,7 @@ test('a bare #admin means the MENU on mobile, Overview on desktop', () => {
     /key === 'overview' && !AdminConsole\._isMobile\(\)/,
     'only desktop collapses overview onto bare #admin');
   assert.match(writeHash.slice(0, 500), /location\.hash\.startsWith\(`\$\{target\}\/`\)/,
-    'sections owning a second hash level (topochain, campaigns) are left alone');
+    'sections owning a second hash level (seasons, campaigns) are left alone');
 });
 
 test('a mobile drill-in is a real hash navigation, so device back works', () => {

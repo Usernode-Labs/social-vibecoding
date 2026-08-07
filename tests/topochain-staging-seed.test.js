@@ -163,12 +163,22 @@ test('fixed ids used throughout live in the obviously-fake 900500+ range', () =>
 
 // ─── Content spot-checks per the brief's fixture list ──────────────────
 
-test('1 season', () => {
+test('2 seasons in ONE statement: the running one and a closed one', () => {
   assert.match(body, /INSERT INTO seasons/);
-  assert.equal((body.match(/INSERT INTO seasons/g) || []).length, 1);
+  assert.equal((body.match(/INSERT INTO seasons/g) || []).length, 1,
+    'both rows belong to the same statement — a second INSERT would be a second failure point');
+  const start = body.indexOf('INSERT INTO seasons');
+  const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
+  assert.match(block, /NOW\(\) - INTERVAL '60 days', NOW\(\) \+ INTERVAL '30 days', TRUE/,
+    'the running season is is_active = TRUE and spans now');
+  // The admin Seasons list renders an active/closed badge and orders by
+  // display_order; with one always-active row neither was reviewable.
+  assert.match(block, /NOW\(\) - INTERVAL '240 days', NOW\(\) - INTERVAL '150 days', FALSE/,
+    'the archive season ended months ago and is is_active = FALSE');
+  assert.match(block, /Staging Demo Season — Archive/);
 });
 
-test('3 season_events: regular (current), type=\'season\', and a fully-past one', () => {
+test("5 season_events: regular (current), type='season', a fully-past one, an archive-season one and a challenge-free one", () => {
   const start = body.indexOf('INSERT INTO season_events');
   const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
   assert.match(block, /'\{"metrics": \[\], "offchain_weight": 1\}'::jsonb/g);
@@ -176,7 +186,19 @@ test('3 season_events: regular (current), type=\'season\', and a fully-past one'
   assert.match(block, /'regular'/);
   assert.match(block, /'season'/);
   const scoringFormulaCount = (block.match(/::jsonb/g) || []).length;
-  assert.equal(scoringFormulaCount, 3, 'all three season_events rows carry a scoring_formula');
+  assert.equal(scoringFormulaCount, 5, 'all five season_events rows carry a scoring_formula');
+
+  // The archive event hangs off the CLOSED season ($6), which is what
+  // gives the admin events list two scopes to tell apart; the unfilled
+  // one hangs off the running season ($3) and is the only event with no
+  // challenges, so the per-event "No challenges yet" empty state is
+  // reachable in a preview.
+  assert.match(block, /\(\$5, \$6, 'Staging Demo Event — Archive Sprint'/);
+  assert.match(block, /\(\$7, \$3, 'Staging Demo Event — Unfilled Sprint'/);
+  // Both are is_active = FALSE, so no public surface (the leaderboard's
+  // event picker, the between-events fallback) shifts because of them.
+  assert.match(block, /NOW\(\) - INTERVAL '230 days', NOW\(\) - INTERVAL '200 days', FALSE/);
+  assert.match(block, /NOW\(\) \+ INTERVAL '20 days', NOW\(\) \+ INTERVAL '50 days', FALSE/);
 
   // The third event exists specifically so the between-events fallback
   // (public/js/topochain-events.js) is reachable in a staging preview: the
@@ -253,40 +275,99 @@ test('5 challenge_templates', () => {
   assert.equal(ids.length, 5);
 });
 
-test('10 challenges split across all three season_events', () => {
+test('13 challenges split across four of the five season_events', () => {
   const start = body.indexOf('INSERT INTO challenges');
   const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
-  const ids = block.match(/^\s*\(9005\d\d, \$/gm) || [];
-  assert.equal(ids.length, 10);
-  const regularEventRows = block.match(/\(9005\d\d, \$1,/g) || [];
-  const seasonEventRows = block.match(/\(9005\d\d, \$2,/g) || [];
+  const ids = block.match(/^\s*\(9\d{5}, \$/gm) || [];
+  assert.equal(ids.length, 13);
+  const regularEventRows = block.match(/\(9\d{5}, \$1,/g) || [];
+  const seasonEventRows = block.match(/\(9\d{5}, \$2,/g) || [];
   // The ended event needs its own challenges, or selecting it renders an
   // empty list that reads like the fallback is broken.
-  const endedEventRows = block.match(/\(9005\d\d, \$3,/g) || [];
+  const endedEventRows = block.match(/\(9\d{5}, \$3,/g) || [];
+  const archiveEventRows = block.match(/\(9\d{5}, \$4,/g) || [];
   assert.equal(regularEventRows.length, 5, '5 challenges on the regular event');
   assert.equal(seasonEventRows.length, 3, '3 challenges on the season-type event');
   assert.equal(endedEventRows.length, 2, '2 challenges on the fully-past event');
+  assert.equal(archiveEventRows.length, 3, '3 challenges on the archive-season event');
+
+  // EVENT_EMPTY_ID is deliberately absent: it is the ONLY event with no
+  // challenges, which is the only way the admin challenge list's empty
+  // state can be looked at in a preview. A challenge added to it here
+  // would silently delete that coverage.
+  assert.equal((block.match(/\(9\d{5}, \$5,/g) || []).length, 0,
+    'the unfilled event must stay challenge-free');
 });
 
-test('6 users with emails, one exclude_podium=TRUE, one with a real bcrypt password', () => {
+test('the archive challenges cover disabled and non-contiguous display orders', () => {
+  const start = body.indexOf('INSERT INTO challenges');
+  const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
+  // Every other fixture challenge is enabled, so "Enable" (the control the
+  // list offers on a disabled row) was unreachable in a preview.
+  assert.equal((block.match(/', FALSE, \d+, FALSE/g) || []).length, 1,
+    'exactly one disabled challenge fixture');
+  // Contiguous 1..n orders make a reorder bug invisible — any renumbering
+  // looks right. The archive event's 2/6/11 has gaps for that reason.
+  for (const order of [', 2, TRUE', ', 6, FALSE', ', 11, FALSE']) {
+    assert.ok(block.includes(order), `non-contiguous display order ${order} must be seeded`);
+  }
+});
+
+test('8 users with emails, one exclude_podium=TRUE, one with a real bcrypt password', () => {
   const start = body.indexOf('INSERT INTO users');
   const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
   const usernames = block.match(/staging-demo-topochain-participant-\d/g) || [];
-  assert.equal(new Set(usernames).size, 6, '6 distinct fixture usernames');
+  assert.equal(new Set(usernames).size, 8, '8 distinct fixture usernames');
   const emails = block.match(/staging-demo-topochain-\d@example\.invalid/g) || [];
-  assert.equal(new Set(emails).size, 6, '6 distinct fixture emails');
-  assert.match(block, /TRUE\)/, 'one row sets exclude_podium TRUE');
-  assert.equal((block.match(/, TRUE\)/g) || []).length, 1, 'exactly one exclude_podium=TRUE row');
+  assert.equal(new Set(emails).size, 8, '8 distinct fixture emails');
+  // exclude_podium and accept_logs are adjacent columns, so pin the pair:
+  // exactly one row is podium-excluded, and exactly one has accept_logs
+  // switched off (the column defaults to TRUE, so a screen showing it needs
+  // a FALSE row or the column is the same all the way down).
+  assert.equal((block.match(/', TRUE, TRUE,/g) || []).length, 1,
+    'exactly one exclude_podium = TRUE row');
+  assert.equal((block.match(/', FALSE, FALSE,/g) || []).length, 1,
+    'exactly one accept_logs = FALSE row');
   assert.match(body, /const realHash = await bcrypt\.hash\(/, 'a real bcrypt hash is computed');
   assert.match(block, /\$7,/, 'the bcrypt hash param is used in place of the sentinel password for one user');
+});
+
+test('the block-producer queue has one pending and one released row', () => {
+  // GET /api/v4/admin/bp-queue is literally `users WHERE bp_requested_at IS
+  // NOT NULL`, and its status filter splits on bp_released_at. With no
+  // requesting user the admin screen's queue is empty in every preview and
+  // both the table and its filter read as broken rather than as unused.
+  const start = body.indexOf('INSERT INTO users');
+  const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
+  assert.match(block, /bp_requested_at, bp_released_at/,
+    'the queue columns are set in the users INSERT, not by a later UPDATE');
+  assert.match(block, /NOW\(\) - INTERVAL '12 days', NULL\)/, 'one pending request');
+  assert.match(block, /NOW\(\) - INTERVAL '25 days', NOW\(\) - INTERVAL '20 days'\)/,
+    'one already-released request');
+  assert.equal((block.match(/NULL, NULL\)/g) || []).length, 6,
+    'the other six users are not in the queue');
+});
+
+test('3 waitlist_signups covering pending/unconfirmed/released', () => {
+  const start = body.indexOf('INSERT INTO waitlist_signups');
+  assert.ok(start > 0, 'the admin Waitlist screen reads waitlist_signups, which a staging clone empties');
+  const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
+  const ids = block.match(/^\s*\(9005\d\d, '/gm) || [];
+  assert.equal(ids.length, 3);
+  assert.equal((block.match(/@example\.invalid/g) || []).length, 3,
+    'every fixture address is .invalid — nothing here is ever mailed');
+  // One row per state that renders differently on the screen.
+  assert.match(block, /NULL, NULL, NULL, NULL\)/, 'one unconfirmed, answer-less, pending row');
+  assert.match(block, /NOW\(\) - INTERVAL '20 days', \$1,/, 'one released row linked to a fixture user');
+  assert.equal((block.match(/'::jsonb/g) || []).length, 2, 'two rows carry survey answers');
 });
 
 test('user_enrollments: a mix of season-wide (NULL event) and event-scoped rows, every row carrying the same season_id', () => {
   const start = body.indexOf('INSERT INTO user_enrollments');
   const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
-  const rows = block.match(/\(9005\d\d, [^,]+, \$\d, (\$\d), NOW/g) || [];
-  assert.ok(rows.length >= 6, 'a substantial number of enrollment rows');
-  const seasonIdTokens = new Set(rows.map((r) => r.match(/\$\d, NOW/)[0].split(',')[0].trim()));
+  const rows = block.match(/\(9\d{5}, [^,]+, \$\d+, (\$\d+), NOW/g) || [];
+  assert.ok(rows.length >= 8, 'a substantial number of enrollment rows');
+  const seasonIdTokens = new Set(rows.map((r) => r.match(/\$\d+, NOW/)[0].split(',')[0].trim()));
   assert.equal(seasonIdTokens.size, 1,
     'every enrollment row must reference the SAME season_id placeholder (the scope invariant, enforced by construction)');
   assert.match(block, /\(\d+, NULL, /, 'at least one season-wide (NULL season_event_id) row');
@@ -306,11 +387,19 @@ test('6 onchain_accounts, some assigned/used, some unassigned/unused, with a fak
 test('user_activities span multiple challenges with the challenge_completion replay-guard metadata', () => {
   const start = body.indexOf('INSERT INTO user_activities');
   const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
-  const ids = block.match(/^\s*\(9005\d\d,/gm) || [];
-  assert.equal(ids.length, 8);
+  const ids = block.match(/^\s*\(9\d{5},/gm) || [];
+  assert.equal(ids.length, 12);
   assert.match(block, /'\{"kind": "challenge_completion"\}'::jsonb/);
   const challengeIds = new Set((block.match(/, (900500|900501|900502|900503|900504|900505|900506|900507)\)/g) || []));
   assert.ok(challengeIds.size >= 6, 'activities reference a variety of distinct challenges');
+  // The activities screen filters by event, and until the archive rows
+  // existed every row belonged to the running season — so the filter could
+  // only ever return everything.
+  assert.equal((block.match(/\(9007\d\d, \$[89], \$7,/g) || []).length, 4,
+    '4 activities on the archive event, for the two block-producer-queue users');
+  // The one row with no challenge_id, so the "—" cell that stands in for
+  // "not tied to a challenge" is on screen rather than being a dead branch.
+  assert.equal((block.match(/INTERVAL '\d+ days', NULL\)/g) || []).length, 1);
 });
 
 // The home-screen Challenges card (#911) can draw four states, and a seed
