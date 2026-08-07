@@ -150,3 +150,31 @@ test('sw.js and manifest.webmanifest get the revalidate-every-load header', () =
   // Icons stay on the default policy (they're content-stable PNGs).
   assert.equal(shellAssetCacheControl('/srv/public/icons/icon-192.png'), null);
 });
+
+test('offline affordances only gate the anonymous auth screens (#1021)', () => {
+  const html = readPublic('index.html');
+  // Both places an offline visitor can land carry an explanation.
+  assert.ok(html.split('class="offline-only').length - 1 >= 2,
+    'the login and landing screens should each explain the offline state');
+  // data-offline-disabled greys a control out AND blocks its clicks, so a
+  // stray one in the authed shell would silently break a working feature
+  // for anyone whose probe is briefly failing. Keep them confined to the
+  // auth overlays, whose actions genuinely cannot work offline.
+  const authStart = html.indexOf('id="auth-landing-screen"');
+  const authEnd = html.indexOf('id="auth-waitlist-screen"');
+  assert.ok(authStart > -1 && authEnd > authStart);
+  for (const m of html.matchAll(/data-offline-disabled/g)) {
+    assert.ok(m.index > authStart && m.index < authEnd,
+      `data-offline-disabled at index ${m.index} is outside the auth screens`);
+  }
+});
+
+test('the offline state is styled from the committed stylesheet, not inline', () => {
+  // body.is-offline is toggled by offline.js and every visual consequence
+  // lives in app.css — nothing here depends on a Tailwind utility that
+  // would have to be generated for a class name built at runtime.
+  const css = readPublic('css/app.css');
+  for (const sel of ['body.is-offline', '.offline-only', '[data-offline-disabled]']) {
+    assert.ok(css.includes(sel), `app.css has no ${sel} rule`);
+  }
+});

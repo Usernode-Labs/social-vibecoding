@@ -32,9 +32,25 @@ const debugAccess = require('../src/services/debug-access');
 // belong.
 const blockStart = schema.indexOf('Topochain Task 2 — `users` columns');
 assert.ok(blockStart > 0, 'the Task 2 block header exists');
+// Bound the slice at the header of the section that follows, the same way
+// tests/topochain-schema.test.js bounds the §3.4 block. Without an end the
+// slice ran to EOF, so the exact-count assertions below ("exactly eight
+// table-level staging:private tags") silently counted tags belonging to
+// every later, unrelated section too — adding one staging:private table
+// anywhere further down schema.sql broke a test about Task 2.
+//
+// Task 8 immediately follows Task 2 but uses the same heavy "═" banner
+// rather than the "── " decoration other top-level sections use, so it
+// wouldn't be caught by a generic next-section search — hence the
+// explicit indexOf. The generic "-- ── " search stays as a fallback so a
+// differently-decorated section inserted between Task 2 and Task 8 in the
+// future is still excluded, whichever bound comes first.
 const afterStart = schema.slice(blockStart);
-const nextSection = afterStart.search(/\n-- ── /);
-const block = nextSection > 0 ? afterStart.slice(0, nextSection) : afterStart;
+const nextGenericSection = afterStart.search(/\n-- ── /);
+const task8Offset = schema.indexOf('Topochain Task 8 — mobile auth', blockStart) - blockStart;
+assert.ok(task8Offset > 0, 'the section after the Task 2 block exists');
+const blockCut = nextGenericSection > 0 ? Math.min(nextGenericSection, task8Offset) : task8Offset;
+const block = afterStart.slice(0, blockCut);
 
 // ─── users columns ──────────────────────────────────────────────────
 

@@ -62,13 +62,76 @@ const App = {
   // actually leave the page.
   _isRestoring: false,
 
-  async init() {
-    // Install fetch wrap and (if we were mid-restart on a previous load)
-    // restore the platform-updating banner state BEFORE any other init
-    // step that might fire a write. See PlatformUpdating below.
-    App.PlatformUpdating.installFetchWrap();
-    App.PlatformUpdating.restoreFromSessionStorage();
+  // ── Display-only session snapshot (#1021) ───────────────────────────
+  // A tiny durable record that THIS DEVICE was signed in, written on every
+  // successful boot/login and read only when /api/auth/me cannot be
+  // reached at all. Without it an offline reload is indistinguishable from
+  // a sign-out: `fetch` throws, and the shell drops the user on the
+  // landing screen with no way back until the network returns.
+  //
+  // It is DISPLAY-ONLY and grants nothing. The session cookie remains the
+  // sole credential — every request still authenticates normally and the
+  // server is free to reject them. All the snapshot decides is which
+  // *screen* an offline boot paints, and the moment the network answers
+  // again the real /api/auth/me reconciles it (see _reconcileSession).
+  // It is cleared on logout, on any answered non-ok /me, and when it ages
+  // out, so a stale one can't strand a signed-out device in a signed-in
+  // looking shell.
+  SESSION_SNAPSHOT_KEY: 'usernode.session.v1',
+  SESSION_SNAPSHOT_MAX_AGE_MS: 30 * 24 * 60 * 60 * 1000, // 30 days
 
+  // How long boot waits for /api/auth/me before falling back to the
+  // snapshot. Deliberately just past the service worker's own API deadline
+  // (API_TIMEOUT_MS) so the SW gets first refusal at answering from cache;
+  // this only catches the no-SW / SW-bypassed cases.
+  BOOT_SESSION_TIMEOUT_MS: 5000,
+
+  saveSessionSnapshot(user) {
+    if (!user || !user.id) return;
+    try {
+      localStorage.setItem(App.SESSION_SNAPSHOT_KEY, JSON.stringify({
+        user, savedAt: Date.now(),
+      }));
+    } catch (err) { /* private mode / quota — offline boot just degrades */ }
+  },
+
+  readSessionSnapshot() {
+    try {
+      const raw = localStorage.getItem(App.SESSION_SNAPSHOT_KEY);
+      if (!raw) return null;
+      const snap = JSON.parse(raw);
+      if (!snap || !snap.user || !snap.user.id) return null;
+      const age = Date.now() - Number(snap.savedAt || 0);
+      if (!(age >= 0) || age > App.SESSION_SNAPSHOT_MAX_AGE_MS) {
+        App.clearSessionSnapshot();
+        return null;
+      }
+      return snap;
+    } catch (err) {
+      return null;
+    }
+  },
+
+  clearSessionSnapshot() {
+    try { localStorage.removeItem(App.SESSION_SNAPSHOT_KEY); } catch (err) { /* ignore */ }
+  },
+
+  // Ask the service worker to drop the cached API responses of a session
+  // that is definitively over. Fire-and-forget: the snapshot has already
+  // been cleared, so a worker that never answers changes nothing.
+  _dropCachedSession() {
+    App.clearSessionSnapshot();
+    try {
+      navigator.serviceWorker?.controller?.postMessage({ type: 'clear-api-cache' });
+    } catch (err) { /* no SW — nothing cached to drop */ }
+  },
+
+  // True while the shell is running on the snapshot rather than a verified
+  // /api/auth/me. Read by the boot path (skip the session-gated fetches
+  // and the events socket) and cleared by _reconcileSession.
+  _sessionFromSnapshot: false,
+
+  async init() {
     // FIRST, before any screen paints: the synthetic-inset shot state.
     // Runs here rather than beside the other ?shot= handlers below
     // because it must cover the anonymous shell too (the landing / login
@@ -95,27 +158,113 @@ const App = {
       await App.enterAnonymous();
       return;
     }
+    // `?shot=offline` / `?shot=offline-signin` pin the offline state before
+    // the boot check runs, so the shot never depends on real connectivity.
+    // The signed-out variant boots the anonymous shell directly, exactly
+    // as _anonShot does, so it doesn't depend on the capture's session.
+    if (App._applyOfflineShot() === 'offline-signin') {
+      await App.enterAnonymous();
+      return;
+    }
 
+    // Boot has THREE outcomes, not two (#1021). The old code collapsed
+    // "the server said no" and "the server said nothing" into the same
+    // anonymous boot, so a signed-in user who reloaded on a dead network
+    // landed on the landing page — signed out, in effect, by a dropped
+    // packet.
+    //
+    //   answered, ok       → the real session; refresh the snapshot.
+    //   answered, not ok   → genuinely signed out; drop every cached trace.
+    //   never answered     → unknown. Fall back to the snapshot and show
+    //                        the signed-in shell in read-only offline mode,
+    //                        reconciling as soon as the network returns.
+    let res = null;
     try {
-      // Offline note (#487): the service worker serves this network-first
-      // with a cached fallback, so an offline reload by a logged-in user
-      // resolves `res.ok` from the last successful copy and boot proceeds
-      // to the cached shell. A real 401 (only reachable online — errors
-      // never enter the SW cache) boots the anonymous shell below.
-      const res = await fetch('/api/auth/me');
-      if (!res.ok) {
-        await App.enterAnonymous();
+      res = await App._fetchSession();
+    } catch (err) {
+      res = null;
+    }
+
+    if (res && res.ok) {
+      let user = null;
+      try { user = (await res.json()).user; } catch (err) { user = null; }
+      if (user) {
+        App.enterAuthed(user);
         return;
       }
-      const data = await res.json();
-      App.enterAuthed(data.user);
-    } catch {
-      // Network failure with no service-worker-cached /api/auth/me —
-      // i.e. offline on a device that never logged in (or predates the
-      // SW). Boot the anonymous shell; offline.js owns the connectivity
-      // banner and the login screen refuses submits while offline.
+    } else if (res) {
+      // A real answer with a real "no" (401/403). Only reachable online —
+      // error responses never enter the SW cache — so this is authoritative.
+      App._dropCachedSession();
       await App.enterAnonymous();
+      return;
     }
+
+    // No answer at all: offline, captive portal, or a connection that
+    // stalled past the deadline. Probe so the strip appears, then decide
+    // from the snapshot.
+    try { window.Offline?.nudge(); } catch (err) { /* ignore */ }
+    const snap = App.readSessionSnapshot();
+    if (snap) {
+      App._sessionFromSnapshot = true;
+      App.enterAuthed(snap.user);
+      return;
+    }
+    // Offline on a device that was never signed in. The anonymous shell
+    // shows its own offline state and refuses submits (see auth-screens.js).
+    await App.enterAnonymous();
+  },
+
+  // /api/auth/me with a deadline. Resolves to the Response, or throws when
+  // nothing arrived in time — an open-but-stalled socket must not hold the
+  // whole boot, which is what left the reported blank screen.
+  async _fetchSession() {
+    let timer = null;
+    const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+    if (ctrl) timer = setTimeout(() => ctrl.abort(), App.BOOT_SESSION_TIMEOUT_MS);
+    try {
+      return await fetch('/api/auth/me', ctrl ? { signal: ctrl.signal } : undefined);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  },
+
+  // Once connectivity is back, replace the snapshot-derived session with a
+  // verified one. Three outcomes again, and each matters:
+  //   401/403     → the session really did end while we were away.
+  //   another id  → a different user; a full reload is the only way to
+  //                 rebuild a shell that was painted for someone else.
+  //   same id     → promote to a live session: connect the events socket
+  //                 and resync whatever screen is on top.
+  async _reconcileSession() {
+    if (!App._sessionFromSnapshot) return;
+    let res;
+    try {
+      res = await fetch('/api/auth/me');
+    } catch (err) {
+      return; // still unreachable — stay on the snapshot.
+    }
+    if (!res.ok) {
+      App._dropCachedSession();
+      App._sessionFromSnapshot = false;
+      location.reload();
+      return;
+    }
+    let user = null;
+    try { user = (await res.json()).user; } catch (err) { user = null; }
+    if (!user) return;
+    if (String(user.id) !== String(App.user?.id)) {
+      App.clearSessionSnapshot();
+      location.reload();
+      return;
+    }
+    App._sessionFromSnapshot = false;
+    App.user = user;
+    App.saveSessionSnapshot(user);
+    App.connectEvents();
+    if (window.Kudos?.Budget?.init) Kudos.Budget.init();
+    if (window.AiCredit?.Budget?.init) AiCredit.Budget.init();
+    try { App.resyncCurrentView(); } catch (err) { /* ignore */ }
   },
 
   // ── Staged boot (fold-auth-pages-into-SPA) ──────────────────────────
@@ -135,9 +284,9 @@ const App = {
       await NativeChrome.enterAnonymous();
     }
     // Capture the platform SHA this document booted with. The anonymous
-    // shell has no WS "platform updating" banner, so pull-to-refresh is
-    // its only recovery path after a deploy — and platformMovedOn()
-    // needs a boot-time baseline to compare against.
+    // shell has no drawer (so no stale-version pill), which makes
+    // pull-to-refresh its only recovery path after a deploy — and
+    // platformMovedOn() needs a boot-time baseline to compare against.
     App.loadVersion();
     if (window.AuthScreens) AuthScreens.enter();
   },
@@ -156,6 +305,30 @@ const App = {
       try { history.replaceState(null, '', location.search + '#waitlist'); } catch (err) { /* ignore */ }
     }
     return true;
+  },
+
+  // Screenshot-state deep links for the offline experience (#1021):
+  //   ?shot=offline         — the signed-in shell in read-only offline mode
+  //                           (the fixed strip above everything).
+  //   ?shot=offline-signin  — the signed-out login screen while offline:
+  //                           the explanation block, and the credential
+  //                           fields greyed out because they cannot work.
+  //
+  // Both pin connectivity rather than reading it, because the one thing a
+  // capture runner and a reviewer's browser always have is a working
+  // network — without this the offline UI is literally unphotographable,
+  // and the "before" side of the comparison could never be produced.
+  // Pure UI state, no writes, so deliberately NOT env-gated (same
+  // reasoning as ?shot=menu). Returns the shot name, or null.
+  _applyOfflineShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'offline' && shot !== 'offline-signin') return null;
+    if (shot === 'offline-signin' && (!location.hash || location.hash === '#')) {
+      try { history.replaceState(null, '', location.search + '#login'); } catch (err) { /* ignore */ }
+    }
+    try { window.Offline?.forceOffline(); } catch (err) { /* ignore */ }
+    return shot;
   },
 
   // Swap the drawer's Profile row between the generic person glyph and the
@@ -210,6 +383,13 @@ const App = {
     // #982: paint the drawer's Profile row with the viewer's picture.
     App.applyUserAvatar();
 
+    // Remember that this device is signed in, so a later boot that can't
+    // reach /api/auth/me still knows which shell to paint (#1021). Skipped
+    // when the shell is running FROM the snapshot — re-writing it then
+    // would keep refreshing savedAt and an offline device would never age
+    // its session out.
+    if (!App._sessionFromSnapshot) App.saveSessionSnapshot(App.user);
+
     // A web session exists (platform access or not). The native login
     // handoff listens for this — wallet provisioning and the node work
     // for waiting-room users too (apps are usable without platform
@@ -240,17 +420,20 @@ const App = {
     // view-only) once App.user is resolved. bindEvents already ran, so
     // the click handler is attached before the button can be seen.
     App.renderAdminButton();
-    App.connectEvents();
+    // On a snapshot-derived boot every one of these is a guaranteed
+    // failure: the socket can't open and the budget endpoints can't
+    // answer. _reconcileSession runs them the moment the network is back.
+    if (!App._sessionFromSnapshot) App.connectEvents();
     App.loadVersion();
     // Header kudos budget badge polls /api/me/kudos-budget once at
     // load and then on a long interval (hourly safety-net for the
     // Monday-UTC rollover). Refreshes opportunistically on every
     // successful give + on the leaderboard screen mount.
-    if (window.Kudos?.Budget?.init) Kudos.Budget.init();
+    if (!App._sessionFromSnapshot && window.Kudos?.Budget?.init) Kudos.Budget.init();
     // AI-credit status row (#555), same boot shape as the kudos badge:
     // the viewer's own daily allowance. Refreshes again on every drawer
     // open (App.HeaderMenu.open), throttled inside the module.
-    if (window.AiCredit?.Budget?.init) AiCredit.Budget.init();
+    if (!App._sessionFromSnapshot && window.AiCredit?.Budget?.init) AiCredit.Budget.init();
     // Session-gated boot fetches (notifications bell, work drawer)
     // defer to this event instead of firing a guaranteed 401 on an
     // anonymous document load.
@@ -263,16 +446,17 @@ const App = {
     App._applyLaunchShot();
     App._applyFeedbackShot();
 
-    // Re-poll the platform version every 10s so the header pill flips to
-    // its "deploying" state within seconds of the deploy workflow signaling
-    // start, and back to "current" (or "stale") when it finishes. Cheap
-    // endpoint — just reads one tiny file off disk on the server.
-    //
-    // While the Phase 3 platform-updating banner is active we kick the
-    // cadence up to 2s (see PlatformUpdating.startFastPolling) so the
-    // banner clears within ~2s of the new container coming up. The slow
-    // interval is the steady-state baseline and remains scheduled
-    // unconditionally.
+    // Promote a snapshot-derived shell to a verified session as soon as
+    // the connectivity probe reports we're back.
+    window.addEventListener('usernode:offline-change', (e) => {
+      if (e.detail && e.detail.offline === false) App._reconcileSession();
+    });
+
+    // Re-poll the platform version every 10s so the drawer's platform
+    // row flips to its "deploying" state within seconds of a deploy
+    // signaling start, and to "stale" (a tappable reload) once a new
+    // build is live and this tab is behind it. Cheap endpoint — just
+    // reads one tiny file off disk on the server.
     setInterval(App.loadVersion, 10_000);
   },
 
@@ -473,12 +657,6 @@ const App = {
       if (!App.loadedPlatformSha && info.sha && info.sha !== 'dev') {
         App.loadedPlatformSha = info.sha;
       }
-      // Phase 3: if we're in the platform-updating window, dismiss the
-      // banner the moment /api/version reports a SHA different from the
-      // one we recorded at trigger time. Independent of WebSocket health
-      // — this is exactly the path that recovers the tab after the WS
-      // dropped during the GHA rolling restart.
-      App.PlatformUpdating.observeVersion(info);
       App.renderPlatformVersionPill(info);
     } catch {}
   },
@@ -616,294 +794,6 @@ const App = {
     return String(s).replace(/[&<>"']/g, (c) => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
     })[c]);
-  },
-
-  // ─────────────────────────────────────────────────────────────────
-  // SELF-HOSTING.md Phase 3: "Platform updating…" banner.
-  //
-  // Lifecycle:
-  //   1. server broadcasts vote_update { merging:true, selfHosted:true }
-  //      when a self-app PR transitions promoted → merging.
-  //   2. handleVoteUpdate calls PlatformUpdating.begin(...).
-  //   3. begin() persists { fromSha, since } to sessionStorage, shows
-  //      the banner, kicks the version poll up to 2s, and arms a 5min
-  //      "stuck" timer that swaps the banner to its red+Reload variant.
-  //   4. App.loadVersion calls observeVersion(info) on every poll. As
-  //      soon as info.sha differs from fromSha (and isn't 'dev'),
-  //      end() clears state, hides the banner, and reloads the page —
-  //      the new server may ship new client code, so a hard reload
-  //      avoids version-skew bugs.
-  //   5. The wrapped fetch (installFetchWrap) rejects all non-GET
-  //      requests while the banner is up — this is the actual write
-  //      block; the banner is just the signal. GETs flow through so
-  //      the version poll, auth check, etc. still work.
-  //
-  // Page-load recovery: restoreFromSessionStorage() runs early in
-  // init() so a tab that loaded mid-restart (or was reloaded by the
-  // user) re-renders the banner immediately and re-arms the poll.
-  //
-  // ONE MODE ONLY (#962). This banner used to carry a second,
-  // non-blocking "resolving merge conflicts" state (#239), armed off
-  // the auto-conflict-resolver's vote_update { resolving:true }. That
-  // broadcast fires whenever an eligible proposal's branch needs a
-  // worker `git merge origin/main` — routine drift housekeeping that
-  // in production ended WITHOUT a merge about 7 times in 10 — so it
-  // announced a merge conflict and a retry to every signed-in person
-  // while nothing was merging and nothing was paused. The per-proposal
-  // signals (the "Resolving conflicts…" / "⚠ Conflict resolution
-  // failed" badges in merge-status.js, the dev-chat sync banner, the
-  // group-chat play-by-play) carry that state in context instead. The
-  // server still broadcasts `resolving` — those badges read it — this
-  // banner just no longer does.
-  // ─────────────────────────────────────────────────────────────────
-  PlatformUpdating: {
-    SS_KEY: 'usernode:platform_updating',
-    POLL_FAST_MS: 2000,
-    STUCK_AFTER_MS: 5 * 60 * 1000,
-
-    // Mutable runtime state. Persisted shape (in sessionStorage) is
-    // just { fromSha, since, appSlug, sessionId } — the timer ids and
-    // DOM refs are ephemeral and must be re-derived on page load.
-    fromSha: null,
-    since: null,
-    // Session whose merge armed the banner — lets restore / the stuck
-    // timer verify against /api/sessions/:id/status that the merge is
-    // still in flight (see verifyMergeStillInFlight).
-    sessionId: null,
-    fastPollTimer: null,
-    stuckTimer: null,
-    fetchWrapInstalled: false,
-
-    isActive() {
-      return !!this.fromSha;
-    },
-
-    begin({ appSlug, sessionId } = {}) {
-      // Idempotent: a second begin() (e.g. server resends the merging
-      // event) is a no-op. The fromSha must be captured at first entry
-      // — re-capturing on a duplicate call would defeat the SHA-flip
-      // dismissal if the new container had already booted in between.
-      if (this.isActive()) return;
-      const fromSha = App.loadedPlatformSha || null;
-      this.fromSha = fromSha;
-      this.since = Date.now();
-      this.sessionId = sessionId || null;
-      try {
-        sessionStorage.setItem(this.SS_KEY, JSON.stringify({
-          fromSha, since: this.since, appSlug: appSlug || null, sessionId: sessionId || null,
-        }));
-      } catch {}
-      this.show(/* stuck */ false);
-      this.startFastPolling();
-      this.armStuckTimer();
-      console.log('[platform-updating] banner armed', { fromSha, appSlug });
-    },
-
-    restoreFromSessionStorage() {
-      let raw = null;
-      try { raw = sessionStorage.getItem(this.SS_KEY); } catch {}
-      if (!raw) return;
-      let parsed = null;
-      try { parsed = JSON.parse(raw); } catch {}
-      if (!parsed || typeof parsed !== 'object') {
-        try { sessionStorage.removeItem(this.SS_KEY); } catch {}
-        return;
-      }
-      // #962: only a real merge payload can restore this banner. A tab
-      // that armed the retired #239 resolving mode before this build
-      // deployed still has its { mode:'resolving', … } payload here,
-      // and any payload without a usable fromSha has no dismissal
-      // condition (no SHA to flip away from) — so it could only ever
-      // sit until the stuck timer. Treat both as garbage.
-      if (parsed.mode === 'resolving' || !parsed.fromSha) {
-        try { sessionStorage.removeItem(this.SS_KEY); } catch {}
-        return;
-      }
-      this.fromSha = parsed.fromSha;
-      this.since = parsed.since || Date.now();
-      this.sessionId = parsed.sessionId || null;
-      const elapsed = Date.now() - this.since;
-      this.show(elapsed >= this.STUCK_AFTER_MS);
-      this.startFastPolling();
-      this.armStuckTimer();
-      console.log('[platform-updating] banner restored from session', { elapsedMs: elapsed });
-      // The restored merge may have aborted while this tab was
-      // reloading (its merging:false counter-event is gone for good) —
-      // verify before holding the tab read-only until the stuck timer.
-      this.verifyMergeStillInFlight();
-    },
-
-    observeVersion(info) {
-      if (!this.isActive()) return;
-      const sha = info && info.sha;
-      // Wait for a real, deploy-pinned SHA different from the one we
-      // captured. 'dev' means GIT_SHA wasn't set on the responding
-      // container — almost certainly a misconfigured rebuild rather
-      // than the legitimate post-restart steady state, so don't
-      // dismiss off it.
-      if (!sha || sha === 'dev' || sha === this.fromSha) return;
-      this.end({ newSha: sha });
-    },
-
-    // The merge behind this banner ended without merging — failed, head
-    // moved, or deferred (vote_update { merging:false, merged:false }).
-    // No new code is coming, so there's no SHA flip to wait for and no
-    // reason to reload — just clear the latch and lift the write block.
-    // Safe when the banner isn't armed (no-op).
-    cancel() {
-      if (!this.isActive()) return;
-      console.log('[platform-updating] cancelled (merge failed, no deploy)');
-      try { sessionStorage.removeItem(this.SS_KEY); } catch {}
-      this.fromSha = null;
-      this.since = null;
-      this.sessionId = null;
-      this.stopFastPolling();
-      this.disarmStuckTimer();
-      this.hide();
-    },
-
-    // Shared amber/red class swap for all banner variants. Swapping
-    // classes rather than re-rendering keeps the spinner animation
-    // uninterrupted when a variant flips mid-flight.
-    _setBannerTone(tone) {
-      const el = document.getElementById('platform-updating-banner');
-      if (!el) return;
-      const amber = ['bg-amber-100', 'text-amber-900', 'border-amber-300',
-        'dark:bg-amber-900/40', 'dark:text-amber-100', 'dark:border-amber-800/60'];
-      const red = ['bg-red-100', 'text-red-900', 'border-red-300',
-        'dark:bg-red-900/40', 'dark:text-red-100', 'dark:border-red-800/60'];
-      el.classList.remove(...(tone === 'red' ? amber : red));
-      el.classList.add(...(tone === 'red' ? red : amber));
-    },
-
-    end({ newSha } = {}) {
-      console.log('[platform-updating] dismissing', { fromSha: this.fromSha, newSha });
-      try { sessionStorage.removeItem(this.SS_KEY); } catch {}
-      this.fromSha = null;
-      this.since = null;
-      this.sessionId = null;
-      this.stopFastPolling();
-      this.disarmStuckTimer();
-      this.hide();
-      // Hard reload: the new server may ship new client code, so
-      // reusing the in-memory App / AppView / Home from the pre-restart
-      // SHA against a freshly-deployed backend is exactly the version-
-      // skew minefield the rest of this codebase tries to avoid (see
-      // the 'stale' pill in renderPlatformVersionPill — same design,
-      // different trigger). loadedPlatformSha is updated by the next
-      // load anyway, so a soft refresh + version-pill flip would also
-      // work, but reload is simpler and unambiguous.
-      try { location.reload(); } catch {}
-    },
-
-    show(stuck) {
-      const el = document.getElementById('platform-updating-banner');
-      if (!el) return;
-      el.classList.remove('hidden');
-      const reload = document.getElementById('platform-updating-reload');
-      const text = document.getElementById('platform-updating-text');
-      const spinner = document.getElementById('platform-updating-spinner');
-      if (stuck) {
-        // Swap to the red "stuck" variant (class swap keeps the
-        // animation uninterrupted if we flip mid-flight, e.g. on
-        // session-storage restore for a tab backgrounded >5 min).
-        this._setBannerTone('red');
-        if (text) text.textContent = 'Platform update is taking longer than expected. You can reload manually.';
-        if (spinner) spinner.classList.add('hidden');
-        if (reload) reload.classList.remove('hidden');
-      } else {
-        this._setBannerTone('amber');
-        if (text) text.textContent = 'Platform updating… sit tight, write actions are paused.';
-        if (spinner) spinner.classList.remove('hidden');
-        if (reload) reload.classList.add('hidden');
-      }
-    },
-
-    hide() {
-      const el = document.getElementById('platform-updating-banner');
-      if (el) el.classList.add('hidden');
-    },
-
-    startFastPolling() {
-      if (this.fastPollTimer != null) return;
-      this.fastPollTimer = setInterval(() => App.loadVersion(), this.POLL_FAST_MS);
-    },
-
-    stopFastPolling() {
-      if (this.fastPollTimer != null) {
-        clearInterval(this.fastPollTimer);
-        this.fastPollTimer = null;
-      }
-    },
-
-    armStuckTimer() {
-      this.disarmStuckTimer();
-      const remaining = Math.max(0, this.STUCK_AFTER_MS - (Date.now() - this.since));
-      this.stuckTimer = setTimeout(() => {
-        if (!this.isActive()) return;
-        this.show(/* stuck */ true);
-        // A banner this old usually means the merging:false
-        // counter-event was missed (WS drop). If the server says the
-        // merge is no longer in flight, unlatch instead of sitting red
-        // forever.
-        this.verifyMergeStillInFlight();
-      }, remaining);
-    },
-
-    // Missed-WS-event recovery: ask the server whether the merge that
-    // armed this banner is still on the merging → merged → deploy path.
-    // The merging:false counter-event un-latches live tabs, but a tab
-    // that was reloading (or whose WS had dropped) when it fired restores the
-    // banner from sessionStorage and would block writes forever — the
-    // dismissal condition (a /api/version SHA flip) never comes for an
-    // aborted merge. 'merged' keeps the banner: the GHA deploy and its
-    // SHA flip are still on the way. Fail-safe on any error or an older
-    // server without `status` in the payload: keep the banner armed.
-    verifyMergeStillInFlight() {
-      const sessionId = this.sessionId;
-      if (sessionId == null) return;
-      fetch(`/api/sessions/${sessionId}/status`)
-        .then((r) => (r.ok ? r.json() : null))
-        .then((data) => {
-          if (!this.isActive() || this.sessionId !== sessionId) return;
-          const status = data && typeof data.status === 'string' ? data.status : null;
-          if (status && status !== 'merging' && status !== 'merged') {
-            console.log('[platform-updating] merge no longer in flight — unlatching', { status });
-            this.cancel();
-          }
-        })
-        .catch(() => {});
-    },
-
-    disarmStuckTimer() {
-      if (this.stuckTimer != null) {
-        clearTimeout(this.stuckTimer);
-        this.stuckTimer = null;
-      }
-    },
-
-    // Wraps window.fetch to reject any non-GET (write) request while
-    // the banner is up. This is the actual block — the banner itself
-    // is purely a signal. GETs flow through unchanged so /api/version
-    // polling, the global events WS reconnect path, and any other
-    // read-only chrome can keep running.
-    //
-    // Idempotent: only installs once even if init() runs twice
-    // (defensive — DOMContentLoaded should fire exactly once but we
-    // don't want to double-wrap if a future flow triggers re-init).
-    installFetchWrap() {
-      if (this.fetchWrapInstalled) return;
-      this.fetchWrapInstalled = true;
-      const orig = window.fetch.bind(window);
-      const self = this;
-      window.fetch = function (resource, init) {
-        const method = (init && init.method ? String(init.method) : 'GET').toUpperCase();
-        if (self.isActive() && method !== 'GET' && method !== 'HEAD') {
-          return Promise.reject(new Error('Platform is updating — write actions paused. Try again in a few seconds.'));
-        }
-        return orig(resource, init);
-      };
-    },
   },
 
   // Per-app redeploy WS handler. Flips affected pills into / out of
@@ -1659,37 +1549,20 @@ const App = {
     }
   },
 
+  // #1015: a self-app merge no longer latches any platform-wide chrome.
+  // The "Platform updating… write actions are paused" banner (and its
+  // fetch write-block, 2s version poll, stuck timer and forced reload)
+  // existed because a self-app merge restarted the ONE platform
+  // container. Blue-green deploys (#1008, scripts/platform-rollout.sh)
+  // keep the live color serving until the new one is health-gated and
+  // cut over, so there is no downtime to announce and no reason to
+  // pause writes. `data.selfHosted` still rides along on these
+  // broadcasts (it's a cheap, honest fact) — this handler simply
+  // doesn't branch on it, and per-proposal state is carried by the
+  // proposal's own badges. A tab left open across a platform deploy is
+  // caught up by the drawer's stale-version pill
+  // (renderPlatformVersionPill) or by pull-to-refresh (_refreshOrReload).
   handleVoteUpdate(data) {
-    // Phase 3 trigger: when a self-hosted PR transitions promoted →
-    // merging, latch the "Platform updating…" banner. The dismissal
-    // (SHA flip on /api/version) happens via App.loadVersion's poll
-    // loop. Fires before the panel refresh so all open tabs (including
-    // ones not currently looking at this app) latch into the state.
-    if (data.merging && data.selfHosted) {
-      App.PlatformUpdating.begin({
-        appSlug: data.appSlug,
-        sessionId: data.sessionId,
-      });
-    }
-    // Counter-event: the self-app merge attempt ended without a merge
-    // (failed, head moved since review, revision unverifiable), so no
-    // SHA flip is coming — unlatch instead of holding the platform
-    // read-only until the stuck timer. `merging === false` (field
-    // present) + no merge is the terminal shape every abort path
-    // broadcasts; keying on it rather than just `mergeFailed` covers the
-    // head-moved / deferred aborts, which are deliberately not flagged
-    // as failures.
-    //
-    // #962: `data.resolving` is deliberately NOT consulted here (nor
-    // anywhere else in this handler). The banner tracks the merge and
-    // only the merge: when a merge attempt ends on a conflict we
-    // unlatch immediately, and if the auto-resolver's fix lands and a
-    // fresh merge is claimed, that merge's own `merging:true` re-arms
-    // us. The intervening 1–2 min of branch-sync work is carried by
-    // the proposal's own badges, not by platform-wide chrome.
-    if (data.merging === false && !data.merged && data.selfHosted) {
-      App.PlatformUpdating.cancel();
-    }
     // Refresh the proposals tab / inline chat vote state if we're in
     // this app's Dev view.
     if (App.currentApp === data.appSlug && App.currentTab === 'dev') {
@@ -3059,7 +2932,22 @@ const App = {
         // (#admin/users etc.) deep-links a menu section; the gate on
         // App.user.isAdmin lives inside navigateToAdminConsole.
         App.setChromeless(false);
-        App.navigateToAdminConsole(parts[1] || null);
+        let _adminSection = parts[1] || null;
+        // Permanent alias for the renamed Topochain section. The sub-tab
+        // (a third segment, owned by AdminTopochain) has to survive the
+        // rewrite, otherwise a deep bookmark like #admin/topochain/users
+        // would silently land on the section's default tab. Same idiom as
+        // the #topochain branch below: rewrite the address BEFORE
+        // navigating so the module's own _syncHash sees the canonical
+        // prefix, and the bookmark self-heals.
+        if (_adminSection === 'topochain') {
+          _adminSection = 'seasons';
+          try {
+            history.replaceState(null, '',
+              parts[2] ? `#admin/seasons/${parts[2]}` : '#admin/seasons');
+          } catch (err) { /* non-fatal: navigation below still works */ }
+        }
+        App.navigateToAdminConsole(_adminSection);
         return;
       }
       if (parts[0] === 'settings') {

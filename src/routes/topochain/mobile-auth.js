@@ -36,6 +36,7 @@ const log = require('../../services/logger');
 const { mobileTokenAuth, optionalSessionAuth, extractBearerToken } = require('../../middleware/topochain-auth');
 const { topochainMobileAuthLimiter } = require('../../middleware/rate-limits');
 const { sendOtpMail } = require('../../services/topochain/mailer');
+const mail = require('../../services/mail');
 const waitlist = require('../../services/waitlist');
 const { ok, fail } = require('./helpers');
 
@@ -139,6 +140,29 @@ async function buildUserPayload(pool, user) {
 
 // ─── Router ───────────────────────────────────────────────────────────
 
+// Rows an expired OTP leaves behind, and mail_deliveries past its
+// retention. Both deletes are bounded by a LIMIT so this stays a small
+// predictable statement on whatever request happens to trigger it, and
+// every failure is swallowed: this is housekeeping riding on an
+// always-200 endpoint, so it may never influence the response.
+const OTP_CLEANUP_LIMIT = 2000;
+
+async function cleanupExpiredMailState(pool) {
+  try {
+    await pool.query(
+      `DELETE FROM mobile_otp_codes
+        WHERE id IN (
+          SELECT id FROM mobile_otp_codes
+           WHERE expires_at < NOW() - INTERVAL '24 hours'
+           LIMIT ${OTP_CLEANUP_LIMIT}
+        )`
+    );
+  } catch (err) {
+    log.warn('topochain-mobile-auth', 'Expired OTP cleanup skipped', { message: err.message });
+  }
+  await mail.pruneDeliveries(pool);
+}
+
 function topochainMobileAuthRoutes(config) {
   const router = Router();
   const pool = getPool(config);
@@ -210,6 +234,20 @@ function topochainMobileAuthRoutes(config) {
 
       // SPEC 1677: only the newest code is ever valid.
       await pool.query('DELETE FROM mobile_otp_codes WHERE email = $1 AND consumed_at IS NULL', [email]);
+
+      // Opportunistic housekeeping. mobile_otp_codes only ever shed rows
+      // for the email being re-requested, so every address that ever asked
+      // for a code and never came back left a (bcrypt-hashed, long-expired)
+      // row behind forever; mail_deliveries has its own 30-day retention.
+      // Doing it here rather than on a timer keeps the platform free of
+      // another background interval — this endpoint is exactly as busy as
+      // the table it prunes.
+      //
+      // Best-effort and bounded: a failure here must not touch the
+      // response, and note this runs BEFORE the throttle decision, so even
+      // a request whose mail is suppressed still rotates the code above
+      // and still does its share of the cleanup.
+      await cleanupExpiredMailState(pool);
 
       const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
       // Lower bcrypt cost than real passwords (auth.js uses 12): a 6-digit

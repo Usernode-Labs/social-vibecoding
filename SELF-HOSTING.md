@@ -684,68 +684,61 @@ Same guard on the `verify-access` route at
 case) into the import modal produces the explanatory error in
 both the Check and Submit paths.
 
-## Phase 3 — Platform-updating banner (shipped)
+## Phase 3 — Platform-updating banner (retired)
 
-**Goal:** clients display "Platform updating…" during a
-self-app rolling restart instead of seeing dropped WebSockets and
-a blank screen.
+**Retired in #1015.** Shipped as a full-width amber
+`"Platform updating… sit tight, write actions are paused."` bar that
+every signed-in tab latched on the pre-merge
+`vote_update { merging: true, selfHosted: true }` broadcast. Behind it
+sat `App.PlatformUpdating` in [public/js/app.js](./public/js/app.js): a
+`sessionStorage`-persisted latch, a 2s `/api/version` poll, a
+`window.fetch` wrapper that rejected every non-`GET`/`HEAD` request
+(the actual write block), a 5-minute red "stuck — reload manually"
+variant, and a hard `location.reload()` once `/api/version` reported a
+different SHA.
 
-**Wrinkle:** during a self-app rolling restart, the WebSocket
-*itself* drops because the server is restarting. The post-merge
-`app_version_changed` may never reach the original tab — the new
-server raises it but the tab has reconnected past it.
+**Why it is gone.** All of that existed for one reason: a self-app merge
+restarted the *single* `usernode` container, so the server really did
+disappear mid-deploy. Blue-green deploys (#1008,
+[scripts/platform-rollout.sh](./scripts/platform-rollout.sh)) removed
+that premise — a deploy builds the idle color, health-gates it on two
+consecutive `/health` passes, flips
+`caddy/active/platform-upstream.caddy` with a graceful `caddy reload`,
+and only then drains the old color. The live color serves the entire
+build window, so the banner paused writes on a platform that was 100%
+available for the length of a Docker build — routinely past its own
+5-minute "stuck" threshold, telling everyone a healthy deploy had
+failed. And because `/api/version` only reports the new SHA *after*
+traffic has already cut over, the forced reload no longer recovered
+anything; it just interrupted whatever the person was doing.
 
-**Implementation:** the *pre-merge* `vote_update` broadcast in
-[votes.js](./src/routes/votes.js) now carries
-`{ merging: true, selfHosted: <bool> }`. When the client sees
-`merging:true && selfHosted:true` it persists
-`{ fromSha, since }` to `sessionStorage` and renders the banner.
-[public/js/app.js](./public/js/app.js) `App.PlatformUpdating`
-owns the state machine:
-- bumps `/api/version` polling to 2s while the banner is up
-- wraps `window.fetch` to reject all non-`GET`/`HEAD` requests
-  while active (the banner is the signal; this is the actual
-  write block — block-writes-only by design)
-- swaps to a red "stuck — manual reload" variant after 5 min
-- on every poll, dismisses + hard-reloads as soon as
-  `/api/version` returns a SHA different from `fromSha` (and not
-  `'dev'`)
-- `restoreFromSessionStorage()` runs early in `init()` so a
-  page load mid-restart re-renders the banner immediately —
-  the WS-drop case the wrinkle calls out
+**What replaced it.** Nothing platform-wide, by design: with
+zero-downtime deploys there is nothing for the user to wait for or do. A
+tab still running an older build is caught up by the two passive nudges
+that survive:
 
-`/api/version` also now exposes `selfAppSlug` for any future UI
-surface that needs to recognize the platform's own row without
-guessing. The banner lifecycle itself uses the WS payload's
-`selfHosted` boolean rather than slug-matching.
+- the drawer's **Platform version** row
+  (`App.renderPlatformVersionPill`), which becomes a tappable
+  `"<sha> · reload"` when the served SHA differs from the one the
+  document booted with — and still shows the `deployProgress` spinner
+  while a deploy is in flight;
+- **pull-to-refresh** (`App._refreshOrReload` → `App.platformMovedOn`),
+  which upgrades a data refresh to a full reload on a moved-on platform.
+  This is the anonymous shell's only path to new client code.
 
-**Scope (#962): a real `promoted → merging` merge is the only
-trigger.** A second, non-blocking "resolving merge conflicts"
-variant (#239) used to share this banner, armed off the
-auto-conflict-resolver's `vote_update { resolving: true }`. That
-broadcast fires whenever an eligible proposal's branch needs a
-worker `git merge origin/main` — routine drift housekeeping that
-in production ended *without* a merge roughly 7 times in 10 — so
-it announced a merge conflict and a retry to every signed-in
-person while nothing was merging and nothing was paused. It was
-retired in favour of the per-proposal signals that already carry
-that state in context: the `Resolving conflicts…` /
-`⚠ Conflict resolution failed` badges from
-[merge-status.js](./public/js/merge-status.js), the dev-chat
-sync banner, and the group-chat play-by-play. The server-side
-`resolving` broadcasts are unchanged — those badges read them;
-this banner simply no longer does.
+Per-proposal state is unaffected: the `Merging…` /
+`Resolving conflicts…` / `⚠ Conflict resolution failed` badges in
+[merge-status.js](./public/js/merge-status.js), the dev-chat sync
+banner and the group-chat play-by-play all still report what is
+happening to a specific proposal.
 
-**Acceptance (verified at deploy):** during a self-app PR merge,
-all open tabs render the amber banner from the moment the merge
-starts through the new container becoming reachable; non-`GET`
-fetches are rejected with a friendly error in between; tabs
-reloaded mid-restart re-render the banner from `sessionStorage`.
-
-**Cost (actual):** ~190 lines client-side
-(`public/js/app.js`), 1 line server-side
-(`src/routes/votes.js`), 1 field on `/api/version`, 1 banner
-element in `public/index.html`.
+**Kept from this phase:** `selfHosted` on the `vote_update` broadcasts,
+`status` on `GET /api/sessions/:id/status`, and `selfAppSlug` on
+`/api/version` — no client reads them now, but each is a cheap, honest
+fact and they stay for admin/debug tooling. The negative contract (no
+banner element, no write-blocking `fetch` wrapper, and the surviving
+stale-version nudge) is pinned by
+[tests/platform-update-nudge.test.js](./tests/platform-update-nudge.test.js).
 
 ## Phase 4 — In-app vote-to-merge for the self-app (code shipped, gated off)
 
@@ -1454,24 +1447,35 @@ whole path and each step has a distinguishable failure.
    returns a branch name, a base commit and **two** pieces of text: a
    `guidance` array — the human's numbered next steps, worded for the
    client that called (claude.ai/code, chatgpt.com/codex, or a neutral
-   variant) — and the `workOrder` itself, which is addressed only to the
-   coding agent and is meant to be reproduced verbatim in a code block.
-   Also `forkStatus`: `ready` (they already have a fork), `missing`, or
+   variant) — and the `workOrder` itself, a payload addressed only to the
+   coding agent that it must reproduce character for character in one code
+   block. An assistant that paraphrases the work order — especially the
+   40-character base commit — is the failure mode this split exists to
+   prevent; if you see it summarised, that is worth recording. Also
+   `forkStatus`: `ready` (they already have a fork), `missing`, or
    `name_conflict` (a same-named repo of theirs is in the way, so the fork
    is made under `<repo>-usernode`). None of the three is a failure; for
    the latter two, making the fork is guidance step 1 and GitHub's
    one-click fork page leads the work order's SETUP section. The refusals
    worth recognising: `github_not_linked` (this user hasn't pressed
-   Connect — step 3) and `github_link_unavailable` (the deployment has no
-   OAuth app — configuration).
+   Connect — step 3), `github_link_unavailable` (the deployment has no
+   OAuth app — configuration), and `platform_unavailable` (GitHub was
+   unreadable, or it answered with something that is not a 40-hex commit
+   id — retry; nothing was recorded).
 5. **Run the coding agent.** On the hosted web agents the fork must exist
    *before* a session can be started on it — both start by picking a
    repository that is already in the user's GitHub account — so the
    one-click fork page is the first step, not a fallback for when
    `gh repo fork` is unavailable (that shortcut is for an agent working in
    a terminal, and it is named inside the work order). Then paste the work
-   order in and let the agent branch, commit and push. It should *not* open
-   a pull request — the platform does that.
+   order in and let the agent fork, branch, commit and push. The setup
+   commands are the same four in every fork state — clone the fork, add
+   `upstream`, fetch, cut the branch at the recorded commit — with the fork
+   step, when there is one, above them. If git rejects the base commit, the
+   work order tells the agent to `git fetch upstream <sha>` and retry
+   rather than branch from somewhere else; an agent that silently starts
+   from `upstream/main` instead is a finding. It should *not* open a pull
+   request — the platform does that.
 6. **Ask the assistant to submit it** (`submit_work`).
    Usernode opens the cross-fork PR with bot credentials and runs it
    through `POST /api/apps/:slug/pr-import`, producing an ordinary

@@ -104,7 +104,7 @@ function settingsAdminRoutes(config) {
   // ── GET /api/v4/admin/settings/mail-status ───────────────────────────
   //
   // NOT a platform_settings row — outbound mail is configured through
-  // platform_env (dapp.json → "Topochain mail"), not this table. It is
+  // platform_env (dapp.json → "Platform mail"), not this table. It is
   // surfaced here because Topochain → Settings is where an admin looks
   // when asking "is this subsystem actually working?", and mail is the
   // one part that can be entirely broken while every endpoint reports
@@ -114,10 +114,55 @@ function settingsAdminRoutes(config) {
   // MUST stay registered ahead of GET /:key below, or `mail-status` is
   // swallowed as a settings key.
   //
-  // Returns presence only — never the endpoint, never the credential.
+  // Returns presence only — never the endpoint, never the credential. The
+  // sender address IS returned: it is public (it's in the From of every
+  // mail we send) and it is the one value an admin has to be able to
+  // check.
   router.get('/api/v4/admin/settings/mail-status', (_req, res) => {
-    const mailTransport = require('../../../services/topochain/mail-transport');
-    return ok(res, { data: mailTransport.describe(process.env) });
+    const mail = require('../../../services/mail');
+    return ok(res, { data: mail.describe(process.env) });
+  });
+
+  // ── GET /api/v4/admin/settings/mail-activity ─────────────────────────
+  //
+  // The other half of the same question. mail-status says whether mail
+  // CAN go out; this says what actually happened to the last few sends —
+  // which is the only place that shows up, because the endpoints that
+  // trigger mail are always-200 and cannot report a delivery failure to
+  // the user who was waiting for it.
+  //
+  // Recipients are returned in full: an admin chasing "this user says the
+  // code never arrived" needs to match the address, and this route already
+  // sits behind the admin guard on the whole router. The message body is
+  // never stored, so a login code cannot appear here.
+  //
+  // MUST stay registered ahead of GET /:key below, same reason as
+  // mail-status.
+  router.get('/api/v4/admin/settings/mail-activity', async (_req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, kind, recipient, provider, status, error, created_at
+           FROM mail_deliveries
+          ORDER BY created_at DESC, id DESC
+          LIMIT 20`
+      );
+      const { rows: totals } = await pool.query(
+        `SELECT status, COUNT(*)::int AS n
+           FROM mail_deliveries
+          WHERE created_at > NOW() - INTERVAL '24 hours'
+          GROUP BY status`
+      );
+      return ok(res, {
+        data: {
+          recent: rows,
+          last24h: totals.reduce((acc, r) => ({ ...acc, [r.status]: r.n }), {}),
+        },
+      });
+    } catch (err) {
+      log.error('topochain-admin', 'GET /admin/settings/mail-activity failed',
+        { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
   });
 
   // ── POST /api/v4/admin/settings/reset (SPEC 2825-2840) ──────────────

@@ -205,12 +205,40 @@ test('all senders resolve with no transport at all, in production', async () => 
 test('production never logs the raw OTP code', () => {
   // Global Constraints #6. The dev/staging branch deliberately DOES print
   // it so the flow stays completable by hand.
+  //
+  // Scans src/services/mail/index.js, which owns this branch now that the
+  // mailer moved out of src/services/topochain/ (mailer.js is a re-export
+  // shim). Pinned by path deliberately: a source scan that silently
+  // targets a file with no production branch in it passes vacuously, so
+  // assert the branch is actually THERE before asserting what it lacks.
   const src = fs.readFileSync(
-    path.join(ROOT, 'src/services/topochain/mailer.js'), 'utf8');
-  const prodBranch = src.slice(src.indexOf("config.env === 'production'"));
+    path.join(ROOT, 'src/services/mail/index.js'), 'utf8');
+  const branchIdx = src.indexOf("config.env === 'production'");
+  assert.ok(branchIdx > -1,
+    'the production branch must live in src/services/mail/index.js — '
+    + 'if it moved, retarget this scan rather than deleting it');
+  const prodBranch = src.slice(branchIdx);
   const firstReturn = prodBranch.slice(0, prodBranch.indexOf('return;'));
+  assert.ok(firstReturn.includes('log.error'),
+    'sanity: the slice must actually contain the production log call');
   assert.doesNotMatch(firstReturn, /\bcode\b\s*[,}]/,
     'the production branch must not pass `code` into a log call');
+});
+
+test('the log transport is unreachable from a production auto-selection', () => {
+  // The log transport DOES print the code — that is its whole purpose in
+  // staging and dev. Global Constraints #6 is upheld structurally, by
+  // select.js refusing to hand it to a production deploy on the default
+  // (auto) setting, rather than by the transport self-censoring.
+  const { chooseTransport } = require(path.join(ROOT, 'src/services/mail/select.js'));
+  const prod = chooseTransport({ USERNODE_ENV: 'production', NODE_ENV: 'production' });
+  assert.equal(prod.transport, null,
+    'production with nothing configured must send NOTHING, not log the code');
+  assert.equal(prod.provider, null);
+
+  // ...whereas dev falls back to logging so a developer can read codes.
+  const dev = chooseTransport({ NODE_ENV: 'development' });
+  assert.equal(dev.provider, 'log');
 });
 
 // ─── describe(): what the admin screen renders ──────────────────────────
@@ -237,12 +265,41 @@ test('describe() names the missing keys and the flows that break', () => {
   assert.match(d.affectedFlows.join(' '), /release/i);
 });
 
-test('the admin mail-status route is registered ahead of GET /:key', () => {
-  // Otherwise `mail-status` is swallowed as a settings key.
+test('the admin mail routes are registered ahead of GET /:key', () => {
+  // Otherwise `mail-status` / `mail-activity` are swallowed as settings keys.
   const src = fs.readFileSync(
     path.join(ROOT, 'src/routes/topochain/admin/settings.js'), 'utf8');
-  const statusIdx = src.indexOf("'/api/v4/admin/settings/mail-status'");
   const keyIdx = src.indexOf("router.get('/api/v4/admin/settings/:key'");
-  assert.ok(statusIdx > -1 && keyIdx > -1);
-  assert.ok(statusIdx < keyIdx, 'mail-status must be registered before /:key');
+  assert.ok(keyIdx > -1);
+  for (const route of ['mail-status', 'mail-activity']) {
+    const idx = src.indexOf(`'/api/v4/admin/settings/${route}'`);
+    assert.ok(idx > -1, `${route} must exist`);
+    assert.ok(idx < keyIdx, `${route} must be registered before /:key`);
+  }
+});
+
+// ─── the new keys leak nothing either ───────────────────────────────────
+
+test('the provider-aware describe() returns no credential value', () => {
+  const mail = require(path.join(ROOT, 'src/services/mail'));
+  const values = {
+    GMAIL_OAUTH_CLIENT_ID: 'gmail-client-id-value',
+    GMAIL_OAUTH_CLIENT_SECRET: 'gmail-client-secret-value',
+    GMAIL_OAUTH_REFRESH_TOKEN: 'gmail-refresh-token-value',
+    TOPOCHAIN_MAIL_API_URL: 'https://mail.example.invalid/send',
+    TOPOCHAIN_MAIL_API_KEY: 'http-api-key-value',
+    PLATFORM_MAIL_FROM: 'Usernode <no-reply@example.invalid>',
+  };
+  const serialized = JSON.stringify(mail.describe(values));
+  for (const [key, value] of Object.entries(values)) {
+    if (key === 'PLATFORM_MAIL_FROM') continue; // the sender IS public
+    assert.ok(!serialized.includes(value),
+      `${key}'s value must never reach the admin screen`);
+  }
+  // The KEY NAMES are the opposite — the card can't tell an admin what to
+  // set without them, so an unconfigured describe() must name them.
+  const empty = mail.describe({});
+  assert.deepEqual(empty.missing.sort(), [
+    'GMAIL_OAUTH_CLIENT_ID', 'GMAIL_OAUTH_CLIENT_SECRET', 'GMAIL_OAUTH_REFRESH_TOKEN',
+  ]);
 });

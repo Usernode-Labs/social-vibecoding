@@ -277,50 +277,89 @@ function buildWorkOrder({
   appName, appSlug, upstreamUrl, upstreamSlug, forkUrl, forkCloneUrl, forkRepo,
   forkPageUrl, forkStatus, branch, baseSha, issueNumber, brief, webPath,
 }) {
-  // One canonical command block for all three fork states — only the
-  // preamble above it differs. The old `missing` branch used
-  // `gh repo fork --clone --remote`, which creates the `upstream` remote
-  // itself, while the `ready` branch added it by hand; two shapes of the
-  // same four steps was a needless divergence.
+  // The fork step, and only when there is a fork to make. The one-click
+  // GitHub page comes FIRST: an agent with no `gh` is exactly the reader who
+  // needs it, and it used to be a footnote below the command it replaces.
   const setup = [];
-  if (forkStatus === 'name_conflict') {
+  if (forkStatus !== 'ready') {
+    if (forkStatus === 'name_conflict') {
+      setup.push(
+        'FIRST, make the fork. Your GitHub account already has a repository with the',
+        'app\'s name that is NOT a fork of it, so the fork needs a different name',
+        '(Usernode never touches that other repository).',
+        '',
+        `In one click: open ${forkPageUrl}, change the repository-name field to`,
+        `${forkRepo}, and press "Create fork".`,
+        '',
+        'Or with the GitHub CLI:',
+        '```bash',
+        `gh repo fork ${upstreamSlug} --clone=false --fork-name ${forkRepo}`,
+        '```'
+      );
+    } else {
+      setup.push(
+        'FIRST, make the fork — you do not have one yet.',
+        '',
+        `In one click: open ${forkPageUrl} and press "Create fork".`,
+        '',
+        'Or with the GitHub CLI (a no-op if the fork already exists):',
+        '```bash',
+        `gh repo fork ${upstreamSlug} --clone=false`,
+        '```'
+      );
+    }
     setup.push(
-      'You do not have a copy of this repository yet, and your GitHub account already holds a',
-      'repository with the app\'s name that is NOT a fork of it, so the copy needs another name',
-      '(Usernode never touches that other repository). One click:',
-      `open ${forkPageUrl}, set the repository name to ${forkRepo} and press "Create fork".`,
-      `With the GitHub CLI instead: \`gh repo fork ${upstreamSlug} --clone --remote --fork-name ${forkRepo}\``,
-      'clones it and adds the `upstream` remote for you, so skip those two lines below.',
-      ''
-    );
-  } else if (forkStatus === 'missing') {
-    setup.push(
-      'You do not have a copy of this repository yet. One click:',
-      `open ${forkPageUrl} and press "Create fork".`,
-      `With the GitHub CLI instead: \`gh repo fork ${upstreamSlug} --clone --remote\` clones it and`,
-      'adds the `upstream` remote for you, so skip those two lines below.',
-      ''
+      '',
+      'GitHub creates forks asynchronously. If the clone below reports 404, wait a',
+      'few seconds and run it again.',
+      '',
+      'THEN, in every case:'
     );
   } else {
     setup.push('You already have this copy of the repository.', '');
   }
+
+  // The same four commands whatever the fork's state — only the fork's own
+  // address changes. Nothing above this block clones, so `git remote add
+  // upstream` is unconditional.
   setup.push(
     '```bash',
-    `git clone ${forkCloneUrl} ${forkRepo} && cd ${forkRepo}`,
+    `git clone ${forkCloneUrl} ${forkRepo}`,
+    `cd ${forkRepo}`,
     `git remote add upstream ${upstreamUrl}`,
     'git fetch upstream',
     `git checkout -b ${branch} ${baseSha}`,
-    '```',
-    '',
-    'If the repository is already checked out where you are working — a hosted session clones',
-    'it for you when the repository is picked — skip the clone, and skip `git remote add` too',
-    'if an `upstream` remote already exists.',
-    '',
-    'The commit id above is 40 hex characters and one unbroken word. If the copy you received',
-    'has a space or a line break inside it, that is a transcription error, not a real id: join',
-    'it back up. If it still will not resolve, run `git rev-parse upstream/main` after fetching',
-    'and branch from that instead.'
+    '```'
   );
+  if (forkStatus === 'ready') {
+    setup.push('', 'Your fork already exists — start at the clone.');
+  }
+
+  // The base commit is the single most-mangled part of this text: it reaches
+  // the coding agent through an assistant that likes to paraphrase. Say what
+  // failure looks like and how to recover, so a bad transcription corrects
+  // itself instead of silently becoming a branch cut from somewhere else.
+  setup.push(
+    '',
+    'If `git checkout` answers `fatal: not a valid object name` or',
+    '`reference is not a tree`, that commit is simply not in your clone yet.',
+    'Fetch it and repeat the checkout:',
+    '```bash',
+    `git fetch upstream ${baseSha}`,
+    `git checkout -b ${branch} ${baseSha}`,
+    '```',
+    'Do not shorten that commit id, do not retype it from memory, and do not',
+    'substitute `upstream/main` or `HEAD` — starting anywhere else produces a diff',
+    'nobody asked for. If it still fails after the fetch, the id was copied wrongly:',
+    'ask for the work order again rather than guessing a starting point.'
+  );
+  if (forkStatus === 'ready') {
+    setup.push(
+      '',
+      'If the clone fails because the fork is not actually there, it can be made in',
+      `one click: open ${forkPageUrl} and press "Create fork", then run the block again.`
+    );
+  }
 
   const lines = [
     `You are making a change to "${appName}" (Usernode app \`${appSlug}\`).`,
@@ -333,7 +372,7 @@ function buildWorkOrder({
     `- Your fork, which you can push to:      ${forkUrl}`,
     `- Branch to create and push:             ${branch}`,
     `- It must start at upstream commit:      ${baseSha}`,
-    '  (a full 40-character hex id — no spaces, no line break inside it)',
+    '  (all 40 characters, exactly as written — see SETUP if git rejects it)',
     '',
     'SETUP',
     ...setup,
@@ -423,12 +462,15 @@ async function prepareWork(deps, params) {
   // commit id" a property rather than an assumption — so a split id seen
   // in a chat message can only have been introduced downstream, and is
   // diagnosed as a transcription error instead of hunted for in here.
+  // getBranchSha returns `ref.object.sha` and throws on failure, so in
+  // practice this also catches a stubbed gh or an unexpected API shape.
   if (!baseSha || !BASE_SHA_RE.test(String(baseSha).trim())) {
     if (baseSha) {
       log.warn('external-agent-tasks', 'base sha is not a 40-char hex id', { app: app.slug });
     }
     return fail('platform_unavailable', 'Usernode could not read the app\'s current code. Try again shortly.', { retryable: true });
   }
+  // Lowercased from here on, matching how inspectPushedBranch compares it.
   baseSha = String(baseSha).trim().toLowerCase();
 
   // Advisory only. A missing fork, a same-named repo in the way, or a GitHub

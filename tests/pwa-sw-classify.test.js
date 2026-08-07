@@ -144,3 +144,13 @@ test('standalone server pages never fall back to the SPA shell', () => {
 test('unparseable URLs are bypassed', () => {
   assert.equal(classifyRequest('GET', 'not a url', null, 'no-cors', undefined), 'bypass');
 });
+
+test('eviction-immune paths are paths the worker actually caches', () => {
+  // Immunity is meaningless for a bypassed path — the entry would never
+  // exist to be protected. This keeps IMMUNE_API_PATHS and the classifier
+  // from drifting apart (#1021).
+  const { IMMUNE_API_PATHS } = require('../public/sw.js');
+  for (const p of IMMUNE_API_PATHS) {
+    assert.equal(classify('GET', p), 'api', `${p} is immune but never cached`);
+  }
+});

@@ -4311,11 +4311,12 @@ function sessionRoutes(config) {
     const { isResolving } = require('../services/conflict-resolver');
 
     // Merge lifecycle status ('promoted' | 'merging' | 'merged' | …).
-    // The self-app "Platform updating…" banner's restore path verifies
-    // against this that the merge behind a restored banner is still in
-    // flight — a banner re-armed from sessionStorage after the merge
-    // aborted (head moved, revision unverifiable) has no SHA flip coming
-    // and would otherwise hold the tab read-only until the stuck timer.
+    // The self-app "Platform updating…" banner's restore path used to
+    // verify against this that the merge behind a restored banner was
+    // still in flight; that banner was removed in #1015, so no client
+    // reads this today. Kept — like the neighbouring `resolving` field —
+    // as a cheap, honest fact about the session for admin/debug tooling
+    // and future surfaces, since the poll already has the row in hand.
     let mergeStatus = null;
     try {
       const { rows } = await pool.query(

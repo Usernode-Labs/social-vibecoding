@@ -561,34 +561,14 @@
     <button id="view-as-non-admin-disable" class="underline hover:text-amber-600 dark:hover:text-amber-200">Switch back</button>
   </div>
 
-  <!-- SELF-HOSTING-PLAN.md Phase 3: "Platform updating…" banner.
-       Hidden by default; shown by App.beginPlatformUpdating() when a
-       vote_update with `merging:true` + `selfHosted:true` arrives over
-       WS, and dismissed by App.endPlatformUpdating() once /api/version
-       reports a SHA different from the one we recorded at start.
-
-       Two visual states: in-flight (default amber) and stuck (red) —
-       the latter swaps in after PLATFORM_UPDATE_TIMEOUT_MS so a botched
-       deploy doesn't trap the tab forever.
-
-       A REAL MERGE IS THE ONLY TRIGGER (#962). The retired #239
-       "resolving merge conflicts" variant used to share this element
-       for background branch-sync work that usually merged nothing;
-       that state now lives on the proposal's own badge instead.
-
-       The banner only signals; the actual write-blocking happens in
-       App's wrapped fetch() (rejects non-GET while the flag is up).
-       Read-only browsing keeps working. -->
-  <div id="platform-updating-banner" class="hidden shrink-0 px-4 py-2 text-sm font-medium border-b
-              bg-amber-100 text-amber-900 border-amber-300
-              dark:bg-amber-900/40 dark:text-amber-100 dark:border-amber-800/60
-              flex items-center justify-center gap-3" role="status" aria-live="polite">
-    <span id="platform-updating-spinner" class="inline-block w-4 h-4 rounded-full border-2 border-current border-t-transparent animate-spin" aria-hidden="true"></span>
-    <span id="platform-updating-text">Platform updating&hellip; sit tight, write actions are paused.</span>
-    <button id="platform-updating-reload" type="button"
-            class="hidden ml-2 px-2 py-0.5 rounded border border-current text-xs font-semibold hover:bg-black/10 dark:hover:bg-white/10"
-            onclick="location.reload()">Reload</button>
-  </div>
+  <!-- The "Platform updating… write actions are paused" banner that used
+       to live here is GONE (#1015). It existed because a self-app merge
+       restarted the single platform container; blue-green deploys
+       (#1008) keep the live color serving until the new one is
+       health-gated and cut over, so there is nothing to announce and no
+       reason to pause writes. A tab running an older build is caught up
+       by the drawer's "Platform version" row (which turns into a
+       tappable "<sha> · reload") or by pull-to-refresh. -->
 
   <!-- Home screen: app list. Rendered as a responsive grid of compact
        tiles — see Home.renderAppCard. The "Create new app" container
@@ -792,12 +772,17 @@
        also mount for a signed-in non-admin; see the PUBLIC MODE note in
        admin-console.js. Ships hidden like its sibling screens.
 
-       max-w-7xl (not 5xl like the other screens): the folded-in Health &
-       status and Analytics sections were built for a wide column — the
-       status summary is a 6-across tile grid and the analytics charts are
-       640px-wide SVGs. -->
+       FULL WIDTH (no max-w / mx-auto, unlike every other screen): this is a
+       dense operator console, not a reading surface. The folded-in Health &
+       status and Analytics sections were always the widest thing in the app
+       — a 6-across tile grid, wide SVG charts, and user/limit/code tables
+       that were horizontally scrolling inside a capped column — so the
+       constraint cost information rather than protecting legibility. The
+       gutter stays modest (p-4, a little roomier from lg up) and everything
+       inside is percentage/grid-based, so mobile is byte-for-byte
+       unchanged. -->
   <main id="admin-screen" class="hidden flex-1 overflow-y-auto platform-safe-scroll" style="position:relative">
-    <div id="admin-root" class="max-w-7xl mx-auto p-4 w-full"></div>
+    <div id="admin-root" class="w-full p-4 lg:px-6"></div>
   </main>
 
   <!-- Settings screen (#settings hash route). Was a modal overlay
@@ -1332,7 +1317,7 @@
              desktop presence horizontally, which costs no height. -->
         <div id="landing-header-ctas" class="flex items-center gap-2">
           <a href="#login" id="landing-signin-cta" class="h-7 inline-flex items-center rounded-lg bg-violet-600 hover:bg-violet-500 px-3 text-xs sm:px-5 font-medium transition-colors text-white">Sign in</a>
-          <a href="#waitlist" id="landing-waitlist-cta" class="h-7 inline-flex items-center rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 text-xs sm:px-5 font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-colors">Join waitlist</a>
+          <a href="#waitlist" id="landing-waitlist-cta" data-offline-disabled class="h-7 inline-flex items-center rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 text-xs sm:px-5 font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-colors">Join waitlist</a>
         </div>
         <!-- Shown instead of the CTAs when a (waiting-room) session exists. -->
         <div id="landing-back-to-waiting" class="hidden">
@@ -1355,6 +1340,22 @@
         <p class="text-sm text-zinc-500 dark:text-zinc-400 italic">A place where users own and build apps together</p>
       </div>
 
+      <!-- Offline explanation (#1021). The landing page's app grid is
+           fetched, so offline it renders empty or stale with no reason
+           given — and both header CTAs lead to screens that cannot
+           complete. Say so once, here. -->
+      <div class="offline-only mb-10 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3">
+        <h2 class="text-sm font-semibold text-amber-600 dark:text-amber-400">You're offline</h2>
+        <p class="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+          Anything below is the last version this device loaded, and signing in or joining the
+          waitlist both need a connection.
+        </p>
+        <button type="button" data-offline-retry
+          class="mt-3 rounded-lg border border-amber-500/50 px-3 py-1.5 text-sm font-medium text-amber-700 dark:text-amber-300 hover:bg-amber-500/10 transition-colors">
+          Try again
+        </button>
+      </div>
+
       <!-- The CTA block sits where the Sign in / Join waitlist buttons used
            to be: a compact pitch plus ONE link into the dedicated waitlist
            screen (#waitlist). The survey itself lives on that screen — a
@@ -1374,7 +1375,7 @@
           Platform access opens in batches — the apps below are open to
           everyone right now.
         </p>
-        <a id="landing-waitlist-link" href="#waitlist"
+        <a id="landing-waitlist-link" href="#waitlist" data-offline-disabled
           class="inline-block rounded-lg bg-violet-600 hover:bg-violet-500 px-5 py-2 text-sm font-medium text-white transition-colors">
           Join the waitlist
         </a>
@@ -1423,12 +1424,32 @@
         <h1 class="text-2xl font-bold text-center mb-1">Usernode Social Vibecoding</h1>
         <p class="text-xs text-zinc-500 dark:text-zinc-400 text-center mb-8 italic">A place where users own and build apps together</p>
 
+        <!-- Offline explanation (#1021). Signing in REQUIRES the network —
+             the credential check happens on the server — so an offline
+             visitor previously typed a password, waited, and got a bare
+             "Network error" with no hint that the whole screen was
+             unusable. Shown by `body.is-offline` (app.css); the controls
+             below carry data-offline-disabled so it's obvious which parts
+             are the ones that can't work. -->
+        <div class="offline-only mb-8 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3">
+          <h2 class="text-sm font-semibold text-amber-600 dark:text-amber-400">You're offline</h2>
+          <p class="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+            Signing in needs a connection — your username and password are checked on the server.
+            Reconnect and try again; if you were signed in on this device before, reloading once
+            you're back online will take you straight in.
+          </p>
+          <button type="button" data-offline-retry
+            class="mt-3 rounded-lg border border-amber-500/50 px-3 py-1.5 text-sm font-medium text-amber-700 dark:text-amber-300 hover:bg-amber-500/10 transition-colors">
+            Try again
+          </button>
+        </div>
+
         <!-- Wallet auth status (shown when native bridge detected) -->
         <div id="wallet-auth" class="hidden space-y-4">
           <div id="wallet-status" class="text-center text-sm text-zinc-400"></div>
           <div id="wallet-error" class="text-red-400 text-sm hidden"></div>
           <div id="wallet-sign-in" class="hidden space-y-3">
-            <button id="btn-wallet-sign-in" class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white flex items-center justify-center gap-2">
+            <button id="btn-wallet-sign-in" data-offline-disabled class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white flex items-center justify-center gap-2">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z"/></svg>
               Sign in with Wallet
             </button>
@@ -1457,7 +1478,7 @@
               placeholder="password">
           </div>
           <div id="login-error" class="text-red-400 text-sm hidden"></div>
-          <button type="submit" class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white">
+          <button type="submit" data-offline-disabled class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white">
             Log in
           </button>
         </form>
@@ -1492,7 +1513,7 @@
                 class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500"
                 placeholder="you@example.com">
             </div>
-            <button id="btn-otp-request" type="button"
+            <button id="btn-otp-request" type="button" data-offline-disabled
               class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white">
               Email me a code
             </button>
@@ -1508,11 +1529,11 @@
                 class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 tracking-widest text-center"
                 placeholder="123456">
             </div>
-            <button id="btn-otp-verify" type="button"
+            <button id="btn-otp-verify" type="button" data-offline-disabled
               class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white">
               Verify code
             </button>
-            <button id="btn-otp-resend" type="button" class="w-full text-sm text-zinc-500 hover:text-zinc-300">Send a new code</button>
+            <button id="btn-otp-resend" type="button" data-offline-disabled class="w-full text-sm text-zinc-500 hover:text-zinc-300">Send a new code</button>
           </div>
 
           <div id="otp-step-password" class="hidden space-y-3">
@@ -1531,7 +1552,7 @@
                 class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500"
                 placeholder="re-enter password">
             </div>
-            <button id="btn-otp-set-password" type="button"
+            <button id="btn-otp-set-password" type="button" data-offline-disabled
               class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white">
               Set password &amp; sign in
             </button>
@@ -2680,10 +2701,14 @@
   <script src="/js/topochain-event-context.js"></script>
   <script src="/js/topochain-leaderboard.js"></script>
   <script src="/js/topochain-challenges.js"></script>
-  <!-- Topochain admin console screens (Task 15): the 'topochain' entry
-       in AdminConsole.SECTION_MODULES delegates to AdminTopochain.render(),
-       which owns its own sub-nav under #admin/topochain/<sub>. Loaded
-       after admin-console.js (which it extends) and before app.js. -->
+  <!-- Seasons, Events & Challenges admin console screens (Task 15): the
+       'seasons' entry in AdminConsole.SECTION_MODULES delegates to
+       AdminTopochain.render(), which owns its own sub-nav under
+       #admin/seasons/<sub> (the old #admin/topochain/<sub> address still
+       resolves and is rewritten to the canonical one). The file name and
+       the AdminTopochain global are historical — renaming them would
+       churn the service-worker precache list for no user-visible gain.
+       Loaded after admin-console.js (which it extends) and before app.js. -->
   <script src="/js/admin-topochain.js"></script>
   <!-- Folded-in admin console sections (#860): the seven standalone pages
        (/status, /node-status, /dashboard, /debug, /gallery, /admin,
@@ -2702,6 +2727,7 @@
   <script src="/js/admin-merges.js"></script>
   <script src="/js/admin-gallery.js"></script>
   <script src="/js/admin-campaigns.js"></script>
+  <script src="/js/admin-mail.js"></script>
   <!-- Build-failure log panel (#416). Loaded before app-view.js/home.js
        so both surfaces can reference window.BuildLog. -->
   <script src="/js/build-log.js"></script>
