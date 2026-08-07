@@ -5,7 +5,7 @@
 // frontend/scripts/build-shell.mjs out of src/head.html plus a prerendered
 // Shell.tsx. So they are pinned here.
 //
-// ── 1. The 48 legacy classic scripts ───────────────────────────────────
+// ── 1. The 50 legacy classic scripts ───────────────────────────────────
 //
 // public/js/** is 53 files of global-scope script with no module system:
 // each defines a global (App, Home, AppView, DevChat, AuthScreens, …) and
@@ -18,7 +18,7 @@
 // ── 2. The React entry's position ──────────────────────────────────────
 //
 // The entry must be a `type="module"` script (therefore deferred) so it
-// executes AFTER all 48 classic scripts have defined their globals and
+// executes AFTER all 50 classic scripts have defined their globals and
 // BEFORE DOMContentLoaded runs their init()s. See frontend/src/main.tsx.
 //
 // ── 3. The stylesheet cascade ──────────────────────────────────────────
@@ -59,13 +59,15 @@ test('every legacy script is loaded, in exactly the pre-migration order', () => 
 });
 
 test('the shell still loads the expected number of legacy scripts', () => {
-  // 49 /js/** tags in total: theme.js in the head (it applies the stored
-  // theme before first paint) plus 48 at the end of <body>.
+  // 51 /js/** tags in total: theme.js in the head (it applies the stored
+  // theme before first paint) plus 50 at the end of <body>. The count moves
+  // whenever main adds a module — it was 48 at the chassis swap, and main's
+  // mail console and credit-options screens brought it to 50.
   const bodyScripts = scriptsOf(after.slice(after.indexOf('</head>')))
     .filter((s) => s.src && s.src.startsWith('/js/'));
   assert.equal(
-    bodyScripts.length, 48,
-    `expected the 48 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
+    bodyScripts.length, 50,
+    `expected the 50 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
     + 'Adding or removing one is fine, but it also needs a matching SHELL_ASSETS entry in '
     + 'public/sw.js (tests/pwa-shell-wiring.test.js enforces that) — so update this count '
     + 'deliberately rather than loosening the check.',

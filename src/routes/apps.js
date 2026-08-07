@@ -1193,7 +1193,15 @@ function appRoutes(config) {
   //     privacy flag, and who changed it.
   async function setPlatformVariable(req, res, app) {
     const key = String(req.params.key || '');
-    const value = typeof req.body?.value === 'string' ? req.body.value : null;
+    // Trimmed before anything else looks at it (see
+    // platform-env.normalizeValue): a pasted value's surrounding
+    // whitespace is invisible in the panel and would otherwise survive
+    // all the way into /opt/usernode/.env. The DAO normalizes too — this
+    // call is what makes a whitespace-only value a 400 from here rather
+    // than a throw from setValue() caught into a 500 below.
+    const value = platformEnv.normalizeValue(
+      typeof req.body?.value === 'string' ? req.body.value : null
+    );
 
     if (!platformEnv.isWritableKey(key)) {
       log.warn('apps', 'Platform-env write refused: unwritable key', {
@@ -1487,7 +1495,12 @@ function appRoutes(config) {
 
   router.put('/api/apps/:slug/secrets/:key', drainGuard, async (req, res) => {
     if (!req.user?.canAdminWrite) return res.status(403).json({ error: 'Full admin access required' });
-    const value = req.body && typeof req.body.value === 'string' ? req.body.value : '';
+    // Trimmed before the emptiness check, so a whitespace-only value is a
+    // 400 here rather than passing this gate and throwing inside
+    // appSecrets.setValue() (which the catch below would turn into a 500).
+    const value = appSecrets.normalizeValue(
+      req.body && typeof req.body.value === 'string' ? req.body.value : ''
+    );
     if (!value.length) return res.status(400).json({ error: 'value is required' });
 
     try {
@@ -1580,7 +1593,14 @@ function appRoutes(config) {
   router.post('/api/apps/:slug/secret-declaration-pr', drainGuard, issueCreateLimiter, async (req, res) => {
     const body = req.body || {};
     const key = typeof body.key === 'string' ? body.key.trim() : '';
-    const value = typeof body.value === 'string' ? body.value : '';
+    // Trimmed up front so every value rule below (the length cap, the
+    // required-needs-a-value rule, .env representability) and every
+    // downstream write — the immediate admin write, the held pending value —
+    // all see the same normalized string. Both DAOs implement the identical
+    // rule, so either normalizeValue serves both scopes.
+    const value = platformEnv.normalizeValue(
+      typeof body.value === 'string' ? body.value : ''
+    );
     const description = typeof body.description === 'string' ? body.description.trim() : '';
     const defaultValue = typeof body.default === 'string' && body.default.length ? body.default : null;
     const stagingDefault = typeof body.stagingDefault === 'string' && body.stagingDefault.length

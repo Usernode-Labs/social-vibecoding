@@ -62,12 +62,82 @@ const App = {
   // actually leave the page.
   _isRestoring: false,
 
+  // ── Display-only session snapshot (#1021) ───────────────────────────
+  // A tiny durable record that THIS DEVICE was signed in, written on every
+  // successful boot/login and read only when /api/auth/me cannot be
+  // reached at all. Without it an offline reload is indistinguishable from
+  // a sign-out: `fetch` throws, and the shell drops the user on the
+  // landing screen with no way back until the network returns.
+  //
+  // It is DISPLAY-ONLY and grants nothing. The session cookie remains the
+  // sole credential — every request still authenticates normally and the
+  // server is free to reject them. All the snapshot decides is which
+  // *screen* an offline boot paints, and the moment the network answers
+  // again the real /api/auth/me reconciles it (see _reconcileSession).
+  // It is cleared on logout, on any answered non-ok /me, and when it ages
+  // out, so a stale one can't strand a signed-out device in a signed-in
+  // looking shell.
+  SESSION_SNAPSHOT_KEY: 'usernode.session.v1',
+  SESSION_SNAPSHOT_MAX_AGE_MS: 30 * 24 * 60 * 60 * 1000, // 30 days
+
+  // How long boot waits for /api/auth/me before falling back to the
+  // snapshot. Deliberately just past the service worker's own API deadline
+  // (API_TIMEOUT_MS) so the SW gets first refusal at answering from cache;
+  // this only catches the no-SW / SW-bypassed cases.
+  BOOT_SESSION_TIMEOUT_MS: 5000,
+
+  saveSessionSnapshot(user) {
+    if (!user || !user.id) return;
+    try {
+      localStorage.setItem(App.SESSION_SNAPSHOT_KEY, JSON.stringify({
+        user, savedAt: Date.now(),
+      }));
+    } catch (err) { /* private mode / quota — offline boot just degrades */ }
+  },
+
+  readSessionSnapshot() {
+    try {
+      const raw = localStorage.getItem(App.SESSION_SNAPSHOT_KEY);
+      if (!raw) return null;
+      const snap = JSON.parse(raw);
+      if (!snap || !snap.user || !snap.user.id) return null;
+      const age = Date.now() - Number(snap.savedAt || 0);
+      if (!(age >= 0) || age > App.SESSION_SNAPSHOT_MAX_AGE_MS) {
+        App.clearSessionSnapshot();
+        return null;
+      }
+      return snap;
+    } catch (err) {
+      return null;
+    }
+  },
+
+  clearSessionSnapshot() {
+    try { localStorage.removeItem(App.SESSION_SNAPSHOT_KEY); } catch (err) { /* ignore */ }
+  },
+
+  // Ask the service worker to drop the cached API responses of a session
+  // that is definitively over. Fire-and-forget: the snapshot has already
+  // been cleared, so a worker that never answers changes nothing.
+  _dropCachedSession() {
+    App.clearSessionSnapshot();
+    try {
+      navigator.serviceWorker?.controller?.postMessage({ type: 'clear-api-cache' });
+    } catch (err) { /* no SW — nothing cached to drop */ }
+  },
+
+  // True while the shell is running on the snapshot rather than a verified
+  // /api/auth/me. Read by the boot path (skip the session-gated fetches
+  // and the events socket) and cleared by _reconcileSession.
+  _sessionFromSnapshot: false,
+
   async init() {
-    // Install fetch wrap and (if we were mid-restart on a previous load)
-    // restore the platform-updating banner state BEFORE any other init
-    // step that might fire a write. See PlatformUpdating below.
-    App.PlatformUpdating.installFetchWrap();
-    App.PlatformUpdating.restoreFromSessionStorage();
+    // FIRST, before any screen paints: the synthetic-inset shot state.
+    // Runs here rather than beside the other ?shot= handlers below
+    // because it must cover the anonymous shell too (the landing / login
+    // / waitlist screens are part of what it reviews) and because a
+    // later application would repaint every inset mid-boot.
+    App._applySafeAreaShot();
 
     // Chrome wiring is session-independent and has no re-entry guards
     // (double listeners otherwise), so it runs exactly once per document
@@ -88,27 +158,113 @@ const App = {
       await App.enterAnonymous();
       return;
     }
+    // `?shot=offline` / `?shot=offline-signin` pin the offline state before
+    // the boot check runs, so the shot never depends on real connectivity.
+    // The signed-out variant boots the anonymous shell directly, exactly
+    // as _anonShot does, so it doesn't depend on the capture's session.
+    if (App._applyOfflineShot() === 'offline-signin') {
+      await App.enterAnonymous();
+      return;
+    }
 
+    // Boot has THREE outcomes, not two (#1021). The old code collapsed
+    // "the server said no" and "the server said nothing" into the same
+    // anonymous boot, so a signed-in user who reloaded on a dead network
+    // landed on the landing page — signed out, in effect, by a dropped
+    // packet.
+    //
+    //   answered, ok       → the real session; refresh the snapshot.
+    //   answered, not ok   → genuinely signed out; drop every cached trace.
+    //   never answered     → unknown. Fall back to the snapshot and show
+    //                        the signed-in shell in read-only offline mode,
+    //                        reconciling as soon as the network returns.
+    let res = null;
     try {
-      // Offline note (#487): the service worker serves this network-first
-      // with a cached fallback, so an offline reload by a logged-in user
-      // resolves `res.ok` from the last successful copy and boot proceeds
-      // to the cached shell. A real 401 (only reachable online — errors
-      // never enter the SW cache) boots the anonymous shell below.
-      const res = await fetch('/api/auth/me');
-      if (!res.ok) {
-        await App.enterAnonymous();
+      res = await App._fetchSession();
+    } catch (err) {
+      res = null;
+    }
+
+    if (res && res.ok) {
+      let user = null;
+      try { user = (await res.json()).user; } catch (err) { user = null; }
+      if (user) {
+        App.enterAuthed(user);
         return;
       }
-      const data = await res.json();
-      App.enterAuthed(data.user);
-    } catch {
-      // Network failure with no service-worker-cached /api/auth/me —
-      // i.e. offline on a device that never logged in (or predates the
-      // SW). Boot the anonymous shell; offline.js owns the connectivity
-      // banner and the login screen refuses submits while offline.
+    } else if (res) {
+      // A real answer with a real "no" (401/403). Only reachable online —
+      // error responses never enter the SW cache — so this is authoritative.
+      App._dropCachedSession();
       await App.enterAnonymous();
+      return;
     }
+
+    // No answer at all: offline, captive portal, or a connection that
+    // stalled past the deadline. Probe so the strip appears, then decide
+    // from the snapshot.
+    try { window.Offline?.nudge(); } catch (err) { /* ignore */ }
+    const snap = App.readSessionSnapshot();
+    if (snap) {
+      App._sessionFromSnapshot = true;
+      App.enterAuthed(snap.user);
+      return;
+    }
+    // Offline on a device that was never signed in. The anonymous shell
+    // shows its own offline state and refuses submits (see auth-screens.js).
+    await App.enterAnonymous();
+  },
+
+  // /api/auth/me with a deadline. Resolves to the Response, or throws when
+  // nothing arrived in time — an open-but-stalled socket must not hold the
+  // whole boot, which is what left the reported blank screen.
+  async _fetchSession() {
+    let timer = null;
+    const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+    if (ctrl) timer = setTimeout(() => ctrl.abort(), App.BOOT_SESSION_TIMEOUT_MS);
+    try {
+      return await fetch('/api/auth/me', ctrl ? { signal: ctrl.signal } : undefined);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  },
+
+  // Once connectivity is back, replace the snapshot-derived session with a
+  // verified one. Three outcomes again, and each matters:
+  //   401/403     → the session really did end while we were away.
+  //   another id  → a different user; a full reload is the only way to
+  //                 rebuild a shell that was painted for someone else.
+  //   same id     → promote to a live session: connect the events socket
+  //                 and resync whatever screen is on top.
+  async _reconcileSession() {
+    if (!App._sessionFromSnapshot) return;
+    let res;
+    try {
+      res = await fetch('/api/auth/me');
+    } catch (err) {
+      return; // still unreachable — stay on the snapshot.
+    }
+    if (!res.ok) {
+      App._dropCachedSession();
+      App._sessionFromSnapshot = false;
+      location.reload();
+      return;
+    }
+    let user = null;
+    try { user = (await res.json()).user; } catch (err) { user = null; }
+    if (!user) return;
+    if (String(user.id) !== String(App.user?.id)) {
+      App.clearSessionSnapshot();
+      location.reload();
+      return;
+    }
+    App._sessionFromSnapshot = false;
+    App.user = user;
+    App.saveSessionSnapshot(user);
+    App.connectEvents();
+    if (window.Kudos?.Budget?.init) Kudos.Budget.init();
+    if (window.AiCredit?.Budget?.init) AiCredit.Budget.init();
+    try { App.resyncCurrentView(); } catch (err) { /* ignore */ }
   },
 
   // ── Staged boot (fold-auth-pages-into-SPA) ──────────────────────────
@@ -128,9 +284,9 @@ const App = {
       await NativeChrome.enterAnonymous();
     }
     // Capture the platform SHA this document booted with. The anonymous
-    // shell has no WS "platform updating" banner, so pull-to-refresh is
-    // its only recovery path after a deploy — and platformMovedOn()
-    // needs a boot-time baseline to compare against.
+    // shell has no drawer (so no stale-version pill), which makes
+    // pull-to-refresh its only recovery path after a deploy — and
+    // platformMovedOn() needs a boot-time baseline to compare against.
     App.loadVersion();
     if (window.AuthScreens) AuthScreens.enter();
   },
@@ -149,6 +305,52 @@ const App = {
       try { history.replaceState(null, '', location.search + '#waitlist'); } catch (err) { /* ignore */ }
     }
     return true;
+  },
+
+  // Screenshot-state deep links for the offline experience (#1021):
+  //   ?shot=offline         — the signed-in shell in read-only offline mode
+  //                           (the fixed strip above everything).
+  //   ?shot=offline-signin  — the signed-out login screen while offline:
+  //                           the explanation block, and the credential
+  //                           fields greyed out because they cannot work.
+  //
+  // Both pin connectivity rather than reading it, because the one thing a
+  // capture runner and a reviewer's browser always have is a working
+  // network — without this the offline UI is literally unphotographable,
+  // and the "before" side of the comparison could never be produced.
+  // Pure UI state, no writes, so deliberately NOT env-gated (same
+  // reasoning as ?shot=menu). Returns the shot name, or null.
+  _applyOfflineShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'offline' && shot !== 'offline-signin') return null;
+    if (shot === 'offline-signin' && (!location.hash || location.hash === '#')) {
+      try { history.replaceState(null, '', location.search + '#login'); } catch (err) { /* ignore */ }
+    }
+    try { window.Offline?.forceOffline(); } catch (err) { /* ignore */ }
+    return shot;
+  },
+
+  // Swap the drawer's Profile row between the generic person glyph and the
+  // viewer's own picture (#982). Called on sign-in and again after the
+  // profile editor saves, so removing a photo puts the glyph back. Both
+  // nodes are static in index.html — only which one is `hidden` changes,
+  // and the <img> gets no src until there is one, so a user with no
+  // picture never issues a request.
+  applyUserAvatar() {
+    const img = document.getElementById('drawer-avatar');
+    const glyph = document.getElementById('drawer-profile-glyph');
+    if (!img || !glyph) return;
+    const url = App.user && App.user.avatarUrl;
+    if (url) {
+      img.src = url;
+      img.classList.remove('hidden');
+      glyph.classList.add('hidden');
+    } else {
+      img.removeAttribute('src');
+      img.classList.add('hidden');
+      glyph.classList.remove('hidden');
+    }
   },
 
   enterAuthed(user) {
@@ -177,6 +379,16 @@ const App = {
       App.user.role = 'user';
       document.body.classList.add('is-view-as-non-admin');
     }
+
+    // #982: paint the drawer's Profile row with the viewer's picture.
+    App.applyUserAvatar();
+
+    // Remember that this device is signed in, so a later boot that can't
+    // reach /api/auth/me still knows which shell to paint (#1021). Skipped
+    // when the shell is running FROM the snapshot — re-writing it then
+    // would keep refreshing savedAt and an offline device would never age
+    // its session out.
+    if (!App._sessionFromSnapshot) App.saveSessionSnapshot(App.user);
 
     // A web session exists (platform access or not). The native login
     // handoff listens for this — wallet provisioning and the node work
@@ -208,17 +420,20 @@ const App = {
     // view-only) once App.user is resolved. bindEvents already ran, so
     // the click handler is attached before the button can be seen.
     App.renderAdminButton();
-    App.connectEvents();
+    // On a snapshot-derived boot every one of these is a guaranteed
+    // failure: the socket can't open and the budget endpoints can't
+    // answer. _reconcileSession runs them the moment the network is back.
+    if (!App._sessionFromSnapshot) App.connectEvents();
     App.loadVersion();
     // Header kudos budget badge polls /api/me/kudos-budget once at
     // load and then on a long interval (hourly safety-net for the
     // Monday-UTC rollover). Refreshes opportunistically on every
     // successful give + on the leaderboard screen mount.
-    if (window.Kudos?.Budget?.init) Kudos.Budget.init();
+    if (!App._sessionFromSnapshot && window.Kudos?.Budget?.init) Kudos.Budget.init();
     // AI-credit status row (#555), same boot shape as the kudos badge:
     // the viewer's own daily allowance. Refreshes again on every drawer
     // open (App.HeaderMenu.open), throttled inside the module.
-    if (window.AiCredit?.Budget?.init) AiCredit.Budget.init();
+    if (!App._sessionFromSnapshot && window.AiCredit?.Budget?.init) AiCredit.Budget.init();
     // Session-gated boot fetches (notifications bell, work drawer)
     // defer to this event instead of firing a guaranteed 401 on an
     // anonymous document load.
@@ -227,19 +442,21 @@ const App = {
     }));
     App.restoreFromHash();
     App._applyMenuShot();
+    App._applyMenuNavShot();
     App._applyLaunchShot();
     App._applyFeedbackShot();
 
-    // Re-poll the platform version every 10s so the header pill flips to
-    // its "deploying" state within seconds of the deploy workflow signaling
-    // start, and back to "current" (or "stale") when it finishes. Cheap
-    // endpoint — just reads one tiny file off disk on the server.
-    //
-    // While the Phase 3 platform-updating banner is active we kick the
-    // cadence up to 2s (see PlatformUpdating.startFastPolling) so the
-    // banner clears within ~2s of the new container coming up. The slow
-    // interval is the steady-state baseline and remains scheduled
-    // unconditionally.
+    // Promote a snapshot-derived shell to a verified session as soon as
+    // the connectivity probe reports we're back.
+    window.addEventListener('usernode:offline-change', (e) => {
+      if (e.detail && e.detail.offline === false) App._reconcileSession();
+    });
+
+    // Re-poll the platform version every 10s so the drawer's platform
+    // row flips to its "deploying" state within seconds of a deploy
+    // signaling start, and to "stale" (a tappable reload) once a new
+    // build is live and this tab is behind it. Cheap endpoint — just
+    // reads one tiny file off disk on the server.
     setInterval(App.loadVersion, 10_000);
   },
 
@@ -276,6 +493,71 @@ const App = {
     // fetches repaint their pills in place whenever they land.
     setTimeout(() => {
       try { App.HeaderMenu.open(); } catch (err) { /* ignore */ }
+    }, 50);
+  },
+
+  // Screenshot-state deep link `?shot=safe-bottom`: paint the whole shell
+  // as if it were on a notched phone, so the safe-area treatment is
+  // REVIEWABLE. No desktop browser reports a bottom inset and Chrome's
+  // device emulation doesn't synthesise one, so without this every
+  // before/after capture and every manual check of the home-indicator
+  // clearance renders with zero insets — i.e. shows nothing.
+  //
+  // It writes the KIT's two custom properties rather than our own
+  // --platform-safe-* tokens, and that is the whole trick: our tokens are
+  // defined as `var(--un-safe-inset-X, env(...))`, so setting the kit
+  // property drives the platform utilities AND every `.un-safe-*` kit
+  // class (the header included) from one place — the shell shifts as a
+  // whole instead of insets appearing in a few places and not others.
+  //
+  // Pure paint state — nothing is written and no layout code branches on
+  // it — so it is deliberately NOT env-gated (same reasoning as
+  // ?shot=menu above). It also cannot lie to an app frame: the insets
+  // forwarded over the safe-area bridge are read from the hidden
+  // env()-valued probe element (AppView._readRootInsets), never from
+  // these properties, so an embedded app still receives its real ones.
+  //
+  // 47/34 are the iPhone 14/15-class status-bar and home-indicator
+  // insets in portrait — the frame the captures use (390x844).
+  SAFE_AREA_SHOT_INSETS: { top: '47px', bottom: '34px' },
+
+  _applySafeAreaShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'safe-bottom') return;
+    try {
+      const root = document.documentElement;
+      root.style.setProperty('--un-safe-inset-top', App.SAFE_AREA_SHOT_INSETS.top);
+      root.style.setProperty('--un-safe-inset-bottom', App.SAFE_AREA_SHOT_INSETS.bottom);
+    } catch (err) { /* ignore */ }
+  },
+
+  // Screenshot-state deep link `?shot=menu-nav` (#977): open the drawer
+  // and TAP a navigation row, so the single-motion rule — the drawer's
+  // exit is the only animation, the destination screen is swapped
+  // underneath it with no push — is reachable by URL. The defect it
+  // fixes lives entirely inside the ~400ms both animations used to
+  // overlap, which no still frame and no plain route can reach; the
+  // dapp.json checks assert the resulting state (the destination screen
+  // carrying data-entered="none", the drawer fully torn down).
+  //
+  // Ungated for the same reason as ?shot=menu above: pure UI state, no
+  // writes, and an env-gated link would starve the production "before"
+  // shot forever. The row is a real anchor, so .click() follows its href
+  // and the whole hash → restoreFromHash → navigate* path is exercised
+  // exactly as a finger would.
+  _applyMenuNavShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'menu-nav') return;
+    setTimeout(() => {
+      try { App.HeaderMenu.open(); } catch (err) { /* ignore */ }
+      // After the entrance spring has settled, so the tap lands on a
+      // presented drawer rather than one still sliding in.
+      setTimeout(() => {
+        const row = document.getElementById('drawer-row-leaderboard');
+        if (row) row.click();
+      }, 200);
     }, 50);
   },
 
@@ -375,12 +657,6 @@ const App = {
       if (!App.loadedPlatformSha && info.sha && info.sha !== 'dev') {
         App.loadedPlatformSha = info.sha;
       }
-      // Phase 3: if we're in the platform-updating window, dismiss the
-      // banner the moment /api/version reports a SHA different from the
-      // one we recorded at trigger time. Independent of WebSocket health
-      // — this is exactly the path that recovers the tab after the WS
-      // dropped during the GHA rolling restart.
-      App.PlatformUpdating.observeVersion(info);
       App.renderPlatformVersionPill(info);
     } catch {}
   },
@@ -518,302 +794,6 @@ const App = {
     return String(s).replace(/[&<>"']/g, (c) => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
     })[c]);
-  },
-
-  // ─────────────────────────────────────────────────────────────────
-  // SELF-HOSTING.md Phase 3: "Platform updating…" banner.
-  //
-  // Lifecycle:
-  //   1. server broadcasts vote_update { merging:true, selfHosted:true }
-  //      when a self-app PR transitions promoted → merging.
-  //   2. handleVoteUpdate calls PlatformUpdating.begin(...).
-  //   3. begin() persists { fromSha, since } to sessionStorage, shows
-  //      the banner, kicks the version poll up to 2s, and arms a 5min
-  //      "stuck" timer that swaps the banner to its red+Reload variant.
-  //   4. App.loadVersion calls observeVersion(info) on every poll. As
-  //      soon as info.sha differs from fromSha (and isn't 'dev'),
-  //      end() clears state, hides the banner, and reloads the page —
-  //      the new server may ship new client code, so a hard reload
-  //      avoids version-skew bugs.
-  //   5. The wrapped fetch (installFetchWrap) rejects all non-GET
-  //      requests while the banner is up — this is the actual write
-  //      block; the banner is just the signal. GETs flow through so
-  //      the version poll, auth check, etc. still work.
-  //
-  // Page-load recovery: restoreFromSessionStorage() runs early in
-  // init() so a tab that loaded mid-restart (or was reloaded by the
-  // user) re-renders the banner immediately and re-arms the poll.
-  //
-  // ONE MODE ONLY (#962). This banner used to carry a second,
-  // non-blocking "resolving merge conflicts" state (#239), armed off
-  // the auto-conflict-resolver's vote_update { resolving:true }. That
-  // broadcast fires whenever an eligible proposal's branch needs a
-  // worker `git merge origin/main` — routine drift housekeeping that
-  // in production ended WITHOUT a merge about 7 times in 10 — so it
-  // announced a merge conflict and a retry to every signed-in person
-  // while nothing was merging and nothing was paused. The per-proposal
-  // signals (the "Resolving conflicts…" / "⚠ Conflict resolution
-  // failed" badges in merge-status.js, the dev-chat sync banner, the
-  // group-chat play-by-play) carry that state in context instead. The
-  // server still broadcasts `resolving` — those badges read it — this
-  // banner just no longer does.
-  // ─────────────────────────────────────────────────────────────────
-  PlatformUpdating: {
-    SS_KEY: 'usernode:platform_updating',
-    POLL_FAST_MS: 2000,
-    STUCK_AFTER_MS: 5 * 60 * 1000,
-
-    // Mutable runtime state. Persisted shape (in sessionStorage) is
-    // just { fromSha, since, appSlug, sessionId } — the timer ids and
-    // DOM refs are ephemeral and must be re-derived on page load.
-    fromSha: null,
-    since: null,
-    // Session whose merge armed the banner — lets restore / the stuck
-    // timer verify against /api/sessions/:id/status that the merge is
-    // still in flight (see verifyMergeStillInFlight).
-    sessionId: null,
-    fastPollTimer: null,
-    stuckTimer: null,
-    fetchWrapInstalled: false,
-
-    isActive() {
-      return !!this.fromSha;
-    },
-
-    begin({ appSlug, sessionId } = {}) {
-      // Idempotent: a second begin() (e.g. server resends the merging
-      // event) is a no-op. The fromSha must be captured at first entry
-      // — re-capturing on a duplicate call would defeat the SHA-flip
-      // dismissal if the new container had already booted in between.
-      if (this.isActive()) return;
-      const fromSha = App.loadedPlatformSha || null;
-      this.fromSha = fromSha;
-      this.since = Date.now();
-      this.sessionId = sessionId || null;
-      try {
-        sessionStorage.setItem(this.SS_KEY, JSON.stringify({
-          fromSha, since: this.since, appSlug: appSlug || null, sessionId: sessionId || null,
-        }));
-      } catch {}
-      this.show(/* stuck */ false);
-      this.startFastPolling();
-      this.armStuckTimer();
-      console.log('[platform-updating] banner armed', { fromSha, appSlug });
-    },
-
-    restoreFromSessionStorage() {
-      let raw = null;
-      try { raw = sessionStorage.getItem(this.SS_KEY); } catch {}
-      if (!raw) return;
-      let parsed = null;
-      try { parsed = JSON.parse(raw); } catch {}
-      if (!parsed || typeof parsed !== 'object') {
-        try { sessionStorage.removeItem(this.SS_KEY); } catch {}
-        return;
-      }
-      // #962: only a real merge payload can restore this banner. A tab
-      // that armed the retired #239 resolving mode before this build
-      // deployed still has its { mode:'resolving', … } payload here,
-      // and any payload without a usable fromSha has no dismissal
-      // condition (no SHA to flip away from) — so it could only ever
-      // sit until the stuck timer. Treat both as garbage.
-      if (parsed.mode === 'resolving' || !parsed.fromSha) {
-        try { sessionStorage.removeItem(this.SS_KEY); } catch {}
-        return;
-      }
-      this.fromSha = parsed.fromSha;
-      this.since = parsed.since || Date.now();
-      this.sessionId = parsed.sessionId || null;
-      const elapsed = Date.now() - this.since;
-      this.show(elapsed >= this.STUCK_AFTER_MS);
-      this.startFastPolling();
-      this.armStuckTimer();
-      console.log('[platform-updating] banner restored from session', { elapsedMs: elapsed });
-      // The restored merge may have aborted while this tab was
-      // reloading (its merging:false counter-event is gone for good) —
-      // verify before holding the tab read-only until the stuck timer.
-      this.verifyMergeStillInFlight();
-    },
-
-    observeVersion(info) {
-      if (!this.isActive()) return;
-      const sha = info && info.sha;
-      // Wait for a real, deploy-pinned SHA different from the one we
-      // captured. 'dev' means GIT_SHA wasn't set on the responding
-      // container — almost certainly a misconfigured rebuild rather
-      // than the legitimate post-restart steady state, so don't
-      // dismiss off it.
-      if (!sha || sha === 'dev' || sha === this.fromSha) return;
-      this.end({ newSha: sha });
-    },
-
-    // The merge behind this banner ended without merging — failed, head
-    // moved, or deferred (vote_update { merging:false, merged:false }).
-    // No new code is coming, so there's no SHA flip to wait for and no
-    // reason to reload — just clear the latch and lift the write block.
-    // Safe when the banner isn't armed (no-op).
-    cancel() {
-      if (!this.isActive()) return;
-      console.log('[platform-updating] cancelled (merge failed, no deploy)');
-      try { sessionStorage.removeItem(this.SS_KEY); } catch {}
-      this.fromSha = null;
-      this.since = null;
-      this.sessionId = null;
-      this.stopFastPolling();
-      this.disarmStuckTimer();
-      this.hide();
-    },
-
-    // Shared amber/red class swap for all banner variants. Swapping
-    // classes rather than re-rendering keeps the spinner animation
-    // uninterrupted when a variant flips mid-flight.
-    _setBannerTone(tone) {
-      const el = document.getElementById('platform-updating-banner');
-      if (!el) return;
-      const amber = ['bg-amber-100', 'text-amber-900', 'border-amber-300',
-        'dark:bg-amber-900/40', 'dark:text-amber-100', 'dark:border-amber-800/60'];
-      const red = ['bg-red-100', 'text-red-900', 'border-red-300',
-        'dark:bg-red-900/40', 'dark:text-red-100', 'dark:border-red-800/60'];
-      el.classList.remove(...(tone === 'red' ? amber : red));
-      el.classList.add(...(tone === 'red' ? red : amber));
-    },
-
-    end({ newSha } = {}) {
-      console.log('[platform-updating] dismissing', { fromSha: this.fromSha, newSha });
-      try { sessionStorage.removeItem(this.SS_KEY); } catch {}
-      this.fromSha = null;
-      this.since = null;
-      this.sessionId = null;
-      this.stopFastPolling();
-      this.disarmStuckTimer();
-      this.hide();
-      // Hard reload: the new server may ship new client code, so
-      // reusing the in-memory App / AppView / Home from the pre-restart
-      // SHA against a freshly-deployed backend is exactly the version-
-      // skew minefield the rest of this codebase tries to avoid (see
-      // the 'stale' pill in renderPlatformVersionPill — same design,
-      // different trigger). loadedPlatformSha is updated by the next
-      // load anyway, so a soft refresh + version-pill flip would also
-      // work, but reload is simpler and unambiguous.
-      try { location.reload(); } catch {}
-    },
-
-    show(stuck) {
-      const el = document.getElementById('platform-updating-banner');
-      if (!el) return;
-      el.classList.remove('hidden');
-      const reload = document.getElementById('platform-updating-reload');
-      // This used to be an inline `onclick="location.reload()"` in
-      // index.html. The markup is React-rendered now (frontend/src/Shell.tsx)
-      // and React rejects inline `onclick` attributes, so the binding moved
-      // to its owning module — here. Assignment rather than
-      // addEventListener on purpose: show() can be called repeatedly (a
-      // mid-flight amber→red flip, a session-storage restore), and assigning
-      // is idempotent where adding a listener would stack duplicates.
-      if (reload) reload.onclick = () => { try { location.reload(); } catch {} };
-      const text = document.getElementById('platform-updating-text');
-      const spinner = document.getElementById('platform-updating-spinner');
-      if (stuck) {
-        // Swap to the red "stuck" variant (class swap keeps the
-        // animation uninterrupted if we flip mid-flight, e.g. on
-        // session-storage restore for a tab backgrounded >5 min).
-        this._setBannerTone('red');
-        if (text) text.textContent = 'Platform update is taking longer than expected. You can reload manually.';
-        if (spinner) spinner.classList.add('hidden');
-        if (reload) reload.classList.remove('hidden');
-      } else {
-        this._setBannerTone('amber');
-        if (text) text.textContent = 'Platform updating… sit tight, write actions are paused.';
-        if (spinner) spinner.classList.remove('hidden');
-        if (reload) reload.classList.add('hidden');
-      }
-    },
-
-    hide() {
-      const el = document.getElementById('platform-updating-banner');
-      if (el) el.classList.add('hidden');
-    },
-
-    startFastPolling() {
-      if (this.fastPollTimer != null) return;
-      this.fastPollTimer = setInterval(() => App.loadVersion(), this.POLL_FAST_MS);
-    },
-
-    stopFastPolling() {
-      if (this.fastPollTimer != null) {
-        clearInterval(this.fastPollTimer);
-        this.fastPollTimer = null;
-      }
-    },
-
-    armStuckTimer() {
-      this.disarmStuckTimer();
-      const remaining = Math.max(0, this.STUCK_AFTER_MS - (Date.now() - this.since));
-      this.stuckTimer = setTimeout(() => {
-        if (!this.isActive()) return;
-        this.show(/* stuck */ true);
-        // A banner this old usually means the merging:false
-        // counter-event was missed (WS drop). If the server says the
-        // merge is no longer in flight, unlatch instead of sitting red
-        // forever.
-        this.verifyMergeStillInFlight();
-      }, remaining);
-    },
-
-    // Missed-WS-event recovery: ask the server whether the merge that
-    // armed this banner is still on the merging → merged → deploy path.
-    // The merging:false counter-event un-latches live tabs, but a tab
-    // that was reloading (or whose WS had dropped) when it fired restores the
-    // banner from sessionStorage and would block writes forever — the
-    // dismissal condition (a /api/version SHA flip) never comes for an
-    // aborted merge. 'merged' keeps the banner: the GHA deploy and its
-    // SHA flip are still on the way. Fail-safe on any error or an older
-    // server without `status` in the payload: keep the banner armed.
-    verifyMergeStillInFlight() {
-      const sessionId = this.sessionId;
-      if (sessionId == null) return;
-      fetch(`/api/sessions/${sessionId}/status`)
-        .then((r) => (r.ok ? r.json() : null))
-        .then((data) => {
-          if (!this.isActive() || this.sessionId !== sessionId) return;
-          const status = data && typeof data.status === 'string' ? data.status : null;
-          if (status && status !== 'merging' && status !== 'merged') {
-            console.log('[platform-updating] merge no longer in flight — unlatching', { status });
-            this.cancel();
-          }
-        })
-        .catch(() => {});
-    },
-
-    disarmStuckTimer() {
-      if (this.stuckTimer != null) {
-        clearTimeout(this.stuckTimer);
-        this.stuckTimer = null;
-      }
-    },
-
-    // Wraps window.fetch to reject any non-GET (write) request while
-    // the banner is up. This is the actual block — the banner itself
-    // is purely a signal. GETs flow through unchanged so /api/version
-    // polling, the global events WS reconnect path, and any other
-    // read-only chrome can keep running.
-    //
-    // Idempotent: only installs once even if init() runs twice
-    // (defensive — DOMContentLoaded should fire exactly once but we
-    // don't want to double-wrap if a future flow triggers re-init).
-    installFetchWrap() {
-      if (this.fetchWrapInstalled) return;
-      this.fetchWrapInstalled = true;
-      const orig = window.fetch.bind(window);
-      const self = this;
-      window.fetch = function (resource, init) {
-        const method = (init && init.method ? String(init.method) : 'GET').toUpperCase();
-        if (self.isActive() && method !== 'GET' && method !== 'HEAD') {
-          return Promise.reject(new Error('Platform is updating — write actions paused. Try again in a few seconds.'));
-        }
-        return orig(resource, init);
-      };
-    },
   },
 
   // Per-app redeploy WS handler. Flips affected pills into / out of
@@ -1569,37 +1549,20 @@ const App = {
     }
   },
 
+  // #1015: a self-app merge no longer latches any platform-wide chrome.
+  // The "Platform updating… write actions are paused" banner (and its
+  // fetch write-block, 2s version poll, stuck timer and forced reload)
+  // existed because a self-app merge restarted the ONE platform
+  // container. Blue-green deploys (#1008, scripts/platform-rollout.sh)
+  // keep the live color serving until the new one is health-gated and
+  // cut over, so there is no downtime to announce and no reason to
+  // pause writes. `data.selfHosted` still rides along on these
+  // broadcasts (it's a cheap, honest fact) — this handler simply
+  // doesn't branch on it, and per-proposal state is carried by the
+  // proposal's own badges. A tab left open across a platform deploy is
+  // caught up by the drawer's stale-version pill
+  // (renderPlatformVersionPill) or by pull-to-refresh (_refreshOrReload).
   handleVoteUpdate(data) {
-    // Phase 3 trigger: when a self-hosted PR transitions promoted →
-    // merging, latch the "Platform updating…" banner. The dismissal
-    // (SHA flip on /api/version) happens via App.loadVersion's poll
-    // loop. Fires before the panel refresh so all open tabs (including
-    // ones not currently looking at this app) latch into the state.
-    if (data.merging && data.selfHosted) {
-      App.PlatformUpdating.begin({
-        appSlug: data.appSlug,
-        sessionId: data.sessionId,
-      });
-    }
-    // Counter-event: the self-app merge attempt ended without a merge
-    // (failed, head moved since review, revision unverifiable), so no
-    // SHA flip is coming — unlatch instead of holding the platform
-    // read-only until the stuck timer. `merging === false` (field
-    // present) + no merge is the terminal shape every abort path
-    // broadcasts; keying on it rather than just `mergeFailed` covers the
-    // head-moved / deferred aborts, which are deliberately not flagged
-    // as failures.
-    //
-    // #962: `data.resolving` is deliberately NOT consulted here (nor
-    // anywhere else in this handler). The banner tracks the merge and
-    // only the merge: when a merge attempt ends on a conflict we
-    // unlatch immediately, and if the auto-resolver's fix lands and a
-    // fresh merge is claimed, that merge's own `merging:true` re-arms
-    // us. The intervening 1–2 min of branch-sync work is carried by
-    // the proposal's own badges, not by platform-wide chrome.
-    if (data.merging === false && !data.merged && data.selfHosted) {
-      App.PlatformUpdating.cancel();
-    }
     // Refresh the proposals tab / inline chat vote state if we're in
     // this app's Dev view.
     if (App.currentApp === data.appSlug && App.currentTab === 'dev') {
@@ -1705,11 +1668,78 @@ const App = {
   // menu — #645.)
   HeaderMenu: {
     _panel: null,
+
+    // ── Presentation state (#977) ───────────────────────────────────
+    // The drawer's exit is the ONE motion a sidebar-originated
+    // navigation is allowed to show, so App._entryTransition has to be
+    // able to ask "is this drawer on screen (or still animating out)?"
+    // and "did a link inside it just start this navigation?".
+    //
+    // _closingAt exists only for the LEGACY (desktop / kit-missing)
+    // path: close() strips [data-open] synchronously while the 200ms
+    // CSS slide still has to run, so the attribute alone reports the
+    // drawer as gone while it is visibly still there. The kit path
+    // needs no timestamp — _panel is cleared in the onDismiss teardown,
+    // i.e. only once the exit spring has come to rest.
+    _closingAt: 0,
+    _navArmedAt: 0,
+    // Callers waiting for the drawer to be fully gone (close()'s
+    // completion promise — see close()).
+    _dismissWaiters: [],
+    LEGACY_CLOSE_MS: 200,
+    // The legacy slide plus a frame of margin.
+    CLOSING_WINDOW_MS: 260,
+    // Generous, because it is CONSUMED on first read: only a link that
+    // produced no navigation at all can leave it to expire.
+    NAV_ARM_TTL_MS: 600,
+    // Backstop for the completion promise, so a teardown that never
+    // fires (a kit that vanished, a superseded handle) can't strand a
+    // caller that chained its own presentation behind it.
+    DISMISS_SAFETY_MS: 500,
+
+    _now() {
+      return (typeof performance !== 'undefined' && performance.now)
+        ? performance.now()
+        : Date.now();
+    },
+
+    // True while the drawer surface is on screen OR still animating out.
+    isPresenting() {
+      if (App.HeaderMenu._panel) return true;
+      const panel = document.getElementById('header-menu-panel');
+      if (panel && panel.hasAttribute('data-open')) return true;
+      return App.HeaderMenu._closingAt > 0
+        && (App.HeaderMenu._now() - App.HeaderMenu._closingAt)
+          < App.HeaderMenu.CLOSING_WINDOW_MS;
+    },
+
+    // One-shot: a link inside the drawer armed this immediately before
+    // close(), and the navigation it triggered is the next thing to ask.
+    // Consumed on read so it can never apply to a second navigation.
+    consumeNavPending() {
+      const at = App.HeaderMenu._navArmedAt;
+      if (!at) return false;
+      App.HeaderMenu._navArmedAt = 0;
+      return (App.HeaderMenu._now() - at) < App.HeaderMenu.NAV_ARM_TTL_MS;
+    },
+
+    _resolveDismissWaiters() {
+      const waiters = App.HeaderMenu._dismissWaiters;
+      if (!waiters.length) return;
+      App.HeaderMenu._dismissWaiters = [];
+      for (const resolve of waiters) {
+        try { resolve(); } catch (err) { /* ignore */ }
+      }
+    },
+
     open() {
       const panel = document.getElementById('header-menu-panel');
       const overlay = document.getElementById('header-menu-overlay');
       const btn = document.getElementById('header-menu-btn');
       if (!panel) return;
+      // A fresh presentation ends any "still sliding out" window the
+      // legacy path was counting down (#977).
+      App.HeaderMenu._closingAt = 0;
       // #555: the AI-credit row only ever renders in this drawer, so
       // opening it is exactly when its number matters. The refresh is
       // throttled inside AiCredit, so this is cheap on every open —
@@ -1733,6 +1763,11 @@ const App = {
           contentEl: panel,
           side: 'right',
           onDismiss: () => {
+            // The drawer this handle owned has left the screen, so anyone
+            // who chained a presentation behind close() may go — resolved
+            // BEFORE the ownership guard below, or a superseded teardown
+            // would strand them until the safety cap (#977).
+            App.HeaderMenu._resolveDismissWaiters();
             // Teardown is deferred behind the exit spring, so a tap on the
             // hamburger during that window can re-adopt the drawer into a
             // NEW kit panel before this fires. Restoring it to <body> then
@@ -1806,21 +1841,47 @@ const App = {
         track.style.setProperty('--theme-caret-index', String(idx));
       }
     },
+    // Returns a promise that resolves once the drawer is actually GONE —
+    // the kit teardown on the touch path, the CSS slide's end on the
+    // legacy one, immediately when nothing was open (#977). Callers that
+    // present a surface of their own (the Node / Wallet sheets, the Share
+    // dialog) chain it so only one surface moves at a time; every other
+    // caller can keep ignoring the return value.
     close() {
       if (App.HeaderMenu._panel) {
+        const done = App.HeaderMenu._afterDismiss();
+        App.HeaderMenu._closingAt = App.HeaderMenu._now();
         App.HeaderMenu._panel.dismiss();
-        return;
+        return done;
       }
       const panel = document.getElementById('header-menu-panel');
       const overlay = document.getElementById('header-menu-overlay');
       const btn = document.getElementById('header-menu-btn');
-      if (!panel) return;
+      if (!panel) return Promise.resolve();
+      const wasOpen = panel.hasAttribute('data-open');
+      if (wasOpen) App.HeaderMenu._closingAt = App.HeaderMenu._now();
       panel.removeAttribute('data-open');
       overlay.removeAttribute('data-open');
       btn.setAttribute('aria-expanded', 'false');
       btn.setAttribute('aria-label', 'Open menu');
+      if (!wasOpen) return Promise.resolve();
+      const done = App.HeaderMenu._afterDismiss();
       // Hide overlay after the slide-out transition finishes.
-      setTimeout(() => overlay.classList.add('hidden'), 200);
+      setTimeout(() => {
+        overlay.classList.add('hidden');
+        App.HeaderMenu._resolveDismissWaiters();
+      }, App.HeaderMenu.LEGACY_CLOSE_MS);
+      return done;
+    },
+
+    // The completion promise itself: settled by whichever exit path runs,
+    // with a hard safety cap so a teardown that never fires can't hang a
+    // chained presentation forever.
+    _afterDismiss() {
+      return new Promise((resolve) => {
+        App.HeaderMenu._dismissWaiters.push(resolve);
+        setTimeout(resolve, App.HeaderMenu.DISMISS_SAFETY_MS);
+      });
     },
     init() {
       const btn = document.getElementById('header-menu-btn');
@@ -1840,6 +1901,41 @@ const App = {
           if (panel && panel.hasAttribute('data-open')) App.HeaderMenu.close();
         }
       });
+      // Every LINK inside the drawer, in one rule (#977). Two jobs:
+      //
+      //   1. Arm the single-motion rule. A same-document hash link is
+      //      about to navigate the shell, and the drawer's own exit is
+      //      the only motion that navigation may show — so stamp
+      //      _navArmedAt and let App._entryTransition downgrade the
+      //      screen animation to 'none'. External links (the GitHub row,
+      //      whose href is an absolute repo URL) animate nothing in this
+      //      document, so they only close.
+      //   2. Close the drawer for links that never had a handler of
+      //      their own: the Kudos meter in the status pane
+      //      (#leaderboard/prs, rendered by kudos.js) and the footer's
+      //      "Forked from" line (#app/<slug>, rendered by app-view.js)
+      //      used to navigate with the drawer left wide open.
+      //
+      // Registered on the panel element itself, so it rides along when
+      // the panel is adopted into the kit drawer — same reason the
+      // per-row listeners below survive adoption. Those per-row
+      // handlers are now redundant with this one, and harmlessly so:
+      // both close paths are idempotent (the kit's dismiss() returns
+      // early once closed).
+      const drawerPanel = document.getElementById('header-menu-panel');
+      if (drawerPanel) {
+        drawerPanel.addEventListener('click', (e) => {
+          const link = e.target.closest ? e.target.closest('a[href]') : null;
+          if (!link || !drawerPanel.contains(link)) return;
+          // getAttribute, not .href: the property resolves to an absolute
+          // URL, which would make every in-page hash link look external.
+          const href = link.getAttribute('href') || '';
+          if (href.startsWith('#')) {
+            App.HeaderMenu._navArmedAt = App.HeaderMenu._now();
+          }
+          App.HeaderMenu.close();
+        });
+      }
       // Drawer row actions — each closes the menu after triggering its action.
       document.getElementById('drawer-row-github')
         .addEventListener('click', () => App.HeaderMenu.close());
@@ -1850,10 +1946,13 @@ const App = {
       // beside it are gone; they're tabs of this one screen now.
       document.getElementById('drawer-row-leaderboard')
         ?.addEventListener('click', () => App.HeaderMenu.close());
+      // Share — a dialog of its own, so it waits for the drawer to be
+      // gone rather than fading in across the drawer's exit (#977).
       document.getElementById('drawer-row-share')
         .addEventListener('click', () => {
-          App.HeaderMenu.close();
-          if (window.AppView) AppView.openShareModal();
+          Promise.resolve(App.HeaderMenu.close()).then(() => {
+            if (window.AppView) AppView.openShareModal();
+          });
         });
       // Settings — the #settings screen (settings-modal-to-screen
       // conversion). Same real-anchor idiom as Challenges / Profile above:
@@ -2783,7 +2882,20 @@ const App = {
         const profileUser = parts[1] === 'users' && parts[2]
           ? decodeURIComponent(parts[2])
           : null;
-        App.navigateToLeaderboard(parts[1], profileUser);
+        // #leaderboard/challenges/<eventId>[/<challengeId>] (#982) — the
+        // address the profile's completed-challenge rows link to. The
+        // event id is part of the path because a challenge id alone is
+        // meaningless: the challenge list is fetched per season event, so
+        // without it the router would have to guess which event to load.
+        // Non-numeric segments resolve to null and the whole target is
+        // dropped, leaving a plain #leaderboard/challenges navigation.
+        const challengeTarget = parts[1] === 'challenges' && parts[2]
+          ? {
+            eventId: App._numericSegment(parts[2]),
+            challengeId: App._numericSegment(parts[3]),
+          }
+          : null;
+        App.navigateToLeaderboard(parts[1], profileUser, challengeTarget);
         return;
       }
       if (parts[0] === 'challenges') {
@@ -2820,7 +2932,22 @@ const App = {
         // (#admin/users etc.) deep-links a menu section; the gate on
         // App.user.isAdmin lives inside navigateToAdminConsole.
         App.setChromeless(false);
-        App.navigateToAdminConsole(parts[1] || null);
+        let _adminSection = parts[1] || null;
+        // Permanent alias for the renamed Topochain section. The sub-tab
+        // (a third segment, owned by AdminTopochain) has to survive the
+        // rewrite, otherwise a deep bookmark like #admin/topochain/users
+        // would silently land on the section's default tab. Same idiom as
+        // the #topochain branch below: rewrite the address BEFORE
+        // navigating so the module's own _syncHash sees the canonical
+        // prefix, and the bookmark self-heals.
+        if (_adminSection === 'topochain') {
+          _adminSection = 'seasons';
+          try {
+            history.replaceState(null, '',
+              parts[2] ? `#admin/seasons/${parts[2]}` : '#admin/seasons');
+          } catch (err) { /* non-fatal: navigation below still works */ }
+        }
+        App.navigateToAdminConsole(_adminSection);
         return;
       }
       if (parts[0] === 'settings') {
@@ -3074,6 +3201,37 @@ const App = {
     if (link && link.parentNode) link.parentNode.removeChild(link);
   },
 
+  // The single decision point for "what animation does entering this
+  // screen get?" (#977). Every navigate* method passes the type it WANTS
+  // and takes back the type it gets.
+  //
+  // One rule: a screen swap that begins while the slide-out drawer is on
+  // screen — or that a link inside the drawer just started — runs with no
+  // animation at all. The drawer's own exit spring is already a motion in
+  // flight, and the kit's push/pop is a View Transition over the whole
+  // document root: it snapshots the open drawer and parallaxes that
+  // snapshot away while the live panel springs the other way, which is
+  // the two-competing-motions bug. Cutting the screen swap leaves exactly
+  // one motion — the drawer leaving, revealing the destination behind it.
+  // (It also matches the kit's own guidance that panels and other
+  // high-frequency UI must use type:'none'.)
+  //
+  // The resolved type is stamped on the screen element as `data-entered`,
+  // mirroring the kit's own data-un-vt. Nothing reads it at runtime — it
+  // exists so the dapp.json checks can assert an ordering that is
+  // otherwise only observable mid-animation.
+  _entryTransition(preferred, screenEl) {
+    const menu = App.HeaderMenu;
+    // consumeNavPending() FIRST and unconditionally — it is one-shot, so
+    // letting isPresenting() short-circuit it would leave the flag armed
+    // for whatever navigation came next.
+    const fromDrawer = !!menu && menu.consumeNavPending();
+    const suppress = fromDrawer || (!!menu && menu.isPresenting());
+    const type = suppress ? 'none' : preferred;
+    if (screenEl && screenEl.setAttribute) screenEl.setAttribute('data-entered', type);
+    return type;
+  },
+
   // ── Screen swap — THE ORDERING RULE (issue #979) ────────────────────
   // The mutually exclusive full-screen roots. Exactly one of these is
   // visible at a time (they are `flex-1` siblings in the body column, so
@@ -3140,7 +3298,17 @@ const App = {
   // primary standings tab), 'kudos' and 'challenges' select a whole
   // section instead. `profileUser` (#60) opens the per-user PR profile
   // drill-in instead of a plain tab.
-  navigateToLeaderboard(sub, profileUser) {
+  // A hash segment that must be a positive integer id, or nothing. Returns
+  // null for anything else (empty, '12abc', '-1', a username) so a
+  // hand-typed or truncated address degrades to the plain screen rather
+  // than sending NaN into a fetch URL.
+  _numericSegment(raw) {
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isInteger(n) && n > 0 ? n : null;
+  },
+
+  navigateToLeaderboard(sub, profileUser, challengeTarget) {
     // Already mounted: an in-screen change (a tab, the deep-linked
     // section, a user drill-in), not a screen entry — hand it to the
     // module instead of replaying the whole swap. Same idiom as
@@ -3153,7 +3321,7 @@ const App = {
     // page is captured, which is exactly how the incoming screen ended
     // up painted behind its own entry animation.
     if (App._inLeaderboard && window.Leaderboard?.isOpen?.()) {
-      App._routeLeaderboard(sub, profileUser);
+      App._routeLeaderboard(sub, profileUser, challengeTarget);
       if (window.Leaderboard?.open) Leaderboard.open();
       return;
     }
@@ -3172,14 +3340,15 @@ const App = {
     if (App._inBrowse) App._exitBrowse();
     // Screen reveal + chrome, all inside the transition callback so the
     // outgoing page is snapshotted as it actually looked (#979).
+    const screen = document.getElementById('leaderboard-screen');
     PlatformUI.transition(() => {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('leaderboard-screen');
       App._enterScreenChrome();
       App.setHeaderTitle('Leaderboard');
-    }, { type: fromIframe ? 'none' : 'push' });
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
     App._inLeaderboard = true;
-    App._routeLeaderboard(sub, profileUser);
+    App._routeLeaderboard(sub, profileUser, challengeTarget);
     if (window.Leaderboard?.open) Leaderboard.open();
   },
 
@@ -3189,11 +3358,21 @@ const App = {
   // _setSub clears profile state and would replaceState the profile hash
   // away. When the screen is already open they re-render in place; the
   // open() each caller runs afterwards dedupes the in-flight load.
-  _routeLeaderboard(sub, profileUser) {
+  _routeLeaderboard(sub, profileUser, challengeTarget) {
     if (profileUser && window.Leaderboard?.openProfile) {
       Leaderboard.openProfile(profileUser);
     } else if ((sub === 'topochain' || sub === 'kudos' || sub === 'challenges')
                && window.Leaderboard?._setSection) {
+      // Register the challenge deep link BEFORE the section mounts (#982).
+      // Selecting the event first means the pane's very first fetch is
+      // already for the right event — ordering it after _setSection would
+      // load the default event, then throw that list away and reload.
+      if (sub === 'challenges' && challengeTarget
+          && window.TopochainChallenges?.openFromHash) {
+        TopochainChallenges.openFromHash(
+          challengeTarget.eventId, challengeTarget.challengeId
+        );
+      }
       Leaderboard._setSection(sub);
     } else if (sub && window.Leaderboard?._setSub) {
       Leaderboard._setSub(sub);
@@ -3237,12 +3416,13 @@ const App = {
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
+    const screen = document.getElementById('profile-screen');
     PlatformUI.transition(() => {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('profile-screen');
       App._enterScreenChrome();
       App.setHeaderTitle('Profile');
-    }, { type: fromIframe ? 'none' : 'push' });
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
     App._inProfile = true;
     if (window.Profile?.open) Profile.open();
   },
@@ -3280,6 +3460,7 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
+    const screen = document.getElementById('browse-screen');
     App._inBrowse = true;
     // Renders into the still-hidden screen; `chrome: false` holds back its
     // level-dependent title/back-icon so the header only changes inside
@@ -3293,7 +3474,7 @@ const App = {
       // Browse owns the header title / back icon for whichever level the
       // slug selected, so its sync runs after setHeaderTitle above.
       if (window.Browse?.syncChrome) Browse.syncChrome();
-    }, { type: fromIframe ? 'none' : 'push' });
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
 
   // State-only (#979) — see _exitLeaderboard. The back chevron the detail
@@ -3351,6 +3532,7 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
+    const screen = document.getElementById('admin-screen');
     App._inAdmin = true;
     // Renders into the still-hidden screen; `chrome: false` holds its
     // section title / back arrow back for the callback below (#979).
@@ -3363,7 +3545,7 @@ const App = {
       App._enterScreenChrome();
       App.setHeaderTitle(publicMode ? 'Platform status' : 'Admin & moderation');
       if (window.AdminConsole?.syncChrome) AdminConsole.syncChrome();
-    }, { type: fromIframe ? 'none' : 'push' });
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
 
   // State-only (#979) — see _exitLeaderboard. The back chevron the mobile
@@ -3398,6 +3580,7 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inBrowse) App._exitBrowse();
+    const screen = document.getElementById('settings-screen');
     App._inSettings = true;
     // Renders every section into the still-hidden screen — invisible, so
     // it may stay synchronous (which keeps Settings.isOpen() truthful for
@@ -3414,7 +3597,7 @@ const App = {
       // the header ends up showing the section's name rather than
       // "Settings".
       if (window.Settings?.syncChrome) Settings.syncChrome();
-    }, { type: fromIframe ? 'none' : 'push' });
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
 
   // State-only (#979) — see _exitLeaderboard. The back chevron the mobile
@@ -3882,6 +4065,10 @@ const App = {
     // too: either way it runs exactly when #app-view is revealed.
     // The departing screen stays visible beneath the zoom (fn reveals,
     // `after` conceals — kit contract).
+    // #977: reachable from the drawer too (the footer's "Forked from"
+    // link opens the source app), so the zoom goes through the same
+    // single-motion gate — 'none' still runs fn + after as one mutation.
+    const appViewEl = document.getElementById('app-view');
     PlatformUI.transition(() => {
       document.getElementById('app-view').classList.remove('hidden');
       document.getElementById('back-btn').classList.remove('hidden');
@@ -3890,7 +4077,7 @@ const App = {
       // demo cards, non-running apps, an explicit non-app tab, offline.
       try { AppView.beginLaunch(slug, tab); } catch (err) { /* fall back to the plain path */ }
     }, {
-      type: 'zoom-in',
+      type: App._entryTransition('zoom-in', appViewEl),
       el: document.getElementById('app-view'),
       fromEl: () => App._tileFor(slug),
       // The outgoing screen: the kit hides it while measuring the
@@ -4001,7 +4188,7 @@ const App = {
       App.DrawerStatus.setAppOpen(false);
       App.setHeaderTitle('dApps');
     }, {
-      type: 'zoom-out',
+      type: App._entryTransition('zoom-out', av),
       el: av,
       fromEl: () => (leavingSlug ? App._tileFor(leavingSlug) : null),
       fallback: fallbackType,

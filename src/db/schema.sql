@@ -562,6 +562,45 @@ CREATE TABLE IF NOT EXISTS app_activity (
   UNIQUE(app_id, user_id, date)
 );
 
+-- Per-check history: which of an app's declared dapp.json checks have ever
+-- been OBSERVED PASSING, and are therefore allowed to block a merge.
+--
+-- Background: the manifest reader used to keep only the first 12 declared
+-- checks, so this repo's own ~229 tail checks had never executed once. The
+-- capture container now runs every declared check on every build, and this
+-- table is what stops that from blocking the next proposal on hundreds of
+-- pre-existing failures it did not cause. A check is BLOCKING iff
+-- `first_passed_at IS NOT NULL` (derived, never stored as a flag); one that
+-- has never passed is ADVISORY — it runs and reports, but does not gate.
+-- There is no demotion: a graduated check that starts failing stays
+-- blocking, which is the whole point of graduating it.
+--
+-- `check_key` is sha256(name || '\n' || path) — the same (name+path) pair
+-- app-manifest.readTests de-duplicates on, so renaming a check mints a new
+-- key and drops it back to advisory (an edited check re-earns its status).
+--
+-- PUBLIC (no `staging:private` tag) and deliberately so: it holds check
+-- names and pass/fail timestamps for app code, which every viewer of a
+-- proposal's checks card can already see. No credentials, no user content.
+CREATE TABLE IF NOT EXISTS app_check_history (
+  id              BIGSERIAL PRIMARY KEY,
+  app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  check_key       VARCHAR(64) NOT NULL,
+  check_name      TEXT,
+  check_path      TEXT,
+  first_passed_at TIMESTAMPTZ,
+  last_passed_at  TIMESTAMPTZ,
+  last_failed_at  TIMESTAMPTZ,
+  last_seen_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  pass_count      INTEGER NOT NULL DEFAULT 0,
+  fail_count      INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (app_id, check_key)
+);
+CREATE INDEX IF NOT EXISTS idx_app_check_history_app ON app_check_history(app_id);
+-- The graduated-set load is the hot read (once per checks run).
+CREATE INDEX IF NOT EXISTS idx_app_check_history_graduated
+  ON app_check_history(app_id) WHERE first_passed_at IS NOT NULL;
+
 -- Group chat messages
 CREATE TABLE IF NOT EXISTS chat_messages (
   id         SERIAL PRIMARY KEY,
@@ -1718,6 +1757,9 @@ COMMENT ON TABLE chat_session_spec_user_shares IS 'staging:private';
 COMMENT ON TABLE llm_usage              IS 'staging:private';
 COMMENT ON TABLE notifications          IS 'staging:private';
 COMMENT ON TABLE app_secrets            IS 'staging:private';
+-- `mail_deliveries` is tagged too, but its COMMENT lives beside its
+-- CREATE TABLE further down this file — the table doesn't exist yet at
+-- this point, and a COMMENT ON a missing table aborts the whole re-apply.
 
 -- Column-level on `users`: rows survive cloning so FK-targeted
 -- attribution (chat_messages.user_id, apps.created_by, …) keeps
@@ -3596,6 +3638,13 @@ CREATE TABLE IF NOT EXISTS mobile_auth_tokens (
 );
 CREATE INDEX IF NOT EXISTS idx_mobile_auth_tokens_user ON mobile_auth_tokens (user_id);
 
+-- Mobile push notifications — sender identity, registrations, deliveries (#844)
+--
+-- This header also bounds the topochain block above for
+-- tests/topochain-schema.test.js: the four mobile_push_* tables below are
+-- NOT part of the SPEC §3.4 topochain migration and must not count toward
+-- its 22-table pin.
+
 -- Database-owned sender identity and activation boundary. Same-identity sender
 -- restarts retain this cutoff so queued work survives ordinary deployments.
 -- Initial activation, re-enabling, and deployment identity changes establish
@@ -3907,6 +3956,60 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_waitlist_signups_more_token
   ON waitlist_signups (more_token) WHERE more_token IS NOT NULL;
 COMMENT ON COLUMN waitlist_signups.more_token IS 'staging:private';
 
+-- Email confirmation. Set the first time the signer follows the confirm
+-- link in their join mail (GET /api/public/waitlist/confirm/:token, which
+-- then lands them on the stage-2 survey). Idempotent — a second visit
+-- keeps the original timestamp. A NULL here after a join means the
+-- address never proved it can receive mail, which is exactly what an
+-- admin wants to see before releasing a row.
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ;
+
+-- Outbound mail log (src/services/mail/). Every send attempt lands here
+-- with its outcome, and it is the ONLY place an operator can see what
+-- happened: the endpoints that trigger mail are always-200 by contract
+-- (SPEC 1667) so they cannot report a delivery failure to the user, and a
+-- non-delivery was historically invisible for exactly that reason.
+--
+-- It is also the throttle's state: src/services/mail/rate-limit.js counts
+-- the `sent` / `skipped_staging` rows for a recipient to cap how much mail
+-- one address can be made to receive, and counts them globally to bound
+-- the provider bill.
+--
+-- `status` is one of:
+--   sent                  delivered to the provider
+--   skipped_staging       rendered to the log by a staging preview
+--   failed                the provider refused or timed out (`error` says)
+--   suppressed_rate_limit the throttle declined it (`error` says why)
+--   no_transport          nothing was configured to send it
+-- `error` holds a bounded provider complaint. It NEVER holds the message
+-- body, so a login code cannot end up in this table.
+CREATE TABLE IF NOT EXISTS mail_deliveries (
+  id         BIGSERIAL PRIMARY KEY,
+  kind       VARCHAR(64) NOT NULL,
+  recipient  VARCHAR(255) NOT NULL,
+  provider   VARCHAR(32),
+  status     VARCHAR(24) NOT NULL,
+  error      TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- The throttle's read path: newest rows for one recipient and kind.
+CREATE INDEX IF NOT EXISTS idx_mail_deliveries_recipient
+  ON mail_deliveries (recipient, kind, created_at DESC);
+-- The global hourly count, the admin card's "recent activity", and the
+-- retention sweep all walk the table by time.
+CREATE INDEX IF NOT EXISTS idx_mail_deliveries_created
+  ON mail_deliveries (created_at DESC);
+-- Staging privacy (see the convention block earlier in this file): a log
+-- of who the platform emailed and when is private user content, so a
+-- staging clone starts empty and gets obviously-fake seed rows instead
+-- (seedStagingPlatformMail in src/db/migrate.js).
+--
+-- Deliberately NOT added to the prod-debug deny lists in
+-- src/services/debug-access.js: this table holds no password, key or
+-- token, and "did that user's login code actually go out" is precisely the
+-- question an admin debugging session needs to be able to answer.
+COMMENT ON TABLE mail_deliveries IS 'staging:private';
+
 -- Access + block-production state on the user. `has_platform_access`
 -- gates the SV platform surfaces (home/social/build) — NOT login-required
 -- child apps, which any account may use (see src/middleware/auth.js).
@@ -3945,3 +4048,397 @@ INSERT INTO platform_settings (key, value, description) VALUES
   ('onboarding_gate_grandfathered', 'true',
     'Marker: the one-time platform-access grandfather + waitlist backfill has run. Do not delete — deleting re-grants access to every account on next boot.')
 ON CONFLICT (key) DO NOTHING;
+
+-- ── Hosted MCP connector: OAuth 2.1 authorization server ────────────────
+--
+-- Claude.ai and ChatGPT connect to the platform's remote MCP endpoint
+-- (POST /mcp) as PUBLIC OAuth clients: dynamic client registration, the
+-- authorization-code grant with mandatory PKCE S256, and rotating refresh
+-- tokens. These are deliberately SEPARATE tables from the CLI's
+-- cli_access_tokens / cli_auth_audit_events family, whose CHECK
+-- constraints pin client_id to the single first-party CLI identity and
+-- scopes to that flow's two values — a third-party connector fits neither.
+--
+-- All three are staging:private: they hold (hashed) credential material
+-- and a staging clone must never carry a live grant. The Settings section
+-- that lists them therefore renders from a ?demo=1 fixture in staging.
+
+CREATE TABLE IF NOT EXISTS mcp_clients (
+  id               BIGSERIAL PRIMARY KEY,
+  client_id        TEXT NOT NULL UNIQUE,
+  client_name      TEXT NOT NULL,
+  -- Every entry is https (or loopback in explicit local-dev mode) and its
+  -- host is on the deployment's connector allowlist; the registration
+  -- route is the enforcement point.
+  redirect_uris    TEXT[] NOT NULL CHECK (cardinality(redirect_uris) BETWEEN 1 AND 10),
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  disabled_at      TIMESTAMPTZ,
+  CHECK (char_length(client_name) BETWEEN 1 AND 128)
+);
+COMMENT ON TABLE mcp_clients IS 'staging:private';
+
+-- Authorization codes. Single-use, 60s TTL, bound to client + redirect +
+-- PKCE challenge, stored hashed. The consumed_at/expires_at pairing is
+-- expressed as constraints so an inconsistent row cannot be written.
+CREATE TABLE IF NOT EXISTS mcp_authorization_codes (
+  id             BIGSERIAL PRIMARY KEY,
+  code_hash      TEXT NOT NULL UNIQUE CHECK (code_hash ~ '^[0-9a-f]{64}$'),
+  client_id      TEXT NOT NULL,
+  user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  scopes         TEXT[] NOT NULL
+    CHECK (
+      cardinality(scopes) BETWEEN 1 AND 2
+      AND scopes <@ ARRAY['usernode:apps:read', 'usernode:proposals:write']::TEXT[]
+    ),
+  redirect_uri   TEXT NOT NULL,
+  code_challenge TEXT NOT NULL CHECK (code_challenge ~ '^[A-Za-z0-9_-]{43}$'),
+  grant_id       TEXT NOT NULL,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at     TIMESTAMPTZ NOT NULL,
+  consumed_at    TIMESTAMPTZ,
+  CHECK (expires_at > created_at),
+  CHECK (consumed_at IS NULL OR consumed_at >= created_at)
+);
+COMMENT ON TABLE mcp_authorization_codes IS 'staging:private';
+
+-- Access + refresh tokens. grant_id groups everything minted from one
+-- consent so Settings → Disconnect revokes the whole chain in one write;
+-- rotated_from records refresh rotation so reuse of a consumed refresh
+-- token can be detected and the chain killed.
+CREATE TABLE IF NOT EXISTS mcp_tokens (
+  id           BIGSERIAL PRIMARY KEY,
+  token_hash   TEXT NOT NULL UNIQUE CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+  token_hint   TEXT NOT NULL,
+  kind         TEXT NOT NULL CHECK (kind IN ('access', 'refresh')),
+  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  client_id    TEXT NOT NULL,
+  grant_id     TEXT NOT NULL,
+  scopes       TEXT[] NOT NULL
+    CHECK (
+      cardinality(scopes) BETWEEN 1 AND 2
+      AND scopes <@ ARRAY['usernode:apps:read', 'usernode:proposals:write']::TEXT[]
+    ),
+  rotated_from BIGINT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_used_at TIMESTAMPTZ,
+  expires_at   TIMESTAMPTZ NOT NULL,
+  revoked_at   TIMESTAMPTZ,
+  CHECK (expires_at > created_at),
+  CHECK (last_used_at IS NULL OR last_used_at >= created_at),
+  CHECK (revoked_at IS NULL OR revoked_at >= created_at)
+);
+COMMENT ON TABLE mcp_tokens IS 'staging:private';
+
+CREATE INDEX IF NOT EXISTS mcp_tokens_user_idx
+  ON mcp_tokens (user_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS mcp_tokens_grant_idx
+  ON mcp_tokens (grant_id);
+CREATE INDEX IF NOT EXISTS mcp_tokens_expiry_idx
+  ON mcp_tokens (expires_at);
+CREATE INDEX IF NOT EXISTS mcp_authorization_codes_expiry_idx
+  ON mcp_authorization_codes (expires_at);
+
+-- Connector auth audit. Same event vocabulary and same
+-- metadata-allowlist discipline as cli_auth_audit_events, but with a free
+-- client_id (a third-party connector is not the first-party CLI) and the
+-- connector scope set.
+CREATE TABLE IF NOT EXISTS mcp_auth_audit_events (
+  id              BIGSERIAL PRIMARY KEY,
+  event_type      TEXT NOT NULL
+    CHECK (event_type IN (
+      'authorization_approved', 'authorization_rejected',
+      'token_issued', 'token_used', 'token_revoked'
+    )),
+  occurred_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  user_id         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  actor_user_id   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  access_token_id BIGINT,
+  client_id       TEXT NOT NULL,
+  scopes          TEXT[] NOT NULL
+    CHECK (
+      cardinality(scopes) <= 2
+      AND scopes <@ ARRAY['usernode:apps:read', 'usernode:proposals:write']::TEXT[]
+    ),
+  outcome         TEXT NOT NULL DEFAULT 'success'
+    CHECK (
+      (event_type = 'token_used'
+       AND outcome IN ('scope_authorized', 'insufficient_scope'))
+      OR (event_type <> 'token_used' AND outcome = 'success')
+    ),
+  metadata        JSONB NOT NULL DEFAULT '{}'
+    CHECK (jsonb_typeof(metadata) = 'object')
+);
+COMMENT ON TABLE mcp_auth_audit_events IS 'staging:private';
+
+CREATE INDEX IF NOT EXISTS mcp_auth_audit_events_user_idx
+  ON mcp_auth_audit_events (user_id, occurred_at DESC);
+
+-- ── Verified GitHub account link (IDENTITY ONLY) ────────────────────────
+-- Distinct from the self-declared `users.github` profile string above,
+-- which is unverified display text and must NEVER be used for
+-- authorization. These are written only by the OAuth round-trip in
+-- src/services/github-link.js, which asks GitHub for NO SCOPE: the login
+-- is the whole link, and the platform holds no credential for the user.
+--
+-- github_oauth_token_enc is LEGACY and always NULL. It once held a
+-- `public_repo` token used to fork an app repo into the user's account on
+-- their behalf; that fork is now made by the user's own coding agent.
+-- saveLink writes NULL, and migrate.js's revokeLegacyGithubGrants hands
+-- any pre-existing token back to GitHub and clears it. Kept (rather than
+-- dropped) so a rollback to the previous release cannot hit a missing
+-- column mid-deploy; drop it once every deployment has migrated.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS github_login             VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS github_oauth_token_enc   TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS github_linked_at         TIMESTAMPTZ;
+COMMENT ON COLUMN users.github_oauth_token_enc IS 'staging:private';
+
+-- Which external coding agent produced a proposal, for the "built with
+-- Claude Code" / "built with Codex" badge. Deliberately a SEPARATE column
+-- rather than a new `source` value: `source = 'imported'` is compared for
+-- exact equality in ~10 places (sync-main, staging-recovery, pr-vote-
+-- revision, the chat-turn guard, …) and every one of those behaviours is
+-- wanted for an externally-authored branch.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS external_agent   TEXT;
+
+-- ── External-agent work orders ──────────────────────────────────────────
+--
+-- One row per "the connector handed a task to the user's own coding agent
+-- and is waiting for the branch to come back". It is the server's memory of
+-- what prepare_work promised, so submit_work can check that the branch it
+-- is asked to import is the branch it reserved, in the fork it reserved,
+-- from the base commit it recorded — rather than trusting the three strings
+-- the model hands back.
+--
+-- `staging:private`: rows tie a Usernode account to a personal GitHub
+-- account and to in-flight, unpublished work. They carry no credential
+-- (the OAuth token lives encrypted on `users`), so they are not in the
+-- prod-debug deny list; they are simply not other people's business and
+-- must not ride along into a staging clone. This table references public
+-- tables, never the reverse.
+CREATE TABLE IF NOT EXISTS external_agent_tasks (
+  id            BIGSERIAL PRIMARY KEY,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  app_id        INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  issue_number  INTEGER,
+  fork_owner    TEXT NOT NULL,
+  fork_repo     TEXT NOT NULL,
+  branch_name   TEXT NOT NULL,
+  base_sha      TEXT NOT NULL,
+  brief         TEXT NOT NULL DEFAULT '',
+  client_id     TEXT,
+  status        TEXT NOT NULL DEFAULT 'open'
+    CHECK (status IN ('open', 'submitted', 'abandoned')),
+  session_id    INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at    TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '14 days'
+);
+COMMENT ON TABLE external_agent_tasks IS 'staging:private';
+
+-- At most one OPEN task per (user, app, branch): re-running prepare_work
+-- for the same branch adopts the existing reservation instead of minting a
+-- second one, and two connectors racing cannot both reserve it.
+CREATE UNIQUE INDEX IF NOT EXISTS external_agent_tasks_open_branch_idx
+  ON external_agent_tasks (user_id, app_id, branch_name)
+  WHERE status = 'open';
+CREATE INDEX IF NOT EXISTS external_agent_tasks_user_idx
+  ON external_agent_tasks (user_id, created_at DESC);
+
+-- ── Generic agent backend (Codex/OpenRouter BYOK; plan.md PR1) ───────
+-- chat_sessions today pins Claude continuity via cc_session_id. To add a
+-- second coding-agent backend (codex_openrouter) without breaking the
+-- Claude path, we generalize the session's agent configuration into its
+-- own columns. Each field is nullable / defaulted so legacy rows stay on
+-- claude_code with zero migration work; cc_session_id remains the source
+-- of truth for existing Claude threads until PR8's legacy cleanup.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS agent_backend            VARCHAR(32) NOT NULL DEFAULT 'claude_code';
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS agent_provider           VARCHAR(32);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS agent_model              VARCHAR(255);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS agent_reasoning_effort   VARCHAR(16);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS agent_thread_id          VARCHAR(128);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS agent_config_version     INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS agent_context_reset_at   TIMESTAMPTZ;
+
+-- Backfill: every existing session is a Claude session. Carry the Claude
+-- continuity id into the generic agent_thread_id so backend-neutral code
+-- can read one field for both backends, while cc_session_id remains
+-- readable during the migration window (plan.md §5.4).
+--
+-- Gated with `agent_thread_id IS DISTINCT FROM cc_session_id` instead of
+-- the old `agent_thread_id IS NULL`: rows whose thread already equals the
+-- cc_session_id are skipped entirely, so a NULL->NULL rewrite (locks, WAL,
+-- dead tuples) no longer happens on every boot.
+UPDATE chat_sessions
+SET agent_backend = 'claude_code',
+    agent_provider = 'anthropic',
+    agent_thread_id = cc_session_id
+WHERE agent_backend = 'claude_code'
+  AND (
+    agent_thread_id IS DISTINCT FROM cc_session_id
+    OR agent_provider IS DISTINCT FROM 'anthropic'
+  );
+
+-- ── Generic user AI credentials (plan.md PR2) ────────────────────────
+-- Generalization of users.anthropic_key_enc/_last4 so a second provider
+-- (openrouter) can be stored without stacking another pair of columns.
+--
+-- provider:  anthropic | openrouter
+-- purpose:   coding_agent | app_llm
+-- For this feature we add provider='openrouter', purpose='coding_agent'.
+-- The encryption envelope is unchanged (secrets.js AES-256-GCM), so
+-- existing Anthropic ciphertext can be copied in without decrypting.
+--
+-- On deletion we keep a tombstone row (status='revoked', secret_enc
+-- cleared, revision incremented, revoked_at set) so session/audit
+-- references stay safe; we never physically delete the row.
+-- Credentials live in a dedicated PRIVATE schema (not `public`). The
+-- prod-debug role bootstrap (src/services/debug-access.js) only sweeps
+-- `public` (REVOKE/GRANT ALL TABLES IN SCHEMA public), so rolled-back
+-- (old) code cannot re-grant SELECT on this table — the schema boundary
+-- is rollback-persistent DB state, independent of the JS deny-list.
+CREATE SCHEMA IF NOT EXISTS credentials;
+CREATE TABLE IF NOT EXISTS credentials.user_ai_credentials (
+  id                   BIGSERIAL PRIMARY KEY,
+  user_id              BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider             VARCHAR(32) NOT NULL,
+  purpose              VARCHAR(32) NOT NULL,
+  secret_enc           TEXT,
+  secret_last4         VARCHAR(8),
+  secret_fingerprint   VARCHAR(64),
+  status               VARCHAR(16) NOT NULL DEFAULT 'unverified',
+  revision             INTEGER NOT NULL DEFAULT 1,
+  verified_at          TIMESTAMPTZ,
+  last_used_at         TIMESTAMPTZ,
+  last_error_code      VARCHAR(64),
+  revoked_at           TIMESTAMPTZ,
+  metadata             JSONB NOT NULL DEFAULT '{}',
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT user_ai_credentials_provider_check
+    CHECK (provider IN ('anthropic', 'openrouter')),
+  CONSTRAINT user_ai_credentials_purpose_check
+    CHECK (purpose IN ('coding_agent', 'app_llm')),
+  -- status/verified_at coupling: a usable ('valid') row must carry a
+  -- verified_at timestamp; non-valid rows must not claim verification.
+  CONSTRAINT user_ai_credentials_valid_verified_check
+    CHECK (
+      (status = 'valid' AND verified_at IS NOT NULL)
+      OR (status <> 'valid' AND verified_at IS NULL)
+    )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS user_ai_credentials_unique_provider_purpose
+  ON credentials.user_ai_credentials (user_id, provider, purpose);
+
+-- Backfill existing Anthropic BYOK keys into the generic store. Because
+-- the encryption envelope is unchanged we copy the existing ciphertext
+-- as-is (no decrypt/re-encrypt). Seeds verified status; a key stored
+-- on-file was verified at save time.
+--
+-- Rollback reconciliation (plan.md review F2): during the migration
+-- window the LEGACY users.anthropic_key_* columns remain the source of
+-- truth for the Anthropic coding-agent credential, because rolled-back
+-- (old) code can only ever write those columns. Re-deriving the generic
+-- row from legacy on every schema run guarantees rollback survival:
+--
+--   1. Where legacy ciphertext exists, we OVERWRITE the generic row from
+--      it — even if the existing generic row is 'valid'. This reconciles a
+--      stale generic key that a legacy-only replace changed during a
+--      rollback (a plain `ON CONFLICT DO NOTHING`, or a guard that skips
+--      valid rows, would keep the obsolete key usable).
+--   2. Where legacy is NULL but a generic row is 'valid', the legacy side
+--      (a delete during rollback, or a first-save that was never mirrored)
+--      is authoritative: we REVOKE the generic row so a deleted key can
+--      never be resurrected. Non-valid generic rows without legacy
+--      (e.g. an unverified key kept generic-only) are left as non-usable
+--      pending rows.
+INSERT INTO credentials.user_ai_credentials
+  (user_id, provider, purpose, secret_enc, secret_last4, status, verified_at, revision)
+SELECT id, 'anthropic', 'coding_agent', anthropic_key_enc, anthropic_key_last4,
+       'valid', NOW(), 1
+FROM users
+WHERE anthropic_key_enc IS NOT NULL
+ON CONFLICT (user_id, provider, purpose) DO UPDATE SET
+  secret_enc = EXCLUDED.secret_enc,
+  secret_last4 = EXCLUDED.secret_last4,
+  secret_fingerprint = NULL,
+  status = EXCLUDED.status,
+  verified_at = EXCLUDED.verified_at,
+  revoked_at = NULL,
+  revision = credentials.user_ai_credentials.revision + 1,
+  updated_at = NOW()
+-- Only touch the generic row when the legacy value actually differs, so
+-- we never reset fingerprint / verified_at / revision on an unchanged
+-- credential every restart (review F2).
+WHERE credentials.user_ai_credentials.secret_enc IS DISTINCT FROM EXCLUDED.secret_enc;
+
+-- Legacy delete must win over a previously-valid generic row: revoke any
+-- generic anthropic/coding_agent row that is 'valid' while the legacy
+-- column is absent (rolled-back delete, or a key that was never mirrored
+-- to legacy). Non-valid rows (unverified/invalid/revoked) are untouched.
+UPDATE credentials.user_ai_credentials g
+SET secret_enc = NULL,
+    secret_last4 = NULL,
+    secret_fingerprint = NULL,
+    status = 'revoked',
+    -- valid_verified requires non-valid rows to carry verified_at NULL,
+    -- so the tombstone must clear it or the UPDATE fails (breaking
+    -- roll-forward after a rollback deletion).
+    verified_at = NULL,
+    revoked_at = NOW(),
+    revision = g.revision + 1,
+    updated_at = NOW()
+WHERE g.provider = 'anthropic'
+  AND g.purpose = 'coding_agent'
+  AND g.status = 'valid'
+  AND NOT EXISTS (
+    SELECT 1 FROM users u
+    WHERE u.id = g.user_id
+      AND u.anthropic_key_enc IS NOT NULL
+  );
+
+-- Mark credential-bearing columns for the staging:private scrubber
+-- (same treatment the legacy users.anthropic_key_enc already gets).
+COMMENT ON TABLE  credentials.user_ai_credentials IS 'staging:private';
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- Profile customization (issue #982) — the editable half of the #profile
+-- screen: a short bio and a profile picture.
+-- ═══════════════════════════════════════════════════════════════════════
+
+-- User-authored public bio, shown on the viewer's own #profile screen and
+-- (once the follow-up lands) on their public builder page. Plain text, NOT
+-- markdown — nothing renders it through marked/DOMPurify, so it is always
+-- inserted as a text node. The ≤280-char cap is enforced in
+-- src/routes/profile.js rather than as a DB constraint, matching how every
+-- other user-authored text column on this table is handled. Deliberately
+-- not `staging:private`: it is content the user publishes to other users.
+--
+-- `display_name`, `github` and `x` — the other three fields the profile
+-- editor writes — already exist on this table (topochain Task 2 block
+-- above) and are reused as-is; only the bio is new.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS bio TEXT;
+
+-- Profile pictures, modelled column-for-column on `app_icons` above and
+-- served the same way: GET /avatars/:id is mounted BEFORE authMiddleware
+-- (src/routes/avatars.js) so a plain <img> renders with no auth dance, and
+-- the unguessable 32-hex id is the only access control — an avatar
+-- discloses only itself, and it is published to other users by design.
+--
+-- ONE ROW PER USER (user_id UNIQUE) and the id ROTATES on every upload:
+-- POST /api/me/avatar upserts with `ON CONFLICT (user_id) DO UPDATE SET
+-- id = EXCLUDED.id, …`, so the content-addressed URL changes whenever the
+-- bytes do and the year-long immutable cache header stays safe. That also
+-- means there is never an orphan row to sweep (contrast issue_screenshots,
+-- which needs the 24h GC) — the UNIQUE + ON DELETE CASCADE cover it.
+--
+-- NOT staging:private, for the same reason as app_icons: avatars render on
+-- shared surfaces and should survive into staging clones.
+CREATE TABLE IF NOT EXISTS user_avatars (
+  id           VARCHAR(32) PRIMARY KEY,
+  user_id      INTEGER UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  content_type VARCHAR(32) NOT NULL,
+  size_bytes   INTEGER     NOT NULL,
+  data         BYTEA       NOT NULL,
+  sha256       VARCHAR(64) NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

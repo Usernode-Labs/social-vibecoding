@@ -163,12 +163,26 @@ async function fetchEventLeaderboardRows(pool, event) {
 //
 // The server-side twin of `TopochainEvents.pickDefault(events, {
 // requireLeaderboard: true })` in public/js/topochain-events.js — KEEP THE
-// TWO IN STEP. Same three-step rule, in one round trip:
+// TWO IN STEP. Same FOUR-step rule, in one round trip:
 //
-//   1. the event running right now (temporally, and organiser-enabled);
-//   2. otherwise the most recent one that has already STARTED — this is
+//   1. the season's own `type = 'season'` event, once it has STARTED — a
+//      season's standings are the dataset people mean by "the
+//      leaderboard"; individual events remain in the picker. Without this
+//      step the rule below silently opened on whichever sub-event started
+//      LAST, which in production was "Season 1 Beta" (started 48h after
+//      the "Season 1" season event) — a three-week slice showing
+//      four-figure totals where the season shows five (issue #999).
+//   2. the event running right now (temporally, and organiser-enabled);
+//   3. otherwise the most recent one that has already STARTED — this is
 //      the between-seasons case, and it is production's normal state;
-//   3. otherwise the SOONEST upcoming one, rather than nothing at all.
+//   4. otherwise the SOONEST upcoming one, rather than nothing at all.
+//
+// Steps 2-4 are byte-for-byte the original rule, so a season with no
+// season-type event (or one that hasn't started) behaves exactly as
+// before. The `starts_at <= NOW()` guard on step 1 is what makes that
+// true and matters on its own: without it an organiser creating NEXT
+// season's wrap-up event in advance would instantly hijack the current
+// board with a hero that reads "upcoming".
 //
 // Scoped like every public standings view: `internal = FALSE` (internal
 // events never surface publicly) and `display_leaderboard = TRUE` (an
@@ -178,11 +192,15 @@ async function fetchEventLeaderboardRows(pool, event) {
 // The two CASE keys give each group its own direction — newest-first among
 // started events, soonest-first among upcoming ones — and can't interfere,
 // because the `(starts_at <= NOW())` key has already separated the groups.
+// They also serve step 1's own group: every member of it has started, so
+// the `starts_at DESC` key picks the most recently started season event —
+// correct once a Season 2 exists.
 const DEFAULT_PUBLIC_EVENT_SQL = `
   SELECT id, name, season_id, type, starts_at, ends_at
     FROM season_events
    WHERE internal = FALSE AND display_leaderboard = TRUE
-   ORDER BY (is_active = TRUE AND starts_at <= NOW() AND ends_at >= NOW()) DESC,
+   ORDER BY (type = 'season' AND starts_at <= NOW()) DESC,
+            (is_active = TRUE AND starts_at <= NOW() AND ends_at >= NOW()) DESC,
             (starts_at <= NOW()) DESC,
             CASE WHEN starts_at <= NOW() THEN starts_at END DESC NULLS LAST,
             CASE WHEN starts_at >  NOW() THEN starts_at END ASC  NULLS LAST,

@@ -177,7 +177,9 @@ test('credential records are exact, canonical, and scope bound', () => {
 });
 
 test('durable credential JSON writes use private permissions and no backup', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-state-'));
+  // realpath: on macOS os.tmpdir() sits under /var → /private/var, and the
+  // CLI's config-path safety check rejects symlinked path components.
+  const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-state-')));
   await fs.chmod(directory, 0o700);
   const filename = path.join(directory, 'credentials.json');
   try {
@@ -192,7 +194,7 @@ test('durable credential JSON writes use private permissions and no backup', asy
 });
 
 test('state and origin locks serialize live owners and recover only stale dead owners', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-lock-'));
+  const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-lock-')));
   await fs.chmod(directory, 0o700);
   const filename = path.join(directory, 'operation.lock');
   try {
@@ -265,7 +267,7 @@ test('state and origin locks serialize live owners and recover only stale dead o
 });
 
 test('fallback credential persistence is journaled outside environment-selected homes', async () => {
-  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-fallback-'));
+  const home = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-fallback-')));
   await fs.chmod(home, 0o700);
   const originalUserInfo = os.userInfo;
   const originalPath = process.env.PATH;

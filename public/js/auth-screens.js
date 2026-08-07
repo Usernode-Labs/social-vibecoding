@@ -75,6 +75,27 @@
   }
   function hideError(el) { el.classList.add('hidden'); }
 
+  // Every credential exchange on these screens is a server round trip, so
+  // offline they can only fail. app.js's boot comment claimed for a long
+  // time that "the login screen refuses submits while offline" — it did
+  // not, and the user got a bare "Network error" that read like a wrong
+  // password (#1021). Guard first, and say what's actually wrong.
+  //
+  // The check is Offline's probe result, not navigator.onLine: the flag
+  // false-positives behind captive portals, which is exactly where a
+  // submit would hang. When it says nothing is wrong we let the request
+  // go — an unguarded real failure still falls back to its own catch.
+  function blockedOffline(errorEl) {
+    let offline = false;
+    try { offline = !!(window.Offline && Offline.isOffline()); } catch (_) { offline = false; }
+    if (!offline) return false;
+    if (errorEl) {
+      showError(errorEl, "You're offline — signing in needs a connection.");
+    }
+    try { window.Offline.nudge(); } catch (_) { /* ignore */ }
+    return true;
+  }
+
   const AuthScreens = {
     _current: null,       // route name currently shown, or null
     // Deep-link fragment (e.g. '#app/<slug>/full' from a shared link) an
@@ -205,6 +226,12 @@
           return;
         }
       } catch (_) {}
+
+      // Drop any offline session snapshot left by whoever used this
+      // device last (#1021). enterAuthed writes a fresh one below; until
+      // it does, a stale snapshot for a DIFFERENT account must not be
+      // sitting there ready for the next offline boot to paint.
+      try { window.App?.clearSessionSnapshot?.(); } catch (_) {}
 
       try {
         const res = await fetch('/api/auth/me');
@@ -358,8 +385,8 @@
       // directory (probe results, active-user counts, new deploys) —
       // and, via App._refreshOrReload, hard-reloads when the platform
       // itself redeployed since this document loaded (the anonymous
-      // shell has no WS platform-updating banner, so this pull is its
-      // only recovery path to new client code).
+      // shell has no drawer, hence no stale-version pill, so this pull
+      // is its only recovery path to new client code).
       // Attached to the INNER scroller, never the fixed overlay: the
       // rubber-band translate on the overlay itself would expose the
       // authed shell's header behind it during the pull.
@@ -1105,6 +1132,7 @@
       loginForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         hideError(errorEl);
+        if (blockedOffline(errorEl)) return;
         const username = byId('login-username').value.trim();
         const password = byId('login-password').value;
         try {
@@ -1235,6 +1263,7 @@
           showError(otpError, 'Enter a valid email address');
           return;
         }
+        if (blockedOffline(otpError)) return;
         AuthScreens._otpSetStatus('Sending code...');
         try {
           const res = await fetch('/api/v4/mobile/auth/otp/request', {
@@ -1270,6 +1299,7 @@
         hideError(otpError);
         const code = byId('otp-code').value.trim();
         if (!code) { showError(otpError, 'Enter the code from the email'); return; }
+        if (blockedOffline(otpError)) return;
         AuthScreens._otpSetStatus('Verifying...');
         try {
           const res = await fetch('/api/v4/mobile/auth/otp/verify', {
@@ -1301,6 +1331,7 @@
         const confirm = byId('otp-confirm-password').value;
         if (password.length < 8) { showError(otpError, 'Password must be at least 8 characters'); return; }
         if (password !== confirm) { showError(otpError, 'Passwords do not match'); return; }
+        if (blockedOffline(otpError)) return;
         AuthScreens._otpSetStatus('Setting password...');
         try {
           const res = await fetch('/api/v4/mobile/auth/set-password', {
@@ -1344,6 +1375,7 @@
       // "Sign in with Wallet" button handler
       byId('btn-wallet-sign-in').addEventListener('click', async () => {
         hideError(walletError);
+        if (blockedOffline(walletError)) return;
         walletStatus.textContent = 'Verifying identity...';
         showOnly(null);
 
@@ -1475,6 +1507,7 @@
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         errorEl.classList.add('hidden');
+        if (blockedOffline(errorEl)) return;
         const code = byId('reg-code').value.trim();
         const username = byId('reg-username').value.trim();
         const password = byId('reg-password').value;
@@ -1568,6 +1601,7 @@
           return;
         }
         AuthScreens._stopWaitingPoll();
+        try { window.App?.clearSessionSnapshot?.(); } catch (_) {}
         try {
           await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
         } catch (_) {}
@@ -1585,6 +1619,21 @@
       });
     });
   });
+
+  // Coming back online re-enables the controls via CSS (body.is-offline
+  // drops off), so the "you're offline" error left on screen would be the
+  // only thing still saying otherwise. Clear it.
+  // (Guarded: the anonymous-shell tests eval this file in a bare sandbox
+  // whose `window` is not an event target.)
+  if (typeof window.addEventListener === 'function') {
+    window.addEventListener('usernode:offline-change', (e) => {
+      if (!e.detail || e.detail.offline !== false) return;
+      ['login-error', 'otp-error', 'wallet-error', 'reg-error'].forEach((id) => {
+        const el = byId(id);
+        if (el && /offline/i.test(el.textContent || '')) hideError(el);
+      });
+    });
+  }
 
   window.AuthScreens = AuthScreens;
 })();

@@ -3,8 +3,12 @@
 // the React sources that now generate it.
 //
 //   node frontend/scripts/html-to-jsx.cjs
-//     → frontend/index.html   (the Vite HTML template: <head>, verbatim)
-//     → frontend/src/Shell.tsx (the <body> contents as static JSX)
+//     reads  tests/fixtures/pre-migration-index.html (the hand-written markup)
+//     writes frontend/src/head.html          (the <head>, verbatim)
+//     writes frontend/src/Shell.generated.tsx (the <body> as static JSX)
+//
+// Then run frontend/scripts/apply-step1-edits.cjs, which turns
+// Shell.generated.tsx into the committed frontend/src/Shell.tsx.
 //
 // This is NOT part of the build. It ran once, its output was committed, and
 // frontend/src/Shell.tsx is hand-maintained source from that point on. It is
@@ -231,7 +235,24 @@ function convert(html) {
 }
 
 // ── Split the source document ──────────────────────────────────────────
-const source = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+// INPUT: the hand-written markup, which lives in the parity fixture.
+//
+// NOT public/index.html — that is this pipeline's OUTPUT now, and feeding a
+// generator its own output is how frontend/src/head.html once absorbed the
+// build's stamp and do-not-edit banner. The fixture is a byte copy of the
+// last hand-written document (refresh it from main when merging; see the
+// merge note in AGENTS.md), which makes re-running this idempotent.
+const SOURCE_FILE = 'tests/fixtures/pre-migration-index.html';
+const source = fs.readFileSync(path.join(ROOT, SOURCE_FILE), 'utf8');
+
+if (source.includes('shell-build stamp:') || source.includes('GENERATED FILE')) {
+  console.error(
+    `[html-to-jsx] ${SOURCE_FILE} carries the shell build's own banner, so it is a copy of the `
+    + 'GENERATED public/index.html rather than the hand-written source. Re-copy it from main '
+    + '(git show origin/main:public/index.html) before converting.',
+  );
+  process.exit(1);
+}
 
 const headOpen = source.indexOf('<head>');
 const headClose = source.indexOf('</head>');
@@ -301,8 +322,34 @@ ${shellBody}
 fs.mkdirSync(path.join(ROOT, 'frontend', 'src'), { recursive: true });
 fs.writeFileSync(path.join(ROOT, 'frontend', 'src', 'Shell.generated.tsx'), shellSource);
 
-fs.writeFileSync(path.join(ROOT, 'frontend', '.head-inner.html'), headInner);
-fs.writeFileSync(path.join(ROOT, 'frontend', '.body-attrs.json'), JSON.stringify(bodyAttrs, null, 2));
+// Write the <head> straight to its real source file rather than to a scratch
+// copy. It is carried over VERBATIM, so re-running the converter after a merge
+// picks up any change main made to the head automatically — the alternative
+// (a scratch file someone has to remember to copy) is a silent staleness bug
+// waiting for the first commit that edits the head.
+const headPath = path.join(ROOT, 'frontend', 'src', 'head.html');
+const previousHead = fs.existsSync(headPath) ? fs.readFileSync(headPath, 'utf8') : null;
+fs.writeFileSync(headPath, headInner);
+if (previousHead !== null && previousHead !== headInner) {
+  console.log('[html-to-jsx] NOTE: frontend/src/head.html changed — review the diff.');
+}
+
+// The <body> element's own attributes are a build input too (they live on the
+// template's <body> tag in scripts/build-shell.mjs, since React hydrates
+// body's children rather than the element). Report them so a change is
+// visible rather than silently ignored.
+const BUILD_SHELL = path.join(ROOT, 'frontend', 'scripts', 'build-shell.mjs');
+const declared = fs.readFileSync(BUILD_SHELL, 'utf8').match(/const BODY_ATTRS = '([^']*)'/);
+const actual = Object.entries(bodyAttrs).map(([k, v]) => `${k}="${v}"`).join(' ');
+if (declared && declared[1] !== actual) {
+  console.error(
+    '[html-to-jsx] the <body> attributes changed.\n'
+    + `  build-shell.mjs has: ${declared[1]}\n`
+    + `  the markup now has:  ${actual}\n`
+    + '  Update BODY_ATTRS in frontend/scripts/build-shell.mjs to match.',
+  );
+  process.exitCode = 1;
+}
 
 console.log('[html-to-jsx] wrote frontend/src/Shell.generated.tsx');
 console.log('[html-to-jsx] body attrs:', JSON.stringify(bodyAttrs));

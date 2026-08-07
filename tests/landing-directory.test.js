@@ -179,9 +179,13 @@ test('the anonymous screens are reachable to shots via ?shot=anon', () => {
   const init = js.match(/async init\(\) \{[\s\S]*?\n  \},/);
   assert.ok(init, 'init exists');
   const shotAt = init[0].indexOf('_anonShot()');
-  const meAt = init[0].indexOf("fetch('/api/auth/me')");
+  // The fetch itself moved into App._fetchSession when boot gained a
+  // deadline (#1021); init calls it, and the ordering is what matters.
+  const meAt = init[0].indexOf('_fetchSession()');
   assert.ok(shotAt > -1 && meAt > -1, 'both the shot check and the /me fetch are in init');
   assert.ok(shotAt < meAt, 'the shot override runs before the /me fetch');
+  assert.match(js.match(/async _fetchSession\(\) \{[\s\S]*?\n  \},/)[0],
+    /fetch\('\/api\/auth\/me'/);
   const fn = js.match(/_anonShot\(\) \{[\s\S]*?\n  \},/);
   assert.ok(fn, '_anonShot exists');
   assert.match(fn[0], /'anon'/);

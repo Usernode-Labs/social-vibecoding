@@ -259,16 +259,23 @@ test('#971 ?shot=work-drawer opens the drawer once, and nothing else does', () =
   assert.equal(shown, 1, 'the 15s refresh poll does not reopen it');
 });
 
-// #971: dapp.json's `tests` array is newest-first and app-manifest keeps
-// only the first MAX_TESTS entries, so a check appended at the bottom would
-// never run. Pin this one inside the cap.
-test('#971 the work-drawer check is declared and survives the MAX_TESTS cap', () => {
+// #971: the check must be declared AND survive the manifest reader. It used
+// to also have to sit near the top of the array (the reader kept only the
+// first MAX_TESTS entries); #1019 runs every declared check, so what is left
+// to pin is that the reader keeps this one and refuses nothing for ceiling
+// reasons.
+test('#971 the work-drawer check is declared and the reader keeps it', () => {
   const root = path.join(__dirname, '..');
   const appManifest = require('../src/services/app-manifest');
-  const kept = appManifest.read(root).tests;
-  const check = kept.find((t) => t.path === '/?shot=work-drawer&demo=1');
+  const meta = appManifest.readTestsWithMeta(
+    JSON.parse(fs.readFileSync(path.join(root, 'dapp.json'), 'utf8'))
+  );
+  assert.equal(meta.ceilingDropped, 0,
+    `dapp.json declares more than ${appManifest.MAX_DECLARED_TESTS} valid checks — `
+    + 'checks past the ceiling never run');
+  const check = meta.tests.find((t) => t.path === '/?shot=work-drawer&demo=1');
   assert.ok(check,
-    'the check must survive the cap — put it near the TOP of dapp.json tests');
+    'the check must survive the manifest reader — a dropped check gates nothing');
   assert.match(check.expectSelector, /#work-drawer-panel:not\(\.hidden\)/,
     'asserts the drawer is actually revealed, not merely present');
   assert.match(check.expectText, /^\[Mock\]/,

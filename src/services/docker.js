@@ -50,8 +50,14 @@ const APP_CPUS = '0.5';
 // materialises during the capture window this exists to fix. Memory stays
 // at 256m deliberately — production previews sit at 28-57 MiB, so memory
 // was never the constraint. Both are env-overridable if a host proves tight.
+//
+// Raised 1 → 2 when the checks run went parallel: the capture container now
+// drives up to 8 pages at once against this one preview, so the preview
+// itself became the bottleneck the ceiling was protecting against. Still a
+// ceiling — an idle preview is unaffected, and the cost only appears during
+// the same capture window the 1.0 bump was already for.
 const STAGING_MEMORY = process.env.STAGING_MEMORY || '256m';
-const STAGING_CPUS = process.env.STAGING_CPUS || '1';
+const STAGING_CPUS = process.env.STAGING_CPUS || '2';
 
 const SHARED_NETWORK = process.env.DOCKER_NETWORK || 'shared-web';
 

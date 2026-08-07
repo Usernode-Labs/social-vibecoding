@@ -724,7 +724,16 @@ test('toggleAdded ignores staging demo tiles (their slugs have no DB row)', asyn
 // ── index.html shell ─────────────────────────────────────────────
 
 test('index.html hosts #browse-screen with its own search field and grid', () => {
-  assert.match(INDEX, /<main id="browse-screen" class="hidden flex-1 overflow-y-auto"/);
+  // Ships hidden, and is the flex-child scroller its siblings are. Matched
+  // per-class rather than as one closed string so an added utility (e.g.
+  // `platform-safe-scroll`, which reserves the home-indicator strip for
+  // the last row) doesn't fail this on a substring.
+  const openTag = /<main id="browse-screen"[^>]*>/.exec(INDEX);
+  assert.ok(openTag, '#browse-screen is missing from index.html');
+  for (const cls of ['hidden', 'flex-1', 'overflow-y-auto']) {
+    assert.match(openTag[0], new RegExp(`(?:class="|\\s)${cls}(?:\\s|")`),
+      `#browse-screen must keep the ${cls} utility`);
+  }
   const main = INDEX.slice(
     INDEX.indexOf('<main id="browse-screen"'),
     INDEX.indexOf('</main>', INDEX.indexOf('<main id="browse-screen"'))

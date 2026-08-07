@@ -15,6 +15,19 @@
   with "STALE" otherwise, exactly like the Tailwind artifact below. Run
   `npm install` inside `frontend/` first if you haven't (it is a separate
   workspace; the root `npm ci --production` never touches it).
+- **Order matters when you run both builds: `build:shell` FIRST, then
+  `build:css`.** `public/index.html` is a Tailwind content source *and* a
+  shell-build output, so compiling the stylesheet before regenerating the
+  markup scans the previous document and leaves `tests/tailwind-build.test.js`
+  reporting a stale artifact. There is no loop — `tailwind.css` is not a shell
+  input — so the two-step order is all it takes.
+- **Merging main into a branch that has already done the chassis swap:** take
+  main's `public/index.html` wholesale (it is the hand-written markup on that
+  side), copy it over `tests/fixtures/pre-migration-index.html`, then re-run
+  `frontend/scripts/html-to-jsx.cjs` and
+  `frontend/scripts/apply-step1-edits.cjs` to re-derive `Shell.tsx` and
+  `head.html` from it. Never hand-merge the generated artifacts — regenerate
+  them, and let the parity test prove the result still matches main's markup.
 - Three constraints in `frontend/src/Shell.tsx` are load-bearing, and its
   header comment explains each: the component is **static** (no state, no
   effects — otherwise React reconciles over DOM that `public/js/**` owns), it

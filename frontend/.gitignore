@@ -1,2 +1,8 @@
 node_modules/
 .ssr/
+
+# Scratch output from the one-time html-to-jsx converter (frontend/scripts/).
+# It writes the split <head> and <body> attrs beside the sources so the
+# conversion can be inspected; neither is an input to the build.
+.head-inner.html
+.body-attrs.json

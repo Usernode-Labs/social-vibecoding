@@ -166,16 +166,30 @@ function normalizeAttrValue(name, value) {
   return value;
 }
 
-// HTML named entities the shell actually uses, plus the always-required five.
-// Decoded so `&times;` in hand-written HTML and `×` in React output compare
-// equal.
+// HTML named entities, decoded so `&times;` in hand-written HTML and `×` in
+// React output compare equal — they are the same character to a browser, and
+// which spelling you get is only an artefact of the rendering path.
+//
+// An entity MISSING here is a silent FALSE POSITIVE: the parity test reports a
+// text difference where none exists (a `&rarr;` in the fixture against a
+// literal → in the generated markup). That is exactly what happened when main
+// added `&rarr;` to the MCP-connector microcopy. So keep this a superset of
+// what the shell uses rather than a minimal list — arrows, dashes and quotes
+// turn up in new copy constantly.
 const ENTITIES = {
   amp: '&', lt: '<', gt: '>', quot: '"', apos: "'",
-  nbsp: ' ', hellip: '…', larr: '←', ldquo: '“',
-  rdquo: '”', rsquo: '’', lsquo: '‘', mdash: '—',
-  ndash: '–', times: '×', middot: '·', bull: '•',
-  copy: '©', reg: '®', trade: '™', deg: '°',
-  laquo: '«', raquo: '»', check: '✓',
+  nbsp: '\u00a0', ensp: '\u2002', emsp: '\u2003', thinsp: '\u2009',
+  hellip: '\u2026', middot: '\u00b7', bull: '\u2022', dagger: '\u2020',
+  ldquo: '\u201c', rdquo: '\u201d', lsquo: '\u2018', rsquo: '\u2019',
+  sbquo: '\u201a', bdquo: '\u201e', laquo: '\u00ab', raquo: '\u00bb',
+  lsaquo: '\u2039', rsaquo: '\u203a',
+  mdash: '\u2014', ndash: '\u2013', minus: '\u2212', shy: '\u00ad',
+  larr: '\u2190', rarr: '\u2192', uarr: '\u2191', darr: '\u2193',
+  harr: '\u2194', lArr: '\u21d0', rArr: '\u21d2', crarr: '\u21b5',
+  times: '\u00d7', divide: '\u00f7', plusmn: '\u00b1', frasl: '\u2044',
+  copy: '\u00a9', reg: '\u00ae', trade: '\u2122', deg: '\u00b0',
+  sect: '\u00a7', para: '\u00b6', check: '\u2713',
+  euro: '\u20ac', pound: '\u00a3', yen: '\u00a5', cent: '\u00a2',
 };
 
 function decodeEntities(text) {

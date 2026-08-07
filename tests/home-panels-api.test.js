@@ -170,6 +170,10 @@ const SEASON = { id: 1, name: 'Season 1' };
 
 async function get(app, url) {
   const server = app.listen(0);
+  // The harness preload (tests/lib/test-net.js) pins hostless listens to
+  // 127.0.0.1, which makes the bind complete on the next tick instead of
+  // synchronously — so wait for it before reading the assigned port.
+  await new Promise((resolve) => server.once('listening', resolve));
   try {
     const { port } = server.address();
     const res = await fetch(`http://127.0.0.1:${port}${url}`);
@@ -182,6 +186,10 @@ async function get(app, url) {
 
 async function post(app, url, payload) {
   const server = app.listen(0);
+  // The harness preload (tests/lib/test-net.js) pins hostless listens to
+  // 127.0.0.1, which makes the bind complete on the next tick instead of
+  // synchronously — so wait for it before reading the assigned port.
+  await new Promise((resolve) => server.once('listening', resolve));
   try {
     const { port } = server.address();
     const res = await fetch(`http://127.0.0.1:${port}${url}`, {
@@ -873,6 +881,39 @@ test('a season-type event is served by the shared standings aggregate', async ()
     'the per-event snapshot query is not even attempted for this type');
 });
 
+// #999 made the season-type event the DEFAULT board, so the podium-skip is
+// now exercised on the path production actually serves — not just on the
+// per-event one. A podium-excluded row leading on POINTS must be dropped
+// from `top` (it is excluded from podium ranking by definition) while still
+// resolving through `byUserId`, so an excluded viewer sees their own
+// rank-less line. Same contract as the per-event test above; different path.
+test('the season board skips a podium-excluded leader in its podium rows', async () => {
+  const { app } = makeApp({
+    season: SEASON, rows: [row()],
+    event: { id: 7, name: 'Season 1', season_id: 1, type: 'season' },
+    seasonStandings: [
+      // Leads on points, excluded from the podium — assignSharedRanks gives
+      // it the CURRENT counter value without consuming the slot, so the next
+      // real user is still rank 1.
+      { user_id: 90, total_points: '9999', extra_points: '0', events_participated: 3,
+        total_produced_blocks: 20, total_produced_blocks_last_event: 8,
+        is_non_podium: true, email: null, telegram: null, discord: 'houseAccount', display_name: null },
+      { user_id: 11, total_points: '5000', extra_points: '0', events_participated: 2,
+        total_produced_blocks: 10, total_produced_blocks_last_event: 4,
+        is_non_podium: false, email: null, telegram: null, discord: 'first', display_name: null },
+      { user_id: 12, total_points: '2500', extra_points: '0', events_participated: 1,
+        total_produced_blocks: 5, total_produced_blocks_last_event: 5,
+        is_non_podium: false, email: null, telegram: null, discord: 'second', display_name: null },
+    ],
+  }, { user: { id: 90, username: 'houseAccount' } });
+  const { body } = await get(app, '/api/home-panels');
+  const lb = body.panels.find((p) => p.key === 'challenges').leaderboard;
+  assert.deepEqual(lb.top.map((r) => [r.rank, r.name]), [[1, 'first'], [2, 'second']],
+    'the excluded leader must not occupy a podium row');
+  assert.deepEqual(lb.viewer, { rank: null, name: 'houseAccount', score: 9999, you: true },
+    'but the excluded viewer still sees their own rank-less line');
+});
+
 test('the fill is omitted when the tile is full, and when expanded', async () => {
   // Four challenges fill the row budget: nothing left to fill.
   const four = [row(), row({ id: 2 }), row({ id: 3 }), row({ id: 4 })];
@@ -1061,17 +1102,23 @@ test('the demo variants are staging-only, like ?demo=1 itself', async () => {
   assert.notEqual(panel.leaderboard.top[0].name, 'staging-demo-lead');
 });
 
-// The declared checks are a CAPPED resource: src/services/app-manifest.js
-// keeps only the first MAX_TESTS (10) entries, so an entry's position in the
-// array decides whether it ever runs. This change spends exactly one slot —
-// on the zero state, which is the state production is in, and which asserts
-// the empty copy, the stamps and a fill row all at once. The `few` state is
-// covered by the render suite's budget table instead of a second slot.
-test('dapp.json checks the new state, and it survives the MAX_TESTS cap', () => {
+// Declared checks used to be a capped resource — the reader kept only the
+// first MAX_TESTS entries, so position decided whether a check ever ran and
+// each new one cost an older one its slot. #1019 runs every declared check,
+// so the assertion here is the one that still bites: the reader KEEPS this
+// entry (malformed ones are dropped silently) and the manifest hasn't grown
+// past MAX_DECLARED_TESTS and started shedding its tail again.
+test('dapp.json checks the new state, and the reader keeps it', () => {
   const appManifest = require('../src/services/app-manifest');
-  const kept = appManifest.read(path.join(__dirname, '..')).tests;
+  const meta = appManifest.readTestsWithMeta(
+    JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'dapp.json'), 'utf8'))
+  );
+  assert.equal(meta.ceilingDropped, 0,
+    `dapp.json declares more than ${appManifest.MAX_DECLARED_TESTS} valid checks — `
+    + 'checks past the ceiling never run');
+  const kept = meta.tests;
   const none = kept.find((t) => t.path === '/?demo=1&challenges=none');
-  assert.ok(none, 'the no-challenges check is inside the parse cap, not just declared');
+  assert.ok(none, 'the no-challenges check must survive the manifest reader');
   // The checks run at the desktop frame, so it asserts the FILLED tile.
   assert.match(none.expectSelector, /data-rows="0"/);
   assert.match(none.expectSelector, /data-fill="3"/);

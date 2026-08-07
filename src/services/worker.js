@@ -236,6 +236,16 @@ function parseLine(line, onProgress, state) {
       else if (k === 'sha') state.sha = v || null;
       else if (k === 'push_ok') state.pushOk = v === '1';
       else if (k === 'sync_result') state.syncResult = v || null;
+      // Backend-neutral antelope (plan.md §4-PR1): Codex/OpenRouter turns
+      // (PR5+) emit these fields in __USERNODE_RESULT__ alongside the
+      // legacy cc_* fields. Parsing them here keeps worker.js the single
+      // place that understands the terminal result line, with the legacy
+      // cc_exit alias still honored during the migration window.
+      else if (k === 'agent_backend') state.agentBackend = v || null;
+      else if (k === 'agent_provider') state.agentProvider = v || null;
+      else if (k === 'agent_model') state.agentModel = v || null;
+      else if (k === 'agent_thread_id') state.agentThreadId = v || null;
+      else if (k === 'agent_exit') state.agentExit = parseInt(v, 10);
       // #361: comma-delimited conflicted file paths (MODE=sync). Empty
       // string → no conflicts. Threaded out as result.conflictFiles so
       // sync-main.js can persist the merge-conflict snapshot.
@@ -285,6 +295,14 @@ function newWatchState() {
     initSessionId: null,
     ccIsError: false,
     ccExit: null,
+    // Backend-neutral terminal-result fields (plan.md §4-PR1). PR5's
+    // codex_openrouter runner emits these; claude_code leaves them null
+    // and callers keep using ccExit/cc_session_id during migration.
+    agentBackend: null,
+    agentProvider: null,
+    agentModel: null,
+    agentThreadId: null,
+    agentExit: null,
     ahead: 0,
     // #8: how many commits the branch is behind origin/main, parsed from
     // run-cc.sh's __USERNODE_RESULT__ line. Persisted to

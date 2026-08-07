@@ -62,6 +62,11 @@ const DENIED_TABLES = new Set([
   'cli_access_tokens',   // global CLI bearer hashes and hints
   'cli_auth_audit_events', // security audit trail for CLI credentials
   'cli_auth_rate_limits', // shared security limiter state
+  'mcp_clients',              // hosted-connector client registrations
+  'mcp_authorization_codes',  // hosted-connector PKCE codes (hashed, short-lived)
+  'mcp_tokens',               // hosted-connector bearer hashes and hints
+  'mcp_auth_audit_events',    // security audit trail for connector credentials
+  'user_ai_credentials', // per-user AI/LLM provider keys (encrypted blobs, still deny)
 ]);
 
 const DENIED_COLUMNS = {
@@ -73,6 +78,7 @@ const DENIED_COLUMNS = {
     'wallet_link_expires_at',
     'email_confirmation_token', // topochain (SPEC §6)
     'waitlist_ip',              // topochain (SPEC §6)
+    'github_oauth_token_enc',   // verified GitHub link: the user's OAuth token
   ],
   apps: [
     'db_password',

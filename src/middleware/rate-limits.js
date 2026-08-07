@@ -224,6 +224,22 @@ const issueScreenshotLimiter = makeLimiter({
   message: 'Too many screenshot uploads — slow down for a few minutes.',
 });
 
+// Profile customization writes (issue #982): PATCH /api/me/profile plus
+// the avatar upload/delete pair share ONE bucket at 20 / minute / user.
+// Honest editing is a handful of saves per sitting — even fiddling with a
+// display name and re-cropping a photo a few times stays well under it —
+// while a scripted loop of ≤1 MB bytea upserts bounces off quickly. Shared
+// rather than split because the avatar write is the expensive one and a
+// caller who is rate-limited on it has no business hammering the text
+// fields either. Per-user keyed for shared-NAT fairness.
+const profileWriteLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 20,
+  name: 'profile-write',
+  keyByUser: true,
+  message: 'Too many profile updates — slow down for a minute.',
+});
+
 // Priority / assignee attribute votes: 60 / minute / user. Loose enough
 // that switching your pick a few times never bumps it, tight enough to
 // stop a scripted vote-spam loop. Per-user keyed for shared-NAT fairness.
@@ -356,4 +372,26 @@ const waitlistJoinLimiter = makeLimiter({
   message: 'Too many signups from this address — try again in a few minutes.',
 });
 
-module.exports = { dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, waitlistJoinLimiter };
+// Admin "send a test email": 10 / hour / full admin. This is the one
+// route where an authenticated operator can aim platform mail at an
+// address of their choosing, so it gets its own small budget on top of
+// the per-recipient rule in services/mail/rate-limit.js — that one bounds
+// how often ONE address can be tested, this one bounds how many addresses
+// one admin can work through.
+//
+// exemptAdmins is deliberately omitted, for the same reason as the export
+// limiter above: the route is already full-admin-only, so exempting
+// admins would disable the limit entirely. keyByUser, because the budget
+// belongs to the operator rather than to the office they sit in.
+// skipFailedRequests refunds the 400 a malformed address earns, so
+// fixing a typo doesn't cost a slot.
+const mailTestLimiter = makeLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  name: 'mail-test',
+  keyByUser: true,
+  skipFailedRequests: true,
+  message: (s) => `Rate limit reached: up to 10 test emails per hour. You can try again ${retryPhrase(s)}.`,
+});
+
+module.exports = { dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, waitlistJoinLimiter, mailTestLimiter };

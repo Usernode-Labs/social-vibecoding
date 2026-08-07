@@ -612,19 +612,39 @@ export function Shell() {
                 so hash navigation drives the screen. The former native-push
                 Profile / App Settings rows are gone: App Settings merged into
                 the Settings modal as capability-gated sections (settings.js).
+                
+                #982: when the viewer has set a profile picture, it REPLACES the
+                generic person glyph here — App.applyUserAvatar (public/js/app.js)
+                swaps which of the two is `hidden` from App.user.avatarUrl, so the
+                row shows the same face the profile screen does. The <img> ships
+                hidden with no src: a signed-out shell and a user with no picture
+                both keep the glyph, and nothing requests /avatars/ until there is
+                something to request.
             */}
             <a
               id="drawer-row-profile"
               href="#profile"
               className="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
             >
-              <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+              <svg
+                id="drawer-profile-glyph"
+                className="w-5 h-5 shrink-0"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                strokeWidth="2"
+              >
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
                 />
               </svg>
+              <img
+                id="drawer-avatar"
+                alt=""
+                className="hidden w-5 h-5 shrink-0 rounded-full object-cover bg-zinc-100 dark:bg-zinc-800"
+              />
               <span className="text-sm font-medium">
                 Profile
               </span>
@@ -833,48 +853,15 @@ export function Shell() {
         </button>
       </div>
       {/*
-          SELF-HOSTING-PLAN.md Phase 3: "Platform updating…" banner.
-          Hidden by default; shown by App.beginPlatformUpdating() when a
-          vote_update with `merging:true` + `selfHosted:true` arrives over
-          WS, and dismissed by App.endPlatformUpdating() once /api/version
-          reports a SHA different from the one we recorded at start.
-          
-          Two visual states: in-flight (default amber) and stuck (red) —
-          the latter swaps in after PLATFORM_UPDATE_TIMEOUT_MS so a botched
-          deploy doesn't trap the tab forever.
-          
-          A REAL MERGE IS THE ONLY TRIGGER (#962). The retired #239
-          "resolving merge conflicts" variant used to share this element
-          for background branch-sync work that usually merged nothing;
-          that state now lives on the proposal's own badge instead.
-          
-          The banner only signals; the actual write-blocking happens in
-          App's wrapped fetch() (rejects non-GET while the flag is up).
-          Read-only browsing keeps working.
+          The "Platform updating… write actions are paused" banner that used
+          to live here is GONE (#1015). It existed because a self-app merge
+          restarted the single platform container; blue-green deploys
+          (#1008) keep the live color serving until the new one is
+          health-gated and cut over, so there is nothing to announce and no
+          reason to pause writes. A tab running an older build is caught up
+          by the drawer's "Platform version" row (which turns into a
+          tappable "<sha> · reload") or by pull-to-refresh.
       */}
-      <div
-        id="platform-updating-banner"
-        className={"hidden shrink-0 px-4 py-2 text-sm font-medium border-b\n              bg-amber-100 text-amber-900 border-amber-300\n              dark:bg-amber-900/40 dark:text-amber-100 dark:border-amber-800/60\n              flex items-center justify-center gap-3"}
-        role="status"
-        aria-live="polite"
-      >
-        <span
-          id="platform-updating-spinner"
-          className="inline-block w-4 h-4 rounded-full border-2 border-current border-t-transparent animate-spin"
-          aria-hidden="true"
-        >
-        </span>
-        <span id="platform-updating-text">
-          Platform updating&hellip; sit tight, write actions are paused.
-        </span>
-        <button
-          id="platform-updating-reload"
-          type="button"
-          className="hidden ml-2 px-2 py-0.5 rounded border border-current text-xs font-semibold hover:bg-black/10 dark:hover:bg-white/10"
-        >
-          Reload
-        </button>
-      </div>
       {/*
           Home screen: app list. Rendered as a responsive grid of compact
           tiles — see Home.renderAppCard. The "Create new app" container
@@ -1024,7 +1011,11 @@ export function Shell() {
           this viewer may see, featured first, with per-tile add/remove badges.
           Owned by public/js/browse.js; mounted by App.navigateToBrowse.
       */}
-      <main id="browse-screen" className="hidden flex-1 overflow-y-auto" style={{ position: "relative" }}>
+      <main
+        id="browse-screen"
+        className="hidden flex-1 overflow-y-auto platform-safe-scroll"
+        style={{ position: "relative" }}
+      >
         <div id="browse-search-bar" className="sticky top-0 z-20 px-3 pt-3 pb-2 bg-white dark:bg-zinc-950">
           <div className="relative max-w-xl">
             <svg
@@ -1106,7 +1097,11 @@ export function Shell() {
           The wrapper is max-w-5xl for the Topochain table's sake; the Kudos
           pane keeps its narrower max-w-3xl reading column.
       */}
-      <main id="leaderboard-screen" className="hidden flex-1 overflow-y-auto" style={{ position: "relative" }}>
+      <main
+        id="leaderboard-screen"
+        className="hidden flex-1 overflow-y-auto platform-safe-scroll"
+        style={{ position: "relative" }}
+      >
         <div className="max-w-5xl mx-auto p-4 w-full">
           <h2 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mb-3">
             Leaderboard
@@ -1141,7 +1136,11 @@ export function Shell() {
           participant id is no longer consulted). Hash route #profile;
           mounted by App.navigateToProfile.
       */}
-      <main id="profile-screen" className="hidden flex-1 overflow-y-auto" style={{ position: "relative" }}>
+      <main
+        id="profile-screen"
+        className="hidden flex-1 overflow-y-auto platform-safe-scroll"
+        style={{ position: "relative" }}
+      >
         <div id="profile-root" className="max-w-3xl mx-auto p-4">
         </div>
       </main>
@@ -1158,13 +1157,22 @@ export function Shell() {
           also mount for a signed-in non-admin; see the PUBLIC MODE note in
           admin-console.js. Ships hidden like its sibling screens.
           
-          max-w-7xl (not 5xl like the other screens): the folded-in Health &
-          status and Analytics sections were built for a wide column — the
-          status summary is a 6-across tile grid and the analytics charts are
-          640px-wide SVGs.
+          FULL WIDTH (no max-w / mx-auto, unlike every other screen): this is a
+          dense operator console, not a reading surface. The folded-in Health &
+          status and Analytics sections were always the widest thing in the app
+          — a 6-across tile grid, wide SVG charts, and user/limit/code tables
+          that were horizontally scrolling inside a capped column — so the
+          constraint cost information rather than protecting legibility. The
+          gutter stays modest (p-4, a little roomier from lg up) and everything
+          inside is percentage/grid-based, so mobile is byte-for-byte
+          unchanged.
       */}
-      <main id="admin-screen" className="hidden flex-1 overflow-y-auto" style={{ position: "relative" }}>
-        <div id="admin-root" className="max-w-7xl mx-auto p-4 w-full">
+      <main
+        id="admin-screen"
+        className="hidden flex-1 overflow-y-auto platform-safe-scroll"
+        style={{ position: "relative" }}
+      >
+        <div id="admin-root" className="w-full p-4 lg:px-6">
         </div>
       </main>
       {/*
@@ -1189,7 +1197,11 @@ export function Shell() {
           max-w-5xl (not the admin console's 7xl): every section here is a
           form column, none is a wide chart grid.
       */}
-      <main id="settings-screen" className="hidden flex-1 overflow-y-auto" style={{ position: "relative" }}>
+      <main
+        id="settings-screen"
+        className="hidden flex-1 overflow-y-auto platform-safe-scroll"
+        style={{ position: "relative" }}
+      >
         <div id="settings-root" className="max-w-5xl mx-auto p-4 w-full">
           <div className="md:flex md:items-start md:gap-6">
             {/*
@@ -1331,6 +1343,79 @@ export function Shell() {
                     on the key itself for defense in depth.
                   </p>
                   <div id="settings-status" className="text-sm mt-3 hidden">
+                  </div>
+                </div>
+                {/*
+                    Hosted MCP connector: connect Claude.ai / ChatGPT so their
+                    built-in coding agent (Claude Code on the web, Codex) can do
+                    the work on the user's own subscription. Also holds the
+                    verified GitHub account link, because that link exists only
+                    to serve this flow: it is IDENTITY ONLY (no OAuth scope, no
+                    stored token) and its whole job is attributing a submitted
+                    pull request to the account that verified it. The fork the
+                    agent pushes to is made by that agent, not by the platform.
+                    Rendered by Settings._renderConnectors() /
+                    _renderGithubLink() from GET /api/me/connectors and
+                    GET /api/me/github (?demo=1 passthrough in staging — mcp_tokens
+                    is staging:private and the link needs a real OAuth round-trip,
+                    so a staging clone has neither).
+                */}
+                <div data-settings-section="connectors" className="hidden">
+                  <div id="connectors-section">
+                    <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">
+                      Claude &amp; ChatGPT connectors
+                    </h3>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
+                      Connect Usernode to Claude.ai or ChatGPT and you can browse apps, file requests and turn finished work into proposals from the chat you already have open &mdash; with the coding done by Claude Code or Codex on your own plan, not your Usernode daily allowance.
+                    </p>
+                    <label
+                      className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1"
+                      htmlFor="connector-url"
+                    >
+                      Connector URL
+                    </label>
+                    <div className="flex gap-2 mb-2">
+                      <input
+                        id="connector-url"
+                        type="text"
+                        readOnly={true}
+                        spellCheck="false"
+                        className="flex-1 min-w-0 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 font-mono focus:outline-none focus:ring-2 focus:ring-violet-500"
+                      />
+                      <button
+                        id="connector-url-copy"
+                        type="button"
+                        className="shrink-0 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-4 leading-relaxed">
+                      In Claude.ai: Settings &rarr; Connectors &rarr; Add custom connector. In ChatGPT: Settings &rarr; Connectors. Paste the URL above, then approve the connection in the browser page that opens. You can disconnect here at any time.
+                    </p>
+                    <h4 className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-2">
+                      Connected
+                    </h4>
+                    <div id="connectors-list" className="space-y-2">
+                    </div>
+                    <div id="connectors-status" className="text-xs mt-2 hidden">
+                    </div>
+                  </div>
+                  <div id="github-link-section" className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
+                    <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">
+                      GitHub account
+                    </h3>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
+                      Linking GitHub proves which GitHub account is yours, so work built by your own coding agent can be submitted under your name. Usernode asks for
+                      <strong className="font-semibold text-zinc-600 dark:text-zinc-400">
+                        no access to your repositories
+                      </strong>
+                      &mdash; read-only public profile information only &mdash; and stores no GitHub token. Your coding agent (Claude Code or Codex) makes your fork of an app using its own GitHub connection.
+                    </p>
+                    <div id="github-link-body" className="space-y-2">
+                    </div>
+                    <div id="github-link-status" className="text-xs mt-2 hidden">
+                    </div>
                   </div>
                 </div>
                 <div data-settings-section="app-ai" className="hidden">
@@ -1972,6 +2057,7 @@ export function Shell() {
               <a
                 href="#waitlist"
                 id="landing-waitlist-cta"
+                data-offline-disabled=""
                 className="h-7 inline-flex items-center rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 text-xs sm:px-5 font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-colors"
               >
                 Join waitlist
@@ -1997,7 +2083,7 @@ export function Shell() {
             the gesture. flex-1/min-h-0, not h-full: it's a flex child under
             the header now, and h-full would overflow by the header's height.
         */}
-        <div id="auth-landing-scroll" className="flex-1 min-h-0 overflow-y-auto">
+        <div id="auth-landing-scroll" className="flex-1 min-h-0 overflow-y-auto platform-safe-scroll">
           <div className="max-w-3xl mx-auto px-6 py-12">
             <div className="text-center mb-10">
               <h1 className="text-3xl font-bold mb-2">
@@ -2006,6 +2092,28 @@ export function Shell() {
               <p className="text-sm text-zinc-500 dark:text-zinc-400 italic">
                 A place where users own and build apps together
               </p>
+            </div>
+            {/*
+                Offline explanation (#1021). The landing page's app grid is
+                fetched, so offline it renders empty or stale with no reason
+                given — and both header CTAs lead to screens that cannot
+                complete. Say so once, here.
+            */}
+            <div className="offline-only mb-10 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3">
+              <h2 className="text-sm font-semibold text-amber-600 dark:text-amber-400">
+                You're offline
+              </h2>
+              <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+                Anything below is the last version this device loaded, and signing in or joining the
+          waitlist both need a connection.
+              </p>
+              <button
+                type="button"
+                data-offline-retry=""
+                className="mt-3 rounded-lg border border-amber-500/50 px-3 py-1.5 text-sm font-medium text-amber-700 dark:text-amber-300 hover:bg-amber-500/10 transition-colors"
+              >
+                Try again
+              </button>
             </div>
             {/*
                 The CTA block sits where the Sign in / Join waitlist buttons used
@@ -2036,6 +2144,7 @@ export function Shell() {
               <a
                 id="landing-waitlist-link"
                 href="#waitlist"
+                data-offline-disabled=""
                 className="inline-block rounded-lg bg-violet-600 hover:bg-violet-500 px-5 py-2 text-sm font-medium text-white transition-colors"
               >
                 Join the waitlist
@@ -2085,7 +2194,10 @@ export function Shell() {
           Login screen (also hosts the #signup email-code sub-view and the
           forgot-password recovery sub-view)
       */}
-      <main id="auth-login-screen" className="hidden fixed inset-0 z-40 overflow-y-auto bg-white dark:bg-zinc-950">
+      <main
+        id="auth-login-screen"
+        className="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll bg-white dark:bg-zinc-950"
+      >
         <a
           href="#"
           data-auth-back=""
@@ -2102,6 +2214,32 @@ export function Shell() {
             <p className="text-xs text-zinc-500 dark:text-zinc-400 text-center mb-8 italic">
               A place where users own and build apps together
             </p>
+            {/*
+                Offline explanation (#1021). Signing in REQUIRES the network —
+                the credential check happens on the server — so an offline
+                visitor previously typed a password, waited, and got a bare
+                "Network error" with no hint that the whole screen was
+                unusable. Shown by `body.is-offline` (app.css); the controls
+                below carry data-offline-disabled so it's obvious which parts
+                are the ones that can't work.
+            */}
+            <div className="offline-only mb-8 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3">
+              <h2 className="text-sm font-semibold text-amber-600 dark:text-amber-400">
+                You're offline
+              </h2>
+              <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+                Signing in needs a connection — your username and password are checked on the server.
+            Reconnect and try again; if you were signed in on this device before, reloading once
+            you're back online will take you straight in.
+              </p>
+              <button
+                type="button"
+                data-offline-retry=""
+                className="mt-3 rounded-lg border border-amber-500/50 px-3 py-1.5 text-sm font-medium text-amber-700 dark:text-amber-300 hover:bg-amber-500/10 transition-colors"
+              >
+                Try again
+              </button>
+            </div>
             {/* Wallet auth status (shown when native bridge detected) */}
             <div id="wallet-auth" className="hidden space-y-4">
               <div id="wallet-status" className="text-center text-sm text-zinc-400">
@@ -2111,6 +2249,7 @@ export function Shell() {
               <div id="wallet-sign-in" className="hidden space-y-3">
                 <button
                   id="btn-wallet-sign-in"
+                  data-offline-disabled=""
                   className="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white flex items-center justify-center gap-2"
                 >
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
@@ -2175,6 +2314,7 @@ export function Shell() {
               </div>
               <button
                 type="submit"
+                data-offline-disabled=""
                 className="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white"
               >
                 Log in
@@ -2230,6 +2370,7 @@ export function Shell() {
                 <button
                   id="btn-otp-request"
                   type="button"
+                  data-offline-disabled=""
                   className="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white"
                 >
                   Email me a code
@@ -2259,6 +2400,7 @@ export function Shell() {
                 <button
                   id="btn-otp-verify"
                   type="button"
+                  data-offline-disabled=""
                   className="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white"
                 >
                   Verify code
@@ -2266,6 +2408,7 @@ export function Shell() {
                 <button
                   id="btn-otp-resend"
                   type="button"
+                  data-offline-disabled=""
                   className="w-full text-sm text-zinc-500 hover:text-zinc-300"
                 >
                   Send a new code
@@ -2302,6 +2445,7 @@ export function Shell() {
                 <button
                   id="btn-otp-set-password"
                   type="button"
+                  data-offline-disabled=""
                   className="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white"
                 >
                   Set password &amp; sign in
@@ -2394,7 +2538,10 @@ export function Shell() {
         </div>
       </main>
       {/* Register screen (activation-code flow) */}
-      <main id="auth-register-screen" className="hidden fixed inset-0 z-40 overflow-y-auto bg-white dark:bg-zinc-950">
+      <main
+        id="auth-register-screen"
+        className="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll bg-white dark:bg-zinc-950"
+      >
         <a
           href="#"
           data-auth-back=""
@@ -2487,7 +2634,10 @@ export function Shell() {
           here; polls /api/auth/me and boots the full shell in place when
           access is granted.
       */}
-      <main id="auth-waiting-screen" className="hidden fixed inset-0 z-40 overflow-y-auto bg-white dark:bg-zinc-950">
+      <main
+        id="auth-waiting-screen"
+        className="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll bg-white dark:bg-zinc-950"
+      >
         <div className="min-h-full flex items-center justify-center">
           <div className="w-full max-w-sm px-6 py-16 text-center">
             <h1 className="text-2xl font-bold mb-1">
@@ -2538,7 +2688,10 @@ export function Shell() {
           header-layout.js measures document.querySelector('header') and must
           keep resolving to #platform-header.
       */}
-      <main id="auth-waitlist-screen" className="hidden fixed inset-0 z-40 overflow-y-auto bg-white dark:bg-zinc-950">
+      <main
+        id="auth-waitlist-screen"
+        className="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll bg-white dark:bg-zinc-950"
+      >
         <a
           href="#landing"
           data-auth-back=""
@@ -2743,7 +2896,10 @@ export function Shell() {
           re-openable from the join email. GitHub / X verify via the
           /waitlist/connect OAuth round-trip when the platform has creds.
       */}
-      <main id="auth-more-screen" className="hidden fixed inset-0 z-40 overflow-y-auto bg-white dark:bg-zinc-950">
+      <main
+        id="auth-more-screen"
+        className="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll bg-white dark:bg-zinc-950"
+      >
         <a
           href="#landing"
           className="fixed left-4 z-10 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400"
@@ -3115,7 +3271,16 @@ export function Shell() {
       </div>
       {/* Staging preview (fullscreen overlay) */}
       <div id="staging-overlay" className="hidden fixed inset-0 z-40 bg-zinc-950 flex flex-col">
-        <div className="flex items-center gap-3 px-4 py-2 border-b border-zinc-800 shrink-0">
+        {/*
+            `staging-chrome-bar` is a STYLE HOOK, not decoration: fullscreen,
+            this overlay is `inset: 0` and covers the status bar, so app.css
+            adds the top safe-area inset to this bar (and only in the
+            non-docked state — a docked panel is pinned mid-page and needs
+            none). The bar's bottom edge needs nothing: everything below it
+            is the staging iframe, which reaches the true bottom edge and
+            receives the real insets over the safe-area bridge.
+        */}
+        <div className="staging-chrome-bar flex items-center gap-3 px-4 py-2 border-b border-zinc-800 shrink-0">
           <button id="staging-back" className="text-zinc-400 hover:text-zinc-100 text-sm flex items-center gap-1">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
@@ -4437,6 +4602,12 @@ export function Shell() {
           future settings/home destructive actions).
       */}
       <script src="/js/confirm-modal.js" />
+      {/*
+          Shared "you're out of daily AI credits — here's how to keep building"
+          copy + destinations, used by the dev-chat card, the credits banner and
+          the Generate-proposal modal. Loaded before its three consumers.
+      */}
+      <script src="/js/credit-options.js" />
       <script src="/js/settings.js" />
       <script src="/js/group-chat.js" />
       {/*
@@ -4525,10 +4696,14 @@ export function Shell() {
       <script src="/js/topochain-leaderboard.js" />
       <script src="/js/topochain-challenges.js" />
       {/*
-          Topochain admin console screens (Task 15): the 'topochain' entry
-          in AdminConsole.SECTION_MODULES delegates to AdminTopochain.render(),
-          which owns its own sub-nav under #admin/topochain/<sub>. Loaded
-          after admin-console.js (which it extends) and before app.js.
+          Seasons, Events & Challenges admin console screens (Task 15): the
+          'seasons' entry in AdminConsole.SECTION_MODULES delegates to
+          AdminTopochain.render(), which owns its own sub-nav under
+          #admin/seasons/<sub> (the old #admin/topochain/<sub> address still
+          resolves and is rewritten to the canonical one). The file name and
+          the AdminTopochain global are historical — renaming them would
+          churn the service-worker precache list for no user-visible gain.
+          Loaded after admin-console.js (which it extends) and before app.js.
       */}
       <script src="/js/admin-topochain.js" />
       {/*
@@ -4552,6 +4727,7 @@ export function Shell() {
       <script src="/js/admin-merges.js" />
       <script src="/js/admin-gallery.js" />
       <script src="/js/admin-campaigns.js" />
+      <script src="/js/admin-mail.js" />
       {/*
           Build-failure log panel (#416). Loaded before app-view.js/home.js
           so both surfaces can reference window.BuildLog.

@@ -45,21 +45,23 @@ const after = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
 const ENTRY_TAG = '<script type="module" src="/shell/assets/shell.js"></script>';
 const afterWithoutEntry = after.replace(ENTRY_TAG, '');
 
-// ── The one deliberate, reviewed markup difference in step 1 ───────────
+// ── Deliberate, reviewed markup differences ────────────────────────────
 //
-// #platform-updating-reload carried `onclick="location.reload()"`, the only
-// inline handler in the whole document. React rejects inline `onclick`
-// attributes (it warns, and a warning is a console.error, and a console.error
-// on any route fails the platform's proposal checks), so the binding moved
-// into the module that already owns that button — PlatformUpdating.show() in
-// public/js/app.js, which was already doing getElementById on it.
+// EMPTY, and that is the goal: the generated document reproduces the
+// hand-written one exactly, with no exceptions at all.
 //
-// Behaviour is identical; the attribute is gone from the served HTML. It is
-// listed here rather than tolerated silently so that any OTHER attribute
-// disappearing still fails.
-const ALLOWED_ATTR_REMOVALS = [
-  { id: 'platform-updating-reload', attr: 'onclick' },
-];
+// It briefly held one. #platform-updating-reload carried
+// `onclick="location.reload()"`, the document's only inline handler, and
+// React rejects those (it warns, a warning is a console.error, and a
+// console.error on any route fails the platform's proposal checks) — so the
+// binding moved into the module that already owned the button. Main then
+// removed the whole platform-updating banner (#1015/#1018), which retired the
+// element, the workaround and this exception together.
+//
+// Keep it empty. An entry here is a claim that the shell's markup and its
+// React source have diverged on purpose, and step 1's contract is that they
+// haven't.
+const ALLOWED_ATTR_REMOVALS = [];
 
 function isAllowedRemoval(token, attr) {
   return ALLOWED_ATTR_REMOVALS.some((a) => a.id === token.attrs.id && a.attr === attr);
@@ -141,10 +143,11 @@ test('the generated shell matches the pre-migration markup element for element',
   }
 });
 
-test('the deliberate markup differences are exactly the ones listed here', () => {
-  // Guards the allow-list itself: if someone retires the inline handler
-  // exception without removing the entry, or the element disappears, this
-  // fails rather than quietly widening the tolerance.
+test('the conversion needs no markup exceptions at all', () => {
+  // Guards the allow-list itself. Each entry must still describe a real
+  // attribute on a real element in the fixture, so an exception cannot outlive
+  // the thing it excuses — and the list must stay empty, because a
+  // scaffolding-only chassis swap has nothing to except.
   const a = structure(before);
   for (const allowed of ALLOWED_ATTR_REMOVALS) {
     const token = a.find((t) => t.kind === 'open' && t.attrs.id === allowed.id);
@@ -154,10 +157,22 @@ test('the deliberate markup differences are exactly the ones listed here', () =>
       `#${allowed.id} in the fixture has no \`${allowed.attr}\` attribute — the exception is obsolete`,
     );
   }
-  assert.equal(
-    ALLOWED_ATTR_REMOVALS.length, 1,
-    'step 1 permits exactly ONE markup difference. Adding another means the chassis swap stopped '
-    + 'being scaffolding-only — justify it in review rather than extending this list.',
+  assert.deepEqual(
+    ALLOWED_ATTR_REMOVALS, [],
+    'step 1 permits NO markup differences. An entry here means the chassis swap stopped being '
+    + 'scaffolding-only — justify it in review rather than extending this list.',
+  );
+});
+
+test('the shell markup carries no inline event handlers', () => {
+  // React rejects them, and a React warning is a console.error, which fails
+  // proposal checks on every route that renders the element. The document has
+  // none today; this keeps it that way, and points at the fix if one returns.
+  const offenders = [...after.matchAll(/\son(?:click|change|input|submit|load|error|focus|blur)="/g)];
+  assert.deepEqual(
+    offenders.map((m) => m[0].trim()), [],
+    'public/index.html has an inline event handler. Bind it from the public/js/** module that '
+    + 'owns the element instead — see frontend/scripts/apply-step1-edits.cjs.',
   );
 });
 

@@ -84,7 +84,24 @@ const Home = {
       // now that they're here. No-op when everything has an icon.
       Home._healWidgetIcons();
     } catch (err) {
-      listEl.innerHTML = `<div class="p-4 text-red-400 text-sm">Failed to load apps</div>`;
+      // Offline is not a failure, it's a state (#1021) — and by far the
+      // most common reason this fetch throws. "Failed to load apps" in
+      // red reads like the platform is broken; say what actually happened
+      // and offer the retry. Anything already cached stays on screen.
+      let offline = false;
+      try { offline = !!(window.Offline && Offline.isOffline()); } catch (_) { offline = false; }
+      if (offline) {
+        if (Home._apps.length) {
+          Home.render();
+        } else {
+          listEl.innerHTML = `<div class="col-span-full p-4 text-sm text-zinc-500 dark:text-zinc-400">`
+            + `You're offline — apps you've opened before will appear here once this device `
+            + `has loaded them.</div>`;
+        }
+        try { Offline.nudge(); } catch (_) { /* ignore */ }
+        return;
+      }
+      listEl.innerHTML = `<div class="col-span-full p-4 text-red-400 text-sm">Failed to load apps</div>`;
     }
   },
 
@@ -3371,4 +3388,16 @@ function formatRelativeTime(input) {
   if (seconds < 86400 * 30) return `${Math.floor(seconds / 86400)}d ago`;
   if (seconds < 86400 * 365) return `${Math.floor(seconds / (86400 * 30))}mo ago`;
   return `${Math.floor(seconds / (86400 * 365))}y ago`;
+}
+
+// Back online: refill a grid that could only show the offline note. Guarded
+// on an empty cache so a reconnect never yanks a populated grid out from
+// under someone mid-scroll (App.resyncCurrentView owns the general case).
+// (Guarded: the icon-renderer tests eval this file in a bare sandbox with
+// no event target on `window`.)
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  window.addEventListener('usernode:offline-change', (e) => {
+    if (!e.detail || e.detail.offline !== false) return;
+    if (window.Home && !Home._apps.length) Home.load();
+  });
 }

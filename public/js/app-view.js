@@ -370,6 +370,16 @@ const AppView = {
       return;
     }
     const { app: appData } = await res.json();
+    // #1010: local "being applied" state is per-app and per-page-visit —
+    // proposal ids are global, but a stale entry carried into another app
+    // would spin a card whose apply this client never started. Cleared on
+    // every app load (NOT in _loadDevData, which re-runs on every WS event
+    // and would wipe a spinner mid-apply).
+    if (!AppView.appData || AppView.appData.slug !== appData.slug) {
+      Object.keys(AppView._govApplyTimers).forEach(AppView._clearGovApplyTimers);
+      AppView._govApplying = Object.create(null);
+      AppView._govDueSince = Object.create(null);
+    }
     AppView.appData = appData;
 
     // Mode visibility (App tab hidden for self-hosted apps, whose
@@ -1506,7 +1516,7 @@ const AppView = {
 
         <!-- The card list: locked notice, general-chat card, session
              rows, the intermixed feed, and the Completed section. -->
-        <div id="dev-forum-scroll" class="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+        <div id="dev-forum-scroll" class="flex-1 min-h-0 overflow-y-auto overscroll-contain platform-safe-scroll">
           <div id="dev-locked-notice" class="px-3 pt-2 hidden"></div>
           <div class="px-3 pt-2">
             <button id="dev-chat-card" class="${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}"
@@ -2559,8 +2569,13 @@ const AppView = {
             <!-- Typing indicator -->
             <div id="gc-typing" class="px-3 text-xs text-zinc-500 h-5 shrink-0"></div>
 
-            <!-- Input (#621: read-only viewers get a notice instead) -->
-            <div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2">
+            <!-- Input (#621: read-only viewers get a notice instead).
+                 platform-safe-bar (app.css) adds the home-indicator
+                 inset to this bar's own p-2 — it wraps both the composer
+                 and the read-only notice, so both clear the indicator.
+                 (No backticks in this comment: it lives inside a template
+                 literal, and one would close it.) -->
+            <div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2 platform-safe-bar">
               ${AppView.readOnly ? `
               <div class="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400 text-center">You're viewing this app's dev space read-only — only collaborators can post.</div>
               ` : `
@@ -5240,6 +5255,12 @@ const AppView = {
     const maintenanceBadge = (pr.source === 'maintenance')
       ? '<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-600 dark:text-sky-400 shrink-0" title="Opened automatically by an approved platform maintenance campaign. Review and vote like any proposal — or a platform admin can merge it once checks pass.">Platform maintenance</span>'
       : '';
+    // #967: which coding agent wrote it, when the proposal came in through
+    // the hosted MCP connector — the code was written by the proposer's own
+    // Claude Code or Codex, on their subscription, in their fork. Sits
+    // beside "Imported PR" (such a proposal is an import) rather than
+    // replacing it: one says how it got here, the other says who built it.
+    const agentBadge = AppView.externalAgentBadgeHtml(pr.external_agent);
     // #405: the merge-state slot is now driven by the shared MergeStatus
     // lifecycle helper so labels/colours match the home strip and the dev
     // session header exactly. It renders the merge-pipeline / conflict /
@@ -5312,6 +5333,7 @@ const AppView = {
             </div>
             ${fallbackChip}
             ${importedBadge}
+            ${agentBadge}
             ${maintenanceBadge}
             ${unvotedBadge}
             ${AppView.voteCountPill(pr, majority)}
@@ -5351,6 +5373,14 @@ const AppView = {
     // would otherwise be discovered.
     const importedNote = imported
       ? `<div class="text-xs text-amber-600 dark:text-amber-400 mt-1">Imported pull request${pr.imported_pr_author ? ` — authored by <span class="font-medium">${escapeHtml(pr.imported_pr_author)}</span>` : ''}. The code is maintained on GitHub; there's no in-app dev session for it. Voting and checks work the same as any proposal.</div>`
+      : '';
+    // #967: for a connector-authored proposal, say plainly who wrote the
+    // code and on whose account — an imported proposal that arrived this
+    // way was built by the proposer's own agent, not by a stranger and not
+    // out of the platform's credits.
+    const agentName = AppView.externalAgentName(pr.external_agent);
+    const agentNote = agentName
+      ? `<div class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Built with <span class="font-medium">${escapeHtml(agentName)}</span> by <span class="font-medium">${escapeHtml(pr.username || 'the proposer')}</span>, on their own coding-agent subscription, from a branch in their GitHub fork.</div>`
       : '';
     // #866: say in prose what the Preview slot says in a pill, so the
     // detail view explains why there's no Preview button yet (or why there
@@ -5400,6 +5430,7 @@ const AppView = {
       <div class="text-xs text-zinc-500 dark:text-zinc-400 mt-2 px-1">
         <div>${details.join(' · ')}${helpBtn}</div>
         ${importedNote}
+        ${agentNote}
         ${previewNote}
         ${chips ? `<div class="mt-1 flex flex-wrap gap-1 items-center"><span>Linked issues:</span> ${chips}</div>` : ''}
         ${AppView._mergeConflictDetailHtml(pr)}
@@ -5741,12 +5772,22 @@ const AppView = {
     }
     if (!results.length) return ''; // 'passing' with no detail to show — the green badge is enough.
 
-    const rows = results.map((r) => {
+    // Every declared check now runs, so a suite is hundreds of rows rather
+    // than a dozen, and the rows are no longer equal in weight: a BLOCKING
+    // failure is why the merge is stuck, an ADVISORY failure is a check that
+    // has never been seen passing (it reports, it does not block), and a
+    // pass is context. Ordered by that weight, and the passes — the bulk —
+    // fold away so the card opens on what someone has to act on.
+    const rowHtml = (r) => {
       const pass = r && r.status === 'pass';
+      const advisory = !pass && !!(r && r.advisory);
       const icon = pass ? '✓' : '✗';
-      const iconCls = pass ? 'text-emerald-500' : 'text-red-500';
+      const iconCls = pass ? 'text-emerald-500' : (advisory ? 'text-zinc-500' : 'text-red-500');
       const name = escapeHtml(String((r && r.name) || 'test'));
       const path = (r && r.path) ? `<span class="opacity-60 font-mono">${escapeHtml(String(r.path))}</span>` : '';
+      const chip = advisory
+        ? ' <span class="rounded bg-zinc-500/10 px-1 text-[0.65rem] uppercase tracking-wide opacity-70">advisory</span>'
+        : '';
       let detail = '';
       if (!pass) {
         const reason = (r && r.failureReason) ? escapeHtml(String(r.failureReason).slice(0, 500)) : 'failed';
@@ -5759,23 +5800,67 @@ const AppView = {
         }).join('');
         detail = `<div class="ml-4 opacity-90">${reason}</div>${errItems ? `<ul class="ml-6 list-disc space-y-0.5">${errItems}</ul>` : ''}`;
       }
-      return `<li><span class="${iconCls} font-medium">${icon}</span> ${name} ${path}</li>${detail}`;
-    }).join('');
+      const rowCls = advisory ? ' class="opacity-70"' : '';
+      return `<li${rowCls}><span class="${iconCls} font-medium">${icon}</span> ${name} ${path}${chip}</li>${detail}`;
+    };
 
+    const blockingRows = results.filter((r) => r && r.status !== 'pass' && !r.advisory);
+    const advisoryRows = results.filter((r) => r && r.status !== 'pass' && r.advisory);
+    const passRows = results.filter((r) => r && r.status === 'pass');
+    // 'failing' is the stored verdict and the merge gate's own answer; the
+    // blocking count is only used to phrase the heading, never to override
+    // it, so a legacy row with no `advisory` flags still reads correctly.
     const failing = state === 'failing';
+
+    // A row usually IS one check, but the "N checks did not finish" row
+    // stands for N of them. Count checks, not rows, or the summary
+    // under-reports the suite it is summarising.
+    const weight = (r) => (r && r.count > 1 ? r.count : 1);
+    const total = (rows) => rows.reduce((n, r) => n + weight(r), 0);
+    const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+    const advisoryChecks = total(advisoryRows);
+    const summaryBits = [
+      plural(total(results), 'check', 'checks'),
+      `${passRows.length} passed`,
+    ];
+    if (blockingRows.length) summaryBits.push(plural(total(blockingRows), 'blocking failure', 'blocking failures'));
+    if (advisoryChecks) summaryBits.push(plural(advisoryChecks, 'advisory failure', 'advisory failures'));
+    const summary = `<div class="mt-0.5 opacity-80">${escapeHtml(summaryBits.join(' · '))}</div>`;
+
+    const failureList = blockingRows.concat(advisoryRows).map(rowHtml).join('');
+    // Under this many, folding costs a click and saves nothing.
+    const PASS_FOLD_AT = 8;
+    let passList = '';
+    if (passRows.length && passRows.length <= PASS_FOLD_AT) {
+      passList = `<ul class="mt-1 ml-1 space-y-0.5">${passRows.map(rowHtml).join('')}</ul>`;
+    } else if (passRows.length) {
+      passList = `
+        <details class="mt-1">
+          <summary class="cursor-pointer opacity-80">Show ${passRows.length} passing checks</summary>
+          <ul class="mt-1 ml-1 space-y-0.5">${passRows.map(rowHtml).join('')}</ul>
+        </details>`;
+    }
+
     const wrapCls = failing
       ? 'border-amber-500/30 bg-amber-500/5 text-amber-600 dark:text-amber-500'
       : 'border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-500';
-    const heading = failing
-      ? '⚠ Some checks failed — merge is blocked until they pass.'
-      : '✓ All checks passed on the staging build.';
+    let heading;
+    if (failing) heading = '⚠ Some checks failed — merge is blocked until they pass.';
+    else if (advisoryRows.length) heading = '✓ Every merge-blocking check passed on the staging build.';
+    else heading = '✓ All checks passed on the staging build.';
+    const advisoryNote = (!failing && advisoryRows.length)
+      ? '<div class="mt-1 opacity-80">Advisory checks have never been observed passing on this app, so they report without blocking. Fix one and its first pass makes it a permanent guard rail.</div>'
+      : '';
     const checked = pr.checks_checked_at
       ? `<div class="mt-1 opacity-80">Last checked ${escapeHtml(relTime(pr.checks_checked_at))}.</div>`
       : '';
     return `
       <div class="mt-2 rounded border px-2 py-1.5 ${wrapCls}">
         <div class="font-medium">${heading}</div>
-        <ul class="mt-1 ml-1 space-y-0.5">${rows}</ul>
+        ${summary}
+        ${failureList ? `<ul class="mt-1 ml-1 space-y-0.5">${failureList}</ul>` : ''}
+        ${passList}
+        ${advisoryNote}
         ${checked}
         ${failing ? '<div class="mt-1 opacity-80">Pushing a fix rebuilds the preview and re-runs the checks — the block clears when they pass.</div>' : ''}
         ${failing ? AppView._recheckBtnHtml(pr) : ''}
@@ -6023,6 +6108,277 @@ const AppView = {
       </div>`;
   },
 
+  // ── Governance "being applied" state (#1010) ─────────────────────────
+  //
+  // A deciding up-vote on a governance proposal runs the whole apply inside
+  // the vote request — for a close_issue that's a GitHub close + comment,
+  // 2–5s in production and longer when GitHub is slow. The card used to
+  // change in NO way for that entire window: buttons stayed live, the tally
+  // stayed pre-vote, then the row silently vanished into Done. This is the
+  // spinner that fills that gap.
+  //
+  // Two sources feed one descriptor, checked in this order:
+  //   1. _govApplying — the LOCAL, per-actor state, set the instant the
+  //      deciding vote is posted (before awaiting the fetch), so the voter
+  //      sees the spinner for the full round-trip. Always wins.
+  //   2. _derivedGovApplying — computed from the gate fields every viewer
+  //      already receives, so OTHER clients (and the actor after a reload)
+  //      see the same state without any persisted marker.
+  //
+  // Kept in a plain object rather than patched into the DOM because the
+  // Dev feed re-renders wholesale on every WS event / checks poll — a
+  // DOM-patched spinner would be wiped by the next unrelated refresh.
+  _govApplying: Object.create(null),
+  _govApplyTimers: Object.create(null),
+  // First time THIS client saw a row in its due-but-open state, for rows the
+  // server gives no window end to anchor on (see _derivedGovApplying).
+  _govDueSince: Object.create(null),
+
+  // How long a local apply may run before the copy softens to "still
+  // working" (SLOW) and before the spinner gives up entirely (STALLED).
+  // STALLED is a safety net for a response that never arrives at all —
+  // aborting the fetch wouldn't stop the server-side apply, so we stop
+  // spinning and tell the viewer to refresh instead of lying forever.
+  GOV_APPLY_SLOW_MS: 12000,
+  GOV_APPLY_STALLED_MS: 60000,
+  // How long past a merge window's end the DERIVED state still reads as
+  // "actively closing". The governance-apply ticker runs every ~60s, so a
+  // healthy apply lands well inside this; past it something is wrong
+  // (GitHub unreachable) and the calmer "will retry automatically" copy is
+  // the honest one.
+  GOV_APPLY_DERIVED_GRACE_MS: 120000,
+
+  // Per-kind status copy. The verb has to name the actual side effect —
+  // "Applying…" tells a voter nothing about whether their issue is closing.
+  _govApplyLabel(kind, targetIssueNumber) {
+    if (kind === 'close_issue') {
+      return targetIssueNumber
+        ? `Closing issue #${targetIssueNumber}…`
+        : 'Closing issue…';
+    }
+    if (kind === 'secret_change') return 'Applying env-var change…';
+    if (kind === 'rename') return 'Renaming app…';
+    if (kind === 'maintenance_campaign') return 'Starting campaign…';
+    return 'Applying…';
+  },
+
+  // The local (actor-side) descriptor for one proposal, or null.
+  _localGovApplying(issue) {
+    const st = issue && AppView._govApplying[issue.id];
+    if (!st) return null;
+    const label = AppView._govApplyLabel(st.kind, st.targetIssueNumber);
+    if (st.phase === 'failed') {
+      return {
+        spinner: false, tone: 'amber', busy: false,
+        label: st.kind === 'close_issue'
+          ? 'Close didn\'t complete — try voting again'
+          : 'Didn\'t complete — try voting again',
+        title: st.error
+          ? `The apply didn't finish: ${st.error}`
+          : 'The apply didn\'t finish. Voting again re-drives it.',
+      };
+    }
+    if (st.phase === 'stalled') {
+      return {
+        spinner: false, tone: 'amber', busy: false,
+        label: st.kind === 'close_issue'
+          ? 'Still closing — refresh to check'
+          : 'Still applying — refresh to check',
+        title: 'This is taking much longer than usual. The apply may still '
+          + 'be running on the server — refresh to see where it landed.',
+      };
+    }
+    if (st.phase === 'slow') {
+      return {
+        spinner: true, tone: 'amber', busy: true,
+        label: `${label.replace(/…$/, '')} — still working, GitHub may be slow…`,
+        title: 'Still working. GitHub can be slow to accept the close; '
+          + 'nothing is lost while this runs.',
+      };
+    }
+    return {
+      spinner: true, tone: 'amber', busy: true, label,
+      title: issue.kind === 'close_issue'
+        ? 'The vote passed — the issue is being closed here and on GitHub.'
+        : 'The vote passed — this change is being applied.',
+    };
+  },
+
+  // The DERIVED descriptor: what every viewer can infer from the gate
+  // fields the /issues serializer already sends. True when the proposal has
+  // passed and its clock has run out, yet the row is still open — i.e. the
+  // apply is due or in flight.
+  //
+  // The locked-app suppression is load-bearing: on a locked app a
+  // threshold-met proposal legitimately waits for an admin's Yes, which
+  // this client cannot verify, so it would otherwise show a spinner for a
+  // proposal that is not being applied at all. The locked notice above the
+  // list already explains that wait.
+  _derivedGovApplying(issue) {
+    if (!issue || issue.status !== 'open') return null;
+    const ctx = AppView._proposalsCtx || {};
+    if (ctx.locked || issue.contested) {
+      delete AppView._govDueSince[issue.id];
+      return null;
+    }
+
+    const yes = issue.qualified_yes_count != null
+      ? (parseInt(issue.qualified_yes_count, 10) || 0)
+      : (parseInt(issue.up_count, 10) || 0);
+    // "At least N" mode is clock-free, so its own target is the gate.
+    const atLeast = issue.approvals_required != null
+      ? (parseInt(issue.approvals_required, 10) || 1) : null;
+    const required = atLeast != null
+      ? atLeast
+      : (parseInt(issue.votes_required, 10) || 0);
+    if (!(required > 0) || yes < required) {
+      delete AppView._govDueSince[issue.id];
+      return null;
+    }
+
+    const endsMs = issue.merge_window_ends_at
+      ? Date.parse(issue.merge_window_ends_at) : NaN;
+    // A window still running means the countdown pill owns this row.
+    if (Number.isFinite(endsMs) && endsMs > Date.now()) {
+      delete AppView._govDueSince[issue.id];
+      return null;
+    }
+
+    const label = AppView._govApplyLabel(
+      issue.kind, issue.payload && issue.payload.issueNumber
+    );
+    // Past the grace window the spinner would be a promise nothing is
+    // keeping — degrade to the retry copy instead of spinning forever.
+    //
+    // The window's end is the natural anchor, but it can be absent: a clear
+    // majority collapses the window to zero, and at-least-N mode has no clock
+    // at all. Those rows are due RIGHT NOW, so with no anchor they would spin
+    // forever if the apply kept failing (GitHub unreachable). Fall back to
+    // when THIS client first saw the row in its due state — bounded in every
+    // regime, and a reload simply grants a fresh grace period, which is the
+    // same generosity any other viewer's first load gets.
+    let elapsed;
+    if (Number.isFinite(endsMs)) {
+      elapsed = Date.now() - endsMs;
+    } else {
+      if (!AppView._govDueSince[issue.id]) AppView._govDueSince[issue.id] = Date.now();
+      elapsed = Date.now() - AppView._govDueSince[issue.id];
+    }
+    if (elapsed > AppView.GOV_APPLY_DERIVED_GRACE_MS) {
+      return {
+        spinner: false, tone: 'neutral', busy: false,
+        label: issue.kind === 'close_issue'
+          ? 'Close pending — will retry automatically'
+          : 'Apply pending — will retry automatically',
+        title: 'The vote passed, but the change hasn\'t gone through yet. '
+          + 'The platform retries automatically.',
+      };
+    }
+    return {
+      spinner: true, tone: 'amber', busy: true, label,
+      title: issue.kind === 'close_issue'
+        ? 'The vote passed — the issue is being closed here and on GitHub.'
+        : 'The vote passed — this change is being applied.',
+    };
+  },
+
+  // One descriptor per row, local state winning over derived.
+  _govApplyState(issue) {
+    return AppView._localGovApplying(issue) || AppView._derivedGovApplying(issue);
+  },
+
+  // Same slot + treatment as the proposal card's "Merging…" badge, so an
+  // applying governance row reads identically to an in-flight merge.
+  _govApplyBadgeHtml(state) {
+    if (!state || !state.label) return '';
+    const cls = state.tone === 'neutral'
+      ? 'gc-merging-badge gc-checks-running-badge' : 'gc-merging-badge';
+    const spin = state.spinner
+      ? '<span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>'
+      : '';
+    const title = state.title ? ` title="${escapeAttr(state.title)}"` : '';
+    return `<span class="${cls}"${title}>${spin}${escapeHtml(state.label)}</span>`;
+  },
+
+  // Mark a proposal as locally applying and paint it immediately. Timers
+  // soften the copy rather than cancelling anything — the server-side apply
+  // runs to completion regardless of what this client does.
+  _beginGovApply(issue, vote) {
+    if (!issue) return false;
+    AppView._govApplying[issue.id] = {
+      kind: issue.kind,
+      targetIssueNumber: (issue.payload && issue.payload.issueNumber) || null,
+      startedAt: Date.now(),
+      phase: 'applying',
+      vote,
+    };
+    AppView._clearGovApplyTimers(issue.id);
+    AppView._govApplyTimers[issue.id] = {
+      slow: setTimeout(() => {
+        const st = AppView._govApplying[issue.id];
+        if (st && st.phase === 'applying') { st.phase = 'slow'; AppView._repaintCards(); }
+      }, AppView.GOV_APPLY_SLOW_MS),
+      stalled: setTimeout(() => {
+        const st = AppView._govApplying[issue.id];
+        if (st && (st.phase === 'applying' || st.phase === 'slow')) {
+          st.phase = 'stalled';
+          AppView._repaintCards();
+        }
+      }, AppView.GOV_APPLY_STALLED_MS),
+    };
+    AppView._repaintCards();
+    return true;
+  },
+
+  _clearGovApplyTimers(issueId) {
+    const t = AppView._govApplyTimers[issueId];
+    if (!t) return;
+    clearTimeout(t.slow);
+    clearTimeout(t.stalled);
+    delete AppView._govApplyTimers[issueId];
+  },
+
+  // Clear the local state (the normal ending), or park it on a terminal
+  // phase so the failure stays legible until the next refresh replaces the
+  // row. Either way the timers go.
+  _endGovApply(issueId, phase, error) {
+    AppView._clearGovApplyTimers(issueId);
+    if (phase && AppView._govApplying[issueId]) {
+      AppView._govApplying[issueId].phase = phase;
+      if (error) AppView._govApplying[issueId].error = error;
+    } else {
+      delete AppView._govApplying[issueId];
+    }
+    AppView._repaintCards();
+  },
+
+  // Would casting `vote` on this row be the vote that DECIDES it? Mirrors
+  // the server's gate (governedGate + the locked-app admin-Yes rule) closely
+  // enough to choose the copy; a wrong guess is self-correcting — a false
+  // positive clears on the response's gate fields, a false negative picks
+  // the spinner up from the derived state on the next refresh.
+  _govVoteWouldDecide(issue, vote) {
+    if (!issue || vote !== 'up' || issue.status !== 'open') return false;
+    const ctx = AppView._proposalsCtx || {};
+    if (ctx.locked) return false;
+    if (issue.contested) return false;
+    const yes = issue.qualified_yes_count != null
+      ? (parseInt(issue.qualified_yes_count, 10) || 0)
+      : (parseInt(issue.up_count, 10) || 0);
+    // Re-casting an existing Yes adds nothing; a switch from No does.
+    const next = issue.my_vote === 'up' ? yes : yes + 1;
+    const atLeast = issue.approvals_required != null
+      ? (parseInt(issue.approvals_required, 10) || 1) : null;
+    const required = atLeast != null
+      ? atLeast : (parseInt(issue.votes_required, 10) || 0);
+    if (!(required > 0) || next < required) return false;
+    const endsMs = issue.merge_window_ends_at
+      ? Date.parse(issue.merge_window_ends_at) : NaN;
+    // A window still running means the apply is deferred, not immediate.
+    if (Number.isFinite(endsMs) && endsMs > Date.now()) return false;
+    return true;
+  },
+
   // One governance card (env-var change, or a legacy rename row still
   // open from before renames moved to dapp.json PRs). Up/down controls
   // post to the existing /api/issues/:id/vote.
@@ -6084,13 +6440,23 @@ const AppView = {
     // #621: read-only viewers see the tally pill only — no vote /
     // admin / withdraw controls. Settled rows show none for anyone.
     const ro = AppView.readOnly || settled;
+    // #1010: the "being applied" state. Rendered for read-only viewers too —
+    // it is status, not an action. While it's up the controls stay in place
+    // but go `disabled`, rather than being dropped: the row must not reflow
+    // under the cursor mid-apply, and a second Yes click would otherwise hit
+    // the server's toggle-off branch and silently retract the vote.
+    const applyState = settled ? null : AppView._govApplyState(issue);
+    const busy = !!(applyState && applyState.busy);
+    const applyBadge = AppView._govApplyBadgeHtml(applyState);
+    const busyAttr = busy
+      ? ` disabled title="${escapeAttr(applyState.label)}"` : '';
     const upT = AppView._voteBtnTally(issue.qualified_yes_count, upCount, issue.approval_policy, 'Yes');
     const downT = AppView._voteBtnTally(issue.qualified_no_count, downCount, issue.approval_policy, 'No');
-    const yesBtn = ro ? '' : `<button class="gc-vote-btn gc-vote-btn-yes${myVote === 'up' ? ' gc-vote-active' : ''}"${upT.title} onclick="AppView.castIssueVote(${issue.id}, 'up')">Yes (${upT.label})</button>`;
-    const noBtn = ro ? '' : `<button class="gc-vote-btn gc-vote-btn-no${myVote === 'down' ? ' gc-vote-active' : ''}"${downT.title} onclick="AppView.castIssueVote(${issue.id}, 'down')">No (${downT.label})</button>`;
+    const yesBtn = ro ? '' : `<button class="gc-vote-btn gc-vote-btn-yes${myVote === 'up' ? ' gc-vote-active' : ''}"${busy ? busyAttr : upT.title} onclick="AppView.castIssueVote(${issue.id}, 'up')">Yes (${upT.label})</button>`;
+    const noBtn = ro ? '' : `<button class="gc-vote-btn gc-vote-btn-no${myVote === 'down' ? ' gc-vote-active' : ''}"${busy ? busyAttr : downT.title} onclick="AppView.castIssueVote(${issue.id}, 'down')">No (${downT.label})</button>`;
     const isCampaign = issue.kind === 'maintenance_campaign';
     const adminBtn = (!ro && (issue.kind === 'secret_change' || isCloseIssue || isCampaign) && App.user?.canAdminWrite)
-      ? `<button class="gc-vote-btn gc-vote-btn-admin" title="Admin: apply this change right now, bypassing the vote majority" onclick="AppView.castIssueAdminApply(${issue.id})">Admin merge</button>`
+      ? `<button class="gc-vote-btn gc-vote-btn-admin"${busy ? busyAttr : ' title="Admin: apply this change right now, bypassing the vote majority"'} onclick="AppView.castIssueAdminApply(${issue.id})">Admin merge</button>`
       : '';
     // An applied campaign proposal links to its live dashboard (fan-out
     // progress, per-app PRs, retry, merge-all-green) on /admin. Admin-only
@@ -6103,7 +6469,7 @@ const AppView = {
     // withdraw it (creator-scoped POST /api/issues/:id/close).
     const mine = !ro && !!(App.user && issue.created_by === App.user.id);
     const withdrawBtn = mine
-      ? `<button class="gc-vote-btn" title="Withdraw this proposal (removes it from the vote panel)" onclick="AppView.withdrawGovProposal(${issue.id})">Withdraw</button>`
+      ? `<button class="gc-vote-btn"${busy ? busyAttr : ' title="Withdraw this proposal (removes it from the vote panel)"'} onclick="AppView.withdrawGovProposal(${issue.id})">Withdraw</button>`
       : '';
     const govChatN = parseInt(issue.chat_count) || 0;
     // Chat-reference highlighting hook: twins carry github_issue_number;
@@ -6112,7 +6478,7 @@ const AppView = {
       || (isCloseIssue && issue.payload ? issue.payload.issueNumber : null);
 
     return `
-      <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" data-gov-row="${issue.id}"${refIssueN ? ` data-ref-issue="${refIssueN}"` : ''}${noNav ? '' : ' title="Open this proposal\'s discussion"'}>
+      <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}${busy ? ' opacity-70' : ''}" data-gov-row="${issue.id}"${refIssueN ? ` data-ref-issue="${refIssueN}"` : ''}${noNav ? '' : ' title="Open this proposal\'s discussion"'}>
         ${AppView._devCardIcon('gov')}
         <div class="flex-1 min-w-0">
           <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -6121,6 +6487,7 @@ const AppView = {
               <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta">${metaParts.join(' · ')}</div>
             </div>
             ${tallyPill}
+            ${applyBadge}
             ${AppView._devChatBadge(govChatN)}
           </div>
           ${AppView._cardActionsHtml([yesBtn, noBtn, adminBtn, campaignBtn, withdrawBtn])}
@@ -7250,12 +7617,19 @@ const AppView = {
     // open close_issue row in _govProposals targeting this number), the
     // button renders disabled as "Close proposed" so duplicates can't be
     // raced from the UI (the server also 409s).
-    const hasCloseProposal = (AppView._govProposals || []).some((g) =>
+    const closeProposal = (AppView._govProposals || []).find((g) =>
       g.kind === 'close_issue' && g.status === 'open'
       && Number(g.payload && g.payload.issueNumber) === n);
-    const closeBtn = hasCloseProposal
-      ? `<button class="gc-vote-btn" disabled title="A close proposal for this issue is up for vote">Close proposed</button>`
-      : `<button class="gc-vote-btn" title="Propose closing this issue — the group votes; if it passes, the issue is closed here and on GitHub" onclick="AppView.promptCloseIssue(${n})">Propose to close</button>`;
+    // #1010: once that proposal's vote has passed and the close is being
+    // applied, say so HERE too — this row is where the reporter is looking
+    // when they wonder whether the issue is actually closing.
+    const closeApplying = closeProposal
+      ? AppView._govApplyState(closeProposal) : null;
+    const closeBtn = closeApplying && closeApplying.busy
+      ? `<button class="gc-vote-btn" disabled title="${escapeAttr(closeApplying.title || closeApplying.label)}"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Closing&hellip;</button>`
+      : closeProposal
+        ? `<button class="gc-vote-btn" disabled title="A close proposal for this issue is up for vote">Close proposed</button>`
+        : `<button class="gc-vote-btn" title="Propose closing this issue — the group votes; if it passes, the issue is closed here and on GitHub" onclick="AppView.promptCloseIssue(${n})">Propose to close</button>`;
     // Manual "In progress" claim toggle, keyed strictly off the VIEWER's
     // own claim: they can always add theirs alongside other users' claims
     // (claims are per-user, never exclusive) and can only clear their own
@@ -7885,6 +8259,15 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
+        // Out of daily credits is not an ordinary error — it has three real
+        // ways forward (own API key, a coding tool on your computer, a
+        // connected Claude.ai / ChatGPT subscription). Show the same card
+        // the dev chat shows instead of a one-line toast the user can only
+        // read and dismiss. Every other failure keeps the toast.
+        if (data.code === 'budget_exceeded') {
+          AppView._showCreditOptionsModal(data.error);
+          return;
+        }
         PlatformUI.toast(data.error || `Couldn't start generating the proposal (HTTP ${resp.status}).`);
         return;
       }
@@ -7897,6 +8280,54 @@ const AppView = {
     } catch (err) {
       PlatformUI.toast(`Couldn't start generating the proposal: ${err.message}`);
     }
+  },
+
+  // Out-of-credits popup for the Generate-proposal path. Same scrim/card
+  // chrome as _showAutoSessionModal below; the body is the shared card from
+  // public/js/credit-options.js, so the copy and the three Settings
+  // destinations are identical to the dev-chat card and the red banner.
+  // Choosing a route is a hash navigation, which unmounts this screen —
+  // so the modal only has to handle explicit dismissal.
+  _showCreditOptionsModal(errorText) {
+    const existing = document.getElementById('credit-options-modal');
+    if (existing) existing.remove();
+    if (!window.CreditOptions) {
+      PlatformUI.toast(errorText || "You're out of today's free AI credits.");
+      return;
+    }
+    const root = document.createElement('div');
+    root.id = 'credit-options-modal';
+    root.className = 'fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/60';
+    const state = {
+      error: errorText || '',
+      hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
+      // The headless route refuses on the user's own allowance the same way
+      // the chat does; the shared-budget wording is reachable through the
+      // budget meter, which this modal doesn't read.
+      globalOut: false,
+    };
+    root.innerHTML = `
+      <div class="min-h-full flex items-center justify-center p-4">
+        <div class="dc-credits-modal-card w-full max-w-lg rounded-xl bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 shadow-xl p-4">
+          ${CreditOptions.cardHtml(state)}
+          <div class="flex justify-end mt-3">
+            <button type="button" data-credits-close
+              class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Not now</button>
+          </div>
+        </div>
+      </div>`;
+    const close = () => {
+      root.remove();
+      document.removeEventListener('keydown', onKey);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    root.addEventListener('click', (e) => {
+      if (e.target === root) close();
+      if (e.target.closest('[data-credits-close]')) close();
+    });
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(root);
+    CreditOptions.wire(root);
   },
 
   // Singleton confirm popup for Generate proposal. Same scrim/card styling as
@@ -8280,6 +8711,35 @@ const AppView = {
     const n = parseInt(pr.behind_main, 10) || 0;
     const label = n ? `Behind main · ${n}` : 'Behind main';
     return `<span class="gc-behind-badge" title="This proposal is behind main but still merges cleanly">${escapeHtml(label)}</span>`;
+  },
+
+  // #967: the "built with …" provenance chip for a proposal that arrived
+  // through the hosted MCP connector — the code was written by the
+  // proposer's OWN coding agent (Claude Code on the web, or Codex), on
+  // their subscription, in their own GitHub fork.
+  //
+  // The vocabulary is closed on purpose. chat_sessions.external_agent is
+  // written only by services/external-agent-tasks.js from a fixed set, and
+  // an unrecognised value renders the generic label rather than whatever
+  // string reached the row — a provenance badge that prints server data
+  // verbatim is a provenance badge worth spoofing.
+  EXTERNAL_AGENT_NAMES: {
+    'claude-code': 'Claude Code',
+    codex: 'Codex',
+    external: 'an external coding agent',
+  },
+
+  externalAgentName(value) {
+    if (!value) return '';
+    return AppView.EXTERNAL_AGENT_NAMES[value] || AppView.EXTERNAL_AGENT_NAMES.external;
+  },
+
+  externalAgentBadgeHtml(value) {
+    const name = AppView.externalAgentName(value);
+    if (!name) return '';
+    const label = (value === 'claude-code' || value === 'codex')
+      ? `Built with ${name}` : 'Built with a coding agent';
+    return `<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-600 dark:text-violet-400 shrink-0" title="${escapeHtml('The code was written by the proposer’s own coding agent (' + name + ') on their subscription, in their GitHub fork. Usernode opened the pull request; the group still votes on it.')}">${escapeHtml(label)}</span>`;
   },
 
   // #381: advisory "may break the app" warning. Shown alongside (not
@@ -8958,7 +9418,40 @@ const AppView = {
     }
   },
 
+  // Vote on a governance proposal (env-var change, close-issue, rename,
+  // maintenance campaign).
+  //
+  // #1010: a DECIDING up-vote makes this request run the whole apply
+  // server-side, so the fetch stays open for seconds. Three things follow
+  // from that, all of which this used to get wrong:
+  //   - the row needs an in-progress state for the whole round-trip
+  //     (_beginGovApply, painted BEFORE the await);
+  //   - a second click must not land, because "same side again" is the
+  //     server's toggle-OFF branch — an impatient double-click on Yes used
+  //     to retract the vote that had just decided the proposal;
+  //   - the outcome must be reported. This swallowed every non-ok response
+  //     (including the 409 you get when someone else decided it first) and
+  //     every exception, so a failed vote looked exactly like a successful one.
   async castIssueVote(issueId, vote) {
+    const key = `issue:${issueId}`;
+    if (AppView._voteInFlight.has(key)) return;
+    AppView._voteInFlight.add(key);
+
+    const issue = (AppView._govProposals || []).find((g) => g.id === issueId);
+    const kind = issue ? issue.kind : null;
+    const targetN = (issue && issue.payload && issue.payload.issueNumber) || null;
+    // Only the deciding vote gets the spinner: an ordinary vote resolves in
+    // well under a second, and a spinner there would be noise.
+    const deciding = AppView._govVoteWouldDecide(issue, vote);
+    if (deciding) AppView._beginGovApply(issue, vote);
+
+    let settled = false;
+    const finish = (phase, error) => {
+      if (settled) return;
+      settled = true;
+      if (deciding) AppView._endGovApply(issueId, phase, error);
+    };
+
     try {
       const res = await fetch(`/api/issues/${issueId}/vote`, {
         method: 'POST',
@@ -8966,14 +9459,59 @@ const AppView = {
         body: JSON.stringify({ vote }),
       });
       const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        // 409 "Issue is not open" is the common one: someone else's vote
+        // decided it between this card rendering and the click landing.
+        finish();
+        PlatformUI.toast(data.error || `Vote failed (HTTP ${res.status}).`);
+        AppView.refreshDevData('vote');
+        return;
+      }
+
       // If a rename proposal just crossed the threshold, the WS app_update
       // event will refresh state for everyone; we just reload the panel.
       if (data?.renamed?.applied) {
         // Optimistic local update; the WS handler will re-sync.
         if (AppView.appData) AppView.appData.name = data.renamed.newName;
       }
+
+      // Report what the apply actually did. `outcome` is whichever of the
+      // four per-kind result objects this row produced (all share the
+      // { applied, superseded, awaitingAdmin, error, … } shape).
+      const outcome = data?.issueClosed || data?.secretChanged
+        || data?.renamed || data?.campaignStarted || null;
+      finish();
+      if (outcome && outcome.applied) {
+        if (kind === 'close_issue') {
+          PlatformUI.toast(`Issue #${outcome.issueNumber || targetN || '?'} closed by group vote.`);
+        }
+      } else if (outcome && outcome.superseded) {
+        // Not an error: the guard found the target already closed and
+        // retired the proposal instead of applying it.
+        PlatformUI.toast(
+          `Issue #${targetN || '?'} was already closed — the proposal was resolved automatically.`
+        );
+      } else if (outcome && outcome.awaitingAdmin) {
+        PlatformUI.toast('Vote passed — an admin still needs to approve before it applies.');
+      } else if (outcome && outcome.error) {
+        PlatformUI.toast(`The change didn't complete: ${outcome.error}`);
+      }
+      // Anything else (vote recorded, gate not met yet, toggled off) needs no
+      // toast — the refreshed card's tally / countdown pill says it all.
+
       AppView.refreshDevData('vote');
-    } catch {}
+      // Voting clears this proposal's nudge server-side; re-pull so the
+      // unread badge drops it. Never optimistic — only on an ok response.
+      window.Notifications?.refresh?.();
+    } catch (err) {
+      // Network/abort: the server-side apply may well have completed, so
+      // park on the failure copy rather than pretending nothing happened.
+      finish('failed', err && err.message);
+      PlatformUI.toast(`Vote failed: ${(err && err.message) || 'connection lost'}`);
+    } finally {
+      AppView._voteInFlight.delete(key);
+    }
   },
 
   promptRename() {

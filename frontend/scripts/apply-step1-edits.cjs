@@ -34,6 +34,22 @@ function edit(name, from, to) {
   console.log(`[apply-step1-edits] ${name}`);
 }
 
+// React turns an inline `on…="…"` attribute into a console.error, which fails
+// the platform's proposal checks on every route that renders it. Fail the
+// conversion loudly rather than emit a Shell.tsx that only breaks at runtime.
+function assertNoInlineHandlers() {
+  const found = [...source.matchAll(/\son(click|change|input|submit|load|error|focus|blur|keyup|keydown)="/g)];
+  if (found.length) {
+    console.error(
+      `[apply-step1-edits] ${found.length} inline event handler(s) in the converted markup: `
+      + `${[...new Set(found.map((m) => `on${m[1]}`))].join(', ')}. React rejects these. Bind them `
+      + 'from the owning public/js/** module instead, and strip the attribute with an edit here.',
+    );
+    process.exit(1);
+  }
+  console.log('[apply-step1-edits] no inline event handlers (nothing to strip)');
+}
+
 // ── 1. The one live shadcn conversion ──────────────────────────────────
 edit(
   '#settings-save → <Button> (the shadcn proof)',
@@ -66,22 +82,19 @@ edit(
                     </Button>`,
 );
 
-// ── 2. The document's only inline event handler ────────────────────────
-// React rejects an inline `onclick` attribute: it warns, a warning is a
-// console.error, and a console.error on any route fails the platform's
-// proposal checks. The binding moved into the module that already owns this
-// button — PlatformUpdating.show() in public/js/app.js, which was already
-// doing getElementById on it. Behaviour is identical.
-edit(
-  '#platform-updating-reload: inline onclick → bound in public/js/app.js',
-  `          className="hidden ml-2 px-2 py-0.5 rounded border border-current text-xs font-semibold hover:bg-black/10 dark:hover:bg-white/10"
-          onclick="location.reload()"
-        >`,
-  `          className="hidden ml-2 px-2 py-0.5 rounded border border-current text-xs font-semibold hover:bg-black/10 dark:hover:bg-white/10"
-        >`,
-);
+// The shell's markup carries NO inline event handlers. React rejects them
+// (it warns, a warning is a console.error, and a console.error on any route
+// fails the platform's proposal checks), so if one ever reappears it needs an
+// edit here — or better, a binding in the module that owns the element.
+//
+// There was exactly one when this migration started:
+// `onclick="location.reload()"` on #platform-updating-reload. It is gone —
+// main removed the whole platform-updating banner in #1015/#1018 — so the
+// edit that stripped it is gone too, and so is the parity-test exception it
+// needed. Nothing to do.
+assertNoInlineHandlers();
 
-// ── 3 & 4. Uncontrolled form fields ────────────────────────────────────
+// ── 2 & 3. Uncontrolled form fields ────────────────────────────────────
 // `value` / `checked` without an onChange make React warn about a controlled
 // field with no handler — again a console.error. `defaultValue` /
 // `defaultChecked` are the uncontrolled spelling and render the IDENTICAL

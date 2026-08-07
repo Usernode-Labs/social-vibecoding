@@ -1,0 +1,39 @@
+# Active blue/green platform color for the apex + access-gate upstreams.
+#
+# MANAGED FILE — rewritten by scripts/platform-rollout.sh on every
+# zero-downtime deploy, then picked up via a graceful `caddy reload`. The
+# committed value (blue) is only the bootstrap default for a cold start /
+# local use; in production the rollout always writes the color it just cut
+# over to before reloading Caddy. Keep the content here byte-identical to
+# write_active() in scripts/platform-rollout.sh (modulo the color).
+#
+# Why these two upstreams flip here (and not via the shared `usernode`
+# network alias that the wildcard `default` row + the error-handler
+# fallback + PLATFORM_INTERNAL_URL use): the apex site and the per-app
+# access gate carry turn-scoped SSE / WebSocket streams, so they need an
+# all-or-nothing cutover to one color rather than DNS round-robin across
+# both during the rollout overlap.
+#
+# Both snippets keep the #711 hold-and-retry: a color that crash-restarts
+# outside a rollout (or a cold start) reads as a brief latency bump, not
+# a 502 storm. Sizing rationale lives in the Caddyfile comments.
+(platform_upstream) {
+	reverse_proxy usernode-blue:3000 {
+		lb_try_duration 30s
+		lb_try_interval 250ms
+		transport http {
+			dial_timeout 2s
+		}
+	}
+}
+
+(platform_gate) {
+	forward_auth usernode-blue:3000 {
+		uri /__caddy/access
+		lb_try_duration 30s
+		lb_try_interval 250ms
+		transport http {
+			dial_timeout 2s
+		}
+	}
+}

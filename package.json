@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --test --test-force-exit tests/*.test.js",
+    "test": "node --require ./tests/lib/test-net.js --test --test-force-exit tests/*.test.js",
     "build:css": "node scripts/build-tailwind.js",
     "watch:css": "node scripts/build-tailwind.js --watch",
     "vendor:assets": "node scripts/vendor-assets.js",

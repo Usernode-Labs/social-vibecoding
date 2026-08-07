@@ -795,6 +795,177 @@ Respond with ONLY a JSON object: {“title”: “...”}. No prose before or af
   return { title, usage: resp.usage, model };
 }
 
+// ── #1001 quick-reply pills: enforcement + contextual backstop ────────
+//
+// Background. The Mayor's suggest_replies tool is optional and production
+// turns skipped it on ~2/3 of assistant rows, so the pill bar above the
+// dev-chat composer was usually filled from a fixed, state-only list.
+// #1001 makes the Mayor author at least one pill itself on every turn that
+// renders the bar. Two helpers implement the two model-backed rungs of the
+// ladder routes/sessions.js resolveTurnPills walks:
+//
+//   requireQuickReplies   — rung 2. A FORCED, pills-only continuation on
+//                           the turn's OWN model. This is the Mayor
+//                           authoring its own pills after the fact.
+//   generateQuickReplies  — rung 3. A cheap Haiku backstop for when the
+//                           forced call can't be made or fails.
+//
+// WHY THE CONTEXT IS COMPACT, NOT THE WHOLE CONVERSATION. Forcing the tool
+// on the FIRST call is not available to us: on phase 1 the dispatch tools
+// share the tools array (forcing would make dispatching impossible), and on
+// phase 2 a forced tool_use suppresses the text block that IS the wrap-up
+// message. So enforcement has to be a second call — and a second call that
+// replayed the turn's conversation would cost a second full-price input
+// pass. Measured on production: the median dev-chat assistant row carries
+// 52.3k tokens ≈ 26¢ on Opus, so a full replay would DOUBLE the cost of
+// two thirds of all turns. buildQuickReplyContext instead sends ~1.5-3k
+// tokens (≈1-1.5¢, about 5% of the turn) carrying the only things the pills
+// actually need: the reply just written, a few prior turns, and the state.
+//
+// IF PROMPT CACHING EVER LANDS in this codebase (nothing sets cache_control
+// today), re-evaluate: a cached full-context reprompt would be both cheaper
+// and better-informed than this digest, and would be the better mechanism.
+
+// The compact digest both helpers send. Shared so the forced call and the
+// Haiku backstop see IDENTICAL context — a pill set should not depend on
+// which rung produced it.
+//
+//   appName       — the app being worked on, for naming things naturally.
+//   state         — short plain-text state line (PR number, spec present,
+//                   staging preview, how the turn ended). Built by the
+//                   caller, which is the only place that knows.
+//   transcriptTail— [{ role, content }] oldest-first, the last few
+//                   user/assistant rows. Clipped hard.
+//   replyText     — the reply the pills will sit under, verbatim.
+//
+// Clipping is deliberate and load-bearing (see the cost note above):
+// TAIL_ROWS rows × TAIL_ROW_CHARS chars, plus REPLY_CHARS of the reply.
+const QR_TAIL_ROWS = 6;
+const QR_TAIL_ROW_CHARS = 600;
+const QR_REPLY_CHARS = 1500;
+
+function buildQuickReplyContext({ appName, state, transcriptTail, replyText } = {}) {
+  const rows = (Array.isArray(transcriptTail) ? transcriptTail : [])
+    .filter((r) => r && (r.role === 'user' || r.role === 'assistant'))
+    .slice(-QR_TAIL_ROWS)
+    .map((r) => {
+      const who = r.role === 'user' ? 'User' : 'You';
+      const body = stripLoneSurrogates(String(r.content == null ? '' : r.content)).trim();
+      return `${who}: ${body.slice(0, QR_TAIL_ROW_CHARS)}`;
+    })
+    .filter((line) => line.length > 6);
+
+  const reply = stripLoneSurrogates(String(replyText == null ? '' : replyText))
+    .trim().slice(0, QR_REPLY_CHARS);
+
+  const parts = [`APP: ${String(appName || 'this app').slice(0, 120)}`];
+  if (state) parts.push(`STATE: ${String(state).slice(0, 400)}`);
+  if (rows.length) parts.push(`RECENT CONVERSATION (oldest first):\n${rows.join('\n')}`);
+  parts.push(reply
+    ? `YOUR REPLY, which these pills sit directly beneath:\n${reply}`
+    : 'YOUR REPLY: (none yet — pick pills from the state and conversation above.)');
+  parts.push('Write the pills for what this user most plausibly wants to send NEXT, given everything above.');
+  return parts.join('\n\n');
+}
+
+// Rung 2 — the FORCED pills-only continuation.
+//
+// `tool` is SUGGEST_REPLIES_TOOL passed in from routes/sessions.js so the
+// schema stays defined exactly once, at the place that also sanitizes its
+// input. tool_choice pins that one tool, which means the response is a lone
+// tool_use with no text block — exactly what we want here, because the
+// user-visible text was already produced and streamed by the first call.
+// No tool_result round-trip is involved, so the dangling-tool_use 400 that
+// a full-context replay has to handle cannot occur.
+//
+// Returns { replies (RAW tool input, for the caller's sanitizer), usage,
+// model }. THROWS when no tool_use came back (refusal, max_tokens
+// truncation, transport error) — resolveTurnPills catches and drops to the
+// next rung.
+async function requireQuickReplies({ rules, context, model, tool, apiKey, signal }) {
+  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
+  if (!activeClient) throw new Error('LLM not initialized');
+  if (!tool || !tool.name) throw new Error('requireQuickReplies needs the suggest_replies tool shape');
+
+  const runModel = model || DEFAULT_MODEL;
+  const system = `You are the Mayor of a Usernode dev chat, continuing your own reply. You already sent the reply text below; the user can see it. All that is missing is the row of suggested next messages ("pills") that sits above their message box.
+
+Call ${tool.name} now with those pills, and nothing else. Do not write any text — it would not be shown.
+
+${rules || ''}`;
+
+  const resp = await activeClient.messages.create({
+    model: runModel,
+    max_tokens: 300,
+    system,
+    messages: [{ role: 'user', content: context }],
+    tools: [tool],
+    tool_choice: { type: 'tool', name: tool.name },
+  }, signal ? { signal } : undefined);
+
+  const call = (resp.content || []).find((b) => b.type === 'tool_use' && b.name === tool.name);
+  if (!call) throw new Error('Forced suggest_replies call returned no tool_use');
+  return { replies: call.input, usage: resp.usage, model: resp.model || runModel };
+}
+
+// Structured-output schema for the Haiku backstop. Same posture as
+// ESTIMATE_SCHEMA: presence + types only, with the defensive parse below
+// still in place for off-schema output.
+const QUICK_REPLIES_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    replies: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['replies'],
+};
+
+// Rung 3 — the cheap contextual backstop.
+//
+// Fires only when the forced Mayor call above could not be made or failed
+// (LLM error, refusal, timeout, no usable key). Deliberately a DIFFERENT
+// model from the turn's own, so a model-specific failure doesn't take both
+// rungs down with it. Throws on any failure so the caller can fall through
+// to the deterministic static set.
+async function generateQuickReplies({ rules, context, apiKey }) {
+  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
+  if (!activeClient) throw new Error('LLM not initialized');
+
+  const system = `You write the row of suggested next messages ("pills") shown above the message box in a Usernode dev chat. They are written in the voice of the USER, as messages the user might send next — not in the voice of the assistant.
+
+${rules || ''}
+
+Respond with ONLY a JSON object: {"replies": ["...", "..."]}. No prose before or after.`;
+
+  const model = 'claude-haiku-4-5';
+  const resp = await activeClient.messages.create({
+    model,
+    max_tokens: 200,
+    system,
+    messages: [{ role: 'user', content: context }],
+    // Structured outputs (#323 precedent): force schema-matching JSON so
+    // the parse-failure class can't occur for normal completions. The
+    // fence/smart-quote repair below stays as a defensive fallback for
+    // refusals and max_tokens truncation.
+    output_config: { format: { type: 'json_schema', schema: QUICK_REPLIES_SCHEMA } },
+  });
+
+  const raw = (resp.content || []).find((b) => b.type === 'text')?.text || '';
+  const text = raw
+    .replace(/```(?:json)?/gi, '')
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'");
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error('No JSON object in quick-replies response');
+  const parsed = JSON.parse(match[0]);
+  if (!Array.isArray(parsed.replies) || !parsed.replies.length) {
+    throw new Error('Empty quick-replies list from LLM');
+  }
+  // Returned RAW (unsanitized) in the same { replies } shape the tool call
+  // produces, so both rungs feed the caller's single sanitizer.
+  return { replies: { replies: parsed.replies }, usage: resp.usage, model };
+}
+
 // The template title routes/feedback.js files with when the Haiku title
 // call fails. Exported so feedback.js, the title-heal sweeper, and the UI
 // serializers all agree on the exact string they mark/detect.
@@ -844,6 +1015,10 @@ function _setClientForTests(fakeClient) {
 module.exports = {
   init, isEnabled, getSystemPrompt, streamChat, estimateCostCents,
   generatePrMetadata, parsePrMetadataText, generateSessionTitle,
+  // #1001 quick-reply pills: the forced Mayor continuation, the Haiku
+  // backstop, and the compact context both share.
+  buildQuickReplyContext, requireQuickReplies, generateQuickReplies,
+  QUICK_REPLIES_SCHEMA,
   parseSessionTitleText, estimateRunProgress, sanitizeEstimate,
   sanitizeRemainingSeconds, DEFAULT_MODEL,
   // Progress-estimator calibration surface (#892). Exported so the admin
