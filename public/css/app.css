@@ -2539,10 +2539,20 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
  * carry a faint resting tint of their own hue — the same tinted-chip
  * language as the Closes-#N chips, bounty pill, and icon chips. */
 .gc-vote-btn {
-  padding: 3px 10px;
+  /* One fixed height for the whole family so a text pill, the icon Preview
+     and the ⋯ trigger line up exactly rather than each being sized by its
+     own content. box-sizing keeps the 1px border inside that height. */
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  padding: 0 10px;
   border-radius: 9999px;
   font-size: 11px;
   font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
   cursor: pointer;
   border: 1px solid var(--border);
   background: transparent;
@@ -2639,18 +2649,75 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
    fixed 24px box so the glyph is centred and the two never drift in
    height from the text pills beside them. */
 .gc-vote-btn-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   width: 24px;
-  height: 24px;
   padding: 0;
-  line-height: 1;
 }
 .gc-vote-btn-icon svg { width: 14px; height: 14px; }
 /* Non-interactive preview states (building / unavailable) render as a
    <span>, so they get the pill's geometry with no pointer affordance. */
 span.gc-vote-btn-icon { cursor: default; }
+
+/* ── The card head: headline + badges, with ⋯ pinned top-right ──────
+   The ⋯ trigger lives in the card's TOP-RIGHT corner rather than in the
+   action row: the corner is where "more about this card" belongs, and it
+   keeps the action row to the one or two things you'd actually do. Its own
+   flex column means it can never collide with the 💬 badge (inside the
+   wrapping badge row to its left) or the drag grip (a gutter outside the
+   card entirely), and the chevron stays outside this box as the card's own
+   last child. */
+.dev-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.dev-card-head-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* Optically aligned with the FIRST line of the title rather than with the
+   top of the head box — the title's 20px line-box is taller than the 24px
+   button by too little to centre, so a 2px lift lands it on the cap line. */
+/* The right-edge rail: ⋯ pinned to the card's top-right corner, chevron
+   centred in whatever height is left below it. One column for both, because
+   a kanban column only gives a card ~175px of text width and a separate
+   flex slot for the ⋯ cost 30px of it. */
+.dev-card-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  align-self: stretch;
+  flex: none;
+  gap: 4px;
+}
+.dev-card-rail > svg {
+  margin-top: auto;
+  margin-bottom: auto;
+}
+.dev-card-menu-btn {
+  flex: none;
+  color: var(--text-faint);
+  /* No border: it is a corner affordance, not one of the action pills. */
+  border-color: transparent;
+}
+.dev-card-menu-btn:hover { border-color: var(--accent-light); }
+.dev-card-menu-btn svg { width: 16px; height: 16px; }
+
+/* The card's title and meta lines. Extracted from six copies of the same
+   Tailwind class list so the type scale is edited in one place. */
+.dev-card-title {
+  font-size: 13.5px;
+  line-height: 1.35;
+  color: var(--text-primary);
+  overflow-wrap: break-word;
+}
+.dev-card-headline-meta {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* ── Card overflow (⋯) menu ──────────────────────────────
    Body-mounted + position:fixed, copying .attr-popover: the kanban
@@ -2778,6 +2845,45 @@ span.gc-vote-btn-icon { cursor: default; }
 .gc-vote-inline:empty { display: none; }
 /* Live "yes / majority" tally shown ahead of the inline buttons, in a
    little boxed pill to match the buttons / "You voted X" box. */
+/* ── The composite status pill, full width ─────────────────
+   On a card the pill spans the whole content width on its own row: a
+   proportional tally reads as a progress bar there, where wedged between
+   chips at thumbnail width it read as noise. The capsule form
+   (.gc-vote-count without -block) is kept for the detail head and for the
+   group-chat / home surfaces that still call voteCountPill. */
+.dev-status-row {
+  margin-top: 7px;
+}
+.dev-status-pill-block {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 7px;
+}
+/* A tier with no proportional fill (settled, in-flight, blocked) would read
+   as an empty outlined bar at full width, so it takes a faint wash of its
+   own tone instead. The tally tiers keep the plain surface — their fill IS
+   the background, and washing it too would flatten the contrast that makes
+   the bar readable. */
+.dev-status-pill-block.gc-vote-count-neutral   { background: var(--state-neutral-bg); }
+.dev-status-pill-block.gc-vote-count-progress  { background: var(--state-progress-bg); }
+.dev-status-pill-block.gc-vote-count-attention { background: var(--state-attention-bg); }
+.dev-status-pill-block.gc-vote-count-blocked   { background: var(--state-blocked-bg); }
+.dev-status-pill-block.gc-vote-count-ok        { background: var(--state-ok-bg); }
+/* Left-aligned in the block form so the label starts at a fixed point and
+   the fill sweeps out from under it, rather than the text shifting as the
+   tally changes. */
+.dev-status-pill-block .gc-vote-count-label {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .gc-vote-count {
   position: relative;
   display: inline-block;
@@ -5303,6 +5409,37 @@ a.drawer-ver--fork:hover {
    native appearance/border, and let `items-center` flexbox handle vertical
    centring (no line-height override — that drifted the chip's height). The
    utility `bg-…` class supplies the tint, so background stays none here. */
+/* ── One geometry for every chip in a card's badge row ──────────────
+   The row used to mix three sizes: Tailwind-sized attribute chips, the 💬
+   badge, and the linked-issue pills, each computing its own height from
+   its own padding + line-height. They now share ONE box so a row of them
+   sits on a single baseline. The tint (bg + text colour) still comes from
+   the per-value utility classes; only the geometry lives here. */
+.dev-badge {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+button.dev-badge { cursor: pointer; }
+.dev-badge:disabled { cursor: default; }
+/* A long username must not take the whole badge row on its own — a kanban
+   column gives the row about 165px, and "@some-long-username" alone can
+   exceed that, pushing every sibling chip onto its own line. */
+.dev-badge-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 11ch;
+}
+
 .attr-chip {
   cursor: default;
   font: inherit;

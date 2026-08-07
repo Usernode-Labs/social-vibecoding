@@ -105,7 +105,62 @@ test('the trigger registers its descriptors under a stable key', () => {
   assert.match(html, /aria-haspopup="true"/);
   assert.match(html, /aria-label="More actions"/);
   assert.match(html, /gc-vote-btn-icon/, 'the icon pill variant, so it never outsizes a text pill');
+  assert.match(html, /dev-card-menu-btn/, 'and the corner-placement class');
   assert.equal(AppView._cardMenus['proposal:7'].length, 1);
+});
+
+test('the trigger is pinned in the top-right RAIL on every card type that has one', () => {
+  const AppView = makeAppView({ admin: true });
+  AppView._sharedById = {};
+  const cards = {
+    proposal: AppView._renderProposalCard(PR()),
+    issue: AppView._renderIssueRow(ISSUE({ htmlUrl: 'https://gh/i/5' })),
+    gov: AppView._renderGovCard(GOV()),
+    merged: AppView._renderMergedCard(PR({ status: 'merged', chat_count: 0 }), 3),
+    session: AppView._renderMySessionCard({ id: 51, session_title: 'Mine', status: 'active' }),
+  };
+  for (const [kind, html] of Object.entries(cards)) {
+    assert.match(html, /dev-card-head-main/, `${kind}: uses the shared head`);
+    // The rail is the card's LAST child — a right-edge column with the ⋯ on
+    // top and the chevron centred below.
+    assert.match(html, /dev-card-rail/, `${kind}: rail present`);
+    const rail = html.slice(html.indexOf('dev-card-rail'));
+    assert.match(rail, /dev-card-menu-btn/, `${kind}: trigger inside the rail`);
+    // Never inside the badge row (where the 💬 lives) or the action row.
+    const actions = html.match(/<div class="gc-card-actions">[\s\S]*?<\/div>/);
+    if (actions) {
+      assert.ok(!/data-card-menu/.test(actions[0]),
+        `${kind}: the trigger is in the rail, not the action row`);
+    }
+    const badgeRow = html.match(/<div class="flex flex-wrap items-center gap-x-2 gap-y-1">[\s\S]*?<\/div>\s*<\/div>/);
+    if (badgeRow) {
+      assert.ok(!/data-card-menu/.test(badgeRow[0]),
+        `${kind}: the trigger cannot collide with the 💬 badge`);
+    }
+  }
+});
+
+test('a card with no ⋯ still gets its chevron, with no empty rail around it', () => {
+  const AppView = makeAppView();
+  // A shared session demotes nothing, so _cardRailHtml returns the bare
+  // chevron rather than a one-child column.
+  const html = AppView._renderSharedSessionCard({
+    id: 71, session_title: 'Theirs', username: 'them', user_id: 9,
+  });
+  assert.equal(menuKeyOf(html), null);
+  assert.doesNotMatch(html, /dev-card-rail/);
+  assert.match(html, /M9 5l7 7-7 7/, 'the chevron survives on its own');
+});
+
+test('an applied close-issue card has no ⋯ and no action row at all', () => {
+  const AppView = makeAppView();
+  const html = AppView._renderCompletedCloseIssueCard({
+    id: 9, chat_count: 0, created_at: '2026-06-01T00:00:00Z', up_count: 2, down_count: 0,
+    payload: { issueNumber: 5, issueTitle: 'T', appliedAt: '2026-06-02T00:00:00Z', appliedBy: 'group-vote', required: 2 },
+  });
+  assert.equal(menuKeyOf(html), null);
+  assert.doesNotMatch(html, /gc-card-actions/);
+  assert.match(html, /dev-status-row/, 'but it does get the full-width pill');
 });
 
 test('a repaint under the same key OVERWRITES rather than accumulating', () => {

@@ -352,6 +352,37 @@ test('a countdown carries the ticker contract the 30s timer reads', () => {
   assert.match(html, /data-label-suffix=" · 1\/2"/, 'the ticker preserves the tally suffix');
 });
 
+test('the pill is FULL WIDTH on a card, and a capsule in the detail head', () => {
+  const AppView = makeAppView();
+  const pr = PR({ my_vote: 'yes', check_state: 'passing', yes_count: 1, votes_required: 4 });
+  // Default (the board): a block that spans the card's content width, so the
+  // proportional fill reads as a progress bar rather than a thumbnail-sized
+  // capsule wedged between chips.
+  const block = AppView.statusPillHtml(pr);
+  assert.match(block, /dev-status-pill-block/);
+  // opts.inline keeps the capsule for the detail head, which already has the
+  // full page width — a second full-width bar there is just a rule.
+  const inline = AppView.statusPillHtml(pr, { inline: true });
+  assert.doesNotMatch(inline, /dev-status-pill-block/);
+  assert.match(inline, /gc-vote-count /);
+  // Both forms keep the same fill markup, so the bar scales with the tally.
+  for (const html of [block, inline]) {
+    assert.match(html, /gc-vote-fill gc-vote-fill-yes" style="width:25%/);
+  }
+});
+
+test('the fill still stretches the whole pill at every level', () => {
+  const AppView = makeAppView();
+  // Empty, partial and full — the widths are a pure function of the tally,
+  // and full width is what makes them legible.
+  const at = (yes) => AppView.statusPillHtml(PR({
+    check_state: 'passing', my_vote: 'yes', yes_count: yes, votes_required: 4,
+  }));
+  assert.match(at(0), /gc-vote-fill-yes" style="width:0%/);
+  assert.match(at(2), /gc-vote-fill-yes" style="width:50%/);
+  assert.match(at(4), /gc-vote-fill-full gc-vote-fill-full-yes/, 'solid once past threshold');
+});
+
 test('every tone maps to a declared class, and the pill is one element', () => {
   const AppView = makeAppView();
   for (const tone of AppView.STATUS_PILL_TONES) {

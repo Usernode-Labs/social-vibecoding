@@ -2110,10 +2110,71 @@ const AppView = {
     }
     const primary = (spec.primary || []).filter(Boolean)
       .slice(0, AppView.ACTION_PRIMARY_MAX);
-    const preview = spec.preview || '';
-    const trigger = AppView._cardMenuTriggerHtml(spec.menuKey, spec.menu);
-    const inner = primary.join('') + preview + trigger;
+    const inner = primary.join('') + (spec.preview || '');
     return inner ? `<div class="gc-card-actions">${inner}</div>` : '';
+  },
+
+  // ── The shared card body ─────────────────────────────────────────────
+  //
+  // Every card type assembles the same four bands inside the shell, so they
+  // are built here once rather than copy-pasted into six renderers:
+  //
+  //   head    — the headline (title + meta) and the badge row, with the ⋯
+  //             trigger pinned TOP-RIGHT beside them. It sits in the head
+  //             rather than the action row because a card is a pointer: the
+  //             corner is where "more about this card" belongs, and it keeps
+  //             the action row to the one or two things you'd actually do.
+  //             Its own flex column means it can never collide with the 💬
+  //             badge (which lives inside the wrapping badge row) or with the
+  //             drag grip (a gutter outside the card entirely).
+  //   pill    — the composite status pill, FULL WIDTH on its own row. A
+  //             proportional tally reads far better as a bar than as a
+  //             thumbnail-sized capsule wedged between chips, and giving it
+  //             the whole width is what makes the fill legible at a glance.
+  //   actions — the ≤2 text pills plus the icon Preview.
+  //
+  // opts: { headlineHtml, badges, chatCount, uncapped, pill, inlinePill,
+  //         actions, extraHtml }
+  //
+  // The ⋯ trigger is NOT here — it lives in the card's right rail
+  // (_cardRailHtml) so it shares a column with the chevron instead of
+  // eating a third of the badge row's width.
+  //
+  // `inlinePill` is the detail head's variant: that page already has the
+  // full page width, so a second full-width bar under the header would read
+  // as a rule rather than a status. There the pill leads the badge row as a
+  // capsule instead, which is also why it is exempt from the badge cap.
+  _cardContentHtml(opts) {
+    const o = opts || {};
+    const chips = o.inlinePill
+      ? [o.inlinePill, ...(o.badges || [])]
+      : (o.badges || []);
+    const badges = AppView._cardBadgesHtml(chips, o.chatCount, {
+      uncapped: o.uncapped || !!o.inlinePill,
+    });
+    const pillRow = o.pill ? `<div class="dev-status-row">${o.pill}</div>` : '';
+    return `<div class="flex-1 min-w-0">
+          <div class="dev-card-head">
+            <div class="dev-card-head-main">
+              <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                ${o.headlineHtml || ''}
+                ${badges}
+              </div>
+            </div>
+          </div>
+          ${pillRow}
+          ${o.actions || ''}
+          ${o.extraHtml || ''}
+        </div>`;
+  },
+
+  // The headline cell — title over meta. Shared so the wrap rule
+  // (.dev-card-headline) is applied identically everywhere.
+  _cardHeadlineHtml(titleHtml, metaHtml, titleAttrs) {
+    return `<div class="dev-card-headline">
+                  <div class="dev-card-title"${titleAttrs || ''}>${titleHtml}</div>
+                  <div class="dev-card-headline-meta">${metaHtml || ''}</div>
+                </div>`;
   },
 
   // ── Card overflow (⋯) menu ───────────────────────────────────────────
@@ -2157,7 +2218,7 @@ const AppView = {
     AppView._cardMenus[mkey] = list;
     const dots = '<svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">'
       + '<circle cx="4" cy="10" r="1.6"/><circle cx="10" cy="10" r="1.6"/><circle cx="16" cy="10" r="1.6"/></svg>';
-    return `<button type="button" class="gc-vote-btn gc-vote-btn-icon" data-card-menu="${escapeAttr(mkey)}"`
+    return `<button type="button" class="gc-vote-btn gc-vote-btn-icon dev-card-menu-btn" data-card-menu="${escapeAttr(mkey)}"`
       + ` aria-haspopup="true" aria-label="More actions" title="More actions">${dots}</button>`;
   },
 
@@ -2256,6 +2317,26 @@ const AppView = {
     AppView._openCardMenu = { key, el: menu, trigger };
     const first = menu.querySelector('[data-menu-idx]:not([disabled])');
     if (first && first.focus) first.focus();
+  },
+
+  // The card's right-edge rail: the ⋯ trigger pinned to the TOP-RIGHT
+  // corner with the tap-through chevron centred below it.
+  //
+  // Both are right-edge controls, so they share ONE column rather than each
+  // taking its own. That matters more than it sounds: a kanban column gives
+  // a card about 175px of text width, and giving the ⋯ its own flex slot
+  // beside the head cost 30px of it — enough to push a single assignee chip
+  // onto its own line. Sharing the rail costs 8px instead.
+  //
+  // `chevron` is false on the topic head's static variants (you are already
+  // on the page it would navigate to).
+  _cardRailHtml(menuKey, menu, opts) {
+    const o = opts || {};
+    const trigger = AppView._cardMenuTriggerHtml(menuKey, menu);
+    const chevron = o.chevron === false ? '' : AppView.DEV_CARD_CHEVRON;
+    if (!trigger && !chevron) return '';
+    if (!trigger) return chevron;
+    return `<div class="dev-card-rail">${trigger}${chevron}</div>`;
   },
 
   // A lightweight section divider for a column that groups its cards
@@ -4796,8 +4877,8 @@ const AppView = {
 
   _sessionStatusTagHtml(s) {
     return s.busy
-      ? '<span class="inline-flex items-center gap-1 text-xs text-emerald-500 shrink-0"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>'
-      : (s.status === 'paused' ? '<span class="text-xs text-zinc-500 shrink-0">paused</span>' : '');
+      ? '<span class="dev-badge bg-emerald-500/10 text-emerald-500"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>'
+      : (s.status === 'paused' ? '<span class="dev-badge bg-zinc-500/10 text-zinc-500">paused</span>' : '');
   },
 
   // One of the viewer's own session cards. A clickable <div> (not
@@ -4874,7 +4955,7 @@ const AppView = {
         })();
       },
     });
-    const actions = AppView._cardActionsHtml({ preview, menu, menuKey: `session:${s.id}` });
+    const actions = AppView._cardActionsHtml({ preview });
 
     // A private session gets the muted/draft shell — that IS the signal
     // nobody else can see it, replacing the caption that used to sit above
@@ -4884,17 +4965,13 @@ const AppView = {
       class="${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}${mutedCls}"
       title="${s.busy ? 'AI is working — ' : ''}${label}">
       ${AppView._devCardIcon('session')}
-      <div class="flex-1 min-w-0">
-        <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <div class="dev-card-headline">
-            <div class="text-sm font-medium text-zinc-800 dark:text-zinc-200 break-words">${label}</div>
-            <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta">${subtitle}</div>
-          </div>
-          ${AppView._cardBadgesHtml([statusTag, AppView.issueChipsHtml(s.linked_issues)], null)}
-        </div>
-        ${actions}
-      </div>
-      ${AppView.DEV_CARD_CHEVRON}
+      ${AppView._cardContentHtml({
+        headlineHtml: AppView._cardHeadlineHtml(label, subtitle),
+        badges: [statusTag, AppView.issueChipsHtml(s.linked_issues)],
+        chatCount: null,
+        actions,
+      })}
+      ${AppView._cardRailHtml(`session:${s.id}`, menu)}
     </div>`;
   },
 
@@ -4917,16 +4994,12 @@ const AppView = {
     const actions = noNav ? '' : AppView._cardActionsHtml({ preview });
     return `<div${nav} class="${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" title="${label}">
       ${AppView._devCardIcon('session')}
-      <div class="flex-1 min-w-0">
-        <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <div class="dev-card-headline">
-            <div class="text-sm font-medium text-zinc-800 dark:text-zinc-200 break-words">${label}</div>
-            <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta">${owner} is working on this</div>
-          </div>
-          ${AppView._cardBadgesHtml([statusTag, AppView.issueChipsHtml(s.linked_issues)], s.chat_count)}
-        </div>
-        ${actions}
-      </div>
+      ${AppView._cardContentHtml({
+        headlineHtml: AppView._cardHeadlineHtml(label, `${owner} is working on this`),
+        badges: [statusTag, AppView.issueChipsHtml(s.linked_issues)],
+        chatCount: s.chat_count,
+        actions,
+      })}
       ${chevron}
     </div>`;
   },
@@ -5540,18 +5613,14 @@ const AppView = {
     return `<div class="dev-issue-body text-xs text-zinc-600 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 mt-2">${renderMd(md)}</div>`;
   },
 
-  // Placeholder-title chip. AI naming was unavailable when this proposal /
-  // issue was titled (Anthropic credits ran out or the API errored), so it
-  // carries a template ("<user>'s changes" / "Feedback from Usernode")
-  // instead of a description of the change. The title-heal sweeper
-  // regenerates titles automatically once the API is back
-  // (src/services/title-heal.js); the chip tells voters not to judge the
-  // change by its placeholder in the meantime, and disappears on the next
-  // panel refresh after the heal lands.
-  _autoTitleChip(kind) {
-    const what = kind === 'issue' ? 'issue' : 'proposal';
-    return `<span class="inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-500 shrink-0" title="AI naming was unavailable when this ${what} was created, so it shows a placeholder title. A descriptive title will be generated automatically — the change itself is unaffected.">Auto-title pending</span>`;
-  },
+  // The placeholder-title marker (AI naming was unavailable when this
+  // proposal / issue was titled, so it carries a template rather than a
+  // description of the change) used to be its own sky CHIP in the badge row.
+  // It is a meta-line word now — "auto-title pending", built by
+  // _proposalProvenanceWords and by the issue card's meta parts — because it
+  // cost one of the four badge slots and never changes what you'd do next.
+  // The title-heal sweeper (src/services/title-heal.js) still removes it
+  // automatically once the API is back.
 
   // One PR-proposal card: line 1 is identity + info (icon chip, title,
   // PR meta, tally pill, badges), line 2 is the action pills (vote /
@@ -5612,20 +5681,19 @@ const AppView = {
     // The pill absorbs the tally, the pulsing "Vote" badge, the merge-state
     // badge, the checks badge, the console-errors badge, the advisory chip
     // and the explicit-approval chip. Unset metadata chips don't render.
-    const badges = [
-      AppView.statusPillHtml(pr, { majority, locked: ctx.locked }),
-      ...AppView._attrChipsHtml('proposal', pr.id, pr, {
-        readonly: isMerged, omitUnset: !noNav, asArray: true,
-      }),
-    ];
+    const badges = AppView._attrChipsHtml('proposal', pr.id, pr, {
+      readonly: isMerged, omitUnset: !noNav, asArray: true,
+    });
+    // The pill is its own FULL-WIDTH row now, not one of the four badges.
+    // The detail head keeps the inline capsule — it already has a wide
+    // header and a second full-width bar there would just be a rule.
+    const pill = AppView.statusPillHtml(pr, { majority, locked: ctx.locked, inline: noNav });
 
-    // ── Actions: Yes / No + icon Preview + ⋯ ──
+    // ── Actions: Yes / No + icon Preview; ⋯ is pinned in the head ──
     const preview = AppView.cardPreviewHtml(pr, { kind: 'proposal', sessionId: pr.id });
     const primary = (isMerged || AppView.readOnly) ? [] : AppView._cardVoteButtonsHtml(pr);
     const menu = AppView._proposalMenuItems(pr, { mine, imported, isMerged, isMerging, noNav });
-    const actions = AppView._cardActionsHtml({
-      primary, preview, menu, menuKey: `proposal:${pr.id}`,
-    });
+    const actions = AppView._cardActionsHtml({ primary, preview });
 
     // #195/#211: the before/after capture tiles no longer live on the card —
     // they are a detail-view concern (see _renderTopicHead's actions block),
@@ -5637,17 +5705,17 @@ const AppView = {
     return `
       <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''} data-ref-pr="${pr.pr_number || pr.id}"${noNav ? '' : ` data-proposal-row="${pr.id}" title="Open this proposal's discussion"`}>
         ${AppView._devCardIcon(isMerged ? 'done' : (mine ? 'proposalMine' : 'proposal'), mine && !isMerged ? { title: 'This is your PR — open its session.' } : undefined)}
-        <div class="flex-1 min-w-0">
-          <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <div class="dev-card-headline">
-              <div class="text-sm text-zinc-800 dark:text-zinc-200 break-words">${titleHtml}</div>
-              <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta">${metaParts.join(' · ')}${closesPills ? ` ${closesPills}` : ''}</div>
-            </div>
-            ${AppView._cardBadgesHtml(badges, chatN, { uncapped: noNav })}
-          </div>
-          ${actions}
-        </div>
-        ${noNav ? '' : AppView.DEV_CARD_CHEVRON}
+        ${AppView._cardContentHtml({
+          headlineHtml: AppView._cardHeadlineHtml(
+            titleHtml, metaParts.join(' · ') + (closesPills ? ` ${closesPills}` : '')),
+          badges,
+          chatCount: chatN,
+          uncapped: noNav,
+          pill: noNav ? '' : pill,
+          inlinePill: noNav ? pill : '',
+          actions,
+        })}
+        ${AppView._cardRailHtml(`proposal:${pr.id}`, menu, { chevron: !noNav })}
       </div>`;
   },
 
@@ -5823,7 +5891,7 @@ const AppView = {
       .map((v) => (typeof v === 'number' ? v : Number(v)))
       .filter((n) => Number.isInteger(n) && n > 0);
     const chips = linked.map((n) =>
-      `<a href="#app/${slug}/dev/issues/${n}" class="inline-flex items-center text-[0.65rem] font-medium font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20" title="Open issue #${n}">#${n}</a>`
+      `<a href="#app/${slug}/dev/issues/${n}" class="dev-badge font-mono bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20" title="Open issue #${n}">#${n}</a>`
     ).join(' ');
     const imported = pr.source === 'imported';
     const details = [];
@@ -6576,7 +6644,7 @@ const AppView = {
         approval_policy: issue.approval_policy,
         approvals_required: issue.approvals_required,
       };
-    const statusPill = AppView.statusPillHtml(pillRow, { majority, kind: 'gov' });
+    const statusPill = AppView.statusPillHtml(pillRow, { majority, kind: 'gov', inline: noNav });
 
     // #621: read-only viewers see the pill only — no vote / admin /
     // withdraw controls. Settled rows show none for anyone.
@@ -6619,9 +6687,7 @@ const AppView = {
         act: () => AppView.withdrawGovProposal(issue.id),
       });
     }
-    const actions = AppView._cardActionsHtml({
-      primary, menu, menuKey: `gov:${issue.id}`,
-    });
+    const actions = AppView._cardActionsHtml({ primary });
 
     const govChatN = parseInt(issue.chat_count) || 0;
     // Chat-reference highlighting hook: twins carry github_issue_number;
@@ -6632,17 +6698,16 @@ const AppView = {
     return `
       <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" data-gov-row="${issue.id}"${refIssueN ? ` data-ref-issue="${refIssueN}"` : ''}${noNav ? '' : ' title="Open this proposal\'s discussion"'}>
         ${AppView._devCardIcon('gov')}
-        <div class="flex-1 min-w-0">
-          <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <div class="dev-card-headline">
-              <div class="text-sm text-zinc-800 dark:text-zinc-200 break-words">${escapeHtml(titleText)}</div>
-              <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta">${metaParts.join(' · ')}</div>
-            </div>
-            ${AppView._cardBadgesHtml([statusPill], govChatN)}
-          </div>
-          ${actions}
-        </div>
-        ${noNav ? '' : AppView.DEV_CARD_CHEVRON}
+        ${AppView._cardContentHtml({
+          headlineHtml: AppView._cardHeadlineHtml(escapeHtml(titleText), metaParts.join(' · ')),
+          badges: [],
+          chatCount: govChatN,
+          uncapped: noNav,
+          pill: noNav ? '' : statusPill,
+          inlinePill: noNav ? statusPill : '',
+          actions,
+        })}
+        ${AppView._cardRailHtml(`gov:${issue.id}`, menu, { chevron: !noNav })}
       </div>`;
   },
 
@@ -6868,7 +6933,8 @@ const AppView = {
   // a sea of gray "💬 0" pills was pure noise.
   _devChatBadge(count) {
     const n = parseInt(count) || 0;
-    return `<span class="dev-chat-badge inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded ${n ? 'bg-violet-500/10 text-violet-400' : 'hidden bg-zinc-500/10 text-zinc-500'}" data-count="${n}" title="Messages in this thread">&#128172; ${n}</span>`;
+    // .dev-badge owns the geometry; the utility classes only supply the tint.
+    return `<span class="dev-chat-badge dev-badge ${n ? 'bg-violet-500/10 text-violet-400' : 'hidden bg-zinc-500/10 text-zinc-500'}" data-count="${n}" title="Messages in this thread">&#128172; ${n}</span>`;
   },
 
   // ── Community-voted priority + assigned-person chips ─────────────────
@@ -7037,11 +7103,11 @@ const AppView = {
 
   // One chip. `summary` is { top, count, myValue } as the feed routes
   // attach it. Both the interactive <button> and the read-only (merged)
-  // <span> reuse the SAME pill recipe the sibling card badges use
-  // (text-[0.65rem] font-medium px-1.5 py-0.5 rounded bg-<c>-500/10
-  // text-<c>-500), leading with a single glyph like 💬/★ — so the chips
-  // are pixel-consistent with the other badges. The button-only `.attr-chip`
-  // CSS reset (app.css) strips UA chrome so it matches the span's height.
+  // <span> reuse the SAME geometry class every other chip in the badge row
+  // uses (.dev-badge — one height, one padding, one radius), with the
+  // utility classes supplying only the tint, so a row of them sits on a
+  // single baseline. The button-only `.attr-chip` reset strips UA chrome so
+  // the button matches the span exactly.
   _attrChipHtml(field, targetType, targetRef, summary, readonly) {
     const s = summary || { top: null, count: 0, myValue: null };
     const count = parseInt(s.count) || 0;
@@ -7064,18 +7130,20 @@ const AppView = {
       // glance "who owns this") instead of the generic person emoji, and the
       // empty state reads as an explicit "Unassigned" rather than only a CTA.
       if (s.top) {
-        label = `${AppView._assigneeAvatarHtml(s.top)}<span class="ml-1">@${escapeHtml(s.top)}</span>`;
+        label = `${AppView._assigneeAvatarHtml(s.top)}<span class="dev-badge-name">@${escapeHtml(s.top)}</span>`;
         cls = 'bg-violet-500/10 text-violet-400';
         hover = 'hover:bg-violet-500/20';
       } else {
-        label = `${AppView._assigneeAvatarPlaceholderHtml()}<span class="ml-1">Unassigned</span>`;
+        label = `${AppView._assigneeAvatarPlaceholderHtml()}<span class="dev-badge-name">Unassigned</span>`;
         cls = 'bg-zinc-500/10 text-zinc-500';
         hover = 'hover:bg-zinc-500/20';
       }
     }
     // Faint trailing count, matching how the ★ bounty pill shows its number.
-    const countHtml = count > 1 ? ` <span class="opacity-60">&middot;${count}</span>` : '';
-    const base = 'attr-chip inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded';
+    // No leading space: .dev-badge's flex gap owns the spacing now, and a
+    // literal space on top of it read as a gap-and-a-half.
+    const countHtml = count > 1 ? `<span class="opacity-60">&middot;${count}</span>` : '';
+    const base = 'attr-chip dev-badge';
     let title;
     if (field === 'priority') {
       title = 'Vote on this card\'s priority';
@@ -7776,9 +7844,7 @@ const AppView = {
         { kind: 'issue-run', sessionId: h.sessionId })
       : '';
     const menu = AppView._issueMenuItems(issue, { noNav });
-    const actions = AppView._cardActionsHtml({
-      primary: [primaryBtn], preview, menu, menuKey: `issue:${n}`,
-    });
+    const actions = AppView._cardActionsHtml({ primary: [primaryBtn], preview });
 
     // Topic-view-only admin escape hatch: the live claimer list with a
     // per-claim clear control, so a stuck claim can be removed without
@@ -7811,18 +7877,17 @@ const AppView = {
     return `
       <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" data-ref-issue="${n}"${noNav ? '' : ` data-issue-row="${n}" title="Open this issue's discussion"`}>
         ${icon}
-        <div class="flex-1 min-w-0">
-          <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <div class="dev-card-headline">
-              <div class="text-sm text-zinc-800 dark:text-zinc-200 break-words"${canEditTitle ? ` data-issue-title="${n}"` : ''} title="${escapeHtml(rowTitle)}">${escapeHtml(issue.title)}${editTitleBtn}</div>
-              <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta">${metaParts.join(' · ')}</div>
-            </div>
-            ${AppView._cardBadgesHtml(badges, issue.chatCount, { uncapped: noNav })}
-          </div>
-          ${actions}
-          ${adminClaimList}
-        </div>
-        ${noNav ? '' : AppView.DEV_CARD_CHEVRON}
+        ${AppView._cardContentHtml({
+          headlineHtml: AppView._cardHeadlineHtml(
+            `${escapeHtml(issue.title)}${editTitleBtn}`, metaParts.join(' · '),
+            `${canEditTitle ? ` data-issue-title="${n}"` : ''} title="${escapeHtml(rowTitle)}"`),
+          badges,
+          chatCount: issue.chatCount,
+          uncapped: noNav,
+          actions,
+          extraHtml: adminClaimList,
+        })}
+        ${AppView._cardRailHtml(`issue:${n}`, menu, { chevron: !noNav })}
       </div>`;
   },
 
@@ -8211,33 +8276,28 @@ const AppView = {
 
     // The settled pill (denominator is the threshold snapshotted at merge
     // time) plus the frozen metadata chips that actually carry a value.
-    const badges = [
-      AppView.statusPillHtml(pr, { majority: maj }),
-      ...AppView._attrChipsHtml('proposal', pr.id, pr, {
-        readonly: true, omitUnset: true, asArray: true,
-      }),
-    ];
+    const badges = AppView._attrChipsHtml('proposal', pr.id, pr, {
+      readonly: true, omitUnset: true, asArray: true,
+    });
+    const pill = AppView.statusPillHtml(pr, { majority: maj });
 
     // No text actions on a settled card: Undo / Kudos / Explore all live in
     // ⋯, and the read-only "You voted X" box is gone from the card face —
     // the pill's tooltip and the detail view's vote roster carry that.
     const menu = AppView._proposalMenuItems(pr, { mine, imported: pr.source === 'imported', isMerged: true });
-    const actions = AppView._cardActionsHtml({ menu, menuKey: `merged:${pr.id}` });
 
     return `
         <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-ref-pr="${pr.pr_number || pr.id}" data-proposal-row="${pr.id}" title="Open this proposal's discussion">
           ${AppView._devCardIcon('done')}
-          <div class="flex-1 min-w-0">
-            <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <div class="dev-card-headline">
-                <div class="text-sm text-zinc-800 dark:text-zinc-200 break-words" title="${escapeHtml(mergedQuoteTitle)}">${mergedLabel}</div>
-                <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta">${metaParts.join(' · ')}${closes ? ` ${closes}` : ''}</div>
-              </div>
-              ${AppView._cardBadgesHtml(badges, parseInt(pr.chat_count) || 0)}
-            </div>
-            ${actions}
-          </div>
-          ${AppView.DEV_CARD_CHEVRON}
+          ${AppView._cardContentHtml({
+            headlineHtml: AppView._cardHeadlineHtml(
+              mergedLabel, metaParts.join(' · ') + (closes ? ` ${closes}` : ''),
+              ` title="${escapeHtml(mergedQuoteTitle)}"`),
+            badges,
+            chatCount: parseInt(pr.chat_count) || 0,
+            pill,
+          })}
+          ${AppView._cardRailHtml(`merged:${pr.id}`, menu)}
         </div>`;
   },
 
@@ -8282,18 +8342,19 @@ const AppView = {
       votes_required: p.required != null ? p.required : null,
       status: 'merged',
     }, { majority: parseInt(p.required) || 1, kind: 'gov' });
+    // No actions at all on a settled close-issue row, so no ⋯ either.
     return `
         <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-gov-row="${row.id}"${issueN ? ` data-ref-issue="${issueN}"` : ''} title="Open this proposal's discussion">
           ${AppView._devCardIcon('done')}
-          <div class="flex-1 min-w-0">
-            <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <div class="dev-card-headline">
-                <div class="text-sm text-zinc-800 dark:text-zinc-200 break-words" title="${escapeHtml(titleText)}">${escapeHtml(titleText)}${who}</div>
-                <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta">Issue close · ${issueRef}${how}${date ? ` · ${date}` : ''}</div>
-              </div>
-              ${AppView._cardBadgesHtml([tallyPill], parseInt(row.chat_count) || 0)}
-            </div>
-          </div>
+          ${AppView._cardContentHtml({
+            headlineHtml: AppView._cardHeadlineHtml(
+              `${escapeHtml(titleText)}${who}`,
+              `Issue close · ${issueRef}${how}${date ? ` · ${date}` : ''}`,
+              ` title="${escapeHtml(titleText)}"`),
+            badges: [],
+            chatCount: parseInt(row.chat_count) || 0,
+            pill: tallyPill,
+          })}
           ${AppView.DEV_CARD_CHEVRON}
         </div>`;
   },
@@ -9047,7 +9108,8 @@ const AppView = {
   // it change.
   statusPillHtml(item, opts) {
     if (!item) return '';
-    const s = AppView.statusPillState(item, opts);
+    const o = opts || {};
+    const s = AppView.statusPillState(item, o);
     if (!s || !s.label) return '';
     // Fill: `true` = proportional stripes, 'full-yes'/'full-no' = solid.
     let fills = '';
@@ -9093,7 +9155,12 @@ const AppView = {
     const cd = s.countdown
       ? ` ${s.reject ? 'gc-reject-countdown' : 'gc-merge-countdown'}" data-window-ends="${s.countdown}"${s.suffix ? ` data-label-suffix="${escapeAttr(s.suffix)}"` : ''}`
       : '"';
-    return `<span class="gc-vote-count gc-vote-count-${s.tone} dev-status-pill${cd}${title}>`
+    // Full-width by default (the board): the pill spans the card's content
+    // width so the proportional fill reads as a progress bar rather than a
+    // thumbnail-sized capsule. opts.inline keeps the old capsule for any
+    // caller that wants it in a row of chips (the detail head uses it).
+    const block = o.inline ? '' : ' dev-status-pill-block';
+    return `<span class="gc-vote-count gc-vote-count-${s.tone} dev-status-pill${block}${cd}${title}>`
       + fills
       + `<span class="gc-vote-count-label">${dot}${spinner}${escapeHtml(s.label)}${advisory}${lock}</span>`
       + '</span>';
@@ -9105,11 +9172,15 @@ const AppView = {
   // outside the cap (it is a count-with-shortcut, not a status signal).
   // Priority, highest first:
   //
-  //   1 the composite status pill        (proposal / gov / merged)
-  //   2 In progress · X                  (issues)
-  //   3 priority   — only when set
-  //   4 assignee   — only when set
-  //   5 category   — only when set
+  //   1 In progress · X                  (issues)
+  //   2 priority   — only when set
+  //   3 assignee   — only when set
+  //   4 category   — only when set
+  //
+  // The composite status pill USED to lead this row and count against the
+  // cap. It is now its own full-width row below the head (see
+  // _cardContentHtml), so the cap governs the metadata chips only — which
+  // is also why four is still the right number: that is exactly the set.
   //
   // Everything that used to compete for this row — Auto-title pending,
   // Imported PR, Built with <agent>, Platform maintenance, Explicit
@@ -9738,7 +9809,7 @@ const AppView = {
     if (workers.length) tip.push(`Working in a dev session: ${workers.join(', ')}`);
     if (headlessLive) tip.push('An auto-solve run is on this issue');
     const title = tip.join(' · ') || 'This issue is being worked on';
-    const baseCls = 'inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-500 shrink-0';
+    const baseCls = 'dev-badge bg-sky-500/10 text-sky-500';
     const target = ip && ip.target;
     const targetId = target ? parseInt(target.sessionId, 10) : 0;
     if (target && targetId) {
@@ -9781,7 +9852,7 @@ const AppView = {
     }
     if (!nums.length) return '';
     nums.sort((a, b) => a - b);
-    const cls = 'inline-flex items-center text-[0.65rem] font-medium font-mono px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 shrink-0';
+    const cls = 'dev-badge font-mono bg-violet-500/10 text-violet-400 hover:bg-violet-500/20';
     return nums.map((n) =>
       `<button type="button" class="${cls}" title="Open issue #${n}'s discussion" data-issue-chip="${n}" onclick="AppView.openTopic('issue', ${n})">${prefix}#${n}</button>`
     ).join(' ');
@@ -9806,8 +9877,8 @@ const AppView = {
     // Match the PR-number link tint at each site: emerald for merged,
     // violet for open.
     const cls = merged
-      ? 'inline-flex items-center text-[0.65rem] font-medium font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20'
-      : 'inline-flex items-center text-[0.65rem] font-medium font-mono px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-400 hover:bg-violet-500/20';
+      ? 'dev-badge font-mono bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20'
+      : 'dev-badge font-mono bg-violet-500/10 text-violet-400 hover:bg-violet-500/20';
 
     return nums.map((n) => {
       const href = AppView.issueUrlFromPrUrl(pr.pr_url, n);

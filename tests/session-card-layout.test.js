@@ -116,7 +116,8 @@ test('busy own card: single-row shell, wrapping title, ⋯ instead of five pills
   const AppView = makeAppView();
   AppView._sharedById = {};
   const html = AppView._renderMySessionCard(mySess({ busy: true }));
-  assert.match(html, /break-words/, 'title still word-wraps');
+  assert.match(html, /dev-card-title/, 'title uses the shared title cell');
+  assert.match(html, /dev-card-headline/, 'and its progressive-wrap rule');
   assert.ok(html.includes(SHELL), 'uses the standard single-row card shell');
   assert.ok(!html.includes('block w-full rounded-xl'), 'the two-row session shell is gone');
   assert.ok(!html.includes('pl-12'), 'no indented second actions row');
@@ -144,7 +145,7 @@ test('shared card: single-row shell; noNav drops nav, chevron and the actions ro
   const nav = AppView._renderSharedSessionCard(s);
   assert.match(nav, /data-shared-session-row="71"/);
   assert.ok(nav.includes(SHELL), 'uses the standard single-row card shell');
-  assertOrder(nav, ['break-words', SPINNER, 'dev-chat-badge', 'gc-vote-btn-preview', CHEVRON]);
+  assertOrder(nav, ['dev-card-title', SPINNER, 'dev-chat-badge', 'gc-vote-btn-preview', CHEVRON]);
 
   const noNav = AppView._renderSharedSessionCard(s, { noNav: true });
   assert.doesNotMatch(noNav, /data-shared-session-row/, 'noNav variant has no row hook');

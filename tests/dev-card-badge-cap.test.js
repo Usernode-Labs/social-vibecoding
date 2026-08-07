@@ -200,13 +200,39 @@ test('read-only viewers get no attribute rows at all', () => {
 
 // ── The four badges that survive, in order ──────────────────────────────
 
-test('proposal: the pill leads, then priority / assignee / category', () => {
+test('proposal: the pill is its own FULL-WIDTH row, below the badge row', () => {
   const AppView = makeAppView();
   const html = AppView._renderProposalCard(PR({ ...ATTRS, my_vote: 'yes', check_state: 'passing' }));
-  const pill = html.indexOf('gc-vote-count');
-  assert.ok(pill >= 0 && pill < html.indexOf('High'), 'the composite pill leads the row');
+  // It used to lead the badge row and count against the cap. A proportional
+  // tally reads as a progress bar at full width and as noise at chip width,
+  // so it now spans the card's content on its own row underneath.
+  assert.match(html, /dev-status-row/);
+  assert.match(html, /dev-status-pill-block/);
+  assert.ok(html.indexOf('dev-status-row') > html.indexOf('Bug'),
+    'the pill row comes AFTER the badge row');
+  // The chips keep their own order within the badge row.
   assert.ok(html.indexOf('High') < html.indexOf('@maya'));
   assert.ok(html.indexOf('@maya') < html.indexOf('Bug'));
+});
+
+test('the detail head keeps the INLINE capsule, not a second full-width bar', () => {
+  const AppView = makeAppView();
+  const head = AppView._renderProposalCard(PR({ my_vote: 'yes', check_state: 'passing' }), { noNav: true });
+  assert.match(head, /gc-vote-count/, 'the pill is still there');
+  assert.doesNotMatch(head, /dev-status-pill-block/, 'as a capsule — that page is already full width');
+  assert.doesNotMatch(head, /dev-status-row/);
+});
+
+test('the pill is exempt from the cap, so four chips still fit beside it', () => {
+  const AppView = makeAppView();
+  const html = AppView._renderIssueRow({
+    number: 5, title: 'x', ...ATTRS,
+    in_progress: { users: ['maya'], mine: false, claims: [], target: null },
+  });
+  // In progress + priority + assignee + category is exactly BADGE_MAX.
+  for (const chip of ['In progress · maya', 'High', '@maya', 'Bug']) {
+    assert.ok(html.includes(chip), `${chip} survives the cap`);
+  }
 });
 
 test('issue: the In-progress chip leads, then the three chips', () => {

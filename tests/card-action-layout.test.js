@@ -145,7 +145,7 @@ test('_cardActionsHtml: legacy array shape still wraps a flat button list', () =
   assert.match(html, />B</);
 });
 
-test('_cardActionsHtml: spec shape caps primaries and appends preview + ⋯', () => {
+test('_cardActionsHtml: spec shape caps primaries and appends the preview icon', () => {
   const AppView = makeAppView(ME);
   const html = AppView._cardActionsHtml({
     primary: [
@@ -155,28 +155,44 @@ test('_cardActionsHtml: spec shape caps primaries and appends preview + ⋯', ()
       '<button class="gc-vote-btn">C</button>',
     ],
     preview: '<button class="gc-vote-btn gc-vote-btn-preview gc-vote-btn-icon">eye</button>',
-    menu: [{ label: 'Demoted', act: () => {} }],
-    menuKey: 'test:1',
   });
   assert.match(html, />A</);
   assert.match(html, />B</);
   assert.doesNotMatch(html, />C</, 'the third primary is dropped — it belongs in ⋯');
   assert.equal(primaryCount(html), AppView.ACTION_PRIMARY_MAX);
-  assert.equal(menuKeyOf(html), 'test:1');
-  assert.equal(menuLabels(AppView, html).join('|'), 'Demoted');
+  // The ⋯ is NOT in the action row any more — it is pinned in the card head.
+  assert.equal(menuKeyOf(html), null);
 });
 
-test('_cardActionsHtml: an empty menu renders no ⋯ trigger', () => {
+test('the ⋯ lives in the card\'s top-right RAIL, not in the action row', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._cardActionsHtml({
-    primary: ['<button class="gc-vote-btn">A</button>'],
-    menu: [],
-    menuKey: 'test:2',
+  const html = AppView._renderProposalCard(baseProposal());
+  // The rail is the card's last child: a right-edge column holding the ⋯ at
+  // the top and the tap-through chevron centred below it. Sharing one column
+  // rather than taking two is what keeps the badge row's width — a separate
+  // flex slot for the ⋯ cost 30px of a ~175px row.
+  assert.match(html, /dev-card-rail/);
+  const rail = html.slice(html.indexOf('dev-card-rail'));
+  assert.match(rail, /dev-card-menu-btn/, 'the trigger is inside the rail');
+  assert.match(rail, /M9 5l7 7-7 7/, 'and the chevron below it');
+  // Never in the action row.
+  const actions = html.match(/<div class="gc-card-actions">[\s\S]*?<\/div>/);
+  assert.ok(actions && !/data-card-menu/.test(actions[0]),
+    'the action row carries only the primaries and the preview icon');
+  assert.match(html, /aria-haspopup="true"/);
+  assert.match(html, /aria-label="More actions"/);
+});
+
+test('_cardContentHtml: no ⋯ when there is nothing to demote', () => {
+  const AppView = makeAppView(ME);
+  const html = AppView._cardContentHtml({
+    headlineHtml: AppView._cardHeadlineHtml('T', 'M'), badges: [], chatCount: 0, menu: [],
   });
   assert.equal(menuKeyOf(html), null);
-  // …and neither does a menu whose entries were all conditioned away.
-  const all = AppView._cardActionsHtml({ menu: [null, false, undefined], menuKey: 'test:3' });
-  assert.equal(all, '');
+  const conditioned = AppView._cardContentHtml({
+    headlineHtml: '', badges: [], chatCount: null, menu: [null, false, undefined], menuKey: 'k',
+  });
+  assert.equal(menuKeyOf(conditioned), null);
 });
 
 test('_cardActionsHtml: empty / all-falsy input renders nothing', () => {
