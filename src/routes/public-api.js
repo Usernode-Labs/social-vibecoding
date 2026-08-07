@@ -207,6 +207,40 @@ function publicApiRoutes(config) {
     }
   });
 
+  // GET /api/public/waitlist/confirm/:token — the one-click confirm link
+  // carried in the join mail. It stamps waitlist_signups.confirmed_at
+  // (idempotent) and then REDIRECTS to the stage-2 survey, so confirming
+  // the address and answering the optional questions are one motion
+  // rather than two emails.
+  //
+  // A GET that changes state is deliberate here: a mail client can only
+  // offer a link, and the token is an unguessable capability that was
+  // delivered to the address being confirmed — following it is the proof.
+  // Registered BEFORE the /more/:token routes for clarity; Express matches
+  // on the literal segment either way.
+  router.get('/api/public/waitlist/confirm/:token', waitlistJoinLimiter, async (req, res) => {
+    const token = req.params.token;
+    try {
+      const row = await waitlist.confirmSignupByMoreToken(pool, token);
+      // Unknown token: 404 rather than a redirect. A stale link that
+      // silently landed on a blank survey would look like the survey was
+      // broken.
+      if (!row) return res.status(404).json({ error: 'Unknown or expired link.' });
+      log.info('public-api', 'Waitlist email confirmed', {});
+      // Belt-and-braces before the token reaches a header: reaching this
+      // line already means it matched /^[a-f0-9]{48}$/ inside
+      // getSignupByMoreToken, but a Location built from a request value is
+      // exactly where a CRLF would matter.
+      if (!/^[a-f0-9]{48}$/.test(token)) {
+        return res.status(404).json({ error: 'Unknown or expired link.' });
+      }
+      return res.redirect(302, `/#more/${token}`);
+    } catch (err) {
+      log.error('public-api', 'waitlist confirm failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // GET /api/public/waitlist/more/:token — stage-2 state for the "Want
   // in sooner?" form: previously saved answers (so the form is
   // re-openable and prefills) plus which OAuth connects are available /

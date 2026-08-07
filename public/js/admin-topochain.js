@@ -1169,7 +1169,9 @@ const AdminTopochain = {
     }
     const rows = s.items.map((w) => `
       <tr class="border-t border-zinc-200 dark:border-zinc-800">
-        <td class="px-3 py-2 text-sm font-mono">${esc(w.email)}</td>
+        <td class="px-3 py-2 text-sm font-mono">${esc(w.email)}${w.confirmed_at
+          ? ' <span class="text-emerald-600 dark:text-emerald-400 text-xs" title="Followed the confirm link in the join email">✓ confirmed</span>'
+          : ' <span class="text-zinc-400 text-xs" title="Never followed the confirm link in the join email — this address is unproven">unconfirmed</span>'}</td>
         <td class="px-3 py-2 text-xs text-zinc-500">${esc(AdminTopochain._fmt(w.submitted_at))}</td>
         <td class="px-3 py-2 text-sm">${w.linked_username
           ? `${esc(w.linked_username)}${w.has_platform_access ? ' <span class="text-emerald-600 dark:text-emerald-400 text-xs">(has access)</span>' : ''}`
@@ -1950,12 +1952,14 @@ const AdminTopochain = {
         </div>
       </div>
       <div id="admin-topo-mail-status" class="mb-4"></div>
+      <div id="admin-topo-mail-activity" class="mb-4"></div>
       <div id="admin-topo-set-form"></div>
       <div id="admin-topo-set-table"><p class="text-sm text-zinc-500">Loading&hellip;</p></div>`;
     document.getElementById('admin-topo-set-new')?.addEventListener('click', () => AdminTopochain._openSettingForm(null));
     document.getElementById('admin-topo-set-reset')?.addEventListener('click', () => AdminTopochain._resetSettings());
     AdminTopochain._loadSettings();
     AdminTopochain._loadMailStatus();
+    AdminTopochain._loadMailActivity();
   },
 
   // Outbound-mail readiness. Read-only and deliberately value-free: the
@@ -1972,15 +1976,55 @@ const AdminTopochain = {
 
     const m = data.data || {};
     const flows = (m.affectedFlows || []).map((f) => `<li>${esc(f)}</li>`).join('');
+    // The sender address is safe to render — it is in the From header of
+    // every mail the platform sends. No key or endpoint is ever returned.
+    const sender = `
+      <div class="text-zinc-500 mt-1">
+        Sending as <code class="font-mono text-xs">${esc(m.from || '(unset)')}</code>${
+  m.usingDefaultFrom ? ' <span class="text-zinc-400">(built-in default)</span>' : ''}
+      </div>`;
+
+    // A staging preview is a clone of production data, so it can never
+    // reach a real provider — say so plainly rather than letting a tester
+    // read a card and wait for an inbox that will never fill.
+    if (m.stagingLogOnly) {
+      host.innerHTML = `
+        <div class="rounded-lg border border-sky-300 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/40 px-4 py-3 text-sm">
+          <div class="font-semibold text-sky-800 dark:text-sky-300">
+            Staging preview — email is rendered to the log, never delivered
+          </div>
+          <p class="text-sky-800/80 dark:text-sky-300/80 mt-1">
+            This preview holds a clone of production data, so it must not mail real
+            people. Login codes and links appear in the platform log
+            (<code class="font-mono text-xs">platform-mail</code>) so you can complete
+            a flow by hand.
+          </p>
+          ${sender}
+        </div>`;
+      return;
+    }
 
     if (m.configured) {
       host.innerHTML = `
         <div class="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 px-4 py-3 text-sm">
           <span class="font-semibold text-emerald-600 dark:text-emerald-400">Email is configured</span>
-          <span class="text-zinc-500"> — login codes and waitlist confirmations are being sent.</span>
+          <span class="text-zinc-500"> — login codes and waitlist confirmations are being sent
+            via <span class="font-medium">${esc(m.provider || 'unknown')}</span>.</span>
+          ${sender}
         </div>`;
       return;
     }
+
+    // Per-provider readiness, so the card says which provider needs what
+    // instead of a flat "mail is broken".
+    const providers = (m.providers || []).map((p) => `
+      <li>
+        ${esc(p.label || p.name)} —
+        ${p.configured
+    ? '<span class="text-emerald-700 dark:text-emerald-400">ready</span>'
+    : `needs ${(p.missing || []).map((k) => `<code class="font-mono text-xs">${esc(k)}</code>`).join(', ')}`}
+      </li>`).join('');
+
     host.innerHTML = `
       <div class="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-sm">
         <div class="font-semibold text-amber-800 dark:text-amber-300">
@@ -1990,10 +2034,79 @@ const AdminTopochain = {
           These flows still report success to the user but deliver nothing:
         </p>
         <ul class="list-disc ml-5 mt-1 text-amber-800/80 dark:text-amber-300/80">${flows}</ul>
+        <p class="text-amber-800/80 dark:text-amber-300/80 mt-2">Providers:</p>
+        <ul class="list-disc ml-5 mt-1 text-amber-800/80 dark:text-amber-300/80">${providers}</ul>
         <p class="text-amber-800/80 dark:text-amber-300/80 mt-2">
           Set ${(m.missing || []).map((k) => `<code class="font-mono text-xs">${esc(k)}</code>`).join(', ')}
-          in the platform&rsquo;s Platform variables panel, then redeploy.
+          in the platform&rsquo;s Platform variables panel, then redeploy. The mailbox
+          behind those credentials must also be authorised to send as
+          <code class="font-mono text-xs">${esc(m.from || '')}</code>.
         </p>
+      </div>`;
+  },
+
+  // Colour per delivery status. `sent` is the only unambiguously good
+  // outcome; `suppressed_rate_limit` is the throttle working, not a fault,
+  // so it reads as informational rather than red.
+  _mailStatusClass(status) {
+    if (status === 'sent') return 'text-emerald-700 dark:text-emerald-400';
+    if (status === 'failed') return 'text-rose-700 dark:text-rose-400';
+    if (status === 'suppressed_rate_limit') return 'text-amber-700 dark:text-amber-400';
+    if (status === 'no_transport') return 'text-amber-700 dark:text-amber-400';
+    return 'text-zinc-500';
+  },
+
+  // Recent email activity. The ONLY place a delivery failure is visible:
+  // every endpoint that triggers mail is always-200 by contract, so it
+  // cannot tell the waiting user their code never went out.
+  async _loadMailActivity() {
+    const { ok, data } = await AdminTopochain.fetchJson('/api/v4/admin/settings/mail-activity');
+    if (AdminTopochain._sub !== 'settings') return;
+    const host = document.getElementById('admin-topo-mail-activity');
+    if (!host) return;
+    const esc = AdminTopochain.esc;
+    if (!ok || !data?.success) { host.innerHTML = ''; return; }
+
+    const recent = (data.data && data.data.recent) || [];
+    const last24h = (data.data && data.data.last24h) || {};
+    const totals = Object.keys(last24h).sort()
+      .map((k) => `${esc(k)} ${last24h[k]}`).join(' · ');
+
+    const rows = recent.map((r) => `
+      <tr class="border-t border-zinc-100 dark:border-zinc-800">
+        <td class="py-1.5 pr-3 whitespace-nowrap text-zinc-500">${esc(
+    r.created_at ? String(r.created_at).replace('T', ' ').slice(0, 19) : '')}</td>
+        <td class="py-1.5 pr-3 whitespace-nowrap">${esc(r.kind || '')}</td>
+        <td class="py-1.5 pr-3">${esc(r.recipient || '')}</td>
+        <td class="py-1.5 pr-3 whitespace-nowrap text-zinc-500">${esc(r.provider || '—')}</td>
+        <td class="py-1.5 pr-3 whitespace-nowrap font-medium ${
+  AdminTopochain._mailStatusClass(r.status)}">${esc(r.status || '')}</td>
+        <td class="py-1.5 text-zinc-500">${esc(r.error || '')}</td>
+      </tr>`).join('');
+
+    host.innerHTML = `
+      <div class="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3">
+        <div class="flex flex-wrap items-baseline justify-between gap-2">
+          <h3 class="text-sm font-semibold">Recent email activity</h3>
+          <span class="text-xs text-zinc-500">${totals ? `last 24h: ${totals}` : 'nothing in the last 24h'}</span>
+        </div>
+        ${recent.length ? `
+        <div class="overflow-x-auto mt-2">
+          <table class="w-full text-xs">
+            <thead class="text-zinc-500">
+              <tr>
+                <th class="text-left font-medium pb-1 pr-3">When</th>
+                <th class="text-left font-medium pb-1 pr-3">Kind</th>
+                <th class="text-left font-medium pb-1 pr-3">Recipient</th>
+                <th class="text-left font-medium pb-1 pr-3">Provider</th>
+                <th class="text-left font-medium pb-1 pr-3">Status</th>
+                <th class="text-left font-medium pb-1">Detail</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`
+    : '<p class="text-sm text-zinc-500 mt-2">No mail has been attempted yet.</p>'}
       </div>`;
   },
 

@@ -106,6 +106,7 @@ async function migrate(config) {
   // identities) and AFTER seedStagingLeaderboardProfile (it decorates that
   // seed's 900001 / 900002 fixture accounts).
   await seedStagingProfileCustomization(pool, config);
+  await seedStagingPlatformMail(pool);
   await sweepInterruptedDbExports(pool);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
@@ -9446,9 +9447,86 @@ async function migrateAppDbsToPerRole(pool, config) {
   }
 }
 
+// Staging fixture for the outbound-mail card (Admin → Topochain →
+// Settings). `mail_deliveries` is tagged staging:private, so a staging
+// clone TRUNCATEs it and the card renders an empty "no mail yet" table —
+// which shows nothing about how the card actually looks with each status
+// in it. These five rows cover every status the renderer branches on:
+// sent, skipped_staging, suppressed_rate_limit, failed, no_transport.
+//
+// All addresses are @example.invalid (reserved by RFC 2606, can never
+// resolve) and all are visibly named staging-demo-*, so nobody mistakes
+// one for a real signup. The waitlist row exists so a tester can exercise
+// the confirm link end to end against a known token.
+async function seedStagingPlatformMail(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  // Obvious, fixed token so the testing steps can name the exact URL.
+  // 48 hex chars, matching the real more_token shape.
+  const DEMO_MORE_TOKEN = 'dead'.repeat(12);
+
+  const ROWS = [
+    // A staging preview never delivers, so this is the status a tester's
+    // OWN actions produce here.
+    { kind: 'otp', to: 'staging-demo-user@example.invalid', provider: 'log', status: 'skipped_staging', error: null },
+    { kind: 'waitlist_joined', to: 'staging-demo-waitlist@example.invalid', provider: 'log', status: 'skipped_staging', error: null },
+    // What production looks like when it works.
+    { kind: 'waitlist_released', to: 'staging-demo-released@example.invalid', provider: 'gmail', status: 'sent', error: null },
+    // The throttle firing, which is the system working, not an error.
+    { kind: 'otp', to: 'staging-demo-throttled@example.invalid', provider: 'log', status: 'suppressed_rate_limit', error: 'another otp mail went to this address 12s ago' },
+    // A provider refusal, so the card's error column is exercised.
+    { kind: 'otp', to: 'staging-demo-broken@example.invalid', provider: 'gmail', status: 'failed', error: 'Staging demo — provider rejected the sender' },
+  ];
+
+  try {
+    // Idempotent by (recipient, kind, status): re-running a boot must not
+    // grow the table. mail_deliveries has no natural unique key (it is an
+    // append-only log in real use), so the guard is an existence check
+    // scoped to the obviously-synthetic addresses.
+    for (const row of ROWS) {
+      await pool.query(
+        `INSERT INTO mail_deliveries (kind, recipient, provider, status, error)
+         SELECT $1, $2, $3, $4, $5
+          WHERE NOT EXISTS (
+            SELECT 1 FROM mail_deliveries
+             WHERE recipient = $2 AND kind = $1 AND status = $4
+          )`,
+        [row.kind, row.to, row.provider, row.status, row.error]
+      );
+    }
+
+    // An unconfirmed waitlist signup with a known token, so a tester can
+    // open /api/public/waitlist/confirm/<token> and watch confirmed_at
+    // appear in Admin → Topochain → Waitlist.
+    await pool.query(
+      `INSERT INTO waitlist_signups (email, answers, more_token)
+       VALUES ($1, NULL, $2)
+       ON CONFLICT (email) DO NOTHING`,
+      ['staging-demo-waitlist@example.invalid', DEMO_MORE_TOKEN]
+    );
+    // Never pre-confirmed: the point is that a tester makes it happen.
+    await pool.query(
+      `UPDATE waitlist_signups SET confirmed_at = NULL, more_token = $2
+        WHERE email = $1 AND released_at IS NULL AND linked_user_id IS NULL`,
+      ['staging-demo-waitlist@example.invalid', DEMO_MORE_TOKEN]
+    );
+
+    log.info('migrate', 'Staging platform-mail fixture seeded', {
+      deliveries: ROWS.length,
+    });
+  } catch (err) {
+    // Same contract as every other staging seed: a fixture failure must
+    // never stop a boot.
+    log.warn('migrate', 'Staging platform-mail seed skipped', { message: err.message });
+  }
+}
+
 // seedStagingTopochain is exported alongside migrate() solely so
 // tests/topochain-staging-seed.test.js can invoke it directly against a
 // mock pool (idempotency/param-flow behaviour, not just a source-text
 // regex) without running the entire migrate() boot sequence. It is not
 // meant to be called from anywhere else in the app.
-module.exports = { migrate, seedStagingTopochain, seedStagingProfileCustomization };
+module.exports = {
+  migrate, seedStagingTopochain, seedStagingProfileCustomization,
+  seedStagingPlatformMail,
+};
