@@ -1553,6 +1553,16 @@
       "expectSelector": "#admin-topo-mail-status"
     },
     {
+      "name": "Seasons, Events & Challenges navigates from a collapsible left menu",
+      "path": "/#admin/seasons/season-events",
+      "expectSelector": "#admin-topo-group-programme button[data-topo-sub='season-events'][aria-current='page']"
+    },
+    {
+      "name": "A deep link into the collapsed tools group opens that group",
+      "path": "/#admin/seasons/sql-console",
+      "expectSelector": "#admin-topo-group-platform:not(.hidden) button[data-topo-sub='sql-console'][aria-current='page']"
+    },
+    {
       "name": "Native kit: pull-to-refresh builds its clipped puck layer (the puck hangs below the header, never over it)",
       "path": "/usernode-native/v1/demo.html?un-platform=ios",
       "expectSelector": ".un-ptr-layer > .un-ptr-puck"

@@ -360,17 +360,24 @@ test('challenges are managed nested under a season-event detail view, not a top-
   }
 });
 
-// ─── Grouped sub-nav: four clusters on desktop, two levels on mobile ──────
+// ─── Collapsible left menu: two groups, a column at lg+, compact below ────
 
 test('SUB_GROUPS partitions SUBS exactly — every screen in one and only one group', () => {
   // SUBS stays the key→label source of truth; SUB_GROUPS only says which
-  // cluster a key belongs to. If the two ever drift, a screen either
+  // group a key belongs to. If the two ever drift, a screen either
   // vanishes from the nav entirely or appears twice, and neither failure
   // is visible anywhere except by opening the section.
-  const groupsSrc = topoJs.slice(topoJs.indexOf('  SUB_GROUPS: ['), topoJs.indexOf('  SUB_GROUPS: [') + 900);
-  const grouped = [...groupsSrc.matchAll(/subs: \[([^\]]+)\]/g)]
+  //
+  // Sliced to the NEXT top-level member rather than a fixed character
+  // count: a fixed count silently truncates the moment a comment is added
+  // inside the block, and a truncated group list still "passes" as a
+  // bijection against whatever it managed to read.
+  const groupsStart = topoJs.indexOf('  SUB_GROUPS: [');
+  const groupsSrc = topoJs.slice(groupsStart, topoJs.indexOf('  DEFAULT_COLLAPSED:', groupsStart));
+  assert.ok(groupsStart > 0 && groupsSrc.length > 0, 'SUB_GROUPS block located');
+  const grouped = [...groupsSrc.matchAll(/subs: \[([^\]]+)\]/gs)]
     .flatMap((m) => [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]));
-  const subsSrc = topoJs.slice(topoJs.indexOf('  SUBS: ['), topoJs.indexOf('  SUB_GROUPS: ['));
+  const subsSrc = topoJs.slice(topoJs.indexOf('  SUBS: ['), groupsStart);
   const subKeys = [...subsSrc.matchAll(/key: '([^']+)'/g)].map((m) => m[1]);
 
   assert.ok(subKeys.length >= 10, 'SUBS still lists every screen');
@@ -379,25 +386,96 @@ test('SUB_GROUPS partitions SUBS exactly — every screen in one and only one gr
     'SUB_GROUPS and SUBS must be a bijection');
 
   const labels = [...groupsSrc.matchAll(/label: '([^']+)'/g)].map((m) => m[1]);
-  assert.deepEqual(labels, ['Programme', 'People', 'Activity', 'Platform'],
-    'the four cluster headings the redesign specifies');
+  assert.deepEqual(labels, ['Seasons, Events & Challenges', 'Activity & platform tools'],
+    'the two group headings the left menu specifies');
+  // The section is named after its first group, and that group leads with
+  // the programme screens — an operator opening it lands on Seasons.
+  assert.equal(grouped[0], 'seasons', 'the first group leads with the default screen');
 });
 
-test('the sub-nav renders a desktop cluster strip and a two-level mobile list', () => {
-  const desktop = topoJs.slice(topoJs.indexOf('  _desktopNavHtml() {'), topoJs.indexOf('  _mobileNavHtml() {'));
-  assert.match(desktop, /hidden md:flex/, 'the cluster strip is md+ only');
-  assert.match(desktop, /aria-current="page"/, 'the active screen is announced, not just coloured');
-  assert.match(desktop, /SUB_GROUPS\.map/, 'it renders from the group definition, not a flat list');
+test('the left menu renders a lg+ column and a compact disclosure below lg', () => {
+  const sidebar = topoJs.slice(topoJs.indexOf('  _sidebarNavHtml() {'), topoJs.indexOf('  _compactNavHtml() {'));
+  assert.match(sidebar, /hidden lg:block/, 'the column is lg+ only');
+  assert.match(sidebar, /lg:sticky/, 'the column stays put while the screen scrolls');
+  assert.match(sidebar, /SUB_GROUPS\s*\n?\s*\.map/, 'it renders from the group definition, not a flat list');
 
-  const mobile = topoJs.slice(topoJs.indexOf('  _mobileNavHtml() {'), topoJs.indexOf('  _renderShell() {'));
-  assert.match(mobile, /md:hidden/, 'the two-level list is below-md only');
-  assert.match(mobile, /_navLevel/, 'level 1 (groups) and level 2 (one group\'s screens)');
-  assert.match(mobile, /admin-topo-nav-back/, 'level 2 offers a way back to the group list');
-  assert.match(mobile, /min-h-\[44px\]/, 'drill-in rows meet the touch-target floor');
-  // No matchMedia anywhere: the level only affects the md:hidden block, and
-  // the content host is hidden md:block at level 1, so the desktop layout
-  // is unaffected by mobile nav state and there is no breakpoint to sync.
+  const compact = topoJs.slice(topoJs.indexOf('  _compactNavHtml() {'), topoJs.indexOf('  _renderShell() {'));
+  assert.match(compact, /lg:hidden/, 'the disclosure is below-lg only');
+  assert.match(compact, /admin-topo-nav-toggle/, 'one summary button opens the whole menu');
+  assert.match(compact, /admin-topo-nav-panel/, '…and controls a panel by id');
+  assert.match(compact, /min-h-\[44px\]/, 'the summary button meets the touch-target floor');
+
+  const group = topoJs.slice(topoJs.indexOf('  _groupHtml(g, compact) {'), topoJs.indexOf('  _sidebarNavHtml() {'));
+  assert.match(group, /aria-expanded=/, 'the heading announces its expanded state');
+  assert.match(group, /aria-controls=/, '…and names the panel it controls');
+  assert.match(group, /aria-current="page"/, 'the active screen is announced, not just coloured');
+  assert.match(group, /min-h-\[44px\]/, 'compact rows meet the touch-target floor');
+
+  // No matchMedia anywhere: both layouts are always in the DOM and the
+  // breakpoint classes pick one, so there is nothing to re-render on
+  // resize and no breakpoint constant to keep in sync.
   assert.ok(!/matchMedia/.test(stripComments(topoJs)), 'the responsive split is CSS-only');
+});
+
+test('toggling a group mutates the menu in place — it never remounts the screen', () => {
+  // The screen beside the menu is live: the SQL console holds an editor
+  // buffer, the API tester a request body, every list a page offset. A
+  // _renderShell()/_renderSub() from the toggle handler throws all of it
+  // away for a purely cosmetic change.
+  const toggle = stripComments(
+    topoJs.slice(topoJs.indexOf('  _toggleGroup(key) {'), topoJs.indexOf('  _toggleCompact() {')));
+  assert.ok(!/_renderShell\(|_renderSub\(/.test(toggle),
+    '_toggleGroup must not re-render the shell or the screen');
+  assert.match(toggle, /classList\.toggle\('hidden'/, 'it flips the panel visibility directly');
+  assert.match(toggle, /setAttribute\('aria-expanded'/, 'and keeps the ARIA state in step');
+  assert.match(toggle, /_saveNavGroups\(\)/, 'the new state is persisted');
+
+  const compactToggle = stripComments(
+    topoJs.slice(topoJs.indexOf('  _toggleCompact() {'), topoJs.indexOf('  _syncHash() {')));
+  assert.ok(!/_renderShell\(|_renderSub\(/.test(compactToggle),
+    '_toggleCompact must not re-render the shell or the screen either');
+});
+
+test('the group owning the current screen is force-expanded by setSub, and only there', () => {
+  const setSub = stripComments(
+    topoJs.slice(topoJs.indexOf('  setSub(sub) {'), topoJs.indexOf('  _toggleGroup(key) {')));
+  assert.match(setSub, /_groupOf\(sub\)/, 'setSub looks up the group the screen belongs to');
+  assert.match(setSub, /=\s*false/, '…and clears its collapsed flag');
+  assert.match(setSub, /_navOpen = false/, 'picking a screen closes the compact menu behind you');
+
+  // If the toggle handler re-applied the rule, collapsing the group you
+  // are currently in would immediately undo itself.
+  const toggle = stripComments(
+    topoJs.slice(topoJs.indexOf('  _toggleGroup(key) {'), topoJs.indexOf('  _toggleCompact() {')));
+  assert.ok(!/_groupOf\(/.test(toggle),
+    'the toggle must not force the active group open — you could never collapse it');
+});
+
+test('every localStorage access in the menu is guarded', () => {
+  // Private-mode Safari throws on setItem, a disabled-storage policy
+  // throws on getItem, and a hand-edited value parses to anything at all.
+  // None of that may stop the section rendering.
+  const load = topoJs.slice(topoJs.indexOf('  _loadNavGroups() {'), topoJs.indexOf('  _saveNavGroups() {'));
+  const save = topoJs.slice(topoJs.indexOf('  _saveNavGroups() {'), topoJs.indexOf('  _isCollapsed(key) {'));
+  for (const [name, src] of [['_loadNavGroups', load], ['_saveNavGroups', save]]) {
+    assert.match(src, /try \{/, `${name} wraps storage in try`);
+    assert.match(src, /\} catch/, `${name} catches storage failures`);
+  }
+  assert.match(load, /JSON\.parse/, 'the stored value is JSON');
+  assert.match(load, /typeof parsed === 'object'/, 'a non-object stored value is rejected');
+  // No stray unguarded access anywhere else in the file.
+  const guarded = stripComments(topoJs).match(/localStorage/g) || [];
+  assert.equal(guarded.length, 2, 'localStorage is touched only by the two guarded helpers');
+});
+
+test('the retired top-strip nav is gone, not left behind as dead code', () => {
+  const src = stripComments(topoJs);
+  for (const symbol of [
+    '_navLevel', '_navGroup', '_showGroupList', '_openGroup',
+    'admin-topo-nav-back', '_desktopNavHtml', '_mobileNavHtml',
+  ]) {
+    assert.ok(!src.includes(symbol), `${symbol} belonged to the top strip and must be removed`);
+  }
 });
 
 // ─── No window.prompt(): both flows are inline panels now ─────────────────

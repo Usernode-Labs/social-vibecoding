@@ -23,15 +23,23 @@
 // database tables are all deliberately unchanged — this rename is
 // user-facing copy and routing only.
 //
-// LAYOUT: the eleven subsections are grouped into four labelled clusters
-// (SUB_GROUPS below). At md+ the groups render as a single strip of
-// labelled clusters; below md they become a two-level list — level 1 is
-// the four groups, level 2 is one group's subsections — mirroring
-// admin-console.js's own mobile hierarchy so the two feel like one
-// console. Every screen renders through the shared _list() renderer (a
-// real table at md+, a card stack below) and the shared
-// _skeleton()/_empty()/_error() helpers, so "loading", "nothing here"
-// and "the request failed" never look alike.
+// LAYOUT: the eleven subsections are grouped into two collapsible groups
+// (SUB_GROUPS below) shown in a LEFT MENU, not a top strip. At lg+ the
+// menu is a sticky 13rem column beside the screen; below lg it collapses
+// to a single summary button ("<group> · <screen>") that opens the same
+// two groups as an accordion, because a second permanent column would
+// starve the tables. Both layouts render from the same markup rules and
+// the visible one is chosen by breakpoint classes alone — there is no
+// matchMedia here, so nothing has to be re-rendered on resize.
+// Expanding/collapsing a group mutates the menu DOM IN PLACE and never
+// calls _renderShell()/_renderSub(): remounting would throw away the SQL
+// console's editor contents, the API tester's request body and every
+// screen's pagination. Which groups are collapsed persists in
+// localStorage (NAV_GROUPS_KEY), except that the group owning the screen
+// you are actually on is always forced open. Every screen renders
+// through the shared _list() renderer (a real table at md+, a card stack
+// below) and the shared _skeleton()/_empty()/_error() helpers, so
+// "loading", "nothing here" and "the request failed" never look alike.
 //
 // SECURITY (a previous task shipped an XSS here — non-negotiable): every
 // interpolated value goes through esc() below, including attribute values
@@ -156,6 +164,12 @@ const TEXTAREA_CLS = 'w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border bord
 // Panel and card surfaces, shared by every form, picker and detail view.
 const PANEL_CLS = 'rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm';
 
+// Which left-menu groups the operator has collapsed, as a JSON
+// groupKey -> true map. Only collapsed groups are stored, so a group
+// added later defaults to whatever DEFAULT_COLLAPSED says rather than
+// inheriting a stale preference.
+const NAV_GROUPS_KEY = 'topoNavGroups';
+
 const AdminTopochain = {
   _host: null,
   _sub: null,
@@ -176,26 +190,38 @@ const AdminTopochain = {
     { key: 'api-tester', label: 'API tester' },
   ],
 
-  // The same eleven keys, grouped for navigation. SUBS stays the flat
+  // The same eleven keys, grouped for the left menu. SUBS stays the flat
   // key -> label source of truth (routing, validation and the sub titles
   // all read it); SUB_GROUPS only decides ORDER and HEADINGS, so a new
   // subsection is added in both places and nowhere else. The two lists
   // are a bijection — tests/topochain-admin-screens.test.js checks that
   // every SUBS key appears in exactly one group and vice versa, so a key
   // can never go missing from the nav by being added to only one list.
+  //
+  // Two groups, not the previous four: the menu is now a column, and a
+  // column of four two-item headings is mostly headings. The first group
+  // is the programme and the people in it — everything you open this
+  // section FOR. The second is what people did plus the operator tooling
+  // (raw SQL, arbitrary API calls, the settings that change how the
+  // mobile app behaves) — the sharp ones, deliberately last and
+  // collapsed by default.
   SUB_GROUPS: [
-    // What the programme IS: the season, the events inside it, and the
-    // template library challenges are stamped out of.
-    { key: 'programme', label: 'Programme', subs: ['seasons', 'season-events', 'challenge-templates'] },
-    // Who is in it.
-    { key: 'people', label: 'People', subs: ['users', 'waitlist', 'onchain-accounts'] },
-    // What they did.
-    { key: 'activity', label: 'Activity', subs: ['user-activities'] },
-    // Operator tooling — deliberately last and visually separated: these
-    // are the sharp ones (raw SQL, arbitrary API calls, the settings that
-    // change how the mobile app behaves).
-    { key: 'platform', label: 'Platform', subs: ['settings', 'app-version', 'sql-console', 'api-tester'] },
+    {
+      key: 'programme',
+      label: 'Seasons, Events & Challenges',
+      subs: ['seasons', 'season-events', 'challenge-templates', 'users', 'waitlist', 'onchain-accounts'],
+    },
+    {
+      key: 'platform',
+      label: 'Activity & platform tools',
+      subs: ['user-activities', 'settings', 'app-version', 'sql-console', 'api-tester'],
+    },
   ],
+
+  // Which groups start collapsed for an operator who has never touched
+  // the menu. A stored preference wins over this; the group owning the
+  // current screen overrides both (see setSub).
+  DEFAULT_COLLAPSED: { platform: true },
 
   // ── Shared helpers ─────────────────────────────────────────────────
 
@@ -615,13 +641,52 @@ const AdminTopochain = {
 
   // ── Shell / sub-nav ──────────────────────────────────────────────────
 
-  // Mobile sub-nav level: 1 = the group list, 2 = one group's
-  // subsections plus the active screen. Only the below-md layout reads
-  // it; the md+ layout always shows every group at once, so this is
-  // pure CSS state rather than a matchMedia listener (same reason
-  // _list() renders both layouts and hides one).
-  _navLevel: 2,
-  _navGroup: null,
+  // groupKey -> true for every collapsed group. Shared by BOTH layouts:
+  // the lg+ column and the compact accordion render the same open/closed
+  // state, so collapsing a group on a phone and then rotating to a
+  // tablet width shows the same menu. Loaded lazily on first read so a
+  // test (or a private-mode browser) that never opens the menu never
+  // touches storage.
+  _navCollapsed: null,
+  // Compact layout only: is the summary button's panel open? Deliberately
+  // NOT persisted — a menu that reopens itself on every page load would
+  // cover the screen you asked for.
+  _navOpen: false,
+
+  // Storage is a preference, never a correctness dependency: a browser
+  // in private mode, with storage disabled, or with a corrupted value
+  // must still render the menu, so every access is wrapped and every
+  // failure falls back to the defaults.
+  _loadNavGroups() {
+    if (AdminTopochain._navCollapsed) return AdminTopochain._navCollapsed;
+    let stored = null;
+    try {
+      const raw = localStorage.getItem(NAV_GROUPS_KEY);
+      const parsed = raw ? JSON.parse(raw) : null;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) stored = parsed;
+    } catch { /* unreadable or unparseable — fall through to defaults */ }
+    const out = {};
+    for (const g of AdminTopochain.SUB_GROUPS) {
+      out[g.key] = stored && Object.prototype.hasOwnProperty.call(stored, g.key)
+        ? stored[g.key] === true
+        : AdminTopochain.DEFAULT_COLLAPSED[g.key] === true;
+    }
+    AdminTopochain._navCollapsed = out;
+    return out;
+  },
+
+  _saveNavGroups() {
+    try {
+      const state = AdminTopochain._navCollapsed || {};
+      const collapsed = {};
+      for (const g of AdminTopochain.SUB_GROUPS) if (state[g.key]) collapsed[g.key] = true;
+      localStorage.setItem(NAV_GROUPS_KEY, JSON.stringify(collapsed));
+    } catch { /* storage may be unavailable; the menu still works */ }
+  },
+
+  _isCollapsed(key) {
+    return AdminTopochain._loadNavGroups()[key] === true;
+  },
 
   // Entry point, called by AdminConsole._renderSection every time the
   // top-level "Seasons, Events & Challenges" nav item is (re)selected.
@@ -665,32 +730,70 @@ const AdminTopochain = {
   setSub(sub) {
     if (!AdminTopochain.SUBS.some((s) => s.key === sub)) sub = 'seasons';
     AdminTopochain._sub = sub;
-    // A deep link lands on its screen, with the mobile back control
-    // pointing at the group that screen belongs to.
-    AdminTopochain._navGroup = (AdminTopochain._groupOf(sub) || {}).key || null;
-    AdminTopochain._navLevel = 2;
+    // The group owning the screen you are on is always open — otherwise a
+    // deep link into a collapsed group (or the default-collapsed platform
+    // group) paints a menu with no visible active item and no clue where
+    // you are. Done HERE and nowhere else: the toggle handler must not
+    // re-apply it, or collapsing the group you're in would silently undo
+    // itself. The preference is rewritten so the forced state is what a
+    // reload sees, matching what's on screen.
+    const state = AdminTopochain._loadNavGroups();
+    const group = AdminTopochain._groupOf(sub);
+    if (group && state[group.key]) {
+      state[group.key] = false;
+      AdminTopochain._saveNavGroups();
+    }
+    // Picking a screen answers the question the compact menu was open to
+    // ask, so it closes behind you.
+    AdminTopochain._navOpen = false;
     AdminTopochain._syncHash();
     AdminTopochain._renderShell();
   },
 
-  // Mobile only: step back out to the list of groups. Doesn't touch the
-  // hash — the address still names the screen you'd return to, so a
-  // refresh from the group list reopens where you were.
-  _showGroupList() {
-    AdminTopochain._navLevel = 1;
-    AdminTopochain._renderShell();
+  // Expand/collapse one group. Mutates the rendered menu IN PLACE — no
+  // _renderShell(), no _renderSub() — because the screen beside the menu
+  // is live: remounting it would discard the SQL console's editor
+  // contents, the API tester's request body, an open edit form and the
+  // page you had paged to. The menu markup is small enough that flipping
+  // three attributes is also simply less work than rebuilding it.
+  _toggleGroup(key) {
+    if (!AdminTopochain.SUB_GROUPS.some((g) => g.key === key)) return;
+    const state = AdminTopochain._loadNavGroups();
+    const collapsed = !state[key];
+    state[key] = collapsed;
+    AdminTopochain._saveNavGroups();
+    const host = AdminTopochain._host;
+    if (!host) return;
+    // Both layouts are in the DOM at once (one is hidden by a breakpoint
+    // class), so every match is updated — not just the visible one.
+    // Matched by dataset rather than an interpolated selector: no
+    // CSS.escape dependency, and nothing this module builds can turn a
+    // group key into selector syntax.
+    host.querySelectorAll('[data-topo-group]').forEach((btn) => {
+      if (btn.dataset.topoGroup !== key) return;
+      btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      btn.querySelector('[data-topo-chevron]')?.classList.toggle('rotate-90', !collapsed);
+    });
+    host.querySelectorAll('[data-topo-group-panel]').forEach((panel) => {
+      if (panel.dataset.topoGroupPanel !== key) return;
+      panel.classList.toggle('hidden', collapsed);
+    });
   },
 
-  _openGroup(key) {
-    const g = AdminTopochain.SUB_GROUPS.find((x) => x.key === key);
-    if (!g) return;
-    AdminTopochain._navGroup = key;
-    AdminTopochain._navLevel = 2;
-    // Drilling into a group selects its first screen unless the current
-    // one already belongs to it (so re-opening the group you're in
-    // doesn't throw away the screen you were reading).
-    if (!g.subs.includes(AdminTopochain._sub)) AdminTopochain.setSub(g.subs[0]);
-    else AdminTopochain._renderShell();
+  // Compact layout only: open/close the whole menu behind its summary
+  // button. Same in-place rule as _toggleGroup — the screen underneath
+  // keeps its state.
+  _toggleCompact() {
+    AdminTopochain._navOpen = !AdminTopochain._navOpen;
+    const host = AdminTopochain._host;
+    if (!host) return;
+    const btn = host.querySelector('#admin-topo-nav-toggle');
+    const panel = host.querySelector('#admin-topo-nav-panel');
+    if (btn) {
+      btn.setAttribute('aria-expanded', AdminTopochain._navOpen ? 'true' : 'false');
+      btn.querySelector('[data-topo-chevron]')?.classList.toggle('rotate-90', AdminTopochain._navOpen);
+    }
+    panel?.classList.toggle('hidden', !AdminTopochain._navOpen);
   },
 
   // Keep the hash deep-linkable (#admin/seasons/<sub>) without polluting
@@ -708,92 +811,108 @@ const AdminTopochain = {
 
   // ── Sub-nav markup ─────────────────────────────────────────────────
 
-  // md+: every group at once, as labelled clusters on one strip. Eleven
-  // equal pills in a sideways-scrolling row gave no sense of which
-  // screens belong together; the headings do that work now.
-  _desktopNavHtml() {
-    const esc = AdminTopochain.esc;
-    const active = AdminTopochain._sub;
-    const clusters = AdminTopochain.SUB_GROUPS.map((g) => {
-      const pills = g.subs.map((key) => {
-        const isActive = key === active;
-        const cls = 'admin-topo-tab shrink-0 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors '
-          + (isActive
-            ? 'bg-violet-600/10 text-violet-600 dark:text-violet-400'
-            : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800');
-        return `<button type="button" data-topo-sub="${esc(key)}"${isActive ? ' aria-current="page"' : ''} class="${cls}">${esc(AdminTopochain._labelOf(key))}</button>`;
-      }).join('');
-      return `<div class="min-w-0">
-        <p class="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">${esc(g.label)}</p>
-        <div class="flex flex-wrap items-center gap-1">${pills}</div>
-      </div>`;
-    }).join('');
-    return `<nav aria-label="Seasons, events and challenges sections"
-      class="hidden md:flex flex-wrap items-start gap-x-6 gap-y-3 mb-5 pb-4 border-b border-zinc-200 dark:border-zinc-800">${clusters}</nav>`;
+  // The chevron both layouts use for "this thing opens". It points right
+  // when closed and is rotated a quarter turn to point down when open,
+  // so one glyph carries both states and the transition is a rotation
+  // rather than a swap. aria-hidden: aria-expanded on the button is what
+  // a screen reader announces.
+  _chevronHtml(open) {
+    return `<svg data-topo-chevron viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"
+      class="w-4 h-4 shrink-0 text-zinc-400 transition-transform${open ? ' rotate-90' : ''}"><path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clip-rule="evenodd"/></svg>`;
   },
 
-  // Below md: the same two-level hierarchy the console itself uses —
-  // level 1 is the four groups as full-width drill-in rows, level 2 is
-  // one group's screens with a back control. Same row idiom as
-  // admin-console.js's _mobileMenuHtml so the two navs feel like one.
-  _mobileNavHtml() {
+  // One group: a heading that is itself the expand/collapse control, and
+  // the list of its screens. `compact` only changes the sizing (a finger
+  // target below lg, a pointer-sized row in the column) — the structure,
+  // the data-* hooks and the ARIA wiring are identical, which is what
+  // lets _toggleGroup update both copies with the same code.
+  _groupHtml(g, compact) {
     const esc = AdminTopochain.esc;
-    const chevron = `<svg class="w-4 h-4 shrink-0 text-zinc-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clip-rule="evenodd"/></svg>`;
-
-    if (AdminTopochain._navLevel === 1) {
-      const rows = AdminTopochain.SUB_GROUPS.map((g) => `
-        <button type="button" data-topo-group="${esc(g.key)}"
-          class="w-full flex items-center justify-between gap-3 min-h-[44px] px-4 py-2 text-left border-b border-zinc-100 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/60">
-          <span class="min-w-0">
-            <span class="block text-sm font-medium">${esc(g.label)}</span>
-            <span class="block text-xs text-zinc-500 truncate">${esc(g.subs.map((k) => AdminTopochain._labelOf(k)).join(' · '))}</span>
-          </span>
-          ${chevron}
-        </button>`).join('');
-      return `<nav aria-label="Seasons, events and challenges sections"
-        class="md:hidden mb-4 rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-800 [&>button:last-child]:border-b-0">${rows}</nav>`;
-    }
-
-    const group = AdminTopochain.SUB_GROUPS.find((g) => g.key === AdminTopochain._navGroup)
-      || AdminTopochain._groupOf(AdminTopochain._sub)
-      || AdminTopochain.SUB_GROUPS[0];
-    const pills = group.subs.map((key) => {
+    const collapsed = AdminTopochain._isCollapsed(g.key);
+    const panelId = `admin-topo-group-${compact ? 'compact-' : ''}${g.key}`;
+    const rows = g.subs.map((key) => {
       const isActive = key === AdminTopochain._sub;
-      const cls = 'admin-topo-tab shrink-0 min-h-[36px] px-3 py-1.5 text-sm font-medium rounded-lg transition-colors '
+      const cls = 'admin-topo-tab flex w-full items-center rounded-lg px-3 text-left text-sm font-medium '
+        + 'transition-colors touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 '
+        + (compact ? 'min-h-[44px] py-2 ' : 'min-h-[36px] py-1.5 ')
         + (isActive
           ? 'bg-violet-600/10 text-violet-600 dark:text-violet-400'
           : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800');
       return `<button type="button" data-topo-sub="${esc(key)}"${isActive ? ' aria-current="page"' : ''} class="${cls}">${esc(AdminTopochain._labelOf(key))}</button>`;
     }).join('');
-    return `<nav aria-label="Seasons, events and challenges sections" class="md:hidden mb-4">
-      <button type="button" id="admin-topo-nav-back"
-        class="flex items-center gap-1 min-h-[44px] -ml-1 pr-2 text-sm font-medium text-zinc-600 dark:text-zinc-300">
-        <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M12.79 5.23a.75.75 0 0 1-.02 1.06L8.832 10l3.938 3.71a.75.75 0 1 1-1.04 1.08l-4.5-4.25a.75.75 0 0 1 0-1.08l4.5-4.25a.75.75 0 0 1 1.06.02Z" clip-rule="evenodd"/></svg>
-        ${esc(group.label)}
+    return `<div>
+      <button type="button" data-topo-group="${esc(g.key)}"
+        aria-expanded="${collapsed ? 'false' : 'true'}" aria-controls="${esc(panelId)}"
+        class="flex w-full items-center justify-between gap-2 rounded-lg px-3 text-left transition-colors touch-manipulation
+          focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 hover:bg-zinc-100 dark:hover:bg-zinc-800
+          ${compact ? 'min-h-[44px] py-2' : 'min-h-[36px] py-1.5'}">
+        <span class="min-w-0 text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${esc(g.label)}</span>
+        ${AdminTopochain._chevronHtml(!collapsed)}
       </button>
-      <div class="flex items-center gap-1 mt-1 -mx-1 px-1 overflow-x-auto">${pills}</div>
+      <div id="${esc(panelId)}" data-topo-group-panel="${esc(g.key)}"
+        class="mt-0.5 space-y-0.5${collapsed ? ' hidden' : ''}">${rows}</div>
+    </div>`;
+  },
+
+  // lg+: a sticky column beside the screen. lg rather than md because
+  // admin-console.js already spends md:w-56 on its own section list, and
+  // a third column at 768px leaves the wide tables here nothing to live
+  // in. It sticks to the top of #admin-screen (the scroll container) and
+  // scrolls internally if the two groups ever outgrow the viewport.
+  _sidebarNavHtml() {
+    const groups = AdminTopochain.SUB_GROUPS
+      .map((g) => AdminTopochain._groupHtml(g, false)).join('');
+    return `<nav aria-label="Seasons, events and challenges sections"
+      class="hidden lg:block lg:w-52 shrink-0 lg:sticky lg:top-0 lg:self-start lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto space-y-3">${groups}</nav>`;
+  },
+
+  // Below lg: one summary button naming where you are, opening the same
+  // two groups underneath it. A permanently-expanded list would push the
+  // screen a scroll-length down the page on every visit.
+  _compactNavHtml() {
+    const esc = AdminTopochain.esc;
+    const open = AdminTopochain._navOpen;
+    const group = AdminTopochain._groupOf(AdminTopochain._sub);
+    const where = (group ? `${group.label} · ` : '') + AdminTopochain._labelOf(AdminTopochain._sub);
+    const groups = AdminTopochain.SUB_GROUPS
+      .map((g) => AdminTopochain._groupHtml(g, true)).join('');
+    return `<nav aria-label="Seasons, events and challenges sections (compact)" class="lg:hidden mb-4">
+      <button type="button" id="admin-topo-nav-toggle"
+        aria-expanded="${open ? 'true' : 'false'}" aria-controls="admin-topo-nav-panel"
+        class="flex w-full items-center justify-between gap-3 min-h-[44px] px-3 py-2 rounded-lg text-left
+          border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 touch-manipulation
+          focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 hover:bg-zinc-50 dark:hover:bg-zinc-800/60">
+        <span class="min-w-0 truncate text-sm font-medium">${esc(where)}</span>
+        ${AdminTopochain._chevronHtml(open)}
+      </button>
+      <div id="admin-topo-nav-panel"
+        class="mt-2 space-y-3 rounded-lg border border-zinc-200 dark:border-zinc-800 p-2${open ? '' : ' hidden'}">${groups}</div>
     </nav>`;
   },
 
   _renderShell() {
     const host = AdminTopochain._host;
     if (!host) return;
-    // At mobile level 1 the screen itself is out of the way (you're
-    // picking a group), but md+ never has a level 1 — hence the
-    // breakpoint-scoped hide rather than dropping the node.
-    const contentCls = AdminTopochain._navLevel === 1 ? 'hidden md:block' : '';
+    // Both navs are always in the tree; the breakpoint decides which one
+    // is visible. The compact one sits above the content (it's a
+    // disclosure, not a column), so only the lg+ layout is a flex row —
+    // hence lg:flex on the wrapper rather than a plain flex.
     host.innerHTML = `
-      ${AdminTopochain._desktopNavHtml()}
-      ${AdminTopochain._mobileNavHtml()}
-      <div id="admin-topo-content" class="${contentCls}"></div>`;
+      <div class="lg:flex lg:items-start lg:gap-6">
+        ${AdminTopochain._sidebarNavHtml()}
+        <div class="min-w-0 lg:flex-1">
+          ${AdminTopochain._compactNavHtml()}
+          <div id="admin-topo-content"></div>
+        </div>
+      </div>`;
     host.querySelectorAll('[data-topo-sub]').forEach((btn) => {
       btn.addEventListener('click', () => AdminTopochain.setSub(btn.dataset.topoSub));
     });
     host.querySelectorAll('[data-topo-group]').forEach((btn) => {
-      btn.addEventListener('click', () => AdminTopochain._openGroup(btn.dataset.topoGroup));
+      btn.addEventListener('click', () => AdminTopochain._toggleGroup(btn.dataset.topoGroup));
     });
-    document.getElementById('admin-topo-nav-back')
-      ?.addEventListener('click', AdminTopochain._showGroupList);
+    host.querySelector('#admin-topo-nav-toggle')
+      ?.addEventListener('click', AdminTopochain._toggleCompact);
     AdminTopochain._renderSub();
   },
 
