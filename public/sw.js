@@ -21,7 +21,14 @@
 // /vendor/), so the CDN cache and its stale-while-revalidate strategy are
 // gone. The activate handler prunes any `usernode-*` cache not listed in
 // ALL_CACHES, which retires the old usernode-cdn-v5 entries automatically.
-const SW_VERSION = 'v6';
+// v7: the shell's markup is React-rendered now (the React + shadcn chassis
+// swap). index.html is a build artifact generated from frontend/, and it
+// loads one new local asset — /shell/assets/shell.js, the React runtime plus
+// the shell tree — which SHELL_ASSETS below has to precache like any other.
+// Bumping the version retires the v6 caches through the activate handler's
+// prune pass, so no client keeps serving a v6 index.html that references an
+// asset the v6 precache never had.
+const SW_VERSION = 'v7';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const API_CACHE = `usernode-api-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
@@ -44,6 +51,12 @@ const SHELL_ASSETS = [
   '/index.html',
   '/css/tailwind.css',
   '/css/app.css',
+  // The React chassis: the runtime plus the shell tree, hydrating the markup
+  // index.html already ships (frontend/src/main.tsx). Deliberately UNHASHED —
+  // this list is hand-maintained and content-hashed filenames would make it
+  // churn on every build; freshness comes from `no-cache, must-revalidate`
+  // (src/services/static-cache.js) plus this worker being network-first.
+  '/shell/assets/shell.js',
   // Vendored third-party libs (public/vendor/README.md records provenance).
   '/vendor/qrcode-1.0.0.min.js',
   '/vendor/marked-15.0.12.min.js',

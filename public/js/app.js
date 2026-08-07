@@ -703,6 +703,14 @@ const App = {
       if (!el) return;
       el.classList.remove('hidden');
       const reload = document.getElementById('platform-updating-reload');
+      // This used to be an inline `onclick="location.reload()"` in
+      // index.html. The markup is React-rendered now (frontend/src/Shell.tsx)
+      // and React rejects inline `onclick` attributes, so the binding moved
+      // to its owning module — here. Assignment rather than
+      // addEventListener on purpose: show() can be called repeatedly (a
+      // mid-flight amber→red flip, a session-storage restore), and assigning
+      // is idempotent where adding a listener would stack duplicates.
+      if (reload) reload.onclick = () => { try { location.reload(); } catch {} };
       const text = document.getElementById('platform-updating-text');
       const spinner = document.getElementById('platform-updating-spinner');
       if (stuck) {

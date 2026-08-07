@@ -13,7 +13,8 @@
     "test": "node --test --test-force-exit tests/*.test.js",
     "build:css": "node scripts/build-tailwind.js",
     "watch:css": "node scripts/build-tailwind.js --watch",
-    "vendor:assets": "node scripts/vendor-assets.js"
+    "vendor:assets": "node scripts/vendor-assets.js",
+    "build:shell": "node frontend/scripts/build-shell.mjs"
   },
   "devDependencies": {
     "dompurify": "3.4.4",
