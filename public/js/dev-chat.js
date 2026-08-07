@@ -678,7 +678,16 @@ const DevChat = {
     }).join('');
 
     container.querySelectorAll('.dc-active-item').forEach((el) => {
-      el.addEventListener('click', () => {
+      // #1036: the row can't BE an anchor (it wraps the Pause/Resume
+      // button and a PR link), so cmd/middle-click is intercepted
+      // instead — it opens the same address the plain click routes to.
+      const hrefFor = () => {
+        const id = parseInt(el.dataset.id, 10);
+        const slug = el.dataset.slug;
+        if (!Number.isFinite(id) || !slug) return null;
+        return `#app/${encodeURIComponent(slug)}/dev/sessions/${id}`;
+      };
+      const activate = () => {
         const id = parseInt(el.dataset.id, 10);
         const slug = el.dataset.slug;
         if (!Number.isFinite(id) || !slug) return;
@@ -695,7 +704,9 @@ const DevChat = {
         } else {
           location.hash = `#app/${slug}/dev/sessions/${id}`;
         }
-      });
+      };
+      if (window.NavLink) NavLink.wireModified(el, hrefFor, activate);
+      else el.addEventListener('click', activate);
     });
 
     // Pause / Resume primary action. Stop propagation so the row's
@@ -3480,13 +3491,24 @@ const DevChat = {
               <div class="dc-spec-preview-snippet">${DevChat.renderMarkdown(snippet, { breaks: false })}</div>
             </div>`;
         }
-        // Platform-issue draft card (human gate): the agent suggested
-        // escalating a platform-level blocker. Nothing is filed until a
-        // user taps "Report to platform"; Dismiss kills the draft. Both
-        // buttons need the DB msgId — a live-pushed draft carries it in
-        // the event, a rehydrated one gets it from the row id.
+        // Issue-report draft card (human gate). Two sources: the build
+        // agent escalating a platform-level blocker on its own initiative,
+        // and (#1037) the Mayor answering an explicit "create an issue for
+        // this" from the user. Nothing is filed until a user taps the
+        // confirm button; Dismiss kills the draft. Both buttons need the
+        // DB msgId — a live-pushed draft carries it in the event, a
+        // rehydrated one gets it from the row id.
         if (msg.platformIssueDraft) {
           const d = msg.platformIssueDraft;
+          // #1037: a draft carries `target` ('platform' | 'app'). Drafts
+          // written before that (and the staging fixture's legacy rows)
+          // have no target and are platform-destined, so the default here
+          // must stay the platform copy.
+          const isAppTarget = d.target === 'app';
+          const destLabel = isAppTarget
+            ? `Issue draft — ${d.appName || 'this app'}`
+            : 'Suggested platform report';
+          const confirmLabel = isAppTarget ? 'File issue' : 'Report to platform';
           const pTs = msg.created_at ? new Date(msg.created_at).getTime() : '';
           const pId = msg.id || msg._slug || '';
           // #699: bodies longer than the 300-char preview render as a
@@ -3514,19 +3536,19 @@ const DevChat = {
           if (d.status === 'filed' && d.issueUrl) {
             actionsHtml = `<a href="${escapeHtml(d.issueUrl)}" target="_blank" class="dc-pr-btn dc-pr-btn-preview" style="text-decoration:none">Reported — issue #${d.issueNumber}</a>`;
           } else if (d.status === 'filed') {
-            actionsHtml = '<span style="color:var(--text-muted);font-size:12px">Reported to the platform</span>';
+            actionsHtml = `<span style="color:var(--text-muted);font-size:12px">${isAppTarget ? 'Filed on this app\'s repo' : 'Reported to the platform'}</span>`;
           } else if (d.status === 'dismissed') {
             actionsHtml = '<span style="color:var(--text-muted);font-size:12px">Dismissed</span>';
           } else if (d.msgId) {
             actionsHtml = `
-              <button class="dc-pr-btn dc-pr-btn-promote" onclick="DevChat.resolvePlatformIssueDraft(${d.msgId}, 'confirm', this)">Report to platform</button>
+              <button class="dc-pr-btn dc-pr-btn-promote" onclick="DevChat.resolvePlatformIssueDraft(${d.msgId}, 'confirm', this)">${escapeHtml(confirmLabel)}</button>
               <button class="dc-pr-btn dc-pr-btn-preview" onclick="DevChat.resolvePlatformIssueDraft(${d.msgId}, 'dismiss', this)">Dismiss</button>`;
           }
           return `
             <div class="dc-status-line"><span class="dc-status-icon dc-status-check" aria-hidden="true">&#9873;</span> ${escapeHtml(msg.content || 'The AI suggests reporting this to the platform')}<span style="font-size:9px;opacity:0.4;margin-left:auto">${pId} ${pTs}</span></div>
             <div class="dc-pr-card" data-platform-issue-msg="${d.msgId || ''}">
               <div class="dc-pr-card-header">
-                <span style="color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">Suggested platform report</span>
+                <span style="color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">${escapeHtml(destLabel)}</span>
               </div>
               <div style="font-weight:600;margin:4px 0 2px">${escapeHtml(d.title || '')}</div>
               ${bodyHtml}
@@ -5238,7 +5260,7 @@ const DevChat = {
 
     content.innerHTML = `
       <div class="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
-        <button id="dc-back" class="text-zinc-400 hover:text-zinc-200 text-sm">&larr;</button>
+        <a id="dc-back" class="text-zinc-400 hover:text-zinc-200 text-sm" href="${App.currentApp ? `#app/${escapeHtml(App.currentApp)}/dev` : ''}">&larr;</a>
         <span class="text-xs text-zinc-400 truncate flex-1" title="${escapeHtml(DevChat.currentSession.branch_name || '')}">${escapeHtml(DevChat.currentSession.session_title || DevChat.currentSession.pr_title || DevChat.currentSession.branch_name || 'Session')}</span>
         ${DevChat.currentSession.pr_number
           ? `<button id="dc-pr-header-link" class="text-xs text-violet-400 hover:text-violet-300" title="This session's pull request — every change in this chat goes to PR #${DevChat.currentSession.pr_number}. Use “Start a new change” for separate work.">PR #${DevChat.currentSession.pr_number}</button>`
@@ -5379,7 +5401,12 @@ const DevChat = {
       });
     }
 
-    document.getElementById('dc-back').addEventListener('click', () => {
+    document.getElementById('dc-back').addEventListener('click', (e) => {
+      // #1036: this is a real <a href="#app/<slug>/dev"> now — a
+      // cmd/ctrl/shift/middle click opens the dev page in a new tab and
+      // must leave THIS session mounted exactly as it is.
+      if (window.NavLink && NavLink.isNativeClick(e)) return;
+      e.preventDefault();
       // #771: leaving the session unmounts the staging panel slot — close
       // a docked preview with it (fullscreen previews float independently
       // and are unaffected).

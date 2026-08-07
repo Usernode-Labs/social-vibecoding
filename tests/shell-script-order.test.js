@@ -45,9 +45,21 @@ const after = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
 
 const ENTRY_SRC = '/shell/assets/shell.js';
 
+// Modules added AFTER the chassis swap, which the frozen pre-migration
+// fixture cannot know about. They are removed from the comparison below —
+// exactly as the React entry is — so this test keeps meaning what it says:
+// the 50 pre-migration scripts still load in their original relative order.
+// A new module's own position is pinned by its own assertion instead (see
+// the nav-link.js check below); do not add one here without doing the same.
+const POST_MIGRATION_SRCS = [
+  '/js/nav-link.js', // #1036 — the real-anchor / new-tab seam
+];
+
 test('every legacy script is loaded, in exactly the pre-migration order', () => {
   const expected = scriptsOf(before).filter((s) => s.src).map((s) => s.src);
-  const actual = scriptsOf(after).filter((s) => s.src && s.src !== ENTRY_SRC).map((s) => s.src);
+  const actual = scriptsOf(after)
+    .filter((s) => s.src && s.src !== ENTRY_SRC && !POST_MIGRATION_SRCS.includes(s.src))
+    .map((s) => s.src);
 
   assert.deepEqual(
     actual, expected,
@@ -59,15 +71,16 @@ test('every legacy script is loaded, in exactly the pre-migration order', () => 
 });
 
 test('the shell still loads the expected number of legacy scripts', () => {
-  // 51 /js/** tags in total: theme.js in the head (it applies the stored
-  // theme before first paint) plus 50 at the end of <body>. The count moves
-  // whenever main adds a module — it was 48 at the chassis swap, and main's
-  // mail console and credit-options screens brought it to 50.
+  // 52 /js/** tags in total: theme.js in the head (it applies the stored
+  // theme before first paint) plus 51 at the end of <body>. The count moves
+  // whenever main adds a module — it was 48 at the chassis swap, main's
+  // mail console and credit-options screens brought it to 50, and #1036's
+  // nav-link.js (with its matching SHELL_ASSETS entry) makes 51.
   const bodyScripts = scriptsOf(after.slice(after.indexOf('</head>')))
     .filter((s) => s.src && s.src.startsWith('/js/'));
   assert.equal(
-    bodyScripts.length, 50,
-    `expected the 50 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
+    bodyScripts.length, 51,
+    `expected the 51 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
     + 'Adding or removing one is fine, but it also needs a matching SHELL_ASSETS entry in '
     + 'public/sw.js (tests/pwa-shell-wiring.test.js enforces that) — so update this count '
     + 'deliberately rather than loosening the check.',
@@ -81,6 +94,22 @@ test('the shell still loads the expected number of legacy scripts', () => {
     'theme.js is the only /js/** script that belongs in the head — it applies the stored theme '
     + 'before first paint, which is what stops a light-mode flash on a dark-mode load.',
   );
+});
+
+test('nav-link.js loads ahead of every module that consumes it', () => {
+  // Excluded from the fixture comparison above (the frozen pre-migration
+  // document predates it), so its position is pinned here instead. #1036:
+  // app.js, app-view.js, browse.js, dev-chat.js, home.js and leaderboard.js
+  // all reference window.NavLink, and it has no dependencies of its own.
+  const srcs = scriptsOf(after).filter((s) => s.src && s.src.startsWith('/js/')).map((s) => s.src);
+  const at = srcs.indexOf('/js/nav-link.js');
+  assert.notEqual(at, -1, 'the shell must load /js/nav-link.js');
+  for (const consumer of ['/js/platform-ui.js', '/js/app.js', '/js/app-view.js',
+    '/js/browse.js', '/js/dev-chat.js', '/js/home.js', '/js/leaderboard.js']) {
+    const idx = srcs.indexOf(consumer);
+    assert.ok(idx === -1 || at < idx,
+      `nav-link.js must load before ${consumer}, which reads window.NavLink`);
+  }
 });
 
 test('app.js is the last legacy script', () => {

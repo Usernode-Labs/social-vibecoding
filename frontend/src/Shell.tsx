@@ -85,7 +85,20 @@ export function Shell() {
             floor), with the 20px icon centred inside it.
         */}
         <div className="w-5 h-7 shrink-0 flex items-center">
-          <button id="back-btn" className="text-zinc-400 hover:text-zinc-100 hidden" aria-label="Home">
+          {/*
+              #1036: a real anchor, not a button, so cmd/ctrl-click,
+              middle-click and right-click → "Open in new tab" work on it.
+              Its href is maintained by App.setBackIcon(mode, href) — the
+              single choke point every screen entry already goes through
+              (App._showOnlyScreen). `inline-flex items-center` keeps the
+              20px icon centred: an <a> is `inline` where a <button> was
+              `inline-block`, and while this element is a flex item today
+              (so it is blockified anyway) the 28px header content-row floor
+              is load-bearing enough not to leave to that. No target=_blank:
+              in the native WebView that would push a plain tap out to the
+              system browser.
+          */}
+          <a id="back-btn" className="inline-flex items-center text-zinc-400 hover:text-zinc-100 hidden" aria-label="Home">
             <svg id="back-icon-home" className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
@@ -103,7 +116,7 @@ export function Shell() {
             >
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
             </svg>
-          </button>
+          </a>
         </div>
         <h1
           id="header-title"
@@ -4574,6 +4587,14 @@ export function Shell() {
           (toasts, alerts, confirms, sheets). Loaded FIRST in the bundle:
           every other platform script calls PlatformUI, never unNative.
       */}
+      {/*
+          NavLink (#1036) — the "navigation controls behave like real links"
+          seam (cmd/ctrl-click, middle-click and shift-click open a new tab).
+          No dependencies of its own and consumed by app.js, app-view.js,
+          browse.js, dev-chat.js, home.js and leaderboard.js, so it loads
+          ahead of the whole bundle.
+      */}
+      <script src="/js/nav-link.js" />
       <script src="/js/platform-ui.js" />
       <script src="/js/offline.js" />
       {/*
