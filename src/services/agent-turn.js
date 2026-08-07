@@ -1,15 +1,19 @@
 'use strict';
 
-// Per-turn agent context resolution (plan.md §11). Given a session, this
-// resolves which backend runs the turn and, for codex_openrouter, creates
-// the agent_turns ledger row and returns the per-turn OpenRouter key
-// (direct transport). Claude turns return null context (unchanged path);
-// the raw OpenRouter key is returned ONLY for the codex_openrouter turn.
+// Per-turn agent context resolution + ledger (plan.md §11, §6). Given a
+// session, this resolves which backend runs the turn and, for
+// codex_openrouter, records each physical Codex invocation as one
+// `agent_turns` attempt row (plan §6: one row per physical invocation,
+// per-attempt independent start/finish, cumulative provider totals with
+// transactional deltas). Claude turns return null context (unchanged
+// path); the raw OpenRouter key is returned ONLY for the codex_openrouter
+// turn and is injected per-exec, never into the warm container.
 
 const crypto = require('crypto');
 const platformJwt = require('./platform-jwt');
 const credentialStore = require('./credential-store');
 const registry = require('../agents/registry');
+const agentModels = require('./agent-models');
 const log = require('./logger');
 
 // Resolve the backend for a turn from the session row (pinned at session
@@ -18,18 +22,43 @@ function backendForSession(session) {
   return registry.resolveBackend(session?.agent_backend || 'claude_code');
 }
 
-// For a codex_openrouter turn, resolve the credential + create an
-// agent_turns row, returning the direct-transport execInWorker params
-// (including the per-exec OpenRouter key). Returns null for Claude turns
-// (caller uses the legacy path). Never throws on a missing/invalid
-// credential — returns a structured error the caller surfaces as an
-// actionable UI state.
-async function resolveCodexTurn({ pool, session, userId, model, reasoningEffort, resumeThreadId, config = {} }) {
+// Normalize a nonnegative integer, returning null for missing/invalid — a
+// missing usage total must remain null, never a false zero (plan 5.6, 6.6).
+function normalizeNonNegativeInteger(v) {
+  if (v == null) return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) return 0; // provider totals are nonnegative
+  return Math.round(n);
+}
+
+// Build the immutable pricing snapshot from the sanitized catalog model.
+function pricingSnapshotForModel(model) {
+  if (!model) return null;
+  const inP = model.inputPricePerMillion;
+  const outP = model.outputPricePerMillion;
+  const okIn = inP != null && Number.isFinite(inP);
+  const okOut = outP != null && Number.isFinite(outP);
+  if (!okIn || !okOut || inP < 0 || outP < 0) return { available: false };
+  return {
+    available: true,
+    model: model.id || null,
+    inputPricePerMillion: inP,
+    outputPricePerMillion: outP,
+    capturedAt: new Date().toISOString(),
+    pricingAssumption: 'cached input priced at ordinary prompt rate',
+  };
+}
+
+// ── Phase 1: resolve runtime context (no DB writes) ───────────────────
+// Called once per logical coding-tool invocation. Checks the feature flag
+// + allowlist, loads credential metadata, decrypts the key, resolves the
+// model, and fetches the current pricing snapshot. Does NOT insert a
+// ledger row (plan 6.1) — that is startCodexAttempt's job, immediately
+// before the dispatch, so a later failure to start the attempt does not
+// consume a paid provider request.
+async function resolveCodexRuntimeContext({ pool, session, userId, model, reasoningEffort, resumeThreadId, config = {} }) {
   if (registry.resolveBackend(session?.agent_backend) !== 'codex_openrouter') return null;
 
-  // Enforce availability at EXECUTION (review P3): the feature flag and
-  // beta allowlist must gate dispatch too, not just Settings save. If
-  // access was disabled after a user configured Codex, refuse the turn.
   if (!config.codexOpenrouterEnabled) return { error: 'backend_disabled' };
   if (config.openrouterBetaUserIds?.length
       && !config.openrouterBetaUserIds.includes(String(userId))) {
@@ -43,21 +72,11 @@ async function resolveCodexTurn({ pool, session, userId, model, reasoningEffort,
     return { error: 'credential_required' };
   }
 
-  // A model is REQUIRED and must be an OpenRouter model (review P3):
-  // never fall back to a Claude model (the caller's selectedModel) and
-  // pin it into OpenRouter. The session-pinned model is authoritative; if
-  // the session has none, fall back to the operator-configured
-  // OPENROUTER_DEFAULT_CODEX_MODEL. We deliberately ignore the `model`
-  // param here (it may already carry a Claude fallback). Null → error.
   const resolvedModel = session.agent_model || config.openrouterDefaultCodexModel || null;
   if (!resolvedModel) {
     return { error: 'model_required' };
   }
 
-  // The OpenRouter base URL (review #8): the operator-configured value must
-  // reach Codex, or key-validation/catalog would hit one origin while
-  // generation silently used the public default. Only accepted as an HTTPS
-  // origin unless an explicit insecure-dev escape hatch is enabled.
   const configuredBase = String(config.openrouterApiBase || 'https://openrouter.ai/api/v1')
     .replace(/\/+$/, '');
   let openrouterApiBase = configuredBase;
@@ -65,13 +84,6 @@ async function resolveCodexTurn({ pool, session, userId, model, reasoningEffort,
     return { error: 'invalid_base_url' };
   }
 
-  // Direct transport (review P0): the user's OpenRouter key is returned
-  // here and injected into the per-turn docker exec as OPENROUTER_API_KEY;
-  // it is never placed in the warm container's persistent environment or
-  // filesystem by the platform. DECRYPT + revision-check BEFORE creating
-  // the ledger row (review #9): if decryption fails we return an error with
-  // no `running` agent_turns row left behind, so the caller has nothing to
-  // leak or clean up.
   let openrouterApiKey = null;
   try {
     openrouterApiKey = await credentialStore.readSecret({
@@ -86,27 +98,24 @@ async function resolveCodexTurn({ pool, session, userId, model, reasoningEffort,
     return { error: 'credential_required' };
   }
 
-  const turnId = crypto.randomUUID();
-  // IMPORTANT (review F9): the ledger row is the authoritative state
-  // machine drives the Codex dispatch lifecycle. If creating it fails we
-  // MUST fail closed, so continuing with a missing ledger row would leave
-  // the turn never terminalized (worse: silently turn it "unbillable").
+  // Immutable pricing snapshot (plan 6.4): snapshot at attempt start so a
+  // later price change cannot rewrite the estimate of already-consumed use.
+  // If the catalog fetch fails, continue with no pricing → cost_source
+  // 'unavailable' (never a guessed price). A fetch failure is NOT a
+  // credential/model failure.
+  let pricingSnapshot = null;
   try {
-    await pool.query(
-      `INSERT INTO agent_turns
-         (id, session_id, user_id, backend, provider, requested_model,
-          reasoning_effort, credential_id, credential_revision,
-          agent_thread_id, agent_config_version, status)
-       VALUES ($1, $2, $3, 'codex_openrouter', 'openrouter', $4,
-               $5, $6, $7, $8, $9, 'running')`,
-      [turnId, session.id, userId, resolvedModel,
-       reasoningEffort || session.agent_reasoning_effort || null,
-       meta.id, meta.revision, resumeThreadId || session.agent_thread_id || null,
-       session.agent_config_version || 1],
-    );
+    const matched = await agentModels.resolveModelPricing({
+      pool, userId, credentialRevision: meta.revision,
+      apiKey: openrouterApiKey, modelId: resolvedModel, config,
+    });
+    pricingSnapshot = pricingSnapshotForModel(matched);
+    if (matched && pricingSnapshot && !pricingSnapshot.available) {
+      pricingSnapshot = { available: false, model: resolvedModel };
+    }
   } catch (err) {
-    log.error('agent-turn', 'agent_turns insert failed; refusing to start turn', { sessionId: session.id, err: err.message });
-    throw err;
+    log.warn('agent-turn', 'pricing snapshot fetch failed; cost will be unavailable', { sessionId: session.id, err: err.message });
+    pricingSnapshot = { available: false };
   }
 
   return {
@@ -115,61 +124,312 @@ async function resolveCodexTurn({ pool, session, userId, model, reasoningEffort,
     agentReasoningEffort: reasoningEffort || session.agent_reasoning_effort || null,
     openrouterApiKey,
     openrouterApiBase,
-    turnUuid: turnId,
+    resumeThreadId: resumeThreadId || session.agent_thread_id || null,
+    credentialId: meta.id,
+    credentialRevision: meta.revision,
+    agentConfigVersion: session.agent_config_version || 1,
+    pricingSnapshot: pricingSnapshot || { available: false },
   };
 }
 
-
-module.exports = { backendForSession, resolveCodexTurn, completeCodexTurn };
-
-// Mark a Codex turn's ledger row terminal when the worker dispatch
-// finishes (review P3). The single Responses stream must NOT close the
-// turn (tool loops make many); completion belongs to the worker lifecycle.
-// Call this once, when execInWorker resolves.
-async function completeCodexTurn({ pool, turnUuid, status = 'completed', errorDetail = null, errorCode = null, usage = null }) {
-  if (!turnUuid) return;
+// ── Phase 2: start one physical attempt ───────────────────────────────
+// Insert one `agent_turns` row (status 'running'), return { turnUuid }.
+// Called immediately before every worker.execInWorker(). Records the
+// logical turn id, attempt number, credential id/revision, pricing
+// snapshot, agent config version, model and reasoning effort.
+async function startCodexAttempt({ pool, session, userId, logicalTurnId, attemptNumber, model, reasoningEffort, resumeThreadId, runtimeContext }) {
+  const ctx = runtimeContext || {};
+  const turnId = crypto.randomUUID();
   try {
-    // Backend-aware settlement (review #3): Codex spend is billed to the
-    // user's OpenRouter account directly, so it must never be written into
-    // the Anthropic `llm_usage` ledger. Instead we persist the turn's own
-    // usage/cost into the agent_turns ledger with an explicit source.
-    const u = usage || {};
-    const hasUsage = Number.isFinite(u.inputTokens)
-      || Number.isFinite(u.outputTokens)
-      || (u.cost != null && Number.isFinite(u.cost));
-    let costSource = null;
-    if (hasUsage) costSource = (u.cost != null && Number.isFinite(u.cost)) ? 'openrouter_exact' : 'openrouter_estimated';
     await pool.query(
+      `INSERT INTO agent_turns
+         (id, session_id, user_id, backend, provider, requested_model,
+          reasoning_effort, credential_id, credential_revision,
+          agent_thread_id, agent_config_version, status,
+          logical_turn_id, attempt_number, metadata)
+       VALUES ($1, $2, $3, 'codex_openrouter', 'openrouter', $4,
+               $5, $6, $7, $8, $9, 'running',
+               $10, $11, $12::jsonb)`,
+      [turnId, session.id, userId, model,
+       reasoningEffort || null,
+       ctx.credentialId || null, ctx.credentialRevision || null,
+       resumeThreadId || null,
+       ctx.agentConfigVersion || session.agent_config_version || 1,
+       logicalTurnId || null, attemptNumber || 1,
+       JSON.stringify({ pricing: ctx.pricingSnapshot || null })],
+    );
+  } catch (err) {
+    log.error('agent-turn', 'startCodexAttempt insert failed; refusing to start turn', { sessionId: session.id, err: err.message });
+    throw err;
+  }
+  return { turnUuid: turnId };
+}
+
+// Lock the attempt row for transactional completion. Returns the `running`
+// row, or null if it is already terminal / missing.
+async function lockAttempt(client, turnUuid) {
+  const { rows } = await client.query(
+    `SELECT id, session_id, user_id, backend, requested_model,
+            agent_thread_id, status, metadata, logical_turn_id, attempt_number,
+            provider_input_tokens_total,
+            provider_cached_input_tokens_total,
+            provider_cache_write_input_tokens_total,
+            provider_output_tokens_total,
+            provider_reasoning_output_tokens_total
+       FROM agent_turns
+      WHERE id = $1
+      FOR UPDATE`,
+    [turnUuid]
+  );
+  return rows[0] || null;
+}
+
+// ── Phase 3: complete one attempt idempotently ────────────────────────
+// Lock the attempt, return early if already terminal, compute cumulative
+// provider totals (delta vs the latest terminal row for the same thread),
+// estimate cost from the immutable pricing snapshot, then terminalize.
+// One physical invocation = one attempt; a retry writes a NEW attempt row
+// and never overwrites the prior attempt's usage (plan 6.1, 6.5).
+async function completeCodexAttempt({ pool, turnUuid, status = 'completed', threadId = null, usageTotal = null, errorCode = null, errorDetail = null }) {
+  if (!turnUuid) return { updated: false, alreadyTerminal: true };
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const row = await lockAttempt(client, turnUuid);
+    if (!row) {
+      await client.query('COMMIT');
+      throw new Error('agent attempt not found');
+    }
+    if (row.status !== 'running') {
+      await client.query('COMMIT');
+      return { updated: false, alreadyTerminal: true };
+    }
+
+    const current = normalizeCumulativeUsage(usageTotal);
+    const previous = current && threadId
+      ? await findPreviousProviderTotal(client, row.session_id, threadId, turnUuid)
+      : null;
+    const { delta, resetDetected } = computeProviderUsageDelta(current, previous);
+    const cost = estimateRequestedModelCost(delta, row.metadata?.pricing);
+    const metadata = row.metadata || {};
+    if (previous && resetDetected) {
+      metadata.usageReset = {
+        previous: previous,
+        current: current,
+      };
+    }
+
+    await client.query(
       `UPDATE agent_turns SET
          status = $2,
          completed_at = COALESCE(completed_at, NOW()),
-         error_detail = COALESCE($3, error_detail),
-         error_code = COALESCE($4, error_code),
-         routed_model = COALESCE($6, routed_model),
-         input_tokens = input_tokens + COALESCE($7, 0),
-         cached_input_tokens = cached_input_tokens + COALESCE($8, 0),
-         output_tokens = output_tokens + COALESCE($9, 0),
-         reasoning_output_tokens = reasoning_output_tokens + COALESCE($10, 0),
-         actual_cost_usd = actual_cost_usd + COALESCE($11, 0),
-         cost_source = COALESCE($12, cost_source),
-         billed_by = 'user_openrouter'
+         error_code = COALESCE($3, error_code),
+         error_detail = COALESCE($4, error_detail),
+         agent_thread_id = COALESCE($5, agent_thread_id),
+         input_tokens = input_tokens + $6,
+         cached_input_tokens = cached_input_tokens + $7,
+         cache_write_input_tokens = cache_write_input_tokens + $8,
+         output_tokens = output_tokens + $9,
+         reasoning_output_tokens = reasoning_output_tokens + $10,
+         provider_input_tokens_total = $11,
+         provider_cached_input_tokens_total = $12,
+         provider_cache_write_input_tokens_total = $13,
+         provider_output_tokens_total = $14,
+         provider_reasoning_output_tokens_total = $15,
+         estimated_cost_usd = $16,
+         cost_source = $17,
+         usage_reset_detected = $18,
+         routed_model = COALESCE($19, routed_model),
+         billed_by = 'user_openrouter',
+         metadata = $20::jsonb
        WHERE id = $1 AND status = 'running'`,
-      [turnUuid, status, errorDetail, errorCode, null,
-       Number.isFinite(u.inputTokens) || Number.isFinite(u.outputTokens) || (u.cost != null) ? (u.model || null) : null,
-       Number.isFinite(u.inputTokens) ? u.inputTokens : null,
-       Number.isFinite(u.cachedInputTokens) ? u.cachedInputTokens : null,
-       Number.isFinite(u.outputTokens) ? u.outputTokens : null,
-       Number.isFinite(u.reasoningOutputTokens) ? u.reasoningOutputTokens : null,
-       (u.cost != null && Number.isFinite(u.cost)) ? u.cost : null,
-       costSource],
+      [turnUuid, status,
+       errorCode || null, errorDetail || null,
+       threadId || null,
+       delta.inputTokens, delta.cachedInputTokens, delta.cacheWriteInputTokens,
+       delta.outputTokens, delta.reasoningOutputTokens,
+       current?.inputTokens ?? null,
+       current?.cachedInputTokens ?? null,
+       current?.cacheWriteInputTokens ?? null,
+       current?.outputTokens ?? null,
+       current?.reasoningOutputTokens ?? null,
+       cost != null ? cost.estimatedCostUsd : null,
+       cost != null ? cost.costSource : 'unavailable',
+       resetDetected,
+       row.requested_model || null,
+       JSON.stringify(metadata)],
     );
-  } catch (err) {
-    // Do NOT swallow (review P1): a terminalization failure would leave the
-    // ledger row 'running' and produce wrong audit status / a token-backed
-    // row that lingers until JWT expiry. Rethrow so callers surface it.
-    log.error('agent-turn', 'completeCodexTurn failed', { turnUuid, err: err.message });
-    throw err;
+
+    await client.query('COMMIT');
+    return {
+      updated: true,
+      alreadyTerminal: false,
+      delta,
+      estimatedCost: cost,
+    };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
   }
 }
 
-module.exports = { backendForSession, resolveCodexTurn, completeCodexTurn };
+// Find the latest TERMINAL attempt row with the same session/thread/backend
+// and a provider total present, excluding the current attempt id. Terminal
+// rows include failed/cancelled attempts that may have consumed tokens.
+async function findPreviousProviderTotal(client, sessionId, threadId, excludeTurnUuid) {
+  const { rows } = await client.query(
+    `SELECT provider_input_tokens_total,
+            provider_cached_input_tokens_total,
+            provider_cache_write_input_tokens_total,
+            provider_output_tokens_total,
+            provider_reasoning_output_tokens_total
+       FROM agent_turns
+      WHERE session_id = $1
+        AND agent_thread_id = $2
+        AND backend = 'codex_openrouter'
+        AND id <> $3
+        AND status IN ('completed', 'failed', 'cancelled')
+        AND provider_input_tokens_total IS NOT NULL
+      ORDER BY completed_at DESC NULLS LAST, id DESC
+      LIMIT 1`,
+    [sessionId, threadId, excludeTurnUuid]
+  );
+  return rows[0] || null;
+}
+
+function normalizeCumulativeUsage(u) {
+  if (!u) return null;
+  const input = normalizeNonNegativeInteger(u.inputTokens ?? u.provider_input_tokens_total);
+  const output = normalizeNonNegativeInteger(u.outputTokens ?? u.provider_output_tokens_total);
+  if (input == null && output == null) return null;
+  return {
+    inputTokens: input,
+    cachedInputTokens: normalizeNonNegativeInteger(u.cachedInputTokens ?? u.provider_cached_input_tokens_total),
+    cacheWriteInputTokens: normalizeNonNegativeInteger(u.cacheWriteInputTokens ?? u.provider_cache_write_input_tokens_total),
+    outputTokens: output,
+    reasoningOutputTokens: normalizeNonNegativeInteger(u.reasoningOutputTokens ?? u.provider_reasoning_output_tokens_total),
+  };
+}
+
+function zeroUsage() {
+  return {
+    inputTokens: 0, cachedInputTokens: 0, cacheWriteInputTokens: 0,
+    outputTokens: 0, reasoningOutputTokens: 0,
+  };
+}
+
+// Compute per-attempt deltas from cumulative provider totals. A lower new
+// total than the previous (new provider thread / provider reset / corrupt
+// baseline) resets the baseline rather than producing a negative delta
+// (plan 6.6).
+function computeProviderUsageDelta(current, previous) {
+  if (!current) return { delta: zeroUsage(), resetDetected: false };
+  let resetDetected = false;
+  if (previous) {
+    for (const k of ['inputTokens', 'cachedInputTokens', 'cacheWriteInputTokens', 'outputTokens', 'reasoningOutputTokens']) {
+      const c = current[k] ?? 0;
+      const p = previous[k] ?? 0;
+      if (c < p) { resetDetected = true; break; }
+    }
+  }
+  const baseline = resetDetected ? zeroUsage() : previous ? {
+    inputTokens: previous.inputTokens ?? 0,
+    cachedInputTokens: previous.cachedInputTokens ?? 0,
+    cacheWriteInputTokens: previous.cacheWriteInputTokens ?? 0,
+    outputTokens: previous.outputTokens ?? 0,
+    reasoningOutputTokens: previous.reasoningOutputTokens ?? 0,
+  } : zeroUsage();
+  return {
+    delta: {
+      inputTokens: (current.inputTokens ?? 0) - baseline.inputTokens,
+      cachedInputTokens: (current.cachedInputTokens ?? 0) - baseline.cachedInputTokens,
+      cacheWriteInputTokens: (current.cacheWriteInputTokens ?? 0) - baseline.cacheWriteInputTokens,
+      outputTokens: (current.outputTokens ?? 0) - baseline.outputTokens,
+      reasoningOutputTokens: (current.reasoningOutputTokens ?? 0) - baseline.reasoningOutputTokens,
+    },
+    resetDetected,
+  };
+}
+
+// Estimate cost from per-attempt deltas. Cached input is priced at the
+// ordinary prompt rate (conservative, recorded as an assumption). Reasoning
+// output tokens are already included in outputTokens and must not be added
+// again (plan 6.7). Never label the estimate exact.
+function estimateRequestedModelCost(delta, pricing) {
+  const p = pricing;
+  if (!p || !p.available) return { costSource: 'unavailable', estimatedCostUsd: null };
+  const inP = p.inputPricePerMillion;
+  const outP = p.outputPricePerMillion;
+  if (!Number.isFinite(inP) || !Number.isFinite(outP)) {
+    return { costSource: 'unavailable', estimatedCostUsd: null };
+  }
+  const estimatedCostUsd =
+    ((delta.inputTokens ?? 0) / 1_000_000) * inP +
+    ((delta.outputTokens ?? 0) / 1_000_000) * outP;
+  return { costSource: 'requested_model_catalog_estimate', estimatedCostUsd: Math.round(estimatedCostUsd * 1e8) / 1e8 };
+}
+
+// Back-compat single-attempt path (used by the pre-Commit-5 call sites).
+// Resolves the runtime context, immediately starts attempt 1, and returns
+// the runtime context PLUS the attempt's turnUuid, mirroring the old
+// combined resolveCodexTurn contract so sessions.js/server.js keep working.
+// Commit 5 migrates these call sites to the explicit runtime/start/complete
+// phases with per-attempt retries.
+async function resolveCodexTurn(args) {
+  const ctx = await resolveCodexRuntimeContext(args);
+  if (!ctx) return null;
+  if (ctx.error) return ctx;
+  const attempt = await startCodexAttempt({
+    pool: args.pool,
+    session: args.session,
+    userId: args.userId,
+    logicalTurnId: null,
+    attemptNumber: 1,
+    model: ctx.agentModel,
+    reasoningEffort: ctx.agentReasoningEffort,
+    resumeThreadId: ctx.resumeThreadId,
+    runtimeContext: ctx,
+  });
+  return { ...ctx, turnUuid: attempt.turnUuid };
+}
+
+// Back-compat terminalization (used by pre-Commit-5 call sites). Delegates
+// to the idempotent completeCodexAttempt. No threadId is available on this
+// bridge, so the delta baseline is a fresh thread — correct for a single
+// physical dispatch per logical turn (the retry case is migrated in Commit
+// 5 with explicit thread propagation).
+async function completeCodexTurn({ pool, turnUuid, status = 'completed', errorDetail = null, errorCode = null, usage = null }) {
+  if (!turnUuid) return { updated: false, alreadyTerminal: true };
+  const u = usage || {};
+  const hasUsage = (u.inputTokens != null && Number.isFinite(u.inputTokens))
+    || (u.outputTokens != null && Number.isFinite(u.outputTokens));
+  return completeCodexAttempt({
+    pool, turnUuid, status, errorCode, errorDetail,
+    threadId: null,
+    usageTotal: hasUsage
+      ? {
+          inputTokens: u.inputTokens != null ? u.inputTokens : null,
+          cachedInputTokens: u.cachedInputTokens != null ? u.cachedInputTokens : null,
+          cacheWriteInputTokens: u.cacheWriteInputTokens != null ? u.cacheWriteInputTokens : null,
+          outputTokens: u.outputTokens != null ? u.outputTokens : null,
+          reasoningOutputTokens: u.reasoningOutputTokens != null ? u.reasoningOutputTokens : null,
+        }
+      : null,
+  });
+}
+
+module.exports = {
+  backendForSession,
+  resolveCodexRuntimeContext,
+  startCodexAttempt,
+  completeCodexAttempt,
+  completeCodexTurn,
+  resolveCodexTurn,
+  normalizeCumulativeUsage,
+  computeProviderUsageDelta,
+  estimateRequestedModelCost,
+  pricingSnapshotForModel,
+};

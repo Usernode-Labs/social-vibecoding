@@ -4816,12 +4816,22 @@ CREATE TABLE IF NOT EXISTS agent_turns (
   status                   VARCHAR(24) NOT NULL,
   input_tokens             BIGINT NOT NULL DEFAULT 0,
   cached_input_tokens      BIGINT NOT NULL DEFAULT 0,
+  cache_write_input_tokens BIGINT NOT NULL DEFAULT 0,
   output_tokens            BIGINT NOT NULL DEFAULT 0,
   reasoning_output_tokens  BIGINT NOT NULL DEFAULT 0,
   actual_cost_usd          NUMERIC(18,8) NOT NULL DEFAULT 0,
   reserved_cost_usd        NUMERIC(18,8) NOT NULL DEFAULT 0,
-  cost_source              VARCHAR(24),
+  estimated_cost_usd       NUMERIC(18,8),
+  cost_source              VARCHAR(32),
   billed_by                VARCHAR(32),
+  logical_turn_id          UUID,
+  attempt_number           INTEGER NOT NULL DEFAULT 1,
+  provider_input_tokens_total          BIGINT,
+  provider_cached_input_tokens_total   BIGINT,
+  provider_cache_write_input_tokens_total BIGINT,
+  provider_output_tokens_total         BIGINT,
+  provider_reasoning_output_tokens_total BIGINT,
+  usage_reset_detected     BOOLEAN NOT NULL DEFAULT FALSE,
   error_code               VARCHAR(64),
   error_detail             TEXT,
   started_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -4835,6 +4845,33 @@ CREATE INDEX IF NOT EXISTS idx_agent_turns_session
 -- CREATE TABLE IF NOT EXISTS is a no-op there. This ALTER covers that path.
 ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS agent_config_version INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS reserved_cost_usd NUMERIC(18,8) NOT NULL DEFAULT 0;
+-- Commit 4 (plan §6): per-attempt + cumulative provider totals.
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS logical_turn_id UUID;
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS attempt_number INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS cache_write_input_tokens BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS provider_input_tokens_total BIGINT;
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS provider_cached_input_tokens_total BIGINT;
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS provider_cache_write_input_tokens_total BIGINT;
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS provider_output_tokens_total BIGINT;
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS provider_reasoning_output_tokens_total BIGINT;
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS estimated_cost_usd NUMERIC(18,8);
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS usage_reset_detected BOOLEAN NOT NULL DEFAULT FALSE;
+-- Backfill legacy single-turn rows: a lone row IS its own logical turn.
+UPDATE agent_turns SET logical_turn_id = id WHERE logical_turn_id IS NULL AND attempt_number = 1;
+-- One physical Codex invocation = one attempt under a logical turn.
+CREATE UNIQUE INDEX IF NOT EXISTS agent_turns_logical_attempt_unique
+  ON agent_turns (logical_turn_id, attempt_number)
+  WHERE logical_turn_id IS NOT NULL;
+-- Nonnegativity (idempotent DO blocks; an already-created table will not
+-- pick up constraints from CREATE TABLE IF NOT EXISTS).
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'agent_turns_provider_totals_nonneg') THEN
+    ALTER TABLE agent_turns ADD CONSTRAINT agent_turns_provider_totals_nonneg CHECK (
+      provider_input_tokens_total IS NULL OR provider_input_tokens_total >= 0
+    );
+  END IF;
+END$$;
 
 -- Per-request proxy diagnostics. Uniqueness on (turn_id,
 -- upstream_request_id) prevents double-settlement from SSE replays.

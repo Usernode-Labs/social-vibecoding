@@ -123,6 +123,25 @@ async function listOpenRouterModels({ pool, userId, credentialRevision, apiKey, 
   return value;
 }
 
+
+
+// Resolve the sanitized pricing for a single model id (Commit 4, plan 6.4).
+// Uses the (cached) user-filtered catalog so the snapshot matches what the
+// user's key can actually use; returns null when the model is not in the
+// catalog or the catalog fetch fails (cost then becomes 'unavailable').
+async function resolveModelPricing({ pool, userId, credentialRevision, apiKey, modelId, config }) {
+  try {
+    const catalog = await listOpenRouterModels({
+      pool, userId, credentialRevision, apiKey, config, forceRefresh: false,
+    });
+    const matched = (catalog.models || []).find((m) => m.id === String(modelId));
+    return matched ? sanitizeModel(matched, matched.compatibility) : null;
+  } catch (err) {
+    log.warn('agent-models', 'single-model pricing resolution failed', { userId, err: err.message });
+    return null;
+  }
+}
+
 function invalidateUser(userId) {
   for (const k of cache.keys()) if (k.startsWith(`${userId}:`)) cache.delete(k);
 }
@@ -134,6 +153,7 @@ module.exports = {
   defaultCompatibility,
   loadCompatibilityOverlay,
   listOpenRouterModels,
+  resolveModelPricing,
   invalidateUser,
   invalidateAll,
 };
