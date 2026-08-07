@@ -816,6 +816,17 @@
       "expectSelector": "#pu-l4"
     },
     {
+      "name": "Email delivery section renders the configuration status",
+      "path": "/#admin/mail",
+      "expectSelector": "#admin-mail-status"
+    },
+    {
+      "name": "Email delivery section offers a test send and the delivery ledger",
+      "path": "/#admin/mail",
+      "expectSelector": "#admin-mail-send, #admin-mail-activity",
+      "expectText": "Recent email activity"
+    },
+    {
       "name": "Estimator accuracy section renders",
       "path": "/?demo=1#admin/estimator",
       "expectSelector": "#admin-estimator-root #admin-estimator-card"

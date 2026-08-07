@@ -9476,6 +9476,12 @@ async function seedStagingPlatformMail(pool) {
     { kind: 'otp', to: 'staging-demo-throttled@example.invalid', provider: 'log', status: 'suppressed_rate_limit', error: 'another otp mail went to this address 12s ago' },
     // A provider refusal, so the card's error column is exercised.
     { kind: 'otp', to: 'staging-demo-broken@example.invalid', provider: 'gmail', status: 'failed', error: 'Staging demo — provider rejected the sender' },
+    // Admin → Email delivery sends kind='admin_test'. Its "Test emails
+    // only" filter would show an empty table in a fresh preview
+    // otherwise, and an empty table looks identical to a broken filter.
+    { kind: 'admin_test', to: 'staging-demo-mailtest@example.invalid', provider: 'gmail', status: 'sent', error: null },
+    { kind: 'admin_test', to: 'staging-demo-mailfail@example.invalid', provider: 'gmail', status: 'failed', error: 'Staging demo — HTTP 401: invalid_grant' },
+    { kind: 'admin_test', to: 'staging-demo-mailskipped@example.invalid', provider: 'log', status: 'skipped_staging', error: null },
   ];
 
   try {

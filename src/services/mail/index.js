@@ -70,20 +70,27 @@ function maxPerHour(config) {
 
 // ─── mail_deliveries bookkeeping ────────────────────────────────────────
 
+// Returns the new row's id, or null when there was no pool or the insert
+// failed. send() ignores the return value entirely — the id exists so
+// sendTest() can point the admin console at the exact ledger row its
+// attempt produced.
 async function record(pool, { kind, to, provider, status, error }) {
-  if (!pool) return;
+  if (!pool) return null;
   try {
-    await pool.query(
+    const { rows } = await pool.query(
       `INSERT INTO mail_deliveries (kind, recipient, provider, status, error)
-       VALUES ($1, $2, $3, $4, $5)`,
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id`,
       [String(kind || '').slice(0, 64), String(to || '').slice(0, 255),
         provider ? String(provider).slice(0, 32) : null,
         String(status).slice(0, 24),
         error ? String(error).slice(0, 500) : null]
     );
+    return (rows[0] && rows[0].id) || null;
   } catch (err) {
     // Bookkeeping must never be able to fail a send.
     log.error('platform-mail', 'Could not record a mail delivery', { message: err.message });
+    return null;
   }
 }
 
@@ -217,6 +224,150 @@ async function send(config, { kind, to, ...payload } = {}) {
   }
 }
 
+// ─── the diagnostic send (admin console only) ───────────────────────────
+
+// sendTest(config, { to }) → a structured outcome, always.
+//
+// This is a SIBLING of send(), never a flag on it. send()'s always-200,
+// never-throw, tells-you-nothing contract is load-bearing for the
+// unauthenticated flows (SPEC 1667) and must stay exactly as it is. But
+// an admin who just pasted a Gmail refresh token needs the opposite: they
+// need to be told precisely what happened. The two audiences are
+// irreconcilable in one function, so they are two functions that share
+// every part underneath — same templates, same throttle, same transport,
+// same ledger row.
+//
+// It still never throws. A caller gets an outcome object with a `status`
+// drawn from the same vocabulary mail_deliveries uses:
+//   sent | skipped_staging | failed | no_transport | suppressed_rate_limit
+// plus `invalid_recipient` for a request that never reached a provider.
+async function sendTest(config, { to } = {}) {
+  const startedAt = Date.now();
+  const outcome = {
+    status: 'failed',
+    provider: null,
+    from: null,
+    requestedProvider: null,
+    stagingLogOnly: stagingLogOnly(config),
+    error: null,
+    providerMessageId: null,
+    deliveryId: null,
+    reference: null,
+    durationMs: 0,
+    message: null,
+    missing: [],
+  };
+
+  try {
+    // Presence summary for the panel: which provider was ASKED for and
+    // which keys are absent. describe() reads env only — it never returns
+    // a value, so nothing here can carry a credential.
+    try {
+      const described = select.describe(process.env);
+      outcome.requestedProvider = described.requestedProvider || null;
+      outcome.missing = Array.isArray(described.missing) ? described.missing : [];
+      outcome.from = described.from || null;
+    } catch (err) {
+      log.warn('platform-mail', 'Could not describe the mail configuration for a test send',
+        { message: err.message });
+    }
+
+    if (!to) {
+      outcome.status = 'invalid_recipient';
+      outcome.error = 'No recipient address was given';
+      return outcome;
+    }
+
+    const transport = (config && (config.mailTransport || config.topochainMailTransport)) || null;
+    const provider = (transport && transport.provider)
+      || (config && config.mailProvider)
+      || (transport ? 'injected' : null);
+    outcome.provider = provider;
+    if (transport && transport.from) outcome.from = transport.from;
+
+    const pool = poolFor(config);
+
+    // A short, non-secret handle that appears in the email body, in the
+    // log line and in the outcome, so an operator can tie the message
+    // that landed in their inbox to the attempt that produced it.
+    const reference = require('crypto').randomBytes(4).toString('hex');
+    outcome.reference = reference;
+    const payload = {
+      provider: provider || 'none',
+      from: outcome.from || '(unset)',
+      sentAt: new Date().toISOString(),
+      reference,
+    };
+
+    // Render before anything else, so the console can show the exact copy
+    // that was (or would have been) delivered even on the failure paths.
+    const message = buildMessage('admin_test', payload);
+    outcome.message = { subject: message.subject, text: message.text };
+
+    if (!transport) {
+      outcome.status = 'no_transport';
+      outcome.error = outcome.missing.length
+        ? `No mail transport is configured (missing: ${outcome.missing.join(', ')})`
+        : 'No mail transport is configured';
+      outcome.deliveryId = await record(pool, {
+        kind: 'admin_test', to, provider: null, status: 'no_transport',
+      });
+      return outcome;
+    }
+
+    const { recipientHistory, globalCount } = await readHistory(pool, { kind: 'admin_test', to });
+    const decision = rateLimit.decide({
+      kind: 'admin_test',
+      now: Date.now(),
+      recipientHistory,
+      globalCount,
+      maxPerHour: maxPerHour(config),
+    });
+    if (!decision.allowed) {
+      outcome.status = 'suppressed_rate_limit';
+      outcome.error = decision.reason;
+      outcome.retryAfterMs = decision.retryAfterMs;
+      outcome.deliveryId = await record(pool, {
+        kind: 'admin_test', to, provider, status: 'suppressed_rate_limit', error: decision.reason,
+      });
+      return outcome;
+    }
+
+    try {
+      const detail = await transport.send({ to, kind: 'admin_test', ...payload });
+      if (detail && detail.providerMessageId) {
+        outcome.providerMessageId = String(detail.providerMessageId).slice(0, 128);
+      }
+      outcome.status = stagingLogOnly(config) ? 'skipped_staging' : 'sent';
+      outcome.deliveryId = await record(pool, {
+        kind: 'admin_test', to, provider, status: outcome.status,
+      });
+    } catch (err) {
+      outcome.status = 'failed';
+      // The provider's own bounded complaint. Transports already slice
+      // their error bodies; slice again so a surprising one can't fill a
+      // response.
+      outcome.error = String(err.message || err).slice(0, 500);
+      outcome.deliveryId = await record(pool, {
+        kind: 'admin_test', to, provider, status: 'failed', error: outcome.error,
+      });
+      log.error('platform-mail', 'Admin test mail failed to send',
+        { provider, reference, message: outcome.error });
+    }
+    return outcome;
+  } catch (err) {
+    // Same outermost net as send(): a diagnostic that crashes is worse
+    // than one that reports its own crash.
+    outcome.status = 'failed';
+    outcome.error = String(err.message || err).slice(0, 500);
+    log.error('platform-mail', 'Admin test mail failed before reaching a provider',
+      { message: outcome.error });
+    return outcome;
+  } finally {
+    outcome.durationMs = Date.now() - startedAt;
+  }
+}
+
 // ─── the named senders (the caller-facing API) ──────────────────────────
 
 async function sendOtpMail(config, email, code) {
@@ -250,6 +401,7 @@ async function sendWaitlistReleaseMail(config, email, { hasAccount = false } = {
 
 module.exports = {
   send,
+  sendTest,
   sendOtpMail,
   sendWaitlistJoinMail,
   sendWaitlistReleaseMail,

@@ -32,6 +32,14 @@ const RULES = {
   // Released once per signup by construction (newly_released), so this is
   // a backstop against a stuck admin button, not a normal path.
   waitlist_released: { minGapMs: 60 * 1000, perWindow: 3, windowMs: DAY_MS },
+  // Admin-initiated test sends. An operator debugging a provider will
+  // legitimately retry after changing a credential, so the gap is short —
+  // but this is the one kind an authenticated admin can aim at any
+  // address they like, so the hourly ceiling is what keeps a console
+  // button from becoming a mail cannon. The express limiter in front of
+  // the route bounds it per-IP; this bounds it per-recipient regardless
+  // of which admin or which IP asked.
+  admin_test: { minGapMs: 30 * 1000, perWindow: 10, windowMs: HOUR_MS },
 };
 
 const DEFAULT_MAX_PER_HOUR = 300;

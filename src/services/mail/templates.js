@@ -103,10 +103,48 @@ function waitlistReleased(payload) {
   };
 }
 
+// The admin console's "send a test email" message.
+//
+// Deliberately carries NOTHING sensitive: no code, no token, no link a
+// recipient could act on. Its whole job is to be identifiable in an
+// inbox and traceable back to the attempt that produced it, so it names
+// the provider, the sender, the timestamp and the short reference id
+// that the console's activity table also shows.
+function adminTest(payload) {
+  const provider = payload.provider || 'unknown';
+  const from = payload.from || '(unset)';
+  const sentAt = payload.sentAt || '';
+  const reference = payload.reference || '(none)';
+
+  const text = 'This is a test email from the Usernode platform admin console.\n\n'
+    + `Provider: ${provider}\n`
+    + `Sent as: ${from}\n`
+    + `Sent at: ${sentAt}\n`
+    + `Reference: ${reference}\n\n`
+    + 'An administrator sent it to check that outbound email works. '
+    + 'No action is needed.';
+
+  return {
+    subject: 'Usernode test email',
+    text,
+    html: HTML_SHELL(
+      p('This is a test email from the Usernode platform admin console.')
+      + `<p>Provider: <strong>${esc(provider)}</strong><br>`
+      + `Sent as: ${esc(from)}<br>`
+      + `Sent at: ${esc(sentAt)}<br>`
+      + `Reference: <code>${esc(reference)}</code></p>`
+      + p('An administrator sent it to check that outbound email works. '
+        + 'No action is needed.')
+    ),
+  };
+}
+
 function buildMessage(kind, payload = {}) {
   switch (kind) {
     case 'otp':
       return otp(payload);
+    case 'admin_test':
+      return adminTest(payload);
     case 'waitlist_joined': {
       const m = waitlistJoined(payload);
       return { ...m, html: HTML_SHELL(m.html) };
@@ -120,6 +158,6 @@ function buildMessage(kind, payload = {}) {
 
 // Every kind this module can render, for the admin console and for tests
 // that want to assert the set didn't quietly shrink.
-const KINDS = ['otp', 'waitlist_joined', 'waitlist_released'];
+const KINDS = ['otp', 'waitlist_joined', 'waitlist_released', 'admin_test'];
 
 module.exports = { buildMessage, KINDS };
