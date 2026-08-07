@@ -678,7 +678,16 @@ const DevChat = {
     }).join('');
 
     container.querySelectorAll('.dc-active-item').forEach((el) => {
-      el.addEventListener('click', () => {
+      // #1036: the row can't BE an anchor (it wraps the Pause/Resume
+      // button and a PR link), so cmd/middle-click is intercepted
+      // instead — it opens the same address the plain click routes to.
+      const hrefFor = () => {
+        const id = parseInt(el.dataset.id, 10);
+        const slug = el.dataset.slug;
+        if (!Number.isFinite(id) || !slug) return null;
+        return `#app/${encodeURIComponent(slug)}/dev/sessions/${id}`;
+      };
+      const activate = () => {
         const id = parseInt(el.dataset.id, 10);
         const slug = el.dataset.slug;
         if (!Number.isFinite(id) || !slug) return;
@@ -695,7 +704,9 @@ const DevChat = {
         } else {
           location.hash = `#app/${slug}/dev/sessions/${id}`;
         }
-      });
+      };
+      if (window.NavLink) NavLink.wireModified(el, hrefFor, activate);
+      else el.addEventListener('click', activate);
     });
 
     // Pause / Resume primary action. Stop propagation so the row's
@@ -5238,7 +5249,7 @@ const DevChat = {
 
     content.innerHTML = `
       <div class="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
-        <button id="dc-back" class="text-zinc-400 hover:text-zinc-200 text-sm">&larr;</button>
+        <a id="dc-back" class="text-zinc-400 hover:text-zinc-200 text-sm" href="${App.currentApp ? `#app/${escapeHtml(App.currentApp)}/dev` : ''}">&larr;</a>
         <span class="text-xs text-zinc-400 truncate flex-1" title="${escapeHtml(DevChat.currentSession.branch_name || '')}">${escapeHtml(DevChat.currentSession.session_title || DevChat.currentSession.pr_title || DevChat.currentSession.branch_name || 'Session')}</span>
         ${DevChat.currentSession.pr_number
           ? `<button id="dc-pr-header-link" class="text-xs text-violet-400 hover:text-violet-300" title="This session's pull request — every change in this chat goes to PR #${DevChat.currentSession.pr_number}. Use “Start a new change” for separate work.">PR #${DevChat.currentSession.pr_number}</button>`
@@ -5379,7 +5390,12 @@ const DevChat = {
       });
     }
 
-    document.getElementById('dc-back').addEventListener('click', () => {
+    document.getElementById('dc-back').addEventListener('click', (e) => {
+      // #1036: this is a real <a href="#app/<slug>/dev"> now — a
+      // cmd/ctrl/shift/middle click opens the dev page in a new tab and
+      // must leave THIS session mounted exactly as it is.
+      if (window.NavLink && NavLink.isNativeClick(e)) return;
+      e.preventDefault();
       // #771: leaving the session unmounts the staging panel slot — close
       // a docked preview with it (fullscreen previews float independently
       // and are unaffected).

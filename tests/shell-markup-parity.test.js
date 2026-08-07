@@ -43,7 +43,21 @@ const after = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
 // than special-cased inside the walk — and asserted separately below, so
 // dropping it can't pass by accident.
 const ENTRY_TAG = '<script type="module" src="/shell/assets/shell.js"></script>';
-const afterWithoutEntry = after.replace(ENTRY_TAG, '');
+
+// Script tags for modules added AFTER the fixture was frozen. Same treatment
+// as the React entry, and for the same reason: the frozen document cannot
+// know about them, and leaving one in would shift every later token and bury
+// the real diff. Each is asserted to be present separately below, and its
+// LOAD ORDER is pinned by tests/shell-script-order.js — so removing one
+// cannot pass here by accident.
+const POST_MIGRATION_TAGS = [
+  '<script src="/js/nav-link.js"></script>', // #1036 — real-anchor / new-tab seam
+];
+
+const afterWithoutEntry = POST_MIGRATION_TAGS.reduce(
+  (html, tag) => html.replace(tag, ''),
+  after.replace(ENTRY_TAG, ''),
+);
 
 // ── Deliberate, reviewed markup differences ────────────────────────────
 //
@@ -67,9 +81,50 @@ function isAllowedRemoval(token, attr) {
   return ALLOWED_ATTR_REMOVALS.some((a) => a.id === token.attrs.id && a.attr === attr);
 }
 
+// ── Deliberate POST-migration element changes ──────────────────────────
+//
+// Distinct from ALLOWED_ATTR_REMOVALS above, which is about the chassis swap
+// itself and must stay empty. This list is for markup the shell has changed
+// ON PURPOSE since the fixture was frozen — a real product change, not a
+// conversion artifact. Each entry names the element, the tag swap, and the
+// classes it gained; everything else about that element (its id, its other
+// attributes, its children) is still compared exactly, and the guard test
+// below refuses an entry that no longer describes a real fixture element.
+const ALLOWED_ELEMENT_CHANGES = [
+  {
+    id: 'back-btn',
+    from: 'button',
+    to: 'a',
+    // #1036: the header home/back control became a real link so cmd-click,
+    // middle-click and "Open in new tab" work on it. `inline-flex
+    // items-center` comes with the swap — an <a> is `inline` where a
+    // <button> was `inline-block`, and the header's 28px content-row floor
+    // (tests/header-height-parity.test.js) must not drift.
+    addedClasses: ['inline-flex', 'items-center'],
+  },
+];
+
+function elementChangeFor(token) {
+  return ALLOWED_ELEMENT_CHANGES.find((c) => c.id === token.attrs.id);
+}
+
+// True when `generated` is `fixture` plus exactly the declared extra classes.
+function classesMatchWithAdditions(fixtureValue, generatedValue, added) {
+  const split = (v) => String(v || '').split(/\s+/).filter(Boolean);
+  const want = new Set([...split(fixtureValue), ...added]);
+  const got = new Set(split(generatedValue));
+  return want.size === got.size && [...want].every((c) => got.has(c));
+}
+
 test('the generated shell matches the pre-migration markup element for element', () => {
   const a = structure(before);
   const b = structure(afterWithoutEntry);
+
+  // Open elements, innermost last, so a declared tag swap also relaxes its
+  // MATCHING close token and nothing else. structure() drops void-element
+  // closes and marks self-closing opens, so every entry pushed here really
+  // does get a close.
+  const openStack = [];
 
   const limit = Math.max(a.length, b.length);
   for (let i = 0; i < limit; i += 1) {
@@ -108,15 +163,34 @@ test('the generated shell matches the pre-migration markup element for element',
       continue;
     }
     if (x.kind === 'close') {
-      assert.equal(y.tag, x.tag, `token ${i}: expected </${x.tag}>, got </${y.tag}>`);
+      const opened = openStack.pop();
+      const wantTag = opened && opened.tag === x.tag ? opened.closesAs : x.tag;
+      assert.equal(y.tag, wantTag, `token ${i}: expected </${wantTag}>, got </${y.tag}>`);
       continue;
     }
     if (x.kind !== 'open') continue;
 
-    assert.equal(
-      y.tag, x.tag,
-      `token ${i}: expected <${x.tag}>, got <${y.tag}>\n  preceding context:\n${context()}`,
-    );
+    const changed = elementChangeFor(x);
+
+    if (!x.selfClosing) {
+      openStack.push({
+        tag: x.tag,
+        closesAs: changed && x.tag === changed.from ? changed.to : x.tag,
+      });
+    }
+
+    if (changed && x.tag === changed.from) {
+      assert.equal(
+        y.tag, changed.to,
+        `token ${i}: #${changed.id} is a declared element change — expected <${changed.to}>, `
+        + `got <${y.tag}>\n  preceding context:\n${context()}`,
+      );
+    } else {
+      assert.equal(
+        y.tag, x.tag,
+        `token ${i}: expected <${x.tag}>, got <${y.tag}>\n  preceding context:\n${context()}`,
+      );
+    }
 
     const where = `${describe(x)} (token ${i})`;
 
@@ -126,6 +200,15 @@ test('the generated shell matches the pre-migration markup element for element',
         name in y.attrs,
         `${where}: attribute \`${name}\` was dropped by the JSX conversion (was ${JSON.stringify(value)}).`,
       );
+      if (changed && name === 'class' && changed.addedClasses) {
+        assert.ok(
+          classesMatchWithAdditions(value, y.attrs[name], changed.addedClasses),
+          `${where}: #${changed.id} may add exactly [${changed.addedClasses.join(', ')}] to its `
+          + `class list and nothing else.\n    fixture:   ${JSON.stringify(value)}\n`
+          + `    generated: ${JSON.stringify(y.attrs[name])}`,
+        );
+        continue;
+      }
       assert.equal(
         y.attrs[name], value,
         `${where}: attribute \`${name}\` changed.\n`
@@ -164,6 +247,30 @@ test('the conversion needs no markup exceptions at all', () => {
   );
 });
 
+test('every declared element change still describes a real element', () => {
+  // Same discipline as the allow-list guard above: an exception must not
+  // outlive what it excuses. Each entry has to still name an element that
+  // exists in the fixture with the tag it claims to be changing FROM, and
+  // to have actually been applied in the generated document.
+  const a = structure(before);
+  const b = structure(afterWithoutEntry);
+  for (const c of ALLOWED_ELEMENT_CHANGES) {
+    const fixtureEl = a.find((t) => t.kind === 'open' && t.attrs.id === c.id);
+    assert.ok(fixtureEl, `the fixture has no #${c.id} — remove its ALLOWED_ELEMENT_CHANGES entry`);
+    assert.equal(
+      fixtureEl.tag, c.from,
+      `#${c.id} is <${fixtureEl.tag}> in the fixture, not <${c.from}> — the exception is stale`,
+    );
+    const generatedEl = b.find((t) => t.kind === 'open' && t.attrs.id === c.id);
+    assert.ok(generatedEl, `the generated shell has no #${c.id}`);
+    assert.equal(
+      generatedEl.tag, c.to,
+      `#${c.id} is declared as changing to <${c.to}> but the shell renders <${generatedEl.tag}> — `
+      + 'drop the entry if the change was reverted',
+    );
+  }
+});
+
 test('the shell markup carries no inline event handlers', () => {
   // React rejects them, and a React warning is a console.error, which fails
   // proposal checks on every route that renders the element. The document has
@@ -184,4 +291,9 @@ test('the generated document keeps the shell boilerplate the head depends on', (
     + 'depends on, so React hydrates its CHILDREN rather than a wrapper div');
   assert.ok(after.includes(ENTRY_TAG),
     'the React entry must be referenced from the generated document');
+  for (const tag of POST_MIGRATION_TAGS) {
+    assert.ok(after.includes(tag),
+      `${tag} is stripped before the parity walk, so it must actually be in the document — `
+      + 'drop it from POST_MIGRATION_TAGS if the module was removed');
+  }
 });

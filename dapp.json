@@ -1674,6 +1674,21 @@
       "path": "/?shot=offline-signin#login",
       "expectSelector": "body.is-offline #auth-login-screen:not(.hidden) .offline-only",
       "expectText": "Signing in needs a connection"
+    },
+    {
+      "name": "Back from a dev session is a real link you can open in a new tab (#1036)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
+      "expectSelector": "a#dc-back[href=\"#app/usernode-2d5619/dev\"]"
+    },
+    {
+      "name": "The header home button is a real link, not a button (#1036)",
+      "path": "/#leaderboard",
+      "expectSelector": "header#platform-header a#back-btn:not(.hidden)[href]"
+    },
+    {
+      "name": "Inside an app's detail page the header arrow links back to the list (#1036)",
+      "path": "/#apps/usernode-2d5619",
+      "expectSelector": "a#back-btn[href=\"#apps\"]"
     }
   ],
   "governance": {
