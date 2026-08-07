@@ -26,25 +26,54 @@ const BUILT_SUBS = [
 ];
 const GAP_SUBS = ['challenge-kinds', 'terms-versions', 'token-allocation', 'mobile-logs'];
 
+// Several bans below ("no window.prompt", "no matchMedia") are about what
+// the module DOES, and this file's comments deliberately record what each
+// call site replaced — prose that would otherwise trip the ban it exists
+// to explain. Same line-comment strip the vocabulary test uses.
+const stripComments = (src) => src.replace(/^\s*\/\/.*$/gm, '');
+
 // ─── admin-console.js: the one SECTIONS entry + delegation ────────────────
 
-test("AdminConsole.SECTIONS carries exactly one 'topochain' entry", () => {
+test("AdminConsole.SECTIONS carries exactly one 'seasons' entry, under its new name", () => {
   // #860 added a `group` field to every SECTIONS entry (the sidebar
   // headings); the decision-#8 shape — ONE top-level entry, its own sub-nav
-  // — is unchanged.
-  assert.match(consoleJs, /\{ key: 'topochain', label: 'Topochain', group: '[^']+' \}/,
-    "SECTIONS has the single topochain entry the plan's decision #8 calls for");
-  const matches = consoleJs.match(/key: 'topochain'/g) || [];
-  assert.equal(matches.length, 1, 'topochain appears exactly once in SECTIONS (one section, own sub-nav)');
+  // — is unchanged. The KEY moved from 'topochain' to 'seasons' and the
+  // label to the product name users actually recognise.
+  assert.match(consoleJs, /\{ key: 'seasons', label: 'Seasons, Events & Challenges', group: '[^']+' \}/,
+    "SECTIONS has the single renamed entry the plan's decision #8 calls for");
+  const matches = consoleJs.match(/key: 'seasons'/g) || [];
+  assert.equal(matches.length, 1, 'seasons appears exactly once in SECTIONS (one section, own sub-nav)');
+  assert.doesNotMatch(consoleJs, /key: 'topochain'/,
+    'the old key is gone from SECTIONS — it survives only as a legacy alias');
 });
 
-test('_renderSection dispatches topochain to AdminTopochain via SECTION_MODULES', () => {
+test("the retired 'topochain' key still resolves, at ONE choke point", () => {
+  // Links, bookmarks and the odd hand-typed hash minted before the rename
+  // must not 404 into the fallback section. The alias is resolved at the
+  // two entry points BEFORE visibility, module lookup, nav highlighting or
+  // hash writing see the key — so the rest of admin-console.js only ever
+  // handles canonical keys and no third code path can forget the mapping.
+  assert.match(consoleJs, /LEGACY_SECTION_KEYS: \{[\s\S]*?topochain: 'seasons',[\s\S]*?\}/,
+    'the retired key maps to the canonical one');
+  assert.match(consoleJs, /_canonicalSection\(key\) \{/, 'one resolver');
+  const open = consoleJs.slice(consoleJs.indexOf('  open(section, opts'));
+  assert.match(open.slice(0, 600), /section = AdminConsole\._canonicalSection\(section\);/,
+    'open() canonicalises before it resolves visibility');
+  const setSection = consoleJs.slice(consoleJs.indexOf('  setSection(key, opts'));
+  assert.match(setSection.slice(0, 400), /key = AdminConsole\._canonicalSection\(key\);/,
+    'setSection() canonicalises as its first statement');
+});
+
+test('_renderSection dispatches seasons to AdminTopochain via SECTION_MODULES', () => {
   // #860 replaced the per-section render*Section methods for delegated
   // sections with the SECTION_MODULES map, so every module-backed section
-  // (topochain included) goes through one render/destroy code path.
+  // (this one included) goes through one render/destroy code path. The
+  // module's own name stays AdminTopochain: renaming the global and its
+  // file would churn the service-worker precache list (public/sw.js) for
+  // no user-visible gain.
   assert.match(consoleJs, /SECTION_MODULES: \{/, 'the module map exists');
-  assert.match(consoleJs, /topochain: 'AdminTopochain'/,
-    "SECTION_MODULES maps 'topochain' to the AdminTopochain global");
+  assert.match(consoleJs, /seasons: 'AdminTopochain'/,
+    "SECTION_MODULES maps 'seasons' to the AdminTopochain global");
   const fn = consoleJs.slice(consoleJs.indexOf('  _renderSection() {'));
   assert.match(fn.slice(0, 1200), /mod\.render\(host\)/,
     'the dispatcher calls render(host) on the mapped module');
@@ -135,17 +164,36 @@ test('the seasons subsection is documented as read-only/derived in its own rende
 
 // ─── Sub-nav hash handling ──────────────────────────────────────────────
 
-test('AdminTopochain owns its own second hash level (#admin/topochain/<sub>)', () => {
+test('AdminTopochain owns its own second hash level (#admin/seasons/<sub>)', () => {
   const subFromHash = topoJs.slice(topoJs.indexOf('  _subFromHash() {'), topoJs.indexOf('  setSub(sub) {'));
-  assert.match(subFromHash, /#admin\\\/topochain\\\/\(\[\^\/\]\+\)/,
-    '_subFromHash parses the sub-key straight off location.hash');
+  // Reads BOTH prefixes: a deep link minted before the rename
+  // (#admin/topochain/users) has to keep landing on its sub-tab, not just
+  // on the section's default screen.
+  assert.ok(subFromHash.includes('#admin\\/(?:seasons|topochain)\\/([^/]+)'),
+    '_subFromHash parses the sub-key off either the canonical or the legacy prefix');
 
   const syncHash = topoJs.slice(topoJs.indexOf('  _syncHash() {'), topoJs.indexOf('  _renderShell() {'));
-  assert.match(syncHash, /#admin\/topochain\/\$\{AdminTopochain\._sub\}/, 'builds the two-level hash target');
-  assert.match(syncHash, /location\.hash\.startsWith\('#admin\/topochain'\)/,
-    'only writes back while actually on a topochain admin hash');
+  assert.match(syncHash, /#admin\/seasons\/\$\{AdminTopochain\._sub\}/,
+    'builds the CANONICAL two-level hash target — the legacy address self-heals on first render');
+  assert.match(syncHash, /startsWith\('#admin\/seasons'\)/,
+    'only writes back while actually on this admin section');
+  assert.match(syncHash, /startsWith\('#admin\/topochain'\)/,
+    '...including when the address is still the legacy one, which is exactly when the rewrite is needed');
   assert.match(syncHash, /history\.replaceState/, 'replaceState — sub-nav hops never pollute the back stack');
   assert.ok(!/history\.pushState/.test(topoJs), 'the module never pushes history entries itself');
+});
+
+test('app.js rewrites a legacy #admin/topochain address, sub-tab and all', () => {
+  const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
+  const branch = appJs.slice(appJs.indexOf("parts[0] === 'admin'"),
+    appJs.indexOf("parts[0] === 'admin'") + 1400);
+  assert.match(branch, /_adminSection === 'topochain'/, 'the legacy section key is recognised');
+  assert.match(branch, /_adminSection = 'seasons';/, 'and mapped to the canonical one');
+  // parts[2] is the sub-tab, owned by AdminTopochain — dropping it would
+  // silently demote every deep bookmark to the section's default screen.
+  assert.match(branch, /parts\[2\] \? `#admin\/seasons\/\$\{parts\[2\]\}` : `?'?#admin\/seasons/,
+    'the sub-tab survives the rewrite');
+  assert.match(branch, /history\.replaceState/, 'the address bar self-heals rather than keeping a dead path');
 });
 
 test('render() reads the deep-linked sub-key from the hash rather than a passed argument', () => {
@@ -284,12 +332,20 @@ test('the vocabulary is actually used: Event / User / Challenge template / Kind'
 // ─── Users delete: strong confirm (can delete ANY platform user) ──────────
 
 test('deleting a user requires typing the exact identifier before the button enables', () => {
-  const fn = topoJs.slice(topoJs.indexOf('  _userDeleteConfirmRow(u, identifier) {'), topoJs.indexOf('  async _togglePodium('));
+  // Renamed from _userDeleteConfirmRow: the shared list renderer draws the
+  // same item as a table row AND as a card, so the confirm markup has to be
+  // layout-neutral (a <div>, not a <tr>) to work in both.
+  const fn = topoJs.slice(topoJs.indexOf('  _userDeleteConfirmBlock(u, identifier) {'), topoJs.indexOf('  async _togglePodium('));
+  assert.ok(fn.length > 0, 'the confirm block is defined');
+  assert.ok(!/<tr\b/.test(fn), 'layout-neutral: no <tr>, so the same markup renders inside a card');
   assert.match(fn, /data-expect="\$\{esc\(identifier\)\}"/, 'the expected string is the row identifier, exactly');
   assert.match(fn, /disabled/, 'the confirm button starts disabled');
-  assert.match(fn, /ANY platform user/i, 'the copy warns this is not scoped to topochain-only rows');
-  const wireFn = topoJs.slice(topoJs.indexOf("data-typed-check"), topoJs.indexOf("data-typed-check") + 400);
-  assert.match(wireFn, /inp\.value !== inp\.dataset\.expect/, 'the button only enables on an exact match');
+  assert.match(fn, /ANY platform user/i, 'the copy warns this is not scoped to this programme’s rows');
+  const wireFn = topoJs.slice(topoJs.indexOf("data-typed-check"), topoJs.indexOf("data-typed-check") + 700);
+  assert.match(wireFn, /inp\.value === inp\.dataset\.expect/, 'the button only enables on an exact match');
+  // Both layouts render the hook, so a querySelector would only ever reach
+  // one of the two copies and the visible button could stay disabled.
+  assert.match(wireFn, /querySelectorAll/, 'every copy of the confirm control is wired, not just the first');
 });
 
 // ─── Challenges live inside the season-event detail view ──────────────────
@@ -302,4 +358,102 @@ test('challenges are managed nested under a season-event detail view, not a top-
   for (const action of ['toggle-enabled', 'toggle-completed', 'move', 'update-display-orders']) {
     assert.ok(topoJs.includes(action), `the nested challenge view wires ${action}`);
   }
+});
+
+// ─── Grouped sub-nav: four clusters on desktop, two levels on mobile ──────
+
+test('SUB_GROUPS partitions SUBS exactly — every screen in one and only one group', () => {
+  // SUBS stays the key→label source of truth; SUB_GROUPS only says which
+  // cluster a key belongs to. If the two ever drift, a screen either
+  // vanishes from the nav entirely or appears twice, and neither failure
+  // is visible anywhere except by opening the section.
+  const groupsSrc = topoJs.slice(topoJs.indexOf('  SUB_GROUPS: ['), topoJs.indexOf('  SUB_GROUPS: [') + 900);
+  const grouped = [...groupsSrc.matchAll(/subs: \[([^\]]+)\]/g)]
+    .flatMap((m) => [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]));
+  const subsSrc = topoJs.slice(topoJs.indexOf('  SUBS: ['), topoJs.indexOf('  SUB_GROUPS: ['));
+  const subKeys = [...subsSrc.matchAll(/key: '([^']+)'/g)].map((m) => m[1]);
+
+  assert.ok(subKeys.length >= 10, 'SUBS still lists every screen');
+  assert.equal(new Set(grouped).size, grouped.length, 'no key appears in two groups');
+  assert.deepEqual(grouped.slice().sort(), subKeys.slice().sort(),
+    'SUB_GROUPS and SUBS must be a bijection');
+
+  const labels = [...groupsSrc.matchAll(/label: '([^']+)'/g)].map((m) => m[1]);
+  assert.deepEqual(labels, ['Programme', 'People', 'Activity', 'Platform'],
+    'the four cluster headings the redesign specifies');
+});
+
+test('the sub-nav renders a desktop cluster strip and a two-level mobile list', () => {
+  const desktop = topoJs.slice(topoJs.indexOf('  _desktopNavHtml() {'), topoJs.indexOf('  _mobileNavHtml() {'));
+  assert.match(desktop, /hidden md:flex/, 'the cluster strip is md+ only');
+  assert.match(desktop, /aria-current="page"/, 'the active screen is announced, not just coloured');
+  assert.match(desktop, /SUB_GROUPS\.map/, 'it renders from the group definition, not a flat list');
+
+  const mobile = topoJs.slice(topoJs.indexOf('  _mobileNavHtml() {'), topoJs.indexOf('  _renderShell() {'));
+  assert.match(mobile, /md:hidden/, 'the two-level list is below-md only');
+  assert.match(mobile, /_navLevel/, 'level 1 (groups) and level 2 (one group\'s screens)');
+  assert.match(mobile, /admin-topo-nav-back/, 'level 2 offers a way back to the group list');
+  assert.match(mobile, /min-h-\[44px\]/, 'drill-in rows meet the touch-target floor');
+  // No matchMedia anywhere: the level only affects the md:hidden block, and
+  // the content host is hidden md:block at level 1, so the desktop layout
+  // is unaffected by mobile nav state and there is no breakpoint to sync.
+  assert.ok(!/matchMedia/.test(stripComments(topoJs)), 'the responsive split is CSS-only');
+});
+
+// ─── No window.prompt(): both flows are inline panels now ─────────────────
+
+test('neither the challenge move nor the CSV export uses window.prompt()', () => {
+  // prompt() is unstyled, untranslatable, unvalidatable and outright
+  // blocked in some embedded webviews — and both flows here needed a
+  // CHOICE from a known list, which a free-text box cannot express.
+  // Comments stripped: both call sites document what they replaced, and
+  // that prose is the record of the decision, not a leftover call.
+  assert.ok(!/window\.prompt\(/.test(stripComments(topoJs)), 'no window.prompt( anywhere in the module');
+  assert.ok(!/[^.\w]prompt\(/.test(stripComments(topoJs)), 'not via a bare prompt( either');
+
+  // Both replacements are event pickers rendered inline, so the admin sees
+  // the events that actually exist instead of guessing an id.
+  assert.match(topoJs, /id="admin-topo-ch-move-target"/, 'the move flow offers a target <select>');
+  assert.match(topoJs, /_submitChallengeMove\(eventId, challengeId, targetId\)/,
+    'the move PATCH is a named handler taking the picked id');
+  assert.match(topoJs, /id="admin-topo-u-exp-event"/, 'the export flow offers an event <select>');
+  assert.match(topoJs, /if \(!Number\.isInteger\(id\) \|\| id <= 0\) return;/,
+    'the picked export id is validated before it reaches the URL');
+  assert.match(topoJs, /export-csv\/\$\{encodeURIComponent\(id\)\}/,
+    '...and encoded on the way in');
+});
+
+// ─── Shared loading / empty / error treatment across every screen ─────────
+
+test('the shared list, skeleton, empty and error helpers exist and are used everywhere', () => {
+  for (const helper of ['_list(opts) {', '_skeleton(rows) {', '_empty({', '_error({', '_wireRetry(']) {
+    assert.ok(topoJs.includes(helper), `the shared ${helper.split('(')[0]} helper is defined`);
+  }
+  // One column definition renders both layouts, so a screen can't drift
+  // between its table and its cards.
+  assert.match(topoJs, /hidden md:block/, '_list renders a table at md+');
+  assert.match(topoJs, /md:hidden space-y-2/, '...and a card stack below it');
+
+  // Every screen that loads asynchronously shows the skeleton rather than
+  // the bare word "Loading…", which read as a stuck screen. The ONE
+  // surviving occurrence is the skeleton's own sr-only status line — the
+  // pulsing bars say nothing to a screen reader on their own.
+  assert.equal((topoJs.match(/>Loading&hellip;</g) || []).length, 1,
+    'the only Loading… left is the skeleton\'s sr-only status');
+  const skeleton = topoJs.slice(topoJs.indexOf('  _skeleton(rows) {'),
+    topoJs.indexOf('  _skeleton(rows) {') + 700);
+  assert.match(skeleton, /sr-only" role="status">Loading&hellip;/,
+    '...and it lives inside _skeleton, announced as a status');
+  assert.match(skeleton, /animate-pulse/, 'sighted users get the pulsing placeholder bars');
+  assert.ok((topoJs.match(/_skeleton\(\d\)/g) || []).length >= 10,
+    'every async screen renders a skeleton while it fetches');
+
+  // A failed fetch must be distinguishable from an empty result, and
+  // recoverable without a full page reload.
+  assert.ok((topoJs.match(/_error\(\{/g) || []).length >= 7,
+    'every loader has an error branch');
+  assert.ok((topoJs.match(/_wireRetry\(/g) || []).length >= 7,
+    'every error block wires its own retry');
+  assert.match(topoJs, /Couldn't reach the server\./,
+    'status 0 is reported as a connectivity problem, not as a server error');
 });

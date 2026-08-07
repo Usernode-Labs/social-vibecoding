@@ -2932,7 +2932,22 @@ const App = {
         // (#admin/users etc.) deep-links a menu section; the gate on
         // App.user.isAdmin lives inside navigateToAdminConsole.
         App.setChromeless(false);
-        App.navigateToAdminConsole(parts[1] || null);
+        let _adminSection = parts[1] || null;
+        // Permanent alias for the renamed Topochain section. The sub-tab
+        // (a third segment, owned by AdminTopochain) has to survive the
+        // rewrite, otherwise a deep bookmark like #admin/topochain/users
+        // would silently land on the section's default tab. Same idiom as
+        // the #topochain branch below: rewrite the address BEFORE
+        // navigating so the module's own _syncHash sees the canonical
+        // prefix, and the bookmark self-heals.
+        if (_adminSection === 'topochain') {
+          _adminSection = 'seasons';
+          try {
+            history.replaceState(null, '',
+              parts[2] ? `#admin/seasons/${parts[2]}` : '#admin/seasons');
+          } catch (err) { /* non-fatal: navigation below still works */ }
+        }
+        App.navigateToAdminConsole(_adminSection);
         return;
       }
       if (parts[0] === 'settings') {

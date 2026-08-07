@@ -1544,12 +1544,12 @@
     },
     {
       "name": "Admin App version screen warns when an OS has no active rule",
-      "path": "/#admin/topochain/app-version",
+      "path": "/#admin/seasons/app-version",
       "expectText": "No active version rule"
     },
     {
-      "name": "Admin Topochain settings reports the outbound-mail state",
-      "path": "/#admin/topochain/settings",
+      "name": "Admin Seasons, Events & Challenges settings reports the outbound-mail state",
+      "path": "/#admin/seasons/settings",
       "expectSelector": "#admin-topo-mail-status"
     },
     {

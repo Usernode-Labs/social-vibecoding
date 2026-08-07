@@ -1,16 +1,37 @@
-// Topochain admin console screens (Task 15, migration plan Global
-// Constraint #8: "Admin screens are ONE AdminConsole section 'topochain'
-// that renders its own sub-navigation from public/js/admin-topochain.js").
+// "Seasons, Events & Challenges" admin console screens (Task 15,
+// migration plan Global Constraint #8: "Admin screens are ONE
+// AdminConsole section that renders its own sub-navigation from
+// public/js/admin-topochain.js").
 // Mounted by AdminConsole._renderSection via SECTION_MODULES (#860;
 // public/js/admin-console.js)
 // into the section's #admin-section-content host, exactly like every other
 // renderXSection — the only difference is this module owns a SECOND hash
-// level of its own (#admin/topochain/<sub>) that AdminConsole never learns
+// level of its own (#admin/seasons/<sub>) that AdminConsole never learns
 // the keys of. It reads location.hash directly for the deep-linked sub-key
 // on first render and writes it back itself via replaceState, guarded on
-// '#admin/topochain' — the same pattern public/js/leaderboard.js uses for
+// '#admin/seasons' — the same pattern public/js/leaderboard.js uses for
 // its own tab state (_setSub/_syncHash) — so admin-console.js's existing
 // single-level setSection/_writeHash needed no changes at all.
+//
+// NAMING: the section was called "Topochain" until the rename, and the
+// canonical route is now #admin/seasons/<sub> (the Seasons tab itself is
+// #admin/seasons/seasons). #admin/topochain/<sub> is a PERMANENT alias:
+// _subFromHash() reads either prefix, _syncHash() only ever writes the
+// canonical one, and app.js rewrites the address bar so a bookmark
+// self-heals. The file name, the AdminTopochain global, the
+// `topochain_` settings-key prefix, the /api/v4/admin/* routes and the
+// database tables are all deliberately unchanged — this rename is
+// user-facing copy and routing only.
+//
+// LAYOUT: the eleven subsections are grouped into four labelled clusters
+// (SUB_GROUPS below). At md+ the groups render as a single strip of
+// labelled clusters; below md they become a two-level list — level 1 is
+// the four groups, level 2 is one group's subsections — mirroring
+// admin-console.js's own mobile hierarchy so the two feel like one
+// console. Every screen renders through the shared _list() renderer (a
+// real table at md+, a card stack below) and the shared
+// _skeleton()/_empty()/_error() helpers, so "loading", "nothing here"
+// and "the request failed" never look alike.
 //
 // SECURITY (a previous task shipped an XSS here — non-negotiable): every
 // interpolated value goes through esc() below, including attribute values
@@ -87,6 +108,27 @@ const AdminTopochain = {
     { key: 'app-version', label: 'App version' },
     { key: 'sql-console', label: 'SQL console' },
     { key: 'api-tester', label: 'API tester' },
+  ],
+
+  // The same eleven keys, grouped for navigation. SUBS stays the flat
+  // key -> label source of truth (routing, validation and the sub titles
+  // all read it); SUB_GROUPS only decides ORDER and HEADINGS, so a new
+  // subsection is added in both places and nowhere else. The two lists
+  // are a bijection — tests/topochain-admin-screens.test.js checks that
+  // every SUBS key appears in exactly one group and vice versa, so a key
+  // can never go missing from the nav by being added to only one list.
+  SUB_GROUPS: [
+    // What the programme IS: the season, the events inside it, and the
+    // template library challenges are stamped out of.
+    { key: 'programme', label: 'Programme', subs: ['seasons', 'season-events', 'challenge-templates'] },
+    // Who is in it.
+    { key: 'people', label: 'People', subs: ['users', 'waitlist', 'onchain-accounts'] },
+    // What they did.
+    { key: 'activity', label: 'Activity', subs: ['user-activities'] },
+    // Operator tooling — deliberately last and visually separated: these
+    // are the sharp ones (raw SQL, arbitrary API calls, the settings that
+    // change how the mobile app behaves).
+    { key: 'platform', label: 'Platform', subs: ['settings', 'app-version', 'sql-console', 'api-tester'] },
   ],
 
   // ── Shared helpers ─────────────────────────────────────────────────
@@ -200,6 +242,147 @@ const AdminTopochain = {
     return Number.isNaN(d.getTime()) ? null : d.toISOString();
   },
 
+  // ── Shared state blocks ────────────────────────────────────────────
+  //
+  // Loading, empty and failed used to look identical on these screens: a
+  // grey "Loading…" that either stayed forever or was replaced by
+  // nothing. These three helpers make the states distinguishable at a
+  // glance, and every loader below uses them.
+
+  // Loading placeholder shaped like the rows it is standing in for, so
+  // the layout doesn't jump when the data lands.
+  _skeleton(rows) {
+    const n = Math.max(1, Math.min(rows == null ? 4 : rows, 10));
+    const bars = Array.from({ length: n }, (_, i) => {
+      const w = ['w-3/4', 'w-full', 'w-5/6', 'w-2/3'][i % 4];
+      return `<div class="h-4 ${w} rounded bg-zinc-200 dark:bg-zinc-800"></div>`;
+    }).join('');
+    return `<div class="animate-pulse space-y-2 py-2" aria-hidden="true">${bars}</div>
+      <p class="sr-only" role="status">Loading&hellip;</p>`;
+  },
+
+  // "Nothing here yet" — a title, an optional explanation, and an
+  // optional call to action. The action is dropped entirely for
+  // view-only admins (same rule as every other control in this file):
+  // an empty state whose only affordance 403s is worse than no
+  // affordance.
+  _empty(opts) {
+    const esc = AdminTopochain.esc;
+    const o = opts || {};
+    const body = o.body
+      ? `<p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">${esc(o.body)}</p>` : '';
+    const action = (o.actionId && AdminTopochain.canWrite())
+      ? `<button id="${esc(o.actionId)}" type="button"
+           class="mt-3 rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1.5 text-xs font-medium text-white">${esc(o.actionLabel || 'Create')}</button>`
+      : '';
+    return `<div class="rounded-lg border border-dashed border-zinc-300 dark:border-zinc-700 px-4 py-8 text-center">
+      <p class="text-sm font-medium text-zinc-600 dark:text-zinc-300">${esc(o.title || 'Nothing here yet')}</p>
+      ${body}${action}
+    </div>`;
+  },
+
+  // "The request failed" — visually distinct from empty (red, not
+  // dashed-grey) and always retryable. `retryId` wires to whatever
+  // loader produced it; a status of 0 means the request never got an
+  // answer at all (offline / server down), which is worth saying.
+  _error(opts) {
+    const esc = AdminTopochain.esc;
+    const o = opts || {};
+    const detail = o.status === 0
+      ? "Couldn't reach the server."
+      : (o.message || `Request failed${o.status ? ` (HTTP ${o.status})` : ''}.`);
+    const retry = o.retryId
+      ? `<button id="${esc(o.retryId)}" type="button"
+           class="mt-3 rounded-lg border border-red-300 dark:border-red-800 px-3 py-1.5 text-xs font-medium text-red-700 dark:text-red-300">Try again</button>`
+      : '';
+    return `<div class="rounded-lg border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/30 px-4 py-6 text-center">
+      <p class="text-sm font-medium text-red-700 dark:text-red-300">${esc(o.title || "Couldn't load this")}</p>
+      <p class="mt-1 text-xs text-red-600 dark:text-red-400">${esc(detail)}</p>
+      ${retry}
+    </div>`;
+  },
+
+  // Wires the retry button an _error() block rendered. Safe to call when
+  // no error is on screen.
+  _wireRetry(retryId, onRetry) {
+    document.getElementById(retryId)?.addEventListener('click', onRetry);
+  },
+
+  // ── Shared responsive list renderer ────────────────────────────────
+  //
+  // ONE column definition renders BOTH layouts: a real <table> at md+
+  // (where there is room for it) and a stack of cards below, where a
+  // table could only ever be scrolled sideways one column at a time.
+  // Both layouts are always in the DOM with the other hidden by a
+  // Tailwind breakpoint class, so a resize needs no re-render and no
+  // matchMedia listener — and, importantly, every data-* hook exists
+  // TWICE. Handlers must therefore be wired with querySelectorAll (not
+  // querySelector), which is what every _wire* below does.
+  //
+  // opts:
+  //   columns:  [{ label, cell(item) -> already-escaped html, primary?,
+  //                hideOnCard?, thClass?, tdClass? }]
+  //             `primary: true` marks the column used as the card's
+  //             heading (falls back to the first column).
+  //   items:    the rows
+  //   actions:  (item) -> html for the trailing actions cell/footer.
+  //             Return '' for none. Callers already omit mutating
+  //             controls for view-only admins.
+  //   extra:    (item) -> html rendered directly beneath the row (the
+  //             users typed-delete confirm, the waitlist survey
+  //             answers). Table gets a full-width <tr>; card gets a
+  //             block. Return '' for none.
+  //   rowClass: (item) -> extra classes for the row / card.
+  _list(opts) {
+    const esc = AdminTopochain.esc;
+    const cols = opts.columns || [];
+    const items = opts.items || [];
+    const actions = opts.actions || (() => '');
+    const extra = opts.extra || (() => '');
+    const rowClass = opts.rowClass || (() => '');
+    const anyActions = items.some((it) => actions(it));
+    const span = cols.length + (anyActions ? 1 : 0);
+
+    const head = cols.map((c) => `<th class="px-3 py-2 text-left font-medium ${c.thClass || ''}">${esc(c.label)}</th>`).join('')
+      + (anyActions ? '<th class="px-3 py-2 text-right font-medium">Actions</th>' : '');
+
+    const bodyRows = items.map((it) => {
+      const cells = cols.map((c) => `<td class="px-3 py-2 ${c.tdClass || ''}">${c.cell(it)}</td>`).join('');
+      const act = anyActions
+        ? `<td class="px-3 py-2"><div class="flex flex-wrap items-center justify-end gap-1">${actions(it)}</div></td>`
+        : '';
+      const ex = extra(it);
+      return `<tr class="border-t border-zinc-100 dark:border-zinc-800 ${rowClass(it)}">${cells}${act}</tr>`
+        + (ex ? `<tr class="border-t border-zinc-100 dark:border-zinc-800"><td colspan="${span}" class="px-3 py-3">${ex}</td></tr>` : '');
+    }).join('');
+
+    const table = `<div class="hidden md:block overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+      <table class="w-full text-sm">
+        <thead class="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500"><tr>${head}</tr></thead>
+        <tbody>${bodyRows}</tbody>
+      </table>
+    </div>`;
+
+    const primary = cols.find((c) => c.primary) || cols[0];
+    const cards = `<div class="md:hidden space-y-2">${items.map((it) => {
+      const rest = cols.filter((c) => c !== primary && !c.hideOnCard).map((c) => `
+        <div class="flex items-start justify-between gap-3 py-1">
+          <dt class="shrink-0 text-xs uppercase tracking-wide text-zinc-500">${esc(c.label)}</dt>
+          <dd class="min-w-0 text-right text-sm break-words">${c.cell(it)}</dd>
+        </div>`).join('');
+      const act = actions(it);
+      const ex = extra(it);
+      return `<div class="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-3 py-3 ${rowClass(it)}">
+        <p class="text-sm font-medium break-words">${primary ? primary.cell(it) : ''}</p>
+        <dl class="mt-1 divide-y divide-zinc-100 dark:divide-zinc-800">${rest}</dl>
+        ${act ? `<div class="mt-2 flex flex-wrap gap-1 border-t border-zinc-100 dark:border-zinc-800 pt-2">${act}</div>` : ''}
+        ${ex ? `<div class="mt-2">${ex}</div>` : ''}
+      </div>`;
+    }).join('')}</div>`;
+
+    return table + cards;
+  },
+
   _pagerHtml(meta, idPrefix) {
     if (!meta) return '';
     const esc = AdminTopochain.esc;
@@ -251,11 +434,20 @@ const AdminTopochain = {
 
   // ── Shell / sub-nav ──────────────────────────────────────────────────
 
+  // Mobile sub-nav level: 1 = the group list, 2 = one group's
+  // subsections plus the active screen. Only the below-md layout reads
+  // it; the md+ layout always shows every group at once, so this is
+  // pure CSS state rather than a matchMedia listener (same reason
+  // _list() renders both layouts and hides one).
+  _navLevel: 2,
+  _navGroup: null,
+
   // Entry point, called by AdminConsole._renderSection every time the
-  // top-level "Topochain" nav item is (re)selected. `sub` is read straight
-  // from location.hash (not passed down by admin-console.js — see the
-  // file-header comment) so a hand-typed/deep-linked
-  // #admin/topochain/<sub> lands on the right tab on first paint.
+  // top-level "Seasons, Events & Challenges" nav item is (re)selected.
+  // `sub` is read straight from location.hash (not passed down by
+  // admin-console.js — see the file-header comment) so a hand-typed or
+  // deep-linked #admin/seasons/<sub> (or the legacy
+  // #admin/topochain/<sub>) lands on the right tab on first paint.
   render(host) {
     AdminTopochain._host = host;
     const sub = AdminTopochain._subFromHash() || AdminTopochain._sub || 'seasons';
@@ -271,47 +463,156 @@ const AdminTopochain = {
     AdminTopochain._host = null;
   },
 
+  // Accepts BOTH the canonical prefix and the retired one, so a link
+  // minted before the rename still deep-links its tab. Only
+  // #admin/seasons is ever written back (see _syncHash) — app.js has
+  // normally already rewritten the address by the time we get here, but
+  // reading both keeps this module correct on its own.
   _subFromHash() {
-    const m = /^#admin\/topochain\/([^/]+)/.exec(location.hash);
+    const m = /^#admin\/(?:seasons|topochain)\/([^/]+)/.exec(location.hash);
     return m ? decodeURIComponent(m[1]) : null;
+  },
+
+  _groupOf(sub) {
+    return AdminTopochain.SUB_GROUPS.find((g) => g.subs.includes(sub)) || null;
+  },
+
+  _labelOf(sub) {
+    return (AdminTopochain.SUBS.find((s) => s.key === sub) || {}).label || sub;
   },
 
   setSub(sub) {
     if (!AdminTopochain.SUBS.some((s) => s.key === sub)) sub = 'seasons';
     AdminTopochain._sub = sub;
+    // A deep link lands on its screen, with the mobile back control
+    // pointing at the group that screen belongs to.
+    AdminTopochain._navGroup = (AdminTopochain._groupOf(sub) || {}).key || null;
+    AdminTopochain._navLevel = 2;
     AdminTopochain._syncHash();
     AdminTopochain._renderShell();
   },
 
-  // Keep the hash deep-linkable (#admin/topochain/<sub>) without
-  // polluting history — replaceState, and only while actually on a
-  // topochain admin hash (mirrors leaderboard.js's _syncHash).
+  // Mobile only: step back out to the list of groups. Doesn't touch the
+  // hash — the address still names the screen you'd return to, so a
+  // refresh from the group list reopens where you were.
+  _showGroupList() {
+    AdminTopochain._navLevel = 1;
+    AdminTopochain._renderShell();
+  },
+
+  _openGroup(key) {
+    const g = AdminTopochain.SUB_GROUPS.find((x) => x.key === key);
+    if (!g) return;
+    AdminTopochain._navGroup = key;
+    AdminTopochain._navLevel = 2;
+    // Drilling into a group selects its first screen unless the current
+    // one already belongs to it (so re-opening the group you're in
+    // doesn't throw away the screen you were reading).
+    if (!g.subs.includes(AdminTopochain._sub)) AdminTopochain.setSub(g.subs[0]);
+    else AdminTopochain._renderShell();
+  },
+
+  // Keep the hash deep-linkable (#admin/seasons/<sub>) without polluting
+  // history — replaceState, and only while actually on this section's
+  // hash (mirrors leaderboard.js's _syncHash). The legacy prefix is
+  // accepted as a starting point and rewritten to the canonical one, so
+  // an old bookmark self-heals even if it somehow bypassed app.js.
   _syncHash() {
-    const target = `#admin/topochain/${AdminTopochain._sub}`;
-    if (location.hash.startsWith('#admin/topochain') && location.hash !== target) {
+    const target = `#admin/seasons/${AdminTopochain._sub}`;
+    const h = location.hash;
+    if ((h.startsWith('#admin/seasons') || h.startsWith('#admin/topochain')) && h !== target) {
       history.replaceState(null, '', target);
     }
+  },
+
+  // ── Sub-nav markup ─────────────────────────────────────────────────
+
+  // md+: every group at once, as labelled clusters on one strip. Eleven
+  // equal pills in a sideways-scrolling row gave no sense of which
+  // screens belong together; the headings do that work now.
+  _desktopNavHtml() {
+    const esc = AdminTopochain.esc;
+    const active = AdminTopochain._sub;
+    const clusters = AdminTopochain.SUB_GROUPS.map((g) => {
+      const pills = g.subs.map((key) => {
+        const isActive = key === active;
+        const cls = 'admin-topo-tab shrink-0 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors '
+          + (isActive
+            ? 'bg-violet-600/10 text-violet-600 dark:text-violet-400'
+            : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800');
+        return `<button type="button" data-topo-sub="${esc(key)}"${isActive ? ' aria-current="page"' : ''} class="${cls}">${esc(AdminTopochain._labelOf(key))}</button>`;
+      }).join('');
+      return `<div class="min-w-0">
+        <p class="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">${esc(g.label)}</p>
+        <div class="flex flex-wrap items-center gap-1">${pills}</div>
+      </div>`;
+    }).join('');
+    return `<nav aria-label="Seasons, events and challenges sections"
+      class="hidden md:flex flex-wrap items-start gap-x-6 gap-y-3 mb-5 pb-4 border-b border-zinc-200 dark:border-zinc-800">${clusters}</nav>`;
+  },
+
+  // Below md: the same two-level hierarchy the console itself uses —
+  // level 1 is the four groups as full-width drill-in rows, level 2 is
+  // one group's screens with a back control. Same row idiom as
+  // admin-console.js's _mobileMenuHtml so the two navs feel like one.
+  _mobileNavHtml() {
+    const esc = AdminTopochain.esc;
+    const chevron = `<svg class="w-4 h-4 shrink-0 text-zinc-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clip-rule="evenodd"/></svg>`;
+
+    if (AdminTopochain._navLevel === 1) {
+      const rows = AdminTopochain.SUB_GROUPS.map((g) => `
+        <button type="button" data-topo-group="${esc(g.key)}"
+          class="w-full flex items-center justify-between gap-3 min-h-[44px] px-4 py-2 text-left border-b border-zinc-100 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/60">
+          <span class="min-w-0">
+            <span class="block text-sm font-medium">${esc(g.label)}</span>
+            <span class="block text-xs text-zinc-500 truncate">${esc(g.subs.map((k) => AdminTopochain._labelOf(k)).join(' · '))}</span>
+          </span>
+          ${chevron}
+        </button>`).join('');
+      return `<nav aria-label="Seasons, events and challenges sections"
+        class="md:hidden mb-4 rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-800 [&>button:last-child]:border-b-0">${rows}</nav>`;
+    }
+
+    const group = AdminTopochain.SUB_GROUPS.find((g) => g.key === AdminTopochain._navGroup)
+      || AdminTopochain._groupOf(AdminTopochain._sub)
+      || AdminTopochain.SUB_GROUPS[0];
+    const pills = group.subs.map((key) => {
+      const isActive = key === AdminTopochain._sub;
+      const cls = 'admin-topo-tab shrink-0 min-h-[36px] px-3 py-1.5 text-sm font-medium rounded-lg transition-colors '
+        + (isActive
+          ? 'bg-violet-600/10 text-violet-600 dark:text-violet-400'
+          : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800');
+      return `<button type="button" data-topo-sub="${esc(key)}"${isActive ? ' aria-current="page"' : ''} class="${cls}">${esc(AdminTopochain._labelOf(key))}</button>`;
+    }).join('');
+    return `<nav aria-label="Seasons, events and challenges sections" class="md:hidden mb-4">
+      <button type="button" id="admin-topo-nav-back"
+        class="flex items-center gap-1 min-h-[44px] -ml-1 pr-2 text-sm font-medium text-zinc-600 dark:text-zinc-300">
+        <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M12.79 5.23a.75.75 0 0 1-.02 1.06L8.832 10l3.938 3.71a.75.75 0 1 1-1.04 1.08l-4.5-4.25a.75.75 0 0 1 0-1.08l4.5-4.25a.75.75 0 0 1 1.06.02Z" clip-rule="evenodd"/></svg>
+        ${esc(group.label)}
+      </button>
+      <div class="flex items-center gap-1 mt-1 -mx-1 px-1 overflow-x-auto">${pills}</div>
+    </nav>`;
   },
 
   _renderShell() {
     const host = AdminTopochain._host;
     if (!host) return;
-    const esc = AdminTopochain.esc;
-    const active = AdminTopochain._sub;
-    const tabs = AdminTopochain.SUBS.map((s) => {
-      const isActive = s.key === active;
-      const cls = 'admin-topo-tab shrink-0 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors '
-        + (isActive
-          ? 'bg-violet-600/10 text-violet-600 dark:text-violet-400'
-          : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800');
-      return `<button type="button" data-topo-sub="${esc(s.key)}" class="${cls}">${esc(s.label)}</button>`;
-    }).join('');
+    // At mobile level 1 the screen itself is out of the way (you're
+    // picking a group), but md+ never has a level 1 — hence the
+    // breakpoint-scoped hide rather than dropping the node.
+    const contentCls = AdminTopochain._navLevel === 1 ? 'hidden md:block' : '';
     host.innerHTML = `
-      <nav aria-label="Topochain sections" class="flex items-center gap-1 mb-4 -mx-1 px-1 overflow-x-auto">${tabs}</nav>
-      <div id="admin-topo-content"></div>`;
+      ${AdminTopochain._desktopNavHtml()}
+      ${AdminTopochain._mobileNavHtml()}
+      <div id="admin-topo-content" class="${contentCls}"></div>`;
     host.querySelectorAll('[data-topo-sub]').forEach((btn) => {
       btn.addEventListener('click', () => AdminTopochain.setSub(btn.dataset.topoSub));
     });
+    host.querySelectorAll('[data-topo-group]').forEach((btn) => {
+      btn.addEventListener('click', () => AdminTopochain._openGroup(btn.dataset.topoGroup));
+    });
+    document.getElementById('admin-topo-nav-back')
+      ?.addEventListener('click', AdminTopochain._showGroupList);
     AdminTopochain._renderSub();
   },
 
@@ -346,7 +647,7 @@ const AdminTopochain = {
         is derived by grouping Season events by their <code>season_id</code>. Manage individual
         events in the Season events tab.
       </div>
-      <div id="admin-topo-seasons-list" class="space-y-3"><p class="text-sm text-zinc-500">Loading&hellip;</p></div>`;
+      <div id="admin-topo-seasons-list" class="space-y-3">${AdminTopochain._skeleton(4)}</div>`;
     const events = await AdminTopochain._fetchAllEvents();
     AdminTopochain._renderSeasonsList(events);
   },
@@ -356,7 +657,10 @@ const AdminTopochain = {
     if (!host) return;
     const esc = AdminTopochain.esc;
     if (!events.length) {
-      host.innerHTML = '<p class="text-sm text-zinc-500">No season events yet.</p>';
+      host.innerHTML = AdminTopochain._empty({
+        title: 'No seasons yet',
+        body: 'Seasons appear here as soon as a season event is created with a season id.',
+      });
       return;
     }
     const groups = new Map();
@@ -410,7 +714,7 @@ const AdminTopochain = {
         </div>
       </div>
       <div id="admin-topo-se-form"></div>
-      <div id="admin-topo-se-table"><p class="text-sm text-zinc-500">Loading&hellip;</p></div>`;
+      <div id="admin-topo-se-table">${AdminTopochain._skeleton(4)}</div>`;
     document.getElementById('admin-topo-se-search').addEventListener('change', (e) => {
       AdminTopochain._se.search = e.target.value.trim();
       AdminTopochain._se.page = 1;
@@ -424,14 +728,18 @@ const AdminTopochain = {
     const s = AdminTopochain._se;
     const params = new URLSearchParams({ page: String(s.page), per_page: String(s.perPage) });
     if (s.search) params.set('search', s.search);
-    const { ok, data } = await AdminTopochain.fetchJson(`/api/v4/admin/season-events?${params}`);
+    const { ok, data, status } = await AdminTopochain.fetchJson(`/api/v4/admin/season-events?${params}`);
     if (AdminTopochain._sub !== 'season-events') return;
     if (ok && data?.success) {
       s.items = data.data;
       s.meta = data.meta;
+      s.error = null;
     } else {
       s.items = [];
       s.meta = null;
+      // A failed request and a genuinely empty list used to render the
+      // same "No events found." — keep them apart.
+      s.error = { status, message: (data && data.error) || null };
     }
     AdminTopochain._renderSeasonEventsTable();
   },
@@ -442,38 +750,42 @@ const AdminTopochain = {
     const esc = AdminTopochain.esc;
     const canWrite = AdminTopochain.canWrite();
     const s = AdminTopochain._se;
-    if (!s.items.length) {
-      table.innerHTML = '<p class="text-sm text-zinc-500 py-4">No events found.</p>';
+    if (s.error) {
+      table.innerHTML = AdminTopochain._error({
+        title: "Couldn't load season events", status: s.error.status,
+        message: s.error.message, retryId: 'admin-topo-se-retry',
+      });
+      AdminTopochain._wireRetry('admin-topo-se-retry', () => AdminTopochain._loadSeasonEvents());
       return;
     }
-    const rows = s.items.map((ev) => `
-      <tr class="border-t border-zinc-200 dark:border-zinc-800">
-        <td class="px-3 py-2 text-sm">${esc(ev.name)}</td>
-        <td class="px-3 py-2 text-sm text-zinc-500">${ev.season_id != null ? esc(ev.season_id) : '—'}</td>
-        <td class="px-3 py-2 text-sm text-zinc-500">${esc(ev.type)}</td>
-        <td class="px-3 py-2 text-sm">${ev.is_active ? '<span class="text-green-600 dark:text-green-400">yes</span>' : '—'}</td>
-        <td class="px-3 py-2 text-xs text-zinc-500">${esc(AdminTopochain._fmt(ev.starts_at))}</td>
-        <td class="px-3 py-2 text-xs text-zinc-500">${esc(AdminTopochain._fmt(ev.ends_at))}</td>
-        <td class="px-3 py-2 text-sm text-zinc-500">${ev.users_count != null ? esc(ev.users_count) : '—'}</td>
-        <td class="px-3 py-2 text-right whitespace-nowrap">
-          <button data-manage="${ev.id}" class="text-xs text-violet-500 hover:text-violet-400 mr-2">Manage</button>
-          ${canWrite ? `<button data-edit="${ev.id}" class="text-xs text-zinc-500 hover:text-violet-400 mr-2">Edit</button>` : ''}
-          ${canWrite ? `<button data-delete="${ev.id}" class="text-xs text-red-500 hover:text-red-400">Delete</button>` : ''}
-        </td>
-      </tr>`).join('');
-    table.innerHTML = `
-      <div class="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-        <table class="w-full">
-          <thead class="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500">
-            <tr><th class="px-3 py-2 text-left">Name</th><th class="px-3 py-2 text-left">Season</th>
-              <th class="px-3 py-2 text-left">Type</th><th class="px-3 py-2 text-left">Active</th>
-              <th class="px-3 py-2 text-left">Starts</th><th class="px-3 py-2 text-left">Ends</th>
-              <th class="px-3 py-2 text-left">Users</th><th class="px-3 py-2"></th></tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-      ${AdminTopochain._pagerHtml(s.meta, 'admin-topo-se-pg')}`;
+    if (!s.items.length) {
+      table.innerHTML = AdminTopochain._empty({
+        title: s.search ? 'No events match that search' : 'No season events yet',
+        body: s.search ? 'Clear the search box to see every event.'
+          : 'Create the first event to start scheduling challenges.',
+        actionId: s.search ? null : 'admin-topo-se-empty-new',
+        actionLabel: 'New event',
+      });
+      document.getElementById('admin-topo-se-empty-new')
+        ?.addEventListener('click', () => AdminTopochain._openSeasonEventForm(null));
+      return;
+    }
+    table.innerHTML = AdminTopochain._list({
+      items: s.items,
+      columns: [
+        { label: 'Name', primary: true, cell: (ev) => esc(ev.name) },
+        { label: 'Season', cell: (ev) => (ev.season_id != null ? esc(ev.season_id) : '—'), tdClass: 'text-zinc-500' },
+        { label: 'Type', cell: (ev) => esc(ev.type), tdClass: 'text-zinc-500' },
+        { label: 'Active', cell: (ev) => (ev.is_active ? '<span class="text-green-600 dark:text-green-400">yes</span>' : '—') },
+        { label: 'Starts', cell: (ev) => esc(AdminTopochain._fmt(ev.starts_at)), tdClass: 'text-xs text-zinc-500' },
+        { label: 'Ends', cell: (ev) => esc(AdminTopochain._fmt(ev.ends_at)), tdClass: 'text-xs text-zinc-500' },
+        { label: 'Users', cell: (ev) => (ev.users_count != null ? esc(ev.users_count) : '—'), tdClass: 'text-zinc-500' },
+      ],
+      actions: (ev) => `
+        <button data-manage="${ev.id}" class="text-xs text-violet-500 hover:text-violet-400 mr-2">Manage</button>
+        ${canWrite ? `<button data-edit="${ev.id}" class="text-xs text-zinc-500 hover:text-violet-400 mr-2">Edit</button>` : ''}
+        ${canWrite ? `<button data-delete="${ev.id}" class="text-xs text-red-500 hover:text-red-400">Delete</button>` : ''}`,
+    }) + AdminTopochain._pagerHtml(s.meta, 'admin-topo-se-pg');
     table.querySelectorAll('[data-manage]').forEach((b) => b.addEventListener('click', () => {
       AdminTopochain._se.detailId = parseInt(b.dataset.manage, 10);
       AdminTopochain._renderSub();
@@ -605,20 +917,20 @@ const AdminTopochain = {
     const esc = AdminTopochain.esc;
     host.innerHTML = `
       <button id="admin-topo-se-back" class="text-xs text-violet-500 hover:text-violet-400 mb-3">&larr; Back to season events</button>
-      <div id="admin-topo-se-detail-hero" class="mb-4"><p class="text-sm text-zinc-500">Loading&hellip;</p></div>
+      <div id="admin-topo-se-detail-hero" class="mb-4">${AdminTopochain._skeleton(4)}</div>
       <div class="flex items-center justify-between mb-2">
         <h3 class="text-sm font-semibold">Challenges</h3>
         ${AdminTopochain.canWrite() ? '<button id="admin-topo-ch-new" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1.5 text-xs font-medium text-white">Add challenge</button>' : ''}
       </div>
       <div id="admin-topo-ch-form"></div>
-      <div id="admin-topo-ch-table"><p class="text-sm text-zinc-500">Loading&hellip;</p></div>`;
+      <div id="admin-topo-ch-table">${AdminTopochain._skeleton(4)}</div>`;
     document.getElementById('admin-topo-se-back').addEventListener('click', () => {
       AdminTopochain._se.detailId = null;
       AdminTopochain._renderSub();
     });
     document.getElementById('admin-topo-ch-new')?.addEventListener('click', () => AdminTopochain._openChallengeForm(null));
 
-    const { ok, data } = await AdminTopochain.fetchJson(`/api/v4/admin/season-events/${encodeURIComponent(id)}`);
+    const { ok, data, status } = await AdminTopochain.fetchJson(`/api/v4/admin/season-events/${encodeURIComponent(id)}`);
     const hero = document.getElementById('admin-topo-se-detail-hero');
     if (hero) {
       if (ok && data?.success) {
@@ -629,16 +941,21 @@ const AdminTopochain = {
             &middot; ${esc(ev.users_count ?? 0)} users &middot; ${esc(ev.onchain_accounts_count ?? 0)} accounts</p>
         </div>`;
       } else {
-        hero.innerHTML = `<p class="text-sm text-zinc-500">${esc((data && data.error) || 'Event not found.')}</p>`;
+        hero.innerHTML = AdminTopochain._error({
+          title: 'Event not found', status,
+          message: (data && data.error) || null,
+        });
       }
     }
     AdminTopochain._loadChallenges(id);
   },
 
   async _loadChallenges(eventId) {
-    const { ok, data } = await AdminTopochain.fetchJson(`/api/v4/admin/season-events/${encodeURIComponent(eventId)}/challenges`);
+    const { ok, data, status } = await AdminTopochain.fetchJson(`/api/v4/admin/season-events/${encodeURIComponent(eventId)}/challenges`);
     if (AdminTopochain._se.detailId !== eventId) return;
-    AdminTopochain._challenges = (ok && data?.success && Array.isArray(data.data)) ? data.data : [];
+    const good = ok && data?.success && Array.isArray(data.data);
+    AdminTopochain._challenges = good ? data.data : [];
+    AdminTopochain._challengesError = good ? null : { status, message: (data && data.error) || null };
     AdminTopochain._renderChallengesTable(eventId);
   },
 
@@ -648,36 +965,47 @@ const AdminTopochain = {
     const esc = AdminTopochain.esc;
     const canWrite = AdminTopochain.canWrite();
     const items = AdminTopochain._challenges || [];
-    if (!items.length) {
-      table.innerHTML = '<p class="text-sm text-zinc-500 py-4">No challenges for this event yet.</p>';
+    if (AdminTopochain._challengesError) {
+      const e = AdminTopochain._challengesError;
+      table.innerHTML = AdminTopochain._error({
+        title: "Couldn't load challenges", status: e.status, message: e.message,
+        retryId: 'admin-topo-ch-retry',
+      });
+      AdminTopochain._wireRetry('admin-topo-ch-retry', () => AdminTopochain._loadChallenges(eventId));
       return;
     }
-    const rows = items.map((c, i) => `
-      <tr class="border-t border-zinc-200 dark:border-zinc-800">
-        <td class="px-3 py-2 text-xs text-zinc-500">${esc(c.card_preview?.label || '')}</td>
-        <td class="px-3 py-2 text-sm">${esc(c.card_preview?.goal || '')}</td>
-        <td class="px-3 py-2 text-sm">${c.enabled ? '<span class="text-green-600 dark:text-green-400">enabled</span>' : '<span class="text-zinc-400">disabled</span>'}</td>
-        <td class="px-3 py-2 text-sm text-zinc-500">${c.completed ? 'completed' : '—'}</td>
-        <td class="px-3 py-2 text-right whitespace-nowrap">
+    if (!items.length) {
+      table.innerHTML = AdminTopochain._empty({
+        title: 'No challenges for this event yet',
+        body: 'Add one, or stamp a set out of the Challenge templates library.',
+        actionId: 'admin-topo-ch-empty-new',
+        actionLabel: 'Add challenge',
+      });
+      document.getElementById('admin-topo-ch-empty-new')
+        ?.addEventListener('click', () => AdminTopochain._openChallengeForm(null));
+      return;
+    }
+    const idx = new Map(items.map((c, i) => [c, i]));
+    table.innerHTML = AdminTopochain._list({
+      items,
+      columns: [
+        { label: 'Goal', primary: true, cell: (c) => esc(c.card_preview?.goal || '') },
+        { label: 'Kind', cell: (c) => esc(c.card_preview?.label || ''), tdClass: 'text-xs text-zinc-500' },
+        { label: 'Enabled', cell: (c) => (c.enabled ? '<span class="text-green-600 dark:text-green-400">enabled</span>' : '<span class="text-zinc-400">disabled</span>') },
+        { label: 'Completed', cell: (c) => (c.completed ? 'completed' : '—'), tdClass: 'text-zinc-500' },
+      ],
+      actions: (c) => {
+        const i = idx.get(c);
+        return `
           ${canWrite ? `<button data-up="${i}" class="text-xs text-zinc-500 hover:text-violet-400 mr-1" ${i === 0 ? 'disabled' : ''}>&uarr;</button>` : ''}
           ${canWrite ? `<button data-down="${i}" class="text-xs text-zinc-500 hover:text-violet-400 mr-2" ${i === items.length - 1 ? 'disabled' : ''}>&darr;</button>` : ''}
           ${canWrite ? `<button data-toggle-enabled="${c.id}" class="text-xs text-zinc-500 hover:text-violet-400 mr-2">Toggle</button>` : ''}
           ${canWrite ? `<button data-toggle-completed="${c.id}" class="text-xs text-zinc-500 hover:text-violet-400 mr-2">Complete</button>` : ''}
           ${canWrite ? `<button data-edit-ch="${c.id}" class="text-xs text-zinc-500 hover:text-violet-400 mr-2">Edit</button>` : ''}
           ${canWrite ? `<button data-move-ch="${c.id}" class="text-xs text-zinc-500 hover:text-violet-400 mr-2">Move&hellip;</button>` : ''}
-          ${canWrite ? `<button data-delete-ch="${c.id}" class="text-xs text-red-500 hover:text-red-400">Delete</button>` : ''}
-        </td>
-      </tr>`).join('');
-    table.innerHTML = `
-      <div class="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-        <table class="w-full">
-          <thead class="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500">
-            <tr><th class="px-3 py-2 text-left">Kind</th><th class="px-3 py-2 text-left">Goal</th>
-              <th class="px-3 py-2 text-left">Enabled</th><th class="px-3 py-2 text-left">Completed</th><th class="px-3 py-2"></th></tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>`;
+          ${canWrite ? `<button data-delete-ch="${c.id}" class="text-xs text-red-500 hover:text-red-400">Delete</button>` : ''}`;
+      },
+    }) + '<div id="admin-topo-ch-move"></div>';
     table.querySelectorAll('[data-up]').forEach((b) => b.addEventListener('click', () => AdminTopochain._reorderChallenge(eventId, parseInt(b.dataset.up, 10), -1)));
     table.querySelectorAll('[data-down]').forEach((b) => b.addEventListener('click', () => AdminTopochain._reorderChallenge(eventId, parseInt(b.dataset.down, 10), 1)));
     table.querySelectorAll('[data-toggle-enabled]').forEach((b) => b.addEventListener('click', () => AdminTopochain._toggleChallenge(eventId, b.dataset.toggleEnabled, 'toggle-enabled')));
@@ -721,15 +1049,50 @@ const AdminTopochain = {
     else AdminTopochain._alert((res.data && res.data.error) || 'Delete failed.');
   },
 
+  // Move a challenge to another event. This was a window.prompt() asking
+  // the operator to read an id out of a newline-joined list and type it
+  // back — unstyled, unreadable on a phone, impossible to cancel
+  // cleanly, and a typo silently moved the challenge somewhere else.
+  // It's an inline panel with a real <select> now: the ids never have to
+  // be transcribed, so there is nothing to mistype.
   async _moveChallenge(eventId, challengeId) {
     if (!AdminTopochain.canWrite()) return;
+    const host = document.getElementById('admin-topo-ch-move');
+    if (!host) return;
+    const esc = AdminTopochain.esc;
+    host.innerHTML = `<div class="mt-3 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 p-4">${AdminTopochain._skeleton(2)}</div>`;
     const events = await AdminTopochain._fetchAllEvents();
+    if (!document.getElementById('admin-topo-ch-move')) return;
     const others = events.filter((e) => e.id !== eventId);
-    if (!others.length) { AdminTopochain._alert('No other events to move this challenge to.'); return; }
-    const target = window.prompt(
-      `Move to which event id?\n${others.map((e) => `${e.id}: ${e.name}`).join('\n')}`);
-    const targetId = parseInt(target, 10);
-    if (!Number.isInteger(targetId)) return;
+    if (!others.length) {
+      host.innerHTML = `<div class="mt-3 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 px-4 py-3 text-sm text-zinc-500">
+        There is no other event to move this challenge to.
+        <button id="admin-topo-ch-move-cancel" class="ml-2 text-xs text-violet-500 hover:text-violet-400">Close</button>
+      </div>`;
+    } else {
+      const opts = others.map((e) => `<option value="${esc(e.id)}">${esc(e.name)} (#${esc(e.id)})</option>`).join('');
+      host.innerHTML = `<div class="mt-3 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 p-4">
+        <p class="text-sm font-medium mb-2">Move this challenge to another event</p>
+        <div class="flex flex-wrap items-center gap-2">
+          <select id="admin-topo-ch-move-target"
+            class="rounded-lg bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1.5 text-sm max-w-full">${opts}</select>
+          <button id="admin-topo-ch-move-go" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1.5 text-sm font-medium text-white">Move</button>
+          <button id="admin-topo-ch-move-cancel" class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm font-medium">Cancel</button>
+        </div>
+        <p class="mt-2 text-xs text-zinc-500">The challenge keeps its configuration; its recorded user activities move with it.</p>
+      </div>`;
+      document.getElementById('admin-topo-ch-move-go').addEventListener('click', async () => {
+        const targetId = parseInt(document.getElementById('admin-topo-ch-move-target').value, 10);
+        if (!Number.isInteger(targetId)) return;
+        await AdminTopochain._submitChallengeMove(eventId, challengeId, targetId);
+      });
+    }
+    document.getElementById('admin-topo-ch-move-cancel')
+      ?.addEventListener('click', () => { host.innerHTML = ''; });
+  },
+
+  async _submitChallengeMove(eventId, challengeId, targetId) {
+    if (!AdminTopochain.canWrite()) return;
     const { ok, data } = await AdminTopochain.send(
       'PATCH', `/api/v4/admin/season-events/${encodeURIComponent(eventId)}/challenges/${encodeURIComponent(challengeId)}/move`,
       { target_season_event_id: targetId });
@@ -834,7 +1197,7 @@ const AdminTopochain = {
         </div>
       </div>
       <div id="admin-topo-u-form"></div>
-      <div id="admin-topo-u-table"><p class="text-sm text-zinc-500">Loading&hellip;</p></div>`;
+      <div id="admin-topo-u-table">${AdminTopochain._skeleton(4)}</div>`;
     document.getElementById('admin-topo-u-search').addEventListener('change', (e) => {
       AdminTopochain._users.search = e.target.value.trim();
       AdminTopochain._users.page = 1;
@@ -850,10 +1213,10 @@ const AdminTopochain = {
     const s = AdminTopochain._users;
     const params = new URLSearchParams({ page: String(s.page), per_page: String(s.perPage) });
     if (s.search) params.set('search', s.search);
-    const { ok, data } = await AdminTopochain.fetchJson(`/api/v4/admin/users?${params}`);
+    const { ok, data, status } = await AdminTopochain.fetchJson(`/api/v4/admin/users?${params}`);
     if (AdminTopochain._sub !== 'users') return;
-    if (ok && data?.success) { s.items = data.data; s.meta = data.meta; }
-    else { s.items = []; s.meta = null; }
+    if (ok && data?.success) { s.items = data.data; s.meta = data.meta; s.error = null; }
+    else { s.items = []; s.meta = null; s.error = { status, message: (data && data.error) || null }; }
     AdminTopochain._renderUsersTable();
   },
 
@@ -863,41 +1226,48 @@ const AdminTopochain = {
     const esc = AdminTopochain.esc;
     const canWrite = AdminTopochain.canWrite();
     const s = AdminTopochain._users;
-    if (!s.items.length) {
-      table.innerHTML = '<p class="text-sm text-zinc-500 py-4">No users found.</p>';
+    if (s.error) {
+      table.innerHTML = AdminTopochain._error({
+        title: "Couldn't load users", status: s.error.status,
+        message: s.error.message, retryId: 'admin-topo-u-retry',
+      });
+      AdminTopochain._wireRetry('admin-topo-u-retry', () => AdminTopochain._loadUsers());
       return;
     }
-    const rows = s.items.map((u) => {
-      const identifier = u.email || u.telegram || u.discord || `user #${u.id}`;
-      const confirming = AdminTopochain._users.deleteConfirm?.id === u.id;
-      return `
-      <tr class="border-t border-zinc-200 dark:border-zinc-800">
-        <td class="px-3 py-2 text-sm">${esc(u.display_name || identifier)}</td>
-        <td class="px-3 py-2 text-xs text-zinc-500">${esc(u.email || '—')}</td>
-        <td class="px-3 py-2 text-xs text-zinc-500">${esc(u.telegram || '—')}</td>
-        <td class="px-3 py-2 text-xs text-zinc-500">${esc(u.discord || '—')}</td>
-        <td class="px-3 py-2 text-sm">${u.exclude_podium ? '<span class="text-amber-600 dark:text-amber-400">excluded</span>' : '—'}</td>
-        <td class="px-3 py-2 text-sm">${u.accept_logs ? 'yes' : 'no'}</td>
-        <td class="px-3 py-2 text-right whitespace-nowrap">
-          ${canWrite ? `<button data-toggle-podium="${u.id}" class="text-xs text-zinc-500 hover:text-violet-400 mr-2">Toggle podium</button>` : ''}
-          ${canWrite ? `<button data-edit-u="${u.id}" class="text-xs text-zinc-500 hover:text-violet-400 mr-2">Edit</button>` : ''}
-          ${canWrite ? `<button data-delete-u="${u.id}" data-identifier="${esc(identifier)}" class="text-xs text-red-500 hover:text-red-400">Delete</button>` : ''}
-        </td>
-      </tr>
-      ${confirming ? AdminTopochain._userDeleteConfirmRow(u, identifier) : ''}`;
-    }).join('');
-    table.innerHTML = `
-      <div class="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-        <table class="w-full">
-          <thead class="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500">
-            <tr><th class="px-3 py-2 text-left">User</th><th class="px-3 py-2 text-left">Email</th>
-              <th class="px-3 py-2 text-left">Telegram</th><th class="px-3 py-2 text-left">Discord</th>
-              <th class="px-3 py-2 text-left">Podium</th><th class="px-3 py-2 text-left">Accept logs</th><th class="px-3 py-2"></th></tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-      ${AdminTopochain._pagerHtml(s.meta, 'admin-topo-u-pg')}`;
+    if (!s.items.length) {
+      table.innerHTML = AdminTopochain._empty({
+        title: s.search ? 'No users match that search' : 'No users yet',
+        body: s.search ? 'Clear the search box to see everyone.'
+          : 'Users appear here once they join an event, or you can add one directly.',
+        actionId: s.search ? null : 'admin-topo-u-empty-new',
+        actionLabel: 'New user',
+      });
+      document.getElementById('admin-topo-u-empty-new')
+        ?.addEventListener('click', () => AdminTopochain._openUserForm(null));
+      return;
+    }
+    const ident = (u) => u.email || u.telegram || u.discord || `user #${u.id}`;
+    table.innerHTML = AdminTopochain._list({
+      items: s.items,
+      columns: [
+        { label: 'User', primary: true, cell: (u) => esc(u.display_name || ident(u)) },
+        { label: 'Email', cell: (u) => esc(u.email || '—'), tdClass: 'text-xs text-zinc-500' },
+        { label: 'Telegram', cell: (u) => esc(u.telegram || '—'), tdClass: 'text-xs text-zinc-500' },
+        { label: 'Discord', cell: (u) => esc(u.discord || '—'), tdClass: 'text-xs text-zinc-500' },
+        { label: 'Podium', cell: (u) => (u.exclude_podium ? '<span class="text-amber-600 dark:text-amber-400">excluded</span>' : '—') },
+        { label: 'Accept logs', cell: (u) => (u.accept_logs ? 'yes' : 'no') },
+      ],
+      actions: (u) => `
+        ${canWrite ? `<button data-toggle-podium="${u.id}" class="text-xs text-zinc-500 hover:text-violet-400 mr-2">Toggle podium</button>` : ''}
+        ${canWrite ? `<button data-edit-u="${u.id}" class="text-xs text-zinc-500 hover:text-violet-400 mr-2">Edit</button>` : ''}
+        ${canWrite ? `<button data-delete-u="${u.id}" data-identifier="${esc(ident(u))}" class="text-xs text-red-500 hover:text-red-400">Delete</button>` : ''}`,
+      // The typed-identifier confirm rides along as the row's extra
+      // block, so it lands directly under the row in the table AND
+      // inside the card on a phone.
+      extra: (u) => (s.deleteConfirm?.id === u.id
+        ? AdminTopochain._userDeleteConfirmBlock(u, ident(u)) : ''),
+      rowClass: (u) => (s.deleteConfirm?.id === u.id ? 'bg-red-50 dark:bg-red-950/30' : ''),
+    }) + AdminTopochain._pagerHtml(s.meta, 'admin-topo-u-pg');
     table.querySelectorAll('[data-toggle-podium]').forEach((b) => b.addEventListener('click', () => AdminTopochain._togglePodium(b.dataset.togglePodium)));
     table.querySelectorAll('[data-edit-u]').forEach((b) => b.addEventListener('click', () => AdminTopochain._openUserForm(parseInt(b.dataset.editU, 10))));
     table.querySelectorAll('[data-delete-u]').forEach((b) => b.addEventListener('click', () => {
@@ -906,9 +1276,13 @@ const AdminTopochain = {
     }));
     table.querySelectorAll('[data-confirm-delete-u]').forEach((b) => b.addEventListener('click', () => AdminTopochain._deleteUser(b.dataset.confirmDeleteU)));
     table.querySelectorAll('[data-cancel-delete-u]').forEach((b) => b.addEventListener('click', () => { AdminTopochain._users.deleteConfirm = null; AdminTopochain._renderUsersTable(); }));
+    // querySelectorAll, not querySelector: _list() renders the row in
+    // both the table and the card stack, so the confirm button exists
+    // twice and only the visible copy would otherwise ever enable.
     table.querySelectorAll('[data-typed-check]').forEach((inp) => inp.addEventListener('input', () => {
-      const btn = document.querySelector(`[data-confirm-delete-u="${inp.dataset.typedCheck}"]`);
-      if (btn) btn.disabled = inp.value !== inp.dataset.expect;
+      const match = inp.value === inp.dataset.expect;
+      table.querySelectorAll(`[data-confirm-delete-u="${inp.dataset.typedCheck}"]`)
+        .forEach((btn) => { btn.disabled = !match; });
     }));
     if (s.meta) AdminTopochain._wirePager(s.meta, 'admin-topo-u-pg', (page) => { s.page = page; AdminTopochain._loadUsers(); });
   },
@@ -922,24 +1296,25 @@ const AdminTopochain = {
   // displayed identifier (exact match) before the real Delete button
   // enables — mirrors the DB export section's typed-EXPORT idiom rather
   // than a native confirm()/prompt().
-  _userDeleteConfirmRow(u, identifier) {
+  // Layout-neutral (no <tr>/<td>): _list() drops it into a full-width
+  // row under the table row AND into the card on a phone, so it has to
+  // work in both.
+  _userDeleteConfirmBlock(u, identifier) {
     const esc = AdminTopochain.esc;
-    return `<tr class="bg-red-50 dark:bg-red-950/30">
-      <td colspan="7" class="px-3 py-3">
-        <p class="text-xs text-red-700 dark:text-red-300 mb-2">
-          This permanently deletes <strong>${esc(identifier)}</strong> from the platform users table —
-          this can be ANY platform user, including real logins and other admins, not just a topochain
-          user. Type <code>${esc(identifier)}</code> exactly to confirm.
-        </p>
-        <div class="flex items-center gap-2">
-          <input data-typed-check="${u.id}" data-expect="${esc(identifier)}" type="text"
-            class="rounded-lg bg-white dark:bg-zinc-900 border border-red-300 dark:border-red-800 px-2 py-1 text-xs font-mono">
-          <button data-confirm-delete-u="${u.id}" disabled
-            class="rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-40 px-3 py-1.5 text-xs font-medium text-white">Delete permanently</button>
-          <button data-cancel-delete-u="${u.id}" class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs font-medium">Cancel</button>
-        </div>
-      </td>
-    </tr>`;
+    return `<div class="rounded-lg border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/30 p-3">
+      <p class="text-xs text-red-700 dark:text-red-300 mb-2">
+        This permanently deletes <strong>${esc(identifier)}</strong> from the platform users table —
+        this can be ANY platform user, including real logins and other admins, not just a user of
+        this programme. Type <code>${esc(identifier)}</code> exactly to confirm.
+      </p>
+      <div class="flex flex-wrap items-center gap-2">
+        <input data-typed-check="${u.id}" data-expect="${esc(identifier)}" type="text"
+          class="rounded-lg bg-white dark:bg-zinc-900 border border-red-300 dark:border-red-800 px-2 py-1 text-xs font-mono">
+        <button data-confirm-delete-u="${u.id}" disabled
+          class="rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-40 px-3 py-1.5 text-xs font-medium text-white">Delete permanently</button>
+        <button data-cancel-delete-u="${u.id}" class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs font-medium">Cancel</button>
+      </div>
+    </div>`;
   },
 
   async _togglePodium(id) {
@@ -1088,17 +1463,46 @@ const AdminTopochain = {
     AdminTopochain._loadUsers();
   },
 
+  // Export users for one event. Was a window.prompt() listing "id: name"
+  // pairs the operator had to read and retype — an inline panel with a
+  // real <select> now, rendered into the same host the New/Import forms
+  // use so only one of the three is ever open.
   async _openUserExport() {
+    const host = document.getElementById('admin-topo-u-form');
+    if (!host) return;
+    const esc = AdminTopochain.esc;
+    host.innerHTML = `<div class="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 p-4 mb-4">${AdminTopochain._skeleton(2)}</div>`;
     const events = await AdminTopochain._fetchAllEvents();
-    if (!events.length) { AdminTopochain._alert('No events to export.'); return; }
-    const list = events.map((e) => `${e.id}: ${e.name}`).join('\n');
-    const idStr = window.prompt(`Export users for which event id?\n${list}`);
-    const id = parseInt(idStr, 10);
-    if (!Number.isInteger(id)) return;
-    // Same-origin, server-generated path built from a numeric id we just
-    // fetched ourselves (never attacker-controlled) — navigation, not a
-    // Blob, since this is a streamed CSV attachment.
-    window.location.href = `/api/v4/admin/users/export-csv/${encodeURIComponent(id)}`;
+    if (AdminTopochain._sub !== 'users' || !document.getElementById('admin-topo-u-form')) return;
+    if (!events.length) {
+      host.innerHTML = `<div class="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 px-4 py-3 text-sm text-zinc-500 mb-4">
+        There is no event to export users for yet.
+        <button id="admin-topo-u-exp-cancel" class="ml-2 text-xs text-violet-500 hover:text-violet-400">Close</button>
+      </div>`;
+    } else {
+      const opts = events.map((e) => `<option value="${esc(e.id)}">${esc(e.name)} (#${esc(e.id)})</option>`).join('');
+      host.innerHTML = `<div class="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 p-4 mb-4">
+        <p class="text-sm font-medium mb-2">Export users as CSV</p>
+        <div class="flex flex-wrap items-center gap-2">
+          <select id="admin-topo-u-exp-event"
+            class="rounded-lg bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1.5 text-sm max-w-full">${opts}</select>
+          <button id="admin-topo-u-exp-go" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1.5 text-sm font-medium text-white">Download CSV</button>
+          <button id="admin-topo-u-exp-cancel" class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm font-medium">Cancel</button>
+        </div>
+        <p class="mt-2 text-xs text-zinc-500">Downloads every user enrolled in the selected event.</p>
+      </div>`;
+      document.getElementById('admin-topo-u-exp-go').addEventListener('click', () => {
+        const id = parseInt(document.getElementById('admin-topo-u-exp-event').value, 10);
+        if (!Number.isInteger(id) || id <= 0) return;
+        // Same-origin, server-generated path built from a numeric id we
+        // just fetched ourselves (never attacker-controlled) —
+        // navigation, not a Blob, since this is a streamed CSV
+        // attachment.
+        window.location.href = `/api/v4/admin/users/export-csv/${encodeURIComponent(id)}`;
+      });
+    }
+    document.getElementById('admin-topo-u-exp-cancel')
+      ?.addEventListener('click', () => { host.innerHTML = ''; });
   },
 
   // ══════════════════════════════════════════════════════════════════
@@ -1126,12 +1530,12 @@ const AdminTopochain = {
         <h2 class="text-lg font-semibold">Platform waitlist</h2>
         ${statusSelect('admin-topo-wl-status', AdminTopochain._waitlist.status)}
       </div>
-      <div id="admin-topo-wl-table"><p class="text-sm text-zinc-500">Loading&hellip;</p></div>
+      <div id="admin-topo-wl-table">${AdminTopochain._skeleton(4)}</div>
       <div class="flex flex-wrap items-center justify-between gap-3 mb-3 mt-8">
         <h2 class="text-lg font-semibold">Block-producer queue</h2>
         ${statusSelect('admin-topo-bpq-status', AdminTopochain._bpq.status)}
       </div>
-      <div id="admin-topo-bpq-table"><p class="text-sm text-zinc-500">Loading&hellip;</p></div>`;
+      <div id="admin-topo-bpq-table">${AdminTopochain._skeleton(4)}</div>`;
     document.getElementById('admin-topo-wl-status').addEventListener('change', (e) => {
       AdminTopochain._waitlist.status = e.target.value;
       AdminTopochain._waitlist.page = 1;
@@ -1150,10 +1554,10 @@ const AdminTopochain = {
     const s = AdminTopochain._waitlist;
     const params = new URLSearchParams({ page: String(s.page), per_page: String(s.perPage) });
     if (s.status !== 'all') params.set('status', s.status);
-    const { ok, data } = await AdminTopochain.fetchJson(`/api/v4/admin/waitlist?${params}`);
+    const { ok, data, status } = await AdminTopochain.fetchJson(`/api/v4/admin/waitlist?${params}`);
     if (AdminTopochain._sub !== 'waitlist') return;
-    if (ok && data?.success) { s.items = data.data; s.meta = data.meta; }
-    else { s.items = []; s.meta = null; }
+    if (ok && data?.success) { s.items = data.data; s.meta = data.meta; s.error = null; }
+    else { s.items = []; s.meta = null; s.error = { status, message: (data && data.error) || null }; }
     AdminTopochain._renderWaitlistTable();
   },
 
@@ -1163,47 +1567,56 @@ const AdminTopochain = {
     const esc = AdminTopochain.esc;
     const canWrite = AdminTopochain.canWrite();
     const s = AdminTopochain._waitlist;
-    if (!s.items.length) {
-      table.innerHTML = '<p class="text-sm text-zinc-500 py-4">No waitlist entries.</p>';
+    if (s.error) {
+      table.innerHTML = AdminTopochain._error({
+        title: "Couldn't load the waitlist", status: s.error.status,
+        message: s.error.message, retryId: 'admin-topo-wl-retry',
+      });
+      AdminTopochain._wireRetry('admin-topo-wl-retry', () => AdminTopochain._loadWaitlist());
       return;
     }
-    const rows = s.items.map((w) => `
-      <tr class="border-t border-zinc-200 dark:border-zinc-800">
-        <td class="px-3 py-2 text-sm font-mono">${esc(w.email)}${w.confirmed_at
-          ? ' <span class="text-emerald-600 dark:text-emerald-400 text-xs" title="Followed the confirm link in the join email">✓ confirmed</span>'
-          : ' <span class="text-zinc-400 text-xs" title="Never followed the confirm link in the join email — this address is unproven">unconfirmed</span>'}</td>
-        <td class="px-3 py-2 text-xs text-zinc-500">${esc(AdminTopochain._fmt(w.submitted_at))}</td>
-        <td class="px-3 py-2 text-sm">${w.linked_username
-          ? `${esc(w.linked_username)}${w.has_platform_access ? ' <span class="text-emerald-600 dark:text-emerald-400 text-xs">(has access)</span>' : ''}`
-          : '<span class="text-zinc-400">no account yet</span>'}</td>
-        <td class="px-3 py-2 text-sm">${w.released_at
-          ? `<span class="text-emerald-600 dark:text-emerald-400 text-xs">Released ${esc(AdminTopochain._fmt(w.released_at))}</span>`
-          : '<span class="text-amber-600 dark:text-amber-400 text-xs">pending</span>'}</td>
-        <td class="px-3 py-2 text-right whitespace-nowrap">
-          ${canWrite && !w.released_at
-            ? `<button data-release-wl="${w.id}" data-email="${esc(w.email)}"
-                 class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1 text-xs font-medium text-white">Release</button>`
-            : ''}
-        </td>
-      </tr>
-      ${w.answers ? `
-      <tr><td colspan="5" class="px-3 pb-2 pt-0">
+    if (!s.items.length) {
+      table.innerHTML = AdminTopochain._empty({
+        title: 'No waitlist entries',
+        body: 'Signups from the public join form land here.',
+      });
+      return;
+    }
+    table.innerHTML = AdminTopochain._list({
+      items: s.items,
+      columns: [
+        {
+          label: 'Email',
+          primary: true,
+          tdClass: 'font-mono',
+          cell: (w) => `${esc(w.email)}${w.confirmed_at
+            ? ' <span class="text-emerald-600 dark:text-emerald-400 text-xs" title="Followed the confirm link in the join email">✓ confirmed</span>'
+            : ' <span class="text-zinc-400 text-xs" title="Never followed the confirm link in the join email — this address is unproven">unconfirmed</span>'}`,
+        },
+        { label: 'Joined', cell: (w) => esc(AdminTopochain._fmt(w.submitted_at)), tdClass: 'text-xs text-zinc-500' },
+        {
+          label: 'Account',
+          cell: (w) => (w.linked_username
+            ? `${esc(w.linked_username)}${w.has_platform_access ? ' <span class="text-emerald-600 dark:text-emerald-400 text-xs">(has access)</span>' : ''}`
+            : '<span class="text-zinc-400">no account yet</span>'),
+        },
+        {
+          label: 'Status',
+          cell: (w) => (w.released_at
+            ? `<span class="text-emerald-600 dark:text-emerald-400 text-xs">Released ${esc(AdminTopochain._fmt(w.released_at))}</span>`
+            : '<span class="text-amber-600 dark:text-amber-400 text-xs">pending</span>'),
+        },
+      ],
+      actions: (w) => (canWrite && !w.released_at
+        ? `<button data-release-wl="${w.id}" data-email="${esc(w.email)}"
+             class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1 text-xs font-medium text-white">Release</button>`
+        : ''),
+      extra: (w) => (w.answers ? `
         <details class="text-xs">
           <summary class="cursor-pointer text-zinc-500 select-none py-0.5">Survey answers</summary>
           <div class="mt-1 space-y-0.5 text-zinc-600 dark:text-zinc-300">${AdminTopochain._wlAnswersHtml(w.answers)}</div>
-        </details>
-      </td></tr>` : ''}`).join('');
-    table.innerHTML = `
-      <div class="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-        <table class="w-full">
-          <thead class="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500">
-            <tr><th class="px-3 py-2 text-left">Email</th><th class="px-3 py-2 text-left">Joined</th>
-              <th class="px-3 py-2 text-left">Account</th><th class="px-3 py-2 text-left">Status</th><th class="px-3 py-2"></th></tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-      ${AdminTopochain._pagerHtml(s.meta, 'admin-topo-wl-pg')}`;
+        </details>` : ''),
+    }) + AdminTopochain._pagerHtml(s.meta, 'admin-topo-wl-pg');
     table.querySelectorAll('[data-release-wl]').forEach((b) => b.addEventListener('click', () =>
       AdminTopochain._releaseWaitlist(parseInt(b.dataset.releaseWl, 10), b.dataset.email)));
     if (s.meta) AdminTopochain._wirePager(s.meta, 'admin-topo-wl-pg', (page) => { s.page = page; AdminTopochain._loadWaitlist(); });
@@ -1272,10 +1685,10 @@ const AdminTopochain = {
     const s = AdminTopochain._bpq;
     const params = new URLSearchParams({ page: String(s.page), per_page: String(s.perPage) });
     if (s.status !== 'all') params.set('status', s.status);
-    const { ok, data } = await AdminTopochain.fetchJson(`/api/v4/admin/bp-queue?${params}`);
+    const { ok, data, status } = await AdminTopochain.fetchJson(`/api/v4/admin/bp-queue?${params}`);
     if (AdminTopochain._sub !== 'waitlist') return;
-    if (ok && data?.success) { s.items = data.data; s.meta = data.meta; }
-    else { s.items = []; s.meta = null; }
+    if (ok && data?.success) { s.items = data.data; s.meta = data.meta; s.error = null; }
+    else { s.items = []; s.meta = null; s.error = { status, message: (data && data.error) || null }; }
     AdminTopochain._renderBpQueueTable();
   },
 
@@ -1285,36 +1698,40 @@ const AdminTopochain = {
     const esc = AdminTopochain.esc;
     const canWrite = AdminTopochain.canWrite();
     const s = AdminTopochain._bpq;
-    if (!s.items.length) {
-      table.innerHTML = '<p class="text-sm text-zinc-500 py-4">No block-production requests.</p>';
+    if (s.error) {
+      table.innerHTML = AdminTopochain._error({
+        title: "Couldn't load block-production requests", status: s.error.status,
+        message: s.error.message, retryId: 'admin-topo-bpq-retry',
+      });
+      AdminTopochain._wireRetry('admin-topo-bpq-retry', () => AdminTopochain._loadBpQueue());
       return;
     }
-    const rows = s.items.map((u) => `
-      <tr class="border-t border-zinc-200 dark:border-zinc-800">
-        <td class="px-3 py-2 text-sm">${esc(u.display_name || u.username || `user #${u.id}`)}</td>
-        <td class="px-3 py-2 text-xs text-zinc-500 font-mono">${esc(u.email || '—')}</td>
-        <td class="px-3 py-2 text-xs text-zinc-500">${esc(AdminTopochain._fmt(u.bp_requested_at))}</td>
-        <td class="px-3 py-2 text-sm">${u.bp_released_at
-          ? `<span class="text-emerald-600 dark:text-emerald-400 text-xs">Released ${esc(AdminTopochain._fmt(u.bp_released_at))}</span>`
-          : '<span class="text-amber-600 dark:text-amber-400 text-xs">pending</span>'}</td>
-        <td class="px-3 py-2 text-right whitespace-nowrap">
-          ${canWrite && !u.bp_released_at
-            ? `<button data-release-bp="${u.id}" data-identifier="${esc(u.display_name || u.username || u.email || `user #${u.id}`)}"
-                 class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1 text-xs font-medium text-white">Release keys</button>`
-            : ''}
-        </td>
-      </tr>`).join('');
-    table.innerHTML = `
-      <div class="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-        <table class="w-full">
-          <thead class="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500">
-            <tr><th class="px-3 py-2 text-left">User</th><th class="px-3 py-2 text-left">Email</th>
-              <th class="px-3 py-2 text-left">Requested</th><th class="px-3 py-2 text-left">Status</th><th class="px-3 py-2"></th></tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-      ${AdminTopochain._pagerHtml(s.meta, 'admin-topo-bpq-pg')}`;
+    if (!s.items.length) {
+      table.innerHTML = AdminTopochain._empty({
+        title: 'No block-production requests',
+        body: 'Requests appear here when a user asks for producer keys from the app.',
+      });
+      return;
+    }
+    const bpIdent = (u) => u.display_name || u.username || u.email || `user #${u.id}`;
+    table.innerHTML = AdminTopochain._list({
+      items: s.items,
+      columns: [
+        { label: 'User', primary: true, cell: (u) => esc(u.display_name || u.username || `user #${u.id}`) },
+        { label: 'Email', cell: (u) => esc(u.email || '—'), tdClass: 'text-xs text-zinc-500 font-mono' },
+        { label: 'Requested', cell: (u) => esc(AdminTopochain._fmt(u.bp_requested_at)), tdClass: 'text-xs text-zinc-500' },
+        {
+          label: 'Status',
+          cell: (u) => (u.bp_released_at
+            ? `<span class="text-emerald-600 dark:text-emerald-400 text-xs">Released ${esc(AdminTopochain._fmt(u.bp_released_at))}</span>`
+            : '<span class="text-amber-600 dark:text-amber-400 text-xs">pending</span>'),
+        },
+      ],
+      actions: (u) => (canWrite && !u.bp_released_at
+        ? `<button data-release-bp="${u.id}" data-identifier="${esc(bpIdent(u))}"
+             class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1 text-xs font-medium text-white">Release keys</button>`
+        : ''),
+    }) + AdminTopochain._pagerHtml(s.meta, 'admin-topo-bpq-pg');
     table.querySelectorAll('[data-release-bp]').forEach((b) => b.addEventListener('click', () =>
       AdminTopochain._releaseBp(parseInt(b.dataset.releaseBp, 10), b.dataset.identifier)));
     if (s.meta) AdminTopochain._wirePager(s.meta, 'admin-topo-bpq-pg', (page) => { s.page = page; AdminTopochain._loadBpQueue(); });
@@ -1355,7 +1772,7 @@ const AdminTopochain = {
         </div>
       </div>
       <div id="admin-topo-oa-form"></div>
-      <div id="admin-topo-oa-table"><p class="text-sm text-zinc-500">Loading&hellip;</p></div>`;
+      <div id="admin-topo-oa-table">${AdminTopochain._skeleton(4)}</div>`;
     document.getElementById('admin-topo-oa-search').addEventListener('change', (e) => {
       AdminTopochain._accts.search = e.target.value.trim();
       AdminTopochain._accts.page = 1;
@@ -1369,10 +1786,10 @@ const AdminTopochain = {
     const s = AdminTopochain._accts;
     const params = new URLSearchParams({ page: String(s.page), per_page: String(s.perPage) });
     if (s.search) params.set('search', s.search);
-    const { ok, data } = await AdminTopochain.fetchJson(`/api/v4/admin/onchain-accounts?${params}`);
+    const { ok, data, status } = await AdminTopochain.fetchJson(`/api/v4/admin/onchain-accounts?${params}`);
     if (AdminTopochain._sub !== 'onchain-accounts') return;
-    if (ok && data?.success) { s.items = data.data; s.meta = data.meta; }
-    else { s.items = []; s.meta = null; }
+    if (ok && data?.success) { s.items = data.data; s.meta = data.meta; s.error = null; }
+    else { s.items = []; s.meta = null; s.error = { status, message: (data && data.error) || null }; }
     AdminTopochain._renderAccountsTable();
   },
 
@@ -1382,34 +1799,39 @@ const AdminTopochain = {
     const esc = AdminTopochain.esc;
     const canWrite = AdminTopochain.canWrite();
     const s = AdminTopochain._accts;
-    if (!s.items.length) {
-      table.innerHTML = '<p class="text-sm text-zinc-500 py-4">No onchain accounts found.</p>';
+    if (s.error) {
+      table.innerHTML = AdminTopochain._error({
+        title: "Couldn't load onchain accounts", status: s.error.status,
+        message: s.error.message, retryId: 'admin-topo-oa-retry',
+      });
+      AdminTopochain._wireRetry('admin-topo-oa-retry', () => AdminTopochain._loadAccounts());
       return;
     }
-    const rows = s.items.map((a) => `
-      <tr class="border-t border-zinc-200 dark:border-zinc-800">
-        <td class="px-3 py-2 text-xs font-mono">${esc(a.public_key)}</td>
-        <td class="px-3 py-2 text-sm text-zinc-500">${esc(a.tier)}</td>
-        <td class="px-3 py-2 text-sm font-mono text-right">${esc(a.amount)}</td>
-        <td class="px-3 py-2 text-xs text-zinc-500">${a.event ? esc(a.event.name) : '—'}</td>
-        <td class="px-3 py-2 text-sm">${a.is_used ? '<span class="text-amber-600 dark:text-amber-400">used</span>' : '<span class="text-green-600 dark:text-green-400">free</span>'}</td>
-        <td class="px-3 py-2 text-xs text-zinc-500">${a.user ? esc(a.user.username) : '—'}</td>
-        <td class="px-3 py-2 text-right">
-          ${canWrite && a.is_used ? `<button data-reset="${a.id}" class="text-xs text-amber-600 hover:text-amber-500">Reset</button>` : ''}
-        </td>
-      </tr>`).join('');
-    table.innerHTML = `
-      <div class="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-        <table class="w-full">
-          <thead class="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500">
-            <tr><th class="px-3 py-2 text-left">Public key</th><th class="px-3 py-2 text-left">Tier</th>
-              <th class="px-3 py-2 text-right">Amount</th><th class="px-3 py-2 text-left">Event</th>
-              <th class="px-3 py-2 text-left">Status</th><th class="px-3 py-2 text-left">User</th><th class="px-3 py-2"></th></tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-      ${AdminTopochain._pagerHtml(s.meta, 'admin-topo-oa-pg')}`;
+    if (!s.items.length) {
+      table.innerHTML = AdminTopochain._empty({
+        title: s.search ? 'No accounts match that search' : 'No onchain accounts yet',
+        body: s.search ? 'Clear the search box to see every account.'
+          : 'Import a batch of accounts to hand out registration codes for an event.',
+        actionId: s.search ? null : 'admin-topo-oa-empty-import',
+        actionLabel: 'Import accounts',
+      });
+      document.getElementById('admin-topo-oa-empty-import')
+        ?.addEventListener('click', () => AdminTopochain._openAccountImportForm());
+      return;
+    }
+    table.innerHTML = AdminTopochain._list({
+      items: s.items,
+      columns: [
+        { label: 'Public key', primary: true, cell: (a) => esc(a.public_key), tdClass: 'text-xs font-mono' },
+        { label: 'Tier', cell: (a) => esc(a.tier), tdClass: 'text-zinc-500' },
+        { label: 'Amount', cell: (a) => esc(a.amount), tdClass: 'font-mono text-right', thClass: 'text-right' },
+        { label: 'Event', cell: (a) => (a.event ? esc(a.event.name) : '—'), tdClass: 'text-xs text-zinc-500' },
+        { label: 'Status', cell: (a) => (a.is_used ? '<span class="text-amber-600 dark:text-amber-400">used</span>' : '<span class="text-green-600 dark:text-green-400">free</span>') },
+        { label: 'User', cell: (a) => (a.user ? esc(a.user.username) : '—'), tdClass: 'text-xs text-zinc-500' },
+      ],
+      actions: (a) => (canWrite && a.is_used
+        ? `<button data-reset="${a.id}" class="text-xs text-amber-600 hover:text-amber-500">Reset</button>` : ''),
+    }) + AdminTopochain._pagerHtml(s.meta, 'admin-topo-oa-pg');
     table.querySelectorAll('[data-reset]').forEach((b) => b.addEventListener('click', () => AdminTopochain._resetAccount(b.dataset.reset)));
     if (s.meta) AdminTopochain._wirePager(s.meta, 'admin-topo-oa-pg', (page) => { s.page = page; AdminTopochain._loadAccounts(); });
   },
@@ -1495,7 +1917,7 @@ const AdminTopochain = {
         </div>
       </div>
       <div id="admin-topo-act-form"></div>
-      <div id="admin-topo-act-table"><p class="text-sm text-zinc-500">Loading&hellip;</p></div>`;
+      <div id="admin-topo-act-table">${AdminTopochain._skeleton(4)}</div>`;
     document.getElementById('admin-topo-act-new')?.addEventListener('click', () => AdminTopochain._openActivityForm(null));
     document.getElementById('admin-topo-act-import')?.addEventListener('click', () => AdminTopochain._openActivityImportForm());
     document.getElementById('admin-topo-act-totals').addEventListener('click', () => AdminTopochain._openActivityTotals());
@@ -1505,10 +1927,10 @@ const AdminTopochain = {
   async _loadActivities() {
     const s = AdminTopochain._acts;
     const params = new URLSearchParams({ page: String(s.page), per_page: String(s.perPage) });
-    const { ok, data } = await AdminTopochain.fetchJson(`/api/v4/admin/user-activities?${params}`);
+    const { ok, data, status } = await AdminTopochain.fetchJson(`/api/v4/admin/user-activities?${params}`);
     if (AdminTopochain._sub !== 'user-activities') return;
-    if (ok && data?.success) { s.items = data.data; s.meta = data.meta; }
-    else { s.items = []; s.meta = null; }
+    if (ok && data?.success) { s.items = data.data; s.meta = data.meta; s.error = null; }
+    else { s.items = []; s.meta = null; s.error = { status, message: (data && data.error) || null }; }
     AdminTopochain._renderActivitiesTable();
   },
 
@@ -1518,35 +1940,39 @@ const AdminTopochain = {
     const esc = AdminTopochain.esc;
     const canWrite = AdminTopochain.canWrite();
     const s = AdminTopochain._acts;
-    if (!s.items.length) {
-      table.innerHTML = '<p class="text-sm text-zinc-500 py-4">No activities found.</p>';
+    if (s.error) {
+      table.innerHTML = AdminTopochain._error({
+        title: "Couldn't load user activities", status: s.error.status,
+        message: s.error.message, retryId: 'admin-topo-act-retry',
+      });
+      AdminTopochain._wireRetry('admin-topo-act-retry', () => AdminTopochain._loadActivities());
       return;
     }
-    const rows = s.items.map((a) => `
-      <tr class="border-t border-zinc-200 dark:border-zinc-800">
-        <td class="px-3 py-2 text-xs text-zinc-500">${esc(a.user?.display_name || a.user?.email || a.user_id)}</td>
-        <td class="px-3 py-2 text-xs text-zinc-500">${esc(a.event?.name || a.season_event_id)}</td>
-        <td class="px-3 py-2 text-xs text-zinc-500">${esc(a.challenge?.goal || '—')}</td>
-        <td class="px-3 py-2 text-xs">${esc(a.activity_type)}</td>
-        <td class="px-3 py-2 text-sm font-mono text-right">${esc(a.points)}</td>
-        <td class="px-3 py-2 text-xs text-zinc-500">${esc(AdminTopochain._fmt(a.activity_at))}</td>
-        <td class="px-3 py-2 text-right whitespace-nowrap">
-          ${canWrite ? `<button data-edit-act="${a.id}" class="text-xs text-zinc-500 hover:text-violet-400 mr-2">Edit</button>` : ''}
-          ${canWrite ? `<button data-delete-act="${a.id}" class="text-xs text-red-500 hover:text-red-400">Delete</button>` : ''}
-        </td>
-      </tr>`).join('');
-    table.innerHTML = `
-      <div class="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-        <table class="w-full">
-          <thead class="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500">
-            <tr><th class="px-3 py-2 text-left">User</th><th class="px-3 py-2 text-left">Event</th>
-              <th class="px-3 py-2 text-left">Challenge</th><th class="px-3 py-2 text-left">Type</th>
-              <th class="px-3 py-2 text-right">Points</th><th class="px-3 py-2 text-left">At</th><th class="px-3 py-2"></th></tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-      ${AdminTopochain._pagerHtml(s.meta, 'admin-topo-act-pg')}`;
+    if (!s.items.length) {
+      table.innerHTML = AdminTopochain._empty({
+        title: 'No activities yet',
+        body: 'Activities are recorded when users complete challenges — you can also add one by hand.',
+        actionId: 'admin-topo-act-empty-new',
+        actionLabel: 'New activity',
+      });
+      document.getElementById('admin-topo-act-empty-new')
+        ?.addEventListener('click', () => AdminTopochain._openActivityForm(null));
+      return;
+    }
+    table.innerHTML = AdminTopochain._list({
+      items: s.items,
+      columns: [
+        { label: 'User', primary: true, cell: (a) => esc(a.user?.display_name || a.user?.email || a.user_id) },
+        { label: 'Event', cell: (a) => esc(a.event?.name || a.season_event_id), tdClass: 'text-xs text-zinc-500' },
+        { label: 'Challenge', cell: (a) => esc(a.challenge?.goal || '—'), tdClass: 'text-xs text-zinc-500' },
+        { label: 'Type', cell: (a) => esc(a.activity_type), tdClass: 'text-xs' },
+        { label: 'Points', cell: (a) => esc(a.points), tdClass: 'font-mono text-right', thClass: 'text-right' },
+        { label: 'At', cell: (a) => esc(AdminTopochain._fmt(a.activity_at)), tdClass: 'text-xs text-zinc-500' },
+      ],
+      actions: (a) => `
+        ${canWrite ? `<button data-edit-act="${a.id}" class="text-xs text-zinc-500 hover:text-violet-400 mr-2">Edit</button>` : ''}
+        ${canWrite ? `<button data-delete-act="${a.id}" class="text-xs text-red-500 hover:text-red-400">Delete</button>` : ''}`,
+    }) + AdminTopochain._pagerHtml(s.meta, 'admin-topo-act-pg');
     table.querySelectorAll('[data-edit-act]').forEach((b) => b.addEventListener('click', () => AdminTopochain._openActivityForm(parseInt(b.dataset.editAct, 10))));
     table.querySelectorAll('[data-delete-act]').forEach((b) => b.addEventListener('click', () => AdminTopochain._deleteActivity(b.dataset.deleteAct)));
     if (s.meta) AdminTopochain._wirePager(s.meta, 'admin-topo-act-pg', (page) => { s.page = page; AdminTopochain._loadActivities(); });
@@ -1701,14 +2127,22 @@ const AdminTopochain = {
             <button id="admin-topo-act-tot-close" class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs font-medium">Close</button>
           </div>
         </div>
-        <div id="admin-topo-act-tot-body"><p class="text-sm text-zinc-500">Loading&hellip;</p></div>
+        <div id="admin-topo-act-tot-body">${AdminTopochain._skeleton(4)}</div>
       </div>`;
     const loadTotals = async () => {
       const eventId = document.getElementById('admin-topo-act-tot-event').value;
       const params = eventId ? `?season_event_id=${encodeURIComponent(eventId)}` : '';
-      const { ok, data } = await AdminTopochain.fetchJson(`/api/v4/admin/user-activities/totals${params}`);
+      const { ok, data, status } = await AdminTopochain.fetchJson(`/api/v4/admin/user-activities/totals${params}`);
       const body = document.getElementById('admin-topo-act-tot-body');
-      if (!ok || !data?.success) { body.innerHTML = '<p class="text-sm text-zinc-500">Failed to load totals.</p>'; return; }
+      if (!body) return;
+      if (!ok || !data?.success) {
+        body.innerHTML = AdminTopochain._error({
+          title: "Couldn't load totals", status, message: (data && data.error) || null,
+          retryId: 'admin-topo-act-tot-retry',
+        });
+        AdminTopochain._wireRetry('admin-topo-act-tot-retry', loadTotals);
+        return;
+      }
       const d = data.data;
       const userRows = d.user_totals.slice(0, 50).map((t) => `
         <tr class="border-t border-zinc-200 dark:border-zinc-800">
@@ -1767,7 +2201,7 @@ const AdminTopochain = {
         </div>
       </div>
       <div id="admin-topo-tpl-form"></div>
-      <div id="admin-topo-tpl-table"><p class="text-sm text-zinc-500">Loading&hellip;</p></div>`;
+      <div id="admin-topo-tpl-table">${AdminTopochain._skeleton(4)}</div>`;
     document.getElementById('admin-topo-tpl-search').addEventListener('change', (e) => {
       AdminTopochain._tmpl.search = e.target.value.trim();
       AdminTopochain._tmpl.page = 1;
@@ -1787,10 +2221,10 @@ const AdminTopochain = {
     const params = new URLSearchParams({ page: String(s.page), per_page: String(s.perPage) });
     if (s.search) params.set('search', s.search);
     if (s.category) params.set('category', s.category);
-    const { ok, data } = await AdminTopochain.fetchJson(`/api/v4/admin/challenge-templates?${params}`);
+    const { ok, data, status } = await AdminTopochain.fetchJson(`/api/v4/admin/challenge-templates?${params}`);
     if (AdminTopochain._sub !== 'challenge-templates') return;
-    if (ok && data?.success) { s.items = data.data; s.meta = data.meta; }
-    else { s.items = []; s.meta = null; }
+    if (ok && data?.success) { s.items = data.data; s.meta = data.meta; s.error = null; }
+    else { s.items = []; s.meta = null; s.error = { status, message: (data && data.error) || null }; }
     AdminTopochain._renderTemplatesTable();
   },
 
@@ -1800,32 +2234,37 @@ const AdminTopochain = {
     const esc = AdminTopochain.esc;
     const canWrite = AdminTopochain.canWrite();
     const s = AdminTopochain._tmpl;
-    if (!s.items.length) {
-      table.innerHTML = '<p class="text-sm text-zinc-500 py-4">No challenge templates found.</p>';
+    if (s.error) {
+      table.innerHTML = AdminTopochain._error({
+        title: "Couldn't load challenge templates", status: s.error.status,
+        message: s.error.message, retryId: 'admin-topo-tpl-retry',
+      });
+      AdminTopochain._wireRetry('admin-topo-tpl-retry', () => AdminTopochain._loadTemplates());
       return;
     }
-    const rows = s.items.map((t) => `
-      <tr class="border-t border-zinc-200 dark:border-zinc-800">
-        <td class="px-3 py-2 text-xs text-zinc-500">${esc(t.category)}</td>
-        <td class="px-3 py-2 text-sm">${esc(t.goal)}</td>
-        <td class="px-3 py-2 text-sm text-zinc-500">${esc(t.reward)}</td>
-        <td class="px-3 py-2 text-xs text-zinc-500">${esc(t.kind || '—')}</td>
-        <td class="px-3 py-2 text-right whitespace-nowrap">
-          ${canWrite ? `<button data-edit-tpl="${t.id}" class="text-xs text-zinc-500 hover:text-violet-400 mr-2">Edit</button>` : ''}
-          ${canWrite ? `<button data-delete-tpl="${t.id}" class="text-xs text-red-500 hover:text-red-400">Delete</button>` : ''}
-        </td>
-      </tr>`).join('');
-    table.innerHTML = `
-      <div class="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-        <table class="w-full">
-          <thead class="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500">
-            <tr><th class="px-3 py-2 text-left">Category</th><th class="px-3 py-2 text-left">Goal</th>
-              <th class="px-3 py-2 text-left">Reward</th><th class="px-3 py-2 text-left">Kind</th><th class="px-3 py-2"></th></tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-      ${AdminTopochain._pagerHtml(s.meta, 'admin-topo-tpl-pg')}`;
+    if (!s.items.length) {
+      table.innerHTML = AdminTopochain._empty({
+        title: 'No challenge templates yet',
+        body: 'Templates are the reusable library challenges are stamped out of.',
+        actionId: 'admin-topo-tpl-empty-new',
+        actionLabel: 'New template',
+      });
+      document.getElementById('admin-topo-tpl-empty-new')
+        ?.addEventListener('click', () => AdminTopochain._openTemplateForm(null));
+      return;
+    }
+    table.innerHTML = AdminTopochain._list({
+      items: s.items,
+      columns: [
+        { label: 'Goal', primary: true, cell: (t) => esc(t.goal) },
+        { label: 'Category', cell: (t) => esc(t.category), tdClass: 'text-xs text-zinc-500' },
+        { label: 'Reward', cell: (t) => esc(t.reward), tdClass: 'text-zinc-500' },
+        { label: 'Kind', cell: (t) => esc(t.kind || '—'), tdClass: 'text-xs text-zinc-500' },
+      ],
+      actions: (t) => `
+        ${canWrite ? `<button data-edit-tpl="${t.id}" class="text-xs text-zinc-500 hover:text-violet-400 mr-2">Edit</button>` : ''}
+        ${canWrite ? `<button data-delete-tpl="${t.id}" class="text-xs text-red-500 hover:text-red-400">Delete</button>` : ''}`,
+    }) + AdminTopochain._pagerHtml(s.meta, 'admin-topo-tpl-pg');
     table.querySelectorAll('[data-edit-tpl]').forEach((b) => b.addEventListener('click', () => AdminTopochain._openTemplateForm(parseInt(b.dataset.editTpl, 10))));
     table.querySelectorAll('[data-delete-tpl]').forEach((b) => b.addEventListener('click', () => AdminTopochain._deleteTemplate(b.dataset.deleteTpl)));
     if (s.meta) AdminTopochain._wirePager(s.meta, 'admin-topo-tpl-pg', (page) => { s.page = page; AdminTopochain._loadTemplates(); });
@@ -1954,7 +2393,7 @@ const AdminTopochain = {
       <div id="admin-topo-mail-status" class="mb-4"></div>
       <div id="admin-topo-mail-activity" class="mb-4"></div>
       <div id="admin-topo-set-form"></div>
-      <div id="admin-topo-set-table"><p class="text-sm text-zinc-500">Loading&hellip;</p></div>`;
+      <div id="admin-topo-set-table">${AdminTopochain._skeleton(4)}</div>`;
     document.getElementById('admin-topo-set-new')?.addEventListener('click', () => AdminTopochain._openSettingForm(null));
     document.getElementById('admin-topo-set-reset')?.addEventListener('click', () => AdminTopochain._resetSettings());
     AdminTopochain._loadSettings();
@@ -2111,9 +2550,11 @@ const AdminTopochain = {
   },
 
   async _loadSettings() {
-    const { ok, data } = await AdminTopochain.fetchJson('/api/v4/admin/settings');
+    const { ok, data, status } = await AdminTopochain.fetchJson('/api/v4/admin/settings');
     if (AdminTopochain._sub !== 'settings') return;
-    AdminTopochain._settings.items = (ok && data?.success) ? data.data : [];
+    const good = ok && data?.success;
+    AdminTopochain._settings.items = good ? data.data : [];
+    AdminTopochain._settings.error = good ? null : { status, message: (data && data.error) || null };
     AdminTopochain._renderSettingsTable();
   },
 
@@ -2122,32 +2563,39 @@ const AdminTopochain = {
     if (!table) return;
     const esc = AdminTopochain.esc;
     const canWrite = AdminTopochain.canWrite();
-    const items = AdminTopochain._settings.items;
-    if (!items.length) {
-      table.innerHTML = '<p class="text-sm text-zinc-500 py-4">No settings found.</p>';
+    const st = AdminTopochain._settings;
+    const items = st.items;
+    if (st.error) {
+      table.innerHTML = AdminTopochain._error({
+        title: "Couldn't load settings", status: st.error.status,
+        message: st.error.message, retryId: 'admin-topo-set-retry',
+      });
+      AdminTopochain._wireRetry('admin-topo-set-retry', () => AdminTopochain._loadSettings());
       return;
     }
-    const rows = items.map((s) => `
-      <tr class="border-t border-zinc-200 dark:border-zinc-800">
-        <td class="px-3 py-2 text-xs font-mono">${esc(s.key)}</td>
-        <td class="px-3 py-2 text-sm font-mono text-right">${esc(s.value)}</td>
-        <td class="px-3 py-2 text-xs text-zinc-500">${esc(s.description || '—')}</td>
-        <td class="px-3 py-2 text-xs text-zinc-500">${esc(AdminTopochain._fmt(s.updated_at))}</td>
-        <td class="px-3 py-2 text-right whitespace-nowrap">
-          ${canWrite ? `<button data-edit-set="${esc(s.key)}" class="text-xs text-zinc-500 hover:text-violet-400 mr-2">Edit</button>` : ''}
-          ${canWrite ? `<button data-delete-set="${esc(s.key)}" class="text-xs text-red-500 hover:text-red-400">Delete</button>` : ''}
-        </td>
-      </tr>`).join('');
-    table.innerHTML = `
-      <div class="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-        <table class="w-full">
-          <thead class="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500">
-            <tr><th class="px-3 py-2 text-left">Key</th><th class="px-3 py-2 text-right">Value</th>
-              <th class="px-3 py-2 text-left">Description</th><th class="px-3 py-2 text-left">Updated</th><th class="px-3 py-2"></th></tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>`;
+    if (!items.length) {
+      table.innerHTML = AdminTopochain._empty({
+        title: 'No settings yet',
+        body: 'Settings are numeric knobs read by the mobile app. Keys must start with topochain_.',
+        actionId: 'admin-topo-set-empty-new',
+        actionLabel: 'New setting',
+      });
+      document.getElementById('admin-topo-set-empty-new')
+        ?.addEventListener('click', () => AdminTopochain._openSettingForm(null));
+      return;
+    }
+    table.innerHTML = AdminTopochain._list({
+      items,
+      columns: [
+        { label: 'Key', primary: true, cell: (s) => esc(s.key), tdClass: 'text-xs font-mono' },
+        { label: 'Value', cell: (s) => esc(s.value), tdClass: 'font-mono text-right', thClass: 'text-right' },
+        { label: 'Description', cell: (s) => esc(s.description || '—'), tdClass: 'text-xs text-zinc-500' },
+        { label: 'Updated', cell: (s) => esc(AdminTopochain._fmt(s.updated_at)), tdClass: 'text-xs text-zinc-500' },
+      ],
+      actions: (s) => `
+        ${canWrite ? `<button data-edit-set="${esc(s.key)}" class="text-xs text-zinc-500 hover:text-violet-400 mr-2">Edit</button>` : ''}
+        ${canWrite ? `<button data-delete-set="${esc(s.key)}" class="text-xs text-red-500 hover:text-red-400">Delete</button>` : ''}`,
+    });
     table.querySelectorAll('[data-edit-set]').forEach((b) => b.addEventListener('click', () => AdminTopochain._openSettingForm(b.dataset.editSet)));
     table.querySelectorAll('[data-delete-set]').forEach((b) => b.addEventListener('click', () => AdminTopochain._deleteSetting(b.dataset.deleteSet)));
   },
@@ -2238,7 +2686,7 @@ const AdminTopochain = {
       </div>
       <div id="admin-topo-av-gate"></div>
       <div id="admin-topo-av-form"></div>
-      <div id="admin-topo-av-table"><p class="text-sm text-zinc-500">Loading&hellip;</p></div>
+      <div id="admin-topo-av-table">${AdminTopochain._skeleton(4)}</div>
       <div id="admin-topo-av-activity"></div>`;
     document.getElementById('admin-topo-av-new')?.addEventListener('click', () => AdminTopochain._openAppVersionForm(null));
     AdminTopochain._loadAppVersions();
@@ -2246,9 +2694,11 @@ const AdminTopochain = {
   },
 
   async _loadAppVersions() {
-    const { ok, data } = await AdminTopochain.fetchJson('/api/v4/admin/app-version-configs');
+    const { ok, data, status } = await AdminTopochain.fetchJson('/api/v4/admin/app-version-configs');
     if (AdminTopochain._sub !== 'app-version') return;
-    AdminTopochain._appver.items = (ok && data?.success) ? data.data : [];
+    const good = ok && data?.success;
+    AdminTopochain._appver.items = good ? data.data : [];
+    AdminTopochain._appver.error = good ? null : { status, message: (data && data.error) || null };
     AdminTopochain._renderAppVersionsTable();
     AdminTopochain._renderAppVersionGate();
   },
@@ -2334,34 +2784,40 @@ const AdminTopochain = {
     if (!table) return;
     const esc = AdminTopochain.esc;
     const canWrite = AdminTopochain.canWrite();
-    const items = AdminTopochain._appver.items;
-    if (!items.length) {
-      table.innerHTML = '<p class="text-sm text-zinc-500 py-4">No app version configs found.</p>';
+    const av = AdminTopochain._appver;
+    const items = av.items;
+    if (av.error) {
+      table.innerHTML = AdminTopochain._error({
+        title: "Couldn't load app version configs", status: av.error.status,
+        message: av.error.message, retryId: 'admin-topo-av-retry',
+      });
+      AdminTopochain._wireRetry('admin-topo-av-retry', () => AdminTopochain._loadAppVersions());
       return;
     }
-    const rows = items.map((c) => `
-      <tr class="border-t border-zinc-200 dark:border-zinc-800">
-        <td class="px-3 py-2 text-sm">${esc(c.os)}</td>
-        <td class="px-3 py-2 text-sm font-mono text-right">${esc(c.min_build_number)}</td>
-        <td class="px-3 py-2 text-sm font-mono text-right">${c.recommended_build_number != null ? esc(c.recommended_build_number) : '—'}</td>
-        <td class="px-3 py-2 text-xs text-zinc-500">${esc(c.current_version || '—')}</td>
-        <td class="px-3 py-2 text-sm">${c.is_active ? '<span class="text-green-600 dark:text-green-400">active</span>' : '—'}</td>
-        <td class="px-3 py-2 text-right whitespace-nowrap">
-          ${canWrite ? `<button data-edit-av="${c.id}" class="text-xs text-zinc-500 hover:text-violet-400 mr-2">Edit</button>` : ''}
-          ${canWrite ? `<button data-delete-av="${c.id}" class="text-xs text-red-500 hover:text-red-400">Delete</button>` : ''}
-        </td>
-      </tr>`).join('');
-    table.innerHTML = `
-      <div class="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-        <table class="w-full">
-          <thead class="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500">
-            <tr><th class="px-3 py-2 text-left">OS</th><th class="px-3 py-2 text-right">Min build</th>
-              <th class="px-3 py-2 text-right">Recommended</th><th class="px-3 py-2 text-left">Current version</th>
-              <th class="px-3 py-2 text-left">Active</th><th class="px-3 py-2"></th></tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>`;
+    if (!items.length) {
+      table.innerHTML = AdminTopochain._empty({
+        title: 'No app version configs yet',
+        body: 'Without a rule per OS the update gate is off — every build is told it is up to date.',
+        actionId: 'admin-topo-av-empty-new',
+        actionLabel: 'New config',
+      });
+      document.getElementById('admin-topo-av-empty-new')
+        ?.addEventListener('click', () => AdminTopochain._openAppVersionForm(null));
+      return;
+    }
+    table.innerHTML = AdminTopochain._list({
+      items,
+      columns: [
+        { label: 'OS', primary: true, cell: (c) => esc(c.os) },
+        { label: 'Min build', cell: (c) => esc(c.min_build_number), tdClass: 'font-mono text-right', thClass: 'text-right' },
+        { label: 'Recommended', cell: (c) => (c.recommended_build_number != null ? esc(c.recommended_build_number) : '—'), tdClass: 'font-mono text-right', thClass: 'text-right' },
+        { label: 'Current version', cell: (c) => esc(c.current_version || '—'), tdClass: 'text-xs text-zinc-500' },
+        { label: 'Active', cell: (c) => (c.is_active ? '<span class="text-green-600 dark:text-green-400">active</span>' : '—') },
+      ],
+      actions: (c) => `
+        ${canWrite ? `<button data-edit-av="${c.id}" class="text-xs text-zinc-500 hover:text-violet-400 mr-2">Edit</button>` : ''}
+        ${canWrite ? `<button data-delete-av="${c.id}" class="text-xs text-red-500 hover:text-red-400">Delete</button>` : ''}`,
+    });
     table.querySelectorAll('[data-edit-av]').forEach((b) => b.addEventListener('click', () => AdminTopochain._openAppVersionForm(parseInt(b.dataset.editAv, 10))));
     table.querySelectorAll('[data-delete-av]').forEach((b) => b.addEventListener('click', () => AdminTopochain._deleteAppVersion(b.dataset.deleteAv)));
   },
@@ -2458,11 +2914,11 @@ const AdminTopochain = {
         <div>
           <div class="mb-2">
             <div class="text-xs uppercase tracking-wide text-zinc-500 mb-1">Templates</div>
-            <div id="admin-topo-sql-templates" class="space-y-1"><p class="text-xs text-zinc-500">Loading&hellip;</p></div>
+            <div id="admin-topo-sql-templates" class="space-y-1">${AdminTopochain._skeleton(3)}</div>
           </div>
           <div>
             <div class="text-xs uppercase tracking-wide text-zinc-500 mb-1">Schema</div>
-            <div id="admin-topo-sql-schema" class="space-y-1 max-h-96 overflow-y-auto"><p class="text-xs text-zinc-500">Loading&hellip;</p></div>
+            <div id="admin-topo-sql-schema" class="space-y-1 max-h-96 overflow-y-auto">${AdminTopochain._skeleton(3)}</div>
           </div>
         </div>
         <div>
@@ -2551,6 +3007,11 @@ const AdminTopochain = {
       <tr class="border-t border-zinc-200 dark:border-zinc-800">
         ${cols.map((c) => `<td class="px-2 py-1 text-xs font-mono whitespace-nowrap">${esc(row[c] == null ? '' : String(row[c]))}</td>`).join('')}
       </tr>`).join('');
+    // Deliberately NOT the shared _list() card/table pair: the columns
+    // here are whatever the query returned, so there is no primary
+    // column to title a card with and no stable label set. A scrolling
+    // result grid is the right shape for arbitrary SQL output, on a
+    // phone as much as anywhere.
     result.innerHTML = `
       <p class="text-xs text-zinc-500 mb-2">${esc(data.row_count)} row(s)${data.limited ? ' (truncated to the limit)' : ''} in ${esc(data.execution_time_ms)} ms</p>
       <div class="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
