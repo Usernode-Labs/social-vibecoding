@@ -1239,6 +1239,10 @@ function sessionRoutes(config) {
       // exhausted — exactly like a chat turn. No headroom + no key → 429.
       // The code lets the client tell budget exhaustion apart from a
       // rate-limit 429 (#463).
+      // At SESSION-CREATION time the backend is not yet established (it is
+      // copied from preferences by the insert below), so this creation gate
+      // stays Anthropic-budget based; the Codex coding dispatch itself is
+      // gated Codex-aware in runScoutTool/runClaudeCodeTool.
       const billing = await limits.resolveBillingPath(pool, config.dataEncryptionKey, req.user.id);
       if (billing.error) return res.status(429).json({ error: billing.error, code: 'budget_exceeded' });
       const userApiKey = billing.apiKey;
@@ -2909,8 +2913,19 @@ function sessionRoutes(config) {
       // below routes the cost to the right bucket. Allowance gone and
       // no key on file → the same 429 as always, tagged with a code so
       // the client can tell it apart from a chatLimiter throttle (#463).
-      const billing = await limits.resolveBillingPath(pool, config.dataEncryptionKey, req.user.id);
-      if (billing.error) return res.status(429).json({ error: billing.error, code: 'budget_exceeded' });
+      const admissionIsCodex = registry.resolveBackend(session.agent_backend) === 'codex_openrouter';
+      // Backend-aware admission (review P1 #2): a Codex/OpenRouter coding
+      // turn bills directly to the user's OpenRouter account and must NOT
+      // be blocked by the Anthropic allowance gate. Only resolve Anthropic
+      // billing for Claude turns; the Mayor/wrap-up phases remain gated
+      // separately below.
+      let billing;
+      if (admissionIsCodex) {
+        billing = { apiKey: null, byok: false };
+      } else {
+        billing = await limits.resolveBillingPath(pool, config.dataEncryptionKey, req.user.id);
+        if (billing.error) return res.status(429).json({ error: billing.error, code: 'budget_exceeded' });
+      }
       // Mutable since #664: an expensive CC phase can exhaust the
       // allowance mid-turn, so billing is re-resolved after the tool
       // completes and the wrap-up phase bills the fresh payer.

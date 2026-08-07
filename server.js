@@ -34,7 +34,6 @@ const { profileRoutes } = require('./src/routes/profile');
 const { appFileServeRoutes, appFileShellRoutes } = require('./src/routes/app-files');
 const appStorageRoutes = require('./src/routes/app-storage');
 const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
-const { openrouterProxyRoutes } = require('./src/routes/openrouter-proxy');
 const { credentialRoutes } = require('./src/routes/credentials');
 const appLlmProxyRoutes = require('./src/routes/app-llm-proxy');
 const appPlatformApiRoutes = require('./src/routes/app-platform-api');
@@ -217,7 +216,6 @@ app.use('/explorer-api', (req, res) => {
 // large limit. See routes/anthropic-proxy.js for the scoped parser.
 app.use((req, res, next) => {
   if (req.path.startsWith('/api/internal/anthropic/')) return next();
-  if (req.path.startsWith('/api/internal/openrouter/')) return next();
   if (req.path.startsWith('/api/app-llm/')) return next();
   // CLI-auth POSTs own a strict 4 KiB route-scoped parser. Browser approval
   // reaches its parser only after cookie auth; public device routes were
@@ -397,13 +395,6 @@ app.use(internalRoutes(config));
 // short-lived JWT useless against Anthropic directly. Same private-IP
 // gate as internalRoutes; not reachable through Caddy externally.
 app.use(anthropicProxyRoutes(config));
-
-// Worker → platform OpenRouter Responses relay (Codex BYOK). Same private-
-// IP gate as the Anthropic proxy; authenticates a per-turn scoped bearer
-// token, decrypts the user's OpenRouter key server-side, pins the model,
-// and transparently streams OpenRouter SSE back to Codex while settling
-// usage/cost. The raw OpenRouter key never enters the worker container.
-app.use(openrouterProxyRoutes(config));
 
 // Dapp → platform LLM proxy (issue #34). App containers call
 // /api/app-llm/v1/messages with their per-app token

@@ -78,26 +78,34 @@ async function resolveCodexTurn({ pool, session, userId, model, reasoningEffort,
     throw err;
   }
 
-  const token = platformJwt.signAgentProxyToken({
-    sessionId: session.id,
-    userId,
-    turnId,
-    backend: 'codex_openrouter',
-    model: resolvedModel,
-    credentialRevision: meta.revision,
-    agentConfigVersion: session.agent_config_version || 1,
-  });
+  // Direct transport (review P0): there is no relay token. The user's
+  // OpenRouter key is returned here and injected into the per-turn docker
+  // exec as OPENROUTER_API_KEY; it is never placed in the warm container's
+  // persistent environment or filesystem by the platform.
+  let openrouterApiKey = null;
+  try {
+    openrouterApiKey = await credentialStore.readSecret({
+      pool, userId, provider: 'openrouter', purpose: 'coding_agent',
+      dataKey: config.dataEncryptionKey, expectedRevision: meta.revision,
+    });
+  } catch (err) {
+    log.error('agent-turn', 'openrouter key decrypt failed; refusing to start turn', { sessionId: session.id, err: err.message });
+    return { error: 'credential_required' };
+  }
+  if (!openrouterApiKey) {
+    return { error: 'credential_required' };
+  }
 
   return {
     agentBackend: 'codex_openrouter',
     agentModel: resolvedModel,
     agentReasoningEffort: reasoningEffort || session.agent_reasoning_effort || null,
-    agentProxyToken: token,
+    openrouterApiKey,
     turnUuid: turnId,
   };
 }
 
-module.exports = { backendForSession, resolveCodexTurn };
+module.exports = { backendForSession, resolveCodexTurn, completeCodexTurn };
 
 // Mark a Codex turn's ledger row terminal when the worker dispatch
 // finishes (review P3). The relay intentionally does NOT close the turn on

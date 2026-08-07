@@ -25,16 +25,16 @@ const crypto = require('crypto');
 // Usernode relay. The worker never holds the OpenRouter key; the relay
 // injects it. `agents.enabled = false` disables multi-agent in the first
 // release (plan.md §8.6).
-function buildCodexConfig({ relayBaseUrl, model, reasoningEffort }) {
+function buildCodexConfig({ openRouterBaseUrl, model, reasoningEffort }) {
   const provider = 'usernode_openrouter';
-  // TOML-safe serialization (review P1): model/provider/relay values are
+  // TOML-safe serialization (review P1): model/provider/base-url values are
   // interpolated into config.toml, so quotes, backslashes and newlines
   // must be escaped or rejected to prevent injecting extra TOML sections
   // (e.g. an attacker model id like `x"\n[[mcp_servers.malicious]]`).
   const tomlStr = (v) => String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
   const safeModel = tomlStr(model);
   const safeProvider = tomlStr(provider);
-  const safeRelay = tomlStr(relayBaseUrl.replace(/\/$/, ''));
+  const safeBase = tomlStr((openRouterBaseUrl || 'https://openrouter.ai/api/v1').replace(/\/$/, ''));
   const safeEffort = reasoningEffort ? tomlStr(reasoningEffort) : '';
   return `model_provider = "${safeProvider}"
 model = "${safeModel}"
@@ -44,10 +44,10 @@ ${safeEffort ? `model_reasoning_effort = "${safeEffort}"` : ''}
 enabled = false
 
 [model_providers.${provider}]
-name = "Usernode OpenRouter"
-base_url = "${safeRelay}"
+name = "OpenRouter"
+base_url = "${safeBase}"
 wire_api = "responses"
-env_key = "USERNODE_AGENT_TOKEN"
+env_key = "OPENROUTER_API_KEY"
 `;
 }
 

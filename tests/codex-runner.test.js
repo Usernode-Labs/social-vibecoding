@@ -35,7 +35,7 @@ function makeEnv(run) {
     BRANCH: 'smoke',
     MODE: 'scout',
     WORKER_JWT: 'jwt', SESSION_ID: '1', PLATFORM_URL: 'http://p',
-    USERNODE_AGENT_TOKEN: 'tok', USERNODE_AGENT_RELAY: 'http://relay/v1',
+    OPENROUTER_API_KEY: 'sk-or-v1-test', OPENROUTER_API_BASE: 'https://openrouter.ai/api/v1',
     AGENT_MODEL: 'openai/gpt-5.3-codex',
     WORKSPACE_DIR: ws, CODEX_HOME: path.join(dir, 'codex-home'),
   };

@@ -7,15 +7,16 @@
 #   __USERNODE_WARN__   <msg>
 #   __USERNODE_ERROR__  <msg>
 #
-# The raw OpenRouter key NEVER enters this container. Codex is configured
-# to point at the Usernode relay (USERNODE_AGENT_RELAY) and authenticates
-# with the per-turn scoped token in USERNODE_AGENT_TOKEN. The relay
-# decrypts the user key server-side.
+# Direct-transport (review P0): Codex points DIRECTLY at OpenRouter and
+# authenticates with the user's own key, injected per-turn on this specific
+# `docker exec` as OPENROUTER_API_KEY. It is NOT persisted in the warm
+# container's env/filesystem by the platform; the agent code running in this
+# worker naturally sees the key, which the UI discloses. No platform relay.
 #
-# Required env: PROMPT_FILE, BRANCH, WORKER_JWT, SESSION_ID, PLATFORM_URL,
-#   USERNODE_AGENT_TOKEN, USERNODE_AGENT_RELAY, AGENT_MODEL
+# Required env: PROMPT_FILE, BRANCH, SESSION_ID, PLATFORM_URL,
+#   OPENROUTER_API_KEY, AGENT_MODEL
 # Optional: MODE (build|scout), AGENT_REASONING_EFFORT, AGENT_THREAD_ID,
-#   COMMIT_MSG, TURN_UUID
+#   COMMIT_MSG, TURN_UUID, OPENROUTER_API_BASE, WORKER_JWT (build-only)
 
 set -u
 
@@ -27,17 +28,25 @@ die() {
 : "${PROMPT_FILE:?PROMPT_FILE required}"
 [ -s "$PROMPT_FILE" ] || die "prompt file missing or empty: $PROMPT_FILE"
 : "${BRANCH:?BRANCH required}"
-: "${WORKER_JWT:?WORKER_JWT required}"
 : "${SESSION_ID:?SESSION_ID required}"
 : "${PLATFORM_URL:?PLATFORM_URL required}"
-: "${USERNODE_AGENT_TOKEN:?USERNODE_AGENT_TOKEN required}"
-: "${USERNODE_AGENT_RELAY:?USERNODE_AGENT_RELAY required}"
+: "${OPENROUTER_API_KEY:?OPENROUTER_API_KEY required}"
 : "${AGENT_MODEL:?AGENT_MODEL required}"
 : "${MODE:=build}"
 : "${AGENT_REASONING_EFFORT:=}"
 : "${AGENT_THREAD_ID:=}"
 : "${COMMIT_MSG:=Changes via Usernode (Codex)}"
 : "${TURN_UUID:=}"
+: "${WORKER_JWT:=}"
+# Scout must NEVER receive push authority (review #4): WORKER_JWT is
+# required for build (to push) but must be empty for scout.
+if [ "$MODE" = "build" ] && [ -z "$WORKER_JWT" ]; then
+  die "WORKER_JWT required for build mode"
+fi
+if [ "$MODE" = "scout" ]; then
+  WORKER_JWT=""
+fi
+export WORKER_JWT
 
 WORKSPACE_DIR="${WORKSPACE_DIR:-/home/node/workspace}"
 cd "$WORKSPACE_DIR" || die "no workspace: $WORKSPACE_DIR"
@@ -66,7 +75,8 @@ toml_escape() {
   printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e ':a;N;$!ba;s/\n/\\n/g'
 }
 ESCAPED_MODEL=$(toml_escape "$AGENT_MODEL")
-ESCAPED_RELAY=$(toml_escape "$USERNODE_AGENT_RELAY")
+OPENROUTER_API_BASE="${OPENROUTER_API_BASE:-https://openrouter.ai/api/v1}"
+ESCAPED_BASE=$(toml_escape "$OPENROUTER_API_BASE")
 if [ -n "$AGENT_REASONING_EFFORT" ]; then
   ESCAPED_EFFORT=$(toml_escape "$AGENT_REASONING_EFFORT")
 fi
@@ -89,14 +99,14 @@ approval_policy = "never"
 enabled = false
 
 [model_providers.usernode_openrouter]
-name = "Usernode OpenRouter"
-base_url = "$ESCAPED_RELAY"
+name = "OpenRouter"
+base_url = "$ESCAPED_BASE"
 wire_api = "responses"
-env_key = "USERNODE_AGENT_TOKEN"
+env_key = "OPENROUTER_API_KEY"
 EOF
 
-export USERNODE_AGENT_TOKEN
-export OPENROUTER_API_KEY=""
+# Export the user's key for this process only.
+export OPENROUTER_API_KEY""
 
 CODEX_EXIT=0
 AGENT_THREAD_OUT="$AGENT_THREAD_ID"

@@ -335,15 +335,15 @@ function openrouterProxyRoutes(config) {
 
       // Transparent passthrough + incremental SSE parser for settlement.
       let buf = '';
+      const decoder = new TextDecoder();
       const reader = upstream.body.getReader();
 
       try {
         for (;;) {
           const { value, done } = await reader.read();
           if (done) break;
-          const chunk = Buffer.from(value).toString('utf8');
-          res.write(chunk);
-          buf += chunk;
+          res.write(value);
+          buf += decoder.decode(value, { stream: true });
           const parsed = parseSseFrames(buf);
           buf = parsed.rest;
           for (const ev of parsed.events) {
@@ -351,6 +351,7 @@ function openrouterProxyRoutes(config) {
             if (u) await settle(u);
           }
         }
+        buf += decoder.decode();
         // Best-effort final settle from any trailing buffered frame.
         if (buf.trim()) {
           const parsed = parseSseFrames(buf + '\n\n');

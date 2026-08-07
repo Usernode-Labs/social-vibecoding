@@ -37,16 +37,26 @@ function meetsStaticMinimums(m) {
 // Sanitize a raw OpenRouter model into the UI-friendly shape.
 function sanitizeModel(m, compatibility) {
   const pricing = m.pricing || {};
+  const params = m.supported_parameters || m.parameters || [];
+  const reasoningMetadata = !Array.isArray(params) && params.reasoning;
+  const supportsReasoning = Array.isArray(params)
+    ? params.includes('reasoning')
+    : !!reasoningMetadata;
+  const reasoningEfforts = reasoningMetadata && typeof reasoningMetadata === 'object'
+    ? (reasoningMetadata.efforts ?? null)
+    : null;
+  const promptPrice = pricing.prompt == null ? null : parseFloat(pricing.prompt) * 1_000_000;
+  const completionPrice = pricing.completion == null ? null : parseFloat(pricing.completion) * 1_000_000;
   return {
     id: m.id,
     name: m.name || m.id,
     contextLength: m.context_length || null,
     maxOutputTokens: m.top_provider?.max_completion_tokens || null,
-    inputPricePerMillion: parseFloat(pricing.prompt) || null,
-    outputPricePerMillion: parseFloat(pricing.completion) || null,
+    inputPricePerMillion: promptPrice,
+    outputPricePerMillion: completionPrice,
     supportsTools: meetsStaticMinimums(m),
-    supportsReasoning: !!(m.architecture?.input_modalities || m.supported_parameters?.reasoning),
-    reasoningEfforts: m.supported_parameters?.reasoning?.efforts || ['low', 'medium', 'high'],
+    supportsReasoning,
+    reasoningEfforts,
     compatibility: compatibility.status,
     compatibilityNote: compatibility.note || null,
   };

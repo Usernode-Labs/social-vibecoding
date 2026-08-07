@@ -10,6 +10,7 @@ const assert = require('node:assert/strict');
 
 const worker = require('../src/services/worker');
 const { parseSseFrames, extractUsage } = require('../src/services/openrouter-usage');
+const { sanitizeModel } = require('../src/services/agent-models');
 
 // Authentic pinned-Codex 0.146.0 JSONL (captured from a real run).
 const AUTHENTIC_CODEX_JSONL = [
@@ -68,4 +69,42 @@ test('vertical: response.done with response.usage + cost settles', () => {
   assert.equal(u.outputTokens, 5);
   assert.equal(u.cost, 0.02);
   assert.equal(u.requestId, 'gen_req_456');
+});
+
+test('streaming UTF-8 decoding preserves a character split across chunks', () => {
+  const bytes = Buffer.from('data: {"delta":"€"}\r\n\r\n');
+  const split = bytes.indexOf(Buffer.from('€')) + 1;
+  const decoder = new TextDecoder();
+  const text = decoder.decode(bytes.subarray(0, split), { stream: true })
+    + decoder.decode(bytes.subarray(split), { stream: true })
+    + decoder.decode();
+  assert.equal(text, 'data: {"delta":"€"}\r\n\r\n');
+});
+
+test('parseSseFrames handles CRLF-separated frames', () => {
+  const parsed = parseSseFrames(
+    'data: {"type":"response.created"}\r\n\r\n'
+    + 'data: {"type":"response.done","response":{"id":"crlf","usage":{}}}\r\n\r\n',
+  );
+  assert.deepEqual(parsed.events.map((event) => event.event), ['response.created', 'response.done']);
+  assert.equal(parsed.rest, '');
+});
+
+test('sanitizeModel converts per-token prices and uses reasoning metadata', () => {
+  const compatibility = { status: 'verified', note: null };
+  const arrayModel = sanitizeModel({
+    id: 'array', pricing: { prompt: '0', completion: '0.000002' },
+    supported_parameters: ['tools', 'reasoning'], context_length: 32000,
+  }, compatibility);
+  assert.equal(arrayModel.inputPricePerMillion, 0);
+  assert.equal(arrayModel.outputPricePerMillion, 2);
+  assert.equal(arrayModel.supportsReasoning, true);
+  assert.equal(arrayModel.reasoningEfforts, null);
+
+  const metadataModel = sanitizeModel({
+    id: 'metadata', supported_parameters: { tools: true, reasoning: { efforts: ['low', 'high'] } },
+    context_length: 32000,
+  }, compatibility);
+  assert.equal(metadataModel.supportsReasoning, true);
+  assert.deepEqual(metadataModel.reasoningEfforts, ['low', 'high']);
 });

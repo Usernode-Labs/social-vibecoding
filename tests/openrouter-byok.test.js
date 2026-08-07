@@ -46,22 +46,22 @@ test('a worker:session token does NOT verify as agent-proxy', () => {
 });
 
 // ── Codex config builder ──────────────────────────────────────────────
-test('buildCodexConfig points at the relay and disables agents', () => {
+test('buildCodexConfig points directly at OpenRouter and disables agents', () => {
   const cfg = codex.buildCodexConfig({
-    relayBaseUrl: 'http://usernode:3000/api/internal/openrouter/v1/',
+    openRouterBaseUrl: 'http://usernode:3000/api/internal/openrouter/v1/',
     model: 'openai/gpt-5.3-codex',
     reasoningEffort: 'high',
   });
   assert.match(cfg, /model_provider = "usernode_openrouter"/);
   assert.match(cfg, /model = "openai\/gpt-5.3-codex"/);
   assert.match(cfg, /base_url = "http:\/\/usernode:3000\/api\/internal\/openrouter\/v1"/);
-  assert.match(cfg, /env_key = "USERNODE_AGENT_TOKEN"/);
+  assert.match(cfg, /env_key = "OPENROUTER_API_KEY"/);
   assert.match(cfg, /\[agents\][\s\S]*enabled = false/);
   assert.match(cfg, /model_reasoning_effort = "high"/);
 });
 
 test('buildCodexConfig omits reasoning effort when not provided', () => {
-  const cfg = codex.buildCodexConfig({ relayBaseUrl: 'http://x/v1', model: 'm' });
+  const cfg = codex.buildCodexConfig({ openRouterBaseUrl: 'http://x/v1', model: 'm' });
   assert.ok(!/model_reasoning_effort/.test(cfg), 'no reasoning effort line when unset');
 });
 

@@ -20,7 +20,7 @@
 // payload's `type` field (data-only) or the `event:` header (if present).
 function parseSseFrames(buf) {
   const events = [];
-  let text = typeof buf === 'string' ? buf : buf.toString('utf8');
+  let text = (typeof buf === 'string' ? buf : buf.toString('utf8')).replace(/\r\n/g, '\n');
   let idx;
   while ((idx = text.indexOf('\n\n')) !== -1) {
     const frame = text.slice(0, idx);
