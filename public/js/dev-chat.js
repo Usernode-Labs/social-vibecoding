@@ -3491,13 +3491,24 @@ const DevChat = {
               <div class="dc-spec-preview-snippet">${DevChat.renderMarkdown(snippet, { breaks: false })}</div>
             </div>`;
         }
-        // Platform-issue draft card (human gate): the agent suggested
-        // escalating a platform-level blocker. Nothing is filed until a
-        // user taps "Report to platform"; Dismiss kills the draft. Both
-        // buttons need the DB msgId — a live-pushed draft carries it in
-        // the event, a rehydrated one gets it from the row id.
+        // Issue-report draft card (human gate). Two sources: the build
+        // agent escalating a platform-level blocker on its own initiative,
+        // and (#1037) the Mayor answering an explicit "create an issue for
+        // this" from the user. Nothing is filed until a user taps the
+        // confirm button; Dismiss kills the draft. Both buttons need the
+        // DB msgId — a live-pushed draft carries it in the event, a
+        // rehydrated one gets it from the row id.
         if (msg.platformIssueDraft) {
           const d = msg.platformIssueDraft;
+          // #1037: a draft carries `target` ('platform' | 'app'). Drafts
+          // written before that (and the staging fixture's legacy rows)
+          // have no target and are platform-destined, so the default here
+          // must stay the platform copy.
+          const isAppTarget = d.target === 'app';
+          const destLabel = isAppTarget
+            ? `Issue draft — ${d.appName || 'this app'}`
+            : 'Suggested platform report';
+          const confirmLabel = isAppTarget ? 'File issue' : 'Report to platform';
           const pTs = msg.created_at ? new Date(msg.created_at).getTime() : '';
           const pId = msg.id || msg._slug || '';
           // #699: bodies longer than the 300-char preview render as a
@@ -3525,19 +3536,19 @@ const DevChat = {
           if (d.status === 'filed' && d.issueUrl) {
             actionsHtml = `<a href="${escapeHtml(d.issueUrl)}" target="_blank" class="dc-pr-btn dc-pr-btn-preview" style="text-decoration:none">Reported — issue #${d.issueNumber}</a>`;
           } else if (d.status === 'filed') {
-            actionsHtml = '<span style="color:var(--text-muted);font-size:12px">Reported to the platform</span>';
+            actionsHtml = `<span style="color:var(--text-muted);font-size:12px">${isAppTarget ? 'Filed on this app\'s repo' : 'Reported to the platform'}</span>`;
           } else if (d.status === 'dismissed') {
             actionsHtml = '<span style="color:var(--text-muted);font-size:12px">Dismissed</span>';
           } else if (d.msgId) {
             actionsHtml = `
-              <button class="dc-pr-btn dc-pr-btn-promote" onclick="DevChat.resolvePlatformIssueDraft(${d.msgId}, 'confirm', this)">Report to platform</button>
+              <button class="dc-pr-btn dc-pr-btn-promote" onclick="DevChat.resolvePlatformIssueDraft(${d.msgId}, 'confirm', this)">${escapeHtml(confirmLabel)}</button>
               <button class="dc-pr-btn dc-pr-btn-preview" onclick="DevChat.resolvePlatformIssueDraft(${d.msgId}, 'dismiss', this)">Dismiss</button>`;
           }
           return `
             <div class="dc-status-line"><span class="dc-status-icon dc-status-check" aria-hidden="true">&#9873;</span> ${escapeHtml(msg.content || 'The AI suggests reporting this to the platform')}<span style="font-size:9px;opacity:0.4;margin-left:auto">${pId} ${pTs}</span></div>
             <div class="dc-pr-card" data-platform-issue-msg="${d.msgId || ''}">
               <div class="dc-pr-card-header">
-                <span style="color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">Suggested platform report</span>
+                <span style="color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">${escapeHtml(destLabel)}</span>
               </div>
               <div style="font-weight:600;margin:4px 0 2px">${escapeHtml(d.title || '')}</div>
               ${bodyHtml}
