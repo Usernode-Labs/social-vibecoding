@@ -398,7 +398,9 @@ const AdminConsole = {
   _syncChrome() {
     if (!window.App || AdminConsole._chromeSuspended) return;
     const inSection = AdminConsole._isMobile() && AdminConsole._level === 2;
-    if (App.setBackIcon) App.setBackIcon(inSection ? 'arrow' : 'home');
+    // #1036: the header control is a real anchor — inside a section the
+    // chevron pops to the console's own menu, so that is its href.
+    if (App.setBackIcon) App.setBackIcon(inSection ? 'arrow' : 'home', inSection ? '#admin' : undefined);
     if (!App.setHeaderTitle) return;
     if (inSection) {
       const s = AdminConsole._visibleSections().find((x) => x.key === AdminConsole._section);

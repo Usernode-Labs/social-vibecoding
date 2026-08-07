@@ -538,7 +538,9 @@ test('a browse row tap declares the list as its origin; the home menu declares h
   // Both call sites note the origin BEFORE writing the hash — the
   // hashchange lands in a later task, so the note is always in place.
   const rows = BROWSE_SRC.slice(BROWSE_SRC.indexOf('_wireRows(listEl) {'));
-  const tap = rows.slice(0, 700);
+  // Wide enough for the #1036 hrefFor guard block that now sits above the
+  // plain-click handler as well as the handler itself.
+  const tap = rows.slice(0, 1400);
   assert.match(tap, /noteDetailOrigin\('list'\)/);
   assert.ok(tap.indexOf("noteDetailOrigin('list')") < tap.indexOf('location.hash'));
 

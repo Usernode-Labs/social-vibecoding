@@ -7,6 +7,9 @@ const log = require('../services/logger');
 const appManifest = require('../services/app-manifest');
 const dbManager = require('../services/db-manager');
 const { encrypt } = require('../services/secrets');
+// #1037: the draft-card row copy lives with the service that writes real
+// drafts, so the staging fixture can't drift from what production emits.
+const issueDraftSvc = require('../services/issue-draft');
 
 async function migrate(config) {
   const pool = getPool(config);
@@ -2929,17 +2932,22 @@ async function seedStagingCcCohortRuns(pool, config) {
   }
 }
 
-// #699: platform-issue draft-card fixture. The "Suggested platform report"
-// card only appears when a build agent escalates via
-// usernode-report-platform-issue, which a tester can't trigger on demand —
-// so seed one dev-chat session whose timeline carries all three card
-// shapes: a long (>300-char) PENDING draft that must show the
-// "Show full report" expand toggle, a short pending draft that must NOT,
-// and a FILED draft (fake issueUrl/issueNumber) proving resolved cards
-// stay expandable. chat_sessions is staging:private, so this is invisible
-// without seeding. Idempotent on the fixture branch name; strict no-op in
-// production. Testers should use Dismiss (not confirm) on the pending
-// cards — confirm would attempt a real GitHub call.
+// #699: issue-report draft-card fixture. The card appears when a build
+// agent escalates via usernode-report-platform-issue, or (#1037) when the
+// Mayor answers an explicit "create an issue for this" — neither of which
+// a tester can trigger on demand — so seed one dev-chat session whose
+// timeline carries every card shape: a long (>300-char) PENDING draft
+// that must show the "Show full report" expand toggle, a short pending
+// draft that must NOT, a FILED draft (fake issueUrl/issueNumber) proving
+// resolved cards stay expandable, and (#1037) a user-requested
+// APP-targeted pending draft carrying the "Issue draft — <app>" header
+// and the "File issue" button, preceded by the user message that produced
+// it. The first three deliberately carry NO `target`, proving legacy rows
+// still render as platform-destined.
+// chat_sessions is staging:private, so this is invisible without seeding.
+// Idempotent on the fixture branch name; strict no-op in production.
+// Testers should use Dismiss (not confirm) on the pending cards — confirm
+// would attempt a real GitHub call.
 async function seedStagingPlatformIssueDrafts(pool, config) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
@@ -2967,7 +2975,9 @@ async function seedStagingPlatformIssueDrafts(pool, config) {
   }
   const owner = userRows[0];
 
-  const fixtureBranch = 'staging-fixture/platform-issue-drafts';
+  // #1037: re-keyed so a staging clone that already carries the v1
+  // fixture re-seeds and picks up the new app-targeted card.
+  const fixtureBranch = 'staging-fixture/platform-issue-drafts-v2';
   const { rows: existing } = await pool.query(
     'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
     [appId, fixtureBranch]
@@ -3031,6 +3041,19 @@ async function seedStagingPlatformIssueDrafts(pool, config) {
     'the fact. END OF STAGING DEMO REPORT — full text visible.',
   ].join(' ');
 
+  // #1037: an APP-targeted body — a bug in the app itself, not in the
+  // platform — so the card's destination copy is obviously different from
+  // the three platform cards above.
+  const appTargetBody = [
+    '[staging fixture] The leaderboard keeps showing the previous round\'s',
+    'scores after a new round settles. Reproduce: finish a round on the demo',
+    'screen, then open Leaderboard — the top row still shows the score from',
+    'the round before, and a manual refresh corrects it. Expected: the',
+    'leaderboard reflects the settled round without a refresh. Filed against',
+    'this app\'s own repo rather than the platform, since nothing outside the',
+    'app is involved. END OF STAGING DEMO REPORT — full text visible.',
+  ].join(' ');
+
   const drafts = [
     {
       minutesAgo: 45,
@@ -3064,6 +3087,25 @@ async function seedStagingPlatformIssueDrafts(pool, config) {
         issueNumber: 9001,
       },
     },
+    // #1037: the user-requested, APP-targeted card. Carries `target`,
+    // `source` and the fulfilment status line, so a tester sees the
+    // "Issue draft — <app>" header and the "File issue" button next to
+    // the three legacy platform cards above.
+    {
+      minutesAgo: 25,
+      content: issueDraftSvc.CONTENT_USER,
+      draft: {
+        title: 'Staging demo: leaderboard shows stale scores after a round',
+        body: appTargetBody,
+        status: 'pending',
+        target: 'app',
+        source: 'user_request',
+        owner: 'example',
+        repo: 'staging-demo',
+        appSlug: 'staging-demo-app',
+        appName: 'Staging demo app',
+      },
+    },
   ];
 
   await pool.query(
@@ -3071,13 +3113,20 @@ async function seedStagingPlatformIssueDrafts(pool, config) {
      VALUES ($1, 'user', $2, '{}', NOW() - INTERVAL '48 minutes')`,
     [sessionId, '[staging fixture] Please wire the wallet flow into the demo screen.']
   );
+  // #1037: the request that produces the app-targeted card below, so the
+  // new conversational entry point reads end-to-end in the timeline.
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+     VALUES ($1, 'user', $2, '{}', NOW() - INTERVAL '26 minutes')`,
+    [sessionId, '[staging fixture] create an issue for the stale leaderboard scores']
+  );
   for (const d of drafts) {
     await pool.query(
       `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
        VALUES ($1, 'system', $2, $3, NOW() - ($4::int * INTERVAL '1 minute'))`,
       [
         sessionId,
-        'The AI suggests reporting this to the platform',
+        d.content || issueDraftSvc.CONTENT_AGENT,
         JSON.stringify({ platformIssueDraft: d.draft }),
         d.minutesAgo,
       ]

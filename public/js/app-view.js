@@ -1657,6 +1657,17 @@ const AppView = {
   // remaining height with the composer pinned to the bottom.
   _devTopic: null, // { kind: 'issue'|'proposal'|'gov', id } while open
 
+  // #1036: the address of the app's dev page — what every "← Back" in a
+  // dev sub-view (topic, general chat) points at as a real anchor, so a
+  // cmd-click opens the dev page in a new tab instead of leaving this
+  // one. Returns '' when there is no open app to name rather than
+  // minting "#app/undefined/dev": NavLink.bind and the markup both treat
+  // an empty href as "inert", which is the honest state.
+  _devPageHref() {
+    const slug = (AppView.appData && AppView.appData.slug) || App.currentApp;
+    return slug ? `#app/${encodeURIComponent(slug)}/dev` : '';
+  },
+
   async _renderTopicSubView(content, ref) {
     AppView._devTopic = { kind: ref.kind, id: ref.id };
     // #363: only the back bar is pinned here. The topic card/body no longer
@@ -1668,12 +1679,15 @@ const AppView = {
     content.innerHTML = `
       <div class="flex flex-col h-full min-h-0">
         <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
-          <button id="dev-topic-back" class="inline-flex items-center gap-1 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm shrink-0" title="Back to the dev page">&larr; Back</button>
+          <a id="dev-topic-back" class="inline-flex items-center gap-1 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm shrink-0" title="Back to the dev page" href="${AppView._devPageHref()}">&larr; Back</a>
         </div>
         <div id="dev-topic-thread" class="flex-1 min-h-0"></div>
       </div>`;
 
-    document.getElementById('dev-topic-back').addEventListener('click', () => {
+    document.getElementById('dev-topic-back').addEventListener('click', (e) => {
+      // #1036: real anchor — leave a modified click to the browser.
+      if (window.NavLink && NavLink.isNativeClick(e)) return;
+      e.preventDefault();
       App.switchTab('dev');
     });
 
@@ -2600,13 +2614,16 @@ const AppView = {
     content.innerHTML = `
       <div class="flex flex-col h-full min-h-0">
         <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
-          <button id="dev-chat-back" class="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm" title="Back to the dev page">&larr;</button>
+          <a id="dev-chat-back" class="inline-flex items-center text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm" title="Back to the dev page" href="${AppView._devPageHref()}">&larr;</a>
           <span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider">General chat</span>
         </div>
         <div id="dev-chat-body" class="flex-1 min-h-0"></div>
       </div>`;
 
-    document.getElementById('dev-chat-back').addEventListener('click', () => {
+    document.getElementById('dev-chat-back').addEventListener('click', (e) => {
+      // #1036: real anchor — leave a modified click to the browser.
+      if (window.NavLink && NavLink.isNativeClick(e)) return;
+      e.preventDefault();
       App.switchTab('dev');
     });
 

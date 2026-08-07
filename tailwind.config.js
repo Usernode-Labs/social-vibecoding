@@ -27,6 +27,14 @@ module.exports = {
     './public/index.html',
     './public/js/**/*.js',
     './public/usernode-native/v1/demo.html',
+    // The React chassis. public/index.html is generated FROM these sources
+    // now, so scanning it alone would still find every class in the shell —
+    // but shadcn primitives under frontend/@/components/ui hold classes in
+    // `cva` variant tables that only some call sites use, and a step-2
+    // component will hold classes that appear in no static markup at all.
+    // Scan the source, not just the artifact.
+    './frontend/src/**/*.{ts,tsx}',
+    './frontend/@/**/*.{ts,tsx}',
   ],
 
   // Every class name in the shell is a COMPLETE literal in source — the
