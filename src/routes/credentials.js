@@ -114,26 +114,38 @@ function credentialRoutes(config) {
     try {
       await credentialStore.revoke({ pool, userId: req.user.id, ...OPENROUTER });
       agentModels.invalidateUser(req.user.id);
-      // Key-removal consistency (review #8): if Codex/OpenRouter is the
-      // user's DEFAULT coding agent, reset the default back to Claude.
-      // Otherwise every future ordinary/headless session copies the Codex
-      // default and immediately fails with `credential_required` until the
-      // user reconfigured a key. Swapping the default avoids that dead-end
-      // state. Existing sessions are left untouched (they stay on whatever
-      // backend they were created with).
-      await pool.query(
-        `UPDATE user_agent_preferences SET is_default = FALSE
-         WHERE user_id = $1 AND backend = 'codex_openrouter' AND is_default = TRUE`,
-        [req.user.id],
-      );
-      await pool.query(
-        `INSERT INTO user_agent_preferences
-           (user_id, backend, model_id, reasoning_effort, is_default)
-         VALUES ($1, 'claude_code', NULL, NULL, TRUE)
-         ON CONFLICT (user_id, backend) DO UPDATE SET
-           is_default = TRUE, updated_at = NOW()`,
-        [req.user.id],
-      );
+      // Key-removal consistency (review #8, plan 9.4): if Codex/OpenRouter
+      // is the user's DEFAULT coding agent, reset the default back to
+      // Claude — otherwise every future ordinary/headless session copies the
+      // Codex default and immediately fails with `credential_required` until
+      // a key is reconfigured. The "clear Codex default + upsert Claude
+      // default" pair runs in ONE transaction so a failure between them can
+      // never leave the user with NO default backend. Existing sessions are
+      // left untouched (they stay on whatever backend they were created
+      // with).
+      const prefClient = await pool.connect();
+      try {
+        await prefClient.query('BEGIN');
+        await prefClient.query(
+          `UPDATE user_agent_preferences SET is_default = FALSE
+           WHERE user_id = $1 AND backend = 'codex_openrouter' AND is_default = TRUE`,
+          [req.user.id],
+        );
+        await prefClient.query(
+          `INSERT INTO user_agent_preferences
+             (user_id, backend, model_id, reasoning_effort, is_default)
+           VALUES ($1, 'claude_code', NULL, NULL, TRUE)
+           ON CONFLICT (user_id, backend) DO UPDATE SET
+             is_default = TRUE, updated_at = NOW()`,
+          [req.user.id],
+        );
+        await prefClient.query('COMMIT');
+      } catch (prefErr) {
+        await prefClient.query('ROLLBACK').catch(() => {});
+        throw prefErr;
+      } finally {
+        prefClient.release();
+      }
       log.info('credentials', 'OpenRouter key removed; default agent reset to Claude', { userId: req.user.id });
       res.json({ ok: true, defaultReset: true });
     } catch (err) {

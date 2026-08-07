@@ -555,35 +555,79 @@ async function snapshotSessionSpec(pool, sessionId, content) {
 // "default coding agent" means the same thing regardless of how a session
 // was spawned. Falls back to the legacy claude_code schema default when the
 // user has never set a default. Best-effort: never throws.
-async function applyDefaultAgentPreferences(pool, sessionId, userId, config) {
-  try {
-    const { rows: prefRows } = await pool.query(
-      `SELECT backend, model_id, reasoning_effort
+// Resolve the default coding-agent preference for a NEW session WITHOUT
+// mutating the session (plan 9.1). A Codex default is applied only when it
+// is actually usable (feature enabled, user in the beta allowlist, valid
+// OpenRouter credential, and a model present in the preference or the
+// operator default) — otherwise we fall back to a Claude session rather than
+// creating one that is guaranteed to fail its first dispatch. A DB error
+// while reading the preference is NOT treated as "no preference": it lets
+// session creation fail rather than silently choosing another backend.
+async function resolveDefaultAgentPreference(client, userId, config) {
+  const { rows: prefRows } = await client.query(
+    `SELECT backend, model_id, reasoning_effort
        FROM user_agent_preferences
-       WHERE user_id = $1 AND is_default = TRUE`,
-      [userId],
-    );
-    const pref = prefRows[0];
-    if (!pref) return;
-    // A Codex default without a pinned model falls back to the
-    // operator-configured OPENROUTER_DEFAULT_CODEX_MODEL so the session is
-    // immediately usable (the dispatch path requires an OpenRouter model).
-    let modelId = pref.model_id;
-    if (pref.backend === 'codex_openrouter' && !modelId) {
-      modelId = (config && config.openrouterDefaultCodexModel) || null;
-    }
-    await pool.query(
-      `UPDATE chat_sessions SET
-         agent_backend = $2, agent_provider = $3,
-         agent_model = $4, agent_reasoning_effort = $5
-       WHERE id = $1`,
-      [sessionId, pref.backend,
-       pref.backend === 'codex_openrouter' ? 'openrouter' : 'anthropic',
-       modelId, pref.reasoning_effort],
-    );
-  } catch (err) {
-    log.warn('sessions', 'Failed to apply default agent preferences', { sessionId, err: err.message });
+      WHERE user_id = $1 AND is_default = TRUE`,
+    [userId],
+  );
+  const pref = prefRows[0];
+  if (!pref || pref.backend !== 'codex_openrouter') {
+    // No preference or a Claude default → Claude session (schema default).
+    return {
+      backend: 'claude_code',
+      provider: 'anthropic',
+      model: null,
+      reasoningEffort: null,
+    };
   }
+
+  // Codex default — validate it is genuinely usable before applying.
+  const claudeFallback = {
+    backend: 'claude_code',
+    provider: 'anthropic',
+    model: null,
+    reasoningEffort: null,
+  };
+
+  if (!config || !config.codexOpenrouterEnabled) {
+    log.warn('sessions', 'Codex default not applied: feature disabled', { userId });
+    return claudeFallback;
+  }
+  if (config.openrouterBetaUserIds?.length
+      && !config.openrouterBetaUserIds.includes(String(userId))) {
+    log.warn('sessions', 'Codex default not applied: beta access revoked', { userId });
+    return claudeFallback;
+  }
+
+  let modelId = pref.model_id;
+  if (!modelId) {
+    modelId = (config && config.openrouterDefaultCodexModel) || null;
+  }
+  if (!modelId) {
+    log.warn('sessions', 'Codex default not applied: no model', { userId });
+    return claudeFallback;
+  }
+
+  try {
+    const credentialStore = require('../services/credential-store');
+    const meta = await credentialStore.readMetadata({
+      pool: client, userId, provider: 'openrouter', purpose: 'coding_agent',
+    });
+    if (!meta || meta.status !== 'valid') {
+      log.warn('sessions', 'Codex default not applied: missing/invalid credential', { userId });
+      return claudeFallback;
+    }
+  } catch (err) {
+    log.warn('sessions', 'Codex default not applied: credential check failed', { userId, err: err.message });
+    return claudeFallback;
+  }
+
+  return {
+    backend: 'codex_openrouter',
+    provider: 'openrouter',
+    model: modelId,
+    reasoningEffort: pref.reasoning_effort || null,
+  };
 }
 
 function sessionRoutes(config) {
@@ -1175,18 +1219,22 @@ function sessionRoutes(config) {
         }
       }
 
+      // plan 9 (Commit 7): insert the session with its FINAL default
+      // backend/model atomically — never insert-then-patch. The resolver
+      // returns the validated Codex config (or a Claude fallback) and the
+      // insert carries it, so the row's agent fields match what the first
+      // dispatch will use.
+      const pref = await resolveDefaultAgentPreference(pool, req.user.id, config);
       const { rows } = await pool.query(
-       `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, created_from_issue_number)
-        VALUES ($1, $2, $3, 'active', $4)
-        RETURNING *`,
-       [app.id, req.user.id, branchName, issueNumber]
+        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, created_from_issue_number,
+            agent_backend, agent_provider, agent_model, agent_reasoning_effort)
+         VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8)
+         RETURNING *`,
+        [app.id, req.user.id, branchName, issueNumber,
+         pref.backend, pref.provider, pref.model, pref.reasoningEffort]
       );
 
       log.info('sessions', 'Session created', { sessionId: rows[0].id, branch: branchName });
-      // Copy the user's default coding-agent preferences into the session
-      // (review #8): without this, preferences are written but never
-      // consumed and every session gets the claude_code schema default.
-      await applyDefaultAgentPreferences(pool, rows[0].id, req.user.id, config);
       events.record(pool, {
         type: events.EVENT_TYPES.DEV_SESSION_STARTED,
         userId: req.user.id,
@@ -1309,11 +1357,16 @@ function sessionRoutes(config) {
 
       // linked_issues is seeded with the issue so a PR opened later from a
       // CLONED session carries `Closes #N` (the clone copies the linkage).
+      // plan 9 (Commit 7): carry the final default backend/model in the
+      // insert — no insert-then-patch for headless sessions either.
+      const pref = await resolveDefaultAgentPreference(pool, req.user.id, config);
       const { rows } = await pool.query(
-        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, headless_status, headless_issue_number, linked_issues, session_title)
-         VALUES ($1, $2, $3, 'active', TRUE, 'generating', $4, $5, $6)
+        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, headless_status, headless_issue_number, linked_issues, session_title,
+            agent_backend, agent_provider, agent_model, agent_reasoning_effort)
+         VALUES ($1, $2, $3, 'active', TRUE, 'generating', $4, $5, $6, $7, $8, $9, $10)
          RETURNING *`,
-        [app.id, req.user.id, branchName, issueNumber, [issueNumber], autoTitle]
+        [app.id, req.user.id, branchName, issueNumber, [issueNumber], autoTitle,
+         pref.backend, pref.provider, pref.model, pref.reasoningEffort]
       );
       const session = rows[0];
       // The runner reuses chat-handler helpers that expect the app fields
@@ -1322,16 +1375,6 @@ function sessionRoutes(config) {
       session.app_name = app.name;
       session.repo_url = app.repo_url;
       session.app_self_hosted = app.self_hosted;
-
-      // Copy the user's default coding-agent backend/model into the
-      // headless session (review #8) so headless sessions honor the same
-      // default as ordinary and cloned sessions. Refresh the in-memory
-      // row used by the runner so it dispatches to the right backend.
-      await applyDefaultAgentPreferences(pool, session.id, req.user.id, config);
-      const { rows: refreshed } = await pool.query(
-        'SELECT agent_backend, agent_model FROM chat_sessions WHERE id = $1', [session.id],
-      );
-      if (refreshed[0]) { session.agent_backend = refreshed[0].agent_backend; session.agent_model = refreshed[0].agent_model; }
 
       events.record(pool, {
         type: events.EVENT_TYPES.DEV_SESSION_STARTED,
@@ -1453,23 +1496,19 @@ function sessionRoutes(config) {
         }
       }
 
+      // plan 9 (Commit 7): the clone is inserted with its final
+      // default backend/model atomically (no insert-then-patch).
+      const pref = await resolveDefaultAgentPreference(pool, req.user.id, config);
       const { rows } = await pool.query(
-        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, spec_md, linked_issues, testing_md, testing_path, testing_paths, cloned_from_session_id, session_title)
-         VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9, $10)
+        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, spec_md, linked_issues, testing_md, testing_path, testing_paths, cloned_from_session_id, session_title,
+            agent_backend, agent_provider, agent_model, agent_reasoning_effort)
+         VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
          RETURNING *`,
         [src.app_id, req.user.id, branchName, src.spec_md || '', src.linked_issues, src.testing_md, src.testing_path,
-         src.testing_paths != null ? JSON.stringify(src.testing_paths) : null, src.id, cloneTitle]
+         src.testing_paths != null ? JSON.stringify(src.testing_paths) : null, src.id, cloneTitle,
+         pref.backend, pref.provider, pref.model, pref.reasoningEffort]
       );
       const session = rows[0];
-
-      // Copy the user's default coding-agent backend/model into the clone
-      // (review #8) so a cloned session honors the same default as ordinary
-      // and headless sessions; refresh the in-memory row used downstream.
-      await applyDefaultAgentPreferences(pool, session.id, req.user.id, config);
-      const { rows: cloneRefreshed } = await pool.query(
-        'SELECT agent_backend, agent_model FROM chat_sessions WHERE id = $1', [session.id],
-      );
-      if (cloneRefreshed[0]) { session.agent_backend = cloneRefreshed[0].agent_backend; session.agent_model = cloneRefreshed[0].agent_model; }
 
       // Copy the conversation so the Mayor (and the new owner) see the full
       // auto-session context. Costs are zeroed — the cloner didn't pay for
@@ -11049,4 +11088,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { runCodexAttemptLoop,  sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine };
+module.exports = { runCodexAttemptLoop, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, resolveDefaultAgentPreference };
