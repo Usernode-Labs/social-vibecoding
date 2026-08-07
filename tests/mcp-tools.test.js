@@ -259,6 +259,38 @@ test('a request’s text stays wrapped all the way into the work order', () => {
   assert.match(tools.SERVER_INSTRUCTIONS, /WHAT TO BUILD section of a work order/);
 });
 
+test('prepare_work returns human guidance beside the agent-only work order', () => {
+  const idx = SRC.indexOf("server.registerTool('prepare_work'");
+  const body = SRC.slice(idx, SRC.indexOf("server.registerTool('submit_work'"));
+  // Two fields, two audiences: a checklist for the person, a payload for
+  // their coding agent.
+  assert.match(body, /guidance: z\.array\(z\.string\(\)\)/, 'the output schema declares it');
+  assert.match(body, /guidance: result\.guidance/, 'and it comes straight from the service');
+  // The service owns the fork wording now — a copy in the tool layer is
+  // exactly the second implementation that drifts.
+  assert.doesNotMatch(body, /forkNote/);
+  assert.doesNotMatch(body, /result\.forkStatus === 'name_conflict'/);
+  // The connected chat product is what tells the service which coding agent
+  // to name in the steps.
+  assert.match(body, /clientName,/, 'clientName reaches prepareWork');
+});
+
+test('the work order is described as a payload to reproduce, not prose to summarise', () => {
+  const idx = SRC.indexOf("server.registerTool('prepare_work'");
+  const desc = SRC.slice(idx, SRC.indexOf('inputSchema:', idx));
+  assert.match(desc, /character for character/i);
+  assert.match(desc, /Do not shorten/i);
+  assert.match(desc, /commit id/i);
+  assert.match(desc, /show them in order|in order, as written/i, 'and guidance is relayed as-is');
+
+  // The same contract in the server instructions, so a model that never
+  // reads a tool description still gets it.
+  const instructions = tools.SERVER_INSTRUCTIONS;
+  assert.match(instructions, /character for character/i);
+  assert.match(instructions, /relay them in order, as written/i);
+  assert.match(instructions, /retype the branch name or the 40-character commit id/i);
+});
+
 test('the platform-build fallback is described as the second choice', () => {
   const idx = SRC.indexOf("server.registerTool('start_platform_build'");
   const desc = SRC.slice(idx, idx + 1200);

@@ -98,7 +98,7 @@ function baseGh(overrides = {}) {
       const m = /github\.com\/([^/]+)\/([^/.]+)/.exec(String(url || ''));
       return m ? { owner: m[1], repo: m[2] } : null;
     },
-    getBranchSha: async () => 'base00000000000000000000000000000000sha',
+    getBranchSha: async () => '0123456789abcdef0123456789abcdef01234567',
     ...overrides,
   };
 }
@@ -200,15 +200,29 @@ test('the work order creates the branch itself — the platform no longer does',
   }
 });
 
-test('the work order forks when the fork is missing, and offers the one-click fallback', () => {
+test('the work order forks when the fork is missing, and leads with the one-click link', () => {
   const missing = orderFor('missing');
-  assert.match(missing, /gh repo fork usernode-bot\/recipe-box --clone --remote/);
-  // The human fallback for an agent with no `gh`: GitHub's own fork page.
+  // Create-only: the shared block below does the cloning, so the CLI form
+  // must not clone a second working copy.
+  assert.match(missing, /gh repo fork usernode-bot\/recipe-box --clone=false/);
+  assert.doesNotMatch(missing, /gh repo fork [^\n]*--clone(?!=false)/);
+  // The human fallback for an agent with no `gh`: GitHub's own fork page —
+  // and it comes FIRST now, above the command it replaces.
   assert.match(missing, /https:\/\/github\.com\/usernode-bot\/recipe-box\/fork/);
   assert.match(missing, /Create fork/);
+  assert.ok(
+    missing.indexOf('https://github.com/usernode-bot/recipe-box/fork')
+      < missing.indexOf('gh repo fork'),
+    'the one-click link is offered before the CLI command'
+  );
+  assert.ok(
+    missing.indexOf('https://github.com/usernode-bot/recipe-box/fork')
+      < missing.indexOf('git clone'),
+    'and before the clone it has to happen before'
+  );
 
-  // A fork that already exists is a plain clone — no pointless fork call
-  // first — but the fallback link stays, since our read is advisory.
+  // A fork that already exists needs no fork step at all — but the fallback
+  // link stays, since our read of GitHub is advisory.
   const ready = orderFor('ready');
   assert.match(ready, /git clone https:\/\/github\.com\/someuser\/recipe-box\.git/);
   assert.doesNotMatch(ready, /gh repo fork/);
@@ -224,6 +238,102 @@ test('a same-named repo in the way becomes a differently-named fork, never a ref
   assert.match(order, /--fork-name recipe-box-usernode/);
   assert.match(order, /cd recipe-box-usernode/);
   assert.match(order, /never touches that other repository/i);
+  // Forking by hand needs the name changed on GitHub's own page, so the
+  // one-click route says which name to type.
+  assert.match(order, /change the repository-name field to\s+recipe-box-usernode/);
+});
+
+test('the setup commands are the same four in every fork state', () => {
+  // The three paths used to diverge — one cloned into a directory called
+  // `app`, the others fork-and-cloned — so nobody could see they ended in
+  // the same place. Only the fork's own address varies now.
+  for (const status of ['ready', 'missing', 'name_conflict']) {
+    const order = orderFor(status);
+    const want = [
+      'git clone https://github.com/someuser/recipe-box.git recipe-box',
+      'cd recipe-box',
+      'git remote add upstream https://github.com/usernode-bot/recipe-box',
+      'git fetch upstream',
+      'git checkout -b usernode/recipe-box-issue-4-abc123 deadbeef',
+    ];
+    let at = -1;
+    for (const cmd of want) {
+      const found = order.indexOf(cmd, at + 1);
+      assert.ok(found > at, `${status}: ${cmd} appears, in order`);
+      at = found;
+    }
+    // The old ready-path quirk: a working directory named after nothing.
+    assert.doesNotMatch(order, /git clone \S+ app &&/, `${status}: no 'app' directory`);
+  }
+});
+
+test('the work order tells the agent how to recover a commit id git rejects', () => {
+  for (const status of ['ready', 'missing', 'name_conflict']) {
+    const order = orderFor(status);
+    assert.match(order, /fatal: not a valid object name/, `${status}: names the failure`);
+    assert.match(order, /reference is not a tree/, `${status}: and the other one`);
+    assert.match(order, /git fetch upstream deadbeef/, `${status}: and the recovery`);
+    assert.match(order, /Do not shorten that commit id/, `${status}: no shortening`);
+    assert.match(order, /substitute `upstream\/main` or `HEAD`/, `${status}: no substitute`);
+    assert.match(order, /ask for the work order again/, `${status}: and an escape hatch`);
+  }
+});
+
+// ── The guidance steps ─────────────────────────────────────────────────
+
+function guidanceFor(forkStatus, overrides = {}) {
+  return svc.buildGuidance({
+    forkStatus,
+    forkPageUrl: 'https://github.com/usernode-bot/recipe-box/fork',
+    forkRepo: 'recipe-box',
+    branch: 'usernode/recipe-box-issue-4-abc123',
+    agentName: 'Claude Code',
+    ...overrides,
+  });
+}
+
+test('guidance is a short list of platform-authored steps for the person', () => {
+  for (const status of ['ready', 'missing', 'name_conflict']) {
+    const steps = guidanceFor(status);
+    assert.ok(Array.isArray(steps), `${status}: an array`);
+    assert.ok(steps.length >= 3 && steps.length <= 5, `${status}: 3–5 steps, got ${steps.length}`);
+    // Short enough to read as a checklist, not paragraphs.
+    for (const step of steps) {
+      assert.equal(typeof step, 'string');
+      assert.ok(step.trim().length > 0, `${status}: no empty step`);
+      assert.ok(step.length <= 260, `${status}: steps stay short (${step.length})`);
+    }
+    const joined = steps.join('\n');
+    assert.match(joined, /Claude Code/, `${status}: names the coding agent`);
+    assert.match(joined, /not open a pull request/i, `${status}: sets the PR expectation`);
+    assert.match(joined, /pushed/, `${status}: and how the loop closes`);
+    // The brief is other users' writing and belongs only inside the work
+    // order, where the receiving agent is warned about it.
+    assert.doesNotMatch(joined, /<untrusted-content>/, `${status}: no user text`);
+  }
+});
+
+test('guidance leads with the fork only when there is a fork to make', () => {
+  const missing = guidanceFor('missing');
+  assert.match(missing[0], /Create your fork in one click/);
+  assert.match(missing[0], /https:\/\/github\.com\/usernode-bot\/recipe-box\/fork/);
+
+  const conflict = guidanceFor('name_conflict', { forkRepo: 'recipe-box-usernode' });
+  assert.match(conflict[0], /recipe-box-usernode/);
+  assert.match(conflict[0], /never touches it/i);
+  assert.match(conflict[1], /change the repository-name field to recipe-box-usernode/);
+
+  const ready = guidanceFor('ready');
+  assert.match(ready[0], /^Open Claude Code/);
+  assert.doesNotMatch(ready.join('\n'), /Create fork/);
+});
+
+test('the coding agent named in guidance follows the connected client', () => {
+  assert.equal(svc.codingAgentName(svc.normalizeAgent(null, 'Claude')), 'Claude Code');
+  assert.equal(svc.codingAgentName(svc.normalizeAgent(null, 'ChatGPT')), 'Codex');
+  assert.equal(svc.codingAgentName(svc.normalizeAgent(null, 'Some MCP Client')), 'your coding agent');
+  // And with nothing at all it still reads as a sentence.
+  assert.match(guidanceFor('ready', { agentName: undefined })[0], /^Open your coding agent/);
 });
 
 test('a work order with no brief tells the agent to ask rather than guess', () => {
@@ -351,7 +461,7 @@ test('prepare_work records the work order at the UPSTREAM base commit', async ()
   assert.equal(result.taskId, 31);
   assert.equal(result.forkOwner, 'someuser');
   assert.equal(result.forkStatus, 'ready');
-  assert.equal(result.baseSha, 'base00000000000000000000000000000000sha');
+  assert.equal(result.baseSha, '0123456789abcdef0123456789abcdef01234567');
   assert.match(result.branch, /^usernode\/recipe-box-issue-4-/);
 
   // The base commit comes from UPSTREAM, read with the platform's own
@@ -359,7 +469,7 @@ test('prepare_work records the work order at the UPSTREAM base commit', async ()
   // is what the work order tells the agent to branch from.
   assert.match(
     result.workOrder,
-    new RegExp(`git checkout -b ${result.branch} base00000000000000000000000000000000sha`)
+    new RegExp(`git checkout -b ${result.branch} 0123456789abcdef0123456789abcdef01234567`)
   );
 
   // Nothing is written to GitHub at all: one read, no more.
@@ -443,6 +553,74 @@ test('prepare_work refuses before touching GitHub when the account is not linked
   }
 });
 
+test('prepare_work returns guidance beside the work order', async () => {
+  const queries = [];
+  const pool = fakePool([['INSERT INTO external_agent_tasks', [{ id: 34 }]]], queries);
+  const result = await withFetch({
+    'GET /repos/someuser/recipe-box': { status: 404, body: { message: 'Not Found' } },
+  }, [], () => svc.prepareWork(
+    { pool, config: {}, gh: baseGh(), githubLink: linkedAs('someuser'), limits: okLimits },
+    {
+      user: { id: 3 }, app: APP, brief: '<untrusted-content>Add dark mode</untrusted-content>',
+      clientName: 'Claude', origin: 'https://usernode.example',
+    }
+  ));
+
+  assert.equal(result.ok, true);
+  assert.ok(Array.isArray(result.guidance));
+  assert.match(result.guidance[0], /https:\/\/github\.com\/usernode-bot\/recipe-box\/fork/);
+  // Named from the connected chat product, and free of the user-authored
+  // brief that the work order carries under its envelope.
+  assert.match(result.guidance.join('\n'), /Claude Code/);
+  assert.doesNotMatch(result.guidance.join('\n'), /Add dark mode/);
+  assert.match(result.workOrder, /<untrusted-content>Add dark mode<\/untrusted-content>/);
+});
+
+test('a base commit that is not a commit id is refused, not pasted into a work order', async () => {
+  for (const bad of ['', 'abc123', 'z'.repeat(40), '0123456789abcdef0123456789abcdef0123456', null]) {
+    const queries = [];
+    let fetched = false;
+    const original = global.fetch;
+    global.fetch = async () => { fetched = true; throw new Error('should not be called'); };
+    try {
+      const result = await svc.prepareWork(
+        {
+          pool: fakePool([], queries), config: {},
+          gh: baseGh({ getBranchSha: async () => bad }),
+          githubLink: linkedAs('someuser'), limits: okLimits,
+        },
+        { user: { id: 3 }, app: APP, brief: 'x', origin: 'https://usernode.example' }
+      );
+      assert.equal(result.ok, false, `${JSON.stringify(bad)} is refused`);
+      assert.equal(result.code, 'platform_unavailable');
+      assert.equal(result.retryable, true);
+      assert.equal(fetched, false, 'and GitHub is never read for the fork');
+      assert.equal(queries.length, 0, 'and nothing is reserved');
+    } finally {
+      global.fetch = original;
+    }
+  }
+});
+
+test('an upper-case commit id is accepted and recorded lowercased', async () => {
+  const queries = [];
+  const pool = fakePool([['INSERT INTO external_agent_tasks', [{ id: 35 }]]], queries);
+  const result = await withFetch(FORK_READY, [], () => svc.prepareWork(
+    {
+      pool, config: {},
+      gh: baseGh({ getBranchSha: async () => '0123456789ABCDEF0123456789ABCDEF01234567' }),
+      githubLink: linkedAs('someuser'), limits: okLimits,
+    },
+    { user: { id: 3 }, app: APP, brief: 'x', origin: 'https://usernode.example' }
+  ));
+
+  assert.equal(result.ok, true);
+  assert.equal(result.baseSha, '0123456789abcdef0123456789abcdef01234567');
+  const insert = queries.find((q) => q.sql.includes('INSERT INTO external_agent_tasks'));
+  assert.equal(insert.params[6], '0123456789abcdef0123456789abcdef01234567');
+  assert.match(result.workOrder, /0123456789abcdef0123456789abcdef01234567/);
+});
+
 test('prepare_work is bounded before it records anything', async () => {
   const queries = [];
   let fetched = false;
@@ -472,7 +650,7 @@ const TASK_ROW = {
   id: 31, user_id: 3, app_id: 7, issue_number: 4,
   fork_owner: 'someuser', fork_repo: 'recipe-box',
   branch_name: 'usernode/recipe-box-issue-4-abc123',
-  base_sha: 'base00000000000000000000000000000000sha',
+  base_sha: '0123456789abcdef0123456789abcdef01234567',
   brief: 'Add dark mode', status: 'open',
   app_slug: 'recipe-box', app_name: 'Recipe Box',
   repo_url: 'https://github.com/usernode-bot/recipe-box',
@@ -480,7 +658,7 @@ const TASK_ROW = {
 
 const PUSHED_BRANCH = {
   'GET /repos/someuser/recipe-box/branches/usernode%2Frecipe-box-issue-4-abc123': {
-    status: 200, body: { commit: { sha: 'newsha1111111111111111111111111111111' } },
+    status: 200, body: { commit: { sha: '89abcdef0123456789abcdef0123456789abcdef' } },
   },
 };
 

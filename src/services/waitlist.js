@@ -58,6 +58,24 @@ async function getSignupByMoreToken(pool, token) {
   return rows[0] || null;
 }
 
+// Confirm the email address behind a stage-2 capability token — the
+// one-click link carried in the join mail. Idempotent: the original
+// timestamp is kept, so a forwarded or re-opened link is harmless.
+// Returns the row (with confirmed_at) or null when the token doesn't
+// resolve, so the caller can 404 an unknown link rather than pretending.
+async function confirmSignupByMoreToken(pool, token) {
+  const row = await getSignupByMoreToken(pool, token);
+  if (!row) return null;
+  const { rows } = await pool.query(
+    `UPDATE waitlist_signups
+        SET confirmed_at = COALESCE(confirmed_at, NOW())
+      WHERE id = $1
+      RETURNING id, email, confirmed_at`,
+    [row.id]
+  );
+  return rows[0] || null;
+}
+
 // Merge a validated stage-2 payload into the signup's answers. Merging
 // is section-wise (mirrors topochain's Participant::mergeAnswers): a
 // re-submitted section replaces that section, untouched sections keep
@@ -176,6 +194,7 @@ module.exports = {
   normalizeEmail,
   joinWaitlist,
   getSignupByMoreToken,
+  confirmSignupByMoreToken,
   mergeMoreAnswers,
   setVerifiedHandle,
   grantPlatformAccess,

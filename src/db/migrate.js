@@ -107,6 +107,7 @@ async function migrate(config) {
   // identities) and AFTER seedStagingLeaderboardProfile (it decorates that
   // seed's 900001 / 900002 fixture accounts).
   await seedStagingProfileCustomization(pool, config);
+  await seedStagingPlatformMail(pool);
   await sweepInterruptedDbExports(pool);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
@@ -8580,7 +8581,14 @@ async function seedStagingArchiveProposalFixtures(pool, config) {
 // fixture set — a season, two season_events, a challenge taxonomy, six
 // users, onchain accounts, a points ledger, two leaderboard snapshots,
 // and the supporting settings/terms/version-gate/token rows — so the
-// whole surface is exercisable end to end.
+// whole surface is exercisable end to end. It has since grown a second,
+// CLOSED season plus an archive event and a deliberately challenge-free
+// one, two block-producer-queue users and three waitlist signups — all of
+// them for the admin console (Seasons, Events & Challenges), whose lists
+// each had exactly one state to show while a single running season was the
+// only thing seeded. `topochain_*` platform_settings are NOT seeded here:
+// schema.sql:3819-3834 inserts all seven on every boot, so the settings
+// screen is already populated and a second copy would only drift.
 //
 // Idempotent via fixed ids in the 900500+ range (this platform's
 // "obviously fake, staging-demo" numbering convention — see
@@ -8595,7 +8603,9 @@ async function seedStagingArchiveProposalFixtures(pool, config) {
 // user_enrollments/onchain_accounts — no cross-table DB CHECK exists):
 // every row that carries a season_event_id must carry THAT event's
 // season_id. Enforced below by construction: every event-scoped row
-// literally reuses SEASON_ID alongside its season_event_id.
+// literally reuses SEASON_ID alongside its season_event_id. The closed
+// season owns exactly one event (EVENT_ARCHIVE_ID) and no scoped rows
+// point at it, so adding it cannot break that invariant.
 async function seedStagingTopochain(pool, config) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
@@ -8611,6 +8621,40 @@ async function seedStagingTopochain(pool, config) {
   // see the "Nothing is running right now" state.
   const EVENT_ENDED_ID = 900502;
 
+  // A SECOND season, closed (is_active = FALSE, ends_at in the past), and
+  // two more events — added for the Seasons, Events & Challenges admin
+  // console, where a single always-active season left three screens
+  // showing only one state each:
+  //   - Seasons list: no closed row, so the inactive badge never rendered.
+  //   - Season events: every row hung off the same season, so the
+  //     season column read as decoration rather than as a scope.
+  //   - Challenges: every event had challenges, so the per-event EMPTY
+  //     state ("No challenges yet") was unreachable in a preview — and an
+  //     empty state nobody can look at is an empty state nobody approved.
+  // EVENT_ARCHIVE_ID belongs to the CLOSED season, EVENT_EMPTY_ID to the
+  // active one; the scope invariant (a row carrying a season_event_id
+  // carries THAT event's season_id) holds for both by construction.
+  const SEASON_CLOSED_ID = 900501;
+  const EVENT_ARCHIVE_ID = 900503; // on SEASON_CLOSED_ID; has challenges
+  const EVENT_EMPTY_ID = 900504;   // on SEASON_ID; deliberately has NONE
+
+  // A THIRD season and a season-less event, added with the Seasons admin
+  // CRUD (/api/v4/admin/seasons). Both exist to make a state reachable in
+  // a preview that the two seasons above cannot produce:
+  //   - SEASON_INTERNAL_ID is internal = TRUE (the Internal badge) AND
+  //     has NO events, enrollments, onchain accounts or allocations —
+  //     which makes it the one season whose DELETE actually succeeds.
+  //     Deleting either of the other two returns the 409 `season_in_use`
+  //     guard, so without this row the happy path could only be reviewed
+  //     by first creating a season.
+  //   - EVENT_UNASSIGNED_ID carries season_id = NULL, which nothing else
+  //     in this fixture does: it is what the Seasons screen's "Events not
+  //     assigned to a season" panel and the events list's `season_id=none`
+  //     filter are for. Kept is_active = FALSE so no public surface picks
+  //     it up (it has no season to scope a leaderboard to anyway).
+  const SEASON_INTERNAL_ID = 900502;
+  const EVENT_UNASSIGNED_ID = 900505;
+
   const USERS = {
     seasonWide1: 900500, // exclude_podium = TRUE
     seasonWide2: 900501,
@@ -8618,35 +8662,64 @@ async function seedStagingTopochain(pool, config) {
     eventA2: 900503,
     eventB1: 900504,
     mixed: 900505, // event-scoped AND season-wide enrollment; real password
+    bpPending: 900506,  // block-producer queue: requested, not released
+    bpReleased: 900507, // block-producer queue: requested AND released;
+                        // the one row with accept_logs = FALSE
   };
 
   try {
-    // ─── Users (6) ─────────────────────────────────────────────────────
-    // Sentinel password for five of the six (never-login fixtures, same
+    // ─── Users (8) ─────────────────────────────────────────────────────
+    // Sentinel password for seven of the eight (never-login fixtures, same
     // idiom as seedStagingWalletUsers); the sixth gets a real bcrypt hash
     // so the "one with password set" requirement is exercisable.
+    //
+    // `bp_requested_at`/`bp_released_at` are the BLOCK-PRODUCER QUEUE the
+    // admin console's Waitlist screen renders beside the platform waitlist
+    // (GET /api/v4/admin/bp-queue is literally `users WHERE bp_requested_at
+    // IS NOT NULL`). Participants 7 and 8 are the only rows in it, one per
+    // side of that screen's pending/released filter — with neither, the
+    // queue is empty in every preview and both the table and its filter
+    // read as broken rather than as unused.
+    //
+    // Participant 8 is also the one row with `accept_logs = FALSE` (the
+    // column defaults to TRUE), so the users screen shows both values of
+    // the flag instead of a column that is the same all the way down.
     const realHash = await bcrypt.hash('staging-demo-topochain-password', 12);
     await pool.query(
-      `INSERT INTO users (id, username, password, email, exclude_podium)
+      `INSERT INTO users
+         (id, username, password, email, exclude_podium, accept_logs,
+          bp_requested_at, bp_released_at)
        VALUES
          ($1, 'staging-demo-topochain-participant-1', '!staging-fixture-no-login!',
-          'staging-demo-topochain-1@example.invalid', TRUE),
+          'staging-demo-topochain-1@example.invalid', TRUE, TRUE, NULL, NULL),
          ($2, 'staging-demo-topochain-participant-2', '!staging-fixture-no-login!',
-          'staging-demo-topochain-2@example.invalid', FALSE),
+          'staging-demo-topochain-2@example.invalid', FALSE, TRUE, NULL, NULL),
          ($3, 'staging-demo-topochain-participant-3', '!staging-fixture-no-login!',
-          'staging-demo-topochain-3@example.invalid', FALSE),
+          'staging-demo-topochain-3@example.invalid', FALSE, TRUE, NULL, NULL),
          ($4, 'staging-demo-topochain-participant-4', '!staging-fixture-no-login!',
-          'staging-demo-topochain-4@example.invalid', FALSE),
+          'staging-demo-topochain-4@example.invalid', FALSE, TRUE, NULL, NULL),
          ($5, 'staging-demo-topochain-participant-5', '!staging-fixture-no-login!',
-          'staging-demo-topochain-5@example.invalid', FALSE),
+          'staging-demo-topochain-5@example.invalid', FALSE, TRUE, NULL, NULL),
          ($6, 'staging-demo-topochain-participant-6', $7,
-          'staging-demo-topochain-6@example.invalid', FALSE)
+          'staging-demo-topochain-6@example.invalid', FALSE, TRUE, NULL, NULL),
+         ($8, 'staging-demo-topochain-participant-7', '!staging-fixture-no-login!',
+          'staging-demo-topochain-7@example.invalid', FALSE, TRUE,
+          NOW() - INTERVAL '12 days', NULL),
+         ($9, 'staging-demo-topochain-participant-8', '!staging-fixture-no-login!',
+          'staging-demo-topochain-8@example.invalid', FALSE, FALSE,
+          NOW() - INTERVAL '25 days', NOW() - INTERVAL '20 days')
        ON CONFLICT (id) DO NOTHING`,
       [USERS.seasonWide1, USERS.seasonWide2, USERS.eventA1, USERS.eventA2,
-       USERS.eventB1, USERS.mixed, realHash]
+       USERS.eventB1, USERS.mixed, realHash, USERS.bpPending, USERS.bpReleased]
     );
 
-    // ─── Season (1) ─────────────────────────────────────────────────────
+    // ─── Seasons (3): one running, one closed, one internal + empty ─────
+    // The closed one is not decoration: the admin console's Seasons screen
+    // renders an active/closed badge and orders by display_order, and with
+    // a single always-active row neither the inactive badge nor the sort
+    // was reviewable. It also gives the season events screen two distinct
+    // scopes, so its season column reads as a scope rather than as a
+    // constant.
     await pool.query(
       `INSERT INTO seasons
          (id, name, description, starts_at, ends_at, is_active, internal,
@@ -8655,9 +8728,17 @@ async function seedStagingTopochain(pool, config) {
          ($1, 'Staging Demo Season — Topochain',
           'Fixture season for exercising the topochain staging surface end to end.',
           NOW() - INTERVAL '60 days', NOW() + INTERVAL '30 days', TRUE, FALSE, 0,
-          'Staging demo token pool', NOW(), NOW())
+          'Staging demo token pool', NOW(), NOW()),
+         ($2, 'Staging Demo Season — Archive',
+          'Closed fixture season: ended months ago and is_active = FALSE, so the admin Seasons list has a non-running row to render.',
+          NOW() - INTERVAL '240 days', NOW() - INTERVAL '150 days', FALSE, FALSE, 1,
+          'Staging demo token pool (closed)', NOW(), NOW()),
+         ($3, 'Staging Demo Season — Internal Dry Run',
+          'Internal fixture season with nothing hanging off it: renders the Internal badge, and is the one row whose admin DELETE is not blocked by the season_in_use guard.',
+          NOW() - INTERVAL '5 days', NOW() + INTERVAL '25 days', TRUE, TRUE, 2,
+          'Staging demo token pool (internal)', NOW(), NOW())
        ON CONFLICT (id) DO NOTHING`,
-      [SEASON_ID]
+      [SEASON_ID, SEASON_CLOSED_ID, SEASON_INTERNAL_ID]
     );
 
     // ─── Season events (2): one 'regular' with epochs + scoring_formula,
@@ -8685,9 +8766,39 @@ async function seedStagingTopochain(pool, config) {
           NOW() - INTERVAL '120 days', NOW() - INTERVAL '90 days', TRUE,
           '{"metrics": [], "offchain_weight": 1}'::jsonb, 60, 90, FALSE, TRUE,
           NOW() - INTERVAL '120 days', NOW() - INTERVAL '90 days', FALSE,
-          'staging-demo-chain-1', TRUE, 'regular', NOW(), NOW())
+          'staging-demo-chain-1', TRUE, 'regular', NOW(), NOW()),
+         -- On the CLOSED season, and is_active = FALSE: the admin events
+         -- list is the only screen that shows an event outside the running
+         -- season, and without this row its season filter had nothing to
+         -- filter. Kept inactive so no public surface (the leaderboard's
+         -- event picker, the between-events fallback) changes because of
+         -- these two additions.
+         ($5, $6, 'Staging Demo Event — Archive Sprint',
+          'Inactive event on the closed season. Exercises the admin events list across two seasons; deliberately invisible to the public event picker.',
+          NOW() - INTERVAL '230 days', NOW() - INTERVAL '200 days', FALSE,
+          '{"metrics": [], "offchain_weight": 1}'::jsonb, 10, 40, FALSE, FALSE,
+          NOW() - INTERVAL '230 days', NOW() - INTERVAL '200 days', FALSE,
+          'staging-demo-chain-1', TRUE, 'regular', NOW(), NOW()),
+         -- Deliberately CHALLENGE-FREE. Every other event here has
+         -- challenges, so "No challenges yet" — the empty state the admin
+         -- challenges list draws under a season event — could not be
+         -- looked at in a preview. Nothing else about this row is special:
+         -- that is the point, it is an ordinary event nobody has filled in.
+         ($7, $3, 'Staging Demo Event — Unfilled Sprint',
+          'Event with NO challenges, so the per-event empty state is reachable in a preview.',
+          NOW() + INTERVAL '20 days', NOW() + INTERVAL '50 days', FALSE,
+          '{"metrics": [], "offchain_weight": 1}'::jsonb, NULL, NULL, FALSE, FALSE,
+          NULL, NULL, FALSE, NULL, FALSE, 'regular', NOW(), NOW()),
+         -- season_id NULL: the only unassigned event in the fixture. See
+         -- the EVENT_UNASSIGNED_ID note in the id block above.
+         ($8, NULL, 'Staging Demo Event — Unassigned Sprint',
+          'Event with no season at all, so the Seasons screen''s unassigned panel and the events list''s season_id=none filter both have something to show.',
+          NOW() + INTERVAL '10 days', NOW() + INTERVAL '40 days', FALSE,
+          '{"metrics": [], "offchain_weight": 1}'::jsonb, NULL, NULL, FALSE, FALSE,
+          NULL, NULL, FALSE, NULL, FALSE, 'regular', NOW(), NOW())
        ON CONFLICT (id) DO NOTHING`,
-      [EVENT_REGULAR_ID, EVENT_SEASON_ID, SEASON_ID, EVENT_ENDED_ID]
+      [EVENT_REGULAR_ID, EVENT_SEASON_ID, SEASON_ID, EVENT_ENDED_ID,
+       EVENT_ARCHIVE_ID, SEASON_CLOSED_ID, EVENT_EMPTY_ID, EVENT_UNASSIGNED_ID]
     );
 
     // ─── Challenge kinds (4) ────────────────────────────────────────────
@@ -8815,9 +8926,34 @@ async function seedStagingTopochain(pool, config) {
          (900509, $3, 900504, 'Produce your first block',
           'Produce at least one block during the event window.',
           '250 points', 'Block-production challenge (finished event).',
-          'SEND_TRANSACTION_CHALLENGE', TRUE, 2, TRUE, TRUE, 1, NOW(), NOW())
+          'SEND_TRANSACTION_CHALLENGE', TRUE, 2, TRUE, TRUE, 1, NOW(), NOW()),
+         -- Archive-season challenges. Two things here that no other event
+         -- provides, both of them admin-console states rather than viewer
+         -- ones: a DISABLED challenge (900711 — the list draws a muted row
+         -- and offers "Enable" instead of "Disable", which was dead code in
+         -- every preview), and NON-CONTIGUOUS display orders (2, 6, 11).
+         -- Contiguous 1..n orders make the reorder controls untestable by
+         -- inspection: any renumbering looks right. With gaps, a move that
+         -- silently rewrites its neighbours' orders is visible.
+         -- Ids at 900710+, not 900515+: 900520-900579 is the per-viewer
+         -- window in the tables below, and the seed's own tests identify a
+         -- viewer row by that id range alone — a 9005[2-9]x row in ANY
+         -- table reads as one. Staying above it keeps that cheap check
+         -- honest.
+         (900710, $4, 900500, 'Report a reproducible bug',
+          'Find and file a reproducible bug report against the testnet client.',
+          '250 points', 'Bug-report challenge (archive event).', 'REPORT_BUG_CHALLENGE',
+          TRUE, 2, TRUE, FALSE, NULL, NOW(), NOW()),
+         (900711, $4, 900502, 'Share the season announcement',
+          'Share the season announcement post on social media.',
+          '50 points', 'DISABLED challenge (archive event) — the only enabled = FALSE fixture.',
+          'SOCIAL_SHARE_CHALLENGE', FALSE, 6, FALSE, FALSE, NULL, NOW(), NOW()),
+         (900712, $4, 900503, 'Invite a new participant',
+          'Invite a new participant who successfully enrolls in the season.',
+          '150 points', 'Enabled-but-unfinished challenge (archive event).',
+          'INVITE_PARTICIPANT_CHALLENGE', TRUE, 11, FALSE, FALSE, NULL, NOW(), NOW())
        ON CONFLICT (id) DO NOTHING`,
-      [EVENT_REGULAR_ID, EVENT_SEASON_ID, EVENT_ENDED_ID]
+      [EVENT_REGULAR_ID, EVENT_SEASON_ID, EVENT_ENDED_ID, EVENT_ARCHIVE_ID]
     );
 
     // ─── OPEN challenges for the home-screen Challenges card (#911) ─────
@@ -8877,10 +9013,21 @@ async function seedStagingTopochain(pool, config) {
          (900503, $5, $4, $7, NOW() - INTERVAL '38 days'),
          (900504, $6, $8, $7, NOW() - INTERVAL '10 days'),
          (900505, $5, $9, $7, NOW() - INTERVAL '35 days'),
-         (900506, NULL, $9, $7, NOW() - INTERVAL '35 days')
+         (900506, NULL, $9, $7, NOW() - INTERVAL '35 days'),
+         -- The two block-producer-queue users. Ids sit at 900700+, not
+         -- immediately after 900506: the per-viewer blocks below own
+         -- 900520-900579 in this table with no upper bound, and a row that
+         -- grows into one of them is swallowed by ON CONFLICT (id) rather
+         -- than failing. $12 is EVENT_EMPTY_ID, which belongs to $7 — the
+         -- scope invariant holds, and the challenge-free event gets
+         -- participants so its empty CHALLENGE list can't be mistaken for
+         -- an empty event.
+         (900700, NULL, $10, $7, NOW() - INTERVAL '26 days'),
+         (900701, $12, $11, $7, NOW() - INTERVAL '13 days')
        ON CONFLICT (id) DO NOTHING`,
       [USERS.seasonWide1, USERS.seasonWide2, USERS.eventA1, USERS.eventA2,
-       EVENT_REGULAR_ID, EVENT_SEASON_ID, SEASON_ID, USERS.eventB1, USERS.mixed]
+       EVENT_REGULAR_ID, EVENT_SEASON_ID, SEASON_ID, USERS.eventB1, USERS.mixed,
+       USERS.bpReleased, USERS.bpPending, EVENT_EMPTY_ID]
     );
 
     // ─── Onchain accounts (6): mix of season-wide/event-scoped and
@@ -8945,10 +9092,26 @@ async function seedStagingTopochain(pool, config) {
          (900506, $4, $6, 'challenge_completion', 250, 'Reported a reproducible bug.',
           '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '3 days', 900505),
          (900507, $4, $6, 'challenge_completion', 100, 'Sent a testnet transaction.',
-          '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '2 days', 900506)
+          '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '2 days', 900506),
+         -- Four rows on the ARCHIVE event (ids at 900700+, clear of the
+         -- per-viewer blocks). Two reasons, both admin-screen ones: the
+         -- activities list filters by event, and until now every row in it
+         -- belonged to the running season, so the filter could only ever
+         -- return everything; and 900701 is the one row with a NULL
+         -- challenge_id, so the "—" cell that stands in for "not tied to a
+         -- challenge" is on screen instead of being a branch nobody sees.
+         (900700, $8, $7, 'challenge_completion', 250, 'Reported a reproducible bug.',
+          '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '210 days', 900710),
+         (900701, $8, $7, 'block_produced', 250, 'Produced a testnet block.',
+          '{"kind": "block_production"}'::jsonb, NOW() - INTERVAL '208 days', NULL),
+         (900702, $9, $7, 'challenge_completion', 50, 'Shared the season announcement.',
+          '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '206 days', 900711),
+         (900703, $9, $7, 'challenge_completion', 150, 'Invited a new participant.',
+          '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '205 days', 900712)
        ON CONFLICT (id) DO NOTHING`,
       [USERS.eventA1, USERS.eventA2, USERS.mixed, USERS.eventB1,
-       EVENT_REGULAR_ID, EVENT_SEASON_ID]
+       EVENT_REGULAR_ID, EVENT_SEASON_ID, EVENT_ARCHIVE_ID,
+       USERS.bpPending, USERS.bpReleased]
     );
 
     // ─── Leaderboard snapshots (2 snapshot times x 6 users, all against
@@ -9139,6 +9302,42 @@ async function seedStagingTopochain(pool, config) {
                 SELECT 1 FROM app_version_configs x WHERE x.os = v.os
               )
        ON CONFLICT (id) DO NOTHING`
+    );
+
+    // ─── Waitlist signups (3) ──────────────────────────────────────────
+    // The admin console's Waitlist screen reads `waitlist_signups`
+    // directly, and in a staging clone that table is emptied along with
+    // every other signup surface — so the screen, its pending/released
+    // filter and its per-row Release button were all reviewable only as an
+    // empty state. Three rows, one per state that renders differently:
+    //
+    //   900500  pending, CONFIRMED, with survey answers   → the row whose
+    //           "Survey answers" disclosure has something to disclose.
+    //   900501  pending, UNCONFIRMED, no answers          → the plain row,
+    //           and the only one that proves confirmed_at can be null.
+    //   900502  RELEASED and linked to a fixture account  → the released
+    //           half of the filter, plus the linked-username cell.
+    //
+    // Emails are `.invalid` and nothing here is ever mailed: the release
+    // action is the only thing that sends, and a tester triggering it in
+    // staging hits the same skipped_staging path as every other fixture.
+    await pool.query(
+      `INSERT INTO waitlist_signups
+         (id, email, submitted_at, ip, answers, released_at, linked_user_id,
+          confirmed_at)
+       VALUES
+         (900500, 'staging-demo-topochain-waitlist-1@example.invalid',
+          NOW() - INTERVAL '30 days', NULL,
+          '{"role": "Validator", "chain": "Testnet", "why": "Staging demo survey answer."}'::jsonb,
+          NULL, NULL, NOW() - INTERVAL '29 days'),
+         (900501, 'staging-demo-topochain-waitlist-2@example.invalid',
+          NOW() - INTERVAL '18 days', NULL, NULL, NULL, NULL, NULL),
+         (900502, 'staging-demo-topochain-waitlist-3@example.invalid',
+          NOW() - INTERVAL '40 days', NULL,
+          '{"role": "Builder", "chain": "Testnet", "why": "Staging demo survey answer (released)."}'::jsonb,
+          NOW() - INTERVAL '20 days', $1, NOW() - INTERVAL '39 days')
+       ON CONFLICT (id) DO NOTHING`,
+      [USERS.bpReleased]
     );
 
     // ─── Account delegation period (1) — delegation of the season-wide,
@@ -9634,9 +9833,92 @@ async function migrateAppDbsToPerRole(pool, config) {
   }
 }
 
+// Staging fixture for the outbound-mail card (Admin → Topochain →
+// Settings). `mail_deliveries` is tagged staging:private, so a staging
+// clone TRUNCATEs it and the card renders an empty "no mail yet" table —
+// which shows nothing about how the card actually looks with each status
+// in it. These five rows cover every status the renderer branches on:
+// sent, skipped_staging, suppressed_rate_limit, failed, no_transport.
+//
+// All addresses are @example.invalid (reserved by RFC 2606, can never
+// resolve) and all are visibly named staging-demo-*, so nobody mistakes
+// one for a real signup. The waitlist row exists so a tester can exercise
+// the confirm link end to end against a known token.
+async function seedStagingPlatformMail(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  // Obvious, fixed token so the testing steps can name the exact URL.
+  // 48 hex chars, matching the real more_token shape.
+  const DEMO_MORE_TOKEN = 'dead'.repeat(12);
+
+  const ROWS = [
+    // A staging preview never delivers, so this is the status a tester's
+    // OWN actions produce here.
+    { kind: 'otp', to: 'staging-demo-user@example.invalid', provider: 'log', status: 'skipped_staging', error: null },
+    { kind: 'waitlist_joined', to: 'staging-demo-waitlist@example.invalid', provider: 'log', status: 'skipped_staging', error: null },
+    // What production looks like when it works.
+    { kind: 'waitlist_released', to: 'staging-demo-released@example.invalid', provider: 'gmail', status: 'sent', error: null },
+    // The throttle firing, which is the system working, not an error.
+    { kind: 'otp', to: 'staging-demo-throttled@example.invalid', provider: 'log', status: 'suppressed_rate_limit', error: 'another otp mail went to this address 12s ago' },
+    // A provider refusal, so the card's error column is exercised.
+    { kind: 'otp', to: 'staging-demo-broken@example.invalid', provider: 'gmail', status: 'failed', error: 'Staging demo — provider rejected the sender' },
+    // Admin → Email delivery sends kind='admin_test'. Its "Test emails
+    // only" filter would show an empty table in a fresh preview
+    // otherwise, and an empty table looks identical to a broken filter.
+    { kind: 'admin_test', to: 'staging-demo-mailtest@example.invalid', provider: 'gmail', status: 'sent', error: null },
+    { kind: 'admin_test', to: 'staging-demo-mailfail@example.invalid', provider: 'gmail', status: 'failed', error: 'Staging demo — HTTP 401: invalid_grant' },
+    { kind: 'admin_test', to: 'staging-demo-mailskipped@example.invalid', provider: 'log', status: 'skipped_staging', error: null },
+  ];
+
+  try {
+    // Idempotent by (recipient, kind, status): re-running a boot must not
+    // grow the table. mail_deliveries has no natural unique key (it is an
+    // append-only log in real use), so the guard is an existence check
+    // scoped to the obviously-synthetic addresses.
+    for (const row of ROWS) {
+      await pool.query(
+        `INSERT INTO mail_deliveries (kind, recipient, provider, status, error)
+         SELECT $1, $2, $3, $4, $5
+          WHERE NOT EXISTS (
+            SELECT 1 FROM mail_deliveries
+             WHERE recipient = $2 AND kind = $1 AND status = $4
+          )`,
+        [row.kind, row.to, row.provider, row.status, row.error]
+      );
+    }
+
+    // An unconfirmed waitlist signup with a known token, so a tester can
+    // open /api/public/waitlist/confirm/<token> and watch confirmed_at
+    // appear in Admin → Topochain → Waitlist.
+    await pool.query(
+      `INSERT INTO waitlist_signups (email, answers, more_token)
+       VALUES ($1, NULL, $2)
+       ON CONFLICT (email) DO NOTHING`,
+      ['staging-demo-waitlist@example.invalid', DEMO_MORE_TOKEN]
+    );
+    // Never pre-confirmed: the point is that a tester makes it happen.
+    await pool.query(
+      `UPDATE waitlist_signups SET confirmed_at = NULL, more_token = $2
+        WHERE email = $1 AND released_at IS NULL AND linked_user_id IS NULL`,
+      ['staging-demo-waitlist@example.invalid', DEMO_MORE_TOKEN]
+    );
+
+    log.info('migrate', 'Staging platform-mail fixture seeded', {
+      deliveries: ROWS.length,
+    });
+  } catch (err) {
+    // Same contract as every other staging seed: a fixture failure must
+    // never stop a boot.
+    log.warn('migrate', 'Staging platform-mail seed skipped', { message: err.message });
+  }
+}
+
 // seedStagingTopochain is exported alongside migrate() solely so
 // tests/topochain-staging-seed.test.js can invoke it directly against a
 // mock pool (idempotency/param-flow behaviour, not just a source-text
 // regex) without running the entire migrate() boot sequence. It is not
 // meant to be called from anywhere else in the app.
-module.exports = { migrate, seedStagingTopochain, seedStagingProfileCustomization };
+module.exports = {
+  migrate, seedStagingTopochain, seedStagingProfileCustomization,
+  seedStagingPlatformMail,
+};

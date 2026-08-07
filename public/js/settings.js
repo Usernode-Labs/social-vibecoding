@@ -1727,6 +1727,11 @@
       // device can't see this user's cached feed. Belt-and-braces: the SW
       // also clears the API cache when it sees the logout POST above.
       try { await this._clearSwApiCache(); } catch (_) {}
+      // Same reasoning for the offline session snapshot (#1021): it is the
+      // record that says "this device is signed in", so leaving it behind
+      // would let the next offline boot paint the signed-in shell for an
+      // account that just logged out.
+      try { window.App?.clearSessionSnapshot?.(); } catch (_) {}
 
       // This must remain the final statement on the native path: successful
       // native logout replaces the WebView, so the old document has no
