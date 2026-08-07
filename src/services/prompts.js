@@ -23,6 +23,39 @@ function getAppConventions() {
   return cached;
 }
 
+// The offline excerpt carried inside a connector work order.
+//
+// Every app's notes tell a coding agent to fetch these conventions from the
+// Usernode site at the start of a session. A hosted agent's container blocks
+// that host, so it never reads them — and then reasons its way to the very
+// things the document forbids (vendoring the hosted assets, "fixing" the
+// styling, shipping a screen with no test). The work order therefore carries
+// a compact excerpt with it.
+//
+// The excerpt is a REGION OF THE SAME FILE, delimited by the markers below,
+// rather than a second document: a copy would drift, and a drifted copy of
+// platform rules is worse than none. Cached alongside getAppConventions().
+const WORK_ORDER_BEGIN = '<!-- work-order:begin -->';
+const WORK_ORDER_END = '<!-- work-order:end -->';
+
+let cachedEssentials = null;
+
+function getWorkOrderEssentials() {
+  if (cachedEssentials !== null) return cachedEssentials;
+  const doc = getAppConventions();
+  const start = doc.indexOf(WORK_ORDER_BEGIN);
+  const end = doc.indexOf(WORK_ORDER_END);
+  if (start < 0 || end < 0 || end < start) {
+    // Never fatal: the work order loses background guidance, not the base
+    // commit or the push commands.
+    log.warn('prompts', 'work-order markers missing from app-conventions.md');
+    cachedEssentials = '';
+    return cachedEssentials;
+  }
+  cachedEssentials = doc.slice(start + WORK_ORDER_BEGIN.length, end).trim();
+  return cachedEssentials;
+}
+
 // SELF-HOSTING.md sub-step 2i: appended to the Mayor system prompt
 // only when the chat session's app is self_hosted=TRUE. The list
 // is the source of truth (originally derived from the design-phase
@@ -69,5 +102,8 @@ function getSelfHostedRefuseList() {
 
 module.exports = {
   getAppConventions,
+  getWorkOrderEssentials,
   getSelfHostedRefuseList,
+  WORK_ORDER_BEGIN,
+  WORK_ORDER_END,
 };

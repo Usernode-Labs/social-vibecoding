@@ -137,9 +137,36 @@ test('truncateRows: caps by serialized byte size', () => {
 // ── Container-log allowlist + tail clamp ───────────────────────────────
 
 test('isAllowedLogContainer: exact platform names allowed', () => {
-  for (const n of ['usernode', 'usernode-db', 'usernode-node', 'caddy', 'acme-dns']) {
+  for (const n of ['usernode', 'usernode-blue', 'usernode-green',
+    'usernode-db', 'usernode-node', 'usernode-minio', 'caddy', 'acme-dns']) {
     assert.equal(debugAccess.isAllowedLogContainer(n), true, n);
   }
+});
+
+test('every container_name in docker-compose.yml is a readable log container', () => {
+  // Derived from the compose file rather than restated, because the last
+  // time these two lists drifted it cost a whole production investigation:
+  // the platform moved to blue-green (`usernode-blue` / `usernode-green`)
+  // while the allowlist still named the retired single `usernode` service,
+  // so `usernode-debug logs usernode` answered "No such container" and the
+  // connector's PR failure went uncharacterised for an afternoon.
+  //
+  // The check runs the other way round on purpose: a container the platform
+  // RUNS but the debugger cannot READ is the failure mode. Extra names in
+  // the allowlist (`usernode` itself, kept for pre-blue-green and
+  // self-hosted single-instance deploys) are fine.
+  const compose = fs.readFileSync(path.join(__dirname, '../docker-compose.yml'), 'utf8');
+  const names = [...compose.matchAll(/^\s*container_name:\s*(\S+)\s*$/gm)].map((m) => m[1]);
+  assert.ok(names.length >= 7, `found the compose services (got ${names.length})`);
+  for (const name of names) {
+    assert.equal(
+      debugAccess.isAllowedLogContainer(name), true,
+      `docker-compose.yml runs "${name}" but prod-debug cannot read its logs — `
+      + 'add it to LOG_CONTAINER_EXACT in src/services/debug-access.js'
+    );
+  }
+  // The two colours specifically: this is the case that actually broke.
+  assert.ok(names.includes('usernode-blue') && names.includes('usernode-green'));
 });
 
 test('isAllowedLogContainer: managed prefixes allowed, bare prefix rejected', () => {
