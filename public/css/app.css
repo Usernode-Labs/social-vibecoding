@@ -2737,7 +2737,9 @@ span.gc-vote-btn-icon { cursor: default; }
   padding: 4px;
 }
 .dev-card-menu-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   text-align: left;
   padding: 7px 10px;
@@ -2748,6 +2750,26 @@ span.gc-vote-btn-icon { cursor: default; }
   font-size: 12.5px;
   color: var(--text-primary);
   cursor: pointer;
+}
+/* The leading icon column. FIXED width rather than intrinsic: the
+   vocabulary mixes one-em emoji with narrower text glyphs (✕, ↗, @), and
+   an intrinsic column would step every label a pixel or two left or right
+   of its neighbours — the exact scanning cost the icons were added to
+   remove. Decorative, so it carries aria-hidden in the markup. */
+.dev-card-menu-icon {
+  flex: none;
+  width: 16px;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1;
+  /* Emoji ignore `color`, but the text glyphs don't — holding them a shade
+     back from the label keeps the icon a signpost rather than a shout,
+     while a danger row's red still reads straight through. */
+  opacity: 0.75;
+}
+.dev-card-menu-label {
+  min-width: 0;
+  flex: 1 1 auto;
 }
 .dev-card-menu-item:hover:not(:disabled) { background: var(--accent-tint); color: var(--accent); }
 .dev-card-menu-item:disabled { opacity: 0.45; cursor: default; }
@@ -5432,10 +5454,10 @@ a.drawer-ver--fork:hover {
 /* ── Priority / assigned-person chips + dropdown (community-voted) ───── */
 /* Strip the <button> UA chrome so an interactive chip is pixel-identical
    to the sibling <span> badge pills (💬 / ★ / #N): inherit the surrounding
-   font (a <button> otherwise brings its own family + baseline), drop the
-   native appearance/border, and let `items-center` flexbox handle vertical
-   centring (no line-height override — that drifted the chip's height). The
-   utility `bg-…` class supplies the tint, so background stays none here. */
+   font FAMILY (a <button> otherwise brings its own), drop the native
+   appearance/border, and let the shared `.dev-badge` box own the height,
+   padding and type size. The utility `bg-…` class supplies the tint, so
+   background stays none here. */
 /* ── One geometry for every chip in a card's badge row ──────────────
    The row used to mix three sizes: Tailwind-sized attribute chips, the 💬
    badge, and the linked-issue pills, each computing its own height from
@@ -5467,9 +5489,18 @@ button.dev-badge { cursor: pointer; }
   max-width: 11ch;
 }
 
+/* NOTE the property here is `font-family`, NOT the `font` shorthand. The
+   shorthand resets font-size / font-weight / line-height to their initial
+   values, and this rule sits AFTER `.dev-badge` at equal specificity — so
+   `font: inherit` silently threw away the badge geometry's 10.5px/500/1 and
+   let every attribute chip inherit the card's 14px body text. It went
+   unnoticed for exactly one release because the chips used to carry a
+   Tailwind `text-[0.65rem]` utility, and tailwind.css loads last. Only the
+   <button>'s UA font FAMILY needs overriding; the size, weight and
+   line-height belong to `.dev-badge`. */
 .attr-chip {
   cursor: default;
-  font: inherit;
+  font-family: inherit;
   appearance: none;
   -webkit-appearance: none;
   border: 0;

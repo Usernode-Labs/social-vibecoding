@@ -429,6 +429,16 @@
       "expectText": "Yours · private"
     },
     {
+      "name": "Dev board: every ⋯ menu row leads with an aligned icon",
+      "path": "/?demo=1&view=kanban&shot=card-menu#app/usernode-2d5619/dev",
+      "expectSelector": ".dev-card-menu .dev-card-menu-item .dev-card-menu-icon[aria-hidden=\"true\"] + .dev-card-menu-label"
+    },
+    {
+      "name": "Dev board: attribute chips keep the small label inside the 20px box",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban button.attr-chip.dev-badge[data-attr-field=\"priority\"]"
+    },
+    {
       "name": "Dev board renders the Set priority / Set category / Unassigned metadata chips",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "button.attr-chip[data-attr-field=\"priority\"]",

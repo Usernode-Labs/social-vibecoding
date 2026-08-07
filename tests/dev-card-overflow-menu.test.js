@@ -344,15 +344,20 @@ test('touch presents the SAME descriptors as an action sheet', () => {
   const AppView = makeAppView({ touch: true });
   let ran = false;
   AppView._cardMenus['k'] = [
-    { label: 'Do it', act: () => { ran = true; } },
-    { label: 'Inert', disabled: true },
-    { label: 'Nuke', danger: true, act: () => {} },
+    { label: 'Do it', icon: 'merge', act: () => { ran = true; } },
+    { label: 'Inert', icon: 'close', disabled: true },
+    { label: 'Nuke', icon: 'withdraw', danger: true, act: () => {} },
   ];
   AppView._toggleCardMenu({ dataset: { cardMenu: 'k' }, setAttribute: () => {} });
   const sheet = AppView.__sandbox.__sheet;
   assert.ok(sheet, 'an action sheet was presented, not an anchored dropdown');
   // Disabled rows carry no handler, so they are not offered as sheet actions.
-  assert.equal(sheet.actions.map((a) => a.label).join('|'), 'Do it|Nuke');
+  // The kit's sheet takes a plain string per row, so the descriptor's icon
+  // rides in as a label prefix — the SAME glyph the dropdown draws in its
+  // leading column, resolved from the one descriptor.
+  const I = AppView.MENU_ICONS;
+  assert.equal(sheet.actions.map((a) => a.label).join('|'),
+    `${I.merge}  Do it|${I.withdraw}  Nuke`);
   assert.equal(sheet.actions[1].destructive, true);
   sheet.actions[0].handler();
   assert.ok(ran, 'the descriptor\'s own closure runs');
@@ -365,4 +370,103 @@ test('a menu with no actionable rows still presents nothing on touch', () => {
   AppView._cardMenus['empty'] = [];
   AppView._toggleCardMenu({ dataset: { cardMenu: 'empty' }, setAttribute: () => {} });
   assert.equal(AppView.__sandbox.__sheet, null);
+});
+
+// ── Leading icons ───────────────────────────────────────────────────────
+//
+// One vocabulary, keyed by MEANING and resolved from the descriptor, so the
+// anchored dropdown and the touch sheet cannot drift apart and the same
+// action wears the same glyph on every card type.
+
+// Every descriptor a card can produce, across all five card types and the
+// roles that unlock the privileged rows.
+function everyDescriptor(AppView) {
+  AppView._sharedById = { 51: { id: 51, chat_count: 2 } };
+  const out = [];
+  const collect = (html) => out.push(...menuItems(AppView, html));
+  collect(AppView._renderProposalCard(PR({
+    pr_url: 'https://gh/pr/7', staging_error: 'boom',
+    visuals: { before: { png: 'a'.repeat(32) }, after: { png: 'b'.repeat(32) } },
+  })));
+  collect(AppView._renderProposalCard(PR({ user_id: ME, pr_url: 'https://gh/pr/7' })));
+  collect(AppView._renderMergedCard(PR({ status: 'merged', chat_count: 0, pr_url: 'https://gh/pr/7' }), 3));
+  collect(AppView._renderIssueRow(ISSUE({ htmlUrl: 'https://gh/i/5' })));
+  collect(AppView._renderIssueRow(ISSUE({
+    number: 6, htmlUrl: 'https://gh/i/6', my_bounty: 1,
+    in_progress: { claims: [{ mine: true }] },
+  })));
+  collect(AppView._renderGovCard(GOV({ created_by: ME })));
+  collect(AppView._renderGovCard(GOV({ kind: 'maintenance_campaign', payload: { campaignId: 3 } })));
+  collect(AppView._renderMySessionCard({ id: 51, session_title: 'Mine', status: 'active' }));
+  collect(AppView._renderMySessionCard({
+    id: 51, session_title: 'Mine', status: 'active',
+    shared_at: '2026-06-01T00:00:00Z', transcript_shared_at: '2026-06-01T01:00:00Z',
+  }));
+  return out;
+}
+
+test('every descriptor on every card type declares an icon from the vocabulary', () => {
+  const AppView = makeAppView({ admin: true });
+  const all = everyDescriptor(AppView);
+  assert.ok(all.length > 20, `expected the full descriptor inventory, got ${all.length}`);
+  const missing = all.filter((it) => !it.icon).map((it) => it.label);
+  assert.deepEqual(missing, [], 'no row falls back to the default bullet');
+  const unknown = all.filter((it) => !AppView.MENU_ICONS[it.icon])
+    .map((it) => `${it.label} → ${it.icon}`);
+  assert.deepEqual(unknown, [], 'every icon key resolves in MENU_ICONS');
+});
+
+test('the same action wears the same glyph on every card type', () => {
+  const AppView = makeAppView({ admin: true });
+  const byLabel = new Map();
+  for (const it of everyDescriptor(AppView)) {
+    const glyph = AppView._menuIconGlyph(it);
+    if (byLabel.has(it.label)) {
+      assert.equal(byLabel.get(it.label), glyph, `${it.label} drifted between card types`);
+    }
+    byLabel.set(it.label, glyph);
+  }
+  // The three that genuinely repeat across card types.
+  assert.equal(byLabel.get('Admin merge'), AppView.MENU_ICONS.merge);
+  assert.equal(byLabel.get('Withdraw'), AppView.MENU_ICONS.withdraw);
+  assert.equal(byLabel.get('View PR on GitHub'), AppView.MENU_ICONS.github);
+  assert.equal(byLabel.get('Open on GitHub'), AppView.MENU_ICONS.github);
+});
+
+test('an unknown or absent icon key still gets a glyph, so the column never collapses', () => {
+  const AppView = makeAppView();
+  assert.equal(AppView._menuIconGlyph({ label: 'x' }), AppView.MENU_ICONS.default);
+  assert.equal(AppView._menuIconGlyph({ label: 'x', icon: 'nope' }), AppView.MENU_ICONS.default);
+});
+
+test('the dropdown draws the glyph in a decorative leading column', () => {
+  const AppView = makeAppView();
+  let menuEl = null;
+  const sandbox = AppView.__sandbox;
+  sandbox.document.createElement = () => (menuEl = {
+    className: '', innerHTML: '', style: {}, offsetWidth: 200, offsetHeight: 120,
+    setAttribute: () => {}, addEventListener: () => {},
+    querySelector: () => null,
+  });
+  sandbox.window.innerWidth = 1280;
+  sandbox.window.innerHeight = 800;
+  AppView._cardMenus['k'] = [{ label: 'Withdraw', icon: 'withdraw', danger: true, act: () => {} }];
+  AppView._toggleCardMenu({
+    dataset: { cardMenu: 'k' }, setAttribute: () => {},
+    getBoundingClientRect: () => ({ top: 100, bottom: 120, right: 400, left: 380 }),
+  });
+  assert.ok(menuEl, 'a dropdown was built');
+  assert.match(menuEl.innerHTML,
+    new RegExp(`<span class="dev-card-menu-icon" aria-hidden="true">${AppView.MENU_ICONS.withdraw}</span>`),
+    'glyph in its own aria-hidden span');
+  assert.match(menuEl.innerHTML, /<span class="dev-card-menu-label">Withdraw<\/span>/,
+    'the LABEL is still the accessible name — the glyph is not part of it');
+});
+
+test('the ✨ that used to live inside the Explore label is now its icon', () => {
+  const AppView = makeAppView();
+  const item = menuItems(AppView, AppView._renderProposalCard(PR()))
+    .find((i) => /Explore in dev chat/.test(i.label));
+  assert.equal(item.label, 'Explore in dev chat', 'no glyph baked into the label');
+  assert.equal(AppView._menuIconGlyph(item), AppView.MENU_ICONS.explore);
 });

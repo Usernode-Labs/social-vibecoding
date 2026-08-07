@@ -462,6 +462,36 @@ const AppView = {
           document.getElementById('dev-plus-btn')?.click();
         }, 300);
       }
+      // A card's ⋯ menu is interaction-gated in exactly the same way, and
+      // its whole point is the row inventory — the leading icon column, the
+      // wording, which actions a role gets. Tap the first card's trigger so
+      // a check (and a before/after capture) sees the open menu instead of
+      // the board it hangs off. Pure UI state, no writes, not env-gated.
+      // Unlike the "+" menu this one has to wait on _loadDevData's fetches
+      // (a board with no cards has no trigger to tap) AND survive the
+      // repaints those fetches trigger, each of which dismisses an open menu
+      // by design. So it retries on a short interval until a menu is up and
+      // stays up, then stops — a capture must not race a websocket push.
+      // It also picks the trigger out of the ACTIVE column: below 640px the
+      // other three are display:none, and a menu anchored to a hidden card
+      // lands in the corner beside nothing.
+      if (shot === 'card-menu') {
+        let tries = 0;
+        const tick = setInterval(() => {
+          // Stop on route change, and cap the window so a link left open in
+          // a real tab isn't re-arming a menu forever. It has to outlast the
+          // whole settle — the board's fetches, the websocket's first push
+          // and a capture pipeline's own wait — so the budget is ~40s, not
+          // the "+" menu's single 300ms shot.
+          if (!String(location.hash || '').includes(`app/${slug}`) || (tries += 1) > 130) {
+            clearInterval(tick);
+            return;
+          }
+          if (AppView._openCardMenu) return;   // already up — leave it alone
+          const scope = document.querySelector('.dev-kanban-col-active') || document.getElementById('dev-body');
+          scope?.querySelector('[data-card-menu]')?.click();
+        }, 300);
+      }
       if (shot === 'preview-loading' || shot === 'preview-rebuilding') {
         setTimeout(() => {
           // Gate on the ROUTE, not on appData: the dev tab clears appData
@@ -2211,9 +2241,10 @@ const AppView = {
   // Repaints re-register under the same key, so a stale registry entry is
   // always overwritten rather than accumulating a second copy.
   //
-  // A descriptor is { label, title?, disabled?, danger?, act? }:
+  // A descriptor is { label, title?, icon?, disabled?, danger?, act? }:
   //   label    — the row text (same wording the pill had)
   //   title    — tooltip / the disabled reason
+  //   icon     — a MENU_ICONS key; the glyph is decorative, never the name
   //   disabled — renders inert (kept, rather than hidden, so "Close proposed"
   //              still explains itself)
   //   danger   — red row (Archive, Withdraw, Undo)
@@ -2223,6 +2254,62 @@ const AppView = {
   // The presented menu's dismissal hooks, or null. Body-mounted like
   // .attr-popover so a kanban column's overflow-x:auto can't clip it.
   _openCardMenu: null,
+
+  // ── One icon vocabulary for every ⋯ menu ──────────────────────────────
+  //
+  // Keyed by MEANING, not by card type, so the same action wears the same
+  // glyph wherever it appears: "Admin merge" is ⚡ on a proposal card, a
+  // governance card and the topic head alike, and a reader who learns one
+  // menu has learned all five. Because it is looked up from the descriptor
+  // (never baked into the label), the anchored dropdown and the touch action
+  // sheet render from ONE source — the whole point of descriptors over HTML.
+  //
+  // The glyph is DECORATIVE: `aria-hidden` in the dropdown and never part of
+  // the accessible name, so a screen reader still hears "Withdraw", not
+  // "multiplication sign Withdraw". Danger rows deliberately use monochrome
+  // text glyphs rather than emoji, so they inherit the row's red instead of
+  // sitting in it as a coloured sticker.
+  MENU_ICONS: {
+    merge: '⚡',            // ⚡ admin bypass of the vote
+    session: '💻',    // 💻 the dev session behind a proposal
+    withdraw: '✕',         // ✕ danger
+    undo: '↩',             // ↩ danger
+    kudos: '★',            // ★ matches the bounty badge on the meta line
+    explore: '✨',          // ✨ was inline in the label; now the icon
+    generate: '✧',         // ✧ sibling sparkle: the headless AI run
+    retry: '↻',            // ↻
+    visuals: '🖼',    // 🖼 before/after captures
+    github: '↗',           // ↗ leaves the platform
+    priority: '⚑',         // ⚑ the same flag the priority chip uses
+    category: '🏷',   // 🏷
+    assignee: '@',              // the assignee chip renders "@name"
+    progress: '◐',         // ◐ half-filled: in progress
+    clear: '○',            // ○ the same circle, emptied
+    close: '⊘',            // ⊘ danger
+    visible: '👁',    // 👁
+    hide: '🔒',       // 🔒 private again
+    chat: '💬',       // 💬 matches the message-count badge
+    archive: '📦',    // 📦
+    campaign: '📊',   // 📊
+    // Nothing should reach this, but a descriptor added later without an
+    // icon must still line up with its neighbours rather than losing the
+    // leading column and shifting its own label left.
+    default: '•',          // •
+  },
+
+  // The glyph for one descriptor. Unknown / absent keys fall back to the
+  // neutral bullet so the fixed-width leading column is never empty.
+  _menuIconGlyph(it) {
+    const key = it && it.icon;
+    return (key && AppView.MENU_ICONS[key]) || AppView.MENU_ICONS.default;
+  },
+
+  // The touch action sheet takes a plain string per row (the native kit
+  // owns that markup), so the SAME glyph rides in as a label prefix there.
+  // Two spaces, not one: the sheet has no leading column to align against.
+  _menuSheetLabel(it) {
+    return `${AppView._menuIconGlyph(it)}  ${it.label}`;
+  },
 
   // Register `items` under `key` and return the ⋯ trigger, or '' when there
   // is nothing to demote (a card with an empty menu must not grow a dead
@@ -2302,7 +2389,7 @@ const AppView = {
     if (typeof PlatformUI !== 'undefined' && PlatformUI.isTouch && PlatformUI.isTouch()) {
       PlatformUI.actionSheet({
         actions: items.filter((it) => !it.disabled && it.act).map((it) => ({
-          label: it.label,
+          label: AppView._menuSheetLabel(it),
           destructive: !!it.danger,
           handler: () => { try { it.act(); } catch { /* handler owns its errors */ } },
         })),
@@ -2316,7 +2403,11 @@ const AppView = {
       const cls = 'dev-card-menu-item' + (it.danger ? ' dev-card-menu-item-danger' : '');
       const t = it.title ? ` title="${escapeAttr(it.title)}"` : '';
       const dis = (it.disabled || !it.act) ? ' disabled' : '';
-      return `<button type="button" role="menuitem" class="${cls}" data-menu-idx="${i}"${t}${dis}>${escapeHtml(it.label)}</button>`;
+      // The glyph is aria-hidden and the label keeps its own element, so the
+      // button's accessible name stays exactly the label text.
+      const icon = `<span class="dev-card-menu-icon" aria-hidden="true">${escapeHtml(AppView._menuIconGlyph(it))}</span>`;
+      return `<button type="button" role="menuitem" class="${cls}" data-menu-idx="${i}"${t}${dis}>`
+        + `${icon}<span class="dev-card-menu-label">${escapeHtml(it.label)}</span></button>`;
     }).join('');
     document.body.appendChild(menu);
     // Flip / clamp into the viewport, same arithmetic as _positionAttrPopover.
@@ -4941,11 +5032,13 @@ const AppView = {
       shared
         ? {
           label: 'Hide',
+          icon: 'hide',
           title: "Make this session private again (removes it from everyone's In progress area, and stops anyone reading the chat)",
           act: () => AppView._setSessionShared(s.id, false, null),
         }
         : {
           label: 'Make visible',
+          icon: 'visible',
           title: "Show this session in everyone's In progress area — others can comment and open its live preview, but can't read your chat unless you also share it",
           act: () => AppView._setSessionShared(s.id, true, null),
         },
@@ -4956,23 +5049,27 @@ const AppView = {
       menu.push(transcriptShared
         ? {
           label: 'Chat shared — stop sharing',
+          icon: 'chat',
           title: 'Stop others reading this chat (they keep the card and the discussion)',
           act: () => AppView._setTranscriptShared(s.id, false, null),
         }
         : {
           label: 'Share chat',
+          icon: 'chat',
           title: "Let everyone read this chat, read-only — they can't reply in it, and can't see your costs or uploaded files",
           act: () => AppView._setTranscriptShared(s.id, true, null),
         });
       const chatN = sh ? (parseInt(sh.chat_count, 10) || 0) : 0;
       menu.push({
         label: `Open public discussion${chatN ? ` (${chatN})` : ''}`,
+        icon: 'chat',
         title: 'Open the public discussion on this session',
         act: () => AppView.openTopic('session', s.id),
       });
     }
     menu.push({
       label: 'Archive',
+      icon: 'archive',
       title: 'Archive this session (closes the PR, frees the slot)',
       danger: true,
       act: () => {
@@ -5810,6 +5907,7 @@ const AppView = {
       if (canForceMerge && pr.status === 'promoted') {
         items.push({
           label: 'Admin merge',
+          icon: 'merge',
           title: pr.requires_explicit_approval
             ? 'Admin: merge this admins-changing PR right now, bypassing the vote'
             : 'Admin: merge this PR right now, bypassing the vote majority',
@@ -5823,6 +5921,7 @@ const AppView = {
     if (st.mine && !st.imported) {
       items.push({
         label: 'Open session',
+        icon: 'session',
         title: 'Open the dev session behind this proposal',
         act: () => AppView.openProposalSession(pr.id),
       });
@@ -5830,6 +5929,7 @@ const AppView = {
     if (st.mine && !ro && !isMerged && !isMerging && pr.status === 'promoted') {
       items.push({
         label: 'Withdraw',
+        icon: 'withdraw',
         title: 'Withdraw this proposal (closes the PR, removes it from the vote panel)',
         danger: true,
         act: () => AppView.withdrawProposal(pr.id),
@@ -5840,6 +5940,7 @@ const AppView = {
       if (!pr.revert_of_session_id && !pr.revert_session_id) {
         items.push({
           label: 'Undo',
+          icon: 'undo',
           title: 'Open a revert PR for this merge. It still needs a merge vote to land.',
           danger: true,
           act: () => AppView.undoPr(pr.id),
@@ -5861,6 +5962,7 @@ const AppView = {
       const count = entry.count || 0;
       items.push({
         label: (mineKudos && direct ? 'Retract kudos' : 'Give kudos') + (count ? ` (${count})` : ''),
+        icon: 'kudos',
         title: reason || (mineKudos && direct
           ? 'You gave kudos to this PR — this retracts it'
           : 'Thank the author of this change'),
@@ -5876,7 +5978,8 @@ const AppView = {
     // so Explore is offered only on proposals the viewer does NOT own.
     if (!st.mine && !ro) {
       items.push({
-        label: '✨ Explore in dev chat',
+        label: 'Explore in dev chat',
+        icon: 'explore',
         title: AppView.EXPLORE_CHAT_TITLE,
         act: () => AppView.exploreProposalInDevChat(pr.id, null),
       });
@@ -5884,6 +5987,7 @@ const AppView = {
     if (!ro && !pr.staging_url && pr.staging_error) {
       items.push({
         label: 'Retry preview',
+        icon: 'retry',
         title: "Try building this proposal's staging preview again",
         act: () => AppView.swapToStagingForSession(pr.id, ''),
       });
@@ -5891,6 +5995,7 @@ const AppView = {
     if (AppView.visualsTilesHtml(pr.visuals)) {
       items.push({
         label: 'Before/after screenshots',
+        icon: 'visuals',
         title: 'Open this proposal and expand its before/after captures',
         act: () => { AppView._visualsOpen.add(pr.id); AppView.openTopic('proposal', pr.id); },
       });
@@ -5901,6 +6006,7 @@ const AppView = {
     if (pr.pr_url) {
       items.push({
         label: 'View PR on GitHub',
+        icon: 'github',
         title: pr.pr_url,
         act: () => window.open(pr.pr_url, '_blank', 'noopener'),
       });
@@ -7024,6 +7130,7 @@ const AppView = {
     if (!ro && (issue.kind === 'secret_change' || isCloseIssue || isCampaign) && App.user?.canAdminWrite) {
       menu.push({
         label: 'Admin merge',
+        icon: 'merge',
         title: busy ? (applyState.title || applyState.label) : 'Admin: apply this change right now, bypassing the vote majority',
         disabled: busy,
         danger: true,
@@ -7036,6 +7143,7 @@ const AppView = {
     if (isCampaign && issue.payload && issue.payload.campaignId && App.user?.canAdminWrite) {
       menu.push({
         label: 'View campaign',
+        icon: 'campaign',
         title: "Open this campaign's per-app progress",
         act: () => window.open(`/admin#campaign-${issue.payload.campaignId}`, '_blank', 'noopener'),
       });
@@ -7045,6 +7153,7 @@ const AppView = {
     if (!ro && !!(App.user && issue.created_by === App.user.id)) {
       menu.push({
         label: 'Withdraw',
+        icon: 'withdraw',
         title: busy ? (applyState.title || applyState.label) : 'Withdraw this proposal (removes it from the vote panel)',
         disabled: busy,
         danger: true,
@@ -7571,6 +7680,9 @@ const AppView = {
       const set = !!(it[field] && it[field].top);
       return {
         label: labels[field][set ? 1 : 0],
+        // Each field's icon matches the chip it sets, so the row and the
+        // chip it produces are recognisably the same thing.
+        icon: field,
         title: field === 'assignee'
           ? 'Suggest or vote on who should take this'
           : `Vote on this card's ${field}`,
@@ -8354,6 +8466,7 @@ const AppView = {
       if (!generating && !clonedReady) {
         items.push({
           label: 'Generate proposal',
+          icon: 'generate',
           title: h && h.status === 'ready' && h.outcome === 'question'
             ? 'Questions were posted on the issue — answer them, then generate a proposal again'
             : 'Spin up a headless AI session that starts solving this issue on its own — uses your credits',
@@ -8367,7 +8480,8 @@ const AppView = {
         ? 'You already placed a bounty on this issue'
         : (budgetSpent ? 'Weekly kudos allowance spent' : '');
       items.push({
-        label: issue.my_bounty ? '★ Bountied' : 'Pledge kudos',
+        label: issue.my_bounty ? 'Bountied' : 'Pledge kudos',
+        icon: 'kudos',
         title: kudosReason
           || 'Pledge a kudos bounty — paid to whoever’s merged PR closes this issue',
         disabled: !!kudosReason,
@@ -8382,11 +8496,13 @@ const AppView = {
       items.push(myClaim
         ? {
           label: 'Clear in progress',
+          icon: 'clear',
           title: 'Remove your in-progress mark from this issue',
           act: () => AppView.clearIssueClaim(n),
         }
         : {
           label: 'Mark in progress',
+          icon: 'progress',
           title: 'Mark this issue as in progress — you’re working on it. Expires on its own after ~7 days without activity; discussion in the issue’s thread keeps it alive.',
           act: () => AppView.markIssueInProgress(n),
         });
@@ -8403,17 +8519,20 @@ const AppView = {
       items.push(closeApplying && closeApplying.busy
         ? {
           label: 'Closing…',
+          icon: 'close',
           title: closeApplying.title || closeApplying.label,
           disabled: true,
         }
         : closeProposal
           ? {
             label: 'Close proposed',
+            icon: 'close',
             title: 'A close proposal for this issue is up for vote',
             disabled: true,
           }
           : {
             label: 'Propose to close',
+            icon: 'close',
             title: 'Propose closing this issue — the group votes; if it passes, the issue is closed here and on GitHub',
             danger: true,
             act: () => AppView.promptCloseIssue(n),
@@ -8425,6 +8544,7 @@ const AppView = {
     if (issue.htmlUrl) {
       items.push({
         label: 'Open on GitHub',
+        icon: 'github',
         title: issue.htmlUrl,
         act: () => window.open(issue.htmlUrl, '_blank', 'noopener'),
       });

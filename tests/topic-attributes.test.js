@@ -917,7 +917,12 @@ test('chips reuse the sibling-badge pill recipe + tint-deepening hover', () => {
 
   const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf-8');
   const block = css.slice(css.indexOf('.attr-chip {'), css.indexOf('button.attr-chip'));
-  assert.match(block, /font:\s*inherit/, '.attr-chip inherits the surrounding font');
+  // font-FAMILY, never the `font` shorthand: this rule follows .dev-badge at
+  // equal specificity, and the shorthand resets font-size/weight/line-height
+  // to their initial values — which is how the chips ended up rendering at
+  // the card's 14px body text inside a 20px box. See dev-chip-geometry.test.js.
+  assert.match(block, /font-family:\s*inherit/, '.attr-chip inherits the surrounding font family');
+  assert.doesNotMatch(block, /(^|[\s;{])font:\s/, 'and never the size-clobbering shorthand');
   assert.match(block, /appearance:\s*none/, '.attr-chip strips native button appearance');
   // The shared box: one height for every chip in the row, so they sit on a
   // single baseline instead of each being sized by its own content.
