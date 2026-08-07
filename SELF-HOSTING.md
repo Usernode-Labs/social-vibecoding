@@ -1451,18 +1451,27 @@ whole path and each step has a distinguishable failure.
    the running container: confirm the deploy that picked them up has actually
    landed.
 4. **Ask the assistant to set up work on an app** (`prepare_work`). Success
-   returns a branch name, a base commit and a paste-ready work order, plus
-   `forkStatus`: `ready` (they already have a fork), `missing` (the work
-   order's first command creates it), or `name_conflict` (a same-named repo
-   of theirs is in the way, so the work order forks under
-   `<repo>-usernode`). None of the three is a failure. The refusals worth
-   recognising: `github_not_linked` (this user hasn't pressed Connect —
-   step 3) and `github_link_unavailable` (the deployment has no OAuth app —
-   configuration).
-5. **Run the coding agent.** Paste the work order into Claude Code on the
-   web (or Codex) and let it fork, branch and push. It should *not* open a
-   pull request — the platform does that. If `gh repo fork` is unavailable
-   to it, the work order's fallback link creates the fork in one click.
+   returns a branch name, a base commit and **two** pieces of text: a
+   `guidance` array — the human's numbered next steps, worded for the
+   client that called (claude.ai/code, chatgpt.com/codex, or a neutral
+   variant) — and the `workOrder` itself, which is addressed only to the
+   coding agent and is meant to be reproduced verbatim in a code block.
+   Also `forkStatus`: `ready` (they already have a fork), `missing`, or
+   `name_conflict` (a same-named repo of theirs is in the way, so the fork
+   is made under `<repo>-usernode`). None of the three is a failure; for
+   the latter two, making the fork is guidance step 1 and GitHub's
+   one-click fork page leads the work order's SETUP section. The refusals
+   worth recognising: `github_not_linked` (this user hasn't pressed
+   Connect — step 3) and `github_link_unavailable` (the deployment has no
+   OAuth app — configuration).
+5. **Run the coding agent.** On the hosted web agents the fork must exist
+   *before* a session can be started on it — both start by picking a
+   repository that is already in the user's GitHub account — so the
+   one-click fork page is the first step, not a fallback for when
+   `gh repo fork` is unavailable (that shortcut is for an agent working in
+   a terminal, and it is named inside the work order). Then paste the work
+   order in and let the agent branch, commit and push. It should *not* open
+   a pull request — the platform does that.
 6. **Ask the assistant to submit it** (`submit_work`).
    Usernode opens the cross-fork PR with bot credentials and runs it
    through `POST /api/apps/:slug/pr-import`, producing an ordinary

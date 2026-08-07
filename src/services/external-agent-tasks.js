@@ -60,6 +60,24 @@ const MAX_BRIEF_CHARS = 6000;
 // never the name.
 const CONFLICT_FORK_SUFFIX = '-usernode';
 
+// A base commit is a full 40-character hex object id, always. The work
+// order's `git checkout -b <branch> <sha>` line is the single most
+// copy-sensitive thing the connector emits — a host model that retypes it
+// with a stray space produces `not a valid object name` — so the value is
+// checked here rather than assumed, and the work order states the
+// invariant so a mangled copy can be recognised and repaired downstream.
+const BASE_SHA_RE = /^[0-9a-f]{40}$/i;
+
+// Where the two hosted coding agents live. Named in the human steps
+// because "open Claude Code" is not an instruction anyone can follow.
+const CLAUDE_CODE_URL = 'https://claude.ai/code';
+const CODEX_URL = 'https://chatgpt.com/codex';
+
+// Guidance strings are read by a person in a chat bubble, so they stay
+// one short line each. The bound is generous only because a GitHub fork
+// URL and two repository names can eat 150 characters on their own.
+const MAX_GUIDANCE_CHARS = 320;
+
 // Which coding agent produced the work. Stored on chat_sessions.external_agent
 // and rendered as the "built with …" badge. A closed vocabulary: this string
 // reaches the client, and the client maps it to a label rather than printing
@@ -181,6 +199,64 @@ function branchNameFor(slug, issueNumber, nonce) {
   return `${BRANCH_PREFIX}/${safeSlugPart(slug)}-${middle}-${suffix}`;
 }
 
+// ── The human's next steps ─────────────────────────────────────────────
+//
+// Short second-person lines the assistant renders as a numbered list
+// ABOVE the work order. Every string is an action the PERSON takes.
+// Nothing here narrates what the coding agent is about to do — cloning,
+// branching, pushing and "do not open a pull request" are all in the work
+// order, addressed to the party that actually acts on them; repeating
+// them at the human is a line to read and nothing to do.
+//
+// The fork step never offers to skip itself when the coding agent has the
+// GitHub CLI. Both hosted agents start a session by PICKING a repository
+// that already exists in the user's GitHub account, so the copy is a
+// precondition there, not a convenience — sending a web user past it
+// lands them on a picker with nothing to pick. The `gh repo fork`
+// shortcut lives in the work order's SETUP, where a terminal agent reads
+// it, and in guidance only for the `external` variant, where a terminal
+// really is the likely setting.
+function buildGuidance({
+  agent, forkOwner, forkRepo, repo, forkPageUrl, forkStatus,
+}) {
+  const forkRef = `${forkOwner}/${forkRepo}`;
+  const justCreated = forkStatus !== 'ready';
+  const ghNote = agent === 'external'
+    ? ' (A coding agent with the GitHub CLI can create it instead — the work order says how.)'
+    : '';
+  const steps = [];
+
+  if (forkStatus === 'name_conflict') {
+    steps.push(
+      `Create your own copy of the app's code in one click: ${forkPageUrl} — name it `
+      + `"${forkRepo}", because you already have a repository called "${repo}" that Usernode `
+      + `never touches, then press "Create fork".${ghNote}`
+    );
+  } else if (forkStatus === 'missing') {
+    steps.push(
+      `Create your own copy of the app's code in one click: ${forkPageUrl} — press `
+      + `"Create fork".${ghNote}`
+    );
+  }
+
+  const madeIt = justCreated ? ' — the copy you just made' : '';
+  if (agent === 'claude-code') {
+    steps.push(`Open ${CLAUDE_CODE_URL} and start a new session.`);
+    steps.push(`In the repository picker, choose ${forkRef}${madeIt}.`);
+  } else if (agent === 'codex') {
+    steps.push(`Open ${CODEX_URL} and start a new task.`);
+    steps.push(`Choose ${forkRef} as its repository${madeIt}.`);
+  } else {
+    // No web UI we can name with confidence, so the one thing that is
+    // true everywhere: point it at the repository.
+    steps.push(`Open your coding agent on ${forkRef}, cloning it first if it works from a terminal.`);
+  }
+
+  steps.push('Paste the work order below into it, exactly as written.');
+  steps.push('Tell me when it says the branch is pushed, and I\'ll put it up for the group\'s vote.');
+  return steps;
+}
+
 // ── The work order ─────────────────────────────────────────────────────
 //
 // One block of text the assistant pastes into Claude Code on the web or
@@ -189,6 +265,11 @@ function branchNameFor(slug, issueNumber, nonce) {
 // and since the platform no longer touches the user's GitHub account, it is
 // also what CREATES the fork and the branch.
 //
+// AGENT-ONLY. Everything addressed at the human or at the calling
+// assistant lives in buildGuidance above; a work order that ends with
+// "then come back and tell the assistant" is what produced a chat message
+// with human steps buried inside a block the user was told to paste.
+//
 // `brief` arrives already clipped and already wrapped in the connector's
 // <untrusted-content> envelope by the caller: it is text other Usernode
 // users wrote, and it is on its way to a second agent that has a shell.
@@ -196,46 +277,49 @@ function buildWorkOrder({
   appName, appSlug, upstreamUrl, upstreamSlug, forkUrl, forkCloneUrl, forkRepo,
   forkPageUrl, forkStatus, branch, baseSha, issueNumber, brief, webPath,
 }) {
+  // One canonical command block for all three fork states — only the
+  // preamble above it differs. The old `missing` branch used
+  // `gh repo fork --clone --remote`, which creates the `upstream` remote
+  // itself, while the `ready` branch added it by hand; two shapes of the
+  // same four steps was a needless divergence.
   const setup = [];
-  if (forkStatus === 'ready') {
+  if (forkStatus === 'name_conflict') {
     setup.push(
-      '```bash',
-      `git clone ${forkCloneUrl} app && cd app`,
-      `git remote add upstream ${upstreamUrl}`,
-      'git fetch upstream',
-      `git checkout -b ${branch} ${baseSha}`,
-      '```',
-      '',
-      'Your fork already exists — the clone above is all you need.'
+      'You do not have a copy of this repository yet, and your GitHub account already holds a',
+      'repository with the app\'s name that is NOT a fork of it, so the copy needs another name',
+      '(Usernode never touches that other repository). One click:',
+      `open ${forkPageUrl}, set the repository name to ${forkRepo} and press "Create fork".`,
+      `With the GitHub CLI instead: \`gh repo fork ${upstreamSlug} --clone --remote --fork-name ${forkRepo}\``,
+      'clones it and adds the `upstream` remote for you, so skip those two lines below.',
+      ''
     );
-  } else if (forkStatus === 'name_conflict') {
+  } else if (forkStatus === 'missing') {
     setup.push(
-      'Your GitHub account already has a repository with the app\'s name that is NOT a fork of it,',
-      `so fork under a different name (Usernode never touches that other repository):`,
-      '```bash',
-      `gh repo fork ${upstreamSlug} --clone --remote --fork-name ${forkRepo}`,
-      `cd ${forkRepo}`,
-      'git fetch upstream',
-      `git checkout -b ${branch} ${baseSha}`,
-      '```'
+      'You do not have a copy of this repository yet. One click:',
+      `open ${forkPageUrl} and press "Create fork".`,
+      `With the GitHub CLI instead: \`gh repo fork ${upstreamSlug} --clone --remote\` clones it and`,
+      'adds the `upstream` remote for you, so skip those two lines below.',
+      ''
     );
   } else {
-    setup.push(
-      '```bash',
-      `gh repo fork ${upstreamSlug} --clone --remote`,
-      `cd ${forkRepo}`,
-      'git fetch upstream',
-      `git checkout -b ${branch} ${baseSha}`,
-      '```',
-      '',
-      'The fork command is a no-op if you already have the fork.'
-    );
+    setup.push('You already have this copy of the repository.', '');
   }
   setup.push(
+    '```bash',
+    `git clone ${forkCloneUrl} ${forkRepo} && cd ${forkRepo}`,
+    `git remote add upstream ${upstreamUrl}`,
+    'git fetch upstream',
+    `git checkout -b ${branch} ${baseSha}`,
+    '```',
     '',
-    `If \`gh\` is unavailable or the fork step fails, the fork can be made by hand in one click:`,
-    `open ${forkPageUrl} and press "Create fork", then clone ${forkCloneUrl} and continue from`,
-    '`git fetch upstream`.'
+    'If the repository is already checked out where you are working — a hosted session clones',
+    'it for you when the repository is picked — skip the clone, and skip `git remote add` too',
+    'if an `upstream` remote already exists.',
+    '',
+    'The commit id above is 40 hex characters and one unbroken word. If the copy you received',
+    'has a space or a line break inside it, that is a transcription error, not a real id: join',
+    'it back up. If it still will not resolve, run `git rev-parse upstream/main` after fetching',
+    'and branch from that instead.'
   );
 
   const lines = [
@@ -249,6 +333,7 @@ function buildWorkOrder({
     `- Your fork, which you can push to:      ${forkUrl}`,
     `- Branch to create and push:             ${branch}`,
     `- It must start at upstream commit:      ${baseSha}`,
+    '  (a full 40-character hex id — no spaces, no line break inside it)',
     '',
     'SETUP',
     ...setup,
@@ -272,9 +357,9 @@ function buildWorkOrder({
     '```bash',
     `git push -u origin ${branch}`,
     '```',
-    `Then tell the assistant that started this that the work on \`${branch}\` is pushed.`,
-    'It will submit the change to Usernode, where it becomes a proposal with a',
-    'staging preview and a group vote.',
+    `Report that \`${branch}\` is pushed, and stop there. Do not open a pull`,
+    'request: Usernode opens it, and the change becomes a proposal with a staging',
+    'preview and a group vote.',
   ];
   if (Number.isInteger(issueNumber) && issueNumber > 0) {
     lines.splice(2, 0, `This implements request #${issueNumber}.`, '');
@@ -291,7 +376,9 @@ function buildWorkOrder({
 // params: { user, app, issueNumber, brief, clientId, clientName, origin }
 async function prepareWork(deps, params) {
   const { pool, config, gh, githubLink, limits } = deps;
-  const { user, app, issueNumber, brief, clientId, origin } = params;
+  const {
+    user, app, issueNumber, brief, clientId, clientName, origin,
+  } = params;
 
   const parsed = gh.parseGithubUrl(app.repo_url);
   if (!parsed) {
@@ -331,9 +418,18 @@ async function prepareWork(deps, params) {
     log.warn('external-agent-tasks', 'base sha lookup failed', { app: app.slug, err: err.message });
     baseSha = null;
   }
-  if (!baseSha) {
+  // A value that is not a clean 40-character hex id never reaches a work
+  // order. Refusing here is what makes "Usernode never emits a malformed
+  // commit id" a property rather than an assumption — so a split id seen
+  // in a chat message can only have been introduced downstream, and is
+  // diagnosed as a transcription error instead of hunted for in here.
+  if (!baseSha || !BASE_SHA_RE.test(String(baseSha).trim())) {
+    if (baseSha) {
+      log.warn('external-agent-tasks', 'base sha is not a 40-char hex id', { app: app.slug });
+    }
     return fail('platform_unavailable', 'Usernode could not read the app\'s current code. Try again shortly.', { retryable: true });
   }
+  baseSha = String(baseSha).trim().toLowerCase();
 
   // Advisory only. A missing fork, a same-named repo in the way, or a GitHub
   // read that simply failed all still produce a work order — the fork is the
@@ -370,6 +466,18 @@ async function prepareWork(deps, params) {
   }
 
   const webPath = `${origin}/#app/${app.slug}`;
+  const forkPageUrl = `https://github.com/${owner}/${repo}/fork`;
+  // Which product's UI the human is about to open. `normalizeAgent`
+  // reads the name the client registered for itself, so anything
+  // unrecognised falls into the deliberately safe `external` variant.
+  const guidance = buildGuidance({
+    agent: normalizeAgent(null, clientName || clientId),
+    forkOwner: link.login,
+    forkRepo,
+    repo,
+    forkPageUrl,
+    forkStatus,
+  });
   const workOrder = buildWorkOrder({
     appName: app.name || app.slug,
     appSlug: app.slug,
@@ -378,7 +486,7 @@ async function prepareWork(deps, params) {
     forkUrl: `https://github.com/${link.login}/${forkRepo}`,
     forkCloneUrl: `https://github.com/${link.login}/${forkRepo}.git`,
     forkRepo,
-    forkPageUrl: `https://github.com/${owner}/${repo}/fork`,
+    forkPageUrl,
     forkStatus,
     branch,
     baseSha,
@@ -393,10 +501,11 @@ async function prepareWork(deps, params) {
     forkOwner: link.login,
     forkRepo,
     forkUrl: `https://github.com/${link.login}/${forkRepo}`,
-    forkPageUrl: `https://github.com/${owner}/${repo}/fork`,
+    forkPageUrl,
     forkStatus,
     branch,
     baseSha,
+    guidance,
     workOrder,
   };
 }
@@ -676,12 +785,15 @@ module.exports = {
   DEFAULT_BASE_BRANCH,
   MAX_BRIEF_CHARS,
   CONFLICT_FORK_SUFFIX,
+  MAX_GUIDANCE_CHARS,
+  BASE_SHA_RE,
   normalizeAgent,
   agentLabel,
   githubPublic,
   inspectFork,
   inspectPushedBranch,
   branchNameFor,
+  buildGuidance,
   buildWorkOrder,
   headOwnerOf,
   attributionError,
