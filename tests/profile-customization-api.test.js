@@ -128,6 +128,10 @@ function freshState(over = {}) {
 
 async function request(app, method, url, { body, contentType } = {}) {
   const server = app.listen(0);
+  // The harness preload (tests/lib/test-net.js) pins hostless listens to
+  // 127.0.0.1, which makes the bind complete on the next tick instead of
+  // synchronously — so wait for it before reading the assigned port.
+  await new Promise((resolve) => server.once('listening', resolve));
   try {
     const { port } = server.address();
     const headers = {};
