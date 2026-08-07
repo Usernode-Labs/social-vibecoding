@@ -1,8 +1,10 @@
 'use strict';
 
 // Codex CLI (codex_openrouter) adapter (plan.md §9, §10). Owns:
-//   - Codex config generation (platform-owned config.toml pointing at the
-//     relay; raw key never in the worker).
+//   - Codex config generation (codex config.toml pointing DIRECTLY at
+//     OpenRouter; the user's key is injected per-turn as OPENROUTER_API_KEY
+//     and is visible to the worker's code by design — see the Settings UI
+//     disclosure).
 //   - The JSONL event parser that normalizes codex exec --json output to
 //     the backend-neutral progress vocabulary (services/agent-events.js)
 //     the worker.js consumer already understands.
@@ -21,10 +23,9 @@
 
 const crypto = require('crypto');
 
-// Generate the platform-owned Codex config that points the CLI at the
-// Usernode relay. The worker never holds the OpenRouter key; the relay
-// injects it. `agents.enabled = false` disables multi-agent in the first
-// release (plan.md §8.6).
+// Generate the Codex config that points the CLI DIRECTLY at OpenRouter.
+// The user's key arrives per-turn as OPENROUTER_API_KEY. `agents.enabled
+// = false` disables multi-agent in the first release (plan.md §8.6).
 function buildCodexConfig({ openRouterBaseUrl, model, reasoningEffort }) {
   const provider = 'usernode_openrouter';
   // TOML-safe serialization (review P1): model/provider/base-url values are

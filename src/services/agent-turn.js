@@ -1,12 +1,10 @@
 'use strict';
 
 // Per-turn agent context resolution (plan.md §11). Given a session, this
-// resolves which backend runs the turn and, for codex_openrouter, mints
-// the scoped relay token + creates the agent_turns ledger row. Claude
-// turns return null context (unchanged dispatch path).
-//
-// The raw OpenRouter key is never returned here — only the scoped token
-// the worker presents to the relay.
+// resolves which backend runs the turn and, for codex_openrouter, creates
+// the agent_turns ledger row and returns the per-turn OpenRouter key
+// (direct transport). Claude turns return null context (unchanged path);
+// the raw OpenRouter key is returned ONLY for the codex_openrouter turn.
 
 const crypto = require('crypto');
 const platformJwt = require('./platform-jwt');
@@ -20,11 +18,12 @@ function backendForSession(session) {
   return registry.resolveBackend(session?.agent_backend || 'claude_code');
 }
 
-// For a codex_openrouter turn, resolve the credential + mint the scoped
-// relay token + create an agent_turns row. Returns the Codex-specific
-// execInWorker params, or null for Claude turns (caller uses the legacy
-// path). Never throws on a missing/invalid credential — returns a
-// structured error the caller surfaces as an actionable UI state.
+// For a codex_openrouter turn, resolve the credential + create an
+// agent_turns row, returning the direct-transport execInWorker params
+// (including the per-exec OpenRouter key). Returns null for Claude turns
+// (caller uses the legacy path). Never throws on a missing/invalid
+// credential — returns a structured error the caller surfaces as an
+// actionable UI state.
 async function resolveCodexTurn({ pool, session, userId, model, reasoningEffort, resumeThreadId, config = {} }) {
   if (registry.resolveBackend(session?.agent_backend) !== 'codex_openrouter') return null;
 
@@ -44,22 +43,22 @@ async function resolveCodexTurn({ pool, session, userId, model, reasoningEffort,
     return { error: 'credential_required' };
   }
 
-  // A model is REQUIRED and must be the session-pinned OpenRouter model
-  // (review P3): never fall back to a Claude model (the caller's
-  // selectedModel) and pin it into OpenRouter. Null → actionable error.
-  // We deliberately ignore the `model` param here (it may already carry a
-  // Claude fallback) and require session.agent_model to be the authority.
-  const resolvedModel = session.agent_model || null;
+  // A model is REQUIRED and must be an OpenRouter model (review P3):
+  // never fall back to a Claude model (the caller's selectedModel) and
+  // pin it into OpenRouter. The session-pinned model is authoritative; if
+  // the session has none, fall back to the operator-configured
+  // OPENROUTER_DEFAULT_CODEX_MODEL. We deliberately ignore the `model`
+  // param here (it may already carry a Claude fallback). Null → error.
+  const resolvedModel = session.agent_model || config.openrouterDefaultCodexModel || null;
   if (!resolvedModel) {
     return { error: 'model_required' };
   }
 
   const turnId = crypto.randomUUID();
   // IMPORTANT (review F9): the ledger row is the authoritative state
-  // machine the relay checks on every request. If creating it fails we
-  // MUST fail closed — the relay rejects requests for turns it cannot
-  // find, so continuing with a missing ledger row would mint tokens that
-  // can never be used (worse: silently turn the turn "unbillable").
+  // machine drives the Codex dispatch lifecycle. If creating it fails we
+  // MUST fail closed, so continuing with a missing ledger row would leave
+  // the turn never terminalized (worse: silently turn it "unbillable").
   try {
     await pool.query(
       `INSERT INTO agent_turns
@@ -108,9 +107,9 @@ async function resolveCodexTurn({ pool, session, userId, model, reasoningEffort,
 module.exports = { backendForSession, resolveCodexTurn, completeCodexTurn };
 
 // Mark a Codex turn's ledger row terminal when the worker dispatch
-// finishes (review P3). The relay intentionally does NOT close the turn on
-// any single Responses stream (tool loops make many); completion belongs
-// to the worker lifecycle. Call this once, when execInWorker resolves.
+// finishes (review P3). The single Responses stream must NOT close the
+// turn (tool loops make many); completion belongs to the worker lifecycle.
+// Call this once, when execInWorker resolves.
 async function completeCodexTurn({ pool, turnUuid, status = 'completed', errorDetail = null, errorCode = null }) {
   if (!turnUuid) return;
   try {

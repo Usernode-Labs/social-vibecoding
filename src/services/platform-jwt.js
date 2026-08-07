@@ -47,14 +47,6 @@ const PUR_WORKER = 'worker:session';
 const PUR_EDGE_GRANT = 'edge:grant';
 const PUR_EDGE_COOKIE = 'edge:cookie';
 
-// Scoped agent-proxy token: the Codex worker authenticates to the
-// OpenRouter Responses relay with this bearer token. Short-lived (one
-// turn + grace), bound to a single session/user/turn/backend/model and a
-// credential revision, so a leaked token cannot reach another model,
-// user, session, or turn and is useless after the turn ends.
-const PUR_AGENT_PROXY = 'agent:responses';
-const AGENT_PROXY_TTL_S = 2 * 60 * 60;
-
 // Shell iframe tokens live an hour and are refreshed by the shell at 45
 // min (public/js/app-view.js). Capture tokens only need to outlive one
 // screenshot run. Worker tokens cover a whole chat session. The edge
@@ -242,48 +234,6 @@ function verifyWorkerToken(token) {
     algorithm: 'HS256',
     audience: AUD_WORKER,
     purpose: PUR_WORKER,
-  });
-}
-
-// ── Scoped agent-proxy token (OpenRouter Responses relay) ────────────
-// The Codex worker presents this bearer token to POST
-// /api/internal/openrouter/v1/responses. It is signed with the same
-// WORKER_JWT_SECRET as worker:session tokens but carries a distinct
-// purpose (agent:responses) and is scoped to a single turn so the relay
-// can pin model/user/session/turn/credential-revision without a DB hit
-// on every request. Short TTL = one turn + recovery grace.
-function signAgentProxyToken(claims) {
-  const {
-    sessionId, userId, turnId, backend, model,
-    credentialRevision, agentConfigVersion,
-  } = claims || {};
-  if (typeof sessionId === 'undefined') throw new Error('platform-jwt: sessionId required');
-  if (typeof userId === 'undefined') throw new Error('platform-jwt: userId required');
-  if (typeof turnId === 'undefined') throw new Error('platform-jwt: turnId required');
-  const payload = {
-    session_id: sessionId,
-    user_id: userId,
-    turn_id: turnId,
-    backend,
-    model,
-    credential_revision: credentialRevision,
-    agent_config_version: agentConfigVersion,
-    scope: PUR_AGENT_PROXY,
-    pur: PUR_AGENT_PROXY,
-  };
-  return jwt.sign(payload, workerSecret(), {
-    algorithm: 'HS256',
-    issuer: ISSUER,
-    audience: AUD_WORKER,
-    expiresIn: AGENT_PROXY_TTL_S,
-  });
-}
-
-function verifyAgentProxyToken(token) {
-  return verifyWith(token, workerSecret(), {
-    algorithm: 'HS256',
-    audience: AUD_WORKER,
-    purpose: PUR_AGENT_PROXY,
   });
 }
 
@@ -475,8 +425,6 @@ module.exports = {
   AUD_EDGE,
   PUR_IFRAME,
   PUR_WORKER,
-  PUR_AGENT_PROXY,
-  AGENT_PROXY_TTL_S,
   PUR_EDGE_GRANT,
   PUR_EDGE_COOKIE,
   IFRAME_TTL,
@@ -489,8 +437,6 @@ module.exports = {
   verifyAppIdentityToken,
   signWorkerToken,
   verifyWorkerToken,
-  signAgentProxyToken,
-  verifyAgentProxyToken,
   signEdgeGrant,
   verifyEdgeGrant,
   signEdgeCookie,

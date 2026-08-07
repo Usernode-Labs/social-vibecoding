@@ -6,10 +6,10 @@
 //   1. Key validation + key-limit info via GET /api/v1/key.
 //   2. The user-filtered model catalog via GET /api/v1/models/user.
 //
-// The raw OpenRouter key is NEVER placed in the worker container; this
-// module runs on the platform and the relay decrypts the key per-turn.
-// The worker only ever sees a scoped bearer token (see platform-jwt
-// signAgentProxyToken + routes/openrouter-proxy.js).
+// The raw OpenRouter key is never persisted in the worker container; this
+// module runs on the platform. For Codex turns the key is injected only
+// into the per-turn docker exec as OPENROUTER_API_KEY (direct transport),
+// never into the worker's warm persistent env/filesystem.
 
 const log = require('./logger');
 

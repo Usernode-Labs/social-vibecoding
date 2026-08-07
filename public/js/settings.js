@@ -149,9 +149,11 @@
       const orSave = document.getElementById('settings-openrouter-save');
       const orRemove = document.getElementById('settings-openrouter-remove');
       const orSetDefault = document.getElementById('settings-openrouter-set-default');
+      const claudeSetDefault = document.getElementById('settings-claude-set-default');
       if (orSave) orSave.addEventListener('click', () => this._saveOpenRouterKey());
       if (orRemove) orRemove.addEventListener('click', () => this._removeOpenRouterKey());
       if (orSetDefault) orSetDefault.addEventListener('click', () => this._saveOpenRouterDefault());
+      if (claudeSetDefault) claudeSetDefault.addEventListener('click', () => this._saveClaudeDefault());
 
       const linkBtn = document.getElementById('wallet-link-btn');
       if (linkBtn) linkBtn.addEventListener('click', () => this._startWalletLink());
@@ -1891,8 +1893,11 @@
       const removeBtn = document.getElementById('settings-openrouter-remove');
       if (removeBtn) removeBtn.disabled = true;
       try {
-        await fetch('/api/me/credentials/openrouter', { method: 'DELETE', credentials: 'same-origin' });
-        this._setOrStatus('Key removed.', 'ok');
+        const r = await fetch('/api/me/credentials/openrouter', { method: 'DELETE', credentials: 'same-origin' });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { this._setOrStatus(j.error || 'Failed to remove key.', 'error'); return; }
+        const note = j.defaultReset ? ' Key removed; your default agent was reset to Claude Code.' : '';
+        this._setOrStatus('Key removed.' + note, 'ok');
         await this._refreshOpenRouter();
       } catch {
         this._setOrStatus('Failed to remove key.', 'error');
@@ -1920,6 +1925,21 @@
         });
         if (!r.ok) { const j = await r.json().catch(() => ({})); this._setOrStatus(j.error || 'Failed to save.', 'error'); return; }
         this._setOrStatus('Codex saved as your default coding agent.', 'ok');
+      } catch { this._setOrStatus('Network error.', 'error'); }
+    },
+
+    async _saveClaudeDefault() {
+      // Reciprocal default control (review #8): set Claude Code (the
+      // legacy backend) as the user's default coding agent. Sends no model
+      // so it doesn't pin a Claude model either.
+      try {
+        const r = await fetch('/api/me/coding-agent', {
+          method: 'PATCH', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ defaultBackend: 'claude_code' }),
+        });
+        if (!r.ok) { const j = await r.json().catch(() => ({})); this._setOrStatus(j.error || 'Failed to save.', 'error'); return; }
+        this._setOrStatus('Claude Code is now your default coding agent.', 'ok');
       } catch { this._setOrStatus('Network error.', 'error'); }
     },
 

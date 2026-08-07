@@ -549,6 +549,43 @@ async function snapshotSessionSpec(pool, sessionId, content) {
   }
 }
 
+// Copy the user's DEFAULT coding-agent backend + model + reasoning effort
+// into a freshly created session row (review #8). Used by EVERY session
+// creation path — ordinary dev-chat, headless auto-session, and clone — so
+// "default coding agent" means the same thing regardless of how a session
+// was spawned. Falls back to the legacy claude_code schema default when the
+// user has never set a default. Best-effort: never throws.
+async function applyDefaultAgentPreferences(pool, sessionId, userId, config) {
+  try {
+    const { rows: prefRows } = await pool.query(
+      `SELECT backend, model_id, reasoning_effort
+       FROM user_agent_preferences
+       WHERE user_id = $1 AND is_default = TRUE`,
+      [userId],
+    );
+    const pref = prefRows[0];
+    if (!pref) return;
+    // A Codex default without a pinned model falls back to the
+    // operator-configured OPENROUTER_DEFAULT_CODEX_MODEL so the session is
+    // immediately usable (the dispatch path requires an OpenRouter model).
+    let modelId = pref.model_id;
+    if (pref.backend === 'codex_openrouter' && !modelId) {
+      modelId = (config && config.openrouterDefaultCodexModel) || null;
+    }
+    await pool.query(
+      `UPDATE chat_sessions SET
+         agent_backend = $2, agent_provider = $3,
+         agent_model = $4, agent_reasoning_effort = $5
+       WHERE id = $1`,
+      [sessionId, pref.backend,
+       pref.backend === 'codex_openrouter' ? 'openrouter' : 'anthropic',
+       modelId, pref.reasoning_effort],
+    );
+  } catch (err) {
+    log.warn('sessions', 'Failed to apply default agent preferences', { sessionId, err: err.message });
+  }
+}
+
 function sessionRoutes(config) {
   const router = Router();
   const pool = getPool(config);
@@ -1147,28 +1184,9 @@ function sessionRoutes(config) {
 
       log.info('sessions', 'Session created', { sessionId: rows[0].id, branch: branchName });
       // Copy the user's default coding-agent preferences into the session
-      // (review F6): without this, preferences are written but never
+      // (review #8): without this, preferences are written but never
       // consumed and every session gets the claude_code schema default.
-      try {
-        const { rows: prefRows } = await pool.query(
-          `SELECT backend, model_id, reasoning_effort
-           FROM user_agent_preferences
-           WHERE user_id = $1 AND is_default = TRUE`,
-          [req.user.id],
-        );
-        const pref = prefRows[0];
-        if (pref) {
-          await pool.query(
-            `UPDATE chat_sessions SET
-               agent_backend = $2, agent_provider = $3,
-               agent_model = $4, agent_reasoning_effort = $5
-             WHERE id = $1`,
-            [rows[0].id, pref.backend,
-             pref.backend === 'codex_openrouter' ? 'openrouter' : 'anthropic',
-             pref.model_id, pref.reasoning_effort],
-          );
-        }
-      } catch {}
+      await applyDefaultAgentPreferences(pool, rows[0].id, req.user.id, config);
       events.record(pool, {
         type: events.EVENT_TYPES.DEV_SESSION_STARTED,
         userId: req.user.id,
@@ -1305,6 +1323,16 @@ function sessionRoutes(config) {
       session.repo_url = app.repo_url;
       session.app_self_hosted = app.self_hosted;
 
+      // Copy the user's default coding-agent backend/model into the
+      // headless session (review #8) so headless sessions honor the same
+      // default as ordinary and cloned sessions. Refresh the in-memory
+      // row used by the runner so it dispatches to the right backend.
+      await applyDefaultAgentPreferences(pool, session.id, req.user.id, config);
+      const { rows: refreshed } = await pool.query(
+        'SELECT agent_backend, agent_model FROM chat_sessions WHERE id = $1', [session.id],
+      );
+      if (refreshed[0]) { session.agent_backend = refreshed[0].agent_backend; session.agent_model = refreshed[0].agent_model; }
+
       events.record(pool, {
         type: events.EVENT_TYPES.DEV_SESSION_STARTED,
         userId: req.user.id,
@@ -1433,6 +1461,15 @@ function sessionRoutes(config) {
          src.testing_paths != null ? JSON.stringify(src.testing_paths) : null, src.id, cloneTitle]
       );
       const session = rows[0];
+
+      // Copy the user's default coding-agent backend/model into the clone
+      // (review #8) so a cloned session honors the same default as ordinary
+      // and headless sessions; refresh the in-memory row used downstream.
+      await applyDefaultAgentPreferences(pool, session.id, req.user.id, config);
+      const { rows: cloneRefreshed } = await pool.query(
+        'SELECT agent_backend, agent_model FROM chat_sessions WHERE id = $1', [session.id],
+      );
+      if (cloneRefreshed[0]) { session.agent_backend = cloneRefreshed[0].agent_backend; session.agent_model = cloneRefreshed[0].agent_model; }
 
       // Copy the conversation so the Mayor (and the new owner) see the full
       // auto-session context. Costs are zeroed — the cloner didn't pay for
@@ -2993,11 +3030,11 @@ function sessionRoutes(config) {
       // For codex_openrouter the session-pinned OpenRouter model is
       // authoritative — the Claude allowlist must NOT coerce it to a
       // Claude model. And the Mayor's Anthropic BYOK key must NEVER
-      // enter a Codex worker (Codex uses the relay token, not an
-      // Anthropic key; leaking the Anthropic key into the worker lets
-      // repository code exfiltrate it).
+      // enter a Codex worker (Codex uses the per-turn OpenRouter key instead;
+      // leaking the Anthropic key into the worker lets repository code
+      // exfiltrate it).
       const isCodexSession = registry.resolveBackend(session.agent_backend) === 'codex_openrouter';
-      const turnModel = isCodexSession ? (session.agent_model || selectedModel) : selectedModel;
+      const turnModel = isCodexSession ? (session.agent_model || config.openrouterDefaultCodexModel || selectedModel) : selectedModel;
       const turnApiKey = isCodexSession ? null : (userApiKey || null);
 
       // SSE response
@@ -8129,7 +8166,7 @@ async function runScoutTool({
   // Backend-aware model + secret (review F2, F10). Codex sessions use
   // the pinned OpenRouter model and NO Anthropic key.
   const isCodexSession = registry.resolveBackend(session.agent_backend) === 'codex_openrouter';
-  const turnModel = isCodexSession ? (session.agent_model || selectedModel) : selectedModel;
+  const turnModel = isCodexSession ? (session.agent_model || config.openrouterDefaultCodexModel || selectedModel) : selectedModel;
   const turnApiKey = isCodexSession ? null : (userApiKey || null);
 
   // #937: the single way this tool ends on a stop, used by every
@@ -8479,8 +8516,8 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
     let result;
     let codexCtx = null;
     try {
-      // Resolve the Codex/OpenRouter turn context (scoped relay token +
-      // ledger row) for codex_openrouter sessions; null for Claude
+      // Resolve the Codex/OpenRouter turn context (ledger row + per-turn
+      // OpenRouter key) for codex_openrouter sessions; null for Claude
       // (legacy path unchanged). plan.md PR5/PR6.
       codexCtx = await agentTurn.resolveCodexTurn({
         pool, session, userId: req.user.id,
@@ -8977,7 +9014,7 @@ async function runClaudeCodeTool({
   // Backend-aware model + secret (review F2, F10). Codex sessions use
   // the pinned OpenRouter model and NO Anthropic key.
   const isCodexSession = registry.resolveBackend(session.agent_backend) === 'codex_openrouter';
-  const turnModel = isCodexSession ? (session.agent_model || selectedModel) : selectedModel;
+  const turnModel = isCodexSession ? (session.agent_model || config.openrouterDefaultCodexModel || selectedModel) : selectedModel;
   const turnApiKey = isCodexSession ? null : (userApiKey || null);
 
   // #937: the single way this tool ends on a stop — used by all five
@@ -9284,7 +9321,7 @@ path: /another/changed/view
     branchName: session.branch_name,
     // Use the backend-aware key (review P8): Codex sessions must NOT pass
     // the Mayor's Anthropic BYOK key into the long-lived container env,
-    // where repository code can read it. Codex uses the relay token only.
+    // where repository code can read it. Codex uses its OpenRouter key.
     anthropicApiKey: turnApiKey,
     onProgress: (text) => {
       send('cc_progress', { text });

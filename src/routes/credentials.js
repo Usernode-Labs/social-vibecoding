@@ -114,8 +114,28 @@ function credentialRoutes(config) {
     try {
       await credentialStore.revoke({ pool, userId: req.user.id, ...OPENROUTER });
       agentModels.invalidateUser(req.user.id);
-      log.info('credentials', 'OpenRouter key removed', { userId: req.user.id });
-      res.json({ ok: true });
+      // Key-removal consistency (review #8): if Codex/OpenRouter is the
+      // user's DEFAULT coding agent, reset the default back to Claude.
+      // Otherwise every future ordinary/headless session copies the Codex
+      // default and immediately fails with `credential_required` until the
+      // user reconfigured a key. Swapping the default avoids that dead-end
+      // state. Existing sessions are left untouched (they stay on whatever
+      // backend they were created with).
+      await pool.query(
+        `UPDATE user_agent_preferences SET is_default = FALSE
+         WHERE user_id = $1 AND backend = 'codex_openrouter' AND is_default = TRUE`,
+        [req.user.id],
+      );
+      await pool.query(
+        `INSERT INTO user_agent_preferences
+           (user_id, backend, model_id, reasoning_effort, is_default)
+         VALUES ($1, 'claude_code', NULL, NULL, TRUE)
+         ON CONFLICT (user_id, backend) DO UPDATE SET
+           is_default = TRUE, updated_at = NOW()`,
+        [req.user.id],
+      );
+      log.info('credentials', 'OpenRouter key removed; default agent reset to Claude', { userId: req.user.id });
+      res.json({ ok: true, defaultReset: true });
     } catch (err) {
       log.error('credentials', 'Failed to remove OpenRouter key', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });

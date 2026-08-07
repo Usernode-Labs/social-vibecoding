@@ -1,15 +1,14 @@
 'use strict';
 // Tests for the OpenRouter BYOK / Codex server-side pieces (plan.md).
-// Covers: the scoped agent-proxy token, the Codex JSONL normalizer, the
-// OpenRouter SSE usage parser, the codex config builder, resume-error
-// classification, and the registry codex_openrouter entry.
+// Covers: the Codex JSONL normalizer, the OpenRouter SSE usage parser,
+// the codex config builder, resume-error classification, and the registry
+// codex_openrouter entry.
 //
 // Run with: node --test tests/openrouter-byok.test.js
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const platformJwt = require('../src/services/platform-jwt');
 const codex = require('../src/agents/codex-openrouter');
 const { parseSseFrames, extractUsage } = require('../src/services/openrouter-usage');
 const registry = require('../src/agents/registry');
@@ -21,40 +20,16 @@ test('registry resolves codex_openrouter and its runner', () => {
   assert.equal(registry.providerFor('codex_openrouter'), 'openrouter');
 });
 
-// ── Scoped agent-proxy token ──────────────────────────────────────────
-test('signAgentProxyToken / verifyAgentProxyToken round-trip and are scoped', () => {
-  process.env.WORKER_JWT_SECRET = 'test-worker-secret';
-  const tok = platformJwt.signAgentProxyToken({
-    sessionId: 123, userId: 456, turnId: 'turn-abc',
-    backend: 'codex_openrouter', model: 'openai/gpt-5.3-codex',
-    credentialRevision: 3, agentConfigVersion: 1,
-  });
-  const claims = platformJwt.verifyAgentProxyToken(tok);
-  assert.equal(claims.session_id, 123);
-  assert.equal(claims.user_id, 456);
-  assert.equal(claims.turn_id, 'turn-abc');
-  assert.equal(claims.backend, 'codex_openrouter');
-  assert.equal(claims.model, 'openai/gpt-5.3-codex');
-  assert.equal(claims.credential_revision, 3);
-  assert.equal(claims.scope, platformJwt.PUR_AGENT_PROXY);
-});
-
-test('a worker:session token does NOT verify as agent-proxy', () => {
-  process.env.WORKER_JWT_SECRET = 'test-worker-secret';
-  const workerTok = platformJwt.signWorkerToken({ sessionId: 1 });
-  assert.throws(() => platformJwt.verifyAgentProxyToken(workerTok), /purpose/);
-});
-
 // ── Codex config builder ──────────────────────────────────────────────
 test('buildCodexConfig points directly at OpenRouter and disables agents', () => {
   const cfg = codex.buildCodexConfig({
-    openRouterBaseUrl: 'http://usernode:3000/api/internal/openrouter/v1/',
+    openRouterBaseUrl: 'https://openrouter.ai/api/v1/',
     model: 'openai/gpt-5.3-codex',
     reasoningEffort: 'high',
   });
   assert.match(cfg, /model_provider = "usernode_openrouter"/);
   assert.match(cfg, /model = "openai\/gpt-5.3-codex"/);
-  assert.match(cfg, /base_url = "http:\/\/usernode:3000\/api\/internal\/openrouter\/v1"/);
+  assert.match(cfg, /base_url = "https:\/\/openrouter.ai\/api\/v1"/);
   assert.match(cfg, /env_key = "OPENROUTER_API_KEY"/);
   assert.match(cfg, /\[agents\][\s\S]*enabled = false/);
   assert.match(cfg, /model_reasoning_effort = "high"/);

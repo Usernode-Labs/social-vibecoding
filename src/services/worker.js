@@ -1022,9 +1022,9 @@ async function execInWorker(sessionId, {
   branchName,
   anthropicApiKey,
   // Backend selection (plan.md): when 'codex_openrouter', the turn is
-  // dispatched to the Codex runner with a scoped OpenRouter relay token
-  // instead of the Claude runner + Anthropic proxy. Defaults to
-  // claude_code (unchanged behavior).
+  // dispatched to the Codex runner with the user's per-exec OpenRouter key
+  // (direct transport) instead of the Claude runner + Anthropic proxy.
+  // Defaults to claude_code (unchanged behavior).
   agentBackend = 'claude_code',
   // Codex/OpenRouter-specific turn context (direct transport, review P0):
   // the user's OpenRouter key is passed in ONLY for this specific docker

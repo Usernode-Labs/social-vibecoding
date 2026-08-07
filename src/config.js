@@ -199,13 +199,11 @@ function load() {
     // OpenRouter BYOK + Codex backend (plan.md). All default off so the
     // feature is inert until an operator opts in.
     codexOpenrouterEnabled: String(process.env.CODEX_OPENROUTER_ENABLED || 'false') === 'true',
-    openrouterProxyEnabled: String(process.env.OPENROUTER_PROXY_ENABLED || 'false') === 'true',
     openrouterBetaUserIds: (process.env.CODEX_OPENROUTER_BETA_USER_IDS || '')
       .split(',').map((s) => s.trim()).filter(Boolean),
     openrouterExperimentalModels: String(process.env.OPENROUTER_EXPERIMENTAL_MODELS_ENABLED || 'false') === 'true',
     openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || '',
     openrouterMaxTurnCostUsd: parseFloat(process.env.OPENROUTER_MAX_TURN_COST_USD || '0') || 0,
-    openrouterKeyTransport: process.env.OPENROUTER_KEY_TRANSPORT || 'relay',
     openrouterApiBase: process.env.OPENROUTER_API_BASE || 'https://openrouter.ai/api/v1',
     openrouterOrigin: process.env.OPENROUTER_ORIGIN || 'https://usernode.dev',
     // The former single shared JWT_SECRET is GONE. All four token

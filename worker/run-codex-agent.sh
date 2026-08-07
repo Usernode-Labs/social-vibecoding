@@ -64,8 +64,8 @@ elif [ "$MODE" = "build" ]; then
 fi
 
 # Codex home lives INSIDE the persistent Claude volume so session/rollout
-# state survives worker eviction. Export it so Codex reads the relay config
-# and persistent rollout dir.
+# state survives worker eviction. Export it so Codex reads the direct
+# OpenRouter config and persistent rollout dir.
 export CODEX_HOME="${CODEX_HOME:-/home/node/.claude/codex-home}"
 mkdir -p "$CODEX_HOME"
 
@@ -84,7 +84,7 @@ fi
 SANDBOX_MODE=$([ "$MODE" = "build" ] && echo workspace-write || echo read-only)
 
 # NOTE: this heredoc is UNQUOTED so we can interpolate the escaped model/
-# relay/effort and the computed sandbox mode. There are NO backticks or
+# base/effort and the computed sandbox mode. There are NO backticks or
 # $(...) in the TOML body itself — command substitution is only used on
 # the interpolation lines' values, which are pre-escaped above.
 cat > "$CODEX_HOME/config.toml" <<EOF
@@ -106,7 +106,7 @@ env_key = "OPENROUTER_API_KEY"
 EOF
 
 # Export the user's key for this process only.
-export OPENROUTER_API_KEY""
+export OPENROUTER_API_KEY
 
 CODEX_EXIT=0
 AGENT_THREAD_OUT="$AGENT_THREAD_ID"
