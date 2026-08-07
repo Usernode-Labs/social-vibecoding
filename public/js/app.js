@@ -147,7 +147,7 @@ const App = {
     App.bindEvents();
 
     // Screenshot-state deep links for the ANONYMOUS shell (`?shot=anon`,
-    // `?shot=waitlist-joined`). Captures and proposal checks carry a
+    // `?shot=waitlist-joined`, `?shot=anon-back`). Captures and proposal checks carry a
     // capture token, so a session always exists for them and
     // restoreFromHash would strip #landing / #waitlist to the home feed —
     // the signed-out screens would be unreachable to every shot. These
@@ -299,7 +299,14 @@ const App = {
   _anonShot() {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
-    if (shot !== 'anon' && shot !== 'waitlist-joined') return false;
+    // `anon-back` (#1028) scripts the guest back path on the landing
+    // directory. It matters that it routes through here and not the
+    // ordinary boot: this path skips /api/auth/me, so the capture or
+    // proposal check's own session can't promote the page into the
+    // signed-in shell and stop exercising the guest viewer at all.
+    if (shot !== 'anon' && shot !== 'waitlist-joined' && shot !== 'anon-back') {
+      return false;
+    }
     if (shot === 'waitlist-joined' &&
         (!location.hash || location.hash === '#')) {
       try { history.replaceState(null, '', location.search + '#waitlist'); } catch (err) { /* ignore */ }

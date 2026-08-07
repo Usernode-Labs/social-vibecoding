@@ -298,6 +298,41 @@
     _openLandingApp() {},
     _closeLandingApp() {},
 
+    // #1028: teardown REPLACES the <iframe> element instead of pointing the
+    // live one at about:blank. Assigning `src` to a frame that already holds
+    // a real document is a genuine navigation, so it pushed an entry onto
+    // the history stack this shell shares with the app — which is what
+    // desynced the viewer's own marker entry and left `history.back()`
+    // rewinding the iframe instead of closing the viewer (the reported
+    // "empty page"). A fresh, never-navigated frame makes every open the
+    // INITIAL about:blank navigation, which browsers elide. It also kills
+    // the app's JS context outright, which is a stricter stop than blanking.
+    //
+    // Callers must re-resolve the frame by id afterwards — any reference
+    // captured before the swap is stale.
+    _swapViewerFrame() {
+      const old = byId('app-viewer-frame');
+      if (!old || !old.parentNode) return null;
+      const fresh = document.createElement('iframe');
+      fresh.id = old.id;
+      fresh.className = old.className;
+      for (const attr of ['title', 'allow', 'sandbox', 'referrerpolicy', 'allowfullscreen']) {
+        const value = old.getAttribute(attr);
+        if (value !== null) fresh.setAttribute(attr, value);
+      }
+      old.parentNode.replaceChild(fresh, old);
+      // The new contentWindow has never received the shell's safe-area
+      // insets, and the broadcast memo suppresses a repeat post of
+      // unchanged values — drop the memo so the next one reaches it.
+      if (window.AppView && typeof AppView.forgetSafeAreaFrame === 'function') {
+        AppView.forgetSafeAreaFrame('app-viewer-frame');
+        if (typeof AppView.scheduleSafeAreaBroadcast === 'function') {
+          AppView.scheduleSafeAreaBroadcast();
+        }
+      }
+      return fresh;
+    },
+
     // Instant, un-animated teardown of the in-page viewer. Used on the
     // paths that LEAVE the landing screen (Sign in, hash routing, the
     // authed boot): animating a zoom-out into a tile on a screen that's
@@ -313,8 +348,7 @@
       AuthScreens._viewerLaunchId = (AuthScreens._viewerLaunchId || 0) + 1;
       AuthScreens._clearViewerCover();
       viewer.classList.add('hidden');
-      const frame = byId('app-viewer-frame');
-      if (frame) frame.src = 'about:blank';
+      AuthScreens._swapViewerFrame();
       const scroller = byId('auth-landing-scroll');
       if (scroller) scroller.classList.remove('hidden');
       AuthScreens._renderLandingHeader();
@@ -324,12 +358,58 @@
       AuthScreens._renderLandingHeader();
       if (!AuthScreens._landingAppsLoaded) {
         AuthScreens._landingAppsLoaded = true;
-        AuthScreens._loadLandingApps();
+        AuthScreens._landingAppsReady = AuthScreens._loadLandingApps();
       }
       // Warm the survey options (memoised) while the visitor is reading the
       // pitch, so the #waitlist chips and country list are already filled
       // by the time they tap through.
       AuthScreens._waitlistOptions();
+      // Screenshot-state deep link `?shot=anon-back` (#1028) — see below.
+      let shot = null;
+      try { shot = new URLSearchParams(location.search).get('shot'); } catch (_) {}
+      if (shot === 'anon-back' && !AuthScreens._anonBackShotRan) {
+        AuthScreens._anonBackShotRan = true;
+        AuthScreens._runAnonBackShot();
+      }
+    },
+
+    // Screenshot-state deep link `?shot=anon-back` (#1028): scripts the
+    // guest back path end to end — open an app, back out, open again, back
+    // out — because the regression it pins only appears from the SECOND
+    // open onward, and neither the capture nor the proposal check can click
+    // anything. `#app-viewer` is stamped `data-anon-back="done"` at the end
+    // so the dapp.json assertion can't pass vacuously on a directory that
+    // never loaded (an empty list leaves the attribute unset).
+    //
+    // Steps wait on the actual DOM state rather than a fixed delay: the
+    // whole sequence has to finish inside the check runner's ~2s settle.
+    async _runAnonBackShot() {
+      const viewer = byId('app-viewer');
+      if (!viewer) return;
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const until = async (pred, budgetMs) => {
+        const started = Date.now();
+        while (!pred() && Date.now() - started < budgetMs) await wait(30);
+        return pred();
+      };
+      const isOpen = () => !viewer.classList.contains('hidden');
+      try { await AuthScreens._landingAppsReady; } catch (_) {}
+      // First app the directory would actually open: not gated, has a URL.
+      const target = (AuthScreens._landingAppsList || [])
+        .find((a) => a && !a.requires_login && a.url);
+      if (!target) return;
+      for (let cycle = 0; cycle < 2; cycle++) {
+        const tile = AuthScreens._landingTileFor(target.slug);
+        if (!tile) return;
+        tile.click();
+        if (!await until(isOpen, 600)) return;
+        // Let the zoom-in settle before backing out, so each cycle
+        // exercises a fully-open viewer rather than a mid-transition one.
+        await wait(140);
+        byId('landing-back-btn')?.click();
+        await until(() => !isOpen(), 900);
+      }
+      viewer.setAttribute('data-anon-back', 'done');
     },
 
     // Single writer for the persistent landing header + the CTA block's
@@ -428,8 +508,11 @@
       // `outEl` lets the kit hide the scroller for its synchronous
       // pre-paint measurement, so the zoom targets the true settled rect.
       const viewer = byId('app-viewer');
-      const viewerFrame = byId('app-viewer-frame');
       const scroller = byId('auth-landing-scroll');
+      // Re-resolved on every use, never captured: teardown swaps the frame
+      // ELEMENT (see _swapViewerFrame), so a closure const would go stale
+      // after the first close.
+      const viewerFrame = () => byId('app-viewer-frame');
 
       AuthScreens._openLandingApp = (app) => {
         const slug = app.slug || '';
@@ -445,13 +528,17 @@
         AuthScreens._viewerLaunchId = (AuthScreens._viewerLaunchId || 0) + 1;
         const launchId = AuthScreens._viewerLaunchId;
         AuthScreens._clearViewerCover();
+        const frame = viewerFrame();
         if (window.AppView && typeof AppView.mountViewerCover === 'function') {
-          AppView.mountViewerCover(viewer, viewerFrame, app, {
+          AppView.mountViewerCover(viewer, frame, app, {
             timers: AuthScreens._viewerTimers,
             isCurrent: () => launchId === AuthScreens._viewerLaunchId,
           });
         }
-        viewerFrame.src = app.url;
+        // The frame is fresh on every open (teardown swaps the element), so
+        // this is its INITIAL navigation away from about:blank — the one
+        // browsers elide instead of pushing onto the shared history stack.
+        if (frame) frame.src = app.url;
         history.pushState({ svAnonAppViewer: true }, '', location.href);
         zoomFx(() => {
           viewer.classList.remove('hidden');
@@ -490,18 +577,47 @@
           fallback: 'none',
           after: () => {
             viewer.classList.add('hidden');
-            viewerFrame.src = 'about:blank';
+            AuthScreens._swapViewerFrame();
           },
         });
         AuthScreens._renderLandingHeader();
+        // #1028: the UI above has already closed — nothing here waits on
+        // the browser. Unwind our own marker entry AFTERWARDS so the stack
+        // doesn't grow one entry per open, and only when the current entry
+        // really is the marker. The re-entrancy flag swallows exactly the
+        // popstate this triggers; the timer is a backstop for the case
+        // where that popstate never arrives (a foreign entry), so a later
+        // genuine back gesture can't be swallowed instead.
+        if (!AuthScreens._unwindingViewerEntry &&
+            history.state && history.state.svAnonAppViewer) {
+          AuthScreens._unwindingViewerEntry = true;
+          setTimeout(() => { AuthScreens._unwindingViewerEntry = false; }, 600);
+          try { history.back(); } catch (_) {
+            AuthScreens._unwindingViewerEntry = false;
+          }
+        }
       };
       AuthScreens._closeLandingApp = closeViewer;
 
-      byId('landing-back-btn').addEventListener('click', () => {
-        if (history.state && history.state.svAnonAppViewer) history.back();
-        else closeViewer();
+      // The back arrow CLOSES the viewer, it does not ask the browser to
+      // navigate (#1028). Same stance as the signed-in header's back
+      // button, which calls App.navigateHome() directly: "go to the
+      // directory", not "go back one step". A `history.back()` here aims
+      // at a stack shared with a live cross-origin iframe, where the
+      // marker on history.state is no proof the current entry is ours.
+      byId('landing-back-btn').addEventListener('click', () => closeViewer());
+
+      // The browser/OS back gesture still closes the viewer. Ignore a
+      // popstate that LANDS on the marker entry — that is a pop INTO the
+      // open viewer, not out of it — and the one our own unwind provokes.
+      window.addEventListener('popstate', () => {
+        if (AuthScreens._unwindingViewerEntry) {
+          AuthScreens._unwindingViewerEntry = false;
+          return;
+        }
+        if (history.state && history.state.svAnonAppViewer) return;
+        closeViewer();
       });
-      window.addEventListener('popstate', closeViewer);
     },
 
     // ── Waitlist survey (two-stage, ported from topochain) ───────────
@@ -957,6 +1073,10 @@
         if (!res.ok) throw new Error('http ' + res.status);
         const data = await res.json();
         const apps = (data && data.apps) || [];
+        // Kept for `?shot=anon-back`, which needs the first app the
+        // directory would actually open (not gated, has a URL) without
+        // re-deriving it from the rendered tiles.
+        AuthScreens._landingAppsList = apps;
         appsEl.textContent = '';
         if (!apps.length) {
           appsEl.appendChild(el('p', 'text-sm text-zinc-500 col-span-full', 'No public apps yet.'));

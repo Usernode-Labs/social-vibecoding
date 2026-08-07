@@ -357,6 +357,13 @@
   ],
   "tests": [
     {
+      "name": "Guest back arrow returns to the app directory (#1028)",
+      "path": "/?shot=anon-back#landing",
+      "expectSelector": "#auth-landing-screen:not(.hidden) #app-viewer.hidden[data-anon-back=\"done\"]",
+      "expectText": "Apps built here",
+      "allowConsoleErrors": true
+    },
+    {
       "name": "Platform variables panel renders on the platform app (#826 folded into app secrets)",
       "path": "/?shot=secrets#app/usernode-2d5619/dev",
       "expectSelector": "#app-secrets-list code"

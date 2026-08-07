@@ -251,12 +251,60 @@ test('landing app open/close use the kit zoom with the flex-sibling outEl', () =
 test('leaving the landing screen tears the viewer down instead of stranding it', () => {
   const js = read('public/js/auth-screens.js');
   assert.match(js, /_resetLandingViewer/);
-  // The live iframe is dropped, not just hidden.
-  assert.match(js, /frame\.src = 'about:blank'/);
+  // #1028: the live iframe is dropped by replacing the ELEMENT, not by
+  // pointing it at about:blank — that assignment is a real navigation and
+  // pushed an entry onto the history stack shared with the app.
+  assert.match(js, /_swapViewerFrame/);
+  assert.match(js, /replaceChild\(fresh, old\)/);
+  assert.doesNotMatch(js, /src = 'about:blank'/);
+  // The replacement carries no src, so the next open is the initial
+  // about:blank navigation browsers elide.
+  assert.doesNotMatch(js, /fresh\.src\s*=/);
   // OS/browser back closes the viewer via a history marker, so the hash
   // router is never disturbed.
   assert.match(js, /svAnonAppViewer/);
   assert.match(js, /addEventListener\('popstate'/);
+});
+
+test('the guest back arrow closes the viewer directly (#1028)', () => {
+  const js = read('public/js/auth-screens.js');
+  // The button performs the navigation; it never delegates to the browser
+  // (the old `if (history.state...) history.back()` is what broke).
+  assert.match(js,
+    /byId\('landing-back-btn'\)\.addEventListener\('click', \(\) => closeViewer\(\)\)/);
+  // The marker entry is unwound AFTER the close, behind a re-entrancy flag.
+  assert.match(js, /_unwindingViewerEntry/);
+  // The popstate listener ignores a pop that lands ON the marker entry.
+  assert.match(js, /if \(history\.state && history\.state\.svAnonAppViewer\) return;/);
+  // The frame is re-resolved per use — a captured const goes stale on swap.
+  assert.match(js, /const viewerFrame = \(\) => byId\('app-viewer-frame'\)/);
+});
+
+test('?shot=anon-back scripts two guest open/back cycles', () => {
+  const app = read('public/js/app.js');
+  // Must skip /api/auth/me, or the check runner's own session promotes the
+  // page into the signed-in shell and the guest viewer is never exercised.
+  assert.match(app, /shot !== 'anon-back'/);
+  const js = read('public/js/auth-screens.js');
+  assert.match(js, /_runAnonBackShot/);
+  // Two cycles: the bug only appears from the second open onward.
+  assert.match(js, /cycle < 2/);
+  // The completion stamp the dapp.json test asserts on.
+  assert.match(js, /setAttribute\('data-anon-back', 'done'\)/);
+  const manifest = JSON.parse(read('dapp.json'));
+  const t = manifest.tests.find((x) => /anon-back/.test(x.path || ''));
+  assert.ok(t, 'dapp.json declares the guest-back test');
+  assert.match(t.expectSelector, /#app-viewer\.hidden\[data-anon-back="done"\]/);
+  // The shot deliberately loads a real app in the viewer iframe, and the
+  // staging fixture's own hostname isn't deployed — its 404 reaches the
+  // runner's console listener. The behaviour is asserted by the selector;
+  // console health on this screen is covered by the plain `?shot=anon#landing`
+  // test, which opens no iframe.
+  assert.equal(t.allowConsoleErrors, true);
+  assert.ok(manifest.tests.some((x) => x.path === '/?shot=anon#landing'),
+    'the console-clean landing test still exists');
+  // Only the first 12 entries run (src/services/app-manifest readTests).
+  assert.ok(manifest.tests.indexOf(t) < 12, 'inside the run window');
 });
 
 test('App._tileFor is scoped to the authed grid', () => {
