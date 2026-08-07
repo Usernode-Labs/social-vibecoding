@@ -972,16 +972,33 @@ async function createProposalCommit(owner, repo, {
 // RequestError.message is EMPTY when GitHub answers with an empty or
 // non-JSON body (the 2026-07-24 create-PR outage logged `{"err":""}` for
 // hours), so warn sites should spread this instead of logging err.message.
+//
+// `scopes` carries GitHub's own `x-oauth-scopes` response header — the
+// authoritative answer to "what can this token actually do", which no
+// amount of source-reading can supply. It is the HEADER STRING ONLY and
+// never the token: a classic PAT's powers are its scopes, and the 2026-08-07
+// connector failure took a live production run to characterise precisely
+// because nothing logged it. Null for an App installation token, which
+// GitHub does not report scopes for.
 function describeGithubError(err) {
-  if (!err) return { status: null, requestId: null, message: 'unknown error', data: null };
+  if (!err) return { status: null, requestId: null, message: 'unknown error', data: null, scopes: null };
+  const headers = (err.response && err.response.headers) || null;
   const status = err.status || (err.response && err.response.status) || null;
-  const requestId = (err.response && err.response.headers
-    && err.response.headers['x-github-request-id']) || null;
+  const requestId = (headers && headers['x-github-request-id']) || null;
+  const rawScopes = headers && headers['x-oauth-scopes'];
+  const scopes = typeof rawScopes === 'string' ? rawScopes.slice(0, 300) : null;
   let data = (err.response && err.response.data !== undefined) ? err.response.data : null;
   if (typeof data === 'string') data = data.slice(0, 300) || null;
   const message = (err.message && String(err.message).trim())
     || (status ? `HTTP ${status} from GitHub (empty response body)` : String(err));
-  return { status, requestId, message, data };
+  return { status, requestId, message, data, scopes };
+}
+
+// Which credential `getOctokit` would have used for this call. Mirrors the
+// preference order in getOctokit itself; reported on failure paths so a log
+// line answers "was this the PAT or the App?" without a second deploy.
+function credentialClass() {
+  return process.env.GITHUB_BOT_TOKEN ? 'pat' : 'installation';
 }
 
 // createPR retries transient GitHub failures (5xx / status-less network
@@ -1000,7 +1017,16 @@ function _setCreatePrRetryDelaysForTests(delays) {
 // user's own coding agent lives on a branch in THEIR fork and the PR is
 // cross-fork. Everything below (the retry schedule, the typed no_commits /
 // pr_exists / github_unavailable errors) is identical either way.
-async function createPR(owner, repo, { branch, title, body, head }) {
+//
+// `headRepo` ("owner/name") is forwarded to GitHub as `head_repo`. A bare
+// `owner:branch` head makes GitHub SEARCH the base's fork network for a repo
+// owned by that login, which is ambiguous the moment the user owns more than
+// one repo in the network — the exact case CONFLICT_FORK_SUFFIX exists to
+// create. Octokit forwards unknown body params, but this function
+// destructures a fixed list, so the parameter has to be named here or it is
+// silently dropped. Omitted entirely (not sent as undefined) when unset, so
+// every same-repo caller's request body is byte-identical to before.
+async function createPR(owner, repo, { branch, title, body, head, headRepo }) {
   const octokit = await getOctokit(owner);
   const headRef = head || branch;
   const attempts = createPrRetryDelaysMs.length + 1;
@@ -1012,6 +1038,7 @@ async function createPR(owner, repo, { branch, title, body, head }) {
         title: safeMention(title),
         body: safeMention(body),
         head: headRef,
+        ...(headRepo ? { head_repo: headRepo } : {}),
         base: 'main',
       }));
       break;
@@ -2017,6 +2044,7 @@ module.exports = {
   createProposalCommit,
   createPR,
   describeGithubError,
+  credentialClass,
   _setCreatePrRetryDelaysForTests,
   findOpenPrByBranch,
   listOpenPulls,

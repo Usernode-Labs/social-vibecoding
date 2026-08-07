@@ -4243,6 +4243,104 @@ CREATE UNIQUE INDEX IF NOT EXISTS external_agent_tasks_open_branch_idx
 CREATE INDEX IF NOT EXISTS external_agent_tasks_user_idx
   ON external_agent_tasks (user_id, created_at DESC);
 
+-- ── Idempotency and submission provenance ────────────────────────────
+--
+-- The branch index above DOCUMENTS "at most one open task per request" and
+-- has never once delivered it: prepare_work invents a fresh random nonce for
+-- every branch name, so the index can only ever catch a nonce collision.
+-- Production proved it — three OPEN rows for one request (#50 on app 156),
+-- minted 15:29 / 16:02 / 17:35 UTC on 2026-08-07, each burning a slot of the
+-- caller's hourly bound and each with a different branch the agent then felt
+-- obliged to rewrite its finished commit to match.
+--
+-- request_key is the key the behaviour actually needs: `issue:<n>` when the
+-- work implements a numbered request, else `brief:<sha256 prefix>` of the
+-- brief. prepare_work now looks it up and RETURNS the existing task instead
+-- of minting a second one.
+ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS request_key TEXT;
+
+-- How the submission actually reached GitHub, recorded so the 2026-08-07
+-- failure is answerable from SQL alone next time:
+--   branch           — the plain cross-fork create worked
+--   branch_head_repo — it only worked once head_repo disambiguated the fork
+--   mirror           — the fork branch had to be copied into the app's repo
+--   patch            — the agent could not push at all and sent a patch
+--   pr               — the caller named an already-open pull request
+-- `branch` vs `branch_head_repo` is precisely the question "was the missing
+-- head_repo parameter the whole bug?".
+ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS submitted_branch TEXT;
+ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS submitted_via TEXT;
+ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS submitted_source TEXT;
+ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS submitted_client_id TEXT;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'external_agent_tasks_submitted_via_chk'
+  ) THEN
+    ALTER TABLE external_agent_tasks ADD CONSTRAINT external_agent_tasks_submitted_via_chk
+      CHECK (submitted_via IS NULL OR submitted_via IN ('branch','branch_head_repo','mirror','patch','pr'));
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'external_agent_tasks_submitted_source_chk'
+  ) THEN
+    ALTER TABLE external_agent_tasks ADD CONSTRAINT external_agent_tasks_submitted_source_chk
+      CHECK (submitted_source IS NULL OR submitted_source IN ('work_order','assistant'));
+  END IF;
+END $$;
+
+-- Forward-only backfill, same shape as the chat_sessions one below.
+--
+-- DEDUPE BEFORE BACKFILL, not after. Filling the key first would make two
+-- open rows collide the moment they got their keys, which fails outright on
+-- any boot where the unique index already exists — and this file is applied
+-- on EVERY boot, not once. So the duplicate check computes the key inline
+-- (`COALESCE(request_key, <what it would be>)`) and closes the losers first;
+-- by the time the backfill runs, no two open rows can share a key.
+--
+-- Newest kept, because that is the one whose branch the agent actually
+-- pushed — production's three rows for request #50 differ only in their
+-- branch nonce, and only the last one exists on GitHub.
+UPDATE external_agent_tasks t
+SET status = 'abandoned'
+WHERE t.status = 'open'
+  AND EXISTS (
+    SELECT 1 FROM external_agent_tasks newer
+     WHERE newer.status = 'open'
+       AND newer.user_id = t.user_id
+       AND newer.app_id = t.app_id
+       AND newer.id > t.id
+       AND COALESCE(
+             newer.request_key,
+             CASE WHEN newer.issue_number IS NOT NULL
+                  THEN 'issue:' || newer.issue_number::text
+                  ELSE 'brief:' || substr(encode(sha256(convert_to(coalesce(newer.brief, ''), 'UTF8')), 'hex'), 1, 32)
+             END
+           ) = COALESCE(
+             t.request_key,
+             CASE WHEN t.issue_number IS NOT NULL
+                  THEN 'issue:' || t.issue_number::text
+                  ELSE 'brief:' || substr(encode(sha256(convert_to(coalesce(t.brief, ''), 'UTF8')), 'hex'), 1, 32)
+             END
+           )
+  );
+
+-- sha256 over the stored (already-trimmed) brief, hex, first 32 chars —
+-- byte-identical to what services/external-agent-tasks.js computes, so a row
+-- backfilled here is FOUND by the next prepare_work rather than duplicated.
+UPDATE external_agent_tasks
+SET request_key = CASE
+      WHEN issue_number IS NOT NULL THEN 'issue:' || issue_number::text
+      ELSE 'brief:' || substr(encode(sha256(convert_to(coalesce(brief, ''), 'UTF8')), 'hex'), 1, 32)
+    END
+WHERE request_key IS NULL;
+
+-- At most one OPEN task per (user, app, request). This is the constraint the
+-- branch index above was always meant to be.
+CREATE UNIQUE INDEX IF NOT EXISTS external_agent_tasks_open_request_idx
+  ON external_agent_tasks (user_id, app_id, request_key)
+  WHERE status = 'open';
+
 -- ── Generic agent backend (Codex/OpenRouter BYOK; plan.md PR1) ───────
 -- chat_sessions today pins Claude continuity via cc_session_id. To add a
 -- second coding-agent backend (codex_openrouter) without breaking the
