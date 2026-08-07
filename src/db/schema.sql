@@ -562,6 +562,45 @@ CREATE TABLE IF NOT EXISTS app_activity (
   UNIQUE(app_id, user_id, date)
 );
 
+-- Per-check history: which of an app's declared dapp.json checks have ever
+-- been OBSERVED PASSING, and are therefore allowed to block a merge.
+--
+-- Background: the manifest reader used to keep only the first 12 declared
+-- checks, so this repo's own ~229 tail checks had never executed once. The
+-- capture container now runs every declared check on every build, and this
+-- table is what stops that from blocking the next proposal on hundreds of
+-- pre-existing failures it did not cause. A check is BLOCKING iff
+-- `first_passed_at IS NOT NULL` (derived, never stored as a flag); one that
+-- has never passed is ADVISORY — it runs and reports, but does not gate.
+-- There is no demotion: a graduated check that starts failing stays
+-- blocking, which is the whole point of graduating it.
+--
+-- `check_key` is sha256(name || '\n' || path) — the same (name+path) pair
+-- app-manifest.readTests de-duplicates on, so renaming a check mints a new
+-- key and drops it back to advisory (an edited check re-earns its status).
+--
+-- PUBLIC (no `staging:private` tag) and deliberately so: it holds check
+-- names and pass/fail timestamps for app code, which every viewer of a
+-- proposal's checks card can already see. No credentials, no user content.
+CREATE TABLE IF NOT EXISTS app_check_history (
+  id              BIGSERIAL PRIMARY KEY,
+  app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  check_key       VARCHAR(64) NOT NULL,
+  check_name      TEXT,
+  check_path      TEXT,
+  first_passed_at TIMESTAMPTZ,
+  last_passed_at  TIMESTAMPTZ,
+  last_failed_at  TIMESTAMPTZ,
+  last_seen_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  pass_count      INTEGER NOT NULL DEFAULT 0,
+  fail_count      INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (app_id, check_key)
+);
+CREATE INDEX IF NOT EXISTS idx_app_check_history_app ON app_check_history(app_id);
+-- The graduated-set load is the hot read (once per checks run).
+CREATE INDEX IF NOT EXISTS idx_app_check_history_graduated
+  ON app_check_history(app_id) WHERE first_passed_at IS NOT NULL;
+
 -- Group chat messages
 CREATE TABLE IF NOT EXISTS chat_messages (
   id         SERIAL PRIMARY KEY,
@@ -1718,6 +1757,9 @@ COMMENT ON TABLE chat_session_spec_user_shares IS 'staging:private';
 COMMENT ON TABLE llm_usage              IS 'staging:private';
 COMMENT ON TABLE notifications          IS 'staging:private';
 COMMENT ON TABLE app_secrets            IS 'staging:private';
+-- `mail_deliveries` is tagged too, but its COMMENT lives beside its
+-- CREATE TABLE further down this file — the table doesn't exist yet at
+-- this point, and a COMMENT ON a missing table aborts the whole re-apply.
 
 -- Column-level on `users`: rows survive cloning so FK-targeted
 -- attribution (chat_messages.user_id, apps.created_by, …) keeps
@@ -3596,6 +3638,13 @@ CREATE TABLE IF NOT EXISTS mobile_auth_tokens (
 );
 CREATE INDEX IF NOT EXISTS idx_mobile_auth_tokens_user ON mobile_auth_tokens (user_id);
 
+-- Mobile push notifications — sender identity, registrations, deliveries (#844)
+--
+-- This header also bounds the topochain block above for
+-- tests/topochain-schema.test.js: the four mobile_push_* tables below are
+-- NOT part of the SPEC §3.4 topochain migration and must not count toward
+-- its 22-table pin.
+
 -- Database-owned sender identity and activation boundary. Same-identity sender
 -- restarts retain this cutoff so queued work survives ordinary deployments.
 -- Initial activation, re-enabling, and deployment identity changes establish
@@ -3907,6 +3956,60 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_waitlist_signups_more_token
   ON waitlist_signups (more_token) WHERE more_token IS NOT NULL;
 COMMENT ON COLUMN waitlist_signups.more_token IS 'staging:private';
 
+-- Email confirmation. Set the first time the signer follows the confirm
+-- link in their join mail (GET /api/public/waitlist/confirm/:token, which
+-- then lands them on the stage-2 survey). Idempotent — a second visit
+-- keeps the original timestamp. A NULL here after a join means the
+-- address never proved it can receive mail, which is exactly what an
+-- admin wants to see before releasing a row.
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ;
+
+-- Outbound mail log (src/services/mail/). Every send attempt lands here
+-- with its outcome, and it is the ONLY place an operator can see what
+-- happened: the endpoints that trigger mail are always-200 by contract
+-- (SPEC 1667) so they cannot report a delivery failure to the user, and a
+-- non-delivery was historically invisible for exactly that reason.
+--
+-- It is also the throttle's state: src/services/mail/rate-limit.js counts
+-- the `sent` / `skipped_staging` rows for a recipient to cap how much mail
+-- one address can be made to receive, and counts them globally to bound
+-- the provider bill.
+--
+-- `status` is one of:
+--   sent                  delivered to the provider
+--   skipped_staging       rendered to the log by a staging preview
+--   failed                the provider refused or timed out (`error` says)
+--   suppressed_rate_limit the throttle declined it (`error` says why)
+--   no_transport          nothing was configured to send it
+-- `error` holds a bounded provider complaint. It NEVER holds the message
+-- body, so a login code cannot end up in this table.
+CREATE TABLE IF NOT EXISTS mail_deliveries (
+  id         BIGSERIAL PRIMARY KEY,
+  kind       VARCHAR(64) NOT NULL,
+  recipient  VARCHAR(255) NOT NULL,
+  provider   VARCHAR(32),
+  status     VARCHAR(24) NOT NULL,
+  error      TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- The throttle's read path: newest rows for one recipient and kind.
+CREATE INDEX IF NOT EXISTS idx_mail_deliveries_recipient
+  ON mail_deliveries (recipient, kind, created_at DESC);
+-- The global hourly count, the admin card's "recent activity", and the
+-- retention sweep all walk the table by time.
+CREATE INDEX IF NOT EXISTS idx_mail_deliveries_created
+  ON mail_deliveries (created_at DESC);
+-- Staging privacy (see the convention block earlier in this file): a log
+-- of who the platform emailed and when is private user content, so a
+-- staging clone starts empty and gets obviously-fake seed rows instead
+-- (seedStagingPlatformMail in src/db/migrate.js).
+--
+-- Deliberately NOT added to the prod-debug deny lists in
+-- src/services/debug-access.js: this table holds no password, key or
+-- token, and "did that user's login code actually go out" is precisely the
+-- question an admin debugging session needs to be able to answer.
+COMMENT ON TABLE mail_deliveries IS 'staging:private';
+
 -- Access + block-production state on the user. `has_platform_access`
 -- gates the SV platform surfaces (home/social/build) — NOT login-required
 -- child apps, which any account may use (see src/middleware/auth.js).
@@ -4070,13 +4173,20 @@ COMMENT ON TABLE mcp_auth_audit_events IS 'staging:private';
 CREATE INDEX IF NOT EXISTS mcp_auth_audit_events_user_idx
   ON mcp_auth_audit_events (user_id, occurred_at DESC);
 
--- ── Verified GitHub account link ────────────────────────────────────────
+-- ── Verified GitHub account link (IDENTITY ONLY) ────────────────────────
 -- Distinct from the self-declared `users.github` profile string above,
 -- which is unverified display text and must NEVER be used for
--- authorization. These three are written only by the OAuth round-trip in
--- src/services/github-link.js. The token carries `public_repo` and its
--- only privileged use is forking an app repo into the user's own account
--- on their behalf.
+-- authorization. These are written only by the OAuth round-trip in
+-- src/services/github-link.js, which asks GitHub for NO SCOPE: the login
+-- is the whole link, and the platform holds no credential for the user.
+--
+-- github_oauth_token_enc is LEGACY and always NULL. It once held a
+-- `public_repo` token used to fork an app repo into the user's account on
+-- their behalf; that fork is now made by the user's own coding agent.
+-- saveLink writes NULL, and migrate.js's revokeLegacyGithubGrants hands
+-- any pre-existing token back to GitHub and clears it. Kept (rather than
+-- dropped) so a rollback to the previous release cannot hit a missing
+-- column mid-deploy; drop it once every deployment has migrated.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS github_login             VARCHAR(255);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS github_oauth_token_enc   TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS github_linked_at         TIMESTAMPTZ;

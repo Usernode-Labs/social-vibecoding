@@ -192,7 +192,7 @@ function stagingMockIssues(repoUrl) {
     // staging-attributes block in GET /github-issues; this number is
     // deliberately absent from that map (as is 900002, which keeps its own
     // unset-dropdown demo).
-    mk(900011, '[Mock] Bare issue — no priority, no category, nobody assigned',
+    mk(900013, '[Mock] Bare issue — no priority, no category, nobody assigned',
       'Staging-only mock issue with NO community-voted attributes, so the '
       + 'card renders with just its icon, title, meta line and one primary '
       + 'action. Compare it against #900001, which has all three chips set.', 6),
@@ -207,6 +207,20 @@ function stagingMockIssues(repoUrl) {
       + 'same way a reporter-captured screenshot attached from the '
       + 'feedback modal does.\n\n'
       + '**Screenshot:**\n![Screenshot](/icons/icon-192.png)', 4),
+    // #1010: the two targets of the applying / retry-pending mock close
+    // proposals below (stagingMockGovernance 9100005 / 9100006), so the
+    // ?demo=1 preview shows the governance card's spinner state AND the
+    // matching "Closing…" state on the target issue's own row.
+    mk(900011, '[Mock] Close vote passed — issue is being closed',
+      'Staging-only mock issue for previewing the #1010 in-progress close '
+      + 'indicator. A mock close proposal for this issue has passed its '
+      + 'vote and its window has just elapsed, so both the governance card '
+      + 'and this row render the "Closing…" spinner state.', 6),
+    mk(900012, '[Mock] Close vote passed a while ago — retry pending',
+      'Staging-only mock issue for previewing the #1010 stalled-apply '
+      + 'state. Its mock close proposal passed long enough ago that the '
+      + 'spinner has timed out, so the card reads "Close pending — will '
+      + 'retry automatically" instead of spinning forever.', 8),
   ];
 }
 
@@ -218,6 +232,7 @@ function stagingMockIssues(repoUrl) {
 function stagingMockGovernance() {
   const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
   const hoursAhead = (h) => new Date(Date.now() + h * 3600 * 1000).toISOString();
+  const secsAgo = (s) => new Date(Date.now() - s * 1000).toISOString();
   const mk = (id, kind, title, payload, hours, up, down, gate = {}) => ({
     id,
     app_id: 0,
@@ -272,6 +287,29 @@ function stagingMockGovernance() {
       qualified_yes_count: 0,
       qualified_no_count: 0,
     },
+    // #1010: the two DERIVED "being applied" states. Both have passed their
+    // gate (up_count >= required, uncontested) with the visibility window
+    // already elapsed — the shape a proposal has in the seconds between the
+    // deciding vote and the apply landing. They differ only in HOW LONG ago
+    // the window ended, which is what selects the state:
+    //   9100005 — 30s ago  → inside the 120s grace → spinner, "Closing issue #900011…"
+    //   9100006 — 10m ago  → past the grace        → "Close pending — will retry automatically"
+    mk(9100005, 'close_issue',
+      '[Mock] Close issue #900011: "Close vote passed — issue is being closed"',
+      {
+        issueNumber: 900011,
+        issueTitle: 'Close vote passed — issue is being closed',
+        reason: 'Fixed by the theme rework — closing.',
+      }, 5, 2, 0,
+      { required: 2, windowEndsAt: secsAgo(30) }),
+    mk(9100006, 'close_issue',
+      '[Mock] Close issue #900012: "Close vote passed a while ago — retry pending"',
+      {
+        issueNumber: 900012,
+        issueTitle: 'Close vote passed a while ago — retry pending',
+        reason: 'Duplicate of an older report.',
+      }, 7, 2, 0,
+      { required: 2, windowEndsAt: secsAgo(600) }),
     // Card-as-pointer revision: a SETTLED governance row. The vote is
     // history, so it renders the frozen pill and — with nothing left to
     // demote — no ⋯ trigger at all. Every other mock here is 'open', so
@@ -280,7 +318,7 @@ function stagingMockGovernance() {
     // stagingMockCompletedCloseIssues in votes.js; this one exercises the
     // gov card renderer's settled branch in the In-review column's shape.)
     {
-      ...mk(9100005, 'close_issue',
+      ...mk(9100007, 'close_issue',
         '[Mock] Settled: closed issue #900003 by vote — pill only, no ⋯',
         {
           issueNumber: 900003,
@@ -874,6 +912,15 @@ function issueRoutes(config) {
         { type: 'governance', ref: issue.id }
       );
 
+      // #1010: broadcast the VOTE before the apply, not after. A deciding
+      // up-vote on a governance proposal runs the whole apply (GitHub close
+      // + comment for close_issue — seconds of latency) inside this request,
+      // and the old ordering held this event behind all of it, so every other
+      // client's tally sat stale for the duration and none of them could
+      // derive the "being applied" state. The apply pushes its own events
+      // when it settles, so this one is purely "a vote landed".
+      pushIssueUpdate({ action: 'voted', appSlug: issue.app_slug, appId: issue.app_id, issueId: issue.id, vote });
+
       let renamed = null;
       let secretChanged = null;
       let issueClosed = null;
@@ -887,8 +934,6 @@ function issueRoutes(config) {
       } else if (vote === 'up' && issue.kind === 'maintenance_campaign') {
         campaignStarted = await maybeApplyMaintenanceCampaignProposal(config, pool, issue);
       }
-
-      pushIssueUpdate({ action: 'voted', appSlug: issue.app_slug, appId: issue.app_id, issueId: issue.id, vote });
 
       res.json({ ok: true, renamed, secretChanged, issueClosed, campaignStarted });
     } catch (err) {
@@ -2599,6 +2644,26 @@ async function maybeApplyCloseIssueProposal(pool, issue, options = {}) {
   }
 
   // ---- Side effects: best-effort, outside the txn. ----
+
+  // #1010: announce the decision the moment it is DURABLE, ahead of the
+  // bounty/chat/GitHub tail below. Two reasons the old single broadcast at
+  // the very end wasn't enough: (1) it sat behind the GitHub close+comment
+  // round-trips, so every open card kept rendering the proposal as live for
+  // seconds after it was decided, and (2) it lived inside the
+  // `github.isEnabled() && parsed` branch — an app with GitHub off or an
+  // unparsable repo_url got NO event at all and its cards lingered until a
+  // manual reload. Same event shape the withdraw path emits, so clients need
+  // no new handling; the trailing `github_synced` push stays where it is
+  // (it additionally means "the open-issues cache is now correct").
+  try {
+    pushIssueUpdate({
+      action: 'closed', appSlug, appId: issue.app_id, issueId: locked.id,
+    });
+  } catch (err) {
+    log.warn('issues', 'Close-issue applied broadcast failed', {
+      issueId: locked.id, err: err.message,
+    });
+  }
 
   // Void open bounties on the target: the issue is closing without a merged
   // PR, so no one earns the kudos — and an 'open' row would linger forever

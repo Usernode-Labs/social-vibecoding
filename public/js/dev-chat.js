@@ -3982,6 +3982,25 @@ const DevChat = {
     'Fix something that\'s broken',
   ],
 
+  // #1001: the starters above are the ONE pill set that is legitimately
+  // generic — there is no conversation yet to be specific about. But a
+  // session started from an issue row's "start work" button already knows
+  // what it is for, so lead with that issue instead of the open-issues
+  // question. Everything after it stays as-is.
+  //
+  // created_from_issue_number comes from the session list (see the SELECT in
+  // routes/sessions.js); absent on the generic "+ New chat" path and on
+  // every session that predates its serialization, both of which fall
+  // through to the plain starters.
+  _starterQuickReplies() {
+    var s = DevChat.currentSession;
+    var n = s && s.created_from_issue_number;
+    if (!Number.isInteger(n)) return DevChat.STARTER_QUICK_REPLIES;
+    return ['What does issue #' + n + ' ask for?'].concat(
+      DevChat.STARTER_QUICK_REPLIES.slice(1)
+    );
+  },
+
   // #894: last-resort defaults for a session whose newest reply carries no
   // pills. The server now guarantees pills on every turn-end path, so this
   // only fires for rows that PREDATE that guarantee (an old chat reopened)
@@ -4061,9 +4080,18 @@ const DevChat = {
     }
     // A brand-new session (nothing but status rows, if anything) keeps the
     // generic starters so the affordance is present from the first screen.
-    if (!sawNonSystem) return DevChat.STARTER_QUICK_REPLIES;
+    if (!sawNonSystem) return DevChat._starterQuickReplies();
     if (!lastConvoRow || lastConvoRow.role !== 'assistant') return null;
     if (Array.isArray(lastConvoRow.suggestions) && lastConvoRow.suggestions.length) return null;
+    // #1001: reaching here means the newest reply carried no pills at all,
+    // which the server now prevents on every live turn-end path. So this is
+    // a genuinely exceptional row (one predating the guarantee, or a path it
+    // somehow missed) and worth a breadcrumb for whoever investigates.
+    try {
+      console.debug('[dev-chat] pill row fell through to the client default', {
+        sessionId: DevChat.currentSession && DevChat.currentSession.id,
+      });
+    } catch (e) {}
     return DevChat._fallbackQuickReplies();
   },
 
@@ -6721,6 +6749,16 @@ const DevChat = {
       ? `<button class="dc-spec-action-btn" disabled title="No spec version to share yet">Share to group</button>`
       : `<button id="dc-spec-viewer-share" class="dc-spec-action-btn" ${alreadyShared ? 'disabled' : ''} title="${alreadyShared ? 'Already shared to group chat' : 'Post a card linking to this spec in the group chat'}">${alreadyShared ? 'Shared' : 'Share to group'}</button>`;
 
+    // (#1012) Copy the WHOLE selected version as raw markdown — both
+    // halves and the marker headings, regardless of which tab is open
+    // (see the click handler below). Disabled with the same posture as
+    // the share buttons while there is nothing to copy; the lazy
+    // frozen-version fetch at the bottom of this method re-renders and
+    // enables it once older content lands.
+    const copyBtnHtml = isEmpty
+      ? `<button class="dc-spec-action-btn dc-spec-copy-btn" disabled title="No spec to copy yet">Copy markdown</button>`
+      : `<button id="dc-spec-viewer-copy" class="dc-spec-action-btn dc-spec-copy-btn" title="Copy the whole spec (both sections) as markdown">Copy markdown</button>`;
+
     // (#86) Private share: send this version to ONE person, who gets a
     // notification deep-linking to the read-only spec panel. Repeatable
     // (no alreadyShared disabling — the owner can share with several
@@ -6779,6 +6817,7 @@ const DevChat = {
         <select id="dc-spec-viewer-version" class="text-xs rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1" ${hasVersions ? '' : 'disabled'}>
           ${hasVersions ? versionOptions : '<option>No versions yet</option>'}
         </select>
+        ${copyBtnHtml}
         ${shareUserBtnHtml}
         ${shareBtnHtml}
         <button id="dc-spec-viewer-close" class="dc-spec-viewer-close" aria-label="Close spec viewer">×</button>
@@ -6804,6 +6843,24 @@ const DevChat = {
 
     const closeBtn = pane.querySelector('#dc-spec-viewer-close');
     if (closeBtn) closeBtn.addEventListener('click', () => DevChat.closeSpecViewer());
+
+    // (#1012) Copy the ENTIRE document: displayContent is the raw
+    // markdown of the selected version, so the copy deliberately ignores
+    // `split` and `activeTab` — "copy the whole thing" means both halves
+    // plus their marker headings, verbatim, with nothing added.
+    // The label flash is fire-and-forget: a spec_updated re-render can
+    // replace this button mid-flash, leaving the restore timer pointed at
+    // a detached node. Harmless (the fresh button renders with the
+    // default label), so it needs no bookkeeping.
+    const copyBtn = pane.querySelector('#dc-spec-viewer-copy');
+    if (copyBtn) {
+      copyBtn.addEventListener('click', async () => {
+        const ok = await PlatformUI.copyText(displayContent);
+        copyBtn.textContent = ok ? 'Copied!' : 'Copy failed';
+        if (!ok) PlatformUI.toast('Couldn\'t copy — select the text and copy it manually');
+        setTimeout(() => { copyBtn.textContent = 'Copy markdown'; }, 1500);
+      });
+    }
 
     const shareBtn = pane.querySelector('#dc-spec-viewer-share');
     if (shareBtn && selectedVersion) shareBtn.addEventListener('click', () => DevChat._shareSpecVersion(selectedVersion.version));

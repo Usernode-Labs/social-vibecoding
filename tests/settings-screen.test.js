@@ -657,7 +657,9 @@ test('the usernode read is retried once on readiness and never leaks a listener'
   const close = settingsJs.slice(settingsJs.indexOf('    close() {'));
   assert.match(close.slice(0, 500), /_clearUsernodeAuthStatusRetry\(\)/,
     'leaving Settings stops listening');
-  const open = settingsJs.slice(settingsJs.indexOf('    open(section) {'));
+  const openIdx = settingsJs.indexOf('    open(section, opts) {');
+  assert.ok(openIdx >= 0, 'Settings.open(section, opts) exists');
+  const open = settingsJs.slice(openIdx);
   assert.match(open.slice(0, 900), /_usernodeAuthRetryUsed = false/,
     'the one re-attempt is offered again on the next visit');
 });

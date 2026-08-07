@@ -215,8 +215,11 @@ test('#816 staging previews get explicit, env-overridable resourcing', () => {
   try {
     // Previews used to inherit the production-app defaults by omission,
     // which capped them at half a core while the post-build checks run was
-    // driving a headless browser against them.
-    assert.equal(docker.STAGING_CPUS, '1', 'a full core ceiling, not 0.5');
+    // driving a headless browser against them. #1019 raised it again: the
+    // checks run now drives up to eight pages CONCURRENTLY at this one
+    // preview, so a one-core ceiling makes every check look slow enough to
+    // trip its own timeout.
+    assert.equal(docker.STAGING_CPUS, '2', 'two cores, for a parallel checks run');
     assert.equal(docker.STAGING_MEMORY, '256m', 'memory was never the constraint');
   } finally {
     restore();

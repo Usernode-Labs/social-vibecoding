@@ -315,6 +315,16 @@ function load() {
     // How often the stale-PR / archived-GC sweeper runs. These actions
     // are day-scale, so it polls infrequently. Default 1h.
     staleSweepIntervalMs: parseInt(process.env.STALE_SWEEP_INTERVAL_MS || String(60 * 60 * 1000), 10),
+    // #1010: how often the FAST governance-apply ticker runs. The hourly
+    // sweeper above also applies window-elapsed governance proposals, but an
+    // hour of dead air after a close proposal's countdown reaches zero is
+    // exactly the "did my vote do anything?" confusion this ticker removes —
+    // and it is what makes the client's derived "Closing issue…" spinner
+    // honest rather than a promise nothing keeps. Deliberately gate-first and
+    // DB-only (no GitHub traffic for rows that aren't ready), and on its own
+    // knob so it can't be silently disabled along with the stale-PR sweeper.
+    // Default 60s; set to 0 to disable (the hourly catch-all still runs).
+    governanceApplyTickMs: parseInt(process.env.GOVERNANCE_APPLY_TICK_MS || String(60 * 1000), 10),
     // Demand-driven global-cap eviction. When a new session is needed but
     // the platform is at maxGlobalSessions, we pause the globally least-
     // recently-active session that has been idle longer than this grace
@@ -408,19 +418,30 @@ function load() {
     mobilePushEnvironment: process.env.PUSH_ENV || '',
     firebaseProjectId: process.env.FIREBASE_PROJECT_ID || '',
     firebaseServiceAccountJsonB64: process.env.FIREBASE_SERVICE_ACCOUNT_JSON_B64 || '',
-    // Topochain outbound mail. `mailer.js` has always had a transport hook
-    // (`config.topochainMailTransport`) and nothing ever filled it, so BOTH
-    // its callers — the shell's email login codes and the onboarding
-    // waitlist confirmation — generated a message and dropped it while
-    // still reporting success to the user. This wires the one transport
-    // (src/services/topochain/mail-transport.js) behind that same hook.
+    // Platform outbound mail (login codes, waitlist confirmations,
+    // waitlist release notices). src/services/mail/select.js picks the
+    // transport once, here, from platform_env: Gmail API, a generic HTTP
+    // mail API, or the log transport — and ALWAYS the log transport in a
+    // staging preview, which is a clone of production data and must never
+    // mail real people from an unvoted branch.
     //
-    // Null when unconfigured, which preserves mailer.js's existing
-    // "no transport configured" branch (loud error in production, code
-    // printed to the log in dev/staging). OPTIONAL and NOT in REQUIRED,
-    // like the three keys above: unset must not block boot.
-    topochainMailTransport: require('./services/topochain/mail-transport')
-      .create(process.env),
+    // `mailTransport` is null when nothing can send, which is what makes
+    // the mailer's loud "NOT delivered" error fire instead of a boot
+    // failure: every key below is OPTIONAL and NOT in REQUIRED, because a
+    // deploy without mail configured must still come up.
+    ...(() => {
+      const chosen = require('./services/mail/select').chooseTransport(process.env);
+      return {
+        mailTransport: chosen.transport,
+        mailProvider: chosen.provider,
+        mailFrom: chosen.from,
+        mailStagingLogOnly: chosen.stagingLogOnly,
+        mailMaxPerHour: Number(process.env.PLATFORM_MAIL_MAX_PER_HOUR) || 0,
+        // The original hook name. Kept as an alias so any caller (or test)
+        // that still reads `config.topochainMailTransport` keeps working.
+        topochainMailTransport: chosen.transport,
+      };
+    })(),
   };
 
   console.log('[config] Loaded:');
@@ -498,9 +519,9 @@ function load() {
   console.log(`  MOBILE_PUSH=${config.mobilePushEnabled ? 'enabled' : 'disabled'} PUSH_ENV=${config.mobilePushEnvironment || '(not set)'}`);
   console.log(`  FIREBASE_PROJECT_ID=${config.firebaseProjectId || '(not set)'}`);
   console.log(`  FIREBASE_SERVICE_ACCOUNT=${config.firebaseServiceAccountJsonB64 ? '(set)' : '(not set)'}`);
-  console.log(`  TOPOCHAIN_MAIL=${config.topochainMailTransport
-    ? 'configured'
-    : '(not set — OTP login codes and waitlist confirmations are NOT delivered)'}`);
+  console.log(`  PLATFORM_MAIL=${config.mailTransport
+    ? `${config.mailProvider}${config.mailStagingLogOnly ? ' (staging — rendered to the log, never delivered)' : ''} from=${config.mailFrom}`
+    : '(no provider configured — OTP login codes and waitlist confirmations are NOT delivered)'}`);
 
   return config;
 }

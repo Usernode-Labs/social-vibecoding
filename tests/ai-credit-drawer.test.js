@@ -72,7 +72,10 @@ test('the budget row carries no global spend or cap', () => {
 });
 
 test('the pill carries the class hook the dapp.json check asserts on', () => {
-  assert.match(creditJs, /ai-budget-pill/, '#ai-budget-slot pill has a stable hook class');
+  // The sidebar reorg (#913) renamed the hook from ai-budget-pill to
+  // ai-budget-meter and updated dapp.json's rendered check to match;
+  // keep this pin aligned with the selector dapp.json asserts on.
+  assert.match(creditJs, /ai-budget-meter/, '#ai-budget-slot meter has a stable hook class');
 });
 
 test('?shot=menu opens the drawer and is not env-gated', () => {

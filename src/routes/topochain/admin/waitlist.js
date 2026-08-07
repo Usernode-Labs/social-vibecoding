@@ -30,6 +30,10 @@ function formatSignup(row) {
     email: row.email,
     submitted_at: iso(row.submitted_at),
     released_at: iso(row.released_at),
+    // NULL after a join means the address never followed the confirm link
+    // in its mail — it was never proved able to receive mail at all, which
+    // is worth seeing before releasing the row.
+    confirmed_at: iso(row.confirmed_at),
     linked_user_id: row.linked_user_id != null ? Number(row.linked_user_id) : null,
     linked_username: row.linked_username ?? null,
     has_platform_access: row.has_platform_access ?? null,
@@ -73,8 +77,8 @@ function waitlistAdminRoutes(config) {
       const total = countRows[0].c;
 
       const { rows } = await pool.query(
-        `SELECT w.id, w.email, w.submitted_at, w.released_at, w.linked_user_id,
-                w.answers,
+        `SELECT w.id, w.email, w.submitted_at, w.released_at, w.confirmed_at,
+                w.linked_user_id, w.answers,
                 u.username AS linked_username, u.has_platform_access
            FROM waitlist_signups w
            LEFT JOIN users u ON u.id = w.linked_user_id

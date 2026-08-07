@@ -13,10 +13,12 @@
 //      picker. submit_work reaches pr-import from a loop that a model can
 //      run, so it has to apply the same bound the browser's promote path
 //      applies — otherwise the connector becomes the way around it.
-//   2. Rate bounds on the fork/branch plumbing itself: forks are writes to
-//      the user's own GitHub account made with the user's own token, and a
-//      confused model retrying prepare_work must not turn into a fork storm
-//      or an unbounded pile of dead reservations.
+//   2. Rate bounds on prepare_work itself. It no longer writes anything to
+//      GitHub — the user's own coding agent makes the fork and the branch —
+//      but a confused model retrying it still mints task rows, each of which
+//      is a work order somebody may act on, so a loop must not turn into an
+//      unbounded pile of dead reservations (or of forks, one step
+//      downstream). The key keeps its old name to avoid churn.
 //   3. Bounds on the platform-build fallback, which spends the platform's
 //      own credits (the primary path spends the user's coding-agent
 //      subscription instead).
@@ -34,7 +36,7 @@ const { effectiveSessionCaps } = require('./session-caps');
 // working".
 const LIMITS = Object.freeze({
   proposalsPerDay: 5,      // connector-authored proposals per user per 24h
-  forksPerHour: 3,         // prepare_work reservations per user per hour
+  forksPerHour: 3,         // prepare_work work orders per user per hour
   openTasks: 10,           // un-submitted work orders held at once
   fallbackInFlight: 2,     // platform builds running at once
   fallbackPerDay: 10,      // platform builds started per user per 24h

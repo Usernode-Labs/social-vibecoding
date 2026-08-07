@@ -20,7 +20,9 @@ const CACHE_TTL_MS = 30 * 60 * 1000;
 const GITHUB_USER_AGENT = 'usernode-platform';
 
 // Headers for the read-only public fetch paths (fetchPublicIssues,
-// fetchPublicIssue, fetchIssueComments). When the bot PAT is configured
+// fetchPublicIssue, fetchIssueComments, and — exported as
+// `publicApiHeaders` — the connector's fork inspection in
+// services/external-agent-tasks). When the bot PAT is configured
 // these requests authenticate as the bot — 5,000 req/hr on the token —
 // instead of burning the per-IP ANONYMOUS 60 req/hr budget, which is
 // shared by every app on the host and was routinely exhausted in prod
@@ -2041,6 +2043,10 @@ module.exports = {
   verifyBotAccess,
   checkRepoPublic,
   fetchPublicRepoInfo,
+  // The header builder for read-only PUBLIC GitHub reads, exported so other
+  // services (services/external-agent-tasks) inherit the bot-PAT-when-present
+  // rate-limit posture instead of re-implementing it anonymously.
+  publicApiHeaders: publicFetchHeaders,
   fetchPublicIssues,
   fetchPublicIssue,
   fetchIssueComments,

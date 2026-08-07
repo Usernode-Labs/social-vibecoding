@@ -172,6 +172,12 @@
       "description": "How often the stale-proposal sweeper runs."
     },
     {
+      "key": "GOVERNANCE_APPLY_TICK_MS",
+      "group": "Proposals & retention",
+      "default": "60000",
+      "description": "How often the fast governance-apply ticker applies vote-passed rename / env-var / close-issue / campaign proposals whose merge window has elapsed. Set to 0 to disable it (the hourly stale-proposal sweeper still applies them)."
+    },
+    {
       "key": "CERT_WARM_TIMEOUT_MS",
       "group": "TLS",
       "default": "15000",
@@ -263,20 +269,55 @@
       "description": "Complete Firebase Admin service-account JSON encoded as base64 on one line. Required only while MOBILE_PUSH_ENABLED is true; never forwarded to child apps."
     },
     {
+      "key": "PLATFORM_MAIL_PROVIDER",
+      "group": "Platform mail",
+      "default": "auto",
+      "description": "Which transport sends platform mail: auto (default), gmail, http, or log. auto tries Gmail, then the generic HTTP API, and in production sends nothing rather than printing login codes into the log. Naming a provider explicitly means a missing key is reported as broken, not silently downgraded. A staging preview ALWAYS logs instead of delivering, whatever this says."
+    },
+    {
+      "key": "PLATFORM_MAIL_FROM",
+      "group": "Platform mail",
+      "default": "Usernode <no-reply@usernodelabs.org>",
+      "description": "The From address on every platform mail. Defaults to Usernode <no-reply@usernodelabs.org>, which is the single sender for all platform mail, so a fresh deploy needs no edit here. The mailbox behind GMAIL_OAUTH_* must be authorised to send as this address (a Workspace alias or a 'send mail as' identity) or every send is rejected upstream. Not secret — it is in the header of every mail we send."
+    },
+    {
+      "key": "GMAIL_OAUTH_CLIENT_ID",
+      "group": "Platform mail",
+      "description": "OAuth2 client ID of the Google Cloud 'Desktop app' credential used to send platform mail through the Gmail API. All three GMAIL_OAUTH_* keys must be set together — a partial config sends nothing. Unset never blocks boot: the mail flows still report success while delivering nothing, which is why Admin → Topochain → Settings shows an explicit mail card."
+    },
+    {
+      "key": "GMAIL_OAUTH_CLIENT_SECRET",
+      "group": "Platform mail",
+      "private": true,
+      "description": "OAuth2 client secret paired with GMAIL_OAUTH_CLIENT_ID. Private: encrypted at rest and never returned by any API."
+    },
+    {
+      "key": "GMAIL_OAUTH_REFRESH_TOKEN",
+      "group": "Platform mail",
+      "private": true,
+      "description": "Long-lived refresh token minted once for the sending mailbox with the https://www.googleapis.com/auth/gmail.send scope. Private: it can send mail as your domain indefinitely, so it is encrypted at rest and never returned by any API. Note the platform-variable value constraints (src/services/platform-env.js): no single quote, no CR, no NUL, 8192 characters max."
+    },
+    {
+      "key": "PLATFORM_MAIL_MAX_PER_HOUR",
+      "group": "Platform mail",
+      "default": "300",
+      "description": "Global ceiling on outbound mail per rolling hour, across all recipients and kinds. Bounds the provider bill and the sender-reputation damage from a runaway loop or an abusive burst; per-recipient caps (5 login codes/hour, 1 waitlist confirmation/day) are fixed in code. Sends over the ceiling are recorded as suppressed_rate_limit and visible in the admin mail card."
+    },
+    {
       "key": "TOPOCHAIN_MAIL_API_URL",
-      "group": "Topochain mail",
-      "description": "HTTPS send endpoint of the mail provider (Resend: https://api.resend.com/emails). POSTed as JSON with a bearer token; body shape lives in src/services/topochain/mail-transport.js. All three TOPOCHAIN_MAIL_* keys must be set together — a partial config sends nothing. Unset never blocks boot: both mail flows still report success while delivering nothing. See Admin → Topochain → Settings."
+      "group": "Platform mail",
+      "description": "HTTPS send endpoint for the generic HTTP mail provider — used when PLATFORM_MAIL_PROVIDER is http, or when auto finds no Gmail config (Resend: https://api.resend.com/emails). POSTed as JSON with a bearer token; body shape lives in src/services/mail/transports/http-api.js. All three TOPOCHAIN_MAIL_* keys must be set together — a partial config sends nothing."
     },
     {
       "key": "TOPOCHAIN_MAIL_API_KEY",
-      "group": "Topochain mail",
+      "group": "Platform mail",
       "private": true,
-      "description": "Bearer credential for TOPOCHAIN_MAIL_API_URL. Private: it can send mail as your domain, so it is encrypted at rest and never returned by any API. Unset means mobile email-login codes and onboarding waitlist confirmations are generated and dropped."
+      "description": "Bearer credential for TOPOCHAIN_MAIL_API_URL. Private: it can send mail as your domain, so it is encrypted at rest and never returned by any API. Only used by the http transport — one of several providers."
     },
     {
       "key": "TOPOCHAIN_MAIL_FROM",
-      "group": "Topochain mail",
-      "description": "Envelope From address for platform mail, e.g. 'Usernode <no-reply@usernodelabs.org>'. Must be a sender the provider has verified for your domain or every send is rejected upstream. Not secret."
+      "group": "Platform mail",
+      "description": "Legacy sender address, kept as a fallback for deploys configured before PLATFORM_MAIL_FROM existed. Prefer PLATFORM_MAIL_FROM; this is only consulted when that is unset. Not secret."
     },
     {
       "key": "MCP_CONNECTOR_REDIRECT_HOSTS",
@@ -315,6 +356,11 @@
     }
   ],
   "tests": [
+    {
+      "name": "Platform variables panel renders on the platform app (#826 folded into app secrets)",
+      "path": "/?shot=secrets#app/usernode-2d5619/dev",
+      "expectSelector": "#app-secrets-list code"
+    },
     {
       "name": "Profile: an editable identity card above completions that link out (#982)",
       "path": "/#profile",
@@ -399,6 +445,12 @@
       "expectSelector": ".gc-explore-chat-btn[data-proposal-id]"
     },
     {
+      "name": "GitHub linking asks for no repository access, and holds no token",
+      "path": "/?demo=1#settings/connectors",
+      "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #github-link-section #github-link-no-token",
+      "expectText": "no access to your repositories"
+    },
+    {
       "name": "Tapping an app shows its icon and name while it loads, not a blank window (#931)",
       "path": "/?shot=app-launching",
       "expectSelector": "#app-launch-cover .app-icon-tile",
@@ -481,11 +533,6 @@
       "name": "App tiles carry no user count and no status dot",
       "path": "/?demo=1",
       "expectSelector": "#app-list .app-card:not(:has(.users-badge)):not(:has(.status-dot))"
-    },
-    {
-      "name": "Platform variables panel renders on the platform app (#826 folded into app secrets)",
-      "path": "/?shot=secrets#app/usernode-2d5619/dev",
-      "expectSelector": "#app-secrets-list code"
     },
     {
       "name": "Browse renders app-store rows with an Add button (no \"…\" menu)",
@@ -588,6 +635,24 @@
       "path": "/#app/usernode-2d5619/dev/sessions/900802",
       "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
       "expectText": "Revise the spec"
+    },
+    {
+      "name": "Assistant-authored pills name the change (#1001)",
+      "path": "/#app/usernode-2d5619/dev/sessions/900805",
+      "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
+      "expectText": "Preview the Season 1 default"
+    },
+    {
+      "name": "Pills from a forced retry render identically (#1001)",
+      "path": "/#app/usernode-2d5619/dev/sessions/900806",
+      "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
+      "expectText": "Build the avatar upload flow"
+    },
+    {
+      "name": "A wrap-up's pills supersede the dispatch preamble's (#1001)",
+      "path": "/#app/usernode-2d5619/dev/sessions/900807",
+      "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
+      "expectText": "Preview the half-height rows"
     },
     {
       "name": "An interrupted turn's tail finishes itself: Changes-ready card lands",
@@ -769,6 +834,17 @@
       "expectSelector": "#pu-l4"
     },
     {
+      "name": "Email delivery section renders the configuration status",
+      "path": "/#admin/mail",
+      "expectSelector": "#admin-mail-status"
+    },
+    {
+      "name": "Email delivery section offers a test send and the delivery ledger",
+      "path": "/#admin/mail",
+      "expectSelector": "#admin-mail-send, #admin-mail-activity",
+      "expectText": "Recent email activity"
+    },
+    {
       "name": "Estimator accuracy section renders",
       "path": "/?demo=1#admin/estimator",
       "expectSelector": "#admin-estimator-root #admin-estimator-card"
@@ -850,6 +926,23 @@
       "name": "Explicit-approval proposal still shows the rejection countdown (#788)",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000032",
       "expectSelector": ".gc-reject-countdown"
+    },
+    {
+      "name": "A passed close proposal whose window elapsed shows the closing spinner (#1010)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "[data-gov-row='9100005'] .gc-merging-badge .dc-status-spinner-arc",
+      "expectText": "Closing issue #900011"
+    },
+    {
+      "name": "A long-stalled close proposal degrades to the retry copy, no spinner (#1010)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "[data-gov-row='9100006'] .gc-checks-running-badge",
+      "expectText": "Close pending — will retry automatically"
+    },
+    {
+      "name": "The closing state also renders on the proposal's own discussion page (#1010)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100005",
+      "expectSelector": "#gc-thread-head [data-gov-row='9100005'] .gc-merging-badge .dc-status-spinner-arc"
     },
     {
       "name": "App-admins section ships in the Members modal (#788)",
@@ -1464,13 +1557,30 @@
     },
     {
       "name": "Admin App version screen warns when an OS has no active rule",
-      "path": "/#admin/topochain/app-version",
+      "path": "/#admin/seasons/app-version",
       "expectText": "No active version rule"
     },
     {
-      "name": "Admin Topochain settings reports the outbound-mail state",
-      "path": "/#admin/topochain/settings",
+      "name": "Admin Seasons, Events & Challenges settings reports the outbound-mail state",
+      "path": "/#admin/seasons/settings",
       "expectSelector": "#admin-topo-mail-status"
+    },
+    {
+      "name": "Admin Seasons screen lists real seasons from /api/v4/admin/seasons with per-row actions",
+      "path": "/#admin/seasons/seasons",
+      "expectSelector": "[data-season-events]",
+      "expectText": "The top tier"
+    },
+    {
+      "name": "Admin Seasons screen surfaces season events that belong to no season",
+      "path": "/#admin/seasons/seasons",
+      "expectSelector": "#admin-topo-sn-unassigned-go",
+      "expectText": "Events not assigned to a season"
+    },
+    {
+      "name": "Admin Season events screen can filter by season",
+      "path": "/#admin/seasons/season-events",
+      "expectSelector": "#admin-topo-se-season-filter"
     },
     {
       "name": "Native kit: pull-to-refresh builds its clipped puck layer (the puck hangs below the header, never over it)",
@@ -1523,6 +1633,11 @@
       "expectSelector": "#admin-credit-balance"
     },
     {
+      "name": "Admin console renders full width — no capped centered column",
+      "path": "/#admin/analytics",
+      "expectSelector": "#admin-root.w-full:not([class*=\"max-w-\"]):not(.mx-auto)"
+    },
+    {
       "name": "Preview overlay opens on a neutral loading state, not a 20-60s rebuild promise (#816)",
       "path": "/?shot=preview-loading#app/usernode-2d5619/dev",
       "expectSelector": "#staging-overlay:not(.hidden) #staging-loader:not(.hidden) #staging-loader-title",
@@ -1560,6 +1675,18 @@
       "path": "/?demo=1#settings/connectors",
       "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connectors-section:not(.hidden) #connector-url",
       "expectText": "Claude — claude.ai"
+    },
+    {
+      "name": "Offline: the signed-in shell keeps a visible offline strip above everything (#1021)",
+      "path": "/?shot=offline",
+      "expectSelector": "body.is-offline #offline-banner:not(.hidden)",
+      "expectText": "You're offline — showing saved content"
+    },
+    {
+      "name": "Offline sign-in explains why the form cannot work instead of failing silently (#1021)",
+      "path": "/?shot=offline-signin#login",
+      "expectSelector": "body.is-offline #auth-login-screen:not(.hidden) .offline-only",
+      "expectText": "Signing in needs a connection"
     }
   ],
   "governance": {

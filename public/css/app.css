@@ -4414,6 +4414,14 @@ span.gc-vote-btn-icon { cursor: default; }
   cursor: not-allowed;
 }
 
+/* (#1012) The copy button's label swaps to "Copied!" / "Copy failed" for
+   1.5s. Reserve the wider label's width so the flash can't reflow — or
+   re-wrap, on a phone-width header — the row around it. */
+.dc-spec-copy-btn {
+  min-width: 108px;
+  text-align: center;
+}
+
 /* (#86) "Share to user" popover, anchored under the spec-viewer header. */
 .dc-spec-viewer-header {
   position: relative;
@@ -4723,6 +4731,25 @@ span.gc-vote-btn-icon { cursor: default; }
   flex-shrink: 0;
 }
 .gc-spec-panel-close:hover { color: var(--text-primary, #e4e4e7); }
+
+/* (#1012) "Copy markdown" in the shared-spec panel header. Matches
+   .dc-spec-action-btn so the two spec surfaces read as one family; the
+   min-width reserves room for the "Copy failed" label flash. */
+.gc-spec-panel-copy {
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border, rgba(255,255,255,0.12));
+  background: var(--bg-secondary, #18181b);
+  color: var(--text-primary, #e4e4e7);
+  cursor: pointer;
+  flex-shrink: 0;
+  min-width: 108px;
+  text-align: center;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.gc-spec-panel-copy:hover { border-color: rgb(139 92 246); }
 
 .gc-spec-panel-body {
   flex: 1 1 auto;
@@ -6104,4 +6131,66 @@ html:not(.dark) #admin-node-root {
   #app-viewer-frame {
     transition: none;
   }
+}
+
+/* ── Offline mode: the visible state (#1021) ──────────────────────────
+   `body.is-offline` is toggled by Offline._set() and is the single hook
+   for every offline affordance. Before this, the only signal was an
+   in-flow amber strip that the auth screens — `fixed inset-0 z-40`,
+   fully opaque — painted straight over, so the exact moment a user most
+   needed to know they were offline (staring at a sign-in form that
+   cannot possibly succeed) was the one moment the strip was invisible. */
+
+/* Height of the strip's text row; body reserves exactly this much so the
+   shell below is not covered. The strip's own safe-area padding then
+   lands on the header's safe-area extension — background over
+   background, no content hidden — instead of shifting the whole shell. */
+body.is-offline {
+  --offline-strip-h: 1.75rem;
+  padding-top: var(--offline-strip-h);
+}
+
+body.is-offline #offline-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  /* Above the auth overlays (z-40) AND the drawer panel (z-50). */
+  z-index: 60;
+  padding-top: calc(var(--platform-safe-top) + 0.375rem);
+  padding-bottom: 0.375rem;
+  /* Opaque: it now floats over content instead of displacing it, and a
+     translucent amber wash over a scrolling form is unreadable. */
+  background-color: #fef3c7;
+  color: #92400e;
+}
+/* darkMode: 'class' — the flag lives on <html> (see theme.js). */
+.dark body.is-offline #offline-banner {
+  background-color: #451a03;
+  color: #fcd34d;
+}
+
+/* The auth screens' corner Back link is pinned with an inline `top`, so
+   clearing the strip needs the override. */
+body.is-offline [data-auth-back] {
+  top: calc(env(safe-area-inset-top, 0px) + 1rem + var(--offline-strip-h)) !important;
+}
+
+/* Blocks that exist only to explain the offline state. Hidden — and
+   inert — the rest of the time. */
+.offline-only {
+  display: none;
+}
+body.is-offline .offline-only {
+  display: block;
+}
+
+/* Controls that cannot work without a network. Greyed and click-through-
+   proof rather than removed, so the form the user already knows stays
+   where they expect it and the reason is obvious. The submit handlers
+   guard independently (auth-screens.js) — this is the visible half. */
+body.is-offline [data-offline-disabled] {
+  opacity: 0.45;
+  pointer-events: none;
+  cursor: not-allowed;
 }
