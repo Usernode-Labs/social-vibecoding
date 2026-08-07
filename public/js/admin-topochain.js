@@ -24,11 +24,12 @@
 // user-facing copy and routing only.
 //
 // LAYOUT: the eleven subsections are grouped into four labelled clusters
-// (SUB_GROUPS below). At md+ the groups render as a single strip of
-// labelled clusters; below md they become a two-level list — level 1 is
-// the four groups, level 2 is one group's subsections — mirroring
-// admin-console.js's own mobile hierarchy so the two feel like one
-// console. Every screen renders through the shared _list() renderer (a
+// (SUB_GROUPS below). At md+ the groups render as a vertical sub-menu on
+// the left of the screen — the same sidebar idiom as admin-console.js's
+// own desktop nav, one level in; below md they become a two-level list —
+// level 1 is the four groups, level 2 is one group's subsections —
+// mirroring admin-console.js's own mobile hierarchy so the two feel like
+// one console. Every screen renders through the shared _list() renderer (a
 // real table at md+, a card stack below) and the shared
 // _skeleton()/_empty()/_error() helpers, so "loading", "nothing here"
 // and "the request failed" never look alike.
@@ -708,28 +709,31 @@ const AdminTopochain = {
 
   // ── Sub-nav markup ─────────────────────────────────────────────────
 
-  // md+: every group at once, as labelled clusters on one strip. Eleven
-  // equal pills in a sideways-scrolling row gave no sense of which
-  // screens belong together; the headings do that work now.
+  // md+: every group at once, as a vertical sub-menu beside the screen —
+  // the same sidebar idiom as admin-console.js's own desktop nav, one
+  // level in. A horizontal strip of eleven pills (even clustered) fought
+  // the console's vertical menu and ate a band of vertical space on every
+  // screen; a narrow left rail matches the console and keeps the active
+  // screen's position stable while switching.
   _desktopNavHtml() {
     const esc = AdminTopochain.esc;
     const active = AdminTopochain._sub;
     const clusters = AdminTopochain.SUB_GROUPS.map((g) => {
-      const pills = g.subs.map((key) => {
+      const items = g.subs.map((key) => {
         const isActive = key === active;
-        const cls = 'admin-topo-tab shrink-0 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors '
+        const cls = 'admin-topo-tab flex w-full items-center min-h-[36px] px-3 py-1.5 text-left text-sm font-medium rounded-lg transition-colors '
           + (isActive
             ? 'bg-violet-600/10 text-violet-600 dark:text-violet-400'
             : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800');
         return `<button type="button" data-topo-sub="${esc(key)}"${isActive ? ' aria-current="page"' : ''} class="${cls}">${esc(AdminTopochain._labelOf(key))}</button>`;
       }).join('');
-      return `<div class="min-w-0">
+      return `<div>
         <p class="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">${esc(g.label)}</p>
-        <div class="flex flex-wrap items-center gap-1">${pills}</div>
+        <div class="space-y-0.5">${items}</div>
       </div>`;
     }).join('');
     return `<nav aria-label="Seasons, events and challenges sections"
-      class="hidden md:flex flex-wrap items-start gap-x-6 gap-y-3 mb-5 pb-4 border-b border-zinc-200 dark:border-zinc-800">${clusters}</nav>`;
+      class="hidden md:flex md:w-48 lg:w-52 shrink-0 flex-col gap-5">${clusters}</nav>`;
   },
 
   // Below md: the same two-level hierarchy the console itself uses —
@@ -783,9 +787,11 @@ const AdminTopochain = {
     // breakpoint-scoped hide rather than dropping the node.
     const contentCls = AdminTopochain._navLevel === 1 ? 'hidden md:block' : '';
     host.innerHTML = `
-      ${AdminTopochain._desktopNavHtml()}
       ${AdminTopochain._mobileNavHtml()}
-      <div id="admin-topo-content" class="${contentCls}"></div>`;
+      <div class="md:flex md:items-start md:gap-6">
+        ${AdminTopochain._desktopNavHtml()}
+        <div id="admin-topo-content" class="${contentCls} min-w-0 md:flex-1"></div>
+      </div>`;
     host.querySelectorAll('[data-topo-sub]').forEach((btn) => {
       btn.addEventListener('click', () => AdminTopochain.setSub(btn.dataset.topoSub));
     });
