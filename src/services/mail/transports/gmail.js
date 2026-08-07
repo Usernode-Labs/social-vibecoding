@@ -201,7 +201,19 @@ function create(env, { sender = null, fetchImpl = null } = {}) {
         body: JSON.stringify({ raw }),
         signal: controller.signal,
       });
-      if (res.ok) return { ok: true, status: res.status };
+      if (res.ok) {
+        // Gmail answers a successful send with the created message's
+        // { id, threadId }. Nothing depends on it — a send is successful
+        // either way — but the admin console shows it as the provider's
+        // own receipt for a test, so parse it best-effort and never let a
+        // surprising body turn a delivered mail into a failure.
+        const body = await res.text().catch(() => '');
+        let id = null;
+        try {
+          id = (JSON.parse(body) || {}).id || null;
+        } catch { /* not JSON: no receipt, still sent */ }
+        return { ok: true, status: res.status, id: id ? String(id).slice(0, 128) : null };
+      }
       const detail = await res.text().catch(() => '');
       return { ok: false, status: res.status, detail: detail.slice(0, 200) };
     } finally {
@@ -241,6 +253,9 @@ function create(env, { sender = null, fetchImpl = null } = {}) {
         // never logged — only the provider's own bounded complaint.
         throw new Error(`HTTP ${result.status}: ${result.detail || ''}`);
       }
+
+      // Optional detail. send() ignores it; sendTest() surfaces it.
+      return result.id ? { providerMessageId: result.id } : undefined;
     },
   };
 }

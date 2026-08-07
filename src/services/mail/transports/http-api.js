@@ -97,6 +97,15 @@ function create(env, { sender = null } = {}) {
           const detail = await res.text().catch(() => '');
           throw new Error(`HTTP ${res.status}: ${detail.slice(0, 200)}`);
         }
+        // Most providers answer with { id: "..." }. Optional detail:
+        // send() ignores it, sendTest() shows it as the provider's own
+        // receipt. A non-JSON success body is still a success.
+        const body = await res.text().catch(() => '');
+        try {
+          const id = (JSON.parse(body) || {}).id;
+          if (id) return { providerMessageId: String(id).slice(0, 128) };
+        } catch { /* not JSON: no receipt, still sent */ }
+        return undefined;
       } finally {
         clearTimeout(timer);
       }

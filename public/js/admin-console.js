@@ -126,6 +126,11 @@ const AdminConsole = {
     // above — that one is "Submitted features" (user feature requests).
     { key: 'featured-apps', label: 'Featured apps', group: 'Platform' },
     { key: 'db-export', label: 'Database export', group: 'Platform' },
+    // Platform outbound mail: configuration, a test send, and the
+    // delivery ledger. Separate from Topochain → Settings (which keeps
+    // its own read-only status/activity card) because the audience is
+    // every mail flow, not the Topochain ones.
+    { key: 'mail', label: 'Email delivery', group: 'Platform' },
     // Topochain (Task 15, migration plan Global Constraint #8): ONE
     // section, its own sub-nav under #admin/topochain/<sub> — see
     // SECTION_MODULES below and public/js/admin-topochain.js,
@@ -616,6 +621,7 @@ const AdminConsole = {
     gallery: 'AdminGallery',
     campaigns: 'AdminCampaigns',
     topochain: 'AdminTopochain',
+    mail: 'AdminMail',
   },
 
   // Stop the outgoing section's background work before its DOM is replaced.

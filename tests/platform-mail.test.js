@@ -373,6 +373,10 @@ test('every kind renders subject, text and html with no leaked undefined', () =>
     otp: { code: '123456' },
     waitlist_joined: { url: 'https://x.invalid/#more/aa', confirmUrl: 'https://x.invalid/c/aa' },
     waitlist_released: { url: 'https://x.invalid/#login', hasAccount: true },
+    admin_test: {
+      provider: 'gmail', from: 'Usernode <no-reply@x.invalid>',
+      sentAt: '2026-01-01T00:00:00.000Z', reference: 'abcd1234',
+    },
   };
   for (const kind of templates.KINDS) {
     const m = templates.buildMessage(kind, payloads[kind]);
@@ -667,7 +671,8 @@ test('the staging mail fixture only writes when USERNODE_ENV=staging', async () 
     process.env.USERNODE_ENV = 'staging';
     await seedStagingPlatformMail(pool);
     const inserts = seen.filter((s) => /INSERT INTO mail_deliveries/.test(s));
-    assert.equal(inserts.length, 5, 'one row per status the card renders');
+    assert.equal(inserts.length, 8,
+      'one row per status the card renders, plus three admin_test rows');
     for (const sql of inserts) {
       assert.match(sql, /WHERE NOT EXISTS/, 'a re-boot must not grow the table');
     }
@@ -698,4 +703,129 @@ test('config exposes the resolved transport under both names', () => {
   assert.match(src, /mailTransport: chosen\.transport/);
   assert.match(src, /topochainMailTransport: chosen\.transport/);
   assert.match(src, /PLATFORM_MAIL=/, 'boot must say which provider is live');
+});
+
+// ─── sendTest: the diagnostic sibling ───────────────────────────────────
+//
+// send() must stay silent about what happened (SPEC 1667). sendTest() must
+// say exactly what happened. These pin the difference, because the easy
+// mistake — "just add a flag to send()" — would put a checkable return
+// value on the path the unauthenticated OTP endpoint uses.
+
+test('sendTest reports a successful send with provider, from and copy', async () => {
+  const seen = [];
+  const outcome = await mail.sendTest({
+    mailStagingLogOnly: false,
+    mailTransport: {
+      provider: 'gmail',
+      from: 'Usernode <no-reply@x.invalid>',
+      send: async (m) => { seen.push(m); },
+    },
+  }, { to: 'ops@example.invalid' });
+
+  assert.equal(outcome.status, 'sent');
+  assert.equal(outcome.provider, 'gmail');
+  assert.equal(outcome.from, 'Usernode <no-reply@x.invalid>');
+  assert.equal(seen[0].kind, 'admin_test');
+  assert.equal(seen[0].to, 'ops@example.invalid');
+  assert.match(outcome.message.subject, /test email/i);
+  assert.ok(outcome.reference, 'the body and the outcome share a reference id');
+  assert.ok(outcome.message.text.includes(outcome.reference));
+  assert.ok(Number.isFinite(outcome.durationMs));
+});
+
+test('sendTest reports a provider refusal as failed rather than throwing', async () => {
+  const outcome = await mail.sendTest({
+    mailStagingLogOnly: false,
+    mailTransport: {
+      provider: 'gmail',
+      send: async () => { throw new Error('HTTP 401: invalid_grant'); },
+    },
+  }, { to: 'ops@example.invalid' });
+
+  assert.equal(outcome.status, 'failed');
+  assert.match(outcome.error, /invalid_grant/);
+});
+
+test('sendTest reports no_transport instead of pretending to send', async () => {
+  const outcome = await mail.sendTest({}, { to: 'ops@example.invalid' });
+  assert.equal(outcome.status, 'no_transport');
+  assert.match(outcome.error, /No mail transport/);
+});
+
+test('sendTest reports skipped_staging when staging log-only is on', async () => {
+  const outcome = await mail.sendTest({
+    mailStagingLogOnly: true,
+    mailTransport: { provider: 'log', send: async () => {} },
+  }, { to: 'ops@example.invalid' });
+  assert.equal(outcome.status, 'skipped_staging');
+});
+
+test('sendTest surfaces a provider message id when the transport returns one', async () => {
+  const outcome = await mail.sendTest({
+    mailStagingLogOnly: false,
+    mailTransport: {
+      provider: 'gmail',
+      send: async () => ({ providerMessageId: '18f0c0ffee' }),
+    },
+  }, { to: 'ops@example.invalid' });
+  assert.equal(outcome.providerMessageId, '18f0c0ffee');
+});
+
+test('sendTest never throws, whatever the transport does', async () => {
+  for (const send of [
+    async () => { throw new Error('boom'); },
+    async () => { throw 'a string, not an Error'; }, // eslint-disable-line no-throw-literal
+    () => { throw new Error('sync throw'); },
+  ]) {
+    const outcome = await mail.sendTest(
+      { mailStagingLogOnly: false, mailTransport: { provider: 'x', send } },
+      { to: 'ops@example.invalid' });
+    assert.equal(outcome.status, 'failed');
+  }
+  // A missing recipient is a caller bug, not a crash.
+  const empty = await mail.sendTest({}, {});
+  assert.equal(empty.status, 'invalid_recipient');
+});
+
+test('send() keeps its silent, never-throw contract', async () => {
+  // The regression this guards: making sendTest() a flag on send() would
+  // give the unauthenticated always-200 OTP endpoint a checkable value.
+  assert.equal(
+    await mail.send({ mailTransport: { provider: 'x', send: async () => { throw new Error('nope'); } } },
+      { kind: 'otp', to: 'a@b.invalid', code: '1' }),
+    undefined, 'send() must resolve undefined even when the provider fails');
+  assert.equal(
+    await mail.send({ mailTransport: { provider: 'x', send: async () => ({ providerMessageId: 'id' }) } },
+      { kind: 'otp', to: 'a@b.invalid', code: '1' }),
+    undefined, 'a transport detail return must not leak through send()');
+  const src = fs.readFileSync(path.join(ROOT, 'src/services/mail/index.js'), 'utf8');
+  assert.match(src, /async function sendTest\(/, 'sendTest is a sibling function');
+});
+
+test('the admin_test body carries nothing an attacker could use', () => {
+  const m = templates.buildMessage('admin_test', {
+    provider: 'gmail', from: 'no-reply@x.invalid',
+    sentAt: '2026-01-01T00:00:00.000Z', reference: 'abcd1234',
+  });
+  assert.doesNotMatch(m.text, /\b\d{6}\b/, 'no OTP-shaped value');
+  assert.doesNotMatch(m.text, /https?:\/\//, 'no link to follow');
+  assert.match(m.text, /no action is needed/i);
+});
+
+test('admin_test has its own per-recipient throttle rule', () => {
+  const rule = rateLimit.RULES.admin_test;
+  assert.ok(rule, 'a kind with no rule is bounded only by the global cap');
+  assert.equal(rule.minGapMs, 30 * 1000);
+  assert.equal(rule.perWindow, 10);
+  assert.equal(rule.windowMs, rateLimit.HOUR_MS);
+
+  // The gap actually fires.
+  const now = Date.now();
+  const decision = rateLimit.decide({
+    kind: 'admin_test',
+    now,
+    recipientHistory: [{ status: 'sent', created_at: new Date(now - 5000) }],
+  });
+  assert.equal(decision.allowed, false);
 });

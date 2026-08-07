@@ -107,6 +107,7 @@ const SHELL_ASSETS = [
   '/js/admin-merges.js',
   '/js/admin-gallery.js',
   '/js/admin-campaigns.js',
+  '/js/admin-mail.js',
   '/js/app-secrets.js',
   '/js/browse.js',
   '/js/platform-ui.js',
