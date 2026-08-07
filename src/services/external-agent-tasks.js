@@ -1176,10 +1176,27 @@ async function resolvePullRequest(ctx) {
     baseSha, taskId, expectedLogin, pushedState,
   } = ctx;
 
+  // Is the head in somebody else's account? On this path it always is — the
+  // work lives in the user's own fork and the base repo is bot-owned — but
+  // the comparison is made rather than assumed, so a same-repo head (a
+  // hypothetical caller whose fork owner IS the base owner) keeps GitHub's
+  // default and behaves exactly like every other createPR in the tree.
+  const crossFork = !sameRepo(forkOwner, owner);
+
   const attempt = async (headRepo) => gh.createPR(owner, repo, {
     branch,
     head: `${forkOwner}:${branch}`,
     ...(headRepo ? { headRepo } : {}),
+    // Do not ask GitHub to grant this repo's maintainers write access to a
+    // branch in the contributor's fork. Only a collaborator on that fork
+    // could grant it, the platform holds no such access by design, and
+    // omitting the parameter means GitHub assumes `true` and 422s the whole
+    // create with `field: "fork_collab"`. That single implicit default is
+    // why every cross-fork submission in production fell through to the
+    // mirror. Nothing is lost by declining: the platform never pushes to an
+    // imported PR's head (services/sync-main.js short-circuits on
+    // `source === 'imported'`; pr-import-sync only records drift).
+    ...(crossFork ? { maintainerCanModify: false } : {}),
     title: prTitle,
     body: prBody,
   });
@@ -1202,6 +1219,23 @@ async function resolvePullRequest(ctx) {
     if (err.code === 'github_unavailable') {
       return {
         done: fail('platform_unavailable', 'GitHub could not open the pull request just now. Try again shortly.', { retryable: true }),
+      };
+    }
+    // A request-shape bug on our side, not a repository condition: the
+    // create asked GitHub to grant this repo's maintainers write access to
+    // the contributor's fork branch. Retrying with `head_repo` cannot help,
+    // and mirroring would paper over a defect that should be fixed at the
+    // call site — so the ladder STOPS here and says so.
+    if (err.code === 'fork_collab_denied') {
+      return {
+        done: fail(
+          'fork_collab_denied',
+          `Usernode asked GitHub to give ${owner}/${repo}'s maintainers write access to ${forkOwner}:${branch}, `
+          + 'and only a collaborator on that fork can grant it. Usernode holds no access to your GitHub account, '
+          + 'so it should never have asked — this is a bug on our side, not a problem with your branch. '
+          + 'Report it, or open the pull request yourself and submit it with its number.',
+          { retryable: false }
+        ),
       };
     }
     return null;
@@ -1265,16 +1299,28 @@ async function resolvePullRequest(ctx) {
   return { failed: firstError, desc: null };
 }
 
+// GitHub's errors[] is where the actual objection lives — "field: head,
+// code: invalid" is the difference between a resolution problem and a
+// repository policy, and `field: fork_collab` is the one that cost three
+// production runs. One reader, shared by the user-facing refusal and the
+// mirror-fallback log line, so the two can never disagree about what
+// GitHub said.
+function firstErrorEntry(desc) {
+  return desc && desc.data && Array.isArray(desc.data.errors) ? desc.data.errors[0] : null;
+}
+
+function firstErrorField(desc) {
+  const entry = firstErrorEntry(desc);
+  return entry ? entry.field || entry.resource || null : null;
+}
+
 // The typed, self-diagnosing replacement for the old generic refusal, which
 // named neither the cause nor a way forward and cost a whole production run.
 function prOpenFailed({ desc, owner, repo, forkOwner, forkRepo, branch }) {
   const compareUrl = `https://github.com/${owner}/${repo}/compare/`
     + `${DEFAULT_BASE_BRANCH}...${forkOwner}:${forkRepo}:${branch}?expand=1`;
   const status = desc && desc.status ? `HTTP ${desc.status}` : 'an error';
-  // GitHub's errors[] is where the actual objection lives — "field: head,
-  // code: invalid" is the difference between a resolution problem and a
-  // repository policy, and it was being thrown away.
-  const entry = desc && desc.data && Array.isArray(desc.data.errors) ? desc.data.errors[0] : null;
+  const entry = firstErrorEntry(desc);
   const field = entry
     ? ` It objected to \`${entry.field || entry.resource || 'the request'}\``
       + `${entry.code ? ` (${entry.code})` : ''}${entry.message ? `: ${entry.message}` : ''}.`
@@ -1513,6 +1559,27 @@ async function submitWorkLocked(deps, params) {
         // that works. Provenance is verified inside mirrorForkBranch
         // BEFORE anything is copied — that is where the attribution gate
         // lives for a platform-written head.
+        //
+        // Say out loud that we got here and why. Since cross-fork creates
+        // send `maintainer_can_modify: false`, rung 1 is expected to
+        // succeed and this line should stop appearing entirely — so its
+        // presence is the signal that something new is refusing the fork
+        // head, visible in the log rather than only as a `submitted_via`
+        // value somebody has to go and query.
+        log.info('external-agent-tasks', 'cross-fork create refused — falling back to the mirror', {
+          owner,
+          repo,
+          head: `${forkOwner}:${branch}`,
+          taskId: task ? task.id : null,
+          // Which rung failed and what GitHub said about it. `desc` is the
+          // describeGithubError shape from the second attempt; the field
+          // GitHub objected to is the part worth reading at a glance.
+          failedRungs: 'branch, branch_head_repo',
+          status: outcome.desc ? outcome.desc.status || null : null,
+          requestId: outcome.desc ? outcome.desc.requestId || null : null,
+          githubField: firstErrorField(outcome.desc),
+          message: outcome.desc ? outcome.desc.message : null,
+        });
         const mirrored = await externalAgentHead.mirrorForkBranch({
           gh, githubPublic, owner, repo, forkOwner, forkRepo, branch,
           expectedLogin: link.login,
