@@ -800,9 +800,30 @@ function groupTestsByUrl(tests) {
 // presence assertions against the same page. Emits exactly one
 // __USERNODE_TEST__ frame per check. Never throws — an unexpected error is
 // reported as a failed frame for every check that hasn't produced one yet.
-// `browser` may be a Browser or a BrowserContext (both expose newPage) —
-// main() passes the tests-only context so screenshot cookies can't bleed
-// into test navigations (see the isolation comment at the call site).
+//
+// THE PAGE MUST BE A WINDOW, NOT A TAB. Concurrent newPage() calls on one
+// context open tabs of one window, and Chromium reports every non-active
+// tab's document as `visibilityState: 'hidden'`. Hidden documents are not
+// an inert copy of visible ones: startViewTransition() skips itself and
+// rejects `ready` (which surfaces as an unhandled-rejection pageerror —
+// "InvalidStateError: Transition was aborted" failed every route that
+// animates its entry, including 4 checks that had already graduated to
+// blocking; the platform kit now swallows that rejection — #1035 — but
+// any app code outside the kit still hits it), requestAnimationFrame
+// never fires (so rAF-driven UI — the platform kit's popovers, action
+// sheets, springs — never presents, and its selectors "aren't found"),
+// and timers are throttled. Giving each group its OWN browser context
+// gives it its own window, which Chromium keeps visible regardless of how
+// many run concurrently — verified against real Chromium: 8 concurrent
+// context-pages all report 'visible' with rAF firing, while 7 of 8
+// same-context tabs report 'hidden'.
+//
+// The fresh context also means a fresh cookie jar, which is what makes the
+// per-group `?token=` exchange deterministic — see runTests.
+//
+// `browser` may be a Browser (per-group context, the production shape) or
+// anything else exposing newPage (the unit-test fakes; also tolerates
+// being handed a BrowserContext).
 async function runTestGroup(browser, group) {
   const tests = Array.isArray(group) ? group : [group];
   const lead = tests[0];
@@ -830,10 +851,14 @@ async function runTestGroup(browser, group) {
     }
   };
 
+  let context = null;
   let page;
   let status = 0;
   try {
-    page = await browser.newPage();
+    if (typeof browser.createBrowserContext === 'function') {
+      context = await browser.createBrowserContext();
+    }
+    page = await (context || browser).newPage();
     await page.setViewport(VIEWPORT);
     page.on('console', (msg) => {
       try {
@@ -857,6 +882,7 @@ async function runTestGroup(browser, group) {
       pushErr('load', `navigation failed: ${err.message}`, lead.url);
       emitAll(0, () => `Page failed to load: ${err.message}`);
       await page.close().catch(() => {});
+      if (context) await context.close().catch(() => {});
       return;
     }
 
@@ -918,6 +944,7 @@ async function runTestGroup(browser, group) {
     emitAll(status, () => `Test run error: ${err.message}`);
   }
   if (page) await page.close().catch(() => {});
+  if (context) await context.close().catch(() => {});
 }
 
 // Extra per-group deadline allowance for each check past the first. The
@@ -928,8 +955,8 @@ async function runTestGroup(browser, group) {
 // worker long" from the ungrouped design.
 const GROUP_EXTRA_CHECK_MS = 1000;
 
-// Run the whole declared suite against one browser context with a bounded
-// worker pool. Two layers of batching:
+// Run the whole declared suite through a bounded worker pool, each group in
+// its own browser context. Two layers of batching:
 //
 //   * URL GROUPS (groupTestsByUrl): checks on the same resolved URL share
 //     one navigation and one settled page — this repo's suite is 234 checks
@@ -940,13 +967,16 @@ const GROUP_EXTRA_CHECK_MS = 1000;
 //
 // Three shapes matter here:
 //
-//  1. PRIMER. The first group runs alone. The context starts with an empty
-//     cookie jar and the first navigation is what exchanges the admin
-//     `?token=` for a session cookie (see main()'s isolation comment). Fan
-//     eight navigations out into an empty jar and all eight race that
-//     exchange — seven of them render the "Admins only" gate and fail
-//     spuriously. One sequential navigation first, and the rest inherit
-//     the cookie.
+//  1. ONE CONTEXT PER GROUP (see runTestGroup). Each group gets its own
+//     window — so its document stays 'visible' however many run at once —
+//     and its own empty cookie jar. Every test URL carries the view-only-
+//     admin `?token=` (visuals.js appends it per test), the exchange is a
+//     stateless JWT that mints a session per exchange, and an empty jar
+//     means the exchange happens deterministically on the group's own
+//     navigation. This replaced the shared-context design, which needed a
+//     sequential "primer" navigation to seed the shared jar (concurrent
+//     exchanges into one jar raced, and the losers rendered the "Admins
+//     only" gate) and still left every non-active tab hidden.
 //  2. PER-GROUP DEADLINE. runTestGroup bounds its navigation, but the
 //     settle sleeps and assertion evaluation are not bounded, and a page
 //     that keeps a socket open can hang `networkidle2` past its own
@@ -959,7 +989,7 @@ const GROUP_EXTRA_CHECK_MS = 1000;
 //     was never dispatched simply has no frame, and the sentinel says so —
 //     the platform reads `deadline=1` and reports those checks as unrun
 //     rather than as a crashed container.
-async function runTests(context, tests, opts) {
+async function runTests(browser, tests, opts) {
   const list = Array.isArray(tests) ? tests : [];
   const o = opts || {};
   const concurrency = Math.max(1, Number(o.concurrency) || 8);
@@ -988,7 +1018,7 @@ async function runTests(context, tests, opts) {
     try {
       outcome = await Promise.race([
         Promise.resolve()
-          .then(() => runTestGroup(context, group))
+          .then(() => runTestGroup(browser, group))
           .then(() => 'done', (err) => `error:${(err && err.message) || err}`),
         timeout,
       ]);
@@ -1015,11 +1045,9 @@ async function runTests(context, tests, opts) {
     ran += group.length;
   };
 
-  // 1. Primer, sequential.
-  await runOne(groups[0]);
-
-  // 2/3. Everything else through the pool.
-  let cursor = 1;
+  // Every group straight through the pool — with per-group contexts there
+  // is no shared cookie jar to seed, so no primer (shape 1 above).
+  let cursor = 0;
   const worker = async () => {
     for (;;) {
       if (cursor >= groups.length) return;
@@ -1029,7 +1057,7 @@ async function runTests(context, tests, opts) {
       await runOne(group);
     }
   };
-  const lanes = Math.min(concurrency, Math.max(1, groups.length - 1));
+  const lanes = Math.min(concurrency, groups.length);
   const workers = [];
   for (let i = 0; i < lanes; i += 1) workers.push(worker());
   await Promise.all(workers);
@@ -1084,19 +1112,15 @@ async function main() {
     // groups run through a bounded pool; per-test failures stay independent
     // and a thrown test is reported as a failed frame, never aborts the run.
     //
-    // Tests get their OWN browser context, isolated from the screenshot
-    // pages above. The screenshot pass navigates with the NON-admin capture
-    // token, and the self-app's staging auth exchanges that query token for
-    // a session COOKIE in the shared default context; the platform's auth
-    // is cookie-first, so a test navigation carrying the view-only-admin
-    // ?token= was silently downgraded to the non-admin identity — the
-    // admin-gated check pages rendered their "Admins only" gate instead of
-    // the content under test (the /debug "PR closed" badge check failed
-    // exactly this way). A fresh context starts with an empty cookie jar,
-    // so the first test navigation exchanges the admin token as intended.
+    // runTests creates a fresh browser context per URL group (see its
+    // comment): each starts with an empty cookie jar, so the screenshot
+    // pass's NON-admin session cookie (exchanged into the default context
+    // above) can never downgrade a test navigation carrying the view-only-
+    // admin ?token= — the failure mode that once rendered the "Admins only"
+    // gate on the /debug badge check — and each group's page is its own
+    // window, so its document stays visible under concurrency.
     if (tests.length) {
-      const testContext = await browser.createBrowserContext();
-      await runTests(testContext, tests, {
+      await runTests(browser, tests, {
         concurrency: poolSize(process.env),
         testTimeoutMs: testTimeoutMs(process.env),
         deadlineMs: testsDeadlineMs(process.env),
