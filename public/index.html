@@ -2662,6 +2662,11 @@
        before dev-chat.js / app-view.js / home.js so all three derive and
        label proposal merge states from one place. -->
   <script src="/js/merge-status.js"></script>
+  <!-- #1038: live session working-state store (window.SessionState). Fed by
+       the `session_state` WS events in app.js; read by work-drawer.js (the
+       spinning cog), app-view.js (Dev board session + issue cards) and
+       dev-chat.js (the session list), so it loads before all three. -->
+  <script src="/js/session-state.js"></script>
   <!-- Header-cog "your work" drawer. Loaded after notifications.js
        (whose shared renderRow / items store it reuses) and after
        merge-status.js (whose lifecycle helper drives the spin state and
