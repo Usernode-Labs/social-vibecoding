@@ -204,14 +204,22 @@ async function runContainer(name, {
 // the throwing contract: a truncated `docker build` log is not a usable
 // result. Non-timeout failures (image missing, OOM-kill, name clash after
 // the retry) still throw regardless of the flag.
+// `stdinPayload` (optional): a string piped to the container's stdin
+// (docker run -i). This is how oversized inputs travel — a Linux exec caps
+// any single argv/env string at 128KB (MAX_ARG_STRLEN), so a large value
+// passed as `-e KEY=...` kills the docker CLI spawn with E2BIG before the
+// container exists. Stdin has no such cap. The write is fire-and-forget
+// with an error swallow: if the container dies before draining stdin the
+// EPIPE must not mask the real (exit-code) failure.
 async function runOneShot(name, {
   image, env = {}, memory = '1g', cpus = '1',
   timeoutMs = 240000, maxBuffer = 128 * 1024 * 1024,
-  salvagePartial = false,
+  salvagePartial = false, stdinPayload = null,
 }) {
   const envArgs = Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
   const args = [
     'run', '--rm',
+    ...(stdinPayload != null ? ['-i'] : []),
     '--name', name,
     '--network', SHARED_NETWORK,
     '--memory', memory,
@@ -221,15 +229,23 @@ async function runOneShot(name, {
     image,
   ];
   const opts = { timeout: timeoutMs, maxBuffer };
+  const start = () => {
+    const promise = execFileAsync('docker', args, opts);
+    if (stdinPayload != null && promise.child && promise.child.stdin) {
+      promise.child.stdin.on('error', () => {});
+      promise.child.stdin.end(stdinPayload);
+    }
+    return promise;
+  };
   try {
-    return await execFileAsync('docker', args, opts);
+    return await start();
   } catch (err) {
     const msg = String((err && (err.stderr || err.message)) || '');
     if (/is already in use/i.test(msg)) {
       // Stale leftover from a killed prior run — clear it and retry once.
       await execFileAsync('docker', ['rm', '-f', name], { timeout: 10000 }).catch(() => {});
       try {
-        return await execFileAsync('docker', args, opts);
+        return await start();
       } catch (err2) {
         await execFileAsync('docker', ['rm', '-f', name], { timeout: 10000 }).catch(() => {});
         const salvaged2 = salvagePartial ? salvageStdout(err2) : null;

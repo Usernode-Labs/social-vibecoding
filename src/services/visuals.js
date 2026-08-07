@@ -1517,9 +1517,20 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     let runPartialReason = '';
     const captureStartedAt = Date.now();
     try {
+      // #47 payload routing: a Linux exec caps any single argv/env string at
+      // 128KB (MAX_ARG_STRLEN). A manifest-scale suite — this repo's own 232
+      // checks, each carrying a tokenized staging URL — exceeds that as one
+      // `-e TESTS=...` string, and the docker spawn dies with E2BIG before
+      // the container starts (that was every self-app proposal fail-closing
+      // to "Checks couldn't run"). Large suites ride the container's stdin
+      // instead (TESTS='@stdin' marker; docker.runOneShot pipes it); small
+      // ones keep the env var, which older capture images also understand.
+      const testsJson = JSON.stringify(tests);
+      const testsViaStdin = testsJson.length > 90 * 1024;
       let res;
       ({ stdout, ...res } = await docker.runOneShot(`usernode-capture-${session.id}`, {
         image: CAPTURE_IMAGE,
+        stdinPayload: testsViaStdin ? testsJson : null,
         env: {
           // Multi-target protocol (#270). The container loops over these
           // sequentially and tags each shot frame with its index=. The
@@ -1563,8 +1574,9 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           MEDIA: media ? '1' : '0',
           // #47: the proposal's automated test suite (each entry pre-resolved
           // to a staging url + assertions). The container runs these and
-          // emits one __USERNODE_TEST__ frame each.
-          TESTS: JSON.stringify(tests),
+          // emits one __USERNODE_TEST__ frame each. '@stdin' → the real
+          // payload is on stdin (see testsViaStdin above).
+          TESTS: testsViaStdin ? '@stdin' : testsJson,
           // Pool bounds (#1019). An older capture image ignores all three
           // and runs the suite sequentially — slower, but correct, so a
           // rolling deploy degrades rather than breaks.
