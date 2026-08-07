@@ -1312,7 +1312,7 @@
              desktop presence horizontally, which costs no height. -->
         <div id="landing-header-ctas" class="flex items-center gap-2">
           <a href="#login" id="landing-signin-cta" class="h-7 inline-flex items-center rounded-lg bg-violet-600 hover:bg-violet-500 px-3 text-xs sm:px-5 font-medium transition-colors text-white">Sign in</a>
-          <a href="#waitlist" id="landing-waitlist-cta" class="h-7 inline-flex items-center rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 text-xs sm:px-5 font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-colors">Join waitlist</a>
+          <a href="#waitlist" id="landing-waitlist-cta" data-offline-disabled class="h-7 inline-flex items-center rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 text-xs sm:px-5 font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-colors">Join waitlist</a>
         </div>
         <!-- Shown instead of the CTAs when a (waiting-room) session exists. -->
         <div id="landing-back-to-waiting" class="hidden">
@@ -1335,6 +1335,22 @@
         <p class="text-sm text-zinc-500 dark:text-zinc-400 italic">A place where users own and build apps together</p>
       </div>
 
+      <!-- Offline explanation (#1021). The landing page's app grid is
+           fetched, so offline it renders empty or stale with no reason
+           given — and both header CTAs lead to screens that cannot
+           complete. Say so once, here. -->
+      <div class="offline-only mb-10 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3">
+        <h2 class="text-sm font-semibold text-amber-600 dark:text-amber-400">You're offline</h2>
+        <p class="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+          Anything below is the last version this device loaded, and signing in or joining the
+          waitlist both need a connection.
+        </p>
+        <button type="button" data-offline-retry
+          class="mt-3 rounded-lg border border-amber-500/50 px-3 py-1.5 text-sm font-medium text-amber-700 dark:text-amber-300 hover:bg-amber-500/10 transition-colors">
+          Try again
+        </button>
+      </div>
+
       <!-- The CTA block sits where the Sign in / Join waitlist buttons used
            to be: a compact pitch plus ONE link into the dedicated waitlist
            screen (#waitlist). The survey itself lives on that screen — a
@@ -1354,7 +1370,7 @@
           Platform access opens in batches — the apps below are open to
           everyone right now.
         </p>
-        <a id="landing-waitlist-link" href="#waitlist"
+        <a id="landing-waitlist-link" href="#waitlist" data-offline-disabled
           class="inline-block rounded-lg bg-violet-600 hover:bg-violet-500 px-5 py-2 text-sm font-medium text-white transition-colors">
           Join the waitlist
         </a>
@@ -1403,12 +1419,32 @@
         <h1 class="text-2xl font-bold text-center mb-1">Usernode Social Vibecoding</h1>
         <p class="text-xs text-zinc-500 dark:text-zinc-400 text-center mb-8 italic">A place where users own and build apps together</p>
 
+        <!-- Offline explanation (#1021). Signing in REQUIRES the network —
+             the credential check happens on the server — so an offline
+             visitor previously typed a password, waited, and got a bare
+             "Network error" with no hint that the whole screen was
+             unusable. Shown by `body.is-offline` (app.css); the controls
+             below carry data-offline-disabled so it's obvious which parts
+             are the ones that can't work. -->
+        <div class="offline-only mb-8 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3">
+          <h2 class="text-sm font-semibold text-amber-600 dark:text-amber-400">You're offline</h2>
+          <p class="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+            Signing in needs a connection — your username and password are checked on the server.
+            Reconnect and try again; if you were signed in on this device before, reloading once
+            you're back online will take you straight in.
+          </p>
+          <button type="button" data-offline-retry
+            class="mt-3 rounded-lg border border-amber-500/50 px-3 py-1.5 text-sm font-medium text-amber-700 dark:text-amber-300 hover:bg-amber-500/10 transition-colors">
+            Try again
+          </button>
+        </div>
+
         <!-- Wallet auth status (shown when native bridge detected) -->
         <div id="wallet-auth" class="hidden space-y-4">
           <div id="wallet-status" class="text-center text-sm text-zinc-400"></div>
           <div id="wallet-error" class="text-red-400 text-sm hidden"></div>
           <div id="wallet-sign-in" class="hidden space-y-3">
-            <button id="btn-wallet-sign-in" class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white flex items-center justify-center gap-2">
+            <button id="btn-wallet-sign-in" data-offline-disabled class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white flex items-center justify-center gap-2">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z"/></svg>
               Sign in with Wallet
             </button>
@@ -1437,7 +1473,7 @@
               placeholder="password">
           </div>
           <div id="login-error" class="text-red-400 text-sm hidden"></div>
-          <button type="submit" class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white">
+          <button type="submit" data-offline-disabled class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white">
             Log in
           </button>
         </form>
@@ -1472,7 +1508,7 @@
                 class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500"
                 placeholder="you@example.com">
             </div>
-            <button id="btn-otp-request" type="button"
+            <button id="btn-otp-request" type="button" data-offline-disabled
               class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white">
               Email me a code
             </button>
@@ -1488,11 +1524,11 @@
                 class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 tracking-widest text-center"
                 placeholder="123456">
             </div>
-            <button id="btn-otp-verify" type="button"
+            <button id="btn-otp-verify" type="button" data-offline-disabled
               class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white">
               Verify code
             </button>
-            <button id="btn-otp-resend" type="button" class="w-full text-sm text-zinc-500 hover:text-zinc-300">Send a new code</button>
+            <button id="btn-otp-resend" type="button" data-offline-disabled class="w-full text-sm text-zinc-500 hover:text-zinc-300">Send a new code</button>
           </div>
 
           <div id="otp-step-password" class="hidden space-y-3">
@@ -1511,7 +1547,7 @@
                 class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500"
                 placeholder="re-enter password">
             </div>
-            <button id="btn-otp-set-password" type="button"
+            <button id="btn-otp-set-password" type="button" data-offline-disabled
               class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white">
               Set password &amp; sign in
             </button>

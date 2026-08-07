@@ -1594,6 +1594,18 @@
       "path": "/?demo=1#settings/connectors",
       "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #connectors-section:not(.hidden) #connector-url",
       "expectText": "Claude — claude.ai"
+    },
+    {
+      "name": "Offline: the signed-in shell keeps a visible offline strip above everything (#1021)",
+      "path": "/?shot=offline",
+      "expectSelector": "body.is-offline #offline-banner:not(.hidden)",
+      "expectText": "You're offline — showing saved content"
+    },
+    {
+      "name": "Offline sign-in explains why the form cannot work instead of failing silently (#1021)",
+      "path": "/?shot=offline-signin#login",
+      "expectSelector": "body.is-offline #auth-login-screen:not(.hidden) .offline-only",
+      "expectText": "Signing in needs a connection"
     }
   ],
   "governance": {
