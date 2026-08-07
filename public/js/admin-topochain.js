@@ -65,11 +65,6 @@
 // DOCUMENTED API GAPS (per the task brief: build only what the API
 // supports; document what's missing rather than inventing endpoints or
 // shipping dead UI):
-//   - `seasons`: there is no /api/v4/admin/seasons resource at all (only
-//     season_events carries a season_id). This subsection is therefore a
-//     READ-ONLY view derived by grouping GET /api/v4/admin/season-events
-//     by season_id — no create/edit/delete, because there is nothing to
-//     call. See renderSeasons() below.
 //   - `challenge-kinds`: no admin (or public) endpoint lists
 //     `challenge_kinds` rows at all — every reference in the API is a
 //     server-side existence check on `kind` (challenge-templates.js,
@@ -86,8 +81,14 @@
 //     surfaced as a field on the Users edit form instead of a standalone
 //     "Mobile logs" tab — this is the judgment call the task brief
 //     anticipated ("surface via users' accept_logs toggle, documented").
-// None of the four gaps above appear in SUBS — a missing tab beats a
+// None of the three gaps above appear in SUBS — a missing tab beats a
 // dead one.
+//
+// (`seasons` used to be a fourth gap here: the screen was a read-only
+// view derived by grouping season-events by season_id, because no
+// /api/v4/admin/seasons resource existed. It does now — see
+// src/routes/topochain/admin/seasons.js — so renderSeasons() below is
+// full CRUD like every other resource screen.)
 'use strict';
 
 // ── Control styling tokens ───────────────────────────────────────────
@@ -613,6 +614,55 @@ const AdminTopochain = {
     return events.map((ev) => ({ value: ev.id, label: `${ev.name} (#${ev.id})` }));
   },
 
+  // Same idea as _fetchAllEvents for the (even smaller) seasons list —
+  // used by the season <select> on the Season events form and by the
+  // season filter on the Season events list. Not cached, so a season
+  // created seconds ago is already pickable.
+  async _fetchAllSeasons() {
+    const out = [];
+    let page = 1;
+    for (let guard = 0; guard < 20; guard++) {
+      const { ok, data } = await AdminTopochain.fetchJson(
+        `/api/v4/admin/seasons?page=${page}&per_page=100`);
+      if (!ok || !data?.success || !Array.isArray(data.data)) break;
+      out.push(...data.data);
+      const meta = data.meta;
+      if (!meta || page >= meta.total_pages) break;
+      page += 1;
+    }
+    return out;
+  },
+
+  _seasonOptions(seasons) {
+    return seasons.map((s) => ({ value: s.id, label: `${s.name} (#${s.id})` }));
+  },
+
+  // Where a season sits relative to now, as a small coloured chip.
+  // Derived client-side from starts_at/ends_at/is_active rather than
+  // asked of the API: the API returns the raw window (there is no
+  // server-computed status field) and "is it running right now" is a
+  // question about the viewer's clock anyway.
+  _seasonStatus(s) {
+    const now = Date.now();
+    const starts = s.starts_at ? new Date(s.starts_at).getTime() : null;
+    const ends = s.ends_at ? new Date(s.ends_at).getTime() : null;
+    if (!s.is_active) return { label: 'Inactive', tone: 'zinc' };
+    if (ends != null && !Number.isNaN(ends) && ends < now) return { label: 'Closed', tone: 'zinc' };
+    if (starts != null && !Number.isNaN(starts) && starts > now) return { label: 'Upcoming', tone: 'amber' };
+    return { label: 'Running', tone: 'green' };
+  },
+
+  _badgeHtml(label, tone) {
+    const esc = AdminTopochain.esc;
+    const tones = {
+      green: 'bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-400',
+      amber: 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400',
+      violet: 'bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-400',
+      zinc: 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300',
+    };
+    return `<span class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${tones[tone] || tones.zinc}">${esc(label)}</span>`;
+  },
+
   // ── Shell / sub-nav ──────────────────────────────────────────────────
 
   // Mobile sub-nav level: 1 = the group list, 2 = one group's
@@ -816,69 +866,266 @@ const AdminTopochain = {
   },
 
   // ══════════════════════════════════════════════════════════════════
-  // Seasons — READ-ONLY, derived (documented gap: no /admin/seasons API;
-  // see the file-header comment). Grouped client-side from the
-  // season-events list, which is the only place a season_id surfaces.
+  // Seasons — full CRUD against /api/v4/admin/seasons, the top tier of
+  // Season -> Season event -> Challenge. (Until that resource existed
+  // this screen was a read-only view derived by grouping season-events
+  // by season_id; see the file-header note.)
+  //
+  // Delete is guarded server-side: a season still referenced by events,
+  // enrollments, onchain accounts or token allocations comes back 409
+  // `season_in_use` with a message naming what is in the way, which is
+  // surfaced verbatim rather than being second-guessed here.
   // ══════════════════════════════════════════════════════════════════
 
-  async renderSeasons(host) {
+  _sn: {
+    page: 1, perPage: 20, search: '', items: [], meta: null, error: null, editingId: null,
+  },
+
+  renderSeasons(host) {
+    const canWrite = AdminTopochain.canWrite();
+    const esc = AdminTopochain.esc;
     host.innerHTML = `
       ${AdminTopochain._screenHeader({
     title: 'Seasons',
-    subtitle: 'Season events grouped by the season they belong to.',
-    actions: `<button id="admin-topo-seasons-goto-events" type="button" class="${BTN.secondarySm}">Manage season events</button>`,
+    subtitle: 'The top tier: each season holds season events, which hold challenges.',
+    actions: `<input id="admin-topo-sn-search" type="text" placeholder="Search name&hellip;"
+            value="${esc(AdminTopochain._sn.search)}" aria-label="Search seasons"
+            class="${FIELD_CLS} sm:w-56">
+          ${canWrite ? `<button id="admin-topo-sn-new" type="button" class="${BTN.primarySm}">New season</button>` : ''}`,
   })}
-      <div class="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 px-4 py-3 text-sm mb-4">
-        There is no dedicated Seasons API (no <code>/api/v4/admin/seasons</code> endpoint) — this view
-        is derived by grouping Season events by their <code>season_id</code>. Manage individual
-        events in the Season events tab.
-      </div>
-      <div id="admin-topo-seasons-list" class="space-y-3">${AdminTopochain._skeleton(4)}</div>`;
-    document.getElementById('admin-topo-seasons-goto-events')
-      ?.addEventListener('click', () => AdminTopochain.setSub('season-events'));
-    const events = await AdminTopochain._fetchAllEvents();
-    AdminTopochain._renderSeasonsList(events);
+      <div id="admin-topo-sn-form"></div>
+      <div id="admin-topo-sn-table">${AdminTopochain._skeleton(4)}</div>
+      <div id="admin-topo-sn-unassigned" class="mt-4"></div>`;
+    document.getElementById('admin-topo-sn-search').addEventListener('change', (e) => {
+      AdminTopochain._sn.search = e.target.value.trim();
+      AdminTopochain._sn.page = 1;
+      AdminTopochain._loadSeasons();
+    });
+    document.getElementById('admin-topo-sn-new')?.addEventListener('click', () => AdminTopochain._openSeasonForm(null));
+    AdminTopochain._loadSeasons();
+    AdminTopochain._loadUnassignedEvents();
   },
 
-  _renderSeasonsList(events) {
-    const host = document.getElementById('admin-topo-seasons-list');
-    if (!host) return;
+  async _loadSeasons() {
+    const s = AdminTopochain._sn;
+    const params = new URLSearchParams({ page: String(s.page), per_page: String(s.perPage) });
+    if (s.search) params.set('search', s.search);
+    const { ok, data, status } = await AdminTopochain.fetchJson(`/api/v4/admin/seasons?${params}`);
+    if (AdminTopochain._sub !== 'seasons') return;
+    if (ok && data?.success) {
+      s.items = data.data;
+      s.meta = data.meta;
+      s.error = null;
+    } else {
+      s.items = [];
+      s.meta = null;
+      s.error = { status, message: (data && data.error) || null };
+    }
+    AdminTopochain._renderSeasonsTable();
+  },
+
+  _renderSeasonsTable() {
+    const table = document.getElementById('admin-topo-sn-table');
+    if (!table) return;
     const esc = AdminTopochain.esc;
-    if (!events.length) {
-      host.innerHTML = AdminTopochain._empty({
-        title: 'No seasons yet',
-        body: 'Seasons appear here as soon as a season event is created with a season id.',
+    const canWrite = AdminTopochain.canWrite();
+    const s = AdminTopochain._sn;
+    if (s.error) {
+      table.innerHTML = AdminTopochain._error({
+        title: "Couldn't load seasons", status: s.error.status,
+        message: s.error.message, retryId: 'admin-topo-sn-retry',
       });
+      AdminTopochain._wireRetry('admin-topo-sn-retry', () => AdminTopochain._loadSeasons());
       return;
     }
-    const groups = new Map();
-    for (const ev of events) {
-      const key = ev.season_id == null ? 'none' : String(ev.season_id);
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(ev);
+    if (!s.items.length) {
+      table.innerHTML = AdminTopochain._empty({
+        title: s.search ? 'No seasons match that search' : 'No seasons yet',
+        body: s.search ? 'Clear the search box to see every season.'
+          : 'Create the first season, then add season events to it.',
+        actionId: s.search ? null : 'admin-topo-sn-empty-new',
+        actionLabel: 'New season',
+      });
+      document.getElementById('admin-topo-sn-empty-new')
+        ?.addEventListener('click', () => AdminTopochain._openSeasonForm(null));
+      return;
     }
-    const keys = [...groups.keys()].sort((a, b) => {
-      if (a === 'none') return 1;
-      if (b === 'none') return -1;
-      return Number(a) - Number(b);
+    table.innerHTML = AdminTopochain._list({
+      items: s.items,
+      columns: [
+        { label: 'Name', primary: true, cell: (sn) => esc(sn.name) },
+        {
+          label: 'Status',
+          cell: (sn) => {
+            const st = AdminTopochain._seasonStatus(sn);
+            return AdminTopochain._badgeHtml(st.label, st.tone)
+              + (sn.internal ? ` ${AdminTopochain._badgeHtml('Internal', 'violet')}` : '');
+          },
+        },
+        { label: 'Starts', cell: (sn) => esc(AdminTopochain._fmt(sn.starts_at)), tdClass: 'text-xs text-zinc-500' },
+        { label: 'Ends', cell: (sn) => esc(AdminTopochain._fmt(sn.ends_at)), tdClass: 'text-xs text-zinc-500' },
+        { label: 'Events', cell: (sn) => (sn.season_events_count != null ? esc(sn.season_events_count) : '—'), tdClass: 'text-zinc-500' },
+        { label: 'Users', cell: (sn) => (sn.users_count != null ? esc(sn.users_count) : '—'), tdClass: 'text-zinc-500' },
+        { label: 'Order', cell: (sn) => esc(sn.display_order ?? 0), tdClass: 'text-zinc-500' },
+      ],
+      actions: (sn) => `
+        <button data-season-events="${sn.id}" type="button" class="${BTN.rowPrimary}">View events</button>
+        ${canWrite ? `<button data-edit="${sn.id}" type="button" class="${BTN.row}">Edit</button>` : ''}
+        ${canWrite ? `<button data-delete="${sn.id}" type="button" class="${BTN.rowDanger}">Delete</button>` : ''}`,
+    }) + AdminTopochain._pagerHtml(s.meta, 'admin-topo-sn-pg');
+    table.querySelectorAll('[data-season-events]').forEach((b) => b.addEventListener('click', () => {
+      // Hand the Season events screen a pre-set filter rather than a
+      // free-text search — season_id is an exact filter the API does
+      // itself, so the list that opens is exactly this season's events.
+      AdminTopochain._se.seasonFilter = b.dataset.seasonEvents;
+      AdminTopochain._se.page = 1;
+      AdminTopochain._se.detailId = null;
+      AdminTopochain.setSub('season-events');
+    }));
+    table.querySelectorAll('[data-edit]').forEach((b) => b.addEventListener('click', () => AdminTopochain._openSeasonForm(parseInt(b.dataset.edit, 10))));
+    table.querySelectorAll('[data-delete]').forEach((b) => b.addEventListener('click', () => AdminTopochain._deleteSeason(parseInt(b.dataset.delete, 10))));
+    if (s.meta) AdminTopochain._wirePager(s.meta, 'admin-topo-sn-pg', (page) => { s.page = page; AdminTopochain._loadSeasons(); });
+  },
+
+  // Events with no season at all are invisible from the seasons list by
+  // definition, and they are exactly the rows an admin needs to notice
+  // (a new event nobody linked up yet). One extra request, rendered
+  // only when the count is non-zero.
+  async _loadUnassignedEvents() {
+    const { ok, data } = await AdminTopochain.fetchJson(
+      '/api/v4/admin/season-events?season_id=none&per_page=100');
+    const host = document.getElementById('admin-topo-sn-unassigned');
+    if (!host || AdminTopochain._sub !== 'seasons') return;
+    if (!ok || !data?.success || !Array.isArray(data.data) || !data.data.length) {
+      host.innerHTML = '';
+      return;
+    }
+    const esc = AdminTopochain.esc;
+    const rows = data.data.map((ev) => `
+      <li class="flex flex-col gap-1 py-2 border-t border-zinc-100 dark:border-zinc-800 first:border-t-0 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-2">
+        <span class="text-sm">${esc(ev.name)} <span class="text-xs text-zinc-500">(${esc(ev.type)})</span></span>
+        <span class="text-xs text-zinc-500">${esc(AdminTopochain._fmt(ev.starts_at))} &ndash; ${esc(AdminTopochain._fmt(ev.ends_at))}</span>
+      </li>`).join('');
+    host.innerHTML = `<section class="${PANEL_CLS} overflow-hidden">
+      <header class="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 dark:border-zinc-800 px-4 py-3 sm:px-5">
+        <div class="min-w-0">
+          <h3 class="text-sm font-semibold">Events not assigned to a season</h3>
+          <p class="mt-0.5 text-xs text-zinc-500">${esc(String(data.data.length))} event${data.data.length === 1 ? '' : 's'} with no season. Edit one to link it.</p>
+        </div>
+        <button id="admin-topo-sn-unassigned-go" type="button" class="${BTN.secondarySm}">Show in Season events</button>
+      </header>
+      <ul class="px-4 py-2 sm:px-5">${rows}</ul>
+    </section>`;
+    document.getElementById('admin-topo-sn-unassigned-go')?.addEventListener('click', () => {
+      AdminTopochain._se.seasonFilter = 'none';
+      AdminTopochain._se.page = 1;
+      AdminTopochain._se.detailId = null;
+      AdminTopochain.setSub('season-events');
     });
-    host.innerHTML = keys.map((key) => {
-      const list = groups.get(key);
-      const title = key === 'none' ? 'No season assigned' : `Season #${esc(key)}`;
-      const rows = list.map((ev) => `
-        <li class="flex flex-col gap-1 py-2 border-t border-zinc-100 dark:border-zinc-800 first:border-t-0 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-2">
-          <span class="text-sm">${esc(ev.name)} <span class="text-xs text-zinc-500">(${esc(ev.type)})</span></span>
-          <span class="text-xs text-zinc-500">${esc(AdminTopochain._fmt(ev.starts_at))} &ndash; ${esc(AdminTopochain._fmt(ev.ends_at))}
-            ${ev.is_active ? '<span class="ml-2 text-green-600 dark:text-green-400">active</span>' : ''}</span>
-        </li>`).join('');
-      return `<section class="${PANEL_CLS} overflow-hidden">
-        <header class="border-b border-zinc-200 dark:border-zinc-800 px-4 py-3 sm:px-5">
-          <h3 class="text-sm font-semibold">${title}</h3>
-          <p class="mt-0.5 text-xs text-zinc-500">${esc(String(list.length))} event${list.length === 1 ? '' : 's'}</p>
-        </header>
-        <ul class="px-4 py-2 sm:px-5">${rows}</ul>
-      </section>`;
-    }).join('');
+  },
+
+  async _openSeasonForm(id) {
+    if (!AdminTopochain.canWrite()) return;
+    AdminTopochain._sn.editingId = id;
+    let sn = null;
+    if (id != null) {
+      const { ok, data } = await AdminTopochain.fetchJson(`/api/v4/admin/seasons/${encodeURIComponent(id)}`);
+      if (ok && data?.success) sn = data.data;
+    }
+    const f = AdminTopochain._inputHtml, field = AdminTopochain._field;
+    const iso = AdminTopochain._isoToLocalInput;
+    const check = AdminTopochain._checkField;
+    const host = document.getElementById('admin-topo-sn-form');
+    if (!host) return;
+    host.innerHTML = AdminTopochain._panel({
+      title: id == null ? 'New season' : `Edit season #${id}`,
+      subtitle: 'Name, window and visibility. Season events are attached from the Season events screen.',
+      closeId: 'admin-topo-sn-close',
+      closeLabel: 'Close the season form',
+      body: `
+        ${AdminTopochain._formGrid(`
+          ${field('Name *', f('admin-topo-sn-f-name', { value: sn?.name }))}
+          ${field('Display order', f('admin-topo-sn-f-display_order', { type: 'number', value: sn?.display_order ?? 0 }), 'Lowest first in the seasons list.')}
+          ${field('Starts at *', f('admin-topo-sn-f-starts_at', { type: 'datetime-local', value: iso(sn?.starts_at) }))}
+          ${field('Ends at *', f('admin-topo-sn-f-ends_at', { type: 'datetime-local', value: iso(sn?.ends_at) }))}
+          <div class="md:col-span-2">${field('Pool info', f('admin-topo-sn-f-pool_info', { value: sn?.pool_info }), 'Free text shown with the reward pool, e.g. "1,000,000 TOPO".')}</div>
+          <div class="md:col-span-2">${field('Description', AdminTopochain._textareaHtml('admin-topo-sn-f-description', sn?.description || '', 3))}</div>
+        `)}
+        <fieldset class="mt-5 border-t border-zinc-200 dark:border-zinc-800 pt-4">
+          <legend class="sr-only">Visibility</legend>
+          <p class="text-xs font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">Visibility</p>
+          <div class="grid grid-cols-1 gap-x-6 sm:grid-cols-2">
+            ${check('admin-topo-sn-f-is_active', 'Active', sn ? sn.is_active : true)}
+            ${check('admin-topo-sn-f-internal', 'Internal', sn?.internal, 'Hidden from the public app; for dry runs.')}
+          </div>
+        </fieldset>
+        ${AdminTopochain._formErrorSlot('admin-topo-sn-form-err')}`,
+      footer: AdminTopochain._formActions('admin-topo-sn-save', 'admin-topo-sn-cancel', 'Save season'),
+    });
+    const closeForm = () => { host.innerHTML = ''; AdminTopochain._sn.editingId = null; };
+    document.getElementById('admin-topo-sn-save').addEventListener('click', () => AdminTopochain._saveSeason());
+    document.getElementById('admin-topo-sn-cancel').addEventListener('click', closeForm);
+    document.getElementById('admin-topo-sn-close').addEventListener('click', closeForm);
+  },
+
+  async _saveSeason() {
+    if (!AdminTopochain.canWrite()) return;
+    const errEl = document.getElementById('admin-topo-sn-form-err');
+    errEl.classList.add('hidden');
+    const val = (id) => document.getElementById(id)?.value ?? '';
+    const checked = (id) => !!document.getElementById(id)?.checked;
+    const orderRaw = val('admin-topo-sn-f-display_order').trim();
+
+    const body = {
+      name: val('admin-topo-sn-f-name').trim(),
+      description: val('admin-topo-sn-f-description').trim() || null,
+      starts_at: AdminTopochain._localInputToIso(val('admin-topo-sn-f-starts_at')),
+      ends_at: AdminTopochain._localInputToIso(val('admin-topo-sn-f-ends_at')),
+      pool_info: val('admin-topo-sn-f-pool_info').trim() || null,
+      display_order: orderRaw === '' ? 0 : Number(orderRaw),
+      is_active: checked('admin-topo-sn-f-is_active'),
+      internal: checked('admin-topo-sn-f-internal'),
+    };
+    if (!body.name) { errEl.textContent = 'Name is required.'; errEl.classList.remove('hidden'); return; }
+    if (!body.starts_at || !body.ends_at) { errEl.textContent = 'Starts at and ends at are required.'; errEl.classList.remove('hidden'); return; }
+    if (new Date(body.ends_at) <= new Date(body.starts_at)) {
+      errEl.textContent = 'Ends at must be after starts at.';
+      errEl.classList.remove('hidden');
+      return;
+    }
+
+    const id = AdminTopochain._sn.editingId;
+    const url = id == null ? '/api/v4/admin/seasons' : `/api/v4/admin/seasons/${encodeURIComponent(id)}`;
+    const { ok, data } = await AdminTopochain.send(id == null ? 'POST' : 'PUT', url, body);
+    if (!ok || !data?.success) {
+      errEl.textContent = (data && data.error) || 'Save failed.';
+      errEl.classList.remove('hidden');
+      return;
+    }
+    document.getElementById('admin-topo-sn-form').innerHTML = '';
+    AdminTopochain._sn.editingId = null;
+    AdminTopochain._loadSeasons();
+    AdminTopochain._loadUnassignedEvents();
+  },
+
+  async _deleteSeason(id) {
+    if (!AdminTopochain.canWrite()) return;
+    const confirmed = await AdminTopochain._confirm({
+      title: 'Delete this season?',
+      message: 'Seasons that still have events, enrollments, onchain accounts or token allocations cannot be deleted — unlink or remove those first. This cannot be undone.',
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!confirmed) return;
+    const res = await AdminTopochain.send('DELETE', `/api/v4/admin/seasons/${encodeURIComponent(id)}`);
+    if (res.ok && res.data?.success) {
+      AdminTopochain._loadSeasons();
+      AdminTopochain._loadUnassignedEvents();
+    } else {
+      // The 409 body names exactly what still references the season;
+      // show it as-is rather than a generic "Delete failed."
+      AdminTopochain._alert((res.data && res.data.error) || 'Delete failed.');
+    }
   },
 
   // ══════════════════════════════════════════════════════════════════
@@ -886,7 +1133,15 @@ const AdminTopochain = {
   // detail view (Manage button), not a separate top-level tab.
   // ══════════════════════════════════════════════════════════════════
 
-  _se: { page: 1, perPage: 20, search: '', items: [], meta: null, formOpen: false, editingId: null, detailId: null },
+  // `seasonFilter` is '' (all), 'none' (events with no season), or a
+  // season id as a string — the three states the API's own `season_id`
+  // query param accepts. The Seasons screen writes it before switching
+  // tabs, which is why it lives on the state block rather than inside
+  // renderSeasonEvents. `seasons` caches the picker options for the
+  // filter and the form.
+  _se: {
+    page: 1, perPage: 20, search: '', seasonFilter: '', seasons: [], items: [], meta: null, formOpen: false, editingId: null, detailId: null,
+  },
 
   renderSeasonEvents(host) {
     if (AdminTopochain._se.detailId != null) {
@@ -898,7 +1153,8 @@ const AdminTopochain = {
       ${AdminTopochain._screenHeader({
     title: 'Season events',
     subtitle: 'Every event, its schedule, and the challenges scheduled inside it.',
-    actions: `<input id="admin-topo-se-search" type="text" placeholder="Search name&hellip;"
+    actions: `${AdminTopochain._seasonFilterHtml()}
+          <input id="admin-topo-se-search" type="text" placeholder="Search name&hellip;"
             value="${esc(AdminTopochain._se.search)}" aria-label="Search season events"
             class="${FIELD_CLS} sm:w-56">
           ${canWrite ? `<button id="admin-topo-se-new" type="button" class="${BTN.primarySm}">New event</button>` : ''}`,
@@ -910,14 +1166,51 @@ const AdminTopochain = {
       AdminTopochain._se.page = 1;
       AdminTopochain._loadSeasonEvents();
     });
+    AdminTopochain._wireSeasonFilter();
     document.getElementById('admin-topo-se-new')?.addEventListener('click', () => AdminTopochain._openSeasonEventForm(null));
     AdminTopochain._loadSeasonEvents();
+    AdminTopochain._refreshSeasonPicker();
+  },
+
+  // The season filter, rendered from whatever is already cached in
+  // `_se.seasons` so first paint isn't blocked on a second request;
+  // _refreshSeasonPicker() fetches and re-renders it in place.
+  _seasonFilterHtml() {
+    const s = AdminTopochain._se;
+    const options = [{ value: 'none', label: '— No season —' }, ...AdminTopochain._seasonOptions(s.seasons)];
+    return `<label class="sr-only" for="admin-topo-se-season-filter">Filter by season</label>
+      ${AdminTopochain._selectHtml('admin-topo-se-season-filter', options, s.seasonFilter, { blank: 'All seasons' })}`;
+  },
+
+  _wireSeasonFilter() {
+    document.getElementById('admin-topo-se-season-filter')?.addEventListener('change', (e) => {
+      AdminTopochain._se.seasonFilter = e.target.value;
+      AdminTopochain._se.page = 1;
+      AdminTopochain._loadSeasonEvents();
+    });
+  },
+
+  // Loads the season list once per visit to this screen and re-renders
+  // the filter <select> with it, keeping the current selection.
+  async _refreshSeasonPicker() {
+    const seasons = await AdminTopochain._fetchAllSeasons();
+    if (AdminTopochain._sub !== 'season-events') return;
+    AdminTopochain._se.seasons = seasons;
+    const sel = document.getElementById('admin-topo-se-season-filter');
+    if (!sel) return;
+    const wrap = document.createElement('div');
+    wrap.innerHTML = AdminTopochain._seasonFilterHtml();
+    const fresh = wrap.querySelector('#admin-topo-se-season-filter');
+    if (!fresh) return;
+    sel.innerHTML = fresh.innerHTML;
+    sel.value = AdminTopochain._se.seasonFilter;
   },
 
   async _loadSeasonEvents() {
     const s = AdminTopochain._se;
     const params = new URLSearchParams({ page: String(s.page), per_page: String(s.perPage) });
     if (s.search) params.set('search', s.search);
+    if (s.seasonFilter) params.set('season_id', s.seasonFilter);
     const { ok, data, status } = await AdminTopochain.fetchJson(`/api/v4/admin/season-events?${params}`);
     if (AdminTopochain._sub !== 'season-events') return;
     if (ok && data?.success) {
@@ -949,11 +1242,12 @@ const AdminTopochain = {
       return;
     }
     if (!s.items.length) {
+      const filtered = !!(s.search || s.seasonFilter);
       table.innerHTML = AdminTopochain._empty({
-        title: s.search ? 'No events match that search' : 'No season events yet',
-        body: s.search ? 'Clear the search box to see every event.'
+        title: filtered ? 'No events match these filters' : 'No season events yet',
+        body: filtered ? 'Clear the search box and the season filter to see every event.'
           : 'Create the first event to start scheduling challenges.',
-        actionId: s.search ? null : 'admin-topo-se-empty-new',
+        actionId: filtered ? null : 'admin-topo-se-empty-new',
         actionLabel: 'New event',
       });
       document.getElementById('admin-topo-se-empty-new')
@@ -964,7 +1258,15 @@ const AdminTopochain = {
       items: s.items,
       columns: [
         { label: 'Name', primary: true, cell: (ev) => esc(ev.name) },
-        { label: 'Season', cell: (ev) => (ev.season_id != null ? esc(ev.season_id) : '—'), tdClass: 'text-zinc-500' },
+        {
+          label: 'Season',
+          // The API sends the joined season object; fall back to the raw
+          // id so a row still says something if the join ever comes back
+          // empty (e.g. an older cached response).
+          cell: (ev) => (ev.season?.name ? esc(ev.season.name)
+            : (ev.season_id != null ? `#${esc(ev.season_id)}` : '—')),
+          tdClass: 'text-zinc-500',
+        },
         { label: 'Type', cell: (ev) => esc(ev.type), tdClass: 'text-zinc-500' },
         { label: 'Active', cell: (ev) => (ev.is_active ? '<span class="text-green-600 dark:text-green-400">yes</span>' : '—') },
         { label: 'Starts', cell: (ev) => esc(AdminTopochain._fmt(ev.starts_at)), tdClass: 'text-xs text-zinc-500' },
@@ -993,6 +1295,10 @@ const AdminTopochain = {
       const { ok, data } = await AdminTopochain.fetchJson(`/api/v4/admin/season-events/${encodeURIComponent(id)}`);
       if (ok && data?.success) ev = data.data;
     }
+    // Season is a real resource now, so the form picks one by name
+    // instead of asking an admin to type its numeric id.
+    const seasons = await AdminTopochain._fetchAllSeasons();
+    AdminTopochain._se.seasons = seasons;
     const f = AdminTopochain._inputHtml, sel = AdminTopochain._selectHtml, field = AdminTopochain._field;
     const iso = AdminTopochain._isoToLocalInput;
     const scoring = ev?.scoring_formula || {};
@@ -1006,7 +1312,7 @@ const AdminTopochain = {
       body: `
         ${AdminTopochain._formGrid(`
           ${field('Name *', f('admin-topo-se-f-name', { value: ev?.name }))}
-          ${field('Season id', f('admin-topo-se-f-season_id', { type: 'number', min: 1, value: ev?.season_id }))}
+          ${field('Season', sel('admin-topo-se-f-season_id', AdminTopochain._seasonOptions(seasons), ev?.season_id ?? '', { blank: '— No season —' }), 'Manage the list on the Seasons screen.')}
           ${field('Type', sel('admin-topo-se-f-type', ['regular', 'season'], ev?.type || 'regular'))}
           ${field('Chain id', f('admin-topo-se-f-chain_id', { value: ev?.chain_id }))}
           ${field('Starts at *', f('admin-topo-se-f-starts_at', { type: 'datetime-local', value: iso(ev?.starts_at) }))}

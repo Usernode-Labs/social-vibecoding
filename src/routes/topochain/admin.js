@@ -23,6 +23,7 @@
 const { Router } = require('express');
 const { ok } = require('./helpers');
 const { adminReadGate } = require('./admin/auth');
+const { seasonsAdminRoutes } = require('./admin/seasons');
 const { seasonEventsAdminRoutes } = require('./admin/season-events');
 const { usersAdminRoutes } = require('./admin/users');
 const { userActivitiesAdminRoutes } = require('./admin/user-activities');
@@ -95,6 +96,14 @@ function topochainAdminRoutes(config) {
   // sits behind platform admin auth" requirement is exercised even before
   // the real endpoints below.
   router.get('/api/v4/admin/__ping', (_req, res) => ok(res, {}));
+
+  // Seasons — the top tier of Season -> Event -> Challenge, and the last
+  // one to get an admin API (the console's Seasons screen used to derive
+  // itself by grouping season-events). No path collision with
+  // season-events.js: `/seasons` and `/season-events` are distinct literal
+  // path segments, so `/api/v4/admin/seasons/:id` can never swallow
+  // `/api/v4/admin/season-events` regardless of mount order.
+  router.use(seasonsAdminRoutes(config));
 
   // Task 11: D1 season-events, D2 users, D3 user-activities.
   router.use(seasonEventsAdminRoutes(config));

@@ -8450,6 +8450,23 @@ async function seedStagingTopochain(pool, config) {
   const EVENT_ARCHIVE_ID = 900503; // on SEASON_CLOSED_ID; has challenges
   const EVENT_EMPTY_ID = 900504;   // on SEASON_ID; deliberately has NONE
 
+  // A THIRD season and a season-less event, added with the Seasons admin
+  // CRUD (/api/v4/admin/seasons). Both exist to make a state reachable in
+  // a preview that the two seasons above cannot produce:
+  //   - SEASON_INTERNAL_ID is internal = TRUE (the Internal badge) AND
+  //     has NO events, enrollments, onchain accounts or allocations —
+  //     which makes it the one season whose DELETE actually succeeds.
+  //     Deleting either of the other two returns the 409 `season_in_use`
+  //     guard, so without this row the happy path could only be reviewed
+  //     by first creating a season.
+  //   - EVENT_UNASSIGNED_ID carries season_id = NULL, which nothing else
+  //     in this fixture does: it is what the Seasons screen's "Events not
+  //     assigned to a season" panel and the events list's `season_id=none`
+  //     filter are for. Kept is_active = FALSE so no public surface picks
+  //     it up (it has no season to scope a leaderboard to anyway).
+  const SEASON_INTERNAL_ID = 900502;
+  const EVENT_UNASSIGNED_ID = 900505;
+
   const USERS = {
     seasonWide1: 900500, // exclude_podium = TRUE
     seasonWide2: 900501,
@@ -8508,7 +8525,7 @@ async function seedStagingTopochain(pool, config) {
        USERS.eventB1, USERS.mixed, realHash, USERS.bpPending, USERS.bpReleased]
     );
 
-    // ─── Seasons (2): one running, one closed ───────────────────────────
+    // ─── Seasons (3): one running, one closed, one internal + empty ─────
     // The closed one is not decoration: the admin console's Seasons screen
     // renders an active/closed badge and orders by display_order, and with
     // a single always-active row neither the inactive badge nor the sort
@@ -8527,9 +8544,13 @@ async function seedStagingTopochain(pool, config) {
          ($2, 'Staging Demo Season — Archive',
           'Closed fixture season: ended months ago and is_active = FALSE, so the admin Seasons list has a non-running row to render.',
           NOW() - INTERVAL '240 days', NOW() - INTERVAL '150 days', FALSE, FALSE, 1,
-          'Staging demo token pool (closed)', NOW(), NOW())
+          'Staging demo token pool (closed)', NOW(), NOW()),
+         ($3, 'Staging Demo Season — Internal Dry Run',
+          'Internal fixture season with nothing hanging off it: renders the Internal badge, and is the one row whose admin DELETE is not blocked by the season_in_use guard.',
+          NOW() - INTERVAL '5 days', NOW() + INTERVAL '25 days', TRUE, TRUE, 2,
+          'Staging demo token pool (internal)', NOW(), NOW())
        ON CONFLICT (id) DO NOTHING`,
-      [SEASON_ID, SEASON_CLOSED_ID]
+      [SEASON_ID, SEASON_CLOSED_ID, SEASON_INTERNAL_ID]
     );
 
     // ─── Season events (2): one 'regular' with epochs + scoring_formula,
@@ -8579,10 +8600,17 @@ async function seedStagingTopochain(pool, config) {
           'Event with NO challenges, so the per-event empty state is reachable in a preview.',
           NOW() + INTERVAL '20 days', NOW() + INTERVAL '50 days', FALSE,
           '{"metrics": [], "offchain_weight": 1}'::jsonb, NULL, NULL, FALSE, FALSE,
+          NULL, NULL, FALSE, NULL, FALSE, 'regular', NOW(), NOW()),
+         -- season_id NULL: the only unassigned event in the fixture. See
+         -- the EVENT_UNASSIGNED_ID note in the id block above.
+         ($8, NULL, 'Staging Demo Event — Unassigned Sprint',
+          'Event with no season at all, so the Seasons screen''s unassigned panel and the events list''s season_id=none filter both have something to show.',
+          NOW() + INTERVAL '10 days', NOW() + INTERVAL '40 days', FALSE,
+          '{"metrics": [], "offchain_weight": 1}'::jsonb, NULL, NULL, FALSE, FALSE,
           NULL, NULL, FALSE, NULL, FALSE, 'regular', NOW(), NOW())
        ON CONFLICT (id) DO NOTHING`,
       [EVENT_REGULAR_ID, EVENT_SEASON_ID, SEASON_ID, EVENT_ENDED_ID,
-       EVENT_ARCHIVE_ID, SEASON_CLOSED_ID, EVENT_EMPTY_ID]
+       EVENT_ARCHIVE_ID, SEASON_CLOSED_ID, EVENT_EMPTY_ID, EVENT_UNASSIGNED_ID]
     );
 
     // ─── Challenge kinds (4) ────────────────────────────────────────────

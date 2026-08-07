@@ -144,22 +144,56 @@ test('every built subsection has a render function reachable from _renderSub', (
   }
 });
 
-test('the four documented API gaps are explained in the file header, not silently dropped', () => {
+test('the three documented API gaps are explained in the file header, not silently dropped', () => {
   const header = topoJs.slice(0, topoJs.indexOf("'use strict';"));
   for (const phrase of [
-    'no /api/v4/admin/seasons resource',
     'no admin (or public) endpoint lists',
     'no admin CRUD/read routes',
     'no admin endpoint lists per-user log payloads',
   ]) {
     assert.ok(header.includes(phrase), `header documents the gap: "${phrase}"`);
   }
+  // Seasons used to be a fourth gap. The resource exists now, so the
+  // header must not still be telling admins it doesn't — a stale
+  // "there is no API for this" is worse than no note at all.
+  assert.ok(!header.includes('no /api/v4/admin/seasons resource'),
+    'the seasons gap is retired, not left in the header');
 });
 
-test('the seasons subsection is documented as read-only/derived in its own render function', () => {
-  const fn = topoJs.slice(topoJs.indexOf('async renderSeasons(host)'), topoJs.indexOf('_renderSeasonsList('));
-  assert.match(fn, /no dedicated Seasons API/i, 'the UI itself tells the admin why there is no create/edit/delete here');
-  assert.ok(!/canWrite/.test(fn), 'seasons has no mutating controls to gate — it is read-only by construction');
+test('the seasons subsection is full CRUD against the real /admin/seasons resource', () => {
+  const fn = topoJs.slice(topoJs.indexOf('  renderSeasons(host) {'), topoJs.indexOf('  _se: {'));
+  assert.ok(!/no dedicated Seasons API/i.test(fn),
+    'the "there is no API" banner is gone — there is one');
+  assert.match(fn, /\/api\/v4\/admin\/seasons/, 'the screen talks to the seasons resource directly');
+  for (const method of ['POST', 'PUT', 'DELETE']) {
+    assert.ok(fn.includes(`'${method}'`), `the screen can ${method}`);
+  }
+  // Same rule as every other CRUD screen in this file: the control is
+  // not rendered for a view-only admin AND the handler refuses anyway.
+  for (const handler of ['_openSeasonForm(id)', '_saveSeason()', '_deleteSeason(id)']) {
+    const body = fn.slice(fn.indexOf(`async ${handler} {`));
+    assert.match(body.slice(0, 200), /if \(!AdminTopochain\.canWrite\(\)\) return;/,
+      `${handler} refuses a view-only admin even if the control were reachable`);
+  }
+});
+
+test('the seasons list delete surfaces the 409 season_in_use message rather than a generic failure', () => {
+  const fn = topoJs.slice(topoJs.indexOf('  async _deleteSeason(id) {'), topoJs.indexOf('  // ══════', topoJs.indexOf('  async _deleteSeason(id) {')));
+  assert.match(fn, /res\.data && res\.data\.error/,
+    "the API's own message (which names what still references the season) is what the admin sees");
+});
+
+test('the season events screen links to seasons by name and can filter by one', () => {
+  const screen = topoJs.slice(topoJs.indexOf('  renderSeasonEvents(host) {'), topoJs.indexOf('  async _openSeasonEventForm(id) {'));
+  assert.match(screen, /admin-topo-se-season-filter/, 'a season filter control exists');
+  assert.match(screen, /params\.set\('season_id', s\.seasonFilter\)/,
+    'the filter is sent to the API, not applied client-side over one page of results');
+  assert.match(screen, /ev\.season\?\.name/, 'the Season column shows the name, not the raw id');
+  assert.match(screen, /— No season —/, 'the unassigned bucket is selectable');
+
+  const form = topoJs.slice(topoJs.indexOf('  async _openSeasonEventForm(id) {'), topoJs.indexOf('  async _saveSeasonEvent() {'));
+  assert.match(form, /sel\('admin-topo-se-f-season_id'/,
+    'the event form picks a season from a dropdown instead of asking for a numeric id');
 });
 
 // ─── Sub-nav hash handling ──────────────────────────────────────────────
