@@ -485,6 +485,10 @@ function registerTools(server, ctx) {
     gh: require('./github'),
     githubLink: require('./github-link'),
     limits: connectorLimits,
+    // Supplies the offline PLATFORM RULES appendix the work order carries.
+    // Injected rather than imported by the service so tests can build a work
+    // order without reading the conventions document.
+    prompts: require('./prompts'),
   });
 
   // A failure from the service, turned into the connector's error shape.
@@ -533,6 +537,8 @@ function registerTools(server, ctx) {
         .describe('The number of an existing request to implement, from list_requests. Its title and body become the task description.'),
       brief: z.string().optional()
         .describe('What to build, when there is no existing request (or to add detail to one).'),
+      restart: z.boolean().optional()
+        .describe('Only when the user explicitly wants to start this request over from the app\'s current code. Closes the job already open for it and mints a fresh one, spending a slot of their hourly allowance. Omit it: calling prepare_work twice for the same request already returns the existing job, which is almost always what is wanted.'),
     },
     outputSchema: {
       taskId: z.number(),
@@ -542,10 +548,15 @@ function registerTools(server, ctx) {
       // 'ready' — the user already has a fork of this app; 'missing' — the
       // coding agent has to create it (the work order's first command);
       // 'name_conflict' — a same-named repo of theirs is in the way, so the
-      // work order asks for a differently-named fork.
-      forkStatus: z.enum(['ready', 'missing', 'name_conflict']),
+      // work order asks for a differently-named fork; 'unknown' — GitHub
+      // could not be read, so the copy is described in hedged wording rather
+      // than asserted either way.
+      forkStatus: z.enum(['ready', 'missing', 'name_conflict', 'unknown']),
       branch: z.string(),
       baseSha: z.string(),
+      // True when this returned a job that was ALREADY open for this
+      // request rather than minting a new one.
+      reused: z.boolean(),
       // The human's steps, already ordered and already client-specific.
       // Render as a numbered list; do not merge them into prose. The work
       // order beside them is for their coding agent and is reproduced
@@ -555,7 +566,7 @@ function registerTools(server, ctx) {
       nextStep: z.string(),
     },
     annotations: writeAnnotations,
-  }, async ({ slug, requestNumber, brief }) => {
+  }, async ({ slug, requestNumber, brief, restart }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
     if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
@@ -595,6 +606,7 @@ function registerTools(server, ctx) {
       // wording, so it has to reach the service distinctly from clientId.
       clientName: clientName || clientId || null,
       origin,
+      restart: restart === true,
     });
     if (!result.ok) return serviceError(result);
 
@@ -611,27 +623,44 @@ function registerTools(server, ctx) {
       forkStatus: result.forkStatus,
       branch: result.branch,
       baseSha: result.baseSha,
+      reused: !!result.reused,
       guidance: result.guidance,
       workOrder: result.workOrder,
-      nextStep: 'Render every string in guidance as a numbered list, in order, then the workOrder '
+      nextStep: (result.reused
+        ? `This request already had a job open — task ${result.taskId}, on the branch and base commit it `
+          + 'started with. Nothing new was created and no allowance was spent. If the user already pasted '
+          + 'the work order once, their coding agent may be working on it right now; say so rather than '
+          + 'sending them round again. '
+        : '')
+        + 'Render every string in guidance as a numbered list, in order, then the workOrder '
         + 'below it in a fenced code block reproduced exactly as returned — no re-wrapping, no '
         + 'tidying, no summarising, no retyping the commit id, no correction appended. Add no steps '
         + 'of your own and do not describe what their coding agent will do; the work order tells it. '
         + 'If a paste needs redoing, re-render from this result rather than calling prepare_work '
-        + `again. When the user says the branch is pushed, call submit_work with taskId ${result.taskId}.`,
+        + 'again. The coding agent submits the work itself through its own Usernode connector, so the '
+        + 'user may hear nothing further from you — if they ask, or if it reports that it could not '
+        + `submit, call submit_work with taskId ${result.taskId} and the branch they name.`,
     });
   });
 
   // ── submit_work ──────────────────────────────────────────────────────
   server.registerTool('submit_work', {
-    title: 'Submit finished work as a proposal',
-    description: "Turn a branch the user's coding agent pushed into a Usernode proposal: opens the pull request, builds a staging preview, runs the app's checks and puts it to the group's vote. Call this only after the coding agent confirms it pushed. Only work in the user's own GitHub fork can be submitted under their name.",
+    title: 'Submit finished work — a pushed branch, a patch, or an open PR',
+    description: "Turn finished work into a Usernode proposal: opens the pull request, builds a staging preview, runs the app's checks and puts it to the group's vote. THREE SHAPES, any of which works — (1) `taskId` plus the `branch` you actually pushed, whatever it is called; (2) `taskId` plus `patch`, when GitHub or the sandbox refused the push: Usernode applies the patch at the recorded base commit in the app's own repository and opens the pull request itself, so NO GitHub write access is needed on your side; (3) `slug` plus `prNumber` for a pull request that is already open. A task belongs to the USER'S USERNODE ACCOUNT, not to one chat — any session connected as that account, including a coding agent's own connector, can submit it, and doing so is the expected path. Only work from the user's own GitHub account is submitted under their name.",
     inputSchema: {
       taskId: z.number().int().positive().optional()
-        .describe('The taskId returned by prepare_work. Required unless you are submitting an already-open pull request.'),
-      slug: z.string().optional().describe('The app slug — only needed when submitting an already-open pull request by number.'),
+        .describe('The task id from prepare_work — or printed in the work order text you were handed, which is the usual source when you are the coding agent. It belongs to the user’s Usernode account, not to the chat that gave it to you, so you can submit it yourself.'),
+      slug: z.string().optional().describe('The app slug. Needed when submitting an already-open pull request by number, or a branch without a taskId.'),
       prNumber: z.number().int().positive().optional()
-        .describe('An already-open pull request to submit instead. It must come from the user’s own fork.'),
+        .describe('An already-open pull request to submit instead. It must come from the user’s own fork. This is also the recovery when submitting a branch returns pr_open_failed: open the pull request from the compareUrl that error returns, then call again with slug + prNumber.'),
+      branch: z.string().optional()
+        .describe('The branch you actually pushed, if it is not the one the work order suggested. Any branch name is accepted — a different name is never a reason to redo finished work.'),
+      forkRepo: z.string().optional()
+        .describe('The name of the fork you pushed to, if you forked under a name other than the app repository’s. The owner is always the user’s linked GitHub account and is never taken from here.'),
+      patch: z.string().optional()
+        .describe('The change as a patch, for when GitHub refused the push — the output of `git format-patch <baseSha>..HEAD --stdout`, or a plain `git diff`. Usernode applies it at the task’s recorded base commit, commits it in the app’s own repository and opens the pull request, so you need no GitHub write access at all. Requires taskId. Roughly 250 KB max; push a branch for anything larger.'),
+      source: z.enum(['work_order', 'assistant']).optional()
+        .describe('Set to "work_order" when you are the coding agent submitting your own finished work, "assistant" when a human relayed it to you. Advisory only.'),
       title: z.string().optional().describe('A short title for the proposal. Defaults to the task description.'),
       description: z.string().optional().describe('What changed and why, for the people voting on it.'),
       agent: z.enum(['claude-code', 'codex', 'external']).optional()
@@ -640,26 +669,44 @@ function registerTools(server, ctx) {
     outputSchema: {
       proposalId: z.number().nullable(),
       appSlug: z.string(),
-      prNumber: z.number(),
+      // Nullable: an `already_submitted` answer resolves the proposal from
+      // the task row, which records the session but not the PR number.
+      prNumber: z.number().nullable(),
       prUrl: z.string().nullable(),
       externalAgent: z.string(),
       webPath: z.string(),
       nextStep: z.string(),
     },
     annotations: writeAnnotations,
-  }, async ({ taskId, slug, prNumber, title, description, agent }) => {
+  }, async ({
+    taskId, slug, prNumber, branch, forkRepo, patch, source, title, description, agent,
+  }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
-    if (!taskId && !prNumber) {
-      return toolError('invalid_request', 'Pass the taskId returned by prepare_work.');
+    // Enumerate every accepted shape rather than naming one. An agent that
+    // hits this error should learn the surface — the run that produced this
+    // change concluded "I have neither" and stopped, with a patch it could
+    // have sent sitting in its working tree.
+    if (!taskId && !prNumber && !(slug && branch)) {
+      return toolError(
+        'invalid_request',
+        'Nothing to submit. Any of these works: taskId + the branch you pushed; taskId + patch (if GitHub '
+        + 'refused the push — Usernode applies it and opens the pull request itself, no GitHub write access '
+        + 'needed); slug + prNumber for a pull request that is already open; or slug + branch. The taskId is '
+        + 'printed in the work order you were given, and it belongs to the user\'s Usernode account — you can '
+        + 'submit it yourself.'
+      );
+    }
+    if (patch && !taskId) {
+      return toolError('invalid_request', 'A patch needs the taskId from the work order — it names the commit to apply the patch at.');
     }
 
-    // Submitting a pull request by number carries no reservation, so the
-    // app has to be resolved (and access-checked) here.
+    // A submission that carries no reservation has to resolve (and
+    // access-check) the app here.
     let repoUrl = null;
     let appSlug = slug;
     if (!taskId) {
-      if (!requireSlug(slug)) return toolError('invalid_request', 'slug is required when submitting a pull request by number.');
+      if (!requireSlug(slug)) return toolError('invalid_request', 'slug is required when submitting without a taskId.');
       const found = await fetchApp(slug);
       if (found.error) return found.error;
       repoUrl = found.app.repo_url;
@@ -673,10 +720,15 @@ function registerTools(server, ctx) {
     const result = await externalAgentTasks.submitWork(taskDeps(), {
       user,
       clientName,
+      clientId: clientId || null,
       taskId,
       prNumber,
       slug: appSlug,
       repoUrl,
+      branch,
+      forkRepo,
+      patch,
+      source,
       agent,
       title,
       body: description,
@@ -687,6 +739,24 @@ function registerTools(server, ctx) {
       // 409 "already imported" and the collab-access 404 both matter.
       if (result.platformResult) return platformError(result.platformResult, 'import_failed');
       return serviceError(result);
+    }
+
+    // Telling Usernode twice is not an error. The second caller gets the
+    // proposal that already exists rather than being sent back to
+    // prepare_work, which would open a duplicate for work already voting.
+    if (result.alreadySubmitted) {
+      return toolResult({
+        proposalId: result.proposalId,
+        appSlug: result.appSlug,
+        prNumber: result.prNumber,
+        prUrl: result.prUrl,
+        externalAgent: result.externalAgent,
+        webPath: result.proposalId
+          ? `${origin}/#app/${result.appSlug}/dev/sessions/${result.proposalId}`
+          : `${origin}/#app/${result.appSlug}`,
+        nextStep: 'That work was already submitted — most likely the coding agent submitted it itself through '
+          + 'its own connector. Nothing was duplicated. It is up for the group\'s vote; use get_proposal to follow it.',
+      });
     }
 
     return toolResult({
