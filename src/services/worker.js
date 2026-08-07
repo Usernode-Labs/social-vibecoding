@@ -7,6 +7,7 @@ const docker = require('./docker');
 const github = require('./github');
 const models = require('./models');
 const inLoopBrowser = require('./in-loop-browser');
+const registry = require('../agents/registry');
 
 const WORKER_IMAGE = 'usernode-worker:latest';
 // Per-session worker container resource limits. Read from env (mirrored
@@ -30,6 +31,13 @@ const PLATFORM_INTERNAL_URL = process.env.PLATFORM_INTERNAL_URL || 'http://usern
 // every per-turn `docker exec`. The TTL itself lives with the signer in
 // services/platform-jwt.js; kept here as the name the comments below use.
 const WORKER_JWT_TTL = platformJwt.WORKER_TTL;
+
+// Version of the warm-container bootstrap ENV shape. Bump whenever the
+// bootstrap environment changes (e.g. Commit 1 removed all secrets from
+// it). ensureWorker compares this label on warm-path hits and evicts +
+// re-bootstraps any container running an older shape, so stale v2
+// containers that still hold a general worker token are recycled.
+const WORKER_BOOTSTRAP_ENV_VERSION = 'v3';
 
 // Mint the auth token the worker container uses to call back into the
 // platform's internal API. Scoped to a single session id; the
@@ -67,46 +75,75 @@ function mintProdDebugJwt(sessionId) {
   return platformJwt.signWorkerToken({ sessionId, prodDebug: true });
 }
 
+// One backend decision, used everywhere in a turn's dispatch so the
+// runner, tokens, env, and active-turn record can never disagree (review
+// Commit 1 / plan 3.1). Rejects unknown backends instead of silently
+// falling through to Claude.
+function resolveTurnBackend(agentBackend) {
+  const backend = registry.resolveBackend(agentBackend || 'claude_code');
+  return {
+    backend,
+    isCodex: backend === 'codex_openrouter',
+    isClaude: backend === 'claude_code',
+  };
+}
+
+function requireNonEmptySecret(value, name) {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`buildTurnSecretEnv: ${name} required`);
+  }
+  return value;
+}
+
 // Pure builder for a turn's secret env (exported for unit tests).
 // Scout mode omits WORKER_JWT so usernode-push can't authenticate (see
 // the long comment in execInWorker); PROD_DEBUG_JWT rides along on
 // build + scout turns only — never sync (bookkeeping, no free-form CC).
-function buildTurnSecretEnv({ mode, workerJwt, workerPushJwt, issuesReadJwt, anthropicApiKey, prodDebugJwt, openrouterApiKey, agentBackend = 'claude_code' }) {
-  const isCodex = agentBackend === 'codex_openrouter';
-  // Codex never talks to the Anthropic proxy (review #2): it must not be
-  // able to spend platform/user Anthropic allowances by curling the proxy
-  // with a worker token. Only claude_code may route through it.
-  const useProxy = !anthropicApiKey && !isCodex;
-  // Direct-OpenRouter/Codex backend (review P0 / #2 / #6): the Codex
-  // process receives ONLY its own credentials (the user's OpenRouter key)
-  // plus two NARROW, purpose-bound capability tokens — worker:push (build
-  // only) and worker:issues-read (both modes). It never receives a
-  // general worker:session token, so repository code in a Codex turn
-  // cannot call the Anthropic proxy.
-  if (agentBackend === 'codex_openrouter') {
-    const env = { OPENROUTER_API_KEY: openrouterApiKey || '' };
+function buildTurnSecretEnv({ mode, agentBackend, workerSessionJwt, workerPushJwt, issuesReadJwt, anthropicApiKey, prodDebugJwt, openrouterApiKey }) {
+  const { backend, isCodex, isClaude } = resolveTurnBackend(agentBackend);
+  if (!isClaude && !isCodex) {
+    throw new Error(`buildTurnSecretEnv: unsupported backend ${agentBackend}`);
+  }
+  if (mode !== 'scout' && mode !== 'build' && mode !== 'sync') {
+    throw new Error(`buildTurnSecretEnv: unsupported mode ${mode}`);
+  }
+  if (isCodex && mode === 'sync') {
+    throw new Error('buildTurnSecretEnv: Codex sync mode is not supported');
+  }
+
+  if (isCodex) {
+    // Codex receives ONLY its own credential plus narrow capability tokens
+    // (review Commit 1 / plan 3.3). It must never receive a general
+    // worker:session token, an Anthropic key/base, or a relay token.
+    const env = {
+      OPENROUTER_API_KEY: requireNonEmptySecret(openrouterApiKey, 'openrouterApiKey'),
+      ISSUES_JWT: requireNonEmptySecret(issuesReadJwt, 'issuesReadJwt'),
+    };
     if (mode === 'build') {
-      env.WORKER_JWT = workerPushJwt || workerJwt; // commit/push only; not present on scout
+      env.WORKER_JWT = requireNonEmptySecret(workerPushJwt, 'workerPushJwt');
     }
-    env.ISSUES_JWT = issuesReadJwt || workerJwt; // read-only issues (narrow worker:issues-read)
     return env;
   }
+
+  // Claude path (unchanged behavior): the Anthropic proxy is used when no
+  // BYOK key is provided; scout omits WORKER_JWT (no push) but keeps
+  // ANTHROPIC_API_KEY for the proxy and ISSUES_JWT for issues reads.
+  const useProxy = !anthropicApiKey;
   const env = mode === 'scout'
     ? {
-        ANTHROPIC_API_KEY: useProxy ? workerJwt : anthropicApiKey,
-        ISSUES_JWT: workerJwt,
+        ANTHROPIC_API_KEY: useProxy ? workerSessionJwt : anthropicApiKey,
+        ISSUES_JWT: workerSessionJwt,
       }
     : {
-        ANTHROPIC_API_KEY: useProxy ? workerJwt : anthropicApiKey,
-        WORKER_JWT: workerJwt,
-        ISSUES_JWT: workerJwt,
+        ANTHROPIC_API_KEY: useProxy ? workerSessionJwt : anthropicApiKey,
+        WORKER_JWT: workerSessionJwt,
+        ISSUES_JWT: workerSessionJwt,
       };
   if (prodDebugJwt && mode !== 'sync') {
     env.PROD_DEBUG_JWT = prodDebugJwt;
   }
   return env;
 }
-
 // ──────────────────────────────────────────────────────────────────────
 // Stream-json / marker parsing
 // ──────────────────────────────────────────────────────────────────────
@@ -763,7 +800,7 @@ function adoptWarmWorker(sessionId, containerName = null) {
 // callers should use `ensureWorker` which handles the "already warm"
 // case and concurrency.
 async function _bootstrapWarmContainer(sessionId, {
-  repoOwner, repoName, branchName, anthropicApiKey, onProgress,
+  repoOwner, repoName, branchName, onProgress,
 }) {
   const containerName = workerContainerName(sessionId);
 
@@ -797,44 +834,15 @@ async function _bootstrapWarmContainer(sessionId, {
   // into git at all.
   const cloneUrl = await github.getCloneUrl(repoOwner, repoName);
 
-  // Mint the JWT the worker uses to call back into the platform's
-  // internal API. The only operation it authorizes is pushing the
-  // session's canonical branch (and creating its PR) — see
-  // src/routes/internal.js and execPushFromWorker below.
-  const workerJwt = mintWorkerJwt(sessionId);
-
-  // CC volume persists across container churn so `claude --resume <id>`
-  // can replay prior conversation state on every re-warm.
+  // Commit 1 (plan 3.4): the warm container's bootstrap environment MUST
+  // contain no provider keys and no worker capability tokens. The long-
+  // lived container is now created with ONLY operational configuration;
+  // every credential/capability is injected on the individual per-turn
+  // `docker exec` instead. worker-run.sh in warm mode only clones,
+  // checks out, initializes files, and sleeps.
   const ccVolume = ccVolumeName(sessionId);
   await docker.ensureVolume(ccVolume);
 
-  // BYOK safety (#30): we split container env into two groups.
-  //
-  // `secretEnv` are secrets that must NEVER appear in the docker CLI
-  // argv — doing so would expose them in `ps` on the host (briefly)
-  // and, far worse, in `err.cmd`/`err.message` on every `execFile`
-  // failure, which `log.warn` then writes to the log file. Instead we
-  // reference them with bare `-e KEY` (no `=value`) so Docker reads
-  // the values from its own process env, and we set that env on the
-  // child only. Values end up in /proc/<docker-pid>/environ
-  // (root/same-user readable, not argv-visible).
-  //
-  // `safeEnv` holds the non-secret args that stay inline.
-  //
-  // Anthropic-proxy (key-exfil mitigation): for platform-key sessions
-  // (anthropicApiKey unset) we deliberately leave ANTHROPIC_API_KEY
-  // empty at bootstrap. The real key NEVER enters this container —
-  // execInWorker overrides ANTHROPIC_API_KEY per-turn with a
-  // session-scoped JWT, and ANTHROPIC_BASE_URL points at the platform
-  // proxy. For BYOK sessions the user's own key is set in env both at
-  // bootstrap and per-turn (their key is theirs to exfiltrate; only
-  // their session can read it).
-  const secretEnv = {
-    ANTHROPIC_API_KEY: anthropicApiKey || '',
-    // No PAT — public clones don't need it, and removing it is the
-    // whole point of the platform-side push proxy.
-    WORKER_JWT: workerJwt,
-  };
   const safeEnv = {
     GIT_AUTHOR_NAME: 'usernode-bot',
     GIT_AUTHOR_EMAIL: 'usernode-bot@users.noreply.github.com',
@@ -851,7 +859,6 @@ async function _bootstrapWarmContainer(sessionId, {
     SESSION_ID: String(sessionId),
     PLATFORM_URL: PLATFORM_INTERNAL_URL,
   };
-  const secretEnvArgs = Object.keys(secretEnv).flatMap((k) => ['-e', k]);
   const safeEnvArgs = Object.entries(safeEnv).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
 
   const network = process.env.DOCKER_NETWORK || 'shared-web';
@@ -867,26 +874,18 @@ async function _bootstrapWarmContainer(sessionId, {
     '--memory', WORKER_MEMORY,
     '--cpus', WORKER_CPUS,
     '--security-opt', 'no-new-privileges:true',
-    // Anthropic-proxy migration marker. ensureWorker checks this label
-    // on warm-path hits and evicts + rebootstraps any container missing
-    // it, so pre-proxy containers (which had the real ANTHROPIC_API_KEY
-    // baked into their bootstrap env) get cycled out on the next ensure.
-    // Bump the version when the bootstrap-env shape changes again.
-    // v2: worker tokens moved off the shared JWT_SECRET onto
-    // WORKER_JWT_SECRET, so any container still holding a v1-era token
-    // would 401 on its next internal call. Evicting them re-mints.
-    '--label', 'usernode.proxy=v2',
+    // Bootstrap-env migration marker: allow the raw `-e KEY` fabrication
+    // helper none (no secrets are injected at bootstrap). ensureWorker
+    // evicts any container whose label != WORKER_BOOTSTRAP_ENV_VERSION so
+    // leftover v2 containers carrying a general worker token get recycled.
+    '--label', `usernode.proxy=${WORKER_BOOTSTRAP_ENV_VERSION}`,
     '-v', `${ccVolume}:/home/node/.claude`,
-    ...secretEnvArgs,
     ...safeEnvArgs,
     WORKER_IMAGE,
   ];
 
   await docker.execFileAsync('docker', args, {
     timeout: 30000,
-    // Merge secrets into the child's env so `docker run -e KEY` can
-    // pick them up without them ever appearing in argv.
-    env: { ...process.env, ...secretEnv },
   });
   log.info('worker', 'Warm worker spawned', { containerName, ccVolume });
 
@@ -969,7 +968,6 @@ async function _awaitWarmReady(containerName, { onProgress, timeoutMs = WARM_REA
 // the registry entry is cleared so the next caller retries from scratch.
 async function ensureWorker(sessionId, {
   repoOwner, repoName, branchName,
-  anthropicApiKey,
   onProgress,
 } = {}) {
   const containerName = workerContainerName(sessionId);
@@ -993,7 +991,7 @@ async function ensureWorker(sessionId, {
     // force a re-bootstrap. Cheap — single `docker inspect` on the
     // warm-path hot path.
     const labels = await docker.getContainerLabels(containerName);
-    if (labels['usernode.proxy'] !== 'v2') {
+    if (labels['usernode.proxy'] !== WORKER_BOOTSTRAP_ENV_VERSION) {
       log.info('worker', 'Evicting stale-label warm container', { containerName });
       await evictWorker(sessionId).catch((err) => {
         log.warn('worker', 'Eviction failed; falling through to bootstrap', {
@@ -1014,7 +1012,7 @@ async function ensureWorker(sessionId, {
   const bootstrap = (async () => {
     try {
       await _bootstrapWarmContainer(sessionId, {
-        repoOwner, repoName, branchName, anthropicApiKey, onProgress,
+        repoOwner, repoName, branchName, onProgress,
       });
       _registryUpsert(sessionId, {
         bootstrap: null,
@@ -1127,7 +1125,31 @@ async function execInWorker(sessionId, {
   // container has been alive. This avoids edge cases where a session
   // outlives its bootstrap-time token (24h is the cap today; could be
   // shorter later) and the next push fails with 401 from the proxy.
-  const workerJwt = mintWorkerJwt(sessionId);
+  // One backend decision for this whole dispatch (review Commit 1 /
+  // plan 3.1): all runner/token/env/active-turn choices derive from it.
+  const { backend: resolvedBackend, isCodex, isClaude } = resolveTurnBackend(agentBackend);
+  const useAnthropicProxy = isClaude && !anthropicApiKey;
+
+  // Backend-specific capability minting (plan 3.2). Crucially,
+  // mintWorkerJwt() (general worker:session) NEVER runs for a Codex turn —
+  // the property is structural, not "hide the already-minted token".
+  let workerSessionJwt = null;
+  let workerPushJwt = null;
+  let issuesReadJwt = null;
+  let prodDebugJwt = null;
+  if (isCodex) {
+    issuesReadJwt = mintIssuesReadJwt(sessionId);
+    if (mode === 'build') {
+      workerPushJwt = mintWorkerPushJwt(sessionId);
+    }
+  } else {
+    workerSessionJwt = mintWorkerJwt(sessionId);
+    if (prodDebug && mode !== 'sync') {
+      prodDebugJwt = mintProdDebugJwt(sessionId);
+    }
+  }
+
+  const persistedModel = isCodex ? (agentModel || '') : models.resolve(model);
 
   // The prompt travels as a file, never as exec argv/env — a single
   // argv/env string is capped at 128 KiB on Linux, and build prompts
@@ -1148,75 +1170,46 @@ async function execInWorker(sessionId, {
   // container, so a malicious prompt like "echo $ANTHROPIC_API_KEY"
   // exfiltrates only a short-lived JWT that's useless against
   // api.anthropic.com directly.
-  const useProxy = !anthropicApiKey;
-  // Scout mode: omit WORKER_JWT so usernode-push has no way to
-  // authenticate against the platform's push proxy, regardless of how
-  // CC may try to invoke it. ANTHROPIC_API_KEY still gets the JWT when
-  // we're routing through the Anthropic proxy — the proxy authenticates
-  // request-scoped JWTs for the Anthropic round-trip itself, so dropping
-  // it would break LLM access entirely. Build mode keeps both: the
-  // commit/push block in run-cc.sh runs, and usernode-push needs the
-  // JWT to push the session branch.
-  // ISSUES_JWT is a read-only, session-scoped token for the usernode-issues
-  // CLI (GET /api/internal/sessions/:id/issues). It's the SAME minted JWT as
-  // WORKER_JWT but handed over under a distinct env var so scout — which
-  // never gets WORKER_JWT, and so cannot push — can still read public
-  // issues. Both modes get it; usernode-push remains gated on WORKER_JWT.
-  // PROD_DEBUG_JWT (#616): a second, claim-carrying JWT for the
-  // usernode-debug CLI, present only when the dispatch site verified
-  // eligibility (admin-owned session on the self-edit app). The routes
-  // re-check eligibility in the DB on every call, so the env var alone
-  // grants nothing once admin is revoked.
   const secretEnv = buildTurnSecretEnv({
     mode,
-    workerJwt,
-    workerPushJwt: mintWorkerPushJwt(sessionId),
-    issuesReadJwt: mintIssuesReadJwt(sessionId),
+    agentBackend: resolvedBackend,
+    workerSessionJwt,
+    workerPushJwt,
+    issuesReadJwt,
     anthropicApiKey,
-    prodDebugJwt: prodDebug && mode !== 'sync' ? mintProdDebugJwt(sessionId) : null,
+    prodDebugJwt,
     openrouterApiKey,
-    agentBackend,
   });
   const safeEnv = {
     PROMPT_FILE: TURN_PROMPT_PATH,
     MODE: mode,
-    MODEL: models.resolve(model),
-    COMMIT_MSG: commitMsg || 'Changes via Usernode',
-    CLAUDE_RESUME_SESSION_ID: resumeSessionId || '',
-    // run-cc.sh defensively re-asserts BRANCH (in case the wrapper's
-    // checkpoint moves) and gates the pre-exec git reset on it.
     BRANCH: branchName || '',
-    // Refresh in case the warm container's env was perturbed; cheap.
     SESSION_ID: String(sessionId),
     PLATFORM_URL: PLATFORM_INTERNAL_URL,
-    // Retarget the Anthropic SDK through our proxy when not BYOK.
-    // Setting it to '' would still be honored by the SDK as the base
-    // URL; only set the key when we mean it.
-    ...(useProxy
-      ? { ANTHROPIC_BASE_URL: `${PLATFORM_INTERNAL_URL}/api/internal/anthropic` }
-      : {}),
+    ...(isClaude ? {
+      MODEL: models.resolve(model),
+      CLAUDE_RESUME_SESSION_ID: resumeSessionId || '',
+      // Retarget the Anthropic SDK through the proxy only for Claude when
+      // not BYOK. Never set for Codex.
+      ...(useAnthropicProxy
+        ? { ANTHROPIC_BASE_URL: `${PLATFORM_INTERNAL_URL}/api/internal/anthropic` }
+        : {}),
+    } : {}),
     // Optional in-loop browser: build-only INLOOP_* env (port,
     // USERNODE_ENV=staging, throwaway DB pointer) the agent uses to boot
     // the edited app locally for a headless visual check. Empty for
-    // scout/sync. This is purely local app/browser config — distinct from
-    // ANTHROPIC_BASE_URL, which only retargets the Anthropic SDK and is
-    // never used by the local launch. See services/in-loop-browser.js.
+    // scout/sync.
    ...inLoopBrowser.browserEnvForMode(mode),
  };
-  // Codex/OpenRouter backend (direct transport, review P0): point Codex
-  // directly at OpenRouter. The user's OPENROUTER_API_KEY is injected via
-  // buildTurnSecretEnv (per-exec secret env), NOT persisted. The sentinel
-  // contract run-codex-agent.sh emits is identical to run-cc.sh.
   if (isCodex) {
     safeEnv.AGENT_BACKEND = 'codex_openrouter';
     safeEnv.AGENT_MODEL = agentModel || '';
     safeEnv.AGENT_REASONING_EFFORT = agentReasoningEffort || '';
     safeEnv.AGENT_THREAD_ID = resumeSessionId || '';
     safeEnv.TURN_UUID = turnUuid || '';
-    // The operator-configured OpenRouter endpoint (review #8): without
-    // this, key-validation/catalog used one origin while Codex generation
-    // silently hit the public default. Validated in resolveCodexTurn.
-    if (openrouterApiBase) safeEnv.OPENROUTER_API_BASE = openrouterApiBase;
+    // The operator-configured OpenRouter endpoint (plan 4): always forward
+    // the (already-validated) base so generation and catalog agree.
+    safeEnv.OPENROUTER_API_BASE = openrouterApiBase || '';
   }
   const runner = isCodex ? '/usr/local/bin/run-codex-agent.sh' : '/usr/local/bin/run-cc.sh';
  // Journal transport: the turn runs DETACHED from this process. The
@@ -1264,9 +1257,9 @@ async function execInWorker(sessionId, {
   await _persistActiveTurn(sessionId, {
     mode,
     journal,
-    backend: agentBackend,
+    backend: resolvedBackend,
     turnUuid: turnUuid || undefined,
-    model: models.resolve(model),
+    model: persistedModel,
     startedAt: new Date().toISOString(),
     // #174: billing context for restart-resume — the resume paths debit
     // the recovered costUsd into the bucket the turn actually billed,

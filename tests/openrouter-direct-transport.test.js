@@ -17,7 +17,7 @@ const worker = require('../src/services/worker');
 test('codex_openrouter scout env: OpenRouter key + narrow issues-read token only (no push, no Anthropic)', () => {
   const env = worker.buildTurnSecretEnv({
     mode: 'scout',
-    workerJwt: 'minted.worker.session.jwt',
+    workerSessionJwt: 'minted.worker.session.jwt',
     workerPushJwt: 'minted.worker.push.jwt',
     issuesReadJwt: 'minted.worker.issues-read.jwt',
     anthropicApiKey: null,
@@ -40,7 +40,7 @@ test('codex_openrouter scout env: OpenRouter key + narrow issues-read token only
 test('codex_openrouter build env: narrow push + issues tokens, no Anthropic/relay', () => {
   const env = worker.buildTurnSecretEnv({
     mode: 'build',
-    workerJwt: 'minted.worker.session.jwt',
+    workerSessionJwt: 'minted.worker.session.jwt',
     workerPushJwt: 'minted.worker.push.jwt',
     issuesReadJwt: 'minted.worker.issues-read.jwt',
     anthropicApiKey: null,
@@ -62,7 +62,7 @@ test('codex_openrouter build env: narrow push + issues tokens, no Anthropic/rela
 test('claude_code build env keeps exactly the legacy Anthropic authority', () => {
   const env = worker.buildTurnSecretEnv({
     mode: 'build',
-    workerJwt: 'minted.worker.jwt',
+    workerSessionJwt: 'minted.worker.jwt',
     anthropicApiKey: null,
     prodDebugJwt: null,
     openrouterApiKey: null,

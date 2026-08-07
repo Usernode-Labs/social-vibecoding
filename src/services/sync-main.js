@@ -568,8 +568,7 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
       repoOwner,
       repoName,
       branchName: session.branch_name,
-      anthropicApiKey: userApiKey || null,
-      onProgress,
+        onProgress,
     });
 
     activeWorkers.add(session.id);

@@ -264,7 +264,7 @@ test('mayorPromptBlock names the Mayor tool, dispatch direction, pages, and the 
 test('secret env: PROD_DEBUG_JWT present for build + scout when granted', () => {
   for (const mode of ['build', 'scout']) {
     const env = worker.buildTurnSecretEnv({
-      mode, workerJwt: 'wjwt', anthropicApiKey: null, prodDebugJwt: 'dbgjwt',
+      mode, workerSessionJwt: 'wjwt', anthropicApiKey: null, prodDebugJwt: 'dbgjwt',
     });
     assert.equal(env.PROD_DEBUG_JWT, 'dbgjwt', mode);
   }
@@ -272,12 +272,12 @@ test('secret env: PROD_DEBUG_JWT present for build + scout when granted', () => 
 
 test('secret env: never on sync turns, never when not granted', () => {
   const sync = worker.buildTurnSecretEnv({
-    mode: 'sync', workerJwt: 'wjwt', anthropicApiKey: null, prodDebugJwt: 'dbgjwt',
+    mode: 'sync', workerSessionJwt: 'wjwt', anthropicApiKey: null, prodDebugJwt: 'dbgjwt',
   });
   assert.ok(!('PROD_DEBUG_JWT' in sync));
   for (const mode of ['build', 'scout', 'sync']) {
     const env = worker.buildTurnSecretEnv({
-      mode, workerJwt: 'wjwt', anthropicApiKey: null, prodDebugJwt: null,
+      mode, workerSessionJwt: 'wjwt', anthropicApiKey: null, prodDebugJwt: null,
     });
     assert.ok(!('PROD_DEBUG_JWT' in env), mode);
   }
@@ -285,11 +285,11 @@ test('secret env: never on sync turns, never when not granted', () => {
 
 test('secret env: pre-existing shape is preserved (scout has no WORKER_JWT)', () => {
   const scout = worker.buildTurnSecretEnv({
-    mode: 'scout', workerJwt: 'wjwt', anthropicApiKey: null, prodDebugJwt: null,
+    mode: 'scout', workerSessionJwt: 'wjwt', anthropicApiKey: null, prodDebugJwt: null,
   });
   assert.deepEqual(scout, { ANTHROPIC_API_KEY: 'wjwt', ISSUES_JWT: 'wjwt' });
   const build = worker.buildTurnSecretEnv({
-    mode: 'build', workerJwt: 'wjwt', anthropicApiKey: 'sk-byok', prodDebugJwt: null,
+    mode: 'build', workerSessionJwt: 'wjwt', anthropicApiKey: 'sk-byok', prodDebugJwt: null,
   });
   assert.deepEqual(build, {
     ANTHROPIC_API_KEY: 'sk-byok', WORKER_JWT: 'wjwt', ISSUES_JWT: 'wjwt',

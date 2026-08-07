@@ -146,6 +146,7 @@ COPY usernode-debug /usr/local/bin/usernode-debug
 # volume with node ownership instead of defaulting to root.
 RUN chmod +x /usr/local/bin/worker-run.sh \
               /usr/local/bin/run-cc.sh \
+              /usr/local/bin/run-codex-agent.sh \
               /usr/local/bin/usernode-push \
               /usr/local/bin/usernode-issues \
               /usr/local/bin/usernode-attachments \

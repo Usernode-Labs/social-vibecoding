@@ -407,15 +407,18 @@ function objectLiterals(src, name) {
 
 test('worker.js container env literals name no platform key', () => {
   const src = read('src/services/worker.js');
-  // The warm-spawn secretEnv plus both safeEnv literals; the per-turn
-  // secretEnv is a call to buildTurnSecretEnv and is covered behaviorally
-  // in the next test.
-  const literals = [...objectLiterals(src, 'secretEnv'), ...objectLiterals(src, 'safeEnv')];
-  assert.ok(literals.length >= 3,
-    'expected the warm-spawn and per-turn env literals to still be there');
-  for (const lit of literals) {
+  // Commit 1: there must be NO `secretEnv` object literal at all — every
+  // credential/capability is assembled by buildTurnSecretEnv (covered
+  // behaviorally in the next test) and injected only on the per-turn exec.
+  const secrets = objectLiterals(src, 'secretEnv');
+  assert.equal(secrets.length, 0,
+    'all secrets must go through buildTurnSecretEnv, not a bootstrap literal');
+  // Both safeEnv literals (bootstrap + per-turn) must name no platform key.
+  const safe = objectLiterals(src, 'safeEnv');
+  assert.ok(safe.length >= 2, 'expected bootstrap and per-turn safeEnv literals');
+  for (const lit of safe) {
     for (const k of FORBIDDEN) {
-      assert.ok(!lit.keys.includes(k), `worker.js container env sets ${k}`);
+      assert.ok(!lit.keys.includes(k), `worker.js safeEnv sets ${k}`);
     }
   }
 });
@@ -430,7 +433,7 @@ test('the per-turn worker env forwards only the minted TOKEN, never the signing 
     for (const anthropicApiKey of [null, 'sk-ant-byok-fixture']) {
       const env = worker.buildTurnSecretEnv({
         mode,
-        workerJwt: 'minted.worker.jwt',
+        workerSessionJwt: 'minted.worker.jwt',
         anthropicApiKey,
         prodDebugJwt: 'minted.proddebug.jwt',
       });
@@ -443,7 +446,7 @@ test('the per-turn worker env forwards only the minted TOKEN, never the signing 
   // Sanity: the token really is what travels, so the check above is not
   // passing on an empty env.
   const build = require('../src/services/worker').buildTurnSecretEnv({
-    mode: 'build', workerJwt: 'minted.worker.jwt', anthropicApiKey: null, prodDebugJwt: null,
+    mode: 'build', workerSessionJwt: 'minted.worker.jwt', anthropicApiKey: null, prodDebugJwt: null,
   });
   assert.equal(build.WORKER_JWT, 'minted.worker.jwt');
   assert.ok(!('WORKER_JWT_SECRET' in build));

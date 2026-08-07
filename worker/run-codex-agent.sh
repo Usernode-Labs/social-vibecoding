@@ -139,7 +139,7 @@ if [ -n "$AGENT_THREAD_ID" ]; then
     # from the error content in $TMP_JSONL (already streamed to the journal).
     if grep -qiE 'thread not found|session not found|local rollout unavailable' "$TMP_JSONL"; then
       echo "__USERNODE_WARN__ codex thread missing (exit $CODEX_RUN_EXIT); retrying fresh"
-      start_codex codex exec - --json -p usernode-build
+      start_codex codex exec - --json
       AGENT_THREAD_OUT=""
     else
       echo "__USERNODE_WARN__ codex resume failed (exit $CODEX_RUN_EXIT); NOT retrying fresh"
@@ -153,7 +153,7 @@ if [ -n "$AGENT_THREAD_ID" ]; then
   fi
 else
   echo "__USERNODE_PHASE__ codex (mode $MODE)"
-  start_codex codex exec - --json -p usernode-build
+  start_codex codex exec - --json
 fi
 CODEX_EXIT=$CODEX_RUN_EXIT
 rm -f "$TMP_STATUS" 2>/dev/null
