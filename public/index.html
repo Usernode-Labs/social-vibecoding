@@ -772,12 +772,17 @@
        also mount for a signed-in non-admin; see the PUBLIC MODE note in
        admin-console.js. Ships hidden like its sibling screens.
 
-       max-w-7xl (not 5xl like the other screens): the folded-in Health &
-       status and Analytics sections were built for a wide column — the
-       status summary is a 6-across tile grid and the analytics charts are
-       640px-wide SVGs. -->
+       FULL WIDTH (no max-w / mx-auto, unlike every other screen): this is a
+       dense operator console, not a reading surface. The folded-in Health &
+       status and Analytics sections were always the widest thing in the app
+       — a 6-across tile grid, wide SVG charts, and user/limit/code tables
+       that were horizontally scrolling inside a capped column — so the
+       constraint cost information rather than protecting legibility. The
+       gutter stays modest (p-4, a little roomier from lg up) and everything
+       inside is percentage/grid-based, so mobile is byte-for-byte
+       unchanged. -->
   <main id="admin-screen" class="hidden flex-1 overflow-y-auto platform-safe-scroll" style="position:relative">
-    <div id="admin-root" class="max-w-7xl mx-auto p-4 w-full"></div>
+    <div id="admin-root" class="w-full p-4 lg:px-6"></div>
   </main>
 
   <!-- Settings screen (#settings hash route). Was a modal overlay

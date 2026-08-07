@@ -1557,6 +1557,11 @@
       "expectSelector": "#admin-credit-balance"
     },
     {
+      "name": "Admin console renders full width — no capped centered column",
+      "path": "/#admin/analytics",
+      "expectSelector": "#admin-root.w-full:not([class*=\"max-w-\"]):not(.mx-auto)"
+    },
+    {
       "name": "Preview overlay opens on a neutral loading state, not a 20-60s rebuild promise (#816)",
       "path": "/?shot=preview-loading#app/usernode-2d5619/dev",
       "expectSelector": "#staging-overlay:not(.hidden) #staging-loader:not(.hidden) #staging-loader-title",

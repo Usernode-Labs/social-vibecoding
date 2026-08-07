@@ -2014,12 +2014,15 @@ const AdminConsole = {
         </div>` : '';
 
       el.innerHTML = `
-        <div class="flex-1 min-w-0 flex flex-col gap-2">
-          <div>
+        <div class="flex-1 min-w-0 flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between xl:gap-6">
+          <div class="min-w-0">
             <div class="font-medium break-words">${esc(user.username)}</div>
             <div class="text-sm text-zinc-500 truncate">$${costToday} spent today ${codeInfo}</div>
           </div>
-          <div class="flex flex-wrap items-center gap-3">
+          <!-- Stacked under the name on narrow screens; from xl the console
+               is full width, so the controls sit on the same line, pushed
+               right, instead of leaving half the row empty. -->
+          <div class="flex flex-wrap items-center gap-3 xl:justify-end xl:shrink-0">
             ${walletHtml}
             ${limitHtml}
             ${roleControlHtml}
