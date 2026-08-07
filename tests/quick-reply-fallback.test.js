@@ -242,7 +242,7 @@ test('no prompt surface lists a boilerplate pill triple verbatim', () => {
   // text in sessions.js and excludes the rules constant itself.
   const forbidden = [
     ['Preview the change', 'Propose it to the group', 'Make another tweak'],
-    ['Build it', 'Revise the spec', 'What will this change?'],
+    ['Build the spec', 'Revise the spec', 'What will this change?'],
     ['Propose it to the group', 'Make a tweak', 'What did it change?'],
     ["How's it going?", 'Stop this build'],
   ];
@@ -278,6 +278,51 @@ test('QUICK_REPLY_RULES_TEXT is shared, not duplicated', () => {
     'both the forced call and the Haiku backstop are handed the same rules');
   assert.match(LLM_SRC, /\$\{rules \|\| ''\}/,
     'llm.js renders the rules it is handed rather than carrying its own copy');
+});
+
+// ── 2c. #1046: the post-spec build pill builds the WHOLE spec ────────
+//
+// The composition rule demands every non-generic pill name its subject,
+// which pushed the model to author the post-spec build pill as "Build the
+// tier colors as spec'd" — read by users as "only that component gets
+// built", when the dispatch it prefills implements the entire spec. The
+// carve-out below is what keeps that pill generic on purpose; these tests
+// stop a later edit from quietly dropping it or reverting the wording.
+
+test('the spec-build pill names the spec, not a component', () => {
+  const { SPEC_BUILD_PILL, RECOVERY_PILLS: SETS } = recoveryPills;
+  assert.equal(SPEC_BUILD_PILL, 'Build the spec',
+    'one shared wording for "implement what the scout planned"');
+  assert.equal(SETS.spec_done[0], SPEC_BUILD_PILL,
+    'the recovered/fallback spec set leads with it');
+
+  const rules = recoveryPills.QUICK_REPLY_RULES_TEXT;
+  assert.match(rules, /SPEC-BUILD CARVE-OUT/,
+    'the shared rules carve the spec-build pill out of the naming rule');
+  assert.match(rules, /ENTIRE spec/,
+    'the carve-out says why: the dispatch builds the whole spec');
+  assert.match(rules, /"Build the spec"/,
+    'the carve-out gives the exact wording to use');
+  // The phrasing that CAUSED the bug may appear only as a prohibition —
+  // never as something the model is shown to imitate.
+  for (const line of rules.split('\n')) {
+    if (!/as spec'd|Build the CSV export/.test(line)) continue;
+    assert.match(line, /NEVER/,
+      `a component-named build pill may only be named as forbidden: ${line}`);
+  }
+  assert.match(rules, /NEVER name a single feature or component in it/,
+    'the carve-out forbids naming one component in the build pill');
+
+  // Every static set the platform ships, plus the Mayor prompt's
+  // situation guidance, spell the pill the same way.
+  const DEVCHAT_SPEC_SET = DEVCHAT_SRC.match(/spec_done: \[([^\]]*)\]/);
+  assert.ok(DEVCHAT_SPEC_SET, 'found the client fallback spec set');
+  assert.match(DEVCHAT_SPEC_SET[1], /'Build the spec'/,
+    'the client fallback mirrors SPEC_BUILD_PILL');
+  assert.match(SESSIONS_SRC, /replies = \[SPEC_BUILD_PILL, 'Revise the spec'/,
+    'the auto-session clone follow-up uses the shared constant');
+  assert.match(SESSIONS_SRC, /After a spec \(dispatch_scout\): building the WHOLE spec/,
+    'the prompt tells the Mayor the post-spec build pill covers the whole spec');
 });
 
 test('BANNED_GENERIC_PILLS covers every static pill the platform ships', () => {

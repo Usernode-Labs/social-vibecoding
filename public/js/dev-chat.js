@@ -4022,9 +4022,14 @@ const DevChat = {
   // (code_done / spec_done / chat_generic). The client can't require that
   // module, so tests/quick-reply-fallback.test.js asserts the two copies
   // stay identical.
+  // #1046: the post-spec build pill is "Build the spec", never "Build it"
+  // or "Build <feature> as spec'd" — tapping it prefills a dispatch that
+  // implements the WHOLE spec, and naming one piece of it misled users into
+  // reading it as "build only that piece". Mirrors SPEC_BUILD_PILL in
+  // src/services/recovery-pills.js.
   FALLBACK_QUICK_REPLIES: {
     code_done: ['Propose it to the group', 'Make a tweak', 'What did it change?'],
-    spec_done: ['Build it', 'Revise the spec', 'What will this change?'],
+    spec_done: ['Build the spec', 'Revise the spec', 'What will this change?'],
     chat_generic: ['Make a change', 'What issues are open right now?', "What's the current state?"],
   },
 

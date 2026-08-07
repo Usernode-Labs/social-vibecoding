@@ -43,7 +43,9 @@ const QR_MAX_REPLY_LEN = 80;
 //   code_done      — a build turn was recovered: commit pushed, PR opened,
 //                    staging rebuilt. Mirrors the 'code' set in
 //                    buildHeadlessFollowUpQuickReplies.
-//   spec_done      — a scout turn was recovered and left a spec.
+//   spec_done      — a scout turn was recovered and left a spec. #1046: the
+//                    build pill names the SPEC, not the feature — see
+//                    SPEC_BUILD_PILL below for why.
 //   push_failed    — the recovered build committed but the push failed.
 //   unrecoverable  — the turn could not be resumed at all (worker gone,
 //                    journal unreadable, watchdog reap).
@@ -65,9 +67,23 @@ const QR_MAX_REPLY_LEN = 80;
 //                    model refusal, provider error). Same wording as
 //                    push_failed, kept as its own key so the recovery
 //                    caller's semantics stay readable at the call site.
+// #1046 — the one wording for "implement what the scout just planned".
+//
+// The post-spec build pill used to be "Build it" here, and the composition
+// rule below (which demands every non-generic pill NAME its subject) pushed
+// the model to author it as "Build the tier colors as spec'd" — a pill that
+// reads as "build only that one component", when tapping it dispatches the
+// coding agent against the WHOLE spec. Users took the narrow reading, which
+// is what this issue reports. Naming the spec is the only phrasing that
+// can't be misread, so it is a shared constant: the static sets below, the
+// clone/headless follow-ups and the client-side fallback all spell it the
+// same way, and the prompt rules carve it out as the one allowed generic
+// action after a scout turn.
+const SPEC_BUILD_PILL = 'Build the spec';
+
 const RECOVERY_PILLS = Object.freeze({
   code_done: Object.freeze(['Propose it to the group', 'Make a tweak', 'What did it change?']),
-  spec_done: Object.freeze(['Build it', 'Revise the spec', 'What will this change?']),
+  spec_done: Object.freeze([SPEC_BUILD_PILL, 'Revise the spec', 'What will this change?']),
   push_failed: Object.freeze(['Try that again', 'What went wrong?']),
   unrecoverable: Object.freeze(['Try that again', "What's the current state?"]),
   unanswered: Object.freeze(["What's the current state?"]),
@@ -100,10 +116,11 @@ const RECOVERY_PILLS = Object.freeze({
 // cycle.
 const QUICK_REPLY_RULES_TEXT = `Each pill must be a complete first-person message the user could send verbatim, under 80 characters. 2-3 of them, most likely first.
 
-COMPOSITION RULE — at most ONE pill may be a generic platform action ("Propose it to the group", "Build it", "Preview the change"). EVERY other pill must name the concrete subject of THIS turn: the feature, screen, component, issue number, or the specific thing just built, planned or discussed. A set where every pill would fit any conversation is a failed set.
+COMPOSITION RULE — at most ONE pill may be a generic platform action ("Propose it to the group", "Preview the change", ${JSON.stringify(SPEC_BUILD_PILL)}). EVERY other pill must name the concrete subject of THIS turn: the feature, screen, component, issue number, or the specific thing just built, planned or discussed. A set where every pill would fit any conversation is a failed set.
 Good, because they name the subject: after a build that made a leaderboard default to Season 1 — "Preview the Season 1 default" / "Propose it to the group" / "Also fix the sub-event tabs". Note only the middle one is generic.
 These are shapes, not strings — never send these words verbatim.
-NEVER emit any of these exact sets, or a set made only of these phrases: "Preview the change" / "Propose it to the group" / "Make another tweak"; "Build it" / "Revise the spec" / "What will this change?"; "Propose it to the group" / "Make a tweak" / "What did it change?"; "Make a change" / "What issues are open right now?" / "What's the current state?"; "Try that again" / "What went wrong?".
+SPEC-BUILD CARVE-OUT — after a scout/spec turn, the pill that starts the build is the ONE exception to the naming rule, and it is the generic action that set is allowed. Write it as ${JSON.stringify(SPEC_BUILD_PILL)} (in the conversation's own language), because tapping it builds the ENTIRE spec. NEVER name a single feature or component in it — "Build the tier colors as spec'd" / "Build the CSV export" read as "build only that piece" and mislead the user about what they are about to get. The OTHER pills in that set still name this spec's own subject, e.g. after a spec for tier colors — ${JSON.stringify(SPEC_BUILD_PILL)} / "Should the tier colors apply to archived tiers?" / "Add a per-row reset to the spec".
+NEVER emit any of these exact sets, or a set made only of these phrases: "Preview the change" / "Propose it to the group" / "Make another tweak"; ${JSON.stringify(SPEC_BUILD_PILL)} (or "Build it") / "Revise the spec" / "What will this change?"; "Propose it to the group" / "Make a tweak" / "What did it change?"; "Make a change" / "What issues are open right now?" / "What's the current state?"; "Try that again" / "What went wrong?".
 If you cannot make a pill specific, emit TWO pills instead of three — a short specific set beats a padded generic one.
 Write the pills in the SAME LANGUAGE the conversation is in, not always English.`;
 
@@ -324,7 +341,10 @@ function normalizePill(text) {
 const BANNED_GENERIC_PILLS = Object.freeze(new Set([
   // RECOVERY_PILLS, every kind.
   'propose it to the group', 'make a tweak', 'what did it change',
-  'build it', 'revise the spec', 'what will this change',
+  'build the spec', 'revise the spec', 'what will this change',
+  // #1046 retired the bare "Build it" from every static set, but a model
+  // that emits it is still emitting boilerplate — keep it banned.
+  'build it',
   'try that again', 'what went wrong',
   "what's the current state", 'make a change',
   "how's it going", 'stop this build',
@@ -356,6 +376,7 @@ module.exports = {
   QR_MAX_REPLIES,
   QR_MAX_REPLY_LEN,
   RECOVERY_PILLS,
+  SPEC_BUILD_PILL,
   QUICK_REPLY_RULES_TEXT,
   BANNED_GENERIC_PILLS,
   normalizePill,

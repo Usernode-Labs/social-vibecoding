@@ -5480,7 +5480,7 @@ async function seedStagingCloneQuestionSuggestions(pool, config) {
 
 // #330: a cloned-from-auto session whose auto run ended in a SPEC outcome.
 // The appended follow-up message (the last row) carries metadata.quickReplies
-// so the above-box pill bar renders next-step pills ("Build it" / "Revise the
+// so the above-box pill bar renders next-step pills ("Build the spec" / "Revise the
 // spec" / "What will this change?") — the bug this fixes was that bar being
 // empty. Sibling of seedStagingCloneQuestionSuggestions (that one covers the
 // chips/question path; this one the pills/spec path). chat_sessions /
@@ -5545,14 +5545,16 @@ async function seedStagingCloneSpecPills(pool, config) {
   // 2. The appended follow-up — last row, carrying the SPEC-outcome pills so
   // the above-box pill bar renders (the thing #330 fixes).
   //
-  // #1001: these used to be the fixed triple ('Build it' / 'Revise the spec' /
+  // #1001: these used to be the fixed triple ('Build the spec' / 'Revise the spec' /
   // 'What will this change?'), which production showed 92 sessions opening on
   // even though each auto run had produced a specific plan. The clone handler
   // now asks the Mayor to author them from the auto run's own output, with the
   // fixed set only as the fallback — so the fixture carries a set naming the
   // issue and the spec, matching what the live path now produces.
   const quickReplies = [
-    'Build the nicer header',
+    // #1046: the build pill names the SPEC, not one component of it —
+    // "Build the nicer header" read as "build only the header bit".
+    'Build the spec',
     'What does the plan for #42 change?',
     'Revise the spec first',
   ];
@@ -5560,7 +5562,7 @@ async function seedStagingCloneSpecPills(pool, config) {
     'This session was cloned from an auto session that ran unattended on GitHub issue #42. '
     + "You're on your own branch (forked from the auto session's, so its commits carry over).\n\n"
     + 'Where things stand: the auto session investigated the repo and drafted a spec — open the '
-    + "spec viewer to review it. When you're happy with it, tell me to build it and I'll dispatch "
+    + "spec viewer to review it. When you're happy with it, tell me to build the spec and I'll dispatch "
     + 'the coding agent.';
   await pool.query(
     `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
@@ -5660,7 +5662,7 @@ async function seedStagingQuickReplyFallback(pool, config) {
       title: '[staging fixture] Staging demo: pills fall back after a spec',
       prNumber: null,
       specMd,
-      // Expect: 'Build it' / 'Revise the spec' / 'What will this change?'
+      // Expect: 'Build the spec' / 'Revise the spec' / 'What will this change?'
       rows: [
         ['user', 'Plan out a dark mode toggle before we build anything.', {}, 12],
         ['assistant', 'The scout drafted the spec — it\'s in the spec viewer.', {}, 10],
@@ -5735,11 +5737,17 @@ async function seedStagingQuickReplyFallback(pool, config) {
       // Expect: pills indistinguishable from the 'model' row above. That IS
       // the point — an enforced set renders identically, so the user never
       // sees which rung produced it; only the telemetry column differs.
+      //
+      // #1046: this is a post-SPEC set, so its build pill is 'Build the
+      // spec' — it used to read 'Build the avatar upload flow', the exact
+      // component-named wording that made users think tapping it would
+      // build only the upload flow rather than the whole spec. The other
+      // two pills still name this spec's own subject.
       rows: [
         ['user', 'Plan how avatar uploads should work before building anything.', {}, 14],
         ['assistant', 'The scout drafted a spec for avatar uploads — it adds a user_avatars '
           + 'table and a crop step, and it\'s in the spec viewer now.', {
-          quickReplies: ['Build the avatar upload flow', 'Drop the crop step from the plan', 'What does this add to the database?'],
+          quickReplies: ['Build the spec', 'Drop the crop step from the plan', 'What does this add to the database?'],
           quickRepliesSource: 'enforced',
         }, 12],
       ],
@@ -7025,7 +7033,7 @@ async function seedStagingHeadlessFixtures(pool, config) {
       spec: {
         text: '_Spec drafted — review it in the spec viewer after starting a session from this auto session._',
         kind: 'spec_done',
-        pills: ['Build it', 'Revise the spec', 'What will this change?'],
+        pills: ['Build the spec', 'Revise the spec', 'What will this change?'],
       },
       code: {
         text: '_Change committed and pushed — start a session from this auto session to open the PR._',

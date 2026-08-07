@@ -100,6 +100,9 @@ const {
   fallbackKindForTurn,
   buildRecoveryQuickReplies,
   QUICK_REPLY_RULES_TEXT,
+  // #1046: the one wording for the post-spec build pill, so the static
+  // follow-up sets here spell it exactly as the prompt rules ask for.
+  SPEC_BUILD_PILL,
   isGenericPillSet,
 } = require('../services/recovery-pills');
 // #937: pure stop policy — the pre-dispatch gate predicate and the
@@ -3815,7 +3818,7 @@ function sessionRoutes(config) {
           } else if (toolKind === 'scout') {
             // Spec/scout just planned something — make the build handoff
             // explicit so a finished spec doesn't read as a finished change.
-            mayorText2 = "_Spec updated — it's in the spec viewer. Tell me to build it whenever you're ready and I'll dispatch the coding agent._";
+            mayorText2 = "_Spec updated — it's in the spec viewer. Tell me to build the spec whenever you're ready and I'll dispatch the coding agent._";
           } else {
             mayorText2 = '_Done._';
           }
@@ -4920,7 +4923,7 @@ function buildHeadlessFollowUpMessage(src) {
     + `other users can clone the same auto session independently without affecting yours.`;
   switch (src.headless_outcome) {
     case 'spec':
-      return `${intro}\n\nWhere things stand: the auto session investigated the repo and drafted a spec — open the spec viewer to review it. When you're happy with it, tell me to build it and I'll dispatch the coding agent (that turn also opens the PR and staging preview).`;
+      return `${intro}\n\nWhere things stand: the auto session investigated the repo and drafted a spec — open the spec viewer to review it. When you're happy with it, tell me to build the spec and I'll dispatch the coding agent (that turn also opens the PR and staging preview).`;
     case 'code':
       return `${intro}\n\nWhere things stand: the code change is already committed and pushed on this branch — see the "Changes ready" card above. A staging preview may be shown there ("Preview staging" / "Test this change") if one built; if it didn't, the card still lets you propose and the preview is rebuilt then. No PR exists yet. Review the change, iterate if you want, and when you're ready hit "Propose to group" on the card — that opens the PR on this branch and starts the vote (or just ask me).`;
     case 'spec_code':
@@ -4943,7 +4946,9 @@ function buildHeadlessFollowUpQuickReplies(src) {
   let replies;
   switch (src.headless_outcome) {
     case 'spec':
-      replies = ['Build it', 'Revise the spec', 'What will this change?'];
+      // #1046: "Build the spec", not "Build it" / "Build <feature>" — the
+      // dispatch it prefills implements the whole spec.
+      replies = [SPEC_BUILD_PILL, 'Revise the spec', 'What will this change?'];
       break;
     case 'code':
       replies = ['Propose it to the group', 'Make a tweak', 'What did it change?'];
@@ -5858,7 +5863,7 @@ async function runRecoveredWrapUp({
   const fallbackText = outcome === 'push_failed'
     ? "_The coding agent didn't complete successfully — see the status messages above._"
     : outcome === 'spec'
-      ? "_Spec updated — it's in the spec viewer. Tell me to build it whenever you're ready and I'll dispatch the coding agent._"
+      ? "_Spec updated — it's in the spec viewer. Tell me to build the spec whenever you're ready and I'll dispatch the coding agent._"
       : outcome === 'no_changes'
         ? '_The coding agent finished without changing anything — see the status messages above._'
         : '_Done._';
@@ -9557,7 +9562,7 @@ ${QUICK_REPLY_RULES_TEXT}
 
 What to reach for in each situation — as a KIND of next step, which you then phrase around what this turn was actually about:
 - After a build (dispatch_claude_code): looking at what shipped, putting it to the group, and the most likely follow-on change to the thing you just built.
-- After a spec (dispatch_scout): building it, the one revision this particular spec most plausibly needs, and the question a reader of THIS spec would still have.
+- After a spec (dispatch_scout): building the WHOLE spec — that pill is ${JSON.stringify(SPEC_BUILD_PILL)} per the spec-build carve-out above, never "Build <feature> as spec'd" — plus the one revision this particular spec most plausibly needs, and the question a reader of THIS spec would still have.
 - A build is still running: checking on it, or stopping it.
 - A normal chat reply: the couple of likeliest next things to ask for, drawn from what you just said.
 This is NOT optional. If you end a non-clarifying reply without suggest_replies, the platform comes straight back and asks you for the pills alone — a wasted round trip that costs the user money and delays their pill row. Write them the first time.
@@ -9565,7 +9570,7 @@ suggest_replies is for NEXT-STEP shortcuts only — it is NOT for clarifying que
 
 AFTER A TOOL RETURNS:
 You'll get a short summary of what happened. Write a 1-3 sentence reply to the user in plain English, referencing the spec doc / staging URL / PR if present. For dispatch_scout: tell them the spec was drafted (or revised) and is available in the spec viewer. For dispatch_claude_code: summarize what was built. If anything failed, explain briefly and suggest next steps.
-- IMPORTANT — spec→build handoff: after dispatch_scout, the spec is only PLANNED, not built. End your reply with a one-line next step that makes this explicit, e.g. "When this looks right, just tell me to build it and I'll have the coding agent implement it." Nothing gets built until the user asks — don't let a finished spec read as a finished change. (After dispatch_claude_code the change IS built, so no handoff line is needed.)
+- IMPORTANT — spec→build handoff: after dispatch_scout, the spec is only PLANNED, not built. End your reply with a one-line next step that makes this explicit, e.g. "When this looks right, just tell me to build the spec and I'll have the coding agent implement it." Nothing gets built until the user asks — don't let a finished spec read as a finished change. (After dispatch_claude_code the change IS built, so no handoff line is needed.)
 
 STAGING BUILD FAILURES (recoverable):
 A dispatch_claude_code tool_result may report that the commit/push/PR succeeded but the staging preview failed to build. The two common causes — both surfaced verbatim in the tool_result with explicit "Fix:" instructions:
