@@ -5772,12 +5772,22 @@ const AppView = {
     }
     if (!results.length) return ''; // 'passing' with no detail to show — the green badge is enough.
 
-    const rows = results.map((r) => {
+    // Every declared check now runs, so a suite is hundreds of rows rather
+    // than a dozen, and the rows are no longer equal in weight: a BLOCKING
+    // failure is why the merge is stuck, an ADVISORY failure is a check that
+    // has never been seen passing (it reports, it does not block), and a
+    // pass is context. Ordered by that weight, and the passes — the bulk —
+    // fold away so the card opens on what someone has to act on.
+    const rowHtml = (r) => {
       const pass = r && r.status === 'pass';
+      const advisory = !pass && !!(r && r.advisory);
       const icon = pass ? '✓' : '✗';
-      const iconCls = pass ? 'text-emerald-500' : 'text-red-500';
+      const iconCls = pass ? 'text-emerald-500' : (advisory ? 'text-zinc-500' : 'text-red-500');
       const name = escapeHtml(String((r && r.name) || 'test'));
       const path = (r && r.path) ? `<span class="opacity-60 font-mono">${escapeHtml(String(r.path))}</span>` : '';
+      const chip = advisory
+        ? ' <span class="rounded bg-zinc-500/10 px-1 text-[0.65rem] uppercase tracking-wide opacity-70">advisory</span>'
+        : '';
       let detail = '';
       if (!pass) {
         const reason = (r && r.failureReason) ? escapeHtml(String(r.failureReason).slice(0, 500)) : 'failed';
@@ -5790,23 +5800,67 @@ const AppView = {
         }).join('');
         detail = `<div class="ml-4 opacity-90">${reason}</div>${errItems ? `<ul class="ml-6 list-disc space-y-0.5">${errItems}</ul>` : ''}`;
       }
-      return `<li><span class="${iconCls} font-medium">${icon}</span> ${name} ${path}</li>${detail}`;
-    }).join('');
+      const rowCls = advisory ? ' class="opacity-70"' : '';
+      return `<li${rowCls}><span class="${iconCls} font-medium">${icon}</span> ${name} ${path}${chip}</li>${detail}`;
+    };
 
+    const blockingRows = results.filter((r) => r && r.status !== 'pass' && !r.advisory);
+    const advisoryRows = results.filter((r) => r && r.status !== 'pass' && r.advisory);
+    const passRows = results.filter((r) => r && r.status === 'pass');
+    // 'failing' is the stored verdict and the merge gate's own answer; the
+    // blocking count is only used to phrase the heading, never to override
+    // it, so a legacy row with no `advisory` flags still reads correctly.
     const failing = state === 'failing';
+
+    // A row usually IS one check, but the "N checks did not finish" row
+    // stands for N of them. Count checks, not rows, or the summary
+    // under-reports the suite it is summarising.
+    const weight = (r) => (r && r.count > 1 ? r.count : 1);
+    const total = (rows) => rows.reduce((n, r) => n + weight(r), 0);
+    const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+    const advisoryChecks = total(advisoryRows);
+    const summaryBits = [
+      plural(total(results), 'check', 'checks'),
+      `${passRows.length} passed`,
+    ];
+    if (blockingRows.length) summaryBits.push(plural(total(blockingRows), 'blocking failure', 'blocking failures'));
+    if (advisoryChecks) summaryBits.push(plural(advisoryChecks, 'advisory failure', 'advisory failures'));
+    const summary = `<div class="mt-0.5 opacity-80">${escapeHtml(summaryBits.join(' · '))}</div>`;
+
+    const failureList = blockingRows.concat(advisoryRows).map(rowHtml).join('');
+    // Under this many, folding costs a click and saves nothing.
+    const PASS_FOLD_AT = 8;
+    let passList = '';
+    if (passRows.length && passRows.length <= PASS_FOLD_AT) {
+      passList = `<ul class="mt-1 ml-1 space-y-0.5">${passRows.map(rowHtml).join('')}</ul>`;
+    } else if (passRows.length) {
+      passList = `
+        <details class="mt-1">
+          <summary class="cursor-pointer opacity-80">Show ${passRows.length} passing checks</summary>
+          <ul class="mt-1 ml-1 space-y-0.5">${passRows.map(rowHtml).join('')}</ul>
+        </details>`;
+    }
+
     const wrapCls = failing
       ? 'border-amber-500/30 bg-amber-500/5 text-amber-600 dark:text-amber-500'
       : 'border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-500';
-    const heading = failing
-      ? '⚠ Some checks failed — merge is blocked until they pass.'
-      : '✓ All checks passed on the staging build.';
+    let heading;
+    if (failing) heading = '⚠ Some checks failed — merge is blocked until they pass.';
+    else if (advisoryRows.length) heading = '✓ Every merge-blocking check passed on the staging build.';
+    else heading = '✓ All checks passed on the staging build.';
+    const advisoryNote = (!failing && advisoryRows.length)
+      ? '<div class="mt-1 opacity-80">Advisory checks have never been observed passing on this app, so they report without blocking. Fix one and its first pass makes it a permanent guard rail.</div>'
+      : '';
     const checked = pr.checks_checked_at
       ? `<div class="mt-1 opacity-80">Last checked ${escapeHtml(relTime(pr.checks_checked_at))}.</div>`
       : '';
     return `
       <div class="mt-2 rounded border px-2 py-1.5 ${wrapCls}">
         <div class="font-medium">${heading}</div>
-        <ul class="mt-1 ml-1 space-y-0.5">${rows}</ul>
+        ${summary}
+        ${failureList ? `<ul class="mt-1 ml-1 space-y-0.5">${failureList}</ul>` : ''}
+        ${passList}
+        ${advisoryNote}
         ${checked}
         ${failing ? '<div class="mt-1 opacity-80">Pushing a fix rebuilds the preview and re-runs the checks — the block clears when they pass.</div>' : ''}
         ${failing ? AppView._recheckBtnHtml(pr) : ''}

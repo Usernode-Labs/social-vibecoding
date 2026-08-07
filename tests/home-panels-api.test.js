@@ -1094,17 +1094,23 @@ test('the demo variants are staging-only, like ?demo=1 itself', async () => {
   assert.notEqual(panel.leaderboard.top[0].name, 'staging-demo-lead');
 });
 
-// The declared checks are a CAPPED resource: src/services/app-manifest.js
-// keeps only the first MAX_TESTS (10) entries, so an entry's position in the
-// array decides whether it ever runs. This change spends exactly one slot —
-// on the zero state, which is the state production is in, and which asserts
-// the empty copy, the stamps and a fill row all at once. The `few` state is
-// covered by the render suite's budget table instead of a second slot.
-test('dapp.json checks the new state, and it survives the MAX_TESTS cap', () => {
+// Declared checks used to be a capped resource — the reader kept only the
+// first MAX_TESTS entries, so position decided whether a check ever ran and
+// each new one cost an older one its slot. #1019 runs every declared check,
+// so the assertion here is the one that still bites: the reader KEEPS this
+// entry (malformed ones are dropped silently) and the manifest hasn't grown
+// past MAX_DECLARED_TESTS and started shedding its tail again.
+test('dapp.json checks the new state, and the reader keeps it', () => {
   const appManifest = require('../src/services/app-manifest');
-  const kept = appManifest.read(path.join(__dirname, '..')).tests;
+  const meta = appManifest.readTestsWithMeta(
+    JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'dapp.json'), 'utf8'))
+  );
+  assert.equal(meta.ceilingDropped, 0,
+    `dapp.json declares more than ${appManifest.MAX_DECLARED_TESTS} valid checks — `
+    + 'checks past the ceiling never run');
+  const kept = meta.tests;
   const none = kept.find((t) => t.path === '/?demo=1&challenges=none');
-  assert.ok(none, 'the no-challenges check is inside the parse cap, not just declared');
+  assert.ok(none, 'the no-challenges check must survive the manifest reader');
   // The checks run at the desktop frame, so it asserts the FILLED tile.
   assert.match(none.expectSelector, /data-rows="0"/);
   assert.match(none.expectSelector, /data-fill="3"/);

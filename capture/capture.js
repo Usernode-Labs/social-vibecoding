@@ -171,6 +171,45 @@ const MAX_CONSOLE_ERRORS = 20;
 const MAX_CONSOLE_MSG_LEN = 500;
 const CONSOLE_ONLY_SETTLE_MS = 1500;
 
+// ── Test-suite pool bounds (every declared check now runs, see runTests) ──
+//
+// The suite used to be at most 12 checks run strictly one after another.
+// It is now every declared check — 240-odd for this repo — which at the
+// measured ~3.9s marginal cost per sequential check would be ~16 minutes,
+// four times the container's own timeout. So the checks run through a
+// bounded pool of concurrent pages instead.
+//
+// 8: production timings put a check at ~3.9s sequential, so 241 checks at
+// pool 8 is ~118s of ideal work; the staging preview (2 CPUs) is the real
+// serialising resource, so budget 55-70% efficiency → ~170-200s, well
+// inside the deadlines below. Raising this past ~16 buys nothing while the
+// preview is the bottleneck, and each live page costs 80-150 MB against
+// the container's 4g.
+function poolSize(env) {
+  const raw = parseInt((env || {}).TEST_CONCURRENCY, 10);
+  if (!Number.isFinite(raw) || raw < 1) return 8;
+  return Math.min(16, raw);
+}
+
+// Per-check wall clock. NAV_TIMEOUT_MS only bounds page.goto — the settle
+// sleeps and the selector/text assertions are unbounded, so one wedged page
+// could previously eat the whole run's budget. A check that blows this is
+// reported as an ordinary failed frame and the pool moves on.
+function testTimeoutMs(env) {
+  const raw = parseInt((env || {}).TEST_TIMEOUT_MS, 10);
+  return (Number.isFinite(raw) && raw > 0) ? raw : 25000;
+}
+
+// Whole-suite deadline. On expiry the pool stops dispatching and abandons
+// what is in flight; undispatched checks simply produce no frame and the
+// platform derives the missing set from the sentinel. Sits below the
+// orchestrator's 600s docker timeout so the container always gets to emit
+// its sentinel rather than being killed mid-suite.
+function testsDeadlineMs(env) {
+  const raw = parseInt((env || {}).TESTS_DEADLINE_MS, 10);
+  return (Number.isFinite(raw) && raw > 0) ? raw : 420000;
+}
+
 // Whether this run also produces the before/after media artifacts. The
 // orchestrator sets MEDIA=0 for the always-on console-only check on a
 // non-UI-affecting proposal (visuals.js) — the page is still navigated
@@ -206,7 +245,10 @@ function parseCookie(raw) {
 // collect frames without monkey-patching process.stdout, which would also
 // swallow the test runner's own output.
 let _sink = (s) => process.stdout.write(s);
-function setFrameSink(fn) { _sink = fn || ((s) => process.stdout.write(s)); }
+function setFrameSink(fn) {
+  _sink = fn || ((s) => process.stdout.write(s));
+  _emittedTests.clear();
+}
 
 function emit(kind, media, status, buf, index, fellback) {
   _sink(
@@ -242,13 +284,38 @@ function emitConsole(index, errors, loadStatus) {
 //   __USERNODE_TEST__ index=<n> status=<pass|fail> loadStatus=<n>
 //   <base64 JSON { name, path, consoleErrors:[{kind,message,source}], failureReason }>
 //   __USERNODE_TEST_END__
+//
+// Exactly one frame per index, whatever happens. runTests races each check
+// against a per-check deadline, so the pool can write a "timed out" frame
+// while the original runTest is still mid-navigation and finishes later.
+// First writer wins and the straggler is dropped, so a slow check can never
+// contradict its own recorded verdict.
+const _emittedTests = new Set();
 function emitTest(index, status, loadStatus, payload) {
+  const key = Number(index) || 0;
+  if (_emittedTests.has(key)) return false;
+  _emittedTests.add(key);
   const json = JSON.stringify(payload || {});
   _sink(
     `__USERNODE_TEST__ index=${index || 0} status=${status === 'pass' ? 'pass' : 'fail'} loadStatus=${loadStatus || 0}\n`
   );
   _sink(Buffer.from(json, 'utf8').toString('base64'));
   _sink('\n__USERNODE_TEST_END__\n');
+  return true;
+}
+
+// Completion sentinel for the test suite. With a pool, "fewer frames than
+// dispatched" is no longer self-evidently a crash — it can also be the
+// suite's own deadline stopping dispatch — so the container states plainly
+// how far it got. The platform reads it to decide whether a missing check
+// is a partial run it must fail closed on.
+//
+// parseTests ignores any line that isn't a `__USERNODE_TEST__ ` header, so
+// an OLDER platform reading a NEWER image is unaffected by this line. The
+// other direction (new platform, old image) sees no sentinel at all and
+// falls back to comparing frame count against dispatched count.
+function emitTestsDone(ran, expected, deadline) {
+  _sink(`__USERNODE_TESTS_DONE__ ran=${ran || 0} expected=${expected || 0} deadline=${deadline ? 1 : 0}\n`);
 }
 
 function execFileAsync(cmd, args, opts = {}) {
@@ -794,6 +861,103 @@ async function runTest(browser, test) {
   if (page) await page.close().catch(() => {});
 }
 
+// Run the whole declared suite against one browser context with a bounded
+// worker pool. Replaces the sequential loop that made a 241-check suite a
+// ~16-minute job; at concurrency 8 the same suite lands in ~3-4 minutes,
+// because a check spends nearly all of its wall clock waiting on the
+// network and on settle sleeps rather than on CPU.
+//
+// Three shapes matter here:
+//
+//  1. PRIMER. The first check runs alone. The context starts with an empty
+//     cookie jar and the first navigation is what exchanges the admin
+//     `?token=` for a session cookie (see main()'s isolation comment). Fan
+//     eight checks out into an empty jar and all eight race that exchange —
+//     seven of them render the "Admins only" gate and fail spuriously. One
+//     sequential navigation first, and the rest inherit the cookie.
+//  2. PER-CHECK DEADLINE. runTest already bounds its navigation, but the
+//     settle sleeps and assertion evaluation are not bounded, and a page
+//     that keeps a socket open can hang `networkidle2` past its own
+//     timeout. A check that overruns is recorded as a failure and its slot
+//     is released, so one bad route can't hold a worker forever.
+//  3. GLOBAL DEADLINE. Workers stop PULLING new checks once the suite
+//     budget is spent (in-flight checks are allowed to finish). Whatever
+//     was never dispatched simply has no frame, and the sentinel says so —
+//     the platform reads `deadline=1` and reports those checks as unrun
+//     rather than as a crashed container.
+async function runTests(context, tests, opts) {
+  const list = Array.isArray(tests) ? tests : [];
+  const o = opts || {};
+  const concurrency = Math.max(1, Number(o.concurrency) || 8);
+  const perTestMs = Number(o.testTimeoutMs) > 0 ? Number(o.testTimeoutMs) : 25000;
+  const budgetMs = Number(o.deadlineMs) > 0 ? Number(o.deadlineMs) : 420000;
+  const now = typeof o.now === 'function' ? o.now : () => Date.now();
+
+  if (!list.length) {
+    emitTestsDone(0, 0, false);
+    return { ran: 0, expected: 0, deadline: false };
+  }
+
+  const startedAt = now();
+  let ran = 0;
+  let hitDeadline = false;
+
+  const runOne = async (test) => {
+    let timer = null;
+    const timeout = new Promise((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), perTestMs);
+      if (timer && typeof timer.unref === 'function') timer.unref();
+    });
+    let outcome;
+    try {
+      outcome = await Promise.race([
+        Promise.resolve()
+          .then(() => runTest(context, test))
+          .then(() => 'done', (err) => `error:${(err && err.message) || err}`),
+        timeout,
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+    // emitTest de-duplicates by index, so this is a no-op when runTest
+    // already wrote its own frame.
+    if (outcome === 'timeout') {
+      emitTest(test.index, 'fail', 0, {
+        name: test.name, path: test.path, consoleErrors: [],
+        failureReason: `Check did not finish within ${Math.round(perTestMs / 1000)}s`,
+      });
+    } else if (outcome !== 'done') {
+      emitTest(test.index, 'fail', 0, {
+        name: test.name, path: test.path, consoleErrors: [],
+        failureReason: `Test run error: ${String(outcome).slice(6) || 'unknown'}`,
+      });
+    }
+    ran += 1;
+  };
+
+  // 1. Primer, sequential.
+  await runOne(list[0]);
+
+  // 2/3. Everything else through the pool.
+  let cursor = 1;
+  const worker = async () => {
+    for (;;) {
+      if (cursor >= list.length) return;
+      if ((now() - startedAt) >= budgetMs) { hitDeadline = true; return; }
+      const test = list[cursor];
+      cursor += 1;
+      await runOne(test);
+    }
+  };
+  const lanes = Math.min(concurrency, Math.max(1, list.length - 1));
+  const workers = [];
+  for (let i = 0; i < lanes; i += 1) workers.push(worker());
+  await Promise.all(workers);
+
+  emitTestsDone(ran, list.length, hitDeadline);
+  return { ran, expected: list.length, deadline: hitDeadline };
+}
+
 async function main() {
   const targets = resolveTargets(process.env);
   const tests = resolveTests(process.env);
@@ -836,8 +1000,9 @@ async function main() {
       }
     }
     // #47: run the declared test suite (assertions + per-test console
-    // check). Sequential, one page each; per-test failures stay independent
-    // and a thrown test is reported as a failed frame, never aborts the run.
+    // check). A bounded pool, one page each; per-test failures stay
+    // independent and a thrown test is reported as a failed frame, never
+    // aborts the run.
     //
     // Tests get their OWN browser context, isolated from the screenshot
     // pages above. The screenshot pass navigates with the NON-admin capture
@@ -849,9 +1014,13 @@ async function main() {
     // the content under test (the /debug "PR closed" badge check failed
     // exactly this way). A fresh context starts with an empty cookie jar,
     // so the first test navigation exchanges the admin token as intended.
-    const testContext = tests.length ? await browser.createBrowserContext() : null;
-    for (const test of tests) {
-      await runTest(testContext || browser, test);
+    if (tests.length) {
+      const testContext = await browser.createBrowserContext();
+      await runTests(testContext, tests, {
+        concurrency: poolSize(process.env),
+        testTimeoutMs: testTimeoutMs(process.env),
+        deadlineMs: testsDeadlineMs(process.env),
+      });
     }
   } finally {
     await browser.close().catch(() => {});
@@ -872,4 +1041,4 @@ if (require.main === module) {
 // file whose BEHAVIOUR (how many navigations it makes, whether it starts a
 // recording) is the thing under test, and it takes its page from the browser
 // it is handed, so a fake browser exercises it without Chromium.
-module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, mediaEnabled, resolveTests, captureTarget, setFrameSink, CHROMIUM_LAUNCH_ARGS };
+module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, mediaEnabled, resolveTests, captureTarget, runTests, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };
