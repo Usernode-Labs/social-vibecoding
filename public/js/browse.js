@@ -224,7 +224,14 @@ const Browse = {
   _syncChrome() {
     if (Browse._chromeSuspended) return;
     const onDetail = !!Browse._slug;
-    App.setBackIcon(onDetail ? 'arrow' : 'home');
+    // #1036: the header control is a real anchor, so it needs the same
+    // target handleBack() would take — up to the list, or all the way
+    // home when the detail page was opened from a home card's "App
+    // details" entry (there is no list behind it to go up to).
+    App.setBackIcon(
+      onDetail ? 'arrow' : 'home',
+      onDetail && Browse._detailOrigin !== 'home' ? '#apps' : undefined
+    );
     if (onDetail) {
       const app = Browse.appBySlug(Browse._slug);
       App.setHeaderTitle(app?.name || Browse._slug);
@@ -411,7 +418,17 @@ const Browse = {
   // the Add button is the one part of the row that doesn't drill in.
   _wireRows(listEl) {
     listEl.querySelectorAll('.browse-row').forEach((row) => {
-      row.addEventListener('click', (e) => {
+      // #1036: the row can't BE an anchor (it wraps its own "Add"
+      // button), so cmd/middle-click is intercepted instead. hrefFor
+      // repeats the same guards the plain click applies, so an inert row
+      // (a demo tile, the Add button) stays inert under a modifier too.
+      const hrefFor = (e) => {
+        if (e.target.closest('.browse-add-btn')) return null;
+        if (row.dataset.demo === 'true') return null;
+        const slug = row.dataset.slug;
+        return slug ? `#apps/${encodeURIComponent(slug)}` : null;
+      };
+      const activate = (e) => {
         if (e.target.closest('.browse-add-btn')) return;
         if (row.dataset.demo === 'true') return;
         const slug = row.dataset.slug;
@@ -419,7 +436,9 @@ const Browse = {
         // Back from here means up to this list.
         Browse.noteDetailOrigin('list');
         location.hash = `#apps/${encodeURIComponent(slug)}`;
-      });
+      };
+      if (window.NavLink) NavLink.wireModified(row, hrefFor, activate);
+      else row.addEventListener('click', activate);
       // #931: a row tap lands on the detail page, not in the app, so this is
       // a warm-up for the "Open" button one screen later — by then the token
       // is minted and the connection to the app's origin is open.
@@ -624,10 +643,15 @@ const Browse = {
         host.innerHTML = `
           <div class="text-sm text-zinc-500 dark:text-zinc-400">
             <p class="mb-3">That app isn&rsquo;t available.</p>
-            <button type="button" id="browse-detail-back" class="text-violet-500 hover:text-violet-400">&larr; Back to all apps</button>
+            <a id="browse-detail-back" href="#apps" class="inline-block text-violet-500 hover:text-violet-400">&larr; Back to all apps</a>
           </div>`;
         host.querySelector('#browse-detail-back')
-          ?.addEventListener('click', () => { location.hash = '#apps'; });
+          ?.addEventListener('click', (e) => {
+            // #1036: real anchor — a modified click is the browser's.
+            if (window.NavLink && NavLink.isNativeClick(e)) return;
+            e.preventDefault();
+            location.hash = '#apps';
+          });
         return;
       }
       host.innerHTML = '<p class="text-sm text-zinc-500 dark:text-zinc-400">Loading…</p>';

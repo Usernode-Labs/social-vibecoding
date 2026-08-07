@@ -110,6 +110,9 @@ const SHELL_ASSETS = [
   '/js/admin-mail.js',
   '/js/app-secrets.js',
   '/js/browse.js',
+  // #1036: the real-anchor / new-tab seam. Loads ahead of every other
+  // module in index.html, so a cache miss here breaks the whole shell.
+  '/js/nav-link.js',
   '/js/platform-ui.js',
   '/js/app-view.js',
   '/js/app.js',

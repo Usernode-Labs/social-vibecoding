@@ -726,7 +726,9 @@
     _syncChrome() {
       if (!window.App || Settings._chromeSuspended) return;
       const inSection = Settings._isMobile() && Settings._level === 2;
-      if (App.setBackIcon) App.setBackIcon(inSection ? 'arrow' : 'home');
+      // #1036: the header control is a real anchor — inside a section
+      // the chevron pops to the settings menu, so that is its href.
+      if (App.setBackIcon) App.setBackIcon(inSection ? 'arrow' : 'home', inSection ? '#settings' : undefined);
       if (!App.setHeaderTitle) return;
       if (inSection) {
         const s = Settings._visibleSections().find((x) => x.key === Settings._section);
