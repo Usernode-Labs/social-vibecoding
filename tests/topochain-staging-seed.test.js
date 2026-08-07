@@ -163,10 +163,10 @@ test('fixed ids used throughout live in the obviously-fake 900500+ range', () =>
 
 // ─── Content spot-checks per the brief's fixture list ──────────────────
 
-test('2 seasons in ONE statement: the running one and a closed one', () => {
+test('3 seasons in ONE statement: running, closed, and internal-and-empty', () => {
   assert.match(body, /INSERT INTO seasons/);
   assert.equal((body.match(/INSERT INTO seasons/g) || []).length, 1,
-    'both rows belong to the same statement — a second INSERT would be a second failure point');
+    'all rows belong to the same statement — a second INSERT would be a second failure point');
   const start = body.indexOf('INSERT INTO seasons');
   const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
   assert.match(block, /NOW\(\) - INTERVAL '60 days', NOW\(\) \+ INTERVAL '30 days', TRUE/,
@@ -176,9 +176,23 @@ test('2 seasons in ONE statement: the running one and a closed one', () => {
   assert.match(block, /NOW\(\) - INTERVAL '240 days', NOW\(\) - INTERVAL '150 days', FALSE/,
     'the archive season ended months ago and is is_active = FALSE');
   assert.match(block, /Staging Demo Season — Archive/);
+  // The third season is internal AND has nothing referencing it, which
+  // makes it the only row whose admin DELETE gets past the 409
+  // `season_in_use` guard — the happy path of the delete flow is
+  // otherwise unreachable without first creating a season by hand.
+  assert.match(block, /Staging Demo Season — Internal Dry Run/);
+  assert.match(block, /NOW\(\) - INTERVAL '5 days', NOW\(\) \+ INTERVAL '25 days', TRUE, TRUE, 2/,
+    'the internal season is active, spans now, and is internal = TRUE');
+  // Nothing may hang off the internal season — being empty is the whole
+  // point of it — so its id must not reach any other statement's params.
+  const eventsIdx = body.indexOf('INSERT INTO season_events');
+  const eventsParams = body.slice(body.indexOf('ON CONFLICT (id) DO NOTHING', eventsIdx),
+    body.indexOf(');', eventsIdx));
+  assert.ok(!eventsParams.includes('SEASON_INTERNAL_ID'),
+    'no season event may hang off the internal season');
 });
 
-test("5 season_events: regular (current), type='season', a fully-past one, an archive-season one and a challenge-free one", () => {
+test("6 season_events: regular (current), type='season', a fully-past one, an archive-season one, a challenge-free one and a season-less one", () => {
   const start = body.indexOf('INSERT INTO season_events');
   const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
   assert.match(block, /'\{"metrics": \[\], "offchain_weight": 1\}'::jsonb/g);
@@ -186,7 +200,14 @@ test("5 season_events: regular (current), type='season', a fully-past one, an ar
   assert.match(block, /'regular'/);
   assert.match(block, /'season'/);
   const scoringFormulaCount = (block.match(/::jsonb/g) || []).length;
-  assert.equal(scoringFormulaCount, 5, 'all five season_events rows carry a scoring_formula');
+  assert.equal(scoringFormulaCount, 6, 'all six season_events rows carry a scoring_formula');
+
+  // The sixth row is the only one with season_id = NULL: it is what the
+  // Seasons screen's "not assigned to a season" panel and the events
+  // list's `season_id=none` filter exist to surface.
+  assert.match(block, /\(\$8, NULL, 'Staging Demo Event — Unassigned Sprint'/);
+  assert.equal((block.match(/^\s*\(\$\d+, NULL, 'Staging Demo Event/gm) || []).length, 1,
+    'exactly one season-less event — the rest must stay scoped to a season');
 
   // The archive event hangs off the CLOSED season ($6), which is what
   // gives the admin events list two scopes to tell apart; the unfilled

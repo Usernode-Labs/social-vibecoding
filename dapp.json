@@ -1553,6 +1553,23 @@
       "expectSelector": "#admin-topo-mail-status"
     },
     {
+      "name": "Admin Seasons screen lists real seasons from /api/v4/admin/seasons with per-row actions",
+      "path": "/#admin/seasons/seasons",
+      "expectSelector": "[data-season-events]",
+      "expectText": "The top tier"
+    },
+    {
+      "name": "Admin Seasons screen surfaces season events that belong to no season",
+      "path": "/#admin/seasons/seasons",
+      "expectSelector": "#admin-topo-sn-unassigned-go",
+      "expectText": "Events not assigned to a season"
+    },
+    {
+      "name": "Admin Season events screen can filter by season",
+      "path": "/#admin/seasons/season-events",
+      "expectSelector": "#admin-topo-se-season-filter"
+    },
+    {
       "name": "Native kit: pull-to-refresh builds its clipped puck layer (the puck hangs below the header, never over it)",
       "path": "/usernode-native/v1/demo.html?un-platform=ios",
       "expectSelector": ".un-ptr-layer > .un-ptr-puck"
