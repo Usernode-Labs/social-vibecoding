@@ -12,10 +12,12 @@
 // so they are tested against a fake browser (runTests takes its pages from
 // whatever it is handed, so no Chromium is needed):
 //
-//   1. PRIMER — the first check runs ALONE. The tests context starts with an
-//      empty cookie jar and the first navigation is what exchanges the admin
-//      ?token= for a session cookie; fanning out into an empty jar races that
-//      exchange and the losers render the "Admins only" gate.
+//   1. ISOLATED CONTEXTS — every group gets its own browser context: its own
+//      WINDOW (a same-context tab is `visibilityState: 'hidden'`, where view
+//      transitions abort with a pageerror and rAF-driven UI never presents)
+//      and its own cookie jar (each group's navigation exchanges its own
+//      ?token= deterministically — the shared-jar design raced concurrent
+//      exchanges and the losers rendered the "Admins only" gate).
 //   2. BOUNDED — at most `concurrency` pages are open at once, whatever the
 //      suite size. Unbounded fan-out is an OOM-kill, which loses the whole
 //      run rather than one check.
@@ -41,38 +43,56 @@ const {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Fake browser/context. Records page open/close so concurrency is
-// observable, and lets each test control how long a given check takes.
+// Fake browser. Mirrors the production shape (createBrowserContext →
+// newPage), records page open/close so concurrency is observable, counts
+// contexts so isolation is observable, and lets each test control how long
+// a given check takes.
 function makeBrowser({ delays = {}, log = [], mode = 'fast', missingSelectors = [] } = {}) {
   let open = 0;
   let peak = 0;
+  let contexts = 0;
+  let openContexts = 0;
+  const newPage = async () => {
+    open += 1;
+    if (open > peak) peak = open;
+    let closed = false;
+    let url = '';
+    return {
+      on() {},
+      async setViewport() {},
+      async goto(u) {
+        url = u;
+        log.push({ call: 'goto', url: u, concurrent: open });
+        const ms = delays[u];
+        if (ms) await sleep(ms);
+        if (mode === 'fast') throw new Error('fake: navigation refused');
+        return { status: () => 200 };
+      },
+      async $(sel) { return missingSelectors.includes(sel) ? null : {}; },
+      async evaluate() { return true; },
+      async close() {
+        if (!closed) { closed = true; open -= 1; }
+        log.push({ call: 'close', url });
+      },
+    };
+  };
   return {
     peak: () => peak,
+    contexts: () => contexts,
+    openContexts: () => openContexts,
     log,
-    async newPage() {
-      open += 1;
-      if (open > peak) peak = open;
-      let closed = false;
-      let url = '';
+    async createBrowserContext() {
+      contexts += 1;
+      openContexts += 1;
+      let ctxClosed = false;
       return {
-        on() {},
-        async setViewport() {},
-        async goto(u) {
-          url = u;
-          log.push({ call: 'goto', url: u, concurrent: open });
-          const ms = delays[u];
-          if (ms) await sleep(ms);
-          if (mode === 'fast') throw new Error('fake: navigation refused');
-          return { status: () => 200 };
-        },
-        async $(sel) { return missingSelectors.includes(sel) ? null : {}; },
-        async evaluate() { return true; },
+        newPage,
         async close() {
-          if (!closed) { closed = true; open -= 1; }
-          log.push({ call: 'close', url });
+          if (!ctxClosed) { ctxClosed = true; openContexts -= 1; }
         },
       };
     },
+    newPage,
   };
 }
 
@@ -122,21 +142,19 @@ test('every declared check gets exactly one frame', async () => {
   assert.equal(done.deadline, '0');
 });
 
-test('the first check runs alone before anything fans out', async () => {
-  // The cookie-exchange primer. If check 0 overlapped any other navigation,
-  // that other navigation went out with an empty cookie jar.
+test('every group runs in its own browser context, and all of them close', async () => {
+  // Isolation is the load-bearing property (see the header): a same-context
+  // tab is a HIDDEN document — view transitions abort with a pageerror and
+  // rAF-driven UI never presents — and a shared cookie jar races concurrent
+  // ?token= exchanges. One context per group means one window and one jar
+  // per group. Contexts must also all be closed, or a long suite leaks
+  // renderer memory the pool's page bound was supposed to cap.
   const read = collect();
-  const log = [];
-  const browser = makeBrowser({ log, delays: { 'http://staging/p0': 40 } });
+  const browser = makeBrowser();
   await runTests(browser, suite(12), { concurrency: 8, testTimeoutMs: 5000 });
   read();
-  const gotos = log.filter((e) => e.call === 'goto');
-  assert.equal(gotos[0].url, 'http://staging/p0', 'the primer goes first');
-  assert.equal(gotos[0].concurrent, 1, 'and it is the only page open while it runs');
-  const firstClose = log.findIndex((e) => e.call === 'close');
-  const secondGoto = log.findIndex((e, i) => e.call === 'goto' && i > 0);
-  assert.ok(firstClose < secondGoto,
-    'nothing else navigates until the primer has finished and closed its page');
+  assert.equal(browser.contexts(), 12, 'one context per URL group');
+  assert.equal(browser.openContexts(), 0, 'and every context was closed');
 });
 
 test('concurrency is bounded by the pool size', async () => {
