@@ -52,6 +52,37 @@ const TopochainEventContext = {
 
   isMounted() { return TopochainEventContext._mounted; },
 
+  // The selected event's entry in the LIST payload (GET /season-events),
+  // which is where `type` lives — GET /season-events/:id (the hero's own
+  // `_detail`) deliberately keeps its v1 shape and carries no `type`, so the
+  // list is the one source for "is this the season aggregate". Null before
+  // loadEvents() resolves.
+  selectedEvent() {
+    const id = TopochainEventContext.eventId;
+    if (id == null) return null;
+    return TopochainEventContext._events.find((ev) => ev.id === id) || null;
+  },
+
+  // True when the CURRENT selection is the season-level aggregate, whoever
+  // chose it — the hero badge and the season caption both key off THIS, not
+  // off "did pickDefault land here".
+  //
+  // Why it must be the selection: loadEvents() only runs pickDefault when
+  // `eventId` is still null, and by then it usually isn't. The standings
+  // pane's own first fetch goes out with no season_event_id, the server
+  // resolves the default itself, and the pane feeds that id back through
+  // select(..., { silent: true }) — often before this module's event list has
+  // even landed. A flag set inside the pickDefault branch is therefore false
+  // on most real loads (and after any re-open, since close() deliberately
+  // keeps the resolved selection). Keying off the selection also means
+  // picking "Season 1" by hand reads exactly like landing on it, which is
+  // right: the caption explains what the board IS, it is not a notice that a
+  // fallback fired.
+  isSeasonSelected() {
+    return !!(window.TopochainEvents
+      && TopochainEvents.isSeasonAggregate(TopochainEventContext.selectedEvent()));
+  },
+
   // Same escaping contract as the sibling Topochain modules: safe in BOTH a
   // text node and a double-quoted attribute value, because this file
   // interpolates admin-authored copy into both.
@@ -157,7 +188,14 @@ const TopochainEventContext = {
         const pick = TopochainEvents.pickDefault(data.data);
         if (pick) {
           TopochainEventContext.eventId = pick.id;
-          TopochainEventContext._endedFallback = TopochainEvents.hasEnded(pick);
+          // The season aggregate is NOT a "nothing is running" fallback,
+          // even though it has usually ended by the time it is the default
+          // (production's Season 1 event closed 2026-06-30 and is still the
+          // season people mean). hasEnded() is true for it, so keying the
+          // caption off that alone put "Nothing is running right now —
+          // showing the most recent event." above a live season board.
+          TopochainEventContext._endedFallback =
+            !TopochainEvents.isSeasonAggregate(pick) && TopochainEvents.hasEnded(pick);
         }
       }
     }
@@ -230,7 +268,15 @@ const TopochainEventContext = {
     }
     sel.innerHTML = TopochainEventContext._events.map((ev) => {
       const selected = current === ev.id ? ' selected' : '';
-      const tag = ev.is_current ? ' (current)' : (ev.is_active ? '' : ' (past)');
+      // A season-type event is labelled by WHAT IT IS, not by its window:
+      // its standings are the whole season's, so "(past)" is both wrong and
+      // (since it is now the default selection) the first thing a reader
+      // sees. Its own window has usually closed while the season is still
+      // the dataset everyone means.
+      const isSeason = !!(window.TopochainEvents
+        && TopochainEvents.isSeasonAggregate(ev));
+      const tag = isSeason ? ' (season)'
+        : (ev.is_current ? ' (current)' : (ev.is_active ? '' : ' (past)'));
       return `<option value="${esc(ev.id)}"${selected}>${esc(ev.name)}${esc(tag)}</option>`;
     }).join('');
     if (current != null) sel.value = String(current);
@@ -257,10 +303,17 @@ const TopochainEventContext = {
       host.innerHTML = '<p class="text-sm text-zinc-500">No event selected.</p>';
       return;
     }
-    const statusBadge = ev.is_current
-      ? 'bg-green-500/20 text-green-600 dark:text-green-300'
-      : (ev.is_active ? 'bg-amber-500/20 text-amber-600 dark:text-amber-300' : 'bg-zinc-500/20 text-zinc-500');
-    const statusLabel = ev.is_current ? 'active now' : (ev.is_active ? 'active' : 'past');
+    // Same reasoning as the picker's `(season)` suffix: a season-type event
+    // is badged for what it is rather than for its own window, which has
+    // usually closed while the season is still the dataset on screen.
+    const isSeason = TopochainEventContext.isSeasonSelected();
+    const statusBadge = isSeason
+      ? 'bg-violet-500/20 text-violet-600 dark:text-violet-300'
+      : (ev.is_current
+        ? 'bg-green-500/20 text-green-600 dark:text-green-300'
+        : (ev.is_active ? 'bg-amber-500/20 text-amber-600 dark:text-amber-300' : 'bg-zinc-500/20 text-zinc-500'));
+    const statusLabel = isSeason ? 'season'
+      : (ev.is_current ? 'active now' : (ev.is_active ? 'active' : 'past'));
     const fmt = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—');
 
     host.innerHTML = `
@@ -274,6 +327,11 @@ const TopochainEventContext = {
           ${esc(fmt(ev.starts_at))} &ndash; ${esc(fmt(ev.ends_at))}
           ${ev.users_count != null ? ` · ${esc(ev.users_count)} taking part` : ''}
         </p>
+        ${isSeason ? `
+        <p id="tc-ev-season-note" class="text-xs text-zinc-500 mt-2">
+          Whole-season standings &mdash; every public event in this season, combined.
+          Pick a single event above to see just its results.
+        </p>` : ''}
         ${TopochainEventContext._endedFallback ? `
         <p id="tc-ev-fallback-note" class="text-xs text-zinc-500 mt-2">
           Nothing is running right now — showing the most recent event.

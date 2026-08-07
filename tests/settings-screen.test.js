@@ -434,12 +434,23 @@ test('close() tears down the two lifecycle timers', () => {
 
 // ── Other callers ──────────────────────────────────────────────────────
 
-test('the credits banner deep-links the API-key section', () => {
+test('the credits banner deep-links all three ways to keep building', () => {
+  // The banner used to offer BYOK alone and navigate itself. It now
+  // delegates to CreditOptions, which owns the same three routes the
+  // in-chat card and the Generate-proposal modal render — so the wiring
+  // assertion moved with it.
   const fn = devChatJs.slice(devChatJs.indexOf('  _wireCreditsBanner() {'));
-  assert.match(fn.slice(0, 800), /location\.hash = '#settings\/api-key'/,
-    'a real navigation, so back returns to the chat');
+  assert.match(fn.slice(0, 800), /CreditOptions\.wire\(banner\)/,
+    'the shared module wires the banner');
   assert.doesNotMatch(fn.slice(0, 800), /Settings\.open\(/,
     'no direct module call any more');
+
+  const creditOptions = read('public/js/credit-options.js');
+  assert.match(creditOptions, /window\.location\.hash = hash/,
+    'a real navigation, so back returns to the chat');
+  for (const hash of ['#settings/api-key', '#settings/cli', '#settings/connectors']) {
+    assert.ok(creditOptions.includes(`'${hash}'`), `offers ${hash}`);
+  }
 });
 
 test('the "Settings → Change password" prose is a real link', () => {
@@ -646,7 +657,9 @@ test('the usernode read is retried once on readiness and never leaks a listener'
   const close = settingsJs.slice(settingsJs.indexOf('    close() {'));
   assert.match(close.slice(0, 500), /_clearUsernodeAuthStatusRetry\(\)/,
     'leaving Settings stops listening');
-  const open = settingsJs.slice(settingsJs.indexOf('    open(section) {'));
+  const openIdx = settingsJs.indexOf('    open(section, opts) {');
+  assert.ok(openIdx >= 0, 'Settings.open(section, opts) exists');
+  const open = settingsJs.slice(openIdx);
   assert.match(open.slice(0, 900), /_usernodeAuthRetryUsed = false/,
     'the one re-attempt is offered again on the next visit');
 });

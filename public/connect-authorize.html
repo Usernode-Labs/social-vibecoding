@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Connect Usernode</title>
+  <link rel="stylesheet" href="/css/connect-authorize.css">
+  <script src="/js/connect-authorize.js" defer></script>
+</head>
+<body>
+  <main>
+    <h1>Connect Usernode</h1>
+
+    <section id="entry">
+      <p id="entry-message">Start the connection from Claude or ChatGPT and
+        the approval details will open here automatically.</p>
+    </section>
+
+    <section id="confirmation" hidden>
+      <p id="intro"></p>
+      <dl>
+        <dt>Requested by</dt><dd id="confirm-client"></dd>
+        <!-- The redirect origin is the load-bearing fact on this page: a
+             client NAME is chosen by whoever registered it, an origin is
+             not. It is styled as the primary identity for that reason. -->
+        <dt>Sends you back to</dt><dd id="confirm-origin" class="origin"></dd>
+        <dt>Your account</dt><dd id="confirm-user"></dd>
+      </dl>
+
+      <h2>This will be allowed to</h2>
+      <ul id="confirm-scopes"></ul>
+
+      <p class="warning">Approve only if you just started this connection
+        yourself from Claude or ChatGPT, and you recognise the address above.</p>
+
+      <div class="actions">
+        <button id="approve" type="button">Allow</button>
+        <button id="reject" type="button" class="secondary">Cancel</button>
+      </div>
+    </section>
+
+    <section id="result" hidden>
+      <p id="message"></p>
+    </section>
+  </main>
+</body>
+</html>

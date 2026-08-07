@@ -92,7 +92,16 @@ const NEUTRAL_PHASE_TEXT = {
 const { isCliCredentialManagementSession } = require('../services/cli-api-policy');
 // #894: the deterministic pill sets a turn falls back to when the Mayor
 // omits suggest_replies (or the turn ends on a path with no wrap-up).
-const { turnFallbackQuickReplies } = require('../services/recovery-pills');
+// #1001 adds the shared pill-composition rules (interpolated into the
+// Mayor prompt, the tool description and both model-backed fallbacks) and
+// the all-boilerplate detector that triggers enforcement.
+const {
+  turnFallbackQuickReplies,
+  fallbackKindForTurn,
+  buildRecoveryQuickReplies,
+  QUICK_REPLY_RULES_TEXT,
+  isGenericPillSet,
+} = require('../services/recovery-pills');
 // #937: pure stop policy — the pre-dispatch gate predicate and the
 // confirm-loop's retry/give-up decision. Kept out of here so both are
 // unit-testable without docker (same pattern as services/turn-watchdog).
@@ -143,6 +152,51 @@ const recheckInFlight = new Set();
 // goes through sanitizeTranscript exactly like a real read, that check
 // exercises the real allowlist rather than a hand-written "safe" payload.
 const STAGING_MOCK_TRANSCRIPT_IDS = new Set([990002]);
+
+// (#1012) Read-only mock spec version for the group-chat spec panel. Same
+// convention as stagingMockTranscript above: request-time only, never
+// persisted, and a strict no-op outside staging — the caller gates on
+// USERNODE_ENV === 'staging' && ?demo=1 AND on the real lookup finding
+// nothing, so a genuine row always wins.
+//
+// Why it's needed: chat_session_specs is staging:private, so a
+// prod-cloned staging DB has ZERO spec content while chat_messages (and
+// therefore the cloned spec_share cards in group chat) IS copied. Without
+// this, every "View full spec" in a staging preview renders the 404 error
+// branch and the panel's real layout — including its copy button — can't
+// be reviewed.
+//
+// The document deliberately conforms to the platform's two-half spec
+// convention (both marker headings), so a reviewer also exercises the
+// dev-chat viewer's tab split and can confirm that "Copy markdown" yields
+// the WHOLE document rather than the open tab's half.
+const STAGING_MOCK_SPEC_MD = [
+  '# [Mock] Readable cards on narrow screens',
+  '',
+  'Staging demo spec — the cards get a two-row layout so the title stops being crushed.',
+  '',
+  '## User-facing changes',
+  '',
+  '- Each card shows its title on its own line.',
+  '- The action buttons wrap underneath instead of squeezing the title.',
+  '',
+  '## Technical implementation',
+  '',
+  '- Split the card renderer into a title row and an actions row.',
+  '- The actions row wraps at narrow widths; no change above 640px.',
+  '',
+].join('\n');
+
+function stagingMockSpecVersion(version) {
+  return {
+    version,
+    content: STAGING_MOCK_SPEC_MD,
+    built_at: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
+    commit_sha: null,
+    pr_number: 9301,
+    shared_to_group_at: new Date(Date.now() - 40 * 60 * 1000).toISOString(),
+  };
+}
 
 function stagingMockTranscript(sessionId) {
   if (!STAGING_MOCK_TRANSCRIPT_IDS.has(sessionId)) return null;
@@ -667,8 +721,14 @@ function sessionRoutes(config) {
       // pill sets from it, and this list is where DevChat.currentSession
       // comes from. Shipping spec_md itself would put every session's full
       // markdown in a list payload for one bit of information.
+      //
+      // created_from_issue_number (#1001): lets the STARTER pills — the one
+      // set that is legitimately generic, since a fresh session has no
+      // conversation to be specific about — name the issue this chat was
+      // started for. Already-present metadata; just wasn't serialized.
       const { rows } = await pool.query(
         `SELECT id, branch_name, pr_number, pr_url, pr_title, session_title, staging_url, status, linked_issues, behind_main, shared_at, transcript_shared_at, created_at,
+                created_from_issue_number,
                 (spec_md IS NOT NULL AND spec_md <> '') AS has_spec
          FROM chat_sessions
          WHERE app_id = $1 AND user_id = $2 AND is_headless = FALSE
@@ -1240,15 +1300,56 @@ function sessionRoutes(config) {
           if (Array.isArray(s) && s.length) followUpSuggestions = s;
         }
       }
-      // #330: spec/code/spec_code clones get static next-step pills (the
-      // question path stays pill-free — its answer chips take precedence).
-      const followUpQuickReplies = buildHeadlessFollowUpQuickReplies(src);
+      // #330: spec/code/spec_code clones get next-step pills (the question
+      // path stays pill-free — its answer chips take precedence).
+      //
+      // #1001: those pills used to be a fixed triple, and production showed
+      // 92 sessions opening on exactly "Propose it to the group / Revise the
+      // spec / Make a tweak" — generic despite the auto run having produced
+      // a specific plan or commit. There is no Mayor reply on a clone to
+      // attach a tool call to, so the forced pills-only call IS the only way
+      // the assistant authors these; the static set stays as the fallback.
+      const staticFollowUpPills = buildHeadlessFollowUpQuickReplies(src);
       const followUp = buildHeadlessFollowUpMessage(src);
+      let followUpPills = null;
+      if (staticFollowUpPills) {
+        const { rows: srcTail } = await pool.query(
+          `SELECT role, content FROM chat_session_messages
+           WHERE session_id = $1 AND role IN ('user', 'assistant')
+           ORDER BY id DESC LIMIT 6`,
+          [src.id]
+        ).catch(() => ({ rows: [] }));
+        followUpPills = await resolveTurnPills({
+          pool,
+          // `src` (not the fresh row) because it carries app_name from its
+          // JOIN — the new session row has only its own columns.
+          session: { id: session.id, app_name: src.app_name },
+          userId: req.user.id,
+          apiKey: null,
+          model: null,
+          modelPills: null,
+          outcome: src.headless_outcome === 'spec' ? 'spec_done' : 'build_done',
+          hasPr: false,
+          hasSpec: !!(src.spec_md || '').trim(),
+          staticFallback: staticFollowUpPills,
+          replyText: followUp,
+          transcriptTail: srcTail.slice().reverse(),
+          state: [
+            src.headless_issue_number ? `cloned from an auto session on GitHub issue #${src.headless_issue_number}` : 'cloned from an auto session',
+            `the auto run produced: ${src.headless_outcome}`,
+            (src.spec_md || '').trim() ? `spec first heading: ${((src.spec_md || '').match(/^#{1,2} +(.+)$/m) || [])[1] || '(untitled)'}` : 'no spec',
+          ].join('; '),
+        });
+        log.info('sessions', 'quick replies resolved', {
+          sessionId: session.id, phase: 'clone-followup',
+          source: followUpPills.source, kind: followUpPills.kind || null,
+        });
+      }
       await pool.query(
         `INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'assistant', $2, $3)`,
         [session.id, followUp, JSON.stringify({
           ...(followUpSuggestions ? { suggestions: followUpSuggestions } : {}),
-          ...(followUpQuickReplies ? { quickReplies: followUpQuickReplies } : {}),
+          ...quickReplyMeta(followUpPills),
         })]
       );
 
@@ -2039,11 +2140,39 @@ function sessionRoutes(config) {
       // The orientation message: where the original left off, what carried
       // over, and — load-bearing — that the AGENT's own memory did not, so
       // the new owner restates anything important instead of assuming it.
+      //
+      // #1001: same treatment as the auto-session clone — the fork's first
+      // pills are authored from where the forked conversation actually got
+      // to, with FORK_FOLLOWUP_REPLIES as the fallback rather than the
+      // guaranteed answer.
+      const forkFollowUp = transcriptShare.buildForkFollowUpMessage(src);
+      const forkTail = srcMessages
+        .filter((r) => r && (r.role === 'user' || r.role === 'assistant'))
+        .slice(-6)
+        .map((r) => ({ role: r.role, content: r.content }));
+      const forkPills = await resolveTurnPills({
+        pool,
+        // `src` carries app_name from its JOIN; the fresh row does not.
+        session: { id: session.id, app_name: src.app_name },
+        userId: req.user.id,
+        apiKey: null,
+        model: null,
+        modelPills: null,
+        outcome: 'chat',
+        hasPr: false,
+        hasSpec: !!(src.spec_md || '').trim(),
+        staticFallback: buildForkFollowUpQuickReplies(),
+        replyText: forkFollowUp,
+        transcriptTail: forkTail,
+        state: 'this session was just forked from a shared dev chat; the new owner is picking up where it left off',
+      });
+      log.info('sessions', 'quick replies resolved', {
+        sessionId: session.id, phase: 'fork-followup',
+        source: forkPills.source, kind: forkPills.kind || null,
+      });
       await pool.query(
         `INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'assistant', $2, $3)`,
-        [session.id, transcriptShare.buildForkFollowUpMessage(src), JSON.stringify({
-          quickReplies: buildForkFollowUpQuickReplies(),
-        })]
+        [session.id, forkFollowUp, JSON.stringify(quickReplyMeta(forkPills))]
       );
 
       events.record(pool, {
@@ -2683,6 +2812,31 @@ function sessionRoutes(config) {
         hasSpec: turnHasSpec,
       });
 
+      // #1001: the pill-resolution ladder for this turn. Every pill-bearing
+      // persist below routes through this so the Mayor authors its own set
+      // (rung 1 or 2) rather than the fixed list filling the row.
+      //
+      // `history` is loaded further down (it's the same rows the Mayor
+      // itself sees), so the tail reads it lazily at CALL time.
+      let turnHistory = [];
+      const turnState = (outcome) => [
+        session.pr_number != null ? `PR #${session.pr_number} is open for this session` : 'no PR opened yet',
+        turnHasSpec ? 'a spec doc exists in the spec viewer' : 'no spec doc yet',
+        `this turn ended as: ${outcome}`,
+      ].join('; ');
+      const resolvePills = (outcome, opts = {}) => resolveTurnPills({
+        pool,
+        session,
+        userId: req.user.id,
+        apiKey: userApiKey,
+        outcome,
+        hasPr: session.pr_number != null,
+        hasSpec: turnHasSpec,
+        transcriptTail: turnHistory,
+        state: turnState(outcome),
+        ...opts,
+      });
+
       // #249: first-message naming — a brand-new session (no title yet,
       // no PR) gets a readable display name from its opening ask, long
       // before any code lands. Fire-and-forget: the turn never waits on
@@ -2773,6 +2927,9 @@ function sessionRoutes(config) {
            ORDER BY id ASC`,
           [session.id]
         );
+        // #1001: hand the same rows to the pill ladder, so an enforced or
+        // generated set is grounded in the conversation the Mayor saw.
+        turnHistory = history;
 
         // #450: bulk-load attachment bytes for user rows that carry
         // metadata.attachments so buildMayorMessages can emit vision
@@ -3097,9 +3254,12 @@ function sessionRoutes(config) {
             sessionId: session.id,
           });
         }
-        // Quick-reply pills (#285): dropped when a dispatch (regenerated in
-        // phase-2 post-build) or suggest_answers (inline chips win) co-occurs.
-        const quickReplies = resolveQuickReplies(mayor1.toolUses);
+        // Quick-reply pills (#285): dropped when suggest_answers co-occurs
+        // (inline chips win). #1001: a dispatch no longer discards them —
+        // the preamble row keeps the Mayor's own pills and the newer
+        // phase-2 row supersedes them by recency, so a turn that dies
+        // mid-dispatch still leaves conversation-specific pills behind.
+        const quickReplies = resolveQuickReplies(mayor1.toolUses, { allowWithDispatch: true });
 
         // Data-informed silent turn (session 2426): the model serviced one
         // or more data tools this turn (e.g. get_prod_status), then ended
@@ -3235,21 +3395,58 @@ function sessionRoutes(config) {
         // persisted, and displayed as the model that actually answered.
         const servedModel1 = mayor1.servedModel || selectedModel;
         const costCents1 = mayor1.usage ? llm.estimateCostCents(mayor1.usage, servedModel1) : 0;
-        // #894: guarantee pills on a plain chat reply — see
-        // shouldFallbackQuickReplies for which turns opt out and why.
-        const quickReplies1 = shouldFallbackQuickReplies(quickReplies, suggestions, mayor1.toolUses)
-          ? turnPills('chat')
-          : quickReplies;
+        // Whether this reply will be followed by a dispatch — i.e. whether
+        // the row about to be written is a PREAMBLE (phase 2 writes the
+        // turn's final row) or the whole turn.
+        const willDispatch = mayor1.toolUses.some((t) =>
+          t && (t.name === 'dispatch_claude_code' || t.name === 'dispatch_scout'));
+
         if (mayorText1.trim()) {
+          // Stream/reconcile the reply bubble FIRST. #1001's enforcement can
+          // add ~1s before the pill row lands, and this ordering is what
+          // keeps that off the critical path the user actually feels: the
+          // text is already on screen before any pill work starts.
           send('mayor_reasoning', { text: mayorText1 });
+
+          // #1001: the Mayor authors its own pills, or is asked again for
+          // them. Two exclusions, both deliberate:
+          //   - suggest_answers came back: the inline answer chips ARE this
+          //     turn's affordance and the above-box row stays empty. No
+          //     pills, no enforcement call. (Same precedence
+          //     resolveQuickReplies and classifyMissingPills enforce.)
+          //   - refusal / empty-reply substitution: the visible text is
+          //     platform-authored and the model has already declined, so
+          //     asking it again is throwing money at a "no". Static set.
+          const chipsOwnTurn = Array.isArray(suggestions) && suggestions.length > 0;
+          const modelDeclined = mayor1.stopReason === 'refusal' || dataSummaryFailed;
+          let pills1 = null;
+          if (!chipsOwnTurn) {
+            // 'chat' either way: on a preamble the dispatch hasn't run yet,
+            // so its outcome isn't knowable here — phase 2 writes the row
+            // that reflects what actually landed.
+            pills1 = await resolvePills('chat', {
+              modelPills: quickReplies,
+              model: servedModel1,
+              replyText: mayorText1,
+              allowModelCalls: !modelDeclined,
+              allowGenerate: !modelDeclined,
+            });
+            log.info('sessions', 'quick replies resolved', {
+              sessionId: session.id, phase: willDispatch ? 'preamble' : 'reply',
+              source: pills1.source, kind: pills1.kind || null,
+            });
+          }
           await pool.query(
             `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
              VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
             [session.id, mayorText1, servedModel1, mayor1.usage.input_tokens + mayor1.usage.output_tokens, costCents1,
-             JSON.stringify({ ...(suggestions ? { suggestions } : {}), ...(quickReplies1 ? { quickReplies: quickReplies1 } : {}) })]
+             JSON.stringify({
+               ...(suggestions ? { suggestions } : {}),
+               ...quickReplyMeta(pills1, { preamble: willDispatch }),
+             })]
           );
           if (suggestions) send('suggestions', { suggestions });
-          if (quickReplies1) send('quick_replies', { replies: quickReplies1 });
+          if (pills1 && pills1.replies) send('quick_replies', { replies: pills1.replies });
         }
         // BYOK users pay Anthropic directly, so their spend lands in
         // the display-only byok_cost_cents bucket (#119) — only
@@ -3582,14 +3779,9 @@ function sessionRoutes(config) {
         // state, so this is where dispatch turns get their pills. The
         // tool_use is terminal (end of turn) — no tool_result round-trip.
         const quickReplies2 = resolveQuickReplies(mayor2.toolUses);
-        // #894: the wrap-up is a dispatch turn's ONLY pill source (phase-1
-        // deliberately dropped its own), so a wrap-up that skipped the tool
-        // — a plain `end_turn`, which production logs show is common — used
-        // to leave the bar empty right after a build. Fall back to the
-        // outcome the dispatch actually had.
-        const wrapUpPills = quickReplies2 || turnPills(
-          toolResult.isError ? 'failed' : (toolKind === 'scout' ? 'spec_done' : 'build_done')
-        );
+        const wrapUpOutcome = toolResult.isError
+          ? 'failed'
+          : (toolKind === 'scout' ? 'spec_done' : 'build_done');
 
         let mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
         log.info('sessions', 'Mayor phase-2 response', {
@@ -3633,11 +3825,28 @@ function sessionRoutes(config) {
 
         const servedModel2 = mayor2.servedModel || selectedModel;
         const costCents2 = llm.estimateCostCents(mayor2.usage, servedModel2);
+        // #1001: the wrap-up is the row the user is left looking at after a
+        // build or a spec, so this is where a generic pill set hurt most —
+        // and where the tool was skipped most (a plain `end_turn`). Ask the
+        // Mayor again for pills naming what actually shipped. A refused
+        // wrap-up skips the extra ask: the text is platform-authored there.
+        const wrapUpResolved = await resolvePills(wrapUpOutcome, {
+          modelPills: quickReplies2,
+          model: servedModel2,
+          replyText: mayorText2,
+          allowModelCalls: mayor2.stopReason !== 'refusal',
+          allowGenerate: mayor2.stopReason !== 'refusal',
+        });
+        log.info('sessions', 'quick replies resolved', {
+          sessionId: session.id, phase: 'wrapup',
+          source: wrapUpResolved.source, kind: wrapUpResolved.kind || null,
+        });
+        const wrapUpPills = wrapUpResolved.replies;
         await pool.query(
           `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
            VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
           [session.id, mayorText2, servedModel2, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2,
-           JSON.stringify(wrapUpPills ? { quickReplies: wrapUpPills } : {})]
+           JSON.stringify(quickReplyMeta(wrapUpResolved))]
         );
         if (wrapUpPills) send('quick_replies', { replies: wrapUpPills });
         // Tail milestone: the wrap-up the recovery path would otherwise
@@ -3793,7 +4002,17 @@ function sessionRoutes(config) {
                 ))`,
         [sessionId, version, req.user.id]
       );
-      if (!rows.length) return res.status(404).json({ error: 'Spec version not found' });
+      if (!rows.length) {
+        // (#1012) Staging-only demo fallback (?demo=1): chat_session_specs
+        // is staging:private, so cloned group-chat spec cards have nothing
+        // to load. Read-path only, gated on staging + the explicit demo
+        // flag, and reached only when no real row matched — production and
+        // any real spec are untouched.
+        if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
+          return res.json({ spec: stagingMockSpecVersion(version) });
+        }
+        return res.status(404).json({ error: 'Spec version not found' });
+      }
       res.json({ spec: rows[0] });
     } catch (err) {
       log.error('sessions', 'Failed to get spec version', { message: err.message });
@@ -4092,11 +4311,12 @@ function sessionRoutes(config) {
     const { isResolving } = require('../services/conflict-resolver');
 
     // Merge lifecycle status ('promoted' | 'merging' | 'merged' | …).
-    // The self-app "Platform updating…" banner's restore path verifies
-    // against this that the merge behind a restored banner is still in
-    // flight — a banner re-armed from sessionStorage after the merge
-    // aborted (head moved, revision unverifiable) has no SHA flip coming
-    // and would otherwise hold the tab read-only until the stuck timer.
+    // The self-app "Platform updating…" banner's restore path used to
+    // verify against this that the merge behind a restored banner was
+    // still in flight; that banner was removed in #1015, so no client
+    // reads this today. Kept — like the neighbouring `resolving` field —
+    // as a cheap, honest fact about the session for admin/debug tooling
+    // and future surfaces, since the poll already has the row in hand.
     let mergeStatus = null;
     try {
       const { rows } = await pool.query(
@@ -4342,6 +4562,25 @@ function sessionRoutes(config) {
 
   // Get current user's budget
   router.get('/api/budget', async (req, res) => {
+    // Staging mock data: the out-of-credits state (red meter + the
+    // three-route credits banner + the in-chat card) is unreachable on a
+    // staging preview without actually burning a real daily allowance, so
+    // a reviewer would only ever see the healthy state. ?demo=1 fabricates
+    // an exhausted snapshot without touching the database — same idiom as
+    // GET /api/me/ai-budget (routes/auth.js) and GET /api/me/cli-tokens.
+    // Strictly a no-op in production. `demo: true` is what the client keys
+    // its one-off card injection off (public/js/dev-chat.js).
+    if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
+      return res.json({
+        spentCents: 2000,
+        limitCents: 2000,
+        globalSpentCents: 4000,
+        globalLimitCents: 100000,
+        byokSpentCents: 0,
+        aiEnabled: true,
+        demo: true,
+      });
+    }
     try {
       const userLimit = await limits.getEffectiveUserLimitCents(pool, req.user.id);
       const globalLimit = await limits.getGlobalLimitCents(pool);
@@ -4970,6 +5209,29 @@ async function setHeadlessStep(pool, sessionId, step, outcome) {
 // `resume` is set by resumeHeadlessRuns when re-driving a 'planning'-step
 // run after a restart: the seed user message already exists in
 // chat_session_messages, so it isn't inserted again.
+
+// #1001: metadata for a headless run's FINAL assistant row.
+//
+// Every headless wrap-up persist used to write no metadata at all, so all 94
+// headless sessions measured in production resolved to the client's built-in
+// generic default. They get the deterministic set here rather than a model
+// call: nobody reads an auto session's pill bar until it is cloned, and the
+// CLONE path is where the assistant authors pills from the run's actual
+// output (see the clone follow-up). Pill-free when answer chips are present —
+// chips win over the above-box row everywhere.
+function headlessWrapUpMeta(outcome, { suggestions = null } = {}) {
+  if (Array.isArray(suggestions) && suggestions.length) return { suggestions };
+  const kind = outcome === 'spec'
+    ? 'spec_done'
+    : (outcome === 'code' || outcome === 'spec_code')
+      ? 'code_done'
+      : outcome === 'question' ? null : 'turn_failed';
+  if (!kind) return {};
+  const replies = buildRecoveryQuickReplies(kind);
+  if (!replies) return {};
+  return { quickReplies: replies, quickRepliesSource: 'static', quickRepliesKind: kind };
+}
+
 async function runHeadlessSession({
   pool, config, session, user, selectedModel,
   repoOwner, repoName, userApiKey, issueNumber, issue,
@@ -5318,9 +5580,10 @@ async function runHeadlessSession({
               : '_Spec drafted — review it in the spec viewer after starting a session from this auto session._');
           send('mayor_reasoning', { text: finalText });
           await pool.query(
-            `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
-             VALUES ($1, 'assistant', $2, $3, $4, $5)`,
-            [session.id, finalText, servedModel2, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2]
+            `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
+             VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
+            [session.id, finalText, servedModel2, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2,
+             JSON.stringify(headlessWrapUpMeta(outcome))]
           );
           await debitMayorUsage(mayor2.usage, mayor2.servedModel);
         } else {
@@ -5459,7 +5722,7 @@ async function runHeadlessSession({
             `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
              VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
             [session.id, mayorText3, servedModel3, mayor3.usage.input_tokens + mayor3.usage.output_tokens, costCents3,
-             JSON.stringify(decisionSuggestions ? { suggestions: decisionSuggestions } : {})]
+             JSON.stringify(headlessWrapUpMeta(outcome, { suggestions: decisionSuggestions }))]
           );
           await debitMayorUsage(mayor3.usage, mayor3.servedModel);
         }
@@ -5486,9 +5749,10 @@ async function runHeadlessSession({
         const servedModelW = mayor2.servedModel || selectedModel;
         const costCents2 = llm.estimateCostCents(mayor2.usage, servedModelW);
         await pool.query(
-          `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
-           VALUES ($1, 'assistant', $2, $3, $4, $5)`,
-          [session.id, mayorText2, servedModelW, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2]
+          `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
+           VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
+          [session.id, mayorText2, servedModelW, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2,
+           JSON.stringify(headlessWrapUpMeta(toolResult.isError ? 'failed' : outcome))]
         );
         await debitMayorUsage(mayor2.usage, mayor2.servedModel);
       }
@@ -5601,7 +5865,11 @@ async function runRecoveredWrapUp({
 
   // Persist the wrap-up as an ordinary assistant row: same columns the
   // live phase-2 writes, plus metadata.recovered for the audit trail.
-  const persistWrapUp = async (text, quickReplies, { model, usage, costCents } = {}) => {
+  //
+  // #1001: `source` rides along so a recovered row is distinguishable in the
+  // pill-source telemetry like any live one. Defaults to 'static' because
+  // every non-model call site here passes the deterministic fallbackPills.
+  const persistWrapUp = async (text, quickReplies, { model, usage, costCents, source = 'static', kind } = {}) => {
     await pool.query(
       `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
        VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
@@ -5610,7 +5878,9 @@ async function runRecoveredWrapUp({
         usage ? (usage.input_tokens || 0) + (usage.output_tokens || 0) : null,
         costCents || null,
         JSON.stringify({
-          ...(quickReplies ? { quickReplies } : {}),
+          ...(quickReplies ? { quickReplies, quickRepliesSource: source } : {}),
+          ...(quickReplies && source === 'static' && (kind || fallbackPillKind)
+            ? { quickRepliesKind: kind || fallbackPillKind } : {}),
           recovered: true,
         }),
       ]
@@ -5682,9 +5952,10 @@ async function runRecoveredWrapUp({
       content: `[SYSTEM NOTE — not the human] The coding agent you dispatched has finished. `
         + `Result:\n\n${dispatchSummary || '(no details available)'}\n\n`
         + 'Write your wrap-up reply to the user now: say what changed and what they can do '
-        + 'next (preview it, propose it to the group, or ask for a tweak). Write it exactly as '
+        + 'next. Write it exactly as '
         + 'you would for any other finished build — do NOT mention platform restarts, recovery, '
-        + 'interruptions, delays, or this note itself. Call suggest_replies with 2-3 next steps.',
+        + 'interruptions, delays, or this note itself. Call suggest_replies with 2-3 next steps '
+        + 'that NAME what changed here, not generic platform actions.',
     });
 
     const currentSpec = await loadSessionSpec(pool, sessionId);
@@ -5711,14 +5982,39 @@ async function runRecoveredWrapUp({
       apiKey: userApiKey,
     });
 
-    const quickReplies = resolveQuickReplies(mayor.toolUses) || fallbackPills;
     const text = stripFakeCompletionMarker((mayor.text || '').trim(), { sessionId })
       || fallbackText;
     const servedModel = mayor.servedModel || selectedModel;
     const costCents = mayor.usage ? llm.estimateCostCents(mayor.usage, servedModel) : 0;
 
+    // #1001: a recovered wrap-up gets the same ladder as a live one. It
+    // qualifies for the forced continuation because it has already resolved
+    // a user id and an API key here — the constraint that keeps the BOOT
+    // BACKFILL sweep on the static set doesn't apply to this path.
+    const resolved = await resolveTurnPills({
+      pool,
+      session,
+      userId: session.user_id,
+      apiKey: userApiKey,
+      model: servedModel,
+      modelPills: resolveQuickReplies(mayor.toolUses),
+      outcome: outcome === 'spec' ? 'spec_done' : (outcome === 'code' ? 'build_done' : 'failed'),
+      hasPr: session.pr_number != null,
+      hasSpec: !!(currentSpec || '').trim(),
+      replyText: text,
+      transcriptTail: history,
+      state: `recovered ${outcome} turn; ${session.pr_number != null ? `PR #${session.pr_number} is open` : 'no PR yet'}`,
+    });
+    const quickReplies = resolved.replies || fallbackPills;
+    log.info('sessions', 'quick replies resolved', {
+      sessionId, phase: 'recovered-wrapup',
+      source: resolved.source, kind: resolved.kind || null,
+    });
+
     await persistWrapUp(text, quickReplies, {
       model: servedModel, usage: mayor.usage, costCents,
+      source: resolved.replies ? resolved.source : 'static',
+      kind: resolved.kind,
     });
     if (costCents) {
       await limits.recordSpend(pool, session.user_id, costCents, { byok: !!userApiKey })
@@ -6150,10 +6446,14 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
   const servedModelR = mayor2.servedModel || selectedModel;
   const costCents2 = mayor2.usage ? llm.estimateCostCents(mayor2.usage, servedModelR) : 0;
   await pool.query(
-    `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
-     VALUES ($1, 'assistant', $2, $3, $4, $5)`,
+    `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
+     VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
     [session.id, mayorText2, servedModelR,
-      mayor2.usage ? mayor2.usage.input_tokens + mayor2.usage.output_tokens : 0, costCents2]
+      mayor2.usage ? mayor2.usage.input_tokens + mayor2.usage.output_tokens : 0, costCents2,
+      // #1001: this row was the single biggest no-pills hole in production —
+      // it wrote no metadata column at all, so every restart-resumed auto
+      // session fell through to the client's generic default.
+      JSON.stringify(headlessWrapUpMeta(outcome))]
   );
   await limits.recordSpend(pool, user.id, costCents2, { byok: !!userApiKey });
 
@@ -6493,16 +6793,24 @@ function resolveSuggestedAnswers(toolUses) {
 // input is sanitized server-side and persisted as metadata.quickReplies on
 // the assistant row so the client renders pills live (the 'quick_replies'
 // SSE event) and on refresh.
+//
+// #1001: the description no longer lists example pill STRINGS. It used to
+// ("Preview the change", "Propose it to the group", …) and the model copied
+// them verbatim on half of all production turns — a tool description is
+// prompt, so it parroted just as hard as the system prompt did. The
+// composition rules now come from the single QUICK_REPLY_RULES_TEXT
+// constant shared with the system prompt and both model-backed fallbacks.
 const SUGGEST_REPLIES_TOOL = {
   name: 'suggest_replies',
   description:
     'Attach 2-3 short suggested NEXT messages the user is likely to want to send next, shown as tappable pills above the message box. '
-    + 'Tapping a pill prefills the text box (the user can edit before sending), so each must read as a complete first-person message the user could send verbatim — e.g. "Preview the change", "Propose it to the group", "Make the button bigger". '
-    + 'Call this on normal replies and post-build wrap-ups to offer the likely next step (built → preview / propose / tweak; spec drafted → build / revise; build running → check status / stop). '
+    + 'Tapping a pill prefills the text box (the user can edit before sending), so each must read as a complete first-person message the user could send verbatim. '
+    + 'Call this on EVERY normal reply, dispatch preamble and post-build/post-spec wrap-up. '
     + 'Do NOT use this for formal clarifying questions — those use suggest_answers instead; never emit both in the same turn. '
     + 'This does NOT count against the one-tool-per-message limit. '
     + 'The tool call renders NOTHING by itself — always include normal message text in the same response; '
-    + 'a tool-only response would show the user an empty reply.',
+    + 'a tool-only response would show the user an empty reply.\n\n'
+    + QUICK_REPLY_RULES_TEXT,
   input_schema: {
     type: 'object',
     properties: {
@@ -6549,14 +6857,26 @@ function sanitizeQuickReplies(input) {
 // dropped when a dispatch/scout tool co-occurs (phase-2 regenerates them
 // post-build) or when suggest_answers co-occurs (the inline answer chips
 // take precedence and the above-box row stays empty).
-function resolveQuickReplies(toolUses) {
+//
+// #1001 `opts.allowWithDispatch`: the dispatch-preamble row now KEEPS the
+// Mayor's pills instead of discarding them. Nothing is stale as a result —
+// the phase-2 wrap-up row is newer, and the client's backward scan finds
+// the newest pill-bearing row first, so phase 2 still supersedes. What it
+// buys is that a turn dying mid-dispatch leaves conversation-specific pills
+// on the transcript rather than falling through to the client's generic
+// default. The suggest_answers precedence is NOT relaxed by the flag —
+// answer chips win over the pill row under both modes.
+//
+// The DEFAULT call (no opts) is byte-identical to the pre-#1001 behaviour.
+function resolveQuickReplies(toolUses, opts = {}) {
   const calls = Array.isArray(toolUses) ? toolUses : [];
   const repliesCall = calls.find((t) => t && t.name === 'suggest_replies');
   if (!repliesCall) return null;
   const hasDispatch = calls.some((t) =>
     t && (t.name === 'dispatch_claude_code' || t.name === 'dispatch_scout'));
   const hasSuggestAnswers = calls.some((t) => t && t.name === 'suggest_answers');
-  if (hasDispatch || hasSuggestAnswers) return null;
+  if (hasSuggestAnswers) return null;
+  if (hasDispatch && !opts.allowWithDispatch) return null;
   return sanitizeQuickReplies(repliesCall.input);
 }
 
@@ -6576,6 +6896,13 @@ function resolveQuickReplies(toolUses) {
 //
 // Pure over the turn's resolved values so the rule is unit-testable.
 // Exported for tests.
+//
+// #1001 SUPERSEDED AT THE CALL SITE. The phase-1 persist now routes through
+// resolveTurnPills, which asks the Mayor for its own pills before reaching
+// for any fixed set, and which keeps a dispatch preamble's pills rather than
+// dropping them. This predicate is retained as the documented statement of
+// the two exclusions that still hold everywhere (chips win; the model's own
+// set wins) and for its unit tests; it is no longer the live gate.
 function shouldFallbackQuickReplies(quickReplies, suggestions, toolUses) {
   if (Array.isArray(quickReplies) && quickReplies.length) return false;
   if (Array.isArray(suggestions) && suggestions.length) return false;
@@ -6583,6 +6910,208 @@ function shouldFallbackQuickReplies(quickReplies, suggestions, toolUses) {
   const hasDispatch = calls.some((t) =>
     t && (t.name === 'dispatch_claude_code' || t.name === 'dispatch_scout'));
   return !hasDispatch;
+}
+
+// ── #1001: the pill-resolution ladder ────────────────────────────────
+//
+// The requirement: the Mayor authors at least one pill ITSELF on every turn
+// that renders the pill row. suggest_replies is optional and production
+// turns skipped it on roughly two thirds of assistant rows, so the row was
+// usually filled from a fixed, state-only list — the reported symptom
+// ("a lot of them are generic").
+//
+// Forcing the tool on the FIRST call is not available:
+//   - phase 1 shares its tools array with the dispatch tools, so a forced
+//     tool_choice would make dispatching structurally impossible;
+//   - phase 2 exposes only suggest_replies, so forcing WOULD work there —
+//     but a forced tool_use suppresses the text block, and on phase 2 that
+//     text IS the wrap-up message.
+// So enforcement is a post-hoc forced continuation instead, on a compact
+// context (see llm.buildQuickReplyContext for why compact, with the
+// measured cost that rules out a full replay).
+//
+// Four rungs, in order, each falling through on failure:
+//
+//   'model'            the Mayor's own suggest_replies call. The common
+//                      case, and the only rung that costs nothing extra.
+//   'enforced'         a forced pills-only continuation on the turn's own
+//                      model. Still the Mayor authoring its own pills.
+//   'generated'        a cheap Haiku call, for when the forced call can't
+//                      be made or fails. Different model on purpose.
+//   'static'           the deterministic RECOVERY_PILLS set. Now genuinely
+//                      exceptional rather than the normal outcome.
+//
+// Rungs 2 and 3 are mutually exclusive per turn (3 only runs when 2 threw
+// or timed out), so the worst case adds ~8s — and only AFTER the reply text
+// has streamed, so the user is never waiting on it.
+const QR_ENFORCE = true;          // one-line revert if cost/latency surprises
+const QR_ENFORCE_TIMEOUT_MS = 5000;
+const QR_GENERATE_TIMEOUT_MS = 3000;
+
+// Reject a promise after `ms`, so a slow provider can never hold a turn
+// open. The underlying call is also passed an AbortSignal where the SDK
+// supports one, so the losing request is actually cancelled rather than
+// merely ignored.
+function qrWithTimeout(makeCall, ms) {
+  const controller = new AbortController();
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`quick-reply call exceeded ${ms}ms`));
+    }, ms);
+  });
+  return Promise.race([makeCall(controller.signal), timeout])
+    .finally(() => { if (timer) clearTimeout(timer); });
+}
+
+// Walk the ladder. Returns { replies, source, kind } — `kind` only on the
+// static rung, so telemetry can tell WHICH fixed set was used.
+//
+//   modelPills      — already-sanitized output of the Mayor's own call, or
+//                     null. An all-boilerplate set counts as "missing" and
+//                     escalates (see isGenericPillSet).
+//   outcome         — fallbackKindForTurn vocabulary, for the static rung.
+//   allowModelCalls — false on paths with no reply to continue from, or
+//                     where the model has already declined: those skip
+//                     straight past rung 2. See the caller comments.
+//   replyText/transcriptTail/state — the compact enforcement context.
+//   staticFallback  — overrides rung 4 for call sites with their own fixed
+//                     set (the clone and fork follow-ups), so the ladder
+//                     degrades to the wording those paths already shipped
+//                     rather than a state-derived approximation of it.
+async function resolveTurnPills({
+  pool, session, userId, apiKey, model, modelPills, outcome,
+  hasPr, hasSpec, replyText, transcriptTail, state, staticFallback = null,
+  allowModelCalls = true, allowGenerate = true,
+}) {
+  const startedAt = Date.now();
+  const staticRung = () => (staticFallback
+    ? { replies: staticFallback, source: 'static' }
+    : {
+      replies: turnFallbackQuickReplies({ outcome, hasPr, hasSpec }),
+      source: 'static',
+      kind: fallbackKindForTurn({ outcome, hasPr, hasSpec }),
+    });
+
+  // Rung 1 — the Mayor's own set, unless it is entirely boilerplate.
+  const modelSetIsGeneric = isGenericPillSet(modelPills);
+  if (Array.isArray(modelPills) && modelPills.length && !modelSetIsGeneric) {
+    return { replies: modelPills, source: 'model' };
+  }
+
+  // Built once, shared by both model rungs. Wrapped because this function's
+  // whole contract is that it NEVER throws — every caller is on a turn-end
+  // path where an exception would cost the user their reply, not just their
+  // pills. A context we can't build simply means both model rungs are
+  // unavailable and the static set stands in.
+  let context = null;
+  try {
+    context = llm.buildQuickReplyContext({
+      appName: session && session.app_name,
+      state,
+      transcriptTail,
+      replyText,
+    });
+  } catch (err) {
+    log.warn('sessions', 'Quick-reply context build failed', {
+      sessionId: session && session.id, err: err.message,
+    });
+  }
+  if (!context) return modelSetIsGeneric
+    ? { replies: modelPills, source: 'model' }
+    : staticRung();
+
+  const debit = async (usage, servedModel) => {
+    if (!usage || !pool || !userId) return;
+    const costCents = llm.estimateCostCents(usage, servedModel);
+    if (!costCents) return;
+    // Deliberately NOT re-checking limits.checkBudget here: phase 2 already
+    // records spend without re-checking, and a one-cent overshoot at the
+    // cap is a better outcome than a pill-less turn.
+    await limits.recordSpend(pool, userId, costCents, { byok: !!apiKey })
+      .catch((err) => log.warn('sessions', 'Quick-reply spend record failed', { err: err.message }));
+  };
+
+  // Rung 2 — the forced pills-only continuation on the turn's own model.
+  if (QR_ENFORCE && allowModelCalls && llm.isEnabled()) {
+    try {
+      const forced = await qrWithTimeout((signal) => llm.requireQuickReplies({
+        rules: QUICK_REPLY_RULES_TEXT,
+        context,
+        model,
+        tool: SUGGEST_REPLIES_TOOL,
+        apiKey,
+        signal,
+      }), QR_ENFORCE_TIMEOUT_MS);
+      const replies = sanitizeQuickReplies(forced.replies);
+      if (replies) {
+        await debit(forced.usage, forced.model);
+        // An enforced set that is STILL all boilerplate is kept anyway —
+        // it was at least freshly authored for this turn — and recorded
+        // under its own source so the telemetry shows the prompt needs
+        // work rather than the mechanism. There is no second retry.
+        return {
+          replies,
+          source: isGenericPillSet(replies) ? 'enforced_generic' : 'enforced',
+        };
+      }
+      log.warn('sessions', 'Forced suggest_replies produced nothing usable', {
+        sessionId: session && session.id,
+      });
+    } catch (err) {
+      log.warn('sessions', 'Forced suggest_replies failed', {
+        sessionId: session && session.id, err: err.message,
+        elapsedMs: Date.now() - startedAt,
+      });
+    }
+  }
+
+  // Rung 3 — the cheap contextual backstop, on a different model.
+  if (allowGenerate && llm.isEnabled()) {
+    try {
+      const gen = await qrWithTimeout(() => llm.generateQuickReplies({
+        rules: QUICK_REPLY_RULES_TEXT,
+        context,
+        apiKey,
+      }), QR_GENERATE_TIMEOUT_MS);
+      const replies = sanitizeQuickReplies(gen.replies);
+      if (replies) {
+        await debit(gen.usage, gen.model);
+        return { replies, source: 'generated' };
+      }
+    } catch (err) {
+      log.warn('sessions', 'Contextual quick-reply generation failed', {
+        sessionId: session && session.id, err: err.message,
+      });
+    }
+  }
+
+  // Rung 4 — the deterministic set. If the model DID produce something,
+  // even all-boilerplate, prefer it over a fixed list: it is at least this
+  // turn's own wording.
+  if (modelSetIsGeneric) return { replies: modelPills, source: 'model' };
+  const fallen = staticRung();
+  log.warn('sessions', 'Quick replies fell through to the static set', {
+    sessionId: session && session.id, kind: fallen.kind, outcome,
+  });
+  return fallen;
+}
+
+// Assemble the metadata keys that ride alongside metadata.quickReplies
+// (#1001 telemetry). `source` is the acceptance instrument: 'model' +
+// 'enforced' dominating is what "the assistant proposed at least one
+// suggestion itself" looks like in SQL. `kind` narrows a static row to the
+// exact fixed set; `preamble` marks a dispatch-preamble row so the
+// acceptance query can exclude rows their own turn's wrap-up supersedes.
+function quickReplyMeta(resolved, { preamble = false } = {}) {
+  if (!resolved || !Array.isArray(resolved.replies) || !resolved.replies.length) return {};
+  return {
+    quickReplies: resolved.replies,
+    ...(resolved.source ? { quickRepliesSource: resolved.source } : {}),
+    ...(resolved.source === 'static' && resolved.kind ? { quickRepliesKind: resolved.kind } : {}),
+    ...(preamble ? { quickRepliesPreamble: true } : {}),
+  };
 }
 
 // Silent-turn salvage (session 2383): when the Mayor's reply is a lone
@@ -9022,12 +9551,17 @@ GENERAL RULES (apply to all tools):
 - Never call dispatch_scout and dispatch_claude_code in the same turn. The user dispatches the build themselves.
 
 SUGGESTED QUICK REPLIES (suggest_replies) — REQUIRED on every reply that isn't a clarifying-question turn:
-Every message you send MUST call the suggest_replies tool, with the single exception of a clarifying-question turn (which uses suggest_answers instead) — that includes normal chat replies, dispatch preambles, and post-build/post-spec wrap-ups. Call it with 2-3 short, first-person messages the user is likely to want to send next — they render as tappable pills above the message box and PREFILL the box when tapped (the user can edit before sending), so each must read as a complete message the user could send verbatim. Tailor them to the current state:
-- After a build (dispatch_claude_code): e.g. "Preview the change", "Propose it to the group", "Make another tweak".
-- After a spec (dispatch_scout): e.g. "Build it", "Revise the spec", "What will this change?".
-- A build is still running: e.g. "How's it going?", "Stop this build".
-- A normal chat reply: the couple of likeliest next things to ask for.
-suggest_replies is for NEXT-STEP shortcuts only — it is NOT for clarifying questions (those use suggest_answers). Never emit suggest_answers and suggest_replies in the same turn. Like suggest_answers, it does NOT count against the one-tool-per-message limit and may accompany a normal reply or wrap-up. Omitting it leaves the user with a bare text box, so treat it as part of writing the reply, not an optional extra.
+Every message you send MUST call the suggest_replies tool, with the single exception of a clarifying-question turn (which uses suggest_answers instead) — that includes normal chat replies, dispatch preambles, and post-build/post-spec wrap-ups. They render as tappable pills above the message box and PREFILL the box when tapped (the user can edit before sending).
+
+${QUICK_REPLY_RULES_TEXT}
+
+What to reach for in each situation — as a KIND of next step, which you then phrase around what this turn was actually about:
+- After a build (dispatch_claude_code): looking at what shipped, putting it to the group, and the most likely follow-on change to the thing you just built.
+- After a spec (dispatch_scout): building it, the one revision this particular spec most plausibly needs, and the question a reader of THIS spec would still have.
+- A build is still running: checking on it, or stopping it.
+- A normal chat reply: the couple of likeliest next things to ask for, drawn from what you just said.
+This is NOT optional. If you end a non-clarifying reply without suggest_replies, the platform comes straight back and asks you for the pills alone — a wasted round trip that costs the user money and delays their pill row. Write them the first time.
+suggest_replies is for NEXT-STEP shortcuts only — it is NOT for clarifying questions (those use suggest_answers). Never emit suggest_answers and suggest_replies in the same turn. Like suggest_answers, it does NOT count against the one-tool-per-message limit and may accompany a normal reply or wrap-up.
 
 AFTER A TOOL RETURNS:
 You'll get a short summary of what happened. Write a 1-3 sentence reply to the user in plain English, referencing the spec doc / staging URL / PR if present. For dispatch_scout: tell them the spec was drafted (or revised) and is available in the spec viewer. For dispatch_claude_code: summarize what was built. If anything failed, explain briefly and suggest next steps.
@@ -9193,4 +9727,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine };

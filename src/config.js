@@ -315,6 +315,16 @@ function load() {
     // How often the stale-PR / archived-GC sweeper runs. These actions
     // are day-scale, so it polls infrequently. Default 1h.
     staleSweepIntervalMs: parseInt(process.env.STALE_SWEEP_INTERVAL_MS || String(60 * 60 * 1000), 10),
+    // #1010: how often the FAST governance-apply ticker runs. The hourly
+    // sweeper above also applies window-elapsed governance proposals, but an
+    // hour of dead air after a close proposal's countdown reaches zero is
+    // exactly the "did my vote do anything?" confusion this ticker removes —
+    // and it is what makes the client's derived "Closing issue…" spinner
+    // honest rather than a promise nothing keeps. Deliberately gate-first and
+    // DB-only (no GitHub traffic for rows that aren't ready), and on its own
+    // knob so it can't be silently disabled along with the stale-PR sweeper.
+    // Default 60s; set to 0 to disable (the hourly catch-all still runs).
+    governanceApplyTickMs: parseInt(process.env.GOVERNANCE_APPLY_TICK_MS || String(60 * 1000), 10),
     // Demand-driven global-cap eviction. When a new session is needed but
     // the platform is at maxGlobalSessions, we pause the globally least-
     // recently-active session that has been idle longer than this grace
@@ -353,12 +363,14 @@ function load() {
     platformRepoUrl: (process.env.USERNODE_PLATFORM_REPO || 'https://github.com/Usernode-Labs/social-vibecoding').replace(/\/$/, ''),
     selfAppSlug: SELF_APP_SLUG,
     selfAppDbName: SELF_APP_DB_NAME,
-    // The platform's own container name on the shared docker network.
-    // Child apps run as `usernode-app-<slug>`, but the platform itself is
-    // the compose service `container_name: usernode` (docker-compose.yml)
-    // — the before/after capture pipeline (services/visuals.js) needs this
-    // to shoot a real "before" of the production platform for self-app
-    // sessions. Overridable for forks whose compose names differ.
+    // The platform's own DNS name on the shared docker network. Child
+    // apps run as `usernode-app-<slug>`, but the platform itself runs as
+    // the blue-green pair usernode-blue/-green, BOTH carrying the
+    // `usernode` network alias (docker-compose.yml) — so this default
+    // resolves to whichever color(s) are up. The before/after capture
+    // pipeline (services/visuals.js) needs this to shoot a real "before"
+    // of the production platform for self-app sessions. Overridable for
+    // forks whose compose names differ.
     selfAppContainer: process.env.SELF_APP_CONTAINER || 'usernode',
     // SELF-HOSTING.md Phase 4: in-app vote-to-merge for the self-
     // app. ON by default — all authenticated users can see the self-

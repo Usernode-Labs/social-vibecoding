@@ -347,12 +347,59 @@ const DevChat = {
     };
   },
 
+  // True when the page carries ?demo=1. The server only honours it in
+  // staging (see the demo branch on GET /api/budget in routes/sessions.js),
+  // so this is safe to send always — same pattern as Settings._cliTokensDemo.
+  _budgetDemo() {
+    try {
+      return new URLSearchParams(window.location.search).get('demo') === '1';
+    } catch { return false; }
+  },
+
   async refreshBudget() {
     try {
-      const res = await fetch('/api/budget');
+      // ?demo=1 passthrough so a staging reviewer can see the exhausted
+      // state (red meter + three-route banner) without burning a real
+      // daily allowance. Strictly a no-op in production.
+      const res = await fetch(`/api/budget${DevChat._budgetDemo() ? '?demo=1' : ''}`);
       if (res.ok) DevChat.budget = await res.json();
     } catch {}
     DevChat.renderBudget();
+    DevChat._maybeInjectDemoCreditsCard();
+  },
+
+  // Staging review aid: with ?demo=1 on a staging page whose demo budget
+  // reports exhausted, drop ONE non-persisted credits card into the
+  // transcript so the in-chat card (not just the banner) is reviewable.
+  // Client-side only and idempotent; a production /api/budget never
+  // reports the demo flag, so this can't fire there.
+  _maybeInjectDemoCreditsCard() {
+    if (!DevChat._budgetDemo()) return;
+    if (!DevChat.budget || !DevChat.budget.demo) return;
+    if (!DevChat.currentSession) return;
+    if (!DevChat._creditsExhausted()) return;
+    if (DevChat.messages.some((m) => m && m.creditsCard)) return;
+    DevChat.messages.push({
+      role: 'assistant',
+      content: '',
+      creditsCard: {
+        error: 'Daily limit reached ($20.00). Resets at midnight UTC.',
+        hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
+        globalOut: DevChat._globalBudgetOut(),
+      },
+      created_at: new Date().toISOString(),
+    });
+    DevChat.renderMessages();
+  },
+
+  // Whether the PLATFORM's shared daily budget (not this user's own
+  // allowance) is what ran out — swaps the card/banner lead sentence.
+  _globalBudgetOut() {
+    const b = DevChat.budget;
+    if (!b) return false;
+    return typeof b.globalSpentCents === 'number'
+      && typeof b.globalLimitCents === 'number'
+      && b.globalSpentCents >= b.globalLimitCents;
   },
 
   renderBudget() {
@@ -432,12 +479,15 @@ const DevChat = {
       ? 'You&rsquo;ve used up today&rsquo;s free AI credits.'
       : 'The platform&rsquo;s shared daily AI budget is used up.';
     return `
-      <div id="dc-credits-banner" class="flex items-center gap-2 px-3 py-2 bg-red-50 dark:bg-red-950/30 border-b border-red-200 dark:border-red-900/50 text-xs">
+      <div id="dc-credits-banner" class="flex flex-wrap items-center gap-2 px-3 py-2 bg-red-50 dark:bg-red-950/30 border-b border-red-200 dark:border-red-900/50 text-xs">
         <svg class="w-4 h-4 text-red-500 dark:text-red-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
         </svg>
-        <span class="text-red-800 dark:text-red-200 flex-1"><span class="font-semibold">${lead}</span> Resets at midnight UTC &mdash; or add your own Anthropic API key to keep working right now, billed to your own Anthropic account.</span>
-        <button id="dc-credits-add-key" type="button" class="rounded bg-red-600 hover:bg-red-500 text-white px-2 py-1 text-xs font-medium shrink-0">Add API key</button>
+        <span class="text-red-800 dark:text-red-200 flex-1 min-w-[14rem]"><span class="font-semibold">${lead}</span> Resets at midnight UTC &mdash; or keep working right now with your own API key, a coding tool on your computer, or your Claude.ai / ChatGPT subscription.</span>
+        ${window.CreditOptions ? CreditOptions.bannerActionsHtml({
+          hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
+          globalOut: !userOut,
+        }) : ''}
       </div>`;
   },
 
@@ -465,13 +515,21 @@ const DevChat = {
   },
 
   _wireCreditsBanner() {
-    const btn = document.getElementById('dc-credits-add-key');
-    if (!btn) return;
-    btn.addEventListener('click', () => {
-      // #463: deep-link straight at the API-key section of the Settings
-      // screen. A real hash navigation, so the browser / device back
-      // gesture returns the user to this chat.
-      location.hash = '#settings/api-key';
+    // All three routes (own key / local coding tool / Claude.ai-ChatGPT
+    // connector) are rendered and wired by CreditOptions, which does the
+    // hash navigation — real navigations, so the browser / device back
+    // gesture returns the user to this chat.
+    const banner = document.getElementById('dc-credits-banner');
+    if (banner && window.CreditOptions) CreditOptions.wire(banner);
+  },
+
+  // Same wiring for every credits CARD currently in the transcript.
+  // Called after each renderMessages; CreditOptions.wire is idempotent
+  // per node, so re-running it never stacks handlers.
+  _wireCreditsCards() {
+    if (!window.CreditOptions) return;
+    document.querySelectorAll('[data-credits-card]').forEach((el) => {
+      CreditOptions.wire(el);
     });
   },
 
@@ -1277,9 +1335,21 @@ const DevChat = {
         // Only the server's billing path sets code: 'budget_exceeded';
         // chatLimiter throttles keep the old wording.
         if (data.code === 'budget_exceeded') {
+          // The refusal renders as a CARD (public/js/credit-options.js) with
+          // all three ways to keep building — own API key, a coding tool on
+          // your machine, or a connected Claude.ai / ChatGPT subscription —
+          // instead of the old BYOK-only prose. Client-only flag: a refused
+          // turn writes no assistant row server-side, and a refusal isn't
+          // transcript content. The durable surface for the same state is
+          // the banner, recomputed from /api/budget on every load.
           DevChat.messages.push({
             role: 'assistant',
-            content: `**You've used up today's free AI credits.** ${data.error || 'They reset at midnight UTC.'}\n\nOpen Settings from the menu (or use the banner above) to add your key — your work then bills to your own Anthropic account.`,
+            content: '',
+            creditsCard: {
+              error: data.error || 'They reset at midnight UTC.',
+              hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
+              globalOut: DevChat._globalBudgetOut(),
+            },
             created_at: new Date().toISOString(),
           });
           // Refresh the meter + banner right away so the "out of
@@ -3702,6 +3772,22 @@ const DevChat = {
         return `<div class="dc-status-line">${iconHtml} ${msg.content} ${elapsedHtml}${tsSpan}</div>`;
       }
 
+      // Out-of-credits card: the dev chat's reply to a 429
+      // { code: 'budget_exceeded' }. Replaces the assistant bubble entirely
+      // with the three routes out — own API key / a coding tool on your
+      // computer / a connected Claude.ai or ChatGPT subscription. Markup,
+      // copy and destinations all live in public/js/credit-options.js so
+      // the card, the red banner and the Generate-proposal modal can't
+      // drift apart. Client-only and never persisted: the refusal wrote no
+      // server row.
+      //
+      // MUST come before the empty-assistant skip below: this row carries
+      // no `content` by design (the card IS the message), so the skip would
+      // otherwise swallow it.
+      if (msg.creditsCard) {
+        return window.CreditOptions ? CreditOptions.cardHtml(msg.creditsCard) : '';
+      }
+
       // Skip truly empty assistant placeholders that exist only as the
       // streaming-target before any tokens arrived. Once content is present
       // (even if just a [CHAT_ONLY] marker with no body) we always render so
@@ -3766,6 +3852,10 @@ const DevChat = {
           ${qaChips}
         </div>`;
     }).join('');
+
+    // Delegated hash navigation for any out-of-credits card just rendered
+    // (idempotent per node, so repeated renders never stack handlers).
+    DevChat._wireCreditsCards();
 
     DevChat._applyDetailsPersistence();
     // #50: start/stop the shared elapsed ticker based on whether this
@@ -3892,6 +3982,25 @@ const DevChat = {
     'Fix something that\'s broken',
   ],
 
+  // #1001: the starters above are the ONE pill set that is legitimately
+  // generic — there is no conversation yet to be specific about. But a
+  // session started from an issue row's "start work" button already knows
+  // what it is for, so lead with that issue instead of the open-issues
+  // question. Everything after it stays as-is.
+  //
+  // created_from_issue_number comes from the session list (see the SELECT in
+  // routes/sessions.js); absent on the generic "+ New chat" path and on
+  // every session that predates its serialization, both of which fall
+  // through to the plain starters.
+  _starterQuickReplies() {
+    var s = DevChat.currentSession;
+    var n = s && s.created_from_issue_number;
+    if (!Number.isInteger(n)) return DevChat.STARTER_QUICK_REPLIES;
+    return ['What does issue #' + n + ' ask for?'].concat(
+      DevChat.STARTER_QUICK_REPLIES.slice(1)
+    );
+  },
+
   // #894: last-resort defaults for a session whose newest reply carries no
   // pills. The server now guarantees pills on every turn-end path, so this
   // only fires for rows that PREDATE that guarantee (an old chat reopened)
@@ -3971,9 +4080,18 @@ const DevChat = {
     }
     // A brand-new session (nothing but status rows, if anything) keeps the
     // generic starters so the affordance is present from the first screen.
-    if (!sawNonSystem) return DevChat.STARTER_QUICK_REPLIES;
+    if (!sawNonSystem) return DevChat._starterQuickReplies();
     if (!lastConvoRow || lastConvoRow.role !== 'assistant') return null;
     if (Array.isArray(lastConvoRow.suggestions) && lastConvoRow.suggestions.length) return null;
+    // #1001: reaching here means the newest reply carried no pills at all,
+    // which the server now prevents on every live turn-end path. So this is
+    // a genuinely exceptional row (one predating the guarantee, or a path it
+    // somehow missed) and worth a breadcrumb for whoever investigates.
+    try {
+      console.debug('[dev-chat] pill row fell through to the client default', {
+        sessionId: DevChat.currentSession && DevChat.currentSession.id,
+      });
+    } catch (e) {}
     return DevChat._fallbackQuickReplies();
   },
 
@@ -6631,6 +6749,16 @@ const DevChat = {
       ? `<button class="dc-spec-action-btn" disabled title="No spec version to share yet">Share to group</button>`
       : `<button id="dc-spec-viewer-share" class="dc-spec-action-btn" ${alreadyShared ? 'disabled' : ''} title="${alreadyShared ? 'Already shared to group chat' : 'Post a card linking to this spec in the group chat'}">${alreadyShared ? 'Shared' : 'Share to group'}</button>`;
 
+    // (#1012) Copy the WHOLE selected version as raw markdown — both
+    // halves and the marker headings, regardless of which tab is open
+    // (see the click handler below). Disabled with the same posture as
+    // the share buttons while there is nothing to copy; the lazy
+    // frozen-version fetch at the bottom of this method re-renders and
+    // enables it once older content lands.
+    const copyBtnHtml = isEmpty
+      ? `<button class="dc-spec-action-btn dc-spec-copy-btn" disabled title="No spec to copy yet">Copy markdown</button>`
+      : `<button id="dc-spec-viewer-copy" class="dc-spec-action-btn dc-spec-copy-btn" title="Copy the whole spec (both sections) as markdown">Copy markdown</button>`;
+
     // (#86) Private share: send this version to ONE person, who gets a
     // notification deep-linking to the read-only spec panel. Repeatable
     // (no alreadyShared disabling — the owner can share with several
@@ -6689,6 +6817,7 @@ const DevChat = {
         <select id="dc-spec-viewer-version" class="text-xs rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1" ${hasVersions ? '' : 'disabled'}>
           ${hasVersions ? versionOptions : '<option>No versions yet</option>'}
         </select>
+        ${copyBtnHtml}
         ${shareUserBtnHtml}
         ${shareBtnHtml}
         <button id="dc-spec-viewer-close" class="dc-spec-viewer-close" aria-label="Close spec viewer">×</button>
@@ -6714,6 +6843,24 @@ const DevChat = {
 
     const closeBtn = pane.querySelector('#dc-spec-viewer-close');
     if (closeBtn) closeBtn.addEventListener('click', () => DevChat.closeSpecViewer());
+
+    // (#1012) Copy the ENTIRE document: displayContent is the raw
+    // markdown of the selected version, so the copy deliberately ignores
+    // `split` and `activeTab` — "copy the whole thing" means both halves
+    // plus their marker headings, verbatim, with nothing added.
+    // The label flash is fire-and-forget: a spec_updated re-render can
+    // replace this button mid-flash, leaving the restore timer pointed at
+    // a detached node. Harmless (the fresh button renders with the
+    // default label), so it needs no bookkeeping.
+    const copyBtn = pane.querySelector('#dc-spec-viewer-copy');
+    if (copyBtn) {
+      copyBtn.addEventListener('click', async () => {
+        const ok = await PlatformUI.copyText(displayContent);
+        copyBtn.textContent = ok ? 'Copied!' : 'Copy failed';
+        if (!ok) PlatformUI.toast('Couldn\'t copy — select the text and copy it manually');
+        setTimeout(() => { copyBtn.textContent = 'Copy markdown'; }, 1500);
+      });
+    }
 
     const shareBtn = pane.querySelector('#dc-spec-viewer-share');
     if (shareBtn && selectedVersion) shareBtn.addEventListener('click', () => DevChat._shareSpecVersion(selectedVersion.version));

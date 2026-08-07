@@ -575,11 +575,13 @@ test('GET /status: exposes the in-flight sync state, and null when idle', async 
   }
 });
 
-test('GET /status: exposes the merge lifecycle status for banner restore verification', async () => {
-  // The self-app "Platform updating…" banner restores itself from
-  // sessionStorage on reload and verifies against this field that the
-  // merge behind it is still in flight (an aborted merge has no SHA
-  // flip coming — see PlatformUpdating.verifyMergeStillInFlight).
+test('GET /status: exposes the merge lifecycle status of the session', async () => {
+  // Added for the self-app "Platform updating…" banner, whose restore
+  // path verified against this field that the merge behind a restored
+  // banner was still in flight. That banner was removed in #1015, so no
+  // client reads this today — it stays, like the neighbouring
+  // `resolving` field, as a cheap honest fact for admin/debug tooling,
+  // and the poll must keep serving it.
   poolQueryHandler = async (sql) => {
     if (/SELECT status FROM chat_sessions/.test(sql)) {
       return { rows: [{ status: 'promoted' }] };

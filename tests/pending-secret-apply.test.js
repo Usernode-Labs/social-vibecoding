@@ -73,7 +73,7 @@ test('a platform apply records the platform-env event with its own appliedBy', (
 test('only the platform branch skips the rebuild (unchanged behaviour)', () => {
   assert.match(finalizeMerge, /if \(!app\.self_hosted\) \{/);
   const selfHostedNote = finalizeMerge.slice(finalizeMerge.indexOf('} else {'), finalizeMerge.indexOf('} else {') + 400);
-  assert.match(selfHostedNote, /GitHub Actions auto-deploy will roll/);
+  assert.match(selfHostedNote, /host deployer will roll/);
 });
 
 test('staging injects pending NON-private values into the proposal\'s own preview', () => {
