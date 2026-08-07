@@ -2037,30 +2037,18 @@ function sessionRoutes(config) {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const { backend, model, reasoningEffort } = req.body || {};
-      // Resolve the backend explicitly and USE the resolved value (review
-      // #10): when `backend` is omitted, validation previously resolved to
-      // the default Claude backend but the SQL still received `undefined`,
-      // violating the non-null constraint.
+
+      // ── Phase 1: validate network-dependent inputs BEFORE locking ──
+      // (plan 8.1). Backend resolution, feature/allowlist checks, and the
+      // OpenRouter credential + model validation can call out over the
+      // network (or decrypt); they must NOT run while holding a row lock.
       const resolved = registry.resolveBackend(backend || registry.DEFAULT_BACKEND);
       if (reasoningEffort != null && !['minimal', 'low', 'medium', 'high', 'xhigh'].includes(reasoningEffort)) {
         return res.status(400).json({ error: 'Invalid reasoning effort' });
       }
-      if (activeWorkers.has(sessionId) || worker.isInFlight(sessionId)) {
-        return res.status(409).json({ error: 'Session is busy; stop the current turn first.' });
-      }
-      // Row-lock the session so a concurrently starting turn on the same row
-      // serializes with this reset (review #10) instead of racing the busy
-      // check, which is in-memory only.
-      const { rows } = await pool.query(
-        `SELECT id, user_id, status FROM chat_sessions WHERE id = $1 AND user_id = $2 FOR UPDATE`,
-        [sessionId, req.user.id],
-      );
-      const sess = rows[0];
-      if (!sess) return res.status(404).json({ error: 'Session not found' });
-      if (sess.status === 'archived' || sess.status === 'merged') {
-        return res.status(409).json({ error: 'Session is closed' });
-      }
       const isCodex = resolved === 'codex_openrouter';
+
+      let credentialMeta = null;
       if (isCodex) {
         // Enforce the same availability as dispatch (review #10): the reset
         // must not let a user configure Codex when the flag/allowlist has
@@ -2074,10 +2062,10 @@ function sessionRoutes(config) {
         }
         const credentialStore = require('../services/credential-store');
         const agentModels = require('../services/agent-models');
-        const meta = await credentialStore.readMetadata({
+        credentialMeta = await credentialStore.readMetadata({
           pool, userId: req.user.id, provider: 'openrouter', purpose: 'coding_agent',
         });
-        if (!meta || meta.status !== 'valid') {
+        if (!credentialMeta || credentialMeta.status !== 'valid') {
           return res.status(400).json({ error: 'Add your OpenRouter API key in Settings first.' });
         }
         if (model) {
@@ -2086,13 +2074,13 @@ function sessionRoutes(config) {
           // validation and persist an unconfirmed model.
           const apiKey = await credentialStore.readSecret({
             pool, userId: req.user.id, provider: 'openrouter', purpose: 'coding_agent',
-            dataKey: config.dataEncryptionKey, expectedRevision: meta.revision,
+            dataKey: config.dataEncryptionKey, expectedRevision: credentialMeta.revision,
           });
           if (!apiKey) {
             return res.status(400).json({ error: 'Could not read your OpenRouter key; re-enter it in Settings first.' });
           }
           const catalog = await agentModels.listOpenRouterModels({
-            pool, userId: req.user.id, credentialRevision: meta.revision,
+            pool, userId: req.user.id, credentialRevision: credentialMeta.revision,
             apiKey, config, forceRefresh: false,
           });
           if (!catalog.models.some((m) => m.id === model)) {
@@ -2100,22 +2088,83 @@ function sessionRoutes(config) {
           }
         }
       }
-      await pool.query(
-        `UPDATE chat_sessions SET
-           agent_backend = $2,
-           agent_provider = $3,
-           agent_model = $4,
-           agent_reasoning_effort = $5,
-           agent_thread_id = NULL,
-           cc_session_id = NULL,
-           agent_config_version = agent_config_version + 1,
-           agent_context_reset_at = NOW()
-         WHERE id = $1`,
-        [sessionId, resolved, isCodex ? 'openrouter' : 'anthropic',
-         model || null, reasoningEffort || null],
-      );
-      try { await worker.evictWorker(sessionId); } catch {}
-      res.json({ ok: true });
+
+      // ── Phase 2: one checked-out client + explicit transaction ──
+      // (plan 8.2). The row lock is held until COMMIT so a concurrently
+      // starting turn serializes correctly instead of racing the in-memory
+      // busy check.
+      const client = await pool.connect();
+      let updatedRow = null;
+      try {
+        await client.query('BEGIN');
+
+        const { rows } = await client.query(
+          `SELECT id, user_id, status, active_turn,
+                  agent_backend, agent_config_version
+             FROM chat_sessions
+            WHERE id = $1 AND user_id = $2
+            FOR UPDATE`,
+          [sessionId, req.user.id],
+        );
+        const sess = rows[0];
+        if (!sess) {
+          await client.query('ROLLBACK').catch(() => {});
+          return res.status(404).json({ error: 'Session not found' });
+        }
+        if (sess.status === 'archived' || sess.status === 'merged') {
+          await client.query('ROLLBACK').catch(() => {});
+          return res.status(409).json({ error: 'Session is closed' });
+        }
+        // ── Phase 3: authoritative post-lock busy recheck ──
+        // (plan 8.3). The pre-lock check above is only a fast path; the
+        // post-lock check (activeWorkers / inFlight / persisted active_turn)
+        // is the source of truth now that we hold the row lock.
+        if (activeWorkers.has(sessionId) || worker.isInFlight(sessionId) || sess.active_turn) {
+          await client.query('ROLLBACK').catch(() => {});
+          return res.status(409).json({ error: 'Session is busy; stop the current turn first.' });
+        }
+
+        // ── Phase 4: conditional update ── (plan 8.4)
+        // `WHERE ... AND active_turn IS NULL` guarantees exactly one row is
+        // touched; RETURNING * lets us return the ACTUAL row we inserted.
+        const upd = await client.query(
+          `UPDATE chat_sessions SET
+             agent_backend = $2,
+             agent_provider = $3,
+             agent_model = $4,
+             agent_reasoning_effort = $5,
+             agent_thread_id = NULL,
+             cc_session_id = NULL,
+             agent_config_version = agent_config_version + 1,
+             agent_context_reset_at = NOW()
+           WHERE id = $1 AND active_turn IS NULL
+           RETURNING *`,
+          [sessionId, resolved, isCodex ? 'openrouter' : 'anthropic',
+           model || null, reasoningEffort || null],
+        );
+        if (upd.rows.length !== 1) {
+          await client.query('ROLLBACK').catch(() => {});
+          return res.status(409).json({ error: 'Session is busy; stop the current turn first.' });
+        }
+        updatedRow = upd.rows[0];
+
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        client.release();
+      }
+
+      // ── Phase 5: commit before worker eviction ── (plan 8.6)
+      // After Commit 1 the warm container no longer holds provider secrets,
+      // so eviction is best-effort (a failure still leaves a consistent DB).
+      if (typeof worker.evictWorker === 'function') {
+        await worker.evictWorker(sessionId).catch((evErr) => {
+          log.warn('sessions', 'reset-agent-context eviction warning', { sessionId, err: evErr.message });
+        });
+      }
+      res.json({ ok: true, session: updatedRow });
     } catch (err) {
       log.error('sessions', 'reset-agent-context failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -8585,7 +8634,11 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
                 ? 'The OpenRouter endpoint is misconfigured.'
                 : code === 'ledger_start_failed'
                   ? 'Could not start the Codex turn. Please retry.'
-                  : 'Add your OpenRouter API key in Settings to use Codex.';
+                  : code === 'agent_context_changed'
+                    ? 'The agent configuration changed while starting this turn. Please retry.'
+                    : code === 'session_busy'
+                      ? 'The session became busy. Stop the current turn before retrying.'
+                      : 'Add your OpenRouter API key in Settings to use Codex.';
           await sendStatus(msg);
           stopHandle.stopped = true;
           stopHandle.stoppedBy = 'agent_error';
@@ -8857,6 +8910,15 @@ async function runCodexAttemptLoop({
         runtimeContext,
       });
     } catch (startErr) {
+      // plan 8.5 (Commit 6): a stale-version/busy race surfaces as a
+      // structured code so the caller can tell the user the agent context
+      // changed under it (no paid dispatch with stale credentials/model).
+      if (startErr?.code === 'agent_context_changed') {
+        return { error: 'agent_context_changed', errorDetail: agentTurn.sanitizeError(startErr) };
+      }
+      if (startErr?.code === 'session_busy') {
+        return { error: 'session_busy', errorDetail: agentTurn.sanitizeError(startErr) };
+      }
       return { error: 'ledger_start_failed', errorDetail: agentTurn.sanitizeError(startErr) };
     }
 
@@ -9969,7 +10031,11 @@ path: /another/changed/view
                 ? 'The OpenRouter endpoint is misconfigured.'
                 : code === 'ledger_start_failed'
                   ? 'Could not start the Codex turn. Please retry.'
-                  : 'Add your OpenRouter API key in Settings to use Codex.';
+                  : code === 'agent_context_changed'
+                    ? 'The agent configuration changed while starting this turn. Please retry.'
+                    : code === 'session_busy'
+                      ? 'The session became busy. Stop the current turn before retrying.'
+                      : 'Add your OpenRouter API key in Settings to use Codex.';
           await sendStatus(msg);
           stopHandle.stopped = true;
           stopHandle.stoppedBy = 'agent_error';

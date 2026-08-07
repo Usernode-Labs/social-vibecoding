@@ -110,6 +110,9 @@ function makeTransactionPool() {
   const rowsById = new Map();
   const query = async (sql, params) => {
     if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
+    if (/FROM chat_sessions/.test(sql)) {
+      return { rows: [{ id: params[0], agent_backend: 'codex_openrouter', agent_config_version: 1, active_turn: null }] };
+    }
     if (/INSERT INTO agent_turns/.test(sql)) {
       const r = {
         id: params[0], session_id: params[1], user_id: params[2],
@@ -131,17 +134,20 @@ function makeTransactionPool() {
       }
       return { rows: r && r.status ? [{ id: params[0] }] : [] };
     }
-    if (/FROM agent_turns/.test(sql)) {
+    if (/CREATE TABLE IF NOT EXISTS agent_turns/.test(sql)) {
       return { rows: [] };
+    }
+    if (/FROM chat_sessions/.test(sql)) {
+      return { rows: [{ id: params[0], agent_backend: 'codex_openrouter', agent_config_version: 1, active_turn: null }] };
     }
     return { rows: [] };
   };
-  const client = { query, release() {} };
+  let currentQuery = query;
   const pool = {
-    query,
-    async connect() { return client; },
+    query: (...a) => currentQuery(...a),
+    async connect() { return { query: (...a) => currentQuery(...a), release() {} }; },
   };
-  return { pool, rowsById };
+  return { pool, rowsById, setQuery: (q) => { currentQuery = q; } };
 }
 
 test('completeCodexAttempt completes once and is idempotent on repeat', async () => {
@@ -187,6 +193,9 @@ function makeLoopPool() {
   const rowsById = new Map();
   let attemptSeq = 0;
   const query = async (sql, params) => {
+    if (/FROM chat_sessions/.test(sql)) {
+      return { rows: [{ id: params[0], agent_backend: 'codex_openrouter', agent_config_version: 1, active_turn: null }] };
+    }
     if (/INSERT INTO agent_turns/.test(sql)) {
       attemptSeq += 1;
       const r = {
@@ -207,8 +216,12 @@ function makeLoopPool() {
     }
     return { rows: [] };
   };
-  const pool = { query, async connect() { return { query, release() {} }; } };
-  return { pool, attempts, rowsById };
+  let currentQuery = query;
+  const pool = {
+    query: (...a) => currentQuery(...a),
+    async connect() { return { query: (...a) => currentQuery(...a), release() {} }; },
+  };
+  return { pool, attempts, rowsById, baseQuery: query, setQuery: (q) => { currentQuery = q; } };
 }
 
 test('attempt loop: one logical turn, two attempts, both terminal, no lost usage', async () => {
@@ -314,4 +327,45 @@ test('recovery settlement: Claude passes through to settleClaude', async () => {
     settleClaude: async () => { claudeSettled += 1; return null; },
   });
   assert.equal(claudeSettled, 1);
+});
+
+// ── Commit 6: dispatch rejects stale agent config version (plan 8.5) ──
+test('attempt loop: refuses to dispatch when the config version changed', async () => {
+  const { pool, baseQuery, setQuery } = makeLoopPool();
+  // Stub the session-lock response to report a bumped config version
+  // (a reset happened after runtime context was resolved).
+  setQuery(async (sql, params) => {
+    if (/FROM chat_sessions/.test(sql)) {
+      return { rows: [{ id: params[0], agent_backend: 'codex_openrouter', agent_config_version: 99, active_turn: null }] };
+    }
+    return baseQuery(sql, params);
+  });
+  let dispatchCalls = 0;
+  const out = await runCodexAttemptLoop({
+    pool, session: { id: 1, agent_config_version: 1 }, userId: 1, config: {},
+    resolveRuntime: async () => ({ agentBackend: 'codex_openrouter', agentModel: 'm', agentConfigVersion: 1, resumeThreadId: null, pricingSnapshot: { available: false } }),
+    dispatchOnce: async () => { dispatchCalls += 1; return { exitCode: 0, resultSeen: true }; },
+    retryPredicate: () => false,
+  });
+  assert.equal(out.error, 'agent_context_changed', 'stale version blocks dispatch');
+  assert.equal(dispatchCalls, 0, 'no paid provider request with stale config');
+});
+
+test('attempt loop: refuses to dispatch when the backend changed', async () => {
+  const { pool, baseQuery, setQuery } = makeLoopPool();
+  setQuery(async (sql, params) => {
+    if (/FROM chat_sessions/.test(sql)) {
+      return { rows: [{ id: params[0], agent_backend: 'claude_code', agent_config_version: 1, active_turn: null }] };
+    }
+    return baseQuery(sql, params);
+  });
+  let dispatchCalls = 0;
+  const out = await runCodexAttemptLoop({
+    pool, session: { id: 1, agent_config_version: 1 }, userId: 1, config: {},
+    resolveRuntime: async () => ({ agentBackend: 'codex_openrouter', agentModel: 'm', agentConfigVersion: 1, resumeThreadId: null, pricingSnapshot: { available: false } }),
+    dispatchOnce: async () => { dispatchCalls += 1; return { exitCode: 0, resultSeen: true }; },
+    retryPredicate: () => false,
+  });
+  assert.equal(out.error, 'agent_context_changed');
+  assert.equal(dispatchCalls, 0);
 });

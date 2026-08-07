@@ -140,8 +140,46 @@ async function resolveCodexRuntimeContext({ pool, session, userId, model, reason
 async function startCodexAttempt({ pool, session, userId, logicalTurnId, attemptNumber, model, reasoningEffort, resumeThreadId, runtimeContext }) {
   const ctx = runtimeContext || {};
   const turnId = crypto.randomUUID();
+  const expectedConfigVersion = ctx.agentConfigVersion || session.agent_config_version || 1;
+  // plan 8.5 (Commit 6): dispatch-side config-version validation. Lock the
+  // session row and verify the backend is still Codex and the config
+  // version still matches the context that resolved credentials/model. If
+  // a reset happened after runtime context was resolved, refuse to dispatch
+  // with stale credentials/model instead of paying for a wrong-thread turn.
+  const client = await pool.connect();
   try {
-    await pool.query(
+    await client.query('BEGIN');
+
+    const { rows } = await client.query(
+      `SELECT id, agent_backend, agent_config_version, active_turn
+         FROM chat_sessions
+        WHERE id = $1 AND user_id = $2
+        FOR UPDATE`,
+      [session.id, userId],
+    );
+    const sessRow = rows[0];
+    if (!sessRow) {
+      const err = new Error('session not found for dispatch');
+      err.code = 'agent_context_changed';
+      throw err;
+    }
+    if (sessRow.agent_backend !== 'codex_openrouter') {
+      const err = new Error('backend changed since context was resolved');
+      err.code = 'agent_context_changed';
+      throw err;
+    }
+    if (sessRow.agent_config_version !== expectedConfigVersion) {
+      const err = new Error('agent config changed since context was resolved');
+      err.code = 'agent_context_changed';
+      throw err;
+    }
+    if (sessRow.active_turn) {
+      const err = new Error('session is busy');
+      err.code = 'session_busy';
+      throw err;
+    }
+
+    await client.query(
       `INSERT INTO agent_turns
          (id, session_id, user_id, backend, provider, requested_model,
           reasoning_effort, credential_id, credential_revision,
@@ -154,13 +192,22 @@ async function startCodexAttempt({ pool, session, userId, logicalTurnId, attempt
        reasoningEffort || null,
        ctx.credentialId || null, ctx.credentialRevision || null,
        resumeThreadId || null,
-       ctx.agentConfigVersion || session.agent_config_version || 1,
+       expectedConfigVersion,
        logicalTurnId || null, attemptNumber || 1,
        JSON.stringify({ pricing: ctx.pricingSnapshot || null })],
     );
+
+    await client.query('COMMIT');
   } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (err.code === 'agent_context_changed' || err.code === 'session_busy') {
+      // Structured, non-log-spam surface error for a stale-version race.
+      throw err;
+    }
     log.error('agent-turn', 'startCodexAttempt insert failed; refusing to start turn', { sessionId: session.id, err: err.message });
     throw err;
+  } finally {
+    client.release();
   }
   return { turnUuid: turnId };
 }
