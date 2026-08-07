@@ -2832,44 +2832,39 @@ async function resumeDetachedTurnInner({
   }
   flushProgress();
 
-  // Terminalize a recovered Codex ledger turn (review P1): interactive
-  // recovery must consume the persisted turnUuid (not just the headless
-  // path) so the row isn't left 'running'. activeTurn.backend is the
-  // backend persisted at dispatch.
-  if (activeTurn.backend === 'codex_openrouter' && activeTurn.turnUuid) {
+  // Terminalize a recovered agent turn through the SHARED settlement
+  // helper (plan 7.5): Codex attempts are completed through the agent_turns
+  // ledger (never the Anthropic ledger); Claude settles through `limits`.
+  // Interactive and headless recovery now share one implementation so they
+  // cannot drift. activeTurn.backend is the backend persisted at dispatch.
+  {
     const agentTurn = require('./src/services/agent-turn');
-    const failed = !!(result.fatalError || result.ccIsError
-      || (result.agentExit != null && result.agentExit !== 0)
-      || (result.exitCode != null && result.exitCode !== 0));
-    await agentTurn.completeCodexTurn({
-      pool, turnUuid: activeTurn.turnUuid,
-      status: failed ? 'failed' : 'completed',
-    }).catch(() => {});
-  }
-
-  // #174: the journal replay rebuilt the turn's self-reported cost —
-  // without this debit a restart silently drops the CC turn's spend from
-  // both ledger buckets. active_turn rows persisted before the byok flag
-  // shipped fall back to key-on-file (presence of the encrypted key is
-  // enough; no decryption needed). #664: a platform-billed turn that
-  // switched onto the owner's key mid-run settles split across both
-  // buckets (getTurnByokCents covers pre- and post-restart spillover).
-  if (result.costUsd) {
-    let byok = activeTurn.byok;
-    if (byok === undefined || byok === null) {
-      try {
-        const { rows } = await pool.query(
-          'SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND anthropic_key_enc IS NOT NULL) AS byok',
-          [session.user_id]
-        );
-        byok = !!rows[0]?.byok;
-      } catch {
-        byok = false;
-      }
-    }
-    await limits.settleTurnSpend(pool, session.user_id, Math.round(result.costUsd * 100), {
-      turnByok: !!byok,
-      byokObservedCents: worker.getTurnByokCents(sessionId),
+    await agentTurn.settleRecoveredAgentAttempt({
+      pool,
+      activeTurn,
+      result,
+      settleClaude: async () => {
+        if (!result.costUsd) return null;
+        let byok = activeTurn.byok;
+        if (byok === undefined || byok === null) {
+          try {
+            const { rows } = await pool.query(
+              'SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND anthropic_key_enc IS NOT NULL) AS byok',
+              [session.user_id]
+            );
+            byok = !!rows[0]?.byok;
+          } catch {
+            byok = false;
+          }
+        }
+        const limits = require('./src/services/limits');
+        return limits.settleTurnSpend(pool, session.user_id, Math.round(result.costUsd * 100), {
+          turnByok: !!byok,
+          byokObservedCents: worker.getTurnByokCents(sessionId),
+        });
+      },
+    }).catch((err) => {
+      log.error('server', 'Recovered agent settlement failed', { sessionId, err: err.message });
     });
   }
 

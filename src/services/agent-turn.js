@@ -421,6 +421,79 @@ async function completeCodexTurn({ pool, turnUuid, status = 'completed', errorDe
   });
 }
 
+
+// ── Shared backend-aware recovery settlement (plan 7.5) ───────────────
+// Used by BOTH interactive (server.js resumeDetachedTurnInner) and
+// headless (sessions.js) recovery so the two paths cannot drift. For a
+// Codex turn this terminalizes the persisted attempt; for Claude it
+// settles Anthropic spend through `limits`. `settleClaude` is injected
+// (the caller owns the `limits` module + user context) to avoid a
+// circular import here.
+async function settleRecoveredAgentAttempt({
+  pool, activeTurn, result, settleClaude,
+}) {
+  if (activeTurn?.backend === 'codex_openrouter' && activeTurn.turnUuid) {
+    const failed = !!(result?.fatalError || result?.ccIsError
+      || (result?.agentExit != null && result?.agentExit !== 0)
+      || (result?.exitCode != null && result?.exitCode !== 0));
+    return completeCodexAttempt({
+      pool,
+      turnUuid: activeTurn.turnUuid,
+      status: failed ? 'failed' : 'completed',
+      threadId: result?.agentThreadId || activeTurn.threadId || null,
+      usageTotal: {
+        inputTokens: result?.inputTokens != null ? result.inputTokens : null,
+        cachedInputTokens: result?.cachedInputTokens != null ? result.cachedInputTokens : null,
+        cacheWriteInputTokens: result?.cacheWriteInputTokens != null ? result.cacheWriteInputTokens : null,
+        outputTokens: result?.outputTokens != null ? result.outputTokens : null,
+        reasoningOutputTokens: result?.reasoningOutputTokens != null ? result.reasoningOutputTokens : null,
+      },
+    });
+  }
+  if (typeof settleClaude === 'function') {
+    return settleClaude(result);
+  }
+  return null;
+}
+
+// Extract a cumulative-provider-usage object from a terminal worker result
+// (plan 7.3): the thread's CURRENT totals. If none observed, returns null.
+function usageTotalFromResult(result) {
+  const r = result || {};
+  const input = r.inputTokens;
+  const output = r.outputTokens;
+  if ((input == null || !Number.isFinite(input)) && (output == null || !Number.isFinite(output))) return null;
+  return {
+    inputTokens: input != null && Number.isFinite(input) ? input : null,
+    cachedInputTokens: r.cachedInputTokens != null && Number.isFinite(r.cachedInputTokens) ? r.cachedInputTokens : null,
+    cacheWriteInputTokens: r.cacheWriteInputTokens != null && Number.isFinite(r.cacheWriteInputTokens) ? r.cacheWriteInputTokens : null,
+    outputTokens: output != null && Number.isFinite(output) ? output : null,
+    reasoningOutputTokens: r.reasoningOutputTokens != null && Number.isFinite(r.reasoningOutputTokens) ? r.reasoningOutputTokens : null,
+  };
+}
+
+// Classify a thrown dispatch error into a terminal status + code (plan 7.2).
+// Never leaks the raw error (secret values must not reach the ledger
+// error_detail either — plan 1.6).
+function classifyErrorCode(err) {
+  if (!err) return 'dispatch_failed';
+  const code = err.code || err.message || '';
+  if (code === 'agent_context_changed') return 'agent_context_changed';
+  const text = String(code).toLowerCase();
+  if (/credential|api key|401|unauthorized/.test(text)) return 'credential_failure';
+  if (/rate|429/.test(text)) return 'rate_limited';
+  if (/timeout|etimedout/.test(text)) return 'timeout';
+  return 'dispatch_failed';
+}
+
+function sanitizeError(err) {
+  if (!err) return null;
+  const msg = String(err.message || err.code || '');
+  // Truncate; a message here may contain a model id but must never carry
+  // a secret. We log only the (already-server-side-safe) message.
+  return msg.slice(0, 300) || null;
+}
+
 module.exports = {
   backendForSession,
   resolveCodexRuntimeContext,
@@ -428,6 +501,10 @@ module.exports = {
   completeCodexAttempt,
   completeCodexTurn,
   resolveCodexTurn,
+  settleRecoveredAgentAttempt,
+  usageTotalFromResult,
+  classifyErrorCode,
+  sanitizeError,
   normalizeCumulativeUsage,
   computeProviderUsageDelta,
   estimateRequestedModelCost,

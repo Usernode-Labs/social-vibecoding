@@ -1077,6 +1077,8 @@ async function execInWorker(sessionId, {
   openrouterApiKey = null,
   openrouterApiBase = null,
   turnUuid = null,
+  logicalTurnId = null,
+  attemptNumber = null,
   onProgress,
   // #616: when true (admin-owned session on the self-edit app — the
   // caller checks via debug-access.isEligible), the turn env gains
@@ -1273,6 +1275,10 @@ async function execInWorker(sessionId, {
     journal,
     backend: resolvedBackend,
     turnUuid: turnUuid || undefined,
+    // plan 7.4: persist the attempt identity so interactive/headless
+    // recovery can terminalize the correct agent_turns row idempotently.
+    logicalTurnId: logicalTurnId || undefined,
+    attemptNumber: attemptNumber || undefined,
     model: persistedModel,
     startedAt: new Date().toISOString(),
     // #174: billing context for restart-resume — the resume paths debit

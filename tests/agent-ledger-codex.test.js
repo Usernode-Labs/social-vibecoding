@@ -175,3 +175,143 @@ test('completeCodexAttempt throws for a genuinely missing turn', async () => {
     /agent attempt not found/,
   );
 });
+
+// ── Commit 5: retry/attempt-loop + shared recovery settlement ─────────
+const { runCodexAttemptLoop } = require('../src/routes/sessions');
+const { settleRecoveredAgentAttempt } = require('../src/services/agent-turn');
+
+function makeLoopPool() {
+  // Records start/complete attempts; behaves transactionally enough for
+  // startCodexAttempt (pool.query) and completeCodexAttempt (connect).
+  const attempts = [];
+  const rowsById = new Map();
+  let attemptSeq = 0;
+  const query = async (sql, params) => {
+    if (/INSERT INTO agent_turns/.test(sql)) {
+      attemptSeq += 1;
+      const r = {
+        id: params[0], session_id: params[1], user_id: params[2],
+        requested_model: params[3], status: 'running',
+        attempt_number: params[10], logical_turn_id: params[9],
+        agent_config_version: params[8], metadata: { pricing: { available: true, inputPricePerMillion: 1, outputPricePerMillion: 1 } },
+      };
+      rowsById.set(params[0], r);
+      attempts.push(r);
+      return { rows: [r] };
+    }
+    if (/FOR UPDATE/.test(sql)) return { rows: [rowsById.get(params[0])].filter(Boolean) };
+    if (/UPDATE agent_turns SET/.test(sql)) {
+      const r = rowsById.get(params[0]);
+      if (r && r.status === 'running') { r.status = params[1]; r.updated = true; }
+      return { rows: r ? [{ id: params[0] }] : [] };
+    }
+    return { rows: [] };
+  };
+  const pool = { query, async connect() { return { query, release() {} }; } };
+  return { pool, attempts, rowsById };
+}
+
+test('attempt loop: one logical turn, two attempts, both terminal, no lost usage', async () => {
+  const { pool, attempts } = makeLoopPool();
+  let dispatchCalls = 0;
+  const result = await runCodexAttemptLoop({
+    pool,
+    session: { id: 1, agent_config_version: 1 },
+    userId: 1, config: {},
+    resolveRuntime: async () => ({
+      agentBackend: 'codex_openrouter', agentModel: 'openai/gpt-5.3-codex',
+      agentReasoningEffort: null, resumeThreadId: 'thr-1',
+      credentialId: 1, credentialRevision: 1, agentConfigVersion: 1,
+      pricingSnapshot: { available: true, inputPricePerMillion: 1, outputPricePerMillion: 1 },
+    }),
+    dispatchOnce: async (ctx) => {
+      dispatchCalls += 1;
+      if (dispatchCalls === 1) {
+        // First physical invocation produced NO output (markerless) → retry.
+        return { exitCode: -1, resultSeen: false, lastResultText: '' };
+      }
+      return { exitCode: 0, resultSeen: true, agentThreadId: 'thr-1' };
+    },
+    retryPredicate: (r) => r && r.exitCode === -1 && !r.resultSeen,
+  });
+  assert.equal(dispatchCalls, 2, 'retried exactly once');
+  assert.equal(attempts.length, 2, 'two agent_turns rows (one per physical invocation)');
+  assert.equal(attempts[0].logical_turn_id, attempts[1].logical_turn_id, 'same logical turn id');
+  assert.equal(attempts[0].attempt_number, 1);
+  assert.equal(attempts[1].attempt_number, 2);
+  assert.equal(attempts[0].status, 'failed', 'first markerless attempt terminal as failed');
+  assert.equal(attempts[1].status, 'completed', 'second attempt terminal as completed');
+});
+
+test('attempt loop: terminal after a single successful dispatch (no retry)', async () => {
+  const { pool, attempts } = makeLoopPool();
+  await runCodexAttemptLoop({
+    pool, session: { id: 1, agent_config_version: 1 }, userId: 1, config: {},
+    resolveRuntime: async () => ({ agentBackend: 'codex_openrouter', agentModel: 'm', pricingSnapshot: { available: false } }),
+    dispatchOnce: async () => ({ exitCode: 0, resultSeen: true }), // honest terminal
+    retryPredicate: () => false,
+  });
+  assert.equal(attempts.length, 1);
+  assert.equal(attempts[0].status, 'completed');
+});
+
+test('attempt loop: surfaced backend errors pass through unresolved', async () => {
+  const { pool, attempts } = makeLoopPool();
+  const out = await runCodexAttemptLoop({
+    pool, session: { id: 1, agent_config_version: 1 }, userId: 1, config: {},
+    resolveRuntime: async () => ({ error: 'credential_required' }),
+    dispatchOnce: async () => ({}),
+    retryPredicate: () => false,
+  });
+  assert.equal(out.error, 'credential_required');
+  assert.equal(attempts.length, 0, 'no ledger row before a successful start');
+});
+
+test('recovery settlement: codex terminalizes in agent ledger, never Claude limits', async () => {
+  const { pool, rowsById } = makeLoopPool();
+  // Insert a genuine running attempt row directly (as dispatch would).
+  await runCodexAttemptLoop({
+    pool, session: { id: 1, agent_config_version: 1 }, userId: 1, config: {},
+    resolveRuntime: async () => ({ agentBackend: 'codex_openrouter', agentModel: 'm', pricingSnapshot: { available: false } }),
+    dispatchOnce: async (ctx) => ({}),
+    retryPredicate: () => false,
+  });
+  // Grab the running row BEFORE the loop completes it — instead, start a
+  // fresh row that stays 'running' by never dispatching completion again.
+  const { startCodexAttempt } = require('../src/services/agent-turn');
+  const started = await startCodexAttempt({
+    pool, session: { id: 1, agent_config_version: 1 }, userId: 1,
+    logicalTurnId: 'lt-rec', attemptNumber: 1, model: 'm', resumeThreadId: null,
+    runtimeContext: { pricingSnapshot: { available: false } },
+  });
+  let claudeSettled = 0;
+  const out = await settleRecoveredAgentAttempt({
+    pool,
+    activeTurn: { backend: 'codex_openrouter', turnUuid: started.turnUuid },
+    result: { exitCode: 0, resultSeen: true, inputTokens: 50, outputTokens: 10 },
+    settleClaude: async () => { claudeSettled += 1; return null; },
+  });
+  assert.equal(out.updated, true, 'codex attempt terminalized');
+  assert.equal(rowsById.get(started.turnUuid).status, 'completed');
+  assert.equal(claudeSettled, 0, 'codex recovery never touches Claude limits');
+
+  // Idempotent: settling the same terminal row again adds nothing.
+  const again = await settleRecoveredAgentAttempt({
+    pool,
+    activeTurn: { backend: 'codex_openrouter', turnUuid: started.turnUuid },
+    result: { exitCode: 0, resultSeen: true, inputTokens: 50, outputTokens: 10 },
+    settleClaude: async () => { claudeSettled += 1; return null; },
+  });
+  assert.equal(again.updated, false);
+  assert.equal(again.alreadyTerminal, true);
+});
+
+test('recovery settlement: Claude passes through to settleClaude', async () => {
+  let claudeSettled = 0;
+  await settleRecoveredAgentAttempt({
+    pool: {}, activeTurn: { backend: 'claude_code' },
+    result: { costUsd: 0.05 },
+    settleClaude: async () => { claudeSettled += 1; return null; },
+  });
+  assert.equal(claudeSettled, 1);
+});

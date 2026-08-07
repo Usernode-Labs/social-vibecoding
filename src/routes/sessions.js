@@ -6742,47 +6742,31 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
       ).catch(() => {});
       session.agent_thread_id = recoveredThreadId;
     }
-    // Complete the recovered Codex ledger turn using the persisted turn
-    // identity (review P1): turnUuid is stored in active_turn at dispatch,
-    // so a turn that survived a restart can still be marked terminal
-    // instead of being left 'running' forever.
-    if (activeTurn.backend === 'codex_openrouter' && activeTurn.turnUuid) {
-      const failed = !!(result.fatalError || result.ccIsError
-        || (result.agentExit != null && result.agentExit !== 0)
-        || (result.exitCode != null && result.exitCode !== 0));
-      await agentTurn.completeCodexTurn({
-        pool, turnUuid: activeTurn.turnUuid,
-        status: failed ? 'failed' : 'completed',
-        usage: {
-          model: result.agentModel || null,
-          inputTokens: result.inputTokens || 0,
-          cachedInputTokens: result.cachedInputTokens || 0,
-          outputTokens: result.outputTokens || 0,
-          reasoningOutputTokens: result.reasoningOutputTokens || 0,
-          cost: result.costUsd || null,
-        },
-      });
-    }
+    // Complete the recovered agent turn through the SHARED settlement
+    // helper (plan 7.5): Codex attempts terminalize in the agent_turns
+    // ledger with their observed usage; Claude settles Anthropic spend.
+    // turnUuid is stored in active_turn at dispatch, so a turn that
+    // survived a restart can still be marked terminal idempotently instead
+    // of being left 'running' forever.
+    await agentTurn.settleRecoveredAgentAttempt({
+      pool,
+      activeTurn,
+      result,
+      settleClaude: async () => {
+        // Guard (plan 7.6): recovered Codex spend never reaches Anthropic
+        // `limits` — only the Claude branch settles through it here.
+        if (!result.costUsd) return null;
+        const byok = activeTurn.byok ?? !!userApiKey;
+        return limits.settleTurnSpend(pool, user.id, Math.round(result.costUsd * 100), {
+          turnByok: byok,
+          byokObservedCents: worker.getTurnByokCents(session.id),
+        });
+      },
+    });
     // Release the record AND the journal it points at (the resume above
     // consumed it, and holdTurnRecord callers no longer delete it in
     // execInWorker's finally).
     await worker.finishTurn(session.id, { journal: activeTurn.journal });
-
-    // #174: the journal replay rebuilt the turn's self-reported cost —
-    // debit it before the recovery check below, because the Anthropic
-    // invoice is paid whether or not the turn produced anything (same
-    // rationale as the turn-end debit in runClaudeCodeTool). active_turn
-    // rows persisted before the byok flag shipped fall back to
-    // key-on-file at resume time. #664: a platform-billed turn that
-    // switched onto the owner's key mid-run settles split across both
-    // buckets (getTurnByokCents covers pre- and post-restart spillover).
-    if (result.costUsd && activeTurn.backend !== 'codex_openrouter') {
-      const byok = activeTurn.byok ?? !!userApiKey;
-      await limits.settleTurnSpend(pool, user.id, Math.round(result.costUsd * 100), {
-        turnByok: byok,
-        byokObservedCents: worker.getTurnByokCents(session.id),
-      });
-    }
 
     const producedAnything = result.execExitSeen || result.resultSeen
       || !!(result.lastResultText || '').trim();
@@ -8536,44 +8520,18 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
     let result;
     let codexCtx = null;
     try {
-      // Resolve the Codex/OpenRouter turn context (ledger row + per-turn
-      // OpenRouter key) for codex_openrouter sessions; null for Claude
-      // (legacy path unchanged). plan.md PR5/PR6.
-      codexCtx = await agentTurn.resolveCodexTurn({
-        pool, session, userId: req.user.id,
-        model: turnModel,
-        resumeThreadId: (isCodexSession ? (session.agent_thread_id || null) : (session.cc_session_id || null)),
-        config,
-      });
-      if (codexCtx?.error === 'backend_disabled' || codexCtx?.error === 'backend_not_available'
-          || codexCtx?.error === 'model_required' || codexCtx?.error === 'credential_required'
-          || codexCtx?.error === 'invalid_base_url') {
-        // SSE is already open; terminate through the SSE protocol (review #5)
-        // instead of res.json (which would throw ERR_HTTP_HEADERS_SENT or
-        // inject JSON into the stream). Mark the stop handle so the caller's
-        // stop branch tears the turn down cleanly and skips the Mayor wrap-up.
-        const code = codexCtx.error;
-        const msg = code === 'backend_disabled' || code === 'backend_not_available'
-          ? 'Codex/OpenRouter is not available for your account right now.'
-          : code === 'model_required'
-            ? 'Pick a Codex model in Settings for this session.'
-            : code === 'invalid_base_url'
-              ? 'The OpenRouter endpoint is misconfigured.'
-              : 'Add your OpenRouter API key in Settings to use Codex.';
-        await sendStatus(msg);
-        stopHandle.stopped = true;
-        stopHandle.stoppedBy = 'agent_error';
-        if (typeof send === 'function') send('error', { code, error: msg });
-        return { toolResultText: msg, isError: true };
-      }
-      const dispatchScout = () => worker.execInWorker(session.id, {
+      const resumeThreadId = isCodexSession ? (session.agent_thread_id || null) : (session.cc_session_id || null);
+      // Shared dispatcher for BOTH the Codex attempt loop and the Claude
+      // fallback, so the expensive execInWorker options (holdTurnRecord,
+      // onProgress) live in exactly one place per tool.
+      const doScout = (ctx) => worker.execInWorker(session.id, {
         mode: 'scout',
         prompt: scoutPrompt,
         model: turnModel,
         commitMsg: '',
-        resumeSessionId: (isCodexSession ? (session.agent_thread_id || null) : (session.cc_session_id || null)),
+        resumeSessionId: resumeThreadId,
         branchName: session.branch_name,
-        ...(codexCtx || {}),
+        ...(ctx || {}),
         prodDebug,
         // Hold the durable turn record through this tool's own tail
         // (spec persist + frozen version + Mayor wrap-up). Short, but the
@@ -8582,42 +8540,77 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         holdTurnRecord: true,
         onProgress: onScoutProgress,
       });
-      result = runLocally ? await dispatchLocalScout() : await dispatchScout();
-      // Headless auto-retry: a markerless turn that produced no spec text
-      // gets exactly one re-dispatch (the retry wraps the call site, not
-      // execInWorker, so active_turn bookkeeping stays per-attempt).
-      if (headless && shouldRetryHeadlessTurn(result, stopHandle, !!(result.lastResultText || '').trim())) {
-        await sendStatus('The coding step failed unexpectedly — retrying once…');
-        await waitForTurnStopped(session.id, containerName);
-        result = await dispatchScout();
-      }
-      // Complete the Codex ledger turn ONLY after the final attempt
-      // (review P1): completing after the first dispatch would 409 the
-      // headless retry that reuses the same turn token.
-      if (codexCtx?.turnUuid) {
-        const failed = !!(result?.fatalError || result?.ccIsError || (result?.agentExit != null && result?.agentExit !== 0) || (result?.exitCode != null && result?.exitCode !== 0));
-        await agentTurn.completeCodexTurn({
-          pool, turnUuid: codexCtx.turnUuid,
-          status: failed ? 'failed' : 'completed',
-          usage: {
-            model: result?.agentModel || codexCtx?.agentModel || null,
-            inputTokens: result?.inputTokens || 0,
-            cachedInputTokens: result?.cachedInputTokens || 0,
-            outputTokens: result?.outputTokens || 0,
-            reasoningOutputTokens: result?.reasoningOutputTokens || 0,
-            cost: result?.costUsd || null,
-          },
+      if (runLocally) {
+        // Local turns do not enter the platform's Codex attempt ledger and a
+        // retry must stay on the same attached machine.
+        result = await dispatchLocalScout();
+        if (headless && shouldRetryHeadlessTurn(result, stopHandle, !!(result.lastResultText || '').trim())) {
+          await sendStatus('The coding step failed unexpectedly — retrying once…');
+          await waitForTurnStopped(session.id, containerName);
+          result = await dispatchLocalScout();
+        }
+      } else {
+        // Backend-aware per-attempt dispatch (plan §7): for a Codex session
+        // this resolves the runtime context ONCE, then starts/completes one
+        // agent_turns attempt per physical worker.execInWorker (a headless
+        // auto-retry gets attempt_number=2, never overwriting attempt 1). For
+        // a Claude session the helper returns null and we fall through to the
+        // legacy path below. plan.md PR5/PR6.
+        const routed = await runCodexAttemptLoop({
+          pool, session, userId: req.user.id, config, isCodexSession,
+          turnModel, resumeThreadId,
+          resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
+            pool, session, userId: req.user.id, model: turnModel,
+            resumeThreadId, config,
+          }),
+          dispatchOnce: (ctx) => doScout(ctx),
+          retryPredicate: (r) => headless && shouldRetryHeadlessTurn(r, stopHandle, !!(r.lastResultText || '').trim()),
+          sendStatus: async (msg) => { await sendStatus(msg); },
+          waitForStopped: waitForTurnStopped,
+          containerName,
         });
+
+        if (routed?.error) {
+          codexCtx = { error: routed.error };
+          // SSE is already open; terminate through the SSE protocol (review #5)
+          // instead of res.json (which would throw ERR_HTTP_HEADERS_SENT or
+          // inject JSON into the stream). Mark the stop handle so the caller's
+          // stop branch tears the turn down cleanly and skips the Mayor wrap-up.
+          const code = routed.error;
+          const msg = code === 'backend_disabled' || code === 'backend_not_available'
+            ? 'Codex/OpenRouter is not available for your account right now.'
+            : code === 'model_required'
+              ? 'Pick a Codex model in Settings for this session.'
+              : code === 'invalid_base_url'
+                ? 'The OpenRouter endpoint is misconfigured.'
+                : code === 'ledger_start_failed'
+                  ? 'Could not start the Codex turn. Please retry.'
+                  : 'Add your OpenRouter API key in Settings to use Codex.';
+          await sendStatus(msg);
+          stopHandle.stopped = true;
+          stopHandle.stoppedBy = 'agent_error';
+          if (typeof send === 'function') send('error', { code, error: msg });
+          return { toolResultText: msg, isError: true };
+        }
+        // For a Claude session (routed === null) keep the legacy combined
+        // path exactly as before (shared dispatcher above).
+        if (routed === null) {
+          result = await doScout({});
+          if (headless && shouldRetryHeadlessTurn(result, stopHandle, !!(result.lastResultText || '').trim())) {
+            await sendStatus('The coding step failed unexpectedly — retrying once…');
+            await waitForTurnStopped(session.id, containerName);
+            result = await doScout({});
+          }
+        } else {
+          result = routed.result;
+        }
       }
     } catch (e) {
-      // A thrown dispatch must still terminalize the Codex ledger turn
-      // (review P1): without this the row stays 'running' and the token
-      // remains usable until expiry. Complete as failed, then rethrow.
-      if (codexCtx?.turnUuid) {
-        await agentTurn.completeCodexTurn({
-          pool, turnUuid: codexCtx.turnUuid, status: 'failed',
-        }).catch(() => {});
-      }
+      // A thrown dispatch must still terminalize any Codex ledger attempt
+      // (review P1): runCodexAttemptLoop completes each attempt in its own
+      // try/finally, and a throw after dispatch already left the attempt
+      // failed. If an attempt started but completion threw, force one
+      // failed pass here as a backstop (idempotent).
       throw e;
     } finally {
       clearInterval(heartbeat);
@@ -8817,6 +8810,90 @@ function describeMarkerlessExit(cause) {
 // passes that as `producedOutput`). Interactive turns stay single-shot —
 // a human is present to re-dispatch — and a user-stopped turn is a
 // deliberate end, not a failure to retry.
+
+// ── Shared per-attempt Codex dispatch (plan 7) ─────────────────────────
+// Encapsulates the logical-turn + per-attempt accounting for BOTH the
+// scout and build call sites so a retry cannot be merged into the prior
+// attempt's ledger row (one physical Codex invocation = one attempt) and
+// a retry never reuses a terminal turnUuid. `dispatchOnce(attemptNumber)`
+// is provided by the caller and must itself call worker.execInWorker with
+// the attempt's turnUuid/logicalTurnId/attemptNumber.
+async function runCodexAttemptLoop({
+  pool, session, userId, config, isCodexSession, turnModel,
+  resumeThreadId, resolveRuntime, dispatchOnce, retryPredicate,
+  sendStatus, waitForStopped, containerName,
+}) {
+  // One logical turn id per coding-tool invocation (plan 7.1); attempt 1
+  // gets attempt_number=1, a retry gets attempt_number=2.
+  const logicalTurnId = crypto.randomUUID();
+  const runtimeContext = await resolveRuntime();
+  if (runtimeContext?.error) return { error: runtimeContext.error };
+  if (!runtimeContext) return null; // Claude turn — caller handles it.
+
+  const completeAttempt = async (attempt, result, status, err) => {
+    await agentTurn.completeCodexAttempt({
+      pool,
+      turnUuid: attempt.turnUuid,
+      status,
+      threadId: result?.agentThreadId || null,
+      usageTotal: agentTurn.usageTotalFromResult(result),
+      errorCode: err ? agentTurn.classifyErrorCode(err) : null,
+      errorDetail: err ? agentTurn.sanitizeError(err) : null,
+    });
+  };
+
+  let lastResult = null;
+  let lastError = null;
+  let attemptNumber = 0;
+  for (;;) {
+    attemptNumber += 1;
+    let attempt;
+    try {
+      attempt = await agentTurn.startCodexAttempt({
+        pool, session, userId, logicalTurnId, attemptNumber,
+        model: runtimeContext.agentModel,
+        reasoningEffort: runtimeContext.agentReasoningEffort,
+        resumeThreadId,
+        runtimeContext,
+      });
+    } catch (startErr) {
+      return { error: 'ledger_start_failed', errorDetail: agentTurn.sanitizeError(startErr) };
+    }
+
+    try {
+      lastResult = await dispatchOnce({
+        ...runtimeContext,
+        turnUuid: attempt.turnUuid,
+        logicalTurnId,
+        attemptNumber,
+      });
+      lastError = null;
+      const failed = !!(lastResult?.fatalError || lastResult?.ccIsError
+        || (lastResult?.agentExit != null && lastResult?.agentExit !== 0)
+        || (lastResult?.exitCode != null && lastResult?.exitCode !== 0));
+      await completeAttempt(attempt, lastResult, failed ? 'failed' : 'completed');
+    } catch (err) {
+      lastError = err;
+      await completeAttempt(attempt, null, 'failed', err);
+      throw err;
+    }
+
+    // Retry only when the caller's predicate says so (markerless headless
+    // turn). Attempt 1 is ALREADY terminal before attempt 2 starts.
+    if (!retryPredicate || !retryPredicate(lastResult)) break;
+    // Guard against spinning: exactly one retry.
+    if (attemptNumber >= 2) break;
+    if (typeof sendStatus === 'function') {
+      try { await sendStatus('The coding step failed unexpectedly — retrying once…'); } catch {}
+    }
+    if (typeof waitForStopped === 'function') {
+      try { await waitForStopped(session.id, containerName); } catch {}
+    }
+  }
+  return { result: lastResult, error: lastError, logicalTurnId };
+}
+
+
 function shouldRetryHeadlessTurn(result, stopHandle, producedOutput) {
   if (!result || producedOutput) return false;
   if (stopHandle && stopHandle.stopped) return false;
@@ -9824,38 +9901,18 @@ path: /another/changed/view
     let result;
     let codexCtx = null;
     try {
-      codexCtx = await agentTurn.resolveCodexTurn({
-        pool, session, userId: req.user.id,
-        model: turnModel,
-        resumeThreadId: (isCodexSession ? (session.agent_thread_id || null) : (session.cc_session_id || null)),
-        config,
-      });
-      if (codexCtx?.error === 'backend_disabled' || codexCtx?.error === 'backend_not_available'
-          || codexCtx?.error === 'model_required' || codexCtx?.error === 'credential_required'
-          || codexCtx?.error === 'invalid_base_url') {
-        // SSE is already open; terminate through the SSE protocol (review #5).
-        const code = codexCtx.error;
-        const msg = code === 'backend_disabled' || code === 'backend_not_available'
-          ? 'Codex/OpenRouter is not available for your account right now.'
-          : code === 'model_required'
-            ? 'Pick a Codex model in Settings for this session.'
-            : code === 'invalid_base_url'
-              ? 'The OpenRouter endpoint is misconfigured.'
-              : 'Add your OpenRouter API key in Settings to use Codex.';
-        await sendStatus(msg);
-        stopHandle.stopped = true;
-        stopHandle.stoppedBy = 'agent_error';
-        if (typeof send === 'function') send('error', { code, error: msg });
-        return { toolResultText: msg, isError: true };
-      }
-      const dispatchBuild = () => worker.execInWorker(session.id, {
+      const resumeThreadId = isCodexSession ? (session.agent_thread_id || null) : (session.cc_session_id || null);
+      // Shared dispatcher for BOTH the Codex attempt loop and the Claude
+      // fallback, so the expensive execInWorker options (holdTurnRecord +
+      // the estimator/phase onProgress closure) live in exactly one place.
+      const doBuild = (ctx) => worker.execInWorker(session.id, {
         mode: 'build',
         prompt: claudePrompt,
         model: turnModel,
         commitMsg,
-        resumeSessionId: (isCodexSession ? (session.agent_thread_id || null) : (session.cc_session_id || null)),
+        resumeSessionId: resumeThreadId,
         branchName: session.branch_name,
-        ...(codexCtx || {}),
+        ...(ctx || {}),
         prodDebug,
         // Hold the durable turn record through the tail below (push heal →
         // PR → staging build → visuals → completion card → Mayor wrap-up).
@@ -9872,42 +9929,71 @@ path: /another/changed/view
         // the local runner shares.
         onProgress: onAgentProgress,
       });
-      result = runLocally ? await dispatchLocalBuild() : await dispatchBuild();
-      // Headless auto-retry: a markerless turn that committed nothing
-      // gets exactly one re-dispatch (the retry wraps the call site, not
-      // execInWorker, so active_turn bookkeeping stays per-attempt).
-      if (headless && shouldRetryHeadlessTurn(result, stopHandle, result.ahead > 0)) {
-        await sendStatus('The coding step failed unexpectedly — retrying once…');
-        await waitForTurnStopped(session.id, containerName);
-        result = await dispatchBuild();
-      }
-      // Complete the Codex ledger turn ONLY after the final attempt
-      // (review P1): completing after the first dispatch would 409 the
-      // headless retry that reuses the same turn token.
-      if (codexCtx?.turnUuid) {
-        const failed = !!(result?.fatalError || result?.ccIsError || (result?.agentExit != null && result?.agentExit !== 0) || (result?.exitCode != null && result?.exitCode !== 0));
-        await agentTurn.completeCodexTurn({
-          pool, turnUuid: codexCtx.turnUuid,
-          status: failed ? 'failed' : 'completed',
-          usage: {
-            model: result?.agentModel || codexCtx?.agentModel || null,
-            inputTokens: result?.inputTokens || 0,
-            cachedInputTokens: result?.cachedInputTokens || 0,
-            outputTokens: result?.outputTokens || 0,
-            reasoningOutputTokens: result?.reasoningOutputTokens || 0,
-            cost: result?.costUsd || null,
-          },
+      if (runLocally) {
+        // Local turns do not enter the platform's Codex attempt ledger and a
+        // retry must stay on the same attached machine.
+        result = await dispatchLocalBuild();
+        if (headless && shouldRetryHeadlessTurn(result, stopHandle, result.ahead > 0)) {
+          await sendStatus('The coding step failed unexpectedly — retrying once…');
+          await waitForTurnStopped(session.id, containerName);
+          result = await dispatchLocalBuild();
+        }
+      } else {
+        // Backend-aware per-attempt dispatch (plan §7): same contract as the
+        // scout path — one logical turn, one agent_turns attempt per physical
+        // worker.execInWorker, and a headless auto-retry as attempt_number=2
+        // that never overwrites the first attempt's usage.
+        const routed = await runCodexAttemptLoop({
+          pool, session, userId: req.user.id, config, isCodexSession,
+          turnModel, resumeThreadId,
+          resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
+            pool, session, userId: req.user.id, model: turnModel,
+            resumeThreadId, config,
+          }),
+          dispatchOnce: (ctx) => doBuild(ctx),
+          retryPredicate: (r) => headless && shouldRetryHeadlessTurn(r, stopHandle, r.ahead > 0),
+          sendStatus: async (msg) => { await sendStatus(msg); },
+          waitForStopped: waitForTurnStopped,
+          containerName,
         });
+
+        if (routed?.error) {
+          codexCtx = { error: routed.error };
+          // SSE is already open; terminate through the SSE protocol (review #5).
+          const code = routed.error;
+          const msg = code === 'backend_disabled' || code === 'backend_not_available'
+            ? 'Codex/OpenRouter is not available for your account right now.'
+            : code === 'model_required'
+              ? 'Pick a Codex model in Settings for this session.'
+              : code === 'invalid_base_url'
+                ? 'The OpenRouter endpoint is misconfigured.'
+                : code === 'ledger_start_failed'
+                  ? 'Could not start the Codex turn. Please retry.'
+                  : 'Add your OpenRouter API key in Settings to use Codex.';
+          await sendStatus(msg);
+          stopHandle.stopped = true;
+          stopHandle.stoppedBy = 'agent_error';
+          if (typeof send === 'function') send('error', { code, error: msg });
+          return { toolResultText: msg, isError: true };
+        }
+        if (routed === null) {
+          // Claude session — legacy combined path, keep the headless retry.
+          result = await doBuild({});
+          if (headless && shouldRetryHeadlessTurn(result, stopHandle, result.ahead > 0)) {
+            await sendStatus('The coding step failed unexpectedly — retrying once…');
+            await waitForTurnStopped(session.id, containerName);
+            result = await doBuild({});
+          }
+        } else {
+          result = routed.result;
+        }
       }
     } catch (e) {
-      // A thrown dispatch must still terminalize the Codex ledger turn
-      // (review P1): mark it failed so the row isn't left 'running' / the
-      // token usable until expiry, then rethrow.
-      if (codexCtx?.turnUuid) {
-        await agentTurn.completeCodexTurn({
-          pool, turnUuid: codexCtx.turnUuid, status: 'failed',
-        }).catch(() => {});
-      }
+      // A thrown dispatch must still terminalize any in-flight Codex ledger
+      // attempt (review P1): runCodexAttemptLoop completes each attempt in
+      // its own try/finally, and a throw after dispatch leaves it failed. An
+      // attempt-start failure is surfaced through routed.error instead of a
+      // throw. Rethrow any residual so the caller's stop-branch runs.
       throw e;
     } finally {
       clearInterval(heartbeat);
@@ -10897,4 +10983,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine };
+module.exports = { runCodexAttemptLoop,  sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine };
