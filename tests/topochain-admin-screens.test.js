@@ -457,3 +457,172 @@ test('the shared list, skeleton, empty and error helpers exist and are used ever
   assert.match(topoJs, /Couldn't reach the server\./,
     'status 0 is reported as a connectivity problem, not as a server error');
 });
+
+// ─── Second pass: the same modern chrome on EVERY sub-tab, not just lists ─
+//
+// The first pass modernised the list screens only, so the forms, detail
+// panels and the four tool screens (Settings, App version, SQL console,
+// API tester) were still on the old flat markup. These tests pin the
+// shared chrome — panel, screen header, form grid, form actions, error
+// slot — and the tap-target/wrapping rules, so a new screen can't be
+// added on the old idiom without failing here.
+
+test('the shared panel/header/form helpers exist', () => {
+  for (const helper of [
+    '_panel(opts) {', '_screenHeader(opts) {', '_formGrid(innerHtml, cols) {',
+    '_formActions(saveId, cancelId, saveLabel) {', '_formErrorSlot(id) {',
+    '_checkField(id, label, checked, help) {',
+  ]) {
+    assert.ok(topoJs.includes(helper), `the shared ${helper.split('(')[0]} helper is defined`);
+  }
+});
+
+test('a panel header sticks to the top and carries a visible dismiss control', () => {
+  const panel = topoJs.slice(topoJs.indexOf('  _panel(opts) {'),
+    topoJs.indexOf('  _panel(opts) {') + 2000);
+  assert.match(panel, /sticky top-0/,
+    'a long form scrolls under its own title rather than losing it');
+  assert.match(panel, /aria-label="\$\{esc\(closeLabel\)\}"/,
+    'the ✕ is labelled for a screen reader, not a bare glyph');
+  assert.match(panel, /<svg[^>]*aria-hidden="true"/,
+    '...and its icon is hidden from the accessibility tree');
+  assert.match(panel, /flex flex-wrap items-center gap-2 border-t/,
+    'the footer action bar wraps instead of overflowing on a phone');
+});
+
+test('every open-a-form entry point renders through _panel with a wired close control', () => {
+  const FORMS = [
+    '_openSeasonEventForm', '_openChallengeForm', '_openUserForm',
+    '_openUserImportForm', '_openUserExport', '_openAccountImportForm',
+    '_openActivityForm', '_openActivityImportForm', '_openActivityTotals',
+    '_openTemplateForm', '_openSettingForm', '_openAppVersionForm',
+    '_moveChallenge',
+  ];
+  for (const fn of FORMS) {
+    const start = topoJs.indexOf(`  async ${fn}(`);
+    assert.ok(start > 0, `${fn} is defined`);
+    const body = topoJs.slice(start, start + topoJs.slice(start).indexOf('\n  },'));
+    assert.match(body, /_panel\(\{/, `${fn} renders inside a _panel`);
+    const closeIds = [...body.matchAll(/closeId: '([^']+)'/g)].map((m) => m[1]);
+    assert.ok(closeIds.length >= 1, `${fn} gives its panel a close control`);
+    for (const id of new Set(closeIds)) {
+      assert.ok(body.includes(`document.getElementById('${id}').addEventListener('click'`),
+        `${fn} wires its '${id}' close control (a ✕ that does nothing is worse than none)`);
+    }
+  }
+});
+
+test('no two static admin-topo-* element ids collide', () => {
+  // The move panel and the CSV export panel each used to render two
+  // different bodies under ONE id, so which control you got depended on
+  // which branch ran. Every literal id in the file must be unique.
+  const ids = [...topoJs.matchAll(/id="(admin-topo-[a-z0-9-]+)"/g)].map((m) => m[1]);
+  const seen = new Map();
+  for (const id of ids) seen.set(id, (seen.get(id) || 0) + 1);
+  const dupes = [...seen].filter(([, n]) => n > 1).map(([id]) => id);
+  assert.deepEqual(dupes, [], 'duplicate static ids');
+});
+
+test('every screen opens with the shared _screenHeader, toolbar and all', () => {
+  const SCREENS = [
+    'renderSeasons', 'renderSeasonEvents', 'renderUsers', 'renderWaitlist',
+    'renderOnchainAccounts', 'renderUserActivities', 'renderChallengeTemplates',
+    'renderSettings', 'renderAppVersion', 'renderSqlConsole', 'renderApiTester',
+  ];
+  for (const fn of SCREENS) {
+    const start = topoJs.search(new RegExp(`\\n  (?:async )?${fn}\\(host\\) \\{`));
+    assert.ok(start > 0, `${fn} is defined`);
+    const body = topoJs.slice(start, start + topoJs.slice(start).indexOf('\n  },'));
+    assert.match(body, /_screenHeader\(\{/, `${fn} uses the shared screen header`);
+  }
+  const header = topoJs.slice(topoJs.indexOf('  _screenHeader(opts) {'),
+    topoJs.indexOf('  _screenHeader(opts) {') + 900);
+  assert.match(header, /flex flex-col gap-3 sm:flex-row/,
+    'title and toolbar stack on a phone and sit side by side from sm: up');
+  assert.match(header, /flex flex-wrap items-center gap-2/,
+    'a three-button toolbar wraps rather than overflowing');
+});
+
+test('form fields stack on a phone and go multi-column from md: up', () => {
+  const grid = topoJs.slice(topoJs.indexOf('  _formGrid(innerHtml, cols) {'),
+    topoJs.indexOf('  _formGrid(innerHtml, cols) {') + 500);
+  assert.match(grid, /grid-cols-1 md:grid-cols-2 lg:grid-cols-3/, 'cols: 3 opts into a third column');
+  assert.match(grid, /grid-cols-1 md:grid-cols-2/, 'the default is one column then two');
+  assert.ok((topoJs.match(/_formGrid\(/g) || []).length >= 8,
+    'every multi-field form is laid out through it');
+  // No screen may go back to the old sm:-breakpoint two-column form grid.
+  assert.doesNotMatch(stripComments(topoJs), /grid grid-cols-1 sm:grid-cols-2 gap-3/,
+    'the pre-second-pass form grid is gone');
+});
+
+test('buttons and fields are one consistent, tap-friendly set of tokens', () => {
+  assert.match(topoJs, /const BTN_BASE = /, 'one base class string for every button');
+  assert.match(topoJs, /const FIELD_CLS = /, 'one class string for every text input and select');
+  assert.match(topoJs, /const TEXTAREA_CLS = /, '...and one for every textarea');
+  assert.match(topoJs, /const PANEL_CLS = /, '...and one panel/card surface');
+  assert.match(topoJs, /touch-manipulation/, 'taps are not delayed by double-tap-zoom detection');
+  assert.match(topoJs, /focus-visible:ring-2/, 'keyboard focus stays visible');
+  // 44px is the tap target on a phone; the denser 36px only applies once
+  // there is a pointer-sized viewport.
+  assert.ok((topoJs.match(/min-h-\[44px\] sm:min-h-\[36px\]/g) || []).length >= 3,
+    'controls are 44px tall on a phone');
+
+  // The tokens must stay class-string CONSTANTS interpolated into markup,
+  // not a helper that returns a whole <button>: Tailwind's extractor only
+  // sees whole literals, and the canWrite() ternary test above counts the
+  // literal `canWrite ? `<button` shape.
+  assert.doesNotMatch(topoJs, /_btn\(/, 'no button-building function');
+  const legacy = [
+    'text-xs text-zinc-500 hover:text-violet-400',
+    'text-xs text-red-500 hover:text-red-400',
+    'rounded-lg bg-violet-600 hover:bg-violet-500 px-',
+  ];
+  for (const cls of legacy) {
+    assert.ok(!topoJs.includes(cls), `the hand-rolled "${cls}" button styling is gone`);
+  }
+  // Row actions are chips inside a wrapping group in BOTH _list layouts.
+  assert.match(topoJs, /flex flex-wrap items-center justify-end gap-1/, 'table action cell wraps');
+  assert.match(topoJs, /mt-2 flex flex-wrap gap-1 border-t/, 'card action footer wraps');
+});
+
+test('every form reports failures through the shared inline error slot', () => {
+  const slot = topoJs.slice(topoJs.indexOf('  _formErrorSlot(id) {'),
+    topoJs.indexOf('  _formErrorSlot(id) {') + 500);
+  assert.match(slot, /class="hidden /, 'rendered hidden, revealed by the save handler');
+  assert.match(slot, /role="alert"/, 'a validation failure is announced, not just coloured red');
+  assert.ok((topoJs.match(/_formErrorSlot\(/g) || []).length >= 8,
+    'every form panel carries one');
+  // The save handlers toggle `hidden` on that element by id — the slot
+  // must keep that contract rather than inventing a second mechanism.
+  assert.ok((topoJs.match(/errEl\.classList\.remove\('hidden'\)/g) || []).length >= 5,
+    'the existing show-the-error path still drives it');
+});
+
+test('the tool screens got the same treatment as the CRUD screens', () => {
+  const sql = topoJs.slice(topoJs.indexOf('  renderSqlConsole(host) {'),
+    topoJs.indexOf('  async _loadSqlTemplates()'));
+  assert.match(sql, /grid-cols-1 gap-4 lg:grid-cols-\[260px_1fr\]/,
+    'the SQL console is one column on a phone, sidebar + editor at lg:');
+  assert.match(sql, /lg:order-2/,
+    'the query editor comes first on a phone, and moves right at lg:');
+  assert.ok((sql.match(/_panel\(\{/g) || []).length >= 3,
+    'query, templates and schema each sit in a panel');
+  assert.match(sql, /_skeleton\(3\)/, 'the reference lists show a skeleton while they load');
+
+  const api = topoJs.slice(topoJs.indexOf('  renderApiTester(host) {'),
+    topoJs.indexOf('  async _runApiTest()'));
+  assert.match(api, /_panel\(\{/, 'the request builder is a panel');
+  assert.match(api, /<label for="admin-topo-api-method"/, 'the method select is labelled');
+  assert.match(api, /<label for="admin-topo-api-path"/, '...and so is the path input');
+  assert.match(api, /\$\{FIELD_CLS\}/, 'its inputs use the shared field styling');
+});
+
+test('the SQL result and API response areas use the shared empty/panel treatment', () => {
+  const run = topoJs.slice(topoJs.indexOf('  async _runSqlQuery()'),
+    topoJs.indexOf('  // ══════════════════════════════════════════════════════════════════\n  // API tester'));
+  assert.match(run, /_empty\(\{/, 'a query that matched nothing gets the empty-state card');
+  assert.match(run, /role="status"/, 'running/failed states are announced');
+  const apiRun = topoJs.slice(topoJs.indexOf('  async _runApiTest()'));
+  assert.match(apiRun, /\$\{PANEL_CLS\}/, 'the response is framed like every other panel');
+  assert.match(apiRun, /HTTP \$\{esc\(res\.status\)\}/, 'the status line survives, escaped');
+});
