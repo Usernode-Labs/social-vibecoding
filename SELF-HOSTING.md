@@ -1444,18 +1444,31 @@ whole path and each step has a distinguishable failure.
    the running container: confirm the deploy that picked them up has actually
    landed.
 4. **Ask the assistant to set up work on an app** (`prepare_work`). Success
-   returns a branch name, a base commit and a paste-ready work order, plus
-   `forkStatus`: `ready` (they already have a fork), `missing` (the work
-   order's first command creates it), or `name_conflict` (a same-named repo
-   of theirs is in the way, so the work order forks under
-   `<repo>-usernode`). None of the three is a failure. The refusals worth
-   recognising: `github_not_linked` (this user hasn't pressed Connect —
-   step 3) and `github_link_unavailable` (the deployment has no OAuth app —
-   configuration).
+   returns a branch name, a base commit, and **two separate things**:
+   `guidance`, a short checklist written for the user, which the assistant
+   should relay in order and as written; and `workOrder`, a payload for the
+   coding agent that it must reproduce character for character in one code
+   block. An assistant that paraphrases the work order — especially the
+   40-character base commit — is the failure mode this split exists to
+   prevent; if you see it summarised, that is worth recording. `forkStatus`
+   is `ready` (they already have a fork), `missing` (the work order's fork
+   step creates it), or `name_conflict` (a same-named repo of theirs is in
+   the way, so the fork is made as `<repo>-usernode`). None of the three is
+   a failure. The refusals worth recognising: `github_not_linked` (this
+   user hasn't pressed Connect — step 3), `github_link_unavailable` (the
+   deployment has no OAuth app — configuration), and `platform_unavailable`
+   (GitHub was unreadable, or it answered with something that is not a
+   40-hex commit id — retry; nothing was recorded).
 5. **Run the coding agent.** Paste the work order into Claude Code on the
-   web (or Codex) and let it fork, branch and push. It should *not* open a
-   pull request — the platform does that. If `gh repo fork` is unavailable
-   to it, the work order's fallback link creates the fork in one click.
+   web (or Codex) and let it fork, branch and push. The setup commands are
+   the same four in all three fork states — clone the fork, add `upstream`,
+   fetch, cut the branch at the recorded commit — with the fork step, when
+   there is one, above them and led by the one-click "Create fork" link for
+   an agent with no `gh`. If git rejects the base commit, the work order
+   tells the agent to `git fetch upstream <sha>` and retry rather than
+   branch from somewhere else; an agent that silently starts from
+   `upstream/main` instead is a finding. It should *not* open a pull
+   request — the platform does that.
 6. **Ask the assistant to submit it** (`submit_work`).
    Usernode opens the cross-fork PR with bot credentials and runs it
    through `POST /api/apps/:slug/pr-import`, producing an ordinary
