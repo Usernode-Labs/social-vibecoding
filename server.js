@@ -52,6 +52,15 @@ const {
   cliPreAuthRoutes,
   cliBrowserRoutes,
 } = require('./src/routes/cli-auth');
+// Hosted MCP connector (Claude.ai / ChatGPT). Same three-way split as the
+// CLI surface above: a hard staging/enablement gate, then the public +
+// bearer routes before cookie auth, then the browser-session management
+// routes after it.
+const {
+  mcpConnectGate,
+  mcpPreAuthRoutes,
+  mcpBrowserRoutes,
+} = require('./src/routes/mcp-remote');
 // Topochain v4 (plan Task 3): public/partner/ingest/mobile carry their own
 // auth and mount BEFORE authMiddleware; admin reuses the platform's own
 // admin auth and mounts AFTER it (architecture decision #2 — see the mount
@@ -88,6 +97,7 @@ const { sweepStuckCreatingApps } = require('./src/routes/apps');
 const appAccess = require('./src/services/app-access');
 const platformJwt = require('./src/services/platform-jwt');
 const { getPool } = require('./src/db/pool');
+const { createLeadership, withMigrationLock } = require('./src/services/leadership');
 const { trustedProxyClientIp } = require('./src/services/client-ip');
 const { currentVotePredicateSql } = require('./src/services/pr-vote-revision');
 
@@ -110,6 +120,14 @@ app.use(trustedProxyClientIp({ hostname: config.trustedProxyHost }));
 // session semantics.
 app.use(cliAuthGate(config));
 app.use(cliPreAuthRoutes(config));
+
+// The hosted MCP connector gets the same treatment for the same reason: a
+// staging preview's browser identity comes from an iframe token, so a
+// connector credential must never be mintable or usable there. POST /mcp
+// authenticates with its own OAuth bearer and must never see a cookie, so
+// it mounts here rather than behind authMiddleware.
+app.use(mcpConnectGate(config));
+app.use(mcpPreAuthRoutes(config));
 
 // ── Explorer API passthrough ───────────────────────────────────────────────
 // The mobile app's in-webview "Transaction Log" panel resolves the explorer
@@ -272,12 +290,13 @@ app.get('/api/version', (_req, res) => {
     // gates behaviour on it, and USERNODE_ENV is platform-injected (a
     // reserved key), so there's no new declaration to make.
     env: process.env.USERNODE_ENV || null,
-    // SELF-HOSTING.md Phase 2f / Phase 3: the platform's own slug
-    // in the apps table. Clients use this to recognize self-app
-    // surfaces (e.g. the "Platform updating…" banner cross-checks
-    // sessionStorage state against the live self-app slug). Cheap to
-    // include — already available in config; saves the client a second
-    // round-trip for any code path that needs it.
+    // SELF-HOSTING.md Phase 2f: the platform's own slug in the apps
+    // table, so a client can recognize self-app surfaces without
+    // guessing. No client reads it today — the "Platform updating…"
+    // banner that did was removed in #1015 — but it stays as the
+    // documented way to identify the self-app: cheap to include
+    // (already in config) and it saves a second round-trip for any
+    // future code path that needs it.
     selfAppSlug: config.selfAppSlug,
   });
 });
@@ -471,6 +490,11 @@ app.use(topochainMobileRoutes(config));
 app.use(cliApiBearerAuth(config));
 app.use(authMiddleware(config));
 app.use(cliBrowserRoutes(config));
+// Connector consent decision + Settings management (connected chat
+// products, GitHub account link). These need a real platform session, so
+// they mount after authMiddleware — the consent POST must never be
+// satisfiable by a bearer token approving itself.
+app.use(mcpBrowserRoutes(config));
 app.use(authRoutes(config));
 app.use(appRoutes(config));
 // Shell relay for usernode.uploadFile()/deleteFile()/getStorageUsage()
@@ -699,9 +723,24 @@ app.get('*', (req, res) => {
   }
 });
 
-async function start() {
-  await migrate(config);
-  await mobilePush.initialize(config);
+// Leadership coordinator for blue-green deploys (assigned in start()).
+// During a rollout both colors serve HTTP, but singleton background work
+// is gated to the leader so it never double-runs. See services/leadership.js.
+let leadership = null;
+
+// Leader-only singleton work. Runs exactly once per cluster — at boot for
+// the leader / the single-instance case (PLATFORM_LEADER_LOCK unset), or at
+// promotion for a follower whose old leader has exited (blue-green handoff).
+// EVERYTHING here either mutates shared cluster state (worker containers,
+// PR/merge rows, staging, Postgres roles, GitHub) or is a singleton
+// poller/sweeper that must never double-run across the two colors. The
+// follower serves HTTP from boot; the couple of leader-scoped capabilities
+// (prod-debug SQL, whose role password lives in the leader's memory) degrade
+// to a clean 503 on the follower for the seconds until promotion.
+async function becomeLeader() {
+  log.info('server', 'Running leader duties (role bootstraps, recovery, sweepers)', {
+    identity: leadership && leadership.identity,
+  });
 
   // Credential rows deliberately outlive their active period for settings
   // and audit correlation, then age out on the documented schedule.
@@ -760,9 +799,6 @@ async function start() {
     });
   });
 
-  await github.init(config);
-  await llm.init(config);
-
   // Any app stuck in 'creating' from a previous process crash gets flipped
   // to 'error' so the creator can retry instead of staring at a spinner.
   await sweepStuckCreatingApps(getPool(config)).catch(() => {});
@@ -803,28 +839,9 @@ async function start() {
     log.warn('server', 'Campaign resume failed', { err: err.message });
   });
 
-  worker.ensureWorkerImage().catch((err) => {
-    log.warn('server', 'Worker image build deferred', { err: err.message });
-  });
-
-  // Module-scoped so cleanup() can close it on SIGTERM (#767) — a
-  // function-local handle left the listener accepting new connections
-  // for the entire drain, then exited from under them.
-  const server = app.listen(config.port, () => {
-    log.info('server', `Listening on :${config.port}`);
-  });
-  httpServer = server;
-  shutdownPool = getPool(config);
-
-  ws.attach(server, config);
+  // The push SENDER claims queued jobs — a singleton. Enqueueing (HTTP
+  // side) works on every color; only the leader drains the queue.
   mobilePush.start();
-  chainPoller.start(config);
-  genesisAccounts.start();
-  nodeStatus.start({ nodeRpcUrl: process.env.NODE_RPC_URL });
-  // Warm the /api/status cache so the first dashboard load doesn't have
-  // to wait 1-2s on `docker stats`. Subsequent loads are served from
-  // cache via stale-while-revalidate (see services/status.js).
-  statusService.start(config);
   // Periodically check imported / bot-owned repos for new commits on
   // `main` we didn't make ourselves and redeploy via the same path
   // that the dev-chat merge flow uses. See main-drift-poller.js.
@@ -904,6 +921,11 @@ async function start() {
   // #907: release local coding-agent leases whose machine stopped
   // heartbeating, and fail the turn they were holding.
   startLocalAgentLeaseSweeper(config);
+
+  // #1010: fast, gate-first governance applies (minute-scale). Complements
+  // the hourly sweeper's Pass 0b, which keeps ownership of the close-issue
+  // superseded sweep (its GitHub fetch is too costly to run per minute).
+  startGovernanceApplyTicker(config);
 
   // Reconcile open PR sessions ('promoted'/'merging') against GitHub's
   // actual merge state. Heals sessions that merged on GitHub but whose
@@ -999,6 +1021,58 @@ async function start() {
   // unavailable (services/title-heal.js). Bounded, non-overlapping, no-op
   // while the LLM stays disabled.
   startTitleHealSweeper(config);
+}
+
+async function start() {
+  // Schema migration is serialized across colors with an advisory lock so
+  // two booting platform containers can't run DDL concurrently during a
+  // blue-green rollout. No-op wrapper in single-instance mode. Orthogonal
+  // to the lock_timeout retry INSIDE migrate() (applySchemaWithLockRetry):
+  // this serializes the two colors against each other; that one survives
+  // lock contention with pg_dump'ing staging clones.
+  await withMigrationLock(getPool(config), () => migrate(config));
+  await mobilePush.initialize(config);
+  await github.init(config);
+  await llm.init(config);
+
+  worker.ensureWorkerImage().catch((err) => {
+    log.warn('server', 'Worker image build deferred', { err: err.message });
+  });
+
+  // ── Per-instance services ────────────────────────────────────────────
+  // Started on EVERY color so a follower can serve traffic the moment the
+  // rollout cuts over to it. These are request-serving / in-memory read
+  // caches — safe (just briefly redundant) to run in both colors during
+  // the rollout overlap.
+  //
+  // Module-scoped so cleanup() can close it on SIGTERM (#767) — a
+  // function-local handle left the listener accepting new connections
+  // for the entire drain, then exited from under them.
+  const server = app.listen(config.port, () => {
+    log.info('server', `Listening on :${config.port}`);
+  });
+  httpServer = server;
+  shutdownPool = getPool(config);
+
+  ws.attach(server, config);
+  chainPoller.start(config);
+  genesisAccounts.start();
+  nodeStatus.start({ nodeRpcUrl: process.env.NODE_RPC_URL });
+  // Warm the /api/status cache so the first dashboard load doesn't have
+  // to wait 1-2s on `docker stats`. Subsequent loads are served from
+  // cache via stale-while-revalidate (see services/status.js).
+  statusService.start(config);
+
+  // ── Leader-only singleton work ───────────────────────────────────────
+  // Elect a single leader across the colors. The leader runs becomeLeader()
+  // immediately; a follower serves HTTP now and runs it later, once the old
+  // leader exits and frees the advisory lock. Single-instance / dev / tests
+  // (PLATFORM_LEADER_LOCK unset) become leader instantly — identical to the
+  // pre-blue-green boot path.
+  leadership = createLeadership({ databaseUrl: config.databaseUrl });
+  leadership.start(becomeLeader).catch((err) => {
+    log.error('server', 'Leadership coordinator failed', { err: err.message });
+  });
 
   return server;
 }
@@ -3483,6 +3557,94 @@ function startSessionAutoPauseSweeper(config) {
   }, config.sessionSweepIntervalMs).unref();
 }
 
+let governanceApplyTickerHandle = null;
+
+// #1010: FAST governance-apply ticker.
+//
+// A governance proposal (rename / secret_change / close_issue /
+// maintenance_campaign) can become mergeable purely through the passage of
+// time — the threshold is met and the minimum visibility window runs out with
+// no further vote to drive the apply. Before this ticker the ONLY thing that
+// noticed was the hourly stale-PR sweeper's Pass 0b, so a close proposal whose
+// countdown reached zero sat visibly decided-but-open for up to an hour. That
+// is the dead air issue #1010 is about, and it is also what would make the
+// client's derived "Closing issue…" spinner a lie — so the indicator and this
+// ticker ship together.
+//
+// Deliberately narrower than Pass 0b in one way that matters: it is
+// **gate-first for every kind**, including close_issue. Pass 0b dispatches
+// close_issue rows UNCONDITIONALLY because maybeApplyCloseIssueProposal's
+// superseded guard doubles as the catch-all for issues closed by hand on
+// GitHub — and that guard costs a `fetchPublicIssues` per app. Replicating it
+// at 60s cadence would mean a GitHub fetch per app per minute, so the
+// superseded sweep STAYS hourly and this ticker only touches rows whose gate
+// already says "apply me". Cost here is one small query plus a DB-only
+// governedGate per open governance row.
+//
+// Its own interval + own enable knob (GOVERNANCE_APPLY_TICK_MS, 0 disables)
+// so it is not silently switched off along with the stale-PR sweeper, which
+// disables itself entirely when both PR_STALE_NOTIFY_MS and
+// ARCHIVED_RETENTION_MS are zero.
+function startGovernanceApplyTicker(config) {
+  if (governanceApplyTickerHandle) return;
+  const intervalMs = config.governanceApplyTickMs;
+  if (!(intervalMs > 0)) {
+    log.info('server', 'Governance-apply ticker disabled');
+    return;
+  }
+  const pool = getPool(config);
+  const issuesModule = require('./src/routes/issues');
+  const governance = require('./src/services/governance');
+  log.info('server', 'Governance-apply ticker started', { intervalMs });
+  governanceApplyTickerHandle = setInterval(async () => {
+    if (lifecycle.isShuttingDown()) return;
+    try {
+      const { rows } = await pool.query(
+        `SELECT i.*, a.slug AS app_slug, a.repo_url,
+                (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'up')   AS up_count,
+                (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'down') AS down_count
+           FROM issues i JOIN apps a ON a.id = i.app_id
+          WHERE i.status = 'open' AND i.kind IN ('rename', 'secret_change', 'close_issue', 'maintenance_campaign')
+          LIMIT 100`
+      );
+      for (const issue of rows) {
+        try {
+          // Gate-first for EVERY kind — see the header comment.
+          const gate = await governance.governedGate(pool, issue.app_id, {
+            kind: 'issue', id: issue.id, openedAt: issue.created_at,
+          });
+          if (!gate.mergeable) continue;
+          // The apply helpers re-check the gate and lock the issue row
+          // atomically, so this can never double-apply against a concurrent
+          // vote, the hourly sweep, or another color's ticker.
+          let result;
+          if (issue.kind === 'close_issue') {
+            result = await issuesModule.maybeApplyCloseIssueProposal(pool, issue);
+          } else if (issue.kind === 'rename') {
+            result = await issuesModule.maybeApplyRenameProposal(pool, issue);
+          } else if (issue.kind === 'maintenance_campaign') {
+            result = await issuesModule.maybeApplyMaintenanceCampaignProposal(config, pool, issue);
+          } else {
+            result = await issuesModule.maybeApplySecretChangeProposal(config, pool, issue);
+          }
+          if (result && (result.applied || result.superseded)) {
+            log.info('server', 'Governance proposal applied by ticker', {
+              issueId: issue.id, appId: issue.app_id, kind: issue.kind,
+              applied: !!result.applied, superseded: !!result.superseded,
+            });
+          }
+        } catch (err) {
+          log.warn('server', 'Governance-apply tick failed for row', {
+            issueId: issue.id, kind: issue.kind, err: err.message,
+          });
+        }
+      }
+    } catch (err) {
+      log.warn('server', 'Governance-apply tick failed', { err: err.message });
+    }
+  }, intervalMs).unref();
+}
+
 let stalePrSweeperHandle = null;
 
 // Stale-promoted-PR policy + reversible-archive hard GC.
@@ -3839,6 +4001,10 @@ async function cleanup() {
     clearInterval(stalePrSweeperHandle);
     stalePrSweeperHandle = null;
   }
+  if (governanceApplyTickerHandle) {
+    clearInterval(governanceApplyTickerHandle);
+    governanceApplyTickerHandle = null;
+  }
 
   const startingCount = getActiveWorkerCount();
   log.info('server', 'Shutdown initiated, draining handlers', {
@@ -3882,6 +4048,16 @@ async function cleanup() {
     } finally {
       if (poolTimer) clearTimeout(poolTimer);
     }
+  }
+
+  // Release the leader advisory lock LAST — only after draining — so the
+  // standby color promotes and runs recovery (incl. orphan worker adoption)
+  // against a quiesced process, not one still finishing a turn. Uses its
+  // own dedicated pg connection, so the pool close above doesn't affect
+  // it. (Process exit would release the session lock anyway; doing it
+  // explicitly just hands off promptly.)
+  if (leadership) {
+    await leadership.stop().catch(() => {});
   }
 
   process.exit(0);

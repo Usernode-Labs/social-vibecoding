@@ -38,6 +38,21 @@ const { encrypt, decrypt } = require('./secrets');
 // vote". Mirrors the findXPr() helpers in services/rename-pr.js.
 const LIVE_SESSION_STATUSES = ['promoted', 'merging'];
 
+/**
+ * Trim a held value — same rule as app-secrets/platform-env
+ * normalizeValue, and duplicated for the same reason computeLast4 below is:
+ * the two DAOs are only required lazily inside applyForSession() to avoid a
+ * load-time cycle, so a two-line rule is cheaper here than a new import.
+ *
+ * The declare route already normalizes before calling create(), so this is
+ * belt-and-braces — but it also keeps the HELD ciphertext and its last-4
+ * consistent with whatever setValue() will eventually store, so the pending
+ * row's panel preview can't disagree with the applied value.
+ */
+function normalizeValue(value) {
+  return typeof value === 'string' ? value.trim() : value;
+}
+
 /** Private values keep no last-4 — same rule as app-secrets/platform-env. */
 function computeLast4(value, isPrivate) {
   if (isPrivate) return null;
@@ -83,6 +98,7 @@ async function create(pool, {
 } = {}) {
   const decl = normalizeDeclaration(declaration);
   const isPrivate = !!decl.private;
+  value = normalizeValue(value);
   const hasHeldValue = !valueApplied && typeof value === 'string' && value.length > 0;
 
   const { rows } = await pool.query(
@@ -330,6 +346,7 @@ module.exports = {
   applyForSession,
   discardForSession,
   normalizeDeclaration,
+  normalizeValue,
   computeLast4,
   LIVE_SESSION_STATUSES,
 };

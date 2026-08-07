@@ -5,8 +5,10 @@
 //   different from the one the document booted with, the pull upgrades
 //   to a full location.reload() so the tab picks up new client code.
 //   This matters most on the anonymous landing screen, which has no
-//   WS "platform updating" banner: before this, a deployed landing
-//   change was unreachable without killing and restarting the app.
+//   drawer and therefore no stale-version pill: before this, a deployed
+//   landing change was unreachable without killing and restarting the
+//   app. Since #1015 removed the platform-updating banner's forced
+//   reload, this and that pill are the ONLY paths to new client code.
 //
 // Contracts pinned here:
 //   1. App.platformMovedOn compares against the boot-time

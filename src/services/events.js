@@ -74,6 +74,15 @@ const EVENT_TYPES = Object.freeze({
   // No backfill: before this shipped, changing a platform variable meant
   // editing deploy.yml, which leaves its trace in git, not here.
   PLATFORM_ENV_CHANGED: 'platform_env_changed',
+  // An admin sent a diagnostic email from Admin → Email delivery
+  // (src/routes/admin.js POST /api/admin/mail/test). Metadata carries
+  // { status, provider, recipient } — the same fields the mail_deliveries
+  // ledger already holds, never the message body and never a credential.
+  // Emitted for every outcome, including `failed` and `no_transport`: an
+  // operator probing an address is worth a durable trace whether or not
+  // the provider accepted it. No backfill — the button didn't exist
+  // before this shipped.
+  MAIL_TEST_SENT: 'mail_test_sent',
   // An admin ran the bulk container rollover (src/services/app-rollover.js
   // via POST /api/admin/rollover): every running child-app container
   // recreated with freshly assembled env. Metadata carries the tally

@@ -149,19 +149,31 @@ function handleQuery(rawSql, params = []) {
   }
 
   // ── season_events: index/show (counts) ──────────────────────────────
-  if (sql.startsWith('SELECT COUNT(*)::int AS c FROM season_events WHERE')) {
-    const pattern = params[0];
-    const total = db.seasonEvents.filter((e) => like(e.name, pattern)).length;
+  //
+  // Both the count and the page query carry the same `season_id` filter
+  // fragment, whose param is null (unfiltered), 0 (events with NO
+  // season) or a season id. Mirrored here rather than ignored: the two
+  // queries have to agree or the pager reports a total the page can't
+  // produce.
+  const seasonMatch = (e, filter) => {
+    if (filter == null) return true;
+    if (filter === 0) return e.season_id == null;
+    return e.season_id === filter;
+  };
+  if (sql.startsWith('SELECT COUNT(*)::int AS c FROM season_events se WHERE')) {
+    const [pattern, seasonFilter] = params;
+    const total = db.seasonEvents.filter((e) => like(e.name, pattern) && seasonMatch(e, seasonFilter)).length;
     return { rows: [{ c: total }] };
   }
   if (sql.startsWith('SELECT se.*') && sql.includes('FROM season_events se') && sql.includes('ORDER BY se.starts_at DESC')) {
-    const [pattern, limit, offset] = params;
+    const [pattern, seasonFilter, limit, offset] = params;
     const rows = db.seasonEvents
-      .filter((e) => like(e.name, pattern))
+      .filter((e) => like(e.name, pattern) && seasonMatch(e, seasonFilter))
       .sort((a, b) => new Date(b.starts_at) - new Date(a.starts_at) || b.id - a.id)
       .slice(offset, offset + limit)
       .map((e) => ({
         ...e,
+        season_name: (db.seasons.find((s) => s.id === e.season_id) || {}).name ?? null,
         users_count: db.userEnrollments.filter((u) => u.season_event_id === e.id).length,
         onchain_accounts_count: db.onchainAccounts.filter((a) => a.season_event_id === e.id).length,
       }));
@@ -173,6 +185,7 @@ function handleQuery(rawSql, params = []) {
     return {
       rows: [{
         ...row,
+        season_name: (db.seasons.find((s) => s.id === row.season_id) || {}).name ?? null,
         users_count: db.userEnrollments.filter((u) => u.season_event_id === row.id).length,
         onchain_accounts_count: db.onchainAccounts.filter((a) => a.season_event_id === row.id).length,
         user_activities_count: db.userActivities.filter((a) => a.season_event_id === row.id).length,
@@ -876,6 +889,66 @@ test('season-events: GET index/show and DELETE work end to end', async () => {
 
     const goneRes = await fetch(`${base}/api/v4/admin/season-events/7`);
     assert.equal(goneRes.status, 404);
+  } finally { server.close(); }
+});
+
+test('season-events: every row carries a joined `season` object (or null), alongside the unchanged season_id', async () => {
+  // The admin console's events list shows the season by NAME. Adding the
+  // object rather than changing season_id keeps every existing consumer
+  // (the mobile client, the CSV export) working unchanged.
+  db.seasonEvents.push({
+    id: 7, name: 'Linked Event', starts_at: T(0), ends_at: T(10), season_id: 5, type: 'regular',
+    scoring_formula: { metrics: [], offchain_weight: 0 }, rank_based_on_bp_or_success_rate: 'BP',
+  });
+  db.seasonEvents.push({
+    id: 8, name: 'Loose Event', starts_at: T(-1), ends_at: T(9), season_id: null, type: 'regular',
+    scoring_formula: { metrics: [], offchain_weight: 0 }, rank_based_on_bp_or_success_rate: 'BP',
+  });
+
+  const { server, base } = await listen(buildSubApp(seasonEventsAdminRoutes));
+  try {
+    const body = await (await fetch(`${base}/api/v4/admin/season-events`)).json();
+    const linked = body.data.find((e) => e.id === 7);
+    const loose = body.data.find((e) => e.id === 8);
+    assert.deepEqual(linked.season, { id: 5, name: 'Season Alpha' });
+    assert.equal(linked.season_id, 5, 'season_id stays exactly as it was');
+    assert.equal(loose.season, null, 'an unassigned event reports season: null, not a stub object');
+    assert.equal(loose.season_id, null);
+
+    const show = await (await fetch(`${base}/api/v4/admin/season-events/7`)).json();
+    assert.deepEqual(show.season, undefined);
+    assert.deepEqual(show.data.season, { id: 5, name: 'Season Alpha' });
+  } finally { server.close(); }
+});
+
+test('season-events: ?season_id= filters to one season, `none` to the unassigned ones, and the count agrees with the page', async () => {
+  db.seasonEvents.push({
+    id: 7, name: 'Linked Event', starts_at: T(0), ends_at: T(10), season_id: 5, type: 'regular',
+    scoring_formula: { metrics: [], offchain_weight: 0 }, rank_based_on_bp_or_success_rate: 'BP',
+  });
+  db.seasonEvents.push({
+    id: 8, name: 'Loose Event', starts_at: T(-1), ends_at: T(9), season_id: null, type: 'regular',
+    scoring_formula: { metrics: [], offchain_weight: 0 }, rank_based_on_bp_or_success_rate: 'BP',
+  });
+
+  const { server, base } = await listen(buildSubApp(seasonEventsAdminRoutes));
+  try {
+    const all = await (await fetch(`${base}/api/v4/admin/season-events`)).json();
+    assert.equal(all.meta.total, 2);
+
+    const scoped = await (await fetch(`${base}/api/v4/admin/season-events?season_id=5`)).json();
+    assert.deepEqual(scoped.data.map((e) => e.id), [7]);
+    assert.equal(scoped.meta.total, 1, 'the count query carries the same filter as the page query');
+
+    const unassigned = await (await fetch(`${base}/api/v4/admin/season-events?season_id=none`)).json();
+    assert.deepEqual(unassigned.data.map((e) => e.id), [8]);
+    assert.equal(unassigned.meta.total, 1);
+
+    // A garbage value is ignored rather than 422ing or returning nothing:
+    // the filter is a convenience, and a stale link shouldn't look like an
+    // empty database.
+    const junk = await (await fetch(`${base}/api/v4/admin/season-events?season_id=abc`)).json();
+    assert.equal(junk.meta.total, 2);
   } finally { server.close(); }
 });
 

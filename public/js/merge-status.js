@@ -140,8 +140,13 @@
     }
     // 5b — checks blocked the merge (a test broke).
     if (check === 'failing') {
+      // BLOCKING failures only. Advisory rows are checks that have never
+      // been observed passing on this app — they report but do not block,
+      // so counting them here would tell a reviewer the merge is held up by
+      // failures that are not holding it up. Rows written before advisory
+      // existed carry no flag and count, which is the old behaviour.
       var n = Array.isArray(p.test_results)
-        ? p.test_results.filter(function (r) { return r && r.status !== 'pass'; }).length
+        ? p.test_results.filter(function (r) { return r && r.status !== 'pass' && !r.advisory; }).length
         : 0;
       var label = n ? 'Checks failing · ' + n : 'Checks failing';
       return descriptor('checks_failing', label, 'amber', false, {

@@ -246,10 +246,20 @@ test('the backfill sweep is chained post-listen onto the recovery block', () => 
   assert.match(SERVER_SRC,
     /resumeHeadlessRuns\(config\)[\s\S]{0,600}\.then\(\(\) => restoreMissingQuickReplies\(config\)\)/,
     'restoreMissingQuickReplies is chained after resumeHeadlessRuns');
-  const listenIdx = SERVER_SRC.indexOf('const server = app.listen(');
+  // Since blue-green, the recovery block lives in becomeLeader(), which is
+  // only ever invoked via leadership.start(becomeLeader) — and that call
+  // sits after app.listen() inside start(). Pin both halves: the chain is
+  // inside becomeLeader, and becomeLeader is started post-listen.
+  const leaderIdx = SERVER_SRC.indexOf('async function becomeLeader(');
   const chainIdx = SERVER_SRC.indexOf('.then(() => restoreMissingQuickReplies(config))');
-  assert.ok(listenIdx >= 0 && chainIdx > listenIdx,
-    'the backfill call site must come after app.listen()');
+  const startIdx = SERVER_SRC.indexOf('async function start(');
+  assert.ok(leaderIdx >= 0 && chainIdx > leaderIdx && chainIdx < startIdx,
+    'the backfill chain must live inside becomeLeader()');
+  const startBody = SERVER_SRC.slice(startIdx);
+  const listenIdx = startBody.indexOf('const server = app.listen(');
+  const electIdx = startBody.indexOf('leadership.start(becomeLeader)');
+  assert.ok(listenIdx >= 0 && electIdx > listenIdx,
+    'leadership.start(becomeLeader) must come after app.listen() in start()');
 });
 
 // ── 3. restoreMissingQuickReplies — the boot backfill sweep ────────────

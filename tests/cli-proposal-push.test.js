@@ -23,8 +23,10 @@ function git(repo, args) {
 }
 
 test('proposal push uploads the exact committed tree through the authenticated API', async () => {
-  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-proposal-push-home-'));
-  const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-proposal-push-repo-'));
+  // realpath: on macOS os.tmpdir() sits under /var → /private/var, and the
+  // CLI's config-path safety check rejects symlinked path components.
+  const home = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-proposal-push-home-')));
+  const repo = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-proposal-push-repo-')));
   await fs.chmod(home, 0o700);
   let server;
   const originalUserInfo = os.userInfo;

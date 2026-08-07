@@ -1,5 +1,47 @@
 # Coding-agent project guidance
 
+## `public/index.html` is a GENERATED artifact — edit `frontend/`, then rebuild
+
+- The shell's markup is React now. **Do not edit `public/index.html`** — it is
+  built from `frontend/` and any hand edit is overwritten by the next build.
+  The sources are:
+  - `frontend/src/Shell.tsx` — the whole `<body>`, as one static component.
+  - `frontend/src/head.html` — the `<head>`, carried over verbatim.
+  - `frontend/@/components/ui/` — shadcn primitives, restyled to the
+    platform's existing `zinc`/`violet` palette (`cssVariables: false`).
+- **After editing anything under `frontend/`, run `npm run build:shell` and
+  commit `public/index.html` + `public/shell/assets/shell.js` in the same
+  commit.** `tests/shell-build.test.js` stamps and verifies this and fails
+  with "STALE" otherwise, exactly like the Tailwind artifact below. Run
+  `npm install` inside `frontend/` first if you haven't (it is a separate
+  workspace; the root `npm ci --production` never touches it).
+- **Order matters when you run both builds: `build:shell` FIRST, then
+  `build:css`.** `public/index.html` is a Tailwind content source *and* a
+  shell-build output, so compiling the stylesheet before regenerating the
+  markup scans the previous document and leaves `tests/tailwind-build.test.js`
+  reporting a stale artifact. There is no loop — `tailwind.css` is not a shell
+  input — so the two-step order is all it takes.
+- **Merging main into a branch that has already done the chassis swap:** take
+  main's `public/index.html` wholesale (it is the hand-written markup on that
+  side), copy it over `tests/fixtures/pre-migration-index.html`, then re-run
+  `frontend/scripts/html-to-jsx.cjs` and
+  `frontend/scripts/apply-step1-edits.cjs` to re-derive `Shell.tsx` and
+  `head.html` from it. Never hand-merge the generated artifacts — regenerate
+  them, and let the parity test prove the result still matches main's markup.
+- Three constraints in `frontend/src/Shell.tsx` are load-bearing, and its
+  header comment explains each: the component is **static** (no state, no
+  effects — otherwise React reconciles over DOM that `public/js/**` owns), it
+  **renders the 48 legacy `<script>` tags** in their original order (`app.js`
+  must stay last), and its **markup is frozen** — 422 ids and every class
+  string are asserted against a pre-migration fixture by
+  `tests/shell-markup-parity.test.js`, and `dapp.json`'s 227 declared tests
+  select against those exact structures.
+- Adding or removing a `public/js/**` script means updating `SHELL_ASSETS` in
+  `public/sw.js` and the count in `tests/shell-script-order.test.js` too.
+- This is step 1 of the React + shadcn migration: a scaffolding-only chassis
+  swap with **zero visual change**. Step 2 converts screens to real components
+  one at a time; until then, leave the markup alone.
+
 ## Shell CSS is a committed build artifact — rebuild it
 
 - The platform shell's Tailwind is **compiled**, not loaded from a CDN:
@@ -7,17 +49,29 @@
   `public/css/tailwind.css` via `npm run build:css`, and that output is
   committed (the runtime image installs with `npm ci --production`, so there
   is no tailwindcss and no build step at deploy time).
-- **After editing `public/index.html`, anything under `public/js/`, the
+- **After editing anything under `public/js/`, anything under `frontend/`, the
   usernode-native demo page, or the Tailwind config — run `npm run build:css`
   and commit the result in the same commit.** A new utility class that isn't
-  in the compiled stylesheet simply has no styles.
+  in the compiled stylesheet simply has no styles. (`frontend/**` is scanned
+  because shadcn variant tables hold classes that appear in no static markup.)
+- Tailwind stays pinned at **v3.4.17**. v4 changes utility semantics (default
+  border colour, ring width, opacity utilities, the `space-*` selector) and
+  would silently restyle the whole shell — it is a deliberate later decision
+  with its own before/after evidence, not a free upgrade.
 - `tests/tailwind-build.test.js` stamps and verifies this: the suite fails
   with "public/css/tailwind.css is STALE" when the artifact predates the
   sources, so don't hand-edit the generated CSS.
 - The shell loads **no cross-origin assets**. marked, DOMPurify and qrcodejs
   are vendored under `public/vendor/` by `npm run vendor:assets` (provenance
   in `public/vendor/README.md`). Don't add a CDN `<script>`/`<link>` to
-  `public/index.html` — vendor or compile it instead; two tests enforce this.
+  `frontend/src/head.html` — vendor or compile it instead; three tests
+  enforce this.
+- The three stylesheet links must stay in the order `native.css` → `app.css`
+  → `tailwind.css`, with the compiled utilities **last**. `app.css` was
+  written against a cascade where Tailwind wins equal-specificity conflicts;
+  inverting it silently restyled the whole dev screen once (#938). The head
+  also probes this at runtime and `console.error`s when it breaks — which
+  fails proposal checks, since a console error on any route does.
 
 ## Codex promotion-hook readiness
 

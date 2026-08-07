@@ -22,10 +22,35 @@ const debugAccess = require('../src/services/debug-access');
 
 // Isolate the Task 2 block so column/index assertions can't accidentally
 // match unrelated platform tables (e.g. the platform's own `users` table
-// definition, or other staging:private tags) earlier in the file.
+// definition, or other staging:private tags) elsewhere in the file.
+//
+// The block is bounded at BOTH ends. It used to run to end-of-file, which
+// silently depended on Task 2 being the last thing in schema.sql — so the
+// next feature to append a table (the hosted MCP connector) started
+// inflating this file's counts. The end bound is the next top-level
+// section header, so later additions land outside the block where they
+// belong.
 const blockStart = schema.indexOf('Topochain Task 2 — `users` columns');
 assert.ok(blockStart > 0, 'the Task 2 block header exists');
-const block = schema.slice(blockStart);
+// Bound the slice at the header of the section that follows, the same way
+// tests/topochain-schema.test.js bounds the §3.4 block. Without an end the
+// slice ran to EOF, so the exact-count assertions below ("exactly eight
+// table-level staging:private tags") silently counted tags belonging to
+// every later, unrelated section too — adding one staging:private table
+// anywhere further down schema.sql broke a test about Task 2.
+//
+// Task 8 immediately follows Task 2 but uses the same heavy "═" banner
+// rather than the "── " decoration other top-level sections use, so it
+// wouldn't be caught by a generic next-section search — hence the
+// explicit indexOf. The generic "-- ── " search stays as a fallback so a
+// differently-decorated section inserted between Task 2 and Task 8 in the
+// future is still excluded, whichever bound comes first.
+const afterStart = schema.slice(blockStart);
+const nextGenericSection = afterStart.search(/\n-- ── /);
+const task8Offset = schema.indexOf('Topochain Task 8 — mobile auth', blockStart) - blockStart;
+assert.ok(task8Offset > 0, 'the section after the Task 2 block exists');
+const blockCut = nextGenericSection > 0 ? Math.min(nextGenericSection, task8Offset) : task8Offset;
+const block = afterStart.slice(0, blockCut);
 
 // ─── users columns ──────────────────────────────────────────────────
 

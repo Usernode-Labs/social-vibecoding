@@ -1,9 +1,11 @@
 // Tests for the deploy half of in-platform env management: the
-// dump-platform-env materializer, its wiring into
-// .github/workflows/deploy.yml, and the post-deploy health gate.
+// dump-platform-env materializer, its wiring into scripts/deploy.sh
+// (the deploy logic shared by the host deployer and the Deploy
+// workflow) and .github/workflows/deploy.yml (the runner-side steps),
+// and the post-deploy health gate.
 //
-// deploy.yml is a guardrailed file that no test can execute, so these
-// are text pins in the style of tests/caddy-deploy-grace.test.js. Each
+// Both are guardrailed files that no test can execute, so these are
+// text pins in the style of tests/caddy-deploy-grace.test.js. Each
 // one guards a property whose failure mode is silent and expensive:
 //
 //  - ORDER. Console values are appended to .env LAST. Put them anywhere
@@ -26,11 +28,22 @@ const path = require('node:path');
 
 const root = path.join(__dirname, '..');
 const deployYml = fs.readFileSync(path.join(root, '.github/workflows/deploy.yml'), 'utf8');
+const deploySh = fs.readFileSync(path.join(root, 'scripts/deploy.sh'), 'utf8');
 const dumpJs = fs.readFileSync(path.join(root, 'scripts/dump-platform-env.js'), 'utf8');
 
 const at = (needle, label) => {
   const i = deployYml.indexOf(needle);
   assert.notStrictEqual(i, -1, `${label}: not found in deploy.yml (${needle})`);
+  return i;
+};
+
+// The remote deploy logic moved out of deploy.yml's ssh step into
+// scripts/deploy.sh so the host deployer can run the identical code
+// without an Actions runner. The ordering pins below therefore index
+// into deploy.sh.
+const atSh = (needle, label) => {
+  const i = deploySh.indexOf(needle);
+  assert.notStrictEqual(i, -1, `${label}: not found in scripts/deploy.sh (${needle})`);
   return i;
 };
 
@@ -105,46 +118,67 @@ test('the forwarded block reaches the remote through the ssh-action envs list', 
 // ── Remote script ordering ────────────────────────────────────────────
 
 test('the previous sha is captured BEFORE .env is overwritten', () => {
-  assert.ok(at("PREV_SHA=$(grep -m1 '^GIT_SHA=' .env", 'PREV_SHA capture')
-    < at('base64 -d > .env', 'base .env write'),
+  assert.ok(atSh("PREV_SHA=$(grep -m1 '^GIT_SHA=' .env", 'PREV_SHA capture')
+    < atSh('base64 -d > .env', 'base .env write'),
     'reading GIT_SHA after the overwrite would roll back to the sha being deployed');
+});
+
+test('without the workflow blob, .env is patched in place, never invented', () => {
+  // The host-deployer path has no access to GitHub secrets, so it must
+  // keep the .env from the last secret-bearing deploy and only update
+  // GIT_SHA. Rewriting (or refusing) here would take production down on
+  // the first poll-triggered deploy.
+  const patch = deploySh.slice(atSh('No BASE_ENV_B64: keeping the existing .env', 'patch mode'));
+  assert.match(patch.slice(0, 400), /awk -v sha="\$DEPLOY_SHA"/,
+    'GIT_SHA is patched with the same awk approach rollback.sh uses');
+  assert.match(deploySh, /No BASE_ENV_B64 and no existing \.env/,
+    'a green-field install without secrets must fail loudly, not boot unconfigured');
 });
 
 test('console values are appended to .env last, after the GitHub-sourced ones', () => {
   // The base layer is composed on the runner and decoded here with a
   // single `> .env` (see deploy-workflow-expression-limit.test.js for why
-  // it is not a heredoc inside this script); the two override blocks then
-  // append with `>> .env`.
-  const baseWrite = at('base64 -d > .env', 'base .env write');
-  const ghAppend = at('base64 -d >> .env', 'GitHub block append');
-  const consoleAppend = at('cat .platform-env >> .env', 'console block append');
+  // it is not a heredoc inside the workflow); the two override blocks
+  // then append with `>> .env`.
+  const baseWrite = atSh('base64 -d > .env', 'base .env write');
+  const ghAppend = atSh('base64 -d >> .env', 'GitHub block append');
+  const consoleAppend = atSh('cat .platform-env >> .env', 'console block append');
   assert.ok(baseWrite < ghAppend, 'GitHub-sourced values override committed defaults');
   assert.ok(ghAppend < consoleAppend,
     'the admin console is the primary path — its values must win over both');
 });
 
+test('the console block does not accumulate across patch-mode deploys', () => {
+  // Patch mode keeps the previous .env, which already ends in a console
+  // block; the strip-then-append keeps the file from growing one
+  // duplicate block per poll-triggered deploy.
+  const strip = atSh('#__CONSOLE_ENV_BEGIN__$/{skip=1}', 'console block strip');
+  const append = atSh("echo '#__CONSOLE_ENV_BEGIN__' >> .env", 'console block append marker');
+  assert.ok(strip < append, 'the old block is stripped before the fresh one is appended');
+});
+
 test('the console values are resolved before the platform starts with that .env', () => {
-  assert.ok(at('cat .platform-env >> .env', 'append') < at('docker compose up -d usernode', 'up'),
+  assert.ok(atSh('cat .platform-env >> .env', 'append') < atSh('docker compose up -d usernode', 'up'),
     'appending after the container is up would take a whole extra deploy to apply');
 });
 
 test('the materializer runs off the freshly built image', () => {
-  const build = at('docker compose build usernode', 'build');
-  const run = at('docker compose run --rm --no-deps -T usernode', 'materializer run');
-  const up = at('docker compose up -d usernode', 'up');
+  const build = atSh('docker compose build usernode', 'build');
+  const run = atSh('docker compose run --rm --no-deps -T usernode', 'materializer run');
+  const up = atSh('docker compose up -d usernode', 'up');
   assert.ok(build < run && run < up,
     'build → materialize → up, so a variable added by this very commit is resolvable now');
-  assert.ok(!/docker compose up -d --build usernode/.test(deployYml),
+  assert.ok(!/docker compose up -d --build usernode/.test(deploySh),
     'the combined form would start the container before the values were resolved');
 });
 
 test('a failed materialization reuses the cache instead of truncating .env', () => {
-  assert.match(deployYml, /node scripts\/dump-platform-env\.js 2>\/dev\/null \|\| true/,
+  assert.match(deploySh, /node scripts\/dump-platform-env\.js 2>\/dev\/null \|\| true/,
     'non-fatal by design');
-  assert.match(deployYml, /grep -q '\^#__PLATFORM_ENV_END__\$'/,
+  assert.match(deploySh, /grep -q '\^#__PLATFORM_ENV_END__\$'/,
     'only a COMPLETE block replaces the cache — a half-written one is discarded');
-  assert.match(deployYml, /reusing cache/);
-  assert.match(deployYml, /chmod 600 \.platform-env/, 'the cache holds decrypted values');
+  assert.match(deploySh, /reusing cache/);
+  assert.match(deploySh, /chmod 600 \.platform-env/, 'the cache holds decrypted values');
 });
 
 test('the cache survives the rsync --delete', () => {
@@ -156,28 +190,42 @@ test('the cache survives the rsync --delete', () => {
 // ── Post-deploy health gate ───────────────────────────────────────────
 
 test('the health probe requires two consecutive successes', () => {
-  assert.match(deployYml, /"\$HEALTH_STREAK" -ge 2/,
+  assert.match(deploySh, /"\$HEALTH_STREAK" -ge 2/,
     'a container mid-boot can answer once and then exit; one 200 is not health');
-  assert.match(deployYml, /HEALTH_STREAK=0/, 'the streak resets on any failure');
+  assert.match(deploySh, /HEALTH_STREAK=0/, 'the streak resets on any failure');
 });
 
-test('the probe hits /health from inside the container, on an interval, with a cap', () => {
-  assert.match(deployYml, /docker compose exec -T usernode wget -qO- http:\/\/localhost:3000\/health/);
-  assert.match(deployYml, /sleep 5/);
-  assert.match(deployYml, /HEALTH_WAITED" -lt 120/);
+test('the probe hits /health from inside the live color, on an interval, with a cap', () => {
+  assert.match(deploySh, /docker exec "usernode-\$LIVE_COLOR" wget -qO- http:\/\/localhost:3000\/health/);
+  assert.match(deploySh, /sleep 5/);
+  assert.match(deploySh, /HEALTH_WAITED" -lt 120/);
 });
 
 test('failure dumps logs, rolls back to PREV_SHA, and fails the job', () => {
-  const gate = deployYml.slice(at('if [ "$HEALTH_OK" -ne 1 ]', 'health gate'));
-  assert.match(gate.slice(0, 1400), /docker compose logs --tail 200 usernode/,
+  const gate = deploySh.slice(atSh('if [ "$HEALTH_OK" -ne 1 ]', 'health gate'));
+  assert.match(gate.slice(0, 1400), /docker logs --tail 200 "usernode-\$LIVE_COLOR"/,
     'the logs are the only artifact left after a rollback');
   assert.match(gate.slice(0, 1400), /\/opt\/usernode-tools\/rollback\.sh "\$PREV_SHA"/);
   assert.match(gate.slice(0, 1400), /::error::/, 'the job must go red, not just log');
   assert.match(gate.slice(0, 1400), /exit 1/);
 });
 
+test('a failed rollout with a healthy old color restores GIT_SHA instead of rolling back', () => {
+  // Blue-green failure semantics: platform-rollout.sh leaves the previous
+  // color serving when the new one never gets healthy, so deploy.sh must
+  // NOT tear the stack down — it reverts the .env sha (so SKIP_IF_CURRENT
+  // can't wrongly skip the retry) and exits red.
+  const gate = deploySh.slice(atSh('if ! bash scripts/platform-rollout.sh; then', 'rollout gate'));
+  assert.match(gate.slice(0, 1600), /if platform_healthy; then/,
+    'rollback is reserved for the nothing-is-serving case');
+  assert.match(gate.slice(0, 1600), /awk -v sha="\$PREV_SHA"/,
+    'GIT_SHA must be restored so on-disk state describes what actually runs');
+  assert.match(gate.slice(0, 1600), /elif \[ -n "\$PREV_SHA" \] && \[ -x \/opt\/usernode-tools\/rollback\.sh \]/);
+  assert.match(gate.slice(0, 1600), /exit 1/);
+});
+
 test('an empty PREV_SHA does not roll back to nothing', () => {
-  const gate = deployYml.slice(at('if [ "$HEALTH_OK" -ne 1 ]', 'health gate'));
+  const gate = deploySh.slice(atSh('if [ "$HEALTH_OK" -ne 1 ]', 'health gate'));
   assert.match(gate.slice(0, 1400), /if \[ -n "\$PREV_SHA" \]/);
   assert.match(gate.slice(0, 1400), /-x \/opt\/usernode-tools\/rollback\.sh/,
     'a green-field deploy has no rollback target and must say so rather than erroring obscurely');

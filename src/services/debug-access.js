@@ -62,6 +62,11 @@ const DENIED_TABLES = new Set([
   'cli_access_tokens',   // global CLI bearer hashes and hints
   'cli_auth_audit_events', // security audit trail for CLI credentials
   'cli_auth_rate_limits', // shared security limiter state
+  'mcp_clients',              // hosted-connector client registrations
+  'mcp_authorization_codes',  // hosted-connector PKCE codes (hashed, short-lived)
+  'mcp_tokens',               // hosted-connector bearer hashes and hints
+  'mcp_auth_audit_events',    // security audit trail for connector credentials
+  'user_ai_credentials', // per-user AI/LLM provider keys (encrypted blobs, still deny)
 ]);
 
 const DENIED_COLUMNS = {
@@ -73,6 +78,7 @@ const DENIED_COLUMNS = {
     'wallet_link_expires_at',
     'email_confirmation_token', // topochain (SPEC §6)
     'waitlist_ip',              // topochain (SPEC §6)
+    'github_oauth_token_enc',   // verified GitHub link: the user's OAuth token
   ],
   apps: [
     'db_password',
@@ -93,8 +99,18 @@ const DENIED_COLUMNS = {
 };
 
 // ── Container-log allowlist (used by the prod-debug logs endpoint) ─────
+// Every `container_name` docker-compose.yml declares for a platform service,
+// and nothing else. `usernode` is kept for pre-blue-green and self-hosted
+// single-instance deploys; `usernode-blue` / `usernode-green` are the two
+// colours production has actually run since the blue-green rollout, and
+// their absence here is why `usernode-debug logs usernode` answered "No such
+// container" while the connector's PR failure went uncharacterised for a
+// whole afternoon. tests/prod-debug-access.test.js derives the expectation
+// from docker-compose.yml, so the next rename cannot silently blind the
+// debugger again.
 const LOG_CONTAINER_EXACT = new Set([
-  'usernode', 'usernode-db', 'usernode-node', 'caddy', 'acme-dns',
+  'usernode', 'usernode-blue', 'usernode-green',
+  'usernode-db', 'usernode-node', 'usernode-minio', 'caddy', 'acme-dns',
 ]);
 const LOG_CONTAINER_PREFIXES = [
   'usernode-app-', 'usernode-staging-', 'usernode-worker-',

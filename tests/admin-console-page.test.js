@@ -44,8 +44,13 @@ test('the icon action navigates to the #admin hash route, gate first', () => {
 test('the hash router handles #admin[/section]', () => {
   assert.match(appJs, /parts\[0\] === 'admin'/,
     'restoreFromHash has an admin branch');
-  assert.match(appJs, /App\.navigateToAdminConsole\(parts\[1\] \|\| null\)/,
+  // The segment goes through `_adminSection` rather than straight into the
+  // call because the branch also rewrites the legacy #admin/topochain
+  // address to #admin/seasons (sub-tab and all) before navigating.
+  assert.match(appJs, /let _adminSection = parts\[1\] \|\| null;/,
     'the optional section segment deep-links a menu section');
+  assert.match(appJs, /App\.navigateToAdminConsole\(_adminSection\)/,
+    'that section is what navigateToAdminConsole receives');
 });
 
 test('navigateToAdminConsole re-checks isAdmin and bails home for non-admins', () => {
@@ -111,7 +116,7 @@ test('the menu carries every section, grouped, with no external tools left', () 
     'overview', 'status', 'node', 'merges', 'rollover', 'staging-reap',
     'users', 'codes', 'limits',
     'analytics', 'estimator', 'gallery', 'features',
-    'campaigns', 'db-export', 'topochain',
+    'campaigns', 'db-export', 'mail', 'seasons',
   ];
   for (const key of KEYS) {
     assert.ok(new RegExp(`key: '${key}'`).test(consoleJs), `section '${key}' registered`);
@@ -169,6 +174,8 @@ test('every folded-in section has a module, a script tag and a precache entry', 
     gallery: 'admin-gallery',
     campaigns: 'admin-campaigns',
     topochain: 'admin-topochain',
+    // Platform outbound mail: configuration, a test send, and the ledger.
+    mail: 'admin-mail',
   };
   for (const [key, file] of Object.entries(MODULES)) {
     assert.match(consoleJs, new RegExp(`${key}: '`),
@@ -194,7 +201,7 @@ test('every folded-in section has a module, a script tag and a precache entry', 
 test('every section module exposes destroy(), and switches call it first', () => {
   for (const file of ['admin-status', 'admin-node', 'admin-analytics',
     'admin-estimator', 'admin-merges', 'admin-gallery', 'admin-campaigns',
-    'admin-topochain']) {
+    'admin-topochain', 'admin-mail']) {
     const src = fs.readFileSync(path.join(root, 'public/js', `${file}.js`), 'utf8');
     assert.match(src, /destroy\(\)\s*\{/, `${file}.js implements destroy()`);
     assert.match(src, /render\(\s*\w+\s*\)\s*\{/, `${file}.js implements render(host)`);

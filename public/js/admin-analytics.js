@@ -1334,7 +1334,9 @@ const AdminAnalytics = (() => {
             <h3 class="text-sm font-semibold text-zinc-500 dark:text-zinc-400">Overview</h3>
             <span class="dc-info" data-info="counters" tabindex="0" role="button" aria-label="What is this?">?</span>
           </div>
-          <div id="counters" class="grid grid-cols-2 sm:grid-cols-4 gap-3"></div>
+          <!-- Ten cards: 5-across from xl fills the now-full-width console
+               with two even rows instead of four very wide tiles. -->
+          <div id="counters" class="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-5 gap-3"></div>
         </section>
 
         <!-- Daily spend -->

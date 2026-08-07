@@ -153,6 +153,14 @@ const TopochainLeaderboard = {
       ? TopochainEventContext.eventId : null;
   },
 
+  // True when the board on screen is the WHOLE-SEASON aggregate rather than
+  // one event's stored snapshots. Read off the last payload's own
+  // `event.type` (not the shared context) so it always describes the rows
+  // actually rendered, even mid-switch.
+  _isSeasonBoard() {
+    return TopochainLeaderboard._data?.event?.type === 'season';
+  },
+
   // ── Shell ────────────────────────────────────────────────────────────
 
   _renderShell() {
@@ -318,6 +326,15 @@ const TopochainLeaderboard = {
       return;
     }
 
+    // The season aggregate (`event.type === 'season'`) is resolved through
+    // computeStandings, which has no per-EVENT breakdown to report: the
+    // server's season path hard-codes event_success_rate (and every other
+    // per-event field) to 0, so a "Success rate" column can only ever read
+    // "0%" — indistinguishable from a real zero and read as broken data.
+    // Drop the column rather than print a number that isn't measured.
+    // `event_total_produced_blocks` is NOT in that bucket: the season path
+    // maps it from the aggregate's real SUM, so it stays.
+    const isSeason = event.type === 'season';
     const rows = leaderboard.map((r, i) => {
       const rankDisplay = r.is_non_podium ? '—' : String(r.rank);
       const nonPodiumTag = r.is_non_podium
@@ -331,7 +348,7 @@ const TopochainLeaderboard = {
           </td>
           <td class="px-3 py-2 text-sm font-mono text-right">${esc(r.total_points)}<span class="text-zinc-400"> +${esc(r.extra_points)}</span></td>
           <td class="px-3 py-2 text-sm font-mono text-right">${esc(r.event_total_produced_blocks)}</td>
-          <td class="px-3 py-2 text-sm font-mono text-right">${esc(r.event_success_rate)}%</td>
+          ${isSeason ? '' : `<td class="px-3 py-2 text-sm font-mono text-right">${esc(r.event_success_rate)}%</td>`}
         </tr>`;
     }).join('');
 
@@ -352,9 +369,9 @@ const TopochainLeaderboard = {
             <tr>
               <th class="px-3 py-2 text-left">Rank</th>
               <th class="px-3 py-2 text-left">User</th>
-              <th class="px-3 py-2 text-right">Points</th>
+              <th class="px-3 py-2 text-right">${isSeason ? 'Season points' : 'Points'}</th>
               <th class="px-3 py-2 text-right">Blocks produced</th>
-              <th class="px-3 py-2 text-right">Success rate</th>
+              ${isSeason ? '' : '<th class="px-3 py-2 text-right">Success rate</th>'}
             </tr>
           </thead>
           <tbody>${rows}</tbody>
@@ -439,8 +456,19 @@ const TopochainLeaderboard = {
         TopochainLeaderboard._renderDrill();
       });
     } else {
+      // On the SEASON aggregate every row's wallet forms are null by
+      // construction — the server's season path (fetchEventLeaderboardRows)
+      // has no single event to resolve an onchain account against, and the
+      // epoch breakdown is defined per event anyway. Saying "no wallet
+      // linked" there would be wrong about the user (they may well have
+      // one) and would read as missing data rather than as a scope the
+      // breakdown doesn't have.
       TopochainLeaderboard._drillEpoch = {
-        loading: false, error: 'No wallet linked for this row.', data: null,
+        loading: false,
+        error: TopochainLeaderboard._isSeasonBoard()
+          ? 'The epoch breakdown is per event — pick a single event above to see it.'
+          : 'No wallet linked for this row.',
+        data: null,
       };
     }
 

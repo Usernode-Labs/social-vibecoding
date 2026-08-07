@@ -76,7 +76,7 @@ test('a bare #admin means the MENU on mobile, Overview on desktop', () => {
     /key === 'overview' && !AdminConsole\._isMobile\(\)/,
     'only desktop collapses overview onto bare #admin');
   assert.match(writeHash.slice(0, 500), /location\.hash\.startsWith\(`\$\{target\}\/`\)/,
-    'sections owning a second hash level (topochain, campaigns) are left alone');
+    'sections owning a second hash level (seasons, campaigns) are left alone');
 });
 
 test('a mobile drill-in is a real hash navigation, so device back works', () => {
@@ -133,12 +133,16 @@ test('the header back button defers to the console, then goes home', () => {
 test('the back button has both icons and one named toggle', () => {
   assert.ok(html.includes('id="back-icon-home"'), 'the house icon ships');
   assert.ok(html.includes('id="back-icon-arrow"'), 'the chevron ships');
-  assert.match(appJs, /setBackIcon\(mode\)\s*\{/, 'App.setBackIcon owns the toggle');
-  const fn = appJs.slice(appJs.indexOf('  setBackIcon(mode) {'));
-  const body = fn.slice(0, 700);
+  // #1036 widened it to setBackIcon(mode, href): the control is a real
+  // anchor now, so the same choke point that owns which icon shows also
+  // owns where it points.
+  assert.match(appJs, /setBackIcon\(mode, href\)\s*\{/, 'App.setBackIcon owns the toggle');
+  const fn = appJs.slice(appJs.indexOf('  setBackIcon(mode, href) {'));
+  const body = fn.slice(0, 900);
   assert.match(body, /back-icon-home/, 'it toggles the home icon');
   assert.match(body, /back-icon-arrow/, 'it toggles the arrow icon');
   assert.match(body, /aria-label/, 'and relabels the button for screen readers');
+  assert.match(body, /setAttribute\('href'/, 'and retargets the anchor (#1036)');
   // Leaving the console must hand the button back, or every later screen
   // inherits a chevron that means "home" — but NOT from _exitAdminConsole
   // itself: that ran before the outgoing page had been captured by the
@@ -202,8 +206,11 @@ test('the header becomes the section nav bar on mobile level 2 only', () => {
   const body = fn.slice(0, 900);
   assert.match(body, /AdminConsole\._isMobile\(\) && AdminConsole\._level === 2/,
     'only a mobile section view borrows the header');
-  assert.match(body, /setBackIcon\(inSection \? 'arrow' : 'home'\)/,
-    'the arrow appears exactly there');
+  // #1036: the second argument is the anchor's href — inside a section
+  // the chevron pops to the console's own menu, so that is where it
+  // points; everywhere else it falls through to home.
+  assert.match(body, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? '#admin' : undefined\)/,
+    'the arrow appears exactly there, and targets the console menu');
   assert.match(body, /App\.setHeaderTitle\(s \? s\.label : /,
     'the title becomes the section label (which also feeds the native AppBar)');
   assert.match(body, /'Platform status'/,

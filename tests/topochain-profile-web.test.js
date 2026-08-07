@@ -25,6 +25,11 @@ const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 
 const indexHtml = read('public/index.html');
+// The shell's markup SOURCE. public/index.html is a generated artifact now
+// (the React + shadcn chassis swap), and JSX comments never reach it — so
+// assertions about the explanatory comments around a screen have to read the
+// source they actually live in.
+const shellSource = read('frontend/src/Shell.tsx');
 const nativeChrome = read('public/js/native-chrome.js');
 const profileJs = read('public/js/profile.js');
 
@@ -57,9 +62,9 @@ test('native-chrome no longer gates the profile row on getProfileInfo', () => {
 test('the stale "hidden unless the bridge reports getProfileInfo" comments are gone', () => {
   // Comments that describe behaviour the code no longer has are worse than
   // no comment: the next reader trusts them.
-  const anchorComment = indexHtml.slice(
-    Math.max(0, indexHtml.indexOf('<a id="drawer-row-profile"') - 700),
-    indexHtml.indexOf('<a id="drawer-row-profile"')
+  const anchorComment = shellSource.slice(
+    Math.max(0, shellSource.indexOf('id="drawer-row-profile"') - 900),
+    shellSource.indexOf('id="drawer-row-profile"')
   );
   assert.doesNotMatch(anchorComment, /Hidden unless/i);
   assert.doesNotMatch(
@@ -74,9 +79,9 @@ test('the screen-host comments no longer describe an external leaderboard', () =
   // alone since the leaderboard merge: the sibling #challenges-screen
   // <main> this used to start from is gone, folded into the Leaderboard
   // screen's Challenges tab.
-  const hosts = indexHtml.slice(
-    indexHtml.indexOf('<main id="profile-screen"') - 900,
-    indexHtml.indexOf('<main id="profile-screen"') + 400
+  const hosts = shellSource.slice(
+    Math.max(0, shellSource.indexOf('id="profile-screen"') - 1200),
+    shellSource.indexOf('id="profile-screen"') + 400
   );
   assert.doesNotMatch(hosts, /public leaderboard service/);
   assert.doesNotMatch(hosts, /using the bridge's\s*\n?\s*getProfileInfo participant id/);
@@ -285,17 +290,22 @@ test('?shot=profile-edit opens the sheet for the screenshot capture', () => {
   // Pure UI state with no writes — an env gate would starve the "before"
   // side of the capture forever.
   assert.doesNotMatch(fn, /staging/i);
-  // The declared checks are a CAPPED resource: src/services/app-manifest.js
-  // keeps only the first MAX_TESTS (10) entries, so an entry's POSITION in
-  // the array decides whether it ever runs. Two things follow, and both are
-  // pinned here because both are easy to get silently wrong:
-  //   - new entries go at the TOP (one appended to the 225-long tail is
-  //     dropped and proves nothing);
-  //   - every slot spent EVICTS an older check, so this change spends two,
-  //     not one per assertion — the screen check carries its identity-card
-  //     assertion as `expectText` rather than buying a third slot.
+  // Declared checks used to be a CAPPED resource — the reader kept only the
+  // first MAX_TESTS entries, so an entry's POSITION decided whether it ever
+  // ran and each new one evicted an older. #1019 removed that cap: every
+  // declared check runs, and the only bound left is MAX_DECLARED_TESTS.
+  //
+  // The surviving invariant is that the reader actually KEEPS these entries
+  // (it still drops malformed ones) and that the manifest hasn't grown past
+  // the ceiling and started shedding its tail again.
   const appManifest = require('../src/services/app-manifest');
-  const live = appManifest.read(path.join(__dirname, '..')).tests;
+  const meta = appManifest.readTestsWithMeta(
+    JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'dapp.json'), 'utf8'))
+  );
+  assert.equal(meta.ceilingDropped, 0,
+    `dapp.json declares more than ${appManifest.MAX_DECLARED_TESTS} valid checks — `
+    + 'checks past the ceiling never run');
+  const live = meta.tests;
   assert.ok(live.some((t) => String(t.path).includes('shot=profile-edit')),
     'a state link that stops rendering must fail checks, not regress silently');
   const mine = live.filter((t) => t.name.includes('#982'));
