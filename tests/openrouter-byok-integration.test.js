@@ -17,9 +17,39 @@ const AUTHENTIC_CODEX_JSONL = [
   { type: 'thread.started', thread_id: '019fd774-7674-7252-806d-2aac62a95cc5' },
   { type: 'turn.started' },
   { type: 'item.completed', item: { id: 'item_0', type: 'error', message: 'mock' } },
-  { type: 'item.completed', item: { id: 'item_1', type: 'agent_message', message: 'I updated the test file to pass.' } },
-  { type: 'turn.completed', usage: { input_tokens: 314, output_tokens: 128 }, model: 'openai/gpt-5.3-codex' },
+  { type: 'item.completed', item: { id: 'item_1', type: 'agent_message', text: 'I updated the test file to pass.' } },
+  { type: 'turn.completed', usage: { input_tokens: 314, cached_input_tokens: 100, cache_write_input_tokens: 20, output_tokens: 128, reasoning_output_tokens: 40 } },
 ];
+
+test('vertical: Codex turn.failed marks turn as error (prevents clean completion)', () => {
+  const state = worker.newWatchState();
+  state.agentBackend = 'codex_openrouter';
+  const progress = [];
+  for (const ev of [
+    { type: 'thread.started', thread_id: '019fd774-7674-7252-806d-2aac62a95cc5' },
+    { type: 'turn.started' },
+    { type: 'turn.failed', error: { message: 'provider unreachable' } },
+  ]) {
+    worker.parseLine(JSON.stringify(ev), (t) => progress.push(t), state);
+  }
+  assert.equal(state.ccIsError, true);
+  assert.equal(state.agentError, 'provider unreachable');
+});
+
+test('vertical: missing usage does not fabricate a cost', () => {
+  const state = worker.newWatchState();
+  state.agentBackend = 'codex_openrouter';
+  for (const ev of [
+    { type: 'thread.started', thread_id: '019fd774-7674-7252-806d-2aac62a95cc5' },
+    { type: 'turn.completed', usage: { input_tokens: 5 } },
+  ]) {
+    worker.parseLine(JSON.stringify(ev), () => {}, state);
+  }
+  assert.equal(state.inputTokens, 5);
+  // Missing usage never fabricates a cost; the codex-only cache-write field
+  // stays null rather than being coerced to a false zero (plan 5.6).
+  assert.equal(state.cacheWriteInputTokens, null);
+});
 
 test('vertical: authentic Codex JSONL → thread id + progress + final message', () => {
   const state = worker.newWatchState();

@@ -353,8 +353,13 @@ function parseLine(line, onProgress, state) {
     // the same progress vocabulary. Claude turns keep the legacy parser.
     if (state.agentBackend === 'codex_openrouter') {
       const codex = require('../agents/codex-openrouter');
-      const ev = codex.normalizeCodexLine(line, state);
-      if (ev) {
+      // The normalizer returns an ARRAY of normalized events (a single
+      // file_change can emit several changed paths), and it now uses the
+      // pinned Codex 0.146.0 JSONL fields exactly. Parsing and state
+      // mutation are kept separate so each normalization branch is
+      // independently testable.
+      const events = codex.normalizeCodexLine(line, state);
+      for (const ev of events) {
         if (ev.threadId) state.agentThreadId = ev.threadId;
         // Store the final agent message as the turn result (review P4):
         // scout persists this as the spec, and `[done]` (turn.completed)
@@ -362,15 +367,20 @@ function parseLine(line, onProgress, state) {
         if (ev.kind === 'agent_message' && ev.fullText != null) {
           state.lastResultText = ev.fullText;
         } else if (ev.kind === 'usage') {
-          state.costUsd = ev.usage?.cost || state.costUsd;
           // Retain token counts so the Codex turn can be attributed directly
           // to agent_turns (review #3) instead of the Anthropic ledger.
+          // Nullish-safe: a missing usage field stays null (absent usage is
+          // NOT a genuine zero-token event).
           const u = ev.usage || {};
-          if (Number.isFinite(u.inputTokens)) state.inputTokens = u.inputTokens;
-          if (Number.isFinite(u.outputTokens)) state.outputTokens = u.outputTokens;
-          if (Number.isFinite(u.cachedInputTokens)) state.cachedInputTokens = u.cachedInputTokens;
-          if (Number.isFinite(u.reasoningOutputTokens)) state.reasoningOutputTokens = u.reasoningOutputTokens;
-          if (u.model) state.agentModel = u.model;
+          if (u.inputTokens != null) state.inputTokens = u.inputTokens;
+          if (u.cachedInputTokens != null) state.cachedInputTokens = u.cachedInputTokens;
+          if (u.cacheWriteInputTokens != null) state.cacheWriteInputTokens = u.cacheWriteInputTokens;
+          if (u.outputTokens != null) state.outputTokens = u.outputTokens;
+          if (u.reasoningOutputTokens != null) state.reasoningOutputTokens = u.reasoningOutputTokens;
+        }
+        if (ev.kind === 'error' && ev.errorMessage != null) {
+          state.ccIsError = true;
+          state.agentError = ev.errorMessage;
         }
         // Progress line: use the short display form (or any event text).
         if (ev.text) onProgress(ev.text);
@@ -396,6 +406,10 @@ function newWatchState() {
     sessionId: null,
     initSessionId: null,
     ccIsError: false,
+    agentError: null,
+    usageSeen: false,
+    // plan.md 5.6: missing usage stays null, never a false zero.
+    cacheWriteInputTokens: null,
     ccExit: null,
     // Backend-neutral terminal-result fields (plan.md §4-PR1). PR5's
     // codex_openrouter runner emits these; claude_code leaves them null
