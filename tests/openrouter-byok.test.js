@@ -164,3 +164,49 @@ test('extractUsage returns null for non-usage events', () => {
 test('extractUsage returns null for null data', () => {
   assert.equal(extractUsage('done', null), null);
 });
+
+// ── Canonical OpenRouter API base (Commit 2 / plan 4) ────────────────
+const { canonicalOpenRouterApiBase } = require('../src/config');
+
+test('canonicalOpenRouterApiBase: default HTTPS base is canonical', () => {
+  assert.equal(canonicalOpenRouterApiBase('https://openrouter.ai/api/v1', {}), 'https://openrouter.ai/api/v1');
+});
+
+test('canonicalOpenRouterApiBase: trailing slashes are stripped', () => {
+  assert.equal(canonicalOpenRouterApiBase('https://openrouter.ai/api/v1/', {}), 'https://openrouter.ai/api/v1');
+  assert.equal(canonicalOpenRouterApiBase('https://example.com/gw///', {}), 'https://example.com/gw');
+});
+
+test('canonicalOpenRouterApiBase: HTTPS custom path is accepted', () => {
+  assert.equal(canonicalOpenRouterApiBase('https://proxy.example.com/openrouter/v1', {}), 'https://proxy.example.com/openrouter/v1');
+});
+
+test('canonicalOpenRouterApiBase: username/password rejected', () => {
+  assert.equal(canonicalOpenRouterApiBase('https://user:pass@openrouter.ai/api/v1', {}), null);
+});
+
+test('canonicalOpenRouterApiBase: query params and fragments rejected', () => {
+  assert.equal(canonicalOpenRouterApiBase('https://openrouter.ai/api/v1?x=1', {}), null);
+  assert.equal(canonicalOpenRouterApiBase('https://openrouter.ai/api/v1#frag', {}), null);
+});
+
+test('canonicalOpenRouterApiBase: remote HTTP rejected even with insecure flag', () => {
+  assert.equal(canonicalOpenRouterApiBase('http://openrouter.ai/api/v1', { isLocalDev: true, allowInsecureBase: 'true' }), null);
+});
+
+test('canonicalOpenRouterApiBase: loopback HTTP rejected without both local-dev conditions', () => {
+  assert.equal(canonicalOpenRouterApiBase('http://localhost:3000', { isLocalDev: false, allowInsecureBase: 'true' }), null);
+  assert.equal(canonicalOpenRouterApiBase('http://localhost:3000', { isLocalDev: true, allowInsecureBase: 'false' }), null);
+  assert.equal(canonicalOpenRouterApiBase('http://localhost:3000', {}), null);
+});
+
+test('canonicalOpenRouterApiBase: loopback HTTP accepted only with both local-dev conditions', () => {
+  assert.equal(canonicalOpenRouterApiBase('http://localhost:3000', { isLocalDev: true, allowInsecureBase: 'true' }), 'http://localhost:3000');
+  assert.equal(canonicalOpenRouterApiBase('http://127.0.0.1:3000', { isLocalDev: true, allowInsecureBase: 'true' }), 'http://127.0.0.1:3000');
+});
+
+test('canonicalOpenRouterApiBase: empty or invalid values rejected', () => {
+  assert.equal(canonicalOpenRouterApiBase('', {}), null);
+  assert.equal(canonicalOpenRouterApiBase('not a url', {}), null);
+  assert.equal(canonicalOpenRouterApiBase(null, {}), null);
+});

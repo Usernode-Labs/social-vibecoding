@@ -75,7 +75,7 @@ function credentialRoutes(config) {
     }
     let keyInfo;
     try {
-      keyInfo = await openrouterClient.validateKey(clean, { origin: config.openrouterOrigin });
+      keyInfo = await openrouterClient.validateKey(clean, { baseUrl: config.openrouterApiBase, origin: config.openrouterOrigin });
     } catch (err) {
       const msg = err.code === 'invalid_key'
         ? 'OpenRouter rejected the key.'

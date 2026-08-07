@@ -96,7 +96,7 @@ async function listOpenRouterModels({ pool, userId, credentialRevision, apiKey, 
 
   let raw;
   try {
-    raw = await openrouterClient.fetchUserModels(apiKey, { origin: config.openrouterOrigin });
+    raw = await openrouterClient.fetchUserModels(apiKey, { baseUrl: config.openrouterApiBase, origin: config.openrouterOrigin });
   } catch (err) {
     log.warn('agent-models', 'OpenRouter catalog fetch failed', { userId, err: err.message });
     throw err;

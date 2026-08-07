@@ -13,7 +13,6 @@
 
 const log = require('./logger');
 
-const OPENROUTER_API_BASE = process.env.OPENROUTER_API_BASE || 'https://openrouter.ai/api/v1';
 const KEY_TIMEOUT_MS = 12000;
 const MODELS_TIMEOUT_MS = 20000;
 
@@ -48,12 +47,15 @@ async function fetchJson(url, { headers, timeoutMs, signal }) {
 // needs (label, limit, remaining, reset). Never returns the raw key.
 // Throws on network/parse/401 so the caller can surface an actionable
 // error and NOT destroy a working key on a transient failure.
-async function validateKey(apiKey, { origin } = {}) {
+async function validateKey(apiKey, { baseUrl, origin } = {}) {
   if (typeof apiKey !== 'string' || !apiKey.trim()) {
     throw new Error('openrouter-client: apiKey required');
   }
+  if (typeof baseUrl !== 'string' || baseUrl.length === 0) {
+    throw new Error('openrouter-client: baseUrl required (callers pass the canonical config value)');
+  }
   const { ok, status, body, error } = await fetchJson(
-    `${OPENROUTER_API_BASE}/key`,
+    `${baseUrl.replace(/\/$/, '')}/key`,
     { headers: { Authorization: `Bearer ${apiKey.trim()}`, ...platformHeaders(origin) }, timeoutMs: KEY_TIMEOUT_MS }
   );
   if (error) throw new Error(`OpenRouter key check failed: ${error}`);
@@ -79,12 +81,15 @@ async function validateKey(apiKey, { origin } = {}) {
 // Returns the raw models array; compatibility filtering happens in
 // agent-models.js. Never throws on a single bad model — surfaces a
 // structured error only when the whole call fails.
-async function fetchUserModels(apiKey, { origin } = {}) {
+async function fetchUserModels(apiKey, { baseUrl, origin } = {}) {
   if (typeof apiKey !== 'string' || !apiKey.trim()) {
     throw new Error('openrouter-client: apiKey required');
   }
+  if (typeof baseUrl !== 'string' || baseUrl.length === 0) {
+    throw new Error('openrouter-client: baseUrl required (callers pass the canonical config value)');
+  }
   const { ok, status, body, error } = await fetchJson(
-    `${OPENROUTER_API_BASE}/models/user`,
+    `${baseUrl.replace(/\/$/, '')}/models/user`,
     { headers: { Authorization: `Bearer ${apiKey.trim()}`, ...platformHeaders(origin) }, timeoutMs: MODELS_TIMEOUT_MS }
   );
   if (error) throw new Error(`OpenRouter catalog fetch failed: ${error}`);
@@ -100,7 +105,6 @@ async function fetchUserModels(apiKey, { origin } = {}) {
 }
 
 module.exports = {
-  OPENROUTER_API_BASE,
   validateKey,
   fetchUserModels,
   platformHeaders,
