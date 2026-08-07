@@ -62,6 +62,75 @@ const App = {
   // actually leave the page.
   _isRestoring: false,
 
+  // ── Display-only session snapshot (#1021) ───────────────────────────
+  // A tiny durable record that THIS DEVICE was signed in, written on every
+  // successful boot/login and read only when /api/auth/me cannot be
+  // reached at all. Without it an offline reload is indistinguishable from
+  // a sign-out: `fetch` throws, and the shell drops the user on the
+  // landing screen with no way back until the network returns.
+  //
+  // It is DISPLAY-ONLY and grants nothing. The session cookie remains the
+  // sole credential — every request still authenticates normally and the
+  // server is free to reject them. All the snapshot decides is which
+  // *screen* an offline boot paints, and the moment the network answers
+  // again the real /api/auth/me reconciles it (see _reconcileSession).
+  // It is cleared on logout, on any answered non-ok /me, and when it ages
+  // out, so a stale one can't strand a signed-out device in a signed-in
+  // looking shell.
+  SESSION_SNAPSHOT_KEY: 'usernode.session.v1',
+  SESSION_SNAPSHOT_MAX_AGE_MS: 30 * 24 * 60 * 60 * 1000, // 30 days
+
+  // How long boot waits for /api/auth/me before falling back to the
+  // snapshot. Deliberately just past the service worker's own API deadline
+  // (API_TIMEOUT_MS) so the SW gets first refusal at answering from cache;
+  // this only catches the no-SW / SW-bypassed cases.
+  BOOT_SESSION_TIMEOUT_MS: 5000,
+
+  saveSessionSnapshot(user) {
+    if (!user || !user.id) return;
+    try {
+      localStorage.setItem(App.SESSION_SNAPSHOT_KEY, JSON.stringify({
+        user, savedAt: Date.now(),
+      }));
+    } catch (err) { /* private mode / quota — offline boot just degrades */ }
+  },
+
+  readSessionSnapshot() {
+    try {
+      const raw = localStorage.getItem(App.SESSION_SNAPSHOT_KEY);
+      if (!raw) return null;
+      const snap = JSON.parse(raw);
+      if (!snap || !snap.user || !snap.user.id) return null;
+      const age = Date.now() - Number(snap.savedAt || 0);
+      if (!(age >= 0) || age > App.SESSION_SNAPSHOT_MAX_AGE_MS) {
+        App.clearSessionSnapshot();
+        return null;
+      }
+      return snap;
+    } catch (err) {
+      return null;
+    }
+  },
+
+  clearSessionSnapshot() {
+    try { localStorage.removeItem(App.SESSION_SNAPSHOT_KEY); } catch (err) { /* ignore */ }
+  },
+
+  // Ask the service worker to drop the cached API responses of a session
+  // that is definitively over. Fire-and-forget: the snapshot has already
+  // been cleared, so a worker that never answers changes nothing.
+  _dropCachedSession() {
+    App.clearSessionSnapshot();
+    try {
+      navigator.serviceWorker?.controller?.postMessage({ type: 'clear-api-cache' });
+    } catch (err) { /* no SW — nothing cached to drop */ }
+  },
+
+  // True while the shell is running on the snapshot rather than a verified
+  // /api/auth/me. Read by the boot path (skip the session-gated fetches
+  // and the events socket) and cleared by _reconcileSession.
+  _sessionFromSnapshot: false,
+
   async init() {
     // FIRST, before any screen paints: the synthetic-inset shot state.
     // Runs here rather than beside the other ?shot= handlers below
@@ -89,27 +158,113 @@ const App = {
       await App.enterAnonymous();
       return;
     }
+    // `?shot=offline` / `?shot=offline-signin` pin the offline state before
+    // the boot check runs, so the shot never depends on real connectivity.
+    // The signed-out variant boots the anonymous shell directly, exactly
+    // as _anonShot does, so it doesn't depend on the capture's session.
+    if (App._applyOfflineShot() === 'offline-signin') {
+      await App.enterAnonymous();
+      return;
+    }
 
+    // Boot has THREE outcomes, not two (#1021). The old code collapsed
+    // "the server said no" and "the server said nothing" into the same
+    // anonymous boot, so a signed-in user who reloaded on a dead network
+    // landed on the landing page — signed out, in effect, by a dropped
+    // packet.
+    //
+    //   answered, ok       → the real session; refresh the snapshot.
+    //   answered, not ok   → genuinely signed out; drop every cached trace.
+    //   never answered     → unknown. Fall back to the snapshot and show
+    //                        the signed-in shell in read-only offline mode,
+    //                        reconciling as soon as the network returns.
+    let res = null;
     try {
-      // Offline note (#487): the service worker serves this network-first
-      // with a cached fallback, so an offline reload by a logged-in user
-      // resolves `res.ok` from the last successful copy and boot proceeds
-      // to the cached shell. A real 401 (only reachable online — errors
-      // never enter the SW cache) boots the anonymous shell below.
-      const res = await fetch('/api/auth/me');
-      if (!res.ok) {
-        await App.enterAnonymous();
+      res = await App._fetchSession();
+    } catch (err) {
+      res = null;
+    }
+
+    if (res && res.ok) {
+      let user = null;
+      try { user = (await res.json()).user; } catch (err) { user = null; }
+      if (user) {
+        App.enterAuthed(user);
         return;
       }
-      const data = await res.json();
-      App.enterAuthed(data.user);
-    } catch {
-      // Network failure with no service-worker-cached /api/auth/me —
-      // i.e. offline on a device that never logged in (or predates the
-      // SW). Boot the anonymous shell; offline.js owns the connectivity
-      // banner and the login screen refuses submits while offline.
+    } else if (res) {
+      // A real answer with a real "no" (401/403). Only reachable online —
+      // error responses never enter the SW cache — so this is authoritative.
+      App._dropCachedSession();
       await App.enterAnonymous();
+      return;
     }
+
+    // No answer at all: offline, captive portal, or a connection that
+    // stalled past the deadline. Probe so the strip appears, then decide
+    // from the snapshot.
+    try { window.Offline?.nudge(); } catch (err) { /* ignore */ }
+    const snap = App.readSessionSnapshot();
+    if (snap) {
+      App._sessionFromSnapshot = true;
+      App.enterAuthed(snap.user);
+      return;
+    }
+    // Offline on a device that was never signed in. The anonymous shell
+    // shows its own offline state and refuses submits (see auth-screens.js).
+    await App.enterAnonymous();
+  },
+
+  // /api/auth/me with a deadline. Resolves to the Response, or throws when
+  // nothing arrived in time — an open-but-stalled socket must not hold the
+  // whole boot, which is what left the reported blank screen.
+  async _fetchSession() {
+    let timer = null;
+    const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+    if (ctrl) timer = setTimeout(() => ctrl.abort(), App.BOOT_SESSION_TIMEOUT_MS);
+    try {
+      return await fetch('/api/auth/me', ctrl ? { signal: ctrl.signal } : undefined);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  },
+
+  // Once connectivity is back, replace the snapshot-derived session with a
+  // verified one. Three outcomes again, and each matters:
+  //   401/403     → the session really did end while we were away.
+  //   another id  → a different user; a full reload is the only way to
+  //                 rebuild a shell that was painted for someone else.
+  //   same id     → promote to a live session: connect the events socket
+  //                 and resync whatever screen is on top.
+  async _reconcileSession() {
+    if (!App._sessionFromSnapshot) return;
+    let res;
+    try {
+      res = await fetch('/api/auth/me');
+    } catch (err) {
+      return; // still unreachable — stay on the snapshot.
+    }
+    if (!res.ok) {
+      App._dropCachedSession();
+      App._sessionFromSnapshot = false;
+      location.reload();
+      return;
+    }
+    let user = null;
+    try { user = (await res.json()).user; } catch (err) { user = null; }
+    if (!user) return;
+    if (String(user.id) !== String(App.user?.id)) {
+      App.clearSessionSnapshot();
+      location.reload();
+      return;
+    }
+    App._sessionFromSnapshot = false;
+    App.user = user;
+    App.saveSessionSnapshot(user);
+    App.connectEvents();
+    if (window.Kudos?.Budget?.init) Kudos.Budget.init();
+    if (window.AiCredit?.Budget?.init) AiCredit.Budget.init();
+    try { App.resyncCurrentView(); } catch (err) { /* ignore */ }
   },
 
   // ── Staged boot (fold-auth-pages-into-SPA) ──────────────────────────
@@ -150,6 +305,30 @@ const App = {
       try { history.replaceState(null, '', location.search + '#waitlist'); } catch (err) { /* ignore */ }
     }
     return true;
+  },
+
+  // Screenshot-state deep links for the offline experience (#1021):
+  //   ?shot=offline         — the signed-in shell in read-only offline mode
+  //                           (the fixed strip above everything).
+  //   ?shot=offline-signin  — the signed-out login screen while offline:
+  //                           the explanation block, and the credential
+  //                           fields greyed out because they cannot work.
+  //
+  // Both pin connectivity rather than reading it, because the one thing a
+  // capture runner and a reviewer's browser always have is a working
+  // network — without this the offline UI is literally unphotographable,
+  // and the "before" side of the comparison could never be produced.
+  // Pure UI state, no writes, so deliberately NOT env-gated (same
+  // reasoning as ?shot=menu). Returns the shot name, or null.
+  _applyOfflineShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'offline' && shot !== 'offline-signin') return null;
+    if (shot === 'offline-signin' && (!location.hash || location.hash === '#')) {
+      try { history.replaceState(null, '', location.search + '#login'); } catch (err) { /* ignore */ }
+    }
+    try { window.Offline?.forceOffline(); } catch (err) { /* ignore */ }
+    return shot;
   },
 
   // Swap the drawer's Profile row between the generic person glyph and the
@@ -204,6 +383,13 @@ const App = {
     // #982: paint the drawer's Profile row with the viewer's picture.
     App.applyUserAvatar();
 
+    // Remember that this device is signed in, so a later boot that can't
+    // reach /api/auth/me still knows which shell to paint (#1021). Skipped
+    // when the shell is running FROM the snapshot — re-writing it then
+    // would keep refreshing savedAt and an offline device would never age
+    // its session out.
+    if (!App._sessionFromSnapshot) App.saveSessionSnapshot(App.user);
+
     // A web session exists (platform access or not). The native login
     // handoff listens for this — wallet provisioning and the node work
     // for waiting-room users too (apps are usable without platform
@@ -234,17 +420,20 @@ const App = {
     // view-only) once App.user is resolved. bindEvents already ran, so
     // the click handler is attached before the button can be seen.
     App.renderAdminButton();
-    App.connectEvents();
+    // On a snapshot-derived boot every one of these is a guaranteed
+    // failure: the socket can't open and the budget endpoints can't
+    // answer. _reconcileSession runs them the moment the network is back.
+    if (!App._sessionFromSnapshot) App.connectEvents();
     App.loadVersion();
     // Header kudos budget badge polls /api/me/kudos-budget once at
     // load and then on a long interval (hourly safety-net for the
     // Monday-UTC rollover). Refreshes opportunistically on every
     // successful give + on the leaderboard screen mount.
-    if (window.Kudos?.Budget?.init) Kudos.Budget.init();
+    if (!App._sessionFromSnapshot && window.Kudos?.Budget?.init) Kudos.Budget.init();
     // AI-credit status row (#555), same boot shape as the kudos badge:
     // the viewer's own daily allowance. Refreshes again on every drawer
     // open (App.HeaderMenu.open), throttled inside the module.
-    if (window.AiCredit?.Budget?.init) AiCredit.Budget.init();
+    if (!App._sessionFromSnapshot && window.AiCredit?.Budget?.init) AiCredit.Budget.init();
     // Session-gated boot fetches (notifications bell, work drawer)
     // defer to this event instead of firing a guaranteed 401 on an
     // anonymous document load.
@@ -256,6 +445,12 @@ const App = {
     App._applyMenuNavShot();
     App._applyLaunchShot();
     App._applyFeedbackShot();
+
+    // Promote a snapshot-derived shell to a verified session as soon as
+    // the connectivity probe reports we're back.
+    window.addEventListener('usernode:offline-change', (e) => {
+      if (e.detail && e.detail.offline === false) App._reconcileSession();
+    });
 
     // Re-poll the platform version every 10s so the drawer's platform
     // row flips to its "deploying" state within seconds of a deploy
