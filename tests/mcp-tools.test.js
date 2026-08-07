@@ -202,6 +202,41 @@ test('the server instructions tell the model what it is and is not', () => {
     'and that a proposal is not a shipped change');
 });
 
+test('the host is told to COPY the work order, not compose it', () => {
+  // The failure this pins: a model retyped a 40-line work order into chat
+  // and split the base commit id with a stray space, then appended a
+  // "correction" to a block the user had been told to paste verbatim. The
+  // contract is render-guidance-as-a-list, reproduce-the-block-exactly.
+  const instructions = tools.SERVER_INSTRUCTIONS;
+  assert.match(instructions, /EXACTLY as returned/);
+  assert.match(instructions, /do not re-?wrap/i);
+  assert.match(instructions, /never append a correction/i);
+  assert.match(instructions, /numbered list/i, 'and guidance is a list, not prose');
+
+  // Some hosts surface only the tool description, so it carries it too.
+  const idx = SRC.indexOf("server.registerTool('prepare_work'");
+  const desc = SRC.slice(idx, SRC.indexOf('inputSchema:', idx));
+  assert.match(desc, /EXACTLY as returned/);
+  assert.match(desc, /guidance/);
+});
+
+test('prepare_work returns the human steps separately from the work order', () => {
+  const idx = SRC.indexOf("server.registerTool('prepare_work'");
+  const body = SRC.slice(idx, SRC.indexOf("server.registerTool('submit_work'"));
+  // Two outputs, two audiences: an ordered list for the person, one
+  // verbatim block for their coding agent.
+  assert.match(body, /guidance: z\.array\(z\.string\(\)\)/);
+  assert.match(body, /guidance: result\.guidance/);
+  // Composed in the service, not here — the whole hand-off text stays in
+  // one reviewable place (see 'the build tools delegate rather than
+  // reimplement' above).
+  assert.ok(!/Open https:\/\/claude\.ai\/code/.test(SRC),
+    'the wording lives in external-agent-tasks.js');
+  // The client's own registered name is what picks Claude Code vs Codex
+  // wording, so it has to reach the service distinctly from clientId.
+  assert.match(body, /clientName: clientName \|\| clientId \|\| null/);
+});
+
 // ── #967 pass 2: the write half ────────────────────────────────────────
 
 test('the build tools delegate rather than reimplement', () => {
@@ -272,7 +307,7 @@ test('prepare_work returns human guidance beside the agent-only work order', () 
   assert.doesNotMatch(body, /result\.forkStatus === 'name_conflict'/);
   // The connected chat product is what tells the service which coding agent
   // to name in the steps.
-  assert.match(body, /clientName,/, 'clientName reaches prepareWork');
+  assert.match(body, /clientName: clientName \|\| clientId \|\| null/, 'clientName reaches prepareWork');
 });
 
 test('the work order is described as a payload to reproduce, not prose to summarise', () => {

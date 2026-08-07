@@ -60,6 +60,24 @@ const MAX_BRIEF_CHARS = 6000;
 // never the name.
 const CONFLICT_FORK_SUFFIX = '-usernode';
 
+// A base commit is a full 40-character hex object id, always. The work
+// order's `git checkout -b <branch> <sha>` line is the single most
+// copy-sensitive thing the connector emits — a host model that retypes it
+// with a stray space produces `not a valid object name` — so the value is
+// checked here rather than assumed, and the work order states the
+// invariant so a mangled copy can be recognised and repaired downstream.
+const BASE_SHA_RE = /^[0-9a-f]{40}$/i;
+
+// Where the two hosted coding agents live. Named in the human steps
+// because "open Claude Code" is not an instruction anyone can follow.
+const CLAUDE_CODE_URL = 'https://claude.ai/code';
+const CODEX_URL = 'https://chatgpt.com/codex';
+
+// Guidance strings are read by a person in a chat bubble, so they stay
+// one short line each. The bound is generous only because a GitHub fork
+// URL and two repository names can eat 150 characters on their own.
+const MAX_GUIDANCE_CHARS = 320;
+
 // Which coding agent produced the work. Stored on chat_sessions.external_agent
 // and rendered as the "built with …" badge. A closed vocabulary: this string
 // reaches the client, and the client maps it to a label rather than printing
@@ -181,6 +199,64 @@ function branchNameFor(slug, issueNumber, nonce) {
   return `${BRANCH_PREFIX}/${safeSlugPart(slug)}-${middle}-${suffix}`;
 }
 
+// ── The human's next steps ─────────────────────────────────────────────
+//
+// Short second-person lines the assistant renders as a numbered list
+// ABOVE the work order. Every string is an action the PERSON takes.
+// Nothing here narrates what the coding agent is about to do — cloning,
+// branching, pushing and "do not open a pull request" are all in the work
+// order, addressed to the party that actually acts on them; repeating
+// them at the human is a line to read and nothing to do.
+//
+// The fork step never offers to skip itself when the coding agent has the
+// GitHub CLI. Both hosted agents start a session by PICKING a repository
+// that already exists in the user's GitHub account, so the copy is a
+// precondition there, not a convenience — sending a web user past it
+// lands them on a picker with nothing to pick. The `gh repo fork`
+// shortcut lives in the work order's SETUP, where a terminal agent reads
+// it, and in guidance only for the `external` variant, where a terminal
+// really is the likely setting.
+function buildGuidance({
+  agent, forkOwner, forkRepo, repo, forkPageUrl, forkStatus,
+}) {
+  const forkRef = `${forkOwner}/${forkRepo}`;
+  const justCreated = forkStatus !== 'ready';
+  const ghNote = agent === 'external'
+    ? ' (A coding agent with the GitHub CLI can create it instead — the work order says how.)'
+    : '';
+  const steps = [];
+
+  if (forkStatus === 'name_conflict') {
+    steps.push(
+      `Create your own copy of the app's code in one click: ${forkPageUrl} — name it `
+      + `"${forkRepo}", because you already have a repository called "${repo}" that Usernode `
+      + `never touches, then press "Create fork".${ghNote}`
+    );
+  } else if (forkStatus === 'missing') {
+    steps.push(
+      `Create your own copy of the app's code in one click: ${forkPageUrl} — press `
+      + `"Create fork".${ghNote}`
+    );
+  }
+
+  const madeIt = justCreated ? ' — the copy you just made' : '';
+  if (agent === 'claude-code') {
+    steps.push(`Open ${CLAUDE_CODE_URL} and start a new session.`);
+    steps.push(`In the repository picker, choose ${forkRef}${madeIt}.`);
+  } else if (agent === 'codex') {
+    steps.push(`Open ${CODEX_URL} and start a new task.`);
+    steps.push(`Choose ${forkRef} as its repository${madeIt}.`);
+  } else {
+    // No web UI we can name with confidence, so the one thing that is
+    // true everywhere: point it at the repository.
+    steps.push(`Open your coding agent on ${forkRef}, cloning it first if it works from a terminal.`);
+  }
+
+  steps.push('Paste the work order below into it, exactly as written.');
+  steps.push('Tell me when it says the branch is pushed, and I\'ll put it up for the group\'s vote.');
+  return steps;
+}
+
 // ── The work order ─────────────────────────────────────────────────────
 //
 // One block of text the assistant pastes into Claude Code on the web or
@@ -188,6 +264,11 @@ function branchNameFor(slug, issueNumber, nonce) {
 // connector, no Usernode credential and no memory of this conversation —
 // and since the platform no longer touches the user's GitHub account, it is
 // also what CREATES the fork and the branch.
+//
+// AGENT-ONLY. Everything addressed at the human or at the calling
+// assistant lives in buildGuidance above; a work order that ends with
+// "then come back and tell the assistant" is what produced a chat message
+// with human steps buried inside a block the user was told to paste.
 //
 // `brief` arrives already clipped and already wrapped in the connector's
 // <untrusted-content> envelope by the caller: it is text other Usernode
@@ -234,6 +315,8 @@ function buildWorkOrder({
       '',
       'THEN, in every case:'
     );
+  } else {
+    setup.push('You already have this copy of the repository.', '');
   }
 
   // The same four commands whatever the fork's state — only the fork's own
@@ -313,9 +396,9 @@ function buildWorkOrder({
     '```bash',
     `git push -u origin ${branch}`,
     '```',
-    `Then tell the assistant that started this that the work on \`${branch}\` is pushed.`,
-    'It will submit the change to Usernode, where it becomes a proposal with a',
-    'staging preview and a group vote.',
+    `Report that \`${branch}\` is pushed, and stop there. Do not open a pull`,
+    'request: Usernode opens it, and the change becomes a proposal with a staging',
+    'preview and a group vote.',
   ];
   if (Number.isInteger(issueNumber) && issueNumber > 0) {
     lines.splice(2, 0, `This implements request #${issueNumber}.`, '');
@@ -326,55 +409,15 @@ function buildWorkOrder({
   return lines.join('\n');
 }
 
-// ── The guidance steps ─────────────────────────────────────────────────
-//
-// The other half of the split. The work order above is a PAYLOAD for a
-// second agent; this is a short checklist for the PERSON, which the
-// assistant relays as-is. Keeping them separate is what stops an assistant
-// from "helpfully" rewriting the work order into prose: it already has
-// something human-shaped to say.
-//
-// Platform-authored strings only. The brief never appears here — it is
-// other users' writing, and it keeps its <untrusted-content> envelope
-// inside the work order where the receiving agent is warned about it.
-function codingAgentName(agent) {
-  if (agent === 'claude-code') return 'Claude Code';
-  if (agent === 'codex') return 'Codex';
-  return 'your coding agent';
-}
-
-function buildGuidance({ forkStatus, forkPageUrl, forkRepo, branch, agentName }) {
-  const agent = agentName || 'your coding agent';
-  const steps = [];
-  if (forkStatus === 'name_conflict') {
-    steps.push(
-      `A repository of yours already has this app's name and is not a fork of it — Usernode never touches it, `
-      + `so your fork needs the name ${forkRepo} instead.`,
-      `To make it by hand: open ${forkPageUrl}, change the repository-name field to ${forkRepo}, `
-      + 'and press "Create fork". Skip this if your coding agent has the GitHub CLI.'
-    );
-  } else if (forkStatus !== 'ready') {
-    steps.push(
-      `Create your fork in one click: ${forkPageUrl} — press "Create fork". `
-      + 'Skip this if your coding agent has the GitHub CLI; the work order forks for you.'
-    );
-  }
-  steps.push(
-    `Open ${agent} and paste the work order below into it, exactly as written.`,
-    `It will clone your fork, create the branch ${branch}, make the change and push. `
-    + 'It will not open a pull request — Usernode does that.',
-    'Tell me when it says the branch is pushed, and I will put it up for the group\'s vote.'
-  );
-  return steps;
-}
-
 // ── prepare_work ───────────────────────────────────────────────────────
 //
 // deps: { pool, config, gh, githubLink, limits }
 // params: { user, app, issueNumber, brief, clientId, clientName, origin }
 async function prepareWork(deps, params) {
   const { pool, config, gh, githubLink, limits } = deps;
-  const { user, app, issueNumber, brief, clientId, clientName, origin } = params;
+  const {
+    user, app, issueNumber, brief, clientId, clientName, origin,
+  } = params;
 
   const parsed = gh.parseGithubUrl(app.repo_url);
   if (!parsed) {
@@ -414,20 +457,21 @@ async function prepareWork(deps, params) {
     log.warn('external-agent-tasks', 'base sha lookup failed', { app: app.slug, err: err.message });
     baseSha = null;
   }
-  // Shape-check it before it goes anywhere. This value lands in a NOT NULL
-  // column and inside a shell command a second agent will run, so anything
-  // that is not a full 40-character commit id is refused here rather than
-  // pasted into a work order for someone to discover later. getBranchSha
-  // returns `ref.object.sha` and throws on failure, so in practice this
-  // catches a stubbed gh or an unexpected API shape — cheap insurance.
-  if (!baseSha || !/^[0-9a-f]{40}$/i.test(String(baseSha))) {
+  // A value that is not a clean 40-character hex id never reaches a work
+  // order. Refusing here is what makes "Usernode never emits a malformed
+  // commit id" a property rather than an assumption — so a split id seen
+  // in a chat message can only have been introduced downstream, and is
+  // diagnosed as a transcription error instead of hunted for in here.
+  // getBranchSha returns `ref.object.sha` and throws on failure, so in
+  // practice this also catches a stubbed gh or an unexpected API shape.
+  if (!baseSha || !BASE_SHA_RE.test(String(baseSha).trim())) {
     if (baseSha) {
-      log.warn('external-agent-tasks', 'base sha is not a commit id', { app: app.slug });
+      log.warn('external-agent-tasks', 'base sha is not a 40-char hex id', { app: app.slug });
     }
     return fail('platform_unavailable', 'Usernode could not read the app\'s current code. Try again shortly.', { retryable: true });
   }
   // Lowercased from here on, matching how inspectPushedBranch compares it.
-  baseSha = String(baseSha).toLowerCase();
+  baseSha = String(baseSha).trim().toLowerCase();
 
   // Advisory only. A missing fork, a same-named repo in the way, or a GitHub
   // read that simply failed all still produce a work order — the fork is the
@@ -464,6 +508,18 @@ async function prepareWork(deps, params) {
   }
 
   const webPath = `${origin}/#app/${app.slug}`;
+  const forkPageUrl = `https://github.com/${owner}/${repo}/fork`;
+  // Which product's UI the human is about to open. `normalizeAgent`
+  // reads the name the client registered for itself, so anything
+  // unrecognised falls into the deliberately safe `external` variant.
+  const guidance = buildGuidance({
+    agent: normalizeAgent(null, clientName || clientId),
+    forkOwner: link.login,
+    forkRepo,
+    repo,
+    forkPageUrl,
+    forkStatus,
+  });
   const workOrder = buildWorkOrder({
     appName: app.name || app.slug,
     appSlug: app.slug,
@@ -472,20 +528,13 @@ async function prepareWork(deps, params) {
     forkUrl: `https://github.com/${link.login}/${forkRepo}`,
     forkCloneUrl: `https://github.com/${link.login}/${forkRepo}.git`,
     forkRepo,
-    forkPageUrl: `https://github.com/${owner}/${repo}/fork`,
+    forkPageUrl,
     forkStatus,
     branch,
     baseSha,
     issueNumber,
     brief: trimmedBrief,
     webPath,
-  });
-  const guidance = buildGuidance({
-    forkStatus,
-    forkPageUrl: `https://github.com/${owner}/${repo}/fork`,
-    forkRepo,
-    branch,
-    agentName: codingAgentName(normalizeAgent(null, clientName)),
   });
 
   return {
@@ -494,7 +543,7 @@ async function prepareWork(deps, params) {
     forkOwner: link.login,
     forkRepo,
     forkUrl: `https://github.com/${link.login}/${forkRepo}`,
-    forkPageUrl: `https://github.com/${owner}/${repo}/fork`,
+    forkPageUrl,
     forkStatus,
     branch,
     baseSha,
@@ -778,15 +827,16 @@ module.exports = {
   DEFAULT_BASE_BRANCH,
   MAX_BRIEF_CHARS,
   CONFLICT_FORK_SUFFIX,
+  MAX_GUIDANCE_CHARS,
+  BASE_SHA_RE,
   normalizeAgent,
   agentLabel,
   githubPublic,
   inspectFork,
   inspectPushedBranch,
   branchNameFor,
-  buildWorkOrder,
   buildGuidance,
-  codingAgentName,
+  buildWorkOrder,
   headOwnerOf,
   attributionError,
   loadOpenTask,
