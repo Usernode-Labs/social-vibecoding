@@ -205,6 +205,9 @@ function load() {
     openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || '',
     openrouterMaxTurnCostUsd: parseFloat(process.env.OPENROUTER_MAX_TURN_COST_USD || '0') || 0,
     openrouterApiBase: process.env.OPENROUTER_API_BASE || 'https://openrouter.ai/api/v1',
+    // Local-dev escape hatch (review #8): allow a non-HTTPS OpenRouter base
+    // URL. Production must keep this unset/default (false).
+    openrouterAllowInsecureBase: String(process.env.OPENROUTER_ALLOW_INSECURE_BASE || 'false') === 'true',
     openrouterOrigin: process.env.OPENROUTER_ORIGIN || 'https://usernode.dev',
     // The former single shared JWT_SECRET is GONE. All four token
     // authorities (app identity RS256, worker, edge grant, edge cookie)

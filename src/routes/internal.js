@@ -3,7 +3,7 @@
 const { Router } = require('express');
 const { rateLimit } = require('express-rate-limit');
 const { getPool } = require('../db/pool');
-const { internalAuth } = require('../middleware/internal-auth');
+const { internalAuth, internalAuthPurpose } = require('../middleware/internal-auth');
 const log = require('../services/logger');
 const worker = require('../services/worker');
 const docker = require('../services/docker');
@@ -313,7 +313,7 @@ function internalRoutes(_config) {
 
   router.post(
     '/api/internal/sessions/:sessionId/push',
-    internalAuth,
+    internalAuthPurpose([platformJwt.PUR_WORKER_PUSH, platformJwt.PUR_WORKER]),
     pushLimiter,
     async (req, res) => {
       const sessionId = parseInt(req.params.sessionId, 10);
@@ -393,7 +393,7 @@ function internalRoutes(_config) {
   // accepts the session-scoped ISSUES_JWT via the same internalAuth gate.
   router.get(
     '/api/internal/sessions/:sessionId/issues',
-    internalAuth,
+    internalAuthPurpose([platformJwt.PUR_ISSUES_READ, platformJwt.PUR_WORKER]),
     pushLimiter,
     async (req, res) => {
       const sessionId = parseInt(req.params.sessionId, 10);
@@ -458,7 +458,7 @@ function internalRoutes(_config) {
   // parseable JSON.
   router.get(
     '/api/internal/sessions/:sessionId/issues/:number',
-    internalAuth,
+    internalAuthPurpose([platformJwt.PUR_ISSUES_READ, platformJwt.PUR_WORKER]),
     pushLimiter,
     async (req, res) => {
       const sessionId = parseInt(req.params.sessionId, 10);
@@ -536,7 +536,7 @@ function internalRoutes(_config) {
   // attachments are listed; pending uploads aren't context yet.
   router.get(
     '/api/internal/sessions/:sessionId/attachments',
-    internalAuth,
+    internalAuthPurpose([platformJwt.PUR_ISSUES_READ, platformJwt.PUR_WORKER]),
     pushLimiter,
     async (req, res) => {
       const sessionId = parseInt(req.params.sessionId, 10);
@@ -580,7 +580,7 @@ function internalRoutes(_config) {
   // here: an id from another session 404s.
   router.get(
     '/api/internal/sessions/:sessionId/attachments/:attId',
-    internalAuth,
+    internalAuthPurpose([platformJwt.PUR_ISSUES_READ, platformJwt.PUR_WORKER]),
     pushLimiter,
     async (req, res) => {
       const sessionId = parseInt(req.params.sessionId, 10);
@@ -714,7 +714,7 @@ function internalRoutes(_config) {
 
   router.post(
     '/api/internal/sessions/:sessionId/platform-issue',
-    internalAuth,
+    internalAuthPurpose([platformJwt.PUR_ISSUES_READ, platformJwt.PUR_WORKER]),
     platformIssueLimiter,
     async (req, res) => {
       const sessionId = parseInt(req.params.sessionId, 10);

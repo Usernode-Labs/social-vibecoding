@@ -46,6 +46,18 @@ function mintWorkerJwt(sessionId) {
   return platformJwt.signWorkerToken({ sessionId });
 }
 
+// Narrow, purpose-bound capabilities (review #2 / #6): minted for Codex
+// turns so the worker never holds a general worker:session token (which
+// would be accepted by the Anthropic proxy). worker:push is used by
+// usernode-push on build; worker:issues-read by usernode-issues /
+// usernode-attachments on both modes.
+function mintWorkerPushJwt(sessionId) {
+  return platformJwt.signWorkerPushToken({ sessionId });
+}
+function mintIssuesReadJwt(sessionId) {
+  return platformJwt.signIssuesReadToken({ sessionId });
+}
+
 // #616: same shape as mintWorkerJwt plus the `prod_debug` claim that the
 // internal prod-debug routes require. Minted ONLY for turns whose
 // session passed debug-access.isEligible (admin-owned session on the
@@ -59,19 +71,24 @@ function mintProdDebugJwt(sessionId) {
 // Scout mode omits WORKER_JWT so usernode-push can't authenticate (see
 // the long comment in execInWorker); PROD_DEBUG_JWT rides along on
 // build + scout turns only — never sync (bookkeeping, no free-form CC).
-function buildTurnSecretEnv({ mode, workerJwt, anthropicApiKey, prodDebugJwt, openrouterApiKey, agentBackend = 'claude_code' }) {
-  const useProxy = !anthropicApiKey;
-  // Direct-OpenRouter/Codex backend (review P0 / #3): the Codex process
-  // receives ONLY its own credentials (the user's OpenRouter key), and
-  // none of the Anthropic authority. It must not see ANTHROPIC_API_KEY or
-  // ANTHROPIC_BASE_URL (which would let a Codex turn spend unrelated
-  // Anthropic funds via the proxy). WORKER_JWT is gated to build mode.
+function buildTurnSecretEnv({ mode, workerJwt, workerPushJwt, issuesReadJwt, anthropicApiKey, prodDebugJwt, openrouterApiKey, agentBackend = 'claude_code' }) {
+  const isCodex = agentBackend === 'codex_openrouter';
+  // Codex never talks to the Anthropic proxy (review #2): it must not be
+  // able to spend platform/user Anthropic allowances by curling the proxy
+  // with a worker token. Only claude_code may route through it.
+  const useProxy = !anthropicApiKey && !isCodex;
+  // Direct-OpenRouter/Codex backend (review P0 / #2 / #6): the Codex
+  // process receives ONLY its own credentials (the user's OpenRouter key)
+  // plus two NARROW, purpose-bound capability tokens — worker:push (build
+  // only) and worker:issues-read (both modes). It never receives a
+  // general worker:session token, so repository code in a Codex turn
+  // cannot call the Anthropic proxy.
   if (agentBackend === 'codex_openrouter') {
     const env = { OPENROUTER_API_KEY: openrouterApiKey || '' };
     if (mode === 'build') {
-      env.WORKER_JWT = workerJwt; // commit/push only; not present on scout
-      env.ISSUES_JWT = workerJwt; // read-only issues (narrowed in #4)
+      env.WORKER_JWT = workerPushJwt || workerJwt; // commit/push only; not present on scout
     }
+    env.ISSUES_JWT = issuesReadJwt || workerJwt; // read-only issues (narrow worker:issues-read)
     return env;
   }
   const env = mode === 'scout'
@@ -309,6 +326,14 @@ function parseLine(line, onProgress, state) {
           state.lastResultText = ev.fullText;
         } else if (ev.kind === 'usage') {
           state.costUsd = ev.usage?.cost || state.costUsd;
+          // Retain token counts so the Codex turn can be attributed directly
+          // to agent_turns (review #3) instead of the Anthropic ledger.
+          const u = ev.usage || {};
+          if (Number.isFinite(u.inputTokens)) state.inputTokens = u.inputTokens;
+          if (Number.isFinite(u.outputTokens)) state.outputTokens = u.outputTokens;
+          if (Number.isFinite(u.cachedInputTokens)) state.cachedInputTokens = u.cachedInputTokens;
+          if (Number.isFinite(u.reasoningOutputTokens)) state.reasoningOutputTokens = u.reasoningOutputTokens;
+          if (u.model) state.agentModel = u.model;
         }
         // Progress line: use the short display form (or any event text).
         if (ev.text) onProgress(ev.text);
@@ -326,6 +351,11 @@ function newWatchState() {
   return {
     lastResultText: '',
     costUsd: 0,
+    // Retained Codex usage (review #3) for direct attribution to agent_turns.
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    reasoningOutputTokens: 0,
     sessionId: null,
     initSessionId: null,
     ccIsError: false,
@@ -1033,6 +1063,7 @@ async function execInWorker(sessionId, {
   agentModel = null,
   agentReasoningEffort = null,
   openrouterApiKey = null,
+  openrouterApiBase = null,
   turnUuid = null,
   onProgress,
   // #616: when true (admin-owned session on the self-edit app — the
@@ -1139,6 +1170,8 @@ async function execInWorker(sessionId, {
   const secretEnv = buildTurnSecretEnv({
     mode,
     workerJwt,
+    workerPushJwt: mintWorkerPushJwt(sessionId),
+    issuesReadJwt: mintIssuesReadJwt(sessionId),
     anthropicApiKey,
     prodDebugJwt: prodDebug && mode !== 'sync' ? mintProdDebugJwt(sessionId) : null,
     openrouterApiKey,
@@ -1174,13 +1207,16 @@ async function execInWorker(sessionId, {
   // directly at OpenRouter. The user's OPENROUTER_API_KEY is injected via
   // buildTurnSecretEnv (per-exec secret env), NOT persisted. The sentinel
   // contract run-codex-agent.sh emits is identical to run-cc.sh.
-  const isCodex = agentBackend === 'codex_openrouter';
   if (isCodex) {
     safeEnv.AGENT_BACKEND = 'codex_openrouter';
     safeEnv.AGENT_MODEL = agentModel || '';
     safeEnv.AGENT_REASONING_EFFORT = agentReasoningEffort || '';
     safeEnv.AGENT_THREAD_ID = resumeSessionId || '';
     safeEnv.TURN_UUID = turnUuid || '';
+    // The operator-configured OpenRouter endpoint (review #8): without
+    // this, key-validation/catalog used one origin while Codex generation
+    // silently hit the public default. Validated in resolveCodexTurn.
+    if (openrouterApiBase) safeEnv.OPENROUTER_API_BASE = openrouterApiBase;
   }
   const runner = isCodex ? '/usr/local/bin/run-codex-agent.sh' : '/usr/local/bin/run-cc.sh';
  // Journal transport: the turn runs DETACHED from this process. The

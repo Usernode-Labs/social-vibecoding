@@ -1879,7 +1879,7 @@
         });
         const j = await r.json();
         if (!r.ok) { this._setOrStatus(j.error || 'Failed to save key.', 'error'); return; }
-        this._setOrStatus('Saved. Codex turns now bill to your OpenRouter key.', 'ok');
+        this._setOrStatus('Saved and encrypted. Codex turns bill to your OpenRouter key.', 'ok');
         input.value = '';
         await this._refreshOpenRouter();
       } catch (err) {

@@ -170,6 +170,7 @@ function credentialRoutes(config) {
   router.patch('/api/me/coding-agent', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     const { defaultBackend, model, reasoningEffort, maxTurnCostUsd } = req.body || {};
+    let parsedMaxTurnCostUsd;
     let backend = defaultBackend || 'codex_openrouter';
     try { registry.resolveBackend(backend); } catch { return res.status(400).json({ error: 'Unknown backend' }); }
     if (backend === 'codex_openrouter' && !betaAllowed(req.user.id)) {
@@ -177,6 +178,19 @@ function credentialRoutes(config) {
     }
     if (reasoningEffort != null && !['minimal', 'low', 'medium', 'high', 'xhigh'].includes(reasoningEffort)) {
       return res.status(400).json({ error: 'Invalid reasoning effort' });
+    }
+    // Cost-ceiling validation (review #7): reject negative, non-finite, or
+    // malformed values up front (instead of letting PostgreSQL 500 on a
+    // broken constraint). `null` means "unchanged"; `0` legitimately clears
+    // the cap — so 0 must be preserved, not collapsed to null.
+    if (maxTurnCostUsd != null) {
+      const num = typeof maxTurnCostUsd === 'number' ? maxTurnCostUsd : Number(maxTurnCostUsd);
+      if (!Number.isFinite(num) || num < 0) {
+        return res.status(400).json({ error: 'Cost cap must be a non-negative number.' });
+      }
+      parsedMaxTurnCostUsd = num;
+    } else {
+      parsedMaxTurnCostUsd = null;
     }
     // Validate the model against the user's permitted catalog (review P1) —
     // model ids become executable Codex config.toml, so arbitrary strings
@@ -239,7 +253,7 @@ function credentialRoutes(config) {
              user_agent_preferences.max_turn_cost_usd),
            is_default = EXCLUDED.is_default,
            updated_at = NOW()`,
-        [req.user.id, backend, model || null, reasoningEffort || null, maxTurnCostUsd || null, !!defaultBackend],
+        [req.user.id, backend, model || null, reasoningEffort || null, parsedMaxTurnCostUsd != null ? parsedMaxTurnCostUsd : null, !!defaultBackend],
       );
       res.json({ ok: true });
     } catch (err) {

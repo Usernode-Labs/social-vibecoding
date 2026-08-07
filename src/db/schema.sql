@@ -4786,7 +4786,13 @@ CREATE TABLE IF NOT EXISTS user_agent_preferences (
     CHECK (backend IN ('claude_code', 'codex_openrouter')),
   CONSTRAINT user_agent_preferences_reasoning_check
     CHECK (reasoning_effort IS NULL
-           OR reasoning_effort IN ('minimal', 'low', 'medium', 'high', 'xhigh'))
+           OR reasoning_effort IN ('minimal', 'low', 'medium', 'high', 'xhigh')),
+  -- Cost ceiling (review #7): reject negatives at the DB so a buggy client
+  -- cannot store a value that disables the cap. The cap is advisory (the
+  -- platform does not mediate direct Codex requests), but it must still be
+  -- a sane nonnegative number.
+  CONSTRAINT user_agent_preferences_cost_check
+    CHECK (max_turn_cost_usd IS NULL OR max_turn_cost_usd >= 0)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS user_agent_preferences_one_default
   ON user_agent_preferences (user_id) WHERE is_default = TRUE;

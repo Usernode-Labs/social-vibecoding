@@ -2037,19 +2037,22 @@ function sessionRoutes(config) {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const { backend, model, reasoningEffort } = req.body || {};
-      try { registry.resolveBackend(backend || ''); } catch { return res.status(400).json({ error: 'Unknown backend' }); }
-      // Validate reasoning effort + model (review P2): both are
-      // interpolated into the Codex config.toml, so arbitrary values must
-      // be rejected (effort against the enumerated set; model against the
-      // user's permitted OpenRouter catalog).
+      // Resolve the backend explicitly and USE the resolved value (review
+      // #10): when `backend` is omitted, validation previously resolved to
+      // the default Claude backend but the SQL still received `undefined`,
+      // violating the non-null constraint.
+      const resolved = registry.resolveBackend(backend || registry.DEFAULT_BACKEND);
       if (reasoningEffort != null && !['minimal', 'low', 'medium', 'high', 'xhigh'].includes(reasoningEffort)) {
         return res.status(400).json({ error: 'Invalid reasoning effort' });
       }
       if (activeWorkers.has(sessionId) || worker.isInFlight(sessionId)) {
         return res.status(409).json({ error: 'Session is busy; stop the current turn first.' });
       }
+      // Row-lock the session so a concurrently starting turn on the same row
+      // serializes with this reset (review #10) instead of racing the busy
+      // check, which is in-memory only.
       const { rows } = await pool.query(
-        `SELECT id, user_id, status FROM chat_sessions WHERE id = $1 AND user_id = $2`,
+        `SELECT id, user_id, status FROM chat_sessions WHERE id = $1 AND user_id = $2 FOR UPDATE`,
         [sessionId, req.user.id],
       );
       const sess = rows[0];
@@ -2057,7 +2060,18 @@ function sessionRoutes(config) {
       if (sess.status === 'archived' || sess.status === 'merged') {
         return res.status(409).json({ error: 'Session is closed' });
       }
-      if (backend === 'codex_openrouter') {
+      const isCodex = resolved === 'codex_openrouter';
+      if (isCodex) {
+        // Enforce the same availability as dispatch (review #10): the reset
+        // must not let a user configure Codex when the flag/allowlist has
+        // been revoked after they saved it.
+        if (!config.codexOpenrouterEnabled) {
+          return res.status(403).json({ error: 'Codex/OpenRouter is not available for your account yet.' });
+        }
+        if (config.openrouterBetaUserIds?.length
+            && !config.openrouterBetaUserIds.includes(String(req.user.id))) {
+          return res.status(403).json({ error: 'Codex/OpenRouter is not available for your account yet.' });
+        }
         const credentialStore = require('../services/credential-store');
         const agentModels = require('../services/agent-models');
         const meta = await credentialStore.readMetadata({
@@ -2067,18 +2081,22 @@ function sessionRoutes(config) {
           return res.status(400).json({ error: 'Add your OpenRouter API key in Settings first.' });
         }
         if (model) {
+          // Fail when the secret cannot be read (review #10): a valid
+          // metadata row that cannot decrypt must not silently skip model
+          // validation and persist an unconfirmed model.
           const apiKey = await credentialStore.readSecret({
             pool, userId: req.user.id, provider: 'openrouter', purpose: 'coding_agent',
-            dataKey: config.dataEncryptionKey,
+            dataKey: config.dataEncryptionKey, expectedRevision: meta.revision,
           });
-          if (apiKey) {
-            const catalog = await agentModels.listOpenRouterModels({
-              pool, userId: req.user.id, credentialRevision: meta.revision,
-              apiKey, config, forceRefresh: false,
-            });
-            if (!catalog.models.some((m) => m.id === model)) {
-              return res.status(400).json({ error: 'That model is not available under your OpenRouter key.' });
-            }
+          if (!apiKey) {
+            return res.status(400).json({ error: 'Could not read your OpenRouter key; re-enter it in Settings first.' });
+          }
+          const catalog = await agentModels.listOpenRouterModels({
+            pool, userId: req.user.id, credentialRevision: meta.revision,
+            apiKey, config, forceRefresh: false,
+          });
+          if (!catalog.models.some((m) => m.id === model)) {
+            return res.status(400).json({ error: 'That model is not available under your OpenRouter key.' });
           }
         }
       }
@@ -2093,7 +2111,7 @@ function sessionRoutes(config) {
            agent_config_version = agent_config_version + 1,
            agent_context_reset_at = NOW()
          WHERE id = $1`,
-        [sessionId, backend, backend === 'codex_openrouter' ? 'openrouter' : 'anthropic',
+        [sessionId, resolved, isCodex ? 'openrouter' : 'anthropic',
          model || null, reasoningEffort || null],
       );
       try { await worker.evictWorker(sessionId); } catch {}
@@ -2950,19 +2968,14 @@ function sessionRoutes(config) {
       // below routes the cost to the right bucket. Allowance gone and
       // no key on file → the same 429 as always, tagged with a code so
       // the client can tell it apart from a chatLimiter throttle (#463).
-      const admissionIsCodex = registry.resolveBackend(session.agent_backend) === 'codex_openrouter';
-      // Backend-aware admission (review P1 #2): a Codex/OpenRouter coding
-      // turn bills directly to the user's OpenRouter account and must NOT
-      // be blocked by the Anthropic allowance gate. Only resolve Anthropic
-      // billing for Claude turns; the Mayor/wrap-up phases remain gated
-      // separately below.
-      let billing;
-      if (admissionIsCodex) {
-        billing = { apiKey: null, byok: false };
-      } else {
-        billing = await limits.resolveBillingPath(pool, config.dataEncryptionKey, req.user.id);
-        if (billing.error) return res.status(429).json({ error: billing.error, code: 'budget_exceeded' });
-      }
+      // Coherent billing contract (review #4): the Mayor + wrap-up phases
+      // are Anthropic-backed for BOTH backends, so the Anthropic budget is
+      // always preflighted up front (matching the headless path). Only the
+      // Codex coding dispatch itself bills to the user's OpenRouter account
+      // (see isCodexSession → turnApiKey=null below); the coding phase is
+      // never debited from the Anthropic ledger.
+      const billing = await limits.resolveBillingPath(pool, config.dataEncryptionKey, req.user.id);
+      if (billing.error) return res.status(429).json({ error: billing.error, code: 'budget_exceeded' });
       // Mutable since #664: an expensive CC phase can exhaust the
       // allowance mid-turn, so billing is re-resolved after the tool
       // completes and the wrap-up phase bills the fresh payer.
@@ -6740,6 +6753,14 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
       await agentTurn.completeCodexTurn({
         pool, turnUuid: activeTurn.turnUuid,
         status: failed ? 'failed' : 'completed',
+        usage: {
+          model: result.agentModel || null,
+          inputTokens: result.inputTokens || 0,
+          cachedInputTokens: result.cachedInputTokens || 0,
+          outputTokens: result.outputTokens || 0,
+          reasoningOutputTokens: result.reasoningOutputTokens || 0,
+          cost: result.costUsd || null,
+        },
       });
     }
     // Release the record AND the journal it points at (the resume above
@@ -6755,7 +6776,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
     // key-on-file at resume time. #664: a platform-billed turn that
     // switched onto the owner's key mid-run settles split across both
     // buckets (getTurnByokCents covers pre- and post-restart spillover).
-    if (result.costUsd) {
+    if (result.costUsd && activeTurn.backend !== 'codex_openrouter') {
       const byok = activeTurn.byok ?? !!userApiKey;
       await limits.settleTurnSpend(pool, user.id, Math.round(result.costUsd * 100), {
         turnByok: byok,
@@ -8525,17 +8546,26 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         resumeThreadId: (isCodexSession ? (session.agent_thread_id || null) : (session.cc_session_id || null)),
         config,
       });
-      if (codexCtx?.error === 'backend_disabled' || codexCtx?.error === 'backend_not_available') {
-        await sendStatus('Codex/OpenRouter is not available for your account right now.');
-        return res.json({ ok: false, error: 'Codex/OpenRouter is not available.' });
-      }
-      if (codexCtx?.error === 'model_required') {
-        await sendStatus('Pick a Codex model in Settings for this session.');
-        return res.json({ ok: false, error: 'A Codex model is required.' });
-      }
-      if (codexCtx?.error === 'credential_required') {
-        await sendStatus('Add your OpenRouter API key in Settings to use Codex.');
-        return res.json({ ok: false, error: 'OpenRouter API key required' });
+      if (codexCtx?.error === 'backend_disabled' || codexCtx?.error === 'backend_not_available'
+          || codexCtx?.error === 'model_required' || codexCtx?.error === 'credential_required'
+          || codexCtx?.error === 'invalid_base_url') {
+        // SSE is already open; terminate through the SSE protocol (review #5)
+        // instead of res.json (which would throw ERR_HTTP_HEADERS_SENT or
+        // inject JSON into the stream). Mark the stop handle so the caller's
+        // stop branch tears the turn down cleanly and skips the Mayor wrap-up.
+        const code = codexCtx.error;
+        const msg = code === 'backend_disabled' || code === 'backend_not_available'
+          ? 'Codex/OpenRouter is not available for your account right now.'
+          : code === 'model_required'
+            ? 'Pick a Codex model in Settings for this session.'
+            : code === 'invalid_base_url'
+              ? 'The OpenRouter endpoint is misconfigured.'
+              : 'Add your OpenRouter API key in Settings to use Codex.';
+        await sendStatus(msg);
+        stopHandle.stopped = true;
+        stopHandle.stoppedBy = 'agent_error';
+        if (typeof send === 'function') send('error', { code, error: msg });
+        return { toolResultText: msg, isError: true };
       }
       const dispatchScout = () => worker.execInWorker(session.id, {
         mode: 'scout',
@@ -8571,6 +8601,14 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         await agentTurn.completeCodexTurn({
           pool, turnUuid: codexCtx.turnUuid,
           status: failed ? 'failed' : 'completed',
+          usage: {
+            model: result?.agentModel || codexCtx?.agentModel || null,
+            inputTokens: result?.inputTokens || 0,
+            cachedInputTokens: result?.cachedInputTokens || 0,
+            outputTokens: result?.outputTokens || 0,
+            reasoningOutputTokens: result?.reasoningOutputTokens || 0,
+            cost: result?.costUsd || null,
+          },
         });
       }
     } catch (e) {
@@ -8681,10 +8719,16 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
     }
 
     // A local scout has no costUsd at all (see dispatchLocalScout), so this
-    // whole block is skipped and no llm_usage row, spend settlement or usage
-    // event is produced. That is the zero-cost path, stated once here rather
-    // than as a `runLocally` branch inside the billing code.
-    if (result.costUsd) {
+    // billing block produces no llm_usage row, spend settlement, or usage
+    // event for that path.
+    if (isCodexSession) {
+      // Codex/OpenRouter spend is billed to the user's OpenRouter account
+      // directly (review #3) — never written into the Anthropic llm_usage
+      // ledger. Recorded instead via completeCodexTurn on agent_turns.
+      if (result.costUsd) {
+        send('usage', { costCents: Math.round(result.costUsd * 100), model: `codex-openrouter/${selectedModel}`, byok: true });
+      }
+    } else if (result.costUsd) {
       const ccCostCents = Math.round(result.costUsd * 100);
       // Scout costs land in the same llm_usage table as build dispatches —
       // they're real Anthropic spend on the same daily budget. #664: a
@@ -9792,17 +9836,23 @@ path: /another/changed/view
         resumeThreadId: (isCodexSession ? (session.agent_thread_id || null) : (session.cc_session_id || null)),
         config,
       });
-      if (codexCtx?.error === 'backend_disabled' || codexCtx?.error === 'backend_not_available') {
-        await sendStatus('Codex/OpenRouter is not available for your account right now.');
-        return res.json({ ok: false, error: 'Codex/OpenRouter is not available.' });
-      }
-      if (codexCtx?.error === 'model_required') {
-        await sendStatus('Pick a Codex model in Settings for this session.');
-        return res.json({ ok: false, error: 'A Codex model is required.' });
-      }
-      if (codexCtx?.error === 'credential_required') {
-        await sendStatus('Add your OpenRouter API key in Settings to use Codex.');
-        return res.json({ ok: false, error: 'OpenRouter API key required' });
+      if (codexCtx?.error === 'backend_disabled' || codexCtx?.error === 'backend_not_available'
+          || codexCtx?.error === 'model_required' || codexCtx?.error === 'credential_required'
+          || codexCtx?.error === 'invalid_base_url') {
+        // SSE is already open; terminate through the SSE protocol (review #5).
+        const code = codexCtx.error;
+        const msg = code === 'backend_disabled' || code === 'backend_not_available'
+          ? 'Codex/OpenRouter is not available for your account right now.'
+          : code === 'model_required'
+            ? 'Pick a Codex model in Settings for this session.'
+            : code === 'invalid_base_url'
+              ? 'The OpenRouter endpoint is misconfigured.'
+              : 'Add your OpenRouter API key in Settings to use Codex.';
+        await sendStatus(msg);
+        stopHandle.stopped = true;
+        stopHandle.stoppedBy = 'agent_error';
+        if (typeof send === 'function') send('error', { code, error: msg });
+        return { toolResultText: msg, isError: true };
       }
       const dispatchBuild = () => worker.execInWorker(session.id, {
         mode: 'build',
@@ -9846,6 +9896,14 @@ path: /another/changed/view
         await agentTurn.completeCodexTurn({
           pool, turnUuid: codexCtx.turnUuid,
           status: failed ? 'failed' : 'completed',
+          usage: {
+            model: result?.agentModel || codexCtx?.agentModel || null,
+            inputTokens: result?.inputTokens || 0,
+            cachedInputTokens: result?.cachedInputTokens || 0,
+            outputTokens: result?.outputTokens || 0,
+            reasoningOutputTokens: result?.reasoningOutputTokens || 0,
+            cost: result?.costUsd || null,
+          },
         });
       }
     } catch (e) {
@@ -10417,7 +10475,13 @@ path: /another/changed/view
     // user's own key by the worker, so they land in the display-only
     // byok bucket instead of the capped one (#119 — this site used to
     // debit BYOK runs against the platform limit by mistake).
-    if (result.costUsd) {
+    if (isCodexSession) {
+      // Codex/OpenRouter spend is billed to the user's OpenRouter account
+      // directly (review #3) — never the Anthropic llm_usage ledger.
+      if (result.costUsd) {
+        send('usage', { costCents: Math.round(result.costUsd * 100), model: `codex-openrouter/${selectedModel}`, byok: true });
+      }
+    } else if (result.costUsd) {
       const ccCostCents = Math.round(result.costUsd * 100);
       // #664: split across buckets — the worker proxy may have switched
       // this platform-dispatched turn onto the owner's key mid-run.
