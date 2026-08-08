@@ -638,7 +638,7 @@
       "name": "Pills from a forced retry render identically (#1001)",
       "path": "/#app/usernode-2d5619/dev/sessions/900806",
       "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
-      "expectText": "Build the avatar upload flow"
+      "expectText": "Build the spec"
     },
     {
       "name": "A wrap-up's pills supersede the dispatch preamble's (#1001)",

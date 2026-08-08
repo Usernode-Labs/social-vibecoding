@@ -5263,7 +5263,9 @@ function buildHeadlessFollowUpQuickReplies(src) {
   let replies;
   switch (src.headless_outcome) {
     case 'spec':
-      replies = ['Build it', 'Revise the spec', 'What will this change?'];
+      // #1046: mirrors RECOVERY_PILLS.spec_done — the build pill names the
+      // whole spec, not one component of it.
+      replies = ['Build the spec', 'Revise the spec', 'What will this change?'];
       break;
     case 'code':
       replies = ['Propose it to the group', 'Make a tweak', 'What did it change?'];
@@ -6279,7 +6281,9 @@ async function runRecoveredWrapUp({
         + 'next. Write it exactly as '
         + 'you would for any other finished build — do NOT mention platform restarts, recovery, '
         + 'interruptions, delays, or this note itself. Call suggest_replies with 2-3 next steps '
-        + 'that NAME what changed here, not generic platform actions.',
+        + 'that NAME what changed here, not generic platform actions — with the one exception in '
+        + 'POST-SPEC BUILD PILL: if this turn left a spec and nothing built, the first pill still '
+        + 'says "Build the spec" rather than naming one component of it.',
     });
 
     const currentSpec = await loadSessionSpec(pool, sessionId);
@@ -6815,7 +6819,9 @@ const DISPATCH_TOOL = {
     + 'Use ONLY when the user has asked for a concrete, actionable code change. Do not call when the user is '
     + 'just chatting, brainstorming, asking about past work, or giving vague feedback. At most one call per user message. '
     + 'NOTE: the current spec doc (CURRENT SPEC DOC in your context) is auto-injected into the agent\'s prompt — '
-    + 'do NOT re-summarize the spec in the prompt arg; describe only WHICH SLICE to build now.',
+    + 'do NOT re-summarize the spec in the prompt arg; describe only WHICH SLICE to build now. '
+    + 'When the user asked to build THE SPEC (rather than naming a narrower scope themselves), the slice is the '
+    + 'ENTIRE spec: say so in the prompt arg and do not silently pick one part of it.',
   input_schema: {
     type: 'object',
     properties: {
@@ -10353,7 +10359,7 @@ ${QUICK_REPLY_RULES_TEXT}
 
 What to reach for in each situation — as a KIND of next step, which you then phrase around what this turn was actually about:
 - After a build (dispatch_claude_code): looking at what shipped, putting it to the group, and the most likely follow-on change to the thing you just built.
-- After a spec (dispatch_scout): building it, the one revision this particular spec most plausibly needs, and the question a reader of THIS spec would still have.
+- After a spec (dispatch_scout): building the WHOLE spec (see POST-SPEC BUILD PILL above — that first pill is a literal, not a component name), the one revision this particular spec most plausibly needs, and the question a reader of THIS spec would still have.
 - A build is still running: checking on it, or stopping it.
 - A normal chat reply: the couple of likeliest next things to ask for, drawn from what you just said.
 This is NOT optional. If you end a non-clarifying reply without suggest_replies, the platform comes straight back and asks you for the pills alone — a wasted round trip that costs the user money and delays their pill row. Write them the first time.
@@ -10361,7 +10367,7 @@ suggest_replies is for NEXT-STEP shortcuts only — it is NOT for clarifying que
 
 AFTER A TOOL RETURNS:
 You'll get a short summary of what happened. Write a 1-3 sentence reply to the user in plain English, referencing the spec doc / staging URL / PR if present. For dispatch_scout: tell them the spec was drafted (or revised) and is available in the spec viewer. For dispatch_claude_code: summarize what was built. If anything failed, explain briefly and suggest next steps.
-- IMPORTANT — spec→build handoff: after dispatch_scout, the spec is only PLANNED, not built. End your reply with a one-line next step that makes this explicit, e.g. "When this looks right, just tell me to build it and I'll have the coding agent implement it." Nothing gets built until the user asks — don't let a finished spec read as a finished change. (After dispatch_claude_code the change IS built, so no handoff line is needed.)
+- IMPORTANT — spec→build handoff: after dispatch_scout, the spec is only PLANNED, not built. End your reply with a one-line next step that makes this explicit, e.g. "When this looks right, just tell me to build the spec and I'll have the coding agent implement all of it." Nothing gets built until the user asks — don't let a finished spec read as a finished change. (After dispatch_claude_code the change IS built, so no handoff line is needed.)
 
 STAGING BUILD FAILURES (recoverable):
 A dispatch_claude_code tool_result may report that the commit/push/PR succeeded but the staging preview failed to build. The two common causes — both surfaced verbatim in the tool_result with explicit "Fix:" instructions:

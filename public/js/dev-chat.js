@@ -4165,7 +4165,7 @@ const DevChat = {
   // stay identical.
   FALLBACK_QUICK_REPLIES: {
     code_done: ['Propose it to the group', 'Make a tweak', 'What did it change?'],
-    spec_done: ['Build it', 'Revise the spec', 'What will this change?'],
+    spec_done: ['Build the spec', 'Revise the spec', 'What will this change?'],
     chat_generic: ['Make a change', 'What issues are open right now?', "What's the current state?"],
   },
 
