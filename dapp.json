@@ -1699,6 +1699,11 @@
       "name": "Inside an app's detail page the header arrow links back to the list (#1036)",
       "path": "/#apps/usernode-2d5619",
       "expectSelector": "a#back-btn[href=\"#apps\"]"
+    },
+    {
+      "name": "A connector-imported proposal names the coding agent that built it (#967)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals",
+      "expectText": "Built with Claude Code"
     }
   ],
   "governance": {
