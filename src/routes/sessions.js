@@ -9405,6 +9405,9 @@ dispatching user's personal preferences: follow them wherever they don't
 conflict with the PLATFORM CONVENTIONS block above (which always wins)
 or the repo's own \`CLAUDE.md\` on app-specific matters.`
     : '';
+  const platformIssueHelperNote = isCodexSession
+    ? 'The `usernode-report-platform-issue` helper is NOT available on this backend; do not call it.'
+    : `A build-turn helper \`usernode-report-platform-issue\` is also available (run it via Bash): \`usernode-report-platform-issue "<short title>"\` with the issue detail on stdin. Use it for anything that needs a change OUTSIDE this app's repo — both platform-level breakage (the shared bridge, wallet / native mobile WebView, the staging/preview pipeline, the checks gate) AND missing platform capabilities the app needs (feature requests: a bridge API that doesn't exist, data the platform doesn't expose, a limit blocking a legitimate feature) — see "Platform-level problems & missing capabilities: escalate, don't file workarounds" in the conventions above. It does NOT file anything directly: it posts a draft report card into the dev chat that the user must tap to confirm (or dismiss) before an issue is filed on the platform repo. It de-dupes against open reports and earlier drafts. The one hard rule: never use it for something you can fix in this app itself.`;
   const claudePrompt = `USER REQUEST: "${userMessage}"
 
 CODING TASK (from the Mayor):
@@ -9431,7 +9434,7 @@ that run against this repo outside the harness.${personalFilesNote}
 
 A read-only helper \`usernode-issues\` is available (run it via Bash) — it prints the repo's open GitHub issues as JSON (\`{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }\`); long bodies are clipped with a "[truncated …]" marker, and \`usernode-issues <number>\` fetches that one issue with its FULL body plus BOTH of its discussion surfaces (\`{ issue, comments, commentsTruncated, usernodeThread?, usernodeThreadTruncated?, note? }\` — \`comments\` are the GitHub comments, \`usernodeThread\` is the issue's Discussion thread on the platform, where people often answer clarifying questions). Consult it if an open issue is relevant to what you're building; do not try to reach GitHub any other way. ${SCREENSHOT_FETCH_NOTE}
 
-${isCodexSession ? 'The \`usernode-report-platform-issue\` helper is NOT available on this backend; do not call it.' : 'A build-turn helper \`usernode-report-platform-issue\` is also available (run it via Bash): \`usernode-report-platform-issue "<short title>"\` with the issue detail on stdin. Use it for anything that needs a change OUTSIDE this app\'s repo — both platform-level breakage (the shared bridge, wallet / native mobile WebView, the staging/preview pipeline, the checks gate) AND missing platform capabilities the app needs (feature requests: a bridge API that doesn\'t exist, data the platform doesn\'t expose, a limit blocking a legitimate feature) — see "Platform-level problems & missing capabilities: escalate, don\'t file workarounds" in the conventions above. It does NOT file anything directly: it posts a draft report card into the dev chat that the user must tap to confirm (or dismiss) before an issue is filed on the platform repo. It de-dupes against open reports and earlier drafts. The one hard rule: never use it for something you can fix in this app itself.'}
+${platformIssueHelperNote}
 ${prodDebug && !isCodexSession ? `
 ${debugAccess.promptBlock()}
 ` : ''}
