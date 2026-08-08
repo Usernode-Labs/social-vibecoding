@@ -338,6 +338,146 @@ test('own session: visibility, chat-sharing, discussion and Archive', () => {
   assert.ok(shared.find((i) => /Archive/.test(i.label)).danger, 'Archive is a danger row');
 });
 
+// The ⋯ on a session card sits INSIDE the card's own tap-to-open target, so
+// the card-open handler has to skip it. It does that by bailing on any
+// `a, button, input, form` ancestor (#dev-body's delegated click), which only
+// holds while the trigger is a real <button> — an <a> or a <div role=button>
+// would fall straight through to "open the session".
+test('session cards: the ⋯ trigger is a <button>, so the card-open handler skips it', () => {
+  const AppView = makeAppView();
+  AppView._sharedById = {};
+  const own = AppView._renderMySessionCard({ id: 51, session_title: 'Mine', status: 'active' });
+  // The trigger is inside the card element, not a sibling of it.
+  assert.match(own, /data-session-chip="51"/);
+  assert.match(own, /<button[^>]*class="[^"]*dev-card-menu-btn[^"]*"[^>]*data-card-menu="session:51"/,
+    'a <button>, which the card-open handler’s a/button/input/form guard skips');
+  // And the handler it has to survive really does carry that guard.
+  assert.match(SRC, /if \(e\.target\.closest\('a, button, input, form'\)\) return;/);
+});
+
+test('someone else’s shared session has nothing to demote, so no ⋯ at all', () => {
+  const AppView = makeAppView();
+  const html = AppView._renderSharedSessionCard({
+    id: 990001, session_title: 'Theirs', username: 'other', status: 'active',
+  });
+  assert.match(html, /data-shared-session-row="990001"/);
+  assert.equal(menuKeyOf(html), null, 'visibility/archive are owner-only, so the menu is empty');
+});
+
+// ── Surviving a repaint ─────────────────────────────────────────────────
+//
+// The regression this pins: the board repaints on its own schedule (session
+// poll, headless poll, every websocket push), every repaint replaces
+// #dev-body's innerHTML, and the repaint paths used to answer that by
+// CLOSING any open ⋯ menu. On the In-progress column — where session rows
+// churn constantly — the menu was torn off the screen within the same tap
+// that opened it, which reads as "the ⋯ doesn't work, it just opens the
+// session". The menu is body-mounted and position:fixed, so a repaint never
+// touches it; only its trigger is replaced, and re-pointing at the successor
+// is all that was ever needed.
+
+// A DOM stub with just enough surface for _reanchorCardMenu: triggers that
+// carry a dataset, and a menu element that can be measured and positioned.
+function fakeTrigger(key) {
+  return {
+    dataset: { cardMenu: key },
+    attrs: {},
+    setAttribute(k, v) { this.attrs[k] = v; },
+    getBoundingClientRect: () => ({ top: 100, bottom: 120, left: 380, right: 400 }),
+  };
+}
+function fakeMenu() {
+  return { innerHTML: '', style: {}, parentNode: { removeChild() {} }, offsetWidth: 200, offsetHeight: 120 };
+}
+function withDom(AppView, triggers) {
+  const sb = AppView.__sandbox;
+  sb.window.innerWidth = 1280;
+  sb.window.innerHeight = 800;
+  sb.document.querySelectorAll = (sel) => (sel === '[data-card-menu]' ? triggers : []);
+}
+
+test('an open menu survives a repaint and re-anchors to the new trigger', () => {
+  const AppView = makeAppView();
+  const oldTrigger = fakeTrigger('session:51');
+  const newTrigger = fakeTrigger('session:51');
+  const menu = fakeMenu();
+  AppView._cardMenus['session:51'] = [{ label: 'Hide', icon: 'hide', act: () => {} }];
+  AppView._openCardMenu = { key: 'session:51', el: menu, trigger: oldTrigger };
+  withDom(AppView, [fakeTrigger('proposal:7'), newTrigger]);
+
+  AppView._reanchorCardMenu();
+
+  assert.ok(AppView._openCardMenu, 'still open — a background refresh is not a dismissal');
+  assert.equal(AppView._openCardMenu.trigger, newTrigger, 're-pointed at the repainted card');
+  assert.equal(newTrigger.attrs['aria-expanded'], 'true');
+  assert.match(menu.style.top, /px$/, 're-positioned against the new trigger');
+});
+
+test('re-anchoring refreshes the rows from the newly-registered descriptors', () => {
+  const AppView = makeAppView();
+  const trigger = fakeTrigger('session:51');
+  const menu = fakeMenu();
+  AppView._cardMenus['session:51'] = [{ label: 'Make visible', icon: 'visible', act: () => {} }];
+  AppView._openCardMenu = { key: 'session:51', el: menu, trigger };
+  withDom(AppView, [trigger]);
+
+  // The repaint re-registers under the same key — here the session flipped
+  // to visible, so the row's wording and its whole action set changed.
+  AppView._cardMenus['session:51'] = [
+    { label: 'Hide', icon: 'hide', act: () => {} },
+    { label: 'Archive', icon: 'archive', danger: true, act: () => {} },
+  ];
+  AppView._reanchorCardMenu();
+
+  assert.match(menu.innerHTML, /Hide/);
+  assert.match(menu.innerHTML, /Archive/);
+  assert.doesNotMatch(menu.innerHTML, /Make visible/, 'no stale row left behind');
+});
+
+test('re-anchoring closes the menu when the card itself is gone', () => {
+  const AppView = makeAppView();
+  AppView._cardMenus['session:51'] = [{ label: 'Hide', act: () => {} }];
+  AppView._openCardMenu = { key: 'session:51', el: fakeMenu(), trigger: fakeTrigger('session:51') };
+  // Archived / filtered out / merged away: the repaint rendered no such card.
+  withDom(AppView, [fakeTrigger('proposal:7')]);
+
+  AppView._reanchorCardMenu();
+  assert.equal(AppView._openCardMenu, null, 'nothing left to act on');
+});
+
+test('_reanchorCardMenu is a no-op with no menu open', () => {
+  const AppView = makeAppView();
+  AppView._openCardMenu = null;
+  withDom(AppView, []);
+  AppView._reanchorCardMenu();          // must not throw
+  assert.equal(AppView._openCardMenu, null);
+});
+
+// Source guard: the three repaint entry points must END in a re-anchor and
+// must NOT re-acquire a blanket dismissal. Every one of them replaces the
+// innerHTML an open menu's trigger lives in, so a `_closeCardMenu()` added
+// back to any of them silently restores the original bug.
+test('every repaint path re-anchors instead of dismissing', () => {
+  for (const fn of ['_repaintDevBody', '_repaintKanbanBoard', '_repaintPmView']) {
+    const start = SRC.indexOf(`\n  ${fn}() {`);
+    assert.ok(start > 0, `expected ${fn}`);
+    const body = SRC.slice(start, SRC.indexOf('\n  },', start));
+    assert.match(body, /_reanchorCardMenu\(\)/, `${fn} must re-anchor an open menu`);
+    assert.doesNotMatch(body, /AppView\._closeCardMenu\(\)/,
+      `${fn} must not dismiss the ⋯ menu — a background repaint is not a user action`);
+  }
+});
+
+// The other half of the same bug: the headless poll repainted the whole board
+// every 8 seconds whether or not anything had moved, so even one surviving
+// menu would have been re-filled on a timer for no reason.
+test('the headless poll only repaints when a run actually moved', () => {
+  const at = SRC.indexOf('_syncHeadlessPolling() {');
+  const poll = SRC.slice(at, at + 3000);
+  assert.match(poll, /if \(changed\) AppView\._repaintCards\(\);/,
+    'an unconditional repaint here churns the board on a timer');
+});
+
 // ── Presentation: dropdown vs action sheet ──────────────────────────────
 
 test('touch presents the SAME descriptors as an action sheet', () => {

@@ -478,16 +478,18 @@ const AppView = {
       if (shot === 'card-menu') {
         let tries = 0;
         const tick = setInterval(() => {
-          // Stop on route change, and cap the window so a link left open in
-          // a real tab isn't re-arming a menu forever. It has to outlast the
-          // whole settle — the board's fetches, the websocket's first push
-          // and a capture pipeline's own wait — so the budget is ~40s, not
-          // the "+" menu's single 300ms shot.
-          if (!String(location.hash || '').includes(`app/${slug}`) || (tries += 1) > 130) {
+          // Retries only until the board has cards to tap — an open menu now
+          // SURVIVES the repaints those fetches trigger (_reanchorCardMenu),
+          // so once it is up this is done. Stop on route change too, and cap
+          // the window so a link left open in a real tab can't keep polling.
+          if (AppView._openCardMenu || !String(location.hash || '').includes(`app/${slug}`)
+              || (tries += 1) > 40) {
             clearInterval(tick);
             return;
           }
-          if (AppView._openCardMenu) return;   // already up — leave it alone
+          // Scoped to the ACTIVE column: below 640px the other three are
+          // display:none, and a menu anchored to a hidden card lands in the
+          // corner beside nothing.
           const scope = document.querySelector('.dev-kanban-col-active') || document.getElementById('dev-body');
           scope?.querySelector('[data-card-menu]')?.click();
         }, 300);
@@ -2399,30 +2401,18 @@ const AppView = {
     const menu = document.createElement('div');
     menu.className = 'dev-card-menu';
     menu.setAttribute('role', 'menu');
-    menu.innerHTML = items.map((it, i) => {
-      const cls = 'dev-card-menu-item' + (it.danger ? ' dev-card-menu-item-danger' : '');
-      const t = it.title ? ` title="${escapeAttr(it.title)}"` : '';
-      const dis = (it.disabled || !it.act) ? ' disabled' : '';
-      // The glyph is aria-hidden and the label keeps its own element, so the
-      // button's accessible name stays exactly the label text.
-      const icon = `<span class="dev-card-menu-icon" aria-hidden="true">${escapeHtml(AppView._menuIconGlyph(it))}</span>`;
-      return `<button type="button" role="menuitem" class="${cls}" data-menu-idx="${i}"${t}${dis}>`
-        + `${icon}<span class="dev-card-menu-label">${escapeHtml(it.label)}</span></button>`;
-    }).join('');
+    AppView._fillCardMenu(menu, items);
     document.body.appendChild(menu);
-    // Flip / clamp into the viewport, same arithmetic as _positionAttrPopover.
-    const r = trigger.getBoundingClientRect();
-    const mw = menu.offsetWidth;
-    const mh = menu.offsetHeight;
-    let left = Math.min(Math.max(8, r.right - mw), window.innerWidth - mw - 8);
-    let top = r.bottom + 6;
-    if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 6);
-    menu.style.left = `${Math.round(left)}px`;
-    menu.style.top = `${Math.round(top)}px`;
+    AppView._positionCardMenu(menu, trigger);
     menu.addEventListener('click', (ev) => {
       const btn = ev.target.closest('[data-menu-idx]');
       if (!btn || btn.disabled) return;
-      const it = items[parseInt(btn.dataset.menuIdx, 10)];
+      // Read the CURRENT descriptor list rather than the one captured when
+      // the menu opened: a repaint re-registers under the same key, and the
+      // menu now survives repaints (see _reanchorCardMenu), so a captured
+      // closure could act on a row the board has already replaced.
+      const live = AppView._cardMenus[key] || items;
+      const it = live[parseInt(btn.dataset.menuIdx, 10)];
       AppView._closeCardMenu();
       if (it && it.act) {
         try { it.act(); } catch { /* handler owns its errors */ }
@@ -2432,6 +2422,74 @@ const AppView = {
     AppView._openCardMenu = { key, el: menu, trigger };
     const first = menu.querySelector('[data-menu-idx]:not([disabled])');
     if (first && first.focus) first.focus();
+  },
+
+  // Render `items` into an existing menu element. Split out of
+  // _toggleCardMenu so a repaint can refresh the rows in place without
+  // tearing the menu down (the click handler is bound on the menu element,
+  // so replacing its innerHTML keeps the wiring).
+  _fillCardMenu(menu, items) {
+    menu.innerHTML = (items || []).map((it, i) => {
+      const cls = 'dev-card-menu-item' + (it.danger ? ' dev-card-menu-item-danger' : '');
+      const t = it.title ? ` title="${escapeAttr(it.title)}"` : '';
+      const dis = (it.disabled || !it.act) ? ' disabled' : '';
+      // The glyph is aria-hidden and the label keeps its own element, so the
+      // button's accessible name stays exactly the label text.
+      const icon = `<span class="dev-card-menu-icon" aria-hidden="true">${escapeHtml(AppView._menuIconGlyph(it))}</span>`;
+      return `<button type="button" role="menuitem" class="${cls}" data-menu-idx="${i}"${t}${dis}>`
+        + `${icon}<span class="dev-card-menu-label">${escapeHtml(it.label)}</span></button>`;
+    }).join('');
+  },
+
+  // Flip / clamp into the viewport, same arithmetic as _positionAttrPopover.
+  _positionCardMenu(menu, trigger) {
+    const r = trigger.getBoundingClientRect();
+    const mw = menu.offsetWidth;
+    const mh = menu.offsetHeight;
+    const left = Math.min(Math.max(8, r.right - mw), window.innerWidth - mw - 8);
+    let top = r.bottom + 6;
+    if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 6);
+    menu.style.left = `${Math.round(left)}px`;
+    menu.style.top = `${Math.round(top)}px`;
+  },
+
+  // Re-attach an open ⋯ menu to the freshly-rendered card after a repaint.
+  //
+  // This is what makes the menu usable at all. Every repaint replaces
+  // #dev-body's innerHTML, and the board repaints on its own schedule —
+  // the session-cache poll, the headless poll, and every websocket push.
+  // The menu itself is body-mounted and position:fixed, so the swap never
+  // touches it; only the trigger element it was anchored to is destroyed.
+  // Closing on that basis meant a background refresh nobody asked for tore
+  // the menu off the screen, which on the In-progress column (where session
+  // rows churn constantly) read as "the ⋯ doesn't open at all" — the menu
+  // appeared and vanished inside the same tap.
+  //
+  // So: find the successor trigger BY KEY (keys are stable per card across
+  // repaints, which is what the registry is for). Found → re-point, refresh
+  // the rows from the newly-registered descriptors, re-position. Gone —
+  // the card was filtered out, archived, merged away — → close, because
+  // there is genuinely nothing left to act on.
+  //
+  // Deliberately NOT re-focused: a background repaint must not yank focus
+  // out from under someone reading the menu.
+  _reanchorCardMenu() {
+    const open = AppView._openCardMenu;
+    if (!open) return;
+    if (!open.el || !open.el.parentNode) { AppView._closeCardMenu(); return; }
+    // Matched by iterating rather than an attribute selector: menu keys carry
+    // a ':' ("session:990102") and would need CSS.escape, which isn't worth
+    // depending on for a list this short.
+    let trigger = null;
+    const all = document.querySelectorAll('[data-card-menu]');
+    for (let i = 0; i < all.length; i += 1) {
+      if (all[i].dataset.cardMenu === open.key) { trigger = all[i]; break; }
+    }
+    if (!trigger) { AppView._closeCardMenu(); return; }
+    open.trigger = trigger;
+    trigger.setAttribute('aria-expanded', 'true');
+    AppView._fillCardMenu(open.el, AppView._cardMenus[open.key] || []);
+    AppView._positionCardMenu(open.el, trigger);
   },
 
   // The card's right-edge rail: the ⋯ trigger pinned to the TOP-RIGHT
@@ -3456,10 +3514,11 @@ const AppView = {
   _repaintDevBody() {
     const body = document.getElementById('dev-body');
     if (!body) return;
-    // The ⋯ menu is body-mounted and position:fixed, so a repaint that
-    // replaces the card it was anchored to would leave it floating beside
-    // nothing. A menu is a momentary choice: dismiss rather than re-anchor.
-    AppView._closeCardMenu();
+    // The ⋯ menu is body-mounted and position:fixed, so this innerHTML swap
+    // never touches it — only the trigger it was anchored to. Each branch
+    // below therefore ends in _reanchorCardMenu() rather than dismissing an
+    // open menu outright; see that function for why that distinction is the
+    // difference between the ⋯ working and appearing not to.
     if (AppView._getViewMode() === 'kanban') {
       // #482: two-node shell — the filter bar is built + wired once per
       // mount and kept stable across repaints (so search-input focus and
@@ -3509,6 +3568,7 @@ const AppView = {
       if (window.Kudos) Kudos.attach(mergedEl);
       AppView._applyExploreChatAvailability(mergedEl);
     }
+    AppView._reanchorCardMenu();
   },
 
   // Locked-app banner at the very top of the card list (above the
@@ -4168,7 +4228,6 @@ const AppView = {
   // leaving the filter bar node untouched. Every filter-control event and
   // WS-driven kanban refresh routes through here.
   _repaintKanbanBoard() {
-    AppView._closeCardMenu();
     // #613: never rebuild the board out from under an in-progress drag — a
     // mid-drag innerHTML swap (e.g. a WS board_order_update from another
     // user) would drop the pointer capture and strand the card. The commit
@@ -4190,6 +4249,7 @@ const AppView = {
     AppView._updateKanbanFilterBarUI();
     AppView._initKanbanDrag(board);
     AppView._initKanbanTabs(board);
+    AppView._reanchorCardMenu();
   },
 
   // ── Drag-to-reorder within a column (#613) ───────────────────────────
@@ -4947,7 +5007,6 @@ const AppView = {
   // _repaintKanbanBoard: fill innerHTML, then re-attach kudos / ask-AI
   // availability and keep the headless-state poller in sync.
   _repaintPmView() {
-    AppView._closeCardMenu();
     // Never rebuild the PM view out from under an in-progress drag — a
     // mid-drag innerHTML swap (e.g. a WS board_order_update from another user)
     // would drop the pointer capture and strand the card. The commit that
@@ -4976,6 +5035,7 @@ const AppView = {
     AppView._applyExploreChatAvailability(el);
     AppView._updateKanbanFilterBarUI();
     AppView._initPmDrag(el);
+    AppView._reanchorCardMenu();
   },
 
   // ── Session cards in the In progress area ──────────────────────────
@@ -9368,10 +9428,20 @@ const AppView = {
         // Merge just the headless field — bounty state may have optimistic
         // local updates we don't want a poll to clobber.
         const byNumber = new Map(data.issues.map((i) => [i.number, i.headless || null]));
+        let changed = false;
         for (const issue of AppView._ghIssues || []) {
-          if (byNumber.has(issue.number)) issue.headless = byNumber.get(issue.number);
+          if (!byNumber.has(issue.number)) continue;
+          const next = byNumber.get(issue.number);
+          // Only repaint when a headless run ACTUALLY moved. This used to
+          // repaint unconditionally every 8s, which meant the whole board's
+          // innerHTML was replaced on a timer even on a repo where nothing
+          // headless is running — churning hover state, and (before the ⋯
+          // menu learned to survive a repaint) tearing an open menu off the
+          // screen seconds after it opened.
+          if (JSON.stringify(issue.headless || null) !== JSON.stringify(next)) changed = true;
+          issue.headless = next;
         }
-        AppView._repaintCards();
+        if (changed) AppView._repaintCards();
       } catch {}
     }, 8000);
   },

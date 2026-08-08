@@ -434,6 +434,11 @@
       "expectSelector": ".dev-card-menu .dev-card-menu-item .dev-card-menu-icon[aria-hidden=\"true\"] + .dev-card-menu-label"
     },
     {
+      "name": "Dev board: a session card’s ⋯ opens (and survives the board’s own repaints)",
+      "path": "/?demo=1&view=kanban&col=inprogress&shot=card-menu#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban-col-inprogress [data-session-chip] [data-card-menu][aria-expanded=\"true\"]"
+    },
+    {
       "name": "Dev board: attribute chips keep the small label inside the 20px box",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban button.attr-chip.dev-badge[data-attr-field=\"priority\"]"
