@@ -5675,8 +5675,8 @@ async function seedStagingCloneQuestionSuggestions(pool, config) {
 
 // #330: a cloned-from-auto session whose auto run ended in a SPEC outcome.
 // The appended follow-up message (the last row) carries metadata.quickReplies
-// so the above-box pill bar renders next-step pills ("Build it" / "Revise the
-// spec" / "What will this change?") — the bug this fixes was that bar being
+// so the above-box pill bar renders next-step pills (a whole-spec "Build the
+// spec" plus this run's own specifics) — the bug this fixes was that bar being
 // empty. Sibling of seedStagingCloneQuestionSuggestions (that one covers the
 // chips/question path; this one the pills/spec path). chat_sessions /
 // chat_session_messages are staging:private (schema-only in staging), hence
@@ -5746,8 +5746,12 @@ async function seedStagingCloneSpecPills(pool, config) {
   // now asks the Mayor to author them from the auto run's own output, with the
   // fixed set only as the fallback — so the fixture carries a set naming the
   // issue and the spec, matching what the live path now produces.
+  //
+  // #1046: the build pill names the WHOLE spec. It used to read "Build the
+  // nicer header" — a component out of a plan that covered more than that,
+  // which reads as "build only that bit". The other two stay specific.
   const quickReplies = [
-    'Build the nicer header',
+    'Build the spec',
     'What does the plan for #42 change?',
     'Revise the spec first',
   ];
@@ -5855,7 +5859,7 @@ async function seedStagingQuickReplyFallback(pool, config) {
       title: '[staging fixture] Staging demo: pills fall back after a spec',
       prNumber: null,
       specMd,
-      // Expect: 'Build it' / 'Revise the spec' / 'What will this change?'
+      // Expect: 'Build the spec' / 'Revise the spec' / 'What will this change?'
       rows: [
         ['user', 'Plan out a dark mode toggle before we build anything.', {}, 12],
         ['assistant', 'The scout drafted the spec — it\'s in the spec viewer.', {}, 10],
@@ -5934,7 +5938,10 @@ async function seedStagingQuickReplyFallback(pool, config) {
         ['user', 'Plan how avatar uploads should work before building anything.', {}, 14],
         ['assistant', 'The scout drafted a spec for avatar uploads — it adds a user_avatars '
           + 'table and a crop step, and it\'s in the spec viewer now.', {
-          quickReplies: ['Build the avatar upload flow', 'Drop the crop step from the plan', 'What does this add to the database?'],
+          // #1046: post-spec, so the build pill is the whole-spec literal
+          // and the other two carry this spec's specifics. Its dapp.json
+          // check asserts the 'Build the spec' pill renders.
+          quickReplies: ['Build the spec', 'Drop the crop step from the plan', 'What does this add to the database?'],
           quickRepliesSource: 'enforced',
         }, 12],
       ],
@@ -7220,7 +7227,7 @@ async function seedStagingHeadlessFixtures(pool, config) {
       spec: {
         text: '_Spec drafted — review it in the spec viewer after starting a session from this auto session._',
         kind: 'spec_done',
-        pills: ['Build it', 'Revise the spec', 'What will this change?'],
+        pills: ['Build the spec', 'Revise the spec', 'What will this change?'],
       },
       code: {
         text: '_Change committed and pushed — start a session from this auto session to open the PR._',
