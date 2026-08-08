@@ -583,6 +583,70 @@ test('guidance names the actual web UI of the client that called it', async () =
   assert.match(other.guidance[0], /GitHub CLI/);
 });
 
+test('an explicitly chosen agent beats sniffing the calling client', async () => {
+  // #1049: the in-platform flow picker KNOWS which agent the user chose —
+  // the browser is the calling client, so there is no client name to sniff
+  // and every prepared task would otherwise come back as 'external', with
+  // guidance that names no product and a badge that names no agent.
+  for (const agent of ['claude-code', 'codex']) {
+    const picked = await prepareWith({ agent, clientName: 'Usernode' }, FORK_MISSING);
+    assert.equal(picked.ok, true);
+    assert.equal(picked.agent, agent, 'the resolved agent comes back to the caller');
+    assert.equal(picked.guidance.length, 5, 'the hosted-web-UI guidance, not the generic four');
+  }
+  assert.match(
+    (await prepareWith({ agent: 'claude-code', clientName: 'Usernode' }, FORK_MISSING)).guidance[1],
+    /https:\/\/claude\.ai\/code/,
+  );
+  assert.match(
+    (await prepareWith({ agent: 'codex', clientName: 'Usernode' }, FORK_MISSING)).guidance[1],
+    /https:\/\/chatgpt\.com\/codex/,
+  );
+
+  // Explicit wins even when the client name says otherwise: an MCP client
+  // that offers its user a choice must be able to honour it.
+  const override = await prepareWith(
+    { agent: 'codex', clientName: 'Claude — claude.ai' }, FORK_MISSING
+  );
+  assert.equal(override.agent, 'codex');
+  assert.match(override.guidance[1], /chatgpt\.com\/codex/);
+
+  // And with nothing explicit, the inference is byte-for-byte what it was.
+  const sniffed = await prepareWith({ clientName: 'Claude — claude.ai' }, FORK_MISSING);
+  assert.equal(sniffed.agent, 'claude-code');
+  const garbage = await prepareWith({ agent: 'not-an-agent', clientName: 'x' }, FORK_MISSING);
+  assert.equal(garbage.agent, 'external', 'an unknown value falls back, it does not leak through');
+});
+
+test('the browser flow round-trips its agent through client_id', async () => {
+  // There is no `agent` column on external_agent_tasks, and #1049 did not
+  // add one: src/routes/dev-flow.js records the picked agent in client_id as
+  // 'usernode-web:<agent>', and normalizeAgent recovers it from that on a
+  // later read. This is what makes the walkthrough resumable — reload the
+  // page and the card still says "Building with Codex".
+  const ROUTE_SRC = fs.readFileSync(
+    path.join(__dirname, '../src/routes/dev-flow.js'), 'utf8'
+  );
+  assert.match(ROUTE_SRC, /usernode-web:/, 'the route stamps the agent into client_id');
+  assert.equal(svc.normalizeAgent(null, 'usernode-web:claude-code'), 'claude-code');
+  assert.equal(svc.normalizeAgent(null, 'usernode-web:codex'), 'codex');
+
+  // Proof of the whole loop: a task row whose only record of the agent is
+  // client_id renders with the right product name.
+  const rendered = svc.renderPreparedTask({
+    task: {
+      id: 77, fork_owner: 'someuser', fork_repo: 'recipe-box',
+      branch_name: 'usernode/x', base_sha: BASE_SHA, issue_number: null, brief: 'x',
+    },
+    app: APP, owner: 'usernode-bot', repo: 'recipe-box',
+    origin: 'https://usernode.example',
+    clientId: 'usernode-web:codex', clientName: null,
+    forkStatus: 'ready', reused: true,
+  });
+  assert.equal(rendered.agent, 'codex');
+  assert.match(rendered.guidance.join('\n'), /chatgpt\.com\/codex/);
+});
+
 test('the work order is addressed to the agent and to nobody else', async () => {
   const result = await prepareWith({ clientName: 'Claude — claude.ai' });
   for (const human of ['tell the assistant', 'paste', 'verbatim', 'come back']) {

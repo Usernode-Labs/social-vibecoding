@@ -412,7 +412,7 @@ test('_syncChrome drives the header through App, not the DOM', () => {
 test('the menu re-resolves when gate state lands after first paint', () => {
   assert.match(settingsJs, /_renderNavIfOpen\(\)\s*\{/, 'the re-resolve helper exists');
   const refresh = settingsJs.slice(settingsJs.indexOf('    async refresh() {'));
-  assert.match(refresh.slice(0, 1400), /_renderNavIfOpen\(\)/,
+  assert.match(refresh.slice(0, 1800), /_renderNavIfOpen\(\)/,
     'walletLinkEnabled arrives with /api/auth/me — re-render the menu');
   const usernode = settingsJs.slice(settingsJs.indexOf('    async _renderUsernodeSection() {'));
   assert.match(usernode.slice(0, 1200), /_renderNavIfOpen\(\)/,
@@ -442,7 +442,9 @@ test('the credits banner deep-links all three ways to keep building', () => {
   // in-chat card and the Generate-proposal modal render — so the wiring
   // assertion moved with it.
   const fn = devChatJs.slice(devChatJs.indexOf('  _wireCreditsBanner() {'));
-  assert.match(fn.slice(0, 800), /CreditOptions\.wire\(banner\)/,
+  // #1049 added a second argument: the two hand-off routes are handled in
+  // place (they start the walkthrough in this chat) rather than navigated.
+  assert.match(fn.slice(0, 800), /CreditOptions\.wire\(banner, \{ onFlow:/,
     'the shared module wires the banner');
   assert.doesNotMatch(fn.slice(0, 800), /Settings\.open\(/,
     'no direct module call any more');
