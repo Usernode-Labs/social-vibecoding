@@ -762,6 +762,12 @@ const DevChat = {
     if (!target) return '';
     const flow = DevChat._devFlow;
     if (target.mode === 'wizard') {
+      // The walkthrough paints its "checking where you are" state while the
+      // first read is in flight — but it has to be KICKED here, not only by
+      // the picker: a saved 'claude-code' / 'codex' preference and a
+      // ?flow= deep link both arrive in wizard mode without ever passing
+      // through _devFlowPick, and would otherwise check forever.
+      if (!flow.status) DevChat._devFlowEnsureStatus();
       return DevFlowSelect.wizardHtml({
         agent: target.agent,
         status: flow.status,
@@ -806,25 +812,30 @@ const DevChat = {
     const session = DevChat.currentSession;
     const slug = App.currentApp;
     if (!session || !slug || !window.DevFlowSelect) return;
-    const flow = DevChat._devFlow;
-    if (flow.loading) return;
-    if (flow.status && !force) return;
-    flow.loading = true;
+    const started = DevChat._devFlow;
+    if (started.loading) return;
+    if (started.status && !force) return;
+    started.loading = true;
+    let status = null;
     try {
       const res = await fetch(
         `/api/apps/${encodeURIComponent(slug)}/dev-flow/status${DevChat._demoQS()}`,
         { credentials: 'same-origin' }
       );
-      if (!res.ok) {
-        // Not an error the user needs: the card simply doesn't render.
-        flow.status = { available: false, reason: 'unavailable' };
-        return;
-      }
-      flow.status = await res.json();
+      // A failed read is not an error the user needs — the card simply
+      // doesn't render (or the walkthrough keeps its last known steps).
+      status = res.ok ? await res.json() : { available: false, reason: 'unavailable' };
     } catch {
-      flow.status = { available: false, reason: 'unavailable' };
+      status = { available: false, reason: 'unavailable' };
     } finally {
-      flow.loading = false;
+      // _resetDevFlow REPLACES the state object (opening a session does it),
+      // so the answer has to land on whatever object is live now rather than
+      // on the one this call started from — writing to a discarded object
+      // leaves the walkthrough saying "checking where you are" forever.
+      const live = DevChat._devFlow;
+      started.loading = false;
+      live.loading = false;
+      if (Number(live.sessionId) === Number(session.id)) live.status = status;
       // Only repaint if we're still looking at the session we asked about.
       if (DevChat.currentSession && Number(DevChat.currentSession.id) === Number(session.id)) {
         DevChat.renderMessages();
