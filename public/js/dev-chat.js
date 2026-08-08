@@ -4380,14 +4380,16 @@ const DevChat = {
           ${isUser ? '' : reasoningDetail}
           ${qaChips}
         </div>`;
-    }).join('');
+      // #1049: the flow picker / walkthrough sits at the END of the
+      // transcript, so on an empty session it is the only thing in the pane
+      // and on a resumed walkthrough it stays next to the composer the user
+      // is typing their brief into. Part of the SAME assignment rather than
+      // an insertAdjacentHTML afterwards — one write to innerHTML is one
+      // repaint, and it keeps the card inside the string the rest of this
+      // method's tests render through. Returns '' for every session that is
+      // already under way.
+    }).join('') + DevChat._devFlowHtml();
 
-    // #1049: the flow picker / walkthrough sits at the END of the
-    // transcript, so on an empty session it is the only thing in the pane
-    // and on a resumed walkthrough it stays next to the composer the user
-    // is typing their brief into. Returns '' for every session that is
-    // already under way.
-    container.insertAdjacentHTML('beforeend', DevChat._devFlowHtml());
     DevChat._wireDevFlowCard();
     DevChat._bindDevFlowVisibility();
 
