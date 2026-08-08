@@ -109,7 +109,10 @@ test('the header CTA is an anchor to #waitlist, not a scroll-to-form', () => {
 
 test('the stage-1 survey lives on its own #waitlist screen', () => {
   const html = read('public/index.html');
-  const screen = html.match(/id="auth-waitlist-screen"[\s\S]*?\n  <\/main>/);
+  // Not anchored on indentation: public/index.html is generated from
+  // frontend/src/Shell.tsx now and ships without the hand-written line
+  // breaks. <main> cannot nest, so the first close tag is this screen's.
+  const screen = html.match(/id="auth-waitlist-screen"[\s\S]*?<\/main>/);
   assert.ok(screen, 'auth-waitlist-screen exists');
   const classes = html.match(/id="auth-waitlist-screen"[^>]*class="([^"]*)"/);
   // Same overlay shape as the other anonymous screens (#more, #login).

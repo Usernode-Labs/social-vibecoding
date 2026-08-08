@@ -1970,6 +1970,12 @@ const App = {
         drawerPanel.addEventListener('click', (e) => {
           const link = e.target.closest ? e.target.closest('a[href]') : null;
           if (!link || !drawerPanel.contains(link)) return;
+          // #1036: a cmd/ctrl/shift/middle click opens the destination
+          // in ANOTHER tab — nothing navigates in this document, so
+          // there is no screen animation to suppress (arming the flag
+          // would leak onto the NEXT real navigation until its TTL) and
+          // no reason to tear the drawer down under the user.
+          if (window.NavLink && NavLink.isNativeClick(e)) return;
           // getAttribute, not .href: the property resolves to an absolute
           // URL, which would make every in-page hash link look external.
           const href = link.getAttribute('href') || '';
@@ -2153,7 +2159,14 @@ const App = {
     // and pops to that screen's section menu (handleBack returns true when
     // it consumed the press). Gating on App._inAdmin / App._inSettings
     // means there is no override state that can go stale.
-    document.getElementById('back-btn').addEventListener('click', () => {
+    //
+    // #1036: the button is an <a href> now, so a cmd/ctrl/shift/middle
+    // click is the BROWSER's to handle (new tab / new window) — bail out
+    // before preventDefault and let it. The guard is the first statement
+    // in the callback; the screen-hook chain below it is unchanged.
+    document.getElementById('back-btn').addEventListener('click', (e) => {
+      if (window.NavLink && NavLink.isNativeClick(e)) return;
+      e.preventDefault();
       if (App._inAdmin && window.AdminConsole?.handleBack?.()) return;
       if (App._inSettings && window.Settings?.handleBack?.()) return;
       // Browse's detail level (#apps/<slug>) claims the button as "up to
@@ -2782,11 +2795,24 @@ const App = {
     // session / chat / topic sub-view to the card list, which is the
     // conventional "tap the active tab to go to its root" behaviour the
     // bottom bar already had.
+    //
+    // #1036: these segments stay <button role="radio"> — an anchor
+    // cannot carry that ARIA role inside a role="radiogroup" — so the
+    // new-tab gesture is intercepted by hand (NavLink mechanism B)
+    // rather than delegated to an href. The "re-tapping the active App
+    // segment is a no-op" guard above applies to the PLAIN click only:
+    // a cmd-click on the active segment isn't re-mounting this tab's
+    // iframe, so it should still open the app view in a new one.
     document.querySelectorAll('.app-mode-seg').forEach((btn) => {
-      btn.addEventListener('click', () => {
+      const hrefFor = () => (App.currentApp
+        ? `#app/${App.currentApp}/${btn.dataset.tab === 'dev' ? 'dev' : 'app'}`
+        : null);
+      const activate = () => {
         if (btn.dataset.tab === 'app' && App.currentTab === 'app') return;
         App.switchTab(btn.dataset.tab);
-      });
+      };
+      if (window.NavLink) NavLink.wireModified(btn, hrefFor, activate);
+      else btn.addEventListener('click', activate);
     });
 
     // popstate fires on browser/device back when the new history
@@ -4252,14 +4278,27 @@ const App = {
   // section view, which is what #back-icon-arrow in index.html was
   // shipped for. Always reset to 'home' when leaving the screen that
   // asked for the arrow (see _exitAdminConsole).
-  setBackIcon(mode) {
+  //
+  // #1036: the control is a real <a href>, so this also owns its TARGET.
+  // `href` is where the button would go if pressed — omit it and it
+  // defaults to home, which is correct for every state except the three
+  // screens that claim the chevron as "up one level" (Browse detail,
+  // and the mobile section views of Settings / the Admin console). Those
+  // pass their own up-level hash. Because App._showOnlyScreen calls this
+  // on EVERY screen change, there is no state in which the href can go
+  // stale — same reasoning that makes the icon itself reliable.
+  setBackIcon(mode, href) {
     const arrow = mode === 'arrow';
     const home = document.getElementById('back-icon-home');
     const chevron = document.getElementById('back-icon-arrow');
     if (home) home.classList.toggle('hidden', arrow);
     if (chevron) chevron.classList.toggle('hidden', !arrow);
     const btn = document.getElementById('back-btn');
-    if (btn) btn.setAttribute('aria-label', arrow ? 'Back' : 'Home');
+    if (btn) {
+      btn.setAttribute('aria-label', arrow ? 'Back' : 'Home');
+      const target = href || (window.NavLink ? NavLink.homeHref() : '/');
+      btn.setAttribute('href', target);
+    }
   },
 
   // Mirror the visible header text into both the on-screen <h1> and

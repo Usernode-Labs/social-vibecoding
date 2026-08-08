@@ -903,12 +903,24 @@ const Home = {
   _wireDiscoveryCards(listEl, onChange) {
     if (!listEl) return;
     listEl.querySelectorAll('.app-card').forEach((card) => {
-      card.addEventListener('click', (e) => {
+      // #1036: the card can't BE an anchor (it wraps its own Add and "…"
+      // buttons), so cmd/middle-click is intercepted instead. hrefFor
+      // repeats the plain click's guards exactly, so an inert card (demo
+      // tile, an app that isn't running) stays inert under a modifier.
+      const hrefFor = (e) => {
+        if (e.target.closest('.card-add-btn') || e.target.closest('.card-menu-btn')) return null;
+        if (card.dataset.demo === 'true') return null;
+        if (card.dataset.status !== 'running' && card.dataset.status !== 'awaiting_secrets') return null;
+        return card.dataset.slug ? `#app/${encodeURIComponent(card.dataset.slug)}/app` : null;
+      };
+      const activate = (e) => {
         if (e.target.closest('.card-add-btn') || e.target.closest('.card-menu-btn')) return;
         if (card.dataset.demo === 'true') return;
         if (card.dataset.status !== 'running' && card.dataset.status !== 'awaiting_secrets') return;
         App.navigateToApp(card.dataset.slug);
-      });
+      };
+      if (window.NavLink) NavLink.wireModified(card, hrefFor, activate);
+      else card.addEventListener('click', activate);
       Home._wirePrewarm(card);
     });
     listEl.querySelectorAll('.card-add-btn').forEach((btn) => {

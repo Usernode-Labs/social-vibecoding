@@ -1684,6 +1684,17 @@ const AppView = {
   // remaining height with the composer pinned to the bottom.
   _devTopic: null, // { kind: 'issue'|'proposal'|'gov', id } while open
 
+  // #1036: the address of the app's dev page — what every "← Back" in a
+  // dev sub-view (topic, general chat) points at as a real anchor, so a
+  // cmd-click opens the dev page in a new tab instead of leaving this
+  // one. Returns '' when there is no open app to name rather than
+  // minting "#app/undefined/dev": NavLink.bind and the markup both treat
+  // an empty href as "inert", which is the honest state.
+  _devPageHref() {
+    const slug = (AppView.appData && AppView.appData.slug) || App.currentApp;
+    return slug ? `#app/${encodeURIComponent(slug)}/dev` : '';
+  },
+
   async _renderTopicSubView(content, ref) {
     AppView._devTopic = { kind: ref.kind, id: ref.id };
     // #363: only the back bar is pinned here. The topic card/body no longer
@@ -1695,12 +1706,15 @@ const AppView = {
     content.innerHTML = `
       <div class="flex flex-col h-full min-h-0">
         <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
-          <button id="dev-topic-back" class="inline-flex items-center gap-1 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm shrink-0" title="Back to the dev page">&larr; Back</button>
+          <a id="dev-topic-back" class="inline-flex items-center gap-1 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm shrink-0" title="Back to the dev page" href="${AppView._devPageHref()}">&larr; Back</a>
         </div>
         <div id="dev-topic-thread" class="flex-1 min-h-0"></div>
       </div>`;
 
-    document.getElementById('dev-topic-back').addEventListener('click', () => {
+    document.getElementById('dev-topic-back').addEventListener('click', (e) => {
+      // #1036: real anchor — leave a modified click to the browser.
+      if (window.NavLink && NavLink.isNativeClick(e)) return;
+      e.preventDefault();
       App.switchTab('dev');
     });
 
@@ -1900,23 +1914,17 @@ const AppView = {
     }
 
     // #827: the only AI affordance on a proposal is the card pill —
-    // "✨ Explore in dev chat" (_exploreChatBtnHtml, rendered when !mine).
+    // "✨ Explore in dev chat" (_exploreChatBtnHtml, gated by
+    // _showExplorePill).
     // It replaced the old private read-only "Ask AI" advisor panel: instead
     // of a bespoke side-chat, the pill opens the user's real dev chat with a
     // message about this PR pre-filled (never sent) in the composer.
     //
-    // Who gets it:
-    // - Another user's PR proposal: yes — the pill rides in the card action
-    //   row, and #321's "no duplicate standalone in the head" rule still
-    //   holds (there is no standalone button any more at all).
-    // - The viewer's OWN PR proposal: no (#313/#348) — owners reach the
-    //   Mayor through "Open session" on their own PR.
-    // - Governance proposals: no (#827). A dev chat can only reason about
-    //   repo code and cannot act on a rename / secret change / close-issue
-    //   vote, so a "let's explore this" seed there would mislead. Their
-    //   shared discussion thread is where that conversation belongs.
-    const mine = !!(App.user && item.user_id === App.user.id);
-    const cardHasExplorePill = (t.kind === 'proposal' && !mine);
+    // Who gets it: see _showExplorePill — the one predicate every render
+    // site shares. Here it additionally decides whether to bind the pill's
+    // click and run the availability pass below (the head has no delegated
+    // handler), so it must agree with what _renderProposalCard painted.
+    const cardHasExplorePill = (t.kind === 'proposal' && AppView._showExplorePill(item));
 
     head.innerHTML = cardHtml + bodyHtml;
     if (window.Kudos) Kudos.attach(head);
@@ -1969,12 +1977,50 @@ const AppView = {
     // outcome label without a manual refresh.
   },
 
+  // #1045: the ONE rule for whether a proposal row offers the "Explore in
+  // dev chat" pill. Every render site (the feed/board card, the Completed
+  // card, the topic head) calls this instead of re-deriving `!mine`, so the
+  // three can't drift — the topic head in particular uses it to decide
+  // whether to BIND the pill's click, and a head that disagrees with the
+  // card it just painted leaves an inert button.
+  //
+  // Who gets it:
+  // - Another user's PR proposal: yes (#313/#827) — the pill rides in the
+  //   card action row, and #321's "no duplicate standalone in the head"
+  //   rule still holds (there is no standalone button any more at all).
+  // - The viewer's OWN native PR proposal: no (#313/#348) — "Open session"
+  //   on their own PR is the better door to the same dev chat, so a pill
+  //   beside it is redundant clutter.
+  // - The viewer's OWN IMPORTED proposal: YES (#1045). An imported PR has
+  //   no platform-owned dev chat at all — src/routes/sessions.js refuses a
+  //   chat turn on a `source='imported'` row, so _renderProposalCard hides
+  //   "Open session" for it too (#687). Without this the owner of a PR they
+  //   imported (or had their own Claude Code / Codex build and submit
+  //   through the connector) gets NO AI affordance on their own proposal.
+  //   The pill opens a SEPARATE ordinary dev chat that reads the PR — it
+  //   never takes over the imported branch.
+  // - Governance proposals and applied close-issue rows: no (#827). A dev
+  //   chat can only reason about repo code and cannot act on a rename /
+  //   secret change / close-issue vote, so a "let's explore this" seed
+  //   there would mislead. Both carry `kind` (and close-issue rows a
+  //   `row_type`); PR-proposal rows from /promoted and mergedRowSelect
+  //   carry neither.
+  //
+  // Read-only viewers are NOT filtered here: that gate lives in
+  // _exploreChatBtnHtml (#621), so it stays in exactly one place.
+  _showExplorePill(pr) {
+    if (!pr) return false;
+    if (pr.kind || pr.row_type === 'close_issue') return false;
+    const mine = !!(App.user && pr.user_id === App.user.id);
+    const imported = pr.source === 'imported';
+    return !mine || imported;
+  },
+
   // #313/#827: a compact "Explore in dev chat" action for the proposal CARD
   // action row (the Dev feed, the kanban board, the Completed list). Cards
   // render many at once, so this uses a class + data-proposal-id hook (ids
-  // must stay unique). Only rendered on proposals the viewer does NOT own —
-  // owners reach the Mayor through "Open session" on their own PR, so a card
-  // button would be redundant clutter. Click is dispatched by the delegated
+  // must stay unique). Whether a given row gets one at all is
+  // _showExplorePill's call. Click is dispatched by the delegated
   // feed/merged handler (and wired directly in the topic head).
   _exploreChatBtnHtml(pr) {
     // #621: the dev chat spends the viewer's LLM budget and its API is
@@ -2239,13 +2285,16 @@ const AppView = {
     content.innerHTML = `
       <div class="flex flex-col h-full min-h-0">
         <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
-          <button id="dev-chat-back" class="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm" title="Back to the dev page">&larr;</button>
+          <a id="dev-chat-back" class="inline-flex items-center text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm" title="Back to the dev page" href="${AppView._devPageHref()}">&larr;</a>
           <span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider">General chat</span>
         </div>
         <div id="dev-chat-body" class="flex-1 min-h-0"></div>
       </div>`;
 
-    document.getElementById('dev-chat-back').addEventListener('click', () => {
+    document.getElementById('dev-chat-back').addEventListener('click', (e) => {
+      // #1036: real anchor — leave a modified click to the browser.
+      if (window.NavLink && NavLink.isNativeClick(e)) return;
+      e.preventDefault();
       App.switchTab('dev');
     });
 
@@ -5337,10 +5386,11 @@ const AppView = {
     const archiveBtn = (mine && !isMerged && !isMerging && pr.status === 'promoted')
       ? `<button class="gc-vote-btn" title="Withdraw this proposal (closes the PR, removes it from the vote panel)" onclick="AppView.withdrawProposal(${pr.id})">Withdraw</button>`
       : '';
-    // #313/#827: "Explore in dev chat", surfaced on the card for proposals
-    // the viewer does NOT own. Owners reach the Mayor via "Open session" on
-    // their own PR, so it's omitted on own cards.
-    const exploreBtn = !mine ? AppView._exploreChatBtnHtml(pr) : '';
+    // #313/#827/#1045: "Explore in dev chat". Shown on proposals the viewer
+    // does NOT own, and on their OWN imported ones — those have no dev
+    // session behind them, so `sessionBtn` above is empty and this is the
+    // only AI affordance the owner gets. See _showExplorePill.
+    const exploreBtn = AppView._showExplorePill(pr) ? AppView._exploreChatBtnHtml(pr) : '';
     // #195/#211: before/after capture tiles, collapsed by default behind a
     // "Show before/after" pill that sits with the other action buttons. The
     // tiles wait in an inert <template> (no bandwidth, no autoplay loops)
@@ -7951,10 +8001,10 @@ const AppView = {
     const kudosBtn = window.Kudos
       ? Kudos.renderButton(pr, { compact: true })
       : '';
-    // #313/#827: "Explore in dev chat" on the Completed list too, for
-    // proposals the viewer does not own (parallel to the live feed cards).
-    const mine = !!(App.user && pr.user_id === App.user.id);
-    const exploreBtn = !mine ? AppView._exploreChatBtnHtml(pr) : '';
+    // #313/#827/#1045: "Explore in dev chat" on the Completed list too,
+    // under the same shared rule as the live feed cards — proposals the
+    // viewer does not own, plus their own imported ones.
+    const exploreBtn = AppView._showExplorePill(pr) ? AppView._exploreChatBtnHtml(pr) : '';
 
     // #16: undo is a single direct action — clicking Undo opens a
     // revert PR (like proposing a change) which then needs the
