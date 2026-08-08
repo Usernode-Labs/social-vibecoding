@@ -654,6 +654,8 @@ const DevChat = {
   // shows the previous snapshot until the next poll lands).
 
   async loadActiveSessions() {
+    // #1038: stamped BEFORE the request goes out — see SessionState.seed.
+    const issuedAt = Date.now();
     try {
       const res = await fetch('/api/me/active-sessions');
       if (!res.ok) return;
@@ -667,6 +669,11 @@ const DevChat = {
         // renders "(N/3)" instead of "(N/undefined)".
         caps: data.caps || { activeSessions: 3, promotedSessions: 5 },
       };
+      // This payload carries per-row busy flags; fold them into the live
+      // store rather than letting them stop here.
+      if (typeof window !== 'undefined' && window.SessionState) {
+        SessionState.seed(DevChat.activeSessions.sessions, issuedAt);
+      }
       DevChat.renderActiveSessions();
     } catch {}
   },
@@ -4788,6 +4795,16 @@ const DevChat = {
         s.status === 'promoted' ? 'text-violet-400' :
         s.status === 'paused' ? 'text-zinc-400' :
         'text-zinc-500';
+      // #1038: this list is the one session surface that never had a
+      // working indicator — GET /api/apps/:slug/sessions returns `warm`
+      // (a container exists) but no `busy`. The live store supplies it
+      // client-side, so the row matches the board and the cog drawer
+      // without widening that payload.
+      const busy = (typeof window !== 'undefined' && window.SessionState)
+        ? SessionState.isBusy(s.id, false) : false;
+      const busyTag = busy
+        ? '<span class="inline-flex items-center gap-1 text-xs text-emerald-500 shrink-0"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>'
+        : '';
       // Promoted sessions can't be demoted to 'paused' (their PR must
       // stay votable), but a warm worker can still be freed — same
       // endpoint, server keeps status 'promoted' (keptPromoted). Once
@@ -4809,6 +4826,7 @@ const DevChat = {
         <div class="dc-session-item px-3 py-2 cursor-pointer hover:bg-zinc-800/50 flex items-center gap-2" data-id="${s.id}">
           <span class="text-xs ${statusColor} font-mono">${s.status}</span>
           <span class="text-sm text-zinc-300 flex-1 truncate" title="${escapeHtml(s.branch_name || '')}">${escapeHtml(s.session_title || s.pr_title || s.branch_name || 'Session')}</span>
+          ${busyTag}
           ${s.pr_url ? `<a href="${s.pr_url}" target="_blank" class="text-xs text-violet-400 hover:text-violet-300" onclick="event.stopPropagation()">PR#${s.pr_number}</a>` : ''}
           ${isPausable ? `<button class="dc-pause-btn text-xs text-zinc-400 hover:text-emerald-400" data-id="${s.id}" data-action="pause" onclick="event.stopPropagation()">Pause</button>` : ''}
           ${isFreeable ? `<button class="dc-pause-btn text-xs text-zinc-400 hover:text-emerald-400" data-id="${s.id}" data-action="pause" data-freeing="1" title="Frees the AI worker. The PR stays up for voting." onclick="event.stopPropagation()">Free worker</button>` : ''}
@@ -7209,6 +7227,18 @@ const DevChat = {
     }
   },
 };
+
+// #1038: repaint the per-app session list when live working state moves.
+// Guarded on the list actually being mounted AND on no session being open
+// (renderSessionList targets #dc-session-list, which only exists on the
+// list view), so this costs nothing everywhere else.
+if (typeof window !== 'undefined' && window.SessionState) {
+  SessionState.subscribe(() => {
+    if (DevChat.currentSession) return;
+    if (!document.getElementById('dc-session-list')) return;
+    DevChat.renderSessionList();
+  });
+}
 
 DevChat._sanitizeStoredModel();
 // Fire-and-forget: refreshes MODELS from the server's allowlist. If

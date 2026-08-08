@@ -90,6 +90,7 @@ const {
   getActiveWorkerCount,
   isSessionBusy,
 } = require('../services/active-workers');
+const sessionState = require('../services/session-state');
 const turnWatchdog = require('../services/turn-watchdog');
 const estimateGuard = require('../services/estimate-guard');
 // #892: what an unearned "nearly done" phrase is replaced with. Mirrors the
@@ -123,6 +124,14 @@ const { stopPendingFor } = stopPolicy;
 
 const CLI_CREDENTIAL_MANAGEMENT_ERROR = 'credential_management_not_available_via_cli';
 
+// #1038: identifies THIS platform process to the client's session-state
+// store. Live busy state is in-process memory (see services/session-state),
+// so a restart or a blue-green cutover invalidates every override a client
+// is holding. Shipping the boot time on each reconcile lets the client
+// notice the swap and clear its state instead of showing a phantom spinner
+// for a turn that died with the old process.
+const PROCESS_BOOT_ID = String(Date.now());
+
 // Per-session stop handles, populated while a chat turn is in flight.
 // Shape: { abort: AbortController, workerName: string|null, phase: 'mayor1'|'cc'|'mayor2', stopped: boolean, stoppedBy: string|null, stopRequestedAt: number|null, confirming: boolean }
 // The POST /stop endpoint looks up this record to:
@@ -134,6 +143,16 @@ const CLI_CREDENTIAL_MANAGEMENT_ERROR = 'credential_management_not_available_via
 // Phase 'mayor2' is intentionally stop-proof — by then CC has already
 // pushed a commit + opened a PR and we just want the summary to finish.
 const stopRegistry = new Map();
+
+// #1038: the live session-state notifier reports `phase` / `stopping`
+// alongside `busy`, but stopRegistry is module-local here and importing
+// routes from a service would be a require cycle. Register a reader
+// instead — the same two values GET /api/sessions/:id/status serves.
+sessionState.setPhaseResolver((sessionId) => {
+  const handle = stopRegistry.get(Number(sessionId));
+  if (!handle) return { phase: null, stopping: false };
+  return { phase: handle.phase || null, stopping: !!handle.stopped };
+});
 
 // Per-session in-flight guard for on-demand staging rebuilds (the
 // ensure-staging route below). Repeated Preview clicks while a rebuild is
@@ -532,6 +551,12 @@ function sessionRoutes(config) {
   const router = Router();
   const pool = getPool(config);
 
+  // #1038: the notifier needs a pool to resolve a touched session's app /
+  // owner / share state before it can decide who a `session_state` event
+  // goes to. It has no config of its own, so hand it the one this router
+  // already built.
+  sessionState.setPool(pool);
+
   // Per-app visibility gate for every session-id-addressed route below
   // (/api/sessions/:id/...): resolves the session's app and requires
   // collab-level access. 404 on deny so private apps' sessions aren't
@@ -714,6 +739,131 @@ function sessionRoutes(config) {
       res.json({ sessions, totals, caps: effectiveSessionCaps(config, req.user) });
     } catch (err) {
       log.error('sessions', 'Failed to list active sessions', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // GET /api/me/session-state[?app=<slug>]
+  //   #1038: the reconcile snapshot behind the live `session_state`
+  //   WebSocket events. Every "we might have missed something" path on the
+  //   client — WS reconnect, a tab returning to the foreground, the slow
+  //   safety tick — funnels through this one endpoint, so there is a single
+  //   place to reason about convergence.
+  //
+  //   Deliberately tiny: ids plus flags, no titles, no PR metadata. It
+  //   replaces the fast-path role of /api/me/active-sessions +
+  //   /shared-sessions + /github-issues for keeping spinners honest, and is
+  //   cheap enough to call on every foreground.
+  //
+  //   Only NON-IDLE rows are returned (sessionState.isIdleState) — absence
+  //   means idle. That is what lets the client clear a phantom spinner: it
+  //   replaces its whole override set from this response rather than
+  //   merging into it.
+  //
+  //   `bootId` is this platform process's start time. A client that sees a
+  //   new value drops every override it holds, which is what unsticks the
+  //   UI after a restart or a blue-green cutover (in-memory busy state does
+  //   not survive either).
+  //
+  //   Scope mirrors the surfaces the state feeds:
+  //     - always: the viewer's own non-archived sessions;
+  //     - with ?app=<slug>, and only behind the same view-level gate
+  //       /api/apps/:slug/shared-sessions uses: that app's explicitly
+  //       shared sessions and its headless auto-runs, which render on
+  //       everyone's board.
+  router.get('/api/me/session-state', async (req, res) => {
+    try {
+      const appSlug = typeof req.query.app === 'string' ? req.query.app : null;
+
+      // One row per candidate session. Kept narrow on purpose: the live
+      // predicate below decides what is actually reported, so this only has
+      // to be a superset of "could plausibly be non-idle right now".
+      const { rows: mine } = await pool.query(
+        `SELECT cs.id, cs.status, cs.is_headless, cs.headless_status,
+                cs.headless_outcome, cs.headless_issue_number,
+                (cs.shared_at IS NOT NULL) AS shared,
+                cs.app_id, cs.user_id, a.slug AS app_slug
+           FROM chat_sessions cs
+           JOIN apps a ON a.id = cs.app_id
+          WHERE cs.user_id = $1
+            AND cs.status IN ('active', 'promoted', 'paused')`,
+        [req.user.id]
+      );
+
+      let visible = [];
+      if (appSlug) {
+        // Same view-level gate as /api/apps/:slug/shared-sessions (#621):
+        // shared rows are metadata-only, so a read-only viewer may see
+        // them. A denied / unknown slug simply contributes nothing —
+        // the viewer's own rows above are unaffected.
+        const app = await appAccess.getAppForUser(
+          pool, appSlug, req.user, 'view', appAccess.ACCESS_COLUMNS
+        ).catch(() => null);
+        if (app) {
+          const { rows } = await pool.query(
+            `SELECT cs.id, cs.status, cs.is_headless, cs.headless_status,
+                    cs.headless_outcome, cs.headless_issue_number,
+                    (cs.shared_at IS NOT NULL) AS shared,
+                    cs.app_id, cs.user_id, a.slug AS app_slug
+               FROM chat_sessions cs
+               JOIN apps a ON a.id = cs.app_id
+              WHERE cs.app_id = $1
+                AND cs.status IN ('active', 'promoted', 'paused')
+                AND (cs.shared_at IS NOT NULL OR cs.is_headless = TRUE)`,
+            [app.id]
+          );
+          visible = rows;
+        }
+      }
+
+      const byId = new Map();
+      for (const row of [...mine, ...visible]) {
+        if (byId.has(row.id)) continue;
+        const payload = sessionState.buildPayload(
+          row.id, row, sessionState.liveState(row.id)
+        );
+        if (sessionState.isIdleState(payload)) continue;
+        byId.set(row.id, {
+          id: payload.sessionId,
+          appSlug: payload.appSlug,
+          busy: payload.busy,
+          phase: payload.phase,
+          stopping: payload.stopping,
+          status: payload.status,
+          headless: payload.headless,
+        });
+      }
+
+      const sessions = [...byId.values()];
+
+      // Staging-only demo rows (?demo=1): the sibling endpoints seed mock
+      // BUSY cards (the own-session spinner from /api/me/active-sessions,
+      // the shared-session spinner from /shared-sessions, the generating
+      // auto-run attached to mock issue 900003 in routes/issues.js). Those
+      // ids have no in-memory state, so without this block the very first
+      // reconcile would report them idle and wipe every demo spinner off
+      // the board. Read-only, and a strict no-op in production.
+      if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
+        sessions.push(
+          {
+            id: 990102, appSlug: config.selfAppSlug, busy: true, phase: 'cc',
+            stopping: false, status: 'active', headless: null,
+          },
+          {
+            id: 990001, appSlug: config.selfAppSlug, busy: true, phase: 'cc',
+            stopping: false, status: 'active', headless: null,
+          },
+          {
+            id: 990301, appSlug: config.selfAppSlug, busy: true, phase: 'cc',
+            stopping: false, status: 'active',
+            headless: { status: 'generating', outcome: null, issueNumber: 900003 },
+          }
+        );
+      }
+
+      res.json({ bootId: PROCESS_BOOT_ID, at: Date.now(), sessions });
+    } catch (err) {
+      log.error('sessions', 'Failed to build session-state snapshot', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -1133,6 +1283,12 @@ function sessionRoutes(config) {
         sessionId: session.id,
         metadata: { headless: true, issueNumber },
       });
+
+      // #1038: the row is now 'generating', which is what puts the spinner
+      // on this issue's kanban card for every viewer of the app. Nothing in
+      // the in-memory registries has moved yet (the runner below is
+      // fire-and-forget), so announce the row write itself.
+      sessionState.touch(session.id);
 
       // Fire-and-forget: the run continues after this response. Failures
       // inside the runner mark the row 'failed' (and a platform restart
@@ -5928,6 +6084,9 @@ async function runHeadlessSession({
       [outcome, session.id]
     );
     send('headless_update', { status: 'ready', outcome, issueNumber, appSlug: session.app_slug });
+    // #1038: the auto-run's card state lives in the row we just wrote, not
+    // in any in-memory registry, so the notifier has to be told explicitly.
+    sessionState.touch(session.id);
     // #150/#178: post the reporter-facing questions on the GitHub issue so
     // the reporter sees them without entering the platform — written by a
     // pure-text phase-1 turn, or by the decision turn when the scout's spec
@@ -5967,6 +6126,7 @@ async function runHeadlessSession({
     ).catch(() => {});
     await sendStatus(`Auto session failed: ${String(err.message || err).substring(0, 200)}`);
     send('headless_update', { status: 'failed', issueNumber, appSlug: session.app_slug });
+    sessionState.touch(session.id);
     // #161: a failed run is still a completion — the user must come back
     // and retry (or read the failure), so notify with detail='failed'.
     await notifyAutoSolveDone(pool, {
@@ -6263,6 +6423,7 @@ async function failHeadlessRun(pool, session, message) {
     type: 'session_event', sessionId: session.id, event: 'headless_update',
     status: 'failed', issueNumber: session.headless_issue_number, appSlug: session.app_slug,
   });
+  sessionState.touch(session.id);
   // #161: terminal state — same completion notification the live
   // runner's catch block fires.
   await notifyAutoSolveDone(pool, {
@@ -6630,6 +6791,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
     type: 'session_event', sessionId: session.id, event: 'headless_update',
     status: 'ready', outcome, issueNumber, appSlug: session.app_slug,
   });
+  sessionState.touch(session.id);
   // #161: a restart-resumed run completing is the same user-facing
   // moment as a live one — notify the user who started it.
   await notifyAutoSolveDone(pool, {
