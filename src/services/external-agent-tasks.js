@@ -721,7 +721,13 @@ function hostedAssetWarning(webPath) {
 //
 // deps: { pool, config, gh, githubLink, limits, prompts }
 // params: { user, app, issueNumber, brief, clientId, clientName, origin,
-//           restart }
+//           restart, agent }
+//
+// `agent` is an EXPLICIT choice ('claude-code' | 'codex' | 'external'),
+// which is what the in-platform flow picker (#1049) has and an MCP client
+// does not. Absent, the agent is inferred from the calling client's name
+// exactly as before — normalizeAgent has always taken the explicit value
+// first, it simply had no caller that could supply one.
 //
 // IDEMPOTENT PER REQUEST since the three-open-tasks incident. Asking twice
 // for the same request returns the job that already exists — same task id,
@@ -733,6 +739,7 @@ async function prepareWork(deps, params) {
   const { pool, config, gh, githubLink, limits, prompts } = deps;
   const {
     user, app, issueNumber, brief, clientId, clientName, origin, restart,
+    agent,
   } = params;
 
   const parsed = gh.parseGithubUrl(app.repo_url);
@@ -773,7 +780,7 @@ async function prepareWork(deps, params) {
     if (existing) {
       return renderPreparedTask({
         task: existing, app, owner, repo, origin, clientId, clientName,
-        prompts, reused: true,
+        prompts, agent, reused: true,
       });
     }
   } else {
@@ -871,7 +878,7 @@ async function prepareWork(deps, params) {
     if (raced) {
       return renderPreparedTask({
         task: raced, app, owner, repo, origin, clientId, clientName,
-        prompts, reused: true,
+        prompts, agent, reused: true,
       });
     }
     return fail('platform_unavailable', 'Usernode could not record this piece of work. Try again shortly.', { retryable: true });
@@ -890,7 +897,7 @@ async function prepareWork(deps, params) {
       brief: trimmedBrief,
       issue_number: Number.isInteger(issueNumber) && issueNumber > 0 ? issueNumber : null,
     },
-    app, owner, repo, origin, clientId, clientName, prompts,
+    app, owner, repo, origin, clientId, clientName, prompts, agent,
     forkStatus, reused: false,
   });
 }
@@ -923,7 +930,7 @@ async function findOpenTaskByRequest(pool, userId, appId, requestKey) {
 // production run rewrite a finished commit.
 function renderPreparedTask({
   task, app, owner, repo, origin, clientId, clientName, prompts,
-  forkStatus, reused,
+  forkStatus, reused, agent: requestedAgent,
 }) {
   const forkOwner = task.fork_owner;
   const forkRepo = task.fork_repo;
@@ -932,7 +939,10 @@ function renderPreparedTask({
   // A reused task did not re-read GitHub, so its fork state is genuinely
   // unknown — and `unknown` is now a first-class state with hedged wording.
   const status = forkStatus || 'unknown';
-  const agent = normalizeAgent(null, clientName || clientId);
+  // An explicit choice (the in-platform flow picker, #1049) wins over
+  // sniffing the calling client's name; with none supplied this is
+  // byte-for-byte the old inference.
+  const agent = normalizeAgent(requestedAgent || null, clientName || clientId);
 
   const guidance = buildGuidance({
     agent,
@@ -975,6 +985,9 @@ function renderPreparedTask({
     forkStatus: status,
     branch: task.branch_name,
     baseSha: task.base_sha,
+    // The RESOLVED enum value, so a caller that picked the agent can render
+    // the right product name without re-deriving it.
+    agent,
     guidance,
     workOrder,
     reused: !!reused,
@@ -1752,6 +1765,12 @@ module.exports = {
   attributionError,
   loadOpenTask,
   loadAnyTask,
+  // Both used by routes/dev-flow.js (#1049) to RE-RENDER a work order the
+  // user already has — the in-platform walkthrough is resumable, so
+  // reopening the chat must show the same branch and base commit rather
+  // than mint a second task.
+  loadLatestOpenTaskForSlug,
+  renderPreparedTask,
   prepareWork,
   submitWork,
 };

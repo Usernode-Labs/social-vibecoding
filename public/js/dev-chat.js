@@ -490,6 +490,7 @@ const DevChat = {
         error: 'Daily limit reached ($20.00). Resets at midnight UTC.',
         hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
         globalOut: DevChat._globalBudgetOut(),
+        externalFlowsAvailable: DevChat._externalFlowsAvailable(),
       },
       created_at: new Date().toISOString(),
     });
@@ -587,10 +588,13 @@ const DevChat = {
         <svg class="w-4 h-4 text-red-500 dark:text-red-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
         </svg>
-        <span class="text-red-800 dark:text-red-200 flex-1 min-w-[14rem]"><span class="font-semibold">${lead}</span> Resets at midnight UTC &mdash; or keep working right now with your own API key, a coding tool on your computer, or your Claude.ai / ChatGPT subscription.</span>
+        <span class="text-red-800 dark:text-red-200 flex-1 min-w-[14rem]"><span class="font-semibold">${lead}</span> Resets at midnight UTC &mdash; or keep working right now ${DevChat._externalFlowsAvailable()
+          ? 'on your own Claude or ChatGPT plan, with your own API key, or with a coding tool on your computer.'
+          : 'with your own API key, a coding tool on your computer, or your Claude.ai / ChatGPT subscription.'}</span>
         ${window.CreditOptions ? CreditOptions.bannerActionsHtml({
           hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
           globalOut: !userOut,
+          externalFlowsAvailable: DevChat._externalFlowsAvailable(),
         }) : ''}
       </div>`;
   },
@@ -618,22 +622,390 @@ const DevChat = {
     }
   },
 
+  // #1049: whether the out-of-credits routes may lead with the Claude Code /
+  // Codex hand-offs. Deployment-level, reported by /api/auth/me — the client
+  // renders what the server says is possible and never sniffs for it.
+  _externalFlowsAvailable() {
+    return !!(typeof App !== 'undefined' && App.user && App.user.externalFlowsAvailable);
+  },
+
   _wireCreditsBanner() {
-    // All three routes (own key / local coding tool / Claude.ai-ChatGPT
-    // connector) are rendered and wired by CreditOptions, which does the
-    // hash navigation — real navigations, so the browser / device back
-    // gesture returns the user to this chat.
+    // Every route is rendered and wired by CreditOptions, which does the hash
+    // navigation — real navigations, so the browser / device back gesture
+    // returns the user to this chat. The two #1049 entries are handled in
+    // place instead: they start the walkthrough right here.
     const banner = document.getElementById('dc-credits-banner');
-    if (banner && window.CreditOptions) CreditOptions.wire(banner);
+    if (banner && window.CreditOptions) {
+      CreditOptions.wire(banner, { onFlow: (flow) => DevChat._devFlowFromCredits(flow) });
+    }
+  },
+
+  // "Use Claude Code" / "Use Codex" from an out-of-credits card or banner.
+  // Same walkthrough the picker opens, in the session the user was refused
+  // in — the work they were describing is right there in the transcript.
+  _devFlowFromCredits(agent) {
+    if (!window.DevFlowSelect) {
+      window.location.hash = '#settings/connectors';
+      return;
+    }
+    const flow = DevChat._devFlow;
+    flow.mode = 'wizard';
+    flow.agent = agent;
+    flow.dismissed = false;
+    flow.error = null;
+    flow.notice = null;
+    DevChat.renderMessages();
+    DevChat._devFlowEnsureStatus(true);
   },
 
   // Same wiring for every credits CARD currently in the transcript.
   // Called after each renderMessages; CreditOptions.wire is idempotent
   // per node, so re-running it never stacks handlers.
+  // Scoped to the transcript on purpose: app-view's Generate-proposal modal
+  // renders the SAME card and wires its own handlers (its "Use Claude Code"
+  // starts a fresh session), and a document-wide selector would attach this
+  // one to that card as well — one click, two different actions (#1049).
   _wireCreditsCards() {
     if (!window.CreditOptions) return;
-    document.querySelectorAll('[data-credits-card]').forEach((el) => {
-      CreditOptions.wire(el);
+    const container = document.getElementById('dc-messages');
+    if (!container) return;
+    container.querySelectorAll('[data-credits-card]').forEach((el) => {
+      CreditOptions.wire(el, { onFlow: (flow) => DevChat._devFlowFromCredits(flow) });
+    });
+  },
+
+  // ── Development-flow picker + walkthrough (#1049) ──────────────────
+  //
+  // A fresh session used to open with nothing but a text box, and the ONLY
+  // way to discover that Usernode can hand the work to your own Claude Code
+  // or Codex was to install the MCP connector. So the choice is offered
+  // here instead: a card at the top of an empty session naming all three
+  // routes, and — if you pick an external one — a five-step walkthrough
+  // that watches your progress (GitHub linked → fork → work order → pushed
+  // branch → submitted).
+  //
+  // All markup lives in public/js/dev-flow-select.js; this is the state and
+  // the fetching. State is per-session and deliberately thin: every step is
+  // re-derived from GET /api/apps/:slug/dev-flow/status, so closing the tab
+  // mid-flow and coming back resumes at the same step.
+  _devFlow: {
+    sessionId: null,
+    status: null,
+    loading: false,
+    // 'wizard' once a flow is picked, null while the picker is showing.
+    mode: null,
+    agent: null,
+    busy: false,
+    error: null,
+    notice: null,
+    // "Build on Usernode instead" / "Build here" — hide the card for the
+    // rest of this session without writing a preference.
+    dismissed: false,
+    // Set by the "+" menu's "Propose with Claude Code or Codex": show the
+    // picker even when a preference is saved, because the user just asked
+    // for the choice by hand.
+    forcePicker: false,
+  },
+
+  // Deep link: ?flow=claude-code|codex opens straight into that
+  // walkthrough instead of the picker. The in-app doors (the picker itself,
+  // the "+" menu, the out-of-credits card) hand the agent over in memory —
+  // this is for a link somebody shares, and for the staging fixtures.
+  _devFlowFromQuery() {
+    try {
+      const q = new URLSearchParams(location.search).get('flow');
+      return (q === 'claude-code' || q === 'codex') ? q : null;
+    } catch { return null; }
+  },
+
+  _resetDevFlow(sessionId) {
+    const deepLink = DevChat._devFlowFromQuery();
+    DevChat._devFlow = {
+      sessionId: sessionId == null ? null : Number(sessionId),
+      status: null,
+      loading: false,
+      mode: deepLink ? 'wizard' : null,
+      agent: deepLink,
+      busy: false,
+      error: null,
+      notice: null,
+      dismissed: false,
+      forcePicker: false,
+    };
+  },
+
+  // Which card (if any) belongs at the top of THIS session's transcript.
+  // Returns null for every session that is already under way — the picker
+  // is a question about work that hasn't started, not a permanent fixture.
+  _devFlowTarget() {
+    const session = DevChat.currentSession;
+    if (!session || !window.DevFlowSelect) return null;
+    const flow = DevChat._devFlow;
+    if (flow.dismissed) return null;
+    if (flow.mode === 'wizard') return { mode: 'wizard', agent: flow.agent };
+    // Only an untouched session: no PR, no user message yet, still open.
+    if (session.pr_number) return null;
+    if (session.status !== 'active') return null;
+    if (DevChat.messages.some((m) => m.role === 'user')) return null;
+    const user = (typeof App !== 'undefined' && App.user) ? App.user : null;
+    // The deployment has to support the hand-off at all — a picker whose
+    // only entry is "build here" is a question with one answer.
+    if (!user || !user.externalFlowsAvailable) return null;
+    const pref = flow.forcePicker ? null : (user.devFlowPreference || null);
+    if (pref === 'platform') return null;
+    if (pref === 'claude-code' || pref === 'codex') return { mode: 'wizard', agent: pref };
+    return { mode: 'picker', agent: null };
+  },
+
+  _devFlowHtml() {
+    const target = DevChat._devFlowTarget();
+    if (!target) return '';
+    const flow = DevChat._devFlow;
+    if (target.mode === 'wizard') {
+      return DevFlowSelect.wizardHtml({
+        agent: target.agent,
+        status: flow.status,
+        busy: flow.busy,
+        error: flow.error,
+        notice: flow.notice,
+      });
+    }
+    // The picker waits for the status read: an app with no repository can't
+    // use the external flows, and offering them before we know is a card
+    // that changes under the user's cursor.
+    if (!flow.status) {
+      DevChat._devFlowEnsureStatus();
+      return '';
+    }
+    if (flow.status.available === false) return '';
+    const user = (typeof App !== 'undefined' && App.user) ? App.user : null;
+    return DevFlowSelect.pickerHtml({
+      available: true,
+      reason: flow.status.reason,
+      externalFlowsAvailable: true,
+      preference: user ? user.devFlowPreference : null,
+    });
+  },
+
+  _wireDevFlowCard() {
+    if (!window.DevFlowSelect) return;
+    const container = document.getElementById('dc-messages');
+    if (!container) return;
+    container.querySelectorAll('[data-flow-card]').forEach((el) => {
+      DevFlowSelect.wire(el, {
+        onPick: (id, remember) => DevChat._devFlowPick(id, remember),
+        onAction: (action) => DevChat._devFlowAction(action),
+      });
+    });
+  },
+
+  // One status read per session, kicked off lazily by the render. Re-entrant
+  // calls collapse onto the in-flight one; `force` is the "Check again"
+  // button and the tab-focus re-check.
+  async _devFlowEnsureStatus(force) {
+    const session = DevChat.currentSession;
+    const slug = App.currentApp;
+    if (!session || !slug || !window.DevFlowSelect) return;
+    const flow = DevChat._devFlow;
+    if (flow.loading) return;
+    if (flow.status && !force) return;
+    flow.loading = true;
+    try {
+      const res = await fetch(
+        `/api/apps/${encodeURIComponent(slug)}/dev-flow/status${DevChat._demoQS()}`,
+        { credentials: 'same-origin' }
+      );
+      if (!res.ok) {
+        // Not an error the user needs: the card simply doesn't render.
+        flow.status = { available: false, reason: 'unavailable' };
+        return;
+      }
+      flow.status = await res.json();
+    } catch {
+      flow.status = { available: false, reason: 'unavailable' };
+    } finally {
+      flow.loading = false;
+      // Only repaint if we're still looking at the session we asked about.
+      if (DevChat.currentSession && Number(DevChat.currentSession.id) === Number(session.id)) {
+        DevChat.renderMessages();
+      }
+    }
+  },
+
+  async _devFlowPick(id, remember) {
+    const flow = DevChat._devFlow;
+    flow.error = null;
+    flow.notice = null;
+    if (remember) {
+      // Best-effort: a failed save must not block the flow the user just
+      // chose. Settings → Claude & ChatGPT connectors is the other door.
+      try {
+        const res = await fetch('/api/me/dev-flow', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ flow: id }),
+        });
+        if (res.ok && typeof App !== 'undefined' && App.user) App.user.devFlowPreference = id;
+      } catch {}
+    }
+    if (id === 'platform') {
+      flow.dismissed = true;
+      DevChat.renderMessages();
+      const input = document.getElementById('dc-input');
+      if (input) input.focus();
+      return;
+    }
+    flow.mode = 'wizard';
+    flow.agent = id;
+    DevChat.renderMessages();
+    DevChat._devFlowEnsureStatus(true);
+  },
+
+  async _devFlowAction(action) {
+    const flow = DevChat._devFlow;
+    flow.error = null;
+    flow.notice = null;
+    if (action === 'cancel') {
+      flow.dismissed = true;
+      DevChat.renderMessages();
+      return;
+    }
+    if (action === 'link-github') {
+      window.location.hash = '#settings/connectors';
+      return;
+    }
+    if (action === 'refresh' || action === 'open-fork' || action === 'open-agent') {
+      // The two "open …" actions already opened their tab in DevFlowSelect;
+      // re-reading the status is what makes coming back feel watched.
+      await DevChat._devFlowEnsureStatus(true);
+      return;
+    }
+    if (action === 'copy') {
+      const task = flow.status && flow.status.task;
+      const text = task ? task.workOrder : '';
+      if (!text) {
+        flow.error = 'No work order to copy yet.';
+        DevChat.renderMessages();
+        return;
+      }
+      let copied = false;
+      try {
+        await navigator.clipboard.writeText(text);
+        copied = true;
+      } catch { copied = false; }
+      if (copied) flow.notice = 'Work order copied — paste it into your agent.';
+      else flow.error = 'Could not reach the clipboard. Open the work order below and copy it by hand.';
+      DevChat.renderMessages();
+      return;
+    }
+    if (action === 'prepare') return DevChat._devFlowPrepare();
+    if (action === 'submit') return DevChat._devFlowSubmit();
+    return undefined;
+  },
+
+  // Step 3. The brief is whatever the user typed in the message box — the
+  // same text they would have sent to the platform agent, so the choice of
+  // flow costs them no re-typing.
+  async _devFlowPrepare() {
+    const flow = DevChat._devFlow;
+    const slug = App.currentApp;
+    const input = document.getElementById('dc-input');
+    const brief = input ? String(input.value || '').trim() : '';
+    if (!brief) {
+      flow.error = 'Describe the change in the message box below first — the work order needs something to hand your agent.';
+      DevChat.renderMessages();
+      if (input) input.focus();
+      return;
+    }
+    flow.busy = true;
+    DevChat.renderMessages();
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/external-tasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ agent: flow.agent, brief }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        flow.error = data.error || 'Could not prepare the work order.';
+        return;
+      }
+      // Clear the box: the brief now lives on the work order, and leaving
+      // it behind invites sending the same text to the platform agent too.
+      if (input) {
+        input.value = '';
+        input.style.height = 'auto';
+      }
+      flow.notice = data.reused
+        ? 'You already had a work order for this app — reusing it.'
+        : 'Work order ready.';
+    } catch (err) {
+      flow.error = `Network error: ${err.message}`;
+    } finally {
+      flow.busy = false;
+      await DevChat._devFlowEnsureStatus(true);
+      DevChat.renderMessages();
+    }
+  },
+
+  // Step 5. Usernode opens the cross-fork pull request with its own
+  // credentials and imports it as an ordinary proposal, then we jump to it.
+  async _devFlowSubmit() {
+    const flow = DevChat._devFlow;
+    const slug = App.currentApp;
+    const task = flow.status && flow.status.task;
+    if (!task) {
+      flow.error = 'No work order to submit yet.';
+      DevChat.renderMessages();
+      return;
+    }
+    flow.busy = true;
+    DevChat.renderMessages();
+    try {
+      const res = await fetch(
+        `/api/apps/${encodeURIComponent(slug)}/external-tasks/${encodeURIComponent(task.id)}/submit`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({}),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        flow.error = data.error || 'Could not submit the branch.';
+        return;
+      }
+      PlatformUI.toast(`Proposal opened from PR #${data.prNumber || ''}`.trim());
+      flow.dismissed = true;
+      if (data.sessionId) {
+        await DevChat.openSession(data.sessionId);
+        DevChat.renderChatView();
+        return;
+      }
+      await DevChat._devFlowEnsureStatus(true);
+    } catch (err) {
+      flow.error = `Network error: ${err.message}`;
+    } finally {
+      flow.busy = false;
+      DevChat.renderMessages();
+    }
+  },
+
+  // Re-check when the tab regains focus. The whole external flow happens in
+  // ANOTHER tab (GitHub, claude.ai/code, chatgpt.com/codex), so coming back
+  // here is the single most reliable moment to notice that the fork now
+  // exists or the branch has been pushed. Bound once per document.
+  _bindDevFlowVisibility() {
+    if (DevChat._devFlowVisibilityBound) return;
+    DevChat._devFlowVisibilityBound = true;
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) return;
+      if (DevChat._devFlow.mode !== 'wizard') return;
+      if (DevChat._devFlow.busy) return;
+      DevChat._devFlowEnsureStatus(true);
     });
   },
 
@@ -1274,6 +1646,17 @@ const DevChat = {
       DevChat._runnerLabel = null;
       DevChat._localAgent = null;
 
+      // #1049: the flow picker / walkthrough is per-session state too — a
+      // wizard opened on session A must not paint over session B, and the
+      // status payload it renders from belongs to the app+session it was
+      // read for. Re-opening the SAME session keeps it, so a status poll
+      // that arrives during a refresh isn't thrown away.
+      if (switchingSession
+          || DevChat._devFlow.sessionId == null
+          || Number(DevChat._devFlow.sessionId) !== Number(sessionId)) {
+        DevChat._resetDevFlow(sessionId);
+      }
+
       // Check if Claude Code is running for this session
       try {
         const statusRes = await fetch(`/api/sessions/${sessionId}/status${DevChat._demoQS()}`);
@@ -1476,6 +1859,7 @@ const DevChat = {
               error: data.error || 'They reset at midnight UTC.',
               hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
               globalOut: DevChat._globalBudgetOut(),
+              externalFlowsAvailable: DevChat._externalFlowsAvailable(),
             },
             created_at: new Date().toISOString(),
           });
@@ -3997,6 +4381,15 @@ const DevChat = {
           ${qaChips}
         </div>`;
     }).join('');
+
+    // #1049: the flow picker / walkthrough sits at the END of the
+    // transcript, so on an empty session it is the only thing in the pane
+    // and on a resumed walkthrough it stays next to the composer the user
+    // is typing their brief into. Returns '' for every session that is
+    // already under way.
+    container.insertAdjacentHTML('beforeend', DevChat._devFlowHtml());
+    DevChat._wireDevFlowCard();
+    DevChat._bindDevFlowVisibility();
 
     // Delegated hash navigation for any out-of-credits card just rendered
     // (idempotent per node, so repeated renders never stack handlers).

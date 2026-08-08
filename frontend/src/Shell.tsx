@@ -4652,6 +4652,12 @@ export function Shell() {
           the Generate-proposal modal. Loaded before its three consumers.
       */}
       <script src="/js/credit-options.js" />
+      {/*
+          #1049: the "how do you want to build this?" picker and its guided
+          Claude Code / Codex walkthrough. Pure render + wire, no fetching —
+          dev-chat.js owns the state and must load AFTER it.
+      */}
+      <script src="/js/dev-flow-select.js" />
       <script src="/js/settings.js" />
       <script src="/js/group-chat.js" />
       {/*

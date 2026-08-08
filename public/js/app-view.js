@@ -1480,6 +1480,10 @@ const AppView = {
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Import Feature from a PR</span>
                 <span class="block text-xs text-zinc-500 dark:text-zinc-400">Turn an existing GitHub pull request into a proposal people can vote on</span>
               </button>` : ''}
+              <button data-plus="proposal-external" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
+                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Propose with Claude Code or Codex</span>
+                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Build it on your own Claude or ChatGPT plan — no Usernode credits</span>
+              </button>
               <button data-plus="issue" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">New issue</span>
                 <span class="block text-xs text-zinc-500 dark:text-zinc-400">Report a problem or idea without building it yourself</span>
@@ -2421,6 +2425,17 @@ const AppView = {
       proposalBtn.addEventListener('click', () => {
         close();
         AppView.createProposal();
+      });
+    }
+    // #1049: the same session, opened straight onto the flow picker. Its own
+    // row rather than a sub-option of "Propose a change", because the whole
+    // point is that the alternate flows are findable without knowing they
+    // exist. Renders in the same non-read-only block as `proposal`.
+    const proposalExternalBtn = menu.querySelector('[data-plus="proposal-external"]');
+    if (proposalExternalBtn) {
+      proposalExternalBtn.addEventListener('click', () => {
+        close();
+        AppView.createProposal({ pickFlow: true });
       });
     }
     // import-pr renders only when can_collaborate, so (like members/fork)
@@ -6752,13 +6767,33 @@ const AppView = {
     }
   },
 
-  async createProposal() {
+  // `opts.pickFlow` (#1049) opens the new session on the development-flow
+  // picker even for someone who ticked "remember my option" — they asked
+  // for the choice explicitly from the "+" menu, so the saved shortcut is
+  // not what they want this time. `opts.flow` skips the question entirely
+  // and opens the walkthrough for that agent, which is what the
+  // out-of-credits card's "Use Claude Code" / "Use Codex" buttons do.
+  async createProposal(opts) {
     if (!AppView.appData || typeof DevChat === 'undefined') return;
     const session = await DevChat.createSession(AppView.appData.slug);
     if (!session) return; // createSession already alerts (cap reached / error)
     AppView._proposalHint = true;
+    const pickFlow = !!(opts && opts.pickFlow);
+    const flowAgent = (opts && opts.flow) || null;
     if (typeof App !== 'undefined' && App.switchTab) {
       await App.switchTab('dev', session.id, 'sessions');
+    }
+    // AFTER the switch: opening the session resets the per-session flow
+    // state, so the request has to land on the other side of it.
+    if ((pickFlow || flowAgent) && DevChat._devFlow) {
+      if (flowAgent) {
+        DevChat._devFlow.mode = 'wizard';
+        DevChat._devFlow.agent = flowAgent;
+      } else {
+        DevChat._devFlow.forcePicker = true;
+      }
+      DevChat._devFlowEnsureStatus(true);
+      DevChat.renderMessages();
     }
   },
 
@@ -8355,6 +8390,10 @@ const AppView = {
       // the chat does; the shared-budget wording is reachable through the
       // budget meter, which this modal doesn't read.
       globalOut: false,
+      // #1049: whether to lead with the Claude Code / Codex hand-offs. From
+      // /api/auth/me, so the card offers only what this deployment supports.
+      externalFlowsAvailable: !!(typeof App !== 'undefined' && App.user
+        && App.user.externalFlowsAvailable),
     };
     root.innerHTML = `
       <div class="min-h-full flex items-center justify-center p-4">
@@ -8377,7 +8416,16 @@ const AppView = {
     });
     document.addEventListener('keydown', onKey);
     document.body.appendChild(root);
-    CreditOptions.wire(root);
+    // #1049: "Use Claude Code" / "Use Codex" start the guided walkthrough in
+    // a new session rather than dropping the user in Settings to work out
+    // what to do next. Every other route is still a hash navigation, which
+    // unmounts this screen on its own.
+    CreditOptions.wire(root, {
+      onFlow: (flow) => {
+        close();
+        AppView.createProposal({ flow });
+      },
+    });
   },
 
   // Singleton confirm popup for Generate proposal. Same scrim/card styling as
@@ -10125,6 +10173,16 @@ const AppView = {
 
     // #194: one-shot hint set by the "+" menu's "Propose a change" —
     // proposals are PRs, so the path runs through a session.
+    // #1049: suppressed when the development-flow picker / walkthrough is
+    // about to render in the same empty pane — that card asks the same
+    // question with more precision, and two stacked explanations of what a
+    // proposal is read as noise.
+    if (AppView._proposalHint
+        && typeof DevChat !== 'undefined'
+        && typeof DevChat._devFlowTarget === 'function'
+        && DevChat._devFlowTarget()) {
+      AppView._proposalHint = false;
+    }
     if (AppView._proposalHint) {
       AppView._proposalHint = false;
       const view = document.getElementById('dc-view');
