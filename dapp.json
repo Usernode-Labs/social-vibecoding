@@ -357,6 +357,11 @@
   ],
   "tests": [
     {
+      "name": "Dev board: session cards carry the live working spinner (#1038)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-body [data-session-chip=\"990102\"] .dc-status-spinner-arc, #dev-body [data-shared-session-row=\"990001\"] .dc-status-spinner-arc"
+    },
+    {
       "name": "Platform variables panel renders on the platform app (#826 folded into app secrets)",
       "path": "/?shot=secrets#app/usernode-2d5619/dev",
       "expectSelector": "#app-secrets-list code"
@@ -393,6 +398,11 @@
       "path": "/?shot=work-drawer&demo=1",
       "expectSelector": "#work-drawer-panel:not(.hidden) #work-drawer-list",
       "expectText": "[Mock] Session titled but not yet proposed"
+    },
+    {
+      "name": "Work drawer: a busy session row spins from live state (#1038)",
+      "path": "/?shot=work-drawer&demo=1",
+      "expectSelector": "#work-drawer-panel:not(.hidden) #work-drawer-list a[href$=\"/sessions/990102\"] .dc-status-spinner-arc"
     },
     {
       "name": "Send Feedback offers a kudos bounty, unchecked by default (#964)",

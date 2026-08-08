@@ -316,9 +316,6 @@ const AppView = {
   _activeKanbanTab() {
     return AppView.KANBAN_TABS.includes(AppView._kanbanTab) ? AppView._kanbanTab : 'issues';
   },
-  // Refresh timer for the session cards' busy indicators (see
-  // _syncSessionPolling); self-clears when #dev-body leaves the DOM.
-  _stripTimer: null,
   // Session caches for the In progress area — see _refreshSessionCaches.
   _mySessions: [],
   _sharedSessions: [],
@@ -1658,7 +1655,6 @@ const AppView = {
       }
     });
 
-    AppView._syncSessionPolling();
     await AppView._loadDevFeed();
 
     // Restore the saved scroll position now that the feed has painted.
@@ -1979,7 +1975,6 @@ const AppView = {
     // same way _renderFeedInner does for the feed. An issue opened while its
     // headless run is 'generating' begins polling so the card advances to its
     // outcome label without a manual refresh.
-    AppView._syncHeadlessPolling();
   },
 
   // #1045: the ONE rule for whether a proposal row offers the "Explore in
@@ -2090,7 +2085,10 @@ const AppView = {
   // cheap extra veto (a titled chat is definitely used), alongside
   // pr_number (pushed work) and busy (a first turn mid-run).
   _isUnusedChat(s) {
-    if (!s || s.pr_number || s.session_title || s.busy) return false;
+    if (!s || s.pr_number || s.session_title) return false;
+    // #1038: live busy, so a first turn that started since the last fetch
+    // still vetoes the "unused chat" treatment.
+    if (AppView._sessionBusy(s)) return false;
     const created = Date.parse(s.created_at || '');
     const active = Date.parse(s.last_activity_at || s.created_at || '');
     return Number.isFinite(created) && Number.isFinite(active) && created === active;
@@ -2821,6 +2819,8 @@ const AppView = {
     let mine = [];
     let sharedAll = [];
     let archived = [];
+    // #1038: stamped BEFORE the requests go out — see SessionState.seed.
+    const issuedAt = Date.now();
     try {
       const [activeRes, sharedRes, allRes] = await Promise.all([
         // ?demo=1 forwarded so the staging mock own-session row (pinned
@@ -2848,6 +2848,12 @@ const AppView = {
           .sort((a, b) => actTs(b) - actTs(a));
       }
     } catch { /* keep whatever loaded */ }
+    // Fold both payloads' busy flags into the live store; a pushed event
+    // newer than `issuedAt` still wins, so a slow response can't resurrect
+    // a finished turn's spinner.
+    if (typeof window !== 'undefined' && window.SessionState) {
+      SessionState.seed([...mine, ...sharedAll], issuedAt);
+    }
     const sig = JSON.stringify([mine, sharedAll, archived]);
     const changed = sig !== AppView._sessionsSig;
     AppView._sessionsSig = sig;
@@ -3198,7 +3204,6 @@ const AppView = {
 
     // Keep the generating-state poller in sync with what we just
     // rendered (idempotent set/clear of one timer).
-    AppView._syncHeadlessPolling();
 
     // Paging footer: more local items, or a GitHub link when the repo
     // has more open issues than the fetch ceiling.
@@ -3736,7 +3741,6 @@ const AppView = {
     // The headless-state poller is keyed off the cached issue data, same
     // as the list feed — filtering a generating row off-screen doesn't
     // stop it.
-    AppView._syncHeadlessPolling();
     if (window.Kudos) Kudos.attach(board);
     AppView._applyExploreChatAvailability(board);
     AppView._updateKanbanFilterBarUI();
@@ -4518,7 +4522,6 @@ const AppView = {
         AppView._repaintBoardSurface();
       });
     }
-    AppView._syncHeadlessPolling();
     if (window.Kudos) Kudos.attach(el);
     AppView._applyExploreChatAvailability(el);
     AppView._updateKanbanFilterBarUI();
@@ -4540,8 +4543,19 @@ const AppView = {
     return escapeHtml(s.session_title || s.pr_title || s.branch_name || `Session #${s.id}`);
   },
 
+  // #1038: busy is read live from window.SessionState, falling back to the
+  // `busy` flag on the fetched row for a session it has never heard about.
+  // A pushed transition repaints these tags with no refetch.
+  _sessionBusy(s) {
+    if (!s) return false;
+    if (typeof window !== 'undefined' && window.SessionState) {
+      return SessionState.isBusy(s.id, s.busy);
+    }
+    return !!s.busy;
+  },
+
   _sessionStatusTagHtml(s) {
-    return s.busy
+    return AppView._sessionBusy(s)
       ? '<span class="inline-flex items-center gap-1 text-xs text-emerald-500 shrink-0"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>'
       : (s.status === 'paused' ? '<span class="text-xs text-zinc-500 shrink-0">paused</span>' : '');
   },
@@ -4929,17 +4943,43 @@ const AppView = {
   // (topic/chat/settings sub-views — renderDevView re-arms on return).
   // Dirty-checks via _refreshSessionCaches so an idle tick never
   // repaints the board (keeping filter-input focus and scroll intact).
-  _syncSessionPolling() {
-    if (AppView._stripTimer) return;
-    AppView._stripTimer = setInterval(async () => {
-      if (!document.getElementById('dev-body') || !AppView.appData) {
-        clearInterval(AppView._stripTimer);
-        AppView._stripTimer = null;
-        return;
-      }
-      const changed = await AppView._refreshSessionCaches(AppView.appData.slug);
-      if (changed && document.getElementById('dev-body')) AppView._repaintDevBody();
-    }, 15000);
+  // #1038: subscribe the Dev board's card surfaces to live session state.
+  // Replaces the old 15s `_stripTimer`, which re-pulled three full payloads
+  // just to notice a "working…" tag had flipped. Registered once at module
+  // load (below), not per mount, so it survives every repaint; the repaint
+  // itself no-ops when no card surface is mounted.
+  _onSessionStateChanged() {
+    // Never rebuild the board out from under an in-progress drag — same
+    // guard _repaintDevBody / _repaintKanbanBoard apply to WS-driven
+    // repaints. The next settled event repaints.
+    if (AppView._dragState) return;
+    if (!AppView.appData) return;
+    if (typeof App !== 'undefined' && App.currentTab !== 'dev') return;
+    // _repaintCards, not _repaintDevBody: an auto-run can be watched from
+    // the OPENED TOPIC view (#gc-thread-head), where #dev-body isn't
+    // mounted at all. The 8s poller this replaced called that case out
+    // explicitly, and keying on #dev-body alone would silently strand it.
+    // Both halves no-op when their own surface is absent.
+    AppView._repaintCards();
+  },
+
+  // #1038: an auto-run's card state lives on the cached issue row, not on a
+  // session id, so the raw event has to patch it before the repaint reads
+  // it. Field-scoped merge (same as the retired 8s poller): bounty state can
+  // carry optimistic local edits a broadcast must not clobber.
+  _onSessionStateEvent(payload) {
+    if (!payload || !payload.headless) return;
+    const n = payload.headless.issueNumber;
+    if (n == null) return;
+    if (!AppView.appData || !payload.appSlug || payload.appSlug !== AppView.appData.slug) return;
+    const issue = (AppView._ghIssues || []).find((i) => i && i.number === n);
+    if (!issue) return;
+    issue.headless = {
+      ...(issue.headless || {}),
+      sessionId: payload.sessionId,
+      status: payload.headless.status,
+      outcome: payload.headless.outcome,
+    };
   },
 
   // The issue's body (GitHub markdown), rendered in the topic
@@ -8273,8 +8313,6 @@ const AppView = {
 
   // ---- Headless auto sessions (#155) --------------------------------------
 
-  _headlessPollTimer: null,
-
   // "Generate proposal" — confirmation popup (token warning + model selector)
   // before spinning up a headless AI session on this issue. The session is
   // billed to the clicking user but isn't attached to their dev chat.
@@ -8324,9 +8362,10 @@ const AppView = {
       const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
       if (issue) issue.headless = { sessionId: data.session.id, status: 'generating' };
       AppView._repaintCards();
-      // Start the completion poller right away so a run begun from the opened
-      // topic view advances to its outcome label without a manual refresh.
-      AppView._syncHeadlessPolling();
+      // #1038: no poller to arm. The server broadcasts this run's state
+      // changes (services/session-state.js) and _onSessionStateEvent patches
+      // the cached issue row, so the card advances to its outcome label on
+      // its own — on every open board, not just this one.
     } catch (err) {
       PlatformUI.toast(`Couldn't start generating the proposal: ${err.message}`);
     }
@@ -8529,52 +8568,15 @@ const AppView = {
     }
   },
 
-  // While any rendered issue shows a generating auto session, poll the
-  // issues endpoint so the button flips to its outcome-specific "Review
-  // … & start session" label (or back to Generate proposal on failure) without
-  // a manual refresh.
-  _syncHeadlessPolling() {
-    const generating = (AppView._ghIssues || []).some(
-      (i) => i.headless && i.headless.status === 'generating'
-    );
-    if (!generating) {
-      if (AppView._headlessPollTimer) {
-        clearInterval(AppView._headlessPollTimer);
-        AppView._headlessPollTimer = null;
-      }
-      return;
-    }
-    if (AppView._headlessPollTimer) return;
-    AppView._headlessPollTimer = setInterval(async () => {
-      const slug = AppView.appData && AppView.appData.slug;
-      // Stop only when the user has actually left the Dev area — i.e. none
-      // of the card surfaces are mounted. Keying on #dev-feed alone would
-      // kill polling for a run watched from the opened topic view
-      // (#gc-thread-head, where the feed isn't present) or from the kanban
-      // board (#dev-kanban, where issue rows live in the columns instead).
-      const mounted = document.getElementById('dev-feed')
-        || document.getElementById('dev-kanban')
-        || document.getElementById('gc-thread-head');
-      if (!slug || !mounted) {
-        clearInterval(AppView._headlessPollTimer);
-        AppView._headlessPollTimer = null;
-        return;
-      }
-      try {
-        const res = await fetch(`/api/apps/${slug}/github-issues`);
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!Array.isArray(data.issues)) return;
-        // Merge just the headless field — bounty state may have optimistic
-        // local updates we don't want a poll to clobber.
-        const byNumber = new Map(data.issues.map((i) => [i.number, i.headless || null]));
-        for (const issue of AppView._ghIssues || []) {
-          if (byNumber.has(issue.number)) issue.headless = byNumber.get(issue.number);
-        }
-        AppView._repaintCards();
-      } catch {}
-    }, 8000);
-  },
+  // #1038: the 8s `_syncHeadlessPolling` timer that used to live here is
+  // gone. It re-pulled the whole GitHub-issues payload every 8 seconds just
+  // to notice a generating auto-run had finished — while the server had
+  // been broadcasting exactly that transition all along (the
+  // `headless_update` session_event) with no client listening. The board
+  // now flips the card from the pushed `session_state` event:
+  // _onSessionStateEvent patches the cached issue row's `headless` field
+  // (same field-scoped merge the poller did, so optimistic bounty edits
+  // survive) and the coalesced repaint follows.
 
   // Core PR voting controls (Preview / Yes / No / Admin-merge) as an HTML
   // string. Shared by the vote panel rows and the inline buttons on
@@ -12908,4 +12910,15 @@ function relTime(iso) {
 // see the module.exports block above) doesn't crash on a missing `window`.
 if (typeof window !== 'undefined') {
   window.AppView = AppView;
+  // #1038: wire the Dev board's card surfaces to live session state. Both
+  // subscriptions are registered ONCE here rather than per mount, so no
+  // repaint or navigation can leave the board stranded on a stale spinner;
+  // the handlers themselves no-op when no card surface is mounted.
+  //
+  // Order matters: the raw event handler patches the cached issue row's
+  // auto-run state, and the coalesced subscriber repaints from that cache.
+  if (window.SessionState) {
+    SessionState.onEvent(AppView._onSessionStateEvent);
+    SessionState.subscribe(AppView._onSessionStateChanged);
+  }
 }
