@@ -50,6 +50,7 @@ async function migrate(config) {
   await seedStagingSavedDrafts(pool, config);
   await seedStagingDevFlowPicker(pool, config);
   await seedStagingDevFlowWizard(pool, config);
+  await seedStagingSessionOptions(pool, config);
   await seedStagingSharedSession(pool, config);
   // #945: must run AFTER seedStagingSharedSession — the proposal-thread
   // half hangs off that fixture's session id.
@@ -2364,6 +2365,50 @@ async function seedStagingDevFlowWizard(pool, config) {
     sessionId: STAGING_DEV_FLOW_WIZARD_SESSION_ID,
     sessionInserted: rowCount,
     taskInserted,
+  });
+}
+
+// #1055: a session to open the composer's "session and billing options"
+// menu in. An `active` session with no PR, exactly like its 990403/990404
+// neighbours — the menu hangs off the composer, which every open session
+// has, so the only thing this fixture supplies is a session id a reviewer
+// (and the dapp.json checks) can deep-link to without first creating one.
+//
+//   990405 — /#app/<self-slug>/dev/sessions/990405?demo=1&shot=session-options
+//            the menu itself, open. `?demo=1` is what makes GET
+//            /api/auth/me report a saved key (routes/auth.js, request-time
+//            and staging-only), so the API-key row renders its "Change your
+//            API key (…7f2c)" branch rather than the unset one — both
+//            branches are reachable, the unset one by dropping `demo=1`.
+//   990405 — …?demo=1&shot=session-options-instructions
+//            the "run this session on your computer" card, with the
+//            commands interpolated for THIS session id.
+//
+// Id stays in the 99xxxx fake range beside its neighbours. Idempotent on
+// the session id; a strict no-op outside staging.
+const STAGING_SESSION_OPTIONS_SESSION_ID = 990405;
+
+async function seedStagingSessionOptions(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const ctx = await devFlowFixtureContext(pool, config, 'Staging session-options fixture');
+  if (!ctx) return;
+
+  const { rowCount } = await pool.query(
+    `INSERT INTO chat_sessions
+       (id, app_id, user_id, branch_name, pr_title, session_title, status, created_at, last_activity_at)
+     VALUES ($1, $2, $3, 'staging-fixture/session-options', NULL,
+             '[staging fixture] Session and billing options', 'active',
+             NOW() - INTERVAL '6 minutes', NOW() - INTERVAL '1 minute')
+     ON CONFLICT (id) DO NOTHING`,
+    [STAGING_SESSION_OPTIONS_SESSION_ID, ctx.appId, ctx.owner.id]
+  );
+
+  log.info('db', 'Staging session-options fixture seeded', {
+    appId: ctx.appId,
+    owner: ctx.owner.username,
+    sessionId: STAGING_SESSION_OPTIONS_SESSION_ID,
+    inserted: rowCount,
   });
 }
 

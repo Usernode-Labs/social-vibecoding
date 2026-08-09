@@ -53,6 +53,7 @@ const ENTRY_TAG = '<script type="module" src="/shell/assets/shell.js"></script>'
 const POST_MIGRATION_TAGS = [
   '<script src="/js/nav-link.js"></script>', // #1036 — real-anchor / new-tab seam
   '<script src="/js/dev-flow-select.js"></script>', // #1049 — dev-flow picker + walkthrough
+  '<script src="/js/session-options.js"></script>', // #1055 — composer session/billing menu
 ];
 
 const afterWithoutEntry = POST_MIGRATION_TAGS.reduce(

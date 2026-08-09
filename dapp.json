@@ -1728,6 +1728,50 @@
       "name": "A connector-imported proposal names the coding agent that built it (#967)",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals",
       "expectText": "Built with Claude Code"
+    },
+    {
+      "name": "The composer's ⋯ opens session and billing options (#1055)",
+      "path": "/?demo=1&shot=session-options#app/usernode-2d5619/dev/sessions/990405",
+      "expectSelector": ".un-popover .dc-options-header .dc-options-title",
+      "expectText": "Session and billing options"
+    },
+    {
+      "name": "Session options paint an opaque surface (#1055)",
+      "path": "/?demo=1&shot=session-options#app/usernode-2d5619/dev/sessions/990405",
+      "expectSelector": ".un-popover[data-surface=\"opaque\"]"
+    },
+    {
+      "name": "Session options separate running this session locally from starting new work (#1055)",
+      "path": "/?demo=1&shot=session-options#app/usernode-2d5619/dev/sessions/990405",
+      "expectSelector": ".un-popover .un-popover-item, .un-popover [role=\"menuitem\"]",
+      "expectText": "Run this session on your computer"
+    },
+    {
+      "name": "Session options offer the Claude Code hand-off as NEW work (#1055)",
+      "path": "/?demo=1&shot=session-options#app/usernode-2d5619/dev/sessions/990405",
+      "expectText": "Start new work with Claude Code on the web"
+    },
+    {
+      "name": "Session options name the key already on file (#1055)",
+      "path": "/?demo=1&shot=session-options#app/usernode-2d5619/dev/sessions/990405",
+      "expectText": "Change your API key"
+    },
+    {
+      "name": "With no key on file the menu leads with setting one (#1055)",
+      "path": "/?shot=session-options#app/usernode-2d5619/dev/sessions/990405",
+      "expectText": "Set your Anthropic API key"
+    },
+    {
+      "name": "Session options open as an action sheet on touch (#1055)",
+      "path": "/?demo=1&shot=session-options&un-platform=ios#app/usernode-2d5619/dev/sessions/990405",
+      "expectSelector": ".un-action-sheet .un-action-card .un-action-btn",
+      "expectText": "Start new work with Codex"
+    },
+    {
+      "name": "The local-CLI card spells the commands for THIS session (#1055)",
+      "path": "/?demo=1&shot=session-options-instructions#app/usernode-2d5619/dev/sessions/990405",
+      "expectSelector": "#dc-options-commands",
+      "expectText": "agent run --session 990405"
     }
   ],
   "governance": {

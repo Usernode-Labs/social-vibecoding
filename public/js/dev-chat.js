@@ -674,6 +674,127 @@ const DevChat = {
     });
   },
 
+  // ── Session and billing options — the "⋯" beside the meter (#1055) ─
+  //
+  // All copy, gating and markup live in public/js/session-options.js; this
+  // is the state assembly and the plumbing back into the session. The
+  // button is static markup in renderChatView (see #dc-budget-options), so
+  // it exists in every state of the meter — including the empty one, which
+  // is the state someone with no key and no spend yet is looking at.
+
+  _optionsMenu: null,
+  _optionsCard: null,
+  _shotOptionsDone: false,
+
+  // Everything the menu needs, read from the places that already own each
+  // fact: Settings mirrors /api/auth/me's BYOK state, App.user carries the
+  // two deployment capabilities, and _localAgent is the #907 lease as of
+  // the last status poll.
+  _sessionOptionsState() {
+    const user = (typeof App !== 'undefined' && App.user) || {};
+    const settings = (window.Settings && window.Settings.state) || {};
+    const session = DevChat.currentSession || {};
+    return {
+      hasApiKey: !!settings.hasApiKey,
+      keyLast4: settings.keyLast4 || null,
+      // The whole /api/cli/* family is 404'd in a staging clone, so
+      // cliAuthEnabled is false there and the local-CLI row would be missing
+      // from the very menu a reviewer opened to look at it. ?demo=1 paints
+      // it — the row opens a pure copy card that fetches nothing, so there
+      // is no request to 404 behind it. Production is unaffected: the flag
+      // is only honoured where the page already carries it.
+      cliAuthEnabled: user.cliAuthEnabled !== false || !!DevChat._demoQS(),
+      externalFlowsAvailable: DevChat._externalFlowsAvailable(),
+      localAgent: DevChat._localAgent || null,
+      sessionId: session.id || null,
+      repoUrl: (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.repo_url) || null,
+    };
+  },
+
+  _closeSessionOptions() {
+    const menu = DevChat._optionsMenu;
+    DevChat._optionsMenu = null;
+    if (menu && typeof menu.dismiss === 'function') menu.dismiss();
+    const card = DevChat._optionsCard;
+    DevChat._optionsCard = null;
+    if (card && typeof card.dismiss === 'function') card.dismiss();
+  },
+
+  // anchorEl: the "⋯" button, so the desktop popover toggles closed on a
+  // re-click. Touch gets the kit's action sheet from the same call.
+  openSessionOptions(anchorEl) {
+    if (!window.SessionOptions) return;
+    DevChat._closeSessionOptions();
+    const menu = SessionOptions.open({
+      anchorEl: anchorEl || document.getElementById('dc-budget-options') || undefined,
+      state: DevChat._sessionOptionsState(),
+      onNavigate: (hash) => { window.location.hash = hash; },
+      onInstructions: (state) => {
+        DevChat._optionsCard = SessionOptions.openInstructions({
+          state,
+          onClose: () => { DevChat._optionsCard = null; },
+        });
+      },
+      onHandBack: () => DevChat._handBackToUsernode(),
+      onFlow: (agent) => DevChat._devFlowFromCredits(agent),
+    });
+    DevChat._optionsMenu = menu;
+    if (menu && typeof menu.then === 'function') {
+      menu.then(() => { if (DevChat._optionsMenu === menu) DevChat._optionsMenu = null; });
+    }
+  },
+
+  // Screenshot-state deep links (#1055):
+  //   ?shot=session-options               → the menu itself, open
+  //   ?shot=session-options-instructions  → the CLI instructions card
+  // Once per page load, and only when the composer is actually on screen —
+  // a re-render must not pop the menu back open under the user.
+  _maybeOpenShotOptions() {
+    if (DevChat._shotOptionsDone) return;
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch { /* ignore */ }
+    if (shot !== 'session-options' && shot !== 'session-options-instructions') return;
+    const btn = document.getElementById('dc-budget-options');
+    if (!btn || btn.offsetParent === null) return;
+    DevChat._shotOptionsDone = true;
+    // Deferred a frame: the composer was written synchronously just above
+    // and the kit's flip/clamp placement needs the button's settled rect.
+    requestAnimationFrame(() => {
+      if (shot === 'session-options-instructions') {
+        if (!window.SessionOptions) return;
+        DevChat._optionsCard = SessionOptions.openInstructions({
+          state: DevChat._sessionOptionsState(),
+          onClose: () => { DevChat._optionsCard = null; },
+        });
+        return;
+      }
+      DevChat.openSessionOptions(btn);
+      requestAnimationFrame(() => DevChat._assertOptionsMenuOpaque());
+    });
+  },
+
+  // Same regression lock as home.js's card menu (#847): a translucent
+  // surface is invisible to a selector/text check — every row is present
+  // and correct, you just read the composer through them. Stamp the
+  // verdict for the dapp.json check and console.error on a violation so
+  // the baseline no-console-errors check trips on the same route.
+  _assertOptionsMenuOpaque() {
+    const pop = document.querySelector('.un-popover');
+    if (!pop) return; // touch idiom: an action sheet over the kit's backdrop
+    const bg = getComputedStyle(pop).backgroundColor || '';
+    const m = bg.match(/^rgba?\(([^)]+)\)$/);
+    const parts = m ? m[1].split(',').map((s) => parseFloat(s.trim())) : [];
+    const alpha = parts.length >= 4 ? parts[3] : (parts.length === 3 ? 1 : 0);
+    const opaque = alpha >= 0.99;
+    pop.dataset.surface = opaque ? 'opaque' : 'translucent';
+    if (!opaque) {
+      console.error(
+        `[dev-chat] session options menu surface is translucent (${bg}) — the`
+        + ' composer reads through it. --un-popover-bg must resolve to an opaque color.'
+      );
+    }
+  },
+
   // ── Development-flow picker + walkthrough (#1049) ──────────────────
   //
   // A fresh session used to open with nothing but a text box, and the ONLY
@@ -5845,6 +5966,13 @@ const DevChat = {
               <span id="dc-runner" class="dc-runner"></span>
               <span class="flex-1"></span>
               <span id="dc-budget" class="text-xs font-mono"></span>
+              <!-- #1055: session and billing options. STATIC markup rather
+                   than something renderBudget() appends, because
+                   renderBudget() returns early when there is nothing to
+                   paint — and "no key, no spend yet" is exactly the state
+                   this menu exists for. -->
+              <button type="button" id="dc-budget-options" title="Session and billing options" aria-label="Session and billing options" aria-haspopup="menu"
+                class="dc-budget-options">&#8943;</button>
             </div>
             <!-- #800: one-line plain-language description of the SELECTED
                  model — what kind of work it suits. Filled by
@@ -5935,6 +6063,16 @@ const DevChat = {
     // itself runs a beat later; painting here means a re-render of an already
     // open session doesn't drop the chip for a second.
     DevChat._renderRunnerControls();
+
+    // #1055: the "⋯" beside the meter. Any menu left open by a previous
+    // render is anchored to a button that no longer exists, so it is
+    // dismissed here rather than left floating over the new composer.
+    DevChat._closeSessionOptions();
+    const optionsBtn = document.getElementById('dc-budget-options');
+    if (optionsBtn) {
+      optionsBtn.addEventListener('click', () => DevChat.openSessionOptions(optionsBtn));
+    }
+    DevChat._maybeOpenShotOptions();
 
     document.getElementById('dc-model-select').addEventListener('change', (e) => {
       DevChat.selectedModel = e.target.value;

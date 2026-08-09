@@ -259,6 +259,18 @@ function authRoutes(config) {
         : null;
       profile = shapeProfile(rows[0]);
     } catch {}
+    // #1055 staging fixture: report a saved BYOK key so the composer's
+    // session-options menu renders its "Change your API key (…7f2c)" branch
+    // (and the meter its "your key" one). STRICTLY request-time — nothing is
+    // written, users.anthropic_key_enc is untouched, and dropping `demo=1`
+    // gives the honest unset state back on the very next request. A no-op in
+    // production: same IS_STAGING && ?demo=1 gate as /api/me/ai-budget below.
+    let demoKey = false;
+    if (IS_STAGING && req.query.demo === '1') {
+      demoKey = true;
+      hasApiKey = true;
+      keyLast4 = '7f2c';
+    }
     if (!canCreateApps) {
       try {
         const { rows: countRows } = await pool.query(
@@ -301,6 +313,10 @@ function authRoutes(config) {
         hasPlatformAccess: !!req.user.hasPlatformAccess || !!req.user.isAdmin,
         hasApiKey,
         keyLast4,
+        // Marks the two fields above as the staging fixture rather than
+        // real state, the same way every other ?demo=1 payload labels
+        // itself (services/local-agent-demo.js, GET /api/budget).
+        ...(demoKey ? { demoKey: true } : {}),
         usernodePubkey,
         walletLinkEnabled: !!config.usernodeAppPubkey,
         // Profile customization (#982). `username` stays the permanent

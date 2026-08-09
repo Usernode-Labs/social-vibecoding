@@ -54,6 +54,7 @@ const ENTRY_SRC = '/shell/assets/shell.js';
 const POST_MIGRATION_SRCS = [
   '/js/nav-link.js', // #1036 — the real-anchor / new-tab seam
   '/js/dev-flow-select.js', // #1049 — the dev-flow picker + walkthrough
+  '/js/session-options.js', // #1055 — the composer's session/billing menu
 ];
 
 test('every legacy script is loaded, in exactly the pre-migration order', () => {
@@ -72,16 +73,17 @@ test('every legacy script is loaded, in exactly the pre-migration order', () => 
 });
 
 test('the shell still loads the expected number of legacy scripts', () => {
-  // 53 /js/** tags in total: theme.js in the head (it applies the stored
-  // theme before first paint) plus 52 at the end of <body>. The count moves
+  // 54 /js/** tags in total: theme.js in the head (it applies the stored
+  // theme before first paint) plus 53 at the end of <body>. The count moves
   // whenever main adds a module — it was 48 at the chassis swap, main's
   // mail console and credit-options screens brought it to 50, #1036's
-  // nav-link.js made 51, and #1049's dev-flow-select.js makes 52.
+  // nav-link.js made 51, #1049's dev-flow-select.js made 52, and #1055's
+  // session-options.js makes 53.
   const bodyScripts = scriptsOf(after.slice(after.indexOf('</head>')))
     .filter((s) => s.src && s.src.startsWith('/js/'));
   assert.equal(
-    bodyScripts.length, 52,
-    `expected the 52 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
+    bodyScripts.length, 53,
+    `expected the 53 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
     + 'Adding or removing one is fine, but it also needs a matching SHELL_ASSETS entry in '
     + 'public/sw.js (tests/pwa-shell-wiring.test.js enforces that) — so update this count '
     + 'deliberately rather than loosening the check.',
@@ -126,6 +128,24 @@ test('dev-flow-select.js loads ahead of the modules that consume it', () => {
     const idx = srcs.indexOf(consumer);
     assert.ok(idx === -1 || at < idx,
       `dev-flow-select.js must load before ${consumer}, which reads window.DevFlowSelect`);
+  }
+});
+
+test('session-options.js loads ahead of the modules that consume it', () => {
+  // Excluded from the fixture comparison above for the same reason as the
+  // two modules before it, so its position is pinned here. #1055: dev-chat.js
+  // owns the state and calls SessionOptions.open / openInstructions; the
+  // module itself depends only on PlatformUI, which loads earlier still.
+  const srcs = scriptsOf(after).filter((s) => s.src && s.src.startsWith('/js/')).map((s) => s.src);
+  const at = srcs.indexOf('/js/session-options.js');
+  assert.notEqual(at, -1, 'the shell must load /js/session-options.js');
+  const platformUi = srcs.indexOf('/js/platform-ui.js');
+  assert.ok(platformUi === -1 || platformUi < at,
+    'platform-ui.js must load before session-options.js, which presents through the seam');
+  for (const consumer of ['/js/dev-chat.js', '/js/app.js']) {
+    const idx = srcs.indexOf(consumer);
+    assert.ok(idx === -1 || at < idx,
+      `session-options.js must load before ${consumer}, which reads window.SessionOptions`);
   }
 });
 

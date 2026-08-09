@@ -5999,6 +5999,68 @@ html:not(.dark) #admin-node-root {
 }
 .dc-runner-chip-past::before { background: var(--text-faint); }
 
+/* ── Dev-chat session and billing options (#1055) ─────────────────────────
+   The "⋯" beside the credit meter. Deliberately quiet: it sits in the
+   composer's status row next to a number, so at rest it is the same muted
+   weight as the meter itself and only gains a surface on hover/focus.
+   Sized past the 44px touch target with padding rather than a box, so the
+   row's height is unchanged for everyone who never presses it. */
+.dc-budget-options {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  min-width: 1.5rem;
+  height: 1.5rem;
+  margin-left: 0.25rem;
+  padding: 0 0.25rem;
+  border-radius: 0.375rem;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.12s ease, background-color 0.12s ease, border-color 0.12s ease;
+}
+.dc-budget-options:hover {
+  color: var(--text-primary);
+  background: var(--bg-code);
+  border-color: var(--border);
+}
+.dc-budget-options:focus-visible {
+  outline: none;
+  color: var(--text-primary);
+  border-color: #8b5cf6;
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.35);
+}
+
+/* Rich popover header (SessionOptions.headerHtml). Same role as
+   .card-menu-header on the home grid: it rides inside the kit popover as a
+   headerEl, and the touch action sheet falls back to the plain title. The
+   kit sets item labels with textContent, so any sentence longer than a
+   label lives here. */
+.dc-options-header {
+  max-width: 20rem;
+  padding: 0.5rem 0.875rem 0.55rem;
+  margin-bottom: 0.25rem;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.dc-options-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dc-options-line {
+  margin-top: 0.25rem;
+  font-size: 0.7rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
 /* ── Offline mode: the visible state (#1021) ──────────────────────────
    `body.is-offline` is toggled by Offline._set() and is the single hook
    for every offline affordance. Before this, the only signal was an
