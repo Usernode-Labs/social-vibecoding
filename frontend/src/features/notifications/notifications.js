@@ -1348,6 +1348,14 @@ function relativeTime(ts) {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
+// #1079 chunk B: the cog drawer's "Needs attention" section renders these very
+// same per-kind rows (WorkDrawer.renderPendingSection). While both files were
+// classic <script>s they shared one global scope and it simply called
+// renderRow; inside the bundle each module has its own scope, so the row
+// builder has to be published on the object work-drawer already reaches
+// through (Notifications.items, ._onItemClick, ._renderBadge, …).
+Notifications._renderRow = renderRow;
+
 // Published exactly where the classic <script> published it: at module
 // evaluation, which for the React entry is still before DOMContentLoaded. The
 // guard is for the SSG prerender pass, which evaluates this module in node.

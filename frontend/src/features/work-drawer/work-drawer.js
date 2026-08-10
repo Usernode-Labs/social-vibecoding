@@ -358,10 +358,16 @@ const WorkDrawer = {
   // "Needs attention": unread session-related notifications, rendered
   // with notifications.js's shared per-kind row builder so copy/markup
   // match what the bell used to show. Hidden when empty.
+  //
+  // The builder is reached through window.Notifications (the same seam as
+  // .items and ._onItemClick below), not as a bare identifier: since #1079
+  // chunk B both files live in the bundle, where each module has its own
+  // scope and a bare `renderRow` would resolve to nothing.
   renderPendingSection() {
     const pending = WorkDrawer._pendingNotifs();
     if (!pending.length) return '';
-    const rowFn = (typeof renderRow === 'function') ? renderRow : null;
+    const rowFn = (typeof window !== 'undefined' && window.Notifications
+      && typeof Notifications._renderRow === 'function') ? Notifications._renderRow : null;
     if (!rowFn) return '';
     return WorkDrawer._sectionHeader('Needs attention') + pending.map(rowFn).join('');
   },
