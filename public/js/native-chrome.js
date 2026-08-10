@@ -484,16 +484,25 @@
     // Replaces the native onboarding permission screens: after the first
     // successful login handoff on a device, offer the exact-alarm /
     // battery-optimization prompts the node needs for block production.
-    // One-shot per device (localStorage marker, set on dismiss either
-    // way) — the same rows live permanently in Settings → Usernode app,
-    // so skipping here loses nothing.
+    // One-shot per device (localStorage marker, written when the sheet
+    // is presented) — the same rows live permanently in Settings →
+    // Usernode app, so skipping here loses nothing. The marker must not
+    // wait for dismiss: killing the app with the sheet still up used to
+    // re-show it on every later launch. The sheet is also reachable from
+    // several overlapping triggers (boot handoff, every `sv:session`,
+    // the auth-status recovery path), so `_firstRunPromptDone` closes
+    // re-entry synchronously, before the first await — otherwise each
+    // trigger stacked another identical sheet (iOS TestFlight report).
     _FIRST_RUN_KEY: 'sv:onboarding_permissions_done',
+    _firstRunPromptDone: false,
 
     _markFirstRunDone() {
       try { localStorage.setItem(NativeChrome._FIRST_RUN_KEY, '1'); } catch (_) {}
     },
 
     async maybeShowFirstRunPermissions() {
+      if (NativeChrome._firstRunPromptDone) return;
+      NativeChrome._firstRunPromptDone = true;
       try {
         if (localStorage.getItem(NativeChrome._FIRST_RUN_KEY) === '1') return;
       } catch (_) {}
@@ -505,10 +514,12 @@
       if (!state) {
         // Silent skip (the permanent Settings rows are the fallback), but
         // name the reason from the shared record so this and the Settings
-        // section agree on why the read came back empty.
+        // section agree on why the read came back empty. A later trigger
+        // may retry this document — only a presented sheet is one-shot.
         const why = NativeChrome.lastReadError('getSettingsState');
         console.warn('[native-chrome] first-run permissions skipped:',
           why ? `${why.kind}: ${why.message || 'no message'}` : 'no settings state');
+        NativeChrome._firstRunPromptDone = false;
         return;
       }
       const perms = state.permissions || {};
@@ -602,13 +613,11 @@
       };
 
       render(perms);
-      sheet = PlatformUI.sheet({
-        contentEl: panel,
-        onDismiss: () => NativeChrome._markFirstRunDone(),
-      });
-      // Kit unavailable (degraded shell) — don't retry every boot; the
-      // permanent Settings rows remain the fallback.
-      if (!sheet) NativeChrome._markFirstRunDone();
+      // Presenting is what burns the one-shot — not dismissing. This also
+      // covers the kit-unavailable degraded shell: don't retry every boot;
+      // the permanent Settings rows remain the fallback.
+      NativeChrome._markFirstRunDone();
+      sheet = PlatformUI.sheet({ contentEl: panel });
     },
 
     _initAuthStatusEvents() {
