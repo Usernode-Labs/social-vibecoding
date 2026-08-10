@@ -9,17 +9,37 @@
 //
 //   - `render(host)` / `destroy()` so AdminConsole owns the poll's
 //     lifetime instead of it running for the life of the tab;
-//   - the page's self-contained CSS (its own :root palette, .card, .kv,
-//     .badge, .sync-bar, details/summary styling) moved into
-//     public/css/app.css scoped under #admin-node-root, so it can't leak
-//     into the rest of the SPA. The palette is unchanged — this section
-//     deliberately keeps the dapp-server.js status-page look rather than
-//     being restyled into Tailwind, so the two stay comparable.
+//   - the page's self-contained CSS became Tailwind classes shared with
+//     the rest of the console (the AdminUI registry in admin-console.js
+//     plus the NodeUI locals below). The dapp-server.js status page keeps
+//     its own look; the two are no longer visually paired.
 //
 // PERMISSIONS: one of the two `public` console sections.
 // /api/node-status/full is mounted before authMiddleware (server.js) and
 // carries only on-chain / sidecar info, which is public by nature — no
 // progressive disclosure needed, same as the standalone page.
+
+// Local class recipes for this section — complete literals (Tailwind's
+// extractor scans this file; see the AdminUI note in admin-console.js).
+// The section previously kept the dapp-server.js status-page look via
+// scoped --un-ns-* CSS variables in app.css; it now shares the console's
+// topochain-style vocabulary.
+const NodeUI = Object.freeze({
+  kv: 'grid grid-cols-[max-content_1fr] items-baseline gap-x-6 gap-y-1.5 text-sm',
+  label: 'text-gray-500 dark:text-gray-400',
+  val: 'break-all text-gray-900 dark:text-gray-100',
+  small: 'text-[11px] text-gray-500 dark:text-gray-400',
+  empty: 'py-1.5 text-xs italic text-gray-500 dark:text-gray-400',
+  errText: 'text-xs text-red-600 dark:text-red-400',
+  warnText: 'text-xs text-amber-600 dark:text-amber-400',
+  code: 'rounded bg-gray-100 dark:bg-gray-800 px-1 py-0.5 font-mono text-xs',
+  link: 'text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 hover:underline',
+  details: 'rounded-lg bg-gray-50 dark:bg-gray-800/50 px-3 py-1.5 my-2',
+  summary: 'cursor-pointer select-none py-1 text-[13px] font-medium text-gray-700 dark:text-gray-300',
+  syncBar: 'mt-1 h-1.5 w-full max-w-[240px] overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800',
+  syncFill: 'h-full rounded-full bg-indigo-600 transition-all duration-300',
+  syncFillFull: 'h-full rounded-full bg-emerald-500 transition-all duration-300',
+});
 
 const AdminNode = {
   POLL_MS: 2000,
@@ -57,13 +77,13 @@ const AdminNode = {
 
   statusBadge(status) {
     const s = String(status || 'unknown');
-    let cls = 'muted';
-    if (s === 'Synced' || s === 'ok') cls = 'ok';
-    else if (s === 'Syncing' || s === 'Connected') cls = 'accent';
-    else if (s === 'Connecting' || s === 'bad_response' || s === 'degraded') cls = 'warn';
-    else if (s === 'unreachable') cls = 'err';
-    else if (s === 'mock') cls = 'muted';
-    return '<span class="badge ' + cls + '">' + AdminNode.esc(s) + '</span>';
+    let cls = AdminUI.badge.default;
+    if (s === 'Synced' || s === 'ok') cls = AdminUI.badge.success;
+    else if (s === 'Syncing' || s === 'Connected') cls = AdminUI.badge.secondary;
+    else if (s === 'Connecting' || s === 'bad_response' || s === 'degraded') cls = AdminUI.badge.warn;
+    else if (s === 'unreachable') cls = AdminUI.badge.destructive;
+    else if (s === 'mock') cls = AdminUI.badge.default;
+    return '<span class="' + cls + '">' + AdminNode.esc(s) + '</span>';
   },
 
   _$(id) { return document.getElementById(id); },
@@ -96,17 +116,17 @@ const AdminNode = {
     const body = AdminNode._$('admin-node-body');
     if (!body) return;
     if (!n) {
-      body.className = 'empty';
+      body.className = NodeUI.empty;
       body.textContent = 'No node probe data.';
       return;
     }
     body.className = '';
     const rows = [];
-    rows.push('<div class="kv">');
-    rows.push('<div class="label">Status</div><div class="val">' + AdminNode.statusBadge(n.status) +
-      (n.error ? ' <span class="err-text">' + esc(n.error) + '</span>' : '') + '</div>');
-    rows.push('<div class="label">Peers</div><div class="val">' + fmtNum(n.peers) + '</div>');
-    rows.push('<div class="label">Best tip</div><div class="val">' +
+    rows.push('<div class="' + NodeUI.kv + '">');
+    rows.push('<div class="' + NodeUI.label + '">Status</div><div class="' + NodeUI.val + '">' + AdminNode.statusBadge(n.status) +
+      (n.error ? ' <span class="' + NodeUI.errText + '">' + esc(n.error) + '</span>' : '') + '</div>');
+    rows.push('<div class="' + NodeUI.label + '">Peers</div><div class="' + NodeUI.val + '">' + fmtNum(n.peers) + '</div>');
+    rows.push('<div class="' + NodeUI.label + '">Best tip</div><div class="' + NodeUI.val + '">' +
       (n.bestTipHeight != null ? fmtNum(n.bestTipHeight) : '—') +
       (n.peerBestTipHeight != null ? ' / ' + fmtNum(n.peerBestTipHeight) + ' (peers)' : '') + '</div>');
     let pct = null;
@@ -114,39 +134,39 @@ const AdminNode = {
       pct = Math.max(0, Math.min(100, (n.bestTipHeight / n.peerBestTipHeight) * 100));
     }
     if (pct != null) {
-      rows.push('<div class="label">Sync</div><div class="val">' + pct.toFixed(1) + '%' +
-        '<div class="sync-bar"><div class="sync-fill' + (pct >= 99.9 ? ' full' : '') + '" style="width:' + pct + '%"></div></div>' +
+      rows.push('<div class="' + NodeUI.label + '">Sync</div><div class="' + NodeUI.val + '">' + pct.toFixed(1) + '%' +
+        '<div class="' + NodeUI.syncBar + '"><div class="' + (pct >= 99.9 ? NodeUI.syncFillFull : NodeUI.syncFill) + '" style="width:' + pct + '%"></div></div>' +
         '</div>');
     }
-    rows.push('<div class="label">First-synced?</div><div class="val">' +
-      (n.hasBeenSynced ? '<span class="badge ok">yes</span>' : '<span class="badge warn">not yet</span>') + '</div>');
+    rows.push('<div class="' + NodeUI.label + '">First-synced?</div><div class="' + NodeUI.val + '">' +
+      (n.hasBeenSynced ? '<span class="' + AdminUI.badge.success + '">yes</span>' : '<span class="' + AdminUI.badge.warn + '">not yet</span>') + '</div>');
     if (n.hasFullUtxoDb === false) {
       // Verbatim from dapp-server.js — same explanation, same FIXME link.
       // Future readers: keep these two strings in sync if either changes.
-      rows.push('<div class="label">UTXO mode</div><div class="val">' +
-        '<span class="badge err">PARTIAL</span> ' +
-        '<span class="warn-text">sidecar lacks HAS_FULL_UTXO_DB — incoming txs from non-tracked senders may be silently dropped</span>' +
-        '<details style="margin-top:6px"><summary class="small">Why? (likely cause)</summary>' +
-        '<div class="small" style="margin-top:6px;line-height:1.5">' +
-        'Most often this is a silent <code>BlockchainSyncAction::Replace</code>: the candidate verifier picks a target chain that doesn&rsquo;t share enough ancestor with the current best chain, ' +
-        '<code>replace()</code> clears <code>trees.utxo_root</code>, and from that point every block applies in <code>partial</code> mode because the worker has no full UTXO tree at the new parent root. ' +
-        '(Replace actions log at <code>DEBUG</code> by default, so they don&rsquo;t appear in <code>RUST_LOG=info</code>.)' +
+      rows.push('<div class="' + NodeUI.label + '">UTXO mode</div><div class="' + NodeUI.val + '">' +
+        '<span class="' + AdminUI.badge.destructive + '">PARTIAL</span> ' +
+        '<span class="' + NodeUI.warnText + '">sidecar lacks HAS_FULL_UTXO_DB — incoming txs from non-tracked senders may be silently dropped</span>' +
+        '<details class="' + NodeUI.details + '" style="margin-top:6px"><summary class="' + NodeUI.summary + '">Why? (likely cause)</summary>' +
+        '<div class="' + NodeUI.small + '" style="margin-top:6px;line-height:1.5">' +
+        'Most often this is a silent <code class="' + NodeUI.code + '">BlockchainSyncAction::Replace</code>: the candidate verifier picks a target chain that doesn&rsquo;t share enough ancestor with the current best chain, ' +
+        '<code class="' + NodeUI.code + '">replace()</code> clears <code class="' + NodeUI.code + '">trees.utxo_root</code>, and from that point every block applies in <code class="' + NodeUI.code + '">partial</code> mode because the worker has no full UTXO tree at the new parent root. ' +
+        '(Replace actions log at <code class="' + NodeUI.code + '">DEBUG</code> by default, so they don&rsquo;t appear in <code class="' + NodeUI.code + '">RUST_LOG=info</code>.)' +
         '<br><br>' +
-        'A related contributing path is the <code>BlocksApplyWithoutCandidateVerification</code> warning &mdash; peer-fetched blocks reaching the apply pipeline before candidate verification has signed off. ' +
-        'Upstream <code>FIXME</code> at ' +
-        '<a href="https://github.com/Usernode-Labs/usernode/blob/main/crates/node/src/blockchain/sync/blockchain_sync_reducer.rs#L468" target="_blank" rel="noopener" style="color:var(--un-ns-accent)">' +
+        'A related contributing path is the <code class="' + NodeUI.code + '">BlocksApplyWithoutCandidateVerification</code> warning &mdash; peer-fetched blocks reaching the apply pipeline before candidate verification has signed off. ' +
+        'Upstream <code class="' + NodeUI.code + '">FIXME</code> at ' +
+        '<a href="https://github.com/Usernode-Labs/usernode/blob/main/crates/node/src/blockchain/sync/blockchain_sync_reducer.rs#L468" target="_blank" rel="noopener" class="' + NodeUI.link + '">' +
         'crates/node/src/blockchain/sync/blockchain_sync_reducer.rs:468</a>:' +
         '<br><em>&ldquo;ensure peer-origin intermediate sync blocks are ingested through candidate verification before they can enter the apply pipeline.&rdquo;</em>' +
         '<br><br>' +
         'Workaround: restart the sidecar with a fresh archive snapshot to get a fresh full-mode window. ' +
-        'Confirm with <code>RUST_LOG=&#x27;info,usernode_node::blockchain=debug&#x27;</code> to see <code>BlockchainSyncReplace</code> events directly.' +
+        'Confirm with <code class="' + NodeUI.code + '">RUST_LOG=&#x27;info,usernode_node::blockchain=debug&#x27;</code> to see <code class="' + NodeUI.code + '">BlockchainSyncReplace</code> events directly.' +
         '</div></details>' +
         '</div>');
     } else if (n.hasFullUtxoDb === true) {
-      rows.push('<div class="label">UTXO mode</div><div class="val"><span class="badge ok">full</span></div>');
+      rows.push('<div class="' + NodeUI.label + '">UTXO mode</div><div class="' + NodeUI.val + '"><span class="' + AdminUI.badge.success + '">full</span></div>');
     }
-    rows.push('<div class="label">Last refresh</div><div class="val">' + AdminNode.fmtTime(n.at) +
-      ' <span class="small">(' + AdminNode.fmtAge(Date.now() - (n.at || Date.now())) + ' ago)</span></div>');
+    rows.push('<div class="' + NodeUI.label + '">Last refresh</div><div class="' + NodeUI.val + '">' + AdminNode.fmtTime(n.at) +
+      ' <span class="' + NodeUI.small + '">(' + AdminNode.fmtAge(Date.now() - (n.at || Date.now())) + ' ago)</span></div>');
     rows.push('</div>');
     body.innerHTML = rows.join('');
   },
@@ -158,37 +178,37 @@ const AdminNode = {
     const body = AdminNode._$('admin-node-explorer-body');
     if (!body) return;
     if (!ex) {
-      body.className = 'empty';
+      body.className = NodeUI.empty;
       body.textContent = 'No explorer probe data.';
       return;
     }
     body.className = '';
     const rows = [];
-    rows.push('<div class="kv">');
-    rows.push('<div class="label">Status</div><div class="val">' + AdminNode.statusBadge(ex.status) +
-      (ex.error ? ' <span class="err-text">' + esc(ex.error) + '</span>' : '') + '</div>');
-    rows.push('<div class="label">Host</div><div class="val mono">' + esc(ex.host || '—') + '</div>');
-    rows.push('<div class="label">Chain id</div><div class="val mono">' + esc(ex.chainId || '—') + '</div>');
-    rows.push('<div class="label">Latency</div><div class="val">' +
+    rows.push('<div class="' + NodeUI.kv + '">');
+    rows.push('<div class="' + NodeUI.label + '">Status</div><div class="' + NodeUI.val + '">' + AdminNode.statusBadge(ex.status) +
+      (ex.error ? ' <span class="' + NodeUI.errText + '">' + esc(ex.error) + '</span>' : '') + '</div>');
+    rows.push('<div class="' + NodeUI.label + '">Host</div><div class="' + NodeUI.val + ' mono font-mono text-xs">' + esc(ex.host || '—') + '</div>');
+    rows.push('<div class="' + NodeUI.label + '">Chain id</div><div class="' + NodeUI.val + ' mono font-mono text-xs">' + esc(ex.chainId || '—') + '</div>');
+    rows.push('<div class="' + NodeUI.label + '">Latency</div><div class="' + NodeUI.val + '">' +
       (ex.latencyMs != null ? esc(String(ex.latencyMs)) + ' ms' : '—') + '</div>');
-    rows.push('<div class="label">First-ok?</div><div class="val">' +
-      (ex.hasBeenOk ? '<span class="badge ok">yes</span>' : '<span class="badge warn">not yet</span>') + '</div>');
-    rows.push('<div class="label">Last refresh</div><div class="val">' + AdminNode.fmtTime(ex.at) +
-      ' <span class="small">(' + AdminNode.fmtAge(Date.now() - (ex.at || Date.now())) + ' ago)</span></div>');
+    rows.push('<div class="' + NodeUI.label + '">First-ok?</div><div class="' + NodeUI.val + '">' +
+      (ex.hasBeenOk ? '<span class="' + AdminUI.badge.success + '">yes</span>' : '<span class="' + AdminUI.badge.warn + '">not yet</span>') + '</div>');
+    rows.push('<div class="' + NodeUI.label + '">Last refresh</div><div class="' + NodeUI.val + '">' + AdminNode.fmtTime(ex.at) +
+      ' <span class="' + NodeUI.small + '">(' + AdminNode.fmtAge(Date.now() - (ex.at || Date.now())) + ' ago)</span></div>');
     // Outage shape — how long, and how many probes have failed in a row.
     // Without these a blip and a multi-hour outage look identical here.
     if (ex.downSince) {
-      rows.push('<div class="label">Down since</div><div class="val">' + AdminNode.fmtTime(ex.downSince) +
-        ' <span class="small">(' + AdminNode.fmtAge(Date.now() - ex.downSince) + ')</span></div>');
+      rows.push('<div class="' + NodeUI.label + '">Down since</div><div class="' + NodeUI.val + '">' + AdminNode.fmtTime(ex.downSince) +
+        ' <span class="' + NodeUI.small + '">(' + AdminNode.fmtAge(Date.now() - ex.downSince) + ')</span></div>');
     }
     if (ex.consecutiveFailures) {
-      rows.push('<div class="label">Failed probes</div><div class="val">' +
+      rows.push('<div class="' + NodeUI.label + '">Failed probes</div><div class="' + NodeUI.val + '">' +
         fmtNum(ex.consecutiveFailures) + ' in a row</div>');
     }
     rows.push('</div>');
     // The consequence an operator can't infer from the fields above.
     if (ex.status && ex.status !== 'ok' && ex.status !== 'mock') {
-      rows.push('<p class="err-text" style="margin-top:10px">' +
+      rows.push('<p class="' + NodeUI.errText + '" style="margin-top:10px">' +
         'Wallet linking is paused while the explorer is unreachable — the ' +
         'chain poller reads incoming link transactions from here, so ' +
         '&ldquo;Link wallet&rdquo; will not complete. Retries are backing off.' +
@@ -212,35 +232,35 @@ const AdminNode = {
     // Chain-poller (wallet-linking).
     const cp = svc.chainPoller;
     if (cp) {
-      rows.push('<details open><summary>Chain-poller (wallet linker) ' +
-        '<span class="small">' + (cp.enabled ? '<span class="badge ok">enabled</span>' : '<span class="badge warn">disabled</span>') + '</span></summary>');
-      rows.push('<div class="kv" style="margin-top:8px">');
-      rows.push('<div class="label">Chain id</div><div class="val mono">' + esc(cp.chainId || '—') + '</div>');
-      rows.push('<div class="label">Last block height</div><div class="val">' + fmtNum(cp.lastBlockHeight) + '</div>');
-      rows.push('<div class="label">Tx ids seen</div><div class="val">' + fmtNum(cp.seenTxCount) + '</div>');
-      rows.push('<div class="label">Wallet links applied</div><div class="val">' + fmtNum(cp.walletLinkCount) + '</div>');
-      rows.push('<div class="label">Last polled</div><div class="val">' +
+      rows.push('<details open class="' + NodeUI.details + '"><summary class="' + NodeUI.summary + '">Chain-poller (wallet linker) ' +
+        '<span class="' + NodeUI.small + '">' + (cp.enabled ? '<span class="' + AdminUI.badge.success + '">enabled</span>' : '<span class="' + AdminUI.badge.warn + '">disabled</span>') + '</span></summary>');
+      rows.push('<div class="' + NodeUI.kv + '" style="margin-top:8px">');
+      rows.push('<div class="' + NodeUI.label + '">Chain id</div><div class="' + NodeUI.val + ' mono font-mono text-xs">' + esc(cp.chainId || '—') + '</div>');
+      rows.push('<div class="' + NodeUI.label + '">Last block height</div><div class="' + NodeUI.val + '">' + fmtNum(cp.lastBlockHeight) + '</div>');
+      rows.push('<div class="' + NodeUI.label + '">Tx ids seen</div><div class="' + NodeUI.val + '">' + fmtNum(cp.seenTxCount) + '</div>');
+      rows.push('<div class="' + NodeUI.label + '">Wallet links applied</div><div class="' + NodeUI.val + '">' + fmtNum(cp.walletLinkCount) + '</div>');
+      rows.push('<div class="' + NodeUI.label + '">Last polled</div><div class="' + NodeUI.val + '">' +
         (cp.lastPolledAt
-          ? fmtTime(cp.lastPolledAt) + ' <span class="small">(' + fmtAge(Date.now() - cp.lastPolledAt) + ' ago)</span>'
+          ? fmtTime(cp.lastPolledAt) + ' <span class="' + NodeUI.small + '">(' + fmtAge(Date.now() - cp.lastPolledAt) + ' ago)</span>'
           : '—') + '</div>');
       // Retry cadence + failure streak: the poller backs off from 4s to
       // 60s while the explorer is down, so "last polled 40s ago" is
       // expected during an outage rather than a sign of a wedged loop.
       if (cp.pollIntervalMs != null) {
-        rows.push('<div class="label">Retry interval</div><div class="val">' +
+        rows.push('<div class="' + NodeUI.label + '">Retry interval</div><div class="' + NodeUI.val + '">' +
           fmtNum(Math.round(cp.pollIntervalMs / 1000)) + 's' +
-          (cp.consecutiveFailures ? ' <span class="small">(backing off)</span>' : '') + '</div>');
+          (cp.consecutiveFailures ? ' <span class="' + NodeUI.small + '">(backing off)</span>' : '') + '</div>');
       }
       if (cp.consecutiveFailures) {
-        rows.push('<div class="label">Consecutive failures</div><div class="val">' +
+        rows.push('<div class="' + NodeUI.label + '">Consecutive failures</div><div class="' + NodeUI.val + '">' +
           fmtNum(cp.consecutiveFailures) + '</div>');
       }
       if (cp.downSince) {
-        rows.push('<div class="label">Failing since</div><div class="val">' + fmtTime(cp.downSince) +
-          ' <span class="small">(' + fmtAge(Date.now() - cp.downSince) + ')</span></div>');
+        rows.push('<div class="' + NodeUI.label + '">Failing since</div><div class="' + NodeUI.val + '">' + fmtTime(cp.downSince) +
+          ' <span class="' + NodeUI.small + '">(' + fmtAge(Date.now() - cp.downSince) + ')</span></div>');
       }
       if (cp.lastError) {
-        rows.push('<div class="label">Last error</div><div class="val"><span class="err-text">' + esc(cp.lastError) + '</span></div>');
+        rows.push('<div class="' + NodeUI.label + '">Last error</div><div class="' + NodeUI.val + '"><span class="' + NodeUI.errText + '">' + esc(cp.lastError) + '</span></div>');
       }
       rows.push('</div></details>');
     }
@@ -248,30 +268,30 @@ const AdminNode = {
     // Genesis-accounts loader.
     const ga = svc.genesisAccounts;
     if (ga) {
-      rows.push('<details open><summary>Genesis-accounts ' +
-        '<span class="small">' +
-        (ga.loaded ? '<span class="badge ok">loaded</span>' : '<span class="badge warn">loading</span>') +
+      rows.push('<details open class="' + NodeUI.details + '"><summary class="' + NodeUI.summary + '">Genesis-accounts ' +
+        '<span class="' + NodeUI.small + '">' +
+        (ga.loaded ? '<span class="' + AdminUI.badge.success + '">loaded</span>' : '<span class="' + AdminUI.badge.warn + '">loading</span>') +
         '</span></summary>');
-      rows.push('<div class="kv" style="margin-top:8px">');
-      rows.push('<div class="label">Loaded?</div><div class="val">' +
-        (ga.loaded ? '<span class="badge ok">yes</span>' : '<span class="badge warn">not yet</span>') + '</div>');
-      rows.push('<div class="label">Account count</div><div class="val">' + fmtNum(ga.count) + '</div>');
+      rows.push('<div class="' + NodeUI.kv + '" style="margin-top:8px">');
+      rows.push('<div class="' + NodeUI.label + '">Loaded?</div><div class="' + NodeUI.val + '">' +
+        (ga.loaded ? '<span class="' + AdminUI.badge.success + '">yes</span>' : '<span class="' + AdminUI.badge.warn + '">not yet</span>') + '</div>');
+      rows.push('<div class="' + NodeUI.label + '">Account count</div><div class="' + NodeUI.val + '">' + fmtNum(ga.count) + '</div>');
       if (ga.consecutiveFailures) {
-        rows.push('<div class="label">Consecutive failures</div><div class="val">' +
+        rows.push('<div class="' + NodeUI.label + '">Consecutive failures</div><div class="' + NodeUI.val + '">' +
           fmtNum(ga.consecutiveFailures) + '</div>');
       }
       if (ga.downSince) {
-        rows.push('<div class="label">Failing since</div><div class="val">' + fmtTime(ga.downSince) +
-          ' <span class="small">(' + fmtAge(Date.now() - ga.downSince) + ')</span></div>');
+        rows.push('<div class="' + NodeUI.label + '">Failing since</div><div class="' + NodeUI.val + '">' + fmtTime(ga.downSince) +
+          ' <span class="' + NodeUI.small + '">(' + fmtAge(Date.now() - ga.downSince) + ')</span></div>');
       }
       if (ga.lastError) {
-        rows.push('<div class="label">Last error</div><div class="val"><span class="err-text">' + esc(ga.lastError) + '</span></div>');
+        rows.push('<div class="' + NodeUI.label + '">Last error</div><div class="' + NodeUI.val + '"><span class="' + NodeUI.errText + '">' + esc(ga.lastError) + '</span></div>');
       }
       rows.push('</div></details>');
     }
 
     if (!rows.length) {
-      body.className = 'empty';
+      body.className = NodeUI.empty;
       body.textContent = 'No services registered.';
       return;
     }
@@ -291,13 +311,19 @@ const AdminNode = {
   },
 
   _setConn(state) {
-    const el = AdminNode._$('admin-node-conn');
+    const led = AdminNode._$('admin-node-led');
     const t = AdminNode._$('admin-node-conn-text');
-    if (!el || !t) return;
-    el.className = 'conn ' + state;
-    if (state === 'live') t.textContent = 'live (2s poll)';
-    else if (state === 'dead') t.textContent = 'disconnected';
-    else t.textContent = 'connecting…';
+    if (!led || !t) return;
+    if (state === 'live') {
+      led.className = 'inline-block h-2 w-2 rounded-full bg-emerald-500';
+      t.textContent = 'live (2s poll)';
+    } else if (state === 'dead') {
+      led.className = 'inline-block h-2 w-2 rounded-full bg-red-500';
+      t.textContent = 'disconnected';
+    } else {
+      led.className = 'inline-block h-2 w-2 rounded-full bg-gray-300 dark:bg-gray-600';
+      t.textContent = 'connecting…';
+    }
   },
 
   async _fetchOnce() {
@@ -326,33 +352,33 @@ const AdminNode = {
   render(host) {
     host.innerHTML = `
       <div id="admin-node-root">
-        <div class="header">
+        <div class="mb-1 flex flex-wrap items-baseline justify-between gap-2">
           <div>
-            <h2 id="admin-node-server-name">Loading…</h2>
-            <div class="header-pill" id="admin-node-server-meta"></div>
+            <h2 id="admin-node-server-name" class="text-2xl font-bold text-gray-900 dark:text-gray-100">Loading…</h2>
+            <div class="mb-6 text-[13px] text-gray-500 dark:text-gray-400" id="admin-node-server-meta"></div>
           </div>
-          <div class="conn" id="admin-node-conn"><span class="led"></span><span id="admin-node-conn-text">connecting…</span></div>
+          <div class="flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-gray-400" id="admin-node-conn"><span id="admin-node-led" class="inline-block h-2 w-2 rounded-full bg-gray-300 dark:bg-gray-600"></span><span id="admin-node-conn-text">connecting…</span></div>
         </div>
 
-        <div class="card">
-          <h3>Node</h3>
-          <div id="admin-node-body" class="empty">Loading…</div>
+        <div class="${AdminUI.card} p-6 mb-4">
+          <h3 class="${AdminUI.cardTitle} mb-3">Node</h3>
+          <div id="admin-node-body" class="${NodeUI.empty}">Loading…</div>
         </div>
 
-        <div class="card">
-          <h3>Explorer</h3>
-          <div id="admin-node-explorer-body" class="empty">Loading…</div>
+        <div class="${AdminUI.card} p-6 mb-4">
+          <h3 class="${AdminUI.cardTitle} mb-3">Explorer</h3>
+          <div id="admin-node-explorer-body" class="${NodeUI.empty}">Loading…</div>
         </div>
 
-        <div class="card">
-          <h3>Chain-dependent services</h3>
-          <div id="admin-node-services-body" class="empty">Loading…</div>
+        <div class="${AdminUI.card} p-6 mb-4">
+          <h3 class="${AdminUI.cardTitle} mb-3">Chain-dependent services</h3>
+          <div id="admin-node-services-body" class="${NodeUI.empty}">Loading…</div>
         </div>
 
-        <div class="small" style="text-align:center;margin-top:18px">
+        <div class="${NodeUI.small} mt-[18px] text-center">
           Updated <span id="admin-node-last-updated">—</span> · polling
-          <code>/api/node-status/full</code> every 2s ·
-          JSON snapshot at <a href="/api/node-status/full" target="_blank" rel="noopener">/api/node-status/full</a>
+          <code class="${NodeUI.code}">/api/node-status/full</code> every 2s ·
+          JSON snapshot at <a href="/api/node-status/full" target="_blank" rel="noopener" class="${NodeUI.link}">/api/node-status/full</a>
         </div>
       </div>`;
 
