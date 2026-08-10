@@ -1842,7 +1842,7 @@
     {
       "name": "Continuing a proposal ends in submitting an update, not a new proposal (#1071)",
       "path": "/?demo=1&flow=claude-code#app/usernode-2d5619/dev/sessions/990406",
-      "expectSelector": "[data-flow-wizard] [data-flow-action=\"submit-update\"]",
+      "expectSelector": "[data-flow-wizard] [data-flow-step=\"submit\"] .dc-flow-step-title",
       "expectText": "Submit the update"
     }
   ],

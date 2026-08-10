@@ -1159,9 +1159,14 @@ const DevChat = {
   //   ?shot=session-options               → the menu itself, open
   //   ?shot=session-options-instructions  → the CLI instructions card
   // Once per page load, and only when the composer is actually on screen —
-  // a re-render must not pop the menu back open under the user.
-  _maybeOpenShotOptions() {
-    if (DevChat._shotOptionsDone) return;
+  // a re-render must not pop the menu back open under the user. `restore` is
+  // the one exception, passed by renderChatView when the menu it just
+  // dismissed was open a moment ago: reopening what was already open is not
+  // popping anything open, and it is what keeps a shot deep link showing its
+  // state across a re-render. Both are still gated on a `?shot=` URL, so a
+  // real session never reaches either path.
+  _maybeOpenShotOptions(restore) {
+    if (DevChat._shotOptionsDone && !restore) return;
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { /* ignore */ }
     if (shot !== 'session-options' && shot !== 'session-options-instructions') return;
@@ -2104,7 +2109,13 @@ const DevChat = {
       // renderChatView treats it as active; other tabs sync via the
       // server's 'resumed' WS event. If resume is refused (e.g. the
       // global cap is hit), leave it paused and tell the user.
-      if (session.status === 'paused') {
+      // …unless this is a screenshot deep link (#1071): `?shot=` names a state
+      // to RENDER, and a shot of a paused session that silently un-pauses it
+      // is a shot of something else. It also made the capture's outcome depend
+      // on the platform's session cap — the refusal toasts a 429, which reads
+      // as a console error on the route and fails the check for a reason that
+      // has nothing to do with what it asserts.
+      if (session.status === 'paused' && !DevChat._isShotDeepLink()) {
         try {
           const rr = await fetch(`/api/sessions/${sessionId}/resume`, { method: 'POST' });
           if (rr.ok) {
@@ -6600,12 +6611,17 @@ const DevChat = {
     // #1055: the "⋯" beside the meter. Any menu left open by a previous
     // render is anchored to a button that no longer exists, so it is
     // dismissed here rather than left floating over the new composer.
+    // Whether it WAS open is remembered, because on a `?shot=` deep link the
+    // open menu is the thing being rendered: without this, a second render
+    // (any status poll) closed it for good and the capture came back showing
+    // a plain composer (#1071).
+    const optionsWereOpen = !!(DevChat._optionsMenu || DevChat._optionsCard);
     DevChat._closeSessionOptions();
     const optionsBtn = document.getElementById('dc-budget-options');
     if (optionsBtn) {
       optionsBtn.addEventListener('click', () => DevChat.openSessionOptions(optionsBtn));
     }
-    DevChat._maybeOpenShotOptions();
+    DevChat._maybeOpenShotOptions(optionsWereOpen);
 
     const agentSelect = document.getElementById('dc-agent-select');
     if (agentSelect) {
@@ -7070,6 +7086,12 @@ const DevChat = {
       const shot = new URLSearchParams(location.search).get('shot');
       return shot === 'drafts' || shot === 'busy-drafts';
     } catch { return false; }
+  },
+
+  // Any `?shot=` deep link, whichever one. Read by openSession to keep a
+  // capture read-only — see the auto-resume above.
+  _isShotDeepLink() {
+    try { return !!new URLSearchParams(location.search).get('shot'); } catch { return false; }
   },
 
   // Screenshot-state deep link (`?shot=busy-drafts`, #801/#810): paints the
