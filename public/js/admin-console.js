@@ -58,6 +58,67 @@
 // names, spend, host load, stuck sessions and the event log from
 // non-admins.
 
+// ── AdminUI: shared class recipes, topochain admin vocabulary (see
+// docs/superpowers/specs/2026-08-10-admin-topochain-skin-design.md) ──────
+// Data-only class-string constants used by this file and every admin-*.js
+// section module (all of which load after this file — see the script order
+// in frontend/src/Shell.tsx). Light mode matches ../topochain's admin
+// verbatim (gray neutrals, indigo accent); dark: variants are the fixed
+// translation documented in the spec. Every value is a COMPLETE class
+// literal: Tailwind's extractor is a regex over public/js/** source, and
+// tests/admin-ui-registry.test.js + tests/tailwind-build.test.js enforce
+// the discipline. Never index this registry dynamically.
+window.AdminUI = Object.freeze({
+  // Surfaces — topochain card: white, rounded-xl, gray-200 hairline, soft shadow.
+  card: 'bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 shadow-sm',
+  cardHeader: 'flex items-center justify-between gap-2 mb-4',
+  cardTitle: 'text-lg font-semibold text-gray-900 dark:text-gray-100',
+  cardDescription: 'text-sm text-gray-500 dark:text-gray-400',
+  // Tables — topochain data-table. NOTE: deliberately no sideways-scroll
+  // utility on the wrapper — nothing in the console scrolls horizontally
+  // (#860, pinned by admin-console-page.test.js, which regexes this file's
+  // raw source).
+  tableWrap: 'w-full rounded-lg border border-gray-200 dark:border-gray-800',
+  table: 'w-full text-sm',
+  thead: 'border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50',
+  th: 'px-6 py-3 text-left align-middle text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400',
+  td: 'px-6 py-4 align-middle',
+  trHover: 'border-b border-gray-100 dark:border-gray-800/60 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50',
+  // Buttons — topochain's canonical button strings.
+  btn: Object.freeze({
+    primary: 'bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg transition-colors text-sm font-medium',
+    outline: 'inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors',
+    destructive: 'bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg transition-colors text-sm font-medium',
+    ghost: 'font-medium transition-colors text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200',
+    link: 'font-medium transition-colors text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300',
+    primarySm: 'bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg transition-colors text-xs font-medium',
+    outlineSm: 'inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors',
+    destructiveSm: 'bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded-lg transition-colors text-xs font-medium',
+  }),
+  // Form controls — topochain's canonical input string (+ dark translation).
+  input: 'w-full border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500',
+  select: 'w-full border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500',
+  textarea: 'w-full min-h-[80px] border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500',
+  label: 'text-sm font-medium text-gray-700 dark:text-gray-300',
+  // Badges — topochain's ring-tinted rounded-full pills.
+  badge: Object.freeze({
+    default: 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-gray-50 text-gray-600 ring-1 ring-inset ring-gray-500/10 dark:bg-gray-500/10 dark:text-gray-300 dark:ring-gray-400/20',
+    secondary: 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-700/10 dark:bg-indigo-500/10 dark:text-indigo-300 dark:ring-indigo-400/20',
+    outline: 'inline-flex items-center rounded-full border border-gray-300 dark:border-gray-700 px-2 py-0.5 text-xs font-medium text-gray-600 dark:text-gray-300',
+    destructive: 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-red-50 text-red-700 ring-1 ring-inset ring-red-700/10 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-400/20',
+    success: 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-700/10 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-400/20',
+    warn: 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-700/10 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-400/20',
+  }),
+  // Overlay — topochain modal: black/50 backdrop, xl-rounded white panel.
+  dialogOverlay: 'fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4',
+  dialogPanel: 'w-full max-w-md bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-6 shadow-xl',
+  // Typography / misc.
+  sectionTitle: 'text-lg font-semibold text-gray-900 dark:text-gray-100',
+  muted: 'text-sm text-gray-500 dark:text-gray-400',
+  separator: 'border-t border-gray-200 dark:border-gray-800',
+  kbd: 'rounded border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 font-mono text-xs text-gray-700 dark:text-gray-300',
+});
+
 const AdminConsole = {
   _open: false,
   _section: 'overview',
@@ -157,6 +218,31 @@ const AdminConsole = {
   LEGACY_SECTION_KEYS: {
     topochain: 'seasons',
   },
+
+  // Heroicons v2 outline, one per section — same icon treatment as
+  // ../topochain's admin sidebar (w-5 h-5, stroke-width 1.5). Path data is
+  // copied from topochain's blade views where an equivalent icon exists.
+  // Complete inline literals; the shell loads no cross-origin assets.
+  NAV_ICONS: Object.freeze({
+    'overview': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z"/></svg>',
+    'status': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>',
+    'node': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"/></svg>',
+    'merges': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M17.25 6.75L22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3l-4.5 16.5"/></svg>',
+    'rollover': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12a7.5 7.5 0 0015 0m-15 0a7.5 7.5 0 1115 0m-15 0H3m16.5 0H21m-1.5 0H12m-8.457 3.077l1.41-.513m14.095-5.13l1.41-.513M5.106 17.785l1.15-.964m11.49-9.642l1.149-.964M7.501 19.795l.75-1.3m7.5-12.99l.75-1.3m-6.063 16.658l.26-1.477m2.605-14.772l.26-1.477m0 17.726l-.26-1.477M10.698 4.614l-.26-1.477M16.5 19.794l-.75-1.299M7.5 4.205L12 12m6.894 5.785l-1.149-.964M6.256 7.794l-1.15-.964"/></svg>',
+    'staging-reap': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"/></svg>',
+    'users': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z"/></svg>',
+    'codes': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z"/></svg>',
+    'limits': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>',
+    'analytics': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"/></svg>',
+    'estimator': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75"/></svg>',
+    'gallery': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z"/></svg>',
+    'features': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18v-5.25m0 0a6.01 6.01 0 001.5-.189m-1.5.189a6.01 6.01 0 01-1.5-.189m3.75 7.478a12.06 12.06 0 01-4.5 0m3.75 2.383a14.406 14.406 0 01-3 0M14.25 18v-.192c0-.983.658-1.823 1.508-2.316a7.5 7.5 0 10-7.517 0c.85.493 1.509 1.333 1.509 2.316V18"/></svg>',
+    'campaigns': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M10.34 15.84c-.688-.06-1.386-.09-2.09-.09H7.5a4.5 4.5 0 110-9h.75c.704 0 1.402-.03 2.09-.09m0 9.18c.253.962.584 1.892.985 2.783.247.55.06 1.21-.463 1.511l-.657.38c-.551.318-1.26.117-1.527-.461a20.845 20.845 0 01-1.44-4.282m3.102.069a18.03 18.03 0 01-.59-4.59c0-1.586.205-3.124.59-4.59m0 9.18a23.848 23.848 0 018.835 2.535M10.34 6.66a23.847 23.847 0 008.835-2.535m0 0A23.74 23.74 0 0018.795 3m.38 1.125a23.91 23.91 0 011.014 5.395m-1.014 8.855c-.118.38-.245.754-.38 1.125m.38-1.125a23.91 23.91 0 001.014-5.395m0-3.46c.495.413.811 1.035.811 1.73 0 .695-.316 1.317-.811 1.73m0-3.46a24.347 24.347 0 010 3.46"/></svg>',
+    'featured-apps': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.562.562 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z"/></svg>',
+    'db-export': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125"/></svg>',
+    'mail': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75"/></svg>',
+    'seasons': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 18.75h-9m9 0a3 3 0 013 3h-15a3 3 0 013-3m9 0v-3.375c0-.621-.503-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.007 0H9.497m5.007 0a7.454 7.454 0 01-.982-3.172M9.497 14.25a7.454 7.454 0 00.981-3.172M5.25 4.236c-.982.143-1.954.317-2.916.52A6.003 6.003 0 007.73 9.728M5.25 4.236V4.5c0 2.108.966 3.99 2.48 5.228M5.25 4.236V2.721C7.456 2.41 9.71 2.25 12 2.25c2.291 0 4.545.16 6.75.47v1.516M7.73 9.728a6.726 6.726 0 002.748 1.35m8.272-6.842V4.5c0 2.108-.966 3.99-2.48 5.228m2.48-5.492a46.32 46.32 0 012.916.52 6.003 6.003 0 01-5.395 4.972m0 0a6.726 6.726 0 01-2.749 1.35m0 0a6.772 6.772 0 01-3.044 0"/></svg>',
+  }),
 
   _canonicalSection(key) {
     return (key && AdminConsole.LEGACY_SECTION_KEYS[key]) || key;
@@ -491,16 +577,16 @@ const AdminConsole = {
     const active = AdminConsole._section;
     const itemHtml = (s) => {
       const isActive = s.key === active;
-      const cls = 'admin-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm font-medium transition-colors '
+      const cls = 'admin-nav-item flex items-center gap-3 w-full text-left rounded-md px-3 py-2.5 text-sm font-medium transition-colors '
         + (isActive
-          ? 'bg-violet-600/10 text-violet-600 dark:text-violet-400'
-          : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800');
+          ? 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100'
+          : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/60');
       return `<button type="button" role="tab" aria-selected="${isActive ? 'true' : 'false'}"
-        data-admin-section="${s.key}" class="${cls}">${AdminConsole.esc(s.label)}</button>`;
+        data-admin-section="${s.key}" class="${cls}">${AdminConsole.NAV_ICONS[s.key] || ''}<span class="flex-1 min-w-0 truncate">${AdminConsole.esc(s.label)}</span></button>`;
     };
     return AdminConsole._groupedSections().map((g, i) => `
-      <div class="${i === 0 ? '' : 'mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800'}">
-        <div class="px-3 pb-1 text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500">${AdminConsole.esc(g.name)}</div>
+      <div class="${i === 0 ? '' : 'mt-6'}">
+        <div class="px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">${AdminConsole.esc(g.name)}</div>
         ${g.items.map(itemHtml).join('')}
       </div>`).join('');
   },
@@ -511,20 +597,21 @@ const AdminConsole = {
   // on the right) rather than the kit's inset-grouped card, which would
   // read as a foreign surface next to the rest of the platform.
   _mobileMenuHtml() {
-    const chevron = `<svg class="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>`;
+    const chevron = `<svg class="w-4 h-4 shrink-0 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>`;
     const rowHtml = (s) => `
       <button type="button" data-admin-section="${s.key}"
               class="admin-menu-row flex items-center gap-3 w-full text-left min-h-[44px] px-4 py-2
-                     border-b border-zinc-100 dark:border-zinc-800
-                     text-zinc-700 dark:text-zinc-200
-                     hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors">
+                     border-b border-gray-100 dark:border-gray-800
+                     text-gray-700 dark:text-gray-200
+                     hover:bg-gray-50 dark:hover:bg-gray-800/60 transition-colors">
+        <span class="text-gray-400 dark:text-gray-500">${AdminConsole.NAV_ICONS[s.key] || ''}</span>
         <span class="flex-1 min-w-0 text-sm font-medium truncate">${AdminConsole.esc(s.label)}</span>
         ${chevron}
       </button>`;
     const groups = AdminConsole._groupedSections().map((g) => `
       <div class="mb-5">
-        <div class="px-4 pb-1.5 text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500">${AdminConsole.esc(g.name)}</div>
-        <div class="rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900
+        <div class="px-4 pb-1.5 text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">${AdminConsole.esc(g.name)}</div>
+        <div class="${AdminUI.card} overflow-hidden
                     [&>button:last-child]:border-b-0">
           ${g.items.map(rowHtml).join('')}
         </div>
@@ -545,12 +632,12 @@ const AdminConsole = {
              phones get the two-level hierarchy instead (the level-1 menu
              renders INTO #admin-section-content). -->
         <nav id="admin-nav-desktop" aria-label="Admin sections"
-             class="hidden md:block md:w-56 shrink-0 space-y-1">
+             class="hidden md:block md:w-64 shrink-0 space-y-1">
           ${AdminConsole._navItemsHtml()}
         </nav>
         <div class="flex-1 min-w-0">
           <!-- View-only admin banner (issue #311), same copy as /admin. -->
-          <div id="admin-view-only-banner" class="${viewOnly ? '' : 'hidden '}bg-amber-100 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-200 rounded-lg px-4 py-3 mb-4 text-sm">
+          <div id="admin-view-only-banner" class="${viewOnly ? '' : 'hidden '}bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200 rounded-lg px-4 py-3 mb-4 text-sm">
             <span class="font-semibold">View-only — read access only.</span>
             You can see every admin surface but can't make changes. Mutating controls are hidden.
           </div>
@@ -559,17 +646,17 @@ const AdminConsole = {
       </div>
       <!-- Temporary password modal (issue #282): the reset response is the
            only time the plaintext exists — shown once, never persisted. -->
-      <div id="admin-temp-pw-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-        <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl border border-zinc-200 dark:border-zinc-800">
-          <h2 class="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">Temporary password</h2>
-          <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
-            Give this to <span id="admin-temp-pw-username" class="font-medium text-zinc-800 dark:text-zinc-200"></span> out-of-band (chat, in person). They use it as their password to log in, then set their own from <a href="#settings/password" class="text-violet-500 hover:text-violet-400 underline">Settings → Change password</a>. It signs them out everywhere and <span class="font-medium">won't be shown again</span>.
+      <div id="admin-temp-pw-modal" class="hidden ${AdminUI.dialogOverlay}">
+        <div class="${AdminUI.dialogPanel}">
+          <h2 class="${AdminUI.cardTitle} mb-1">Temporary password</h2>
+          <p class="${AdminUI.muted} mb-4">
+            Give this to <span id="admin-temp-pw-username" class="font-medium text-gray-800 dark:text-gray-200"></span> out-of-band (chat, in person). They use it as their password to log in, then set their own from <a href="#settings/password" class="text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 underline">Settings → Change password</a>. It signs them out everywhere and <span class="font-medium">won't be shown again</span>.
           </p>
           <div class="flex gap-2">
-            <code id="admin-temp-pw-value" class="flex-1 min-w-0 break-all rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-900 dark:text-zinc-100"></code>
-            <button id="admin-temp-pw-copy" class="shrink-0 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Copy</button>
+            <code id="admin-temp-pw-value" class="flex-1 min-w-0 break-all rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 px-3 py-2 text-sm font-mono text-gray-900 dark:text-gray-100"></code>
+            <button id="admin-temp-pw-copy" class="${AdminUI.btn.primary} shrink-0">Copy</button>
           </div>
-          <button id="admin-temp-pw-close" class="mt-4 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Done</button>
+          <button id="admin-temp-pw-close" class="${AdminUI.btn.outline} mt-4 w-full">Done</button>
         </div>
       </div>`;
 
@@ -696,7 +783,7 @@ const AdminConsole = {
     if (modName) {
       const mod = window[modName];
       if (!mod || typeof mod.render !== 'function') {
-        host.innerHTML = `<p class="p-4 text-sm text-zinc-500">The ${AdminConsole.esc(key)} console module failed to load.</p>`;
+        host.innerHTML = `<p class="${AdminUI.muted} p-4">The ${AdminConsole.esc(key)} console module failed to load.</p>`;
         return;
       }
       AdminConsole._activeModule = mod;
@@ -753,32 +840,32 @@ const AdminConsole = {
   renderFeaturedAppsSection(host) {
     const canWrite = AdminConsole.canWrite();
     host.innerHTML = `
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+      <div class="${AdminUI.card} p-4">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="text-lg font-semibold">Featured apps</h2>
-          <button id="admin-featured-refresh" class="text-xs text-zinc-400 hover:text-violet-400">Refresh</button>
+          <h2 class="${AdminUI.cardTitle}">Featured apps</h2>
+          <button id="admin-featured-refresh" class="${AdminUI.btn.link} text-xs">Refresh</button>
         </div>
-        <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
+        <p class="text-sm text-gray-600 dark:text-gray-400 mb-3">
           These apps appear in the &ldquo;Featured apps&rdquo; row on everyone&rsquo;s
           home screen, in this order. Apps a user has already added are left
           out of their row, and an app someone can&rsquo;t see never shows up
           for them. Up to ${AdminConsole.FEATURED_MAX} apps.
         </p>
         <div id="admin-featured-list" class="space-y-2 mb-3">
-          <p class="text-sm text-zinc-500">Loading&hellip;</p>
+          <p class="text-sm text-gray-500">Loading&hellip;</p>
         </div>
         ${canWrite ? `
-        <div class="flex flex-wrap items-center gap-2 pt-3 border-t border-zinc-200 dark:border-zinc-800">
-          <select id="admin-featured-picker" class="rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2 py-1.5 text-sm max-w-[16rem]">
+        <div class="flex flex-wrap items-center gap-2 pt-3 border-t border-gray-200 dark:border-gray-800">
+          <select id="admin-featured-picker" class="rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-950 px-2 py-1.5 text-sm max-w-[16rem]">
             <option value="">Add an app…</option>
           </select>
-          <button id="admin-featured-add" class="px-3 py-1.5 rounded-md bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-sm">Add</button>
+          <button id="admin-featured-add" class="px-3 py-1.5 rounded-md bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-sm">Add</button>
           <span class="flex-1"></span>
-          <button id="admin-featured-save" class="px-3 py-1.5 rounded-md bg-violet-600 hover:bg-violet-500 text-white text-sm disabled:opacity-50" disabled>Save</button>
+          <button id="admin-featured-save" class="${AdminUI.btn.primary} disabled:opacity-50" disabled>Save</button>
         </div>
-        <p id="admin-featured-status" class="mt-2 text-xs text-zinc-500"></p>
+        <p id="admin-featured-status" class="mt-2 text-xs text-gray-500"></p>
         ` : `
-        <p class="pt-3 border-t border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500">
+        <p class="pt-3 border-t border-gray-200 dark:border-gray-800 text-xs text-gray-500">
           View-only admin — the list is read-only here.
         </p>`}
       </div>`;
@@ -832,10 +919,10 @@ const AdminConsole = {
       return `<img src="${AdminConsole.esc(meta.icon_url)}" alt="" class="w-7 h-7 rounded-md object-cover shrink-0">`;
     }
     if (meta && meta.icon_emoji) {
-      return `<span class="w-7 h-7 rounded-md bg-violet-500/10 flex items-center justify-center text-base shrink-0" aria-hidden="true">${AdminConsole.esc(meta.icon_emoji)}</span>`;
+      return `<span class="w-7 h-7 rounded-md bg-indigo-500/10 flex items-center justify-center text-base shrink-0" aria-hidden="true">${AdminConsole.esc(meta.icon_emoji)}</span>`;
     }
     const letter = ((meta && meta.name) || '?').charAt(0).toUpperCase();
-    return `<span class="w-7 h-7 rounded-md bg-violet-500/10 flex items-center justify-center text-xs font-bold shrink-0">${AdminConsole.esc(letter)}</span>`;
+    return `<span class="w-7 h-7 rounded-md bg-indigo-500/10 flex items-center justify-center text-xs font-bold shrink-0">${AdminConsole.esc(letter)}</span>`;
   },
 
   _renderFeaturedList() {
@@ -844,22 +931,22 @@ const AdminConsole = {
     const canWrite = AdminConsole.canWrite();
     const slugs = AdminConsole._featured || [];
     if (!slugs.length) {
-      listEl.innerHTML = '<p class="text-sm text-zinc-500">No featured apps — the home row is hidden for everyone.</p>';
+      listEl.innerHTML = '<p class="text-sm text-gray-500">No featured apps — the home row is hidden for everyone.</p>';
     } else {
       listEl.innerHTML = slugs.map((slug, i) => {
         const meta = AdminConsole._featuredMeta[slug] || { name: slug };
         return `
-        <div class="flex items-center gap-2 rounded-md bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 px-2 py-1.5" data-featured-row="${AdminConsole.esc(slug)}">
-          <span class="w-5 text-xs text-zinc-400 tabular-nums">${i + 1}</span>
+        <div class="flex items-center gap-2 rounded-md bg-white dark:bg-gray-950 border border-gray-200 dark:border-gray-800 px-2 py-1.5" data-featured-row="${AdminConsole.esc(slug)}">
+          <span class="w-5 text-xs text-gray-400 tabular-nums">${i + 1}</span>
           ${AdminConsole._featuredIconHtml(meta)}
           <span class="min-w-0 flex-1">
             <span class="block text-sm font-medium truncate">${AdminConsole.esc(meta.name || slug)}</span>
-            <span class="block text-[11px] text-zinc-400 truncate">${AdminConsole.esc(slug)}</span>
+            <span class="block text-[11px] text-gray-400 truncate">${AdminConsole.esc(slug)}</span>
           </span>
           ${canWrite ? `
-          <button data-featured-up="${AdminConsole.esc(slug)}" class="px-1.5 py-0.5 text-xs rounded text-zinc-500 hover:text-violet-400 disabled:opacity-30" title="Move up" aria-label="Move ${AdminConsole.esc(meta.name || slug)} up"${i === 0 ? ' disabled' : ''}>&uarr;</button>
-          <button data-featured-down="${AdminConsole.esc(slug)}" class="px-1.5 py-0.5 text-xs rounded text-zinc-500 hover:text-violet-400 disabled:opacity-30" title="Move down" aria-label="Move ${AdminConsole.esc(meta.name || slug)} down"${i === slugs.length - 1 ? ' disabled' : ''}>&darr;</button>
-          <button data-featured-remove="${AdminConsole.esc(slug)}" class="px-1.5 py-0.5 text-xs rounded text-zinc-500 hover:text-red-400" title="Remove" aria-label="Remove ${AdminConsole.esc(meta.name || slug)}">&times;</button>
+          <button data-featured-up="${AdminConsole.esc(slug)}" class="px-1.5 py-0.5 text-xs rounded text-gray-500 hover:text-indigo-800 dark:hover:text-indigo-300 disabled:opacity-30" title="Move up" aria-label="Move ${AdminConsole.esc(meta.name || slug)} up"${i === 0 ? ' disabled' : ''}>&uarr;</button>
+          <button data-featured-down="${AdminConsole.esc(slug)}" class="px-1.5 py-0.5 text-xs rounded text-gray-500 hover:text-indigo-800 dark:hover:text-indigo-300 disabled:opacity-30" title="Move down" aria-label="Move ${AdminConsole.esc(meta.name || slug)} down"${i === slugs.length - 1 ? ' disabled' : ''}>&darr;</button>
+          <button data-featured-remove="${AdminConsole.esc(slug)}" class="px-1.5 py-0.5 text-xs rounded text-gray-500 hover:text-red-400" title="Remove" aria-label="Remove ${AdminConsole.esc(meta.name || slug)}">&times;</button>
           ` : ''}
         </div>`;
       }).join('');
@@ -946,58 +1033,58 @@ const AdminConsole = {
   // src/services/app-rollover.js; an unknown state falls back to the raw
   // string so a new outcome shows up rather than disappearing.
   ROLLOVER_STATES: {
-    pending: { label: 'Queued', cls: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300' },
+    pending: { label: 'Queued', cls: 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300' },
     running: { label: 'Rolling over…', cls: 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300' },
     rolled: { label: 'Done', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
     rebuilt: { label: 'Rebuilt', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
-    skipped_deploying: { label: 'Skipped — deploying', cls: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300' },
-    skipped_missing_secrets: { label: 'Skipped — missing secrets', cls: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300' },
-    skipped_no_db_password: { label: 'Skipped — no DB role', cls: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300' },
-    skipped_deleted: { label: 'Skipped — app gone', cls: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300' },
+    skipped_deploying: { label: 'Skipped — deploying', cls: 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300' },
+    skipped_missing_secrets: { label: 'Skipped — missing secrets', cls: 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300' },
+    skipped_no_db_password: { label: 'Skipped — no DB role', cls: 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300' },
+    skipped_deleted: { label: 'Skipped — app gone', cls: 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300' },
     failed: { label: 'Failed', cls: 'bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-400' },
   },
 
   renderRolloverSection(host) {
     const canWrite = AdminConsole.canWrite();
     host.innerHTML = `
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+      <div class="${AdminUI.card} p-4">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="text-lg font-semibold">Container rollover</h2>
-          <button id="admin-refresh-rollover" class="text-xs text-zinc-400 hover:text-violet-400">Refresh</button>
+          <h2 class="${AdminUI.cardTitle}">Container rollover</h2>
+          <button id="admin-refresh-rollover" class="${AdminUI.btn.link} text-xs">Refresh</button>
         </div>
-        <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-2">
+        <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">
           Recreates every running app container so it picks up the environment
           this platform build hands out. Needed after a platform change to what
           gets injected into containers — a restart is not enough, because a
           restarted container keeps the environment it was created with.
         </p>
-        <p class="text-xs text-zinc-500 mb-4">
+        <p class="text-xs text-gray-500 mb-4">
           This re-runs each app's existing build: it changes the environment and
           nothing else — no new code is shipped, unlike a per-app redeploy. Each
           app blinks offline for a few seconds as its turn comes up. The platform
           app itself is never touched.
         </p>
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-          <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
-            <div class="text-xs uppercase tracking-wide text-zinc-500">Eligible apps</div>
+          <div class="rounded-lg bg-gray-100 dark:bg-gray-800 p-3">
+            <div class="text-xs uppercase tracking-wide text-gray-500">Eligible apps</div>
             <div id="admin-rollover-eligible" class="text-2xl font-bold mt-1">—</div>
           </div>
-          <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
-            <div class="text-xs uppercase tracking-wide text-zinc-500">At a time</div>
+          <div class="rounded-lg bg-gray-100 dark:bg-gray-800 p-3">
+            <div class="text-xs uppercase tracking-wide text-gray-500">At a time</div>
             <div id="admin-rollover-concurrency" class="text-2xl font-bold mt-1">—</div>
           </div>
-          <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
-            <div class="text-xs uppercase tracking-wide text-zinc-500">Failed</div>
+          <div class="rounded-lg bg-gray-100 dark:bg-gray-800 p-3">
+            <div class="text-xs uppercase tracking-wide text-gray-500">Failed</div>
             <div id="admin-rollover-failed" class="text-2xl font-bold mt-1">—</div>
           </div>
         </div>
         ${canWrite ? `
         <button id="admin-rollover-btn"
-          class="rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:hover:bg-violet-600 px-4 py-2 text-sm font-medium text-white transition-colors">
+          class="${AdminUI.btn.primary} disabled:opacity-50 disabled:hover:bg-indigo-600">
           Roll over all app containers
         </button>` : `
-        <p class="text-xs text-zinc-500">View-only admin — you can watch a rollover, but not start one.</p>`}
-        <p id="admin-rollover-summary" class="text-sm text-zinc-500 mt-3">Loading…</p>
+        <p class="text-xs text-gray-500">View-only admin — you can watch a rollover, but not start one.</p>`}
+        <p id="admin-rollover-summary" class="text-sm text-gray-500 mt-3">Loading…</p>
         <div id="admin-rollover-list" class="space-y-2 mt-3"></div>
       </div>`;
 
@@ -1104,7 +1191,7 @@ const AdminConsole = {
         : (running ? 'Rollover in progress…' : 'Roll over all app containers');
     }
     const summaryPrefix = AdminConsole._rolloverDemo
-      ? '<span class="text-violet-500">Staging demo data</span> — ' : '';
+      ? '<span class="text-indigo-500">Staging demo data</span> — ' : '';
 
     if (!job) {
       summary.textContent = 'No rollover has run since this platform process started.';
@@ -1128,9 +1215,9 @@ const AdminConsole = {
     list.innerHTML = '';
     for (const app of job.apps || []) {
       const chip = AdminConsole.ROLLOVER_STATES[app.state]
-        || { label: app.state, cls: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300' };
+        || { label: app.state, cls: 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300' };
       const el = document.createElement('div');
-      el.className = 'flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-2.5 rounded-lg bg-zinc-100 dark:bg-zinc-800';
+      el.className = 'flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-2.5 rounded-lg bg-gray-100 dark:bg-gray-800';
       el.setAttribute('data-rollover-slug', app.slug);
       el.setAttribute('data-rollover-state', app.state);
       const secs = app.ms == null ? '' : `${(app.ms / 1000).toFixed(1)}s`;
@@ -1140,7 +1227,7 @@ const AdminConsole = {
           ${app.error ? `<span class="block text-xs text-red-500 mt-0.5">${esc(app.error)}</span>` : ''}
         </span>
         <span class="flex items-center gap-2 shrink-0">
-          ${secs ? `<span class="text-xs text-zinc-500">${esc(secs)}</span>` : ''}
+          ${secs ? `<span class="text-xs text-gray-500">${esc(secs)}</span>` : ''}
           <span class="text-xs px-2 py-0.5 rounded-full ${chip.cls}">${esc(chip.label)}</span>
         </span>`;
       list.appendChild(el);
@@ -1164,11 +1251,11 @@ const AdminConsole = {
   // src/services/staging-reap.js; an unknown state falls back to the raw
   // string so a new outcome shows up rather than disappearing.
   REAP_STATES: {
-    pending: { label: 'Queued', cls: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300' },
+    pending: { label: 'Queued', cls: 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300' },
     running: { label: 'Shutting down…', cls: 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300' },
     torn_down: { label: 'Shut down', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
     torn_down_no_db: { label: 'Shut down — database kept', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
-    skipped_gone: { label: 'Skipped — already gone', cls: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300' },
+    skipped_gone: { label: 'Skipped — already gone', cls: 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300' },
     failed: { label: 'Failed', cls: 'bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-400' },
   },
 
@@ -1192,12 +1279,12 @@ const AdminConsole = {
   renderStalePreviewsSection(host) {
     const canWrite = AdminConsole.canWrite();
     host.innerHTML = `
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+      <div class="${AdminUI.card} p-4">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="text-lg font-semibold">Stale previews</h2>
-          <button id="admin-refresh-reap" class="text-xs text-zinc-400 hover:text-violet-400">Refresh</button>
+          <h2 class="${AdminUI.cardTitle}">Stale previews</h2>
+          <button id="admin-refresh-reap" class="${AdminUI.btn.link} text-xs">Refresh</button>
         </div>
-        <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-2">
+        <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">
           Shuts down every proposal preview that is still running. A preview's
           settings are fixed when it is built, so after a platform change to
           what gets injected into containers, old previews keep running with
@@ -1206,38 +1293,38 @@ const AdminConsole = {
           automatically in the background; this button is the immediate
           version, and takes every preview rather than only the stale ones.
         </p>
-        <p class="text-xs text-zinc-500 mb-4">
+        <p class="text-xs text-gray-500 mb-4">
           Nothing is lost that matters: clicking Preview on a proposal rebuilds
           it automatically with current settings, the same way a preview that
           went to sleep does. A preview's throwaway test data is discarded, and
           rebuilding re-runs that proposal's automated checks.
         </p>
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-          <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
-            <div class="text-xs uppercase tracking-wide text-zinc-500">Open previews</div>
+          <div class="rounded-lg bg-gray-100 dark:bg-gray-800 p-3">
+            <div class="text-xs uppercase tracking-wide text-gray-500">Open previews</div>
             <div id="admin-reap-stale" class="text-2xl font-bold mt-1">—</div>
           </div>
-          <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
-            <div class="text-xs uppercase tracking-wide text-zinc-500">Out of date</div>
+          <div class="rounded-lg bg-gray-100 dark:bg-gray-800 p-3">
+            <div class="text-xs uppercase tracking-wide text-gray-500">Out of date</div>
             <div id="admin-reap-outdated" class="text-2xl font-bold mt-1">—</div>
           </div>
-          <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
-            <div class="text-xs uppercase tracking-wide text-zinc-500">At a time</div>
+          <div class="rounded-lg bg-gray-100 dark:bg-gray-800 p-3">
+            <div class="text-xs uppercase tracking-wide text-gray-500">At a time</div>
             <div id="admin-reap-concurrency" class="text-2xl font-bold mt-1">—</div>
           </div>
-          <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
-            <div class="text-xs uppercase tracking-wide text-zinc-500">Failed</div>
+          <div class="rounded-lg bg-gray-100 dark:bg-gray-800 p-3">
+            <div class="text-xs uppercase tracking-wide text-gray-500">Failed</div>
             <div id="admin-reap-failed" class="text-2xl font-bold mt-1">—</div>
           </div>
         </div>
-        <p id="admin-reap-automatic" class="text-xs text-zinc-500 mb-4"></p>
+        <p id="admin-reap-automatic" class="text-xs text-gray-500 mb-4"></p>
         ${canWrite ? `
         <button id="admin-reap-btn"
-          class="rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:hover:bg-violet-600 px-4 py-2 text-sm font-medium text-white transition-colors">
+          class="${AdminUI.btn.primary} disabled:opacity-50 disabled:hover:bg-indigo-600">
           Shut down stale previews
         </button>` : `
-        <p class="text-xs text-zinc-500">View-only admin — you can watch a sweep, but not start one.</p>`}
-        <p id="admin-reap-summary" class="text-sm text-zinc-500 mt-3">Loading…</p>
+        <p class="text-xs text-gray-500">View-only admin — you can watch a sweep, but not start one.</p>`}
+        <p id="admin-reap-summary" class="text-sm text-gray-500 mt-3">Loading…</p>
         <div id="admin-reap-list" class="space-y-2 mt-3"></div>
       </div>`;
 
@@ -1395,7 +1482,7 @@ const AdminConsole = {
         : (running ? 'Sweep in progress…' : 'Shut down stale previews');
     }
     const summaryPrefix = AdminConsole._reapDemo
-      ? '<span class="text-violet-500">Staging demo data</span> — ' : '';
+      ? '<span class="text-indigo-500">Staging demo data</span> — ' : '';
 
     if (!job) {
       summary.textContent = 'No sweep has run since this platform process started.';
@@ -1419,23 +1506,23 @@ const AdminConsole = {
     list.innerHTML = '';
     for (const preview of job.previews || []) {
       const chip = AdminConsole.REAP_STATES[preview.state]
-        || { label: preview.state, cls: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300' };
+        || { label: preview.state, cls: 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300' };
       const why = AdminConsole.REAP_CLASSIFICATIONS[preview.classification]
         || preview.classification;
       const el = document.createElement('div');
-      el.className = 'flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-2.5 rounded-lg bg-zinc-100 dark:bg-zinc-800';
+      el.className = 'flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-2.5 rounded-lg bg-gray-100 dark:bg-gray-800';
       el.setAttribute('data-reap-name', preview.name);
       el.setAttribute('data-reap-state', preview.state);
       const secs = preview.ms == null ? '' : `${(preview.ms / 1000).toFixed(1)}s`;
       el.innerHTML = `
         <span class="flex-1 min-w-0">
           <code class="font-mono text-sm">${esc(preview.slug)}</code>
-          <span class="text-xs text-zinc-500 ml-1">#${esc(String(preview.sessionId))}</span>
-          <span class="block text-xs text-zinc-500 mt-0.5">${esc(why)}</span>
+          <span class="text-xs text-gray-500 ml-1">#${esc(String(preview.sessionId))}</span>
+          <span class="block text-xs text-gray-500 mt-0.5">${esc(why)}</span>
           ${preview.error ? `<span class="block text-xs text-red-500 mt-0.5">${esc(preview.error)}</span>` : ''}
         </span>
         <span class="flex items-center gap-2 shrink-0">
-          ${secs ? `<span class="text-xs text-zinc-500">${esc(secs)}</span>` : ''}
+          ${secs ? `<span class="text-xs text-gray-500">${esc(secs)}</span>` : ''}
           <span class="text-xs px-2 py-0.5 rounded-full ${chip.cls}">${esc(chip.label)}</span>
         </span>`;
       list.appendChild(el);
@@ -1446,27 +1533,27 @@ const AdminConsole = {
 
   renderOverviewSection(host) {
     host.innerHTML = `
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+      <div class="${AdminUI.card} p-4">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="text-lg font-semibold">Operations</h2>
-          <button id="admin-refresh-overview" class="text-xs text-zinc-400 hover:text-violet-400">Refresh</button>
+          <h2 class="${AdminUI.cardTitle}">Operations</h2>
+          <button id="admin-refresh-overview" class="${AdminUI.btn.link} text-xs">Refresh</button>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-          <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
-            <div class="text-xs uppercase tracking-wide text-zinc-500">Stuck apps</div>
+          <div class="rounded-lg bg-gray-100 dark:bg-gray-800 p-3">
+            <div class="text-xs uppercase tracking-wide text-gray-500">Stuck apps</div>
             <div id="admin-overview-stuck" class="text-2xl font-bold mt-1">—</div>
           </div>
-          <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
-            <div class="text-xs uppercase tracking-wide text-zinc-500">LLM spend today</div>
+          <div class="rounded-lg bg-gray-100 dark:bg-gray-800 p-3">
+            <div class="text-xs uppercase tracking-wide text-gray-500">LLM spend today</div>
             <div id="admin-overview-llm" class="text-2xl font-bold mt-1">—</div>
           </div>
-          <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
-            <div class="text-xs uppercase tracking-wide text-zinc-500">Orphan workers</div>
+          <div class="rounded-lg bg-gray-100 dark:bg-gray-800 p-3">
+            <div class="text-xs uppercase tracking-wide text-gray-500">Orphan workers</div>
             <div id="admin-overview-orphan" class="text-2xl font-bold mt-1">—</div>
           </div>
         </div>
         <div id="admin-overview-details" class="space-y-3 text-sm">
-          <p class="text-xs text-zinc-500">Loading…</p>
+          <p class="text-xs text-gray-500">Loading…</p>
         </div>
       </div>`;
     document.getElementById('admin-refresh-overview')
@@ -1502,15 +1589,15 @@ const AdminConsole = {
     if (stuck.length) {
       const sec = document.createElement('div');
       sec.innerHTML = `
-        <div class="text-xs uppercase tracking-wide text-zinc-500 mb-1">Stuck apps</div>
+        <div class="text-xs uppercase tracking-wide text-gray-500 mb-1">Stuck apps</div>
         <ul class="space-y-1">
           ${stuck.map((a) => `
-            <li class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-2 rounded bg-zinc-100 dark:bg-zinc-800">
+            <li class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-2 rounded bg-gray-100 dark:bg-gray-800">
               <span>
                 <span class="font-mono">${esc(a.slug)}</span>
-                <span class="text-xs text-zinc-500">(${esc(a.dbStatus)}, by ${esc(a.createdBy || '—')})</span>
+                <span class="text-xs text-gray-500">(${esc(a.dbStatus)}, by ${esc(a.createdBy || '—')})</span>
               </span>
-              <span class="text-xs text-zinc-500">${new Date(a.createdAt).toLocaleString()}</span>
+              <span class="text-xs text-gray-500">${new Date(a.createdAt).toLocaleString()}</span>
             </li>`).join('')}
         </ul>`;
       detail.appendChild(sec);
@@ -1518,13 +1605,13 @@ const AdminConsole = {
     if (orphans.length) {
       const sec = document.createElement('div');
       sec.innerHTML = `
-        <div class="text-xs uppercase tracking-wide text-zinc-500 mb-1">Orphan workers</div>
+        <div class="text-xs uppercase tracking-wide text-gray-500 mb-1">Orphan workers</div>
         <ul class="space-y-1">
           ${orphans.map((w) => `
-            <li class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-2 rounded bg-zinc-100 dark:bg-zinc-800">
+            <li class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-2 rounded bg-gray-100 dark:bg-gray-800">
               <span>
                 <span class="font-mono">${esc(w.name)}</span>
-                <span class="text-xs text-zinc-500">
+                <span class="text-xs text-gray-500">
                   ${w.appSlug ? `app ${esc(w.appSlug)}` : 'no app'}
                   · up ${Math.round((w.uptimeSeconds || 0) / 60)}m
                   ${w.sessionArchived ? '· session archived' : ''}
@@ -1537,17 +1624,17 @@ const AdminConsole = {
     if (llm.users?.length) {
       const sec = document.createElement('div');
       const rows = llm.users.slice(0, 5).map((u) =>
-        `<li class="flex items-center justify-between gap-3 p-2 rounded bg-zinc-100 dark:bg-zinc-800">
+        `<li class="flex items-center justify-between gap-3 p-2 rounded bg-gray-100 dark:bg-gray-800">
           <span>${esc(u.username)}</span>
-          <span class="text-xs font-mono text-zinc-400">$${(u.costCents / 100).toFixed(2)}</span>
+          <span class="text-xs font-mono text-gray-400">$${(u.costCents / 100).toFixed(2)}</span>
         </li>`).join('');
       sec.innerHTML = `
-        <div class="text-xs uppercase tracking-wide text-zinc-500 mb-1">Top LLM spenders today</div>
+        <div class="text-xs uppercase tracking-wide text-gray-500 mb-1">Top LLM spenders today</div>
         <ul class="space-y-1">${rows}</ul>`;
       detail.appendChild(sec);
     }
     if (!detail.children.length) {
-      detail.innerHTML = '<p class="text-xs text-zinc-500">All clear — no stuck apps, no orphan workers, no LLM spend recorded today.</p>';
+      detail.innerHTML = '<p class="text-xs text-gray-500">All clear — no stuck apps, no orphan workers, no LLM spend recorded today.</p>';
     }
   },
 
@@ -1557,43 +1644,43 @@ const AdminConsole = {
     const canWrite = AdminConsole.canWrite();
     const dis = canWrite ? '' : 'disabled';
     host.innerHTML = `
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+      <div class="${AdminUI.card} p-4">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="text-lg font-semibold">LLM Spend Limits</h2>
-          <span class="text-xs text-zinc-500">USD · resets midnight UTC</span>
+          <h2 class="${AdminUI.cardTitle}">LLM Spend Limits</h2>
+          <span class="text-xs text-gray-500">USD · resets midnight UTC</span>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
           <label class="block">
-            <span class="text-xs uppercase tracking-wide text-zinc-500">Default per-user daily cap</span>
+            <span class="text-xs uppercase tracking-wide text-gray-500">Default per-user daily cap</span>
             <div class="relative mt-1">
-              <span class="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500 pointer-events-none">$</span>
+              <span class="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-500 pointer-events-none">$</span>
               <input id="admin-limit-user" type="number" min="0" step="0.01" inputmode="decimal" ${dis}
-                class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 pl-6 pr-3 py-2 text-sm font-mono disabled:opacity-60"
+                class="${AdminUI.input} pl-6 font-mono disabled:opacity-60"
                 placeholder="25.00">
             </div>
           </label>
           <label class="block">
-            <span class="text-xs uppercase tracking-wide text-zinc-500">Global daily cap</span>
+            <span class="text-xs uppercase tracking-wide text-gray-500">Global daily cap</span>
             <div class="relative mt-1">
-              <span class="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500 pointer-events-none">$</span>
+              <span class="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-500 pointer-events-none">$</span>
               <input id="admin-limit-global" type="number" min="0" step="0.01" inputmode="decimal" ${dis}
-                class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 pl-6 pr-3 py-2 text-sm font-mono disabled:opacity-60"
+                class="${AdminUI.input} pl-6 font-mono disabled:opacity-60"
                 placeholder="200.00">
             </div>
           </label>
           <label class="block">
-            <span class="text-xs uppercase tracking-wide text-zinc-500" title="Funds platform-driven merge-conflict / sync-with-main resolution turns">System tokens daily cap</span>
+            <span class="text-xs uppercase tracking-wide text-gray-500" title="Funds platform-driven merge-conflict / sync-with-main resolution turns">System tokens daily cap</span>
             <div class="relative mt-1">
-              <span class="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500 pointer-events-none">$</span>
+              <span class="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-500 pointer-events-none">$</span>
               <input id="admin-limit-system" type="number" min="0" step="0.01" inputmode="decimal" ${dis}
-                class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 pl-6 pr-3 py-2 text-sm font-mono disabled:opacity-60"
+                class="${AdminUI.input} pl-6 font-mono disabled:opacity-60"
                 placeholder="25.00">
             </div>
           </label>
         </div>
         <div class="flex flex-wrap items-center justify-between gap-2">
-          <p class="text-xs text-zinc-500">Per-user overrides live in the Users section; these are the platform defaults.</p>
-          ${canWrite ? '<button id="admin-save-limits-btn" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Save</button>' : ''}
+          <p class="text-xs text-gray-500">Per-user overrides live in the Users section; these are the platform defaults.</p>
+          ${canWrite ? `<button id="admin-save-limits-btn" class="${AdminUI.btn.primary}">Save</button>` : ''}
         </div>
         <p id="admin-limits-status" class="text-xs mt-2 hidden"></p>
       </div>
@@ -1607,34 +1694,34 @@ const AdminConsole = {
            This is the ONLY surface for the figure — the drawer's status
            pane carried a matching row until it was removed for reading
            "Not set up" indefinitely. -->
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800 mt-4">
+      <div class="${AdminUI.card} p-4 mt-4">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="text-lg font-semibold">Anthropic credits</h2>
+          <h2 class="${AdminUI.cardTitle}">Anthropic credits</h2>
         </div>
-        <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
+        <p class="${AdminUI.muted} mb-3">
           Anthropic doesn’t publish a remaining-credit figure, only what it has
           billed. Record the balance and the date it was correct, and the platform
           subtracts billed spend since then. Re-record both after every top-up.
         </p>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
           <label class="block">
-            <span class="text-xs uppercase tracking-wide text-zinc-500">Credit balance</span>
+            <span class="text-xs uppercase tracking-wide text-gray-500">Credit balance</span>
             <div class="relative mt-1">
-              <span class="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500 pointer-events-none">$</span>
+              <span class="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-500 pointer-events-none">$</span>
               <input id="admin-credit-balance" type="number" min="0" step="0.01" inputmode="decimal" ${dis}
-                class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 pl-6 pr-3 py-2 text-sm font-mono disabled:opacity-60"
+                class="${AdminUI.input} pl-6 font-mono disabled:opacity-60"
                 placeholder="5000.00">
             </div>
           </label>
           <label class="block">
-            <span class="text-xs uppercase tracking-wide text-zinc-500" title="The date that balance was correct">As of</span>
+            <span class="text-xs uppercase tracking-wide text-gray-500" title="The date that balance was correct">As of</span>
             <input id="admin-credit-as-of" type="date" ${dis}
-              class="mt-1 w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-3 py-2 text-sm font-mono disabled:opacity-60">
+              class="${AdminUI.input} mt-1 font-mono disabled:opacity-60">
           </label>
         </div>
         <div class="flex flex-wrap items-center justify-between gap-2">
-          <p id="admin-credit-derived" class="text-xs text-zinc-500"></p>
-          ${canWrite ? '<button id="admin-save-credits-btn" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Save</button>' : ''}
+          <p id="admin-credit-derived" class="text-xs text-gray-500"></p>
+          ${canWrite ? `<button id="admin-save-credits-btn" class="${AdminUI.btn.primary}">Save</button>` : ''}
         </div>
         <p id="admin-credits-status" class="text-xs mt-2 hidden"></p>
       </div>`;
@@ -1779,13 +1866,13 @@ const AdminConsole = {
   renderCodesSection(host) {
     const canWrite = AdminConsole.canWrite();
     host.innerHTML = `
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+      <div class="${AdminUI.card} p-4">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="text-lg font-semibold">Activation Codes</h2>
-          ${canWrite ? '<button id="admin-generate-code-btn" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Generate Code</button>' : ''}
+          <h2 class="${AdminUI.cardTitle}">Activation Codes</h2>
+          ${canWrite ? `<button id="admin-generate-code-btn" class="${AdminUI.btn.primary}">Generate Code</button>` : ''}
         </div>
         <div id="admin-code-list" class="space-y-2"></div>
-        <p id="admin-code-empty" class="text-sm text-zinc-500 hidden">No activation codes yet.</p>
+        <p id="admin-code-empty" class="text-sm text-gray-500 hidden">No activation codes yet.</p>
       </div>`;
     document.getElementById('admin-generate-code-btn')
       ?.addEventListener('click', async () => {
@@ -1817,24 +1904,24 @@ const AdminConsole = {
 
     for (const code of codes) {
       const el = document.createElement('div');
-      el.className = 'flex flex-wrap items-center justify-between gap-3 p-2.5 rounded-lg bg-zinc-100 dark:bg-zinc-800';
+      el.className = 'flex flex-wrap items-center justify-between gap-3 p-2.5 rounded-lg bg-gray-100 dark:bg-gray-800';
       const used = !!code.used_by_username;
       let statusHtml;
       if (used) {
         const date = new Date(code.used_at).toLocaleDateString();
-        statusHtml = `<span class="text-xs text-zinc-500">Used by <strong class="text-zinc-400">${esc(code.used_by_username)}</strong> on ${date}</span>`;
+        statusHtml = `<span class="text-xs text-gray-500">Used by <strong class="text-gray-400">${esc(code.used_by_username)}</strong> on ${date}</span>`;
       } else {
-        statusHtml = '<span class="text-xs text-green-500">Available</span>';
+        statusHtml = `<span class="${AdminUI.badge.success}">Available</span>`;
       }
       el.innerHTML = `
         <div class="flex-1 min-w-0 flex flex-wrap items-center gap-x-3 gap-y-1">
-          <code class="font-mono text-sm ${used ? 'text-zinc-400 line-through' : 'text-violet-400'}">${esc(code.code)}</code>
+          <code class="font-mono text-sm ${used ? 'text-gray-400 line-through' : 'text-indigo-400'}">${esc(code.code)}</code>
           ${statusHtml}
         </div>
         <div class="flex items-center gap-2 shrink-0">
-          ${!used ? `<button class="admin-copy-code-btn text-xs text-zinc-400 hover:text-violet-400 transition-colors" data-code="${esc(code.code)}">Copy</button>` : ''}
-          ${!used ? `<button class="admin-share-code-btn text-xs text-zinc-400 hover:text-green-400 transition-colors" data-code="${esc(code.code)}">Share link</button>` : ''}
-          ${!used && canWrite ? `<button class="admin-delete-code-btn text-xs text-zinc-400 hover:text-red-400 transition-colors" data-id="${code.id}" aria-label="Delete code">&times;</button>` : ''}
+          ${!used ? `<button class="admin-copy-code-btn text-xs text-gray-400 hover:text-indigo-800 dark:hover:text-indigo-300 transition-colors" data-code="${esc(code.code)}">Copy</button>` : ''}
+          ${!used ? `<button class="admin-share-code-btn text-xs text-gray-400 hover:text-green-400 transition-colors" data-code="${esc(code.code)}">Share link</button>` : ''}
+          ${!used && canWrite ? `<button class="admin-delete-code-btn text-xs text-gray-400 hover:text-red-400 transition-colors" data-id="${code.id}" aria-label="Delete code">&times;</button>` : ''}
         </div>`;
       list.appendChild(el);
     }
@@ -1869,20 +1956,20 @@ const AdminConsole = {
   renderUsersSection(host) {
     const canWrite = AdminConsole.canWrite();
     host.innerHTML = `
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800">
-        <div class="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-zinc-200 dark:border-zinc-800">
-          <h2 class="text-lg font-semibold">Users</h2>
+      <div class="${AdminUI.card}">
+        <div class="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-gray-200 dark:border-gray-800">
+          <h2 class="${AdminUI.cardTitle}">Users</h2>
           ${canWrite ? `
           <div id="admin-bulk-quota-control" class="flex items-center gap-2" title="Set every user's app quota to this number.">
-            <span class="text-xs text-zinc-400">Set all quotas to</span>
+            <span class="text-xs text-gray-400">Set all quotas to</span>
             <input id="admin-bulk-quota-input" type="number" min="0" step="1" inputmode="numeric"
-              class="w-16 rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono"
+              class="w-16 rounded bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 px-2 py-1 text-xs font-mono"
               placeholder="0">
-            <button id="admin-bulk-quota-btn" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1 text-xs font-medium text-white transition-colors">Set all</button>
+            <button id="admin-bulk-quota-btn" class="${AdminUI.btn.primarySm}">Set all</button>
           </div>` : ''}
         </div>
-        <div id="admin-user-list" class="divide-y divide-zinc-200 dark:divide-zinc-800">
-          <p class="p-4 text-xs text-zinc-500">Loading…</p>
+        <div id="admin-user-list" class="divide-y divide-gray-200 dark:divide-gray-800">
+          <p class="p-4 text-xs text-gray-500">Loading…</p>
         </div>
       </div>`;
     document.getElementById('admin-bulk-quota-btn')
@@ -1932,7 +2019,7 @@ const AdminConsole = {
     const list = document.getElementById('admin-user-list');
     if (!list) return;
     if (status === 403) {
-      list.innerHTML = '<p class="p-4 text-sm text-zinc-500">Admin access required.</p>';
+      list.innerHTML = '<p class="p-4 text-sm text-gray-500">Admin access required.</p>';
       return;
     }
     if (!Array.isArray(data)) return;
@@ -1956,7 +2043,7 @@ const AdminConsole = {
       el.className = 'p-4 flex items-start gap-3';
 
       const codeInfo = user.activation_code
-        ? `<span class="text-xs text-zinc-500">code: <code class="text-zinc-400">${esc(user.activation_code)}</code></span>`
+        ? `<span class="text-xs text-gray-500">code: <code class="text-gray-400">${esc(user.activation_code)}</code></span>`
         : '';
       const costToday = (parseFloat(user.cost_today_cents || 0) / 100).toFixed(2);
 
@@ -1978,8 +2065,8 @@ const AdminConsole = {
       const roleControlHtml = canWrite
         ? `
         <div class="flex items-center gap-2 shrink-0" title="${roleTitle}">
-          <span class="text-xs text-zinc-400">Role</span>
-          <select class="admin-role-select rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs"
+          <span class="text-xs text-gray-400">Role</span>
+          <select class="admin-role-select rounded bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 px-2 py-1 text-xs"
             data-user-id="${user.id}" data-original="${role}" ${roleSelectDisabled ? 'disabled' : ''}>
             <option value="user" ${role === 'user' ? 'selected' : ''}>User</option>
             <option value="view_admin" ${role === 'view_admin' ? 'selected' : ''}>View-only admin</option>
@@ -1988,30 +2075,30 @@ const AdminConsole = {
         </div>`
         : `
         <div class="flex items-center gap-2 shrink-0">
-          <span class="text-xs text-zinc-400">Role</span>
-          <span class="text-xs font-medium text-zinc-500 dark:text-zinc-300">${roleLabel}</span>
+          <span class="text-xs text-gray-400">Role</span>
+          <span class="text-xs font-medium text-gray-500 dark:text-gray-300">${roleLabel}</span>
         </div>`;
 
       const appQuota = user.app_quota == null ? 0 : user.app_quota;
       const appsCreated = user.apps_created == null ? 0 : user.apps_created;
       const quotaHtml = `
         <div class="flex items-center gap-1 shrink-0" title="Max apps this user may create. 0 = cannot create. Admins bypass this.">
-          <span class="text-xs text-zinc-400">App quota</span>
+          <span class="text-xs text-gray-400">App quota</span>
           <input type="number" min="0" step="1" inputmode="numeric"
-            class="admin-quota-input w-16 rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono disabled:opacity-60"
+            class="admin-quota-input w-16 rounded bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 px-2 py-1 text-xs font-mono disabled:opacity-60"
             data-user-id="${user.id}"
             data-original="${appQuota}"
             value="${appQuota}" ${canWrite ? '' : 'disabled'}>
-          <span class="text-xs text-zinc-500 whitespace-nowrap">${appsCreated} used</span>
+          <span class="text-xs text-gray-500 whitespace-nowrap">${appsCreated} used</span>
         </div>`;
 
       const overrideCents = user.daily_limit_cents;
       const overrideDollars = overrideCents == null ? '' : AdminConsole.centsToDollars(overrideCents);
       const limitHtml = `
         <div class="flex items-center gap-1 shrink-0" title="Per-user daily cap in dollars. Blank = use platform default.">
-          <span class="text-xs text-zinc-400">Cap $</span>
+          <span class="text-xs text-gray-400">Cap $</span>
           <input type="number" min="0" step="0.01" inputmode="decimal"
-            class="admin-user-limit-input w-20 rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono disabled:opacity-60"
+            class="admin-user-limit-input w-20 rounded bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 px-2 py-1 text-xs font-mono disabled:opacity-60"
             data-user-id="${user.id}"
             data-original="${overrideDollars}"
             value="${overrideDollars}"
@@ -2021,9 +2108,9 @@ const AdminConsole = {
       const walletAddr = user.usernode_pubkey == null ? '' : user.usernode_pubkey;
       const walletHtml = `
         <div class="flex items-center gap-1 shrink-0" title="Linked Usernode wallet (ut1…). Blank = no wallet linked.">
-          <span class="text-xs text-zinc-400">Wallet</span>
+          <span class="text-xs text-gray-400">Wallet</span>
           <input type="text" autocomplete="off" spellcheck="false"
-            class="admin-wallet-input w-44 max-w-full rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono disabled:opacity-60"
+            class="admin-wallet-input w-44 max-w-full rounded bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 px-2 py-1 text-xs font-mono disabled:opacity-60"
             data-user-id="${user.id}"
             data-original="${esc(walletAddr)}"
             value="${esc(walletAddr)}"
@@ -2033,13 +2120,13 @@ const AdminConsole = {
       // Per-row actions in a "…" overflow menu; only full admins get one
       // (view-only admins have no actions). Delete stays hidden for admins.
       const deleteItem = !user.is_admin
-        ? `<button data-delete-id="${user.id}" class="admin-delete-user-btn block w-full text-left px-3 py-2 text-sm text-red-500 hover:bg-zinc-100 dark:hover:bg-zinc-700">Delete</button>`
+        ? `<button data-delete-id="${user.id}" class="admin-delete-user-btn block w-full text-left px-3 py-2 text-sm text-red-500 hover:bg-gray-100 dark:hover:bg-gray-700">Delete</button>`
         : '';
       const kebabHtml = canWrite ? `
         <div class="relative shrink-0 admin-user-actions">
-          <button type="button" class="admin-kebab-btn rounded px-2 py-1 text-lg leading-none text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200" aria-label="User actions" aria-haspopup="true" aria-expanded="false">&#8943;</button>
-          <div class="admin-kebab-menu hidden absolute right-0 mt-1 z-20 min-w-[11rem] rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 py-1 shadow-lg">
-            <button data-reset-id="${user.id}" data-username="${esc(user.username)}" class="admin-reset-pw-btn block w-full text-left px-3 py-2 text-sm text-violet-500 hover:bg-zinc-100 dark:hover:bg-zinc-700">Reset password</button>
+          <button type="button" class="admin-kebab-btn rounded px-2 py-1 text-lg leading-none text-gray-400 hover:text-gray-700 dark:hover:text-gray-200" aria-label="User actions" aria-haspopup="true" aria-expanded="false">&#8943;</button>
+          <div class="admin-kebab-menu hidden absolute right-0 mt-1 z-20 min-w-[11rem] rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 py-1 shadow-lg">
+            <button data-reset-id="${user.id}" data-username="${esc(user.username)}" class="admin-reset-pw-btn block w-full text-left px-3 py-2 text-sm text-indigo-500 hover:bg-gray-100 dark:hover:bg-gray-700">Reset password</button>
             ${deleteItem}
           </div>
         </div>` : '';
@@ -2048,7 +2135,7 @@ const AdminConsole = {
         <div class="flex-1 min-w-0 flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between xl:gap-6">
           <div class="min-w-0">
             <div class="font-medium break-words">${esc(user.username)}</div>
-            <div class="text-sm text-zinc-500 truncate">$${costToday} spent today ${codeInfo}</div>
+            <div class="text-sm text-gray-500 truncate">$${costToday} spent today ${codeInfo}</div>
           </div>
           <!-- Stacked under the name on narrow screens; from xl the console
                is full width, so the controls sit on the same line, pushed
@@ -2372,29 +2459,29 @@ const AdminConsole = {
   ],
   FEATURES_STATUS_BADGE: {
     open:      { label: 'Open',    cls: 'bg-green-500/20 text-green-600 dark:text-green-300' },
-    closed:    { label: 'Closed',  cls: 'bg-zinc-500/20 text-zinc-600 dark:text-zinc-300' },
-    completed: { label: 'Shipped', cls: 'bg-violet-500/20 text-violet-600 dark:text-violet-300' },
+    closed:    { label: 'Closed',  cls: 'bg-gray-500/20 text-gray-600 dark:text-gray-300' },
+    completed: { label: 'Shipped', cls: 'bg-indigo-500/20 text-indigo-600 dark:text-indigo-300' },
   },
 
   renderFeaturesSection(host) {
     host.innerHTML = `
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+      <div class="${AdminUI.card} p-4">
         <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-          <h2 class="text-lg font-semibold">Submitted features</h2>
+          <h2 class="${AdminUI.cardTitle}">Submitted features</h2>
           <div class="flex items-center gap-2">
-            <select id="admin-features-status" class="rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs">
+            <select id="admin-features-status" class="rounded bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 px-2 py-1 text-xs">
               <option value="all" selected>All</option>
               <option value="open">Open</option>
               <option value="closed">Closed</option>
               <option value="completed">Shipped</option>
             </select>
-            <button id="admin-features-refresh" class="text-xs text-zinc-400 hover:text-violet-400 px-1 py-1">Refresh</button>
-            <button id="admin-features-csv" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1 text-xs font-medium text-white transition-colors">Download CSV</button>
+            <button id="admin-features-refresh" class="${AdminUI.btn.link} text-xs px-1 py-1">Refresh</button>
+            <button id="admin-features-csv" class="${AdminUI.btn.primarySm}">Download CSV</button>
           </div>
         </div>
-        <p id="admin-features-summary" class="text-xs text-zinc-500 mb-3"></p>
+        <p id="admin-features-summary" class="text-xs text-gray-500 mb-3"></p>
         <div id="admin-features-list" class="space-y-3"></div>
-        <p id="admin-features-empty" class="text-sm text-zinc-500 hidden"></p>
+        <p id="admin-features-empty" class="text-sm text-gray-500 hidden"></p>
       </div>`;
     document.getElementById('admin-features-status')
       .addEventListener('change', () => AdminConsole.loadFeatures());
@@ -2419,24 +2506,24 @@ const AdminConsole = {
   _featureCard(f, rank) {
     const esc = AdminConsole.esc;
     const b = AdminConsole.FEATURES_STATUS_BADGE[f.status]
-      || { label: f.status || '—', cls: 'bg-zinc-500/20 text-zinc-600 dark:text-zinc-300' };
+      || { label: f.status || '—', cls: 'bg-gray-500/20 text-gray-600 dark:text-gray-300' };
     const el = document.createElement('div');
-    el.className = 'border border-zinc-200 dark:border-zinc-800 rounded-lg bg-zinc-100 dark:bg-zinc-800/60 p-4';
+    el.className = 'border border-gray-200 dark:border-gray-800 rounded-lg bg-gray-100 dark:bg-gray-800/60 p-4';
     const gh = f.github_issue_number
-      ? `<span class="text-xs text-zinc-500">GitHub #${esc(f.github_issue_number)}</span>` : '';
+      ? `<span class="text-xs text-gray-500">GitHub #${esc(f.github_issue_number)}</span>` : '';
     const submitter = f.created_by_username ? esc(f.created_by_username) : '—';
     el.innerHTML = `
       <div class="flex items-start gap-3">
-        <div class="text-zinc-400 font-mono text-sm pt-0.5 w-8 shrink-0">#${rank}</div>
+        <div class="text-gray-400 font-mono text-sm pt-0.5 w-8 shrink-0">#${rank}</div>
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-2 flex-wrap">
             <span class="font-semibold">${esc(f.title)}</span>
             <span class="text-[11px] font-semibold px-2 py-0.5 rounded ${b.cls}">${esc(b.label)}</span>
           </div>
-          ${f.description ? `<div class="text-sm text-zinc-500 mt-1 whitespace-pre-wrap break-words">${esc(f.description)}</div>` : ''}
-          <div class="text-xs text-zinc-500 mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span class="text-violet-500 dark:text-violet-400">${esc(f.app_name)}</span>
-            <span class="text-zinc-500">${esc(f.app_slug)}</span>
+          ${f.description ? `<div class="text-sm text-gray-500 mt-1 whitespace-pre-wrap break-words">${esc(f.description)}</div>` : ''}
+          <div class="text-xs text-gray-500 mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span class="text-indigo-500 dark:text-indigo-400">${esc(f.app_name)}</span>
+            <span class="text-gray-500">${esc(f.app_slug)}</span>
             <span>by ${submitter}</span>
             <span>${esc(AdminConsole._fmtTime(f.created_at))}</span>
             ${gh}
@@ -2444,7 +2531,7 @@ const AdminConsole = {
         </div>
         <div class="text-right text-sm shrink-0">
           <div class="text-green-500 dark:text-green-400 font-semibold">▲ ${esc(f.up_count)}</div>
-          <div class="text-zinc-400">▼ ${esc(f.down_count)}</div>
+          <div class="text-gray-400">▼ ${esc(f.down_count)}</div>
         </div>
       </div>`;
     return el;
@@ -2570,8 +2657,8 @@ const AdminConsole = {
 
   DB_EXPORT_STATUS_BADGE: {
     completed:   { label: 'Completed',   cls: 'bg-green-500/20 text-green-600 dark:text-green-400' },
-    streaming:   { label: 'Streaming',   cls: 'bg-violet-500/20 text-violet-600 dark:text-violet-400' },
-    requested:   { label: 'Requested',   cls: 'bg-violet-500/20 text-violet-600 dark:text-violet-400' },
+    streaming:   { label: 'Streaming',   cls: 'bg-indigo-500/20 text-indigo-600 dark:text-indigo-400' },
+    requested:   { label: 'Requested',   cls: 'bg-indigo-500/20 text-indigo-600 dark:text-indigo-400' },
     failed:      { label: 'Failed',      cls: 'bg-red-500/20 text-red-600 dark:text-red-400' },
     cancelled:   { label: 'Cancelled',   cls: 'bg-amber-500/20 text-amber-700 dark:text-amber-400' },
     interrupted: { label: 'Interrupted', cls: 'bg-amber-500/20 text-amber-700 dark:text-amber-400' },
@@ -2625,35 +2712,35 @@ const AdminConsole = {
           </p>
         </div>
 
-        <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <div class="${AdminUI.card} p-4">
           <div class="flex flex-wrap items-center justify-between gap-3">
-            <p id="admin-db-export-target" class="text-sm text-zinc-500">Loading…</p>
-            <button id="admin-db-export-refresh" class="text-xs text-zinc-400 hover:text-violet-400 px-1 py-1">Refresh</button>
+            <p id="admin-db-export-target" class="text-sm text-gray-500">Loading…</p>
+            <button id="admin-db-export-refresh" class="${AdminUI.btn.link} text-xs px-1 py-1">Refresh</button>
           </div>
           <div class="mt-3">
             ${canWrite
               ? `<button id="admin-db-export-btn" disabled
                    class="rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-50 disabled:hover:bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors">
                    Export database</button>`
-              : `<span class="inline-block rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-500">
+              : `<span class="inline-block rounded-lg border border-gray-300 dark:border-gray-700 px-3 py-2 text-sm text-gray-500">
                    Exporting the database requires full admin.</span>`}
-            <p id="admin-db-export-reason" class="text-xs text-zinc-500 mt-2"></p>
+            <p id="admin-db-export-reason" class="text-xs text-gray-500 mt-2"></p>
           </div>
 
           <!-- Inline confirm panel. Both fields are required on every export;
                there is no remember-me and no session-scoped bypass. -->
-          <div id="admin-db-export-confirm" class="hidden mt-4 rounded-lg border border-red-300 dark:border-red-900 bg-white dark:bg-zinc-950 p-4">
-            <p class="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Confirm the export</p>
-            <p class="text-xs text-zinc-500 mt-1">
+          <div id="admin-db-export-confirm" class="hidden mt-4 rounded-lg border border-red-300 dark:border-red-900 bg-white dark:bg-gray-950 p-4">
+            <p class="text-sm font-semibold text-gray-900 dark:text-gray-100">Confirm the export</p>
+            <p class="text-xs text-gray-500 mt-1">
               Type <code class="font-mono text-red-600 dark:text-red-400">EXPORT</code> and re-enter your own account password.
             </p>
             <div class="mt-3 space-y-2">
               <input id="admin-db-export-phrase" type="text" autocomplete="off" spellcheck="false"
                 placeholder="EXPORT"
-                class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono">
+                class="w-full rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 px-3 py-2 text-sm font-mono">
               <input id="admin-db-export-password" type="password" autocomplete="current-password"
                 placeholder="Your password"
-                class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm">
+                class="w-full rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 px-3 py-2 text-sm">
             </div>
             <p id="admin-db-export-error" class="hidden text-xs text-red-600 dark:text-red-400 mt-2"></p>
             <div class="flex items-center gap-2 mt-3">
@@ -2661,15 +2748,15 @@ const AdminConsole = {
                 class="rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-50 px-4 py-2 text-sm font-medium text-white transition-colors">
                 Download the .sql.gz</button>
               <button id="admin-db-export-cancel"
-                class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
+                class="rounded-lg border border-gray-300 dark:border-gray-700 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
                 Cancel</button>
             </div>
           </div>
 
-          <p class="text-xs text-zinc-500 mt-4">
+          <p class="text-xs text-gray-500 mt-4">
             The file is a gzip-compressed plain-SQL dump (<code class="font-mono">.sql.gz</code>),
             taken with <code class="font-mono">--no-owner --no-privileges</code>. Restore it with:<br>
-            <code class="font-mono text-zinc-600 dark:text-zinc-300 break-all">gunzip -c &lt;file&gt;.sql.gz | psql -v ON_ERROR_STOP=1 -d &lt;target-db&gt;</code><br>
+            <code class="font-mono text-gray-600 dark:text-gray-300 break-all">gunzip -c &lt;file&gt;.sql.gz | psql -v ON_ERROR_STOP=1 -d &lt;target-db&gt;</code><br>
             Read it without unpacking with <code class="font-mono">zless</code> / <code class="font-mono">zgrep</code>.
           </p>
         </div>
@@ -2688,14 +2775,14 @@ const AdminConsole = {
           </ul>
         </details>
 
-        <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <div class="${AdminUI.card} p-4">
           <div class="flex flex-wrap items-center justify-between gap-3 mb-1">
             <h3 class="text-base font-semibold">Export history</h3>
-            <span class="text-xs text-zinc-500">Append-only — cannot be cleared</span>
+            <span class="text-xs text-gray-500">Append-only — cannot be cleared</span>
           </div>
-          <p class="text-xs text-zinc-500 mb-3">Every attempt, including refused ones, is recorded here permanently.</p>
+          <p class="text-xs text-gray-500 mb-3">Every attempt, including refused ones, is recorded here permanently.</p>
           <div id="admin-db-export-history" class="space-y-2"></div>
-          <p id="admin-db-export-history-empty" class="text-sm text-zinc-500 hidden">No exports recorded yet.</p>
+          <p id="admin-db-export-history-empty" class="text-sm text-gray-500 hidden">No exports recorded yet.</p>
         </div>
       </div>`;
 
@@ -2757,10 +2844,10 @@ const AdminConsole = {
     }
 
     const esc = AdminConsole.esc;
-    target.innerHTML = `Target database <code class="font-mono text-zinc-700 dark:text-zinc-200">${esc(data.dbName || 'unknown')}</code>`
+    target.innerHTML = `Target database <code class="font-mono text-gray-700 dark:text-gray-200">${esc(data.dbName || 'unknown')}</code>`
       + ` · current size <span class="font-medium">${esc(AdminConsole._fmtBytes(data.dbSizeBytes))}</span>`
-      + ` <span class="text-zinc-500">(the .sql.gz download is smaller)</span>`
-      + ` · <span class="text-zinc-500">${esc(data.remainingToday)} of ${esc(data.maxPerDay)} exports left today</span>`;
+      + ` <span class="text-gray-500">(the .sql.gz download is smaller)</span>`
+      + ` · <span class="text-gray-500">${esc(data.remainingToday)} of ${esc(data.maxPerDay)} exports left today</span>`;
 
     if (btn) {
       btn.disabled = !data.available;
@@ -2831,11 +2918,11 @@ const AdminConsole = {
   _dbExportRow(r) {
     const esc = AdminConsole.esc;
     const b = AdminConsole.DB_EXPORT_STATUS_BADGE[r.status]
-      || { label: r.status || '—', cls: 'bg-zinc-500/20 text-zinc-600 dark:text-zinc-300' };
+      || { label: r.status || '—', cls: 'bg-gray-500/20 text-gray-600 dark:text-gray-300' };
     const el = document.createElement('div');
-    el.className = 'border border-zinc-200 dark:border-zinc-800 rounded-lg bg-zinc-100 dark:bg-zinc-800/60 p-3';
+    el.className = 'border border-gray-200 dark:border-gray-800 rounded-lg bg-gray-100 dark:bg-gray-800/60 p-3';
     const denied = r.denied_reason
-      ? `<span class="text-zinc-500">reason: ${esc(String(r.denied_reason).replace(/_/g, ' '))}</span>` : '';
+      ? `<span class="text-gray-500">reason: ${esc(String(r.denied_reason).replace(/_/g, ' '))}</span>` : '';
     const errLine = r.error
       ? `<div class="text-xs text-red-600 dark:text-red-400 mt-1 break-words">${esc(r.error)}</div>` : '';
     el.innerHTML = `
@@ -2845,7 +2932,7 @@ const AdminConsole = {
             <span class="font-medium">${esc(r.username)}</span>
             <span class="text-[11px] font-semibold px-2 py-0.5 rounded ${b.cls}">${esc(b.label)}</span>
           </div>
-          <div class="text-xs text-zinc-500 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <div class="text-xs text-gray-500 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
             <span>${esc(AdminConsole._fmtTime(r.requested_at))}</span>
             <span class="font-mono">${esc(r.db_name)}</span>
             <span title="compressed size downloaded">${esc(AdminConsole._fmtBytes(r.bytes_sent))}</span>

@@ -41,6 +41,10 @@ require.cache[workerPath].exports = {
     if (pushBehavior.mode === 'throw') throw new Error('push proxy failed: container gone');
     return { sha: pushBehavior.sha };
   },
+  noteTailMilestone: async (sessionId, milestone) => {
+    workerCalls.push(['noteTailMilestone', sessionId, milestone]);
+    return true;
+  },
 };
 
 // ── pr-metadata stub (inline-required by finalizeRecoveredTurn) ──────────
@@ -80,6 +84,67 @@ function makePool() {
       }
       return { rows: [], rowCount: 0 };
     },
+  };
+}
+
+function makeDurablePool(activeTurn) {
+  const calls = [];
+  const effects = new Map();
+  const state = {
+    stagingUrl: null,
+    stagingContainerId: null,
+  };
+  const query = async (sql, params = []) => {
+    const text = String(sql);
+    calls.push({ sql: text, params });
+    if (/^(BEGIN|COMMIT|ROLLBACK)$/i.test(text.trim())) return { rows: [], rowCount: 0 };
+    if (/INSERT INTO turn_effects/i.test(text)) {
+      const key = `${params[0]}:${params[1]}`;
+      if (effects.has(key)) return { rows: [], rowCount: 0 };
+      effects.set(key, { state: 'pending', result: null });
+      return { rows: [{ state: 'pending' }], rowCount: 1 };
+    }
+    if (/SELECT state, result FROM turn_effects/i.test(text)) {
+      const row = effects.get(`${params[0]}:${params[1]}`);
+      return { rows: row ? [{ ...row }] : [], rowCount: row ? 1 : 0 };
+    }
+    if (/UPDATE turn_effects/i.test(text)) {
+      const row = effects.get(`${params[0]}:${params[1]}`);
+      if (!row || row.state !== 'pending') return { rows: [], rowCount: 0 };
+      row.state = 'completed';
+      row.result = JSON.parse(params[2]);
+      return { rows: [{ result: row.result }], rowCount: 1 };
+    }
+    if (/SET active_turn = jsonb_set/i.test(text) && /'\{tail\}'/i.test(text)) {
+      const milestone = JSON.parse(params[1]);
+      activeTurn.tail = { ...(activeTurn.tail || {}), ...milestone };
+      return { rows: [{ active_turn: activeTurn }], rowCount: 1 };
+    }
+    if (/SELECT active_turn FROM chat_sessions/i.test(text)) {
+      return { rows: [{ active_turn: activeTurn }], rowCount: 1 };
+    }
+    if (/UPDATE chat_sessions SET staging_container_id/i.test(text)) {
+      state.stagingContainerId = params[0];
+      state.stagingUrl = params[1];
+      return { rows: [], rowCount: 1 };
+    }
+    if (/SELECT staging_url, staging_container_id FROM chat_sessions/i.test(text)) {
+      return { rows: [{
+        staging_url: state.stagingUrl,
+        staging_container_id: state.stagingContainerId,
+      }], rowCount: 1 };
+    }
+    if (/SELECT content FROM chat_session_messages/i.test(text) && /role = 'user'/i.test(text)) {
+      return { rows: [{ content: 'okay do it' }] };
+    }
+    return { rows: [], rowCount: 0 };
+  };
+  return {
+    calls,
+    effects,
+    state,
+    query,
+    async connect() { return { query, release() {} }; },
   };
 }
 
@@ -305,4 +370,103 @@ test('a staging build that fails still leaves a proposable Changes-ready card', 
   assert.ok(emits.some((e) => e.event === 'staging_failed'));
   // And the preview-bearing success row is NOT written.
   assert.ok(!insertedRows(pool).some((r) => r.content === 'Staging deployed!'));
+});
+
+test('a retained recovered tail publishes a successful staging card once without rebuilding', async () => {
+  const activeTurn = {
+    turnId: '44444444-4444-4444-8444-444444444444',
+    phase: 'tail_pending',
+    journal: '/home/node/.claude/turn-4444.log',
+    tail: {},
+  };
+  const done = {
+    completionRowPosted: true,
+    prNumber: 7,
+    prOpenedEventRecorded: true,
+  };
+  const pool = makeDurablePool(activeTurn);
+  const staging = makeStaging();
+  const stagingRecovery = require('../src/services/staging-recovery');
+  const originalNeedsRebuild = stagingRecovery.stagingNeedsRebuild;
+  stagingRecovery.stagingNeedsRebuild = async () => false;
+  try {
+    const args = {
+      config: {}, pool, staging,
+      session: { ...SESSION, pr_number: 7, pr_url: 'https://example/pr/7' },
+      sessionId: 510,
+      result: {
+        ahead: 1, sha: 'pushedsha000123', pushOk: true, sessionId: 'cc-2',
+        lastResultText: 'Sorted the leaderboard by score.',
+      },
+      repoOwner: 'Usernode-Labs', repoName: 'social-vibecoding',
+      emit: () => {},
+      containerName: 'usernode-worker-510',
+      keepWorker: true,
+      alreadyDone: done,
+      activeTurn,
+    };
+
+    await finalizeRecoveredTurn(args);
+    await finalizeRecoveredTurn(args);
+
+    assert.ok(prMetadataCalls.every((call) =>
+      call.effectTurnId === activeTurn.turnId
+      && call.effectSessionId === 510
+      && call.effectBillingByok === false),
+    'recovery threads one stable metadata receipt and payer identity into every retry');
+    assert.equal(staging.calls.length, 1, 'the committed stagingUrl is reused on tail retry');
+    assert.equal(insertedRows(pool).filter((row) => row.content === 'Staging deployed!').length, 1,
+      'the receipt suppresses the duplicate Changes-ready card');
+    assert.equal(done.stagingPublished, true);
+    const receipt = pool.effects.get(`${activeTurn.turnId}:recovered_staging_publication`);
+    assert.equal(receipt?.state, 'completed');
+    assert.deepEqual(receipt?.result?.checkpoint, { stagingPublished: true },
+      'replays restore the checkpoint committed with the success card');
+  } finally {
+    stagingRecovery.stagingNeedsRebuild = originalNeedsRebuild;
+  }
+});
+
+test('a retained staging failure is published once and later tail retries skip the build', async () => {
+  const activeTurn = {
+    turnId: '55555555-5555-4555-8555-555555555555',
+    phase: 'tail_pending',
+    journal: '/home/node/.claude/turn-5555.log',
+    tail: {},
+  };
+  const done = {
+    completionRowPosted: true,
+    prNumber: 7,
+    prOpenedEventRecorded: true,
+  };
+  const pool = makeDurablePool(activeTurn);
+  const staging = makeFailingStaging(new Error('container refused to boot'));
+  const args = {
+    config: {}, pool, staging,
+    session: { ...SESSION, pr_number: 7, pr_url: 'https://example/pr/7' },
+    sessionId: 510,
+    result: {
+      ahead: 1, sha: 'pushedsha000123', pushOk: true, sessionId: 'cc-2',
+      lastResultText: 'Changed the score card.',
+    },
+    repoOwner: 'Usernode-Labs', repoName: 'social-vibecoding',
+    emit: () => {},
+    containerName: 'usernode-worker-510',
+    keepWorker: true,
+    alreadyDone: done,
+    activeTurn,
+  };
+
+  await finalizeRecoveredTurn(args);
+  await finalizeRecoveredTurn(args);
+
+  assert.equal(staging.calls.length, 1, 'a later wrap-up retry does not repeat a known failed build');
+  assert.equal(insertedRows(pool).filter((row) => row.content === 'Staging build failed').length, 1);
+  assert.equal(done.stagingPublished, true);
+  assert.equal(typeof done.stagingFailed, 'object');
+  assert.equal(
+    typeof pool.effects.get(`${activeTurn.turnId}:recovered_staging_publication`)?.result?.checkpoint?.stagingFailed,
+    'object',
+    'replays restore the failure checkpoint committed with the failure card',
+  );
 });

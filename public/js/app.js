@@ -147,7 +147,7 @@ const App = {
     App.bindEvents();
 
     // Screenshot-state deep links for the ANONYMOUS shell (`?shot=anon`,
-    // `?shot=waitlist-joined`). Captures and proposal checks carry a
+    // `?shot=waitlist-joined`, `?shot=anon-back`). Captures and proposal checks carry a
     // capture token, so a session always exists for them and
     // restoreFromHash would strip #landing / #waitlist to the home feed —
     // the signed-out screens would be unreachable to every shot. These
@@ -299,7 +299,14 @@ const App = {
   _anonShot() {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
-    if (shot !== 'anon' && shot !== 'waitlist-joined') return false;
+    // `anon-back` (#1028) scripts the guest back path on the landing
+    // directory. It matters that it routes through here and not the
+    // ordinary boot: this path skips /api/auth/me, so the capture or
+    // proposal check's own session can't promote the page into the
+    // signed-in shell and stop exercising the guest viewer at all.
+    if (shot !== 'anon' && shot !== 'waitlist-joined' && shot !== 'anon-back') {
+      return false;
+    }
     if (shot === 'waitlist-joined' &&
         (!location.hash || location.hash === '#')) {
       try { history.replaceState(null, '', location.search + '#waitlist'); } catch (err) { /* ignore */ }
@@ -1232,7 +1239,7 @@ const App = {
         // paths broadcast pills on the status event, not 'quick_replies'
         // (that handler attaches to the last ASSISTANT row, which a
         // recovered turn doesn't have).
-        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, scoutOutput: data.scoutOutput, quickReplies: data.quickReplies, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
+        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, scoutOutput: data.scoutOutput, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         break;
@@ -1308,7 +1315,7 @@ const App = {
         }
         break;
       case 'cc_progress':
-        DevChat._appendProgressLine(data.text);
+        DevChat._appendProgressLine(data.text, data);
         DevChat.scrollToBottom();
         // Also arm the /status polling fallback when cc_progress arrives via
         // WS (e.g. the SSE POST itself died before getting here). Without
@@ -1455,7 +1462,14 @@ const App = {
         });
         break;
       case 'cc_log':
-        DevChat.messages.push({ role: 'system', ccLog: data.log, content: 'Claude Code log', created_at: new Date().toISOString() });
+        DevChat.messages.push({
+          role: 'system',
+          ccLog: data.log,
+          content: data.agentBackend === 'codex_openrouter' ? 'Codex log' : 'Claude Code log',
+          agentBackend: data.agentBackend,
+          agentModel: data.agentModel,
+          created_at: new Date().toISOString(),
+        });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         break;
@@ -3002,18 +3016,22 @@ const App = {
         // App.user.isAdmin lives inside navigateToAdminConsole.
         App.setChromeless(false);
         let _adminSection = parts[1] || null;
-        // Permanent alias for the renamed Topochain section. The sub-tab
-        // (a third segment, owned by AdminTopochain) has to survive the
-        // rewrite, otherwise a deep bookmark like #admin/topochain/users
-        // would silently land on the section's default tab. Same idiom as
-        // the #topochain branch below: rewrite the address BEFORE
-        // navigating so the module's own _syncHash sees the canonical
-        // prefix, and the bookmark self-heals.
+        // Permanent alias for the renamed Topochain section. Everything
+        // after the section segment is owned by AdminTopochain and has to
+        // survive the rewrite VERBATIM — not just the sub-tab, but the
+        // Season-events tail below it
+        // (season-events/<eventId>/new-challenge/<templateId>) — otherwise
+        // a deep bookmark silently lands on the section's default tab or,
+        // worse, on the right tab with the wrong event. Same idiom as the
+        // #topochain branch below: rewrite the address BEFORE navigating so
+        // the module's own _syncHash sees the canonical prefix, and the
+        // bookmark self-heals.
         if (_adminSection === 'topochain') {
           _adminSection = 'seasons';
+          const tail = parts.slice(2).join('/');
           try {
             history.replaceState(null, '',
-              parts[2] ? `#admin/seasons/${parts[2]}` : '#admin/seasons');
+              tail ? `#admin/seasons/${tail}` : '#admin/seasons');
           } catch (err) { /* non-fatal: navigation below still works */ }
         }
         App.navigateToAdminConsole(_adminSection);

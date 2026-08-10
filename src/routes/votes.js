@@ -342,7 +342,7 @@ function stagingMockProposals(viewer) {
       checks_checked_at: hoursAgo(0.02),
     },
     {
-      ...mk(9000023, 900123,
+      ...mk(9000026, 900126,
         '[Mock] Checks-phase test: running the automated tests against the preview',
         0.06, 1, 0, 0, { required: 2, windowEndsAt: hoursAhead(70) }),
       check_state: 'pending',
@@ -452,7 +452,7 @@ function stagingMockProposals(viewer) {
     // card at that mock issue; the inline priority/assignee stand in for what
     // the inheritance query computes (mock rows bypass the DB summarize path).
     {
-      ...mk(9000022, 900122,
+      ...mk(9000027, 900127,
         '[Mock] Inherited-attrs test: promoted from issue #900006 — chips carry over',
         7, 2, 0, 1, { required: 2, windowEndsAt: hoursAhead(50) }),
       linked_issues: [900006],

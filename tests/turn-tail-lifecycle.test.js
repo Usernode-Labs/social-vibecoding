@@ -43,7 +43,15 @@ function stub(id, exports) {
 // Load worker.js against a fake docker + logger + pg pool, so nothing
 // touches a daemon or a database. Returns the module, the recorded docker
 // execs, and the recorded SQL.
-function loadWorker() {
+function loadWorker({
+  failTransitions = false,
+  vanishOnTransition = false,
+  initialActiveTurn = {
+    turnId: 'logical-1', phase: 'executing', backend: 'codex_openrouter',
+    turnUuid: 'attempt-1', logicalTurnId: 'logical-1', attemptNumber: 1,
+    journal: '/home/node/.claude/turn-777.log', tail: {},
+  },
+} = {}) {
   const ids = {
     docker: require.resolve('../src/services/docker'),
     logger: require.resolve('../src/services/logger'),
@@ -54,11 +62,13 @@ function loadWorker() {
   for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
 
   const execs = [];
+  const events = [];
   const realDocker = require('../src/services/docker');
   stub(ids.docker, {
     ...realDocker,
     execFileAsync: async (cmd, args, opts) => {
       execs.push({ cmd, args, opts });
+      events.push({ type: 'docker', cmd, args, opts });
       return { stdout: '', stderr: '' };
     },
   });
@@ -66,11 +76,42 @@ function loadWorker() {
   stub(ids.logger, { info: noop, warn: noop, error: noop, debug: noop });
 
   const queries = [];
+  let activeTurn = initialActiveTurn;
   stub(ids.pool, {
     getPool: () => ({
       query: async (sql, params = []) => {
-        queries.push({ sql: String(sql), params });
-        return { rows: [], rowCount: 0 };
+        const text = String(sql);
+        queries.push({ sql: text, params });
+        events.push({ type: 'query', sql: text, params });
+        if (/SELECT active_turn/.test(text)) {
+          return { rows: [{ active_turn: activeTurn }], rowCount: 1 };
+        }
+        if (/SET active_turn = active_turn \|\| \$3::jsonb/.test(text)) {
+          if (vanishOnTransition) {
+            activeTurn = null;
+            return { rows: [], rowCount: 0 };
+          }
+          if (failTransitions || !activeTurn) return { rows: [], rowCount: 0 };
+          const patch = JSON.parse(params[2]);
+          activeTurn = { ...activeTurn, ...patch };
+          return { rows: [{ active_turn: activeTurn }], rowCount: 1 };
+        }
+        if (/SET active_turn = jsonb_set/.test(text)) {
+          if (failTransitions || !activeTurn) return { rows: [], rowCount: 0 };
+          activeTurn = {
+            ...activeTurn,
+            tail: { ...(activeTurn.tail || {}), ...JSON.parse(params[1]) },
+          };
+          return { rows: [{ active_turn: activeTurn }], rowCount: 1 };
+        }
+        if (/SET active_turn = NULL/.test(text)) {
+          if (failTransitions || !activeTurn || activeTurn.phase !== 'cleanup_pending') {
+            return { rows: [], rowCount: 0 };
+          }
+          activeTurn = null;
+          return { rows: [{ id: params[0] }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: failTransitions ? 0 : 1 };
       },
     }),
   });
@@ -84,40 +125,44 @@ function loadWorker() {
       else delete require.cache[id];
     }
   };
-  return { worker, execs, queries, restore };
+  return { worker, execs, queries, events, getActiveTurn: () => activeTurn, restore };
 }
 
 // ── 1. The record's lifetime ────────────────────────────────────────────
 
-test('markTurnTail stamps phase tail + tailStartedAt and merges milestones', async () => {
-  const { worker, queries, restore } = loadWorker();
+test('markTurnTail advances the owned turn to tail_pending with seed milestones', async () => {
+  const { worker, queries, getActiveTurn, restore } = loadWorker();
   try {
-    await worker.markTurnTail(2954, { sha: 'dcdd174', pushOk: true });
-    assert.equal(queries.length, 1);
-    const { sql, params } = queries[0];
+    await worker.markTurnTail(
+      2954,
+      { sha: 'dcdd174', pushOk: true },
+      { turnId: 'logical-1' },
+    );
+    const { sql, params } = queries.find((q) => /SET active_turn = active_turn \|\|/.test(q.sql));
     assert.match(sql, /UPDATE chat_sessions/);
-    assert.match(sql, /'\{phase\}'/, 'sets phase');
-    assert.match(sql, /'\{tailStartedAt\}'/, 'stamps when the tail began');
-    assert.match(sql, /'\{tail\}'/, 'seeds the milestone map');
-    // The milestone map is MERGED into whatever is already there (`||`),
-    // never assigned — a second stamp must not wipe the first.
-    assert.match(sql, /COALESCE\(active_turn->'tail', '\{\}'::jsonb\) \|\| /);
-    // Never resurrect a record the tail already released.
     assert.match(sql, /active_turn IS NOT NULL/);
     assert.equal(params[0], 2954);
-    assert.equal(JSON.parse(params[1]), 'tail');
-    assert.deepEqual(JSON.parse(params[3]), { sha: 'dcdd174', pushOk: true });
+    assert.equal(params[1], 'logical-1');
+    const patch = JSON.parse(params[2]);
+    assert.equal(patch.phase, 'tail_pending');
+    assert.ok(patch.tailStartedAt);
+    assert.deepEqual(patch.tail, { sha: 'dcdd174', pushOk: true });
+    assert.equal(getActiveTurn().phase, 'tail_pending');
   } finally { restore(); }
 });
 
 test('noteTailMilestone merges one key and cannot revive a released record', async () => {
   const { worker, queries, restore } = loadWorker();
   try {
-    await worker.noteTailMilestone(2954, { completionRowPosted: true });
+    await worker.noteTailMilestone(
+      2954,
+      { completionRowPosted: true },
+      { turnId: 'logical-1' },
+    );
     assert.equal(queries.length, 1);
     const { sql, params } = queries[0];
     assert.match(sql, /COALESCE\(active_turn->'tail', '\{\}'::jsonb\) \|\| \$2::jsonb/);
-    assert.match(sql, /WHERE id = \$1 AND active_turn IS NOT NULL/,
+    assert.match(sql, /WHERE id = \$1\s+AND active_turn IS NOT NULL/,
       'a late stamp on a finished turn is a no-op, not an insert');
     assert.deepEqual(JSON.parse(params[1]), { completionRowPosted: true });
 
@@ -130,31 +175,138 @@ test('noteTailMilestone merges one key and cannot revive a released record', asy
   } finally { restore(); }
 });
 
-test('finishTurn clears the record AND deletes the held journal', async () => {
-  const { worker, execs, queries, restore } = loadWorker();
+test('markTurnRetryPending keeps the durable phase in tail_pending', async () => {
+  const { worker, queries, getActiveTurn, restore } = loadWorker({
+    initialActiveTurn: {
+      turnId: 'logical-1', phase: 'tail_pending', backend: 'codex_openrouter',
+      turnUuid: 'attempt-1', logicalTurnId: 'logical-1', attemptNumber: 1,
+      journal: '/home/node/.claude/turn-777.log', tail: {},
+    },
+  });
   try {
-    await worker.finishTurn(2954, { journal: '/home/node/.claude/turn-777.log' });
+    await worker.markTurnRetryPending(2954, {
+      turnUuid: 'attempt-1', logicalTurnId: 'logical-1', attemptNumber: 1,
+    });
+    assert.equal(queries.length, 1);
+    const { sql, params } = queries[0];
+    assert.match(sql, /active_turn = active_turn \|\| \$3::jsonb/);
+    assert.match(sql, /active_turn->>'turnId' = \$2/);
+    assert.match(sql, /active_turn->>'turnUuid' = \$4/);
+    const patch = JSON.parse(params[2]);
+    assert.equal(patch.phase, 'tail_pending');
+    assert.equal(patch.retryFresh, true);
+    assert.equal(patch.logicalTurnId, 'logical-1');
+    assert.equal(params[3], 'attempt-1');
+    assert.equal(getActiveTurn().phase, 'tail_pending');
+  } finally { restore(); }
+});
+
+test('finishTurn removes shared files while cleanup ownership still blocks dispatch', async () => {
+  const { worker, execs, queries, events, restore } = loadWorker();
+  try {
+    await worker.finishTurn(2954, {
+      turnId: 'logical-1',
+      journal: '/home/node/.claude/turn-777.log',
+    });
 
     const rm = execs.find((c) => c.args.includes('rm'));
     assert.ok(rm, 'the journal a holdTurnRecord caller kept is removed here');
     assert.ok(rm.args.includes('/home/node/.claude/turn-777.log'));
+    assert.ok(rm.args.includes(worker.TURN_PROMPT_PATH));
     assert.ok(rm.args.includes('usernode-worker-2954'),
       'targets the session\'s own worker container');
 
     const cleared = queries.find((q) => /active_turn = NULL/.test(q.sql));
     assert.ok(cleared, 'the durable record is dropped');
-    assert.deepEqual(cleared.params, [2954]);
+    assert.deepEqual(cleared.params, [2954, 'logical-1']);
+
+    const cleanupIdx = events.findIndex((event) => event.type === 'query'
+      && /active_turn = active_turn \|\|/.test(event.sql));
+    const rmIdx = events.findIndex((event) => event.type === 'docker'
+      && event.args.includes('rm'));
+    const clearIdx = events.findIndex((event) => event.type === 'query'
+      && /active_turn = NULL/.test(event.sql));
+    assert.ok(cleanupIdx < rmIdx && rmIdx < clearIdx,
+      'cleanup_pending is published before shared-file removal and cleared only afterwards');
   } finally { restore(); }
 });
 
-test('finishTurn with no journal still clears the record (idempotent)', async () => {
-  const { worker, execs, queries, restore } = loadWorker();
+test('idempotent finish may remove a unique journal but never the shared prompt', async () => {
+  const { worker, execs, queries, getActiveTurn, restore } = loadWorker({
+    initialActiveTurn: null,
+  });
+  try {
+    const cleared = await worker.finishTurn(2954, {
+      turnId: 'logical-old',
+      journal: '/home/node/.claude/turn-old.log',
+    });
+    assert.equal(cleared, true);
+    assert.equal(getActiveTurn(), null);
+    assert.ok(!queries.some((q) => /active_turn = NULL/.test(q.sql)));
+    const rm = execs.find((c) => c.args.includes('rm'));
+    assert.ok(rm.args.includes('/home/node/.claude/turn-old.log'));
+    assert.ok(!rm.args.includes(worker.TURN_PROMPT_PATH),
+      'a stale/idempotent owner cannot delete a replacement turn\'s shared prompt');
+  } finally { restore(); }
+});
+
+test('finishTurn does not claim shared cleanup when the row vanished during CAS', async () => {
+  const { worker, execs, getActiveTurn, restore } = loadWorker({
+    vanishOnTransition: true,
+  });
+  try {
+    const cleared = await worker.finishTurn(2954, {
+      turnId: 'logical-1',
+      journal: '/home/node/.claude/turn-777.log',
+    });
+    assert.equal(cleared, true);
+    assert.equal(getActiveTurn(), null);
+    const rm = execs.find((c) => c.args.includes('rm'));
+    assert.ok(rm.args.includes('/home/node/.claude/turn-777.log'));
+    assert.ok(!rm.args.includes(worker.TURN_PROMPT_PATH),
+      'an already-cleared CAS result never grants ownership of the shared path');
+  } finally { restore(); }
+});
+
+test('finishTurn with an exact turn id needs no journal and still owns prompt cleanup', async () => {
+  const { worker, execs, queries, restore } = loadWorker({
+    initialActiveTurn: { turnId: 'logical-1', phase: 'tail_pending' },
+  });
   try {
     // Second call for the same turn, or a turn that never held a record.
-    await worker.finishTurn(2954);
-    assert.equal(execs.filter((c) => c.args.includes('rm')).length, 0,
-      'nothing to delete, so no exec');
+    await worker.finishTurn(2954, { turnId: 'logical-1' });
+    const rm = execs.find((c) => c.args.includes('rm'));
+    assert.ok(rm, 'the exact owner still removes the shared prompt');
+    assert.ok(rm.args.includes(worker.TURN_PROMPT_PATH));
+    assert.ok(!rm.args.some((arg) => /turn-.*\.log$/.test(arg)),
+      'no journal path is invented');
     assert.ok(queries.some((q) => /active_turn = NULL/.test(q.sql)));
+  } finally { restore(); }
+});
+
+test('finishTurn retains the journal when the durable clear does not land', async () => {
+  const { worker, execs, queries, restore } = loadWorker({ failTransitions: true });
+  try {
+    const cleared = await worker.finishTurn(2954, {
+      turnId: 'logical-1',
+      journal: '/home/node/.claude/turn-777.log',
+    });
+    assert.equal(cleared, false);
+    assert.ok(queries.some((q) => /SET active_turn = active_turn \|\|/.test(q.sql)),
+      'the durable cleanup transition was attempted');
+    assert.equal(execs.filter((c) => c.args.includes('rm')).length, 0,
+      'the replay source survives for the next recovery');
+  } finally { restore(); }
+});
+
+test('finishTurn refuses to infer ownership from the session current record', async () => {
+  const { worker, execs, queries, getActiveTurn, restore } = loadWorker();
+  try {
+    const cleared = await worker.finishTurn(2954);
+    assert.equal(cleared, false);
+    assert.equal(getActiveTurn().turnId, 'logical-1');
+    assert.ok(!queries.some((q) => /active_turn = NULL/.test(q.sql)));
+    assert.equal(execs.filter((c) => c.args.includes('rm')).length, 0);
   } finally { restore(); }
 });
 
@@ -167,7 +319,7 @@ test('isTailPhase classifies a held tail, tolerating a string-encoded column', (
     assert.equal(worker.isTailPhase({ phase: 'tail' }), true);
     assert.equal(worker.isTailPhase(JSON.stringify({ phase: 'tail' })), true);
     assert.equal(worker.isTailPhase('not json'), false);
-    assert.equal(worker.TURN_PHASE_TAIL, 'tail');
+    assert.equal(worker.TURN_PHASE_TAIL, 'tail_pending');
   } finally { restore(); }
 });
 
@@ -186,8 +338,8 @@ test('execInWorker keeps the journal and the record when holdTurnRecord is set',
     'the journal delete is skipped for a tail-holding caller');
   assert.match(WORKER_SRC, /if \(holdTurnRecord\) \{[\s\S]{0,600}await markTurnTail\(sessionId,/,
     'the tail branch stamps the record instead of clearing it');
-  assert.match(WORKER_SRC, /\} else \{\s*\n\s*await clearActiveTurn\(sessionId\);/,
-    'the non-holding contract is unchanged: clear at exec end');
+  assert.match(WORKER_SRC, /\} else \{\s*\n\s*await finishTurn\(sessionId, \{ turnId: durableTurnId, journal \}\);/,
+    'the non-holding contract uses the same identity-safe cleanup path');
   // The seed milestones are what let a dead-worker recovery tell "code
   // landed" from "nothing landed" without a container to ask.
   assert.match(WORKER_SRC, /sha: execState\.sha \|\| null, pushOk: execState\.pushOk === true/);
@@ -199,21 +351,39 @@ const SESSIONS_SRC = fs.readFileSync(
   path.join(__dirname, '../src/routes/sessions.js'), 'utf8'
 );
 
-test('build and scout dispatches hold the record and release it in a finally', () => {
+test('build and scout keep one owner through their complete tail', () => {
   const holds = SESSIONS_SRC.match(/holdTurnRecord: true/g) || [];
-  assert.equal(holds.length, 2, 'both dispatch tools (build + scout) opt in');
+  assert.equal(holds.length, 2,
+    'only the live build and scout dispatches hold their tail record');
 
-  const finishes = SESSIONS_SRC.match(/worker\.finishTurn\(session\.id\)/g) || [];
-  assert.equal(finishes.length, 2, 'and both release it');
+  const deferredCallers = SESSIONS_SRC.match(/deferTurnCleanup: true/g) || [];
+  assert.equal(deferredCallers.length, 2,
+    'both interactive callers retain ownership through Mayor phase 2');
 
-  // Release must be unconditional — a held record with no owner is what
-  // the stale-turn watchdog reaps, and reaping narrates an interruption
-  // that never happened.
-  for (const m of SESSIONS_SRC.matchAll(/worker\.finishTurn\(session\.id\)/g)) {
-    const before = SESSIONS_SRC.slice(Math.max(0, m.index - 900), m.index);
-    assert.match(before, /\} finally \{[\s\S]*$/,
-      'finishTurn is called from a finally block');
-  }
+  const localCleanupGates = SESSIONS_SRC.match(
+    /if \(durableTailComplete && durableTurnId && \(!deferTurnCleanup \|\| headless\)\)/g
+  ) || [];
+  assert.equal(localCleanupGates.length, 2,
+    'headless/local tails clean up only after every required tool-side effect');
+  assert.match(SESSIONS_SRC,
+    /wrapUpPosted: true[\s\S]{0,500}worker\.finishTurn\(session\.id, \{ turnId: toolResult\.turnId \}\)/,
+    'interactive cleanup happens only after the durable phase-2 milestone');
+
+  // Markerless retries release attempt one, while a missing-thread retry
+  // marks its existing tail before the atomic attempt-two registration.
+  // Both callback copies check the
+  // user stop before and after the awaited transition, and only then clear
+  // the prior attempt's pending-stop marker.
+  const retryCallbacks = SESSIONS_SRC.match(/prepareRetry: async \(retry\) => \{/g) || [];
+  assert.equal(retryCallbacks.length, 2, 'both dispatch tools use stop-aware retry preparation');
+  const durableFresh = SESSIONS_SRC.match(/await worker\.markTurnRetryPending\(session\.id,/g) || [];
+  assert.equal(durableFresh.length, 2, 'both prepare the one live same-process fresh retry');
+  const stopChecks = SESSIONS_SRC.match(/if \(stopPendingFor\(stopHandle\)\) return false;/g) || [];
+  assert.equal(stopChecks.length, 4, 'each retry boundary checks for a stop on both sides of its await');
+
+  assert.match(SESSIONS_SRC,
+    /if \(!durableTailComplete\) \{[\s\S]{0,200}retaining durable turn for recovery/,
+    'a thrown tool-side tail retains its exact durable owner');
 
   // The sync path deliberately does NOT hold: it has no user-visible tail,
   // and resumeDetachedTurnInner already treats recovered sync turns as
@@ -232,14 +402,95 @@ test('every non-idempotent tail step stamps a milestone', () => {
     assert.match(SESSIONS_SRC, new RegExp(`noteTailMilestone\\([\\s\\S]{0,200}${key}`),
       `${key} must be stamped when that step lands`);
   }
+  const explicitLiveOwners = SESSIONS_SRC.match(
+    /noteTailMilestone\([\s\S]{0,240}?\{ turnId: durableTurnId \}[\s\S]{0,20}?\);/g
+  ) || [];
+  assert.equal(explicitLiveOwners.length, 4,
+    'every live build-tail milestone carries the exact logical owner');
 });
 
 // ── 4. finalizeRecoveredTurn skips what already landed ──────────────────
 
 const SERVER_SRC = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8');
 
+test('live retained turns are handed to the interactive recovery scheduler', async () => {
+  const { scheduleRetainedInteractiveTurn } = require('../src/routes/sessions');
+  const activeTurn = {
+    turnId: '11111111-1111-4111-8111-111111111111',
+    phase: 'tail_pending',
+  };
+  const scheduled = [];
+  const pool = {
+    query: async () => ({ rows: [{ active_turn: activeTurn }], rowCount: 1 }),
+  };
+
+  assert.equal(await scheduleRetainedInteractiveTurn({
+    pool,
+    sessionId: 42,
+    scheduleInteractiveRecovery: async (sessionId) => {
+      scheduled.push(sessionId);
+      return true;
+    },
+  }), true);
+  assert.deepEqual(scheduled, [42]);
+
+  assert.match(SERVER_SRC,
+    /app\.use\(sessionRoutes\(config, \{\s*scheduleInteractiveRecovery: scheduleInteractiveTurnRecovery,/,
+    'the production router receives the boot-recovery adapter');
+  assert.match(SESSIONS_SRC,
+    /catch \(err\) \{[\s\S]{0,500}?scheduleRetainedInteractiveTurn\(\{/,
+    'the live request catch schedules any retained durable owner');
+});
+
+test('a failed retained-turn read schedules conservatively while no record is a no-op', async () => {
+  const { scheduleRetainedInteractiveTurn } = require('../src/routes/sessions');
+  let calls = 0;
+  const scheduleInteractiveRecovery = async () => { calls += 1; return true; };
+
+  const absent = await scheduleRetainedInteractiveTurn({
+    pool: { query: async () => ({ rows: [{ active_turn: null }] }) },
+    sessionId: 43,
+    scheduleInteractiveRecovery,
+  });
+  assert.equal(absent, false);
+  assert.equal(calls, 0);
+
+  const uncertain = await scheduleRetainedInteractiveTurn({
+    pool: { query: async () => { throw new Error('database unavailable'); } },
+    sessionId: 44,
+    scheduleInteractiveRecovery,
+  });
+  assert.equal(uncertain, true);
+  assert.equal(calls, 1, 'an outage cannot be interpreted as proof that ownership vanished');
+});
+
+test('restart cleanup retries derive their action from the durable phase', () => {
+  assert.match(SERVER_SRC,
+    /if \(durableTailComplete\) \{[\s\S]{0,350}turnCleanupArgs\(recoveryActiveTurn\)[\s\S]{0,250}requireDurableTurnCleanup/,
+    'interactive recovery clears only the exact owner after a complete tail');
+  assert.match(SERVER_SRC,
+    /Recovered tail failed; retaining durable turn for replay/,
+    'a failed recovered tail is never erased by its finally block');
+
+  assert.match(SESSIONS_SRC,
+    /failHeadlessRun\([\s\S]{0,350}requireDurableTurnCleanup\([\s\S]{0,200}cleanupArgs\(recoveryActiveTurn\)/,
+    'the produced-nothing headless exit validates exact-owner cleanup');
+  assert.match(SESSIONS_SRC,
+    /Release the durable record and its journal only after every recovered[\s\S]{0,300}requireDurableTurnCleanup/,
+    'the successful headless exit validates cleanup after its full tail');
+
+  assert.match(SERVER_SRC,
+    /run: async \(\) => \{[\s\S]{0,500}loadActiveTurn[\s\S]{0,300}action === 'cleanup'[\s\S]{0,300}worker\.finishTurn/,
+    'interactive retry timers reload cleanup_pending instead of capturing cleanupOnly');
+  assert.match(SESSIONS_SRC,
+    /const action = turnLifecycle\.recoveryAction\(fresh\.active_turn\);[\s\S]{0,500}action === 'cleanup'[\s\S]{0,400}worker\.finishTurn/,
+    'headless retry timers derive cleanup without replaying the tail');
+  assert.match(SERVER_SRC, /async function reconcilePendingTurnCleanup[\s\S]{0,500}PHASE_CLEANUP_PENDING/,
+    'boot scans cleanup_pending independently of worker-container state');
+});
+
 test('finalizeRecoveredTurn takes an alreadyDone map and defaults to empty', () => {
-  assert.match(SERVER_SRC, /startedAtMs, alreadyDone = null,\s*\}\) \{/,
+  assert.match(SERVER_SRC, /startedAtMs, alreadyDone = null,\s*activeTurn = null,\s*\}\) \{/,
     'optional, so a genuine mid-exec recovery is unaffected');
   assert.match(SERVER_SRC,
     /const done = alreadyDone && typeof alreadyDone === 'object' \? alreadyDone : \{\};/);
@@ -267,17 +518,21 @@ test('a resumed tail reuses a healthy preview instead of rebuilding for ~5 minut
   assert.match(SERVER_SRC, /stagingNeedsRebuild\(\{ \.\.\.session, \.\.\.live \}, \{ config \}\)/);
   assert.match(SERVER_SRC, /if \(!reusedStaging\) emit\('status', \{ text: 'Building staging preview\.\.\.' \}\)/,
     'no "building" line when nothing is being built');
-  // Reuse still posts the Changes-ready card the interrupted tail owed the
-  // user, and still re-runs checks (setChecksPending voided the verdict).
+  // Reuse still publishes the Changes-ready outcome the interrupted tail
+  // owed the user, behind the same receipt as a newly built preview, and
+  // still re-runs checks (setChecksPending voided the verdict).
   assert.match(SERVER_SRC,
-    /if \(reusedStaging\) \{[\s\S]{0,900}changesReady: true/);
+    /if \(reusedStaging\) \{[\s\S]{0,500}publishRecoveredStaging\(\{ outcome: 'success'/);
+  assert.match(SERVER_SRC,
+    /effectKey: turnEffects\.EFFECT_KEYS\.RECOVERED_STAGING_PUBLICATION/,
+    'staging cards are receipt-backed across recovery retries');
   assert.match(SERVER_SRC,
     /if \(reusedStaging\) \{[\s\S]{0,1400}visuals\.captureForSession/);
 });
 
 test('resumeDetachedTurnInner threads the map through and skips a posted wrap-up', () => {
   assert.match(SERVER_SRC,
-    /const tailDone = \(activeTurn && typeof activeTurn\.tail === 'object' && activeTurn\.tail\) \|\| \{\};/);
+    /let tailDone = \(activeTurn && typeof activeTurn\.tail === 'object' && activeTurn\.tail\) \|\| \{\};/);
   assert.match(SERVER_SRC, /alreadyDone: tailDone,/,
     'finalizeRecoveredTurn receives it');
   assert.match(SERVER_SRC, /if \(wrapUpOutcome && tailDone\.wrapUpPosted\) \{/,

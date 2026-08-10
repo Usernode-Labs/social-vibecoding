@@ -187,11 +187,11 @@ test('html: the chart header carries a Hide/Show $0 toggle', () => {
   assert.match(html, /data-zero-toggle="spend-distribution"/, 'toggle group must exist');
   assert.match(html, /data-zero="hide"[^>]*>Hide \$0/, 'a "Hide $0" button must exist');
   assert.match(html, /data-zero="show"[^>]*>Show \$0/, 'a "Show $0" button must exist');
-  // Hide is the default-active button (violet), Show is inactive (zinc).
+  // Hide is the default-active button (indigo), Show is inactive (gray).
   assert.match(
     html,
-    /data-zero="hide" class="zero-btn[^"]*bg-violet-600/,
-    'Hide $0 must be the default-active (violet) button',
+    /data-zero="hide" class="zero-btn[^"]*bg-indigo-600/,
+    'Hide $0 must be the default-active (indigo) button',
   );
 });
 

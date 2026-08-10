@@ -58,6 +58,7 @@
     _connectors: [],
     _connectorLoadId: 0,
     _githubLink: null,
+    _openRouterModels: [],
 
     // ── Screen state ─────────────────────────────────────────────────────
     _open: false,
@@ -109,6 +110,7 @@
       // deep-link #settings/connectors as one of its three routes; see
       // public/js/credit-options.js.
       { key: 'connectors', label: 'Claude & ChatGPT connectors', group: 'AI & agents' },
+      { key: 'openrouter', label: 'OpenRouter & Codex', group: 'AI & agents' },
       { key: 'app-ai', label: 'App AI permissions', group: 'AI & agents' },
       { key: 'agent-files', label: 'Agent instructions & skills', group: 'AI & agents' },
 
@@ -141,6 +143,20 @@
       // (see the "MOVE, DON'T REWRITE" note on #settings-screen).
       document.getElementById('settings-save').addEventListener('click', () => this.save());
       document.getElementById('settings-remove').addEventListener('click', () => this.remove());
+
+      // OpenRouter & Codex (BYOK). Section bindings — all guarded on
+      // existence so the section degrades cleanly if the feature flag is
+      // off server-side (the section markup stays, the controls no-op).
+      const orSave = document.getElementById('settings-openrouter-save');
+      const orRemove = document.getElementById('settings-openrouter-remove');
+      const orSetDefault = document.getElementById('settings-openrouter-set-default');
+      const orModel = document.getElementById('settings-openrouter-model');
+      const claudeSetDefault = document.getElementById('settings-claude-set-default');
+      if (orSave) orSave.addEventListener('click', () => this._saveOpenRouterKey());
+      if (orRemove) orRemove.addEventListener('click', () => this._removeOpenRouterKey());
+      if (orSetDefault) orSetDefault.addEventListener('click', () => this._saveOpenRouterDefault());
+      if (orModel) orModel.addEventListener('change', () => this._syncOpenRouterModelDetails());
+      if (claudeSetDefault) claudeSetDefault.addEventListener('click', () => this._saveClaudeDefault());
 
       const linkBtn = document.getElementById('wallet-link-btn');
       if (linkBtn) linkBtn.addEventListener('click', () => this._startWalletLink());
@@ -352,6 +368,7 @@
     _renderAllSections() {
       this._renderBody();
       this._refreshSpend();
+      this._refreshOpenRouter();
       this._renderLlmGrants();
       this._loadCliTokens(true);
       this._loadConnectors();
@@ -1353,7 +1370,11 @@
       // Hiding the section is the same outcome the 404 branch produces,
       // so staging and production differ only in whether the request is
       // made at all.
-      if (!(await this._cliAuthAvailable())) {
+      // Staging disables the real CLI surface, but ?demo=1 is a read-only
+      // fixture endpoint specifically meant to make this section reviewable.
+      // Let that mock path through while still suppressing every real token
+      // request when auth/me advertises cliAuthEnabled=false.
+      if (!this._cliTokensDemo() && !(await this._cliAuthAvailable())) {
         section.classList.add('hidden');
         return;
       }
@@ -1764,6 +1785,225 @@
         saveBtn.disabled = false;
         removeBtn.disabled = false;
       }
+    },
+
+    // ── OpenRouter & Codex (BYOK) ───────────────────────────────
+    _formatOpenRouterPrice(value) {
+      if (value == null || value === '') return null;
+      const price = Number(value);
+      if (!Number.isFinite(price) || price < 0) return null;
+      if (price === 0) return '$0';
+      const decimals = price < 0.01 ? 4 : price < 10 ? 2 : price < 100 ? 1 : 0;
+      const fixed = price.toFixed(decimals);
+      const compact = fixed.includes('.') ? fixed.replace(/0+$/, '').replace(/\.$/, '') : fixed;
+      return `$${compact}`;
+    },
+
+    _openRouterModelCostSummary(model) {
+      const tier = {
+        free: 'Free',
+        low: 'Low cost',
+        medium: 'Medium cost',
+        high: 'High cost',
+        unknown: 'Price unavailable',
+      }[model?.costTier] || 'Price unavailable';
+      const input = this._formatOpenRouterPrice(model?.inputPricePerMillion);
+      const output = this._formatOpenRouterPrice(model?.outputPricePerMillion);
+      if (!input && !output) return tier;
+      return `${tier} · ${input || '?'} /M input · ${output || '?'} /M output`;
+    },
+
+    _openRouterModelOptionLabel(model) {
+      const compatibility = model?.compatibility === 'verified'
+        ? ' · verified'
+        : (model?.compatibility === 'blocked' ? ' · limited' : ' · unverified');
+      return `${model?.name || model?.id || 'Unknown model'} — ${this._openRouterModelCostSummary(model)}${compatibility}`;
+    },
+
+    _syncOpenRouterModelDetails() {
+      const select = document.getElementById('settings-openrouter-model');
+      const model = this._openRouterModels.find((item) => item.id === select?.value) || null;
+      if (!model) {
+        if (select) select.title = 'Models are sorted by average input/output price. Actual spend depends on token usage.';
+        return;
+      }
+      let compatibility = 'Not yet verified with Codex.';
+      if (model.compatibility === 'verified') compatibility = 'Verified with Codex.';
+      else if (!model.meetsCodexMinimums) {
+        compatibility = model.compatibilityNote
+          || 'This model may lack coding tools or enough context, so a Codex turn may fail.';
+      }
+      if (select) select.title = `${this._openRouterModelCostSummary(model)}. ${compatibility} Actual spend depends on token usage.`;
+    },
+
+    _setOrStatus(text, kind) {
+      const el = document.getElementById('settings-openrouter-status');
+      if (!el) return;
+      el.textContent = text;
+      el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
+      const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
+      el.classList.add(cls);
+    },
+
+    async _refreshOpenRouter() {
+      const betaGate = document.getElementById('settings-openrouter-beta-gated');
+      const display = document.getElementById('settings-openrouter-key-display');
+      const last4 = document.getElementById('settings-openrouter-key-last4');
+      const info = document.getElementById('settings-openrouter-key-info');
+      const removeBtn = document.getElementById('settings-openrouter-remove');
+      const input = document.getElementById('settings-openrouter-key');
+      const saveBtn = document.getElementById('settings-openrouter-save');
+      const modelsWrap = document.getElementById('settings-openrouter-models-wrap');
+      try {
+        const r = await fetch('/api/me/coding-agent', { credentials: 'same-origin' });
+        const prefs = r.ok ? await r.json() : {};
+        const isBeta = !!prefs.codexAvailable;
+        if (betaGate) betaGate.classList.toggle('hidden', isBeta);
+        if (!isBeta) { if (modelsWrap) modelsWrap.classList.add('hidden'); return; }
+      } catch {}
+      try {
+        const r = await fetch('/api/me/credentials/openrouter', { credentials: 'same-origin' });
+        const j = r.ok ? await r.json() : {};
+        if (j.configured) {
+          if (display) display.classList.remove('hidden');
+          if (last4) last4.textContent = j.last4 || '••••';
+          if (removeBtn) removeBtn.classList.remove('hidden');
+          if (input) { input.placeholder = 'Paste a new key to replace'; input.value = ''; }
+          if (saveBtn) saveBtn.textContent = 'Replace';
+          if (info && j.keyInfo) {
+            info.classList.remove('hidden');
+            const lim = j.keyInfo.limit != null ? `$${j.keyInfo.limit}` : '';
+            const rem = j.keyInfo.limitRemaining != null ? `$${j.keyInfo.limitRemaining}` : '';
+            info.textContent = lim ? `Key limit: ${lim} · Remaining: ${rem}` : (j.keyInfo.label || '');
+          }
+          await this._loadOpenRouterModels();
+        } else {
+          if (display) display.classList.add('hidden');
+          if (removeBtn) removeBtn.classList.add('hidden');
+          if (input) input.placeholder = 'sk-or-...';
+          if (saveBtn) saveBtn.textContent = 'Test & save';
+          if (info) info.classList.add('hidden');
+          if (modelsWrap) modelsWrap.classList.add('hidden');
+        }
+      } catch {}
+    },
+
+    async _loadOpenRouterModels() {
+      const sel = document.getElementById('settings-openrouter-model');
+      const wrap = document.getElementById('settings-openrouter-models-wrap');
+      if (!sel) return;
+      try {
+        const r = await fetch('/api/me/coding-agent/models?backend=codex_openrouter', { credentials: 'same-origin' });
+        if (!r.ok) { if (wrap) wrap.classList.add('hidden'); return; }
+        const cat = await r.json();
+        const models = Array.isArray(cat.models) ? cat.models : [];
+        this._openRouterModels = models;
+        if (!models.length) { if (wrap) wrap.classList.add('hidden'); return; }
+        // Build options with DOM methods, NOT innerHTML (review P2):
+        // OpenRouter model IDs/names are untrusted catalog data and
+        // could inject markup into the authenticated Settings page.
+        sel.innerHTML = '';
+        for (const m of models) {
+          const opt = document.createElement('option');
+          opt.value = m.id;
+          opt.textContent = this._openRouterModelOptionLabel(m);
+          sel.appendChild(opt);
+        }
+        const recommended = models.some((model) => model.id === cat.recommendedModelId)
+          ? cat.recommendedModelId
+          : (models.find((model) => model.compatibility === 'verified')?.id || models[0].id);
+        sel.value = recommended;
+        // Restore the previously-saved model/effort if any.
+        const prefs = await (await fetch('/api/me/coding-agent', { credentials: 'same-origin' })).json();
+        const saved = prefs.backends?.codex_openrouter;
+        if (saved?.model && models.some((model) => model.id === saved.model)) sel.value = saved.model;
+        const eff = document.getElementById('settings-openrouter-reasoning');
+        if (eff) eff.value = saved?.reasoningEffort || '';
+        this._syncOpenRouterModelDetails();
+        if (wrap) wrap.classList.remove('hidden');
+      } catch {
+        this._openRouterModels = [];
+      }
+    },
+
+    async _saveOpenRouterKey() {
+      const input = document.getElementById('settings-openrouter-key');
+      const saveBtn = document.getElementById('settings-openrouter-save');
+      const key = input?.value?.trim();
+      if (!key) { this._setOrStatus('Paste an OpenRouter API key first.', 'error'); return; }
+      if (saveBtn) saveBtn.disabled = true;
+      this._setOrStatus('Verifying with OpenRouter…', 'info');
+      try {
+        const r = await fetch('/api/me/credentials/openrouter', {
+          method: 'PUT', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ apiKey: key }),
+        });
+        const j = await r.json();
+        if (!r.ok) { this._setOrStatus(j.error || 'Failed to save key.', 'error'); return; }
+        this._setOrStatus('Saved and encrypted. Codex turns bill to your OpenRouter key.', 'ok');
+        input.value = '';
+        await this._refreshOpenRouter();
+      } catch (err) {
+        this._setOrStatus(`Network error: ${err.message}`, 'error');
+      } finally {
+        if (saveBtn) saveBtn.disabled = false;
+      }
+    },
+
+    async _removeOpenRouterKey() {
+      const removeBtn = document.getElementById('settings-openrouter-remove');
+      if (removeBtn) removeBtn.disabled = true;
+      try {
+        const r = await fetch('/api/me/credentials/openrouter', { method: 'DELETE', credentials: 'same-origin' });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { this._setOrStatus(j.error || 'Failed to remove key.', 'error'); return; }
+        const note = j.defaultReset ? ' Key removed; your default agent was reset to Claude Code.' : '';
+        this._setOrStatus('Key removed.' + note, 'ok');
+        this._openRouterModels = [];
+        await this._refreshOpenRouter();
+      } catch {
+        this._setOrStatus('Failed to remove key.', 'error');
+      } finally {
+        if (removeBtn) removeBtn.disabled = false;
+      }
+    },
+
+    async _saveOpenRouterDefault() {
+      const model = document.getElementById('settings-openrouter-model')?.value;
+      const reasoningEffort = document.getElementById('settings-openrouter-reasoning')?.value || null;
+      // Preserve the user's existing cost cap across this save (review P3):
+      // include it explicitly so an omission can't drop the safety limit,
+      // and the server also COALESCEs when omitted.
+      let maxTurnCostUsd = null;
+      try {
+        const prefs = await (await fetch('/api/me/coding-agent', { credentials: 'same-origin' })).json();
+        maxTurnCostUsd = prefs.backends?.codex_openrouter?.maxTurnCostUsd ?? null;
+      } catch {}
+      try {
+        const r = await fetch('/api/me/coding-agent', {
+          method: 'PATCH', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ defaultBackend: 'codex_openrouter', model, reasoningEffort, maxTurnCostUsd }),
+        });
+        if (!r.ok) { const j = await r.json().catch(() => ({})); this._setOrStatus(j.error || 'Failed to save.', 'error'); return; }
+        this._setOrStatus('Codex saved as your default coding agent.', 'ok');
+      } catch { this._setOrStatus('Network error.', 'error'); }
+    },
+
+    async _saveClaudeDefault() {
+      // Reciprocal default control (review #8): set Claude Code (the
+      // legacy backend) as the user's default coding agent. Sends no model
+      // so it doesn't pin a Claude model either.
+      try {
+        const r = await fetch('/api/me/coding-agent', {
+          method: 'PATCH', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ defaultBackend: 'claude_code' }),
+        });
+        if (!r.ok) { const j = await r.json().catch(() => ({})); this._setOrStatus(j.error || 'Failed to save.', 'error'); return; }
+        this._setOrStatus('Claude Code is now your default coding agent.', 'ok');
+      } catch { this._setOrStatus('Network error.', 'error'); }
     },
 
     // ── Change password (issue #282) ─────────────────────────────
@@ -2917,13 +3157,18 @@
         this._renderUsernodeError(section, readError, loading);
       } else {
         // Device permissions — mirrors the native QuickSettingsPanel.
+        // iOS maps requestPermissions() to the notification prompt and has
+        // no block production since v4 — describe each platform's real ask.
         const permBox = this._unSection(section, 'Usernode app — device permissions',
-          'Block production needs the app to wake your device at exact slot times.');
-        this._unStatusRow(permBox, isAndroid ? 'Exact alarms' : 'Alarm permissions',
+          isAndroid
+            ? 'Block production needs the app to wake your device at exact slot times.'
+            : 'Notifications let Usernode alert you about node and account activity.');
+        this._unStatusRow(permBox, isAndroid ? 'Exact alarms' : 'Notifications',
           !!perms.exactAlarmGranted, 'Granted', 'Not granted');
         if (!perms.exactAlarmGranted) {
-          this._unButton(permBox, 'Request permissions', () =>
-            this._unApply(window.usernode.requestPermissions()));
+          this._unButton(permBox,
+            isAndroid ? 'Request permissions' : 'Allow notifications', () =>
+              this._unApply(window.usernode.requestPermissions()));
         }
         if (isAndroid) {
           this._unStatusRow(permBox, 'Battery optimization',

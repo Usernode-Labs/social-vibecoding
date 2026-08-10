@@ -590,7 +590,12 @@ test('a tab joining a fresh stop still waits out both rungs', () => {
   const row = DevChat.messages.find((m) => m._stopping);
   assert.equal(row.content, '@dana is stopping the agent…');
   assert.ok(!row._forceOffered, 'no premature escape hatch');
-  assert.deepEqual(armedDelays(timers), [15000, 40000]);
+  const delays = armedDelays(timers);
+  assert.equal(delays.length, 2);
+  assert.ok(delays[0] >= 14990 && delays[0] <= 15000,
+    'the slow rung accounts for only the clock time spent entering the state');
+  assert.ok(delays[1] >= 39990 && delays[1] <= 40000,
+    'the stuck rung accounts for only the clock time spent entering the state');
 });
 
 test('a later server timestamp re-arms the ladder on the already-showing row', () => {

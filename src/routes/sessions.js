@@ -17,6 +17,8 @@ const visuals = require('../services/visuals');
 const docker = require('../services/docker');
 const caddy = require('../services/caddy');
 const worker = require('../services/worker');
+const agentTurn = require('../services/agent-turn');
+const registry = require('../agents/registry');
 const workerProgress = require('../services/worker-progress');
 const sessionLifecycle = require('../services/session-lifecycle');
 const stagingRecovery = require('../services/staging-recovery');
@@ -92,6 +94,20 @@ const {
 } = require('../services/active-workers');
 const sessionState = require('../services/session-state');
 const turnWatchdog = require('../services/turn-watchdog');
+const recoveryRetry = require('../services/recovery-retry');
+const turnLifecycle = require('../services/turn-lifecycle');
+const turnEffects = require('../services/turn-effects');
+const TURN_WRAPUP_EFFECT_KEYS = Object.freeze({
+  llm: 'turn_wrapup_llm',
+  pills: 'turn_wrapup_pills',
+  message: 'turn_wrapup_message',
+  spend: 'turn_wrapup_spend',
+});
+const HEADLESS_WRAPUP_EFFECT_KEYS = Object.freeze({
+  llm: 'headless_wrapup_llm',
+  message: 'headless_wrapup_message',
+  spend: 'headless_wrapup_spend',
+});
 const estimateGuard = require('../services/estimate-guard');
 // #892: what an unearned "nearly done" phrase is replaced with. Mirrors the
 // user-facing wording of ccPhaseLabel() in public/js/cc-progress-summary.js
@@ -121,6 +137,47 @@ const {
 // unit-testable without docker (same pattern as services/turn-watchdog).
 const stopPolicy = require('../services/stop-policy');
 const { stopPendingFor } = stopPolicy;
+
+// A live request can lose its database connection after the detached worker
+// has already produced a result. In that case the durable active_turn is the
+// authority: keep the session reserved and hand it to the same recovery path
+// boot adoption uses. The scheduler itself is injected by server.js to avoid
+// a routes -> server require cycle.
+async function scheduleRetainedInteractiveTurn({
+  pool,
+  sessionId,
+  scheduleInteractiveRecovery,
+  assumeRetained = false,
+}) {
+  let retained = assumeRetained;
+  if (!retained) {
+    try {
+      retained = !!await turnLifecycle.loadActiveTurn(pool, sessionId);
+    } catch (err) {
+      // A failed read cannot prove the owner disappeared. Schedule
+      // conservatively; the retry re-reads the durable phase itself.
+      retained = true;
+      log.warn('sessions', 'Could not inspect interactive durable turn; scheduling recovery', {
+        sessionId, err: err.message,
+      });
+    }
+  }
+  if (!retained) return false;
+  if (typeof scheduleInteractiveRecovery !== 'function') {
+    log.error('sessions', 'Interactive durable turn retained without a recovery scheduler', {
+      sessionId,
+    });
+    return false;
+  }
+  try {
+    return (await scheduleInteractiveRecovery(sessionId)) !== false;
+  } catch (err) {
+    log.error('sessions', 'Could not schedule retained interactive turn recovery', {
+      sessionId, err: err.message,
+    });
+    return false;
+  }
+}
 
 const CLI_CREDENTIAL_MANAGEMENT_ERROR = 'credential_management_not_available_via_cli';
 
@@ -530,9 +587,10 @@ const { stripSpecWrapperFence } = require('../services/spec-format');
 // back to the latest spec. Since #69 retired the manual "Save version"
 // route, this and the native CLI proposal-handoff route are the only writers
 // of new rows in chat_session_specs;
-// it uses MAX(version)+1. Best-effort: returns null on failure so the
-// card falls back to the latest spec rather than blocking the edit.
-async function snapshotSessionSpec(pool, sessionId, content) {
+// it uses MAX(version)+1. Ordinary callers remain best-effort; durable scout
+// publication passes required:true so the version and its receipt/card roll
+// back together instead of committing a partially replayable outcome.
+async function snapshotSessionSpec(pool, sessionId, content, { required = false } = {}) {
   try {
     const { rows } = await pool.query(
       `INSERT INTO chat_session_specs (session_id, version, content)
@@ -543,11 +601,263 @@ async function snapshotSessionSpec(pool, sessionId, content) {
     return rows[0].version;
   } catch (err) {
     log.warn('sessions', 'Failed to snapshot spec version', { err: err.message, sessionId });
+    if (required) throw err;
     return null;
   }
 }
 
-function sessionRoutes(config) {
+// Publish a completed scout's three database effects as one receipt-backed
+// transaction: latest spec, immutable version, and the transcript card. A
+// crash after commit can then replay the receipt without creating another
+// version or row. Legacy records without a stable turn id retain their
+// historical best-effort path.
+async function persistScoutPublication({
+  pool,
+  sessionId,
+  turnId = null,
+  content,
+  hadSpec = false,
+  durationMs = null,
+  quickReplies = null,
+  recovered = false,
+  localAgentLabel = null,
+  localMode = 'scout',
+  agentBackend = null,
+  agentModel = null,
+}) {
+  const ccText = String(content || '').trim();
+  if (!ccText) throw new Error('persistScoutPublication: spec content required');
+  const lineCount = ccText.split('\n').length;
+  const baseScoutText = hadSpec
+    ? `Scout revised the spec (now ${lineCount} lines).`
+    : `Scout drafted a ${lineCount}-line spec from the codebase.`;
+  const scoutText = localAgentLabel
+    ? `${baseScoutText} Drafted on ${localAgentLabel} — no Usernode credits used.`
+    : baseScoutText;
+  const persist = async (client, { requiredSnapshot }) => {
+    await client.query(
+      'UPDATE chat_sessions SET spec_md = $1 WHERE id = $2',
+      [ccText, sessionId],
+    );
+    const specVersion = await snapshotSessionSpec(
+      client,
+      sessionId,
+      ccText,
+      { required: requiredSnapshot },
+    );
+    const metadata = {
+      specPreview: buildSpecPreview(ccText),
+      specLines: lineCount,
+      scoutOutput: ccText,
+      specVersion,
+      ...(durationMs != null ? { durationMs } : {}),
+      ...(quickReplies ? { quickReplies } : {}),
+      ...(recovered ? { recovered: true } : {}),
+      ...(agentBackend ? { agentBackend, agentModel: agentModel || null } : {}),
+      ...(localAgentLabel
+        ? { runner: 'local', localAgentLabel, localMode }
+        : {}),
+    };
+    await client.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+       VALUES ($1, 'system', $2, $3)`,
+      [sessionId, scoutText, JSON.stringify(metadata)],
+    );
+    return { scoutText, metadata, lineCount, specVersion, hadSpec: !!hadSpec };
+  };
+
+  if (turnId) {
+    const receipt = await turnEffects.runDbEffect({
+      pool,
+      turnId,
+      effectKey: turnEffects.EFFECT_KEYS.SCOUT_SPEC_PUBLICATION,
+      sessionId,
+      run: (client) => persist(client, { requiredSnapshot: true }),
+    });
+    return { applied: receipt.applied, ...(receipt.value || {}) };
+  }
+
+  const value = await persist(pool, { requiredSnapshot: false });
+  return { applied: true, ...value };
+}
+
+// Copy the user's DEFAULT coding-agent backend + model + reasoning effort
+// into a freshly created session row (review #8). Used by EVERY session
+// creation path — ordinary dev-chat, headless auto-session, and clone — so
+// "default coding agent" means the same thing regardless of how a session
+// was spawned. Falls back to the legacy claude_code schema default when the
+// user has never set a default. Best-effort: never throws.
+// Resolve the default coding-agent preference for a NEW session WITHOUT
+// mutating the session (plan 9.1). A Codex default is applied only when it
+// is actually usable (feature enabled, user in the beta allowlist, valid
+// OpenRouter credential, and a model present in the preference or the
+// operator default) — otherwise we fall back to a Claude session rather than
+// creating one that is guaranteed to fail its first dispatch. A DB error
+// while reading the preference is NOT treated as "no preference": it lets
+// session creation fail rather than silently choosing another backend.
+async function resolveDefaultAgentPreference(client, userId, config) {
+  const { rows: prefRows } = await client.query(
+    `SELECT backend, model_id, reasoning_effort
+       FROM user_agent_preferences
+      WHERE user_id = $1 AND is_default = TRUE`,
+    [userId],
+  );
+  const pref = prefRows[0];
+  if (!pref || pref.backend !== 'codex_openrouter') {
+    // No preference or a Claude default → Claude session (schema default).
+    return {
+      backend: 'claude_code',
+      provider: 'anthropic',
+      model: null,
+      reasoningEffort: null,
+    };
+  }
+
+  // Codex default — validate it is genuinely usable before applying.
+  const claudeFallback = {
+    backend: 'claude_code',
+    provider: 'anthropic',
+    model: null,
+    reasoningEffort: null,
+  };
+
+  if (!config || !config.codexOpenrouterEnabled) {
+    log.warn('sessions', 'Codex default not applied: feature disabled', { userId });
+    return claudeFallback;
+  }
+  if (config.openrouterBetaUserIds?.length
+      && !config.openrouterBetaUserIds.includes(String(userId))) {
+    log.warn('sessions', 'Codex default not applied: beta access revoked', { userId });
+    return claudeFallback;
+  }
+
+  let modelId = pref.model_id;
+  if (!modelId) {
+    modelId = (config && config.openrouterDefaultCodexModel) || null;
+  }
+  if (!modelId) {
+    log.warn('sessions', 'Codex default not applied: no model', { userId });
+    return claudeFallback;
+  }
+
+  try {
+    const credentialStore = require('../services/credential-store');
+    const meta = await credentialStore.readMetadata({
+      pool: client, userId, provider: 'openrouter', purpose: 'coding_agent',
+    });
+    if (!meta || meta.status !== 'valid') {
+      log.warn('sessions', 'Codex default not applied: missing/invalid credential', { userId });
+      return claudeFallback;
+    }
+  } catch (err) {
+    log.warn('sessions', 'Codex default not applied: credential check failed', { userId, err: err.message });
+    return claudeFallback;
+  }
+
+  return {
+    backend: 'codex_openrouter',
+    provider: 'openrouter',
+    model: modelId,
+    reasoningEffort: pref.reasoning_effort || null,
+  };
+}
+
+const AGENT_REASONING_EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh']);
+
+class AgentSelectionError extends Error {
+  constructor(statusCode, message) {
+    super(message);
+    this.name = 'AgentSelectionError';
+    this.statusCode = statusCode;
+  }
+}
+
+// Resolve an EXPLICIT user choice for a session. Unlike
+// resolveDefaultAgentPreference(), this never falls back to Claude: the
+// caller has chosen a backend and must either get that exact backend or a
+// useful 4xx explaining why it cannot be used. In particular, Codex model
+// ids are catalog-validated because they become executable Codex config.
+async function resolveExplicitAgentPreference(client, userId, config, {
+  backend, model, reasoningEffort,
+} = {}) {
+  let resolved;
+  try {
+    resolved = registry.resolveBackend(backend);
+  } catch {
+    throw new AgentSelectionError(400, 'Unknown backend');
+  }
+
+  const effort = reasoningEffort == null || reasoningEffort === ''
+    ? null
+    : reasoningEffort;
+  if (effort != null && !AGENT_REASONING_EFFORTS.has(effort)) {
+    throw new AgentSelectionError(400, 'Invalid reasoning effort');
+  }
+
+  if (resolved === 'claude_code') {
+    return {
+      backend: 'claude_code',
+      provider: 'anthropic',
+      model: null,
+      reasoningEffort: null,
+    };
+  }
+
+  if (!config || !config.codexOpenrouterEnabled) {
+    throw new AgentSelectionError(403, 'Codex/OpenRouter is not available on this deployment.');
+  }
+  if (config.openrouterBetaUserIds?.length
+      && !config.openrouterBetaUserIds.includes(String(userId))) {
+    throw new AgentSelectionError(403, 'Codex/OpenRouter is not available for your account yet.');
+  }
+
+  if (typeof model !== 'string' || !model.trim()) {
+    throw new AgentSelectionError(400, 'Choose an OpenRouter model for Codex.');
+  }
+  const modelId = model.trim();
+
+  const credentialStore = require('../services/credential-store');
+  const agentModels = require('../services/agent-models');
+  const meta = await credentialStore.readMetadata({
+    pool: client, userId, provider: 'openrouter', purpose: 'coding_agent',
+  });
+  if (!meta || meta.status !== 'valid') {
+    throw new AgentSelectionError(400, 'Add your OpenRouter API key in Settings first.');
+  }
+
+  const apiKey = await credentialStore.readSecret({
+    pool: client, userId, provider: 'openrouter', purpose: 'coding_agent',
+    dataKey: config.dataEncryptionKey, expectedRevision: meta.revision,
+  });
+  if (!apiKey) {
+    throw new AgentSelectionError(400, 'Could not read your OpenRouter key; re-enter it in Settings first.');
+  }
+
+  let catalog;
+  try {
+    catalog = await agentModels.listOpenRouterModels({
+      pool: client, userId, credentialRevision: meta.revision,
+      apiKey, config, forceRefresh: false,
+    });
+  } catch (err) {
+    log.warn('sessions', 'Explicit Codex model validation failed', {
+      userId, model: modelId, err: err.message,
+    });
+    throw new AgentSelectionError(400, 'Could not validate that OpenRouter model right now; try again.');
+  }
+  if (!Array.isArray(catalog?.models) || !catalog.models.some((m) => m.id === modelId)) {
+    throw new AgentSelectionError(400, 'That model is not available under your OpenRouter key.');
+  }
+
+  return {
+    backend: 'codex_openrouter',
+    provider: 'openrouter',
+    model: modelId,
+    reasoningEffort: effort,
+  };
+}
+
+function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   const router = Router();
   const pool = getPool(config);
 
@@ -615,6 +925,7 @@ function sessionRoutes(config) {
         `SELECT cs.id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title,
                 cs.session_title, cs.status, cs.linked_issues, cs.shared_at,
                 cs.transcript_shared_at, cs.created_at, cs.source,
+                cs.agent_backend, cs.agent_model,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
                 a.slug AS app_slug, a.name AS app_name
          FROM chat_sessions cs
@@ -629,10 +940,20 @@ function sessionRoutes(config) {
          ORDER BY last_activity_at DESC`,
         [req.user.id]
       );
-      const sessions = rows.map((s) => ({
-        ...s,
-        busy: isSessionBusy(s.id),
-      }));
+      const sessions = rows.map((s) => {
+        const live = workerProgress.get(s.id);
+        return {
+          ...s,
+          busy: isSessionBusy(s.id),
+          // Keep the pinned snake_case fields untouched. Camel-case fields
+          // describe the runtime actually producing progress right now, so a
+          // Codex-pinned session delegated to local Claude has an honest busy
+          // tooltip without changing what its next platform turn will use.
+          ...(live?.backend
+            ? { agentBackend: live.backend, agentModel: live.model || null }
+            : {}),
+        };
+      });
       const totals = sessions.reduce(
         (acc, s) => {
           if (s.status === 'paused') acc.paused += 1;
@@ -1098,6 +1419,25 @@ function sessionRoutes(config) {
         return res.status(429).json({ error: `You already have ${caps.activeSessions} running sessions. Pause or archive one first.` });
       }
 
+      // A browser that offers the coding-agent picker sends `backend`
+      // explicitly. Honor that exact choice and fail closed if it is not
+      // usable; legacy/API clients that omit it keep the saved-default
+      // behavior. Resolve before global LRU reclamation or GitHub branch
+      // creation so an invalid selection has no external side effects.
+      let pref;
+      try {
+        const explicitAgent = req.body
+          && Object.prototype.hasOwnProperty.call(req.body, 'backend');
+        pref = explicitAgent
+          ? await resolveExplicitAgentPreference(pool, req.user.id, config, req.body)
+          : await resolveDefaultAgentPreference(pool, req.user.id, config);
+      } catch (err) {
+        if (err instanceof AgentSelectionError) {
+          return res.status(err.statusCode).json({ error: err.message });
+        }
+        throw err;
+      }
+
       // The GLOBAL ceiling has no admin tier — it's a host-resource
       // bound (warm workers + staging containers on one box), not a
       // per-user policy budget, so full admins queue behind it exactly
@@ -1141,11 +1481,16 @@ function sessionRoutes(config) {
         }
       }
 
+      // Insert the session with its FINAL chosen/default backend and model
+      // atomically — never insert-then-patch. An explicit choice was strictly
+      // validated above; an omitted choice preserves the saved-default path.
       const { rows } = await pool.query(
-        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, created_from_issue_number)
-         VALUES ($1, $2, $3, 'active', $4)
+        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, created_from_issue_number,
+            agent_backend, agent_provider, agent_model, agent_reasoning_effort)
+         VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8)
          RETURNING *`,
-        [app.id, req.user.id, branchName, issueNumber]
+        [app.id, req.user.id, branchName, issueNumber,
+         pref.backend, pref.provider, pref.model, pref.reasoningEffort]
       );
 
       log.info('sessions', 'Session created', { sessionId: rows[0].id, branch: branchName });
@@ -1219,6 +1564,10 @@ function sessionRoutes(config) {
       // exhausted — exactly like a chat turn. No headroom + no key → 429.
       // The code lets the client tell budget exhaustion apart from a
       // rate-limit 429 (#463).
+      // At SESSION-CREATION time the backend is not yet established (it is
+      // copied from preferences by the insert below), so this creation gate
+      // stays Anthropic-budget based; the Codex coding dispatch itself is
+      // gated Codex-aware in runScoutTool/runClaudeCodeTool.
       const billing = await limits.resolveBillingPath(pool, config.dataEncryptionKey, req.user.id);
       if (billing.error) return res.status(429).json({ error: billing.error, code: 'budget_exceeded' });
       const userApiKey = billing.apiKey;
@@ -1267,11 +1616,16 @@ function sessionRoutes(config) {
 
       // linked_issues is seeded with the issue so a PR opened later from a
       // CLONED session carries `Closes #N` (the clone copies the linkage).
+      // plan 9 (Commit 7): carry the final default backend/model in the
+      // insert — no insert-then-patch for headless sessions either.
+      const pref = await resolveDefaultAgentPreference(pool, req.user.id, config);
       const { rows } = await pool.query(
-        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, headless_status, headless_issue_number, linked_issues, session_title)
-         VALUES ($1, $2, $3, 'active', TRUE, 'generating', $4, $5, $6)
+        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, headless_status, headless_issue_number, linked_issues, session_title,
+            agent_backend, agent_provider, agent_model, agent_reasoning_effort)
+         VALUES ($1, $2, $3, 'active', TRUE, 'generating', $4, $5, $6, $7, $8, $9, $10)
          RETURNING *`,
-        [app.id, req.user.id, branchName, issueNumber, [issueNumber], autoTitle]
+        [app.id, req.user.id, branchName, issueNumber, [issueNumber], autoTitle,
+         pref.backend, pref.provider, pref.model, pref.reasoningEffort]
       );
       const session = rows[0];
       // The runner reuses chat-handler helpers that expect the app fields
@@ -1401,12 +1755,17 @@ function sessionRoutes(config) {
         }
       }
 
+      // plan 9 (Commit 7): the clone is inserted with its final
+      // default backend/model atomically (no insert-then-patch).
+      const pref = await resolveDefaultAgentPreference(pool, req.user.id, config);
       const { rows } = await pool.query(
-        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, spec_md, linked_issues, testing_md, testing_path, testing_paths, cloned_from_session_id, session_title)
-         VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9, $10)
+        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, spec_md, linked_issues, testing_md, testing_path, testing_paths, cloned_from_session_id, session_title,
+            agent_backend, agent_provider, agent_model, agent_reasoning_effort)
+         VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
          RETURNING *`,
         [src.app_id, req.user.id, branchName, src.spec_md || '', src.linked_issues, src.testing_md, src.testing_path,
-         src.testing_paths != null ? JSON.stringify(src.testing_paths) : null, src.id, cloneTitle]
+         src.testing_paths != null ? JSON.stringify(src.testing_paths) : null, src.id, cloneTitle,
+         pref.backend, pref.provider, pref.model, pref.reasoningEffort]
       );
       const session = rows[0];
 
@@ -1961,6 +2320,145 @@ function sessionRoutes(config) {
       res.json({ ok: true });
     } catch (err) {
       log.error('sessions', 'Archive failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // POST /api/sessions/:id/reset-agent-context
+  //   Switch a session's coding-agent backend/model (plan.md §11.3).
+  //   Keeps the Git branch + working tree but starts a fresh agent
+  //   thread: clears agent_thread_id, bumps agent_config_version, evicts
+  //   the warm worker. Only allowed on an idle, owned, non-archived
+  //   session. For codex_openrouter the caller must have a valid
+  //   OpenRouter credential.
+  router.post('/api/sessions/:id/reset-agent-context', drainGuard, async (req, res) => {
+    try {
+      const sessionId = parseInt(req.params.id, 10);
+      const { backend, model, reasoningEffort } = req.body || {};
+      if (!Number.isFinite(sessionId)) {
+        return res.status(400).json({ error: 'Bad session id' });
+      }
+
+      // ── Phase 1: validate network-dependent inputs BEFORE locking ──
+      // (plan 8.1). Backend resolution, feature/allowlist checks, and the
+      // OpenRouter credential + model validation can call out over the
+      // network (or decrypt); they must NOT run while holding a row lock.
+      let pref;
+      try {
+        pref = await resolveExplicitAgentPreference(pool, req.user.id, config, {
+          backend: backend || registry.DEFAULT_BACKEND,
+          model,
+          reasoningEffort,
+        });
+      } catch (err) {
+        if (err instanceof AgentSelectionError) {
+          return res.status(err.statusCode).json({ error: err.message });
+        }
+        throw err;
+      }
+      const resolved = pref.backend;
+      const isCodex = resolved === 'codex_openrouter';
+
+      // ── Phase 2: one checked-out client + explicit transaction ──
+      // (plan 8.2). The row lock is held until COMMIT so a concurrently
+      // starting turn serializes correctly instead of racing the in-memory
+      // busy check.
+      const client = await pool.connect();
+      let updatedRow = null;
+      let contextMessage = null;
+      try {
+        await client.query('BEGIN');
+
+        const { rows } = await client.query(
+          `SELECT id, user_id, status, active_turn,
+                  agent_backend, agent_model, agent_reasoning_effort,
+                  agent_config_version
+             FROM chat_sessions
+            WHERE id = $1 AND user_id = $2
+            FOR UPDATE`,
+          [sessionId, req.user.id],
+        );
+        const sess = rows[0];
+        if (!sess) {
+          await client.query('ROLLBACK').catch(() => {});
+          return res.status(404).json({ error: 'Session not found' });
+        }
+        if (sess.status === 'archived' || sess.status === 'merged') {
+          await client.query('ROLLBACK').catch(() => {});
+          return res.status(409).json({ error: 'Session is closed' });
+        }
+        // ── Phase 3: authoritative post-lock busy recheck ──
+        // (plan 8.3). The pre-lock check above is only a fast path; the
+        // post-lock check (activeWorkers / inFlight / persisted active_turn)
+        // is the source of truth now that we hold the row lock.
+        if (activeWorkers.has(sessionId) || worker.isInFlight(sessionId) || sess.active_turn) {
+          await client.query('ROLLBACK').catch(() => {});
+          return res.status(409).json({ error: 'Session is busy; stop the current turn first.' });
+        }
+
+        // ── Phase 4: conditional update ── (plan 8.4)
+        // `WHERE ... AND active_turn IS NULL` guarantees exactly one row is
+        // touched; RETURNING * lets us return the ACTUAL row we inserted.
+        const upd = await client.query(
+          `UPDATE chat_sessions SET
+             agent_backend = $2,
+             agent_provider = $3,
+             agent_model = $4,
+             agent_reasoning_effort = $5,
+             agent_thread_id = NULL,
+             cc_session_id = NULL,
+             agent_config_version = agent_config_version + 1,
+             agent_context_reset_at = NOW()
+           WHERE id = $1 AND active_turn IS NULL
+           RETURNING *`,
+          [sessionId, pref.backend, pref.provider,
+           pref.model, pref.reasoningEffort],
+        );
+        if (upd.rows.length !== 1) {
+          await client.query('ROLLBACK').catch(() => {});
+          return res.status(409).json({ error: 'Session is busy; stop the current turn first.' });
+        }
+        updatedRow = upd.rows[0];
+
+        const agentLabel = isCodex
+          ? `Codex via OpenRouter (${safeAgentModelLabel(pref.model)})`
+          : 'Claude Code';
+        const changedBackend = registry.resolveBackend(sess.agent_backend) !== pref.backend;
+        const messageText = changedBackend
+          ? `Coding agent switched to ${agentLabel}. A fresh agent context will start on the next turn; the branch and conversation were kept.`
+          : `${agentLabel} context was reset. A fresh agent context will start on the next turn; the branch and conversation were kept.`;
+        const msg = await client.query(
+          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+           VALUES ($1, 'system', $2, $3) RETURNING *`,
+          [sessionId, messageText, JSON.stringify({
+            type: 'agent_context_reset',
+            previousBackend: sess.agent_backend,
+            agentBackend: pref.backend,
+            agentModel: pref.model,
+            reasoningEffort: pref.reasoningEffort,
+          })],
+        );
+        contextMessage = msg.rows[0] || null;
+
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        client.release();
+      }
+
+      // ── Phase 5: commit before worker eviction ── (plan 8.6)
+      // After Commit 1 the warm container no longer holds provider secrets,
+      // so eviction is best-effort (a failure still leaves a consistent DB).
+      if (typeof worker.evictWorker === 'function') {
+        await worker.evictWorker(sessionId).catch((evErr) => {
+          log.warn('sessions', 'reset-agent-context eviction warning', { sessionId, err: evErr.message });
+        });
+      }
+      res.json({ ok: true, session: updatedRow, message: contextMessage });
+    } catch (err) {
+      log.error('sessions', 'reset-agent-context failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -2811,6 +3309,12 @@ function sessionRoutes(config) {
       // below routes the cost to the right bucket. Allowance gone and
       // no key on file → the same 429 as always, tagged with a code so
       // the client can tell it apart from a chatLimiter throttle (#463).
+      // Coherent billing contract (review #4): the Mayor + wrap-up phases
+      // are Anthropic-backed for BOTH backends, so the Anthropic budget is
+      // always preflighted up front (matching the headless path). Only the
+      // Codex coding dispatch itself bills to the user's OpenRouter account
+      // (see isCodexSession → turnApiKey=null below); the coding phase is
+      // never debited from the Anthropic ledger.
       const billing = await limits.resolveBillingPath(pool, config.dataEncryptionKey, req.user.id);
       if (billing.error) return res.status(429).json({ error: billing.error, code: 'budget_exceeded' });
       // Mutable since #664: an expensive CC phase can exhaust the
@@ -3754,11 +4258,21 @@ function sessionRoutes(config) {
         // for ~10 min after the first dispatch finishes (warm idle is
         // not busy).
         if (isSessionBusy(session.id)) {
+          const live = workerProgress.get(session.id);
+          const busyAgent = live?.backend
+            ? {
+                agentName: live.backend === 'codex_openrouter' ? 'Codex' : 'Claude Code',
+                metadata: {
+                  agentBackend: live.backend,
+                  agentModel: live.model || null,
+                },
+              }
+            : codingAgentRuntimeIdentity(session, selectedModel, config);
           // #894: this status line IS the turn — no assistant row follows,
           // so it carries the pills (the run in flight is the only useful
           // thing to ask about next).
-          await sendStatus('Claude Code is already running for this session. Please wait for it to finish.',
-            { quickReplies: turnPills('worker_busy') });
+          await sendStatus(`${busyAgent.agentName} is already running for this session. Please wait for it to finish.`,
+            { ...busyAgent.metadata, quickReplies: turnPills('worker_busy') });
           send('done', {});
           res.end();
           return;
@@ -3888,11 +4402,24 @@ function sessionRoutes(config) {
             send, sendStatus,
             stopHandle,
             userApiKey,
+            deferTurnCleanup: true,
           });
 
           if (stopHandle.stopped) {
             // Same shape as the build stop path: skip the Mayor wrap-up
             // because there's nothing coherent to summarize.
+            if (toolResult.turnId) {
+              const cleared = await worker.finishTurn(session.id, { turnId: toolResult.turnId });
+              if (!cleared) {
+                log.warn('sessions', 'Stopped scout cleanup remains pending', {
+                  sessionId: session.id, turnId: toolResult.turnId,
+                });
+                await scheduleRetainedInteractiveTurn({
+                  pool, sessionId: session.id, scheduleInteractiveRecovery,
+                  assumeRetained: true,
+                });
+              }
+            }
             send('stopped', { phase: 'cc', by: stopHandle.stoppedBy });
             send('done', {});
             res.end();
@@ -3916,14 +4443,27 @@ function sessionRoutes(config) {
             send, sendStatus,
             stopHandle,
             userApiKey,
+            deferTurnCleanup: true,
           });
 
           if (stopHandle.stopped) {
-            // User stopped during the CC run. The worker's finally already
-            // tore it down; we skip the Mayor wrap-up entirely because the
+            // User stopped during the CC run. We skip the Mayor wrap-up
+            // entirely because the
             // Mayor has nothing coherent to summarize (no push, no PR, no
             // staging). The next dispatch resumes CC via --resume so its
             // own session memory is preserved.
+            if (toolResult.turnId) {
+              const cleared = await worker.finishTurn(session.id, { turnId: toolResult.turnId });
+              if (!cleared) {
+                log.warn('sessions', 'Stopped build cleanup remains pending', {
+                  sessionId: session.id, turnId: toolResult.turnId,
+                });
+                await scheduleRetainedInteractiveTurn({
+                  pool, sessionId: session.id, scheduleInteractiveRecovery,
+                  assumeRetained: true,
+                });
+              }
+            }
             send('stopped', { phase: 'cc', by: stopHandle.stoppedBy });
             send('done', {});
             res.end();
@@ -4039,28 +4579,63 @@ function sessionRoutes(config) {
         // ran absolutely can, and the wrap-up should see it.
         discussionBlock = await buildSessionDiscussionBlock(pool, session);
         mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext2, openProposalsBlock, agentFilesBlock, prodDebugEligible, discussionBlock, canDraftIssues);
-        const mayor2 = await llm.streamChat({
-          messages: followUpMessages,
-          systemPrompt: mayorPrompt,
-          model: selectedModel,
-          // Expose ONLY the quick-reply pills tool (#285) so the wrap-up can
-          // suggest next steps but cannot dispatch again — the dispatch tools
-          // are simply absent from the list, preserving the original
-          // "wrap-up can't dispatch" invariant that toolChoice:none gave us.
-          tools: [SUGGEST_REPLIES_TOOL],
-          toolChoice: { type: 'auto' },
-          onToken: (text) => send('token', { text }),
-          apiKey: userApiKey,
-        });
-        await noteModelFallback(mayor2);
+        const wrapUpOutcome = toolResult.isError
+          ? 'failed'
+          : (toolKind === 'scout' ? 'spec_done' : 'build_done');
+        const fallbackMayor2 = {
+          ...snapshotMayorResponse({
+            text: staticWrapUpText(wrapUpOutcome, { toolKind }),
+          }),
+          recoveryFallback: true,
+        };
+        const invokeMayor2 = async () => snapshotMayorResponse(await llm.streamChat({
+            messages: followUpMessages,
+            systemPrompt: mayorPrompt,
+            model: selectedModel,
+            // Expose ONLY the quick-reply pills tool (#285) so the wrap-up can
+            // suggest next steps but cannot dispatch again — the dispatch tools
+            // are simply absent from the list, preserving the original
+            // "wrap-up can't dispatch" invariant that toolChoice:none gave us.
+            tools: [SUGGEST_REPLIES_TOOL],
+            toolChoice: { type: 'auto' },
+            onToken: (text) => send('token', { text }),
+            apiKey: userApiKey,
+          }));
+        let mayor2;
+        let mayor2Disposition = 'executed';
+        if (toolResult.turnId) {
+          const effect = await turnEffects.runExternalEffectFailClosed({
+            pool,
+            turnId: toolResult.turnId,
+            effectKey: TURN_WRAPUP_EFFECT_KEYS.llm,
+            sessionId: session.id,
+            run: invokeMayor2,
+            fallback: fallbackMayor2,
+          });
+          mayor2 = effect.value || fallbackMayor2;
+          mayor2Disposition = effect.disposition;
+          if (effect.disposition === 'fallback') {
+            log.warn('sessions', 'Interactive wrap-up provider call failed closed', {
+              sessionId: session.id,
+              turnId: toolResult.turnId,
+              err: effect.error?.message || 'ambiguous pending provider call',
+            });
+          }
+        } else {
+          mayor2 = await invokeMayor2();
+        }
+        // A replay/fallback did not stream in this request. Paint its complete
+        // text once; mayor_reasoning below reconciles the final bubble after
+        // the durable message insert commits.
+        if (mayor2Disposition !== 'executed' && mayor2.text) {
+          send('token', { text: mayor2.text });
+        }
+        if (mayor2Disposition === 'executed') await noteModelFallback(mayor2);
 
         // Quick-reply pills (#285): the wrap-up reflects the final post-build
         // state, so this is where dispatch turns get their pills. The
         // tool_use is terminal (end of turn) — no tool_result round-trip.
         const quickReplies2 = resolveQuickReplies(mayor2.toolUses);
-        const wrapUpOutcome = toolResult.isError
-          ? 'failed'
-          : (toolKind === 'scout' ? 'spec_done' : 'build_done');
 
         let mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
         log.info('sessions', 'Mayor phase-2 response', {
@@ -4074,12 +4649,14 @@ function sessionRoutes(config) {
           // work already happened — record it and substitute an honest
           // line rather than leaving the build unexplained.
           const refusalCategory2 = (mayor2.stopDetails && mayor2.stopDetails.category) || null;
-          await modelFallback.record(pool, {
-            kind: events.EVENT_TYPES.MODEL_REFUSAL,
-            userId: req.user.id, appId: session.app_id, sessionId: session.id,
-            requested: selectedModel, served: mayor2.servedModel || selectedModel,
-            category: refusalCategory2, source: 'mayor',
-          });
+          if (mayor2Disposition === 'executed') {
+            await modelFallback.record(pool, {
+              kind: events.EVENT_TYPES.MODEL_REFUSAL,
+              userId: req.user.id, appId: session.app_id, sessionId: session.id,
+              requested: selectedModel, served: mayor2.servedModel || selectedModel,
+              category: refusalCategory2, source: 'mayor',
+            });
+          }
           if (!mayorText2.trim()) {
             mayorText2 = '_The wrap-up was declined by the model\'s safety classifiers — the dispatched work above still completed; see the status messages for the outcome._';
             send('token', { text: mayorText2 });
@@ -4100,48 +4677,131 @@ function sessionRoutes(config) {
           }
           send('token', { text: mayorText2 });
         }
-        send('mayor_reasoning', { text: mayorText2 });
-
         const servedModel2 = mayor2.servedModel || selectedModel;
-        const costCents2 = llm.estimateCostCents(mayor2.usage, servedModel2);
+        const costCents2 = mayor2.usage
+          ? llm.estimateCostCents(mayor2.usage, servedModel2)
+          : 0;
+        const tokenCount2 = mayor2.usage
+          ? (mayor2.usage.input_tokens || 0) + (mayor2.usage.output_tokens || 0)
+          : null;
         // #1001: the wrap-up is the row the user is left looking at after a
         // build or a spec, so this is where a generic pill set hurt most —
         // and where the tool was skipped most (a plain `end_turn`). Ask the
         // Mayor again for pills naming what actually shipped. A refused
         // wrap-up skips the extra ask: the text is platform-authored there.
-        const wrapUpResolved = await resolvePills(wrapUpOutcome, {
-          modelPills: quickReplies2,
-          model: servedModel2,
-          replyText: mayorText2,
-          allowModelCalls: mayor2.stopReason !== 'refusal',
-          allowGenerate: mayor2.stopReason !== 'refusal',
-        });
+        const staticWrapUpResolved = {
+          replies: turnPills(wrapUpOutcome),
+          source: 'static',
+          kind: fallbackKindForTurn({
+            outcome: wrapUpOutcome,
+            hasPr: session.pr_number != null,
+            hasSpec: turnHasSpec,
+          }),
+        };
+        const resolveLiveWrapUpPills = () => resolvePills(wrapUpOutcome, {
+            modelPills: quickReplies2,
+            model: servedModel2,
+            replyText: mayorText2,
+            allowModelCalls: mayor2.stopReason !== 'refusal',
+            allowGenerate: mayor2.stopReason !== 'refusal',
+          });
+        let wrapUpResolved;
+        if (mayor2.recoveryFallback) {
+          wrapUpResolved = staticWrapUpResolved;
+        } else if (toolResult.turnId) {
+          const pillEffect = await turnEffects.runExternalEffectFailClosed({
+            pool,
+            turnId: toolResult.turnId,
+            effectKey: TURN_WRAPUP_EFFECT_KEYS.pills,
+            sessionId: session.id,
+            run: resolveLiveWrapUpPills,
+            fallback: staticWrapUpResolved,
+          });
+          wrapUpResolved = pillEffect.value || staticWrapUpResolved;
+        } else {
+          wrapUpResolved = await resolveLiveWrapUpPills();
+        }
         log.info('sessions', 'quick replies resolved', {
           sessionId: session.id, phase: 'wrapup',
           source: wrapUpResolved.source, kind: wrapUpResolved.kind || null,
         });
         const wrapUpPills = wrapUpResolved.replies;
-        await pool.query(
+        const wrapUpParams = [
+          session.id,
+          mayorText2,
+          servedModel2,
+          tokenCount2,
+          costCents2 || null,
+          JSON.stringify(quickReplyMeta(wrapUpResolved)),
+        ];
+        const insertWrapUp = (client) => client.query(
           `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
            VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
-          [session.id, mayorText2, servedModel2, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2,
-           JSON.stringify(quickReplyMeta(wrapUpResolved))]
+          wrapUpParams,
         );
-        if (wrapUpPills) send('quick_replies', { replies: wrapUpPills });
-        // Tail milestone: the wrap-up the recovery path would otherwise
-        // re-issue is on the transcript. A NO-OP in the common case — the
-        // dispatch tool's `finally` already released the record, and
-        // noteTailMilestone is guarded on `active_turn IS NOT NULL` — but
-        // it lands for any future caller that holds the record across
-        // phase 2, and costs one cheap UPDATE either way.
-        await worker.noteTailMilestone(session.id, { wrapUpPosted: true });
-        await limits.recordSpend(pool, req.user.id, costCents2, { byok: !!userApiKey });
-        send('usage', { costCents: costCents2, model: servedModel2, byok: !!userApiKey });
+        let messageApplied = true;
+        if (toolResult.turnId) {
+          const receipt = await turnEffects.runDbEffect({
+            pool,
+            turnId: toolResult.turnId,
+            effectKey: TURN_WRAPUP_EFFECT_KEYS.message,
+            sessionId: session.id,
+            run: async (client) => {
+              await insertWrapUp(client);
+              return { persisted: true };
+            },
+          });
+          messageApplied = receipt.applied;
+        } else {
+          await insertWrapUp(pool);
+        }
+        if (messageApplied) {
+          send('mayor_reasoning', { text: mayorText2 });
+          if (wrapUpPills) send('quick_replies', { replies: wrapUpPills });
+        }
+
+        if (costCents2) {
+          if (toolResult.turnId) {
+            await limits.settleTurnSpend(pool, req.user.id, costCents2, {
+              turnByok: !!userApiKey,
+              turnId: toolResult.turnId,
+              sessionId: session.id,
+              effectKey: TURN_WRAPUP_EFFECT_KEYS.spend,
+            });
+          } else {
+            await limits.recordSpend(pool, req.user.id, costCents2, { byok: !!userApiKey });
+          }
+          send('usage', { costCents: costCents2, model: servedModel2, byok: !!userApiKey });
+        }
+
+        if (toolResult.turnId) {
+          // The wrap-up message and its spend receipt are both committed. Only
+          // now may recovery skip this tail step and only now may the exact
+          // owner release the durable turn.
+          await worker.noteTailMilestone(
+            session.id,
+            { wrapUpPosted: true },
+            { turnId: toolResult.turnId },
+          );
+          const cleared = await worker.finishTurn(session.id, { turnId: toolResult.turnId });
+          if (!cleared) {
+            log.warn('sessions', 'Interactive wrap-up committed; durable cleanup remains pending', {
+              sessionId: session.id, turnId: toolResult.turnId,
+            });
+            await scheduleRetainedInteractiveTurn({
+              pool, sessionId: session.id, scheduleInteractiveRecovery,
+              assumeRetained: true,
+            });
+          }
+        }
       } catch (err) {
         activeWorkers.delete(session.id);
         workerProgress.clear(session.id);
         log.error('sessions', 'Chat error', { message: err.message, stack: err.stack });
         send('error', { error: err.message });
+        const recoveringDurableTurn = await scheduleRetainedInteractiveTurn({
+          pool, sessionId: session.id, scheduleInteractiveRecovery,
+        });
         // Persist the failure as a status row so it survives refresh —
         // the 'error' event above is SSE-only and dies with the stream,
         // which used to make a mid-turn provider error (429 rate limit,
@@ -4151,7 +4811,9 @@ function sessionRoutes(config) {
         if (!stopHandle.stopped) {
           const friendly = describeTurnError(err);
           await sendStatus(
-            `This turn failed: ${friendly}${/[.!?]$/.test(friendly) ? '' : '.'} Send your message again to retry.`,
+            recoveringDurableTurn
+              ? `This turn's finalization was interrupted: ${friendly}${/[.!?]$/.test(friendly) ? '' : '.'} The platform is recovering it automatically.`
+              : `This turn failed: ${friendly}${/[.!?]$/.test(friendly) ? '' : '.'} Send your message again to retry.`,
             // #894: a failed turn is exactly when the user most wants a
             // one-tap retry, and it never reaches a pill-bearing persist.
             { turnError: true, quickReplies: turnPills('failed') }
@@ -4540,6 +5202,8 @@ function sessionRoutes(config) {
     }
 
     let progress = [];
+    let progressAgentBackend = null;
+    let progressAgentModel = null;
     try {
       const { rows } = await pool.query(
         `SELECT metadata FROM chat_session_messages
@@ -4549,8 +5213,20 @@ function sessionRoutes(config) {
       );
       if (rows[0]?.metadata?.progressLog) {
         progress = rows[0].metadata.progressLog;
+        progressAgentBackend = rows[0].metadata.agentBackend || null;
+        progressAgentModel = rows[0].metadata.agentModel || null;
       }
     } catch {}
+    // During bootstrap the latest durable row can still belong to the prior
+    // turn. An in-memory entry, when it has a backend, is necessarily the
+    // current run and therefore wins for identity (especially when a
+    // Codex-pinned session is executing on an attached local Claude agent).
+    // Fall back to the durable row only before current progress has begun.
+    const liveProgress = workerProgress.get(sessionId);
+    if (liveProgress?.backend) {
+      progressAgentBackend = liveProgress.backend;
+      progressAgentModel = liveProgress.model || null;
+    }
 
     // Current turn phase (mayor1 / cc / mayor2). Lets the client pick
     // between the stop button and the finishing-up spinner on refresh
@@ -4643,6 +5319,8 @@ function sessionRoutes(config) {
     // the client's stop-escalation ladder across reloads.
     res.json({
       busy, progress, phase, stopping, stopRequestedAt, estimate,
+      agentBackend: progressAgentBackend,
+      agentModel: progressAgentModel,
       resolving: isResolving(sessionId),
       sync: syncMainSvc.getSyncState(sessionId),
       status: mergeStatus,
@@ -4692,6 +5370,9 @@ function sessionRoutes(config) {
       // a machine that went to sleep mid-turn leaves behind.
       await localAgent.requestStop(pool, { sessionId, userId: null }).catch(() => {});
       await forceStopSession(pool, sessionId, req.user.username, null);
+      await scheduleRetainedInteractiveTurn({
+        pool, sessionId, scheduleInteractiveRecovery,
+      });
       return res.json({ ok: true, stopped: true, forced: true, phase: null });
     }
     if (action === 'force_without_stop') {
@@ -4808,6 +5489,9 @@ function sessionRoutes(config) {
       // owning request unwinds, then announce the stop ourselves — that
       // request may itself be wedged and can't be relied on to do it.
       await forceStopSession(pool, sessionId, req.user.username, handle);
+      await scheduleRetainedInteractiveTurn({
+        pool, sessionId, scheduleInteractiveRecovery,
+      });
       return res.json({ ok: true, stopped: true, forced: true, phase: handle.phase });
     }
 
@@ -5503,15 +6187,32 @@ async function postHeadlessQuestionThreadMessage({ pool, appId, issueNumber, que
 // 'wrapping' (Mayor phase-2). `outcome` is persisted alongside the
 // cc_running → wrapping transition so a 'wrapping' resume knows what the
 // dispatch arrived at without re-deriving it.
-async function setHeadlessStep(pool, sessionId, step, outcome) {
+async function setHeadlessStep(pool, sessionId, step, outcome, headlessTurnId = undefined) {
+  const sets = ['headless_step = $1'];
+  const params = [step, sessionId];
+  if (outcome !== undefined) {
+    params.push(outcome);
+    sets.push(`headless_outcome = $${params.length}`);
+  }
+  if (headlessTurnId !== undefined) {
+    params.push(headlessTurnId);
+    sets.push(`headless_turn_id = $${params.length}`);
+  } else if (step === 'planning') {
+    sets.push('headless_turn_id = NULL');
+  }
+  // This is a dispatch/replay boundary, not telemetry. If it cannot commit,
+  // the caller must not make the next paid call under an identity recovery
+  // cannot rediscover.
   await pool.query(
-    outcome !== undefined
-      ? 'UPDATE chat_sessions SET headless_step = $1, headless_outcome = $3 WHERE id = $2'
-      : 'UPDATE chat_sessions SET headless_step = $1 WHERE id = $2',
-    outcome !== undefined ? [step, sessionId, outcome] : [step, sessionId]
-  ).catch((err) => {
-    log.warn('sessions', 'Failed to persist headless_step', { sessionId, step, err: err.message });
-  });
+    `UPDATE chat_sessions SET ${sets.join(', ')} WHERE id = $2`,
+    params,
+  );
+}
+
+async function checkpointHeadlessWrapUp(pool, sessionId, outcome) {
+  const headlessTurnId = crypto.randomUUID();
+  await setHeadlessStep(pool, sessionId, 'wrapping', outcome, headlessTurnId);
+  return headlessTurnId;
 }
 
 // #155: the unattended Mayor turn behind the issue panel's "Generate
@@ -5557,6 +6258,91 @@ function headlessWrapUpMeta(outcome, { suggestions = null } = {}) {
   const replies = buildRecoveryQuickReplies(kind);
   if (!replies) return {};
   return { quickReplies: replies, quickRepliesSource: 'static', quickRepliesKind: kind };
+}
+
+async function runHeadlessMayorEffect({
+  pool, sessionId, headlessTurnId, invoke, fallbackText,
+}) {
+  const fallback = {
+    ...snapshotMayorResponse({ text: fallbackText }),
+    recoveryFallback: true,
+  };
+  if (!headlessTurnId) {
+    return {
+      response: snapshotMayorResponse(await invoke()),
+      disposition: 'legacy',
+    };
+  }
+  const effect = await turnEffects.runExternalEffectFailClosed({
+    pool,
+    turnId: headlessTurnId,
+    effectKey: HEADLESS_WRAPUP_EFFECT_KEYS.llm,
+    sessionId,
+    run: async () => snapshotMayorResponse(await invoke()),
+    fallback,
+  });
+  return {
+    response: effect.value || fallback,
+    disposition: effect.disposition,
+  };
+}
+
+async function persistHeadlessMayorRow({
+  pool, sessionId, headlessTurnId, text, model, usage, costCents, metadata,
+}) {
+  const params = [
+    sessionId,
+    text,
+    model || null,
+    usage ? (usage.input_tokens || 0) + (usage.output_tokens || 0) : 0,
+    costCents || 0,
+    JSON.stringify(metadata || {}),
+  ];
+  const insert = (client) => client.query(
+    `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
+     VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
+    params,
+  );
+  if (!headlessTurnId) {
+    await insert(pool);
+    return true;
+  }
+  const receipt = await turnEffects.runDbEffect({
+    pool,
+    turnId: headlessTurnId,
+    effectKey: HEADLESS_WRAPUP_EFFECT_KEYS.message,
+    sessionId,
+    run: async (client) => {
+      await insert(client);
+      return { persisted: true };
+    },
+  });
+  return receipt.applied;
+}
+
+async function settleHeadlessMayorUsage({
+  pool, userId, sessionId, headlessTurnId, usage, servedModel,
+  selectedModel, userApiKey, emit = null,
+}) {
+  if (!usage) return 0;
+  const billModel = servedModel || selectedModel;
+  const costCents = llm.estimateCostCents(usage, billModel);
+  if (costCents) {
+    if (headlessTurnId) {
+      await limits.settleTurnSpend(pool, userId, costCents, {
+        turnByok: !!userApiKey,
+        turnId: headlessTurnId,
+        sessionId,
+        effectKey: HEADLESS_WRAPUP_EFFECT_KEYS.spend,
+      });
+    } else {
+      await limits.recordSpend(pool, userId, costCents, { byok: !!userApiKey });
+    }
+  }
+  if (typeof emit === 'function') {
+    emit('usage', { costCents, model: billModel, byok: !!userApiKey });
+  }
+  return costCents;
 }
 
 async function runHeadlessSession({
@@ -5623,6 +6409,10 @@ async function runHeadlessSession({
   };
 
   let outcome = 'question';
+  // Stable receipt identity for the next/current post-agent Mayor phase.
+  // It is checkpointed before the coding turn is released, then replaced
+  // when a scout decision legitimately starts a later build wrap-up.
+  let headlessTurnId = null;
   // #178: the reporter-facing question text to post on the issue at the
   // terminal write, set by whichever path produced it — the phase-1
   // pure-text turn, or the decision turn when the scout's spec still
@@ -5790,6 +6580,14 @@ async function runHeadlessSession({
         send, sendStatus,
         stopHandle: null,
         userApiKey,
+        beforeTurnCleanup: async ({ isError }) => {
+          const checkpointOutcome = isError
+            ? 'question'
+            : (toolKind === 'scout' ? 'spec' : 'code');
+          headlessTurnId = await checkpointHeadlessWrapUp(
+            pool, session.id, checkpointOutcome,
+          );
+        },
       };
       // Checkpoint BEFORE the dispatch: if the platform restarts while
       // the (detached) CC turn runs, resumeHeadlessRuns finds
@@ -5829,7 +6627,9 @@ async function runHeadlessSession({
       // resume finalization flips to 'question' when the spec carries a
       // blocking Questions section — without posting a comment, since the
       // decision text died with the old process.)
-      await setHeadlessStep(pool, session.id, 'wrapping', outcome);
+      if (!headlessTurnId) {
+        headlessTurnId = await checkpointHeadlessWrapUp(pool, session.id, outcome);
+      }
 
       // Tool results fed back to the Mayor for phase 2.
       const phase2ToolResults = [];
@@ -5875,19 +6675,32 @@ async function runHeadlessSession({
         // the decision text becomes a posted issue comment and the run
         // finalizes as 'question' so Generate proposal can be re-run with answers.
         const specHasQuestions = specHasBlockingQuestions(currentSpec);
-        const mayor2 = await llm.streamChat({
-          messages: phase2Messages,
-          systemPrompt: wrapPrompt + buildHeadlessDecisionAddendum(issueNumber),
-          model: selectedModel,
-          tools: [DISPATCH_TOOL],
-          apiKey: userApiKey,
+        const decisionTurnId = headlessTurnId;
+        const decisionFallback = specHasQuestions
+          ? '_The spec has open questions — review them before implementation._'
+          : '_Spec drafted — review it in the spec viewer after starting a session from this auto session._';
+        const decisionEffect = await runHeadlessMayorEffect({
+          pool,
+          sessionId: session.id,
+          headlessTurnId: decisionTurnId,
+          fallbackText: decisionFallback,
+          invoke: () => llm.streamChat({
+            messages: phase2Messages,
+            systemPrompt: wrapPrompt + buildHeadlessDecisionAddendum(issueNumber),
+            model: selectedModel,
+            tools: [DISPATCH_TOOL],
+            apiKey: userApiKey,
+          }),
         });
-        await noteModelFallback(mayor2);
+        const mayor2 = decisionEffect.response;
+        if (decisionEffect.disposition === 'executed') await noteModelFallback(mayor2);
         const servedModel2 = mayor2.servedModel || selectedModel;
         const buildCall = mayor2.toolUses.find((t) => t.name === 'dispatch_claude_code');
         const strayCalls = mayor2.toolUses.filter((t) => t.name !== 'dispatch_claude_code');
         const mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
-        const costCents2 = llm.estimateCostCents(mayor2.usage, servedModel2);
+        const costCents2 = mayor2.usage
+          ? llm.estimateCostCents(mayor2.usage, servedModel2)
+          : 0;
 
         if (!mayor2.toolUses.length) {
           // Text only. Without open Questions the decision text IS the
@@ -5905,26 +6718,55 @@ async function runHeadlessSession({
             : (specHasQuestions
               ? '_The spec has open questions — review the Questions section in the spec viewer after starting a session from this auto session._'
               : '_Spec drafted — review it in the spec viewer after starting a session from this auto session._');
-          send('mayor_reasoning', { text: finalText });
-          await pool.query(
-            `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
-             VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
-            [session.id, finalText, servedModel2, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2,
-             JSON.stringify(headlessWrapUpMeta(outcome))]
-          );
-          await debitMayorUsage(mayor2.usage, mayor2.servedModel);
+          const messageApplied = await persistHeadlessMayorRow({
+            pool,
+            sessionId: session.id,
+            headlessTurnId: decisionTurnId,
+            text: finalText,
+            model: servedModel2,
+            usage: mayor2.usage,
+            costCents: costCents2,
+            metadata: headlessWrapUpMeta(outcome),
+          });
+          if (messageApplied) send('mayor_reasoning', { text: finalText });
+          await settleHeadlessMayorUsage({
+            pool,
+            userId: user.id,
+            sessionId: session.id,
+            headlessTurnId: decisionTurnId,
+            usage: mayor2.usage,
+            servedModel: mayor2.servedModel,
+            selectedModel,
+            userApiKey,
+            emit: send,
+          });
         } else {
           // The Mayor called a tool — persist its stated rationale first
           // (same text-plus-dispatch pattern phase-1 uses).
           if (mayorText2.trim()) {
-            send('mayor_reasoning', { text: mayorText2 });
-            await pool.query(
-              `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
-               VALUES ($1, 'assistant', $2, $3, $4, $5)`,
-              [session.id, mayorText2, servedModel2, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2]
-            );
+            const messageApplied = await persistHeadlessMayorRow({
+              pool,
+              sessionId: session.id,
+              headlessTurnId: decisionTurnId,
+              text: mayorText2,
+              model: servedModel2,
+              usage: mayor2.usage,
+              costCents: costCents2,
+              metadata: {},
+            });
+            if (messageApplied) send('mayor_reasoning', { text: mayorText2 });
           }
-          await debitMayorUsage(mayor2.usage, mayor2.servedModel);
+          await settleHeadlessMayorUsage({
+            pool,
+            userId: user.id,
+            sessionId: session.id,
+            headlessTurnId: decisionTurnId,
+            usage: mayor2.usage,
+            servedModel: mayor2.servedModel,
+            selectedModel,
+            userApiKey,
+            emit: send,
+          });
 
           const decisionToolResults = [];
           if (buildCall && specHasQuestions) {
@@ -5969,7 +6811,16 @@ async function runHeadlessSession({
               // disambiguates scout vs build on resume.
               await setHeadlessStep(pool, session.id, 'cc_running');
               buildResult = await runClaudeCodeTool({
-                ...toolArgs, userApiKey, toolPromptArg: buildPromptArg, headless: true,
+                ...toolArgs,
+                userApiKey,
+                toolPromptArg: buildPromptArg,
+                headless: true,
+                beforeTurnCleanup: async ({ isError }) => {
+                  const checkpointOutcome = isError ? 'spec' : 'spec_code';
+                  headlessTurnId = await checkpointHeadlessWrapUp(
+                    pool, session.id, checkpointOutcome,
+                  );
+                },
               });
               // #664: the build itself may have exhausted the allowance —
               // re-resolve so the phase-3 wrap-up bills the fresh payer.
@@ -5988,7 +6839,9 @@ async function runHeadlessSession({
             // phase-1 build path): the spec is the durable artifact and a
             // failed implementation attempt must not mask it.
             outcome = buildResult.isError ? 'spec' : 'spec_code';
-            await setHeadlessStep(pool, session.id, 'wrapping', outcome);
+            if (headlessTurnId === decisionTurnId) {
+              headlessTurnId = await checkpointHeadlessWrapUp(pool, session.id, outcome);
+            }
             decisionToolResults.push({
               type: 'tool_result',
               tool_use_id: buildCall.id,
@@ -6008,22 +6861,37 @@ async function runHeadlessSession({
           }
 
           // --- Phase 3: tool-less wrap-up (mirrors the old phase-2). ---
-          const mayor3 = await llm.streamChat({
-            messages: [
-              ...phase2Messages,
-              { role: 'assistant', content: mayor2.rawContent },
-              { role: 'user', content: decisionToolResults },
-            ],
-            systemPrompt: wrapPrompt,
-            model: selectedModel,
-            // #32: on the rejected-build (question) path the wrap-up
-            // re-asks the human-only questions — expose suggest_answers so
-            // it can attach answer chips, mirroring the phase-1 question
-            // turn. Other wrap-up outcomes ignore the tool.
-            tools: [SUGGEST_ANSWERS_TOOL],
-            apiKey: userApiKey,
+          if (headlessTurnId === decisionTurnId) {
+            headlessTurnId = await checkpointHeadlessWrapUp(pool, session.id, outcome);
+          }
+          const phase3Fallback = outcome === 'spec_code'
+            ? '_Spec drafted and change committed — start a session from this auto session to review it and propose it to the group._'
+            : outcome === 'question'
+              ? '_The spec has open questions — review the Questions section in the spec viewer after starting a session from this auto session._'
+              : '_Spec drafted — the implementation attempt did not complete; review the spec in the spec viewer after starting a session from this auto session._';
+          const phase3Effect = await runHeadlessMayorEffect({
+            pool,
+            sessionId: session.id,
+            headlessTurnId,
+            fallbackText: phase3Fallback,
+            invoke: () => llm.streamChat({
+              messages: [
+                ...phase2Messages,
+                { role: 'assistant', content: mayor2.rawContent || [] },
+                { role: 'user', content: decisionToolResults },
+              ],
+              systemPrompt: wrapPrompt,
+              model: selectedModel,
+              // #32: on the rejected-build (question) path the wrap-up
+              // re-asks the human-only questions — expose suggest_answers so
+              // it can attach answer chips, mirroring the phase-1 question
+              // turn. Other wrap-up outcomes ignore the tool.
+              tools: [SUGGEST_ANSWERS_TOOL],
+              apiKey: userApiKey,
+            }),
           });
-          await noteModelFallback(mayor3);
+          const mayor3 = phase3Effect.response;
+          if (phase3Effect.disposition === 'executed') await noteModelFallback(mayor3);
           let mayorText3 = stripFakeCompletionMarker(mayor3.text, { sessionId: session.id });
           // #32: persist suggestions only on the question outcome — that's
           // the row a cloned session forwards onto its follow-up to render
@@ -6042,29 +6910,55 @@ async function runHeadlessSession({
                 ? '_The spec has open questions — review the Questions section in the spec viewer after starting a session from this auto session._'
                 : '_Spec drafted — the implementation attempt did not complete; review the spec in the spec viewer after starting a session from this auto session._';
           }
-          send('mayor_reasoning', { text: mayorText3 });
           const servedModel3 = mayor3.servedModel || selectedModel;
-          const costCents3 = llm.estimateCostCents(mayor3.usage, servedModel3);
-          await pool.query(
-            `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
-             VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
-            [session.id, mayorText3, servedModel3, mayor3.usage.input_tokens + mayor3.usage.output_tokens, costCents3,
-             JSON.stringify(headlessWrapUpMeta(outcome, { suggestions: decisionSuggestions }))]
-          );
-          await debitMayorUsage(mayor3.usage, mayor3.servedModel);
+          const costCents3 = mayor3.usage
+            ? llm.estimateCostCents(mayor3.usage, servedModel3)
+            : 0;
+          const messageApplied = await persistHeadlessMayorRow({
+            pool,
+            sessionId: session.id,
+            headlessTurnId,
+            text: mayorText3,
+            model: servedModel3,
+            usage: mayor3.usage,
+            costCents: costCents3,
+            metadata: headlessWrapUpMeta(outcome, { suggestions: decisionSuggestions }),
+          });
+          if (messageApplied) send('mayor_reasoning', { text: mayorText3 });
+          await settleHeadlessMayorUsage({
+            pool,
+            userId: user.id,
+            sessionId: session.id,
+            headlessTurnId,
+            usage: mayor3.usage,
+            servedModel: mayor3.servedModel,
+            selectedModel,
+            userApiKey,
+            emit: send,
+          });
         }
       } else {
         // --- Phase 2: Mayor wrap-up (mirrors the chat handler) — scout
         // error, direct phase-1 build, or any other dispatch path. ---
-        const mayor2 = await llm.streamChat({
-          messages: phase2Messages,
-          systemPrompt: wrapPrompt,
-          model: selectedModel,
-          tools,
-          toolChoice: { type: 'none' },
-          apiKey: userApiKey,
+        const directFallback = toolResult.isError
+          ? "_The auto session's dispatch didn't finish successfully — see the status above._"
+          : '_Change committed and pushed — start a session from this auto session to review it and propose it to the group._';
+        const directEffect = await runHeadlessMayorEffect({
+          pool,
+          sessionId: session.id,
+          headlessTurnId,
+          fallbackText: directFallback,
+          invoke: () => llm.streamChat({
+            messages: phase2Messages,
+            systemPrompt: wrapPrompt,
+            model: selectedModel,
+            tools,
+            toolChoice: { type: 'none' },
+            apiKey: userApiKey,
+          }),
         });
-        await noteModelFallback(mayor2);
+        const mayor2 = directEffect.response;
+        if (directEffect.disposition === 'executed') await noteModelFallback(mayor2);
 
         let mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
         if (!mayorText2.trim()) {
@@ -6072,21 +6966,38 @@ async function runHeadlessSession({
             ? "_The auto session's dispatch didn't finish successfully — see the status above._"
             : '_Change committed and pushed — start a session from this auto session to review it and propose it to the group._';
         }
-        send('mayor_reasoning', { text: mayorText2 });
         const servedModelW = mayor2.servedModel || selectedModel;
-        const costCents2 = llm.estimateCostCents(mayor2.usage, servedModelW);
-        await pool.query(
-          `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
-           VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
-          [session.id, mayorText2, servedModelW, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2,
-           JSON.stringify(headlessWrapUpMeta(toolResult.isError ? 'failed' : outcome))]
-        );
-        await debitMayorUsage(mayor2.usage, mayor2.servedModel);
+        const costCents2 = mayor2.usage
+          ? llm.estimateCostCents(mayor2.usage, servedModelW)
+          : 0;
+        const messageApplied = await persistHeadlessMayorRow({
+          pool,
+          sessionId: session.id,
+          headlessTurnId,
+          text: mayorText2,
+          model: servedModelW,
+          usage: mayor2.usage,
+          costCents: costCents2,
+          metadata: headlessWrapUpMeta(toolResult.isError ? 'failed' : outcome),
+        });
+        if (messageApplied) send('mayor_reasoning', { text: mayorText2 });
+        await settleHeadlessMayorUsage({
+          pool,
+          userId: user.id,
+          sessionId: session.id,
+          headlessTurnId,
+          usage: mayor2.usage,
+          servedModel: mayor2.servedModel,
+          selectedModel,
+          userApiKey,
+          emit: send,
+        });
       }
     }
 
     await pool.query(
-      `UPDATE chat_sessions SET headless_status = 'ready', headless_outcome = $1, headless_step = NULL, last_activity_at = NOW()
+      `UPDATE chat_sessions SET headless_status = 'ready', headless_outcome = $1,
+              headless_step = NULL, headless_turn_id = NULL, last_activity_at = NOW()
        WHERE id = $2`,
       [outcome, session.id]
     );
@@ -6126,9 +7037,59 @@ async function runHeadlessSession({
   } catch (err) {
     activeWorkers.delete(session.id);
     workerProgress.clear(session.id);
+    let retainedTurn = null;
+    try {
+      retainedTurn = await turnLifecycle.loadActiveTurn(pool, session.id);
+    } catch (loadErr) {
+      // A DB outage cannot prove there is no replay owner. Keep the run in
+      // generating and let the retained scheduler re-read it later.
+      err.retainActiveTurn = true;
+      log.warn('sessions', 'Could not inspect failed headless turn; retaining recovery ownership', {
+        sessionId: session.id, err: loadErr.message,
+      });
+    }
+    let recoveryDisposition = null;
+    if (retainedTurn) {
+      try {
+        recoveryDisposition = await recoveryRetry.retainOrQuarantineRecoveryError({
+          pool,
+          sessionId: session.id,
+          activeTurn: retainedTurn,
+          error: err,
+        });
+      } catch (quarantineErr) {
+        err = quarantineErr;
+      }
+    }
+    if (recoveryDisposition?.action === 'quarantine') {
+      log.error('sessions', 'Headless run has invalid durable state; leaving turn quarantined', {
+        sessionId: session.id,
+        turnId: turnLifecycle.turnIdentity(retainedTurn),
+        err: err.message,
+      });
+      await failHeadlessRun(
+        pool,
+        session,
+        `Auto session could not be completed: ${String(err.message || err).substring(0, 200)}`,
+      );
+      return;
+    }
+    if (retainedTurn || headlessTurnId || err?.retainActiveTurn) {
+      err.retainActiveTurn = true;
+      log.warn('sessions', 'Headless tail paused with durable state retained', {
+        sessionId: session.id,
+        turnId: turnLifecycle.turnIdentity(retainedTurn),
+        headlessTurnId,
+        err: err.message,
+      });
+      scheduleRetainedHeadlessRecovery({ pool, config, session });
+      return;
+    }
     log.error('sessions', 'Headless session failed', { sessionId: session.id, err: err.message, stack: err.stack });
     await pool.query(
-      `UPDATE chat_sessions SET headless_status = 'failed', headless_step = NULL WHERE id = $1`,
+      `UPDATE chat_sessions
+          SET headless_status = 'failed', headless_step = NULL, headless_turn_id = NULL
+        WHERE id = $1`,
       [session.id]
     ).catch(() => {});
     await sendStatus(`Auto session failed: ${String(err.message || err).substring(0, 200)}`);
@@ -6174,11 +7135,41 @@ async function runHeadlessSession({
 //   emit             — session-event emitter (global WS) so an open tab
 //                      paints the bubble and pills without a reload.
 //
-// NEVER throws and never blocks recovery: any failure degrades to a short
-// static closing line carrying the deterministic pills.
+function snapshotMayorResponse(response) {
+  return {
+    text: typeof response?.text === 'string' ? response.text : '',
+    usage: response?.usage || null,
+    toolUses: Array.isArray(response?.toolUses) ? response.toolUses : [],
+    rawContent: Array.isArray(response?.rawContent) ? response.rawContent : [],
+    servedModel: response?.servedModel || null,
+    fallbackServed: response?.fallbackServed === true,
+    stopReason: response?.stopReason || null,
+    stopDetails: response?.stopDetails || null,
+  };
+}
+
+function staticWrapUpText(outcome, { toolKind = null } = {}) {
+  if (outcome === 'push_failed' || outcome === 'failed') {
+    return toolKind === 'scout'
+      ? "_The scout didn't finish successfully — see the status above._"
+      : "_The coding agent didn't complete successfully — see the status messages above._";
+  }
+  if (outcome === 'spec' || outcome === 'spec_done') {
+    return "_Spec updated — it's in the spec viewer. Tell me to build it whenever you're ready and I'll dispatch the coding agent._";
+  }
+  if (outcome === 'no_changes') {
+    return '_The coding agent finished without changing anything — see the status messages above._';
+  }
+  return '_Done._';
+}
+
+// Durable recovery propagates receipt/message/spend failures so the retained
+// turn can retry its tail. Provider ambiguity itself never throws: it is
+// reconciled with a deterministic closing line and, crucially, is never
+// re-issued. Legacy rows without a turnId retain the old best-effort behavior.
 async function runRecoveredWrapUp({
   pool, config, session, sessionId, outcome, dispatchSummary,
-  fallbackPillKind, turnModel, emit = () => {},
+  fallbackPillKind, turnModel, turnId = null, emit = () => {},
 }) {
   const recoveryPills = require('../services/recovery-pills');
   const fallbackPills = recoveryPills.buildRecoveryQuickReplies(fallbackPillKind);
@@ -6186,13 +7177,7 @@ async function runRecoveredWrapUp({
   // The static closing line used when the model call can't be made or
   // fails — mirrors the live wrap-up's empty-text guards, so a degraded
   // recovery still ends on a normal-looking assistant bubble.
-  const fallbackText = outcome === 'push_failed'
-    ? "_The coding agent didn't complete successfully — see the status messages above._"
-    : outcome === 'spec'
-      ? "_Spec updated — it's in the spec viewer. Tell me to build it whenever you're ready and I'll dispatch the coding agent._"
-      : outcome === 'no_changes'
-        ? '_The coding agent finished without changing anything — see the status messages above._'
-        : '_Done._';
+  const fallbackText = staticWrapUpText(outcome);
 
   // Persist the wrap-up as an ordinary assistant row: same columns the
   // live phase-2 writes, plus metadata.recovered for the audit trail.
@@ -6201,29 +7186,46 @@ async function runRecoveredWrapUp({
   // pill-source telemetry like any live one. Defaults to 'static' because
   // every non-model call site here passes the deterministic fallbackPills.
   const persistWrapUp = async (text, quickReplies, { model, usage, costCents, source = 'static', kind } = {}) => {
-    await pool.query(
+    const params = [
+      sessionId, text, model || null,
+      usage ? (usage.input_tokens || 0) + (usage.output_tokens || 0) : null,
+      costCents || null,
+      JSON.stringify({
+        ...(quickReplies ? { quickReplies, quickRepliesSource: source } : {}),
+        ...(quickReplies && source === 'static' && (kind || fallbackPillKind)
+          ? { quickRepliesKind: kind || fallbackPillKind } : {}),
+        recovered: true,
+      }),
+    ];
+    const insert = (client) => client.query(
       `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
        VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
-      [
-        sessionId, text, model || null,
-        usage ? (usage.input_tokens || 0) + (usage.output_tokens || 0) : null,
-        costCents || null,
-        JSON.stringify({
-          ...(quickReplies ? { quickReplies, quickRepliesSource: source } : {}),
-          ...(quickReplies && source === 'static' && (kind || fallbackPillKind)
-            ? { quickRepliesKind: kind || fallbackPillKind } : {}),
-          recovered: true,
-        }),
-      ]
-    ).catch((err) => log.warn('sessions', 'Recovered wrap-up persist failed', {
-      sessionId, err: err.message,
-    }));
+      params,
+    );
+    let shouldEmit = true;
+    if (turnId) {
+      const receipt = await turnEffects.runDbEffect({
+        pool,
+        turnId,
+        effectKey: TURN_WRAPUP_EFFECT_KEYS.message,
+        sessionId,
+        run: async (client) => {
+          await insert(client);
+          return { persisted: true };
+        },
+      });
+      shouldEmit = receipt.applied;
+    } else {
+      await insert(pool);
+    }
     // mayor_reasoning opens/reconciles the assistant bubble; quick_replies
     // then attaches to it (same emit order as the live phase-2). No 'done'
     // — a concurrent user turn could be streaming, and 'done' would tear
     // its client-side streaming state down.
-    emit('mayor_reasoning', { text });
-    if (quickReplies) emit('quick_replies', { replies: quickReplies });
+    if (shouldEmit) {
+      emit('mayor_reasoning', { text });
+      if (quickReplies) emit('quick_replies', { replies: quickReplies });
+    }
   };
 
   if (!llm.isEnabled()) {
@@ -6304,7 +7306,11 @@ async function runRecoveredWrapUp({
       '', '', false, discussionBlock
     );
 
-    const mayor = await llm.streamChat({
+    const fallbackMayor = {
+      ...snapshotMayorResponse({ text: fallbackText }),
+      recoveryFallback: true,
+    };
+    const invokeMayor = async () => snapshotMayorResponse(await llm.streamChat({
       messages,
       systemPrompt,
       model: selectedModel,
@@ -6313,7 +7319,27 @@ async function runRecoveredWrapUp({
       tools: [SUGGEST_REPLIES_TOOL],
       toolChoice: { type: 'auto' },
       apiKey: userApiKey,
-    });
+    }));
+
+    let mayor;
+    if (turnId) {
+      const effect = await turnEffects.runExternalEffectFailClosed({
+        pool,
+        turnId,
+        effectKey: TURN_WRAPUP_EFFECT_KEYS.llm,
+        sessionId,
+        run: invokeMayor,
+        fallback: fallbackMayor,
+      });
+      mayor = effect.value || fallbackMayor;
+      if (effect.disposition === 'fallback') {
+        log.warn('sessions', 'Recovered wrap-up provider call failed closed', {
+          sessionId, err: effect.error?.message || 'ambiguous pending provider call',
+        });
+      }
+    } else {
+      mayor = await invokeMayor();
+    }
 
     const text = stripFakeCompletionMarker((mayor.text || '').trim(), { sessionId })
       || fallbackText;
@@ -6324,20 +7350,41 @@ async function runRecoveredWrapUp({
     // qualifies for the forced continuation because it has already resolved
     // a user id and an API key here — the constraint that keeps the BOOT
     // BACKFILL sweep on the static set doesn't apply to this path.
-    const resolved = await resolveTurnPills({
-      pool,
-      session,
-      userId: session.user_id,
-      apiKey: userApiKey,
-      model: servedModel,
-      modelPills: resolveQuickReplies(mayor.toolUses),
-      outcome: outcome === 'spec' ? 'spec_done' : (outcome === 'code' ? 'build_done' : 'failed'),
-      hasPr: session.pr_number != null,
-      hasSpec: !!(currentSpec || '').trim(),
-      replyText: text,
-      transcriptTail: history,
-      state: `recovered ${outcome} turn; ${session.pr_number != null ? `PR #${session.pr_number} is open` : 'no PR yet'}`,
-    });
+    const staticResolved = {
+      replies: fallbackPills,
+      source: 'static',
+      kind: fallbackPillKind,
+    };
+    const resolveRecoveredPills = () => resolveTurnPills({
+        pool,
+        session,
+        userId: session.user_id,
+        apiKey: userApiKey,
+        model: servedModel,
+        modelPills: resolveQuickReplies(mayor.toolUses),
+        outcome: outcome === 'spec' ? 'spec_done' : (outcome === 'code' ? 'build_done' : 'failed'),
+        hasPr: session.pr_number != null,
+        hasSpec: !!(currentSpec || '').trim(),
+        replyText: text,
+        transcriptTail: history,
+        state: `recovered ${outcome} turn; ${session.pr_number != null ? `PR #${session.pr_number} is open` : 'no PR yet'}`,
+      });
+    let resolved;
+    if (mayor.recoveryFallback) {
+      resolved = staticResolved;
+    } else if (turnId) {
+      const pillEffect = await turnEffects.runExternalEffectFailClosed({
+        pool,
+        turnId,
+        effectKey: TURN_WRAPUP_EFFECT_KEYS.pills,
+        sessionId,
+        run: resolveRecoveredPills,
+        fallback: staticResolved,
+      });
+      resolved = pillEffect.value || staticResolved;
+    } else {
+      resolved = await resolveRecoveredPills();
+    }
     const quickReplies = resolved.replies || fallbackPills;
     log.info('sessions', 'quick replies resolved', {
       sessionId, phase: 'recovered-wrapup',
@@ -6350,18 +7397,39 @@ async function runRecoveredWrapUp({
       kind: resolved.kind,
     });
     if (costCents) {
-      await limits.recordSpend(pool, session.user_id, costCents, { byok: !!userApiKey })
-        .catch((err) => log.warn('sessions', 'Recovered wrap-up spend record failed', {
-          sessionId, err: err.message,
-        }));
+      if (turnId) {
+        await limits.settleTurnSpend(pool, session.user_id, costCents, {
+          turnByok: !!userApiKey,
+          turnId,
+          sessionId,
+          effectKey: TURN_WRAPUP_EFFECT_KEYS.spend,
+        });
+      } else {
+        await limits.recordSpend(pool, session.user_id, costCents, { byok: !!userApiKey });
+      }
     }
     log.info('sessions', 'Recovered turn wrap-up posted', {
       sessionId, outcome, model: servedModel, textLen: text.length,
     });
-    return { ok: true, text, quickReplies };
+    return {
+      ok: !mayor.recoveryFallback,
+      ...(mayor.recoveryFallback ? { reason: 'llm_failed' } : {}),
+      text,
+      quickReplies,
+    };
   } catch (err) {
-    // A failed wrap-up must never cost the user the recovery itself —
-    // the commit, PR and preview already landed.
+    // Receipt/message/spend failures on a durable turn are recovery work, not
+    // a reason to declare the tail complete. Propagate them so the scheduler
+    // retains ownership and retries from the same effect receipts.
+    if (turnId) {
+      log.warn('sessions', 'Durable recovered wrap-up tail incomplete', {
+        sessionId, outcome, err: err.message,
+      });
+      throw err;
+    }
+
+    // Legacy rows have no stable identity/receipts. Preserve their historical
+    // best-effort behavior: a failed model call still posts a static close.
     log.warn('sessions', 'Recovered wrap-up failed — falling back to static close', {
       sessionId, outcome, err: err.message,
     });
@@ -6395,7 +7463,9 @@ async function resumeHeadlessRuns(config) {
        FROM chat_sessions cs
        JOIN apps a ON cs.app_id = a.id
        JOIN users u ON cs.user_id = u.id
-       WHERE cs.is_headless = TRUE AND cs.headless_status = 'generating'`
+       WHERE cs.is_headless = TRUE
+         AND (cs.headless_status = 'generating'
+              OR cs.active_turn->>'phase' = 'cleanup_pending')`
     ));
   } catch (err) {
     log.error('sessions', 'resumeHeadlessRuns query failed', { err: err.message });
@@ -6407,6 +7477,13 @@ async function resumeHeadlessRuns(config) {
   });
   for (const session of rows) {
     resumeOneHeadlessRun({ pool, config, session }).catch(async (err) => {
+      if (err?.retainActiveTurn && recoveryRetry.shouldRetryRecoveryError(err)) {
+        log.warn('sessions', 'Headless resume paused with durable turn state retained', {
+          sessionId: session.id, err: err.message,
+        });
+        scheduleRetainedHeadlessRecovery({ pool, config, session });
+        return;
+      }
       log.error('sessions', 'Headless resume failed — marking run failed', {
         sessionId: session.id, err: err.message, stack: err.stack,
       });
@@ -6415,14 +7492,170 @@ async function resumeHeadlessRuns(config) {
   }
 }
 
+async function reloadRecoverableHeadlessSession(pool, sessionId) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url,
+              a.self_hosted AS app_self_hosted, u.username
+       FROM chat_sessions cs
+       JOIN apps a ON cs.app_id = a.id
+       JOIN users u ON cs.user_id = u.id
+       WHERE cs.id = $1
+         AND cs.is_headless = TRUE
+         AND (cs.headless_status = 'generating'
+              OR cs.active_turn->>'phase' = 'cleanup_pending')`,
+      [sessionId]
+    );
+    return rows[0] || null;
+  } catch (err) {
+    // This query is part of an already-retained recovery. A transient DB
+    // outage must not demote it to the ordinary "mark failed" path.
+    err.retainActiveTurn = true;
+    throw err;
+  }
+}
+
+function scheduleRetainedHeadlessRecovery({
+  pool,
+  config,
+  session,
+}) {
+  const sessionId = Number(session.id);
+  let releaseReservation = null;
+  let latestSession = session;
+  return recoveryRetry.scheduleRetainedRecovery({
+    key: `headless:${sessionId}`,
+    hold: () => {
+      if (!releaseReservation) releaseReservation = beginSessionOperation(sessionId);
+    },
+    release: () => {
+      releaseReservation?.();
+      releaseReservation = null;
+    },
+    run: async () => {
+      const fresh = await reloadRecoverableHeadlessSession(pool, sessionId);
+      if (!fresh) return;
+      latestSession = fresh;
+      const action = turnLifecycle.recoveryAction(fresh.active_turn);
+      if (action === 'cleanup') {
+        const cleanupArgs = turnLifecycle.cleanupArgs(fresh.active_turn);
+        recoveryRetry.requireDurableTurnCleanup(
+          await worker.finishTurn(sessionId, cleanupArgs),
+          cleanupArgs,
+        );
+        // cleanup_pending can be the last coding-turn state while the
+        // independently identified headless Mayor wrap-up is still pending.
+        // Clearing that obsolete coding owner must hand back to wrapping,
+        // not strand a generating row forever.
+        fresh.active_turn = null;
+        if (fresh.headless_status !== 'generating') return;
+      }
+      if (action === 'quarantine') {
+        await failHeadlessRun(
+          pool,
+          fresh,
+          'Auto session could not be completed because its durable coding-turn state is inconsistent.',
+        );
+        return;
+      }
+      if (fresh.headless_status !== 'generating') return;
+      await resumeOneHeadlessRun({ pool, config, session: fresh });
+    },
+    onError: async (err, { failures }) => {
+      if (err?.retainActiveTurn && recoveryRetry.shouldRetryRecoveryError(err)) {
+        log.warn('sessions', 'Retrying retained headless recovery', {
+          sessionId, failures, err: err.message,
+        });
+        return true;
+      }
+      log.error('sessions', 'Retried headless resume failed — marking run failed', {
+        sessionId, err: err.message, stack: err.stack,
+      });
+      await failHeadlessRun(
+        pool,
+        latestSession,
+        `Auto session could not be completed: ${String(err.message || err).substring(0, 200)}`
+      );
+      return false;
+    },
+    onComplete: () => log.info('sessions', 'Retained headless recovery completed', { sessionId }),
+    onHookError: (err) => log.warn('sessions', 'Headless recovery retry hook failed', {
+      sessionId, err: err.message,
+    }),
+  });
+}
+
+// A missing Codex provider thread can be retried once while the original
+// process is still alive: its stop state, prompt hand-off and exact dispatch
+// boundary are all observable there. After a platform restart that boundary
+// is ambiguous. Recovery therefore never creates or re-dispatches a paid
+// attempt. It converts the durable record into a terminal tail and asks the
+// user to retry explicitly; the ordinary shared settlement below then closes
+// the existing ledger attempt exactly once.
+async function resumeRecoveredCodexFreshRetry({ pool, session, activeTurn, result }) {
+  if (activeTurn?.backend !== 'codex_openrouter') return null;
+  const legacyRetryPhase = activeTurn.phase === 'retry_pending'
+    || activeTurn.phase === 'retry_dispatch_pending';
+  if (result?.agentRetryFresh !== true && !legacyRetryPhase) return null;
+
+  const message = 'The saved Codex thread became unavailable during a platform restart. '
+    + 'For safety, no automatic retry was dispatched; retry this turn to start fresh.';
+  const patch = {
+    retryFresh: false,
+    recoveryFailure: 'restart_retry_requires_user',
+    tail: {
+      ...((activeTurn.tail && typeof activeTurn.tail === 'object') ? activeTurn.tail : {}),
+      sha: activeTurn.tail?.sha || result?.sha || null,
+      pushOk: activeTurn.tail?.pushOk === true || result?.pushOk === true,
+    },
+  };
+
+  const transition = await turnLifecycle.markTailPending(pool, {
+    sessionId: session.id,
+    turnId: activeTurn.turnId || null,
+    journal: activeTurn.turnId ? null : activeTurn.journal,
+    turnUuid: activeTurn.turnUuid || null,
+    patch,
+  });
+  const recoveredTurn = transition.activeTurn || {
+    ...activeTurn,
+    phase: turnLifecycle.PHASE_TAIL_PENDING,
+    ...patch,
+  };
+  return {
+    result: {
+      ...result,
+      resultSeen: true,
+      execExitSeen: true,
+      exitCode: result?.exitCode && result.exitCode !== 0 ? result.exitCode : 1,
+      agentExit: result?.agentExit && result.agentExit !== 0 ? result.agentExit : 1,
+      agentRetryFresh: false,
+      ccIsError: true,
+      fatalError: message,
+    },
+    activeTurn: recoveredTurn,
+  };
+}
+
 // Terminal failure for a resumed headless run: same row updates + WS
 // broadcast the live runner's catch block performs.
-async function failHeadlessRun(pool, session, message) {
+async function failHeadlessRun(pool, session, message, { activeTurn = null } = {}) {
   const { broadcastGlobal } = require('../services/ws');
-  await pool.query(
-    `UPDATE chat_sessions SET headless_status = 'failed', headless_step = NULL WHERE id = $1`,
-    [session.id]
-  ).catch(() => {});
+  if (activeTurn) {
+    const identity = turnLifecycle.cleanupArgs(activeTurn);
+    await turnLifecycle.markHeadlessTerminal(pool, {
+      sessionId: session.id,
+      ...identity,
+      status: 'failed',
+    });
+  } else {
+    await pool.query(
+      `UPDATE chat_sessions
+          SET headless_status = 'failed', headless_step = NULL, headless_turn_id = NULL
+        WHERE id = $1`,
+      [session.id]
+    ).catch(() => {});
+  }
   await pool.query(
     `INSERT INTO chat_session_messages (session_id, role, content, metadata)
      VALUES ($1, 'system', $2, $3)`,
@@ -6448,6 +7681,23 @@ async function resumeOneHeadlessRun(args) {
   activeWorkers.add(args.session.id);
   try {
     return await resumeOneHeadlessRunInner(args);
+  } catch (err) {
+    let retainedTurn;
+    try {
+      retainedTurn = await turnLifecycle.loadActiveTurn(args.pool, args.session.id);
+    } catch (loadErr) {
+      loadErr.retainActiveTurn = true;
+      throw loadErr;
+    }
+    if (retainedTurn) {
+      await recoveryRetry.retainOrQuarantineRecoveryError({
+        pool: args.pool,
+        sessionId: args.session.id,
+        activeTurn: retainedTurn,
+        error: err,
+      });
+    }
+    throw err;
   } finally {
     activeWorkers.delete(args.session.id);
   }
@@ -6455,6 +7705,23 @@ async function resumeOneHeadlessRun(args) {
 
 async function resumeOneHeadlessRunInner({ pool, config, session }) {
   const { broadcastGlobal } = require('../services/ws');
+  const initialRecoveryAction = turnLifecycle.recoveryAction(session.active_turn);
+  if (initialRecoveryAction === 'quarantine') {
+    return failHeadlessRun(
+      pool,
+      session,
+      'Auto session could not be completed because its durable coding-turn state is inconsistent.',
+    );
+  }
+  if (initialRecoveryAction === 'cleanup') {
+    const cleanupArgs = turnLifecycle.cleanupArgs(session.active_turn);
+    recoveryRetry.requireDurableTurnCleanup(
+      await worker.finishTurn(session.id, cleanupArgs),
+      cleanupArgs,
+    );
+    session.active_turn = null;
+    if (session.headless_status !== 'generating') return;
+  }
   const issueNumber = session.headless_issue_number;
   const user = { id: session.user_id, username: session.username };
   const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
@@ -6502,12 +7769,25 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
 
   let outcome = session.headless_outcome || 'question';
   let dispatchSummary = null;
+  let recoveredJournal = null;
+  let recoveredTurnForCleanup = null;
+  let headlessTurnId = session.headless_turn_id || null;
+
+  // New live runners checkpoint wrapping before releasing their coding
+  // owner. If the process died in that narrow hand-off, the exec/tail is
+  // already complete and this record now exists solely to make cleanup CAS
+  // safe after the receipt-backed wrap-up below.
+  if (step === 'wrapping' && session.active_turn) {
+    recoveredTurnForCleanup = session.active_turn;
+    recoveredJournal = session.active_turn.journal || null;
+  }
 
   if (step === 'cc_running') {
     const activeTurn = session.active_turn || null;
     if (!activeTurn || !activeTurn.journal) {
       return failHeadlessRun(pool, session, 'Auto session failed: its coding turn left no resumable record.');
     }
+    recoveredJournal = activeTurn.journal;
     // Replay/follow the detached turn's journal. Progress lines are
     // rebuilt WHOLESALE onto the latest progress row (replay re-feeds
     // every line from the start of the turn).
@@ -6527,20 +7807,70 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
         [JSON.stringify(progressLines), session.id]
       ).catch(() => {});
     };
-    const result = await worker.resumeTurnFromJournal(session.id, {
+    const onRecoveredProgress = (text) => {
+      broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'cc_progress', text });
+      progressLines.push(text);
+      if (!flushQueued) {
+        flushQueued = true;
+        setTimeout(flushProgress, 1000);
+      }
+    };
+    let result = await worker.resumeTurnFromJournal(session.id, {
       journal: activeTurn.journal,
+      turnId: activeTurn.turnId || null,
+      agentBackend: activeTurn.backend || 'claude_code',
       // #664: seed the per-turn BYOK tally from the persisted record so
       // post-restart switched calls accumulate on top of pre-restart ones.
       byokCentsSoFar: Number(activeTurn.byokCents || 0),
-      onProgress: (text) => {
-        broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'cc_progress', text });
-        progressLines.push(text);
-        if (!flushQueued) {
-          flushQueued = true;
-          setTimeout(flushProgress, 1000);
-        }
-      },
+      onProgress: onRecoveredProgress,
     });
+    let recoveryActiveTurn = activeTurn;
+    try {
+      const retried = await resumeRecoveredCodexFreshRetry({
+        pool, config, session, activeTurn, result,
+        onProgress: onRecoveredProgress,
+      });
+      if (retried) {
+        result = retried.result;
+        recoveryActiveTurn = retried.activeTurn;
+      }
+
+      // These writes are part of consuming the journal, not optional tail
+      // decoration. If either fails, leave active_turn and every journal in
+      // place so the next recovery can replay idempotently.
+      await agentTurn.persistRecoveredAgentThread({ pool, session, result });
+      await agentTurn.settleRecoveredAgentAttempt({
+        pool,
+        activeTurn: recoveryActiveTurn,
+        result,
+        settleClaude: async () => {
+          // Guard (plan 7.6): recovered Codex spend never reaches Anthropic
+          // `limits` — only the Claude branch settles through it here.
+          if (!result.costUsd) return null;
+          const byok = recoveryActiveTurn.byok ?? !!userApiKey;
+          return limits.settleTurnSpend(pool, user.id, Math.round(result.costUsd * 100), {
+            turnByok: byok,
+            byokObservedCents: worker.getTurnByokCents(session.id),
+            turnId: turnLifecycle.turnIdentity(recoveryActiveTurn),
+            sessionId: session.id,
+          });
+        },
+      });
+    } catch (err) {
+      const disposition = await recoveryRetry.retainOrQuarantineRecoveryError({
+        pool,
+        sessionId: session.id,
+        activeTurn: recoveryActiveTurn,
+        error: err,
+      });
+      log.error('sessions', disposition.action === 'retry'
+        ? 'Required recovered-turn persistence failed; retaining durable state'
+        : 'Recovered turn has invalid durable state; leaving it quarantined without retry', {
+        sessionId: session.id, err: err.message,
+      });
+      throw err;
+    }
+    recoveredTurnForCleanup = recoveryActiveTurn;
     // Terminal marker for the recovered turn's progress card (dedup:
     // journals from new worker images already end with their own
     // [done]/[push_failed] marker). Decided before flushing so the
@@ -6549,38 +7879,27 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
       || !!(result.lastResultText || '').trim();
     const headlessTerminal = !producedAnythingEarly
       ? '[interrupted]'
-      : (activeTurn.mode !== 'scout' && result.pushOk === false && result.ahead > 0)
+      : (recoveryActiveTurn.mode !== 'scout' && result.pushOk === false && result.ahead > 0)
         ? '[push_failed]'
         : '[done]';
     if (turnWatchdog.appendTerminalLine(progressLines, headlessTerminal)) {
       broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'cc_progress', text: headlessTerminal });
     }
     flushProgress();
-    // Release the record AND the journal it points at (the resume above
-    // consumed it, and holdTurnRecord callers no longer delete it in
-    // execInWorker's finally).
-    await worker.finishTurn(session.id, { journal: activeTurn.journal });
-
-    // #174: the journal replay rebuilt the turn's self-reported cost —
-    // debit it before the recovery check below, because the Anthropic
-    // invoice is paid whether or not the turn produced anything (same
-    // rationale as the turn-end debit in runClaudeCodeTool). active_turn
-    // rows persisted before the byok flag shipped fall back to
-    // key-on-file at resume time. #664: a platform-billed turn that
-    // switched onto the owner's key mid-run settles split across both
-    // buckets (getTurnByokCents covers pre- and post-restart spillover).
-    if (result.costUsd) {
-      const byok = activeTurn.byok ?? !!userApiKey;
-      await limits.settleTurnSpend(pool, user.id, Math.round(result.costUsd * 100), {
-        turnByok: byok,
-        byokObservedCents: worker.getTurnByokCents(session.id),
-      });
-    }
-
     const producedAnything = result.execExitSeen || result.resultSeen
       || !!(result.lastResultText || '').trim();
     if (!producedAnything) {
-      return failHeadlessRun(pool, session, "Auto session failed: its coding turn didn't finish.");
+      await failHeadlessRun(
+        pool,
+        session,
+        "Auto session failed: its coding turn didn't finish.",
+        { activeTurn: recoveryActiveTurn },
+      );
+      recoveryRetry.requireDurableTurnCleanup(
+        await worker.finishTurn(session.id, turnLifecycle.cleanupArgs(recoveryActiveTurn)),
+        turnLifecycle.cleanupArgs(recoveryActiveTurn),
+      );
+      return;
     }
 
     // Persist the CC session id for later cloned sessions' --resume.
@@ -6595,29 +7914,26 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
     // Headless post-processing — mirrors runScoutTool / runClaudeCodeTool's
     // headless success paths (spec persist / testing notes), never PR or
     // staging (the headless contract).
-    if (activeTurn.mode === 'scout') {
+    if (recoveryActiveTurn.mode === 'scout') {
       const ccText = stripSpecWrapperFence((result.lastResultText || '').trim());
       if (ccText && !result.fatalError) {
-        await pool.query(
-          'UPDATE chat_sessions SET spec_md = $1 WHERE id = $2',
-          [ccText, session.id]
-        );
-        const specVersion = await snapshotSessionSpec(pool, session.id, ccText);
-        const lineCount = ccText.split('\n').length;
-        await pool.query(
-          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-           VALUES ($1, 'system', $2, $3)`,
-          [session.id, `Scout drafted a ${lineCount}-line spec from the codebase.`,
-            // specPreview drives the tappable spec card in dev-chat; omitting
-            // it here left recovered scout turns (and their clones) with a
-            // message claiming a spec exists but no card to open it.
-            JSON.stringify({ specPreview: buildSpecPreview(ccText), specLines: lineCount, scoutOutput: ccText, specVersion })]
-        ).catch(() => {});
+        const publication = await persistScoutPublication({
+          pool,
+          sessionId: session.id,
+          turnId: recoveryActiveTurn.turnId || null,
+          content: ccText,
+          hadSpec: !!(session.spec_md || '').trim(),
+          agentBackend: recoveryActiveTurn.backend || session.agent_backend || 'claude_code',
+          agentModel: recoveryActiveTurn.model || session.agent_model || null,
+        });
+        session.spec_md = ccText;
         // #178: blocking Questions in the recovered spec finalize as
         // 'question' so the answer-and-re-run loop survives the restart
         // (no comment is posted — there is no decision turn on resume).
         outcome = specHasBlockingQuestions(ccText) ? 'question' : 'spec';
-        dispatchSummary = `The scout investigated the repo and drafted a ${lineCount}-line markdown spec. It now lives in the session's spec doc.`;
+        dispatchSummary = publication.hadSpec
+          ? `The scout revised the session's spec doc (now ${publication.lineCount} lines). It now lives in the session's spec doc.`
+          : `The scout investigated the repo and drafted a ${publication.lineCount}-line markdown spec. It now lives in the session's spec doc.`;
       } else {
         outcome = 'question';
         dispatchSummary = 'The scout did not complete successfully — no spec was produced.';
@@ -6714,7 +8030,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
           + (session.spec_md ? ' The spec drafted earlier this run is still the reviewable artifact.' : '');
       }
     }
-    await setHeadlessStep(pool, session.id, 'wrapping', outcome);
+    headlessTurnId = await checkpointHeadlessWrapUp(pool, session.id, outcome);
   }
 
   // #178: a 'wrapping' checkpoint written before/during the decision turn
@@ -6749,15 +8065,34 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
   const wrapPrompt = getMayorSystemPrompt(session.app_name, false, currentSpec, !!session.app_self_hosted, null) + headlessAddendum;
   // No tools passed → plain text turn; the API can't call anything, so
   // tool_choice is unnecessary (and invalid without a tools array).
-  const mayor2 = await llm.streamChat({
-    messages: convo,
-    systemPrompt: wrapPrompt,
-    model: selectedModel,
-    apiKey: userApiKey,
+  if (!headlessTurnId) {
+    // Rolling-deploy compatibility: wrapping rows created before
+    // headless_turn_id existed get an identity before any new provider call.
+    headlessTurnId = await checkpointHeadlessWrapUp(pool, session.id, outcome);
+  }
+  const fallbackMayorText = outcome === 'spec'
+    ? '_Spec drafted — review it in the spec viewer after starting a session from this auto session._'
+    : outcome === 'spec_code'
+      ? '_Spec drafted and change committed — start a session from this auto session to open the PR._'
+      : outcome === 'code'
+        ? '_Change committed and pushed — start a session from this auto session to open the PR._'
+        : "_The auto session's dispatch didn't finish successfully — see the status above._";
+  const recoveredEffect = await runHeadlessMayorEffect({
+    pool,
+    sessionId: session.id,
+    headlessTurnId,
+    fallbackText: fallbackMayorText,
+    invoke: () => llm.streamChat({
+        messages: convo,
+        systemPrompt: wrapPrompt,
+        model: selectedModel,
+        apiKey: userApiKey,
+      }),
   });
+  const mayor2 = recoveredEffect.response;
   // Fable 5 fallback: admin record only on this rare resume path (there's
   // no sendStatus plumbing here); attribution below uses the served model.
-  if (mayor2.fallbackServed) {
+  if (mayor2.fallbackServed && recoveredEffect.disposition === 'executed') {
     await modelFallback.record(pool, {
       kind: events.EVENT_TYPES.MODEL_FALLBACK,
       userId: user.id, appId: session.app_id, sessionId: session.id,
@@ -6769,33 +8104,49 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
 
   let mayorText2 = (mayor2.text || '').trim();
   if (!mayorText2) {
-    mayorText2 = outcome === 'spec'
-      ? '_Spec drafted — review it in the spec viewer after starting a session from this auto session._'
-      : outcome === 'spec_code'
-        ? '_Spec drafted and change committed — start a session from this auto session to open the PR._'
-        : outcome === 'code'
-          ? '_Change committed and pushed — start a session from this auto session to open the PR._'
-          : "_The auto session's dispatch didn't finish successfully — see the status above._";
+    mayorText2 = fallbackMayorText;
   }
   const servedModelR = mayor2.servedModel || selectedModel;
   const costCents2 = mayor2.usage ? llm.estimateCostCents(mayor2.usage, servedModelR) : 0;
-  await pool.query(
-    `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
-     VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
-    [session.id, mayorText2, servedModelR,
-      mayor2.usage ? mayor2.usage.input_tokens + mayor2.usage.output_tokens : 0, costCents2,
-      // #1001: this row was the single biggest no-pills hole in production —
-      // it wrote no metadata column at all, so every restart-resumed auto
-      // session fell through to the client's generic default.
-      JSON.stringify(headlessWrapUpMeta(outcome))]
-  );
-  await limits.recordSpend(pool, user.id, costCents2, { byok: !!userApiKey });
+  await persistHeadlessMayorRow({
+    pool,
+    sessionId: session.id,
+    headlessTurnId,
+    text: mayorText2,
+    model: servedModelR,
+    usage: mayor2.usage,
+    costCents: costCents2,
+    // #1001: this row was the single biggest no-pills hole in production —
+    // it wrote no metadata column at all, so every restart-resumed auto
+    // session fell through to the client's generic default.
+    metadata: headlessWrapUpMeta(outcome),
+  });
+  await settleHeadlessMayorUsage({
+    pool,
+    userId: user.id,
+    sessionId: session.id,
+    headlessTurnId,
+    usage: mayor2.usage,
+    servedModel: mayor2.servedModel,
+    selectedModel,
+    userApiKey,
+  });
 
-  await pool.query(
-    `UPDATE chat_sessions SET headless_status = 'ready', headless_outcome = $1, headless_step = NULL, last_activity_at = NOW()
-     WHERE id = $2`,
-    [outcome, session.id]
-  );
+  if (recoveredJournal && recoveredTurnForCleanup) {
+    recoveredTurnForCleanup = await turnLifecycle.markHeadlessTerminal(pool, {
+      sessionId: session.id,
+      ...turnLifecycle.cleanupArgs(recoveredTurnForCleanup),
+      status: 'ready',
+      outcome,
+    });
+  } else {
+    await pool.query(
+      `UPDATE chat_sessions SET headless_status = 'ready', headless_outcome = $1,
+              headless_step = NULL, headless_turn_id = NULL, last_activity_at = NOW()
+       WHERE id = $2`,
+      [outcome, session.id]
+    );
+  }
   broadcastGlobal({
     type: 'session_event', sessionId: session.id, event: 'headless_update',
     status: 'ready', outcome, issueNumber, appSlug: session.app_slug,
@@ -6807,6 +8158,15 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
     userId: user.id, appId: session.app_id, sessionId: session.id, detail: outcome,
   });
   log.info('sessions', 'Headless session resumed to ready', { sessionId: session.id, issueNumber, outcome });
+  if (recoveredTurnForCleanup) {
+    // Release the durable record and its journal only after every recovered
+    // tail step has completed. A failed clear is then safe to retry alone.
+    const cleanupArgs = turnLifecycle.cleanupArgs(recoveredTurnForCleanup);
+    recoveryRetry.requireDurableTurnCleanup(
+      await worker.finishTurn(session.id, cleanupArgs),
+      cleanupArgs,
+    );
+  }
 }
 
 // Tools the Mayor can call. Each user message produces at most one
@@ -6819,7 +8179,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
 const DISPATCH_TOOL = {
   name: 'dispatch_claude_code',
   description:
-    'Dispatch an autonomous coding agent (Claude Code) to make the requested changes to the app repo. '
+    'Dispatch the autonomous coding agent selected for this session to make the requested changes to the app repo. '
     + 'The agent will clone the repo, edit files, commit, and push to the dev branch — staging will auto-rebuild. '
     + 'Use ONLY when the user has asked for a concrete, actionable code change. Do not call when the user is '
     + 'just chatting, brainstorming, asking about past work, or giving vague feedback. At most one call per user message. '
@@ -7851,6 +9211,47 @@ function prettyModelLabel(modelId) {
   return modelId;
 }
 
+// Model ids are execution data, but they are also interpolated into a few
+// trusted server-authored status strings that the legacy client renders as
+// HTML. Keep the exact id in runtime metadata and billing while limiting the
+// display copy to the punctuation OpenRouter model ids actually use. This
+// prevents a provider catalog entry from becoming markup in the transcript.
+function safeAgentModelLabel(modelId, fallback = 'model not configured') {
+  const raw = String(modelId || '').trim();
+  if (!raw) return fallback;
+  const safe = raw.slice(0, 200).replace(/[^A-Za-z0-9._:/+@-]/g, '?');
+  return safe || fallback;
+}
+
+// One provider-neutral identity for every coding-agent runtime surface.
+// Execution, progress, transcript labels, and usage reporting must all use
+// the session-pinned model; deriving these independently is what previously
+// let a Codex turn be displayed and billed under the Mayor's Claude model.
+// The selectedModel fallback is intentionally Claude-only. A malformed
+// legacy Codex row without a pinned/operator model remains unconfigured and
+// is rejected by resolveCodexRuntimeContext instead of masquerading as a
+// Claude-model Codex run.
+function codingAgentRuntimeIdentity(session, selectedModel, config = {}) {
+  const backend = registry.resolveBackend(session?.agent_backend);
+  const isCodex = backend === 'codex_openrouter';
+  const model = isCodex
+    ? (session?.agent_model || config.openrouterDefaultCodexModel || null)
+    : selectedModel;
+  return {
+    backend,
+    isCodex,
+    model,
+    modelLabel: isCodex
+      ? safeAgentModelLabel(model)
+      : safeAgentModelLabel(prettyModelLabel(selectedModel), 'Sonnet'),
+    agentName: isCodex ? 'Codex' : 'Claude Code',
+    metadata: {
+      agentBackend: backend,
+      agentModel: model || null,
+    },
+  };
+}
+
 // The synthetic label the harness folds a REAL coding-agent run under
 // when replaying history into the Mayor's context (see buildMayorMessages
 // below). It is reserved for the harness — the system prompt forbids the
@@ -7947,6 +9348,20 @@ function buildMayorMessages(history, attachmentsByMessageId = new Map()) {
   return messages;
 }
 
+// A headless dispatch cannot move on to its independently identified Mayor
+// wrap-up while the coding owner is only *partly* released. If cleanup cannot
+// commit, retain both durable records and let the recovery scheduler finish
+// the handoff. Ordinary non-headless callers preserve the historical
+// best-effort cleanup behavior; interactive dispatches defer cleanup until
+// their own wrap-up and therefore do not call this helper here.
+async function finishToolTurnCleanup(sessionId, turnId, { required = false } = {}) {
+  const cleared = await worker.finishTurn(sessionId, { turnId }).catch(() => false);
+  if (required) {
+    recoveryRetry.requireDurableTurnCleanup(cleared, { turnId });
+  }
+  return cleared;
+}
+
 // Runs Claude Code in read-only PLAN MODE (the spec-stage scout). CC
 // reads the repo and produces a markdown spec as its final result text;
 // we capture that into chat_sessions.spec_md. No commit, no push, no
@@ -7971,12 +9386,29 @@ async function runScoutTool({
   stopHandle,
   userApiKey,
   headless = false,
+  // Interactive callers own the Mayor phase-2 wrap-up and therefore keep
+  // this turn's durable record until that final tail is committed. A headless
+  // caller supplies beforeTurnCleanup to checkpoint the next paid Mayor phase
+  // (and its stable receipt id) before this per-dispatch owner is released.
+  deferTurnCleanup = false,
+  beforeTurnCleanup = null,
 }) {
   activeWorkers.add(session.id);
   // #50: wall-clock start for the durationMs persisted on terminal
   // statuses, so the dev-chat "(took Xm Ys)" suffix survives reloads.
   const turnStartedMs = Date.now();
-  const modelLabel = prettyModelLabel(selectedModel);
+  // Backend-aware model + secret (review F2, F10). Codex sessions use the
+  // exact pinned OpenRouter model and NO Anthropic key. Keep every runtime
+  // label/metadata consumer on this same identity so the Mayor's Claude model
+  // can never leak into Codex progress or usage.
+  const agentIdentity = codingAgentRuntimeIdentity(session, selectedModel, config);
+  const {
+    isCodex: isCodexSession,
+    model: turnModel,
+    modelLabel,
+  } = agentIdentity;
+  const turnApiKey = isCodexSession ? null : (userApiKey || null);
+  let durableTurnId = null;
 
   // #937: the single way this tool ends on a stop, used by every
   // pre-dispatch gate below AND by the post-run branch, so the two can't
@@ -7994,6 +9426,7 @@ async function runScoutTool({
     // because a dispatch co-occurred — so this row carries them. The
     // 'stopped' outcome is state-independent, hence no hasPr/hasSpec.
     await sendStatus(`Scout stopped${byStr}.`, {
+      ...agentIdentity.metadata,
       durationMs: Date.now() - turnStartedMs,
       quickReplies: turnFallbackQuickReplies({ outcome: 'stopped' }),
     });
@@ -8006,6 +9439,7 @@ async function runScoutTool({
     return {
       toolResultText: `The scout was stopped${byStr} before it finished. The spec doc was not updated.`,
       isError: true,
+      turnId: durableTurnId,
     };
   };
 
@@ -8045,6 +9479,11 @@ async function runScoutTool({
     }
   }
   const runLocally = !!lease;
+  // A local lease is explicitly the user's own Claude runtime, regardless of
+  // which cloud backend this session has pinned for platform turns.
+  const executionAgentMeta = runLocally
+    ? { agentBackend: 'claude_code', agentModel: null }
+    : agentIdentity.metadata;
   // Prod-debug access is deliberately cloud-only (the spec's "a local turn
   // never receives PROD_DEBUG_JWT"). Clear the flag rather than only omitting
   // the credential, so the prompt does not advertise a `usernode-debug` helper
@@ -8057,8 +9496,11 @@ async function runScoutTool({
       ? `Scouting on ${lease.label} — your machine, read-only${discussionBlock ? ' · with issue & proposal discussion' : ''}...`
       : `Scouting the repo for context (${modelLabel}${prodDebug ? ' · prod debug' : ''}${discussionBlock ? ' · with issue & proposal discussion' : ''})...`,
     runLocally
-      ? { runner: 'local', localAgentLabel: lease.label, localMode: 'scout' }
-      : undefined
+      ? {
+          ...executionAgentMeta,
+          runner: 'local', localAgentLabel: lease.label, localMode: 'scout',
+        }
+      : executionAgentMeta
   );
 
   // A local scout needs no worker image, no warm container and no CC volume:
@@ -8158,10 +9600,12 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
     repoOwner,
     repoName,
     branchName: session.branch_name,
-    anthropicApiKey: userApiKey || null,
     onProgress: (text) => {
-      send('cc_progress', { text });
-      workerProgress.set(session.id, text, { model: selectedModel });
+      send('cc_progress', { text, ...agentIdentity.metadata });
+      workerProgress.set(session.id, text, {
+        model: turnModel,
+        backend: agentIdentity.backend,
+      });
     },
   });
 
@@ -8191,6 +9635,10 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
 
   let isError = false;
   const summaryParts = [];
+  // Once dispatch begins, an exception means the durable tail must remain
+  // replayable. Normal/handled exits flip this back only after every required
+  // tail effect has landed.
+  let durableTailComplete = true;
 
   try {
     // #937 gate 5 of 5 — immediately before the dispatch. Placed ahead of
@@ -8199,7 +9647,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
     // scout ran nor an empty progress card in the transcript.
     if (stopPendingFor(stopHandle)) return stoppedResult();
 
-    await sendStatus('Scout reading the codebase...');
+    await sendStatus('Scout reading the codebase...', executionAgentMeta);
 
     const heartbeat = setInterval(() => {
       try { res.write(`:heartbeat\n\n`); } catch {}
@@ -8220,13 +9668,16 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
     const { rows: progRows } = await pool.query(
       `INSERT INTO chat_session_messages (session_id, role, content, metadata)
        VALUES ($1, 'system', 'Claude Code progress', $2) RETURNING id`,
-      [session.id, JSON.stringify({ progressLog: [] })]
+      [session.id, JSON.stringify({ progressLog: [], ...executionAgentMeta })]
     );
     const progressMsgId = progRows[0].id;
 
     const onScoutProgress = (text) => {
-      send('cc_progress', { text });
-      workerProgress.set(session.id, text, { model: selectedModel });
+      send('cc_progress', { text, ...executionAgentMeta });
+      workerProgress.set(session.id, text, {
+        model: executionAgentMeta.agentModel,
+        backend: executionAgentMeta.agentBackend,
+      });
       pool.query(
         `UPDATE chat_session_messages SET metadata = jsonb_set(
           metadata, '{progressLog}',
@@ -8320,15 +9771,21 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
     };
 
     let result;
+    let codexCtx = null;
+    durableTailComplete = false;
     try {
-      const dispatchScout = () => worker.execInWorker(session.id, {
+      const resumeThreadId = isCodexSession ? (session.agent_thread_id || null) : (session.cc_session_id || null);
+      // Shared dispatcher for BOTH the Codex attempt loop and the Claude
+      // fallback, so the expensive execInWorker options (holdTurnRecord,
+      // onProgress) live in exactly one place per tool.
+      const doScout = (ctx) => worker.execInWorker(session.id, {
         mode: 'scout',
         prompt: scoutPrompt,
-        model: selectedModel,
+        model: turnModel,
         commitMsg: '',
-        resumeSessionId: session.cc_session_id || null,
+        resumeSessionId: resumeThreadId,
         branchName: session.branch_name,
-        anthropicApiKey: userApiKey || null,
+        ...(ctx || {}),
         prodDebug,
         // Hold the durable turn record through this tool's own tail
         // (spec persist + frozen version + Mayor wrap-up). Short, but the
@@ -8337,18 +9794,120 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         holdTurnRecord: true,
         onProgress: onScoutProgress,
       });
-      result = runLocally ? await dispatchLocalScout() : await dispatchScout();
-      // Headless auto-retry: a markerless turn that produced no spec text
-      // gets exactly one re-dispatch (the retry wraps the call site, not
-      // execInWorker, so active_turn bookkeeping stays per-attempt).
-      if (headless && shouldRetryHeadlessTurn(result, stopHandle, !!(result.lastResultText || '').trim())) {
-        await sendStatus('The coding step failed unexpectedly — retrying once…');
-        await waitForTurnStopped(session.id, containerName);
-        result = await dispatchScout();
+      if (runLocally) {
+        // Local turns do not enter the platform's Codex attempt ledger and a
+        // retry must stay on the same attached machine.
+        result = await dispatchLocalScout();
+        if (headless && shouldRetryHeadlessTurn(result, stopHandle, !!(result.lastResultText || '').trim())) {
+          await sendStatus('The coding step failed unexpectedly — retrying once…', executionAgentMeta);
+          await waitForTurnStopped(session.id, containerName);
+          result = await dispatchLocalScout();
+        }
+      } else {
+        // Backend-aware per-attempt dispatch (plan §7): for a Codex session
+      // this resolves the runtime context ONCE, then starts/completes one
+      // agent_turns attempt per physical worker.execInWorker (a headless
+      // auto-retry gets attempt_number=2, never overwriting attempt 1). For
+      // a Claude session the helper returns null and we fall through to the
+      // legacy path below. plan.md PR5/PR6.
+      const routed = await runCodexAttemptLoop({
+        pool, session, userId: req.user.id, config, isCodexSession,
+        turnModel, resumeThreadId, mode: 'scout',
+        resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
+          pool, session, userId: req.user.id, model: turnModel,
+          resumeThreadId, config,
+        }),
+        dispatchOnce: (ctx) => doScout(ctx),
+        retryPredicate: (r) => headless && shouldRetryHeadlessTurn(r, stopHandle, !!(r.lastResultText || '').trim()),
+        sendStatus: async (msg) => { await sendStatus(msg, executionAgentMeta); },
+        waitForStopped: waitForTurnStopped,
+        prepareRetry: async (retry) => {
+          if (stopPendingFor(stopHandle)) return false;
+          if (retry.retryFresh) {
+            await worker.markTurnRetryPending(session.id, {
+              turnUuid: retry.attempt.turnUuid,
+              logicalTurnId: retry.logicalTurnId,
+              attemptNumber: retry.attemptNumber,
+            });
+          } else {
+            if (!retry.result?.turnId
+                || !await worker.finishTurn(session.id, { turnId: retry.result.turnId })) return false;
+          }
+          // The required DB write / journal cleanup above yields. Re-check
+          // before resetting the old attempt's stop marker so a stop that
+          // landed in that window remains authoritative for attempt two.
+          if (stopPendingFor(stopHandle)) return false;
+          worker.clearPendingStop(session.id);
+          return true;
+        },
+        classifyAttemptStatus: ({ failed }) => stopPendingFor(stopHandle)
+          ? 'cancelled'
+          : (failed ? 'failed' : 'completed'),
+        containerName,
+      });
+
+      if (routed?.error) {
+        codexCtx = { error: routed.error };
+        durableTurnId = routed.logicalTurnId || null;
+        isError = true;
+        // SSE is already open; terminate through the SSE protocol (review #5)
+        // instead of res.json (which would throw ERR_HTTP_HEADERS_SENT or
+        // inject JSON into the stream). Mark the stop handle so the caller's
+        // stop branch tears the turn down cleanly and skips the Mayor wrap-up.
+        const code = routed.error;
+        const msg = code === 'backend_disabled' || code === 'backend_not_available'
+          ? 'Codex/OpenRouter is not available for your account right now.'
+          : code === 'model_required'
+            ? 'Pick a Codex model in Settings for this session.'
+            : code === 'invalid_base_url'
+              ? 'The OpenRouter endpoint is misconfigured.'
+              : code === 'ledger_start_failed'
+                ? 'Could not start the Codex turn. Please retry.'
+                : code === 'agent_context_changed'
+                  ? 'The agent configuration changed while starting this turn. Please retry.'
+                  : code === 'session_busy'
+                    ? 'The session became busy. Stop the current turn before retrying.'
+                    : 'Add your OpenRouter API key in Settings to use Codex.';
+        await sendStatus(msg, executionAgentMeta);
+        if (stopHandle) {
+          stopHandle.stopped = true;
+          stopHandle.stoppedBy = 'agent_error';
+        }
+        if (typeof send === 'function') send('error', { code, error: msg });
+        durableTailComplete = true;
+        return { toolResultText: msg, isError: true, turnId: durableTurnId };
       }
+      // For a Claude session (routed === null) keep the legacy combined path
+      // exactly as before (shared dispatcher above).
+      if (routed === null) {
+        // Claude session — legacy combined path (no agent_turns ledger),
+        // but keep the headless auto-retry that the Codex loop provides
+        // for its own attempts (one extra dispatch, never more).
+        result = await doScout({});
+        if (headless && shouldRetryHeadlessTurn(result, stopHandle, !!(result.lastResultText || '').trim())) {
+          await sendStatus('The coding step failed unexpectedly — retrying once…', executionAgentMeta);
+          await waitForTurnStopped(session.id, containerName);
+          if (!result.turnId || !await worker.finishTurn(session.id, { turnId: result.turnId })) {
+            throw new Error('Could not durably finish the first scout attempt before retry');
+          }
+          result = await doScout({});
+        }
+      } else {
+        result = routed.result;
+      }
+      }
+    } catch (e) {
+      // A thrown dispatch must still terminalize any Codex ledger attempt
+      // (review P1): runCodexAttemptLoop completes each attempt in its own
+      // try/finally, and a throw after dispatch already left the attempt
+      // failed. If an attempt started but completion threw, force one
+      // failed pass here as a backstop (idempotent).
+      throw e;
     } finally {
       clearInterval(heartbeat);
     }
+
+    durableTurnId = result?.turnId || null;
 
     // Same cc_session_id thread-through as runClaudeCodeTool — a scout
     // call early in the session is remembered when the user later
@@ -8362,11 +9921,23 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       ).catch(() => {});
       session.cc_session_id = newCcId;
     }
+    // Persist the Codex thread id for resume on the next turn (review F5).
+    // For Codex the thread id comes from __USERNODE_RESULT__ agent_thread_id
+    // (parsed by worker.js parseLine into state.agentThreadId).
+    const newAgentThreadId = result.agentThreadId || null;
+    if (newAgentThreadId && newAgentThreadId !== session.agent_thread_id) {
+      await pool.query(
+        'UPDATE chat_sessions SET agent_thread_id = $1 WHERE id = $2',
+        [newAgentThreadId, session.id]
+      ).catch(() => {});
+      session.agent_thread_id = newAgentThreadId;
+    }
 
     // #937: the post-run stop, now sharing stoppedResult() with the five
     // pre-dispatch gates so the wording, pills and duration can't drift.
     if (stopPendingFor(stopHandle)) {
       isError = true;
+      durableTailComplete = true;
       return stoppedResult();
     }
 
@@ -8375,12 +9946,12 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
     if (result.fatalError) {
       isError = true;
       const msg = `Scout error: ${result.fatalError.substring(0, 200)}`;
-      await sendStatus(msg);
+      await sendStatus(msg, executionAgentMeta);
       summaryParts.push(msg);
     } else if (result.ccIsError && !ccText) {
       isError = true;
       const msg = `Scout error: ${(ccText || 'unknown').substring(0, 200)}`;
-      await sendStatus(msg);
+      await sendStatus(msg, executionAgentMeta);
       summaryParts.push(msg);
     } else if (!ccText) {
       isError = true;
@@ -8389,54 +9960,49 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       const msg = (result.exitCode === -1 || result.exitCode == null)
         ? `${describeMarkerlessExit(result.markerlessCause)} No spec text was produced.`
         : 'Scout finished but produced no spec text.';
-      await sendStatus(msg);
+      await sendStatus(msg, executionAgentMeta);
       summaryParts.push(msg);
     } else {
-      await pool.query(
-        'UPDATE chat_sessions SET spec_md = $1 WHERE id = $2',
-        [ccText, session.id]
-      );
-
-      const lineCount = ccText.split('\n').length;
-      const preview = buildSpecPreview(ccText);
-      // #27: freeze the scout's draft so the inline card opens its own content.
-      const specVersion = await snapshotSessionSpec(pool, session.id, ccText);
-      // #907: a locally-drafted spec says so, and says it cost nothing. The
-      // transcript is the record of who did the work — a row that reads like
-      // a platform scout would be claiming spend the platform never made.
-      const localSuffix = runLocally
-        ? ` Drafted on ${lease.label} — no Usernode credits used.`
-        : '';
-      await sendStatus(
-        (existingSpec
-          ? `Scout revised the spec (now ${lineCount} lines).`
-          : `Scout drafted a ${lineCount}-line spec from the codebase.`) + localSuffix,
-        {
-          specPreview: preview,
-          specLines: lineCount,
-          scoutOutput: ccText,
-          specVersion,
-          durationMs: Date.now() - turnStartedMs,
-          ...(runLocally
-            ? { runner: 'local', localAgentLabel: lease.label, localMode: 'scout' }
-            : {}),
-        }
-      );
-      send('spec_updated', { length: ccText.length, lines: lineCount, version: specVersion });
+      const publication = await persistScoutPublication({
+        pool,
+        sessionId: session.id,
+        turnId: durableTurnId,
+        content: ccText,
+        hadSpec: !!existingSpec,
+        durationMs: Date.now() - turnStartedMs,
+        localAgentLabel: runLocally ? lease.label : null,
+        agentBackend: executionAgentMeta.agentBackend,
+        agentModel: executionAgentMeta.agentModel,
+      });
+      session.spec_md = ccText;
+      if (publication.applied) {
+        send('status', { text: publication.scoutText, ...publication.metadata });
+        send('spec_updated', {
+          length: ccText.length,
+          lines: publication.lineCount,
+          version: publication.specVersion,
+        });
+      }
       summaryParts.push(
-        existingSpec
-          ? `The scout revised the session's spec doc (now ${lineCount} lines). `
+        publication.hadSpec
+          ? `The scout revised the session's spec doc (now ${publication.lineCount} lines). `
             + `The user can review it in the dev-chat spec viewer. When they're ready to ship, they'll ask you to dispatch the coding agent.`
-          : `The scout investigated the repo and drafted a ${lineCount}-line markdown spec. `
+          : `The scout investigated the repo and drafted a ${publication.lineCount}-line markdown spec. `
             + `It now lives in the session's spec doc; the user can review it in the dev-chat spec viewer. When they're ready to ship, they'll ask you to dispatch the coding agent.`
       );
     }
 
     // A local scout has no costUsd at all (see dispatchLocalScout), so this
-    // whole block is skipped and no llm_usage row, spend settlement or usage
-    // event is produced. That is the zero-cost path, stated once here rather
-    // than as a `runLocally` branch inside the billing code.
-    if (result.costUsd) {
+    // billing block produces no llm_usage row, spend settlement, or usage
+    // event for that path.
+    if (isCodexSession) {
+      // Codex/OpenRouter spend is billed to the user's OpenRouter account
+      // directly (review #3) — never written into the Anthropic llm_usage
+      // ledger. Recorded instead via completeCodexTurn on agent_turns.
+      if (result.costUsd) {
+        send('usage', { costCents: Math.round(result.costUsd * 100), model: `codex-openrouter/${turnModel}`, byok: true });
+      }
+    } else if (result.costUsd) {
       const ccCostCents = Math.round(result.costUsd * 100);
       // Scout costs land in the same llm_usage table as build dispatches —
       // they're real Anthropic spend on the same daily budget. #664: a
@@ -8445,28 +10011,35 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       const split = await limits.settleTurnSpend(pool, req.user.id, ccCostCents, {
         turnByok: !!userApiKey,
         byokObservedCents: worker.getTurnByokCents(session.id),
+        turnId: result.turnId || null,
+        sessionId: session.id,
       });
       if (split.platformCents > 0) send('usage', { costCents: split.platformCents, model: `scout/${selectedModel}`, byok: false });
       if (split.byokCents > 0) send('usage', { costCents: split.byokCents, model: `scout/${selectedModel}`, byok: true });
     }
+    durableTailComplete = true;
   } finally {
     activeWorkers.delete(session.id);
     workerProgress.clear(session.id);
-    // The scout tail is over (spec persisted or not): release the held
-    // turn record + its journal. Must run for EVERY exit path out of this
-    // tool — a held record with nobody to consume it is what the stale
-    // active_turn watchdog exists to reap, and reaping narrates.
-    await worker.finishTurn(session.id).catch(() => {});
-    // #907: remember where this turn ran so the dev-chat chip survives a
-    // reload, and record the outcome with mode='scout' so a read-only local
-    // turn is distinguishable from a local build in analytics. Both are
-    // best-effort, both run after finishTurn, neither can fail the turn.
-    //
-    // Recorded for a platform scout too, symmetrically with the build path: a
-    // cloud scout genuinely IS the session's most recent turn, so leaving a
-    // stale "ran on Evan's laptop" behind would be a lie. While a lease is
-    // live the chip renders from the lease itself, so this only affects the
-    // past-tense chip a detached machine leaves behind.
+    if (durableTailComplete && durableTurnId && typeof beforeTurnCleanup === 'function') {
+      try {
+        await beforeTurnCleanup({ turnId: durableTurnId, isError });
+      } catch (err) {
+        err.retainActiveTurn = true;
+        throw err;
+      }
+    }
+    if (durableTailComplete && durableTurnId && (!deferTurnCleanup || headless)) {
+      await finishToolTurnCleanup(session.id, durableTurnId, { required: headless });
+    } else {
+      if (!durableTailComplete) {
+        log.warn('sessions', 'Scout tail failed; retaining durable turn for recovery', {
+          sessionId: session.id,
+        });
+      }
+    }
+    // #907: persist the execution venue after the durable worker lifecycle
+    // has either completed or been retained for recovery.
     await localAgent.recordTurnRunner(
       pool, session.id, runLocally ? 'local' : 'platform', lease?.label
     );
@@ -8498,6 +10071,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
     toolResultText: summaryParts.join('\n\n').slice(0, 4000)
       || (isError ? 'Scout did not complete successfully.' : 'Scout finished with no summary.'),
     isError,
+    turnId: durableTurnId,
   };
 }
 
@@ -8527,6 +10101,157 @@ function describeMarkerlessExit(cause) {
 // passes that as `producedOutput`). Interactive turns stay single-shot —
 // a human is present to re-dispatch — and a user-stopped turn is a
 // deliberate end, not a failure to retry.
+
+// ── Shared per-attempt Codex dispatch (plan 7) ─────────────────────────
+// Encapsulates the logical-turn + per-attempt accounting for BOTH the
+// scout and build call sites so a retry cannot be merged into the prior
+// attempt's ledger row (one physical Codex invocation = one attempt) and
+// a retry never reuses a terminal turnUuid. `dispatchOnce(attemptNumber)`
+// is provided by the caller and must itself call worker.execInWorker with
+// the attempt's turnUuid/logicalTurnId/attemptNumber.
+async function runCodexAttemptLoop({
+  pool, session, userId, config, isCodexSession, turnModel,
+  resumeThreadId, resolveRuntime, dispatchOnce, retryPredicate,
+  sendStatus, waitForStopped, prepareRetry, classifyAttemptStatus,
+  containerName, mode = 'build',
+}) {
+  // One logical turn id per coding-tool invocation (plan 7.1); attempt 1
+  // gets attempt_number=1, a retry gets attempt_number=2.
+  const logicalTurnId = crypto.randomUUID();
+  const runtimeContext = await resolveRuntime();
+  if (runtimeContext?.error) return { error: runtimeContext.error, logicalTurnId };
+  if (!runtimeContext) return null; // Claude turn — caller handles it.
+
+  const completeAttempt = async (attempt, result, status, err) => {
+    await agentTurn.completeCodexAttempt({
+      pool,
+      turnUuid: attempt.turnUuid,
+      status,
+      threadId: result?.agentThreadId || null,
+      usageTotal: agentTurn.usageTotalFromResult(result),
+      errorCode: err
+        ? agentTurn.classifyErrorCode(err)
+        : result?.agentRetryFresh ? 'resume_thread_missing' : null,
+      errorDetail: err ? agentTurn.sanitizeError(err) : null,
+    });
+  };
+
+  let lastResult = null;
+  let lastError = null;
+  let attemptNumber = 0;
+  let attemptResumeThreadId = resumeThreadId ?? runtimeContext.resumeThreadId ?? null;
+  let allowRetryPendingForAttempt = false;
+  const statusFor = ({ result = null, error = null, failed = false } = {}) => {
+    const fallback = failed || error ? 'failed' : 'completed';
+    if (typeof classifyAttemptStatus !== 'function') return fallback;
+    const classified = classifyAttemptStatus({ result, error, failed });
+    return ['completed', 'failed', 'cancelled'].includes(classified)
+      ? classified
+      : fallback;
+  };
+  for (;;) {
+    attemptNumber += 1;
+    let attempt;
+    try {
+      attempt = await agentTurn.startCodexAttempt({
+        pool, session, userId, logicalTurnId, attemptNumber,
+        model: runtimeContext.agentModel,
+        reasoningEffort: runtimeContext.agentReasoningEffort,
+        resumeThreadId: attemptResumeThreadId,
+        runtimeContext,
+        allowRetryPending: allowRetryPendingForAttempt,
+        mode,
+      });
+    } catch (startErr) {
+      // plan 8.5 (Commit 6): a stale-version/busy race surfaces as a
+      // structured code so the caller can tell the user the agent context
+      // changed under it (no paid dispatch with stale credentials/model).
+      if (startErr?.code === 'agent_context_changed') {
+        return { error: 'agent_context_changed', errorDetail: agentTurn.sanitizeError(startErr), logicalTurnId };
+      }
+      if (startErr?.code === 'session_busy') {
+        return { error: 'session_busy', errorDetail: agentTurn.sanitizeError(startErr), logicalTurnId };
+      }
+      return { error: 'ledger_start_failed', errorDetail: agentTurn.sanitizeError(startErr), logicalTurnId };
+    }
+
+    let dispatchResult;
+    try {
+      dispatchResult = await dispatchOnce({
+        ...runtimeContext,
+        // execInWorker consumes resumeSessionId; resumeThreadId is also
+        // overridden so custom dispatchers never observe the stale value.
+        resumeThreadId: attemptResumeThreadId,
+        resumeSessionId: attemptResumeThreadId,
+        turnUuid: attempt.turnUuid,
+        logicalTurnId,
+        attemptNumber,
+        journalPath: attempt.journal,
+        // A same-process missing-thread retry leaves attempt one in
+        // tail_pending until startCodexAttempt atomically installs attempt
+        // two's dispatch intent. Persistence stays mandatory at this boundary.
+        requireActiveTurnPersistence: allowRetryPendingForAttempt,
+      });
+    } catch (err) {
+      lastError = err;
+      const observedResult = err?.turnResult || null;
+      await completeAttempt(attempt, observedResult, statusFor({
+        result: observedResult,
+        error: err,
+        failed: true,
+      }), err);
+      throw err;
+    }
+
+    lastResult = dispatchResult;
+    lastError = null;
+    const failed = !!(lastResult?.fatalError || lastResult?.ccIsError
+      || (lastResult?.agentExit != null && lastResult?.agentExit !== 0)
+      || (lastResult?.exitCode != null && lastResult?.exitCode !== 0));
+    // Keep ledger completion outside the dispatch catch. If this required
+    // write fails, retrying it with `result = null` would erase the usage we
+    // just observed and falsely terminalize the attempt as an empty failure.
+    await completeAttempt(attempt, lastResult, statusFor({ result: lastResult, failed }));
+
+    // A stale resume is a runner-to-host retry request for every Codex
+    // turn. Markerless headless retries remain caller-controlled. Attempt
+    // 1 is ALREADY terminal before attempt 2 starts.
+    const retryFresh = lastResult?.agentRetryFresh === true;
+    const retryRequested = retryFresh
+      || (typeof retryPredicate === 'function' && retryPredicate(lastResult));
+    if (!retryRequested) break;
+    // Guard against spinning: exactly one retry.
+    if (attemptNumber >= 2) break;
+    if (typeof sendStatus === 'function') {
+      const status = retryFresh
+        ? 'The saved Codex thread is unavailable — retrying fresh once…'
+        : 'The coding step failed unexpectedly — retrying once…';
+      try { await sendStatus(status); } catch {}
+    }
+    if (!retryFresh && typeof waitForStopped === 'function') {
+      try { await waitForStopped(session.id, containerName); } catch {}
+    }
+    // Retry preparation is also the last stop boundary before attempt two.
+    // A callback returns false when a user stop landed during the status /
+    // wait / durable-state transition; in that case do not create another
+    // ledger row and, most importantly, do not launch another paid request.
+    if (typeof prepareRetry === 'function') {
+      const prepared = await prepareRetry({
+        retryFresh,
+        attempt,
+        logicalTurnId,
+        attemptNumber,
+        result: lastResult,
+      });
+      if (prepared === false) break;
+    }
+    if (retryFresh) attemptResumeThreadId = null;
+    allowRetryPendingForAttempt = retryFresh;
+  }
+  return { result: lastResult, error: lastError, logicalTurnId };
+}
+
+
 function shouldRetryHeadlessTurn(result, stopHandle, producedOutput) {
   if (!result || producedOutput) return false;
   if (stopHandle && stopHandle.stopped) return false;
@@ -8628,8 +10353,61 @@ async function forceStopSession(pool, sessionId, username, handle) {
     await worker.evictWorker(sessionId).catch(
       (err) => log.warn('sessions', 'force stop evict failed', { sessionId, err: err.message })
     );
+    // Give the owning journal consumer a short chance to terminalize with
+    // any usage it already observed. The fallback below is for the wedged
+    // owner this force path exists to rescue.
+    await sleepMs(250);
   }
-  await worker.clearActiveTurn(sessionId).catch(() => {});
+  try {
+    const activeTurn = await turnLifecycle.loadActiveTurn(pool, sessionId);
+    if (activeTurn) {
+      let ledgerReady = true;
+      if (activeTurn.backend === 'codex_openrouter' && activeTurn.turnUuid) {
+        let attempt = await agentTurn.getCodexAttemptRecoveryState({
+          pool,
+          turnUuid: activeTurn.turnUuid,
+        });
+        if (attempt?.status === 'running') {
+          await sleepMs(250);
+          attempt = await agentTurn.getCodexAttemptRecoveryState({
+            pool,
+            turnUuid: activeTurn.turnUuid,
+          });
+        }
+        if (attempt?.status === 'running' || !attempt) {
+          try {
+            await agentTurn.completeCodexAttempt({
+              pool,
+              turnUuid: activeTurn.turnUuid,
+              status: 'cancelled',
+              errorCode: 'user_cancelled',
+              errorDetail: 'Turn was force-stopped by the user.',
+            });
+          } catch (ledgerErr) {
+            ledgerReady = false;
+            const disposition = await recoveryRetry.retainOrQuarantineRecoveryError({
+              pool,
+              sessionId,
+              activeTurn,
+              error: ledgerErr,
+            });
+            log.warn('sessions', disposition.action === 'retry'
+              ? 'Force stop retained durable turn because ledger cancellation failed'
+              : 'Force stop quarantined a turn with a missing ledger attempt', {
+              sessionId, turnUuid: activeTurn.turnUuid, err: ledgerErr.message,
+            });
+          }
+        }
+      }
+      if (ledgerReady) {
+        await worker.clearActiveTurn(sessionId, turnLifecycle.cleanupArgs(activeTurn));
+      }
+    }
+  } catch (err) {
+    log.warn('sessions', 'Force stop could not clear the owned durable turn', {
+      sessionId, err: err.message,
+    });
+  }
   activeWorkers.delete(sessionId);
 
   const byStr = username ? ` by @${username}` : '';
@@ -8753,16 +10531,29 @@ async function runClaudeCodeTool({
   // variant (staging, no PR); everything else (worker exec, push
   // accounting, cost debit) is identical.
   headless = false,
+  deferTurnCleanup = false,
+  beforeTurnCleanup = null,
 }) {
   activeWorkers.add(session.id);
   // #50: wall-clock start for the durationMs persisted on terminal
   // statuses, so the dev-chat "(took Xm Ys)" suffix survives reloads.
   const turnStartedMs = Date.now();
-  // Name the model in the spin-up status so users can see at a glance
-  // that Claude Code is using the model they selected in the dropdown.
-  // Without this, the only place the model is surfaced is the cost
-  // line, which lands much later (fixes #33).
-  const modelLabel = prettyModelLabel(selectedModel);
+  // Name the exact coding-agent model in the spin-up status and reuse that
+  // same provider-neutral identity for progress, transcript, and usage. Codex
+  // sessions use the pinned OpenRouter model and NO Anthropic key.
+  const agentIdentity = codingAgentRuntimeIdentity(session, selectedModel, config);
+  const {
+    isCodex: isCodexSession,
+    model: turnModel,
+    modelLabel,
+  } = agentIdentity;
+  const turnApiKey = isCodexSession ? null : (userApiKey || null);
+  // May switch to the user's local Claude runtime once the lease lookup below
+  // completes. The early stop gate still truthfully names the session-pinned
+  // cloud agent, because no execution venue has been chosen at that point.
+  let executionAgentName = agentIdentity.agentName;
+  let executionAgentMeta = agentIdentity.metadata;
+  let durableTurnId = null;
 
   // #937: the single way this tool ends on a stop — used by all five
   // pre-dispatch gates below AND by the post-run branch, so wording,
@@ -8792,7 +10583,8 @@ async function runClaudeCodeTool({
       : '';
     // #894: no phase-2 wrap-up follows a stop, so this status row is the
     // turn's only pill carrier.
-    await sendStatus(`Claude Code stopped${byStr}${landed}.`, {
+    await sendStatus(`${executionAgentName} stopped${byStr}${landed}.`, {
+      ...executionAgentMeta,
       durationMs: Date.now() - turnStartedMs,
       quickReplies: turnFallbackQuickReplies({ outcome: 'stopped' }),
     });
@@ -8803,7 +10595,7 @@ async function runClaudeCodeTool({
     // pins that). A gate that fires before the dispatch never held one in
     // the first place, and a gate inside the try reaches that finally.
     return {
-      toolResultText: `Claude Code was stopped${byStr} before it finished.${
+      toolResultText: `${executionAgentName} was stopped${byStr} before it finished.${
         commits
           ? ` It had already committed ${commits} change${commits === 1 ? '' : 's'} (${shortSha})`
             + `${result.pushOk ? ' and pushed the branch' : ' but the branch was not pushed'},`
@@ -8813,6 +10605,7 @@ async function runClaudeCodeTool({
       isError: true,
       ccLog: result ? ((result.rawStderr || '').substring(0, 5000) || null) : null,
       stagingUrl: null,
+      turnId: durableTurnId,
     };
   };
 
@@ -8853,13 +10646,20 @@ async function runClaudeCodeTool({
     }
   }
   const runLocally = !!lease;
+  if (runLocally) {
+    executionAgentName = 'Claude Code';
+    executionAgentMeta = { agentBackend: 'claude_code', agentModel: null };
+  }
   await sendStatus(
     runLocally
       ? `Handing this turn to ${lease.label} — your machine, your Claude subscription${discussionBlock ? ' · with issue & proposal discussion' : ''}...`
       : `Spinning up coding agent (${modelLabel}${prodDebug ? ' · prod debug' : ''}${discussionBlock ? ' · with issue & proposal discussion' : ''})...`,
     runLocally
-      ? { runner: 'local', localAgentLabel: lease.label, localMode: 'build' }
-      : undefined
+      ? {
+          ...executionAgentMeta,
+          runner: 'local', localAgentLabel: lease.label, localMode: 'build',
+        }
+      : executionAgentMeta
   );
 
   // A local run needs no worker image, no warm container and no volume: the
@@ -8932,6 +10732,9 @@ dispatching user's personal preferences: follow them wherever they don't
 conflict with the PLATFORM CONVENTIONS block above (which always wins)
 or the repo's own \`CLAUDE.md\` on app-specific matters.`
     : '';
+  const platformIssueHelperNote = isCodexSession
+    ? 'The `usernode-report-platform-issue` helper is NOT available on this backend; do not call it.'
+    : `A build-turn helper \`usernode-report-platform-issue\` is also available (run it via Bash): \`usernode-report-platform-issue "<short title>"\` with the issue detail on stdin. Use it for anything that needs a change OUTSIDE this app's repo — both platform-level breakage (the shared bridge, wallet / native mobile WebView, the staging/preview pipeline, the checks gate) AND missing platform capabilities the app needs (feature requests: a bridge API that doesn't exist, data the platform doesn't expose, a limit blocking a legitimate feature) — see "Platform-level problems & missing capabilities: escalate, don't file workarounds" in the conventions above. It does NOT file anything directly: it posts a draft report card into the dev chat that the user must tap to confirm (or dismiss) before an issue is filed on the platform repo. It de-dupes against open reports and earlier drafts. The one hard rule: never use it for something you can fix in this app itself.`;
   const claudePrompt = `USER REQUEST: "${userMessage}"
 
 CODING TASK (from the Mayor):
@@ -8953,13 +10756,13 @@ is authoritative and overrides CLAUDE.md if they conflict.
 The repo's \`CLAUDE.md\` may reference a hosted copy of the platform
 conventions at \`https://${process.env.USERNODE_DOMAIN || 'social-vibecoding.usernodelabs.org'}/claude.md\` —
 in dev-chat you already have those rules injected above, so ignore
-that instruction here. It's for humans or Claude Code invocations
+that instruction here. It's for humans or coding-agent invocations
 that run against this repo outside the harness.${personalFilesNote}
 
 A read-only helper \`usernode-issues\` is available (run it via Bash) — it prints the repo's open GitHub issues as JSON (\`{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }\`); long bodies are clipped with a "[truncated …]" marker, and \`usernode-issues <number>\` fetches that one issue with its FULL body plus BOTH of its discussion surfaces (\`{ issue, comments, commentsTruncated, usernodeThread?, usernodeThreadTruncated?, note? }\` — \`comments\` are the GitHub comments, \`usernodeThread\` is the issue's Discussion thread on the platform, where people often answer clarifying questions). Consult it if an open issue is relevant to what you're building; do not try to reach GitHub any other way. ${SCREENSHOT_FETCH_NOTE}
 
-A build-turn helper \`usernode-report-platform-issue\` is also available (run it via Bash): \`usernode-report-platform-issue "<short title>"\` with the issue detail on stdin. Use it for anything that needs a change OUTSIDE this app's repo — both platform-level breakage (the shared bridge, wallet / native mobile WebView, the staging/preview pipeline, the checks gate) AND missing platform capabilities the app needs (feature requests: a bridge API that doesn't exist, data the platform doesn't expose, a limit blocking a legitimate feature) — see "Platform-level problems & missing capabilities: escalate, don't file workarounds" in the conventions above. It does NOT file anything directly: it posts a draft report card into the dev chat that the user must tap to confirm (or dismiss) before an issue is filed on the platform repo. It de-dupes against open reports and earlier drafts. The one hard rule: never use it for something you can fix in this app itself.
-${prodDebug ? `
+${platformIssueHelperNote}
+${prodDebug && !isCodexSession ? `
 ${debugAccess.promptBlock()}
 ` : ''}
 INSTRUCTIONS:
@@ -9066,10 +10869,12 @@ path: /another/changed/view
     repoOwner,
     repoName,
     branchName: session.branch_name,
-    anthropicApiKey: userApiKey || null,
     onProgress: (text) => {
-      send('cc_progress', { text });
-      workerProgress.set(session.id, text, { model: selectedModel });
+      send('cc_progress', { text, ...agentIdentity.metadata });
+      workerProgress.set(session.id, text, {
+        model: turnModel,
+        backend: agentIdentity.backend,
+      });
     },
   });
 
@@ -9109,6 +10914,7 @@ path: /another/changed/view
   // branches that emit status events so the two stay in sync.
   const summaryParts = [];
   let isError = false;
+  let durableTailComplete = true;
 
   try {
     // #937 gate 5 of 5 — immediately before the dispatch. Placed ahead of
@@ -9118,7 +10924,7 @@ path: /another/changed/view
     // stop) nor an empty progress card in the transcript.
     if (stopPendingFor(stopHandle)) return stoppedResult();
 
-    await sendStatus('Claude Code is running...');
+    await sendStatus(`${executionAgentName} is running...`, executionAgentMeta);
 
     const heartbeat = setInterval(() => {
       try { res.write(`:heartbeat\n\n`); } catch {}
@@ -9127,7 +10933,7 @@ path: /another/changed/view
     const { rows: progRows } = await pool.query(
       `INSERT INTO chat_session_messages (session_id, role, content, metadata)
        VALUES ($1, 'system', 'Claude Code progress', $2) RETURNING id`,
-      [session.id, JSON.stringify({ progressLog: [] })]
+      [session.id, JSON.stringify({ progressLog: [], ...executionAgentMeta })]
     );
     const progressMsgId = progRows[0].id;
 
@@ -9410,8 +11216,11 @@ path: /another/changed/view
     // progress log, the phase marker, the estimator — must not be able to
     // tell the difference.
     const onAgentProgress = (text) => {
-      send('cc_progress', { text });
-      workerProgress.set(session.id, text, { model: selectedModel });
+      send('cc_progress', { text, ...executionAgentMeta });
+      workerProgress.set(session.id, text, {
+        model: executionAgentMeta.agentModel,
+        backend: executionAgentMeta.agentBackend,
+      });
       {
         const phaseMatch = String(text).trim().match(/^\[([^\]]+)\]$/);
         if (phaseMatch) lastPhase = phaseMatch[1];
@@ -9528,15 +11337,21 @@ path: /another/changed/view
     };
 
     let result;
+    let codexCtx = null;
+    durableTailComplete = false;
     try {
-      const dispatchBuild = () => worker.execInWorker(session.id, {
+      const resumeThreadId = isCodexSession ? (session.agent_thread_id || null) : (session.cc_session_id || null);
+      // Shared dispatcher for BOTH the Codex attempt loop and the Claude
+      // fallback, so the expensive execInWorker options (holdTurnRecord +
+      // the estimator/phase onProgress closure) live in exactly one place.
+      const doBuild = (ctx) => worker.execInWorker(session.id, {
         mode: 'build',
         prompt: claudePrompt,
-        model: selectedModel,
+        model: turnModel,
         commitMsg,
-        resumeSessionId: session.cc_session_id || null,
+        resumeSessionId: resumeThreadId,
         branchName: session.branch_name,
-        anthropicApiKey: userApiKey || null,
+        ...(ctx || {}),
         prodDebug,
         // Hold the durable turn record through the tail below (push heal →
         // PR → staging build → visuals → completion card → Mayor wrap-up).
@@ -9553,15 +11368,103 @@ path: /another/changed/view
         // the local runner shares.
         onProgress: onAgentProgress,
       });
-      result = runLocally ? await dispatchLocalBuild() : await dispatchBuild();
-      // Headless auto-retry: a markerless turn that committed nothing
-      // gets exactly one re-dispatch (the retry wraps the call site, not
-      // execInWorker, so active_turn bookkeeping stays per-attempt).
-      if (headless && shouldRetryHeadlessTurn(result, stopHandle, result.ahead > 0)) {
-        await sendStatus('The coding step failed unexpectedly — retrying once…');
-        await waitForTurnStopped(session.id, containerName);
-        result = await dispatchBuild();
+      if (runLocally) {
+        // Local turns do not enter the platform's Codex attempt ledger and a
+        // retry must stay on the same attached machine.
+        result = await dispatchLocalBuild();
+        if (headless && shouldRetryHeadlessTurn(result, stopHandle, result.ahead > 0)) {
+          await sendStatus('The coding step failed unexpectedly — retrying once…', executionAgentMeta);
+          await waitForTurnStopped(session.id, containerName);
+          result = await dispatchLocalBuild();
+        }
+      } else {
+        // Backend-aware per-attempt dispatch (plan §7): same contract as the
+      // scout path — one logical turn, one agent_turns attempt per physical
+      // worker.execInWorker, and a headless auto-retry as attempt_number=2
+      // that never overwrites the first attempt's usage.
+      const routed = await runCodexAttemptLoop({
+        pool, session, userId: req.user.id, config, isCodexSession,
+        turnModel, resumeThreadId, mode: 'build',
+        resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
+          pool, session, userId: req.user.id, model: turnModel,
+          resumeThreadId, config,
+        }),
+        dispatchOnce: (ctx) => doBuild(ctx),
+        retryPredicate: (r) => headless && shouldRetryHeadlessTurn(r, stopHandle, r.ahead > 0),
+        sendStatus: async (msg) => { await sendStatus(msg, executionAgentMeta); },
+        waitForStopped: waitForTurnStopped,
+        prepareRetry: async (retry) => {
+          if (stopPendingFor(stopHandle)) return false;
+          if (retry.retryFresh) {
+            await worker.markTurnRetryPending(session.id, {
+              turnUuid: retry.attempt.turnUuid,
+              logicalTurnId: retry.logicalTurnId,
+              attemptNumber: retry.attemptNumber,
+            });
+          } else {
+            if (!retry.result?.turnId
+                || !await worker.finishTurn(session.id, { turnId: retry.result.turnId })) return false;
+          }
+          if (stopPendingFor(stopHandle)) return false;
+          worker.clearPendingStop(session.id);
+          return true;
+        },
+        classifyAttemptStatus: ({ failed }) => stopPendingFor(stopHandle)
+          ? 'cancelled'
+          : (failed ? 'failed' : 'completed'),
+        containerName,
+      });
+
+      if (routed?.error) {
+        codexCtx = { error: routed.error };
+        durableTurnId = routed.logicalTurnId || null;
+        isError = true;
+        // SSE is already open; terminate through the SSE protocol (review #5).
+        const code = routed.error;
+        const msg = code === 'backend_disabled' || code === 'backend_not_available'
+          ? 'Codex/OpenRouter is not available for your account right now.'
+          : code === 'model_required'
+            ? 'Pick a Codex model in Settings for this session.'
+            : code === 'invalid_base_url'
+              ? 'The OpenRouter endpoint is misconfigured.'
+              : code === 'ledger_start_failed'
+                ? 'Could not start the Codex turn. Please retry.'
+                : code === 'agent_context_changed'
+                  ? 'The agent configuration changed while starting this turn. Please retry.'
+                  : code === 'session_busy'
+                    ? 'The session became busy. Stop the current turn before retrying.'
+                    : 'Add your OpenRouter API key in Settings to use Codex.';
+        await sendStatus(msg, executionAgentMeta);
+        if (stopHandle) {
+          stopHandle.stopped = true;
+          stopHandle.stoppedBy = 'agent_error';
+        }
+        if (typeof send === 'function') send('error', { code, error: msg });
+        durableTailComplete = true;
+        return { toolResultText: msg, isError: true, turnId: durableTurnId };
       }
+      if (routed === null) {
+        // Claude session — legacy combined path, keep the headless retry.
+        result = await doBuild({});
+        if (headless && shouldRetryHeadlessTurn(result, stopHandle, result.ahead > 0)) {
+          await sendStatus('The coding step failed unexpectedly — retrying once…', executionAgentMeta);
+          await waitForTurnStopped(session.id, containerName);
+          if (!result.turnId || !await worker.finishTurn(session.id, { turnId: result.turnId })) {
+            throw new Error('Could not durably finish the first build attempt before retry');
+          }
+          result = await doBuild({});
+        }
+      } else {
+        result = routed.result;
+      }
+      }
+    } catch (e) {
+      // A thrown dispatch must still terminalize any in-flight Codex ledger
+      // attempt (review P1): runCodexAttemptLoop completes each attempt in
+      // its own try/finally, and a throw after dispatch leaves it failed. An
+      // attempt-start failure is surfaced through routed.error instead of a
+      // throw. Rethrow any residual so the caller's stop-branch runs.
+      throw e;
     } finally {
       clearInterval(heartbeat);
       // Belt-and-braces (#891): a markerless turn (fatal error, container
@@ -9595,6 +11498,8 @@ path: /another/changed/view
       }
     }
 
+    durableTurnId = result?.turnId || null;
+
     const newCcId = result.sessionId || result.initSessionId || null;
     if (newCcId && newCcId !== session.cc_session_id) {
       await pool.query(
@@ -9602,6 +11507,16 @@ path: /another/changed/view
         [newCcId, session.id]
       ).catch(() => {});
       session.cc_session_id = newCcId;
+    }
+
+    // Persist the Codex thread id for resume on the next turn (review F5).
+    const buildAgentThreadId = result.agentThreadId || null;
+    if (buildAgentThreadId && buildAgentThreadId !== session.agent_thread_id) {
+      await pool.query(
+        'UPDATE chat_sessions SET agent_thread_id = $1 WHERE id = $2',
+        [buildAgentThreadId, session.id]
+      ).catch(() => {});
+      session.agent_thread_id = buildAgentThreadId;
     }
 
     // If the user stopped mid-run we want to BAIL before push/PR/staging
@@ -9620,16 +11535,17 @@ path: /another/changed/view
       // hanging next to "Claude Code stopped." — idempotent, so this is
       // a no-op when teardown already happened.
       stopEstimator('stopped');
+      durableTailComplete = true;
       return stoppedResult(result);
     }
 
     ccLog = (result.rawStderr || '').substring(0, 5000) || null;
     if (ccLog?.trim()) {
-      send('cc_log', { log: ccLog });
+      send('cc_log', { log: ccLog, ...executionAgentMeta });
       await pool.query(
         `INSERT INTO chat_session_messages (session_id, role, content, metadata)
          VALUES ($1, 'system', $2, $3)`,
-        [session.id, 'Claude Code log', JSON.stringify({ ccLog })]
+        [session.id, `${executionAgentName} log`, JSON.stringify({ ccLog, ...executionAgentMeta })]
       ).catch(() => {});
     }
 
@@ -9655,7 +11571,7 @@ path: /another/changed/view
     // [done] after a successful platform-side re-push heal (the card's
     // collapsed label is the log's LAST line).
     const appendTurnProgressLine = (text) => {
-      send('cc_progress', { text });
+      send('cc_progress', { text, ...executionAgentMeta });
       return pool.query(
         `UPDATE chat_session_messages SET metadata = jsonb_set(
           metadata, '{progressLog}',
@@ -9691,26 +11607,26 @@ path: /another/changed/view
     if (result.fatalError) {
       isError = true;
       const msg = `Worker error: ${result.fatalError.substring(0, 200)}`;
-      await sendStatus(msg);
+      await sendStatus(msg, executionAgentMeta);
       summaryParts.push(msg);
     } else if (result.ccIsError && !hasChanges) {
       isError = true;
-      const msg = `Claude Code error: ${(ccText || 'unknown').substring(0, 200)}`;
-      await sendStatus(msg);
+      const msg = `${executionAgentName} error: ${(ccText || 'unknown').substring(0, 200)}`;
+      await sendStatus(msg, executionAgentMeta);
       summaryParts.push(msg);
     } else if (!hasChanges) {
       isError = true;
       let msg;
       if (result.exitCode === 0) {
-        msg = 'No changes were made by Claude Code.';
+        msg = `No changes were made by ${executionAgentName}.`;
       } else if (result.exitCode === -1 || result.exitCode == null) {
         // Markerless turn — say WHY in plain terms instead of a bare
         // "-1" (which also normalizes the old "code null" rendering).
         msg = `${describeMarkerlessExit(result.markerlessCause)} No changes were made.`;
       } else {
-        msg = `Claude Code exited with code ${result.exitCode} — no changes were made.`;
+        msg = `${executionAgentName} exited with code ${result.exitCode} — no changes were made.`;
       }
-      await sendStatus(msg);
+      await sendStatus(msg, executionAgentMeta);
       summaryParts.push(msg);
     } else if (!result.pushOk && !(await healPush())) {
       // Terminal push failure (heal included): the branch on GitHub is
@@ -9721,7 +11637,7 @@ path: /another/changed/view
       // re-pushes it (#295), so nothing is lost.
       isError = true;
       const msg = 'Push to GitHub failed — your changes are committed in the session\'s worker but not on GitHub. Retry your request to re-push and open the PR.';
-      await sendStatus(msg, { error: msg });
+      await sendStatus(msg, { ...executionAgentMeta, error: msg });
       summaryParts.push(msg);
     } else if (headless) {
       // Success path, headless variant (#155/#183): the commit was already
@@ -9858,6 +11774,11 @@ path: /another/changed/view
         session.testing_paths = testing.testingPaths || [];
       }
 
+      // The external-effect receipt stores this payer as its pending intent,
+      // so recovery can settle an ambiguous call without guessing from its
+      // own keyless boot context.
+      const prMetadataBillingByok = !!userApiKey;
+
       const wasNewPR = !session.pr_number;
       let prResult = null;
       try {
@@ -9867,8 +11788,12 @@ path: /another/changed/view
           broadcast: (event, data) => send(event, data),
           apiKey: userApiKey,
           userId: req.user.id,
+          effectTurnId: durableTurnId,
+          effectSessionId: session.id,
+          effectBillingByok: prMetadataBillingByok,
         });
       } catch (prErr) {
+        if (prErr?.retainActiveTurn) throw prErr;
         // applyPrMetadata throws typed errors ('github_unavailable' — a
         // GitHub-side outage like 2026-07-24's create-PR 500s — and, in
         // principle, 'no_commits'). None of them may abort the turn: the
@@ -9885,20 +11810,50 @@ path: /another/changed/view
         }
       }
       if (prResult && wasNewPR) {
-        await sendStatus(`PR #${prResult.prNumber} created`);
+        const prStatus = `PR #${prResult.prNumber} created`;
+        if (result.turnId) {
+          const receipt = await turnEffects.runDbEffect({
+            pool,
+            turnId: result.turnId,
+            effectKey: 'pr_opened_announcement',
+            sessionId: session.id,
+            run: async (client) => {
+              await client.query(
+                `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+                 VALUES ($1, 'system', $2, $3)`,
+                [session.id, prStatus, JSON.stringify({})],
+              );
+              await client.query(
+                `INSERT INTO events (user_id, app_id, session_id, event_type, metadata)
+                 VALUES ($1, $2, $3, $4, $5::jsonb)`,
+                [
+                  req.user.id,
+                  session.app_id,
+                  session.id,
+                  events.EVENT_TYPES.PR_OPENED,
+                  JSON.stringify({ prNumber: prResult.prNumber }),
+                ],
+              );
+              return { prNumber: prResult.prNumber };
+            },
+          });
+          if (receipt.applied) send('status', { text: prStatus });
+        } else {
+          await sendStatus(prStatus);
+          events.record(pool, {
+            type: events.EVENT_TYPES.PR_OPENED,
+            userId: req.user.id,
+            appId: session.app_id,
+            sessionId: session.id,
+            metadata: { prNumber: prResult.prNumber },
+          });
+        }
         summaryParts.push(`Opened PR #${prResult.prNumber}: ${prResult.prUrl}`);
-        events.record(pool, {
-          type: events.EVENT_TYPES.PR_OPENED,
-          userId: req.user.id,
-          appId: session.app_id,
-          sessionId: session.id,
-          metadata: { prNumber: prResult.prNumber },
-        });
         // Tail milestone: a resume must not open a second PR-opened event
         // (applyPrMetadata itself is update-safe once pr_number is set).
         await worker.noteTailMilestone(session.id, {
           prNumber: prResult.prNumber, prOpenedEventRecorded: true,
-        });
+        }, { turnId: durableTurnId });
       } else if (session.pr_number && !wasNewPR) {
         summaryParts.push(`Pushed to existing PR #${session.pr_number}.`);
       }
@@ -9948,7 +11903,7 @@ path: /another/changed/view
         // ~5 minutes.
         await worker.noteTailMilestone(session.id, {
           stagingUrl: stagingResult.stagingUrl,
-        });
+        }, { turnId: durableTurnId });
 
         // Make one real end-to-end request through the edge now that
         // staging_url is persisted and BEFORE emitting `staging_ready`
@@ -9999,7 +11954,11 @@ path: /another/changed/view
           // so claim it up front — a crash between the stamp and the
           // delete leaves at worst an unannounced reset, which the next
           // push redoes anyway.
-          await worker.noteTailMilestone(session.id, { votesResetFor: commitHash });
+          await worker.noteTailMilestone(
+            session.id,
+            { votesResetFor: commitHash },
+            { turnId: durableTurnId },
+          );
           // #788: the new commit may have added or removed a name in
           // dapp.json's `admins` block, so re-classify alongside the
           // vote reset. Best-effort (swallows GitHub failures) and
@@ -10111,13 +12070,21 @@ path: /another/changed/view
     // user's own key by the worker, so they land in the display-only
     // byok bucket instead of the capped one (#119 — this site used to
     // debit BYOK runs against the platform limit by mistake).
-    if (result.costUsd) {
+    if (isCodexSession) {
+      // Codex/OpenRouter spend is billed to the user's OpenRouter account
+      // directly (review #3) — never the Anthropic llm_usage ledger.
+      if (result.costUsd) {
+        send('usage', { costCents: Math.round(result.costUsd * 100), model: `codex-openrouter/${turnModel}`, byok: true });
+      }
+    } else if (result.costUsd) {
       const ccCostCents = Math.round(result.costUsd * 100);
       // #664: split across buckets — the worker proxy may have switched
       // this platform-dispatched turn onto the owner's key mid-run.
       const split = await limits.settleTurnSpend(pool, req.user.id, ccCostCents, {
         turnByok: !!userApiKey,
         byokObservedCents: worker.getTurnByokCents(session.id),
+        turnId: result.turnId || null,
+        sessionId: session.id,
       });
       if (split.platformCents > 0) send('usage', { costCents: split.platformCents, model: `claude-code/${selectedModel}`, byok: false });
       if (split.byokCents > 0) send('usage', { costCents: split.byokCents, model: `claude-code/${selectedModel}`, byok: true });
@@ -10134,10 +12101,10 @@ path: /another/changed/view
         ? 'success'
         : ((result.fatalError || result.ccIsError) ? 'error' : 'no_changes');
       let statusText = ccOutcome === 'success'
-        ? 'Claude Code finished'
+        ? `${executionAgentName} finished`
         : ccOutcome === 'no_changes'
-          ? 'Claude Code made no changes'
-          : 'Claude Code did not complete';
+          ? `${executionAgentName} made no changes`
+          : `${executionAgentName} did not complete`;
       // #907: name the machine and say plainly that the platform did not pay
       // for the coding phase. The scout path's counterpart reads "Drafted on
       // …"; the two together are how a reader of the transcript tells a local
@@ -10145,41 +12112,69 @@ path: /another/changed/view
       if (runLocally) {
         statusText += ` Coding done on ${lease.label} — no Usernode credits used.`;
       }
-      await sendStatus(statusText, {
+      const completionMeta = {
+        ...executionAgentMeta,
         ccOutput: ccText,
         ccOutcome,
         durationMs: Date.now() - turnStartedMs,
         ...(runLocally
           ? { runner: 'local', localAgentLabel: lease.label, localMode: 'build' }
           : {}),
-      });
+      };
+      if (result.turnId) {
+        const receipt = await turnEffects.runDbEffect({
+          pool,
+          turnId: result.turnId,
+          effectKey: 'completion_row',
+          sessionId: session.id,
+          run: async (client) => {
+            await client.query(
+              `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+               VALUES ($1, 'system', $2, $3)`,
+              [session.id, statusText, JSON.stringify(completionMeta)],
+            );
+            return { persisted: true };
+          },
+        });
+        if (receipt.applied) send('status', { text: statusText, ...completionMeta });
+      } else {
+        await sendStatus(statusText, completionMeta);
+      }
       // Tail milestone: the agent's own summary card is on the transcript.
       // A resumed tail must not post a second one (finalizeRecoveredTurn's
       // persistCompletionRow is otherwise unconditional).
-      await worker.noteTailMilestone(session.id, { completionRowPosted: true });
+      await worker.noteTailMilestone(
+        session.id,
+        { completionRowPosted: true },
+        { turnId: durableTurnId },
+      );
       // Prepend CC's own description so the Mayor leads with what was
       // actually built, with our outcome bullets as supplementary context.
       summaryParts.unshift(`What the agent did:\n${ccText}`);
     }
+    durableTailComplete = true;
   } finally {
     activeWorkers.delete(session.id);
     workerProgress.clear(session.id);
-    // The tail is over — release the held turn record and its journal.
-    // Deliberately in the `finally`: every exit path out of this tool
-    // (stop, staging failure, a throw in the PR block) must release it,
-    // or the stale-active_turn watchdog reaps the row 5 minutes later and
-    // narrates an interruption that didn't happen.
-    //
-    // NOTE the ordering with the Mayor wrap-up: phase 2 runs in the chat
-    // handler AFTER this tool returns, so a restart in that last window
-    // is covered by the resume's own `wrapUpPosted` check rather than by
-    // this record. The window is seconds, and re-issuing a wrap-up is the
-    // benign direction to fail in.
-    await worker.finishTurn(session.id).catch(() => {});
-    // #907: remember where this turn ran so the dev-chat "Running on your
-    // machine" chip survives a reload, and record the outcome for analytics.
-    // Both are best-effort and neither can fail the turn — and both run
-    // AFTER finishTurn so nothing can delay releasing the held record.
+    if (durableTailComplete && durableTurnId && typeof beforeTurnCleanup === 'function') {
+      try {
+        await beforeTurnCleanup({ turnId: durableTurnId, isError });
+      } catch (err) {
+        err.retainActiveTurn = true;
+        throw err;
+      }
+    }
+    if (durableTailComplete && durableTurnId && (!deferTurnCleanup || headless)) {
+      await finishToolTurnCleanup(session.id, durableTurnId, { required: headless });
+    } else {
+      if (!durableTailComplete) {
+        log.warn('sessions', 'Build tail failed; retaining durable turn for recovery', {
+          sessionId: session.id,
+        });
+      }
+    }
+    // #907: persist the execution venue after the durable worker lifecycle
+    // has either completed or been retained for recovery.
     await localAgent.recordTurnRunner(
       pool, session.id, runLocally ? 'local' : 'platform', lease?.label
     );
@@ -10208,11 +12203,20 @@ path: /another/changed/view
   }
 
   const toolResultText = summaryParts.join('\n\n').slice(0, 4000)
-    || (isError ? 'Claude Code did not complete successfully.' : 'Claude Code finished with no summary.');
+    || (isError
+      ? `${executionAgentName} did not complete successfully.`
+      : `${executionAgentName} finished with no summary.`);
   // commitSha is exposed (in addition to ccLog/stagingUrl) for the
   // caller's bookkeeping (PR card metadata, etc.). Null if CC made no
   // changes.
-  return { toolResultText, ccLog, stagingUrl, isError, commitSha: commitHash || null };
+  return {
+    toolResultText,
+    ccLog,
+    stagingUrl,
+    isError,
+    commitSha: commitHash || null,
+    turnId: durableTurnId,
+  };
 }
 
 // `prodDebug` (default false — headless call sites never set it): the
@@ -10310,7 +12314,7 @@ If the user's next request is a DISTINCT, separate change — a new feature or f
   return `You are the Mayor — a friendly project manager for the app "${appName}" on Usernode Social Vibecoding.
 
 YOUR ROLE:
-You talk to the user in plain English and decide whether their latest message needs the coding agent (Claude Code) to actually edit the repo, OR needs spec-stage planning before any code is written. You are NOT a developer — never write code, file contents, diffs, or implementation details. Keep replies to 1-4 sentences.
+You talk to the user in plain English and decide whether their latest message needs the session's selected coding agent to actually edit the repo, OR needs spec-stage planning before any code is written. You are NOT a developer — never write code, file contents, diffs, or implementation details. Keep replies to 1-4 sentences.
 
 THE SPEC DOC:
 Every session has a markdown SPEC DOC that the user can read in the dev-chat spec viewer (a side-panel they open via the spec preview cards in the chat). It is your collaborative working surface for planning before code is written. The current spec is included verbatim below in the CURRENT SPEC DOC block — refer to it whenever you discuss or summarize the spec. The viewer is read-only: the user cannot hand-edit the spec, so all revisions go through you — and YOU never edit the spec in-process either. ALL spec writing and revising, however small, is done by dispatching the scout (dispatch_scout), which reads the repo and rewrites the doc; you only relay what the user wants changed. When they're happy with the spec they'll ask you to dispatch the coding agent in chat — you don't need to call dispatch_claude_code just because the spec is done; the user owns that decision.
@@ -10534,4 +12538,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine };
+module.exports = { runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError };

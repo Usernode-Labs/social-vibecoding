@@ -223,10 +223,15 @@ test('app.js rewrites a legacy #admin/topochain address, sub-tab and all', () =>
     appJs.indexOf("parts[0] === 'admin'") + 1400);
   assert.match(branch, /_adminSection === 'topochain'/, 'the legacy section key is recognised');
   assert.match(branch, /_adminSection = 'seasons';/, 'and mapped to the canonical one');
-  // parts[2] is the sub-tab, owned by AdminTopochain — dropping it would
-  // silently demote every deep bookmark to the section's default screen.
-  assert.match(branch, /parts\[2\] \? `#admin\/seasons\/\$\{parts\[2\]\}` : `?'?#admin\/seasons/,
-    'the sub-tab survives the rewrite');
+  // Everything from parts[2] on is owned by AdminTopochain — the sub-tab
+  // AND the Season-events tail under it
+  // (season-events/<eventId>/new-challenge/<templateId>). Keeping only
+  // parts[2] would demote a deep bookmark to the tab's default screen;
+  // dropping it entirely would demote it to the section's.
+  assert.match(branch, /const tail = parts\.slice\(2\)\.join\('\/'\);/,
+    'the whole tail below the section segment is carried over');
+  assert.match(branch, /tail \? `#admin\/seasons\/\$\{tail\}` : `?'?#admin\/seasons/,
+    'and spliced back under the canonical prefix');
   assert.match(branch, /history\.replaceState/, 'the address bar self-heals rather than keeping a dead path');
 });
 

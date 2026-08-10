@@ -96,6 +96,8 @@ test('keeps the renderable metadata: progress log, agent summary, spec preview, 
       specVersion: 3,
       specLines: 12,
       inheritedFrom: 55,
+      agentBackend: 'codex_openrouter',
+      agentModel: 'openai/gpt-5.3-codex',
     },
   }));
   assert.deepStrictEqual(out.metadata.progressLog, ['Reading app-view.js', 'Editing the card renderer']);
@@ -105,6 +107,8 @@ test('keeps the renderable metadata: progress log, agent summary, spec preview, 
   assert.strictEqual(out.metadata.inheritedFrom, 55);
   assert.strictEqual(out.metadata.prNumber, 931);
   assert.strictEqual(out.metadata.changesReady, true);
+  assert.strictEqual(out.metadata.agentBackend, 'codex_openrouter');
+  assert.strictEqual(out.metadata.agentModel, 'openai/gpt-5.3-codex');
 });
 
 test('attachments keep name/kind/size and LOSE the id (no reachable bytes URL)', () => {

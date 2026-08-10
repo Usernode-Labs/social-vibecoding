@@ -29,6 +29,13 @@ const BACKENDS = {
     runner: '/usr/local/bin/run-cc.sh',
     claudeLike: true,
   },
+  codex_openrouter: {
+    id: 'codex_openrouter',
+    label: 'Codex (OpenRouter BYOK)',
+    provider: 'openrouter',
+    runner: '/usr/local/bin/run-codex-agent.sh',
+    claudeLike: false,
+  },
 };
 
 function isBackend(b) {

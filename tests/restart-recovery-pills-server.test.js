@@ -44,7 +44,7 @@ require.cache[workerPath].exports = {
   isWorkerExecuting: async () => workerExecuting,
   watchWorker: async () => ({}),
   stopTurn: async () => false,
-  clearActiveTurn: async () => {},
+  clearActiveTurn: async () => true,
 };
 
 // ── ws stub (restoreMissingQuickReplies broadcasts its breadcrumb) ──────
@@ -188,7 +188,7 @@ test('the recovered-turn success tail picks its wrap-up pill kind from the outco
 // #896: a sync turn is system work with no Mayor reply on the live path
 // either — recovering one must not manufacture a chat message.
 test('a recovered sync turn gets no Mayor wrap-up', () => {
-  assert.match(SERVER_SRC, /activeTurn\.mode === 'sync'/,
+  assert.match(SERVER_SRC, /recoveryActiveTurn\.mode === 'sync'/,
     'sync mode is branched explicitly, not lumped in with build');
   assert.match(SERVER_SRC, /Recovered sync turn — no Mayor wrap-up/,
     'the sync branch is logged rather than surfaced in chat');

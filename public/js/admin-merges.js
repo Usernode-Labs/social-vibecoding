@@ -65,8 +65,8 @@ const AdminMerges = (() => {
     blocked:            { label: 'Blocked',              cls: 'bg-amber-500/20 text-amber-600 dark:text-amber-300' },
     conflict_resolving: { label: 'Conflict — resolving', cls: 'bg-sky-500/20 text-sky-600 dark:text-sky-300', spin: true },
     conflict_failed:    { label: 'Conflict — failed',    cls: 'bg-red-500/20 text-red-600 dark:text-red-300' },
-    awaiting_github:    { label: 'Awaiting GitHub',      cls: 'bg-zinc-500/20 text-zinc-600 dark:text-zinc-300' },
-    noop:               { label: 'No-op',                cls: 'bg-zinc-500/20 text-zinc-500 dark:text-zinc-400' },
+    awaiting_github:    { label: 'Awaiting GitHub',      cls: 'bg-gray-500/20 text-gray-600 dark:text-gray-300' },
+    noop:               { label: 'No-op',                cls: 'bg-gray-500/20 text-gray-500 dark:text-gray-400' },
     error:              { label: 'Error',                cls: 'bg-red-500/20 text-red-600 dark:text-red-300' },
     // The proposal's PR is closed on GitHub and couldn't be reopened —
     // terminal, distinct from a conflict.
@@ -76,15 +76,15 @@ const AdminMerges = (() => {
     // container broke reports the same thing a failed merge does.)
     passing:            { label: 'Checks passing',       cls: 'bg-green-500/20 text-green-600 dark:text-green-300' },
     failing:            { label: 'Checks failing',       cls: 'bg-red-500/20 text-red-600 dark:text-red-300' },
-    skipped:            { label: 'Checks skipped',       cls: 'bg-zinc-500/20 text-zinc-500 dark:text-zinc-400' },
+    skipped:            { label: 'Checks skipped',       cls: 'bg-gray-500/20 text-gray-500 dark:text-gray-400' },
   };
   function badge(status) {
-    const b = BADGES[status] || { label: status || '—', cls: 'bg-zinc-500/20 text-zinc-600 dark:text-zinc-300' };
+    const b = BADGES[status] || { label: status || '—', cls: 'bg-gray-500/20 text-gray-600 dark:text-gray-300' };
     const spin = b.spin ? '<span class="inline-block w-2 h-2 mr-1 rounded-full bg-current spin align-middle"></span>' : '';
     return `<span class="text-[11px] font-semibold px-2 py-0.5 rounded ${b.cls}">${spin}${esc(b.label)}</span>`;
   }
   const LEVEL_DOT = {
-    info:  'bg-zinc-400',
+    info:  'bg-gray-400',
     warn:  'bg-amber-400',
     error: 'bg-red-400',
   };
@@ -111,19 +111,19 @@ const AdminMerges = (() => {
       : run.kind === 'checks' ? 'checks'
       : 'merge';
     const el = document.createElement('div');
-    el.className = 'border border-zinc-200 dark:border-zinc-800 rounded-lg bg-zinc-50 dark:bg-zinc-900 overflow-hidden';
+    el.className = 'border border-gray-200 dark:border-gray-800 rounded-lg bg-gray-50 dark:bg-gray-900 overflow-hidden';
     el.innerHTML = `
-      <button type="button" class="run-head w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-zinc-100 dark:hover:bg-zinc-800/60">
-        <span class="chev text-zinc-500 transition-transform">▶</span>
+      <button type="button" class="run-head w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-800/60">
+        <span class="chev text-gray-500 transition-transform">▶</span>
         <span class="flex-1 min-w-0">
           <span class="block text-sm font-medium truncate">${esc(run.app_name || run.app_slug || 'unknown app')} · ${esc(pr)}${title}</span>
-          <span class="block text-xs text-zinc-500">
+          <span class="block text-xs text-gray-500">
             ${esc(kindLabel)} · trigger: ${esc(run.trigger || '—')} · ${run.step_count != null ? run.step_count + ' steps · ' : ''}${esc(fmtTime(run.started_at))} · ${esc(fmtDuration(run.started_at, run.ended_at))}
           </span>
         </span>
         ${badge(run.status)}
       </button>
-      <div class="run-body hidden border-t border-zinc-200 dark:border-zinc-800 px-4 py-3"></div>`;
+      <div class="run-body hidden border-t border-gray-200 dark:border-gray-800 px-4 py-3"></div>`;
 
     const head = el.querySelector('.run-head');
     const body = el.querySelector('.run-body');
@@ -139,7 +139,7 @@ const AdminMerges = (() => {
       body.classList.remove('hidden');
       chev.style.transform = 'rotate(90deg)';
       if (!loaded) {
-        body.innerHTML = '<div class="text-xs text-zinc-500">Loading steps…</div>';
+        body.innerHTML = '<div class="text-xs text-gray-500">Loading steps…</div>';
         try {
           const data = await getJSON(`/api/debug/merge-runs/${run.id}${qs()}`);
           body.innerHTML = stepsHtml(data.steps || []);
@@ -154,7 +154,7 @@ const AdminMerges = (() => {
   }
 
   function stepsHtml(steps) {
-    if (!steps.length) return '<div class="text-xs text-zinc-500">No steps recorded.</div>';
+    if (!steps.length) return '<div class="text-xs text-gray-500">No steps recorded.</div>';
     return '<ol class="space-y-1.5">' + steps.map((s) => {
       const dot = LEVEL_DOT[s.level] || LEVEL_DOT.info;
       const hasDetail = s.detail && Object.keys(s.detail).length > 0;
@@ -164,20 +164,20 @@ const AdminMerges = (() => {
       // a run tells you which phase is the slow one at a glance.
       const ms = s.detail && typeof s.detail.durationMs === 'number' ? s.detail.durationMs : null;
       const dur = ms == null ? '' :
-        `<span class="text-[10px] font-mono px-1 rounded bg-zinc-200/70 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300">${
+        `<span class="text-[10px] font-mono px-1 rounded bg-gray-200/70 dark:bg-gray-800 text-gray-600 dark:text-gray-300">${
           esc(ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's')}</span>`;
       return `<li class="text-sm">
         <div class="flex items-start gap-2">
           <span class="mt-1.5 w-2 h-2 rounded-full ${dot} flex-shrink-0"></span>
           <div class="flex-1 min-w-0">
             <div class="flex items-baseline gap-2">
-              <span class="text-[10px] uppercase tracking-wide text-zinc-500 font-mono">${esc(s.phase || '')}</span>
-              <span class="text-[10px] text-zinc-500 dark:text-zinc-600">${esc(fmtTime(s.created_at))}</span>
+              <span class="text-[10px] uppercase tracking-wide text-gray-500 font-mono">${esc(s.phase || '')}</span>
+              <span class="text-[10px] text-gray-500 dark:text-gray-600">${esc(fmtTime(s.created_at))}</span>
               ${dur}
             </div>
-            <div class="${s.level === 'error' ? 'text-red-600 dark:text-red-300' : s.level === 'warn' ? 'text-amber-600 dark:text-amber-300' : 'text-zinc-700 dark:text-zinc-200'}">${esc(s.message || '')}</div>
-            ${hasDetail ? `<button type="button" class="detail-toggle text-[11px] text-violet-500 dark:text-violet-400 hover:text-violet-400 dark:hover:text-violet-300 mt-0.5">detail</button>
-              <pre class="detail-body hidden step-detail mt-1 text-[11px] text-zinc-500 dark:text-zinc-400 bg-zinc-100 dark:bg-zinc-950 rounded p-2 border border-zinc-200 dark:border-zinc-800">${detailJson}</pre>` : ''}
+            <div class="${s.level === 'error' ? 'text-red-600 dark:text-red-300' : s.level === 'warn' ? 'text-amber-600 dark:text-amber-300' : 'text-gray-700 dark:text-gray-200'}">${esc(s.message || '')}</div>
+            ${hasDetail ? `<button type="button" class="detail-toggle text-[11px] text-indigo-500 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 dark:hover:text-indigo-300 mt-0.5">detail</button>
+              <pre class="detail-body hidden step-detail mt-1 text-[11px] text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-950 rounded p-2 border border-gray-200 dark:border-gray-800">${detailJson}</pre>` : ''}
           </div>
         </div>
       </li>`;
@@ -293,32 +293,32 @@ const AdminMerges = (() => {
   const MARKUP = `
     <div id="admin-merges-root">
       <h2 class="text-lg font-semibold mb-4">Merge debug</h2>
-      <div id="admin-merges-gate" class="hidden text-zinc-500 text-center py-20"></div>
+      <div id="admin-merges-gate" class="hidden text-gray-500 text-center py-20"></div>
 
       <main id="admin-merges-content" class="hidden space-y-4">
-        <p class="text-sm text-zinc-500">
+        <p class="text-sm text-gray-500">
           Step-by-step trace of every PR merge and automatic conflict resolution.
           Each row is one merge attempt; expand it for the chronological steps.
         </p>
 
         <!-- Filter bar -->
-        <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-3 border border-zinc-200 dark:border-zinc-800
+        <section class="${AdminUI.card} p-3
                         flex flex-wrap items-end gap-3">
-          <label class="flex flex-col text-xs text-zinc-500 dark:text-zinc-400">App
-            <select id="admin-merges-f-app" class="mt-1 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded px-2 py-1 text-sm text-zinc-900 dark:text-zinc-100">
+          <label class="flex flex-col text-xs text-gray-500 dark:text-gray-400">App
+            <select id="admin-merges-f-app" class="mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-sm text-gray-900 dark:text-gray-100">
               <option value="">All apps</option>
             </select>
           </label>
-          <label class="flex flex-col text-xs text-zinc-500 dark:text-zinc-400">PR #
+          <label class="flex flex-col text-xs text-gray-500 dark:text-gray-400">PR #
             <input id="admin-merges-f-pr" type="text" inputmode="numeric" placeholder="any"
-                   class="mt-1 w-24 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded px-2 py-1 text-sm">
+                   class="mt-1 w-24 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-sm">
           </label>
-          <label class="flex flex-col text-xs text-zinc-500 dark:text-zinc-400">Session id
+          <label class="flex flex-col text-xs text-gray-500 dark:text-gray-400">Session id
             <input id="admin-merges-f-session" type="text" inputmode="numeric" placeholder="any"
-                   class="mt-1 w-24 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded px-2 py-1 text-sm">
+                   class="mt-1 w-24 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-sm">
           </label>
-          <label class="flex flex-col text-xs text-zinc-500 dark:text-zinc-400">Outcome
-            <select id="admin-merges-f-outcome" class="mt-1 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded px-2 py-1 text-sm">
+          <label class="flex flex-col text-xs text-gray-500 dark:text-gray-400">Outcome
+            <select id="admin-merges-f-outcome" class="mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-sm">
               <option value="">Any</option>
               <option value="running">Running</option>
               <option value="merged">Merged</option>
@@ -334,8 +334,8 @@ const AdminMerges = (() => {
               <option value="skipped">Checks skipped</option>
             </select>
           </label>
-          <label class="flex flex-col text-xs text-zinc-500 dark:text-zinc-400">Kind
-            <select id="admin-merges-f-kind" class="mt-1 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded px-2 py-1 text-sm">
+          <label class="flex flex-col text-xs text-gray-500 dark:text-gray-400">Kind
+            <select id="admin-merges-f-kind" class="mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-sm">
               <option value="">Any</option>
               <option value="merge">Merge</option>
               <option value="conflict_resolution">Conflict resolution</option>
@@ -345,10 +345,10 @@ const AdminMerges = (() => {
               <option value="checks">Checks (timings)</option>
             </select>
           </label>
-          <button id="admin-merges-apply" type="button" class="ml-auto px-3 py-1.5 rounded bg-violet-600 hover:bg-violet-700 text-white text-sm">Apply</button>
-          <button id="admin-merges-refresh" type="button" class="px-3 py-1.5 rounded bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-sm">Refresh</button>
-          <label class="inline-flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400 cursor-pointer select-none">
-            <input id="admin-merges-live" type="checkbox" class="h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-violet-600 focus:ring-violet-500">
+          <button id="admin-merges-apply" type="button" class="ml-auto px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-sm">Apply</button>
+          <button id="admin-merges-refresh" type="button" class="px-3 py-1.5 rounded bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-sm">Refresh</button>
+          <label class="inline-flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 cursor-pointer select-none">
+            <input id="admin-merges-live" type="checkbox" class="h-4 w-4 rounded border-gray-600 bg-gray-800 text-indigo-600 focus:ring-indigo-500">
             <span>Live</span>
           </label>
         </section>
@@ -356,8 +356,8 @@ const AdminMerges = (() => {
         <div id="admin-merges-runs" class="space-y-2"></div>
 
         <div class="flex justify-center py-4">
-          <button id="admin-merges-load-older" type="button" class="hidden px-4 py-2 rounded bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-sm">Load older</button>
-          <span id="admin-merges-empty" class="hidden text-zinc-500 text-sm">No merge runs match these filters yet.</span>
+          <button id="admin-merges-load-older" type="button" class="hidden px-4 py-2 rounded bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-sm">Load older</button>
+          <span id="admin-merges-empty" class="hidden text-gray-500 text-sm">No merge runs match these filters yet.</span>
         </div>
       </main>
     </div>`;

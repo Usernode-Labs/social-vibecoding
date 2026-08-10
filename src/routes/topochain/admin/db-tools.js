@@ -49,7 +49,7 @@ const {
   parseLimit,
   runConsoleQuery,
 } = require('../../../services/topochain/sql-console');
-const { getTopochainSchema } = require('../../../services/topochain/db-schema-info');
+const { getConsoleSchema } = require('../../../services/topochain/db-schema-info');
 const { TEMPLATES } = require('../../../services/topochain/db-query-templates');
 
 function dbToolsAdminRoutes(config) {
@@ -159,7 +159,7 @@ function dbToolsAdminRoutes(config) {
   // ── GET /api/v4/admin/sql-query/schema (SPEC 2895-2912) ──────────────
   router.get('/api/v4/admin/sql-query/schema', async (_req, res) => {
     try {
-      const data = await getTopochainSchema(pool);
+      const data = await getConsoleSchema(pool);
       return res.json({ success: true, data });
     } catch (err) {
       log.error('topochain-admin', 'GET /sql-query/schema failed', { message: err.message });

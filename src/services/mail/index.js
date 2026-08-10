@@ -390,6 +390,19 @@ async function sendWaitlistJoinMail(config, email, { moreToken = null } = {}) {
   });
 }
 
+// The plaintext reset token exists only here (in the link) and in the
+// requester's response path — the DB holds its sha256. The caller mints and
+// hashes; this just carries it.
+async function sendPasswordResetMail(config, email, token) {
+  await send(config, {
+    kind: 'password_reset',
+    to: email,
+    // Segment style (like #more/<token>): AuthScreens.routeFromHash splits
+    // hash routes on '/', so a ?token= query would never parse.
+    url: `${PRODUCTION_ORIGIN}/#reset-password/${token}`,
+  });
+}
+
 async function sendWaitlistReleaseMail(config, email, { hasAccount = false } = {}) {
   await send(config, {
     kind: 'waitlist_released',
@@ -403,6 +416,7 @@ module.exports = {
   send,
   sendTest,
   sendOtpMail,
+  sendPasswordResetMail,
   sendWaitlistJoinMail,
   sendWaitlistReleaseMail,
   pruneDeliveries,

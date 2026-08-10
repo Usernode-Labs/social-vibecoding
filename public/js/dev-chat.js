@@ -229,6 +229,399 @@ const DevChat = {
     DevChat._renderModelNote();
   },
 
+  // ── Session-pinned coding-agent choice ────────────────────────────
+  // The deployment flag only controls whether Codex is available; it does
+  // not choose a provider for the user. Every ordinary new session asks the
+  // user which backend to pin, preselecting (but never silently applying)
+  // their saved default. The same dialog switches an idle existing session
+  // through reset-agent-context, which intentionally starts fresh agent
+  // context while preserving the branch and conversation.
+  _agentBackend(session) {
+    return session?.agent_backend === 'codex_openrouter'
+      ? 'codex_openrouter'
+      : 'claude_code';
+  },
+
+  _agentName(backend) {
+    return backend === 'codex_openrouter' ? 'Codex via OpenRouter' : 'Claude Code';
+  },
+
+  // Runtime rows use camelCase metadata, session rows use snake_case, and
+  // legacy rows have neither. Resolve all three in one place so progress,
+  // logs, active-session tooltips, and reloads cannot disagree about which
+  // provider actually ran the turn.
+  _activityAgentBackend(source) {
+    const backend = source?.agentBackend
+      || source?.metadata?.agentBackend
+      || source?.agent_backend;
+    if (backend === 'codex_openrouter') return 'codex_openrouter';
+    if (/^Codex\b/i.test(String(source?.content || ''))) return 'codex_openrouter';
+    return 'claude_code';
+  },
+
+  _activityAgentName(source) {
+    return DevChat._activityAgentBackend(source) === 'codex_openrouter'
+      ? 'Codex'
+      : 'Claude Code';
+  },
+
+  _copyActivityAgentMetadata(target, source) {
+    if (!target || !source) return target;
+    const backend = source.agentBackend
+      || source.metadata?.agentBackend
+      || source.agent_backend;
+    const model = source.agentModel
+      ?? source.metadata?.agentModel
+      ?? source.agent_model;
+    // Only copy an explicit identity. Older coding events deliberately have
+    // neither field and continue to render as Claude through the legacy
+    // fallback; sync-with-main also reuses cc_progress but is not a Codex
+    // model run, so it must not inherit the current session's backend.
+    if (backend === 'claude_code' || backend === 'codex_openrouter') {
+      target.agentBackend = backend;
+    }
+    if (model != null) target.agentModel = model;
+    return target;
+  },
+
+  _agentButtonText(session) {
+    const backend = DevChat._agentBackend(session);
+    if (backend !== 'codex_openrouter') return 'Claude Code';
+    const model = String(session?.agent_model || '').trim();
+    return model ? `Codex · ${model}` : 'Codex via OpenRouter';
+  },
+
+  _agentBillingNote(session) {
+    if (DevChat._agentBackend(session) === 'codex_openrouter') {
+      const model = String(session?.agent_model || '').trim();
+      return `Coding work runs with Codex${model ? ` (${model})` : ''} and bills your OpenRouter key.`;
+    }
+    return 'Coding work runs with Claude Code through Usernode.';
+  },
+
+  _busyComposerPlaceholder() {
+    const name = DevChat._agentBackend(DevChat.currentSession) === 'codex_openrouter'
+      ? 'Codex'
+      : 'Claude';
+    return `${name} is working — type your next note and tap 💾 to save it for later.`;
+  },
+
+  _formatOpenRouterPrice(value) {
+    if (value == null || value === '') return null;
+    const price = Number(value);
+    if (!Number.isFinite(price) || price < 0) return null;
+    if (price === 0) return '$0';
+    const decimals = price < 0.01 ? 4 : price < 10 ? 2 : price < 100 ? 1 : 0;
+    const fixed = price.toFixed(decimals);
+    const compact = fixed.includes('.') ? fixed.replace(/0+$/, '').replace(/\.$/, '') : fixed;
+    return `$${compact}`;
+  },
+
+  _openRouterModelCostSummary(model) {
+    const tier = {
+      free: 'Free',
+      low: 'Low cost',
+      medium: 'Medium cost',
+      high: 'High cost',
+      unknown: 'Price unavailable',
+    }[model?.costTier] || 'Price unavailable';
+    const input = this._formatOpenRouterPrice(model?.inputPricePerMillion);
+    const output = this._formatOpenRouterPrice(model?.outputPricePerMillion);
+    if (!input && !output) return tier;
+    return `${tier} · ${input || '?'} /M input · ${output || '?'} /M output`;
+  },
+
+  _openRouterModelOptionLabel(model) {
+    const compatibility = model?.compatibility === 'verified'
+      ? ' · verified'
+      : (model?.compatibility === 'blocked' ? ' · limited' : ' · unverified');
+    return `${model?.name || model?.id || 'Unknown model'} — ${this._openRouterModelCostSummary(model)}${compatibility}`;
+  },
+
+  _openRouterModelCompatibilitySummary(model) {
+    if (!model) return '';
+    if (model.compatibility === 'verified') return 'Verified with Codex.';
+    if (model.meetsCodexMinimums) {
+      return 'OpenRouter advertises coding-tool support and enough context, but this model is not yet verified with Codex.';
+    }
+    return model.compatibilityNote
+      || 'OpenRouter exposes this model, but it may lack coding tools or enough context; the turn may fail.';
+  },
+
+  async _loadCodingAgentChoiceData() {
+    const data = {
+      defaultBackend: 'claude_code',
+      backends: {},
+      codexAvailable: false,
+      credentialConfigured: false,
+      models: [],
+      recommendedModelId: null,
+      loadError: null,
+      catalogError: null,
+    };
+
+    try {
+      const prefsRes = await fetch('/api/me/coding-agent', { credentials: 'same-origin' });
+      if (!prefsRes.ok) throw new Error('Could not load your coding-agent settings.');
+      const prefs = await prefsRes.json();
+      data.defaultBackend = prefs.defaultBackend === 'codex_openrouter'
+        ? 'codex_openrouter'
+        : 'claude_code';
+      data.backends = prefs.backends || {};
+      data.codexAvailable = !!prefs.codexAvailable;
+    } catch (err) {
+      data.loadError = err.message || 'Could not load coding-agent settings.';
+      return data;
+    }
+
+    try {
+      const credentialRes = await fetch('/api/me/credentials/openrouter', {
+        credentials: 'same-origin',
+      });
+      if (!credentialRes.ok) throw new Error('Could not check your OpenRouter key.');
+      const credential = await credentialRes.json();
+      data.credentialConfigured = credential.configured === true && credential.status === 'valid';
+    } catch (err) {
+      data.catalogError = err.message || 'Could not check your OpenRouter key.';
+      return data;
+    }
+
+    if (!data.codexAvailable || !data.credentialConfigured) return data;
+
+    try {
+      const modelsRes = await fetch('/api/me/coding-agent/models?backend=codex_openrouter', {
+        credentials: 'same-origin',
+      });
+      const catalog = await modelsRes.json().catch(() => ({}));
+      if (!modelsRes.ok) throw new Error(catalog.error || 'Could not load OpenRouter models.');
+      data.models = Array.isArray(catalog.models) ? catalog.models : [];
+      data.recommendedModelId = catalog.recommendedModelId || null;
+      if (!data.models.length) data.catalogError = 'No OpenRouter models are available under this key.';
+    } catch (err) {
+      data.catalogError = err.message || 'Could not load OpenRouter models.';
+    }
+    return data;
+  },
+
+  async _chooseCodingAgent({ mode = 'create', current = null } = {}) {
+    const data = await DevChat._loadCodingAgentChoiceData();
+    if (typeof document === 'undefined' || !document.body) return null;
+
+    document.getElementById('dc-agent-choice-modal')?.remove();
+
+    const savedCodex = data.backends?.codex_openrouter || {};
+    let selectedBackend = current?.backend || data.defaultBackend || 'claude_code';
+    if (!['claude_code', 'codex_openrouter'].includes(selectedBackend)) {
+      selectedBackend = 'claude_code';
+    }
+    const availableIds = new Set(data.models.map((m) => m.id));
+    const recommendedModel = availableIds.has(data.recommendedModelId)
+      ? data.recommendedModelId
+      : (data.models.find((m) => m.compatibility === 'verified')?.id || data.models[0]?.id || '');
+    let selectedModel = current?.model || savedCodex.model || recommendedModel;
+    if (!availableIds.has(selectedModel)) selectedModel = recommendedModel;
+    let selectedEffort = current?.reasoningEffort || savedCodex.reasoningEffort || '';
+
+    const overlay = document.createElement('div');
+    overlay.id = 'dc-agent-choice-modal';
+    overlay.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4';
+    overlay.innerHTML = `
+      <div class="w-full max-w-lg rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-5 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="dc-agent-choice-title">
+        <div class="flex items-start gap-3">
+          <div class="min-w-0 flex-1">
+            <h2 id="dc-agent-choice-title" class="text-lg font-bold text-zinc-900 dark:text-zinc-100">${mode === 'switch' ? 'Choose this session’s coding agent' : 'Choose a coding agent'}</h2>
+            <p class="mt-1 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">${mode === 'switch' ? 'Switching keeps this branch and conversation, but starts a fresh coding-agent context on the next turn.' : 'Both agents stay available. Your saved default is preselected; this choice is pinned to the new session.'}</p>
+          </div>
+          <button type="button" id="dc-agent-choice-close" class="shrink-0 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200" aria-label="Close">✕</button>
+        </div>
+        <div class="mt-4 grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Coding agent">
+          <button type="button" id="dc-agent-choice-claude" role="radio" class="rounded-lg border p-3 text-left transition-colors">
+            <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Claude Code</span>
+            <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">Usernode’s existing coding-agent path.</span>
+            ${data.defaultBackend === 'claude_code' ? '<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-300">Saved default</span>' : ''}
+          </button>
+          <button type="button" id="dc-agent-choice-codex" role="radio" class="rounded-lg border p-3 text-left transition-colors">
+            <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Codex via OpenRouter</span>
+            <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">Your model and your OpenRouter key.</span>
+            ${data.defaultBackend === 'codex_openrouter' ? '<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-300">Saved default</span>' : ''}
+          </button>
+        </div>
+        <div id="dc-agent-choice-codex-options" class="mt-4 hidden rounded-lg border border-zinc-200 dark:border-zinc-800 p-3">
+          <label for="dc-agent-choice-model" class="block text-xs font-medium text-zinc-700 dark:text-zinc-300">OpenRouter model</label>
+          <select id="dc-agent-choice-model" class="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500"></select>
+          <p class="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">All models exposed by your OpenRouter key, sorted by average input/output token price. Rates are per 1M tokens; actual spend depends on usage.</p>
+          <label for="dc-agent-choice-effort" class="mt-3 block text-xs font-medium text-zinc-700 dark:text-zinc-300">Reasoning effort</label>
+          <select id="dc-agent-choice-effort" class="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
+            <option value="">Default</option>
+            <option value="minimal">Minimal</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+            <option value="xhigh">Extra high</option>
+          </select>
+        </div>
+        <p id="dc-agent-choice-status" class="mt-3 min-h-[1.25rem] text-xs leading-relaxed text-zinc-500 dark:text-zinc-400"></p>
+        <div class="mt-4 flex flex-wrap justify-end gap-2">
+          <button type="button" id="dc-agent-choice-settings" class="hidden rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">Open OpenRouter settings</button>
+          <button type="button" id="dc-agent-choice-cancel" class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">Cancel</button>
+          <button type="button" id="dc-agent-choice-apply" class="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"></button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const claudeButton = overlay.querySelector('#dc-agent-choice-claude');
+    const codexButton = overlay.querySelector('#dc-agent-choice-codex');
+    const codexOptions = overlay.querySelector('#dc-agent-choice-codex-options');
+    const modelSelect = overlay.querySelector('#dc-agent-choice-model');
+    const effortSelect = overlay.querySelector('#dc-agent-choice-effort');
+    const status = overlay.querySelector('#dc-agent-choice-status');
+    const settingsButton = overlay.querySelector('#dc-agent-choice-settings');
+    const applyButton = overlay.querySelector('#dc-agent-choice-apply');
+
+    for (const model of data.models) {
+      const option = document.createElement('option');
+      option.value = model.id;
+      option.textContent = this._openRouterModelOptionLabel(model);
+      modelSelect.appendChild(option);
+    }
+    modelSelect.value = selectedModel;
+    effortSelect.value = selectedEffort;
+
+    const cardClass = (selected) => `rounded-lg border p-3 text-left transition-colors ${selected
+      ? 'border-violet-500 bg-violet-500/5 ring-1 ring-violet-500'
+      : 'border-zinc-300 dark:border-zinc-700 hover:border-violet-400'}`;
+
+    const render = () => {
+      const codex = selectedBackend === 'codex_openrouter';
+      claudeButton.className = cardClass(!codex);
+      codexButton.className = cardClass(codex);
+      claudeButton.setAttribute('aria-checked', String(!codex));
+      codexButton.setAttribute('aria-checked', String(codex));
+      codexOptions.classList.toggle('hidden', !codex);
+      settingsButton.classList.toggle('hidden', !codex);
+
+      applyButton.disabled = false;
+      applyButton.textContent = mode === 'switch'
+        ? `Switch to ${codex ? 'Codex' : 'Claude Code'}`
+        : `Create with ${codex ? 'Codex' : 'Claude Code'}`;
+
+      if (!codex) {
+        status.textContent = data.loadError
+          ? `${data.loadError} Claude Code is still available.`
+          : 'Claude Code uses Usernode’s existing platform coding-agent path.';
+        return;
+      }
+      if (data.loadError) {
+        status.textContent = data.loadError;
+        applyButton.disabled = true;
+        return;
+      }
+      if (!data.codexAvailable) {
+        status.textContent = 'Codex via OpenRouter is not enabled for this account or deployment.';
+        applyButton.disabled = true;
+        return;
+      }
+      if (!data.credentialConfigured) {
+        status.textContent = data.catalogError || 'Add your OpenRouter API key before choosing Codex.';
+        applyButton.textContent = 'Set up OpenRouter';
+        return;
+      }
+      if (!data.models.length) {
+        status.textContent = data.catalogError || 'No OpenRouter models are available under this key.';
+        applyButton.disabled = true;
+        return;
+      }
+      const model = data.models.find((item) => item.id === selectedModel) || null;
+      status.textContent = `${this._openRouterModelCostSummary(model)}. ${this._openRouterModelCompatibilitySummary(model)} Codex coding turns bill directly to your OpenRouter key.`;
+    };
+
+    claudeButton.addEventListener('click', () => { selectedBackend = 'claude_code'; render(); });
+    codexButton.addEventListener('click', () => { selectedBackend = 'codex_openrouter'; render(); });
+    modelSelect.addEventListener('change', () => { selectedModel = modelSelect.value; render(); });
+    effortSelect.addEventListener('change', () => { selectedEffort = effortSelect.value; });
+
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        document.removeEventListener('keydown', onKeydown);
+        overlay.remove();
+        resolve(value);
+      };
+      const openSettings = () => {
+        finish(null);
+        window.location.hash = '#settings/openrouter';
+      };
+      const onKeydown = (event) => {
+        if (event.key === 'Escape') finish(null);
+      };
+      document.addEventListener('keydown', onKeydown);
+      overlay.querySelector('#dc-agent-choice-close').addEventListener('click', () => finish(null));
+      overlay.querySelector('#dc-agent-choice-cancel').addEventListener('click', () => finish(null));
+      overlay.addEventListener('click', (event) => { if (event.target === overlay) finish(null); });
+      settingsButton.addEventListener('click', openSettings);
+      applyButton.addEventListener('click', () => {
+        if (applyButton.disabled) return;
+        if (selectedBackend === 'codex_openrouter' && !data.credentialConfigured) {
+          openSettings();
+          return;
+        }
+        finish({
+          backend: selectedBackend,
+          model: selectedBackend === 'codex_openrouter' ? modelSelect.value : null,
+          reasoningEffort: selectedBackend === 'codex_openrouter'
+            ? (effortSelect.value || null)
+            : null,
+        });
+      });
+      render();
+      (selectedBackend === 'codex_openrouter' ? codexButton : claudeButton).focus();
+    });
+  },
+
+  async _switchCurrentCodingAgent() {
+    const session = DevChat.currentSession;
+    if (!session || DevChat.isStreaming) return;
+    const current = {
+      backend: DevChat._agentBackend(session),
+      model: session.agent_model || null,
+      reasoningEffort: session.agent_reasoning_effort || null,
+    };
+    const choice = await DevChat._chooseCodingAgent({ mode: 'switch', current });
+    if (!choice || !DevChat.currentSession || DevChat.currentSession.id !== session.id) return;
+
+    const same = choice.backend === current.backend
+      && (choice.model || null) === (current.model || null)
+      && (choice.reasoningEffort || null) === (current.reasoningEffort || null);
+    if (same) {
+      PlatformUI.toast(`${DevChat._agentName(choice.backend)} is already selected for this session.`);
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/sessions/${session.id}/reset-agent-context`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(choice),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        PlatformUI.toast(data.error || 'Could not switch coding agents.');
+        return;
+      }
+      Object.assign(DevChat.currentSession, data.session || {});
+      const cached = DevChat.sessions.find((s) => Number(s.id) === Number(session.id));
+      if (cached) Object.assign(cached, data.session || {});
+      if (data.message) DevChat.messages.push(data.message);
+      DevChat.renderChatView();
+      PlatformUI.toast(`This session now uses ${DevChat._agentName(choice.backend)}.`);
+    } catch {
+      PlatformUI.toast('Network error while switching coding agents.');
+    }
+  },
+
   // ── #907: where the next coding turn runs ────────────────────────────
   //
   // The platform, not this page, decides: if a machine holds a lease on the
@@ -1143,6 +1536,11 @@ const DevChat = {
       // for active/promoted (paused sessions can't be busy).
       let statusClass;
       let dotTitle;
+      // Preserve the legacy Claude tooltip byte-for-byte; only Codex rows
+      // need a different provider name.
+      const runningAgent = DevChat._activityAgentBackend(s) === 'codex_openrouter'
+        ? 'Codex'
+        : 'Claude';
       if (s.status === 'paused') { statusClass = 'dc-active-dot-paused'; dotTitle = 'Paused'; }
       else if (s.status === 'promoted') {
         statusClass = 'dc-active-dot-promoted';
@@ -1150,9 +1548,9 @@ const DevChat = {
         // vote, NOT merged). Use the canonical lifecycle label instead.
         const pLife = (window.MergeStatus && MergeStatus.lifecycle) ? MergeStatus.lifecycle(s) : null;
         const pLabel = (pLife && pLife.label) || 'Proposed';
-        dotTitle = s.busy ? `Claude is running · ${pLabel}` : pLabel;
+        dotTitle = s.busy ? `${runningAgent} is running · ${pLabel}` : pLabel;
       }
-      else { statusClass = 'dc-active-dot-active'; dotTitle = s.busy ? 'Claude is running' : 'Active'; }
+      else { statusClass = 'dc-active-dot-active'; dotTitle = s.busy ? `${runningAgent} is running` : 'Active'; }
       const busyClass = s.busy ? ' dc-active-dot-busy' : '';
       const isPaused = s.status === 'paused';
       // Primary action toggles between Pause and Resume. Archive is
@@ -1290,17 +1688,25 @@ const DevChat = {
   // row's start-work button (created_from_issue_number) so the row can
   // swap "Create proposal" → "Create new proposal". Omitted on the generic
   // "+ New chat" path, which sends no body and stores NULL.
-  async createSession(appSlug, issueNumber) {
+  async createSession(appSlug, issueNumber, agentChoice = null) {
     try {
+      const choice = agentChoice || await DevChat._chooseCodingAgent({ mode: 'create' });
+      // `undefined` means the user deliberately cancelled the chooser;
+      // `null` remains the existing create-failed signal. A caller that can
+      // fall back to an older session must distinguish those outcomes so
+      // Cancel never redirects work somewhere the user did not choose.
+      if (!choice) return undefined;
       const hasIssue = Number.isInteger(issueNumber) && issueNumber > 0;
       const res = await fetch(`/api/apps/${appSlug}/sessions`, {
         method: 'POST',
-        ...(hasIssue
-          ? {
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ issueNumber }),
-            }
-          : {}),
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...(hasIssue ? { issueNumber } : {}),
+          backend: choice.backend,
+          model: choice.model || null,
+          reasoningEffort: choice.reasoningEffort || null,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -1560,6 +1966,8 @@ const DevChat = {
           if (m.metadata.ccOutput) m.ccOutput = m.metadata.ccOutput;
           if (m.metadata.ccSummary) m.ccSummary = m.metadata.ccSummary;
           if (m.metadata.progressLog) m.progressLog = m.metadata.progressLog;
+          if (m.metadata.agentBackend) m.agentBackend = m.metadata.agentBackend;
+          if (m.metadata.agentModel) m.agentModel = m.metadata.agentModel;
           // #50: terminal statuses persist how long the run took so the
           // "(took 4m 12s)" suffix survives a reload.
           if (m.metadata.durationMs != null) m.durationMs = m.metadata.durationMs;
@@ -1756,7 +2164,7 @@ const DevChat = {
             // created, etc.) instead of only what the 3s polling can
             // reconstruct from the DB. Polling stays on as a safety net.
             DevChat._openResumableStream(sessionId);
-            DevChat._startProgressPolling(sessionId, progress);
+            DevChat._startProgressPolling(sessionId, progress, statusPayload);
           }
         }
       } catch {}
@@ -2029,7 +2437,7 @@ const DevChat = {
                 // #786: quickReplies ride the status event so a
                 // restart-recovery breadcrumb repaints the pill bar live
                 // (the server persists them on the same system row).
-                DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
+                DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
                 DevChat.renderMessages();
                 DevChat.scrollToBottom();
                 break;
@@ -2165,7 +2573,7 @@ const DevChat = {
                 break;
               }
               case 'cc_progress': {
-                DevChat._appendProgressLine(data.text);
+                DevChat._appendProgressLine(data.text, data);
                 DevChat.scrollToBottom();
                 // Start /status polling as a fallback in case the SSE stream
                 // or the global WS drops before we receive the 'done' event.
@@ -2189,7 +2597,12 @@ const DevChat = {
                 });
                 break;
               case 'cc_log':
-                DevChat.messages.push({ role: 'system', ccLog: data.log, content: 'Claude Code log', created_at: new Date().toISOString() });
+                DevChat.messages.push(DevChat._copyActivityAgentMetadata({
+                  role: 'system',
+                  ccLog: data.log,
+                  content: `${DevChat._activityAgentName(data)} log`,
+                  created_at: new Date().toISOString(),
+                }, data));
                 DevChat.renderMessages();
                 DevChat.scrollToBottom();
                 break;
@@ -2498,7 +2911,7 @@ const DevChat = {
         const sealMsg = lastAssistantMsg();
         if (sealMsg) sealMsg._finalized = true;
         // #786: carry quickReplies (see the POST-SSE status handler).
-        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8), _active: true });
+        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8), _active: true });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         break;
@@ -2582,7 +2995,7 @@ const DevChat = {
         }
         break;
       case 'cc_progress':
-        DevChat._appendProgressLine(data.text);
+        DevChat._appendProgressLine(data.text, data);
         DevChat.scrollToBottom();
         break;
       case 'cc_estimate':
@@ -2595,7 +3008,12 @@ const DevChat = {
         });
         break;
       case 'cc_log':
-        DevChat.messages.push({ role: 'system', ccLog: data.log, content: 'Claude Code log', created_at: new Date().toISOString() });
+        DevChat.messages.push(DevChat._copyActivityAgentMetadata({
+          role: 'system',
+          ccLog: data.log,
+          content: `${DevChat._activityAgentName(data)} log`,
+          created_at: new Date().toISOString(),
+        }, data));
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         break;
@@ -2823,9 +3241,11 @@ const DevChat = {
     if (input) {
       input.disabled = false;
       input.placeholder = streaming
-        ? DevChat.COMPOSER_PLACEHOLDER_BUSY
+        ? DevChat._busyComposerPlaceholder()
         : DevChat.COMPOSER_PLACEHOLDER;
     }
+    const agentSelect = document.getElementById('dc-agent-select');
+    if (agentSelect) agentSelect.disabled = !!streaming;
     DevChat._syncSaveDraftBtn();
     // Re-render the saved-drafts list so each row's Send button picks up
     // the new busy state (disabled while thinking, live once idle).
@@ -3147,14 +3567,14 @@ const DevChat = {
 
   _progressPollTimer: null,
 
-  _startProgressPolling(sessionId, initialProgress) {
+  _startProgressPolling(sessionId, initialProgress, initialMetadata = null) {
     DevChat._stopProgressPolling();
 
     // Show initial progress if any. Use replace (not append per-line) because
     // the persisted message loaded by openSession already contains these
     // lines — appending would double them up.
     if (initialProgress?.length) {
-      DevChat._replaceProgressLog(initialProgress);
+      DevChat._replaceProgressLog(initialProgress, initialMetadata);
     }
 
     DevChat._progressPollTimer = setInterval(async () => {
@@ -3167,7 +3587,7 @@ const DevChat = {
         DevChat._applyRunnerState(payload);
 
         if (progress?.length) {
-          DevChat._replaceProgressLog(progress);
+          DevChat._replaceProgressLog(progress, payload);
         }
 
         // #889: missed-event safety net. If the `stopping` broadcast never
@@ -3241,7 +3661,7 @@ const DevChat = {
     return null;
   },
 
-  _appendProgressLine(text) {
+  _appendProgressLine(text, metadata = null) {
     let msg = DevChat._currentProgressMsg();
     const isNew = !msg;
     if (!msg) {
@@ -3255,12 +3675,13 @@ const DevChat = {
       };
       DevChat.messages.push(msg);
     }
+    DevChat._copyActivityAgentMetadata(msg, metadata);
     msg.progressLog.push(text);
     if (isNew) DevChat.renderMessages();
     else DevChat._patchProgressDom(msg);
   },
 
-  _replaceProgressLog(lines) {
+  _replaceProgressLog(lines, metadata = null) {
     let msg = DevChat._currentProgressMsg();
     const isNew = !msg;
     if (!msg) {
@@ -3274,6 +3695,7 @@ const DevChat = {
       };
       DevChat.messages.push(msg);
     }
+    DevChat._copyActivityAgentMetadata(msg, metadata);
     msg.progressLog = lines.slice();
     if (isNew) DevChat.renderMessages();
     else DevChat._patchProgressDom(msg);
@@ -3305,7 +3727,7 @@ const DevChat = {
     // and the line-count summary so old timeline entries still work.
     const summary = target.querySelector('.dc-cc-log-toggle');
     const pre = target.querySelector('.dc-cc-log-content');
-    if (summary) summary.textContent = `Claude Code output (${msg.progressLog.length} lines)`;
+    if (summary) summary.textContent = `${DevChat._activityAgentName(msg)} output (${msg.progressLog.length} lines)`;
     if (pre) {
       pre.textContent = text;
       pre.scrollTop = pre.scrollHeight;
@@ -3403,7 +3825,7 @@ const DevChat = {
   _isLiveCcRun(m) {
     if (!m || m.role !== 'system' || !m._active) return false;
     if (m.progressLog) return true;
-    return /^(Claude Code is (running|making changes)|Scout reading the codebase|Syncing with main)/i
+    return /^(Claude Code is (running|making changes)|Codex is running|Scout reading the codebase|Syncing with main)/i
       .test(String(m.content || ''));
   },
 
@@ -3916,7 +4338,7 @@ const DevChat = {
     // Each is paired with a 'Claude Code progress' system row whose
     // live log we want to attach.
     const ACTIVE_CC_STATUS_RE
-      = /^(Claude Code is (running|making changes)|Scout reading the codebase|Syncing with main)/i;
+      = /^(Claude Code is (running|making changes)|Codex is running|Scout reading the codebase|Syncing with main)/i;
     // Helper: is this a viable status candidate for pairing? Stop on
     // any non-system row (status/progress pairs always live inside a
     // single dispatch turn) and skip rows that already carry their
@@ -4082,7 +4504,7 @@ const DevChat = {
         }
         if (msg.ccLog) {
           const pid = DevChat._detailsId(msg, 'cclog');
-          return `<details class="dc-cc-log" data-persist-id="${pid}"><summary class="dc-cc-log-toggle">Claude Code log</summary><pre class="dc-cc-log-content">${msg.ccLog.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre></details>`;
+          return `<details class="dc-cc-log" data-persist-id="${pid}"><summary class="dc-cc-log-toggle">${DevChat._activityAgentName(msg)} log</summary><pre class="dc-cc-log-content">${msg.ccLog.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre></details>`;
         }
         if (msg.progressLog?.length) {
           // Already merged into a parent "Claude Code is running"
@@ -4099,7 +4521,7 @@ const DevChat = {
           const ts = msg.created_at ? new Date(msg.created_at).getTime() : '';
           const id = msg.id || msg._slug || '';
           const icon = '<span class="dc-status-icon dc-status-check" aria-hidden="true">&#10003;</span>';
-          return `<details class="dc-cc-attached" data-persist-id="${outerPid}" ${DevChat._ccOpenAttrs(msg)}><summary class="dc-status-line dc-cc-attached-summary">${icon} Claude Code output<span class="dc-cc-attached-chevron" aria-hidden="true"></span><span style="font-size:9px;opacity:0.4;margin-left:auto">${id} ${ts}</span></summary><pre class="dc-cc-attached-log" data-persist-id="${innerPid}">${logText}</pre></details>`;
+          return `<details class="dc-cc-attached" data-persist-id="${outerPid}" ${DevChat._ccOpenAttrs(msg)}><summary class="dc-status-line dc-cc-attached-summary">${icon} ${DevChat._activityAgentName(msg)} output<span class="dc-cc-attached-chevron" aria-hidden="true"></span><span style="font-size:9px;opacity:0.4;margin-left:auto">${id} ${ts}</span></summary><pre class="dc-cc-attached-log" data-persist-id="${innerPid}">${logText}</pre></details>`;
         }
         // #361: the "Changes ready" card renders whenever the turn produced
         // a reviewable commit — i.e. either a preview built (msg.stagingUrl)
@@ -5804,6 +6226,8 @@ const DevChat = {
     const stagingStyle = stagingOpen && stagingSavedWidth
       ? ` style="width:${stagingSavedWidth}px"`
       : '';
+    const agentButtonText = DevChat._agentButtonText(DevChat.currentSession);
+    const agentBillingNote = DevChat._agentBillingNote(DevChat.currentSession);
 
     content.innerHTML = `
       <div class="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
@@ -5828,8 +6252,10 @@ const DevChat = {
                reserved on #app-view. (No backticks in this comment: it
                lives inside a template literal, and one would close it.) -->
           <div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2 platform-safe-bar">
-            <div class="flex items-center gap-2 mb-2">
-              <label class="text-xs text-zinc-500">Model:</label>
+            <div class="flex flex-wrap items-center gap-2 mb-2">
+              <label class="text-xs text-zinc-500" for="dc-agent-select">Coding agent:</label>
+              <button type="button" id="dc-agent-select" class="max-w-full truncate rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-900 px-2 py-1 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:border-violet-500 hover:text-violet-500 disabled:cursor-not-allowed disabled:opacity-50" title="Choose Claude Code or Codex for this session. Switching starts fresh agent context but keeps the branch and conversation.">${escapeHtml(agentButtonText)}</button>
+              <label class="text-xs text-zinc-500" for="dc-model-select">Chat model:</label>
               <select id="dc-model-select" class="rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-violet-500">
                 ${modelOptions}
               </select>
@@ -5846,6 +6272,7 @@ const DevChat = {
               <span class="flex-1"></span>
               <span id="dc-budget" class="text-xs font-mono"></span>
             </div>
+            <div id="dc-agent-note" class="mb-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">${escapeHtml(agentBillingNote)}</div>
             <!-- #800: one-line plain-language description of the SELECTED
                  model — what kind of work it suits. Filled by
                  _renderModelNote(); hidden when the payload carries no
@@ -5935,6 +6362,12 @@ const DevChat = {
     // itself runs a beat later; painting here means a re-render of an already
     // open session doesn't drop the chip for a second.
     DevChat._renderRunnerControls();
+
+    const agentSelect = document.getElementById('dc-agent-select');
+    if (agentSelect) {
+      agentSelect.disabled = DevChat.isStreaming;
+      agentSelect.addEventListener('click', () => DevChat._switchCurrentCodingAgent());
+    }
 
     document.getElementById('dc-model-select').addEventListener('change', (e) => {
       DevChat.selectedModel = e.target.value;
