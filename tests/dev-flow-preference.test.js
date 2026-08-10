@@ -231,21 +231,25 @@ test('Settings disables the hand-offs when the deployment cannot offer them', ()
     'a deployment with no GitHub link must not offer a preference it cannot honour');
 });
 
-test('the dev chat honours the preference instead of always asking', () => {
+test('the dev chat honours the preference instead of asking again', () => {
   const devChat = read('public/js/dev-chat.js');
-  // 'platform' means "never ask again" — the picker must not render.
-  assert.match(devChat, /pref === 'platform'/, 'a saved platform preference suppresses the picker');
-  assert.match(devChat, /pref === 'claude-code' \|\| pref === 'codex'/,
-    'a saved external preference goes straight into the walkthrough');
-  assert.match(devChat, /forcePicker/,
-    'the "+" menu must be able to re-ask despite a saved preference');
+  // The saved value is no longer read as a raw string here: it is one input
+  // to BuildVenues.currentVenue, which resolves the whole precedence chain
+  // (imported > lease > backend > saved flow) in one place. 'platform' and
+  // an unset preference both come back as a venue with no `flow`, which is
+  // exactly the "build here, render nothing" case the old
+  // `pref === 'platform'` branch spelled out by hand.
   assert.match(devChat, /devFlowPreference/, 'the gate reads the value from App.user');
+  assert.match(devChat, /BuildVenues\.preselect\(BuildVenues\.currentVenue\(/,
+    'the saved preference is resolved through the shared venue list');
+  assert.doesNotMatch(devChat, /forcePicker/,
+    'nothing re-asks at creation time — the venue line is the door now');
 });
 
-test('the picker only appears where a choice is still meaningful', () => {
+test('the walkthrough only appears where the hand-off can still be started', () => {
   // Otherwise it would sit above a conversation already in progress, or on a
-  // session whose proposal exists — asking a question whose answer can no
-  // longer change anything.
+  // session whose proposal exists — offering to start work somewhere else
+  // when the work is already underway here.
   const devChat = read('public/js/dev-chat.js');
   const fnStart = devChat.indexOf('_devFlowTarget() {');
   assert.ok(fnStart !== -1, '_devFlowTarget must exist');
@@ -255,13 +259,41 @@ test('the picker only appears where a choice is still meaningful', () => {
   assert.match(fn, /role === 'user'/, 'a session with a typed message is past the choice');
   assert.match(fn, /externalFlowsAvailable/,
     'with no hand-off available there is no choice to offer, so nothing renders');
+  // …but an EXPLICIT choice from the venue sheet outranks all of it: the
+  // user just asked for this flow, in this session, out loud.
+  assert.match(fn, /flow\.mode === 'wizard' && flow\.agent/,
+    'an explicit pick renders the walkthrough regardless of the gates above');
 });
 
-test('the "+" menu can start either flow explicitly', () => {
+test('the "+" menu asks nothing about venue', () => {
+  // "Propose with Claude Code or Codex" sat one row under "Propose a
+  // change" and meant the same thing, so the menu made the venue a fork in
+  // the road before the work existed — and could only name two of six.
   const appView = read('public/js/app-view.js');
-  assert.match(appView, /data-plus="proposal-external"/,
-    'the "+" menu must name the hand-off, or nobody discovers it');
-  assert.match(appView, /Claude Code or Codex/);
-  assert.match(appView, /createProposal\(\{ pickFlow: true \}\)/,
-    'that entry re-asks even for someone who saved "platform"');
+  assert.ok(!appView.includes('data-plus="proposal-external"'),
+    'the second propose row is gone');
+  assert.ok(!/createProposal\(\{ pickFlow: true \}\)/.test(appView),
+    'and nothing re-opens a picker that no longer exists');
+  // The one surviving programmatic entry is the out-of-credits card's, and
+  // it stays: that user has been refused here, so a venue IS decided for
+  // them.
+  assert.match(appView, /createProposal\(\{ flow \}\)/,
+    'the out-of-credits hand-off still opens its walkthrough directly');
+});
+
+test('the "+" menu is two named groups, not one flat list', () => {
+  const appView = read('public/js/app-view.js');
+  assert.match(appView, /_plusMenuHeading\('Build a change', 'build', false\)/);
+  assert.match(appView, /_plusMenuHeading\('Settings &amp; rules', 'settings', true\)/);
+  // A heading must not be a <button>: _wirePlusMenu collects
+  // `button[data-plus]` for the touch action sheet, and a heading that
+  // matched would arrive there as a tappable row that does nothing.
+  const fnStart = appView.indexOf('_plusMenuHeading(label, key, divider) {');
+  assert.ok(fnStart !== -1, '_plusMenuHeading must exist');
+  const fn = appView.slice(fnStart, appView.indexOf('\n  },', fnStart));
+  assert.match(fn, /<div data-plus-group=/, 'headings render as a div');
+  assert.ok(!fn.includes('data-plus="'), 'a heading carries no data-plus');
+  // The touch sheet renders them too, since it has no heading primitive.
+  assert.match(appView, /button\[data-plus\], \[data-plus-group\]/,
+    'the action sheet walks headings and rows together, in DOM order');
 });

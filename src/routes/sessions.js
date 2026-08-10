@@ -695,6 +695,15 @@ async function persistScoutPublication({
 // creating one that is guaranteed to fail its first dispatch. A DB error
 // while reading the preference is NOT treated as "no preference": it lets
 // session creation fail rather than silently choosing another backend.
+//
+// Every one of those fallbacks used to be a server-side log line and
+// nothing else: the user had set "Usernode · OpenRouter" as their default,
+// got a Usernode · Claude session, and the only trace was in the operator's
+// logs. The fallback stays LENIENT on purpose — a session that runs is
+// better than a 4xx — but it now names itself, so the caller can say so.
+// `fallbackReason` is one of 'flag_off' | 'not_in_beta' | 'model_unavailable'
+// | 'no_credential', and is absent whenever the resolved venue is the one
+// the user actually asked for.
 async function resolveDefaultAgentPreference(client, userId, config) {
   const { rows: prefRows } = await client.query(
     `SELECT backend, model_id, reasoning_effort
@@ -714,21 +723,22 @@ async function resolveDefaultAgentPreference(client, userId, config) {
   }
 
   // Codex default — validate it is genuinely usable before applying.
-  const claudeFallback = {
+  const claudeFallback = (reason) => ({
     backend: 'claude_code',
     provider: 'anthropic',
     model: null,
     reasoningEffort: null,
-  };
+    fallbackReason: reason,
+  });
 
   if (!config || !config.codexOpenrouterEnabled) {
     log.warn('sessions', 'Codex default not applied: feature disabled', { userId });
-    return claudeFallback;
+    return claudeFallback('flag_off');
   }
   if (config.openrouterBetaUserIds?.length
       && !config.openrouterBetaUserIds.includes(String(userId))) {
     log.warn('sessions', 'Codex default not applied: beta access revoked', { userId });
-    return claudeFallback;
+    return claudeFallback('not_in_beta');
   }
 
   let modelId = pref.model_id;
@@ -737,7 +747,7 @@ async function resolveDefaultAgentPreference(client, userId, config) {
   }
   if (!modelId) {
     log.warn('sessions', 'Codex default not applied: no model', { userId });
-    return claudeFallback;
+    return claudeFallback('model_unavailable');
   }
 
   try {
@@ -747,11 +757,11 @@ async function resolveDefaultAgentPreference(client, userId, config) {
     });
     if (!meta || meta.status !== 'valid') {
       log.warn('sessions', 'Codex default not applied: missing/invalid credential', { userId });
-      return claudeFallback;
+      return claudeFallback('no_credential');
     }
   } catch (err) {
     log.warn('sessions', 'Codex default not applied: credential check failed', { userId, err: err.message });
-    return claudeFallback;
+    return claudeFallback('no_credential');
   }
 
   return {
@@ -1215,9 +1225,23 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // set that is legitimately generic, since a fresh session has no
       // conversation to be specific about — name the issue this chat was
       // started for. Already-present metadata; just wasn't serialized.
+      //
+      // agent_backend / agent_model / source / external_agent: the VENUE a
+      // session is building in. Every one of these columns has existed for
+      // as long as the feature that writes it, but no list payload carried
+      // any of them, so every session card said the same thing no matter
+      // where the turns actually ran — and a user whose OpenRouter default
+      // had silently fallen back to Claude had no way to see it from the
+      // board. Four scalars; no new endpoint, no new column.
+      //
+      // The pair matters as a pair: `source='imported'` and
+      // `external_agent` are what let the card tell "this is building on
+      // Usernode" apart from "this arrived from somewhere else", which is
+      // the distinction a bare agent_backend cannot make — an imported row
+      // has a defaulted agent_backend that no turn ever ran through.
       const { rows } = await pool.query(
         `SELECT id, branch_name, pr_number, pr_url, pr_title, session_title, staging_url, status, linked_issues, behind_main, shared_at, transcript_shared_at, created_at,
-                created_from_issue_number,
+                created_from_issue_number, agent_backend, agent_model, source, external_agent,
                 (spec_md IS NOT NULL AND spec_md <> '') AS has_spec
          FROM chat_sessions
          WHERE app_id = $1 AND user_id = $2 AND is_headless = FALSE
@@ -1500,7 +1524,16 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         appId: app.id,
         sessionId: rows[0].id,
       });
-      res.status(201).json({ session: rows[0] });
+      // agentFallbackReason: the saved default could not be honoured and a
+      // Usernode · Claude session was created instead. The row itself only
+      // records WHAT was chosen, so the reason rides alongside it and the
+      // chat renders one sentence naming it. Absent when nothing fell back
+      // — the client must not have to distinguish "no fallback" from
+      // "fallback with an unknown cause".
+      res.status(201).json({
+        session: rows[0],
+        ...(pref.fallbackReason ? { agentFallbackReason: pref.fallbackReason } : {}),
+      });
     } catch (err) {
       log.error('sessions', 'Failed to create session', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -1662,7 +1695,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       });
 
       log.info('sessions', 'Headless session started', { sessionId: session.id, issueNumber, model: selectedModel });
-      res.status(201).json({ session });
+      // See POST /sessions: same lenient fallback, same named reason.
+      res.status(201).json({
+        session,
+        ...(pref.fallbackReason ? { agentFallbackReason: pref.fallbackReason } : {}),
+      });
     } catch (err) {
       log.error('sessions', 'Failed to start headless session', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -1907,7 +1944,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         .catch((err) => log.warn('sessions', 'headless_cloned dismiss failed', { err: err.message }));
 
       log.info('sessions', 'Cloned headless session', { src: src.id, sessionId: session.id, user: req.user.username });
-      res.status(201).json({ session });
+      // See POST /sessions: same lenient fallback, same named reason.
+      res.status(201).json({
+        session,
+        ...(pref.fallbackReason ? { agentFallbackReason: pref.fallbackReason } : {}),
+      });
     } catch (err) {
       log.error('sessions', 'Failed to clone headless session', { message: err.message, stack: err.stack });
       res.status(500).json({ error: 'Internal server error' });

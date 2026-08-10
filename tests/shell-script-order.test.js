@@ -62,6 +62,7 @@ const ADDED_SCRIPTS = [
   '/js/nav-link.js', // #1036 — the real-anchor / new-tab seam
   '/js/dev-flow-select.js', // #1049 — the dev-flow picker + walkthrough
   '/js/session-options.js', // #1055 — the composer's session/billing menu
+  '/js/build-venues.js', // the six build venues, shared by every picker
 ];
 
 // Modules a conversion chunk RETIRED, with the reason. Each one's behaviour
@@ -99,12 +100,13 @@ test('the shell still loads the expected number of legacy scripts', () => {
   // mail console and credit-options screens brought it to 50, #1036's
   // nav-link.js made 51, #1049's dev-flow-select.js made 52, and #1055's
   // session-options.js made 53. It goes DOWN as conversion chunks retire
-  // modules: #1078 chunk A retired offline.js, so 52.
+  // modules: #1078 chunk A retired offline.js, so 52 — and the shared
+  // build-venues.js list makes 53 again.
   const bodyScripts = scriptsOf(after.slice(after.indexOf('</head>')))
     .filter((s) => s.src && s.src.startsWith('/js/'));
   assert.equal(
-    bodyScripts.length, 52,
-    `expected the 52 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
+    bodyScripts.length, 53,
+    `expected the 53 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
     + 'Adding or removing one is fine, but it also needs a matching SHELL_ASSETS entry in '
     + 'public/sw.js (tests/pwa-shell-wiring.test.js enforces that) — so update this count '
     + 'deliberately rather than loosening the check.',
@@ -192,6 +194,31 @@ test('session-options.js loads ahead of the modules that consume it', () => {
     const idx = srcs.indexOf(consumer);
     assert.ok(idx === -1 || at < idx,
       `session-options.js must load before ${consumer}, which reads window.SessionOptions`);
+  }
+});
+
+test('build-venues.js loads ahead of the modules that consume it', () => {
+  // Excluded from the fixture comparison above for the same reason as the
+  // three modules before it, so its position is pinned here. It is the
+  // single list of the six build venues, and it is a LEAF: pure data, copy
+  // and presentation, depending only on PlatformUI for the sheet. Every
+  // surface that asks "where should this be built?" reads window.BuildVenues,
+  // which is four modules — if any one of them loads first it silently falls
+  // back to whatever local copy it still has, which is exactly the drift
+  // this module exists to end.
+  const srcs = scriptsOf(after).filter((s) => s.src && s.src.startsWith('/js/')).map((s) => s.src);
+  const at = srcs.indexOf('/js/build-venues.js');
+  assert.notEqual(at, -1, 'the shell must load /js/build-venues.js');
+  const platformUi = srcs.indexOf('/js/platform-ui.js');
+  assert.ok(platformUi === -1 || platformUi < at,
+    'platform-ui.js must load before build-venues.js, which presents the sheet through the seam');
+  for (const consumer of [
+    '/js/credit-options.js', '/js/session-options.js',
+    '/js/dev-chat.js', '/js/app-view.js', '/js/app.js',
+  ]) {
+    const idx = srcs.indexOf(consumer);
+    assert.ok(idx === -1 || at < idx,
+      `build-venues.js must load before ${consumer}, which reads window.BuildVenues`);
   }
 });
 

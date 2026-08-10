@@ -3601,6 +3601,14 @@ export function Shell() {
       */}
       <script src="/js/confirm-modal.js" />
       {/*
+          The six build venues — the single list behind every "where should
+          this be built?" surface. Pure data + copy + presentation; it reads
+          nothing and fetches nothing. credit-options.js, session-options.js,
+          dev-chat.js and app-view.js all read window.BuildVenues, so it must
+          load before all four.
+      */}
+      <script src="/js/build-venues.js" />
+      {/*
           Shared "you're out of daily AI credits — here's how to keep building"
           copy + destinations, used by the dev-chat card, the credits banner and
           the Generate-proposal modal. Loaded before its three consumers.

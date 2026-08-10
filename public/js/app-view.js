@@ -1471,32 +1471,30 @@ const AppView = {
               title="${AppView.readOnly ? 'Fork this app' : 'Propose a change, file an issue, or manage this app'}">+</button>
             <div id="dev-plus-menu" class="hidden absolute right-0 top-9 z-30 w-64 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden">
               ${AppView.readOnly ? '' : `
+              ${AppView._plusMenuHeading('Build a change', 'build', false)}
               <button data-plus="proposal" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Propose a change</span>
-                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Start an AI dev session — promoting its PR creates the proposal</span>
+                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Start a dev session — you pick where it is built, and can change that any time</span>
               </button>
               ${AppView.appData?.can_collaborate ? `
               <button data-plus="import-pr" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Import Feature from a PR</span>
-                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Turn an existing GitHub pull request into a proposal people can vote on</span>
+                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Your computer &middot; your own tools — you have already built it, so there is no chat for this one</span>
               </button>` : ''}
-              <button data-plus="proposal-external" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
-                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Propose with Claude Code or Codex</span>
-                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Build it on your own Claude or ChatGPT plan — no Usernode credits</span>
-              </button>
               <button data-plus="issue" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">New issue</span>
                 <span class="block text-xs text-zinc-500 dark:text-zinc-400">Report a problem or idea without building it yourself</span>
               </button>
+              ${AppView._plusMenuHeading('Settings &amp; rules', 'settings', true)}
               ${AppView._plusMenuShowsMembers() ? `
-              <button data-plus="members" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
+              <button data-plus="members" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
                 ${AppView.appData?.self_hosted ? `
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Proposal approvals</span>
                 <span class="block text-xs text-zinc-500 dark:text-zinc-400">Who approves proposals and how many approvals are needed</span>` : `
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Members &amp; visibility</span>
                 <span class="block text-xs text-zinc-500 dark:text-zinc-400">Who can build and see this app</span>`}
               </button>` : ''}
-              <button data-plus="rename" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
+              <button data-plus="rename" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors ${AppView._plusMenuShowsMembers() ? 'border-t border-zinc-200 dark:border-zinc-800' : ''}">
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">App display name</span>
                 <span class="block text-xs text-zinc-500 dark:text-zinc-400">Renames are proposals — applied once voted in</span>
               </button>
@@ -2382,6 +2380,21 @@ const AppView = {
       || (a.collab_visibility === 'private' && a.can_collaborate)
       || (a.approver_policy === 'invited' && a.can_collaborate));
   },
+  // A non-interactive group label inside the "+" menu.
+  //
+  // The menu grew to eight entries with no shape: "Propose a change" sat
+  // one keystroke from "App secrets", and two of the eight were different
+  // spellings of the same act. It is two groups now — what you do to the
+  // CODE, then what you do to the APP's settings — and this is the row
+  // that says so. Deliberately a <div>, not a <button>: _wirePlusMenu
+  // collects `button[data-plus]` for the touch action sheet, so anything
+  // that is not an action must not be a button or it would arrive in that
+  // sheet as a tappable row that does nothing.
+  _plusMenuHeading(label, key, divider) {
+    return `<div data-plus-group="${key}" class="px-3 pt-2.5 pb-1 text-[10px] uppercase font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 select-none${
+      divider ? ' border-t border-zinc-200 dark:border-zinc-800 mt-1' : ''}">${label}</div>`;
+  },
+
   _wirePlusMenu(content) {
     const btn = document.getElementById('dev-plus-btn');
     const menu = document.getElementById('dev-plus-menu');
@@ -2398,12 +2411,26 @@ const AppView = {
       // handler, so both idioms share one wiring path.
       if (PlatformUI.isTouch()) {
         AppView.refreshDevChatSecretsState();
-        const rows = Array.from(menu.querySelectorAll('button[data-plus]'));
+        // In DOM order, so the two group headings arrive between the rows
+        // they head rather than being dropped on the touch path — the
+        // sheet has no heading primitive, so a heading is a row whose
+        // handler does nothing. Gated by omission everywhere else in this
+        // codebase; `disabled: true` is not used because the kit drops
+        // disabled rows entirely.
+        const nodes = Array.from(menu.querySelectorAll('button[data-plus], [data-plus-group]'));
         PlatformUI.actionSheet({
-          actions: rows.map((row) => ({
-            label: (row.querySelector('span')?.textContent || row.textContent).replace(/\s+/g, ' ').trim(),
-            handler: () => row.click(),
-          })),
+          actions: nodes.map((node) => {
+            if (!node.hasAttribute('data-plus')) {
+              return {
+                label: `— ${node.textContent.replace(/\s+/g, ' ').trim()} —`,
+                handler: () => {},
+              };
+            }
+            return {
+              label: (node.querySelector('span')?.textContent || node.textContent).replace(/\s+/g, ' ').trim(),
+              handler: () => node.click(),
+            };
+          }),
         });
         return;
       }
@@ -2428,17 +2455,14 @@ const AppView = {
         AppView.createProposal();
       });
     }
-    // #1049: the same session, opened straight onto the flow picker. Its own
-    // row rather than a sub-option of "Propose a change", because the whole
-    // point is that the alternate flows are findable without knowing they
-    // exist. Renders in the same non-read-only block as `proposal`.
-    const proposalExternalBtn = menu.querySelector('[data-plus="proposal-external"]');
-    if (proposalExternalBtn) {
-      proposalExternalBtn.addEventListener('click', () => {
-        close();
-        AppView.createProposal({ pickFlow: true });
-      });
-    }
+    // "Propose with Claude Code or Codex" USED to be a second row here
+    // (#1049), opening the same session straight onto the flow picker. It
+    // is gone: two rows in one menu that both mean "propose a change" made
+    // the venue a fork in the road before the work existed, and it could
+    // only name two of the six venues. One row starts the session; the
+    // venue line above the composer says where it will be built and opens
+    // the full list on demand.
+    //
     // import-pr renders only when can_collaborate, so (like members/fork)
     // its handler needs an existence check.
     const importPrBtn = menu.querySelector('[data-plus="import-pr"]');
@@ -4572,6 +4596,29 @@ const AppView = {
     return !!s.busy;
   },
 
+  // Where this session's turns actually run.
+  //
+  // The venue was decided once, at creation, from a preference the user set
+  // somewhere else — and then never mentioned again, so a board full of
+  // cards looked identical whether the work was billed to Usernode credits,
+  // an OpenRouter key or a laptop. Naming it on the card is the cheapest
+  // place to make that visible; the sheet behind it is the same one every
+  // other surface opens (public/js/build-venues.js).
+  //
+  // Suppressed on an imported row: that card already carries the amber
+  // "Imported PR" badge, and one provenance badge is the right number. Also
+  // returns '' when build-venues.js has not loaded, so the card degrades to
+  // exactly what it rendered before rather than to a broken chip.
+  _sessionVenueChipHtml(s) {
+    const BV = (typeof window !== 'undefined' && window.BuildVenues) || null;
+    if (!BV || !s || s.source === 'imported') return '';
+    return BV.chipHtml(BV.currentVenue({
+      source: s.source,
+      agentBackend: s.agent_backend,
+      externalAgent: s.external_agent,
+    }));
+  },
+
   _sessionStatusTagHtml(s) {
     return AppView._sessionBusy(s)
       ? '<span class="inline-flex items-center gap-1 text-xs text-emerald-500 shrink-0"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>'
@@ -4631,6 +4678,7 @@ const AppView = {
       </div>
       <div class="${AppView.SESSION_CARD_ACTIONS_CLS}">
         ${statusTag}
+        ${AppView._sessionVenueChipHtml(s)}
         ${AppView.issueChipsHtml(s.linked_issues)}
         ${previewBtn}
         ${chatBtn}
@@ -6810,31 +6858,29 @@ const AppView = {
     }
   },
 
-  // `opts.pickFlow` (#1049) opens the new session on the development-flow
-  // picker even for someone who ticked "remember my option" — they asked
-  // for the choice explicitly from the "+" menu, so the saved shortcut is
-  // not what they want this time. `opts.flow` skips the question entirely
-  // and opens the walkthrough for that agent, which is what the
-  // out-of-credits card's "Use Claude Code" / "Use Codex" buttons do.
+  // `opts.flow` skips the venue question entirely and opens the walkthrough
+  // for that agent, which is what the out-of-credits card's "Use Claude
+  // Code" / "Use Codex" buttons do — the user has already been told they
+  // cannot build here, so landing them in a chat that will refuse them is
+  // the one case where a venue is decided for them.
+  //
+  // `opts.pickFlow` is gone with the picker. It existed for the second "+"
+  // row that asked the venue question at creation time; creation asks
+  // nothing now.
   async createProposal(opts) {
     if (!AppView.appData || typeof DevChat === 'undefined') return;
     const session = await DevChat.createSession(AppView.appData.slug);
     if (!session) return; // createSession already alerts (cap reached / error)
     AppView._proposalHint = true;
-    const pickFlow = !!(opts && opts.pickFlow);
     const flowAgent = (opts && opts.flow) || null;
     if (typeof App !== 'undefined' && App.switchTab) {
       await App.switchTab('dev', session.id, 'sessions');
     }
     // AFTER the switch: opening the session resets the per-session flow
     // state, so the request has to land on the other side of it.
-    if ((pickFlow || flowAgent) && DevChat._devFlow) {
-      if (flowAgent) {
-        DevChat._devFlow.mode = 'wizard';
-        DevChat._devFlow.agent = flowAgent;
-      } else {
-        DevChat._devFlow.forcePicker = true;
-      }
+    if (flowAgent && DevChat._devFlow) {
+      DevChat._devFlow.mode = 'wizard';
+      DevChat._devFlow.agent = flowAgent;
       DevChat._devFlowEnsureStatus(true);
       DevChat.renderMessages();
     }
@@ -8374,7 +8420,22 @@ const AppView = {
     const stored = localStorage.getItem('usernode:dc:model');
     const preselect = models.some((m) => m.id === stored) ? stored : defaultModel;
 
-    const choice = await AppView._showAutoSessionModal(issueNumber, models, preselect);
+    // The venue this run will build in. It was always decided by the saved
+    // coding-agent default and never mentioned, so a user with an OpenRouter
+    // default confirmed a popup that talked only about "your tokens/credits"
+    // — the wrong pot, silently. Best-effort: an unreachable preferences
+    // endpoint just means the modal renders exactly as it did before.
+    let venueId = 'usernode-claude';
+    try {
+      const prefsRes = await fetch('/api/me/coding-agent', { credentials: 'same-origin' });
+      if (prefsRes.ok) {
+        const prefs = await prefsRes.json();
+        venueId = (window.BuildVenues || { currentVenue: () => 'usernode-claude' })
+          .currentVenue({ agentBackend: prefs.defaultBackend });
+      }
+    } catch { /* keep the default; the server decides either way */ }
+
+    const choice = await AppView._showAutoSessionModal(issueNumber, models, preselect, venueId);
     if (!choice) return;
 
     try {
@@ -8397,6 +8458,12 @@ const AppView = {
         PlatformUI.toast(data.error || `Couldn't start generating the proposal (HTTP ${resp.status}).`);
         return;
       }
+      // The server is deliberately lenient about an unusable default — a run
+      // that starts beats a 4xx — but until now the fallback was a log line
+      // and nothing else, so someone whose default was Usernode · OpenRouter
+      // got a Usernode · Claude run with no explanation and a bill on the
+      // pot they weren't expecting.
+      AppView._reportVenueFallback(data.agentFallbackReason);
       const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
       if (issue) issue.headless = { sessionId: data.session.id, status: 'generating' };
       AppView._repaintCards();
@@ -8470,10 +8537,22 @@ const AppView = {
     });
   },
 
+  // "Your default wasn't available, so this is building somewhere else."
+  //
+  // One sentence, from the shared list, on whichever creation route the
+  // server stamped a reason onto. Silent when there is nothing to report —
+  // a session that got the venue it asked for should say nothing at all.
+  _reportVenueFallback(reason) {
+    if (!reason || !window.BuildVenues) return;
+    const note = BuildVenues.fallbackNote(reason);
+    if (note) PlatformUI.toast(note);
+  },
+
   // Singleton confirm popup for Generate proposal. Same scrim/card styling as
   // ConfirmModal (confirm-modal.js) plus a model <select>; resolves to the
-  // chosen model id, or null on cancel/backdrop/Esc.
-  _showAutoSessionModal(issueNumber, models, preselect) {
+  // chosen model id, or null on cancel/backdrop/Esc. `venueId` names where
+  // the run will build (see confirmAutoSession).
+  _showAutoSessionModal(issueNumber, models, preselect, venueId) {
     let root = document.getElementById('auto-session-modal');
     if (root) root.remove();
     root = document.createElement('div');
@@ -8491,6 +8570,10 @@ const AppView = {
     const options = models.map((m) =>
       `<option value="${escapeAttr(m.id)}"${m.id === preselect ? ' selected' : ''}>${escapeHtml(optionText(m) || m.id)}</option>`
     ).join('');
+    const venue = window.BuildVenues ? BuildVenues.venue(venueId || 'usernode-claude') : null;
+    const venueHtml = venue
+      ? `Building in <b>${escapeHtml(venue.label)}</b> — your saved default. ${escapeHtml(venue.blurb)}`
+      : '';
     root.innerHTML = `
       <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
         <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl relative">
@@ -8504,10 +8587,14 @@ const AppView = {
             connected to your dev chat, but it <b>will automatically use your
             tokens/credits</b> the moment you confirm.
           </p>
-          <p class="text-xs text-amber-500 mb-4">
+          <p class="text-xs text-amber-500 mb-2">
             Experimental — not recommended for normal users at the moment. Costs are billed
             to you even if the result isn't useful.
           </p>
+          <!-- WHERE it builds, named before you confirm — the pot the costs
+               above land in depends on it. Empty when build-venues.js
+               hasn't loaded, which leaves the popup as it was. -->
+          <p class="text-xs text-zinc-500 dark:text-zinc-400 mb-4">${venueHtml}</p>
           <label class="block text-xs font-medium text-zinc-500 mb-1" for="auto-session-model">Model</label>
           <select id="auto-session-model"
             class="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100">
@@ -8586,6 +8673,12 @@ const AppView = {
           issue.headless.mySessionId = data.session.id;
         }
       }
+      // The clone is a NEW session with its own venue, resolved from the
+      // cloner's default rather than inherited from the auto session — so
+      // the one place to say where their copy will build is here, before
+      // they land in it. (The venue line above the composer says it again
+      // on every paint; this covers the fallback the line can't explain.)
+      AppView._reportVenueFallback(data.agentFallbackReason);
       DevChat.sessions.unshift(data.session);
       if (typeof App !== 'undefined' && App.switchTab) {
         await App.switchTab('dev', data.session.id, 'sessions');
