@@ -30,6 +30,9 @@ const indexHtml = read('public/index.html');
 // assertions about the explanatory comments around a screen have to read the
 // source they actually live in.
 const shellSource = read('frontend/src/Shell.tsx');
+// #1079 chunk B moved the drawer (#header-menu-panel) out of Shell.tsx into its
+// own island — same markup, same comments, new file.
+const menuSource = read('frontend/src/features/header/header-menu.tsx');
 const nativeChrome = read('public/js/native-chrome.js');
 const profileJs = read('public/js/profile.js');
 
@@ -62,10 +65,9 @@ test('native-chrome no longer gates the profile row on getProfileInfo', () => {
 test('the stale "hidden unless the bridge reports getProfileInfo" comments are gone', () => {
   // Comments that describe behaviour the code no longer has are worse than
   // no comment: the next reader trusts them.
-  const anchorComment = shellSource.slice(
-    Math.max(0, shellSource.indexOf('id="drawer-row-profile"') - 900),
-    shellSource.indexOf('id="drawer-row-profile"')
-  );
+  const profileAt = menuSource.indexOf('id="drawer-row-profile"');
+  assert.ok(profileAt > 0, 'the drawer row must still live in the menu island');
+  const anchorComment = menuSource.slice(Math.max(0, profileAt - 900), profileAt);
   assert.doesNotMatch(anchorComment, /Hidden unless/i);
   assert.doesNotMatch(
     nativeChrome.slice(0, nativeChrome.indexOf('const NativeChrome')),
