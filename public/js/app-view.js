@@ -7723,7 +7723,7 @@ const AppView = {
         autoBtn += `<button class="gc-vote-btn" title="Questions were posted on the issue — answer them, then generate a proposal again" onclick="AppView.confirmAutoSession(${n})">Generate proposal</button>`;
       }
     } else {
-      autoBtn = `<button class="gc-vote-btn" title="Spin up a headless AI session that starts solving this issue on its own — uses your credits" onclick="AppView.confirmAutoSession(${n})">Generate proposal</button>`;
+      autoBtn = `<button class="gc-vote-btn" title="Start an unattended AI session using your saved session provider and its billing method" onclick="AppView.confirmAutoSession(${n})">Generate proposal</button>`;
     }
     // #250: the chip icon mirrors the auto-solve state so proposal issues
     // read at a glance — pulsing sky document while generating, steady sky
@@ -8358,30 +8358,60 @@ const AppView = {
     const slug = AppView.appData && AppView.appData.slug;
     if (!slug) return;
 
-    // Model list comes from the same GET /api/models the dev-chat dropdown
-    // uses, so the popup can never offer a model the server would reject.
+    // Follow the user's saved session provider. Claude auto-runs keep their
+    // existing chat-model choice; OpenRouter auto-runs choose from the same
+    // key-visible catalog as an ordinary OpenRouter session and never show
+    // Claude models or Claude-credit copy.
     let models = [];
     let defaultModel = '';
+    let provider = 'claude';
+    let reasoningEffort = null;
     try {
-      const res = await fetch('/api/models');
-      const data = await res.json();
-      models = Array.isArray(data.models) ? data.models : [];
-      defaultModel = data.default || (models[0] && models[0].id) || '';
+      const prefsRes = await fetch('/api/me/coding-agent', { credentials: 'same-origin' });
+      const prefs = prefsRes.ok ? await prefsRes.json() : {};
+      if (prefs.defaultBackend === 'codex_openrouter') {
+        provider = 'openrouter';
+        const catalogRes = await fetch('/api/me/coding-agent/models?backend=codex_openrouter', {
+          credentials: 'same-origin',
+        });
+        if (!catalogRes.ok) throw new Error('Could not load OpenRouter models.');
+        const catalog = await catalogRes.json();
+        models = Array.isArray(catalog.models) ? catalog.models : [];
+        const saved = prefs.backends && prefs.backends.codex_openrouter;
+        reasoningEffort = (saved && saved.reasoningEffort) || null;
+        defaultModel = (saved && models.some((m) => m.id === saved.model) && saved.model)
+          || catalog.recommendedModelId
+          || (models[0] && models[0].id)
+          || '';
+      } else {
+        const res = await fetch('/api/models');
+        const data = await res.json();
+        models = Array.isArray(data.models) ? data.models : [];
+        defaultModel = data.default || (models[0] && models[0].id) || '';
+      }
     } catch {
       PlatformUI.toast("Couldn't load the model list — try again.");
       return;
     }
-    const stored = localStorage.getItem('usernode:dc:model');
+    if (!models.length || !defaultModel) {
+      PlatformUI.toast(provider === 'openrouter'
+        ? 'No OpenRouter models are available under your key.'
+        : "Couldn't load the model list — try again.");
+      return;
+    }
+    const stored = provider === 'claude' ? localStorage.getItem('usernode:dc:model') : null;
     const preselect = models.some((m) => m.id === stored) ? stored : defaultModel;
 
-    const choice = await AppView._showAutoSessionModal(issueNumber, models, preselect);
+    const choice = await AppView._showAutoSessionModal(issueNumber, models, preselect, { provider });
     if (!choice) return;
 
     try {
       const resp = await fetch(`/api/apps/${slug}/issues/${issueNumber}/headless-session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: choice }),
+        body: JSON.stringify(provider === 'openrouter'
+          ? { backend: 'codex_openrouter', model: choice, reasoningEffort }
+          : { model: choice }),
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
@@ -8391,6 +8421,10 @@ const AppView = {
         // the dev chat shows instead of a one-line toast the user can only
         // read and dismiss. Every other failure keeps the toast.
         if (data.code === 'budget_exceeded') {
+          if (provider === 'openrouter') {
+            PlatformUI.toast(data.error || 'The OpenRouter run could not start.');
+            return;
+          }
           AppView._showCreditOptionsModal(data.error);
           return;
         }
@@ -8473,7 +8507,7 @@ const AppView = {
   // Singleton confirm popup for Generate proposal. Same scrim/card styling as
   // ConfirmModal (confirm-modal.js) plus a model <select>; resolves to the
   // chosen model id, or null on cancel/backdrop/Esc.
-  _showAutoSessionModal(issueNumber, models, preselect) {
+  _showAutoSessionModal(issueNumber, models, preselect, modalOptions = {}) {
     let root = document.getElementById('auto-session-modal');
     if (root) root.remove();
     root = document.createElement('div');
@@ -8483,11 +8517,15 @@ const AppView = {
     // recommended change size), built by the shared DevChat helpers so
     // the two pickers can't drift. Falls back to the bare label when
     // dev-chat.js isn't loaded on this page (e.g. the gallery shell).
-    const optionText = (m) => (
-      (typeof DevChat !== 'undefined' && DevChat.modelOptionText)
+    const openRouter = modalOptions.provider === 'openrouter';
+    const optionText = (m) => {
+      if (openRouter && typeof DevChat !== 'undefined' && DevChat._openRouterModelOptionLabel) {
+        return DevChat._openRouterModelOptionLabel(m);
+      }
+      return (typeof DevChat !== 'undefined' && DevChat.modelOptionText)
         ? DevChat.modelOptionText(m)
-        : (m.label || m.id)
-    );
+        : (m.label || m.name || m.id);
+    };
     const options = models.map((m) =>
       `<option value="${escapeAttr(m.id)}"${m.id === preselect ? ' selected' : ''}>${escapeHtml(optionText(m) || m.id)}</option>`
     ).join('');
@@ -8496,19 +8534,14 @@ const AppView = {
         <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl relative">
           <h2 class="text-lg font-bold mb-2 text-zinc-900 dark:text-zinc-100">Generate proposal for issue #${issueNumber}?</h2>
           <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
-            This spins up a <b>headless AI session</b> that immediately starts working on the
-            issue on its own — investigating the repo and drafting a spec, pushing a code
-            change, or coming back with a question. When the drafted spec looks
-            straightforward, the session <b>may also implement it</b> in the same run
-            (committing and pushing to its own branch — never a PR or deploy). It is not
-            connected to your dev chat, but it <b>will automatically use your
-            tokens/credits</b> the moment you confirm.
+            ${openRouter
+              ? 'This sends the issue directly to your selected <b>OpenRouter model</b>. It can inspect the repository, answer with a question, or commit and push a change to its own branch (never a PR or deploy). The run bills your OpenRouter key and does not use platform Claude credits.'
+              : 'This spins up a <b>headless AI session</b> that immediately starts working on the issue on its own — investigating the repo and drafting a spec, pushing a code change, or coming back with a question. When the drafted spec looks straightforward, the session <b>may also implement it</b> in the same run (committing and pushing to its own branch — never a PR or deploy). It is not connected to your dev chat, but it <b>will automatically use your tokens/credits</b> the moment you confirm.'}
           </p>
           <p class="text-xs text-amber-500 mb-4">
-            Experimental — not recommended for normal users at the moment. Costs are billed
-            to you even if the result isn't useful.
+            Experimental — costs are billed to you even if the result isn't useful.
           </p>
-          <label class="block text-xs font-medium text-zinc-500 mb-1" for="auto-session-model">Model</label>
+          <label class="block text-xs font-medium text-zinc-500 mb-1" for="auto-session-model">${openRouter ? 'OpenRouter model' : 'Chat model'}</label>
           <select id="auto-session-model"
             class="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100">
             ${options}
@@ -8531,11 +8564,17 @@ const AppView = {
     const paintNote = () => {
       if (!noteEl) return;
       const chosen = models.find((m) => m.id === (modelSel && modelSel.value));
-      const text = (typeof DevChat !== 'undefined' && DevChat.modelNoteText)
-        ? DevChat.modelNoteText(chosen)
-        : '';
+      const text = openRouter
+        ? ((typeof DevChat !== 'undefined' && DevChat._openRouterModelCostSummary)
+          ? `${DevChat._openRouterModelCostSummary(chosen)}. ${DevChat._openRouterModelCompatibilitySummary(chosen)}`
+          : '')
+        : ((typeof DevChat !== 'undefined' && DevChat.modelNoteText)
+          ? DevChat.modelNoteText(chosen)
+          : '');
       noteEl.textContent = text;
-      noteEl.title = text && DevChat.MODEL_GUIDANCE_TOOLTIP ? DevChat.MODEL_GUIDANCE_TOOLTIP : '';
+      noteEl.title = !openRouter && text && typeof DevChat !== 'undefined' && DevChat.MODEL_GUIDANCE_TOOLTIP
+        ? DevChat.MODEL_GUIDANCE_TOOLTIP
+        : '';
     };
     paintNote();
     if (modelSel) modelSel.addEventListener('change', paintNote);

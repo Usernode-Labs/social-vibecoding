@@ -2,17 +2,16 @@
 //
 // Background: public/index.html used to load Tailwind's Play CDN, which
 // compiled utilities in the browser on every page load and would generate
-// CSS for any class it saw at runtime. That stylesheet is now built ahead of
-// time (`npm run build:css`) and COMMITTED — the runtime image installs with
-// `npm ci --production`, so tailwindcss isn't available to compile at deploy
-// time, and neither the deploy workflow nor a worker checkout runs a build.
+// CSS for any class it saw at runtime. Dockerfile now compiles the stylesheet
+// in a disposable builder stage for every image and copies only the result
+// into the production runtime. public/css/tailwind.css is generated and
+// gitignored, never committed.
 //
-// A committed build artifact is only safe if staleness is detectable and the
-// config can't silently drift, which is what this file pins:
+// This file performs the same fresh compile into a temporary directory, then
+// pins the properties that make the image-build path safe:
 //
-//  1. FRESHNESS — the stamp in public/css/tailwind.css matches a hash
-//     recomputed from tailwind.config.js, the input CSS and every scanned
-//     source file. Edit markup without rebuilding and this fails.
+//  1. LIFECYCLE — Docker builds the CSS from the checked-out sources, copies
+//     it into the runtime after COPY . ., and the source artifact is ignored.
 //  2. CONFIG — the platform palette and the hoverOnlyWhenSupported future
 //     flag (both formerly inline in index.html) actually reached the output.
 //  3. SENTINEL CLASSES — the awkward shapes the shell really uses (arbitrary
@@ -26,21 +25,32 @@
 //  5. WHOLE LITERALS — no class attribute glues an interpolation onto a
 //     utility prefix, since the extractor is a regex and cannot see those.
 //
-// Deliberately requires nothing from node_modules: freshness is verifiable
-// without tailwindcss installed, so this runs in any checkout.
-//
 // Run with: node --test tests/tailwind-build.test.js
+// (Run `npm install` at the repo root first; Tailwind is a dev dependency.)
 
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
+const { execFileSync } = require('node:child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 
-const { expectedStamp, readStamp, OUTPUT_FILE } = require('../scripts/tailwind-stamp');
-
 const ROOT = path.join(__dirname, '..');
-const CSS_PATH = path.join(ROOT, OUTPUT_FILE);
+const OUTPUT_FILE = 'public/css/tailwind.css';
+const BUILD_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'usernode-tailwind-test-'));
+const CSS_PATH = path.join(BUILD_DIR, 'tailwind.css');
+try {
+  execFileSync(process.execPath, [
+    path.join(ROOT, 'scripts', 'build-tailwind.js'), '--output', CSS_PATH,
+  ], { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+} catch (err) {
+  fs.rmSync(BUILD_DIR, { recursive: true, force: true });
+  const detail = err.stderr ? String(err.stderr).trim() : err.message;
+  throw new Error(`fresh Tailwind compile failed: ${detail}`);
+}
+after(() => fs.rmSync(BUILD_DIR, { recursive: true, force: true }));
+
 const css = fs.readFileSync(CSS_PATH, 'utf8');
 const indexHtml = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
 
@@ -59,15 +69,36 @@ const VENDOR_FILES = [
 const HOSTED_TAILWIND = 'public/usernode-tailwind/v1/tailwind.js';
 const HOSTED_TAILWIND_SHA384 = 'igm5BeiBt36UU4gqwWS7imYmelpTsZlQ45FZf+XBn9MuJbn4nQr7yx1yFydocC/K';
 
-test('the committed stylesheet is in sync with its sources', () => {
-  const stamped = readStamp(css);
-  assert.ok(stamped, `${OUTPUT_FILE} has no build stamp on its first line — run \`npm run build:css\``);
-  const { stamp, files } = expectedStamp();
-  assert.equal(
-    stamped, stamp,
-    `${OUTPUT_FILE} is STALE (built from different sources than the ${files.length} files `
-    + 'currently scanned). Run `npm run build:css` and commit the result.'
-  );
+test('the build script compiles the current sources without a committed artifact', () => {
+  assert.ok(css.length > 20000, `${OUTPUT_FILE} is only ${css.length} bytes`);
+
+  const gitignore = fs.readFileSync(path.join(ROOT, '.gitignore'), 'utf8').split(/\r?\n/);
+  const dockerignore = fs.readFileSync(path.join(ROOT, '.dockerignore'), 'utf8').split(/\r?\n/);
+  assert.ok(gitignore.includes(`/${OUTPUT_FILE}`), `${OUTPUT_FILE} must be gitignored`);
+  assert.ok(dockerignore.includes(OUTPUT_FILE), `${OUTPUT_FILE} must be excluded from the Docker context`);
+});
+
+test('Dockerfile compiles Tailwind in a builder and copies only the output into runtime', () => {
+  const dockerfile = fs.readFileSync(path.join(ROOT, 'Dockerfile'), 'utf8');
+  assert.match(dockerfile, /FROM node:22-alpine AS css/, 'needs a named CSS builder stage');
+  assert.match(dockerfile, /COPY package\.json package-lock\.json \.\//,
+    'the CSS stage should use the lockfile-pinned dependency tree');
+  assert.match(dockerfile, /RUN npm ci(?:\s|$)/, 'the CSS stage should install dev dependencies');
+  assert.match(dockerfile, /COPY public \.\/public/, 'the CSS stage must scan public sources');
+  assert.match(dockerfile, /COPY frontend \.\/frontend/, 'the CSS stage must scan frontend sources');
+  assert.match(dockerfile, /RUN npm run build:css/, 'the CSS stage must run the platform compiler');
+  assert.match(dockerfile,
+    /COPY --from=css \/build\/public\/css\/tailwind\.css \.\/public\/css\/tailwind\.css/,
+    'the runtime stage must copy in the generated stylesheet');
+
+  const runtimeCopy = dockerfile.lastIndexOf('COPY . .');
+  const generatedCopy = dockerfile.indexOf('COPY --from=css');
+  assert.ok(runtimeCopy > -1 && generatedCopy > runtimeCopy,
+    'the generated stylesheet must be copied after the source tree');
+
+  const runtime = dockerfile.slice(dockerfile.indexOf('# Stage 2'));
+  assert.match(runtime, /RUN npm ci --production/, 'the runtime must remain production-only');
+  assert.doesNotMatch(runtime, /npm run build:css/, 'the runtime must not compile assets');
 });
 
 test('the compiled stylesheet is substantial, not a stub', () => {

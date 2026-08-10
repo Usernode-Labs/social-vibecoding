@@ -82,6 +82,81 @@ test('swallows DB errors instead of throwing', async () => {
   assert.equal(pool.calls.length, 1);
 });
 
+// ── #1088: claimByokSwitchNotice ───────────────────────────────────────
+//
+// The once-per-user-per-UTC-day claim that decides whether the BYOK
+// switchover notice is shown. The proxy's per-turn registry flag alone
+// re-announced the switch on every chat once credits ran out.
+
+// A pool whose claim statement behaves like the real conditional upsert:
+// the first caller stamps the row (rowCount 1), everyone after it updates
+// nothing (rowCount 0) until the day rolls over.
+function makeClaimPool({ alreadyClaimed = false, fail = false } = {}) {
+  const calls = [];
+  let claimed = alreadyClaimed;
+  return {
+    calls,
+    async query(sql, params) {
+      calls.push({ sql, params });
+      if (fail) throw new Error('connection refused');
+      if (claimed) return { rows: [], rowCount: 0 };
+      claimed = true;
+      return { rows: [{ id: 1 }], rowCount: 1 };
+    },
+  };
+}
+
+test('claimByokSwitchNotice upserts today\'s row and stamps byok_notice_at', async () => {
+  const pool = makeClaimPool();
+  assert.equal(await limits.claimByokSwitchNotice(pool, 7), true);
+  assert.equal(pool.calls.length, 1);
+  const { sql, params } = pool.calls[0];
+  assert.match(sql, /INSERT INTO llm_usage/);
+  assert.match(sql, /byok_notice_at/);
+  // Upsert, not a bare UPDATE: a GLOBAL-cap crossing can switch a user
+  // who has spent nothing today and so has no llm_usage row yet.
+  assert.match(sql, /VALUES \(\$1, CURRENT_DATE, NOW\(\)\)/);
+  assert.match(sql, /ON CONFLICT \(user_id, date\)/);
+  // One statement, so two concurrent callers cannot both win.
+  assert.match(sql, /WHERE llm_usage\.byok_notice_at IS NULL/);
+  assert.match(sql, /RETURNING id/);
+  // Never touches either spend column.
+  assert.doesNotMatch(sql, /total_cost_cents/);
+  assert.doesNotMatch(sql, /byok_cost_cents/);
+  assert.deepEqual(params, [7]);
+});
+
+test('claimByokSwitchNotice returns true once, then false for the rest of the day', async () => {
+  const pool = makeClaimPool();
+  assert.equal(await limits.claimByokSwitchNotice(pool, 7), true);
+  assert.equal(await limits.claimByokSwitchNotice(pool, 7), false);
+  assert.equal(await limits.claimByokSwitchNotice(pool, 7), false);
+  assert.equal(pool.calls.length, 3, 'every attempt still goes to the DB — it is the arbiter');
+});
+
+test('claimByokSwitchNotice loses to a row already stamped today', async () => {
+  const pool = makeClaimPool({ alreadyClaimed: true });
+  assert.equal(await limits.claimByokSwitchNotice(pool, 7), false);
+});
+
+test('claimByokSwitchNotice fails quiet (false, not throw) on a DB error', async () => {
+  const pool = makeClaimPool({ fail: true });
+  let result;
+  await assert.doesNotReject(async () => {
+    result = await limits.claimByokSwitchNotice(pool, 7);
+  });
+  // Deliberately the inverse of recordSpend's fail-open tolerance:
+  // over-notifying is the defect, and the credit meter still shows state.
+  assert.equal(result, false);
+});
+
+test('claimByokSwitchNotice no-ops on a missing user id', async () => {
+  const pool = makeClaimPool();
+  assert.equal(await limits.claimByokSwitchNotice(pool, null), false);
+  assert.equal(await limits.claimByokSwitchNotice(pool, undefined), false);
+  assert.equal(pool.calls.length, 0);
+});
+
 // ── #361: system-token budget helpers ──────────────────────────────────
 
 // A pool whose query routes by SQL so the cap read (platform_settings)

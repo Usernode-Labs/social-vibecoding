@@ -200,6 +200,46 @@ test.beforeEach(() => {
   certCalls.length = 0;
 });
 
+test('a recovered OpenRouter chat reply stays a normal reply, not a Claude completion card', async () => {
+  const pool = makePool();
+  const emits = [];
+  const ret = await finalizeRecoveredTurn({
+    config: {},
+    pool,
+    staging: makeStaging(),
+    session: {
+      ...SESSION,
+      agent_backend: 'codex_openrouter',
+      agent_model: 'anthropic/claude-sonnet-4.5',
+    },
+    sessionId: 510,
+    result: {
+      ahead: 0,
+      sha: null,
+      pushOk: true,
+      exitCode: 0,
+      ccIsError: false,
+      lastResultText: 'The current session uses OpenRouter for every turn.',
+    },
+    repoOwner: 'Usernode-Labs',
+    repoName: 'social-vibecoding',
+    emit: (event, data) => emits.push({ event, data }),
+    containerName: 'usernode-worker-510',
+    keepWorker: true,
+    activeTurn: {
+      turnId: '00000000-0000-4000-8000-000000000510',
+      backend: 'codex_openrouter',
+      model: 'anthropic/claude-sonnet-4.5',
+    },
+  });
+
+  assert.equal(ret.outcome, 'done');
+  assert.equal(ret.summary, 'The current session uses OpenRouter for every turn.');
+  assert.equal(insertedRows(pool).length, 0, 'the direct reply is persisted by the wrap-up owner');
+  assert.equal(emits.length, 0, 'recovery does not paint a duplicate completion card');
+  assert.ok(!JSON.stringify(pool.calls).includes('Claude Code'));
+});
+
 test('re-pushes an un-pushed recovered branch before creating the PR', async () => {
   const pool = makePool();
   const staging = makeStaging();

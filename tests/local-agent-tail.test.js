@@ -56,7 +56,8 @@ test('a local turn is never routed for a headless run', () => {
   // backwards and silently match nothing.
   const at = sessions.indexOf('#907: is a coding agent on the user');
   const gate = sessions.slice(at, sessions.indexOf('const runLocally =', at));
-  assert.match(gate, /if \(!headless\)/);
+  assert.match(gate, /if \(!headless && !isCodexSession\)/,
+    'headless and OpenRouter turns both stay on their provider-owned worker path');
   assert.match(sessions, /const runLocally = !!lease;/);
 });
 
@@ -222,7 +223,8 @@ test('a local scout is never routed for a headless run', () => {
     scout.indexOf('#907: a scout turn follows'),
     scout.indexOf('const runLocally =')
   );
-  assert.match(gate, /if \(!headless\) \{/);
+  assert.match(gate, /if \(!headless && !isCodexSession\) \{/,
+    'headless and OpenRouter scouts never delegate to a local Claude lease');
   assert.match(gate, /catch \(err\)/, 'and a lookup failure downgrades to a worker');
 });
 

@@ -1,20 +1,14 @@
 // Freshness of the React shell's committed build artifacts.
 //
 // public/index.html and public/shell/assets/shell.js are GENERATED from
-// frontend/ and committed to the repo, for the same reason
-// public/css/tailwind.css is: the runtime image installs with
-// `npm ci --production` (no vite, no react, no typescript), the deploy
-// workflow only rsyncs and runs `docker compose up --build`, and worker
-// checkouts never run an install step. There is no build step at deploy time
-// and nowhere to add one cheaply.
+// frontend/ and committed to the repo. Unlike the deploy-generated Tailwind
+// stylesheet, tests and non-Docker checkouts need the shell's rendered markup
+// and executable bundle without installing the separate frontend workspace.
 //
 // That is only safe if staleness is impossible to miss, which is what this
 // test is for. `npm run build:shell` stamps both artifacts with a sha256 over
 // every input under frontend/; here we recompute it from the working tree and
 // fail when they disagree.
-//
-// Modelled on tests/tailwind-build.test.js — same contract, same failure mode,
-// same remedy (run the build, commit the output in the same commit).
 //
 // Run with: node --test tests/shell-build.test.js
 
