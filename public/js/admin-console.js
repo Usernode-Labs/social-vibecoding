@@ -58,6 +58,65 @@
 // names, spend, host load, stuck sessions and the event log from
 // non-admins.
 
+// ── AdminUI: shared shadcn-style class recipes (see
+// docs/superpowers/specs/2026-08-10-admin-shadcn-restyle-design.md) ──────
+// Data-only class-string constants used by this file and every admin-*.js
+// section module (all of which load after this file — see the script order
+// in frontend/src/Shell.tsx). Buttons are composed verbatim from the
+// variant table in frontend/@/components/ui/button.tsx so admin buttons
+// pixel-match the shell's React <Button>. Every value is a COMPLETE class
+// literal: Tailwind's extractor is a regex over public/js/** source, and
+// tests/admin-ui-registry.test.js + tests/tailwind-build.test.js enforce
+// the discipline. Never index this registry dynamically.
+window.AdminUI = Object.freeze({
+  // Surfaces — shadcn Card, density-matched to the console's p-4 rhythm.
+  card: 'rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm',
+  cardHeader: 'flex items-center justify-between gap-2 mb-3',
+  cardTitle: 'text-lg font-semibold text-zinc-900 dark:text-zinc-100',
+  cardDescription: 'text-sm text-zinc-500 dark:text-zinc-400',
+  // Tables — shadcn Table.
+  tableWrap: 'w-full overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800',
+  table: 'w-full text-sm',
+  thead: 'border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50',
+  th: 'px-3 py-2 text-left align-middle text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400',
+  td: 'px-3 py-2 align-middle',
+  trHover: 'border-b border-zinc-100 dark:border-zinc-800/60 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/50',
+  // Buttons — button.tsx variants composed with its default / sm sizes.
+  btn: Object.freeze({
+    primary: 'font-medium transition-colors bg-violet-600 hover:bg-violet-500 text-white rounded-lg px-4 py-2 text-sm',
+    outline: 'font-medium transition-colors border border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg px-4 py-2 text-sm',
+    destructive: 'font-medium transition-colors border border-red-400 dark:border-red-700 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 rounded-lg px-4 py-2 text-sm',
+    ghost: 'font-medium transition-colors text-zinc-400 hover:text-zinc-200',
+    link: 'font-medium transition-colors text-zinc-500 hover:text-violet-400',
+    primarySm: 'font-medium transition-colors bg-violet-600 hover:bg-violet-500 text-white rounded px-3 py-1 text-xs',
+    outlineSm: 'font-medium transition-colors border border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded px-3 py-1 text-xs',
+    destructiveSm: 'font-medium transition-colors border border-red-400 dark:border-red-700 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 rounded px-3 py-1 text-xs',
+  }),
+  // Form controls.
+  input: 'w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:border-violet-500',
+  select: 'w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-violet-500',
+  textarea: 'w-full min-h-[80px] rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:border-violet-500',
+  label: 'text-sm font-medium text-zinc-700 dark:text-zinc-300',
+  // Badges — shadcn Badge shape; success/warn use the console's existing
+  // emerald/amber status conventions.
+  badge: Object.freeze({
+    default: 'inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium bg-violet-600 text-white',
+    secondary: 'inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300',
+    outline: 'inline-flex items-center rounded-md border border-zinc-300 dark:border-zinc-700 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:text-zinc-300',
+    destructive: 'inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium bg-red-100 dark:bg-red-950 text-red-700 dark:text-red-300',
+    success: 'inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300',
+    warn: 'inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300',
+  }),
+  // Overlay.
+  dialogOverlay: 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4',
+  dialogPanel: 'w-full max-w-md rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-6 shadow-xl',
+  // Typography / misc.
+  sectionTitle: 'text-lg font-semibold text-zinc-900 dark:text-zinc-100',
+  muted: 'text-sm text-zinc-500 dark:text-zinc-400',
+  separator: 'border-t border-zinc-200 dark:border-zinc-800',
+  kbd: 'rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 font-mono text-xs text-zinc-700 dark:text-zinc-300',
+});
+
 const AdminConsole = {
   _open: false,
   _section: 'overview',
