@@ -8,6 +8,13 @@ const github = require('../services/github');
 const staging = require('../services/staging');
 const visuals = require('../services/visuals');
 const sessionLifecycle = require('../services/session-lifecycle');
+const proposalUpdate = require('../services/proposal-update');
+// The connector-error → HTTP status map. It lives in routes/dev-flow.js
+// because tests/dev-flow-routes.test.js scrapes the services' emitted codes
+// against it in both directions; importing it here rather than restating it is
+// what keeps the connector's loopback and the browser's twin from drifting
+// apart on what a refusal means.
+const { STATUS_BY_CODE: UPDATE_STATUS_BY_CODE } = require('./dev-flow');
 const { beginSessionOperation, isSessionBusy } = require('../services/active-workers');
 const { effectiveSessionCaps } = require('../services/session-caps');
 const { drainGuard } = require('../services/lifecycle');
@@ -279,6 +286,24 @@ function requireCliMiddleware(req, res, next) {
   if (requireCli(req, res)) next();
 }
 
+// The update route's body: the fork branch that carries the new work, and two
+// optional refinements. Same `exactKeys` discipline as every other body in
+// this file — an unrecognised field is a 400 rather than a silently ignored
+// intention. The VALUES are validated by services/proposal-update.js against
+// the same git-ref and repository-name predicates the submit path uses; this
+// only bounds their size so nothing enormous reaches them.
+function parseUpdateFromForkBody(body) {
+  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha'], 'body');
+  const branch = boundedText(body.branch, { label: 'branch', min: 1, max: 255, trim: true });
+  const forkRepo = body.forkRepo == null
+    ? null
+    : boundedText(body.forkRepo, { label: 'forkRepo', min: 1, max: 100, trim: true });
+  const expectedHeadSha = body.expectedHeadSha == null
+    ? null
+    : parseSha(body.expectedHeadSha, 'expectedHeadSha');
+  return { branch, forkRepo, expectedHeadSha };
+}
+
 function repoCoordinates(app) {
   return github.parseGithubUrl(app && app.repo_url);
 }
@@ -499,6 +524,81 @@ function proposalHandoffRoutes(config) {
   const pool = getPool(config);
   const proposalJson = express.json({ limit: '512kb' });
   const commitUploadJson = express.json({ limit: COMMIT_UPLOAD_JSON_LIMIT });
+
+  // ── Advancing a proposal from its author's fork (#1054) ──────────────
+  //
+  // The connector's loopback target for submit_work's `proposalId` + `branch`
+  // shape, and the browser twin's target too — one route, one set of gates,
+  // whichever surface asks.
+  //
+  // Deliberately NOT behind `requireCli`: a connector access token is exactly
+  // the credential this is for, and the CLI-only gate would 404 it. It is
+  // instead on the connector allowlist in services/cli-api-policy.js, so a
+  // connector token reaches this path and nothing else it was not granted.
+  //
+  // The route's whole job is authorization and shape: `collab` access to the
+  // app, the proposal belonging to this app, and a body of at most three
+  // fields. Every decision about whose fork it is, whether the work sits on
+  // the proposal's head and what a moved branch means lives in
+  // services/proposal-update.js, which the browser twin and the connector
+  // share.
+  router.post('/api/apps/:slug/proposals/:id/update-from-fork', proposalJson, drainGuard, async (req, res) => {
+    const sessionId = parseSessionId(req.params.id);
+    if (!sessionId) return res.status(404).json({ error: 'not_found' });
+    let input;
+    try {
+      input = parseUpdateFromForkBody(req.body);
+    } catch (err) {
+      if (err instanceof ValidationError) return res.status(400).json({ error: 'invalid_request', message: err.message });
+      log.error('proposal-handoff', 'Update validation failed unexpectedly', { err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+    try {
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', '*');
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const { rows } = await pool.query(
+        `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url,
+                a.collab_visibility, a.view_visibility
+           FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+          WHERE cs.id = $1 AND cs.app_id = $2`,
+        [sessionId, app.id]
+      );
+      const session = rows[0] || null;
+      if (!session) return res.status(404).json({ error: 'not_found', message: 'That proposal is not on this app.' });
+
+      const result = await proposalUpdate.updateProposalFromForkBranch(
+        { pool, config },
+        {
+          user: req.user,
+          session,
+          branch: input.branch,
+          forkRepo: input.forkRepo,
+          expectedHeadSha: input.expectedHeadSha,
+          origin: config.cliAuthOrigin || null,
+        }
+      );
+      if (!result.ok) {
+        // One shared code→status map, in routes/dev-flow.js, so the connector
+        // and the browser cannot disagree about what a refusal means.
+        const status = UPDATE_STATUS_BY_CODE[result.code] || 400;
+        return res.status(status).json({
+          error: result.code,
+          message: result.message,
+          ...(result.retryable ? { retryable: true } : {}),
+          ...(result.expectedBase ? { expectedBase: result.expectedBase } : {}),
+          ...(result.headSha ? { headSha: result.headSha } : {}),
+          ...(result.settingsUrl ? { settingsUrl: result.settingsUrl } : {}),
+        });
+      }
+      return res.json({
+        ...result,
+        webPath: `/#app/${session.app_slug}/dev/sessions/${session.id}`,
+      });
+    } catch (err) {
+      log.error('proposal-handoff', 'Proposal update failed', { sessionId, err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
 
   router.post('/api/apps/:slug/proposal-handoffs', proposalJson, drainGuard, async (req, res) => {
     if (!requireCli(req, res)) return;

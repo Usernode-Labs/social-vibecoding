@@ -114,6 +114,13 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   // unattended build and promotes its clone.
   { method: 'GET', pattern: '/api/apps/:slug/pr-import/preview' },
   { method: 'POST', pattern: '/api/apps/:slug/pr-import' },
+  // Advancing a proposal that is already up for a vote (#1054), from a branch
+  // in the author's own fork. Allowlisted because the connector is where the
+  // agent that wrote the code lives — a failing check gates merge, and until
+  // this route existed the cheapest possible fixer of its own failing test had
+  // no way to land the fix. The route itself refuses everything that is not
+  // the caller's own open proposal.
+  { method: 'POST', pattern: '/api/apps/:slug/proposals/:id/update-from-fork' },
   { method: 'POST', pattern: '/api/apps/:slug/issues/:number/headless-session' },
   { method: 'POST', pattern: '/api/sessions/:id/clone-headless' },
   { method: 'POST', pattern: '/api/sessions/:id/promote' },

@@ -4482,14 +4482,27 @@ ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS submitted_via TEXT;
 ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS submitted_source TEXT;
 ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS submitted_client_id TEXT;
 
+-- Which existing proposal this work order UPDATES, when prepare_work was
+-- called with a proposalId (#1054). NULL is the original behaviour: the work
+-- order opens a NEW proposal. ON DELETE SET NULL because the task row is the
+-- audit trail of what an agent was asked to do, and it outlives the proposal.
+ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS target_session_id BIGINT
+  REFERENCES chat_sessions(id) ON DELETE SET NULL;
+
 DO $$
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint WHERE conname = 'external_agent_tasks_submitted_via_chk'
-  ) THEN
-    ALTER TABLE external_agent_tasks ADD CONSTRAINT external_agent_tasks_submitted_via_chk
-      CHECK (submitted_via IS NULL OR submitted_via IN ('branch','branch_head_repo','mirror','patch','pr'));
-  END IF;
+  -- The update path adds two more values (#1054):
+  --   update_branch    — the fork branch was pushed onto the proposal's
+  --                      bot-owned branch in the app repo
+  --   update_fork_head — the proposal's head already lived in the author's
+  --                      fork, so advancing the tracked head WAS the write
+  -- Widening a CHECK means replacing it, so this one constraint is dropped
+  -- and recreated rather than added-if-absent. Safe on every boot: the new
+  -- list is a superset, so no stored value can be excluded by it.
+  ALTER TABLE external_agent_tasks DROP CONSTRAINT IF EXISTS external_agent_tasks_submitted_via_chk;
+  ALTER TABLE external_agent_tasks ADD CONSTRAINT external_agent_tasks_submitted_via_chk
+    CHECK (submitted_via IS NULL OR submitted_via IN (
+      'branch','branch_head_repo','mirror','patch','pr','update_branch','update_fork_head'));
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint WHERE conname = 'external_agent_tasks_submitted_source_chk'
   ) THEN

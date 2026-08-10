@@ -21,6 +21,7 @@
 //   GET  /api/apps/:slug/dev-flow/status         → the walkthrough's state
 //   POST /api/apps/:slug/external-tasks          → prepare a work order
 //   POST /api/apps/:slug/external-tasks/:id/submit → open the PR + import
+//   POST /api/apps/:slug/external-tasks/:id/submit-update → advance a proposal
 //
 // The connector is now one way in, not the way in. Anyone who has linked
 // GitHub can run the whole flow from the dev chat.
@@ -50,10 +51,10 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 // service's failures are all "you or your GitHub account needs to do
 // something", never a bug on this side, and the client renders the
 // service's own wording either way. The keys are the complete set of codes
-// external-agent-tasks.js and connector-limits.js can emit, and
-// tests/dev-flow-routes.test.js scrapes both files to keep it that way — an
-// unmapped code would answer 400 for something that is really a 429 or a
-// 502, which is what a retry policy reads.
+// external-agent-tasks.js, proposal-update.js and connector-limits.js can
+// emit, and tests/dev-flow-routes.test.js scrapes all three files to keep it
+// that way — an unmapped code would answer 400 for something that is really a
+// 429 or a 502, which is what a retry policy reads.
 const STATUS_BY_CODE = {
   no_repository: 409,
   platform_unavailable: 503,
@@ -70,6 +71,17 @@ const STATUS_BY_CODE = {
   import_failed: 502,
   invalid_request: 400,
   at_capacity: 429,
+  // The update path (#1054). Three of these are 409 rather than 403 on
+  // purpose: `base_mismatch` and `branch_moved` mean the caller's picture of
+  // the proposal is out of date, and `session_busy` means "not now", which is
+  // a conflict with the world's state, not a permission problem.
+  not_your_proposal: 403,
+  not_your_fork: 403,
+  proposal_closed: 409,
+  base_mismatch: 409,
+  branch_moved: 409,
+  session_busy: 409,
+  fork_branch_not_found: 404,
 };
 
 // Same-origin guard for the two writes, copied in spirit from
@@ -96,6 +108,12 @@ function sendFailure(res, result) {
     code: result.code || 'error',
     retryable: !!result.retryable,
     ...(result.settingsUrl ? { settingsUrl: result.settingsUrl } : {}),
+    // `expectedBase` and `headSha` come from the update path (#1054): a
+    // `base_mismatch` is only actionable if the client can say which commit to
+    // rebase onto, and a `branch_moved` only if it can say where the proposal
+    // is now.
+    ...(result.expectedBase ? { expectedBase: result.expectedBase } : {}),
+    ...(result.headSha ? { headSha: result.headSha } : {}),
   });
 }
 
@@ -145,6 +163,34 @@ async function connectorCount(pool, userId) {
     // switched off — an unreadable count is "none", never a failed status.
     return 0;
   }
+}
+
+// The proposal an open UPDATE task revises (#1054), re-derived so reopening
+// the chat resumes the update walkthrough instead of showing a work order
+// that has forgotten what it was for. Deliberately the SAME describe function
+// the prepare path uses, against the same row, so the resumed order cannot
+// disagree with the original one — including its refusals: a proposal that
+// merged while the agent worked stops being offered here too.
+async function reloadTargetProposal(pool, user, app, origin, task) {
+  const proposalId = Number(task && task.target_session_id);
+  if (!Number.isSafeInteger(proposalId) || proposalId <= 0) return null;
+  let session = null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, user_id, app_id, status, source, branch_name,
+              imported_pr_head_sha, pr_title
+         FROM chat_sessions
+        WHERE id = $1`,
+      [proposalId]
+    );
+    session = rows[0] || null;
+  } catch (err) {
+    log.warn('dev-flow', 'target proposal reload failed', { proposalId, err: err.message });
+    return null;
+  }
+  if (!session) return null;
+  const described = externalAgentTasks.describeTargetProposal(session, user, app, origin);
+  return described.ok ? described : null;
 }
 
 // inspectPushedBranch answers with a bare string. The walkthrough wants a
@@ -258,12 +304,16 @@ function devFlowRoutes(config) {
       // walkthrough instead of restarting it.
       const task = await externalAgentTasks.loadLatestOpenTaskForSlug(pool, req.user.id, app.slug);
       if (task) {
+        const targetProposal = await reloadTargetProposal(
+          pool, req.user, app, originOf(config), task
+        );
         const rendered = externalAgentTasks.renderPreparedTask({
           task,
           app,
           owner: parsed.owner,
           repo: parsed.repo,
           origin: originOf(config),
+          targetProposal,
           // The agent this task was prepared for. The browser flow records
           // it as the client id (`usernode-web:<agent>`), which is exactly
           // what normalizeAgent reads — so the choice survives a reload
@@ -286,6 +336,18 @@ function devFlowRoutes(config) {
           brief: task.brief || '',
           guidance: rendered.guidance,
           workOrder: rendered.workOrder,
+          // Present only for an UPDATE task (#1054). `null` on every ordinary
+          // work order, which is what the client branches on: with it, the
+          // walkthrough's last step submits onto an existing proposal instead
+          // of opening a new one.
+          targetProposal: targetProposal
+            ? {
+              id: targetProposal.proposalId,
+              title: targetProposal.title,
+              branchHome: targetProposal.branchHome,
+              webPath: targetProposal.webPath,
+            }
+            : null,
         };
         let branchState = 'unknown';
         try {
@@ -449,6 +511,99 @@ function devFlowRoutes(config) {
     }
   });
 
+  // ── Advance a proposal that is already up for a vote (#1054) ──────────
+  //
+  // body { proposalId, branch?, forkRepo?, expectedHeadSha? }
+  //
+  // The browser twin of submit_work's proposalId shape. It is the same
+  // submitWork entry point, and it reaches the push through the same loopback
+  // POST /api/apps/:slug/proposals/:id/update-from-fork the connector uses —
+  // so the ownership gate, the fork-attribution gate and the lease all live in
+  // one place, and this file cannot be the path that skips one.
+  //
+  // `:id` is the TASK, matching the submit route beside it. The proposal it
+  // advances comes from the body, and submitUpdate refuses the pair when the
+  // task was prepared for a different proposal.
+  router.post('/api/apps/:slug/external-tasks/:id/submit-update', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    if (!sameOrigin(config, req, res)) return undefined;
+
+    const taskId = /^\d+$/.test(req.params.id) ? parseInt(req.params.id, 10) : NaN;
+    if (!Number.isInteger(taskId) || taskId <= 0) {
+      return res.status(400).json({ error: 'Bad task id', code: 'invalid_request' });
+    }
+    const rawProposal = req.body?.proposalId;
+    const proposalId = Number.isInteger(rawProposal) && rawProposal > 0 ? rawProposal : null;
+    if (!proposalId) {
+      return res.status(400).json({
+        error: 'proposalId must be the id of one of your proposals that is up for a vote.',
+        code: 'invalid_request',
+      });
+    }
+
+    try {
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', '*');
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      if (IS_STAGING) {
+        return res.status(503).json({
+          error: 'Updating a proposal is disabled in a staging preview.',
+          code: 'platform_unavailable',
+        });
+      }
+
+      const cookie = req.headers.cookie || '';
+      const updateProposal = async (targetSlug, id, payload) => {
+        try {
+          const resp = await fetch(
+            `${loopbackBase(config)}/api/apps/${encodeURIComponent(targetSlug)}/proposals/${encodeURIComponent(id)}/update-from-fork`,
+            {
+              method: 'POST',
+              headers: {
+                'content-type': 'application/json',
+                accept: 'application/json',
+                // The caller's OWN session, replayed — same reasoning as the
+                // import loopback above.
+                cookie,
+              },
+              body: JSON.stringify(payload),
+            }
+          );
+          const text = await resp.text();
+          let parsed = null;
+          try { parsed = text ? JSON.parse(text) : null; } catch { parsed = null; }
+          return { ok: resp.ok, status: resp.status, body: parsed };
+        } catch (err) {
+          log.warn('dev-flow', 'update-from-fork loopback failed', { err: err.message });
+          return { ok: false, status: 0, body: null, networkError: true };
+        }
+      };
+
+      const result = await externalAgentTasks.submitWork(taskDeps(pool, config), {
+        user: req.user,
+        clientName: 'Usernode',
+        clientId: 'usernode-web',
+        taskId,
+        proposalId,
+        slug: app.slug,
+        branch: typeof req.body?.branch === 'string' ? req.body.branch : undefined,
+        forkRepo: typeof req.body?.forkRepo === 'string' ? req.body.forkRepo : undefined,
+        expectedHeadSha: typeof req.body?.expectedHeadSha === 'string' ? req.body.expectedHeadSha : undefined,
+        source: 'web',
+        updateProposal,
+      });
+      if (!result.ok) return sendFailure(res, result);
+
+      log.info('dev-flow', 'proposal updated', {
+        userId: req.user.id, slug: app.slug, taskId, proposalId,
+        via: result.submittedVia, votesCleared: result.votesCleared,
+      });
+      return res.json(result);
+    } catch (err) {
+      log.error('dev-flow', 'update failed', { slug: req.params.slug, err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   return router;
 }
 
@@ -457,6 +612,10 @@ function devFlowRoutes(config) {
 // production (IS_STAGING gates the caller). It puts the walkthrough at
 // step 4 — GitHub linked, fork ready, work order in hand, branch not yet
 // pushed — because that is the step with the most to review.
+//
+// The work order is an UPDATE one (#1054): the update branch is the harder of
+// the two to review, it renders every ordinary step as well, and a reviewer
+// who only ever sees the new-proposal copy cannot check the difference.
 function demoStatus(app, parsed) {
   const owner = (parsed && parsed.owner) || 'usernode-apps';
   const repo = (parsed && parsed.repo) || app.slug;
@@ -498,19 +657,31 @@ function demoStatus(app, parsed) {
         'Come back here when it has pushed; Usernode submits the change itself.',
       ],
       workOrder: [
-        `You are working on the Usernode app "${app.name || app.slug}".`,
+        `You are UPDATING a proposal on the Usernode app "${app.name || app.slug}".`,
         '',
         `Repository to fork from: https://github.com/${owner}/${repo}`,
         `Your fork: https://github.com/${login}/${repo}`,
         `Branch to create: ${branch}`,
         `Base commit: ${baseSha}`,
         '',
+        'THE PROPOSAL YOU ARE UPDATING',
+        '- Usernode proposal id:                  990601',
+        '- Its title:                             Add a dark-mode toggle',
+        '- Where its head lives:                  a branch in your own fork',
+        '',
         'TASK',
-        'Add a dark-mode toggle to the settings screen.',
+        'The dark-mode toggle proposal has a failing check. Fix it.',
         '',
         'When you are done, commit and push the branch, then come back to',
-        'Usernode and press "Submit for review".',
+        'Usernode and press "Submit the update".',
       ].join('\n'),
+      // The proposal this order revises. `null` on an ordinary work order.
+      targetProposal: {
+        id: 990601,
+        title: 'Add a dark-mode toggle',
+        branchHome: 'user_fork',
+        webPath: `/#app/${app.slug}/dev/sessions/990601`,
+      },
     },
     branch: shapeBranch('missing'),
   };
