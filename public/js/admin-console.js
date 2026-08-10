@@ -74,8 +74,9 @@ window.AdminUI = Object.freeze({
   cardHeader: 'flex items-center justify-between gap-2 mb-3',
   cardTitle: 'text-lg font-semibold text-zinc-900 dark:text-zinc-100',
   cardDescription: 'text-sm text-zinc-500 dark:text-zinc-400',
-  // Tables — shadcn Table.
-  tableWrap: 'w-full overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800',
+  // Tables — shadcn Table. NOTE: no overflow-x-auto — nothing in the
+  // console scrolls sideways (#860, pinned by admin-console-page.test.js).
+  tableWrap: 'w-full rounded-lg border border-zinc-200 dark:border-zinc-800',
   table: 'w-full text-sm',
   thead: 'border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50',
   th: 'px-3 py-2 text-left align-middle text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400',

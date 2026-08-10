@@ -46,7 +46,7 @@ Write the resulting class names down in the task's commit message body. `hidden`
 | Bordered red/destructive button | `${AdminUI.btn.destructive}` |
 | Small (`text-xs`, `px-3 py-1`) variants of the above | `${AdminUI.btn.primarySm}` / `outlineSm` / `destructiveSm` |
 | Quiet text-link button (`text-zinc-400 hover:text-violet-400`, refresh links) | `${AdminUI.btn.link}` |
-| `<table>` element | `${AdminUI.table}`, its scroll/border wrapper `${AdminUI.tableWrap}` (add wrapper `<div>` only if the table has none) |
+| `<table>` element | `${AdminUI.table}`, its border wrapper `${AdminUI.tableWrap}` (add wrapper `<div>` only if the table has none; never `overflow-x-auto` — nothing in the console scrolls sideways, #860) |
 | `<thead>` row styling | `${AdminUI.thead}` on `<thead>`, `${AdminUI.th}` on each `<th>` |
 | `<td>` cells / body rows | `${AdminUI.td}` / `${AdminUI.trHover}` on `<tr>` |
 | Status pill/tag spans (emerald=ok, amber=warn, red=error, zinc=neutral) | `${AdminUI.badge.success}` / `warn` / `destructive` / `secondary` |
@@ -169,7 +169,7 @@ window.AdminUI = Object.freeze({
   cardTitle: 'text-lg font-semibold text-zinc-900 dark:text-zinc-100',
   cardDescription: 'text-sm text-zinc-500 dark:text-zinc-400',
   // Tables — shadcn Table.
-  tableWrap: 'w-full overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800',
+  tableWrap: 'w-full rounded-lg border border-zinc-200 dark:border-zinc-800',
   table: 'w-full text-sm',
   thead: 'border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50',
   th: 'px-3 py-2 text-left align-middle text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400',
