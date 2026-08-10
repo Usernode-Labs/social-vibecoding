@@ -44,12 +44,18 @@ function makeInput() {
   };
 }
 
-function makeHarness({
-  input = null,
-  coarsePointer = false,
-  drafts = {},
-  createReturns = { id: 77 },
-} = {}) {
+function makeHarness(options = {}) {
+  const {
+    input = null,
+    coarsePointer = false,
+    drafts = {},
+  } = options;
+  // `undefined` is an intentional createSession result: it means the user
+  // cancelled the coding-agent chooser. Do not let a destructuring default
+  // turn that case into a successful fake creation.
+  const createReturns = Object.prototype.hasOwnProperty.call(options, 'createReturns')
+    ? options.createReturns
+    : { id: 77 };
   const calls = {
     createSession: [],
     setDraft: [],
@@ -285,6 +291,21 @@ test('cap fallback: refused creation lands the message in the newest chat + a to
   assert.equal(calls.toast.length, 1, 'the user is told where the message went');
   assert.match(calls.toast[0], /most recent dev chat/);
   assert.equal(calls.sendMessage.length, 0);
+});
+
+test('cancelled creation does not redirect the draft into an existing chat', async () => {
+  const { AppView, calls } = makeHarness({ createReturns: undefined });
+  AppView._proposals = [PR];
+  AppView._mySessions = [
+    { ...CLEAN, id: 9, pr_number: 41, session_title: 'Live work' },
+  ];
+
+  await AppView.exploreProposalInDevChat(7);
+
+  assert.deepEqual(calls.createSession, [['test-app']]);
+  assert.equal(calls.setDraft.length, 0, 'cancel means no session receives the draft');
+  assert.equal(calls.switchTab.length, 0, 'cancel leaves the user where they were');
+  assert.equal(calls.toast.length, 0, 'cancel needs no failure or fallback toast');
 });
 
 test('refused creation with no existing chat at all: no draft, no navigation, no throw', async () => {

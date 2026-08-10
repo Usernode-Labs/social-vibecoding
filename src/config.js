@@ -231,9 +231,10 @@ function load() {
     iframeJwtPublicKey: (process.env.IFRAME_JWT_PUBLIC_KEY || '').replace(/\\n/g, '\n'),
     workerJwtSecret: process.env.WORKER_JWT_SECRET || '',
     edgeJwtSecret: process.env.EDGE_JWT_SECRET || '',
-    // OpenRouter BYOK + Codex backend (plan.md). All default off so the
-    // feature is inert until an operator opts in.
-    codexOpenrouterEnabled: String(process.env.CODEX_OPENROUTER_ENABLED || 'false') === 'true',
+    // OpenRouter BYOK + Codex backend. Available alongside Claude by
+    // default; this is an availability/kill switch, never a global provider
+    // choice. Each user explicitly chooses the backend for their session.
+    codexOpenrouterEnabled: String(process.env.CODEX_OPENROUTER_ENABLED || 'true') === 'true',
     openrouterBetaUserIds: (process.env.CODEX_OPENROUTER_BETA_USER_IDS || '')
       .split(',').map((s) => s.trim()).filter(Boolean),
     openrouterExperimentalModels: String(process.env.OPENROUTER_EXPERIMENTAL_MODELS_ENABLED || 'false') === 'true',

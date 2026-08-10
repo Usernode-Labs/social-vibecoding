@@ -7,7 +7,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { resolveDefaultAgentPreference } = require('../src/routes/sessions');
+const {
+  AgentSelectionError,
+  codingAgentRuntimeIdentity,
+  resolveDefaultAgentPreference,
+  resolveExplicitAgentPreference,
+} = require('../src/routes/sessions');
 
 // A stubbed pool that serves the user_agent_preferences row and the
 // OpenRouter credential metadata row for resolveDefaultAgentPreference.
@@ -30,7 +35,37 @@ const BASE_CONFIG = {
   codexOpenrouterEnabled: true,
   openrouterBetaUserIds: [],
   openrouterDefaultCodexModel: 'openai/gpt-5.3-codex',
+  dataEncryptionKey: 'test-data-key',
 };
+
+function stubExplicitCodexServices(t, {
+  metadata = { id: 1, status: 'valid', revision: 4 },
+  secret = 'sk-or-test',
+  models = [{ id: 'openai/gpt-5.3-codex' }],
+  catalogError = null,
+} = {}) {
+  const credentialStore = require('../src/services/credential-store');
+  const agentModels = require('../src/services/agent-models');
+  const originals = {
+    readMetadata: credentialStore.readMetadata,
+    readSecret: credentialStore.readSecret,
+    listOpenRouterModels: agentModels.listOpenRouterModels,
+  };
+  credentialStore.readMetadata = async () => metadata;
+  credentialStore.readSecret = async (args) => {
+    assert.equal(args.expectedRevision, metadata?.revision);
+    return secret;
+  };
+  agentModels.listOpenRouterModels = async () => {
+    if (catalogError) throw catalogError;
+    return { models };
+  };
+  t.after(() => {
+    credentialStore.readMetadata = originals.readMetadata;
+    credentialStore.readSecret = originals.readSecret;
+    agentModels.listOpenRouterModels = originals.listOpenRouterModels;
+  });
+}
 
 test('no preference → Claude default', async () => {
   const { pool } = makePool({ prefRow: null });
@@ -109,4 +144,128 @@ test('a preference-quoting/resolver failure falls back to Claude, not "no prefer
   const query = async () => { throw new Error('db down'); };
   const pool = { query, connect: async () => ({ query, release() {} }) };
   await assert.rejects(() => resolveDefaultAgentPreference(pool, 7, BASE_CONFIG));
+});
+
+test('an explicit Claude choice is honored even when Codex is disabled', async () => {
+  const out = await resolveExplicitAgentPreference({}, 7, {
+    ...BASE_CONFIG, codexOpenrouterEnabled: false,
+  }, {
+    backend: 'claude_code', model: 'ignored', reasoningEffort: 'high',
+  });
+  assert.deepEqual(out, {
+    backend: 'claude_code', provider: 'anthropic', model: null, reasoningEffort: null,
+  });
+});
+
+test('an explicit Codex choice is returned exactly after key and catalog validation', async (t) => {
+  stubExplicitCodexServices(t);
+  const out = await resolveExplicitAgentPreference({}, 7, BASE_CONFIG, {
+    backend: 'codex_openrouter',
+    model: 'openai/gpt-5.3-codex',
+    reasoningEffort: 'high',
+  });
+  assert.deepEqual(out, {
+    backend: 'codex_openrouter',
+    provider: 'openrouter',
+    model: 'openai/gpt-5.3-codex',
+    reasoningEffort: 'high',
+  });
+});
+
+test('an explicit Codex choice never silently falls back when unavailable', async () => {
+  await assert.rejects(
+    () => resolveExplicitAgentPreference({}, 7, {
+      ...BASE_CONFIG, codexOpenrouterEnabled: false,
+    }, {
+      backend: 'codex_openrouter', model: 'openai/gpt-5.3-codex',
+    }),
+    (err) => err instanceof AgentSelectionError
+      && err.statusCode === 403
+      && /not available/.test(err.message),
+  );
+});
+
+test('an explicit Codex choice requires a user-selected model', async () => {
+  await assert.rejects(
+    () => resolveExplicitAgentPreference({}, 7, BASE_CONFIG, {
+      backend: 'codex_openrouter', model: null,
+    }),
+    (err) => err instanceof AgentSelectionError
+      && err.statusCode === 400
+      && /Choose an OpenRouter model/.test(err.message),
+  );
+});
+
+test('an explicit Codex choice rejects a model outside the user catalog', async (t) => {
+  stubExplicitCodexServices(t, { models: [{ id: 'openai/another-model' }] });
+  await assert.rejects(
+    () => resolveExplicitAgentPreference({}, 7, BASE_CONFIG, {
+      backend: 'codex_openrouter', model: 'openai/gpt-5.3-codex',
+    }),
+    (err) => err instanceof AgentSelectionError
+      && err.statusCode === 400
+      && /not available under your OpenRouter key/.test(err.message),
+  );
+});
+
+test('an explicit unknown backend is a client error', async () => {
+  await assert.rejects(
+    () => resolveExplicitAgentPreference({}, 7, BASE_CONFIG, { backend: 'mystery-agent' }),
+    (err) => err instanceof AgentSelectionError
+      && err.statusCode === 400
+      && err.message === 'Unknown backend',
+  );
+});
+
+test('runtime identity preserves the legacy Claude model and labels', () => {
+  const out = codingAgentRuntimeIdentity(
+    { agent_backend: 'claude_code', agent_model: null },
+    'claude-opus-4-6',
+    BASE_CONFIG,
+  );
+  assert.equal(out.backend, 'claude_code');
+  assert.equal(out.agentName, 'Claude Code');
+  assert.equal(out.model, 'claude-opus-4-6');
+  assert.equal(out.modelLabel, 'Opus');
+  assert.deepEqual(out.metadata, {
+    agentBackend: 'claude_code', agentModel: 'claude-opus-4-6',
+  });
+});
+
+test('runtime identity pins Codex reporting to the session model, not the Mayor model', () => {
+  const out = codingAgentRuntimeIdentity(
+    { agent_backend: 'codex_openrouter', agent_model: 'openai/gpt-5.3-codex' },
+    'claude-opus-4-6',
+    { ...BASE_CONFIG, openrouterDefaultCodexModel: 'openai/operator-default' },
+  );
+  assert.equal(out.backend, 'codex_openrouter');
+  assert.equal(out.agentName, 'Codex');
+  assert.equal(out.model, 'openai/gpt-5.3-codex');
+  assert.equal(out.modelLabel, 'openai/gpt-5.3-codex');
+  assert.deepEqual(out.metadata, {
+    agentBackend: 'codex_openrouter', agentModel: 'openai/gpt-5.3-codex',
+  });
+});
+
+test('a malformed Codex row never borrows the Mayor Claude model', () => {
+  const out = codingAgentRuntimeIdentity(
+    { agent_backend: 'codex_openrouter', agent_model: null },
+    'claude-opus-4-6',
+    { ...BASE_CONFIG, openrouterDefaultCodexModel: '' },
+  );
+  assert.equal(out.model, null);
+  assert.equal(out.modelLabel, 'model not configured');
+  assert.equal(out.metadata.agentModel, null);
+});
+
+test('runtime model display is markup-safe without changing the executable id', () => {
+  const model = 'openai/<img src=x onerror=alert(1)>-codex';
+  const out = codingAgentRuntimeIdentity(
+    { agent_backend: 'codex_openrouter', agent_model: model },
+    'claude-opus-4-6',
+    BASE_CONFIG,
+  );
+  assert.equal(out.model, model);
+  assert.equal(out.metadata.agentModel, model);
+  assert.doesNotMatch(out.modelLabel, /[<>"']/);
 });

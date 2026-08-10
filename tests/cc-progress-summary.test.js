@@ -351,7 +351,7 @@ test("sessions.js persists durationMs on the completion status", () => {
   // terminal ccOutput row must still carry durationMs. Durable turns write
   // that row inside runDbEffect, while legacy turns retain sendStatus.
   const completionMeta = sessionsSrc.match(
-    /const completionMeta = \{([\s\S]{0,240}?)\};/
+    /const completionMeta = \{([\s\S]{0,420}?)\};/
   );
   assert.ok(completionMeta, 'missing shared completion metadata');
   assert.ok(
@@ -367,11 +367,11 @@ test("sessions.js persists durationMs on the completion status", () => {
     'durable completion rows persist the shared metadata in the exact-once effect');
   assert.match(sessionsSrc, /sendStatus\(statusText, completionMeta\)/,
     'legacy completion rows use the same metadata');
-  // The literal 'Claude Code finished' header is still produced for the
-  // success outcome.
+  // The provider-specific success header comes from the shared runtime
+  // identity (Claude remains byte-for-byte "Claude Code finished").
   assert.ok(
-    /statusText\s*=\s*ccOutcome === 'success'\s*\?\s*'Claude Code finished'/.test(sessionsSrc),
-    "success outcome must still surface 'Claude Code finished'"
+    /statusText\s*=\s*ccOutcome === 'success'\s*\?\s*`\$\{executionAgentName\} finished`/.test(sessionsSrc),
+    'success outcome must use the actual coding-agent name'
   );
 });
 

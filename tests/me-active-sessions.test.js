@@ -28,6 +28,7 @@ poolMod.getPool = () => ({
 });
 
 const worker = require('../src/services/worker');
+const workerProgress = require('../src/services/worker-progress');
 const { activeWorkers } = require('../src/services/active-workers');
 
 const { sessionRoutes } = require('../src/routes/sessions');
@@ -60,6 +61,8 @@ function sessionRow(overrides = {}) {
     last_activity_at: '2026-06-12T01:00:00Z',
     app_slug: 'demo',
     app_name: 'Demo App',
+    agent_backend: 'claude_code',
+    agent_model: null,
     ...overrides,
   };
 }
@@ -92,6 +95,8 @@ test('query is owner-scoped and excludes archived/headless rows', async () => {
     // shared_at rides along so the owner's pinned cards can render their
     // "Visible to everyone" / "Make visible" state.
     assert.match(q.sql, /cs\.shared_at/);
+    assert.match(q.sql, /cs\.agent_backend/);
+    assert.match(q.sql, /cs\.agent_model/);
   } finally {
     server.close();
   }
@@ -102,7 +107,7 @@ test('response shape: row fields pass through, busy false without a warm worker'
   poolQueryHandler = async () => ({
     rows: [
       sessionRow({ id: 11, status: 'active', pr_title: 'Add leaderboard' }),
-      sessionRow({ id: 12, status: 'promoted', app_slug: 'other', app_name: 'Other App' }),
+      sessionRow({ id: 12, status: 'promoted', app_slug: 'other', app_name: 'Other App', agent_backend: 'codex_openrouter', agent_model: 'openai/gpt-5.3-codex' }),
       sessionRow({ id: 13, status: 'paused' }),
     ],
   });
@@ -121,6 +126,8 @@ test('response shape: row fields pass through, busy false without a warm worker'
       assert.strictEqual(s.busy, false);
     }
     assert.strictEqual(body.sessions[0].pr_title, 'Add leaderboard');
+    assert.strictEqual(body.sessions[1].agent_backend, 'codex_openrouter');
+    assert.strictEqual(body.sessions[1].agent_model, 'openai/gpt-5.3-codex');
   } finally {
     worker.isInFlight = realIsInFlight;
     server.close();
@@ -162,6 +169,32 @@ test('busy flag: set via activeWorkers or worker.isInFlight; totals arithmetic c
   } finally {
     worker.isInFlight = realIsInFlight;
     activeWorkers.clear();
+    server.close();
+  }
+});
+
+test('busy runtime identity does not overwrite the session-pinned backend', async () => {
+  capturedQueries = [];
+  poolQueryHandler = async () => ({
+    rows: [sessionRow({
+      id: 31,
+      agent_backend: 'codex_openrouter',
+      agent_model: 'openai/gpt-5.3-codex',
+    })],
+  });
+  workerProgress.set(31, 'Editing locally', {
+    backend: 'claude_code', model: null,
+  });
+  const server = await startServer();
+  try {
+    const { body } = await fetchActiveSessions(server);
+    const session = body.sessions[0];
+    assert.strictEqual(session.agent_backend, 'codex_openrouter', 'next platform turn stays pinned');
+    assert.strictEqual(session.agent_model, 'openai/gpt-5.3-codex');
+    assert.strictEqual(session.agentBackend, 'claude_code', 'busy tooltip names the actual local runtime');
+    assert.strictEqual(session.agentModel, null);
+  } finally {
+    workerProgress.clear(31);
     server.close();
   }
 });

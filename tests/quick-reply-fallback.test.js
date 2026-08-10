@@ -191,7 +191,7 @@ test('every status-only turn end carries pills on its status row', () => {
   // These paths never persist an assistant row, so the status line is the
   // only thing the client's backward scan can find.
   const sites = [
-    [/Claude Code is already running for this session[\s\S]{0,200}?turnPills\('worker_busy'\)/,
+    [/\$\{busyAgent\.agentName\} is already running for this session[\s\S]{0,300}?turnPills\('worker_busy'\)/,
       'worker-busy race'],
     [/refusalText\(selectedModel, refusalCategory\)[\s\S]{0,300}?turnPills\('failed'\)/,
       'whole-chain model refusal'],
@@ -199,7 +199,7 @@ test('every status-only turn end carries pills on its status row', () => {
       'provider/turn error catch'],
     [/Scout stopped\$\{byStr\}[\s\S]{0,300}?turnFallbackQuickReplies\(\{ outcome: 'stopped' \}\)/,
       'scout stopped mid-run'],
-    [/Claude Code stopped\$\{byStr\}[\s\S]{0,300}?turnFallbackQuickReplies\(\{ outcome: 'stopped' \}\)/,
+    [/\$\{executionAgentName\} stopped\$\{byStr\}[\s\S]{0,400}?turnFallbackQuickReplies\(\{ outcome: 'stopped' \}\)/,
       'build stopped mid-run'],
   ];
   for (const [re, label] of sites) {

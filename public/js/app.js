@@ -1232,7 +1232,7 @@ const App = {
         // paths broadcast pills on the status event, not 'quick_replies'
         // (that handler attaches to the last ASSISTANT row, which a
         // recovered turn doesn't have).
-        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, scoutOutput: data.scoutOutput, quickReplies: data.quickReplies, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
+        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, scoutOutput: data.scoutOutput, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         break;
@@ -1308,7 +1308,7 @@ const App = {
         }
         break;
       case 'cc_progress':
-        DevChat._appendProgressLine(data.text);
+        DevChat._appendProgressLine(data.text, data);
         DevChat.scrollToBottom();
         // Also arm the /status polling fallback when cc_progress arrives via
         // WS (e.g. the SSE POST itself died before getting here). Without
@@ -1455,7 +1455,14 @@ const App = {
         });
         break;
       case 'cc_log':
-        DevChat.messages.push({ role: 'system', ccLog: data.log, content: 'Claude Code log', created_at: new Date().toISOString() });
+        DevChat.messages.push({
+          role: 'system',
+          ccLog: data.log,
+          content: data.agentBackend === 'codex_openrouter' ? 'Codex log' : 'Claude Code log',
+          agentBackend: data.agentBackend,
+          agentModel: data.agentModel,
+          created_at: new Date().toISOString(),
+        });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         break;

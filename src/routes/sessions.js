@@ -622,6 +622,8 @@ async function persistScoutPublication({
   recovered = false,
   localAgentLabel = null,
   localMode = 'scout',
+  agentBackend = null,
+  agentModel = null,
 }) {
   const ccText = String(content || '').trim();
   if (!ccText) throw new Error('persistScoutPublication: spec content required');
@@ -651,6 +653,7 @@ async function persistScoutPublication({
       ...(durationMs != null ? { durationMs } : {}),
       ...(quickReplies ? { quickReplies } : {}),
       ...(recovered ? { recovered: true } : {}),
+      ...(agentBackend ? { agentBackend, agentModel: agentModel || null } : {}),
       ...(localAgentLabel
         ? { runner: 'local', localAgentLabel, localMode }
         : {}),
@@ -759,6 +762,101 @@ async function resolveDefaultAgentPreference(client, userId, config) {
   };
 }
 
+const AGENT_REASONING_EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh']);
+
+class AgentSelectionError extends Error {
+  constructor(statusCode, message) {
+    super(message);
+    this.name = 'AgentSelectionError';
+    this.statusCode = statusCode;
+  }
+}
+
+// Resolve an EXPLICIT user choice for a session. Unlike
+// resolveDefaultAgentPreference(), this never falls back to Claude: the
+// caller has chosen a backend and must either get that exact backend or a
+// useful 4xx explaining why it cannot be used. In particular, Codex model
+// ids are catalog-validated because they become executable Codex config.
+async function resolveExplicitAgentPreference(client, userId, config, {
+  backend, model, reasoningEffort,
+} = {}) {
+  let resolved;
+  try {
+    resolved = registry.resolveBackend(backend);
+  } catch {
+    throw new AgentSelectionError(400, 'Unknown backend');
+  }
+
+  const effort = reasoningEffort == null || reasoningEffort === ''
+    ? null
+    : reasoningEffort;
+  if (effort != null && !AGENT_REASONING_EFFORTS.has(effort)) {
+    throw new AgentSelectionError(400, 'Invalid reasoning effort');
+  }
+
+  if (resolved === 'claude_code') {
+    return {
+      backend: 'claude_code',
+      provider: 'anthropic',
+      model: null,
+      reasoningEffort: null,
+    };
+  }
+
+  if (!config || !config.codexOpenrouterEnabled) {
+    throw new AgentSelectionError(403, 'Codex/OpenRouter is not available on this deployment.');
+  }
+  if (config.openrouterBetaUserIds?.length
+      && !config.openrouterBetaUserIds.includes(String(userId))) {
+    throw new AgentSelectionError(403, 'Codex/OpenRouter is not available for your account yet.');
+  }
+
+  if (typeof model !== 'string' || !model.trim()) {
+    throw new AgentSelectionError(400, 'Choose an OpenRouter model for Codex.');
+  }
+  const modelId = model.trim();
+
+  const credentialStore = require('../services/credential-store');
+  const agentModels = require('../services/agent-models');
+  const meta = await credentialStore.readMetadata({
+    pool: client, userId, provider: 'openrouter', purpose: 'coding_agent',
+  });
+  if (!meta || meta.status !== 'valid') {
+    throw new AgentSelectionError(400, 'Add your OpenRouter API key in Settings first.');
+  }
+
+  const apiKey = await credentialStore.readSecret({
+    pool: client, userId, provider: 'openrouter', purpose: 'coding_agent',
+    dataKey: config.dataEncryptionKey, expectedRevision: meta.revision,
+  });
+  if (!apiKey) {
+    throw new AgentSelectionError(400, 'Could not read your OpenRouter key; re-enter it in Settings first.');
+  }
+
+  let catalog;
+  try {
+    catalog = await agentModels.listOpenRouterModels({
+      pool: client, userId, credentialRevision: meta.revision,
+      apiKey, config, forceRefresh: false,
+    });
+  } catch (err) {
+    log.warn('sessions', 'Explicit Codex model validation failed', {
+      userId, model: modelId, err: err.message,
+    });
+    throw new AgentSelectionError(400, 'Could not validate that OpenRouter model right now; try again.');
+  }
+  if (!Array.isArray(catalog?.models) || !catalog.models.some((m) => m.id === modelId)) {
+    throw new AgentSelectionError(400, 'That model is not available under your OpenRouter key.');
+  }
+
+  return {
+    backend: 'codex_openrouter',
+    provider: 'openrouter',
+    model: modelId,
+    reasoningEffort: effort,
+  };
+}
+
 function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   const router = Router();
   const pool = getPool(config);
@@ -822,6 +920,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         `SELECT cs.id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title,
                 cs.session_title, cs.status, cs.linked_issues, cs.shared_at,
                 cs.transcript_shared_at, cs.created_at,
+                cs.agent_backend, cs.agent_model,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
                 a.slug AS app_slug, a.name AS app_name
          FROM chat_sessions cs
@@ -836,10 +935,20 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
          ORDER BY last_activity_at DESC`,
         [req.user.id]
       );
-      const sessions = rows.map((s) => ({
-        ...s,
-        busy: isSessionBusy(s.id),
-      }));
+      const sessions = rows.map((s) => {
+        const live = workerProgress.get(s.id);
+        return {
+          ...s,
+          busy: isSessionBusy(s.id),
+          // Keep the pinned snake_case fields untouched. Camel-case fields
+          // describe the runtime actually producing progress right now, so a
+          // Codex-pinned session delegated to local Claude has an honest busy
+          // tooltip without changing what its next platform turn will use.
+          ...(live?.backend
+            ? { agentBackend: live.backend, agentModel: live.model || null }
+            : {}),
+        };
+      });
       const totals = sessions.reduce(
         (acc, s) => {
           if (s.status === 'paused') acc.paused += 1;
@@ -1305,6 +1414,25 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         return res.status(429).json({ error: `You already have ${caps.activeSessions} running sessions. Pause or archive one first.` });
       }
 
+      // A browser that offers the coding-agent picker sends `backend`
+      // explicitly. Honor that exact choice and fail closed if it is not
+      // usable; legacy/API clients that omit it keep the saved-default
+      // behavior. Resolve before global LRU reclamation or GitHub branch
+      // creation so an invalid selection has no external side effects.
+      let pref;
+      try {
+        const explicitAgent = req.body
+          && Object.prototype.hasOwnProperty.call(req.body, 'backend');
+        pref = explicitAgent
+          ? await resolveExplicitAgentPreference(pool, req.user.id, config, req.body)
+          : await resolveDefaultAgentPreference(pool, req.user.id, config);
+      } catch (err) {
+        if (err instanceof AgentSelectionError) {
+          return res.status(err.statusCode).json({ error: err.message });
+        }
+        throw err;
+      }
+
       // The GLOBAL ceiling has no admin tier — it's a host-resource
       // bound (warm workers + staging containers on one box), not a
       // per-user policy budget, so full admins queue behind it exactly
@@ -1348,12 +1476,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         }
       }
 
-      // plan 9 (Commit 7): insert the session with its FINAL default
-      // backend/model atomically — never insert-then-patch. The resolver
-      // returns the validated Codex config (or a Claude fallback) and the
-      // insert carries it, so the row's agent fields match what the first
-      // dispatch will use.
-      const pref = await resolveDefaultAgentPreference(pool, req.user.id, config);
+      // Insert the session with its FINAL chosen/default backend and model
+      // atomically — never insert-then-patch. An explicit choice was strictly
+      // validated above; an omitted choice preserves the saved-default path.
       const { rows } = await pool.query(
         `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, created_from_issue_number,
             agent_backend, agent_provider, agent_model, agent_reasoning_effort)
@@ -2213,59 +2338,21 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // (plan 8.1). Backend resolution, feature/allowlist checks, and the
       // OpenRouter credential + model validation can call out over the
       // network (or decrypt); they must NOT run while holding a row lock.
-      let resolved;
+      let pref;
       try {
-        // Empty is intentionally equivalent to absent/default. Only an
-        // explicit unknown backend is rejected.
-        resolved = registry.resolveBackend(backend || registry.DEFAULT_BACKEND);
-      } catch {
-        return res.status(400).json({ error: 'Unknown backend' });
-      }
-      if (reasoningEffort != null && !['minimal', 'low', 'medium', 'high', 'xhigh'].includes(reasoningEffort)) {
-        return res.status(400).json({ error: 'Invalid reasoning effort' });
-      }
-      const isCodex = resolved === 'codex_openrouter';
-
-      let credentialMeta = null;
-      if (isCodex) {
-        // Enforce the same availability as dispatch (review #10): the reset
-        // must not let a user configure Codex when the flag/allowlist has
-        // been revoked after they saved it.
-        if (!config.codexOpenrouterEnabled) {
-          return res.status(403).json({ error: 'Codex/OpenRouter is not available for your account yet.' });
-        }
-        if (config.openrouterBetaUserIds?.length
-            && !config.openrouterBetaUserIds.includes(String(req.user.id))) {
-          return res.status(403).json({ error: 'Codex/OpenRouter is not available for your account yet.' });
-        }
-        const credentialStore = require('../services/credential-store');
-        const agentModels = require('../services/agent-models');
-        credentialMeta = await credentialStore.readMetadata({
-          pool, userId: req.user.id, provider: 'openrouter', purpose: 'coding_agent',
+        pref = await resolveExplicitAgentPreference(pool, req.user.id, config, {
+          backend: backend || registry.DEFAULT_BACKEND,
+          model,
+          reasoningEffort,
         });
-        if (!credentialMeta || credentialMeta.status !== 'valid') {
-          return res.status(400).json({ error: 'Add your OpenRouter API key in Settings first.' });
+      } catch (err) {
+        if (err instanceof AgentSelectionError) {
+          return res.status(err.statusCode).json({ error: err.message });
         }
-        if (model) {
-          // Fail when the secret cannot be read (review #10): a valid
-          // metadata row that cannot decrypt must not silently skip model
-          // validation and persist an unconfirmed model.
-          const apiKey = await credentialStore.readSecret({
-            pool, userId: req.user.id, provider: 'openrouter', purpose: 'coding_agent',
-            dataKey: config.dataEncryptionKey, expectedRevision: credentialMeta.revision,
-          });
-          if (!apiKey) {
-            return res.status(400).json({ error: 'Could not read your OpenRouter key; re-enter it in Settings first.' });
-          }
-          const catalog = await agentModels.listOpenRouterModels({
-            pool, userId: req.user.id, credentialRevision: credentialMeta.revision,
-            apiKey, config, forceRefresh: false,
-          });
-          if (!catalog.models.some((m) => m.id === model)) {
-            return res.status(400).json({ error: 'That model is not available under your OpenRouter key.' });
-          }
-        }
+        throw err;
       }
+      const resolved = pref.backend;
+      const isCodex = resolved === 'codex_openrouter';
 
       // ── Phase 2: one checked-out client + explicit transaction ──
       // (plan 8.2). The row lock is held until COMMIT so a concurrently
@@ -2273,12 +2360,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // busy check.
       const client = await pool.connect();
       let updatedRow = null;
+      let contextMessage = null;
       try {
         await client.query('BEGIN');
 
         const { rows } = await client.query(
           `SELECT id, user_id, status, active_turn,
-                  agent_backend, agent_config_version
+                  agent_backend, agent_model, agent_reasoning_effort,
+                  agent_config_version
              FROM chat_sessions
             WHERE id = $1 AND user_id = $2
             FOR UPDATE`,
@@ -2317,14 +2406,34 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
              agent_context_reset_at = NOW()
            WHERE id = $1 AND active_turn IS NULL
            RETURNING *`,
-          [sessionId, resolved, isCodex ? 'openrouter' : 'anthropic',
-           model || null, reasoningEffort || null],
+          [sessionId, pref.backend, pref.provider,
+           pref.model, pref.reasoningEffort],
         );
         if (upd.rows.length !== 1) {
           await client.query('ROLLBACK').catch(() => {});
           return res.status(409).json({ error: 'Session is busy; stop the current turn first.' });
         }
         updatedRow = upd.rows[0];
+
+        const agentLabel = isCodex
+          ? `Codex via OpenRouter (${safeAgentModelLabel(pref.model)})`
+          : 'Claude Code';
+        const changedBackend = registry.resolveBackend(sess.agent_backend) !== pref.backend;
+        const messageText = changedBackend
+          ? `Coding agent switched to ${agentLabel}. A fresh agent context will start on the next turn; the branch and conversation were kept.`
+          : `${agentLabel} context was reset. A fresh agent context will start on the next turn; the branch and conversation were kept.`;
+        const msg = await client.query(
+          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+           VALUES ($1, 'system', $2, $3) RETURNING *`,
+          [sessionId, messageText, JSON.stringify({
+            type: 'agent_context_reset',
+            previousBackend: sess.agent_backend,
+            agentBackend: pref.backend,
+            agentModel: pref.model,
+            reasoningEffort: pref.reasoningEffort,
+          })],
+        );
+        contextMessage = msg.rows[0] || null;
 
         await client.query('COMMIT');
       } catch (err) {
@@ -2342,7 +2451,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           log.warn('sessions', 'reset-agent-context eviction warning', { sessionId, err: evErr.message });
         });
       }
-      res.json({ ok: true, session: updatedRow });
+      res.json({ ok: true, session: updatedRow, message: contextMessage });
     } catch (err) {
       log.error('sessions', 'reset-agent-context failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -3266,17 +3375,6 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // offers and what the server accepts.
       const selectedModel = models.resolve(model);
 
-      // Backend-aware model + secret resolution (review F2, F10):
-      // For codex_openrouter the session-pinned OpenRouter model is
-      // authoritative — the Claude allowlist must NOT coerce it to a
-      // Claude model. And the Mayor's Anthropic BYOK key must NEVER
-      // enter a Codex worker (Codex uses the per-turn OpenRouter key instead;
-      // leaking the Anthropic key into the worker lets repository code
-      // exfiltrate it).
-      const isCodexSession = registry.resolveBackend(session.agent_backend) === 'codex_openrouter';
-      const turnModel = isCodexSession ? (session.agent_model || config.openrouterDefaultCodexModel || selectedModel) : selectedModel;
-      const turnApiKey = isCodexSession ? null : (userApiKey || null);
-
       // SSE response
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
@@ -4155,11 +4253,21 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         // for ~10 min after the first dispatch finishes (warm idle is
         // not busy).
         if (isSessionBusy(session.id)) {
+          const live = workerProgress.get(session.id);
+          const busyAgent = live?.backend
+            ? {
+                agentName: live.backend === 'codex_openrouter' ? 'Codex' : 'Claude Code',
+                metadata: {
+                  agentBackend: live.backend,
+                  agentModel: live.model || null,
+                },
+              }
+            : codingAgentRuntimeIdentity(session, selectedModel, config);
           // #894: this status line IS the turn — no assistant row follows,
           // so it carries the pills (the run in flight is the only useful
           // thing to ask about next).
-          await sendStatus('Claude Code is already running for this session. Please wait for it to finish.',
-            { quickReplies: turnPills('worker_busy') });
+          await sendStatus(`${busyAgent.agentName} is already running for this session. Please wait for it to finish.`,
+            { ...busyAgent.metadata, quickReplies: turnPills('worker_busy') });
           send('done', {});
           res.end();
           return;
@@ -5089,6 +5197,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     }
 
     let progress = [];
+    let progressAgentBackend = null;
+    let progressAgentModel = null;
     try {
       const { rows } = await pool.query(
         `SELECT metadata FROM chat_session_messages
@@ -5098,8 +5208,20 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       );
       if (rows[0]?.metadata?.progressLog) {
         progress = rows[0].metadata.progressLog;
+        progressAgentBackend = rows[0].metadata.agentBackend || null;
+        progressAgentModel = rows[0].metadata.agentModel || null;
       }
     } catch {}
+    // During bootstrap the latest durable row can still belong to the prior
+    // turn. An in-memory entry, when it has a backend, is necessarily the
+    // current run and therefore wins for identity (especially when a
+    // Codex-pinned session is executing on an attached local Claude agent).
+    // Fall back to the durable row only before current progress has begun.
+    const liveProgress = workerProgress.get(sessionId);
+    if (liveProgress?.backend) {
+      progressAgentBackend = liveProgress.backend;
+      progressAgentModel = liveProgress.model || null;
+    }
 
     // Current turn phase (mayor1 / cc / mayor2). Lets the client pick
     // between the stop button and the finishing-up spinner on refresh
@@ -5192,6 +5314,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // the client's stop-escalation ladder across reloads.
     res.json({
       busy, progress, phase, stopping, stopRequestedAt, estimate,
+      agentBackend: progressAgentBackend,
+      agentModel: progressAgentModel,
       resolving: isResolving(sessionId),
       sync: syncMainSvc.getSyncState(sessionId),
       status: mergeStatus,
@@ -7794,6 +7918,8 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
           turnId: recoveryActiveTurn.turnId || null,
           content: ccText,
           hadSpec: !!(session.spec_md || '').trim(),
+          agentBackend: recoveryActiveTurn.backend || session.agent_backend || 'claude_code',
+          agentModel: recoveryActiveTurn.model || session.agent_model || null,
         });
         session.spec_md = ccText;
         // #178: blocking Questions in the recovered spec finalize as
@@ -8048,7 +8174,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
 const DISPATCH_TOOL = {
   name: 'dispatch_claude_code',
   description:
-    'Dispatch an autonomous coding agent (Claude Code) to make the requested changes to the app repo. '
+    'Dispatch the autonomous coding agent selected for this session to make the requested changes to the app repo. '
     + 'The agent will clone the repo, edit files, commit, and push to the dev branch — staging will auto-rebuild. '
     + 'Use ONLY when the user has asked for a concrete, actionable code change. Do not call when the user is '
     + 'just chatting, brainstorming, asking about past work, or giving vague feedback. At most one call per user message. '
@@ -9080,6 +9206,47 @@ function prettyModelLabel(modelId) {
   return modelId;
 }
 
+// Model ids are execution data, but they are also interpolated into a few
+// trusted server-authored status strings that the legacy client renders as
+// HTML. Keep the exact id in runtime metadata and billing while limiting the
+// display copy to the punctuation OpenRouter model ids actually use. This
+// prevents a provider catalog entry from becoming markup in the transcript.
+function safeAgentModelLabel(modelId, fallback = 'model not configured') {
+  const raw = String(modelId || '').trim();
+  if (!raw) return fallback;
+  const safe = raw.slice(0, 200).replace(/[^A-Za-z0-9._:/+@-]/g, '?');
+  return safe || fallback;
+}
+
+// One provider-neutral identity for every coding-agent runtime surface.
+// Execution, progress, transcript labels, and usage reporting must all use
+// the session-pinned model; deriving these independently is what previously
+// let a Codex turn be displayed and billed under the Mayor's Claude model.
+// The selectedModel fallback is intentionally Claude-only. A malformed
+// legacy Codex row without a pinned/operator model remains unconfigured and
+// is rejected by resolveCodexRuntimeContext instead of masquerading as a
+// Claude-model Codex run.
+function codingAgentRuntimeIdentity(session, selectedModel, config = {}) {
+  const backend = registry.resolveBackend(session?.agent_backend);
+  const isCodex = backend === 'codex_openrouter';
+  const model = isCodex
+    ? (session?.agent_model || config.openrouterDefaultCodexModel || null)
+    : selectedModel;
+  return {
+    backend,
+    isCodex,
+    model,
+    modelLabel: isCodex
+      ? safeAgentModelLabel(model)
+      : safeAgentModelLabel(prettyModelLabel(selectedModel), 'Sonnet'),
+    agentName: isCodex ? 'Codex' : 'Claude Code',
+    metadata: {
+      agentBackend: backend,
+      agentModel: model || null,
+    },
+  };
+}
+
 // The synthetic label the harness folds a REAL coding-agent run under
 // when replaying history into the Mayor's context (see buildMayorMessages
 // below). It is reserved for the harness — the system prompt forbids the
@@ -9225,11 +9392,16 @@ async function runScoutTool({
   // #50: wall-clock start for the durationMs persisted on terminal
   // statuses, so the dev-chat "(took Xm Ys)" suffix survives reloads.
   const turnStartedMs = Date.now();
-  const modelLabel = prettyModelLabel(selectedModel);
-  // Backend-aware model + secret (review F2, F10). Codex sessions use
-  // the pinned OpenRouter model and NO Anthropic key.
-  const isCodexSession = registry.resolveBackend(session.agent_backend) === 'codex_openrouter';
-  const turnModel = isCodexSession ? (session.agent_model || config.openrouterDefaultCodexModel || selectedModel) : selectedModel;
+  // Backend-aware model + secret (review F2, F10). Codex sessions use the
+  // exact pinned OpenRouter model and NO Anthropic key. Keep every runtime
+  // label/metadata consumer on this same identity so the Mayor's Claude model
+  // can never leak into Codex progress or usage.
+  const agentIdentity = codingAgentRuntimeIdentity(session, selectedModel, config);
+  const {
+    isCodex: isCodexSession,
+    model: turnModel,
+    modelLabel,
+  } = agentIdentity;
   const turnApiKey = isCodexSession ? null : (userApiKey || null);
   let durableTurnId = null;
 
@@ -9249,6 +9421,7 @@ async function runScoutTool({
     // because a dispatch co-occurred — so this row carries them. The
     // 'stopped' outcome is state-independent, hence no hasPr/hasSpec.
     await sendStatus(`Scout stopped${byStr}.`, {
+      ...agentIdentity.metadata,
       durationMs: Date.now() - turnStartedMs,
       quickReplies: turnFallbackQuickReplies({ outcome: 'stopped' }),
     });
@@ -9301,6 +9474,11 @@ async function runScoutTool({
     }
   }
   const runLocally = !!lease;
+  // A local lease is explicitly the user's own Claude runtime, regardless of
+  // which cloud backend this session has pinned for platform turns.
+  const executionAgentMeta = runLocally
+    ? { agentBackend: 'claude_code', agentModel: null }
+    : agentIdentity.metadata;
   // Prod-debug access is deliberately cloud-only (the spec's "a local turn
   // never receives PROD_DEBUG_JWT"). Clear the flag rather than only omitting
   // the credential, so the prompt does not advertise a `usernode-debug` helper
@@ -9313,8 +9491,11 @@ async function runScoutTool({
       ? `Scouting on ${lease.label} — your machine, read-only${discussionBlock ? ' · with issue & proposal discussion' : ''}...`
       : `Scouting the repo for context (${modelLabel}${prodDebug ? ' · prod debug' : ''}${discussionBlock ? ' · with issue & proposal discussion' : ''})...`,
     runLocally
-      ? { runner: 'local', localAgentLabel: lease.label, localMode: 'scout' }
-      : undefined
+      ? {
+          ...executionAgentMeta,
+          runner: 'local', localAgentLabel: lease.label, localMode: 'scout',
+        }
+      : executionAgentMeta
   );
 
   // A local scout needs no worker image, no warm container and no CC volume:
@@ -9415,10 +9596,10 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
     repoName,
     branchName: session.branch_name,
     onProgress: (text) => {
-      send('cc_progress', { text });
+      send('cc_progress', { text, ...agentIdentity.metadata });
       workerProgress.set(session.id, text, {
         model: turnModel,
-        backend: session.agent_backend,
+        backend: agentIdentity.backend,
       });
     },
   });
@@ -9461,7 +9642,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
     // scout ran nor an empty progress card in the transcript.
     if (stopPendingFor(stopHandle)) return stoppedResult();
 
-    await sendStatus('Scout reading the codebase...');
+    await sendStatus('Scout reading the codebase...', executionAgentMeta);
 
     const heartbeat = setInterval(() => {
       try { res.write(`:heartbeat\n\n`); } catch {}
@@ -9482,13 +9663,16 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
     const { rows: progRows } = await pool.query(
       `INSERT INTO chat_session_messages (session_id, role, content, metadata)
        VALUES ($1, 'system', 'Claude Code progress', $2) RETURNING id`,
-      [session.id, JSON.stringify({ progressLog: [] })]
+      [session.id, JSON.stringify({ progressLog: [], ...executionAgentMeta })]
     );
     const progressMsgId = progRows[0].id;
 
     const onScoutProgress = (text) => {
-      send('cc_progress', { text });
-      workerProgress.set(session.id, text, { model: selectedModel });
+      send('cc_progress', { text, ...executionAgentMeta });
+      workerProgress.set(session.id, text, {
+        model: executionAgentMeta.agentModel,
+        backend: executionAgentMeta.agentBackend,
+      });
       pool.query(
         `UPDATE chat_session_messages SET metadata = jsonb_set(
           metadata, '{progressLog}',
@@ -9610,7 +9794,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         // retry must stay on the same attached machine.
         result = await dispatchLocalScout();
         if (headless && shouldRetryHeadlessTurn(result, stopHandle, !!(result.lastResultText || '').trim())) {
-          await sendStatus('The coding step failed unexpectedly — retrying once…');
+          await sendStatus('The coding step failed unexpectedly — retrying once…', executionAgentMeta);
           await waitForTurnStopped(session.id, containerName);
           result = await dispatchLocalScout();
         }
@@ -9630,7 +9814,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         }),
         dispatchOnce: (ctx) => doScout(ctx),
         retryPredicate: (r) => headless && shouldRetryHeadlessTurn(r, stopHandle, !!(r.lastResultText || '').trim()),
-        sendStatus: async (msg) => { await sendStatus(msg); },
+        sendStatus: async (msg) => { await sendStatus(msg, executionAgentMeta); },
         waitForStopped: waitForTurnStopped,
         prepareRetry: async (retry) => {
           if (stopPendingFor(stopHandle)) return false;
@@ -9679,7 +9863,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
                   : code === 'session_busy'
                     ? 'The session became busy. Stop the current turn before retrying.'
                     : 'Add your OpenRouter API key in Settings to use Codex.';
-        await sendStatus(msg);
+        await sendStatus(msg, executionAgentMeta);
         if (stopHandle) {
           stopHandle.stopped = true;
           stopHandle.stoppedBy = 'agent_error';
@@ -9696,7 +9880,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         // for its own attempts (one extra dispatch, never more).
         result = await doScout({});
         if (headless && shouldRetryHeadlessTurn(result, stopHandle, !!(result.lastResultText || '').trim())) {
-          await sendStatus('The coding step failed unexpectedly — retrying once…');
+          await sendStatus('The coding step failed unexpectedly — retrying once…', executionAgentMeta);
           await waitForTurnStopped(session.id, containerName);
           if (!result.turnId || !await worker.finishTurn(session.id, { turnId: result.turnId })) {
             throw new Error('Could not durably finish the first scout attempt before retry');
@@ -9757,12 +9941,12 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
     if (result.fatalError) {
       isError = true;
       const msg = `Scout error: ${result.fatalError.substring(0, 200)}`;
-      await sendStatus(msg);
+      await sendStatus(msg, executionAgentMeta);
       summaryParts.push(msg);
     } else if (result.ccIsError && !ccText) {
       isError = true;
       const msg = `Scout error: ${(ccText || 'unknown').substring(0, 200)}`;
-      await sendStatus(msg);
+      await sendStatus(msg, executionAgentMeta);
       summaryParts.push(msg);
     } else if (!ccText) {
       isError = true;
@@ -9771,7 +9955,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       const msg = (result.exitCode === -1 || result.exitCode == null)
         ? `${describeMarkerlessExit(result.markerlessCause)} No spec text was produced.`
         : 'Scout finished but produced no spec text.';
-      await sendStatus(msg);
+      await sendStatus(msg, executionAgentMeta);
       summaryParts.push(msg);
     } else {
       const publication = await persistScoutPublication({
@@ -9782,6 +9966,8 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         hadSpec: !!existingSpec,
         durationMs: Date.now() - turnStartedMs,
         localAgentLabel: runLocally ? lease.label : null,
+        agentBackend: executionAgentMeta.agentBackend,
+        agentModel: executionAgentMeta.agentModel,
       });
       session.spec_md = ccText;
       if (publication.applied) {
@@ -9809,7 +9995,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       // directly (review #3) — never written into the Anthropic llm_usage
       // ledger. Recorded instead via completeCodexTurn on agent_turns.
       if (result.costUsd) {
-        send('usage', { costCents: Math.round(result.costUsd * 100), model: `codex-openrouter/${selectedModel}`, byok: true });
+        send('usage', { costCents: Math.round(result.costUsd * 100), model: `codex-openrouter/${turnModel}`, byok: true });
       }
     } else if (result.costUsd) {
       const ccCostCents = Math.round(result.costUsd * 100);
@@ -10347,16 +10533,21 @@ async function runClaudeCodeTool({
   // #50: wall-clock start for the durationMs persisted on terminal
   // statuses, so the dev-chat "(took Xm Ys)" suffix survives reloads.
   const turnStartedMs = Date.now();
-  // Name the model in the spin-up status so users can see at a glance
-  // that Claude Code is using the model they selected in the dropdown.
-  // Without this, the only place the model is surfaced is the cost
-  // line, which lands much later (fixes #33).
-  const modelLabel = prettyModelLabel(selectedModel);
-  // Backend-aware model + secret (review F2, F10). Codex sessions use
-  // the pinned OpenRouter model and NO Anthropic key.
-  const isCodexSession = registry.resolveBackend(session.agent_backend) === 'codex_openrouter';
-  const turnModel = isCodexSession ? (session.agent_model || config.openrouterDefaultCodexModel || selectedModel) : selectedModel;
+  // Name the exact coding-agent model in the spin-up status and reuse that
+  // same provider-neutral identity for progress, transcript, and usage. Codex
+  // sessions use the pinned OpenRouter model and NO Anthropic key.
+  const agentIdentity = codingAgentRuntimeIdentity(session, selectedModel, config);
+  const {
+    isCodex: isCodexSession,
+    model: turnModel,
+    modelLabel,
+  } = agentIdentity;
   const turnApiKey = isCodexSession ? null : (userApiKey || null);
+  // May switch to the user's local Claude runtime once the lease lookup below
+  // completes. The early stop gate still truthfully names the session-pinned
+  // cloud agent, because no execution venue has been chosen at that point.
+  let executionAgentName = agentIdentity.agentName;
+  let executionAgentMeta = agentIdentity.metadata;
   let durableTurnId = null;
 
   // #937: the single way this tool ends on a stop — used by all five
@@ -10387,7 +10578,8 @@ async function runClaudeCodeTool({
       : '';
     // #894: no phase-2 wrap-up follows a stop, so this status row is the
     // turn's only pill carrier.
-    await sendStatus(`Claude Code stopped${byStr}${landed}.`, {
+    await sendStatus(`${executionAgentName} stopped${byStr}${landed}.`, {
+      ...executionAgentMeta,
       durationMs: Date.now() - turnStartedMs,
       quickReplies: turnFallbackQuickReplies({ outcome: 'stopped' }),
     });
@@ -10398,7 +10590,7 @@ async function runClaudeCodeTool({
     // pins that). A gate that fires before the dispatch never held one in
     // the first place, and a gate inside the try reaches that finally.
     return {
-      toolResultText: `Claude Code was stopped${byStr} before it finished.${
+      toolResultText: `${executionAgentName} was stopped${byStr} before it finished.${
         commits
           ? ` It had already committed ${commits} change${commits === 1 ? '' : 's'} (${shortSha})`
             + `${result.pushOk ? ' and pushed the branch' : ' but the branch was not pushed'},`
@@ -10449,13 +10641,20 @@ async function runClaudeCodeTool({
     }
   }
   const runLocally = !!lease;
+  if (runLocally) {
+    executionAgentName = 'Claude Code';
+    executionAgentMeta = { agentBackend: 'claude_code', agentModel: null };
+  }
   await sendStatus(
     runLocally
       ? `Handing this turn to ${lease.label} — your machine, your Claude subscription${discussionBlock ? ' · with issue & proposal discussion' : ''}...`
       : `Spinning up coding agent (${modelLabel}${prodDebug ? ' · prod debug' : ''}${discussionBlock ? ' · with issue & proposal discussion' : ''})...`,
     runLocally
-      ? { runner: 'local', localAgentLabel: lease.label, localMode: 'build' }
-      : undefined
+      ? {
+          ...executionAgentMeta,
+          runner: 'local', localAgentLabel: lease.label, localMode: 'build',
+        }
+      : executionAgentMeta
   );
 
   // A local run needs no worker image, no warm container and no volume: the
@@ -10552,7 +10751,7 @@ is authoritative and overrides CLAUDE.md if they conflict.
 The repo's \`CLAUDE.md\` may reference a hosted copy of the platform
 conventions at \`https://${process.env.USERNODE_DOMAIN || 'social-vibecoding.usernodelabs.org'}/claude.md\` —
 in dev-chat you already have those rules injected above, so ignore
-that instruction here. It's for humans or Claude Code invocations
+that instruction here. It's for humans or coding-agent invocations
 that run against this repo outside the harness.${personalFilesNote}
 
 A read-only helper \`usernode-issues\` is available (run it via Bash) — it prints the repo's open GitHub issues as JSON (\`{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }\`); long bodies are clipped with a "[truncated …]" marker, and \`usernode-issues <number>\` fetches that one issue with its FULL body plus BOTH of its discussion surfaces (\`{ issue, comments, commentsTruncated, usernodeThread?, usernodeThreadTruncated?, note? }\` — \`comments\` are the GitHub comments, \`usernodeThread\` is the issue's Discussion thread on the platform, where people often answer clarifying questions). Consult it if an open issue is relevant to what you're building; do not try to reach GitHub any other way. ${SCREENSHOT_FETCH_NOTE}
@@ -10666,8 +10865,11 @@ path: /another/changed/view
     repoName,
     branchName: session.branch_name,
     onProgress: (text) => {
-      send('cc_progress', { text });
-      workerProgress.set(session.id, text, { model: selectedModel });
+      send('cc_progress', { text, ...agentIdentity.metadata });
+      workerProgress.set(session.id, text, {
+        model: turnModel,
+        backend: agentIdentity.backend,
+      });
     },
   });
 
@@ -10717,7 +10919,7 @@ path: /another/changed/view
     // stop) nor an empty progress card in the transcript.
     if (stopPendingFor(stopHandle)) return stoppedResult();
 
-    await sendStatus('Claude Code is running...');
+    await sendStatus(`${executionAgentName} is running...`, executionAgentMeta);
 
     const heartbeat = setInterval(() => {
       try { res.write(`:heartbeat\n\n`); } catch {}
@@ -10726,7 +10928,7 @@ path: /another/changed/view
     const { rows: progRows } = await pool.query(
       `INSERT INTO chat_session_messages (session_id, role, content, metadata)
        VALUES ($1, 'system', 'Claude Code progress', $2) RETURNING id`,
-      [session.id, JSON.stringify({ progressLog: [] })]
+      [session.id, JSON.stringify({ progressLog: [], ...executionAgentMeta })]
     );
     const progressMsgId = progRows[0].id;
 
@@ -11009,8 +11211,11 @@ path: /another/changed/view
     // progress log, the phase marker, the estimator — must not be able to
     // tell the difference.
     const onAgentProgress = (text) => {
-      send('cc_progress', { text });
-      workerProgress.set(session.id, text, { model: selectedModel });
+      send('cc_progress', { text, ...executionAgentMeta });
+      workerProgress.set(session.id, text, {
+        model: executionAgentMeta.agentModel,
+        backend: executionAgentMeta.agentBackend,
+      });
       {
         const phaseMatch = String(text).trim().match(/^\[([^\]]+)\]$/);
         if (phaseMatch) lastPhase = phaseMatch[1];
@@ -11163,7 +11368,7 @@ path: /another/changed/view
         // retry must stay on the same attached machine.
         result = await dispatchLocalBuild();
         if (headless && shouldRetryHeadlessTurn(result, stopHandle, result.ahead > 0)) {
-          await sendStatus('The coding step failed unexpectedly — retrying once…');
+          await sendStatus('The coding step failed unexpectedly — retrying once…', executionAgentMeta);
           await waitForTurnStopped(session.id, containerName);
           result = await dispatchLocalBuild();
         }
@@ -11181,7 +11386,7 @@ path: /another/changed/view
         }),
         dispatchOnce: (ctx) => doBuild(ctx),
         retryPredicate: (r) => headless && shouldRetryHeadlessTurn(r, stopHandle, r.ahead > 0),
-        sendStatus: async (msg) => { await sendStatus(msg); },
+        sendStatus: async (msg) => { await sendStatus(msg, executionAgentMeta); },
         waitForStopped: waitForTurnStopped,
         prepareRetry: async (retry) => {
           if (stopPendingFor(stopHandle)) return false;
@@ -11224,7 +11429,7 @@ path: /another/changed/view
                   : code === 'session_busy'
                     ? 'The session became busy. Stop the current turn before retrying.'
                     : 'Add your OpenRouter API key in Settings to use Codex.';
-        await sendStatus(msg);
+        await sendStatus(msg, executionAgentMeta);
         if (stopHandle) {
           stopHandle.stopped = true;
           stopHandle.stoppedBy = 'agent_error';
@@ -11237,7 +11442,7 @@ path: /another/changed/view
         // Claude session — legacy combined path, keep the headless retry.
         result = await doBuild({});
         if (headless && shouldRetryHeadlessTurn(result, stopHandle, result.ahead > 0)) {
-          await sendStatus('The coding step failed unexpectedly — retrying once…');
+          await sendStatus('The coding step failed unexpectedly — retrying once…', executionAgentMeta);
           await waitForTurnStopped(session.id, containerName);
           if (!result.turnId || !await worker.finishTurn(session.id, { turnId: result.turnId })) {
             throw new Error('Could not durably finish the first build attempt before retry');
@@ -11331,11 +11536,11 @@ path: /another/changed/view
 
     ccLog = (result.rawStderr || '').substring(0, 5000) || null;
     if (ccLog?.trim()) {
-      send('cc_log', { log: ccLog });
+      send('cc_log', { log: ccLog, ...executionAgentMeta });
       await pool.query(
         `INSERT INTO chat_session_messages (session_id, role, content, metadata)
          VALUES ($1, 'system', $2, $3)`,
-        [session.id, 'Claude Code log', JSON.stringify({ ccLog })]
+        [session.id, `${executionAgentName} log`, JSON.stringify({ ccLog, ...executionAgentMeta })]
       ).catch(() => {});
     }
 
@@ -11361,7 +11566,7 @@ path: /another/changed/view
     // [done] after a successful platform-side re-push heal (the card's
     // collapsed label is the log's LAST line).
     const appendTurnProgressLine = (text) => {
-      send('cc_progress', { text });
+      send('cc_progress', { text, ...executionAgentMeta });
       return pool.query(
         `UPDATE chat_session_messages SET metadata = jsonb_set(
           metadata, '{progressLog}',
@@ -11397,26 +11602,26 @@ path: /another/changed/view
     if (result.fatalError) {
       isError = true;
       const msg = `Worker error: ${result.fatalError.substring(0, 200)}`;
-      await sendStatus(msg);
+      await sendStatus(msg, executionAgentMeta);
       summaryParts.push(msg);
     } else if (result.ccIsError && !hasChanges) {
       isError = true;
-      const msg = `Claude Code error: ${(ccText || 'unknown').substring(0, 200)}`;
-      await sendStatus(msg);
+      const msg = `${executionAgentName} error: ${(ccText || 'unknown').substring(0, 200)}`;
+      await sendStatus(msg, executionAgentMeta);
       summaryParts.push(msg);
     } else if (!hasChanges) {
       isError = true;
       let msg;
       if (result.exitCode === 0) {
-        msg = 'No changes were made by Claude Code.';
+        msg = `No changes were made by ${executionAgentName}.`;
       } else if (result.exitCode === -1 || result.exitCode == null) {
         // Markerless turn — say WHY in plain terms instead of a bare
         // "-1" (which also normalizes the old "code null" rendering).
         msg = `${describeMarkerlessExit(result.markerlessCause)} No changes were made.`;
       } else {
-        msg = `Claude Code exited with code ${result.exitCode} — no changes were made.`;
+        msg = `${executionAgentName} exited with code ${result.exitCode} — no changes were made.`;
       }
-      await sendStatus(msg);
+      await sendStatus(msg, executionAgentMeta);
       summaryParts.push(msg);
     } else if (!result.pushOk && !(await healPush())) {
       // Terminal push failure (heal included): the branch on GitHub is
@@ -11427,7 +11632,7 @@ path: /another/changed/view
       // re-pushes it (#295), so nothing is lost.
       isError = true;
       const msg = 'Push to GitHub failed — your changes are committed in the session\'s worker but not on GitHub. Retry your request to re-push and open the PR.';
-      await sendStatus(msg, { error: msg });
+      await sendStatus(msg, { ...executionAgentMeta, error: msg });
       summaryParts.push(msg);
     } else if (headless) {
       // Success path, headless variant (#155/#183): the commit was already
@@ -11864,7 +12069,7 @@ path: /another/changed/view
       // Codex/OpenRouter spend is billed to the user's OpenRouter account
       // directly (review #3) — never the Anthropic llm_usage ledger.
       if (result.costUsd) {
-        send('usage', { costCents: Math.round(result.costUsd * 100), model: `codex-openrouter/${selectedModel}`, byok: true });
+        send('usage', { costCents: Math.round(result.costUsd * 100), model: `codex-openrouter/${turnModel}`, byok: true });
       }
     } else if (result.costUsd) {
       const ccCostCents = Math.round(result.costUsd * 100);
@@ -11891,10 +12096,10 @@ path: /another/changed/view
         ? 'success'
         : ((result.fatalError || result.ccIsError) ? 'error' : 'no_changes');
       let statusText = ccOutcome === 'success'
-        ? 'Claude Code finished'
+        ? `${executionAgentName} finished`
         : ccOutcome === 'no_changes'
-          ? 'Claude Code made no changes'
-          : 'Claude Code did not complete';
+          ? `${executionAgentName} made no changes`
+          : `${executionAgentName} did not complete`;
       // #907: name the machine and say plainly that the platform did not pay
       // for the coding phase. The scout path's counterpart reads "Drafted on
       // …"; the two together are how a reader of the transcript tells a local
@@ -11903,6 +12108,7 @@ path: /another/changed/view
         statusText += ` Coding done on ${lease.label} — no Usernode credits used.`;
       }
       const completionMeta = {
+        ...executionAgentMeta,
         ccOutput: ccText,
         ccOutcome,
         durationMs: Date.now() - turnStartedMs,
@@ -11992,7 +12198,9 @@ path: /another/changed/view
   }
 
   const toolResultText = summaryParts.join('\n\n').slice(0, 4000)
-    || (isError ? 'Claude Code did not complete successfully.' : 'Claude Code finished with no summary.');
+    || (isError
+      ? `${executionAgentName} did not complete successfully.`
+      : `${executionAgentName} finished with no summary.`);
   // commitSha is exposed (in addition to ccLog/stagingUrl) for the
   // caller's bookkeeping (PR card metadata, etc.). Null if CC made no
   // changes.
@@ -12101,7 +12309,7 @@ If the user's next request is a DISTINCT, separate change — a new feature or f
   return `You are the Mayor — a friendly project manager for the app "${appName}" on Usernode Social Vibecoding.
 
 YOUR ROLE:
-You talk to the user in plain English and decide whether their latest message needs the coding agent (Claude Code) to actually edit the repo, OR needs spec-stage planning before any code is written. You are NOT a developer — never write code, file contents, diffs, or implementation details. Keep replies to 1-4 sentences.
+You talk to the user in plain English and decide whether their latest message needs the session's selected coding agent to actually edit the repo, OR needs spec-stage planning before any code is written. You are NOT a developer — never write code, file contents, diffs, or implementation details. Keep replies to 1-4 sentences.
 
 THE SPEC DOC:
 Every session has a markdown SPEC DOC that the user can read in the dev-chat spec viewer (a side-panel they open via the spec preview cards in the chat). It is your collaborative working surface for planning before code is written. The current spec is included verbatim below in the CURRENT SPEC DOC block — refer to it whenever you discuss or summarize the spec. The viewer is read-only: the user cannot hand-edit the spec, so all revisions go through you — and YOU never edit the spec in-process either. ALL spec writing and revising, however small, is done by dispatching the scout (dispatch_scout), which reads the repo and rewrites the doc; you only relay what the user wants changed. When they're happy with the spec they'll ask you to dispatch the coding agent in chat — you don't need to call dispatch_claude_code just because the spec is done; the user owns that decision.
@@ -12325,4 +12533,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, resolveDefaultAgentPreference };
+module.exports = { runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError };

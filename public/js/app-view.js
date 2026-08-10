@@ -2142,7 +2142,7 @@ const AppView = {
         const created = await DevChat.createSession(slug);
         if (created) {
           sessionId = created.id;
-        } else if (mine.length) {
+        } else if (created === null && mine.length) {
           // Cap / capacity / repo error — createSession already explained
           // why. Land in the newest existing chat rather than dead-ending.
           sessionId = mine[0].id;
