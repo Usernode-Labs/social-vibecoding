@@ -152,17 +152,30 @@ test('the row content distinguishes a user request from an agent suggestion', as
 
 test('validation rejects an empty or oversized title/body without inserting', async (t) => {
   withStubs(t);
+  // Too-long rejections carry `limit` and `length`: the Mayor retries
+  // these, and a bare code left it trimming blind — session 3184 looped
+  // through rejections it could not calibrate against.
   const cases = [
-    [{ title: '   ', body: 'x' }, 'bad_title'],
-    [{ title: 'a'.repeat(issueDraft.TITLE_MAX + 1), body: 'x' }, 'title_too_long'],
-    [{ title: 'ok', body: 'b'.repeat(issueDraft.BODY_MAX + 1) }, 'body_too_long'],
+    [{ title: '   ', body: 'x' }, { ok: false, code: 'bad_title' }],
+    [{ title: 'a'.repeat(issueDraft.TITLE_MAX + 1), body: 'x' },
+      { ok: false, code: 'title_too_long', limit: issueDraft.TITLE_MAX, length: issueDraft.TITLE_MAX + 1 }],
+    [{ title: 'ok', body: 'b'.repeat(issueDraft.BODY_MAX + 1) },
+      { ok: false, code: 'body_too_long', limit: issueDraft.BODY_MAX, length: issueDraft.BODY_MAX + 1 }],
   ];
-  for (const [input, code] of cases) {
+  for (const [input, expected] of cases) {
     const pool = makePool({ session: SESSION });
     const res = await issueDraft.createDraft(pool, CONFIG, { sessionId: 5, ...input });
-    assert.deepEqual(res, { ok: false, code }, `${code} refused`);
+    assert.deepEqual(res, expected, `${expected.code} refused`);
     assert.equal(pool.inserted.length, 0, 'nothing persisted on a rejected draft');
   }
+});
+
+test('the body cap fits a spec-chunk report (session 3184 regression)', () => {
+  // The tool description tells the model to paste "the relevant part of
+  // the spec in full" — a cap that cannot hold a few thousand words of
+  // ordered slices guarantees the too_long retry loop the fields above
+  // exist to break out of.
+  assert.ok(issueDraft.BODY_MAX >= 10000, `BODY_MAX ${issueDraft.BODY_MAX} fits spec-derived bodies`);
 });
 
 test('a missing session is session_not_found, not a throw', async (t) => {
