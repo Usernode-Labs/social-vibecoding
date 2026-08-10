@@ -814,9 +814,9 @@ const AdminConsole = {
   renderFeaturedAppsSection(host) {
     const canWrite = AdminConsole.canWrite();
     host.innerHTML = `
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+      <div class="${AdminUI.card} p-4">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="text-lg font-semibold">Featured apps</h2>
+          <h2 class="${AdminUI.cardTitle}">Featured apps</h2>
           <button id="admin-featured-refresh" class="text-xs text-zinc-400 hover:text-violet-400">Refresh</button>
         </div>
         <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
@@ -1021,9 +1021,9 @@ const AdminConsole = {
   renderRolloverSection(host) {
     const canWrite = AdminConsole.canWrite();
     host.innerHTML = `
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+      <div class="${AdminUI.card} p-4">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="text-lg font-semibold">Container rollover</h2>
+          <h2 class="${AdminUI.cardTitle}">Container rollover</h2>
           <button id="admin-refresh-rollover" class="text-xs text-zinc-400 hover:text-violet-400">Refresh</button>
         </div>
         <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-2">
@@ -1253,9 +1253,9 @@ const AdminConsole = {
   renderStalePreviewsSection(host) {
     const canWrite = AdminConsole.canWrite();
     host.innerHTML = `
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+      <div class="${AdminUI.card} p-4">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="text-lg font-semibold">Stale previews</h2>
+          <h2 class="${AdminUI.cardTitle}">Stale previews</h2>
           <button id="admin-refresh-reap" class="text-xs text-zinc-400 hover:text-violet-400">Refresh</button>
         </div>
         <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-2">
@@ -1507,9 +1507,9 @@ const AdminConsole = {
 
   renderOverviewSection(host) {
     host.innerHTML = `
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+      <div class="${AdminUI.card} p-4">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="text-lg font-semibold">Operations</h2>
+          <h2 class="${AdminUI.cardTitle}">Operations</h2>
           <button id="admin-refresh-overview" class="text-xs text-zinc-400 hover:text-violet-400">Refresh</button>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
@@ -1618,9 +1618,9 @@ const AdminConsole = {
     const canWrite = AdminConsole.canWrite();
     const dis = canWrite ? '' : 'disabled';
     host.innerHTML = `
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+      <div class="${AdminUI.card} p-4">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="text-lg font-semibold">LLM Spend Limits</h2>
+          <h2 class="${AdminUI.cardTitle}">LLM Spend Limits</h2>
           <span class="text-xs text-zinc-500">USD · resets midnight UTC</span>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
@@ -1629,7 +1629,7 @@ const AdminConsole = {
             <div class="relative mt-1">
               <span class="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500 pointer-events-none">$</span>
               <input id="admin-limit-user" type="number" min="0" step="0.01" inputmode="decimal" ${dis}
-                class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 pl-6 pr-3 py-2 text-sm font-mono disabled:opacity-60"
+                class="${AdminUI.input} pl-6 font-mono disabled:opacity-60"
                 placeholder="25.00">
             </div>
           </label>
@@ -1638,7 +1638,7 @@ const AdminConsole = {
             <div class="relative mt-1">
               <span class="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500 pointer-events-none">$</span>
               <input id="admin-limit-global" type="number" min="0" step="0.01" inputmode="decimal" ${dis}
-                class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 pl-6 pr-3 py-2 text-sm font-mono disabled:opacity-60"
+                class="${AdminUI.input} pl-6 font-mono disabled:opacity-60"
                 placeholder="200.00">
             </div>
           </label>
@@ -1647,14 +1647,14 @@ const AdminConsole = {
             <div class="relative mt-1">
               <span class="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500 pointer-events-none">$</span>
               <input id="admin-limit-system" type="number" min="0" step="0.01" inputmode="decimal" ${dis}
-                class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 pl-6 pr-3 py-2 text-sm font-mono disabled:opacity-60"
+                class="${AdminUI.input} pl-6 font-mono disabled:opacity-60"
                 placeholder="25.00">
             </div>
           </label>
         </div>
         <div class="flex flex-wrap items-center justify-between gap-2">
           <p class="text-xs text-zinc-500">Per-user overrides live in the Users section; these are the platform defaults.</p>
-          ${canWrite ? '<button id="admin-save-limits-btn" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Save</button>' : ''}
+          ${canWrite ? `<button id="admin-save-limits-btn" class="${AdminUI.btn.primary}">Save</button>` : ''}
         </div>
         <p id="admin-limits-status" class="text-xs mt-2 hidden"></p>
       </div>
@@ -1668,11 +1668,11 @@ const AdminConsole = {
            This is the ONLY surface for the figure — the drawer's status
            pane carried a matching row until it was removed for reading
            "Not set up" indefinitely. -->
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800 mt-4">
+      <div class="${AdminUI.card} p-4 mt-4">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="text-lg font-semibold">Anthropic credits</h2>
+          <h2 class="${AdminUI.cardTitle}">Anthropic credits</h2>
         </div>
-        <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
+        <p class="${AdminUI.muted} mb-3">
           Anthropic doesn’t publish a remaining-credit figure, only what it has
           billed. Record the balance and the date it was correct, and the platform
           subtracts billed spend since then. Re-record both after every top-up.
@@ -1683,19 +1683,19 @@ const AdminConsole = {
             <div class="relative mt-1">
               <span class="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500 pointer-events-none">$</span>
               <input id="admin-credit-balance" type="number" min="0" step="0.01" inputmode="decimal" ${dis}
-                class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 pl-6 pr-3 py-2 text-sm font-mono disabled:opacity-60"
+                class="${AdminUI.input} pl-6 font-mono disabled:opacity-60"
                 placeholder="5000.00">
             </div>
           </label>
           <label class="block">
             <span class="text-xs uppercase tracking-wide text-zinc-500" title="The date that balance was correct">As of</span>
             <input id="admin-credit-as-of" type="date" ${dis}
-              class="mt-1 w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-3 py-2 text-sm font-mono disabled:opacity-60">
+              class="${AdminUI.input} mt-1 font-mono disabled:opacity-60">
           </label>
         </div>
         <div class="flex flex-wrap items-center justify-between gap-2">
           <p id="admin-credit-derived" class="text-xs text-zinc-500"></p>
-          ${canWrite ? '<button id="admin-save-credits-btn" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Save</button>' : ''}
+          ${canWrite ? `<button id="admin-save-credits-btn" class="${AdminUI.btn.primary}">Save</button>` : ''}
         </div>
         <p id="admin-credits-status" class="text-xs mt-2 hidden"></p>
       </div>`;
@@ -1840,10 +1840,10 @@ const AdminConsole = {
   renderCodesSection(host) {
     const canWrite = AdminConsole.canWrite();
     host.innerHTML = `
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+      <div class="${AdminUI.card} p-4">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="text-lg font-semibold">Activation Codes</h2>
-          ${canWrite ? '<button id="admin-generate-code-btn" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Generate Code</button>' : ''}
+          <h2 class="${AdminUI.cardTitle}">Activation Codes</h2>
+          ${canWrite ? `<button id="admin-generate-code-btn" class="${AdminUI.btn.primary}">Generate Code</button>` : ''}
         </div>
         <div id="admin-code-list" class="space-y-2"></div>
         <p id="admin-code-empty" class="text-sm text-zinc-500 hidden">No activation codes yet.</p>
@@ -1885,7 +1885,7 @@ const AdminConsole = {
         const date = new Date(code.used_at).toLocaleDateString();
         statusHtml = `<span class="text-xs text-zinc-500">Used by <strong class="text-zinc-400">${esc(code.used_by_username)}</strong> on ${date}</span>`;
       } else {
-        statusHtml = '<span class="text-xs text-green-500">Available</span>';
+        statusHtml = `<span class="${AdminUI.badge.success}">Available</span>`;
       }
       el.innerHTML = `
         <div class="flex-1 min-w-0 flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -1930,16 +1930,16 @@ const AdminConsole = {
   renderUsersSection(host) {
     const canWrite = AdminConsole.canWrite();
     host.innerHTML = `
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800">
+      <div class="${AdminUI.card}">
         <div class="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-zinc-200 dark:border-zinc-800">
-          <h2 class="text-lg font-semibold">Users</h2>
+          <h2 class="${AdminUI.cardTitle}">Users</h2>
           ${canWrite ? `
           <div id="admin-bulk-quota-control" class="flex items-center gap-2" title="Set every user's app quota to this number.">
             <span class="text-xs text-zinc-400">Set all quotas to</span>
             <input id="admin-bulk-quota-input" type="number" min="0" step="1" inputmode="numeric"
               class="w-16 rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono"
               placeholder="0">
-            <button id="admin-bulk-quota-btn" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1 text-xs font-medium text-white transition-colors">Set all</button>
+            <button id="admin-bulk-quota-btn" class="${AdminUI.btn.primarySm}">Set all</button>
           </div>` : ''}
         </div>
         <div id="admin-user-list" class="divide-y divide-zinc-200 dark:divide-zinc-800">
@@ -2439,9 +2439,9 @@ const AdminConsole = {
 
   renderFeaturesSection(host) {
     host.innerHTML = `
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+      <div class="${AdminUI.card} p-4">
         <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-          <h2 class="text-lg font-semibold">Submitted features</h2>
+          <h2 class="${AdminUI.cardTitle}">Submitted features</h2>
           <div class="flex items-center gap-2">
             <select id="admin-features-status" class="rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs">
               <option value="all" selected>All</option>
@@ -2686,7 +2686,7 @@ const AdminConsole = {
           </p>
         </div>
 
-        <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <div class="${AdminUI.card} p-4">
           <div class="flex flex-wrap items-center justify-between gap-3">
             <p id="admin-db-export-target" class="text-sm text-zinc-500">Loading…</p>
             <button id="admin-db-export-refresh" class="text-xs text-zinc-400 hover:text-violet-400 px-1 py-1">Refresh</button>
@@ -2749,7 +2749,7 @@ const AdminConsole = {
           </ul>
         </details>
 
-        <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <div class="${AdminUI.card} p-4">
           <div class="flex flex-wrap items-center justify-between gap-3 mb-1">
             <h3 class="text-base font-semibold">Export history</h3>
             <span class="text-xs text-zinc-500">Append-only — cannot be cleared</span>
