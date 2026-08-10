@@ -31,6 +31,17 @@ declare global {
       open: boolean;
       [key: string]: unknown;
     };
+    /** public/js/app.js — the shell's router. */
+    App?: {
+      currentApp?: string | null;
+      [key: string]: unknown;
+    };
+    /** public/js/platform-ui.js — the native-kit adapter. */
+    PlatformUI?: {
+      isTouch(): boolean;
+      pullToRefresh(el: Element, fn: () => Promise<unknown> | void): void;
+      [key: string]: unknown;
+    };
     /** features/header/node-pill.js */
     NodePill?: {
       init(): Promise<void>;
@@ -39,6 +50,28 @@ declare global {
     /** features/header/wallet-sheet.js */
     WalletSheet?: {
       init(): void;
+      [key: string]: unknown;
+    };
+    /**
+     * features/header/header-menu-controller.js — the hamburger drawer's
+     * open/close, and the two app-scoped drawer rows' visibility. Both were
+     * App.HeaderMenu / App.DrawerStatus in app.js, which now forwards onto
+     * these so its own call sites (plus app-view.js, native-chrome.js,
+     * node-pill.js, wallet-sheet.js) are untouched.
+     */
+    HeaderMenu?: {
+      init(): void;
+      open(): void;
+      close(): Promise<void> | void;
+      isPresenting(): boolean;
+      consumeNavPending(): boolean;
+      [key: string]: unknown;
+    };
+    /** features/header/header-menu-controller.js */
+    DrawerStatus?: {
+      setAppOpen(open: boolean): void;
+      setForkVisible(visible: boolean): void;
+      refreshDeployDot(): void;
       [key: string]: unknown;
     };
     /** The inline head-blocking theme module in src/head.html. */

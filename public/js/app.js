@@ -1640,407 +1640,37 @@ const App = {
     }
   },
 
-  // Drawer status/version rows (header slim-down): the kudos + AI-credit
-  // meters render into #drawer-status-pane, and the platform/app build
-  // lines + fork lineage label into #drawer-footer — none of them in the
-  // header any more. Their RENDERERS are untouched — every slot kept its
-  // id through both moves — so all this owns is the two app-scoped rows'
-  // visibility plus the hamburger's amber deploy dot.
+  // Drawer status/version rows + the hamburger drawer itself (#1079 chunk
+  // B): both objects moved into the React bundle, beside the markup they
+  // drive, as frontend/src/features/header/header-menu-controller.js. What
+  // stays here is a forwarder apiece, because the call sites are spread over
+  // app.js, app-view.js, native-chrome.js, node-pill.js and wallet-sheet.js
+  // and none of them had any reason to change.
+  //
+  // Explicit method-by-method forwarding rather than a getter for App.X:
+  // app.js is a classic script and the bundle is a module, so there is a
+  // window in which window.DrawerStatus does not exist yet, and the two
+  // unguarded refreshDeployDot() / setAppOpen() callers below would throw on
+  // a bare getter. Forwarding no-ops instead, which is what those calls did
+  // when the drawer was not on screen anyway.
   DrawerStatus: {
-    // The "App" build row follows the same lifecycle as
-    // #drawer-row-github / #drawer-row-share: visible only while an app
-    // is open. Called from openApp and from every navigate* that leaves
-    // an app behind.
-    //
-    // The header's App/Dev switch rides the SAME lifecycle, which is why
-    // it's owned here rather than in a seventh place: this one call
-    // already covers openApp, navigateHome, AppView.close() and all six
-    // other-screen navigations (leaderboard, challenges, profile, admin,
-    // settings, topochain). It used to be free — the old #app-tabs bar
-    // was a child of #app-view and disappeared whenever that did — but a
-    // header-resident control has to be hidden explicitly.
-    setAppOpen(open) {
-      const row = document.getElementById('drawer-row-app-version');
-      if (row) row.classList.toggle('hidden', !open);
-      // Fork lineage is app-scoped too — closing an app can never leave
-      // the previous app's "Forked from" line behind.
-      if (!open) App.DrawerStatus.setForkVisible(false);
-      // Self-hosted apps (the platform's own row) have no App mode at
-      // all — appData.url maps to a slug-derived subdomain that doesn't
-      // resolve, so switchTab coerces them to the Dev forum. A switch
-      // with one reachable option is noise, so hide the whole control
-      // rather than shipping a dead segment. setAppOpen(true) runs after
-      // the /api/apps/:slug fetch resolves, so self_hosted is known by
-      // the time this reads it.
-      const modeSwitch = document.getElementById('app-mode-switch');
-      if (modeSwitch) {
-        const show = !!open && !window.AppView?.appData?.self_hosted;
-        modeSwitch.classList.toggle('hidden', !show);
-        // The control materially changes the header's right-group width,
-        // which is one of the two inputs to the title's centered-vs-flow
-        // decision. The group's ResizeObserver would catch this on its
-        // own a frame later; the explicit hook exists so the title
-        // doesn't visibly jump.
-        window.HeaderLayout?.refresh?.();
-      }
-      App.DrawerStatus.refreshDeployDot();
-    },
-
-    // Driven by AppView.renderForkBadge(): shown only when it actually
-    // wrote a badge (i.e. the open app is a fork). `flex`, not the row
-    // default, because the row ships `hidden` and Tailwind's `hidden`
-    // would otherwise fight an inline display.
-    setForkVisible(visible) {
-      const row = document.getElementById('drawer-row-app-fork');
-      if (!row) return;
-      row.classList.toggle('hidden', !visible);
-      row.classList.toggle('flex', !!visible);
-    },
-
-    // Mirror "a deploy is in flight" onto the hamburger. Read straight
-    // off the rendered version lines rather than threading state: their
-    // markup is already the single source of truth for the deploying
-    // state (renderAppVersionPillHTML / renderPlatformVersionPill both
-    // stamp .drawer-ver--deploying on the footer's text form), and both
-    // may change independently. Scoped to #drawer-footer — where the two
-    // version lines live since the footer split — so a deploying home-tile
-    // pill elsewhere in the document can never light this dot.
-    refreshDeployDot() {
-      const dot = document.getElementById('header-menu-deploy-dot');
-      if (!dot) return;
-      const deploying = !!document.querySelector(
-        '#drawer-footer .drawer-ver--deploying');
-      dot.classList.toggle('hidden', !deploying);
-    },
+    setAppOpen(open) { window.DrawerStatus?.setAppOpen(open); },
+    setForkVisible(visible) { window.DrawerStatus?.setForkVisible(visible); },
+    refreshDeployDot() { window.DrawerStatus?.refreshDeployDot(); },
   },
 
-  // Slide-out navigation drawer — available at every viewport width
-  // (#122). Top to bottom: the kudos/AI-credit status pane, the theme
-  // selector directly below it, the native Node/Wallet rows, the four
-  // main nav rows (Profile, Leaderboard, Settings, Admin & moderation),
-  // and a bottom-anchored footer carrying the platform/app build lines
-  // plus GitHub + Share. (Members & visibility moved to the Dev "+"
-  // menu — #645.)
   HeaderMenu: {
-    _panel: null,
-
-    // ── Presentation state (#977) ───────────────────────────────────
-    // The drawer's exit is the ONE motion a sidebar-originated
-    // navigation is allowed to show, so App._entryTransition has to be
-    // able to ask "is this drawer on screen (or still animating out)?"
-    // and "did a link inside it just start this navigation?".
-    //
-    // _closingAt exists only for the LEGACY (desktop / kit-missing)
-    // path: close() strips [data-open] synchronously while the 200ms
-    // CSS slide still has to run, so the attribute alone reports the
-    // drawer as gone while it is visibly still there. The kit path
-    // needs no timestamp — _panel is cleared in the onDismiss teardown,
-    // i.e. only once the exit spring has come to rest.
-    _closingAt: 0,
-    _navArmedAt: 0,
-    // Callers waiting for the drawer to be fully gone (close()'s
-    // completion promise — see close()).
-    _dismissWaiters: [],
-    LEGACY_CLOSE_MS: 200,
-    // The legacy slide plus a frame of margin.
-    CLOSING_WINDOW_MS: 260,
-    // Generous, because it is CONSUMED on first read: only a link that
-    // produced no navigation at all can leave it to expire.
-    NAV_ARM_TTL_MS: 600,
-    // Backstop for the completion promise, so a teardown that never
-    // fires (a kit that vanished, a superseded handle) can't strand a
-    // caller that chained its own presentation behind it.
-    DISMISS_SAFETY_MS: 500,
-
-    _now() {
-      return (typeof performance !== 'undefined' && performance.now)
-        ? performance.now()
-        : Date.now();
-    },
-
-    // True while the drawer surface is on screen OR still animating out.
-    isPresenting() {
-      if (App.HeaderMenu._panel) return true;
-      const panel = document.getElementById('header-menu-panel');
-      if (panel && panel.hasAttribute('data-open')) return true;
-      return App.HeaderMenu._closingAt > 0
-        && (App.HeaderMenu._now() - App.HeaderMenu._closingAt)
-          < App.HeaderMenu.CLOSING_WINDOW_MS;
-    },
-
-    // One-shot: a link inside the drawer armed this immediately before
-    // close(), and the navigation it triggered is the next thing to ask.
-    // Consumed on read so it can never apply to a second navigation.
-    consumeNavPending() {
-      const at = App.HeaderMenu._navArmedAt;
-      if (!at) return false;
-      App.HeaderMenu._navArmedAt = 0;
-      return (App.HeaderMenu._now() - at) < App.HeaderMenu.NAV_ARM_TTL_MS;
-    },
-
-    _resolveDismissWaiters() {
-      const waiters = App.HeaderMenu._dismissWaiters;
-      if (!waiters.length) return;
-      App.HeaderMenu._dismissWaiters = [];
-      for (const resolve of waiters) {
-        try { resolve(); } catch (err) { /* ignore */ }
-      }
-    },
-
-    open() {
-      const panel = document.getElementById('header-menu-panel');
-      const overlay = document.getElementById('header-menu-overlay');
-      const btn = document.getElementById('header-menu-btn');
-      if (!panel) return;
-      // A fresh presentation ends any "still sliding out" window the
-      // legacy path was counting down (#977).
-      App.HeaderMenu._closingAt = 0;
-      // #555: the AI-credit row only ever renders in this drawer, so
-      // opening it is exactly when its number matters. The refresh is
-      // throttled inside AiCredit, so this is cheap on every open —
-      // and it must run BEFORE the touch branch below, which returns.
-      if (window.AiCredit?.refreshAll) AiCredit.refreshAll();
-      // Touch platforms: present the drawer as a kit side panel — a
-      // right-edge slide-in with 1:1 drag-to-dismiss, matching what
-      // desktop's CSS slide-over already does positionally (it used to
-      // come up from the bottom as a sheet capped at 70vh, which cut the
-      // bottom-anchored footer off). The panel element itself is adopted
-      // via contentEl — its row listeners ride along — and is restored to
-      // <body> (off-screen, as usual) when the panel dismisses. Desktop
-      // keeps the right-side slide-over below.
-      if (PlatformUI.isTouch()) {
-        App.HeaderMenu._renderThemeButtons();
-        panel.classList.add('platform-panel-adopted');
-        // Assigned right below; captured here so onDismiss can tell its own
-        // teardown apart from a newer one's (see the guard).
-        let handle = null;
-        const kitPanel = PlatformUI.panel({
-          contentEl: panel,
-          side: 'right',
-          onDismiss: () => {
-            // The drawer this handle owned has left the screen, so anyone
-            // who chained a presentation behind close() may go — resolved
-            // BEFORE the ownership guard below, or a superseded teardown
-            // would strand them until the safety cap (#977).
-            App.HeaderMenu._resolveDismissWaiters();
-            // Teardown is deferred behind the exit spring, so a tap on the
-            // hamburger during that window can re-adopt the drawer into a
-            // NEW kit panel before this fires. Restoring it to <body> then
-            // would yank the node straight back out of the panel the user
-            // just opened, leaving an empty drawer. Only the CURRENT
-            // handle's teardown owns the node.
-            if (handle && App.HeaderMenu._panel !== handle) return;
-            panel.classList.remove('platform-panel-adopted');
-            document.body.appendChild(panel);
-            App.HeaderMenu._panel = null;
-            // The hamburger's state is not the kit's business, so it is
-            // reset here on EVERY exit path (backdrop, Escape, ✕, row
-            // navigation) — they all route through the kit dismiss.
-            btn.setAttribute('aria-expanded', 'false');
-            btn.setAttribute('aria-label', 'Open menu');
-          },
-        });
-        handle = kitPanel;
-        if (kitPanel) {
-          App.HeaderMenu._panel = kitPanel;
-          // The touch path used to return before the aria writes below,
-          // leaving the button reading "Open menu" / collapsed while the
-          // drawer was open.
-          btn.setAttribute('aria-expanded', 'true');
-          btn.setAttribute('aria-label', 'Close menu');
-          return;
-        }
-        panel.classList.remove('platform-panel-adopted');
-      }
-      overlay.classList.remove('hidden');
-      // Force a reflow so the transition fires (element was display:none).
-      overlay.getBoundingClientRect();
-      overlay.setAttribute('data-open', '');
-      panel.setAttribute('data-open', '');
-      btn.setAttribute('aria-expanded', 'true');
-      btn.setAttribute('aria-label', 'Close menu');
-      // Reflect the current theme mode every time the drawer opens (covers
-      // cross-tab changes and explicit values that happen to match the OS).
-      App.HeaderMenu._renderThemeButtons();
-      const closeBtn = document.getElementById('header-menu-close');
-      if (closeBtn) closeBtn.focus();
-    },
-    // Order of the three segments in the DOM — also the caret's stop
-    // index, so the two can never disagree.
-    THEME_MODES: ['light', 'dark', 'system'],
-
-    // Sync the Light/Dark/System segmented control from Theme.get(): the
-    // raised active segment, its aria-checked state, and the position of
-    // the caret underneath it. Safe to call before Theme/DOM exist
-    // (guards both).
-    //
-    // The caret is moved by writing --theme-caret-index (0|1|2) on the
-    // track and letting CSS translate a thirds-width element by
-    // index * 100%. Deliberately NOT an offsetLeft measurement: this runs
-    // once from open() BEFORE PlatformUI.panel resizes the panel from
-    // w-60 to the kit drawer's --un-panel-width, so a pixel read here
-    // would be stale the moment the panel presents. Percentages are
-    // correct at both widths with no re-measure, and the transition in
-    // CSS is what makes the caret slide between segments.
-    _renderThemeButtons() {
-      if (!window.Theme) return;
-      const current = Theme.get();
-      document.querySelectorAll('#drawer-theme-track [data-theme-mode]').forEach((b) => {
-        const active = b.dataset.themeMode === current;
-        b.classList.toggle('theme-seg-active', active);
-        b.setAttribute('aria-checked', active ? 'true' : 'false');
-      });
-      const track = document.getElementById('drawer-theme-track');
-      if (track) {
-        const idx = Math.max(0, App.HeaderMenu.THEME_MODES.indexOf(current));
-        track.style.setProperty('--theme-caret-index', String(idx));
-      }
-    },
-    // Returns a promise that resolves once the drawer is actually GONE —
-    // the kit teardown on the touch path, the CSS slide's end on the
-    // legacy one, immediately when nothing was open (#977). Callers that
-    // present a surface of their own (the Node / Wallet sheets, the Share
-    // dialog) chain it so only one surface moves at a time; every other
-    // caller can keep ignoring the return value.
+    open() { window.HeaderMenu?.open(); },
+    // close() is awaited by callers that present a surface of their own (the
+    // Node / Wallet sheets, the Share dialog), so the forwarder has to keep
+    // returning a thenable even when the controller is not up yet.
     close() {
-      if (App.HeaderMenu._panel) {
-        const done = App.HeaderMenu._afterDismiss();
-        App.HeaderMenu._closingAt = App.HeaderMenu._now();
-        App.HeaderMenu._panel.dismiss();
-        return done;
-      }
-      const panel = document.getElementById('header-menu-panel');
-      const overlay = document.getElementById('header-menu-overlay');
-      const btn = document.getElementById('header-menu-btn');
-      if (!panel) return Promise.resolve();
-      const wasOpen = panel.hasAttribute('data-open');
-      if (wasOpen) App.HeaderMenu._closingAt = App.HeaderMenu._now();
-      panel.removeAttribute('data-open');
-      overlay.removeAttribute('data-open');
-      btn.setAttribute('aria-expanded', 'false');
-      btn.setAttribute('aria-label', 'Open menu');
-      if (!wasOpen) return Promise.resolve();
-      const done = App.HeaderMenu._afterDismiss();
-      // Hide overlay after the slide-out transition finishes.
-      setTimeout(() => {
-        overlay.classList.add('hidden');
-        App.HeaderMenu._resolveDismissWaiters();
-      }, App.HeaderMenu.LEGACY_CLOSE_MS);
-      return done;
+      return window.HeaderMenu
+        ? window.HeaderMenu.close()
+        : Promise.resolve();
     },
-
-    // The completion promise itself: settled by whichever exit path runs,
-    // with a hard safety cap so a teardown that never fires can't hang a
-    // chained presentation forever.
-    _afterDismiss() {
-      return new Promise((resolve) => {
-        App.HeaderMenu._dismissWaiters.push(resolve);
-        setTimeout(resolve, App.HeaderMenu.DISMISS_SAFETY_MS);
-      });
-    },
-    init() {
-      const btn = document.getElementById('header-menu-btn');
-      if (!btn) return;
-      btn.addEventListener('click', () => App.HeaderMenu.open());
-      document.getElementById('header-menu-close')
-        .addEventListener('click', () => App.HeaderMenu.close());
-      document.getElementById('header-menu-overlay')
-        .addEventListener('click', () => App.HeaderMenu.close());
-      document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') {
-          // Adopted into a kit panel: the kit's own modal-stack handler
-          // owns Escape (it dismisses the topmost surface, which may be a
-          // modal opened above the drawer). Don't double-handle it.
-          if (App.HeaderMenu._panel) return;
-          const panel = document.getElementById('header-menu-panel');
-          if (panel && panel.hasAttribute('data-open')) App.HeaderMenu.close();
-        }
-      });
-      // Every LINK inside the drawer, in one rule (#977). Two jobs:
-      //
-      //   1. Arm the single-motion rule. A same-document hash link is
-      //      about to navigate the shell, and the drawer's own exit is
-      //      the only motion that navigation may show — so stamp
-      //      _navArmedAt and let App._entryTransition downgrade the
-      //      screen animation to 'none'. External links (the GitHub row,
-      //      whose href is an absolute repo URL) animate nothing in this
-      //      document, so they only close.
-      //   2. Close the drawer for links that never had a handler of
-      //      their own: the Kudos meter in the status pane
-      //      (#leaderboard/prs, rendered by kudos.js) and the footer's
-      //      "Forked from" line (#app/<slug>, rendered by app-view.js)
-      //      used to navigate with the drawer left wide open.
-      //
-      // Registered on the panel element itself, so it rides along when
-      // the panel is adopted into the kit drawer — same reason the
-      // per-row listeners below survive adoption. Those per-row
-      // handlers are now redundant with this one, and harmlessly so:
-      // both close paths are idempotent (the kit's dismiss() returns
-      // early once closed).
-      const drawerPanel = document.getElementById('header-menu-panel');
-      if (drawerPanel) {
-        drawerPanel.addEventListener('click', (e) => {
-          const link = e.target.closest ? e.target.closest('a[href]') : null;
-          if (!link || !drawerPanel.contains(link)) return;
-          // #1036: a cmd/ctrl/shift/middle click opens the destination
-          // in ANOTHER tab — nothing navigates in this document, so
-          // there is no screen animation to suppress (arming the flag
-          // would leak onto the NEXT real navigation until its TTL) and
-          // no reason to tear the drawer down under the user.
-          if (window.NavLink && NavLink.isNativeClick(e)) return;
-          // getAttribute, not .href: the property resolves to an absolute
-          // URL, which would make every in-page hash link look external.
-          const href = link.getAttribute('href') || '';
-          if (href.startsWith('#')) {
-            App.HeaderMenu._navArmedAt = App.HeaderMenu._now();
-          }
-          App.HeaderMenu.close();
-        });
-      }
-      // Drawer row actions — each closes the menu after triggering its action.
-      document.getElementById('drawer-row-github')
-        .addEventListener('click', () => App.HeaderMenu.close());
-      // Leaderboard (the merged Kudos + Topochain + Challenges screen) —
-      // same real-anchor idiom as Profile below: navigation rides the
-      // anchor's hash, the click handler here just closes the drawer. The
-      // separate Challenges / Topochain-seasons rows that used to sit
-      // beside it are gone; they're tabs of this one screen now.
-      document.getElementById('drawer-row-leaderboard')
-        ?.addEventListener('click', () => App.HeaderMenu.close());
-      // Share — a dialog of its own, so it waits for the drawer to be
-      // gone rather than fading in across the drawer's exit (#977).
-      document.getElementById('drawer-row-share')
-        .addEventListener('click', () => {
-          Promise.resolve(App.HeaderMenu.close()).then(() => {
-            if (window.AppView) AppView.openShareModal();
-          });
-        });
-      // Settings — the #settings screen (settings-modal-to-screen
-      // conversion). Same real-anchor idiom as Challenges / Profile above:
-      // navigation rides the anchor's hash, this handler just closes the
-      // drawer.
-      document.getElementById('drawer-row-settings')
-        ?.addEventListener('click', () => App.HeaderMenu.close());
-      // Admin & moderation — visibility is App.renderAdminButton()'s job
-      // (isAdmin gate); navigation rides the anchor's #admin hash, which
-      // navigateToAdminConsole re-gates. Same idiom as Settings above.
-      document.getElementById('drawer-row-admin')
-        ?.addEventListener('click', () => App.HeaderMenu.close());
-      // Theme segmented control — a live control, NOT a navigation row: it
-      // sets the mode and re-highlights WITHOUT closing the drawer, so the
-      // user can see the recolor and switch again.
-      if (window.Theme) {
-        document.querySelectorAll('#drawer-theme-track [data-theme-mode]').forEach((b) => {
-          b.addEventListener('click', () => {
-            Theme.set(b.dataset.themeMode);
-            App.HeaderMenu._renderThemeButtons();
-          });
-        });
-        // Storage/OS-driven changes (other tab, OS sunset switch) re-highlight too.
-        Theme.onChange(() => App.HeaderMenu._renderThemeButtons());
-        App.HeaderMenu._renderThemeButtons();
-      }
-    },
+    isPresenting() { return !!window.HeaderMenu?.isPresenting(); },
+    consumeNavPending() { return !!window.HeaderMenu?.consumeNavPending(); },
   },
 
   // Pull-to-refresh on the static full-screen scrollers (element mode —
@@ -2080,15 +1710,19 @@ const App = {
         return Leaderboard._load();
       });
     }
-    const notifList = document.getElementById('notifications-list');
-    if (notifList) PlatformUI.pullToRefresh(notifList, () => Notifications.refresh());
+    // #notifications-list's pull-to-refresh moved with the panel (#1079
+    // chunk B) — it is attached from the island's layout effect in
+    // frontend/src/features/notifications/index.tsx, so the whole panel has
+    // exactly one owner.
   },
 
   bindEvents() {
     // Note: the "Create new app" entry point lives in the home feed
     // now (see Home.wireCreateButtons) — no static header button to
     // bind here anymore.
-    App.HeaderMenu.init();
+    // The drawer's own wiring is HeaderMenu.init(), called from the React
+    // island's layout effect now (#1079 chunk B) — it has to run after
+    // hydration has adopted #header-menu-panel, which is earlier than this.
     App._wirePullToRefresh();
     document.getElementById('create-cancel').addEventListener('click', App.hideCreateModal);
     document.getElementById('create-modal').addEventListener('click', (e) => {
@@ -3228,62 +2862,28 @@ const App = {
   // Hiding the header changes #app-view's rect, so re-broadcast the
   // per-frame insets: the app's top inset is 0 while the header covers
   // it and becomes the real status-bar inset once it doesn't.
+  // Both DOM effects are React's now (#1079 chunk B): #platform-header is an
+  // island, and the floating pill is a component beside it
+  // (frontend/src/features/header/chromeless-pill.tsx). So this publishes two
+  // flags through the shell's visibility store — the ONE way a converted
+  // region's visibility may be driven from outside React — and the two
+  // subscribers produce exactly the DOM the classList toggle and the
+  // createElement/appendChild pair used to produce by hand.
+  //
+  // App.chromeless itself stays here: the router (restoreFromHash, the
+  // navigate* methods, the iframe surface logic) reads it on every hash
+  // change, and it is a routing fact, not a rendering one. Publishing before
+  // the deferred bundle has evaluated is fine — the store is a plain object
+  // on window, and the islands read it on mount.
   setChromeless(on) {
     const enable = !!on;
     if (App.chromeless === enable) return;
     App.chromeless = enable;
-    const header = document.getElementById('platform-header');
-    if (header) header.classList.toggle('hidden', enable);
-    if (enable) App._mountChromelessPill();
-    else App._unmountChromelessPill();
+    App.Visibility.publish('platform-header', !enable);
+    App.Visibility.publish('chromeless-pill', enable);
     if (typeof AppView !== 'undefined' && AppView.scheduleSafeAreaBroadcast) {
       AppView.scheduleSafeAreaBroadcast();
     }
-  },
-
-  // Floating pill, visually matching the bridge's share-view pill
-  // (public/usernode-bridge.js __USERNODE_PLATFORM_LINK__) so users see
-  // one consistent affordance. Unlike the bridge pill it is NOT
-  // dismissible — in chromeless mode it's the only way into the full
-  // platform view. The slug is read at click time so the pill survives
-  // app-to-app hash navigation without a remount.
-  _mountChromelessPill() {
-    if (document.getElementById('chromeless-pill')) return;
-    const link = document.createElement('a');
-    link.id = 'chromeless-pill';
-    link.href = '#';
-    link.setAttribute('aria-label', 'Open this app on Usernode');
-    link.style.cssText = 'position:fixed;'
-      + 'right:calc(12px + env(safe-area-inset-right,0px));'
-      + 'bottom:calc(12px + env(safe-area-inset-bottom,0px));'
-      + 'z-index:40;display:flex;align-items:center;gap:4px;'
-      + 'background:rgba(15,20,32,0.82);color:#e7edf7;border-radius:999px;'
-      + 'padding:6px 12px;font:12px/1.2 -apple-system,system-ui,sans-serif;'
-      + 'text-decoration:none;box-shadow:0 2px 10px rgba(0,0,0,0.3);opacity:0.85';
-    link.addEventListener('mouseenter', () => { link.style.opacity = '1'; });
-    link.addEventListener('mouseleave', () => { link.style.opacity = '0.85'; });
-    const label = document.createElement('span');
-    label.textContent = 'Open in Usernode';
-    const glyph = document.createElement('span');
-    glyph.textContent = '\u2197'; // ↗ (escaped like the bridge pill's)
-    glyph.style.cssText = 'font-size:11px;opacity:0.75';
-    glyph.setAttribute('aria-hidden', 'true');
-    link.appendChild(label);
-    link.appendChild(glyph);
-    link.addEventListener('click', (ev) => {
-      ev.preventDefault();
-      if (App.currentApp) {
-        // hashchange → restoreFromHash clears the mode; the already-
-        // loaded iframe stays mounted (same app, same tab).
-        location.hash = `#app/${App.currentApp}/app`;
-      }
-    });
-    document.body.appendChild(link);
-  },
-
-  _unmountChromelessPill() {
-    const link = document.getElementById('chromeless-pill');
-    if (link && link.parentNode) link.parentNode.removeChild(link);
   },
 
   // The single decision point for "what animation does entering this

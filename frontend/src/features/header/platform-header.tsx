@@ -7,16 +7,29 @@
  * — the one module that owned nodes in here, and now the only thing that writes
  * to this subtree from React's side.
  *
- * Everything else in this bar is still written by public/js/app.js by id
+ * Everything INSIDE this bar is still written by public/js/app.js by id
  * (App.setBackIcon on #back-btn, the title text, #app-mode-switch's visibility,
- * the badges). That is exactly why this component has NO state: React must
- * never reconcile over those nodes. It renders once, hands four refs to the
- * layout hook, and never re-renders — the `hidden` toggles all stay on the
- * legacy side, where they already were.
+ * the badges), so React must never reconcile over those nodes: every class
+ * string below is a constant prop, rendered once at hydration and never again.
+ *
+ * The bar's OWN visibility is the one piece of state it holds. Chromeless mode
+ * (`#app/<slug>/app`) hides the whole header, and App.setChromeless used to do
+ * that with a classList toggle from outside React — the thing the migration's
+ * visibility rule exists to stop. It publishes through
+ * ../../lib/visibility-store now and this component subscribes, with `true` as
+ * the initial value because the shipped markup ships the header visible.
+ *
+ * Even so the toggle lands via useHiddenClass rather than a rendered
+ * `className`: PlatformUI.attachScreenFx is handed this element as its top bar
+ * (app-view.js, group-chat.js) and the kit writes to it at runtime, so React
+ * re-rendering the attribute would drop whatever the kit put there.
  */
 
 import { useRef } from 'react';
 
+import { useHiddenClass } from '../../lib/legacy-dom';
+import { useVisibility } from '../../lib/visibility-store';
+import { ChromelessPill } from './chromeless-pill';
 import { useHeaderLayout } from './use-header-layout';
 
 export function PlatformHeader() {
@@ -29,6 +42,11 @@ export function PlatformHeader() {
   const rightGroupRef = useRef<HTMLDivElement>(null);
 
   useHeaderLayout(headerRef, leftGroupRef, titleRef, rightGroupRef);
+
+  // Chromeless mode hides the bar and floats the "Open in Usernode" pill in
+  // its place; App.setChromeless publishes the flag, this reads it.
+  const visible = useVisibility('platform-header', true);
+  useHiddenClass(headerRef, !visible);
 
   return (
     <>
@@ -329,6 +347,14 @@ export function PlatformHeader() {
           */}
         </div>
       </header>
+      {/*
+          The chromeless-mode pill, mounted as a SIBLING of the bar it replaces
+          (App._mountChromelessPill used to document.body.appendChild it, which
+          put an un-hydrated node inside a body React now owns). It renders
+          nothing at all until the flag flips, which is exactly what the shipped
+          markup had here.
+      */}
+      <ChromelessPill />
     </>
   );
 }

@@ -31,6 +31,19 @@ export function NotificationsPanel() {
   // once, so a late listener would never get the first fetch.
   useIsomorphicLayoutEffect(() => {
     window.Notifications?.init();
+    // The list's pull-to-refresh, moved out of App._wirePullToRefresh() with
+    // the panel: it is a kit attachment on a node this island owns, and the
+    // list is one of the "static full-screen scrollers" only in the sense
+    // that it is never re-created — so attaching it once here, from the same
+    // effect as init(), is the same contract in the right place. The kit
+    // no-ops it on desktop, exactly as before.
+    const list = document.getElementById('notifications-list');
+    if (list && window.PlatformUI?.pullToRefresh) {
+      window.PlatformUI.pullToRefresh(
+        list,
+        () => window.Notifications?.refresh() ?? Promise.resolve(),
+      );
+    }
   }, []);
 
   return (

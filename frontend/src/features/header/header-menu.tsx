@@ -7,16 +7,24 @@
  * Three legacy modules wrote into this subtree; all three moved into the bundle
  * with it, unchanged apart from where their init() is called from:
  *
- *   ./node-pill.js     #drawer-row-node    (native node status)
- *   ./wallet-sheet.js  #drawer-row-wallet  (native wallet balance + sheet)
- *   ./ai-credit.js     #drawer-row-ai-budget / #ai-budget-slot
+ *   ./node-pill.js               #drawer-row-node    (native node status)
+ *   ./wallet-sheet.js            #drawer-row-wallet  (native wallet balance)
+ *   ./ai-credit.js               #drawer-row-ai-budget / #ai-budget-slot
+ *   ./header-menu-controller.js  the drawer's own open/close (was
+ *                                App.HeaderMenu / App.DrawerStatus in app.js)
  *
- * app.js still owns the drawer's OPEN/CLOSE (App.HeaderMenu) and the rows it
- * shows or hides per screen, so this component is stateless for the same reason
- * PlatformHeader is: React must not reconcile over nodes another owner writes.
- * The panel is also physically adopted into a kit side drawer on touch
+ * The drawer stays MARKUP-ONLY apart from the theme segments below, and for the
+ * usual reason: app.js and app-view.js still show and hide individual rows per
+ * screen, and on touch the panel is physically adopted into a kit side drawer
  * (PlatformUI.panel({contentEl}) reparents it and adds .platform-panel-adopted),
- * which a re-render of `className` here would clobber.
+ * which a re-render of the panel's own `className` or child order would clobber.
+ *
+ * ThemeControl is the one exception, and it earns it: the segmented control's
+ * whole subtree is React's — nothing in public/js/** writes to it now that
+ * _renderThemeButtons has moved in here as state. It still renders the shipped
+ * markup exactly on the first pass (no active segment, aria-checked="false", no
+ * caret index) and only reflects Theme.get() from a layout effect, so hydration
+ * matches byte for byte.
  *
  * Why init() moves to a layout effect: imported modules evaluate while the
  * bundle loads — before hydration — and both node-pill and wallet-sheet lift
@@ -28,15 +36,132 @@
  * decision this component cannot make.
  */
 
-import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { useCallback, useRef, useState } from 'react';
+import { useIsomorphicLayoutEffect, useWindowEvent } from '../../lib/legacy-dom';
 import './ai-credit.js';
 import './node-pill.js';
 import './wallet-sheet.js';
+import './header-menu-controller.js';
+
+// Order of the three segments in the DOM — also the caret's stop index, so the
+// two can never disagree.
+const THEME_MODES = ['light', 'dark', 'system'] as const;
+type ThemeMode = (typeof THEME_MODES)[number];
+
+const THEME_SEG_CLASS =
+  'theme-seg flex-1 basis-0 rounded-md px-1.5 py-1 transition-colors';
+
+const THEME_LABELS: Record<ThemeMode, string> = {
+  light: 'Light',
+  dark: 'Dark',
+  system: 'System',
+};
+
+/**
+ * The Light / Dark / System segmented control — App.HeaderMenu's
+ * _renderThemeButtons(), as state.
+ *
+ * `mode` starts null, which renders EXACTLY the markup the hand-written shell
+ * shipped: no `theme-seg-active`, `aria-checked="false"` on all three, and no
+ * `--theme-caret-index` on the track. Theme.get() is only readable on the
+ * client (the inline head block owns it), so reading it during render would
+ * mismatch the prerender; the layout effect below fills it in on the first
+ * client pass instead.
+ *
+ * The caret index is written through a ref rather than rendered as a `style`
+ * prop for the same reason — the shipped track carries no style attribute, and
+ * a custom property is not something to reconcile.
+ *
+ * Three things re-read the mode, matching the three the legacy wiring had:
+ * a click on a segment, Theme.onChange (another tab, the OS sunset switch), and
+ * every drawer open (`usernode:header-menu-open`, dispatched by the controller
+ * where open() used to call _renderThemeButtons directly).
+ */
+function ThemeControl() {
+  const [mode, setMode] = useState<ThemeMode | null>(null);
+  const trackRef = useRef<HTMLDivElement | null>(null);
+
+  const sync = useCallback(() => {
+    const current = window.Theme?.get?.();
+    setMode(
+      THEME_MODES.includes(current as ThemeMode) ? (current as ThemeMode) : null,
+    );
+  }, []);
+
+  useIsomorphicLayoutEffect(() => {
+    sync();
+    // Storage/OS-driven changes (other tab, OS sunset switch) re-highlight too.
+    window.Theme?.onChange?.(sync);
+  }, [sync]);
+
+  // Reflect the current mode every time the drawer opens — covers cross-tab
+  // changes and explicit values that happen to match the OS.
+  useWindowEvent('usernode:header-menu-open', sync);
+
+  useIsomorphicLayoutEffect(() => {
+    const track = trackRef.current;
+    if (!track || mode === null) return;
+    // The caret is moved by writing --theme-caret-index (0|1|2) on the track
+    // and letting CSS translate a thirds-width element by index * 100%.
+    // Deliberately NOT an offsetLeft measurement: this runs from the drawer's
+    // open BEFORE PlatformUI.panel resizes the panel from w-60 to the kit
+    // drawer's --un-panel-width, so a pixel read here would be stale the
+    // moment the panel presents. Percentages are correct at both widths with
+    // no re-measure, and the transition in CSS is what makes the caret slide.
+    track.style.setProperty(
+      '--theme-caret-index',
+      String(Math.max(0, THEME_MODES.indexOf(mode))),
+    );
+  }, [mode]);
+
+  // A live control, NOT a navigation row: it sets the mode and re-highlights
+  // WITHOUT closing the drawer, so the user can see the recolor and switch
+  // again. (These are <button>s, so the panel's delegated a[href] close
+  // handler never sees them.)
+  const choose = useCallback(
+    (next: ThemeMode) => {
+      window.Theme?.set?.(next);
+      sync();
+    },
+    [sync],
+  );
+
+  return (
+    <div
+      id="drawer-theme-track"
+      ref={trackRef}
+      role="radiogroup"
+      aria-label="Theme"
+      className="relative flex p-0.5 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-xs font-medium"
+    >
+      {THEME_MODES.map((m) => (
+        <button
+          key={m}
+          type="button"
+          role="radio"
+          aria-checked={mode === m ? 'true' : 'false'}
+          data-theme-mode={m}
+          className={mode === m ? `${THEME_SEG_CLASS} theme-seg-active` : THEME_SEG_CLASS}
+          onClick={() => choose(m)}
+        >
+          {THEME_LABELS[m]}
+        </button>
+      ))}
+      <span id="drawer-theme-caret-track" aria-hidden="true">
+        <span id="drawer-theme-caret">
+        </span>
+      </span>
+    </div>
+  );
+}
 
 export function HeaderMenu() {
   useIsomorphicLayoutEffect(() => {
     window.NodePill?.init();
     window.WalletSheet?.init();
+    // The drawer's own open/close wiring — app.js's bindEvents() used to call
+    // this; it lives beside the markup it drives now (#1079 chunk B).
+    window.HeaderMenu?.init();
   }, []);
 
   return (
@@ -96,12 +221,13 @@ export function HeaderMenu() {
                 control reads as a setting rather than a banner and costs the
                 rows below it as little height as possible.
                 
-                Wired in App.HeaderMenu (app.js); active segment + caret position
-                are driven from Theme.get() via _renderThemeButtons(). All the
-                persistence lives in the inline `window.Theme` block at the top
-                of frontend/src/head.html — head-blocking, so the stored mode is
-                applied before first paint — and is untouched by the segmented
-                restyle.
+                Active segment + caret position are React state now
+                (ThemeControl above, which is where App.HeaderMenu's
+                _renderThemeButtons ended up). All the persistence still lives
+                in the inline `window.Theme` block at the top of
+                frontend/src/head.html — head-blocking, so the stored mode is
+                applied before first paint — untouched by both the segmented
+                restyle and this conversion.
             */}
             <div
               id="drawer-row-theme"
@@ -128,50 +254,13 @@ export function HeaderMenu() {
               {/*
                   Segmented track + caret. The caret is positioned purely in CSS
                   from the --theme-caret-index custom property (0|1|2) that
-                  _renderThemeButtons sets on the track: a thirds-width element
+                  ThemeControl writes on the track: a thirds-width element
                   translated by index * 100%. Deliberately NOT measured in JS —
-                  _renderThemeButtons runs before PlatformUI.sheet resizes the
-                  panel from w-60 to the sheet's full width, so any pixel read
-                  at that moment would be wrong. Percentages are right at both.
+                  the index is written before PlatformUI.panel resizes the panel
+                  from w-60 to the kit drawer's width, so any pixel read at that
+                  moment would be wrong. Percentages are right at both.
               */}
-              <div
-                id="drawer-theme-track"
-                role="radiogroup"
-                aria-label="Theme"
-                className="relative flex p-0.5 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-xs font-medium"
-              >
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked="false"
-                  data-theme-mode="light"
-                  className="theme-seg flex-1 basis-0 rounded-md px-1.5 py-1 transition-colors"
-                >
-                  Light
-                </button>
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked="false"
-                  data-theme-mode="dark"
-                  className="theme-seg flex-1 basis-0 rounded-md px-1.5 py-1 transition-colors"
-                >
-                  Dark
-                </button>
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked="false"
-                  data-theme-mode="system"
-                  className="theme-seg flex-1 basis-0 rounded-md px-1.5 py-1 transition-colors"
-                >
-                  System
-                </button>
-                <span id="drawer-theme-caret-track" aria-hidden="true">
-                  <span id="drawer-theme-caret">
-                  </span>
-                </span>
-              </div>
+              <ThemeControl />
             </div>
             {/*
                 Status pane: the viewer's remaining weekly kudos and their daily
