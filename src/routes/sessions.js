@@ -8417,8 +8417,9 @@ const DRAFT_ISSUE_REPORT_TOOL = {
     + '`{ ok: true, deduped: true, number, url }` when an open issue with essentially this title already '
     + 'exists (say so and name it instead of claiming you drafted a card), or '
     + '`{ ok: false, code }` — `not_configured` / `no_repo` (issue filing is unavailable here; say so in one '
-    + 'sentence and point at Send Feedback), `rate_limited` (too many drafts in this session just now), '
-    + '`title_too_long` / `body_too_long`. '
+    + 'sentence and point at Send Feedback), `rate_limited` (too many drafts in this session just now), or '
+    + '`title_too_long` / `body_too_long` (the result includes `limit` and `length` — trim to fit and retry '
+    + 'in your next turn; do not guess). '
     + 'It is NOT a dispatch and does not consume your one-action-per-turn budget, but never combine it with '
     + 'dispatch_scout or dispatch_claude_code in the same turn.',
   input_schema: {
@@ -8438,13 +8439,13 @@ const DRAFT_ISSUE_REPORT_TOOL = {
       title: {
         type: 'string',
         description:
-          'Short issue title (under 160 characters), written as a maintainer would title it — the specific '
+          `Short issue title (under ${issueDraft.TITLE_MAX} characters), written as a maintainer would title it — the specific `
           + 'problem or request, not a restatement of the user\'s phrasing.',
       },
       body: {
         type: 'string',
         description:
-          'The issue body (under 4000 characters). Write a complete, self-contained report someone else '
+          `The issue body (under ${issueDraft.BODY_MAX} characters). Write a complete, self-contained report someone else `
           + 'could act on: what is wrong or wanted, where it happens, expected vs actual — or, for an issue '
           + 'derived from the spec doc, the relevant part of the spec in full (e.g. the ordered list of '
           + 'slices for the step being filed). Not a one-liner: this text is what the user reviews before '
