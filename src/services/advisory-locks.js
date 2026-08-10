@@ -34,8 +34,17 @@
  * transaction open across seconds of network is worse than the race it
  * prevents. services/external-agent-tasks.js takes it on a dedicated client
  * and releases it in a `finally`.
+ *
+ * PROPOSAL_UPDATE_LOCK: the same two-key shape, keyed on a chat_sessions id
+ * rather than a task id, taken around #1056's fetch-verify-push-reconcile
+ * cycle for one proposal. A DISTINCT classifier from the task lock on purpose:
+ * the second key comes from a different id space, so sharing the classifier
+ * would make task 4242 and proposal 4242 serialize against each other for no
+ * reason — and, worse, would let a task submission and a proposal update that
+ * genuinely must not interleave believe they were already serialized.
  */
 const ADMIN_MUTATION_LOCK = 991001;
 const EXTERNAL_TASK_SUBMIT_LOCK = 991002;
+const PROPOSAL_UPDATE_LOCK = 991003;
 
-module.exports = { ADMIN_MUTATION_LOCK, EXTERNAL_TASK_SUBMIT_LOCK };
+module.exports = { ADMIN_MUTATION_LOCK, EXTERNAL_TASK_SUBMIT_LOCK, PROPOSAL_UPDATE_LOCK };

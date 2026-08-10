@@ -587,3 +587,137 @@ test('submit_work forwards the testing notes it was given, and only those', () =
   // And the description that reaches the proposal is the CLEANED one.
   assert.match(body, /body: testing\.description/);
 });
+
+// ── #1054: a proposal says where its head lives ───────────────────────────
+//
+// The advice get_proposal used to give — "fix the named tests and push again
+// to the same branch" — was false for exactly the proposals that most needed
+// it. A connector-submitted proposal tracks a BOT-OWNED branch, so the agent
+// that wrote the code could push to its fork all day and the proposal would
+// never move. So a proposal now states its branch home, whether the author can
+// push to it, and what to do instead when they cannot.
+
+test('a proposal states where its head lives and whether the author can push there', () => {
+  const imported = tools.shapeProposal({
+    id: 61, app_slug: 'recipe-box', source: 'imported', status: 'promoted',
+    branch_name: 'usernode/add-a-button', imported_pr_head_sha: 'f'.repeat(40),
+  }, ORIGIN);
+  assert.equal(imported.branch.home, 'user_fork');
+  assert.equal(imported.branch.repo, 'your fork');
+  assert.equal(imported.branch.name, 'usernode/add-a-button');
+  assert.equal(imported.branch.headSha, 'f'.repeat(40));
+  assert.equal(imported.branch.youCanPush, true);
+
+  const native = tools.shapeProposal({
+    id: 62, app_slug: 'recipe-box', source: 'native', status: 'promoted',
+    branch_name: 'dev/evan-1786376366569', reviewed_head_sha: 'a'.repeat(40),
+  }, ORIGIN);
+  assert.equal(native.branch.home, 'app_repo');
+  assert.equal(native.branch.repo, 'the app repository');
+  assert.equal(native.branch.name, 'dev/evan-1786376366569');
+  assert.equal(native.branch.headSha, 'a'.repeat(40));
+  assert.equal(native.branch.youCanPush, false, 'only the platform bot writes that branch');
+  // And it says what to do instead of pushing, rather than leaving the model
+  // to infer that pushing is pointless.
+  assert.match(native.branch.updateWith, /submit_work/);
+
+  // One definition of branch home, shared with the update service — so
+  // get_proposal, the work order and the push cannot disagree.
+  const { branchHomeOf } = require('../src/services/proposal-update');
+  assert.equal(branchHomeOf({ source: 'imported' }), imported.branch.home);
+  assert.equal(branchHomeOf({ source: 'native' }), native.branch.home);
+  assert.match(SRC, /require\('\.\/proposal-update'\)/);
+});
+
+test('a failing check tells the author how to actually land the fix', () => {
+  const failing = {
+    id: 63, app_slug: 'recipe-box', status: 'promoted', check_state: 'failing',
+    test_results: [{ name: 'Board shows the snap toggle', status: 'fail' }],
+  };
+  const bot = tools.shapeProposal({ ...failing, source: 'native', branch_name: 'dev/x' }, ORIGIN);
+  assert.match(bot.nextStep, /submit_work/);
+  assert.match(bot.nextStep, /pushing to your fork alone does not move it/i);
+  assert.match(bot.nextStep, /Do not open a second proposal/i);
+
+  const fork = tools.shapeProposal({ ...failing, source: 'imported', branch_name: 'usernode/x' }, ORIGIN);
+  assert.match(fork.nextStep, /usernode\/x/, 'an imported proposal names the branch to push to');
+
+  // A healthy proposal is not told to fix anything.
+  const passing = tools.shapeProposal({
+    id: 64, app_slug: 'recipe-box', status: 'promoted', check_state: 'passing', source: 'native',
+  }, ORIGIN);
+  assert.doesNotMatch(passing.nextStep, /failing/i);
+  // And a closed one is not offered an update it cannot take.
+  const merged = tools.shapeProposal({
+    id: 65, app_slug: 'recipe-box', status: 'merged', source: 'native', check_state: 'failing',
+  }, ORIGIN);
+  assert.doesNotMatch(merged.nextStep, /submit_work/);
+});
+
+test('list_my_proposals carries branch home, so a list is enough to decide', () => {
+  const block = SRC.slice(
+    SRC.indexOf("server.registerTool('list_my_proposals'"),
+    SRC.indexOf("server.registerTool('prepare_work'")
+  );
+  assert.ok(block.length > 0);
+  assert.match(block, /branchHome: z\.enum\(\['app_repo', 'user_fork'\]\)/);
+  assert.match(block, /youCanPush: z\.boolean\(\)/);
+  assert.match(block, /branchHome: shaped\.branch\.home/);
+  assert.match(block, /youCanPush: shaped\.branch\.youCanPush/);
+  // The route it reads from has to actually return `source`, or every listed
+  // proposal would report app_repo.
+  const SESSIONS_SRC = fs.readFileSync(
+    path.join(__dirname, '../src/routes/sessions.js'), 'utf8'
+  );
+  const route = SESSIONS_SRC.slice(SESSIONS_SRC.indexOf("'/api/me/active-sessions'"));
+  assert.match(route.slice(0, 2500), /cs\.source/);
+});
+
+test('prepare_work can be aimed at a proposal, and says which one it produced', () => {
+  const block = SRC.slice(
+    SRC.indexOf("server.registerTool('prepare_work'"),
+    SRC.indexOf("server.registerTool('submit_work'")
+  );
+  assert.match(block, /proposalId: z\.number\(\)\.int\(\)\.positive\(\)\.optional\(\)/);
+  assert.match(block, /branchHome: z\.enum\(\['app_repo', 'user_fork'\]\)\.nullable\(\)/);
+  // The proposal is loaded through the ordinary session route — no new query
+  // shape and no new access rule — and its refusal is returned as-is.
+  assert.match(block, /await fetchSession\(proposalId\)/);
+  assert.match(block, /if \(loaded\.error\) return loaded\.error/);
+  assert.match(block, /targetProposal/);
+});
+
+test('submit_work reaches the update through the platform route, not around it', () => {
+  const block = SRC.slice(
+    SRC.indexOf("server.registerTool('submit_work'"),
+    SRC.indexOf("server.registerTool('start_platform_build'")
+  );
+  // The same arrangement as the import loopback beside it: the caller's own
+  // token, replayed at the platform's ordinary entry point. Nothing about the
+  // push, the lease or the attribution gate is decided in this module.
+  assert.match(block, /proposals\/\$\{id\}\/update-from-fork/);
+  assert.match(block, /callPlatform\(\s*\n?\s*baseUrl, accessToken, 'POST'/);
+  assert.doesNotMatch(block, /force-with-lease|verifyForkBranch|pushForkBranchToAppBranch/);
+  // An update needs the branch it is advancing FROM.
+  assert.match(block, /const updating = Number\.isInteger\(proposalId\) && proposalId > 0/);
+  assert.match(block, /if \(updating && !branch\)/);
+  // The vote consequence is reported, because it is the one thing the user
+  // must hear before it happens again.
+  assert.match(block, /votesCleared/);
+  assert.match(block, /submittedVia/);
+});
+
+test('the server instructions tell the model to update a proposal, not to open a second one', () => {
+  assert.match(tools.SERVER_INSTRUCTIONS, /update that same proposal instead of opening a second one/);
+  assert.match(tools.SERVER_INSTRUCTIONS, /branch\.youCanPush/);
+  assert.match(tools.SERVER_INSTRUCTIONS, /clears the votes/);
+  assert.match(tools.SERVER_INSTRUCTIONS, /say so before you do it/);
+});
+
+test('an update refusal carries the commit the caller has to act on', () => {
+  // base_mismatch without expectedBase, or branch_moved without headSha, is a
+  // refusal a model can only respond to by guessing.
+  const block = SRC.slice(SRC.indexOf('const serviceError ='), SRC.indexOf('const fetchApp ='));
+  assert.match(block, /expectedBase/);
+  assert.match(block, /headSha/);
+});

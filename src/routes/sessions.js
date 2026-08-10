@@ -606,10 +606,15 @@ function sessionRoutes(config) {
       // falling back to the session's own creation time. The dev tab's
       // card list sorts session rows by this ("most recent activity"),
       // not by creation order.
+      //
+      // `source` is carried so a caller can tell where a proposal's head lives
+      // (#1054) — an imported pull request follows a branch in its author's own
+      // fork, everything else a branch only the platform can write — without a
+      // second read per row.
       const { rows } = await pool.query(
         `SELECT cs.id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title,
                 cs.session_title, cs.status, cs.linked_issues, cs.shared_at,
-                cs.transcript_shared_at, cs.created_at,
+                cs.transcript_shared_at, cs.created_at, cs.source,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
                 a.slug AS app_slug, a.name AS app_name
          FROM chat_sessions cs
