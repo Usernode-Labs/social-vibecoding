@@ -81,15 +81,15 @@ const AdminStatus = {
 
   meterRow(label, valueText, pct, tone = 'zinc') {
     const h = AdminStatus.esc;
-    const barTone = { zinc: 'bg-zinc-500', green: 'bg-green-500', yellow: 'bg-yellow-500', red: 'bg-red-500' }[tone] || 'bg-zinc-500';
+    const barTone = { zinc: 'bg-gray-500', green: 'bg-green-500', yellow: 'bg-yellow-500', red: 'bg-red-500' }[tone] || 'bg-gray-500';
     const w = Math.max(0, Math.min(100, Math.round(pct || 0)));
     return `
       <div class="mb-2">
         <div class="flex justify-between text-xs mb-1">
-          <span class="text-zinc-600 dark:text-zinc-400">${h(label)}</span>
-          <span class="mono text-zinc-700 dark:text-zinc-300">${valueText}</span>
+          <span class="text-gray-600 dark:text-gray-400">${h(label)}</span>
+          <span class="mono text-gray-700 dark:text-gray-300">${valueText}</span>
         </div>
-        <div class="h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden">
+        <div class="h-1.5 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
           <div class="h-full ${barTone}" style="width:${w}%"></div>
         </div>
       </div>`;
@@ -101,7 +101,7 @@ const AdminStatus = {
   // backlog (paused / stale-heading-to-archive / resumable archives).
   renderCapacity(data) {
     const c = data.capacity;
-    if (!c) return '<div class="text-zinc-500">No capacity data.</div>';
+    if (!c) return '<div class="text-gray-500">No capacity data.</div>';
     const host = data.host;
     const db = data.db;
     const meterRow = AdminStatus.meterRow;
@@ -111,9 +111,9 @@ const AdminStatus = {
     const sessTone = sessPct >= 90 ? 'red' : sessPct >= 70 ? 'yellow' : 'green';
     let out = meterRow('Sessions (active + promoted)', `${c.globalUsed} / ${c.globalCap}`, sessPct, sessTone);
 
-    out += `<div class="flex justify-between text-xs mb-3 text-zinc-600 dark:text-zinc-400">
-      <span>Active turns <span class="mono text-zinc-800 dark:text-zinc-200">${c.activeTurns}</span> · warm idle <span class="mono text-zinc-800 dark:text-zinc-200">${c.warmIdleWorkers}</span></span>
-      <span>per-user cap <span class="mono text-zinc-800 dark:text-zinc-200">${c.userCap}</span></span>
+    out += `<div class="flex justify-between text-xs mb-3 text-gray-600 dark:text-gray-400">
+      <span>Active turns <span class="mono text-gray-800 dark:text-gray-200">${c.activeTurns}</span> · warm idle <span class="mono text-gray-800 dark:text-gray-200">${c.warmIdleWorkers}</span></span>
+      <span>per-user cap <span class="mono text-gray-800 dark:text-gray-200">${c.userCap}</span></span>
     </div>`;
 
     if (host) {
@@ -132,13 +132,13 @@ const AdminStatus = {
     }
 
     const bs = c.byStatus || {};
-    out += `<div class="mt-3 pt-3 border-t border-zinc-200 dark:border-zinc-800 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-      <div class="flex justify-between"><span class="text-zinc-500">active</span><span class="mono">${bs.active ?? 0}</span></div>
-      <div class="flex justify-between"><span class="text-zinc-500">promoted</span><span class="mono">${bs.promoted ?? 0}</span></div>
-      <div class="flex justify-between"><span class="text-zinc-500">paused</span><span class="mono">${bs.paused ?? 0}</span></div>
-      <div class="flex justify-between"><span class="text-zinc-500">archived</span><span class="mono">${bs.archived ?? 0}</span></div>
-      <div class="flex justify-between"><span class="text-zinc-500">stale → archive</span><span class="mono ${c.staleNotified > 0 ? 'text-yellow-600 dark:text-yellow-400' : ''}">${c.staleNotified}</span></div>
-      <div class="flex justify-between"><span class="text-zinc-500">resumable</span><span class="mono">${c.archivedResumable}</span></div>
+    out += `<div class="mt-3 pt-3 border-t border-gray-200 dark:border-gray-800 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+      <div class="flex justify-between"><span class="text-gray-500">active</span><span class="mono">${bs.active ?? 0}</span></div>
+      <div class="flex justify-between"><span class="text-gray-500">promoted</span><span class="mono">${bs.promoted ?? 0}</span></div>
+      <div class="flex justify-between"><span class="text-gray-500">paused</span><span class="mono">${bs.paused ?? 0}</span></div>
+      <div class="flex justify-between"><span class="text-gray-500">archived</span><span class="mono">${bs.archived ?? 0}</span></div>
+      <div class="flex justify-between"><span class="text-gray-500">stale → archive</span><span class="mono ${c.staleNotified > 0 ? 'text-yellow-600 dark:text-yellow-400' : ''}">${c.staleNotified}</span></div>
+      <div class="flex justify-between"><span class="text-gray-500">resumable</span><span class="mono">${c.archivedResumable}</span></div>
     </div>`;
 
     return out;
@@ -160,14 +160,14 @@ const AdminStatus = {
 
   summaryCard(label, value, tone = 'zinc') {
     const toneCls = {
-      zinc: 'border-zinc-200 dark:border-zinc-800',
+      zinc: 'border-gray-200 dark:border-gray-800',
       green: 'border-green-300 dark:border-green-700/40',
       yellow: 'border-yellow-300 dark:border-yellow-700/40',
       red: 'border-red-300 dark:border-red-700/40',
     }[tone];
     return `
-      <div class="rounded-lg border ${toneCls} bg-zinc-50 dark:bg-zinc-900/60 p-3">
-        <div class="text-xs text-zinc-500 uppercase tracking-wide">${AdminStatus.esc(label)}</div>
+      <div class="rounded-lg border ${toneCls} bg-gray-50 dark:bg-gray-900/60 p-3">
+        <div class="text-xs text-gray-500 uppercase tracking-wide">${AdminStatus.esc(label)}</div>
         <div class="text-xl font-semibold mt-0.5">${value}</div>
       </div>`;
   },
@@ -208,7 +208,7 @@ const AdminStatus = {
     // Node summary card. Tone matches the dot color in renderNode() so the
     // top-of-page glance and the dedicated section agree at a glance.
     const nodeMeta = AdminStatus.nodeStatusMeta(node);
-    const nodeValue = `${nodeMeta.label}${node && typeof node.peers === 'number' ? ` <span class="text-zinc-500 text-xs">${node.peers}p</span>` : ''}`;
+    const nodeValue = `${nodeMeta.label}${node && typeof node.peers === 'number' ? ` <span class="text-gray-500 text-xs">${node.peers}p</span>` : ''}`;
 
     // Long-lived worker breakdown: "in-flight" is what used to be the
     // only meaningful workersRunning figure; warm-idle is the new
@@ -217,7 +217,7 @@ const AdminStatus = {
     const inFlight = s.workersInFlight ?? s.workersRunning ?? 0;
     const warmIdle = s.workersWarmIdle ?? 0;
     const workerExtras = [];
-    if (warmIdle > 0) workerExtras.push(`<span class="text-zinc-500 text-xs">+${warmIdle} warm</span>`);
+    if (warmIdle > 0) workerExtras.push(`<span class="text-gray-500 text-xs">+${warmIdle} warm</span>`);
     if (s.workersOrphaned > 0) workerExtras.push(`<span class="text-red-600 dark:text-red-400 text-xs">+${s.workersOrphaned} orphan</span>`);
     const workerValue = `${inFlight}${workerExtras.length ? ' ' + workerExtras.join(' ') : ''}`;
 
@@ -267,7 +267,7 @@ const AdminStatus = {
   renderExplorer(ex) {
     const h = AdminStatus.esc;
     if (!ex || ex.status === 'unknown') {
-      return '<div class="text-zinc-500">Explorer not probed yet.</div>';
+      return '<div class="text-gray-500">Explorer not probed yet.</div>';
     }
 
     const meta = {
@@ -295,9 +295,9 @@ const AdminStatus = {
     return `
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
         <span class="pill ${meta.pill}">${h(meta.label)}</span>
-        <span class="mono text-xs text-zinc-500 break-all">${h(ex.host || '—')}</span>
-        ${ex.chainId ? `<span class="text-xs text-zinc-500">chain <span class="mono">${h(ex.chainId)}</span></span>` : ''}
-        ${ex.latencyMs != null ? `<span class="text-xs text-zinc-500">${h(ex.latencyMs)}ms</span>` : ''}
+        <span class="mono text-xs text-gray-500 break-all">${h(ex.host || '—')}</span>
+        ${ex.chainId ? `<span class="text-xs text-gray-500">chain <span class="mono">${h(ex.chainId)}</span></span>` : ''}
+        ${ex.latencyMs != null ? `<span class="text-xs text-gray-500">${h(ex.latencyMs)}ms</span>` : ''}
         ${down}
       </div>
       ${consequence}
@@ -307,7 +307,7 @@ const AdminStatus = {
   renderNode(node) {
     const h = AdminStatus.esc;
     if (!node || node.status === 'unknown') {
-      return '<div class="text-zinc-500">No NODE_RPC_URL configured — node status unavailable.</div>';
+      return '<div class="text-gray-500">No NODE_RPC_URL configured — node status unavailable.</div>';
     }
 
     const meta = AdminStatus.nodeStatusMeta(node);
@@ -323,7 +323,7 @@ const AdminStatus = {
     // after first sync is green ("just applying new tip blocks").
     const barColor = node.status === 'Syncing' && !node.hasBeenSynced ? 'bg-yellow-500'
       : node.status === 'Syncing' ? 'bg-green-500'
-      : 'bg-violet-500';
+      : 'bg-indigo-500';
 
     // PARTIAL_LEDGER_RECENT_TX_SOURCE_BUG warning. False here means the
     // sidecar booted without HAS_FULL_UTXO_DB, which causes the recent-tx
@@ -338,18 +338,18 @@ const AdminStatus = {
       <div class="mt-2 text-xs text-red-600 dark:text-red-400 mono break-all">${h(node.error)}</div>` : '';
 
     const tipLine = (ourTip != null || peerTip != null) ? `
-      <div class="text-xs text-zinc-500 mt-1">
-        tip <span class="mono text-zinc-700 dark:text-zinc-300">${ourTip != null ? ourTip.toLocaleString() : '—'}</span>
-        ${peerTip != null ? `/ <span class="mono text-zinc-600 dark:text-zinc-400">${peerTip.toLocaleString()}</span> on network` : ''}
+      <div class="text-xs text-gray-500 mt-1">
+        tip <span class="mono text-gray-700 dark:text-gray-300">${ourTip != null ? ourTip.toLocaleString() : '—'}</span>
+        ${peerTip != null ? `/ <span class="mono text-gray-600 dark:text-gray-400">${peerTip.toLocaleString()}</span> on network` : ''}
         ${behind != null && behind > 0 ? `<span class="text-yellow-600 dark:text-yellow-400 ml-1">(${behind.toLocaleString()} blocks behind)</span>` : ''}
       </div>` : '';
 
     const ageSeconds = node.at ? Math.max(0, Math.floor((Date.now() - new Date(node.at).getTime()) / 1000)) : null;
-    const lastUpdated = ageSeconds != null ? `<span class="text-xs text-zinc-500 ml-auto">updated ${ageSeconds < 60 ? `${ageSeconds}s` : `${Math.floor(ageSeconds / 60)}m`} ago</span>` : '';
+    const lastUpdated = ageSeconds != null ? `<span class="text-xs text-gray-500 ml-auto">updated ${ageSeconds < 60 ? `${ageSeconds}s` : `${Math.floor(ageSeconds / 60)}m`} ago</span>` : '';
 
     const bar = showBar ? `
       <div class="mt-2">
-        <div class="h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden">
+        <div class="h-1.5 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
           <div class="h-full ${barColor} transition-all duration-300" style="width:${pct.toFixed(1)}%"></div>
         </div>
       </div>` : '';
@@ -357,7 +357,7 @@ const AdminStatus = {
     return `
       <div class="flex items-center gap-3 flex-wrap">
         <span class="pill ${meta.pill}"><span class="dot"></span>${h(meta.label)}</span>
-        <span class="text-zinc-700 dark:text-zinc-300">${node.peers} peer${node.peers === 1 ? '' : 's'}</span>
+        <span class="text-gray-700 dark:text-gray-300">${node.peers} peer${node.peers === 1 ? '' : 's'}</span>
         ${node.hasFullUtxoDb === true ? '<span class="pill pill-running"><span class="dot"></span>full UTXO DB</span>' : ''}
         ${lastUpdated}
       </div>
@@ -371,47 +371,47 @@ const AdminStatus = {
     const h = AdminStatus.esc;
     const statePill = AdminStatus.statePill;
     const fmtDuration = AdminStatus.fmtDurationSeconds;
-    if (!apps.length) return '<div class="text-sm text-zinc-500">No apps yet.</div>';
+    if (!apps.length) return '<div class="text-sm text-gray-500">No apps yet.</div>';
     return apps.map((a) => {
       const prodState = a.prod?.state || (a.dbStatus === 'creating' ? 'creating' : 'missing');
       const prodLabel = a.prod?.state || a.dbStatus || 'missing';
-      const mem = a.prod?.stats?.mem ? `<span class="mono text-zinc-500">${h(a.prod.stats.mem)}</span>` : '';
-      const cpu = a.prod?.stats?.cpu ? `<span class="mono text-zinc-500">${h(a.prod.stats.cpu)}</span>` : '';
+      const mem = a.prod?.stats?.mem ? `<span class="mono text-gray-500">${h(a.prod.stats.mem)}</span>` : '';
+      const cpu = a.prod?.stats?.cpu ? `<span class="mono text-gray-500">${h(a.prod.stats.cpu)}</span>` : '';
 
       const sessions = a.sessions.map((s) => {
         const stagingState = s.staging?.state || (s.stagingDriftWarning ? 'missing' : 'creating');
         const stagingLabel = s.staging?.state || (s.stagingDriftWarning ? 'drift' : 'pending');
-        const stagingStats = s.staging?.stats ? `<span class="mono text-zinc-500 ml-2">${h(s.staging.stats.mem)} · ${h(s.staging.stats.cpu)}</span>` : '';
-        const prLink = s.prUrl ? `<a href="${h(s.prUrl)}" target="_blank" rel="noopener" class="text-violet-600 dark:text-violet-400 hover:underline">PR #${s.prNumber}</a>` : '<span class="text-zinc-500">no PR</span>';
-        const prTitle = s.prTitle ? `<span class="text-zinc-700 dark:text-zinc-300 ml-2 truncate">${h(s.prTitle)}</span>` : '';
+        const stagingStats = s.staging?.stats ? `<span class="mono text-gray-500 ml-2">${h(s.staging.stats.mem)} · ${h(s.staging.stats.cpu)}</span>` : '';
+        const prLink = s.prUrl ? `<a href="${h(s.prUrl)}" target="_blank" rel="noopener" class="text-indigo-600 dark:text-indigo-400 hover:underline">PR #${s.prNumber}</a>` : '<span class="text-gray-500">no PR</span>';
+        const prTitle = s.prTitle ? `<span class="text-gray-700 dark:text-gray-300 ml-2 truncate">${h(s.prTitle)}</span>` : '';
         const resolve = typeof window.resolveDevHost === 'function' ? window.resolveDevHost : ((u) => u);
         const stagingResolved = s.stagingUrl ? resolve(s.stagingUrl) : '';
-        const stagingLink = s.stagingUrl ? `<a href="${h(stagingResolved)}" target="_blank" rel="noopener" class="text-violet-600 dark:text-violet-400 hover:underline mono text-xs break-all">${h(stagingResolved)}</a>` : '';
+        const stagingLink = s.stagingUrl ? `<a href="${h(stagingResolved)}" target="_blank" rel="noopener" class="text-indigo-600 dark:text-indigo-400 hover:underline mono text-xs break-all">${h(stagingResolved)}</a>` : '';
 
         let workerLine = '';
         if (s.worker) {
           const orphanTag = s.worker.orphan ? '<span class="text-red-600 dark:text-red-400 ml-1">(orphan)</span>' : '';
           workerLine = `
-            <div class="mt-1.5 pl-3 border-l-2 border-violet-300 dark:border-violet-800 text-xs">
+            <div class="mt-1.5 pl-3 border-l-2 border-indigo-300 dark:border-indigo-800 text-xs">
               <div class="flex items-center gap-2">
                 <span class="pill pill-running"><span class="dot"></span>worker</span>
-                <span class="text-zinc-600 dark:text-zinc-400">${fmtDuration(s.worker.uptimeSeconds)}${orphanTag}</span>
-                ${s.worker.model ? `<span class="mono text-zinc-500">${h(s.worker.model)}</span>` : ''}
+                <span class="text-gray-600 dark:text-gray-400">${fmtDuration(s.worker.uptimeSeconds)}${orphanTag}</span>
+                ${s.worker.model ? `<span class="mono text-gray-500">${h(s.worker.model)}</span>` : ''}
               </div>
-              ${s.worker.lastProgress ? `<div class="text-zinc-600 dark:text-zinc-400 mt-0.5 mono truncate">▸ ${h(s.worker.lastProgress)}</div>` : ''}
+              ${s.worker.lastProgress ? `<div class="text-gray-600 dark:text-gray-400 mt-0.5 mono truncate">▸ ${h(s.worker.lastProgress)}</div>` : ''}
             </div>`;
         }
 
         return `
-          <div class="pl-3 border-l-2 border-zinc-200 dark:border-zinc-800 py-2">
+          <div class="pl-3 border-l-2 border-gray-200 dark:border-gray-800 py-2">
             <div class="flex items-center gap-2 flex-wrap">
               ${statePill(stagingState, `staging: ${stagingLabel}`)}
-              <span class="text-zinc-600 dark:text-zinc-400 text-xs">#${s.id}</span>
-              <span class="text-zinc-700 dark:text-zinc-300 text-xs">@${h(s.username)}</span>
-              <span class="mono text-zinc-500 text-xs">${h(s.branchName || '—')}</span>
+              <span class="text-gray-600 dark:text-gray-400 text-xs">#${s.id}</span>
+              <span class="text-gray-700 dark:text-gray-300 text-xs">@${h(s.username)}</span>
+              <span class="mono text-gray-500 text-xs">${h(s.branchName || '—')}</span>
               <span class="text-xs">${prLink}</span>
               ${prTitle}
-              <span class="text-zinc-500 text-xs ml-auto">${fmtDuration(s.ageSeconds)}</span>
+              <span class="text-gray-500 text-xs ml-auto">${fmtDuration(s.ageSeconds)}</span>
             </div>
             <div class="mt-0.5 text-xs flex items-center gap-2 flex-wrap">
               ${stagingLink}
@@ -432,11 +432,11 @@ const AdminStatus = {
             <div class="min-w-0">
               <div class="flex items-center gap-2 flex-wrap">
                 <span class="font-semibold">${h(a.name)}</span>
-                <span class="mono text-zinc-500 text-xs">${h(a.slug)}</span>
+                <span class="mono text-gray-500 text-xs">${h(a.slug)}</span>
                 ${statePill(prodState, `prod: ${prodLabel}`)}
               </div>
-              <div class="text-xs text-zinc-500 mt-1 flex items-center gap-3 flex-wrap">
-                ${a.repoUrl ? `<a href="${h(a.repoUrl)}" target="_blank" rel="noopener" class="hover:text-violet-600 dark:hover:text-violet-400 mono">${h(repoHost)}</a>` : ''}
+              <div class="text-xs text-gray-500 mt-1 flex items-center gap-3 flex-wrap">
+                ${a.repoUrl ? `<a href="${h(a.repoUrl)}" target="_blank" rel="noopener" class="hover:text-indigo-600 dark:hover:text-indigo-800 dark:hover:text-indigo-300 mono">${h(repoHost)}</a>` : ''}
                 <span>by @${h(a.createdBy || 'unknown')}</span>
                 <span>${a.openSessions} session${a.openSessions === 1 ? '' : 's'}</span>
                 <span>${a.openIssues} issue${a.openIssues === 1 ? '' : 's'}</span>
@@ -445,7 +445,7 @@ const AdminStatus = {
               </div>
             </div>
           </div>
-          ${a.sessions.length ? `<div class="border-t border-zinc-200 dark:border-zinc-800 px-3 pb-2">${sessions}</div>` : ''}
+          ${a.sessions.length ? `<div class="border-t border-gray-200 dark:border-gray-800 px-3 pb-2">${sessions}</div>` : ''}
         </div>`;
     }).join('');
   },
@@ -469,41 +469,41 @@ const AdminStatus = {
   renderWorkers(workers) {
     const h = AdminStatus.esc;
     const fmtDuration = AdminStatus.fmtDurationSeconds;
-    if (!workers.length) return '<div class="text-zinc-500">No workers running.</div>';
+    if (!workers.length) return '<div class="text-gray-500">No workers running.</div>';
     return workers.map((w) => {
       const orphan = w.orphan ? '<span class="text-red-600 dark:text-red-400 ml-1">orphan</span>' : '';
       const idleLabel = w.workerMode === 'warm-idle' && w.idleMs != null
         ? `idle ${fmtDuration(Math.floor(w.idleMs / 1000))}`
         : '';
       return `
-        <div class="rounded border ${w.orphan ? 'border-red-300 dark:border-red-700/40' : 'border-zinc-200 dark:border-zinc-800'} bg-zinc-50 dark:bg-zinc-900/40 p-2">
+        <div class="rounded border ${w.orphan ? 'border-red-300 dark:border-red-700/40' : 'border-gray-200 dark:border-gray-800'} bg-gray-50 dark:bg-gray-900/40 p-2">
           <div class="flex items-center gap-2 flex-wrap">
             ${AdminStatus.statePill(w.state, w.state)}
             ${AdminStatus.workerModePill(w.workerMode)}
-            <span class="text-xs text-zinc-600 dark:text-zinc-400">session #${w.sessionId}</span>
-            ${w.appSlug ? `<span class="mono text-xs text-zinc-500">${h(w.appSlug)}</span>` : ''}
+            <span class="text-xs text-gray-600 dark:text-gray-400">session #${w.sessionId}</span>
+            ${w.appSlug ? `<span class="mono text-xs text-gray-500">${h(w.appSlug)}</span>` : ''}
             ${w.username ? `<span class="text-xs">@${h(w.username)}</span>` : ''}
-            ${idleLabel ? `<span class="text-xs text-zinc-500">${idleLabel}</span>` : ''}
-            <span class="text-xs text-zinc-500 ml-auto">${fmtDuration(w.uptimeSeconds)}${orphan}</span>
+            ${idleLabel ? `<span class="text-xs text-gray-500">${idleLabel}</span>` : ''}
+            <span class="text-xs text-gray-500 ml-auto">${fmtDuration(w.uptimeSeconds)}${orphan}</span>
           </div>
-          ${w.lastProgress ? `<div class="mt-1 mono text-xs text-zinc-600 dark:text-zinc-400 truncate">▸ ${h(w.lastProgress)}</div>` : ''}
+          ${w.lastProgress ? `<div class="mt-1 mono text-xs text-gray-600 dark:text-gray-400 truncate">▸ ${h(w.lastProgress)}</div>` : ''}
         </div>`;
     }).join('');
   },
 
   renderStuck(stuck) {
     const h = AdminStatus.esc;
-    if (!stuck.length) return '<div class="text-zinc-500">None.</div>';
+    if (!stuck.length) return '<div class="text-gray-500">None.</div>';
     return stuck.map((s) => `
-      <div class="rounded border border-yellow-300 dark:border-yellow-700/40 bg-zinc-50 dark:bg-zinc-900/40 p-2">
+      <div class="rounded border border-yellow-300 dark:border-yellow-700/40 bg-gray-50 dark:bg-gray-900/40 p-2">
         <div class="flex items-center gap-2 flex-wrap">
           <span class="pill pill-stopped"><span class="dot"></span>stuck</span>
-          <span class="text-xs text-zinc-600 dark:text-zinc-400">session #${s.id}</span>
-          <span class="mono text-xs text-zinc-500">${h(s.appSlug)}</span>
+          <span class="text-xs text-gray-600 dark:text-gray-400">session #${s.id}</span>
+          <span class="mono text-xs text-gray-500">${h(s.appSlug)}</span>
           <span class="text-xs">@${h(s.username || 'unknown')}</span>
-          <span class="text-xs text-zinc-500 ml-auto">${AdminStatus.fmtDurationSeconds(s.ageSeconds)}</span>
+          <span class="text-xs text-gray-500 ml-auto">${AdminStatus.fmtDurationSeconds(s.ageSeconds)}</span>
         </div>
-        <div class="text-xs text-zinc-500 mt-0.5 mono">${h(s.branchName)}</div>
+        <div class="text-xs text-gray-500 mt-0.5 mono">${h(s.branchName)}</div>
       </div>`).join('');
   },
 
@@ -511,16 +511,16 @@ const AdminStatus = {
     const h = AdminStatus.esc;
     const fmtDollars = AdminStatus.fmtDollars;
     const { llmUsage, stagingPerUser, summary, limits } = data;
-    if (!summary || !limits) return '<div class="text-zinc-500 text-xs">no data</div>';
+    if (!summary || !limits) return '<div class="text-gray-500 text-xs">no data</div>';
     const pct = Math.min(100, Math.round((summary.globalSpendCents / summary.globalSpendCap) * 100));
     const bar = `
       <div class="mb-2">
         <div class="flex justify-between text-xs mb-1">
-          <span class="text-zinc-600 dark:text-zinc-400">global</span>
+          <span class="text-gray-600 dark:text-gray-400">global</span>
           <span class="mono">${fmtDollars(summary.globalSpendCents)} / ${fmtDollars(summary.globalSpendCap)} (${pct}%)</span>
         </div>
-        <div class="h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden">
-          <div class="h-full bg-violet-500" style="width:${pct}%"></div>
+        <div class="h-1.5 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
+          <div class="h-full bg-indigo-500" style="width:${pct}%"></div>
         </div>
       </div>`;
 
@@ -532,23 +532,23 @@ const AdminStatus = {
         <div class="flex items-center justify-between text-xs py-0.5">
           <div class="flex items-center gap-2 min-w-0">
             <span class="truncate">@${h(u.username)}</span>
-            ${stagingCt >= limits.stagingPerUser ? `<span class="text-red-600 dark:text-red-400 text-[10px]">${stagingCt}/${limits.stagingPerUser} staging</span>` : stagingCt > 0 ? `<span class="text-zinc-500 text-[10px]">${stagingCt} staging</span>` : ''}
+            ${stagingCt >= limits.stagingPerUser ? `<span class="text-red-600 dark:text-red-400 text-[10px]">${stagingCt}/${limits.stagingPerUser} staging</span>` : stagingCt > 0 ? `<span class="text-gray-500 text-[10px]">${stagingCt} staging</span>` : ''}
           </div>
-          <span class="mono ${atCap ? 'text-red-600 dark:text-red-400' : 'text-zinc-600 dark:text-zinc-400'}">${fmtDollars(u.costCents)} (${userPct}%)</span>
+          <span class="mono ${atCap ? 'text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-gray-400'}">${fmtDollars(u.costCents)} (${userPct}%)</span>
         </div>`;
-    }).join('') : '<div class="text-zinc-500 text-xs">no activity</div>';
+    }).join('') : '<div class="text-gray-500 text-xs">no activity</div>';
 
     return bar + rows;
   },
 
   renderDrift(drift) {
     const h = AdminStatus.esc;
-    if (!drift.length) return '<div class="text-zinc-500">No drift detected.</div>';
+    if (!drift.length) return '<div class="text-gray-500">No drift detected.</div>';
     return drift.map((d) => `
-      <div class="rounded border border-red-300 dark:border-red-700/40 bg-zinc-50 dark:bg-zinc-900/40 p-2 text-xs">
+      <div class="rounded border border-red-300 dark:border-red-700/40 bg-gray-50 dark:bg-gray-900/40 p-2 text-xs">
         <div class="flex items-center gap-2">
           <span class="pill pill-missing"><span class="dot"></span>${h(d.kind)} missing</span>
-          <span class="mono text-zinc-600 dark:text-zinc-400">${h(d.expected)}</span>
+          <span class="mono text-gray-600 dark:text-gray-400">${h(d.expected)}</span>
         </div>
       </div>`).join('');
   },
@@ -572,12 +572,12 @@ const AdminStatus = {
 
   renderEvents(events) {
     const h = AdminStatus.esc;
-    if (!events.length) return '<div class="text-zinc-500 text-xs">no events yet</div>';
+    if (!events.length) return '<div class="text-gray-500 text-xs">no events yet</div>';
     return events.map((e) => {
-      const lvl = { ERROR: 'text-red-600 dark:text-red-400', WARN: 'text-yellow-600 dark:text-yellow-400', INFO: 'text-zinc-600 dark:text-zinc-400', DEBUG: 'text-zinc-600' }[e.level] || 'text-zinc-600 dark:text-zinc-400';
+      const lvl = { ERROR: 'text-red-600 dark:text-red-400', WARN: 'text-yellow-600 dark:text-yellow-400', INFO: 'text-gray-600 dark:text-gray-400', DEBUG: 'text-gray-600' }[e.level] || 'text-gray-600 dark:text-gray-400';
       const time = new Date(e.ts).toLocaleTimeString();
       const data = e.data ? ' ' + (typeof e.data === 'string' ? e.data : JSON.stringify(e.data)) : '';
-      return `<div class="truncate"><span class="text-zinc-600">${h(time)}</span> <span class="${lvl}">${h(e.level)}</span> <span class="text-zinc-500">[${h(e.category)}]</span> ${h(e.message)}<span class="text-zinc-600">${h(data.substring(0, 200))}</span></div>`;
+      return `<div class="truncate"><span class="text-gray-600">${h(time)}</span> <span class="${lvl}">${h(e.level)}</span> <span class="text-gray-500">[${h(e.category)}]</span> ${h(e.message)}<span class="text-gray-600">${h(data.substring(0, 200))}</span></div>`;
     }).join('');
   },
 
@@ -590,30 +590,30 @@ const AdminStatus = {
         <header class="flex items-center justify-between flex-wrap gap-2 mb-4">
           <div class="flex items-center gap-3">
             <h2 class="${AdminUI.cardTitle}">Health &amp; status</h2>
-            <span id="admin-status-version" class="text-xs mono text-zinc-500"></span>
-            <span id="admin-status-badge" class="admin-only text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-700/30 text-violet-700 dark:text-violet-300">admin view</span>
+            <span id="admin-status-version" class="text-xs mono text-gray-500"></span>
+            <span id="admin-status-badge" class="admin-only text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-700/30 text-indigo-700 dark:text-indigo-300">admin view</span>
           </div>
-          <div class="flex items-center gap-4 text-xs text-zinc-500">
+          <div class="flex items-center gap-4 text-xs text-gray-500">
             <label class="flex items-center gap-2">
-              <input id="admin-status-autorefresh" type="checkbox" checked class="accent-violet-500">
+              <input id="admin-status-autorefresh" type="checkbox" checked class="accent-indigo-500">
               auto-refresh <span id="admin-status-countdown" class="mono"></span>
             </label>
-            <button id="admin-status-refresh-now" type="button" class="px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200">refresh</button>
+            <button id="admin-status-refresh-now" type="button" class="px-2 py-1 rounded bg-gray-200 dark:bg-gray-800 hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200">refresh</button>
           </div>
         </header>
 
         <!-- Deploy-in-progress banner. Hidden by default. -->
-        <div id="admin-status-deploy-banner" class="hidden mb-4 rounded-lg border border-violet-300 dark:border-violet-700/50 bg-violet-50 dark:bg-violet-900/20 px-4 py-3">
+        <div id="admin-status-deploy-banner" class="hidden mb-4 rounded-lg border border-indigo-300 dark:border-indigo-700/50 bg-indigo-50 dark:bg-indigo-900/20 px-4 py-3">
           <div class="flex items-center gap-3">
             <span class="relative flex h-2.5 w-2.5">
-              <span class="absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75 animate-ping"></span>
-              <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-violet-500"></span>
+              <span class="absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75 animate-ping"></span>
+              <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-indigo-500"></span>
             </span>
             <div class="text-sm">
-              <span class="font-semibold text-violet-800 dark:text-violet-200">Deploy in progress</span>
-              <span class="text-violet-700 dark:text-violet-300/80"> — your changes may take a minute to go live.</span>
+              <span class="font-semibold text-indigo-800 dark:text-indigo-200">Deploy in progress</span>
+              <span class="text-indigo-700 dark:text-indigo-300/80"> — your changes may take a minute to go live.</span>
             </div>
-            <span id="admin-status-deploy-meta" class="ml-auto text-xs mono text-violet-600 dark:text-violet-400"></span>
+            <span id="admin-status-deploy-meta" class="ml-auto text-xs mono text-indigo-600 dark:text-indigo-400"></span>
           </div>
         </div>
 
@@ -626,8 +626,8 @@ const AdminStatus = {
              sidecar. "→ full status" switches to the Node & chain section. -->
         <section class="mb-6">
           <div class="flex items-baseline justify-between mb-2">
-            <h3 class="text-sm font-semibold text-zinc-600 dark:text-zinc-400 uppercase tracking-wide">Usernode node</h3>
-            <button type="button" data-admin-section="node" class="text-xs text-violet-600 dark:text-violet-400 hover:text-violet-700 dark:hover:text-violet-300">
+            <h3 class="text-sm font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">Usernode node</h3>
+            <button type="button" data-admin-section="node" class="text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300">
               → full status
             </button>
           </div>
@@ -640,7 +640,7 @@ const AdminStatus = {
              anywhere else. -->
         <section class="mb-6">
           <div class="flex items-baseline justify-between mb-2">
-            <h3 class="text-sm font-semibold text-zinc-600 dark:text-zinc-400 uppercase tracking-wide">Block explorer</h3>
+            <h3 class="text-sm font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">Block explorer</h3>
           </div>
           <div id="admin-status-explorer" class="${AdminUI.card} p-4 text-sm"></div>
         </section>
@@ -648,39 +648,39 @@ const AdminStatus = {
         <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
           <!-- Left: Apps tree -->
           <div class="space-y-3 min-w-0">
-            <h3 class="text-sm font-semibold text-zinc-600 dark:text-zinc-400 uppercase tracking-wide">Apps</h3>
+            <h3 class="text-sm font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">Apps</h3>
             <div id="admin-status-apps" class="space-y-3"></div>
           </div>
 
           <!-- Right: System lanes -->
           <div class="space-y-6 min-w-0">
             <section class="admin-only">
-              <h3 class="text-sm font-semibold text-zinc-600 dark:text-zinc-400 uppercase tracking-wide mb-2">Capacity &amp; host</h3>
+              <h3 class="text-sm font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide mb-2">Capacity &amp; host</h3>
               <div id="admin-status-capacity" class="${AdminUI.card} p-4 text-sm"></div>
             </section>
 
             <section>
-              <h3 class="text-sm font-semibold text-zinc-600 dark:text-zinc-400 uppercase tracking-wide mb-2">Workers</h3>
+              <h3 class="text-sm font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide mb-2">Workers</h3>
               <div id="admin-status-workers" class="space-y-2 text-sm"></div>
             </section>
 
             <section>
-              <h3 class="text-sm font-semibold text-zinc-600 dark:text-zinc-400 uppercase tracking-wide mb-2">Stuck sessions</h3>
+              <h3 class="text-sm font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide mb-2">Stuck sessions</h3>
               <div id="admin-status-stuck" class="space-y-2 text-sm"></div>
             </section>
 
             <section class="admin-only">
-              <h3 class="text-sm font-semibold text-zinc-600 dark:text-zinc-400 uppercase tracking-wide mb-2">LLM today</h3>
+              <h3 class="text-sm font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide mb-2">LLM today</h3>
               <div id="admin-status-llm" class="space-y-1 text-sm"></div>
             </section>
 
             <section>
-              <h3 class="text-sm font-semibold text-zinc-600 dark:text-zinc-400 uppercase tracking-wide mb-2">Drift</h3>
+              <h3 class="text-sm font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide mb-2">Drift</h3>
               <div id="admin-status-drift" class="space-y-2 text-sm"></div>
             </section>
 
             <section class="admin-only">
-              <h3 class="text-sm font-semibold text-zinc-600 dark:text-zinc-400 uppercase tracking-wide mb-2">Recent events</h3>
+              <h3 class="text-sm font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide mb-2">Recent events</h3>
               <div id="admin-status-events" class="space-y-0.5 text-xs mono max-h-80 overflow-y-auto"></div>
             </section>
           </div>

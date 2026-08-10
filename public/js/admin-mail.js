@@ -72,7 +72,7 @@ const AdminMail = (() => {
     if (!el) return;
 
     if (!ok || !data) {
-      el.innerHTML = '<p class="text-sm text-zinc-500">Could not load the mail configuration.</p>';
+      el.innerHTML = '<p class="text-sm text-gray-500">Could not load the mail configuration.</p>';
       return;
     }
 
@@ -85,9 +85,9 @@ const AdminMail = (() => {
     // The sender address is safe to render — it is in the From header of
     // every mail the platform sends. No key or endpoint is ever returned.
     const sender = `
-      <div class="text-zinc-500 mt-1">
+      <div class="text-gray-500 mt-1">
         Sending as <code class="font-mono text-xs">${esc(data.from || '(unset)')}</code>${
-  data.usingDefaultFrom ? ' <span class="text-zinc-400">(built-in default)</span>' : ''}
+  data.usingDefaultFrom ? ' <span class="text-gray-400">(built-in default)</span>' : ''}
       </div>`;
 
     // A staging preview is a clone of production data, so it can never
@@ -115,7 +115,7 @@ const AdminMail = (() => {
       el.innerHTML = `
         <div class="${AdminUI.card} px-4 py-3 text-sm">
           <span class="font-semibold text-emerald-600 dark:text-emerald-400">Email is configured</span>
-          <span class="text-zinc-500"> — login codes and waitlist confirmations are being sent
+          <span class="text-gray-500"> — login codes and waitlist confirmations are being sent
             via <span class="font-medium">${esc(data.provider || 'unknown')}</span>.</span>
           ${sender}
         </div>`;
@@ -163,7 +163,7 @@ const AdminMail = (() => {
     if (status === 'suppressed_rate_limit') return 'text-amber-700 dark:text-amber-400';
     if (status === 'no_transport') return 'text-amber-700 dark:text-amber-400';
     if (status === 'skipped_staging') return 'text-sky-700 dark:text-sky-400';
-    return 'text-zinc-500';
+    return 'text-gray-500';
   }
 
   // One plain-English sentence per outcome. The raw status is shown too —
@@ -204,7 +204,7 @@ const AdminMail = (() => {
       outcome.error ? ['Detail', esc(outcome.error)] : null,
     ].filter(Boolean).map(([k, v]) => `
       <div class="flex gap-2">
-        <span class="text-zinc-500 w-24 shrink-0">${esc(k)}</span>
+        <span class="text-gray-500 w-24 shrink-0">${esc(k)}</span>
         <span class="min-w-0 break-words">${v}</span>
       </div>`).join('');
 
@@ -214,7 +214,7 @@ const AdminMail = (() => {
       <div class="${AdminUI.card} px-4 py-3 text-sm mt-3">
         <div class="font-semibold mb-2">${esc(outcomeHeadline(outcome))}</div>
         <div class="space-y-1">${rows}</div>
-        ${subject ? `<div class="text-xs text-zinc-500 mt-2">Subject: ${esc(subject)}</div>` : ''}
+        ${subject ? `<div class="text-xs text-gray-500 mt-2">Subject: ${esc(subject)}</div>` : ''}
       </div>`;
   }
 
@@ -258,7 +258,7 @@ const AdminMail = (() => {
     // attempt and retry once, so the honest worst case is ~17 seconds.
     // Say so, rather than letting a patient operator think it hung.
     if (el) {
-      el.innerHTML = '<p class="text-sm text-zinc-500 mt-3">Sending&hellip; this can take up to about 17 seconds if the provider is slow.</p>';
+      el.innerHTML = '<p class="text-sm text-gray-500 mt-3">Sending&hellip; this can take up to about 17 seconds if the provider is slow.</p>';
     }
 
     const mine = generation;
@@ -306,7 +306,7 @@ const AdminMail = (() => {
     if (!el) return;
 
     if (!ok || !data) {
-      el.innerHTML = '<p class="text-sm text-zinc-500">Could not load recent activity.</p>';
+      el.innerHTML = '<p class="text-sm text-gray-500">Could not load recent activity.</p>';
       return;
     }
 
@@ -315,33 +315,33 @@ const AdminMail = (() => {
     const totals = Object.keys(last24h).sort().map((k) => `${esc(k)} ${last24h[k]}`).join(' · ');
 
     const rows = deliveries.map((r) => `
-      <tr class="border-t border-zinc-100 dark:border-zinc-800${
-  highlightId && r.id === highlightId ? ' bg-violet-50 dark:bg-violet-950/40' : ''}">
-        <td class="py-1.5 pr-3 whitespace-nowrap text-zinc-500">${esc(
+      <tr class="border-t border-gray-100 dark:border-gray-800${
+  highlightId && r.id === highlightId ? ' bg-indigo-50 dark:bg-indigo-950/40' : ''}">
+        <td class="py-1.5 pr-3 whitespace-nowrap text-gray-500">${esc(
     r.created_at ? String(r.created_at).replace('T', ' ').slice(0, 19) : '')}</td>
         <td class="py-1.5 pr-3 whitespace-nowrap">${esc(r.kind || '')}</td>
         <td class="py-1.5 pr-3">${esc(r.recipient || '')}</td>
-        <td class="py-1.5 pr-3 whitespace-nowrap text-zinc-500">${esc(r.provider || '—')}</td>
+        <td class="py-1.5 pr-3 whitespace-nowrap text-gray-500">${esc(r.provider || '—')}</td>
         <td class="py-1.5 pr-3 whitespace-nowrap font-medium ${
   statusClass(r.status)}">${esc(r.status || '')}</td>
-        <td class="py-1.5 text-zinc-500">${esc(r.error || '')}</td>
+        <td class="py-1.5 text-gray-500">${esc(r.error || '')}</td>
       </tr>`).join('');
 
     el.innerHTML = `
-      <div class="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3">
+      <div class="rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-4 py-3">
         <div class="flex flex-wrap items-baseline justify-between gap-2">
           <h3 class="text-sm font-semibold">Recent email activity</h3>
           <div class="flex items-center gap-2">
-            <span class="text-xs text-zinc-500">${totals ? `last 24h: ${totals}` : 'nothing in the last 24h'}</span>
-            <button id="admin-mail-filter" class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs">${
+            <span class="text-xs text-gray-500">${totals ? `last 24h: ${totals}` : 'nothing in the last 24h'}</span>
+            <button id="admin-mail-filter" class="rounded-lg border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs">${
   kindFilter ? 'Show all mail' : 'Test emails only'}</button>
-            <button id="admin-mail-refresh" class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs">Refresh</button>
+            <button id="admin-mail-refresh" class="rounded-lg border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs">Refresh</button>
           </div>
         </div>
         ${deliveries.length ? `
         <div class="overflow-x-auto mt-2">
           <table class="w-full text-xs">
-            <thead class="text-zinc-500">
+            <thead class="text-gray-500">
               <tr>
                 <th class="text-left font-medium pb-1 pr-3">When</th>
                 <th class="text-left font-medium pb-1 pr-3">Kind</th>
@@ -354,7 +354,7 @@ const AdminMail = (() => {
             <tbody>${rows}</tbody>
           </table>
         </div>`
-    : `<p class="text-sm text-zinc-500 mt-2">${
+    : `<p class="text-sm text-gray-500 mt-2">${
   kindFilter ? 'No test emails have been sent yet.' : 'No mail has been attempted yet.'}</p>`}
       </div>`;
 
@@ -377,20 +377,20 @@ const AdminMail = (() => {
       const form = canWrite() ? `
         <div class="flex flex-wrap items-end gap-2">
           <label class="block text-xs grow max-w-md">
-            <span class="text-zinc-500">Recipient</span>
+            <span class="text-gray-500">Recipient</span>
             <input id="admin-mail-to" type="email" autocomplete="off" spellcheck="false"
               placeholder="you@example.com"
-              class="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-3 py-1.5 text-sm">
+              class="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-950 px-3 py-1.5 text-sm">
           </label>
           <button id="admin-mail-send"
             class="${AdminUI.btn.primary}">Send test email</button>
         </div>
-        <p class="text-xs text-zinc-500 mt-2">
+        <p class="text-xs text-gray-500 mt-2">
           Sends one message through the configured provider and reports exactly what
           happened — unlike the flows this checks, which always report success. Up to
           10 per hour, and no more than one to the same address every 30 seconds.
         </p>`
-        : `<p class="text-sm text-zinc-500">
+        : `<p class="text-sm text-gray-500">
             Sending a test email needs full admin access. The configuration and the
             delivery history above and below are readable by any admin.
           </p>`;
@@ -399,18 +399,18 @@ const AdminMail = (() => {
         <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
           <h2 class="${AdminUI.cardTitle}">Email delivery</h2>
         </div>
-        <p class="text-sm text-zinc-500 mb-4">
+        <p class="text-sm text-gray-500 mb-4">
           Login codes and waitlist mail are sent on always-200 endpoints, so a user
           is told &ldquo;check your email&rdquo; whether or not anything went out.
           This is where that becomes visible.
         </p>
-        <div id="admin-mail-status" class="mb-4"><p class="text-sm text-zinc-500">Loading&hellip;</p></div>
-        <div class="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3 mb-4">
+        <div id="admin-mail-status" class="mb-4"><p class="text-sm text-gray-500">Loading&hellip;</p></div>
+        <div class="rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-4 py-3 mb-4">
           <h3 class="text-sm font-semibold mb-2">Send a test email</h3>
           ${form}
           <div id="admin-mail-result"></div>
         </div>
-        <div id="admin-mail-activity"><p class="text-sm text-zinc-500">Loading&hellip;</p></div>`;
+        <div id="admin-mail-activity"><p class="text-sm text-gray-500">Loading&hellip;</p></div>`;
 
       document.getElementById('admin-mail-send')?.addEventListener('click', () => sendTest());
       document.getElementById('admin-mail-to')?.addEventListener('keydown', (e) => {
