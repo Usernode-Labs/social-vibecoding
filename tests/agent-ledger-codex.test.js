@@ -14,12 +14,14 @@ const {
   computeProviderUsageDelta,
   estimateRequestedModelCost,
   pricingSnapshotForModel,
+  runtimeModelMetadataForModel,
   normalizeCumulativeUsage,
   completeCodexAttempt,
   startCodexAttempt,
   usageTotalFromResult,
   persistRecoveredAgentThread,
   getCodexAttemptRecoveryState,
+  resolveCodexRuntimeContext,
 } = require('../src/services/agent-turn');
 
 // ── Cumulative delta math (plan 6.5, 6.6) ──────────────────────────────
@@ -120,6 +122,89 @@ test('pricingSnapshotForModel: requires finite nonnegative prices', () => {
   assert.match(snap.pricingAssumption, /ordinary prompt rate/);
   assert.equal(pricingSnapshotForModel({ id: 'm', inputPricePerMillion: null, outputPricePerMillion: 10 }).available, false);
   assert.equal(pricingSnapshotForModel(null), null);
+});
+
+test('runtimeModelMetadataForModel preserves OpenRouter context and capabilities', () => {
+  assert.deepEqual(runtimeModelMetadataForModel({
+    name: 'DeepSeek V4 Flash Latest',
+    contextLength: 1_048_576,
+    maxOutputTokens: 131_072,
+    supportsReasoning: true,
+    reasoningEfforts: ['low', 'high', 'unsupported-value'],
+    supportsTools: true,
+  }, '~deepseek/deepseek-v4-flash-latest'), {
+    name: 'DeepSeek V4 Flash Latest',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 131_072,
+    supportsReasoning: true,
+    reasoningEfforts: ['low', 'high'],
+    supportsTools: true,
+  });
+  assert.deepEqual(runtimeModelMetadataForModel(null, 'vendor/model'), {
+    name: 'vendor/model',
+    contextWindow: null,
+    maxOutputTokens: null,
+    supportsReasoning: null,
+    reasoningEfforts: null,
+    supportsTools: null,
+  });
+});
+
+test('resolveCodexRuntimeContext carries the selected OpenRouter model metadata to the worker', async (t) => {
+  const credentialStore = require('../src/services/credential-store');
+  const agentModels = require('../src/services/agent-models');
+  const originals = {
+    readMetadata: credentialStore.readMetadata,
+    readSecret: credentialStore.readSecret,
+    resolveModelPricing: agentModels.resolveModelPricing,
+  };
+  credentialStore.readMetadata = async () => ({ id: 9, status: 'valid', revision: 3 });
+  credentialStore.readSecret = async () => 'sk-or-test';
+  agentModels.resolveModelPricing = async () => ({
+    id: '~deepseek/deepseek-v4-flash-latest',
+    name: 'DeepSeek V4 Flash Latest',
+    contextLength: 1_048_576,
+    maxOutputTokens: 131_072,
+    supportsReasoning: true,
+    reasoningEfforts: null,
+    supportsTools: true,
+    inputPricePerMillion: 0.2,
+    outputPricePerMillion: 0.5,
+  });
+  t.after(() => {
+    credentialStore.readMetadata = originals.readMetadata;
+    credentialStore.readSecret = originals.readSecret;
+    agentModels.resolveModelPricing = originals.resolveModelPricing;
+  });
+
+  const ctx = await resolveCodexRuntimeContext({
+    pool: {},
+    userId: 7,
+    session: {
+      id: 81,
+      agent_backend: 'codex_openrouter',
+      agent_model: '~deepseek/deepseek-v4-flash-latest',
+      agent_reasoning_effort: 'medium',
+      agent_config_version: 2,
+    },
+    config: {
+      codexOpenrouterEnabled: true,
+      openrouterBetaUserIds: [],
+      openrouterApiBase: 'https://openrouter.ai/api/v1',
+      dataEncryptionKey: 'test-key',
+    },
+  });
+  assert.equal(ctx.agentModel, '~deepseek/deepseek-v4-flash-latest');
+  assert.equal(ctx.agentReasoningEffort, 'medium');
+  assert.deepEqual(ctx.agentModelMetadata, {
+    name: 'DeepSeek V4 Flash Latest',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 131_072,
+    supportsReasoning: true,
+    reasoningEfforts: null,
+    supportsTools: true,
+  });
+  assert.equal(ctx.pricingSnapshot.available, true);
 });
 
 // ── Cumulative usage normalization (plan 5.6) ──────────────────────────

@@ -16,6 +16,8 @@
 # Required env: PROMPT_FILE, BRANCH, SESSION_ID, PLATFORM_URL,
 #   OPENROUTER_API_KEY, AGENT_MODEL
 # Optional: MODE (build|scout), AGENT_REASONING_EFFORT, AGENT_THREAD_ID,
+#   AGENT_MODEL_NAME, AGENT_MODEL_CONTEXT_WINDOW,
+#   AGENT_MODEL_SUPPORTS_REASONING, AGENT_MODEL_REASONING_EFFORTS,
 #   COMMIT_MSG, TURN_UUID, OPENROUTER_API_BASE, WORKER_JWT (build-only)
 
 set -u
@@ -34,6 +36,12 @@ die() {
 : "${AGENT_MODEL:?AGENT_MODEL required}"
 : "${MODE:=build}"
 : "${AGENT_REASONING_EFFORT:=}"
+: "${AGENT_MODEL_NAME:=}"
+: "${AGENT_MODEL_CONTEXT_WINDOW:=}"
+: "${AGENT_MODEL_MAX_OUTPUT_TOKENS:=}"
+: "${AGENT_MODEL_SUPPORTS_REASONING:=}"
+: "${AGENT_MODEL_REASONING_EFFORTS:=}"
+: "${AGENT_MODEL_SUPPORTS_TOOLS:=}"
 : "${AGENT_THREAD_ID:=}"
 : "${COMMIT_MSG:=Changes via Usernode (Codex)}"
 : "${TURN_UUID:=}"
@@ -80,8 +88,35 @@ ESCAPED_BASE=$(toml_escape "$OPENROUTER_API_BASE")
 if [ -n "$AGENT_REASONING_EFFORT" ]; then
   ESCAPED_EFFORT=$(toml_escape "$AGENT_REASONING_EFFORT")
 fi
-# sandbox + approval mode; build needs workspace-write.
-SANDBOX_MODE=$([ "$MODE" = "build" ] && echo workspace-write || echo read-only)
+
+# The worker container is the security boundary for repository commands.
+# Running Codex's Linux bwrap sandbox inside it requires unprivileged user
+# namespaces, which the production worker kernel deliberately does not grant.
+# Disable only that nested layer; Docker confinement and the mode-specific
+# narrow credentials remain in force around the whole turn.
+SANDBOX_MODE=danger-full-access
+
+# Install metadata for the exact OpenRouter slug selected by the user. Codex's
+# bundled catalog contains only OpenAI-native slugs; without this catalog it
+# emits a scary-but-nonfatal unknown-model diagnostic and uses degraded
+# fallback context/tool metadata for every other OpenRouter model.
+MODEL_CATALOG_PATH="$CODEX_HOME/openrouter-model-catalog.json"
+MODEL_CATALOG_TMP=$(mktemp "$CODEX_HOME/openrouter-model-catalog.json.tmp.XXXXXX") \
+  || die "could not create OpenRouter model metadata"
+MODEL_CATALOG_BUILDER="$(dirname "$0")/build-codex-model-catalog.js"
+if ! node "$MODEL_CATALOG_BUILDER" > "$MODEL_CATALOG_TMP"; then
+  rm -f "$MODEL_CATALOG_TMP"
+  die "could not generate OpenRouter model metadata"
+fi
+if grep -Fq -- "$OPENROUTER_API_KEY" "$MODEL_CATALOG_TMP"; then
+  rm -f "$MODEL_CATALOG_TMP"
+  die "refusing model metadata containing the OpenRouter key"
+fi
+chmod 600 "$MODEL_CATALOG_TMP" \
+  || { rm -f "$MODEL_CATALOG_TMP"; die "could not secure OpenRouter model metadata"; }
+mv -f "$MODEL_CATALOG_TMP" "$MODEL_CATALOG_PATH" \
+  || { rm -f "$MODEL_CATALOG_TMP"; die "could not install OpenRouter model metadata"; }
+ESCAPED_MODEL_CATALOG_PATH=$(toml_escape "$MODEL_CATALOG_PATH")
 
 # Generate into a private temporary file and atomically replace the previous
 # per-turn config. Keep every static TOML byte in quoted heredocs: an unquoted
@@ -95,6 +130,7 @@ CONFIG_TMP=$(mktemp "$CODEX_HOME/config.toml.tmp.XXXXXX") \
 if ! {
   printf 'model_provider = "usernode_openrouter"\n'
   printf 'model = "%s"\n' "$ESCAPED_MODEL"
+  printf 'model_catalog_json = "%s"\n' "$ESCAPED_MODEL_CATALOG_PATH"
   if [ -n "$AGENT_REASONING_EFFORT" ]; then
     printf 'model_reasoning_effort = "%s"\n' "$ESCAPED_EFFORT"
   fi
@@ -102,6 +138,14 @@ if ! {
   printf 'sandbox_mode = "%s"\n' "$SANDBOX_MODE"
   cat <<'TOML'
 approval_policy = "never"
+check_for_update_on_startup = false
+
+[analytics]
+enabled = false
+
+[features]
+apps = false
+plugins = false
 
 [shell_environment_policy]
 exclude = ["OPENROUTER_API_KEY"]
@@ -159,6 +203,11 @@ redact_codex_stream() {
   awk '
     BEGIN { secret = ENVIRON["OPENROUTER_API_KEY"] }
     {
+      # Codex emits a structured JSON retry event immediately after this
+      # internal Rust warning. Drop the duplicate implementation detail so
+      # users see the provider-neutral retry message from the JSON adapter.
+      if ($0 ~ / WARN codex_core::responses_retry:/) next
+      if ($0 == "Reading additional input from stdin...") next
       if (secret != "") {
         while ((at = index($0, secret)) > 0) {
           $0 = substr($0, 1, at - 1) "****" substr($0, at + length(secret))
@@ -180,7 +229,7 @@ start_codex() {
 
 if [ -n "$AGENT_THREAD_ID" ]; then
   echo "__USERNODE_PHASE__ codex (resume $AGENT_THREAD_ID, mode $MODE)"
-  start_codex codex exec resume "$AGENT_THREAD_ID" - --json
+  start_codex codex exec resume --dangerously-bypass-approvals-and-sandbox "$AGENT_THREAD_ID" - --json
   if [ "$CODEX_RUN_EXIT" -ne 0 ]; then
     # Only retry fresh for a genuinely missing/stale thread (review P4):
     # auth/credit/rate-limit/unknown failures must NOT re-run (they'd
@@ -208,7 +257,7 @@ if [ -n "$AGENT_THREAD_ID" ]; then
   fi
 else
   echo "__USERNODE_PHASE__ codex (mode $MODE)"
-  start_codex codex exec - --json
+  start_codex codex exec --dangerously-bypass-approvals-and-sandbox - --json
 fi
 CODEX_EXIT=$CODEX_RUN_EXIT
 rm -f "$TMP_STATUS" 2>/dev/null

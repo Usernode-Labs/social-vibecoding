@@ -172,6 +172,19 @@ test('an explicit Codex choice is returned exactly after key and catalog validat
   });
 });
 
+test('an explicit non-reasoning OpenRouter model drops an inapplicable effort', async (t) => {
+  stubExplicitCodexServices(t, {
+    models: [{ id: 'vendor/plain-tools-model', supportsReasoning: false }],
+  });
+  const out = await resolveExplicitAgentPreference({}, 7, BASE_CONFIG, {
+    backend: 'codex_openrouter',
+    model: 'vendor/plain-tools-model',
+    reasoningEffort: 'high',
+  });
+  assert.equal(out.model, 'vendor/plain-tools-model');
+  assert.equal(out.reasoningEffort, null);
+});
+
 test('an explicit Codex choice never silently falls back when unavailable', async () => {
   await assert.rejects(
     () => resolveExplicitAgentPreference({}, 7, {
@@ -268,4 +281,16 @@ test('runtime model display is markup-safe without changing the executable id', 
   assert.equal(out.model, model);
   assert.equal(out.metadata.agentModel, model);
   assert.doesNotMatch(out.modelLabel, /[<>"']/);
+});
+
+test('runtime model display preserves OpenRouter latest-alias prefixes', () => {
+  const model = '~deepseek/deepseek-v4-flash-latest';
+  const out = codingAgentRuntimeIdentity(
+    { agent_backend: 'codex_openrouter', agent_model: model },
+    'claude-opus-4-6',
+    BASE_CONFIG,
+  );
+  assert.equal(out.model, model);
+  assert.equal(out.modelLabel, model);
+  assert.equal(out.agentName, 'OpenRouter');
 });

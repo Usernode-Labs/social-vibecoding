@@ -471,3 +471,48 @@ test('with no stop pending, a dispatch proceeds and issues no kill', async () =>
     assert.ok(!calls.some(isStopScript), 'and nothing kills a healthy turn');
   } finally { restore(); }
 });
+
+test('Codex dispatch forwards OpenRouter model metadata without exposing its key in argv', async () => {
+  const { worker, calls, restore } = loadWorker({
+    journalLines: ['__USERNODE_EXIT__ 0'],
+  });
+  try {
+    warmSession(worker, 8301);
+    await worker.execInWorker(8301, {
+      mode: 'scout',
+      prompt: 'inspect the repository',
+      branchName: 'dev/openrouter-test',
+      agentBackend: 'codex_openrouter',
+      agentModel: '~deepseek/deepseek-v4-flash-latest',
+      agentReasoningEffort: 'medium',
+      agentModelMetadata: {
+        name: 'DeepSeek V4 Flash Latest',
+        contextWindow: 1_048_576,
+        maxOutputTokens: 131_072,
+        supportsReasoning: true,
+        reasoningEfforts: ['low', 'medium', 'high'],
+        supportsTools: true,
+      },
+      openrouterApiKey: 'sk-or-must-not-appear-in-argv',
+      openrouterApiBase: 'https://openrouter.ai/api/v1',
+    });
+
+    const dispatch = calls.find(isDispatch);
+    assert.ok(dispatch, 'Codex turn was dispatched');
+    for (const expected of [
+      'AGENT_MODEL=~deepseek/deepseek-v4-flash-latest',
+      'AGENT_MODEL_NAME=DeepSeek V4 Flash Latest',
+      'AGENT_MODEL_CONTEXT_WINDOW=1048576',
+      'AGENT_MODEL_MAX_OUTPUT_TOKENS=131072',
+      'AGENT_MODEL_SUPPORTS_REASONING=1',
+      'AGENT_MODEL_REASONING_EFFORTS=low,medium,high',
+      'AGENT_MODEL_SUPPORTS_TOOLS=1',
+    ]) {
+      assert.ok(dispatch.args.includes(expected), `${expected} reaches the runner`);
+    }
+    assert.ok(dispatch.args.includes('OPENROUTER_API_KEY'),
+      'Docker copies the secret from the host environment by name');
+    assert.ok(!dispatch.args.some((arg) => String(arg).includes('sk-or-must-not-appear-in-argv')),
+      'the OpenRouter key value never enters docker argv');
+  } finally { restore(); }
+});

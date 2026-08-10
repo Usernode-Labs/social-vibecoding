@@ -131,6 +131,41 @@ test('normalizeCodexLine maps item.completed with error type (real 0.146.0)', ()
   assert.equal(state.ccIsError, true);
 });
 
+test('normalizeCodexLine treats unknown-model fallback metadata as a nonfatal warning', () => {
+  const state = codex.newCodexState();
+  const ev = codex.normalizeCodexLine(JSON.stringify({
+    type: 'item.completed',
+    item: {
+      id: 'item_0',
+      type: 'error',
+      message: 'Model metadata for `~deepseek/deepseek-v4-flash-latest` not found. Defaulting to fallback metadata; this can degrade performance and cause issues.',
+    },
+  }), state);
+  assert.equal(ev.length, 1);
+  assert.equal(ev[0].kind, 'warning');
+  assert.match(ev[0].text, /OpenRouter model metadata/);
+  assert.doesNotMatch(ev[0].text, /agent_failed|Codex/);
+  assert.equal(state.ccIsError, false);
+  assert.equal(state.agentError, null);
+});
+
+test('normalizeCodexLine treats reconnect attempts as warnings until a real terminal failure', () => {
+  const state = codex.newCodexState();
+  const reconnect = codex.normalizeCodexLine(JSON.stringify({
+    type: 'error', message: 'Reconnecting... 2/5 (connection reset)',
+  }), state);
+  assert.equal(reconnect[0].kind, 'warning');
+  assert.match(reconnect[0].text, /OpenRouter connection/);
+  assert.equal(state.ccIsError, false);
+
+  const terminal = codex.normalizeCodexLine(JSON.stringify({
+    type: 'turn.failed', error: { message: 'Provider connection failed' },
+  }), state);
+  assert.equal(terminal[0].kind, 'error');
+  assert.equal(state.ccIsError, true);
+  assert.equal(state.agentError, 'Provider connection failed');
+});
+
 // ── Resume-error classification ───────────────────────────────────────
 test('classifyResumeError: thread-missing is retry-fresh; auth/credit/rate are not', () => {
   assert.equal(codex.classifyResumeError('thread not found', 1).retryFresh, true);

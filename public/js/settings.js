@@ -1966,9 +1966,11 @@
 
     _syncOpenRouterModelDetails() {
       const select = document.getElementById('settings-openrouter-model');
+      const effort = document.getElementById('settings-openrouter-reasoning');
       const model = this._openRouterModels.find((item) => item.id === select?.value) || null;
       if (!model) {
         if (select) select.title = 'Models are sorted by average input/output price. Actual spend depends on token usage.';
+        if (effort) effort.disabled = true;
         return;
       }
       let compatibility = 'Not yet verified for repository coding.';
@@ -1978,6 +1980,13 @@
           || 'This model may lack repository tools or enough context, so an OpenRouter turn may fail.';
       }
       if (select) select.title = `${this._openRouterModelCostSummary(model)}. ${compatibility} Actual spend depends on token usage.`;
+      if (effort) {
+        effort.disabled = model.supportsReasoning !== true;
+        if (effort.disabled) effort.value = '';
+        effort.title = effort.disabled
+          ? 'This model does not expose reasoning-effort controls.'
+          : 'Optional OpenRouter reasoning effort for this model.';
+      }
     },
 
     _setOrStatus(text, kind) {

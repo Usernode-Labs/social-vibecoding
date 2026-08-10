@@ -78,12 +78,13 @@ if [ ! -f /home/node/.claude.json ]; then
   fi
 fi
 
-# Runtime-contract v5 cleanup: v4's Codex config writer accidentally expanded
+# Runtime-contract v6 cleanup: v4's Codex config writer accidentally expanded
 # shell commands from an unquoted heredoc and could persist the per-turn worker
-# environment in this platform-owned file. Codex regenerates config.toml on
-# every turn, so remove the obsolete copy as soon as a fixed worker boots while
-# preserving the neighboring rollout/session history.
-rm -f /home/node/.claude/codex-home/config.toml 2>/dev/null \
+# environment in this platform-owned file; v5 also had no custom OpenRouter
+# model catalog. Codex regenerates both files on every turn, so remove obsolete
+# copies as soon as a fixed worker boots while preserving rollout history.
+rm -f /home/node/.claude/codex-home/config.toml \
+      /home/node/.claude/codex-home/openrouter-model-catalog.json 2>/dev/null \
   || echo "__USERNODE_WARN__ failed to remove stale Codex config"
 
 # Seed the Playwright browser config for the in-loop browser. The MCP

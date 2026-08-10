@@ -845,7 +845,10 @@ async function resolveExplicitAgentPreference(client, userId, config, {
     });
     throw new AgentSelectionError(400, 'Could not validate that OpenRouter model right now; try again.');
   }
-  if (!Array.isArray(catalog?.models) || !catalog.models.some((m) => m.id === modelId)) {
+  const selectedCatalogModel = Array.isArray(catalog?.models)
+    ? catalog.models.find((candidate) => candidate.id === modelId)
+    : null;
+  if (!selectedCatalogModel) {
     throw new AgentSelectionError(400, 'That model is not available under your OpenRouter key.');
   }
 
@@ -853,7 +856,7 @@ async function resolveExplicitAgentPreference(client, userId, config, {
     backend: 'codex_openrouter',
     provider: 'openrouter',
     model: modelId,
-    reasoningEffort: effort,
+    reasoningEffort: selectedCatalogModel.supportsReasoning === false ? null : effort,
   };
 }
 
@@ -9456,7 +9459,7 @@ function prettyModelLabel(modelId) {
 function safeAgentModelLabel(modelId, fallback = 'model not configured') {
   const raw = String(modelId || '').trim();
   if (!raw) return fallback;
-  const safe = raw.slice(0, 200).replace(/[^A-Za-z0-9._:/+@-]/g, '?');
+  const safe = raw.slice(0, 200).replace(/[^A-Za-z0-9._:/+@~-]/g, '?');
   return safe || fallback;
 }
 

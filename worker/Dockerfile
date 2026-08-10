@@ -73,6 +73,14 @@ RUN echo "claude-code cache bust: ${CLAUDE_CODE_CACHE_BUST}" \
 # aligned with the JSONL event shapes src/agents/codex-openrouter.js parses.
 ARG CODEX_VERSION=0.146.0
 RUN npm install -g @openai/codex@${CODEX_VERSION}
+# Preserve the pinned CLI's own full coding-agent instructions as the base for
+# custom OpenRouter model entries. The per-turn builder copies only that text
+# into its one-model catalog; it does not inherit OpenAI-only tool modes or
+# capabilities from the bundled models.
+RUN CODEX_HOME=/tmp/usernode-codex-bootstrap \
+      codex debug models > /usr/local/share/usernode-codex-bundled-models.json \
+  && chmod 444 /usr/local/share/usernode-codex-bundled-models.json \
+  && rm -rf /tmp/usernode-codex-bootstrap
 
 # ── Optional in-loop browser (build-mode turns only) ───────────────────
 # The Playwright MCP server + a matching Chromium give the build-mode
@@ -106,6 +114,7 @@ COPY worker-run.sh   /usr/local/bin/worker-run.sh
 COPY run-cc.sh       /usr/local/bin/run-cc.sh
 COPY run-codex-agent.sh /usr/local/bin/run-codex-agent.sh
 COPY classify-codex-resume.js /usr/local/bin/classify-codex-resume.js
+COPY build-codex-model-catalog.js /usr/local/bin/build-codex-model-catalog.js
 # usernode-push is the worker's only path to writing anything back to
 # GitHub: it POSTs to the platform's internal push proxy, which runs
 # the actual `git push` from the host side with the bot token injected
