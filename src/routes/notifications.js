@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const notifications = require('../services/notifications');
+const mobilePushPreferences = require('../services/mobile-push-preferences');
 const log = require('../services/logger');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
@@ -89,6 +90,43 @@ function stagingMockNotifications() {
 function notificationsRoutes(config) {
   const router = Router();
   const pool = getPool(config);
+
+  // Account-level mobile-push policy. This is intentionally a browser-
+  // session surface rather than a phone-registration surface: any signed-in
+  // Social browser may configure the account, while each phone keeps its
+  // independent Activity notifications master switch.
+  router.get('/api/me/mobile-push-preferences', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+      const preferences = await mobilePushPreferences.readPreferences(pool, req.user.id);
+      return res.json({ preferences });
+    } catch (err) {
+      log.error('mobile-push-preferences', 'read failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.patch('/api/me/mobile-push-preferences', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    const { details, values } = mobilePushPreferences.validatePreferencePatch(req.body);
+    if (Object.keys(details).length) {
+      return res.status(422).json({
+        error: 'The given data was invalid.',
+        details,
+      });
+    }
+    try {
+      const preferences = await mobilePushPreferences.writePreferences(
+        pool, req.user.id, values
+      );
+      return res.json({ preferences });
+    } catch (err) {
+      log.error('mobile-push-preferences', 'update failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
 
   // Full dropdown payload: recent notifications (read and unread) + an
   // unread count so the badge and list stay in sync on initial page load.

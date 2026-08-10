@@ -1868,6 +1868,65 @@ export function Shell() {
                       className="text-xs mt-2 hidden text-zinc-500 dark:text-zinc-400"
                     >
                     </p>
+
+                    <div
+                      id="settings-mobile-push-preferences"
+                      className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800"
+                    >
+                      <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">
+                        Mobile push categories
+                      </h3>
+                      <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-3 leading-relaxed">
+                        Choose which Social activity can send a phone notification. Your phone&apos;s Activity notifications switch remains the master control for that device.
+                      </p>
+                      <div className="space-y-3">
+                        <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="direct_interactions">
+                          <span>
+                            <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Direct interactions</span>
+                            <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Mentions and replies to your messages.</span>
+                          </span>
+                          <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
+                        </label>
+                        <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="invitations">
+                          <span>
+                            <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Invitations</span>
+                            <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Collaboration and approver invitations, including when yours are accepted.</span>
+                          </span>
+                          <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
+                        </label>
+                        <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="shared_work">
+                          <span>
+                            <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Shared work</span>
+                            <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Specs that someone privately shares with you.</span>
+                          </span>
+                          <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
+                        </label>
+                        <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="developer_sessions">
+                          <span>
+                            <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Developer sessions</span>
+                            <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Interactive and unattended coding sessions that finish while you are away.</span>
+                          </span>
+                          <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
+                        </label>
+                        <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="proposal_alerts">
+                          <span>
+                            <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Proposal alerts</span>
+                            <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Proposals needing attention, failed previews, and new proposals ready for voting.</span>
+                          </span>
+                          <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
+                        </label>
+                        <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="lightweight_activity">
+                          <span>
+                            <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Lightweight activity</span>
+                            <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Reactions and kudos on your work.</span>
+                          </span>
+                          <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
+                        </label>
+                      </div>
+                      <p data-mobile-push-status aria-live="polite" className="text-xs mt-3 text-zinc-500 dark:text-zinc-400">
+                        Loading mobile push preferences…
+                      </p>
+                    </div>
                   </div>
                 </div>
                 <div data-settings-section="home-panels" className="hidden">
