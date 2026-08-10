@@ -1,19 +1,16 @@
 // Shared stamp logic for the React shell's committed build artifacts.
 //
 // public/index.html and public/shell/assets/shell.js are GENERATED from
-// frontend/ and committed, for exactly the reason public/css/tailwind.css
-// is: the runtime image is built with `npm ci --production` (no vite, no
-// react, no typescript), the deploy workflow only rsyncs and runs
-// `docker compose up --build`, and worker checkouts never install anything.
-// So the build happens on a developer/agent machine and its output ships in
-// the commit.
+// frontend/ and committed. Unlike Tailwind, the React shell remains a source
+// artifact because tests and non-Docker checkouts need its rendered markup and
+// executable bundle without installing the separate frontend workspace. The
+// deploy-time CSS builder consumes that already-generated index.html.
 //
 // A committed artifact is only safe if staleness is detectable. So
 // frontend/scripts/build-shell.mjs writes a stamp — a sha256 over every
 // input that can change the output — into both artifacts, and
 // tests/shell-build.test.js recomputes it from the working tree and fails
-// the suite when they no longer match. Same contract, same shape, and the
-// same reasoning as scripts/tailwind-stamp.js; read that file's header too.
+// the suite when they no longer match.
 //
 // Both sides MUST agree byte-for-byte, hence this shared module. It uses
 // node builtins only: the test must be able to verify freshness without

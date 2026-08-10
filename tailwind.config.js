@@ -3,9 +3,10 @@
 // This is a verbatim port of the inline `tailwind.config` that used to sit
 // next to the `https://cdn.tailwindcss.com` script tag in
 // public/index.html. The Play CDN compiled utilities in the browser on
-// every page load; we now compile them once at build time into
-// public/css/tailwind.css (see scripts/build-tailwind.js) and commit that
-// artifact, so the shell has no cross-origin asset requests at all.
+// every page load; we now compile them once per image build into
+// public/css/tailwind.css (see Dockerfile and scripts/build-tailwind.js), so
+// the shell has no cross-origin asset requests and the generated file never
+// needs to be committed.
 //
 // Pinned to tailwindcss 3.4.17 — the exact version the Play CDN resolved
 // to (cdn.tailwindcss.com 302s to /3.4.17), so the compiled output matches
@@ -15,9 +16,9 @@
 // whole shell. The React shell migration adopts v4 in its own frontend/
 // tree instead.
 //
-// AFTER EDITING THIS FILE (or any scanned markup) RUN `npm run build:css`.
-// tests/tailwind-build.test.js stamps the output with a hash of every
-// input and fails the suite when the committed CSS is stale.
+// Docker compiles after copying every scanned source. For local browser work,
+// run `npm run build:css`; tests/tailwind-build.test.js also performs a fresh
+// compile into a temporary directory and validates the result.
 module.exports = {
   // Every surface that gets its utilities from the compiled stylesheet.
   // index.html + the shell's JS (which builds markup as template strings)
