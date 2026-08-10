@@ -25,7 +25,11 @@ const PUBLIC = path.join(__dirname, '..', 'public');
 const read = (rel) => fs.readFileSync(path.join(PUBLIC, rel), 'utf8');
 
 const APP = read('js/app.js');
-const OFFLINE = read('js/offline.js');
+// The connectivity engine is React-side since #1078 retired /js/offline.js;
+// its behaviour is unchanged and this file still asserts against it.
+const OFFLINE = fs.readFileSync(
+  path.join(__dirname, '..', 'frontend', 'src', 'lib', 'offline.ts'), 'utf8',
+);
 const AUTH = read('js/auth-screens.js');
 const SETTINGS = read('js/settings.js');
 const HOME = read('js/home.js');
@@ -212,8 +216,13 @@ test('the landing screen explains the offline state too', () => {
 
 test('"Try again" is wired once, globally, and re-probes', () => {
   assert.match(OFFLINE, /\[data-offline-retry\]/);
-  const handler = OFFLINE.slice(OFFLINE.indexOf('[data-offline-retry]'));
-  assert.match(handler.slice(0, 300), /Offline\.probe\(\)/);
+  // lastIndexOf, not indexOf — the module header explains the delegation
+  // before the code does it.
+  const handler = OFFLINE.slice(OFFLINE.lastIndexOf("closest('[data-offline-retry]')"));
+  assert.match(handler.slice(0, 300), /void probe\(\)/);
+  // Delegated from the document, so a screen that was hidden when its own
+  // module ran still gets a working button.
+  assert.match(OFFLINE, /document\.addEventListener\('click'/);
 });
 
 test('every credential exchange refuses to submit while offline', () => {
@@ -249,8 +258,8 @@ test('the offline shots pin connectivity instead of reading it', () => {
   assert.match(body, /Offline\?\.forceOffline\(\)/);
   assert.match(APP, /_applyOfflineShot\(\) === 'offline-signin'/);
   // forceOffline pins the state so a later probe cannot flip it back.
-  assert.match(OFFLINE, /forceOffline\(\)\s*\{/);
-  assert.match(OFFLINE, /if \(Offline\._forced\) return/);
+  assert.match(OFFLINE, /export function forceOffline\(\)/);
+  assert.match(OFFLINE, /if \(forced\) return/);
 });
 
 test('both offline shots are registered as dapp.json checks', () => {

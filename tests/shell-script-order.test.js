@@ -69,12 +69,11 @@ const ADDED_SCRIPTS = [
 // public/js/. They are removed from the baseline side of the comparison.
 const RETIRED_SCRIPTS = {
   // #1078 chunk A — service-worker registration and the /health connectivity
-  // probe moved into frontend/src/lib/{service-worker,offline-store}.ts when
-  // #offline-banner became a React island.
+  // probe moved into frontend/src/lib/{service-worker,offline}.ts when
+  // #offline-banner became a React island (frontend/src/features/shell/
+  // banners.tsx). window.Offline keeps its exact API for the six legacy call
+  // sites that still use it.
   '/js/offline.js': 'offline banner + SW registration converted to React (chunk A)',
-  // #1078 chunk A — the whole App secrets / Platform variables panel is
-  // frontend/src/features/dialogs/AppSecretsDialog.tsx now.
-  '/js/app-secrets.js': 'App secrets dialog converted to React (chunk A)',
 };
 
 test('every legacy script is loaded, in exactly the baseline order', () => {
@@ -93,18 +92,18 @@ test('every legacy script is loaded, in exactly the baseline order', () => {
 });
 
 test('the shell still loads the expected number of legacy scripts', () => {
-  // 51 /js/** tags in total: theme.js in the head (it applies the stored
-  // theme before first paint) plus 50 at the end of <body>. The count moves
+  // 52 /js/** tags in total: theme.js in the head (it applies the stored
+  // theme before first paint) plus 51 at the end of <body>. The count moves
   // whenever main adds a module — it was 48 at the chassis swap, main's
   // mail console and credit-options screens brought it to 50, #1036's
   // nav-link.js made 51, and #1049's dev-flow-select.js made 52. It goes
   // DOWN as conversion chunks retire modules: #1078 chunk A retired
-  // offline.js and app-secrets.js, so 50.
+  // offline.js, so 51.
   const bodyScripts = scriptsOf(after.slice(after.indexOf('</head>')))
     .filter((s) => s.src && s.src.startsWith('/js/'));
   assert.equal(
-    bodyScripts.length, 50,
-    `expected the 50 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
+    bodyScripts.length, 51,
+    `expected the 51 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
     + 'Adding or removing one is fine, but it also needs a matching SHELL_ASSETS entry in '
     + 'public/sw.js (tests/pwa-shell-wiring.test.js enforces that) — so update this count '
     + 'deliberately rather than loosening the check.',

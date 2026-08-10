@@ -851,7 +851,11 @@ test('the app-view zoom departs from whichever screen was on top', () => {
   const depBody = dep.slice(0, dep.indexOf('\n  },'));
   assert.match(depBody, /for \(const id of App\.SCREEN_IDS\)/,
     'it scans every screen root');
-  assert.match(depBody, /!el\.classList\.contains\('hidden'\)/,
+  // Through the visibility seam (#1078), not a raw classList read: a root
+  // React owns publishes its state into the store instead of carrying
+  // `.hidden`, so reading the class directly would answer "visible" for a
+  // React screen that is actually down.
+  assert.match(depBody, /App\._isScreenVisible\(id\)/,
     'and returns the one that is actually visible');
   assert.match(depBody, /return document\.getElementById\('home-screen'\)/,
     'home is the fallback');

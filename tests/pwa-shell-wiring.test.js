@@ -130,7 +130,7 @@ test('index.html wires up the manifest, the banner, and the React bundle', () =>
   // converted the offline banner to a React island and retired that module,
   // so the registration moved into the React bundle — which is the one
   // module script the document loads.
-  assert.doesNotMatch(html, /\/js\/offline\.js/,
+  assert.doesNotMatch(html, /<script[^>]+\/js\/offline\.js/,
     'offline.js was retired in #1078; index.html must not still load it');
   assert.match(html, /<script type="module"[^>]+src="\/shell\/assets\/shell\.js"/,
     'the React bundle (which now registers the SW) must be loaded');

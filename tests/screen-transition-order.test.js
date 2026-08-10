@@ -79,8 +79,11 @@ test('_showOnlyScreen hides every other root, reveals one, resets the chevron', 
     'it iterates the one list');
   assert.match(body, /if \(id === revealId \|\| keep\.includes\(id\)\) continue;/,
     'the revealed screen (and any explicitly kept one) is skipped');
-  assert.match(body, /classList\.add\('hidden'\)/, 'the rest are hidden');
-  assert.match(body, /classList\.remove\('hidden'\)/, 'the target is revealed');
+  // Both sides go through the visibility seam (#1078) rather than writing
+  // `.hidden` themselves — see App._setScreenVisible, which forwards to the
+  // React store for a React-owned root and falls back to the class otherwise.
+  assert.match(body, /App\._setScreenVisible\(id, false\)/, 'the rest are hidden');
+  assert.match(body, /App\._setScreenVisible\(revealId, true\)/, 'the target is revealed');
   assert.match(body, /App\.setBackIcon\('home'\)/,
     "the back chevron goes back to meaning 'home' on every swap");
   // The comment is load-bearing: the ordering rule is invisible from the
@@ -99,8 +102,11 @@ for (const { fn, reveal } of NAVIGATIONS) {
     const at = body.indexOf('PlatformUI.transition(');
     assert.ok(at > 0, `${fn} runs a screen transition`);
     const before = body.slice(0, at);
-    for (const forbidden of ['classList', 'setHeaderTitle(', 'setBackIcon(',
-      'syncChrome(', 'AppView.close(']) {
+    // '_setScreenVisible(' is the #1078 visibility seam — the same mutation
+    // as the classList write it replaced, so it is forbidden here for the
+    // same reason.
+    for (const forbidden of ['classList', '_setScreenVisible(', 'setHeaderTitle(',
+      'setBackIcon(', 'syncChrome(', 'AppView.close(']) {
       assert.ok(!before.includes(forbidden),
         `${fn}: ${forbidden} runs before the transition — it would be captured `
         + 'into the snapshot of the page being left (#979)');
@@ -142,12 +148,13 @@ test('navigateToApp reveals in fn and conceals every other root in after', () =>
   const at = zoom.indexOf('PlatformUI.transition(');
   assert.ok(at > 0, 'navigateToApp runs a transition');
   const before = zoom.slice(0, at);
-  for (const forbidden of ['classList', 'setHeaderTitle(', 'setBackIcon(']) {
+  for (const forbidden of ['classList', '_setScreenVisible(', 'setHeaderTitle(',
+    'setBackIcon(']) {
     assert.ok(!before.includes(forbidden),
       `navigateToApp: ${forbidden} runs before the transition (#979)`);
   }
   const callback = zoom.slice(at);
-  assert.match(callback, /getElementById\('app-view'\)\.classList\.remove\('hidden'\)/,
+  assert.match(callback, /App\._setScreenVisible\('app-view', true\)/,
     'fn reveals the app view (the departing screen stays visible beneath it)');
   assert.match(callback, /getElementById\('back-btn'\)\.classList\.remove\('hidden'\)/,
     'the back button is revealed inside the callback too');
