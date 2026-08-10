@@ -3016,18 +3016,22 @@ const App = {
         // App.user.isAdmin lives inside navigateToAdminConsole.
         App.setChromeless(false);
         let _adminSection = parts[1] || null;
-        // Permanent alias for the renamed Topochain section. The sub-tab
-        // (a third segment, owned by AdminTopochain) has to survive the
-        // rewrite, otherwise a deep bookmark like #admin/topochain/users
-        // would silently land on the section's default tab. Same idiom as
-        // the #topochain branch below: rewrite the address BEFORE
-        // navigating so the module's own _syncHash sees the canonical
-        // prefix, and the bookmark self-heals.
+        // Permanent alias for the renamed Topochain section. Everything
+        // after the section segment is owned by AdminTopochain and has to
+        // survive the rewrite VERBATIM — not just the sub-tab, but the
+        // Season-events tail below it
+        // (season-events/<eventId>/new-challenge/<templateId>) — otherwise
+        // a deep bookmark silently lands on the section's default tab or,
+        // worse, on the right tab with the wrong event. Same idiom as the
+        // #topochain branch below: rewrite the address BEFORE navigating so
+        // the module's own _syncHash sees the canonical prefix, and the
+        // bookmark self-heals.
         if (_adminSection === 'topochain') {
           _adminSection = 'seasons';
+          const tail = parts.slice(2).join('/');
           try {
             history.replaceState(null, '',
-              parts[2] ? `#admin/seasons/${parts[2]}` : '#admin/seasons');
+              tail ? `#admin/seasons/${tail}` : '#admin/seasons');
           } catch (err) { /* non-fatal: navigation below still works */ }
         }
         App.navigateToAdminConsole(_adminSection);
