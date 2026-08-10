@@ -668,6 +668,20 @@ test('the usernode read is retried once on readiness and never leaks a listener'
     'the one re-attempt is offered again on the next visit');
 });
 
+test('activity notifications wait for native admission and surface failures', () => {
+  const section = settingsJs.slice(
+    settingsJs.indexOf('    _renderSocialPushSection(section) {'),
+    settingsJs.indexOf('    // Block production queue')
+  );
+  assert.match(section, /NativeChrome\.isSessionAdmitted\(\)/,
+    'a closed handoff renders recovery instead of a stale toggle');
+  assert.match(section, /NativeChrome\.recoverSessionAdmission\(\)/,
+    'the notification section offers an explicit handoff retry');
+  assert.match(section, /Finishing secure app sign-in/);
+  assert.match(section, /includeErrorDetail: true/,
+    'native storage and admission errors remain visible to the user');
+});
+
 test('only the newest usernode read attempt paints', () => {
   const section = settingsJs.slice(
     settingsJs.indexOf('    async _renderUsernodeSection() {'),

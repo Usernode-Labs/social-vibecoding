@@ -118,6 +118,10 @@
     _logoutRunning: false,
     _sessionWalletRelayAdmitted: true,
 
+    isSessionAdmitted() {
+      return NativeChrome._sessionWalletRelayAdmitted === true;
+    },
+
     _participantId(value) {
       const id = Number(value);
       return Number.isSafeInteger(id) && id > 0 ? id : null;
@@ -270,6 +274,23 @@
       });
       NativeChrome._handoffPromise = tracked;
       return tracked;
+    },
+
+    // A failed cold-start exchange leaves the native gate closed on purpose,
+    // but the web session may remain healthy and emit no later auth change.
+    // Foreground/network recovery signals therefore need an explicit retry.
+    // Unlike a new `sv:session` signal, these retries do not request a second
+    // pass when an authoritative handoff is already in flight.
+    recoverSessionAdmission() {
+      if (NativeChrome._logoutRunning ||
+          NativeChrome._sessionWalletRelayAdmitted) {
+        return Promise.resolve(null);
+      }
+      if (NativeChrome._handoffPromise) return NativeChrome._handoffPromise;
+      if (NativeChrome._webParticipantId() == null) {
+        return NativeChrome.enterAnonymous();
+      }
+      return NativeChrome.runLoginHandoff();
     },
 
     async _runLoginHandoff(generation) {
@@ -655,6 +676,15 @@
       });
     },
 
+    _initSessionRecoveryEvents() {
+      const recover = () => {
+        if (document.visibilityState === 'hidden') return;
+        NativeChrome.recoverSessionAdmission();
+      };
+      window.addEventListener('online', recover);
+      document.addEventListener('visibilitychange', recover);
+    },
+
     init() {
       // The bridge loads before wallet-sheet.js and before App resolves its
       // web session. Start closed so native A cannot be cached/rendered while
@@ -662,6 +692,7 @@
       NativeChrome._setSessionWalletRelayAdmission(false);
       NativeChrome._initDrawerRows();
       NativeChrome._initAuthStatusEvents();
+      NativeChrome._initSessionRecoveryEvents();
       // Anonymous SPA boot (fold-auth-pages-into-SPA): the login handoff
       // needs a live web session (the from-session exchange 401s without
       // one), so it waits for the session boot stage. `sv:session` fires
