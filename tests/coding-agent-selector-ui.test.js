@@ -66,6 +66,28 @@ function makeHarness() {
   };
 }
 
+test('OpenRouter model labels show exact rates, cost tier, and advisory compatibility', () => {
+  const h = makeHarness();
+  const label = h.DevChat._openRouterModelOptionLabel({
+    id: 'vendor/model',
+    name: 'Model',
+    inputPricePerMillion: 0.25,
+    outputPricePerMillion: 4,
+    costTier: 'medium',
+    compatibility: 'experimental',
+  });
+  assert.equal(label, 'Model — Medium cost · $0.25 /M input · $4 /M output · unverified');
+
+  const limited = h.DevChat._openRouterModelOptionLabel({
+    id: 'vendor/limited',
+    inputPricePerMillion: 100,
+    outputPricePerMillion: null,
+    costTier: 'unknown',
+    compatibility: 'blocked',
+  });
+  assert.equal(limited, 'vendor/limited — Price unavailable · $100 /M input · ? /M output · limited');
+});
+
 test('new session creation sends the explicit Claude choice', async () => {
   const h = makeHarness();
   h.respondWith(async () => ({

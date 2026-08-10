@@ -4908,8 +4908,9 @@ CREATE TABLE IF NOT EXISTS agent_model_compatibility (
   PRIMARY KEY (backend, model_id)
 );
 
--- Seed a verified Codex model so the user-filtered catalog is not empty
--- on first use (review F7). Operators add more rows as fixtures pass.
+-- Seed a verified Codex model as the recommended first-run choice.
+-- Compatibility is advisory: every model in the user's OpenRouter catalog
+-- remains selectable, while operators can mark known-good models here.
 INSERT INTO agent_model_compatibility (backend, model_id, status, note, checked_at)
 VALUES ('codex_openrouter', 'openai/gpt-5.3-codex', 'verified', 'Default verified Codex model', NOW())
 ON CONFLICT (backend, model_id) DO NOTHING;
