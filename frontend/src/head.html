@@ -102,8 +102,9 @@
     });
   </script>
   <!-- PWA (#487): installable shell + read-only offline mode. The service
-       worker is registered by /js/offline.js (loaded with the app bundle
-       below). -->
+       worker is registered by src/lib/service-worker.ts, from the React
+       bundle loaded at the end of this head (#1078 retired the
+       /js/offline.js module that used to do it). -->
   <link rel="manifest" href="/manifest.webmanifest">
   <meta name="theme-color" content="#08080f">
   <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">

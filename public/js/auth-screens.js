@@ -73,6 +73,21 @@
 
   function byId(id) { return document.getElementById(id); }
 
+  // The React seam (#1078). Screen roots convert one chunk at a time, and
+  // once React owns one, a classList write from out here is reconciled
+  // away on its next render — so hand the decision to App, which knows
+  // which ids have crossed over. `App` is a script-global (not on
+  // window), and this file loads before app.js, so the guard is a typeof
+  // check and the fallback is the pre-seam behaviour.
+  function setScreenVisible(id, visible) {
+    if (typeof App !== 'undefined' && App._setScreenVisible) {
+      App._setScreenVisible(id, visible);
+      return;
+    }
+    const el = byId(id);
+    if (el) el.classList.toggle('hidden', !visible);
+  }
+
   function showError(el, msg) {
     el.textContent = msg;
     el.classList.remove('hidden');
@@ -183,8 +198,7 @@
 
       fx(() => {
         for (const r of Object.keys(SCREEN_IDS)) {
-          const el = byId(SCREEN_IDS[r]);
-          if (el) el.classList.toggle('hidden', SCREEN_IDS[r] !== id);
+          setScreenVisible(SCREEN_IDS[r], SCREEN_IDS[r] === id);
         }
       }, type);
       AuthScreens._current = route;
@@ -193,10 +207,7 @@
     hideAll() {
       AuthScreens._stopWaitingPoll();
       AuthScreens._resetLandingViewer();
-      for (const r of Object.keys(SCREEN_IDS)) {
-        const el = byId(SCREEN_IDS[r]);
-        if (el) el.classList.add('hidden');
-      }
+      for (const r of Object.keys(SCREEN_IDS)) setScreenVisible(SCREEN_IDS[r], false);
       AuthScreens._current = null;
     },
 
@@ -1241,7 +1252,7 @@
 
     // ── Email password reset (magic link) ────────────────────────────
     //
-    // The shell's markup is frozen (tests/shell-markup-parity.test.js), so
+    // The shell's markup is id-pinned (tests/shell-id-inventory.test.js), so
     // the email-request form and the #reset-password/<token> redeem view
     // are runtime-built here, the way every post-fixture feature adds UI.
     // Class strings are copied verbatim from the neighbouring frozen

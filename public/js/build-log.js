@@ -177,8 +177,7 @@ const BuildLog = {
         BuildLog.close();
         // The retry flips the card back to 'creating'; the WS
         // app_status broadcast drives the rest of the UI update.
-        if (typeof Home !== 'undefined' && document.getElementById('home-screen')
-            && !document.getElementById('home-screen').classList.contains('hidden')) {
+        if (typeof Home !== 'undefined' && App._isScreenVisible('home-screen')) {
           Home.load();
         }
       });

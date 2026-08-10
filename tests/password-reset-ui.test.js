@@ -1,7 +1,8 @@
 // Content pins for the email password-reset UI (login screen recovery
 // flow + the #reset-password/<token> magic-link route).
 //
-// The shell's markup is frozen (tests/shell-markup-parity.test.js), so —
+// The shell's markup was frozen against a whole-document fixture when this
+// was written (#1078 narrowed that to the id/script baselines), so —
 // like every post-fixture feature — the reset UI is built at runtime by
 // public/js/auth-screens.js rather than added to frontend/src/Shell.tsx.
 // These are source pins in the style of tests/landing-directory.test.js:

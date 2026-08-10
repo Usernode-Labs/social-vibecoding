@@ -1,6 +1,6 @@
 // Dependency-free HTML tokenizer + structural comparison helpers for the
-// shell-artifact tests (shell-markup-parity, shell-id-inventory,
-// shell-script-order, dapp-selectors-resolve).
+// shell-artifact tests (shell-id-inventory, shell-script-order,
+// dapp-selectors-resolve) and scripts/derive-shell-baseline.js.
 //
 // Why hand-rolled instead of a parser dependency: the root package installs
 // with `npm ci --production` at runtime and carries only four devDependencies

@@ -840,8 +840,7 @@ const App = {
     }
 
     // Home-screen card pill (only if the home screen is visible).
-    const homeVisible = document.getElementById('home-screen')
-      && !document.getElementById('home-screen').classList.contains('hidden');
+    const homeVisible = App._isScreenVisible('home-screen');
     if (homeVisible && typeof Home !== 'undefined') {
       if (data.deploying) {
         // We don't have the row's `version` data on hand here, but
@@ -977,8 +976,7 @@ const App = {
             // Home screen: re-pull the apps list so the home-screen
             // pill picks up the new SHA. Cheap; only fires on a real
             // version change.
-            if (typeof Home !== 'undefined' && document.getElementById('home-screen')
-                && !document.getElementById('home-screen').classList.contains('hidden')) {
+            if (typeof Home !== 'undefined' && App._isScreenVisible('home-screen')) {
               Home.load();
             }
             // #405: the merge that triggered this rebuild also flips the
@@ -1037,7 +1035,7 @@ const App = {
     // so `window.Home` / `window.AppView` would silently be undefined.
     // `Notifications` is explicitly assigned to `window` in
     // notifications.js, so that one is fine.
-    if (typeof Home !== 'undefined' && document.getElementById('home-screen') && !document.getElementById('home-screen').classList.contains('hidden')) {
+    if (typeof Home !== 'undefined' && App._isScreenVisible('home-screen')) {
       Home.load();
     }
     if (window.Notifications) Notifications.refresh?.();
@@ -3350,12 +3348,65 @@ const App = {
     const keep = keepAlso || [];
     for (const id of App.SCREEN_IDS) {
       if (id === revealId || keep.includes(id)) continue;
-      const el = document.getElementById(id);
-      if (el) el.classList.add('hidden');
+      App._setScreenVisible(id, false);
     }
-    const target = document.getElementById(revealId);
-    if (target) target.classList.remove('hidden');
+    App._setScreenVisible(revealId, true);
     App.setBackIcon('home');
+  },
+
+  // ── The React seam (#1078) ─────────────────────────────────────────
+  // Screen roots whose markup React owns. For these, visibility is
+  // PUBLISHED as data and the component renders its own `hidden` class;
+  // toggling the class from here would be a write into React-owned DOM
+  // that the next render reconciles away. Everything not listed keeps
+  // the classList path, so converted and unconverted screens coexist for
+  // the whole migration. A conversion chunk adds its id here in the same
+  // commit that converts the screen.
+  REACT_SCREEN_IDS: [],
+
+  // The publish/read half of that seam. The state is a plain object on
+  // `window` because load order demands it: these classic scripts run
+  // before the deferred React module, so app.js routes — and publishes —
+  // first. The identical factory lives in
+  // frontend/src/lib/visibility-store.ts; keep the two in sync.
+  Visibility: {
+    _store() {
+      let store = window.__usernodeVisibility;
+      if (!store) {
+        store = { visible: Object.create(null), listeners: new Set() };
+        window.__usernodeVisibility = store;
+      }
+      return store;
+    },
+    publish(id, visible) {
+      const store = App.Visibility._store();
+      if (store.visible[id] === visible) return;
+      store.visible[id] = visible;
+      // Copy first: a listener unsubscribing mid-notification would
+      // otherwise mutate the set being iterated.
+      for (const listener of [...store.listeners]) {
+        try { listener(); } catch (e) { console.error('[visibility] listener failed', e); }
+      }
+    },
+    // `undefined` when nothing has published it yet — deliberately not
+    // `false`, so a converted region can fall back to whatever its
+    // markup shipped with rather than flashing hidden on first render.
+    read(id) { return App.Visibility._store().visible[id]; },
+  },
+
+  // Show/hide one screen root through whichever half owns it.
+  _setScreenVisible(id, visible) {
+    if (App.REACT_SCREEN_IDS.includes(id)) { App.Visibility.publish(id, visible); return; }
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('hidden', !visible);
+  },
+
+  // Is a screen root on screen? Reads the store for converted roots and
+  // the DOM for the rest, so callers don't have to know which is which.
+  _isScreenVisible(id) {
+    if (App.REACT_SCREEN_IDS.includes(id)) return App.Visibility.read(id) === true;
+    const el = document.getElementById(id);
+    return !!el && !el.classList.contains('hidden');
   },
 
   // The chrome every platform screen (leaderboard / profile / browse /
@@ -4065,8 +4116,7 @@ const App = {
   _departingScreen() {
     for (const id of App.SCREEN_IDS) {
       if (id === 'app-view') continue;
-      const el = document.getElementById(id);
-      if (el && !el.classList.contains('hidden')) return el;
+      if (App._isScreenVisible(id)) return document.getElementById(id);
     }
     return document.getElementById('home-screen');
   },
@@ -4157,7 +4207,7 @@ const App = {
     // single-motion gate — 'none' still runs fn + after as one mutation.
     const appViewEl = document.getElementById('app-view');
     PlatformUI.transition(() => {
-      document.getElementById('app-view').classList.remove('hidden');
+      App._setScreenVisible('app-view', true);
       document.getElementById('back-btn').classList.remove('hidden');
       // Best-effort: returns false (and changes nothing) for anything whose
       // App tab wouldn't be a plain production iframe — self-hosted apps,

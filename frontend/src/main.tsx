@@ -35,16 +35,36 @@
 // complete synchronously inside this task, so that interleaving cannot
 // happen.
 //
-// The second guard is in Shell.tsx: it is a completely static component —
-// no state, no effects, no handlers — so React never schedules a re-render
-// after this initial pass and never reconciles over legacy DOM writes.
-// Both guards are load-bearing. Read the header comment there before making
-// any part of the shell tree stateful.
+// The second guard is in Shell.tsx: the tree is static except for explicitly
+// converted ISLANDS, and a region only becomes an island once its entire
+// subtree is React-owned — so React still never reconciles over DOM another
+// module writes into. Both guards are load-bearing. Read the header comment
+// there before making any further part of the shell tree stateful.
+//
+// ── What runs here BEFORE hydration, and why ───────────────────────────
+//
+// Two things that /js/offline.js used to do at classic-script time, and that
+// moved into this bundle when #1078 retired that module:
+//
+//   * service-worker registration — nothing on this load depends on it;
+//   * the connectivity engine, which installs `window.Offline`.
+//
+// The second is ordered deliberately: it runs at module scope, before
+// hydration, because App.init() calls `Offline.forceOffline()` for the
+// `?shot=offline` deep links and home.js / auth-screens.js read
+// `Offline.isOffline()` while painting their first frame. All of that happens
+// on DOMContentLoaded — after this module executes — so the API is in place
+// in time, exactly as it was when a <body> script defined it.
 
 import { flushSync } from 'react-dom';
 import { hydrateRoot } from 'react-dom/client';
 
 import { Shell } from './Shell';
+import { initOffline } from './lib/offline';
+import { registerServiceWorker } from './lib/service-worker';
+
+registerServiceWorker();
+initOffline();
 
 // document.body is the hydration container, not a wrapper <div>, because the
 // body element itself is the flex column the layout depends on

@@ -212,8 +212,9 @@ test('Settings offers the same preference as a dropdown', () => {
   assert.match(js, /\/api\/me\/dev-flow/);
   assert.match(js, /id="settings-dev-flow"/);
   assert.match(js, /devFlowPreference/, 'the section must render from the /me value');
-  // The shell body is frozen against tests/fixtures/pre-migration-index.html
-  // (tests/shell-markup-parity.test.js), so this section is INJECTED by JS
+  // The shell body was frozen against a pre-migration fixture when this was
+  // written (#1078 replaced that with the id/script baselines in
+  // tests/baselines/), so this section is INJECTED by JS
   // rather than added to frontend/src/Shell.tsx. If that ever changes, the
   // injection can go — but silently adding static markup instead would fail
   // the parity test, so the reason is recorded where the code is.

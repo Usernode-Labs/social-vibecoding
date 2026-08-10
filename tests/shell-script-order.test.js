@@ -5,7 +5,11 @@
 // frontend/scripts/build-shell.mjs out of src/head.html plus a prerendered
 // Shell.tsx. So they are pinned here.
 //
-// ── 1. The 50 legacy classic scripts ───────────────────────────────────
+// Both are checked against tests/baselines/shell-markup.json — the frozen
+// structural baseline scripts/derive-shell-baseline.js took from the
+// pre-migration document before the HTML fixture was retired (#1078).
+//
+// ── 1. The legacy classic scripts ──────────────────────────────────────
 //
 // public/js/** is 53 files of global-scope script with no module system:
 // each defines a global (App, Home, AppView, DevChat, AuthScreens, …) and
@@ -40,32 +44,48 @@ const { scriptsOf, stylesheetsOf } = require('./helpers/html-tokens');
 
 const ROOT = path.join(__dirname, '..');
 
-const before = fs.readFileSync(path.join(__dirname, 'fixtures', 'pre-migration-index.html'), 'utf8');
+// The frozen script list, derived once from the pre-migration document by
+// scripts/derive-shell-baseline.js (#1078). It replaced the HTML fixture the
+// chassis swap compared against — see that script's header for why.
+const baseline = require('./baselines/shell-markup.json');
 const after = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
 
 const ENTRY_SRC = '/shell/assets/shell.js';
 
-// Modules added AFTER the chassis swap, which the frozen pre-migration
-// fixture cannot know about. They are removed from the comparison below —
-// exactly as the React entry is — so this test keeps meaning what it says:
-// the 50 pre-migration scripts still load in their original relative order.
-// A new module's own position is pinned by its own assertion instead (see
-// the nav-link.js check below); do not add one here without doing the same.
-const POST_MIGRATION_SRCS = [
+// Modules added AFTER the baseline was taken, which it cannot know about.
+// They are removed from the comparison below — exactly as the React entry is
+// — so this test keeps meaning what it says: the baseline's scripts still
+// load in their original relative order. A new module's own position is
+// pinned by its own assertion instead (see the nav-link.js check below); do
+// not add one here without doing the same.
+const ADDED_SCRIPTS = [
   '/js/nav-link.js', // #1036 — the real-anchor / new-tab seam
   '/js/dev-flow-select.js', // #1049 — the dev-flow picker + walkthrough
   '/js/session-options.js', // #1055 — the composer's session/billing menu
 ];
 
-test('every legacy script is loaded, in exactly the pre-migration order', () => {
-  const expected = scriptsOf(before).filter((s) => s.src).map((s) => s.src);
+// Modules a conversion chunk RETIRED, with the reason. Each one's behaviour
+// moved into the React bundle, so the tag is gone from Shell.tsx, the entry
+// is gone from SHELL_ASSETS in public/sw.js, and the file is deleted from
+// public/js/. They are removed from the baseline side of the comparison.
+const RETIRED_SCRIPTS = {
+  // #1078 chunk A — service-worker registration and the /health connectivity
+  // probe moved into frontend/src/lib/{service-worker,offline}.ts when
+  // #offline-banner became a React island (frontend/src/features/shell/
+  // banners.tsx). window.Offline keeps its exact API for the six legacy call
+  // sites that still use it.
+  '/js/offline.js': 'offline banner + SW registration converted to React (chunk A)',
+};
+
+test('every legacy script is loaded, in exactly the baseline order', () => {
+  const expected = baseline.scripts.filter((s) => !(s in RETIRED_SCRIPTS));
   const actual = scriptsOf(after)
-    .filter((s) => s.src && s.src !== ENTRY_SRC && !POST_MIGRATION_SRCS.includes(s.src))
+    .filter((s) => s.src && s.src !== ENTRY_SRC && !ADDED_SCRIPTS.includes(s.src))
     .map((s) => s.src);
 
   assert.deepEqual(
     actual, expected,
-    'the <script src> sequence in public/index.html no longer matches the pre-migration document.\n'
+    'the <script src> sequence in public/index.html no longer matches the frozen baseline.\n'
     + 'These are global-scope classic scripts with load-order dependencies (app.js must stay last, '
     + 'so App.init() runs after every other module registers). Fix the order in '
     + 'frontend/src/Shell.tsx / frontend/src/head.html and rebuild.',
@@ -73,17 +93,18 @@ test('every legacy script is loaded, in exactly the pre-migration order', () => 
 });
 
 test('the shell still loads the expected number of legacy scripts', () => {
-  // 54 /js/** tags in total: theme.js in the head (it applies the stored
-  // theme before first paint) plus 53 at the end of <body>. The count moves
+  // 53 /js/** tags in total: theme.js in the head (it applies the stored
+  // theme before first paint) plus 52 at the end of <body>. The count moves
   // whenever main adds a module — it was 48 at the chassis swap, main's
   // mail console and credit-options screens brought it to 50, #1036's
   // nav-link.js made 51, #1049's dev-flow-select.js made 52, and #1055's
-  // session-options.js makes 53.
+  // session-options.js made 53. It goes DOWN as conversion chunks retire
+  // modules: #1078 chunk A retired offline.js, so 52.
   const bodyScripts = scriptsOf(after.slice(after.indexOf('</head>')))
     .filter((s) => s.src && s.src.startsWith('/js/'));
   assert.equal(
-    bodyScripts.length, 53,
-    `expected the 53 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
+    bodyScripts.length, 52,
+    `expected the 52 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
     + 'Adding or removing one is fine, but it also needs a matching SHELL_ASSETS entry in '
     + 'public/sw.js (tests/pwa-shell-wiring.test.js enforces that) — so update this count '
     + 'deliberately rather than loosening the check.',
@@ -97,6 +118,31 @@ test('the shell still loads the expected number of legacy scripts', () => {
     'theme.js is the only /js/** script that belongs in the head — it applies the stored theme '
     + 'before first paint, which is what stops a light-mode flash on a dark-mode load.',
   );
+});
+
+test('a retired script is really gone, everywhere', () => {
+  // Keeps RETIRED_SCRIPTS honest. Retiring a module is a four-part edit — the
+  // <script> tag in Shell.tsx, the SHELL_ASSETS entry in public/sw.js, the
+  // file under public/js/, and this map — and a half-done one either 404s
+  // during the service worker's install or silently keeps the old module
+  // running alongside its React replacement.
+  const sw = require('../public/sw.js');
+  for (const [src, reason] of Object.entries(RETIRED_SCRIPTS)) {
+    assert.ok(reason, `RETIRED_SCRIPTS[${src}] needs a reason`);
+    assert.ok(
+      !after.includes(`src="${src}"`),
+      `${src} is listed in RETIRED_SCRIPTS but public/index.html still loads it.`,
+    );
+    assert.ok(
+      !fs.existsSync(path.join(ROOT, 'public', src.replace(/^\//, ''))),
+      `${src} is listed in RETIRED_SCRIPTS but the file is still in the repo — delete it, or `
+      + 'drop the entry if the module is still live.',
+    );
+    assert.ok(
+      !sw.SHELL_ASSETS.includes(src),
+      `${src} is retired but public/sw.js still precaches it — the install would 404.`,
+    );
+  }
 });
 
 test('nav-link.js loads ahead of every module that consumes it', () => {
@@ -199,7 +245,7 @@ test('the React entry loads after every legacy script in document order', () => 
 test('the stylesheet cascade is native.css → app.css → tailwind.css', () => {
   assert.deepEqual(
     stylesheetsOf(after),
-    ['/usernode-native/v1/native.css', '/css/app.css', '/css/tailwind.css'],
+    baseline.stylesheets,
     'the compiled utilities must be linked LAST. app.css was written against a cascade where '
     + 'Tailwind wins equal-specificity conflicts; inverting it silently restyles the shell (#938). '
     + 'The head also probes this at runtime and console.errors when it breaks, which fails checks.',
