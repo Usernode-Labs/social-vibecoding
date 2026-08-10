@@ -27,7 +27,8 @@ const path = require('node:path');
 const notifications = require('../src/services/notifications');
 
 const FE_SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'notifications.js'),
+  // #1079 chunk B: same module, now inside the React bundle.
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'notifications', 'notifications.js'),
   'utf8'
 );
 const ROUTE_SRC = fs.readFileSync(

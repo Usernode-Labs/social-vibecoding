@@ -75,6 +75,32 @@ const RETIRED_SCRIPTS = {
   // banners.tsx). window.Offline keeps its exact API for the six legacy call
   // sites that still use it.
   '/js/offline.js': 'offline banner + SW registration converted to React (chunk A)',
+  // #1079 chunk B — the dev-console receiver, its per-app ring buffer and the
+  // whole #dev-console-panel subtree moved into frontend/src/features/
+  // dev-console/. `window.DevConsole` keeps its exact API (app.js,
+  // app-view.js and settings.js call it unguarded), installed at module scope
+  // in store.ts rather than from an effect.
+  '/js/dev-console.js': 'developer console converted to a React island (chunk B)',
+  // #1079 chunk B — #notifications-panel and #work-drawer-panel became islands
+  // on @/components/ui/anchored-panel, and the two modules moved verbatim into
+  // frontend/src/features/{notifications,work-drawer}/. They still publish
+  // window.Notifications / window.WorkDrawer / window.SESSION_NOTIF_KINDS at
+  // module scope for app.js, app-view.js, dev-chat.js and home.js.
+  '/js/notifications.js': 'bell dropdown converted to a React island (chunk B)',
+  '/js/work-drawer.js': 'header-cog drawer converted to a React island (chunk B)',
+  // #1079 chunk B — #platform-header and #header-menu-{overlay,panel} became
+  // islands (frontend/src/features/header/). header-layout.js is the hook
+  // use-header-layout.ts; node-pill.js, wallet-sheet.js and ai-credit.js moved
+  // verbatim into the same directory and still publish window.NodePill /
+  // window.WalletSheet / window.AiCredit for app.js. theme.js is the one that
+  // did NOT move into the bundle: it is inline and head-blocking in
+  // frontend/src/head.html, because a deferred module cannot apply the stored
+  // theme before first paint.
+  '/js/header-layout.js': 'header title centering ported to a hook (chunk B)',
+  '/js/node-pill.js': 'drawer node row moved into the header island (chunk B)',
+  '/js/wallet-sheet.js': 'drawer wallet row moved into the header island (chunk B)',
+  '/js/ai-credit.js': 'drawer AI-credit row moved into the header island (chunk B)',
+  '/js/theme.js': 'theme module inlined into the head (chunk B)',
 };
 
 test('every legacy script is loaded, in exactly the baseline order', () => {
@@ -93,18 +119,21 @@ test('every legacy script is loaded, in exactly the baseline order', () => {
 });
 
 test('the shell still loads the expected number of legacy scripts', () => {
-  // 53 /js/** tags in total: theme.js in the head (it applies the stored
-  // theme before first paint) plus 52 at the end of <body>. The count moves
-  // whenever main adds a module — it was 48 at the chassis swap, main's
-  // mail console and credit-options screens brought it to 50, #1036's
-  // nav-link.js made 51, #1049's dev-flow-select.js made 52, and #1055's
-  // session-options.js made 53. It goes DOWN as conversion chunks retire
-  // modules: #1078 chunk A retired offline.js, so 52.
+  // 45 /js/** tags, ALL at the end of <body> — the head has none left. The
+  // count moves whenever main adds a module — it was 48 at the chassis swap
+  // (plus theme.js in the head), main's mail console and credit-options
+  // screens brought it to 50, #1036's nav-link.js made 51, #1049's
+  // dev-flow-select.js made 52, and #1055's session-options.js made 53. It
+  // goes DOWN as conversion chunks retire modules: #1078 chunk A retired
+  // offline.js (52), and #1079 chunk B retires dev-console.js (51),
+  // notifications.js and work-drawer.js (49), then header-layout.js,
+  // node-pill.js, wallet-sheet.js, ai-credit.js and theme.js (45 — theme.js
+  // was the head's only one, so the body count drops by four).
   const bodyScripts = scriptsOf(after.slice(after.indexOf('</head>')))
     .filter((s) => s.src && s.src.startsWith('/js/'));
   assert.equal(
-    bodyScripts.length, 52,
-    `expected the 52 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
+    bodyScripts.length, 45,
+    `expected the 45 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
     + 'Adding or removing one is fine, but it also needs a matching SHELL_ASSETS entry in '
     + 'public/sw.js (tests/pwa-shell-wiring.test.js enforces that) — so update this count '
     + 'deliberately rather than loosening the check.',
@@ -114,9 +143,10 @@ test('the shell still loads the expected number of legacy scripts', () => {
     .filter((s) => s.src && s.src.startsWith('/js/'))
     .map((s) => s.src);
   assert.deepEqual(
-    headScripts, ['/js/theme.js'],
-    'theme.js is the only /js/** script that belongs in the head — it applies the stored theme '
-    + 'before first paint, which is what stops a light-mode flash on a dark-mode load.',
+    headScripts, [],
+    'no /js/** script belongs in the head any more. theme.js was the last one, and #1079 chunk B '
+    + 'inlined it into frontend/src/head.html — an external tag there is a second request the '
+    + 'first paint has to wait for, and the thing it decides is whether the page is dark.',
   );
 });
 
@@ -264,8 +294,9 @@ test('the head still loads the bridge before anything can use it', () => {
     + 'reintroduces the flash of a duplicated header title inside the Usernode app WebView.',
   );
   assert.ok(
-    head.indexOf('/js/theme.js') < bridgeAt,
-    'theme.js should keep running first so the stored theme is applied before first paint',
+    head.indexOf('window.Theme') < bridgeAt,
+    'the inline theme block should keep running first so the stored theme is applied before '
+    + 'first paint — it is head-blocking precisely so nothing paints ahead of it',
   );
 });
 

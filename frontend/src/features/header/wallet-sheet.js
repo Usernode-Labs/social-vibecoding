@@ -1,3 +1,8 @@
+// MOVED, NOT REWRITTEN (#1079 chunk B). This file was public/js/wallet-sheet.js;
+// #header-menu-panel became a React island and this module owns nodes inside
+// it, so it moved into the bundle with the region it writes to. The body below
+// is unchanged apart from the init call at the bottom — see the note there.
+//
 // Wallet drawer row + wallet sheet — the app's native wallet surface
 // absorbed into SV chrome (app-as-SV-chrome migration, NATIVE-BRIDGE.md).
 // Lived in the header as a balance chip originally; moved into the
@@ -366,6 +371,11 @@
     },
   };
 
-  window.WalletSheet = WalletSheet;
-  WalletSheet.init();
+  // Same as node-pill.js: published here, initialised from the island's layout
+  // effect so the `hidden` it lifts off #drawer-row-wallet lands after React
+  // has hydrated that node.
+  // `typeof window` guard: the shell's markup is PRERENDERED in Node
+  // (frontend/scripts/build-shell.mjs), which imports this island's module
+  // graph. Same guard as features/notifications/notifications.js.
+  if (typeof window !== 'undefined') window.WalletSheet = WalletSheet;
 })();

@@ -69,6 +69,16 @@
   `frontend/src/lib/legacy-dom.ts`, never a rendered `className`.
 - Adding or removing a `public/js/**` script means updating `SHELL_ASSETS` in
   `public/sw.js` and the count in `tests/shell-script-order.test.js` too.
+- **Moving a `public/js/**` module into the bundle is a move, not a rewrite.**
+  When a chunk converts the markup a legacy module owns, `git mv` the module to
+  `frontend/src/features/<area>/`, keep its `window.X = X` publication (its
+  remaining legacy callers are untouched), drop its `DOMContentLoaded`
+  bootstrap in favour of an `init()` call from the island's
+  `useIsomorphicLayoutEffect`, and guard the publication with
+  `if (typeof window !== 'undefined')` — the SSG prerender pass evaluates the
+  island's whole module graph in Node. Re-point every test that reads the old
+  path **in the same commit that deletes it**, and record the retirement in
+  `RETIRED_SCRIPTS` and `SHELL_ASSETS`.
 - Step 1 of the React + shadcn migration was a scaffolding-only chassis swap
   with zero visual change. **Step 2 converts screens to real components one
   chunk at a time, strictly like-for-like:** component boundaries, props and
