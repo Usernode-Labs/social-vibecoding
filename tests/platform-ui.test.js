@@ -350,7 +350,9 @@ test('app.js wires the switch and guards the same-segment App tap', () => {
 });
 
 test('setAppOpen owns the switch and hides it for self-hosted apps', () => {
-  const src = read('public/js/app.js');
+  // #1079 chunk B moved App.DrawerStatus into the React bundle alongside the
+  // drawer markup it drives; app.js keeps a forwarder.
+  const src = read('frontend/src/features/header/header-menu-controller.js');
   const fn = src.slice(src.indexOf('setAppOpen(open) {'), src.indexOf('setForkVisible(visible)'));
   assert.ok(fn.includes("getElementById('app-mode-switch')"), fn);
   assert.ok(fn.includes('self_hosted'), 'self-hosted apps must not get a dead App segment');

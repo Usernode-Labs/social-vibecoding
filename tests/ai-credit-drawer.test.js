@@ -50,7 +50,12 @@ test('the authed boot initialises the renderer', () => {
 });
 
 test('opening the drawer refreshes the row, before the touch early-return', () => {
-  const open = appJs.slice(appJs.indexOf('    open() {'));
+  // #1079 chunk B moved App.HeaderMenu into the React bundle as
+  // frontend/src/features/header/header-menu-controller.js; the ordering
+  // contract is unchanged.
+  const headerMenuJs = fs.readFileSync(
+    path.join(root, 'frontend/src/features/header/header-menu-controller.js'), 'utf8');
+  const open = headerMenuJs.slice(headerMenuJs.indexOf('  open() {'));
   const body = open.slice(0, open.indexOf('PlatformUI.isTouch()'));
   assert.match(body, /AiCredit\.refreshAll\(\)/,
     'HeaderMenu.open() refreshes the row above the touch branch, which returns early');

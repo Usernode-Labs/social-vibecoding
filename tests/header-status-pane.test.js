@@ -133,8 +133,12 @@ test('the hamburger carries the amber deploy dot, hidden by default', () => {
 });
 
 test('the deploy dot is derived from the rendered pills, not a duplicate flag', () => {
-  assert.match(appJs, /refreshDeployDot\(\)\s*\{/, 'DrawerStatus.refreshDeployDot is defined');
-  const fn = appJs.slice(appJs.indexOf('    refreshDeployDot() {'));
+  // #1079 chunk B moved App.DrawerStatus into the React bundle, beside the
+  // drawer markup it drives; app.js keeps a forwarder for its call sites.
+  const headerMenuJs = fs.readFileSync(
+    path.join(root, 'frontend/src/features/header/header-menu-controller.js'), 'utf8');
+  assert.match(headerMenuJs, /refreshDeployDot\(\)\s*\{/, 'DrawerStatus.refreshDeployDot is defined');
+  const fn = headerMenuJs.slice(headerMenuJs.indexOf('  refreshDeployDot() {'));
   // Post-#913 the version rows live in #drawer-footer and signal a
   // rolling deploy with .drawer-ver--deploying instead of the pill class.
   assert.match(fn.slice(0, 600), /#drawer-footer \.drawer-ver--deploying/,
@@ -142,7 +146,9 @@ test('the deploy dot is derived from the rendered pills, not a duplicate flag', 
   // Every renderer that can paint (or clear) a deploying pill must sync
   // the dot, or the hamburger keeps signalling a finished deploy.
   const calls = (appJs.match(/DrawerStatus\.refreshDeployDot\(\)/g) || []).length
-    + (appViewJs.match(/DrawerStatus\.refreshDeployDot\(\)/g) || []).length;
+    + (appViewJs.match(/DrawerStatus\.refreshDeployDot\(\)/g) || []).length
+    // setAppOpen's own call moved with the object.
+    + (headerMenuJs.match(/DrawerStatus\.refreshDeployDot\(\)/g) || []).length;
   assert.ok(calls >= 4,
     `refreshDeployDot is called from each pill renderer (found ${calls}, expect >= 4)`);
 });

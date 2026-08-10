@@ -13,6 +13,13 @@
 // shipped source, in the static-assertion style of
 // tests/ai-credit-drawer.test.js and tests/header-status-pane.test.js.
 //
+// #1079 chunk B made #header-menu-panel a React island and moved App.HeaderMenu
+// out of public/js/app.js and into the bundle beside it, as
+// frontend/src/features/header/header-menu-controller.js. Every contract below
+// is the same one; only the file it is read from changed. (app.js keeps a thin
+// App.HeaderMenu forwarder for its own call sites — that is a forwarder, not
+// the behaviour, so asserting against it would prove nothing.)
+//
 // Run with: node --test tests/header-menu-panel.test.js
 
 const test = require('node:test');
@@ -22,15 +29,19 @@ const path = require('node:path');
 
 const root = path.join(__dirname, '..');
 const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
+const headerMenuJs = fs.readFileSync(
+  path.join(root, 'frontend/src/features/header/header-menu-controller.js'), 'utf8');
+const headerMenuTsx = fs.readFileSync(
+  path.join(root, 'frontend/src/features/header/header-menu.tsx'), 'utf8');
 const appCss = fs.readFileSync(path.join(root, 'public/css/app.css'), 'utf8');
 const platformUiJs = fs.readFileSync(path.join(root, 'public/js/platform-ui.js'), 'utf8');
 const dapp = JSON.parse(fs.readFileSync(path.join(root, 'dapp.json'), 'utf8'));
 
-// The HeaderMenu.open() body, up to the end of its touch branch.
+// The HeaderMenu.open() body, up to the close() that follows it.
 function openBody() {
-  const at = appJs.indexOf('    open() {');
-  assert.ok(at !== -1, 'App.HeaderMenu.open() went missing');
-  return appJs.slice(at, appJs.indexOf('THEME_MODES', at));
+  const at = headerMenuJs.indexOf('  open() {');
+  assert.ok(at !== -1, 'HeaderMenu.open() went missing');
+  return headerMenuJs.slice(at, headerMenuJs.indexOf('  close() {', at));
 }
 
 test('the touch branch presents a right-side kit panel', () => {
@@ -57,7 +68,7 @@ test('the adopted node is restored on dismissal, and the handle cleared', () => 
     'the class must come off or the panel stays flattened for the desktop path');
   assert.match(body, /document\.body\.appendChild\(panel\)/,
     'the drawer lives in <body> between opens — leaving it detached breaks every later open');
-  assert.match(body, /App\.HeaderMenu\._panel = null/,
+  assert.match(body, /HeaderMenu\._panel = null/,
     'a stale handle would make close() dismiss an already-torn-down panel');
   // The fallback path: a kit that failed to load returns null, and the
   // legacy CSS slide-over must not inherit the flattening class.
@@ -71,7 +82,7 @@ test('a re-open during the exit spring keeps the drawer in the NEW panel', () =>
   // can adopt the drawer into a second kit panel before the first one's
   // onDismiss runs. Without this guard that stale teardown appends the node
   // back to <body> and the freshly-opened panel renders empty.
-  assert.match(body, /App\.HeaderMenu\._panel !== handle\) return/,
+  assert.match(body, /HeaderMenu\._panel !== handle\) return/,
     'onDismiss must no-op when a newer open already took ownership of the node');
 });
 
@@ -89,21 +100,73 @@ test('the hamburger reflects its expanded state on the touch path too', () => {
 });
 
 test('close() and Escape both defer to the kit handle', () => {
-  const close = appJs.slice(appJs.indexOf('    close() {'));
-  assert.match(close.slice(0, 400), /App\.HeaderMenu\._panel[\s\S]{0,120}?\.dismiss\(\)/,
+  const close = headerMenuJs.slice(headerMenuJs.indexOf('  close() {'));
+  assert.match(close.slice(0, 400), /HeaderMenu\._panel[\s\S]{0,120}?\.dismiss\(\)/,
     'close() must dismiss through the kit so onDismiss (and the node restore) runs');
-  const keydown = appJs.slice(appJs.indexOf("e.key === 'Escape'"));
-  assert.match(keydown.slice(0, 400), /App\.HeaderMenu\._panel\) return/,
+  const keydown = headerMenuJs.slice(headerMenuJs.indexOf("e.key === 'Escape'"));
+  assert.match(keydown.slice(0, 400), /HeaderMenu\._panel\) return/,
     "the kit's modal stack owns Escape while adopted — double-handling would also close a modal above the drawer");
 });
 
 test('the renamed handle leaves no _sheet references behind', () => {
-  const at = appJs.indexOf('  HeaderMenu: {');
-  assert.ok(at !== -1, 'App.HeaderMenu went missing');
-  assert.ok(!/HeaderMenu\._sheet/.test(appJs),
+  const at = headerMenuJs.indexOf('const HeaderMenu = {');
+  assert.ok(at !== -1, 'the HeaderMenu controller went missing');
+  assert.ok(!/HeaderMenu\._sheet/.test(headerMenuJs),
     'a surviving _sheet reference reads/writes a handle nothing sets any more');
-  assert.match(appJs.slice(at, at + 200), /_panel:\s*null/,
+  assert.match(headerMenuJs.slice(at, at + 200), /_panel:\s*null/,
     'the handle field is declared on HeaderMenu');
+});
+
+// ── The move itself (#1079 chunk B) ────────────────────────────────────
+
+test('the drawer controller lives in the bundle, not in app.js', () => {
+  // What is left in app.js is a FORWARDER — no kit adoption, no listeners, no
+  // presentation state. A second copy of any of that would be a fork of the
+  // module, and forks of this one fail silently (see the header note).
+  for (const gone of ['PlatformUI.panel({', 'platform-panel-adopted',
+    '_dismissWaiters', 'LEGACY_CLOSE_MS', '_navArmedAt =']) {
+    assert.ok(!appJs.includes(gone),
+      `app.js still carries "${gone}" — the drawer's behaviour moved to `
+      + 'frontend/src/features/header/header-menu-controller.js');
+  }
+  assert.match(headerMenuJs, /window\.HeaderMenu = HeaderMenu/,
+    'the publication is what keeps app.js, native-chrome.js, node-pill.js and '
+    + 'wallet-sheet.js working untouched');
+  assert.match(headerMenuJs, /typeof window !== 'undefined'/,
+    'the SSG prerender pass evaluates this module in Node — an unguarded '
+    + 'window write throws the whole build');
+  assert.match(appJs, /open\(\) \{ window\.HeaderMenu\?\.open\(\); \}/,
+    'app.js keeps a forwarder for its own call sites');
+  assert.match(appJs, /return window\.HeaderMenu\s*\n?\s*\?\s*window\.HeaderMenu\.close\(\)/,
+    'close() is awaited by the Node/Wallet sheets — the forwarder must stay thenable');
+});
+
+test('init() is called from the island, not from App.bindEvents()', () => {
+  assert.ok(!/App\.HeaderMenu\.init\(\);/.test(appJs),
+    'binding from bindEvents() would run before hydration adopted #header-menu-panel');
+  assert.match(headerMenuTsx, /window\.HeaderMenu\?\.init\(\)/,
+    'the island owns the wiring now');
+  assert.match(headerMenuJs, /if \(HeaderMenu\._bound\) return/,
+    'a layout effect can run twice (StrictMode, remount) and these listeners '
+    + 'sit on nodes that outlive the component — binding twice double-closes');
+});
+
+test('the theme segments are React state, with no legacy writer left', () => {
+  assert.ok(!/_renderThemeButtons/.test(appJs),
+    'the DOM-writing renderer moved into ThemeControl');
+  assert.ok(!/theme-seg|data-theme-mode|drawer-theme/.test(headerMenuJs),
+    'the controller announces the open instead of writing the segments itself');
+  assert.match(headerMenuJs, /usernode:header-menu-open/,
+    'open() must still make the control re-read Theme.get() — that is what '
+    + 'catches a cross-tab change made while the drawer was closed');
+  assert.match(headerMenuTsx, /useWindowEvent\('usernode:header-menu-open'/);
+  // Hydration equality: the first render must be the shipped markup, which
+  // has no active segment at all.
+  assert.match(headerMenuTsx, /useState<ThemeMode \| null>\(null\)/,
+    'reading Theme.get() during render would mismatch the prerendered markup');
+  assert.match(headerMenuTsx, /setProperty\(\s*\n?\s*'--theme-caret-index'/,
+    'the caret still moves by custom property, written imperatively — a rendered '
+    + 'style attribute would not match the prerender');
 });
 
 test('PlatformUI exposes panel() with the same null-degradation contract', () => {

@@ -103,7 +103,7 @@ function ThemeControl() {
     if (!track || mode === null) return;
     // The caret is moved by writing --theme-caret-index (0|1|2) on the track
     // and letting CSS translate a thirds-width element by index * 100%.
-    // Deliberately NOT an offsetLeft measurement: this runs from the drawer's
+    // Deliberately NOT a pixel measurement: this runs from the drawer's
     // open BEFORE PlatformUI.panel resizes the panel from w-60 to the kit
     // drawer's --un-panel-width, so a pixel read here would be stale the
     // moment the panel presents. Percentages are correct at both widths with

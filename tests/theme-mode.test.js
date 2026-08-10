@@ -169,29 +169,52 @@ test('the selection caret ships exactly once, inside the track', () => {
     'the caret lives inside the segmented track (it positions against it)');
 });
 
-// ── app.js wiring ────────────────────────────────────────────────────────
+// ── The segmented control's wiring ───────────────────────────────────────
+//
+// #1079 chunk B made #header-menu-panel a React island and the theme segments
+// the one genuinely stateful thing inside it: App.HeaderMenu's
+// _renderThemeButtons is now ThemeControl in
+// frontend/src/features/header/header-menu.tsx, and app.js no longer touches
+// the control at all. Same three contracts, read from the component.
 
-test('app.js HeaderMenu wires Theme.get / Theme.set', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
-  assert.match(src, /Theme\.get\(\)/, 'app.js must read Theme.get()');
-  assert.match(src, /Theme\.set\(/, 'app.js must call Theme.set()');
-  assert.match(src, /_renderThemeButtons/, 'app.js must define/use the _renderThemeButtons helper');
+const themeControlSrc = () => fs.readFileSync(
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'header', 'header-menu.tsx'),
+  'utf8',
+);
+
+test('the theme control wires Theme.get / Theme.set', () => {
+  const src = themeControlSrc();
+  assert.match(src, /window\.Theme\?\.get\?\.\(\)/, 'the control must read Theme.get()');
+  assert.match(src, /window\.Theme\?\.set\?\.\(next\)/, 'and call Theme.set()');
+  assert.match(src, /window\.Theme\?\.onChange\?\.\(sync\)/,
+    'a storage/OS-driven change in another tab must re-highlight here too');
+  // The legacy renderer must be gone from BOTH sides, or two owners write the
+  // same nodes — which is the failure the migration rule exists to prevent.
+  const appSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  assert.ok(!/_renderThemeButtons/.test(appSrc),
+    'app.js must not still render the segments');
 });
 
-test('_renderThemeButtons drives the caret through the CSS custom property', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
-  const fn = src.slice(src.indexOf('    _renderThemeButtons()'));
-  assert.ok(fn.length > 0, '_renderThemeButtons located');
-  const body = fn.slice(0, 1200);
-  assert.match(body, /setProperty\('--theme-caret-index'/,
+test('the control drives the caret through the CSS custom property', () => {
+  const src = themeControlSrc();
+  const at = src.indexOf('function ThemeControl()');
+  assert.ok(at !== -1, 'ThemeControl located');
+  const body = src.slice(at, src.indexOf('export function HeaderMenu()', at));
+  assert.match(body, /setProperty\(\s*\n?\s*'--theme-caret-index'/,
     'the caret is positioned by writing --theme-caret-index on the track');
   assert.match(body, /theme-seg-active/,
     'the active segment is marked with a class, not inline utility toggles');
-  // A pixel measurement would be read BEFORE PlatformUI.sheet resizes
-  // the panel on touch, so it would be wrong exactly where the control
-  // is widest. The percentage transform must stay.
+  // A pixel measurement would be read BEFORE PlatformUI.panel resizes the
+  // panel on touch, so it would be wrong exactly where the control is widest.
+  // The percentage transform must stay.
   assert.ok(!/offsetLeft|getBoundingClientRect/.test(body),
     'caret position must not be measured in JS — CSS percentages handle both panel widths');
+  // Hydration equality: the shipped markup has no active segment and no
+  // custom property, so the first render must produce exactly that.
+  assert.match(body, /useState<ThemeMode \| null>\(null\)/,
+    'reading Theme.get() during render would mismatch the prerendered markup');
+  assert.match(body, /if \(!track \|\| mode === null\) return/,
+    'and the caret index must not be written until a mode is actually known');
 });
 
 test('the caret is a CSS transform with a reduced-motion escape hatch', () => {
@@ -208,14 +231,20 @@ test('the caret is a CSS transform with a reduced-motion escape hatch', () => {
 });
 
 test('the theme button click handler does NOT close the drawer', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
-  // Isolate the theme-button click handler region and assert it sets the
-  // mode without the HeaderMenu.close() that every navigation row uses.
-  const setIdx = src.indexOf('Theme.set(');
+  const src = themeControlSrc();
+  // Isolate the theme-button click handler and assert it sets the mode
+  // without the HeaderMenu.close() that every navigation row uses.
+  const setIdx = src.indexOf('window.Theme?.set?.(next)');
   assert.ok(setIdx !== -1, 'Theme.set call not found');
-  const window = src.slice(setIdx, setIdx + 200);
+  const region = src.slice(setIdx, setIdx + 200);
   assert.ok(
-    !window.includes('HeaderMenu.close()'),
+    !region.includes('HeaderMenu.close()'),
     'theme selection must keep the drawer open (no HeaderMenu.close())',
   );
+  // The segments are <button>s, not anchors, so the panel's delegated
+  // a[href] close handler can never see them either.
+  const at = src.indexOf('function ThemeControl()');
+  const body = src.slice(at, src.indexOf('export function HeaderMenu()', at));
+  assert.ok(!/<a\b/.test(body),
+    'an anchor here would be closed by the drawer\'s delegated link handler');
 });

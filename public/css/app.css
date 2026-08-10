@@ -4826,7 +4826,8 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
    - FLOOR: the lead back-button wrapper (`div.w-5.h-7.shrink-0` — the
      one child present in every state of both headers) carries `h-7` =
      28px, which survives the title being display:none. It stays `w-5`:
-     header-layout.js measures it as the title's left side group.
+     frontend/src/features/header/use-header-layout.ts measures it as the
+     title's left side group.
    - CEILING: no direct child of either header may exceed 28px, and the
      children that could grow past it state their height OUTRIGHT rather
      than adding up to it — #app-mode-switch is `h-7` with
@@ -5977,7 +5978,8 @@ body.is-offline #offline-banner {
   background-color: #fef3c7;
   color: #92400e;
 }
-/* darkMode: 'class' — the flag lives on <html> (see theme.js). */
+/* darkMode: 'class' — the flag lives on <html>, put there before first paint
+   by the inline window.Theme module in frontend/src/head.html. */
 .dark body.is-offline #offline-banner {
   background-color: #451a03;
   color: #fcd34d;
