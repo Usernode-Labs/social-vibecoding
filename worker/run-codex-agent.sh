@@ -83,23 +83,27 @@ fi
 # sandbox + approval mode; build needs workspace-write.
 SANDBOX_MODE=$([ "$MODE" = "build" ] && echo workspace-write || echo read-only)
 
-# NOTE: this heredoc is UNQUOTED so we can interpolate the escaped model/
-# base/effort and the computed sandbox mode. There are NO backticks or
-# $(...) in the TOML body itself — command substitution is only used on
-# the interpolation lines' values, which are pre-escaped above.
-cat > "$CODEX_HOME/config.toml" <<EOF
-model_provider = "usernode_openrouter"
-model = "$ESCAPED_MODEL"
-${ESCAPED_EFFORT:+model_reasoning_effort = "$ESCAPED_EFFORT"}
-
-sandbox_mode = "$SANDBOX_MODE"
+# Generate into a private temporary file and atomically replace the previous
+# per-turn config. Keep every static TOML byte in quoted heredocs: an unquoted
+# heredoc performs command substitution, even inside TOML comments. The old
+# writer contained backtick-wrapped command names in a comment, which executed
+# those commands and persisted the complete worker environment (including the
+# OpenRouter key) into config.toml. Dynamic values are emitted separately after
+# TOML escaping so there is no executable shell syntax in the template.
+CONFIG_TMP=$(mktemp "$CODEX_HOME/config.toml.tmp.XXXXXX") \
+  || die "could not create Codex config"
+if ! {
+  printf 'model_provider = "usernode_openrouter"\n'
+  printf 'model = "%s"\n' "$ESCAPED_MODEL"
+  if [ -n "$AGENT_REASONING_EFFORT" ]; then
+    printf 'model_reasoning_effort = "%s"\n' "$ESCAPED_EFFORT"
+  fi
+  printf '\n'
+  printf 'sandbox_mode = "%s"\n' "$SANDBOX_MODE"
+  cat <<'TOML'
 approval_policy = "never"
 
 [shell_environment_policy]
-# Codex itself needs the key for provider authentication, but commands it
-# launches do not. Keeping it out of the command environment prevents an
-# ordinary `printenv`/`env` tool call from echoing the credential into the
-# model transcript or Codex's persistent rollout history.
 exclude = ["OPENROUTER_API_KEY"]
 
 [agents]
@@ -107,10 +111,27 @@ enabled = false
 
 [model_providers.usernode_openrouter]
 name = "OpenRouter"
-base_url = "$ESCAPED_BASE"
+TOML
+  printf 'base_url = "%s"\n' "$ESCAPED_BASE"
+  cat <<'TOML'
 wire_api = "responses"
 env_key = "OPENROUTER_API_KEY"
-EOF
+TOML
+} > "$CONFIG_TMP"; then
+  rm -f "$CONFIG_TMP"
+  die "could not write Codex config"
+fi
+
+# Defense in depth: the provider credential belongs only in this process's
+# environment. Refuse to launch Codex if a future config change ever persists
+# the literal key again.
+if grep -Fq -- "$OPENROUTER_API_KEY" "$CONFIG_TMP"; then
+  rm -f "$CONFIG_TMP"
+  die "refusing Codex config containing the OpenRouter key"
+fi
+chmod 600 "$CONFIG_TMP" || { rm -f "$CONFIG_TMP"; die "could not secure Codex config"; }
+mv -f "$CONFIG_TMP" "$CODEX_HOME/config.toml" \
+  || { rm -f "$CONFIG_TMP"; die "could not install Codex config"; }
 
 # Export the user's key for this process only.
 export OPENROUTER_API_KEY

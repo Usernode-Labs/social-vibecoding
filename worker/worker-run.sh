@@ -78,6 +78,14 @@ if [ ! -f /home/node/.claude.json ]; then
   fi
 fi
 
+# Runtime-contract v5 cleanup: v4's Codex config writer accidentally expanded
+# shell commands from an unquoted heredoc and could persist the per-turn worker
+# environment in this platform-owned file. Codex regenerates config.toml on
+# every turn, so remove the obsolete copy as soon as a fixed worker boots while
+# preserving the neighboring rollout/session history.
+rm -f /home/node/.claude/codex-home/config.toml 2>/dev/null \
+  || echo "__USERNODE_WARN__ failed to remove stale Codex config"
+
 # Seed the Playwright browser config for the in-loop browser. The MCP
 # server has no CLI flag for raw Chromium args, but `--config <file>`
 # accepts a JSON whose browser.launchOptions.args are forwarded to

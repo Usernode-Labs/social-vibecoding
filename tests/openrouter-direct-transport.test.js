@@ -103,9 +103,11 @@ test('runner script points Codex directly at OpenRouter, never a relay', () => {
   const script = fs.readFileSync(path.join(__dirname, '..', 'worker', 'run-codex-agent.sh'), 'utf8');
   // Codex is configured with OpenRouter as base_url and OPENROUTER_API_KEY
   // as the provider env key (direct transport).
-  assert.match(script, /base_url = "\$ESCAPED_BASE"/);
+  assert.match(script, /printf 'base_url = "%s"\\n' "\$ESCAPED_BASE"/);
   assert.match(script, /env_key = "OPENROUTER_API_KEY"/);
   assert.match(script, /OPENROUTER_API_KEY/);
+  assert.match(script, /grep -Fq -- "\$OPENROUTER_API_KEY" "\$CONFIG_TMP"/,
+    'runner refuses to launch if the generated config ever persists the key');
   // No platform relay / proxy token wiring remains.
   assert.ok(!/USERNODE_AGENT_TOKEN/.test(script), 'runner must not use a relay token');
   assert.ok(!/internal\/openrouter/.test(script), 'runner must not point at a platform relay');
