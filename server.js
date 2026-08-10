@@ -3218,6 +3218,24 @@ async function resumeDetachedTurnInner({
   }
   flushProgress();
 
+  // Mirror execInWorker's finally: the exec is over, hand the durable
+  // record to the tail. A journal that detached MID-EXEC leaves active_turn
+  // in 'executing', and every milestone write below requires 'tail_pending'
+  // (mergeTailMilestones) — without this stamp the tail's first
+  // noteTailMilestone throws invalid_turn_transition, the tail aborts with
+  // the turn retained, and the retained-recovery timer replays the whole
+  // tail every minute forever (session 3180: 13+ identical resume attempts,
+  // each re-running the finalize narration). Only the mid-exec case needs
+  // the stamp — an interrupted TAIL is already 'tail_pending' and re-stamping
+  // would clobber its milestone map with the seed. A failed stamp propagates
+  // to the caller's retain/quarantine triage like any other recovery error.
+  if (turnLifecycle.phaseOf(recoveryActiveTurn) === turnLifecycle.PHASE_EXECUTING) {
+    await worker.markTurnTail(sessionId, {
+      sha: result.sha || null,
+      pushOk: result.pushOk === true,
+    }, turnLifecycle.cleanupArgs(recoveryActiveTurn));
+  }
+
   // A recovered missing-thread marker still owns its one fresh attempt.
   // Re-dispatch it before consuming the journal, then make thread + ledger
   // persistence required. Any failure here deliberately escapes BEFORE the
