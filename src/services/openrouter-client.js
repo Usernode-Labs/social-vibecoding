@@ -78,8 +78,8 @@ async function validateKey(apiKey, { baseUrl, origin } = {}) {
 }
 
 // Fetch the user-filtered model catalog (GET /api/v1/models/user).
-// Returns the raw models array; compatibility filtering happens in
-// agent-models.js. Never throws on a single bad model — surfaces a
+// Returns the raw models array; compatibility annotation and cost ordering
+// happen in agent-models.js. Never throws on a single bad model — surfaces a
 // structured error only when the whole call fails.
 async function fetchUserModels(apiKey, { baseUrl, origin } = {}) {
   if (typeof apiKey !== 'string' || !apiKey.trim()) {

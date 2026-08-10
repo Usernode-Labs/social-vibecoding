@@ -82,6 +82,10 @@ test('sanitizeModel converts per-token prices and uses reasoning metadata', () =
   }, compatibility);
   assert.equal(arrayModel.inputPricePerMillion, 0);
   assert.equal(arrayModel.outputPricePerMillion, 2);
+  assert.equal(arrayModel.averagePricePerMillion, 1);
+  assert.equal(arrayModel.costTier, 'low');
+  assert.equal(arrayModel.supportsTools, true);
+  assert.equal(arrayModel.meetsCodexMinimums, true);
   assert.equal(arrayModel.supportsReasoning, true);
   assert.equal(arrayModel.reasoningEfforts, null);
 
@@ -91,6 +95,75 @@ test('sanitizeModel converts per-token prices and uses reasoning metadata', () =
   }, compatibility);
   assert.equal(metadataModel.supportsReasoning, true);
   assert.deepEqual(metadataModel.reasoningEfforts, ['low', 'high']);
+  assert.equal(metadataModel.averagePricePerMillion, null);
+  assert.equal(metadataModel.costTier, 'unknown');
+});
+
+test('catalog exposes every key-visible model and sorts known prices low to high', async (t) => {
+  const originalFetch = openrouterClient.fetchUserModels;
+  openrouterClient.fetchUserModels = async () => [
+    {
+      id: 'vendor/high-limited', name: 'High Limited',
+      pricing: { prompt: '0.00002', completion: '0.00004' },
+      supported_parameters: [], context_length: 8_000,
+    },
+    {
+      id: 'vendor/unknown', name: 'Unknown Price', pricing: {},
+      supported_parameters: ['tools'], context_length: 64_000,
+    },
+    {
+      id: 'vendor/medium-verified', name: 'Medium Verified',
+      pricing: { prompt: '0.000002', completion: '0.000006' },
+      supported_parameters: ['tools', 'reasoning'], context_length: 64_000,
+    },
+    {
+      id: 'vendor/free', name: 'Free',
+      pricing: { prompt: '0', completion: '0' },
+      supported_parameters: ['tools'], context_length: 64_000,
+    },
+    {
+      id: 'vendor/low', name: 'Low',
+      pricing: { prompt: '0.0000001', completion: '0.0000003' },
+      supported_parameters: ['tools'], context_length: 64_000,
+    },
+  ];
+  agentModels.invalidateAll();
+  t.after(() => {
+    openrouterClient.fetchUserModels = originalFetch;
+    agentModels.invalidateAll();
+  });
+
+  const catalog = await agentModels.listOpenRouterModels({
+    pool: {
+      query: async () => ({ rows: [
+        { model_id: 'vendor/medium-verified', status: 'verified', note: 'Known good' },
+        { model_id: 'vendor/high-limited', status: 'blocked', note: 'No coding tools' },
+      ] }),
+    },
+    userId: 'complete-catalog-test-user',
+    credentialRevision: 3,
+    apiKey: 'sk-or-v1-test',
+    config: {
+      openrouterApiBase: 'https://openrouter.ai/api/v1',
+      openrouterOrigin: 'https://usernode.dev',
+      // Regression: the old implementation hid all non-verified models
+      // when this flag was false. It is intentionally ignored now.
+      openrouterExperimentalModels: false,
+    },
+  });
+
+  assert.deepEqual(catalog.models.map((model) => model.id), [
+    'vendor/free',
+    'vendor/low',
+    'vendor/medium-verified',
+    'vendor/high-limited',
+    'vendor/unknown',
+  ]);
+  assert.deepEqual(catalog.models.map((model) => model.costTier), [
+    'free', 'low', 'medium', 'high', 'unknown',
+  ]);
+  assert.equal(catalog.recommendedModelId, 'vendor/medium-verified');
+  assert.equal(catalog.models.find((model) => model.id === 'vendor/high-limited').compatibility, 'blocked');
 });
 
 test('resolveModelPricing preserves the sanitized per-million catalog prices', async (t) => {

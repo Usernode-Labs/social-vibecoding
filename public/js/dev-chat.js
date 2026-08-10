@@ -306,6 +306,48 @@ const DevChat = {
     return `${name} is working — type your next note and tap 💾 to save it for later.`;
   },
 
+  _formatOpenRouterPrice(value) {
+    if (value == null || value === '') return null;
+    const price = Number(value);
+    if (!Number.isFinite(price) || price < 0) return null;
+    if (price === 0) return '$0';
+    const decimals = price < 0.01 ? 4 : price < 10 ? 2 : price < 100 ? 1 : 0;
+    const fixed = price.toFixed(decimals);
+    const compact = fixed.includes('.') ? fixed.replace(/0+$/, '').replace(/\.$/, '') : fixed;
+    return `$${compact}`;
+  },
+
+  _openRouterModelCostSummary(model) {
+    const tier = {
+      free: 'Free',
+      low: 'Low cost',
+      medium: 'Medium cost',
+      high: 'High cost',
+      unknown: 'Price unavailable',
+    }[model?.costTier] || 'Price unavailable';
+    const input = this._formatOpenRouterPrice(model?.inputPricePerMillion);
+    const output = this._formatOpenRouterPrice(model?.outputPricePerMillion);
+    if (!input && !output) return tier;
+    return `${tier} · ${input || '?'} /M input · ${output || '?'} /M output`;
+  },
+
+  _openRouterModelOptionLabel(model) {
+    const compatibility = model?.compatibility === 'verified'
+      ? ' · verified'
+      : (model?.compatibility === 'blocked' ? ' · limited' : ' · unverified');
+    return `${model?.name || model?.id || 'Unknown model'} — ${this._openRouterModelCostSummary(model)}${compatibility}`;
+  },
+
+  _openRouterModelCompatibilitySummary(model) {
+    if (!model) return '';
+    if (model.compatibility === 'verified') return 'Verified with Codex.';
+    if (model.meetsCodexMinimums) {
+      return 'OpenRouter advertises coding-tool support and enough context, but this model is not yet verified with Codex.';
+    }
+    return model.compatibilityNote
+      || 'OpenRouter exposes this model, but it may lack coding tools or enough context; the turn may fail.';
+  },
+
   async _loadCodingAgentChoiceData() {
     const data = {
       defaultBackend: 'claude_code',
@@ -313,6 +355,7 @@ const DevChat = {
       codexAvailable: false,
       credentialConfigured: false,
       models: [],
+      recommendedModelId: null,
       loadError: null,
       catalogError: null,
     };
@@ -352,7 +395,8 @@ const DevChat = {
       const catalog = await modelsRes.json().catch(() => ({}));
       if (!modelsRes.ok) throw new Error(catalog.error || 'Could not load OpenRouter models.');
       data.models = Array.isArray(catalog.models) ? catalog.models : [];
-      if (!data.models.length) data.catalogError = 'No compatible Codex models are available under this key.';
+      data.recommendedModelId = catalog.recommendedModelId || null;
+      if (!data.models.length) data.catalogError = 'No OpenRouter models are available under this key.';
     } catch (err) {
       data.catalogError = err.message || 'Could not load OpenRouter models.';
     }
@@ -371,8 +415,11 @@ const DevChat = {
       selectedBackend = 'claude_code';
     }
     const availableIds = new Set(data.models.map((m) => m.id));
-    let selectedModel = current?.model || savedCodex.model || data.models[0]?.id || '';
-    if (!availableIds.has(selectedModel)) selectedModel = data.models[0]?.id || '';
+    const recommendedModel = availableIds.has(data.recommendedModelId)
+      ? data.recommendedModelId
+      : (data.models.find((m) => m.compatibility === 'verified')?.id || data.models[0]?.id || '');
+    let selectedModel = current?.model || savedCodex.model || recommendedModel;
+    if (!availableIds.has(selectedModel)) selectedModel = recommendedModel;
     let selectedEffort = current?.reasoningEffort || savedCodex.reasoningEffort || '';
 
     const overlay = document.createElement('div');
@@ -402,6 +449,7 @@ const DevChat = {
         <div id="dc-agent-choice-codex-options" class="mt-4 hidden rounded-lg border border-zinc-200 dark:border-zinc-800 p-3">
           <label for="dc-agent-choice-model" class="block text-xs font-medium text-zinc-700 dark:text-zinc-300">OpenRouter model</label>
           <select id="dc-agent-choice-model" class="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500"></select>
+          <p class="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">All models exposed by your OpenRouter key, sorted by average input/output token price. Rates are per 1M tokens; actual spend depends on usage.</p>
           <label for="dc-agent-choice-effort" class="mt-3 block text-xs font-medium text-zinc-700 dark:text-zinc-300">Reasoning effort</label>
           <select id="dc-agent-choice-effort" class="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
             <option value="">Default</option>
@@ -433,10 +481,7 @@ const DevChat = {
     for (const model of data.models) {
       const option = document.createElement('option');
       option.value = model.id;
-      const compatibility = model.compatibility === 'verified'
-        ? ' ✓'
-        : (model.compatibility === 'experimental' ? ' (experimental)' : '');
-      option.textContent = `${model.name || model.id}${compatibility}`;
+      option.textContent = this._openRouterModelOptionLabel(model);
       modelSelect.appendChild(option);
     }
     modelSelect.value = selectedModel;
@@ -482,16 +527,20 @@ const DevChat = {
         return;
       }
       if (!data.models.length) {
-        status.textContent = data.catalogError || 'No compatible Codex models are available under this key.';
+        status.textContent = data.catalogError || 'No OpenRouter models are available under this key.';
         applyButton.disabled = true;
         return;
       }
-      status.textContent = 'Codex coding turns bill directly to your OpenRouter key; Usernode keeps handling orchestration around them.';
+      const model = data.models.find((item) => item.id === selectedModel) || null;
+      const supportsReasoning = model?.supportsReasoning === true;
+      effortSelect.disabled = !supportsReasoning;
+      effortSelect.value = supportsReasoning ? selectedEffort : '';
+      status.textContent = `${this._openRouterModelCostSummary(model)}. ${this._openRouterModelCompatibilitySummary(model)} Codex coding turns bill directly to your OpenRouter key.`;
     };
 
     claudeButton.addEventListener('click', () => { selectedBackend = 'claude_code'; render(); });
     codexButton.addEventListener('click', () => { selectedBackend = 'codex_openrouter'; render(); });
-    modelSelect.addEventListener('change', () => { selectedModel = modelSelect.value; });
+    modelSelect.addEventListener('change', () => { selectedModel = modelSelect.value; render(); });
     effortSelect.addEventListener('change', () => { selectedEffort = effortSelect.value; });
 
     return new Promise((resolve) => {
@@ -525,7 +574,9 @@ const DevChat = {
           backend: selectedBackend,
           model: selectedBackend === 'codex_openrouter' ? modelSelect.value : null,
           reasoningEffort: selectedBackend === 'codex_openrouter'
-            ? (effortSelect.value || null)
+            ? (data.models.find((model) => model.id === modelSelect.value)?.supportsReasoning
+              ? (effortSelect.value || null)
+              : null)
             : null,
         });
       });

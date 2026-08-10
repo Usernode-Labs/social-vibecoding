@@ -340,13 +340,6 @@
       "description": "Optional comma-separated user-id allowlist for Codex via OpenRouter. Leave unset or empty to make the option available to every user; setting ids restricts only Codex and never disables Claude Code."
     },
     {
-      "key": "OPENROUTER_EXPERIMENTAL_MODELS_ENABLED",
-      "group": "AI & coding agents",
-      "required": false,
-      "default": "false",
-      "description": "When true, users may select compatible OpenRouter models that have not yet been marked verified. Blocked models remain unavailable."
-    },
-    {
       "key": "GITHUB_LINK_CLIENT_ID",
       "group": "Chat connectors",
       "required": false,

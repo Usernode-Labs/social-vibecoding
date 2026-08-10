@@ -1,10 +1,12 @@
 'use strict';
 
 // Backend-aware agent model catalog (plan.md §7). For codex_openrouter we
-// surface the user-filtered OpenRouter catalog (only models the user's
-// key/policy can use) with a compatibility overlay (verified /
-// experimental / blocked). For claude_code the legacy allowlist in
-// services/models.js remains authoritative.
+// surface the complete user-filtered OpenRouter catalog (only models the
+// user's key/policy can use) with advisory compatibility metadata. A model
+// being unverified or missing Codex-friendly capabilities must never hide it
+// from its owner: OpenRouter is the availability authority for BYOK models.
+// For claude_code the legacy allowlist in services/models.js remains
+// authoritative.
 //
 // Per-user cache keyed on (user_id, credential_revision) — never shared
 // across users (each key's filtered catalog differs). Short TTL.
@@ -15,8 +17,24 @@ const openrouterClient = require('./openrouter-client');
 const CACHE_TTL_MS = 60_000;
 const cache = new Map();
 
+// OpenRouter's own pricing sort uses the average prompt/completion price.
+// These fixed bands make that same score easier to scan without pretending
+// to predict a whole Codex turn (whose token use varies substantially).
+const LOW_COST_MAX_PER_MILLION = 2;
+const MEDIUM_COST_MAX_PER_MILLION = 10;
+
 function cacheKey(userId, credentialRevision) {
   return `${userId}:${credentialRevision}`;
+}
+
+function supportedParameterList(m) {
+  const params = m?.supported_parameters || m?.parameters || [];
+  return Array.isArray(params) ? params : Object.keys(params);
+}
+
+function hasToolSupport(m) {
+  const params = supportedParameterList(m);
+  return params.includes('tools') || params.includes('tool_choice');
 }
 
 // Static minimums a model must meet to even be "experimental" for Codex.
@@ -25,13 +43,37 @@ function meetsStaticMinimums(m) {
   // OpenRouter documents `supported_parameters` as an ARRAY of strings
   // (e.g. ["tools","tool_choice","reasoning"]), not an object. Handle
   // both shapes defensively (review P2).
-  const params = m.supported_parameters || m.parameters || [];
-  const paramList = Array.isArray(params) ? params : Object.keys(params);
-  const supportsTools = paramList.includes('tools') || paramList.includes('tool_choice');
-  const supportsReasoning = paramList.includes('reasoning');
   // Context length: Codex turns carry large repo context.
   const ctx = m.context_length || m.top_provider?.context_length || 0;
-  return supportsTools && ctx >= 32000;
+  return hasToolSupport(m) && ctx >= 32000;
+}
+
+function pricePerMillion(rawPrice) {
+  if (rawPrice == null || rawPrice === '') return null;
+  const parsed = Number.parseFloat(rawPrice);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed * 1_000_000 : null;
+}
+
+function averageTokenPrice(inputPricePerMillion, outputPricePerMillion) {
+  if (!Number.isFinite(inputPricePerMillion) || !Number.isFinite(outputPricePerMillion)) {
+    return null;
+  }
+  return (inputPricePerMillion + outputPricePerMillion) / 2;
+}
+
+function costTier(averagePricePerMillion) {
+  if (!Number.isFinite(averagePricePerMillion)) return 'unknown';
+  if (averagePricePerMillion === 0) return 'free';
+  if (averagePricePerMillion <= LOW_COST_MAX_PER_MILLION) return 'low';
+  if (averagePricePerMillion <= MEDIUM_COST_MAX_PER_MILLION) return 'medium';
+  return 'high';
+}
+
+function compareByCost(a, b) {
+  const aPrice = Number.isFinite(a.averagePricePerMillion) ? a.averagePricePerMillion : Infinity;
+  const bPrice = Number.isFinite(b.averagePricePerMillion) ? b.averagePricePerMillion : Infinity;
+  if (aPrice !== bPrice) return aPrice - bPrice;
+  return String(a.name || a.id).localeCompare(String(b.name || b.id));
 }
 
 // Sanitize a raw OpenRouter model into the UI-friendly shape.
@@ -45,8 +87,9 @@ function sanitizeModel(m, compatibility) {
   const reasoningEfforts = reasoningMetadata && typeof reasoningMetadata === 'object'
     ? (reasoningMetadata.efforts ?? null)
     : null;
-  const promptPrice = pricing.prompt == null ? null : parseFloat(pricing.prompt) * 1_000_000;
-  const completionPrice = pricing.completion == null ? null : parseFloat(pricing.completion) * 1_000_000;
+  const promptPrice = pricePerMillion(pricing.prompt);
+  const completionPrice = pricePerMillion(pricing.completion);
+  const averagePricePerMillion = averageTokenPrice(promptPrice, completionPrice);
   return {
     id: m.id,
     name: m.name || m.id,
@@ -54,7 +97,10 @@ function sanitizeModel(m, compatibility) {
     maxOutputTokens: m.top_provider?.max_completion_tokens || null,
     inputPricePerMillion: promptPrice,
     outputPricePerMillion: completionPrice,
-    supportsTools: meetsStaticMinimums(m),
+    averagePricePerMillion,
+    costTier: costTier(averagePricePerMillion),
+    supportsTools: hasToolSupport(m),
+    meetsCodexMinimums: meetsStaticMinimums(m),
     supportsReasoning,
     reasoningEfforts,
     compatibility: compatibility.status,
@@ -79,14 +125,19 @@ async function loadCompatibilityOverlay(pool, backend) {
 }
 
 // Default compatibility when no overlay row exists: experimental if it
-// meets the static minimums, otherwise blocked. Operators promote models
-// to "verified" by inserting an overlay row.
+// meets the static minimums, otherwise blocked. This is advisory catalog
+// metadata only; every model returned by OpenRouter remains selectable.
+// Operators promote models to "verified" by inserting an overlay row.
 function defaultCompatibility(m) {
   return meetsStaticMinimums(m) ? { status: 'experimental', note: null } : { status: 'blocked', note: 'Model does not meet Codex requirements (tools / context).' };
 }
 
 async function listOpenRouterModels({ pool, userId, credentialRevision, apiKey, config, forceRefresh }) {
-  if (!apiKey) return { backend: 'codex_openrouter', credentialRevision, models: [] };
+  if (!apiKey) {
+    return {
+      backend: 'codex_openrouter', credentialRevision, recommendedModelId: null, models: [],
+    };
+  }
 
   const key = cacheKey(userId, credentialRevision);
   if (!forceRefresh) {
@@ -103,20 +154,27 @@ async function listOpenRouterModels({ pool, userId, credentialRevision, apiKey, 
   }
 
   const overlay = await loadCompatibilityOverlay(pool, 'codex_openrouter');
-  const experimentalOk = config.openrouterExperimentalModels;
   const models = raw
+    .filter((m) => m && typeof m.id === 'string' && m.id.trim())
     .map((m) => {
       const compat = overlay.get(m.id) || defaultCompatibility(m);
-      if (compat.status === 'blocked') return null;
-      if (compat.status === 'experimental' && !experimentalOk) return null;
       return sanitizeModel(m, compat);
     })
-    .filter(Boolean);
+    .sort(compareByCost);
+
+  // Preserve a known-good first-run choice while leaving the visible list
+  // sorted strictly by price. The UI uses this only when the user has not
+  // already selected a model.
+  const recommended = models.find((m) => m.compatibility === 'verified')
+    || models.find((m) => m.meetsCodexMinimums)
+    || models[0]
+    || null;
 
   const value = {
     backend: 'codex_openrouter',
     credentialRevision,
     refreshedAt: new Date().toISOString(),
+    recommendedModelId: recommended?.id || null,
     models,
   };
   cache.set(key, { value, at: Date.now() });
@@ -152,6 +210,11 @@ function invalidateAll() { cache.clear(); }
 
 module.exports = {
   meetsStaticMinimums,
+  hasToolSupport,
+  pricePerMillion,
+  averageTokenPrice,
+  costTier,
+  compareByCost,
   sanitizeModel,
   defaultCompatibility,
   loadCompatibilityOverlay,

@@ -58,6 +58,7 @@
     _connectors: [],
     _connectorLoadId: 0,
     _githubLink: null,
+    _openRouterModels: [],
 
     // ── Screen state ─────────────────────────────────────────────────────
     _open: false,
@@ -149,10 +150,12 @@
       const orSave = document.getElementById('settings-openrouter-save');
       const orRemove = document.getElementById('settings-openrouter-remove');
       const orSetDefault = document.getElementById('settings-openrouter-set-default');
+      const orModel = document.getElementById('settings-openrouter-model');
       const claudeSetDefault = document.getElementById('settings-claude-set-default');
       if (orSave) orSave.addEventListener('click', () => this._saveOpenRouterKey());
       if (orRemove) orRemove.addEventListener('click', () => this._removeOpenRouterKey());
       if (orSetDefault) orSetDefault.addEventListener('click', () => this._saveOpenRouterDefault());
+      if (orModel) orModel.addEventListener('change', () => this._syncOpenRouterModelDetails());
       if (claudeSetDefault) claudeSetDefault.addEventListener('click', () => this._saveClaudeDefault());
 
       const linkBtn = document.getElementById('wallet-link-btn');
@@ -1785,6 +1788,59 @@
     },
 
     // ── OpenRouter & Codex (BYOK) ───────────────────────────────
+    _formatOpenRouterPrice(value) {
+      if (value == null || value === '') return null;
+      const price = Number(value);
+      if (!Number.isFinite(price) || price < 0) return null;
+      if (price === 0) return '$0';
+      const decimals = price < 0.01 ? 4 : price < 10 ? 2 : price < 100 ? 1 : 0;
+      const fixed = price.toFixed(decimals);
+      const compact = fixed.includes('.') ? fixed.replace(/0+$/, '').replace(/\.$/, '') : fixed;
+      return `$${compact}`;
+    },
+
+    _openRouterModelCostSummary(model) {
+      const tier = {
+        free: 'Free',
+        low: 'Low cost',
+        medium: 'Medium cost',
+        high: 'High cost',
+        unknown: 'Price unavailable',
+      }[model?.costTier] || 'Price unavailable';
+      const input = this._formatOpenRouterPrice(model?.inputPricePerMillion);
+      const output = this._formatOpenRouterPrice(model?.outputPricePerMillion);
+      if (!input && !output) return tier;
+      return `${tier} · ${input || '?'} /M input · ${output || '?'} /M output`;
+    },
+
+    _openRouterModelOptionLabel(model) {
+      const compatibility = model?.compatibility === 'verified'
+        ? ' · verified'
+        : (model?.compatibility === 'blocked' ? ' · limited' : ' · unverified');
+      return `${model?.name || model?.id || 'Unknown model'} — ${this._openRouterModelCostSummary(model)}${compatibility}`;
+    },
+
+    _syncOpenRouterModelDetails() {
+      const select = document.getElementById('settings-openrouter-model');
+      const effort = document.getElementById('settings-openrouter-reasoning');
+      const model = this._openRouterModels.find((item) => item.id === select?.value) || null;
+      if (effort) {
+        effort.disabled = model?.supportsReasoning !== true;
+        if (effort.disabled) effort.value = '';
+      }
+      if (!model) {
+        if (select) select.title = 'Models are sorted by average input/output price. Actual spend depends on token usage.';
+        return;
+      }
+      let compatibility = 'Not yet verified with Codex.';
+      if (model.compatibility === 'verified') compatibility = 'Verified with Codex.';
+      else if (!model.meetsCodexMinimums) {
+        compatibility = model.compatibilityNote
+          || 'This model may lack coding tools or enough context, so a Codex turn may fail.';
+      }
+      if (select) select.title = `${this._openRouterModelCostSummary(model)}. ${compatibility} Actual spend depends on token usage.`;
+    },
+
     _setOrStatus(text, kind) {
       const el = document.getElementById('settings-openrouter-status');
       if (!el) return;
@@ -1845,27 +1901,34 @@
         const r = await fetch('/api/me/coding-agent/models?backend=codex_openrouter', { credentials: 'same-origin' });
         if (!r.ok) { if (wrap) wrap.classList.add('hidden'); return; }
         const cat = await r.json();
-        const models = cat.models || [];
+        const models = Array.isArray(cat.models) ? cat.models : [];
+        this._openRouterModels = models;
         if (!models.length) { if (wrap) wrap.classList.add('hidden'); return; }
         // Build options with DOM methods, NOT innerHTML (review P2):
         // OpenRouter model IDs/names are untrusted catalog data and
         // could inject markup into the authenticated Settings page.
         sel.innerHTML = '';
         for (const m of models) {
-          const tag = m.compatibility === 'verified' ? ' ✓' : (m.compatibility === 'experimental' ? ' (experimental)' : '');
           const opt = document.createElement('option');
           opt.value = m.id;
-          opt.textContent = m.name + tag;
+          opt.textContent = this._openRouterModelOptionLabel(m);
           sel.appendChild(opt);
         }
+        const recommended = models.some((model) => model.id === cat.recommendedModelId)
+          ? cat.recommendedModelId
+          : (models.find((model) => model.compatibility === 'verified')?.id || models[0].id);
+        sel.value = recommended;
         // Restore the previously-saved model/effort if any.
         const prefs = await (await fetch('/api/me/coding-agent', { credentials: 'same-origin' })).json();
         const saved = prefs.backends?.codex_openrouter;
-        if (saved?.model) sel.value = saved.model;
+        if (saved?.model && models.some((model) => model.id === saved.model)) sel.value = saved.model;
         const eff = document.getElementById('settings-openrouter-reasoning');
-        if (eff && saved?.reasoningEffort) eff.value = saved.reasoningEffort;
+        if (eff) eff.value = saved?.reasoningEffort || '';
+        this._syncOpenRouterModelDetails();
         if (wrap) wrap.classList.remove('hidden');
-      } catch {}
+      } catch {
+        this._openRouterModels = [];
+      }
     },
 
     async _saveOpenRouterKey() {
@@ -1902,6 +1965,7 @@
         if (!r.ok) { this._setOrStatus(j.error || 'Failed to remove key.', 'error'); return; }
         const note = j.defaultReset ? ' Key removed; your default agent was reset to Claude Code.' : '';
         this._setOrStatus('Key removed.' + note, 'ok');
+        this._openRouterModels = [];
         await this._refreshOpenRouter();
       } catch {
         this._setOrStatus('Failed to remove key.', 'error');
@@ -1912,7 +1976,10 @@
 
     async _saveOpenRouterDefault() {
       const model = document.getElementById('settings-openrouter-model')?.value;
-      const reasoningEffort = document.getElementById('settings-openrouter-reasoning')?.value || null;
+      const selected = this._openRouterModels.find((item) => item.id === model) || null;
+      const reasoningEffort = selected?.supportsReasoning
+        ? (document.getElementById('settings-openrouter-reasoning')?.value || null)
+        : null;
       // Preserve the user's existing cost cap across this save (review P3):
       // include it explicitly so an omission can't drop the safety limit,
       // and the server also COALESCEs when omitted.
