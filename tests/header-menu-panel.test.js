@@ -134,7 +134,8 @@ test('.platform-sheet-adopted survives for the surfaces still using it', () => {
     'notifications, the work drawer and the dev console still ride bottom sheets');
   // #1079 chunk B moved the dev console into the React bundle; the sheet
   // idiom came with it (see presentSheetIfTouch in the store).
-  for (const file of ['public/js/notifications.js', 'public/js/work-drawer.js',
+  for (const file of ['frontend/src/features/notifications/notifications.js',
+    'frontend/src/features/work-drawer/work-drawer.js',
     'frontend/src/features/dev-console/store.ts']) {
     const src = fs.readFileSync(path.join(root, file), 'utf8');
     assert.match(src, /platform-sheet-adopted/,

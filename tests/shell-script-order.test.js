@@ -81,6 +81,13 @@ const RETIRED_SCRIPTS = {
   // app-view.js and settings.js call it unguarded), installed at module scope
   // in store.ts rather than from an effect.
   '/js/dev-console.js': 'developer console converted to a React island (chunk B)',
+  // #1079 chunk B — #notifications-panel and #work-drawer-panel became islands
+  // on @/components/ui/anchored-panel, and the two modules moved verbatim into
+  // frontend/src/features/{notifications,work-drawer}/. They still publish
+  // window.Notifications / window.WorkDrawer / window.SESSION_NOTIF_KINDS at
+  // module scope for app.js, app-view.js, dev-chat.js and home.js.
+  '/js/notifications.js': 'bell dropdown converted to a React island (chunk B)',
+  '/js/work-drawer.js': 'header-cog drawer converted to a React island (chunk B)',
 };
 
 test('every legacy script is loaded, in exactly the baseline order', () => {
@@ -106,12 +113,12 @@ test('the shell still loads the expected number of legacy scripts', () => {
   // nav-link.js made 51, #1049's dev-flow-select.js made 52, and #1055's
   // session-options.js made 53. It goes DOWN as conversion chunks retire
   // modules: #1078 chunk A retired offline.js (52), and #1079 chunk B retires
-  // dev-console.js first (51).
+  // dev-console.js (51), then notifications.js and work-drawer.js (49).
   const bodyScripts = scriptsOf(after.slice(after.indexOf('</head>')))
     .filter((s) => s.src && s.src.startsWith('/js/'));
   assert.equal(
-    bodyScripts.length, 51,
-    `expected the 51 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
+    bodyScripts.length, 49,
+    `expected the 49 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
     + 'Adding or removing one is fine, but it also needs a matching SHELL_ASSETS entry in '
     + 'public/sw.js (tests/pwa-shell-wiring.test.js enforces that) — so update this count '
     + 'deliberately rather than loosening the check.',

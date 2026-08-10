@@ -1,5 +1,19 @@
 // Top-right notifications dropdown.
 //
+// MOVED, NOT REWRITTEN (#1079 chunk B). This was public/js/notifications.js —
+// a classic <script> — until #notifications-panel became a React island. The
+// body is unchanged so the rendered rows stay byte-identical (dapp.json
+// selects against them); only the two window publications at the bottom and
+// the init() trigger moved. It is plain .js rather than .ts deliberately: a
+// mechanical retype of 1,300 lines of untyped DOM code would hide the "this is
+// the same module" property that makes the move reviewable, and the tests that
+// load this file in a vm keep working unchanged.
+//
+// The panel's chassis (root, header row, the three leaf containers) is
+// rendered by ./index.tsx. This module owns everything INSIDE those
+// containers — it is now the only writer, since no public/js/** module
+// reaches into them.
+//
 // Lifecycle:
 //  - init() wires the bell button + dropdown controls, does the initial
 //    /api/notifications fetch (so the badge is correct on page load even
@@ -925,7 +939,7 @@ const SESSION_NOTIF_KINDS = new Set([
 function isSessionNotif(n) {
   return !!n && SESSION_NOTIF_KINDS.has(n.kind);
 }
-window.SESSION_NOTIF_KINDS = SESSION_NOTIF_KINDS;
+if (typeof window !== 'undefined') window.SESSION_NOTIF_KINDS = SESSION_NOTIF_KINDS;
 
 // Unread indicator dot. When unread it's a solid violet dot carrying an
 // accessible "Unread" label; when read it's an equal-width invisible
@@ -1334,6 +1348,10 @@ function relativeTime(ts) {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
-window.Notifications = Notifications;
-
-document.addEventListener('DOMContentLoaded', () => Notifications.init());
+// Published exactly where the classic <script> published it: at module
+// evaluation, which for the React entry is still before DOMContentLoaded. The
+// guard is for the SSG prerender pass, which evaluates this module in node.
+// init() is called by the island's layout effect (see ./index.tsx) rather than
+// from a DOMContentLoaded handler — that runs during hydration, i.e. EARLIER
+// than the old handler did, so it still lands before app.js's init.
+if (typeof window !== 'undefined') window.Notifications = Notifications;

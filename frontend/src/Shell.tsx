@@ -47,6 +47,8 @@
 import { Button } from '@/components/ui/button';
 import { OfflineBanner, ViewAsNonAdminBanner } from './features/shell/banners';
 import { DevConsolePanel } from './features/dev-console';
+import { NotificationsPanel } from './features/notifications';
+import { WorkDrawerPanel } from './features/work-drawer';
 import { Dialogs } from './features/dialogs';
 
 export function Shell() {
@@ -3233,76 +3235,14 @@ export function Shell() {
           {/* Tab content renders here */}
         </div>
       </div>
-      {/* Notifications dropdown (top-right anchored). */}
-      <div
-        id="notifications-panel"
-        className="hidden fixed top-14 right-3 z-50 w-80 max-w-[95vw] max-h-[70vh] flex flex-col bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-2xl overflow-hidden"
-      >
-        <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
-          <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
-            Notifications
-          </span>
-          <span className="flex-1">
-          </span>
-          <button
-            id="notifications-mark-all"
-            className="text-xs text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 disabled:opacity-40"
-            disabled={true}
-          >
-            Mark all read
-          </button>
-        </div>
-        {/*
-            Pinned collaborator-invites section: rendered above the grouped
-            notification list, driven by the authoritative pendingInvites
-            payload (see public/js/notifications.js renderInvites).
-        */}
-        <div id="notifications-invites" className="shrink-0 overflow-y-auto max-h-48">
-        </div>
-        <div id="notifications-list" className="flex-1 overflow-y-auto">
-        </div>
-        <div id="notifications-empty" className="hidden px-4 py-6 text-sm text-zinc-500 text-center">
-          You'll get pinged here when someone proposes a change to an app you use.
-        </div>
-      </div>
-      {/*
-          Header-cog "your work" drawer (public/js/work-drawer.js): the
-          viewer's session-related notifications (pinned "Needs attention"
-          section), dev sessions and open proposals. Same chrome/position
-          as the notifications panel above.
-      */}
-      <div
-        id="work-drawer-panel"
-        className="hidden fixed top-14 right-3 z-50 w-80 max-w-[95vw] max-h-[70vh] flex flex-col bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-2xl overflow-hidden"
-      >
-        <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
-          <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
-            Your work
-          </span>
-          <span className="flex-1">
-          </span>
-          <button
-            id="work-drawer-mark-all"
-            className="hidden text-xs text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"
-          >
-            Mark all read
-          </button>
-          <button
-            id="work-drawer-close"
-            className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
-            aria-label="Close"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-        <div id="work-drawer-list" className="flex-1 overflow-y-auto">
-        </div>
-        <div id="work-drawer-empty" className="hidden px-4 py-6 text-sm text-zinc-500 text-center">
-          Nothing in flight — start a dev session from any app's Dev tab.
-        </div>
-      </div>
+      {/* Notifications dropdown (top-right anchored) — an ISLAND since #1079
+          chunk B: features/notifications owns the whole subtree and
+          public/js/notifications.js is retired. */}
+      <NotificationsPanel />
+      {/* Header-cog "your work" drawer — same chrome and position as the
+          notifications panel, same story: features/work-drawer owns it and
+          public/js/work-drawer.js is retired (#1079 chunk B). */}
+      <WorkDrawerPanel />
       {/* Developer console (slide-up panel, anchored to bottom) — an ISLAND
           since #1079 chunk B: features/dev-console owns the whole subtree and
           public/js/dev-console.js is retired. */}
@@ -3535,10 +3475,11 @@ export function Shell() {
       <script src="/js/header-layout.js" />
       {/*
           #138: dev-chat completion alerts (chime + OS notification). Loaded
-          before notifications.js / dev-chat.js, which both reference DevAlerts.
+          before dev-chat.js, which references DevAlerts. The notifications
+          module is in the React bundle now (#1079 chunk B) and runs later
+          still, so it sees DevAlerts too.
       */}
       <script src="/js/dev-alerts.js" />
-      <script src="/js/notifications.js" />
       <script src="/js/social-push.js" />
       {/*
           Webview-safe replacement for window.confirm(). Loaded before any
@@ -3598,13 +3539,6 @@ export function Shell() {
           label proposal merge states from one place.
       */}
       <script src="/js/merge-status.js" />
-      {/*
-          Header-cog "your work" drawer. Loaded after notifications.js
-          (whose shared renderRow / items store it reuses) and after
-          merge-status.js (whose lifecycle helper drives the spin state and
-          the proposal chips).
-      */}
-      <script src="/js/work-drawer.js" />
       <script src="/js/dev-chat.js" />
       {/*
           Kudos widget (button + budget badge) and leaderboard screen.

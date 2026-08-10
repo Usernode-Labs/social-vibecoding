@@ -28,8 +28,11 @@ const vm = require('node:vm');
 
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', 'js', f), 'utf8');
 const MERGE_STATUS_SRC = read('merge-status.js');
-const WORK_DRAWER_SRC = read('work-drawer.js');
-const NOTIFICATIONS_SRC = read('notifications.js');
+// #1079 chunk B moved this module into the React bundle (it is the same
+// file — see the note at the top of it); only the path changed here.
+const FEATURES = path.join(__dirname, '..', 'frontend', 'src', 'features');
+const WORK_DRAWER_SRC = fs.readFileSync(path.join(FEATURES, 'work-drawer', 'work-drawer.js'), 'utf8');
+const NOTIFICATIONS_SRC = fs.readFileSync(path.join(FEATURES, 'notifications', 'notifications.js'), 'utf8');
 // #1038: the live working-state store the cog now reads through.
 const SESSION_STATE_SRC = read('session-state.js');
 

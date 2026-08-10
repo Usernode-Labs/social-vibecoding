@@ -63,7 +63,7 @@ const Home = {
     try {
       // The viewer's own proposals / active sessions used to ride along
       // here as two strips at the top of the grid; both moved into the
-      // header cog's drawer (public/js/work-drawer.js), which owns those
+      // header cog's drawer (frontend/src/features/work-drawer/work-drawer.js), which owns those
       // fetches now.
       // ?demo=1 rides on /api/apps: staging injects the icon-demo
       // tiles there (routes/apps.js demoIconApps). No-op in production.
@@ -1166,8 +1166,8 @@ const Home = {
 
   // The "Your proposals" / "Your active sessions" strips that used to
   // render here (#194) moved into the header cog's drawer — see
-  // public/js/work-drawer.js, which owns their fetches, rendering and
-  // busy-state polling now.
+  // frontend/src/features/work-drawer/work-drawer.js, which owns their
+  // fetches, rendering and busy-state polling now.
 
   // Pill builder for an app's status/activity flags, rendered ONLY in
   // the hamburger menu's build-info header now — the card face

@@ -3677,7 +3677,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 
 /* ── Header cog ("your work" drawer button) ─────────────── */
 /* Spins while the viewer has work in flight (an AI turn running, or a
-   proposal merging / resolving / running checks — see work-drawer.js
+   proposal merging / resolving / running checks — see frontend/src/features/work-drawer/work-drawer.js
    isWorking). A gear glyph is rotationally symmetric enough that a fast
    spin reads as flicker, so it turns SLOWLY and shifts to the accent
    color — the color carries the state even where the rotation is

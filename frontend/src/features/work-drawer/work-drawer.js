@@ -1,5 +1,10 @@
 // Header cog — the "your work" drawer.
 //
+// MOVED, NOT REWRITTEN (#1079 chunk B) — see the matching note at the top of
+// ../notifications/notifications.js. This was public/js/work-drawer.js; the
+// body is unchanged, the panel chassis is now rendered by ./index.tsx, and
+// init() is called from that island instead of on DOMContentLoaded.
+//
 // The home screen's "Your proposals" / "Your active sessions" strips
 // moved here: a cog button in the header (left of the notifications
 // bell) that spins while the machine is doing something for the viewer
@@ -545,8 +550,8 @@ function wdRelativeTime(input) {
   return `${Math.floor(seconds / (86400 * 365))}y ago`;
 }
 
+// Published at module evaluation — for the React entry that is still before
+// DOMContentLoaded, exactly where the classic <script> published it. init() is
+// called by the island's layout effect (see ./index.tsx) instead of from a
+// DOMContentLoaded handler, which runs earlier still.
 if (typeof window !== 'undefined') window.WorkDrawer = WorkDrawer;
-
-if (typeof document !== 'undefined' && document.addEventListener) {
-  document.addEventListener('DOMContentLoaded', () => WorkDrawer.init());
-}
