@@ -475,7 +475,26 @@ const AppView = {
       // It also picks the trigger out of the ACTIVE column: below 640px the
       // other three are display:none, and a menu anchored to a hidden card
       // lands in the corner beside nothing.
+      //
+      // `&card=<kind>` or `&card=<kind>:<id>` names WHICH card's menu to
+      // open, using the same key `_cardRailHtml` stamps (`session:`,
+      // `proposal:`, `issue:`, `gov:`, `merged:`). Card kinds now offer
+      // genuinely different rows — a session's "Share chat" / "Open public
+      // discussion" exist nowhere else, and since those actions came off the
+      // card face the menu is the only place they are visible at all — so
+      // "tap the first trigger on the board" can no longer reach all of it.
+      // Whether a session offers "Share chat" or "Chat shared — stop
+      // sharing" depends on the row, hence the optional id.
+      // Parsed against a fixed grammar rather than used as a selector: this
+      // stays a named UI state, not a query-string-injected querySelector.
       if (shot === 'card-menu') {
+        const asked = /^(session|proposal|issue|gov|merged)(:\d+)?$/.exec(
+          new URLSearchParams(location.search).get('card') || ''
+        );
+        const kind = asked ? asked[1] : null;
+        const want = kind
+          ? (asked[2] ? `[data-card-menu="${asked[0]}"]` : `[data-card-menu^="${kind}:"]`)
+          : '[data-card-menu]';
         let tries = 0;
         const tick = setInterval(() => {
           // Retries only until the board has cards to tap — an open menu now
@@ -487,11 +506,16 @@ const AppView = {
             clearInterval(tick);
             return;
           }
-          // Scoped to the ACTIVE column: below 640px the other three are
-          // display:none, and a menu anchored to a hidden card lands in the
-          // corner beside nothing.
-          const scope = document.querySelector('.dev-kanban-col-active') || document.getElementById('dev-body');
-          scope?.querySelector('[data-card-menu]')?.click();
+          // Unnamed: scoped to the ACTIVE column, because below 640px the
+          // other three are display:none and a menu anchored to a hidden
+          // card lands in the corner beside nothing. NAMED: the whole board,
+          // since the card being asked for sits in whichever column owns it
+          // (sessions are always In progress) and pinning the request to the
+          // active column would just never match.
+          const scope = kind
+            ? document.getElementById('dev-body')
+            : (document.querySelector('.dev-kanban-col-active') || document.getElementById('dev-body'));
+          scope?.querySelector(want)?.click();
         }, 300);
       }
       if (shot === 'preview-loading' || shot === 'preview-rebuilding') {
@@ -1702,6 +1726,18 @@ const AppView = {
 
   async _renderTopicSubView(content, ref) {
     AppView._devTopic = { kind: ref.kind, id: ref.id };
+    // Arriving at a SESSION topic opens its shared transcript. The
+    // "Read chat" pill on the shared-session card used to set
+    // _transcriptOpen on its way here; that pill is gone (the card is
+    // one tap target now), so landing on this page IS the read-the-chat
+    // gesture and nothing else would ever set the flag. Here rather than
+    // in openTopic() because a deep link / reload reaches this view
+    // without going through openTopic — and once per navigation rather
+    // than per paint, so a reader who collapses the section (which nulls
+    // the flag) doesn't have it spring back open on the next WS repaint.
+    // A no-op when the owner hasn't published the chat:
+    // _transcriptSectionHtml renders nothing at all in that case.
+    if (ref.kind === 'session') AppView._transcriptOpen = ref.id;
     // #363: only the back bar is pinned here. The topic card/body no longer
     // sits in its own capped, separately scrolling box — it's painted into the
     // mounted thread's in-scroll header slot (#gc-thread-head) so the header

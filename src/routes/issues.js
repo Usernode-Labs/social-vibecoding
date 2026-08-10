@@ -1271,8 +1271,17 @@ function issueRoutes(config) {
         // by the viewer — only where no real creator resolved — so the
         // affordance is reviewable. Saving still fails (no real GitHub
         // issue behind the mock); purely visual. No-op in production.
+        //
+        // "No real creator resolved" has to include the mock's OWN author
+        // sentinel: stagingMockIssues stamps every row `user:
+        // 'staging-tester'`, and the enrichment above promotes that to
+        // created_by_username as a GitHub login — so the `!created_by_username`
+        // guard never fired and the pencil never rendered. Only the sentinel
+        // is treated as unresolved; a genuinely prod-cloned row that happens
+        // to be numbered 900008 keeps its real author.
         for (const issue of issues) {
-          if (issue.number === 900008 && !issue.created_by_username) {
+          if (issue.number === 900008
+            && (!issue.created_by_username || issue.created_by_username === 'staging-tester')) {
             issue.created_by_username = req.user.username;
           }
         }

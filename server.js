@@ -3122,15 +3122,31 @@ function startSessionAutoPauseSweeper(config) {
     // in-process window including the post-exec PR/staging tail — the
     // bare isInFlight check used to miss that tail and paused sessions
     // mid-wrap-up (sessions 2391/2386).
+    //
+    // STAGING ONLY: the `staging-fixture/*` sessions are exempt. They are
+    // seeded 'active' by migrate.js because the states they exist to show —
+    // the wrap-up quick-reply pills, the "Propose to group" button on the
+    // changes-ready card, the starter suggestions on an empty session —
+    // render on an ACTIVE session and on nothing else. Their seed comment
+    // stamps `last_activity_at = NOW()` to survive the first sweep, but that
+    // only buys one auto-pause window: five minutes after a deploy every one
+    // of them flips to 'paused' and a dozen dapp.json checks start asserting
+    // against a screen that can no longer paint what they name. Nobody is
+    // holding a worker for them (they were never dispatched), so exempting
+    // them costs no capacity. The predicate is the branch prefix migrate.js
+    // seeds them under, and it is gated on USERNODE_ENV so production's
+    // sweep is byte-for-byte what it was.
+    const exemptFixtures = process.env.USERNODE_ENV === 'staging';
     try {
       const { rows } = await pool.query(
         `SELECT id FROM chat_sessions
          WHERE status = 'active'
            AND active_turn IS NULL
            AND last_activity_at < NOW() - make_interval(secs => $1::double precision / 1000.0)
+           AND NOT ($2::boolean AND COALESCE(branch_name, '') LIKE 'staging-fixture/%')
          ORDER BY last_activity_at ASC
          LIMIT 50`,
-        [config.sessionAutopauseIdleMs]
+        [config.sessionAutopauseIdleMs, exemptFixtures]
       );
       for (const row of rows) {
         if (activeWorkersSvc.isSessionBusy(row.id)) continue;

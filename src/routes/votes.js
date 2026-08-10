@@ -338,7 +338,11 @@ function stagingMockProposals(viewer) {
       checks_checked_at: hoursAgo(0.02),
     },
     {
-      ...mk(9000023, 900123,
+      // 9000026, not 9000023: the "at least N approvals" fixture further
+      // down already owns 9000023, and a duplicate id meant this row won the
+      // render — an approvals proposal that permanently showed
+      // "Checks running…" instead of its approvals pill.
+      ...mk(9000026, 900126,
         '[Mock] Checks-phase test: running the automated tests against the preview',
         0.06, 1, 0, 0, { required: 2, windowEndsAt: hoursAhead(70) }),
       check_state: 'pending',
