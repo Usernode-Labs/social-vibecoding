@@ -1580,6 +1580,24 @@
       "expectSelector": "#admin-topo-se-season-filter"
     },
     {
+      "name": "Admin SQL console lists platform tables, not just the topochain ones",
+      "path": "/#admin/seasons/sql-console",
+      "expectSelector": "#admin-topo-sql-schema button[data-table]",
+      "expectText": "chat_sessions"
+    },
+    {
+      "name": "Admin SQL console schema browser has a filter and a table count for the full schema",
+      "path": "/#admin/seasons/sql-console",
+      "expectSelector": "#admin-topo-sql-schema-filter",
+      "expectText": "Every table in the app database"
+    },
+    {
+      "name": "Admin SQL console reports how many tables the schema browser holds",
+      "path": "/#admin/seasons/sql-console",
+      "expectSelector": "#admin-topo-sql-schema-count",
+      "expectText": "tables"
+    },
+    {
       "name": "Native kit: pull-to-refresh builds its clipped puck layer (the puck hangs below the header, never over it)",
       "path": "/usernode-native/v1/demo.html?un-platform=ios",
       "expectSelector": ".un-ptr-layer > .un-ptr-puck"

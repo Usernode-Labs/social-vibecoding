@@ -3531,7 +3531,16 @@ const AdminTopochain = {
   })}
           ${AdminTopochain._panel({
     title: 'Schema',
-    body: `<div id="admin-topo-sql-schema" class="space-y-1 max-h-96 overflow-y-auto">${AdminTopochain._skeleton(3)}</div>`,
+    subtitle: 'Every table in the app database. Click one to draft a SELECT.',
+    // The list covers the whole schema now (~90 tables, not the original
+    // 20 topochain ones), so a filter box is the difference between a
+    // browsable panel and a scroll. Filtering is client-side over the
+    // already-fetched schema — no request per keystroke.
+    body: `
+              <input id="admin-topo-sql-schema-filter" type="search" placeholder="Filter tables&hellip;"
+                aria-label="Filter tables" autocomplete="off" class="${FIELD_CLS} mb-2">
+              <p id="admin-topo-sql-schema-count" class="mb-1 text-xs text-zinc-500" role="status"></p>
+              <div id="admin-topo-sql-schema" class="space-y-1 max-h-96 overflow-y-auto">${AdminTopochain._skeleton(3)}</div>`,
   })}
         </div>
       </div>`;
@@ -3559,17 +3568,55 @@ const AdminTopochain = {
     const { ok, data } = await AdminTopochain.fetchJson('/api/v4/admin/sql-query/schema');
     const host = document.getElementById('admin-topo-sql-schema');
     if (!host) return;
-    const esc = AdminTopochain.esc;
     if (!ok || !data?.success) { host.innerHTML = '<p class="text-xs text-zinc-500">Unavailable.</p>'; return; }
+    // Server order is already alphabetical across the whole schema
+    // (db-console-scope.js sorts it); don't re-sort, just render.
     AdminTopochain._sql.schema = data.data;
-    host.innerHTML = data.data.map((t, i) => `
+    AdminTopochain._renderSqlSchemaList('');
+    const filter = document.getElementById('admin-topo-sql-schema-filter');
+    if (filter) {
+      filter.addEventListener('input', () => AdminTopochain._renderSqlSchemaList(filter.value));
+    }
+  },
+
+  // Renders (or re-renders) the schema list, optionally narrowed to
+  // tables whose name contains `term`. Indexes into `_sql.schema` are
+  // kept as the button's `data-table` so the click handler never has to
+  // re-resolve a name against the filtered view.
+  _renderSqlSchemaList(term) {
+    const host = document.getElementById('admin-topo-sql-schema');
+    if (!host) return;
+    const esc = AdminTopochain.esc;
+    const all = AdminTopochain._sql.schema || [];
+    const needle = String(term || '').trim().toLowerCase();
+    const shown = all
+      .map((t, i) => ({ t, i }))
+      .filter(({ t }) => !needle || t.name.toLowerCase().includes(needle));
+
+    const count = document.getElementById('admin-topo-sql-schema-count');
+    if (count) {
+      count.textContent = needle
+        ? `${shown.length} of ${all.length} tables`
+        : `${all.length} tables`;
+    }
+
+    if (!shown.length) {
+      host.innerHTML = '<p class="text-xs text-zinc-500">No table matches that filter.</p>';
+      return;
+    }
+    host.innerHTML = shown.map(({ t, i }) => `
       <button data-table="${i}" type="button" title="${esc(t.comment || '')}"
-        class="${BTN.sidebar} font-mono">${esc(t.name)}</button>`).join('');
+        class="${BTN.sidebar} font-mono justify-between gap-2">
+        <span class="truncate">${esc(t.name)}</span>
+        <span class="shrink-0 text-zinc-400 dark:text-zinc-500">${t.columns.length}</span>
+      </button>`).join('');
     host.querySelectorAll('[data-table]').forEach((b) => b.addEventListener('click', () => {
       const t = AdminTopochain._sql.schema[parseInt(b.dataset.table, 10)];
       // Never `SELECT *` — the console rejects bare wildcards; list the
       // table's own columns explicitly instead so the inserted query is
-      // guaranteed to pass validation as-is.
+      // guaranteed to pass validation as-is. `t.columns` is already
+      // redaction-filtered server-side, so a credential column is never
+      // in the drafted query either.
       const cols = t.columns.map((c) => c.name).join(', ');
       document.getElementById('admin-topo-sql-query').value = `SELECT ${cols} FROM ${t.name} LIMIT 100`;
     }));
