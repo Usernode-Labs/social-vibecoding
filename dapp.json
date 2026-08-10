@@ -1708,10 +1708,10 @@
       "expectText": "resets Monday 00:00 UTC"
     },
     {
-      "name": "Out of daily credits: the chat offers all three ways to keep building (#967)",
+      "name": "Out of daily credits: the chat offers all four ways to keep building (#967, #1049)",
       "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
       "expectSelector": "[data-credits-card] [data-credits-hash=\"#settings/connectors\"]",
-      "expectText": "Three ways to keep building right now"
+      "expectText": "Four ways to keep building right now"
     },
     {
       "name": "Settings has a Claude & ChatGPT connectors section with the connector URL (#967)",

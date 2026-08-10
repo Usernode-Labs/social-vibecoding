@@ -402,12 +402,15 @@ test('staging seeds a layout for every capture identity', () => {
   assert.match(seed, /ON CONFLICT DO NOTHING/);
 });
 
-test('staging home fixtures use distinct app ids and are visible to capture viewers', () => {
+test('staging home fixtures are slug-keyed and visible to capture viewers', () => {
   const migrate = read('src/db/migrate.js');
-  assert.match(migrate, /VALUES \(900044, 'Staging demo failed app'/);
-  assert.match(migrate, /\(900040, 'Staging demo Chess Arena'/);
   assert.match(migrate, /seedStagingFailedApp\(pool, config\)/);
   assert.match(migrate, /seedStagingForkLineage\(pool, config\)/);
+  assert.match(migrate, /ON CONFLICT \(slug\) DO UPDATE/,
+    'fixture slugs, not collision-prone cloned ids, are the stable key');
   assert.match(migrate, /SELECT id, \$1, 2 FROM apps WHERE slug = 'staging-demo-failed-app'/);
-  assert.match(migrate, /VALUES \(900031, \$1, 1\)/);
+  assert.match(migrate, /SELECT id, \$1, 1 FROM apps WHERE slug = 'staging-demo-fork'/);
+  assert.match(migrate, /SELECT id, \$1, 0 FROM apps WHERE slug = 'staging-demo-chess-arena'/);
+  assert.match(migrate, /SET hidden = FALSE, sort_order = EXCLUDED\.sort_order/,
+    'a stale hidden preference cannot suppress a deterministic capture fixture');
 });

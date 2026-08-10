@@ -29,3 +29,9 @@ test('declared checks do not require removed All Apps UI or write access from th
   assert.equal(names.has('All Apps tiles carry the drag-to-add grab cursor (#746)'), false);
   assert.equal(names.has("Dev '+' menu shows Proposal approvals on the self-app (#646)"), false);
 });
+
+test('the out-of-credits check follows the four-route external-agent UI', () => {
+  const check = dapp.tests.find((entry) => entry.name.startsWith('Out of daily credits:'));
+  assert.ok(check);
+  assert.equal(check.expectText, 'Four ways to keep building right now');
+});

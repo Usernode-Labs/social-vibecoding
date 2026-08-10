@@ -110,6 +110,13 @@ test('seedStagingTopochain is defined with the (pool, config) signature', () => 
   assert.match(src, /async function seedStagingTopochain\(pool, config\)/);
 });
 
+test('the Android inactive rule is applied before the fallible fixture block', () => {
+  const updateAt = body.indexOf("WHERE os = 'android'");
+  const usersAt = body.indexOf('// ─── Users');
+  assert.ok(updateAt > -1 && usersAt > -1 && updateAt < usersAt,
+    'a later fixture collision must not suppress the deterministic admin warning');
+});
+
 test('seedStagingTopochain is a strict no-op outside staging (gate is the first statement)', () => {
   const afterSignature = body.slice(body.indexOf(') {') + 3);
   const firstStatement = afterSignature.split('\n').find((l) => l.trim().length > 0);
