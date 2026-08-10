@@ -26,6 +26,10 @@ const appJs = read('public/js/app.js');
 // #1079 chunk B moved both modules into the React bundle; same files.
 const nodePillJs = read('frontend/src/features/header/node-pill.js');
 const walletSheetJs = read('frontend/src/features/header/wallet-sheet.js');
+// …and moved App.HeaderMenu itself, beside the markup it drives. app.js keeps
+// a forwarder, so its own call sites below are unchanged; the drawer's
+// behaviour is asserted against the module that owns it now.
+const headerMenuJs = read('frontend/src/features/header/header-menu-controller.js');
 const dapp = JSON.parse(read('dapp.json'));
 
 // The App._entryTransition body.
@@ -35,20 +39,20 @@ function entryTransition() {
   return appJs.slice(at, appJs.indexOf('\n  },', at));
 }
 
-// The HeaderMenu object, up to the pull-to-refresh block after it.
+// The HeaderMenu object, up to the window publication after it.
 function headerMenu() {
-  const at = appJs.indexOf('  HeaderMenu: {');
-  assert.ok(at !== -1, 'App.HeaderMenu went missing');
-  const end = appJs.indexOf('_wirePullToRefresh()', at);
-  assert.ok(end !== -1, 'could not find the end of App.HeaderMenu');
-  return appJs.slice(at, end);
+  const at = headerMenuJs.indexOf('const HeaderMenu = {');
+  assert.ok(at !== -1, 'the HeaderMenu controller went missing');
+  const end = headerMenuJs.indexOf("typeof window !== 'undefined'", at);
+  assert.ok(end !== -1, 'could not find the end of HeaderMenu');
+  return headerMenuJs.slice(at, end);
 }
 
 function headerMenuFn(signature) {
   const menu = headerMenu();
   const at = menu.indexOf(signature);
-  assert.ok(at !== -1, `App.HeaderMenu.${signature} went missing`);
-  return menu.slice(at, menu.indexOf('\n    },', at));
+  assert.ok(at !== -1, `HeaderMenu.${signature} went missing`);
+  return menu.slice(at, menu.indexOf('\n  },', at));
 }
 
 // ── The transition gate ────────────────────────────────────────────────
