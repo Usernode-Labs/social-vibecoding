@@ -215,6 +215,30 @@ test('PUT writes the whole width in one transaction', async () => {
   assert.equal(tx[tx.length - 1], 'COMMIT', 'a reader never sees a half-written width');
 });
 
+test('PUT serializes concurrent replaces of the same (user, cols)', async () => {
+  // Two racing PUTs — e.g. several freshly-opened tabs each persisting the
+  // same layout repair on load (session 3193's checks run) — interleave the
+  // delete-then-insert under READ COMMITTED: the second DELETE cannot see
+  // the first's uncommitted inserts, and its own inserts then die on
+  // idx_user_home_layout_*. The advisory lock makes them take turns.
+  const { app, calls } = makeApp({}, { user: USER });
+  await put(app, '/api/home-layout', { cols: 5, items: [A('alpha', 0, 0)] });
+  const inTx = [];
+  let open = false;
+  for (const c of calls) {
+    if (/^BEGIN/i.test(c.sql)) open = true;
+    else if (/^(COMMIT|ROLLBACK)/i.test(c.sql)) open = false;
+    else if (open) inTx.push(c);
+  }
+  assert.match(inTx[0].sql, /pg_advisory_xact_lock/,
+    'the per-(user, cols) lock is the first statement inside the transaction');
+  assert.deepEqual(inTx[0].params, [USER.id, 5], 'keyed on user AND width');
+  assert.match(inTx[1].sql, /^DELETE FROM user_home_layout/,
+    'nothing is deleted before the lock is held');
+  // xact-scoped, so an early throw can never leak a held lock.
+  assert.doesNotMatch(ROUTE, /pg_advisory_lock\(/);
+});
+
 // ── PUT: the create widget is never quota-gated ───────────────────────
 
 // The regression guard for the retired "absent for non-creators" rule. The
