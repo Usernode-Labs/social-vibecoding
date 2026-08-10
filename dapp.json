@@ -377,6 +377,13 @@
   ],
   "tests": [
     {
+      "name": "Guest back arrow returns to the app directory (#1028)",
+      "path": "/?shot=anon-back#landing",
+      "expectSelector": "#auth-landing-screen:not(.hidden) #app-viewer.hidden[data-anon-back=\"done\"]",
+      "expectText": "Apps built here",
+      "allowConsoleErrors": true
+    },
+    {
       "name": "Dev board: session cards carry the live working spinner (#1038)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-body [data-session-chip=\"990102\"] .dc-status-spinner-arc, #dev-body [data-shared-session-row=\"990001\"] .dc-status-spinner-arc"
