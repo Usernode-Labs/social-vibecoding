@@ -1,14 +1,18 @@
 // Topochain v4 admin API — D10 `GET /sql-query/schema` (Task 13; SPEC
 // 2895-2912).
 //
-// Also filters out every column in `db-allowlist.js`'s
-// `EXCLUDED_EXPORT_COLUMNS` (`onchain_accounts.secret_key`/
-// `.registration_code`) — not because the schema endpoint returns
-// secret VALUES (it never does; this is metadata only), but because
-// this router's `sql-query/execute` denies queries that reference those
-// columns by name (sql-console.js), so advertising them here would be
-// actively misleading: an admin would see a column in the schema
-// browser that every query against it then gets rejected for touching.
+// SCOPE: every base table in `public`, not just the topochain ones. The
+// list, and the per-table column redactions applied to it, come from
+// `db-console-scope.js` — the same module that decides what the console's
+// Postgres role is granted and what its statement validator accepts, so
+// the schema browser can never advertise a table or column that a query
+// against it is then rejected for touching. See that file's header for
+// why the scope widened and where its deny lists come from.
+//
+// The redaction is not about the values (this endpoint returns metadata
+// only, never a row) — it is about not showing an admin a column, like
+// `users.password` or `onchain_accounts.secret_key`, that they cannot
+// select.
 //
 // SPEC 2912's two findings this fixes:
 //   1. "`estimated_rows` is a lifetime write counter, not a row count" ->
@@ -24,12 +28,7 @@
 //      column is covered by more than one.
 'use strict';
 
-const { QUERYABLE_TABLES, EXCLUDED_EXPORT_COLUMNS } = require('./db-allowlist');
-
-function isExcludedColumn(tableName, columnName) {
-  const excluded = EXCLUDED_EXPORT_COLUMNS[tableName];
-  return !!excluded && excluded.includes(columnName);
-}
+const { loadConsoleScope, isDeniedColumn } = require('./db-console-scope');
 
 // One row per queryable table with its live row estimate + table comment
 // (NULL for tables with no `COMMENT ON TABLE`, which is most of them —
@@ -82,21 +81,29 @@ const COLUMN_INFO_SQL = `
 
 // SPEC 2899-2910 response shape: `{ name, comment, estimated_rows,
 // columns: [{ name, type, nullable, default_value, comment, key_type }] }`,
-// one entry per queryable table, in `QUERYABLE_TABLES`'s fixed order
-// (not whatever order Postgres happens to return rows in) so the
-// response is stable across calls.
-async function getTopochainSchema(pool) {
+// one entry per in-scope table, alphabetically (not whatever order
+// Postgres happens to return rows in) so the response is stable across
+// calls and the now ~90-entry list is scannable in the browser panel.
+//
+// `loadConsoleScope` doubles as the refresh of the scope cache that
+// `sql-console.js`'s synchronous validator reads, which is why the schema
+// fetch — the thing the console does before an admin types a query — is
+// one of the two places that calls it.
+async function getConsoleSchema(pool) {
+  const scope = await loadConsoleScope(pool);
+  const names = scope.map((entry) => entry.table);
+
   const [{ rows: tableRows }, { rows: columnRows }] = await Promise.all([
-    pool.query(TABLE_INFO_SQL, [QUERYABLE_TABLES]),
-    pool.query(COLUMN_INFO_SQL, [QUERYABLE_TABLES]),
+    pool.query(TABLE_INFO_SQL, [names]),
+    pool.query(COLUMN_INFO_SQL, [names]),
   ]);
 
   const tableByName = new Map(tableRows.map((r) => [r.name, r]));
-  const columnsByTable = new Map(QUERYABLE_TABLES.map((t) => [t, []]));
+  const columnsByTable = new Map(names.map((t) => [t, []]));
   for (const row of columnRows) {
     const list = columnsByTable.get(row.table_name);
-    if (!list) continue; // defensive: ignore anything outside the allow-list
-    if (isExcludedColumn(row.table_name, row.column_name)) continue;
+    if (!list) continue; // defensive: ignore anything outside the scope
+    if (isDeniedColumn(row.table_name, row.column_name)) continue;
     list.push({
       name: row.column_name,
       type: row.data_type,
@@ -107,7 +114,7 @@ async function getTopochainSchema(pool) {
     });
   }
 
-  return QUERYABLE_TABLES.map((name) => {
+  return names.map((name) => {
     const info = tableByName.get(name);
     const estimate = info && info.estimated_rows != null ? Number(info.estimated_rows) : 0;
     return {
@@ -119,4 +126,4 @@ async function getTopochainSchema(pool) {
   });
 }
 
-module.exports = { getTopochainSchema, TABLE_INFO_SQL, COLUMN_INFO_SQL };
+module.exports = { getConsoleSchema, TABLE_INFO_SQL, COLUMN_INFO_SQL };
