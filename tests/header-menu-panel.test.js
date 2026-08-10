@@ -132,8 +132,11 @@ test('.platform-panel-adopted fills the drawer instead of capping it', () => {
 test('.platform-sheet-adopted survives for the surfaces still using it', () => {
   assert.ok(appCss.includes('.platform-sheet-adopted {'),
     'notifications, the work drawer and the dev console still ride bottom sheets');
-  for (const file of ['notifications.js', 'work-drawer.js', 'dev-console.js']) {
-    const src = fs.readFileSync(path.join(root, 'public/js', file), 'utf8');
+  // #1079 chunk B moved the dev console into the React bundle; the sheet
+  // idiom came with it (see presentSheetIfTouch in the store).
+  for (const file of ['public/js/notifications.js', 'public/js/work-drawer.js',
+    'frontend/src/features/dev-console/store.ts']) {
+    const src = fs.readFileSync(path.join(root, file), 'utf8');
     assert.match(src, /platform-sheet-adopted/,
       `${file} is expected to keep the sheet idiom (deferred work, not a leftover)`);
   }

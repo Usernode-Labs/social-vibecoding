@@ -133,7 +133,6 @@ const SHELL_ASSETS = [
   '/js/confirm-modal.js',
   '/js/dev-alerts.js',
   '/js/dev-chat.js',
-  '/js/dev-console.js',
   '/js/dev-flow-select.js',
   '/js/dev-host.js',
   '/js/group-chat.js',

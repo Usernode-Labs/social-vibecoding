@@ -46,6 +46,7 @@
 
 import { Button } from '@/components/ui/button';
 import { OfflineBanner, ViewAsNonAdminBanner } from './features/shell/banners';
+import { DevConsolePanel } from './features/dev-console';
 import { Dialogs } from './features/dialogs';
 
 export function Shell() {
@@ -3302,64 +3303,10 @@ export function Shell() {
           Nothing in flight — start a dev session from any app's Dev tab.
         </div>
       </div>
-      {/* Developer console (slide-up panel, anchored to bottom) */}
-      <div
-        id="dev-console-panel"
-        className="hidden fixed left-0 right-0 bottom-0 z-50 flex flex-col bg-zinc-950 border-t border-zinc-700"
-        style={{ height: "40vh", maxHeight: "60vh" }}
-      >
-        <div className="flex items-center gap-3 px-3 py-2 border-b border-zinc-800 shrink-0 text-sm">
-          <span className="font-medium text-zinc-200">
-            Developer console
-          </span>
-          <span id="dev-console-counts" className="text-xs text-zinc-500">
-          </span>
-          <span className="flex-1">
-          </span>
-          <select
-            id="dev-console-filter"
-            className="text-xs bg-zinc-800 border border-zinc-700 rounded px-1 py-0.5 text-zinc-200"
-          >
-            <option value="all">
-              All
-            </option>
-            <option value="error">
-              Errors
-            </option>
-            <option value="warn">
-              Warnings
-            </option>
-            <option value="info">
-              Info
-            </option>
-            <option value="log">
-              Log
-            </option>
-            <option value="debug">
-              Debug
-            </option>
-          </select>
-          <button id="dev-console-clear" className="text-xs text-zinc-400 hover:text-zinc-200">
-            Clear
-          </button>
-          <button id="dev-console-close" className="text-zinc-400 hover:text-zinc-100" aria-label="Close">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-        <div
-          id="dev-console-log"
-          className="flex-1 overflow-y-auto font-mono text-xs leading-relaxed p-2 space-y-0.5"
-        >
-        </div>
-        <div
-          id="dev-console-empty-hint"
-          className="hidden px-3 py-2 text-xs text-zinc-500 border-t border-zinc-800 shrink-0"
-        >
-          No messages yet. If this app was created before dev-console support shipped, ask the coding agent in Dev Chat to "add dev-console forwarding to public/index.html".
-        </div>
-      </div>
+      {/* Developer console (slide-up panel, anchored to bottom) — an ISLAND
+          since #1079 chunk B: features/dev-console owns the whole subtree and
+          public/js/dev-console.js is retired. */}
+      <DevConsolePanel />
       {/* Staging preview (fullscreen overlay) */}
       <div id="staging-overlay" className="hidden fixed inset-0 z-40 bg-zinc-950 flex flex-col">
         {/*
@@ -3586,7 +3533,6 @@ export function Shell() {
       <script src="/js/wallet-sheet.js" />
       <script src="/js/dev-host.js" />
       <script src="/js/header-layout.js" />
-      <script src="/js/dev-console.js" />
       {/*
           #138: dev-chat completion alerts (chime + OS notification). Loaded
           before notifications.js / dev-chat.js, which both reference DevAlerts.

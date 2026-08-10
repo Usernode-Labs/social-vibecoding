@@ -75,6 +75,12 @@ const RETIRED_SCRIPTS = {
   // banners.tsx). window.Offline keeps its exact API for the six legacy call
   // sites that still use it.
   '/js/offline.js': 'offline banner + SW registration converted to React (chunk A)',
+  // #1079 chunk B — the dev-console receiver, its per-app ring buffer and the
+  // whole #dev-console-panel subtree moved into frontend/src/features/
+  // dev-console/. `window.DevConsole` keeps its exact API (app.js,
+  // app-view.js and settings.js call it unguarded), installed at module scope
+  // in store.ts rather than from an effect.
+  '/js/dev-console.js': 'developer console converted to a React island (chunk B)',
 };
 
 test('every legacy script is loaded, in exactly the baseline order', () => {
@@ -99,12 +105,13 @@ test('the shell still loads the expected number of legacy scripts', () => {
   // mail console and credit-options screens brought it to 50, #1036's
   // nav-link.js made 51, #1049's dev-flow-select.js made 52, and #1055's
   // session-options.js made 53. It goes DOWN as conversion chunks retire
-  // modules: #1078 chunk A retired offline.js, so 52.
+  // modules: #1078 chunk A retired offline.js (52), and #1079 chunk B retires
+  // dev-console.js first (51).
   const bodyScripts = scriptsOf(after.slice(after.indexOf('</head>')))
     .filter((s) => s.src && s.src.startsWith('/js/'));
   assert.equal(
-    bodyScripts.length, 52,
-    `expected the 52 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
+    bodyScripts.length, 51,
+    `expected the 51 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
     + 'Adding or removing one is fine, but it also needs a matching SHELL_ASSETS entry in '
     + 'public/sw.js (tests/pwa-shell-wiring.test.js enforces that) — so update this count '
     + 'deliberately rather than loosening the check.',
