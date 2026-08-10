@@ -41,10 +41,10 @@
   <link rel="stylesheet" href="/css/app.css">
   <!-- Tailwind, COMPILED and served by this app (was cdn.tailwindcss.com's
        in-browser JIT plus an inline `tailwind.config` here). The config moved
-       verbatim to tailwind.config.js at the repo root; the build is
-       `npm run build:css` (scripts/build-tailwind.js) and the output is
-       committed, because the runtime image has no devDependencies to compile
-       with.
+       verbatim to tailwind.config.js at the repo root. Dockerfile runs
+       `npm run build:css` in a disposable builder stage for every image and
+       copies only the generated stylesheet into the production runtime. The
+       output is ignored locally and never committed.
 
        POSITION MATTERS — KEEP THIS LINK LAST, after native.css and app.css.
        The Play CDN did NOT inject its <style> up where its <script> tag sat:
