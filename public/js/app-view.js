@@ -12485,6 +12485,16 @@ const AppView = {
     });
   },
 
+  // Drop one frame's memo entry. A frame whose ELEMENT was replaced (the
+  // anonymous landing viewer swaps in a fresh iframe on teardown so the old
+  // document can't push history — see AuthScreens._swapViewerFrame) has a
+  // brand-new contentWindow that never received the insets, and a src-less
+  // iframe still HAS a contentWindow, so broadcastSafeArea's own
+  // "no contentWindow" reset never fires for it.
+  forgetSafeAreaFrame(id) {
+    delete AppView._safeAreaSent[id];
+  },
+
   // rAF-coalesced entry point — everything that can move a frame's rect
   // calls this rather than broadcastSafeArea directly, so a burst of
   // resize/orientation events collapses into one recompute per frame.
