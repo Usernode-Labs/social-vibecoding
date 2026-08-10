@@ -133,6 +133,7 @@ function loadNativeChrome({
     usernode,
     localStorage: { getItem() { return '1'; }, setItem() {} },
     document: {
+      visibilityState: 'visible',
       getElementById() { return null; },
       createElement() { return {}; },
       addEventListener(type, listener) { documentListeners[type] = listener; },
@@ -412,6 +413,54 @@ test('native handoff-latch failure stops before the session exchange',
     assert.equal(loaded.calls.beginSessionHandoff, 1);
     assert.equal(loaded.calls.fetch.length, 0);
     assert.equal(loaded.calls.walletRelayAdmission.at(-1), false);
+  });
+
+test('online recovery retries a closed authenticated handoff', async () => {
+  let attempts = 0;
+  const loaded = loadNativeChrome({
+    fetchImpl: async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        return response({ success: false, error: 'temporarily unavailable' }, {
+          ok: false,
+          status: 503,
+        });
+      }
+      return response({ success: true, token: 'token-7', user: { id: 7 } });
+    },
+  });
+  loaded.sandbox.App.user = { id: 7 };
+
+  await loaded.NativeChrome.runLoginHandoff();
+  assert.equal(loaded.NativeChrome.isSessionAdmitted(), false);
+
+  loaded.dispatchWindow('online');
+  await loaded.NativeChrome._handoffPromise;
+
+  assert.equal(loaded.calls.fetch.length, 2);
+  assert.equal(loaded.NativeChrome.isSessionAdmitted(), true);
+});
+
+test('foreground recovery ignores hidden and already-admitted pages',
+  async () => {
+    const loaded = loadNativeChrome();
+    loaded.sandbox.App.user = { id: 8 };
+    loaded.sandbox.document.visibilityState = 'hidden';
+
+    loaded.dispatchDocument('visibilitychange');
+    await settle();
+    assert.equal(loaded.calls.fetch.length, 0);
+
+    loaded.sandbox.document.visibilityState = 'visible';
+    loaded.dispatchDocument('visibilitychange');
+    await loaded.NativeChrome._handoffPromise;
+    assert.equal(loaded.calls.fetch.length, 1);
+    assert.equal(loaded.NativeChrome.isSessionAdmitted(), true);
+
+    loaded.dispatchDocument('visibilitychange');
+    await settle();
+    assert.equal(loaded.calls.fetch.length, 1,
+      'an admitted page does not exchange its session again');
   });
 
 test('an overlapping A to B login reruns once for the latest web session', async () => {

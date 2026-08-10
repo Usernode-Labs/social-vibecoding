@@ -215,9 +215,11 @@ async function logSchemaApplyBlockers(pool) {
 // A production run of the same query returned zero rows, so this is a silent
 // pass on the real boot; it only ever fires if data drifts into conflict.
 //
-// SCOPE — imported rows only. The invariant PR-import relies on (and the
-// deferred partial UNIQUE index) is `(app_id, pr_number) WHERE source =
-// 'imported'`. NATIVE sessions can legitimately share an (app_id, pr_number)
+// SCOPE — imported rows only, and only LIVE ones (see the status filter
+// below). The invariant PR-import relies on (and any future partial UNIQUE
+// index must encode the same way) is `(app_id, pr_number) WHERE source =
+// 'imported' AND status IN ('promoted','merging','merged')`.
+// NATIVE sessions can legitimately share an (app_id, pr_number)
 // — most concretely, the staging seed fixtures deliberately reuse fake PR
 // numbers across different native fixtures, which a broad audit would (and
 // did) abort staging boot on, the very environment this feature is meant to
@@ -251,10 +253,23 @@ async function auditDuplicatePrSessions(pool) {
     return;
   }
 
+  // STATUS SCOPE — live rows only, mirroring the import guard
+  // (importedPrNumbers in routes/votes.js): "Archived imports are excluded
+  // so a withdrawn import can be re-imported." That re-import is a
+  // documented, supported flow, and it leaves the withdrawn session behind
+  // with its pr_number intact. An audit that counted ALL imported rows
+  // (as this one originally did) turned that legitimate flow into a boot
+  // abort: withdraw #1075 → reopen → re-import created sessions [3193
+  // archived, 3195 merged], and the next deploy's fresh container refused
+  // to boot until the archived row was manually healed — with the fix for
+  // the audit itself stuck behind the very deploy it was blocking. The
+  // invariant PR-import actually relies on is "at most one LIVE session
+  // claims a PR", so that is exactly what we audit.
   const { rows } = await pool.query(
     `SELECT app_id, pr_number, array_agg(id ORDER BY id) AS session_ids, COUNT(*)
        FROM chat_sessions
       WHERE pr_number IS NOT NULL AND source = 'imported'
+        AND status IN ('promoted', 'merging', 'merged')
       GROUP BY app_id, pr_number
      HAVING COUNT(*) > 1`
   );
@@ -10289,5 +10304,5 @@ async function seedStagingPlatformMail(pool) {
 // meant to be called from anywhere else in the app.
 module.exports = {
   migrate, seedStagingTopochain, seedStagingProfileCustomization,
-  seedStagingPlatformMail,
+  seedStagingPlatformMail, auditDuplicatePrSessions,
 };
