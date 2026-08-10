@@ -335,6 +335,139 @@ async function mirrorForkBranch({
   };
 }
 
+// ── The update push ────────────────────────────────────────────────────
+//
+// #1056. The mirror above writes a NEW branch, for work that has no proposal
+// yet. This one advances an EXISTING proposal's branch: the bot-owned
+// `dev/…` ref in the app's repository that a live pull request already points
+// at. Same three properties as the mirror — the attribution gate runs first,
+// the read from the fork is unauthenticated, the only credential is the
+// platform's own — plus one this needs and the mirror does not:
+//
+//   A LEASE. `--force-with-lease=refs/heads/<target>:<expectedRemoteSha>`
+//   makes the push conditional on the branch still pointing where the caller
+//   was told it points. Without it, two agents updating the same proposal
+//   minutes apart would silently discard one of the two, and the votes
+//   cleared for the losing revision would never come back. A failed lease is
+//   `branch_moved` — a refusal the caller can act on, not a lost commit.
+//
+// The fetch is DEEPER than the mirror's `--depth 1`: a lease-checked push
+// must be able to name the objects between the old tip and the new one, and a
+// single-commit fetch cannot. 50 commits covers every real update; a fork
+// that has diverged further falls back to a full fetch rather than failing.
+const UPDATE_FETCH_DEPTH = 50;
+
+async function pushForkBranchToAppBranch({
+  githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
+  targetBranch, expectedRemoteSha, sessionId,
+}) {
+  // THE ATTRIBUTION GATE, unchanged and unrelaxed. This path writes into the
+  // app's own repository with the platform's credentials on behalf of a
+  // proposal that is already up for a vote, so if anything it matters more
+  // here than on the mirror path.
+  const verified = await verifyForkBranch({
+    githubPublic, forkOwner, forkRepo, branch, expectedLogin,
+  });
+  if (!verified.ok) return verified;
+
+  if (!validRef(targetBranch)) {
+    return { ok: false, code: 'invalid_request', message: 'That proposal branch name is not a valid git ref.' };
+  }
+  // The lease is the whole point: refusing to push without one would be a
+  // blind overwrite of a branch under review.
+  if (typeof expectedRemoteSha !== 'string' || !/^[0-9a-f]{40}$/i.test(expectedRemoteSha)) {
+    return {
+      ok: false,
+      code: 'platform_unavailable',
+      message: 'Usernode does not know which commit this proposal is currently at, so it will not move its branch. Try again shortly.',
+      retryable: true,
+    };
+  }
+  const lease = `refs/heads/${targetBranch}:${expectedRemoteSha.toLowerCase()}`;
+
+  let credential;
+  try {
+    credential = await resolveWriteCredential(owner);
+  } catch (err) {
+    log.error('external-agent-head', 'no write credential for update push', { owner, err: err && err.message });
+    return {
+      ok: false,
+      code: 'platform_unavailable',
+      message: 'Usernode cannot write to the app repository right now. Try again shortly.',
+      retryable: true,
+    };
+  }
+
+  try {
+    await withScratchRepo(`update-${sessionId || 0}`, async ({ git }) => {
+      // UNAUTHENTICATED, exactly as the mirror reads: the fork is public and
+      // Usernode holds no credential for the user's GitHub account.
+      const forkUrl = sourceCloneUrl(forkOwner, forkRepo);
+      try {
+        await git(['fetch', '--depth', String(UPDATE_FETCH_DEPTH), '--no-tags', forkUrl, branch]);
+      } catch (err) {
+        // A fork whose branch is more than UPDATE_FETCH_DEPTH commits from
+        // its root cannot be fetched shallowly at that depth in every case
+        // (an unrelated-history fork, a squashed rewrite). Pay for the full
+        // fetch rather than refuse finished work.
+        log.warn('external-agent-head', 'shallow fetch failed — retrying unshallowed', {
+          forkOwner, err: redactToken(err && err.message, credential.token),
+        });
+        await git(['fetch', '--no-tags', forkUrl, branch]);
+      }
+      await git(['push', `--force-with-lease=${lease}`,
+        authenticatedRemote(credential.token, owner, repo),
+        `FETCH_HEAD:refs/heads/${targetBranch}`]);
+    });
+  } catch (err) {
+    // Redacted twice on purpose, once for the classification below and once at
+    // the log call itself: git puts the whole remote URL — token included — in
+    // its error text, and a redaction that is applied at the log line is one a
+    // reader (and tests/external-agent-tasks.js's scrape) can see is there.
+    const raw = err && (err.stderr || err.message);
+    const text = redactToken(raw, credential.token);
+    // "stale info" is git's own words for a lease that no longer holds.
+    // `non-fast-forward` / `fetch first` mean the same thing from the other
+    // direction, and both are the branch having moved rather than a fault.
+    if (/stale info|non-fast-forward|fetch first|rejected/i.test(text)) {
+      log.info('external-agent-head', 'update push refused — the proposal branch moved', {
+        owner, repo, targetBranch, sessionId: sessionId || null,
+      });
+      return {
+        ok: false,
+        code: 'branch_moved',
+        message: `${targetBranch} is no longer at the commit this update was built against — somebody else advanced `
+          + 'this proposal in the meantime. Re-read the proposal, rebase your branch onto its current head and '
+          + 'submit again.',
+        retryable: false,
+      };
+    }
+    log.error('external-agent-head', 'update push failed', {
+      owner,
+      repo,
+      forkOwner,
+      targetBranch,
+      credential: credential.source,
+      err: redactToken(raw, credential.token),
+    });
+    return {
+      ok: false,
+      code: 'platform_unavailable',
+      message: 'Usernode could not push that branch onto the proposal. Try again shortly.',
+      retryable: true,
+    };
+  }
+
+  log.info('external-agent-head', 'advanced a proposal branch from a fork branch', {
+    owner, repo, forkOwner, targetBranch, sessionId: sessionId || null,
+    credential: credential.source,
+  });
+  // No `cleanup()`: unlike the mirror this wrote no new ref, and rolling the
+  // branch back to `expectedRemoteSha` on a later failure would throw away
+  // the commits it just accepted.
+  return { ok: true, headSha: verified.headSha, credential: credential.source };
+}
+
 // Best-effort removal of a branch this module wrote. Never throws: it runs
 // on a path that is already failing, and a leftover branch is a smaller
 // problem than a masked error.
@@ -364,6 +497,7 @@ module.exports = {
   GIT_TIMEOUT_MS,
   MIRROR_BRANCH_PREFIX,
   PATCH_BRANCH_PREFIX,
+  UPDATE_FETCH_DEPTH,
   nonce,
   sameLogin,
   validSegment,
@@ -374,6 +508,7 @@ module.exports = {
   withScratchRepo,
   verifyForkBranch,
   mirrorForkBranch,
+  pushForkBranchToAppBranch,
   deleteBranch,
   redactToken,
 };

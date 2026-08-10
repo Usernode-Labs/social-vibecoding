@@ -1,0 +1,233 @@
+'use strict';
+// Runtime smoke test for worker/run-codex-agent.sh (review P5). Stubs a
+// fake `codex` binary on PATH that emits authentic-shaped JSONL, runs the
+// actual runner script, and asserts: prompt is read from the file (not a
+// dead stdin), the thread id is extracted from thread.started and persists
+// to the terminal result, and a fresh vs resume invocation are both correct.
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { execFileSync, spawnSync } = require('child_process');
+const { classifyResumeJsonl } = require('../worker/classify-codex-resume');
+
+const RUNNER = path.join(__dirname, '..', 'worker', 'run-codex-agent.sh');
+const CLAUDE_RUNNER = path.join(__dirname, '..', 'worker', 'run-cc.sh');
+
+test('worker runtime contract invalidates warm images from before the new runners', () => {
+  const dockerfile = fs.readFileSync(path.join(__dirname, '..', 'worker', 'Dockerfile'), 'utf8');
+  const workerHost = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'worker.js'), 'utf8');
+  assert.match(dockerfile, /COPY classify-codex-resume\.js \/usr\/local\/bin\/classify-codex-resume\.js/);
+
+  const match = workerHost.match(/const WORKER_BOOTSTRAP_ENV_VERSION = '(v\d+)'/);
+  assert.ok(match, 'warm-worker contract version is declared');
+  assert.ok(Number(match[1].slice(1)) >= 4,
+    'v3 containers predate the capability-scoped runners and must be evicted');
+  assert.match(workerHost,
+    /labels\['usernode\.proxy'\] !== WORKER_BOOTSTRAP_ENV_VERSION/,
+    'the warm path compares the persisted container contract label');
+});
+
+function makeEnv(run) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-runner-'));
+  // fake codex on PATH
+  const bin = path.join(dir, 'bin');
+  fs.mkdirSync(bin, { recursive: true });
+  const fake = path.join(bin, 'codex');
+  fs.writeFileSync(fake, run);
+  fs.chmodSync(fake, 0o755);
+  // workspace + prompt
+  const ws = path.join(dir, 'ws');
+  fs.mkdirSync(ws, { recursive: true });
+  const prompt = path.join(dir, 'prompt.txt');
+  fs.writeFileSync(prompt, 'scout prompt');
+  const invokeLog = path.join(dir, 'codex-invocations.log');
+  const env = {
+    INVOKE_LOG: invokeLog,
+    PATH: `${bin}:${process.env.PATH}`,
+    PROMPT_FILE: prompt,
+    BRANCH: 'smoke',
+    MODE: 'scout',
+    WORKER_JWT: 'jwt', SESSION_ID: '1', PLATFORM_URL: 'http://p',
+    OPENROUTER_API_KEY: 'sk-or-v1-test', OPENROUTER_API_BASE: 'https://openrouter.ai/api/v1',
+    AGENT_MODEL: 'openai/gpt-5.3-codex',
+    WORKSPACE_DIR: ws, CODEX_HOME: path.join(dir, 'codex-home'),
+  };
+  return { dir, env };
+}
+
+test('resume classifier accepts only an isolated structural missing-thread error', () => {
+  assert.deepEqual(
+    classifyResumeJsonl('{"type":"error","message":"thread not found"}\n'),
+    { retryFresh: true, reason: 'thread_missing' },
+  );
+  assert.deepEqual(
+    classifyResumeJsonl('{"type":"turn.failed","error":{"message":"local rollout unavailable"}}\n'),
+    { retryFresh: true, reason: 'thread_missing' },
+  );
+
+  const commandOutputCollision = [
+    { type: 'turn.started' },
+    {
+      type: 'item.completed',
+      item: { type: 'command_execution', aggregated_output: 'thread not found' },
+    },
+    { type: 'error', message: '401 Unauthorized' },
+  ].map(JSON.stringify).join('\n');
+  assert.equal(classifyResumeJsonl(commandOutputCollision).retryFresh, false);
+
+  const alreadyResumed = [
+    { type: 'thread.started', thread_id: 'existing-thread' },
+    { type: 'error', message: 'session not found' },
+  ].map(JSON.stringify).join('\n');
+  assert.equal(classifyResumeJsonl(alreadyResumed).retryFresh, false);
+  assert.equal(classifyResumeJsonl('fatal: thread not found\n').retryFresh, false,
+    'unstructured stderr cannot authorize another paid request');
+  const pinnedCliDiagnostic = [
+    'WARNING: proceeding, even though we could not create PATH aliases: temporary test home',
+    'Error: thread/resume: thread/resume failed: no rollout found for thread id 00000000-0000-0000-0000-000000000000 (code -32600)',
+  ].join('\n');
+  assert.equal(classifyResumeJsonl(pinnedCliDiagnostic).retryFresh, true,
+    'the pinned pre-JSON local-rollout diagnostic remains recoverable');
+  assert.equal(classifyResumeJsonl([
+    '{"type":"error","message":"thread not found"}',
+    'Error: 401 Unauthorized',
+  ].join('\n')).retryFresh, false, 'a conflicting raw diagnostic fails closed');
+});
+
+test('runner: fresh scout turn reads prompt, extracts thread id, completes', () => {
+  const fakeCodex = `#!/bin/sh
+# Prove the prompt was delivered: fail if stdin is empty (review P4).
+echo "invocation" >> "$INVOKE_LOG"
+INPUT=$(cat)
+if [ -z "$INPUT" ]; then
+  echo '{"type":"error","message":"No prompt provided via stdin"}'
+  exit 1
+fi
+echo '{"type":"thread.started","thread_id":"smoke-123"}'
+echo '{"type":"turn.started"}'
+echo '{"type":"item.completed","item":{"id":"i1","type":"agent_message","message":"DONE"}}'
+exit 0
+`;
+  const { env } = makeEnv(fakeCodex);
+  const r = spawnSync('sh', [RUNNER], { env, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /codex \(mode scout\)/, 'invokes fresh codex exec');
+  assert.match(r.stdout, /"thread_id":"smoke-123"/, 'streams codex JSONL');
+  assert.match(r.stdout, /agent_thread_id=smoke-123/, 'persists extracted thread id in result');
+  assert.match(r.stdout, /mode=scout agent_backend=codex_openrouter/, 'terminal scout result');
+});
+
+test('runner: resume that fails NOT thread-missing does NOT retry fresh', () => {
+  const fakeCodex = `#!/bin/sh
+while IFS= read -r _line; do :; done
+echo '{"type":"error","message":"401 Unauthorized"}'
+exit 1
+`;
+  const { env } = makeEnv(fakeCodex);
+  env.AGENT_THREAD_ID = 'existing-thread';
+  const r = spawnSync('sh', [RUNNER], { env, encoding: 'utf8' });
+  // Should NOT retry fresh, and should emit a terminal result.
+  assert.match(r.stdout, /codex \(resume existing-thread/, 'invokes codex resume');
+  assert.match(r.stdout, /NOT retrying fresh/, 'does NOT retry fresh on non-thread-missing failure');
+  assert.match(r.stdout, /mode=scout agent_backend=codex_openrouter .* agent_thread_id=/, 'terminal result emitted');
+});
+
+test('runner: resume that IS thread-missing asks the host for a fresh attempt', () => {
+  const fakeCodex = `#!/bin/sh
+echo "invocation" >> "$INVOKE_LOG"
+INPUT=$(cat)
+if [ -z "$INPUT" ]; then exit 1; fi
+echo "Error: thread/resume: thread/resume failed: no rollout found for thread id $AGENT_THREAD_ID (code -32600)" >&2
+exit 1
+`;
+  const { env } = makeEnv(fakeCodex);
+  env.AGENT_THREAD_ID = 'missing-thread';
+  const r = spawnSync('sh', [RUNNER], { env, encoding: 'utf8' });
+  assert.match(r.stdout, /requesting fresh retry/, 'requests a host-managed fresh retry');
+  assert.match(r.stdout, /agent_retry_fresh=1/, 'emits the structured retry signal');
+  // One runner invocation must equal one physical Codex request. The host
+  // creates attempt 2 (and its own ledger row) after parsing the signal.
+  const invocations = fs.readFileSync(env.INVOKE_LOG, 'utf8').trim().split('\n').filter(Boolean);
+  assert.equal(invocations.length, 1);
+});
+
+test('runner: missing-thread text in command output does not request a fresh attempt', () => {
+  const fakeCodex = `#!/bin/sh
+echo "invocation" >> "$INVOKE_LOG"
+while IFS= read -r _line; do :; done
+echo '{"type":"thread.started","thread_id":"existing-thread"}'
+echo '{"type":"turn.started"}'
+echo '{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"thread not found"}}'
+echo '{"type":"error","message":"401 Unauthorized"}'
+exit 1
+`;
+  const { env } = makeEnv(fakeCodex);
+  env.AGENT_THREAD_ID = 'existing-thread';
+  const r = spawnSync('sh', [RUNNER], { env, encoding: 'utf8' });
+
+  assert.match(r.stdout, /NOT retrying fresh/);
+  assert.doesNotMatch(r.stdout, /agent_retry_fresh=1/);
+  const invocations = fs.readFileSync(env.INVOKE_LOG, 'utf8').trim().split('\n').filter(Boolean);
+  assert.equal(invocations.length, 1);
+});
+
+test('runner: exact OpenRouter key is redacted before streamed JSONL', () => {
+  const fakeCodex = `#!/bin/sh
+while IFS= read -r _line; do :; done
+echo "{\"type\":\"thread.started\",\"thread_id\":\"redact-123\"}"
+echo "{\"type\":\"item.completed\",\"item\":{\"type\":\"command_execution\",\"aggregated_output\":\"$OPENROUTER_API_KEY\"}}"
+exit 0
+`;
+  const { env } = makeEnv(fakeCodex);
+  env.OPENROUTER_API_KEY = 'sk-or-v1-literal.with+regex[chars]';
+  const r = spawnSync('sh', [RUNNER], { env, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.stdout, /sk-or-v1-literal/, 'raw key never reaches stdout/journal stream');
+  assert.match(r.stdout, /aggregated_output.*\*\*\*\*/, 'JSONL remains usable with a redaction marker');
+  const config = fs.readFileSync(path.join(env.CODEX_HOME, 'config.toml'), 'utf8');
+  assert.match(config, /\[shell_environment_policy\][\s\S]*exclude = \["OPENROUTER_API_KEY"\]/,
+    'model-launched commands do not inherit the provider credential');
+});
+
+test('Claude runner: scout succeeds without WORKER_JWT, while build still requires it', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-runner-'));
+  const bin = path.join(dir, 'bin');
+  const ws = path.join(dir, 'ws');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.mkdirSync(ws, { recursive: true });
+  const prompt = path.join(dir, 'prompt.txt');
+  fs.writeFileSync(prompt, 'read the repo');
+  fs.writeFileSync(path.join(bin, 'git'), '#!/bin/sh\nexit 1\n');
+  fs.writeFileSync(path.join(bin, 'claude'), `#!/bin/sh
+if [ -n "\${WORKER_JWT:-}" ]; then exit 9; fi
+cat >/dev/null
+echo '{"type":"result","result":"scout ok","session_id":"cc-scout"}'
+exit 0
+`);
+  fs.chmodSync(path.join(bin, 'git'), 0o755);
+  fs.chmodSync(path.join(bin, 'claude'), 0o755);
+  const env = {
+    ...process.env,
+    PATH: `${bin}:${process.env.PATH}`,
+    PROMPT_FILE: prompt,
+    BRANCH: 'smoke',
+    SESSION_ID: '1',
+    PLATFORM_URL: 'http://platform',
+    MODE: 'scout',
+    WORKSPACE_DIR: ws,
+  };
+  delete env.WORKER_JWT;
+
+  const scout = spawnSync('sh', [CLAUDE_RUNNER], { env, encoding: 'utf8' });
+  assert.equal(scout.status, 0, scout.stderr || scout.stdout);
+  assert.match(scout.stdout, /mode=scout/, 'scout reaches its terminal result');
+
+  const build = spawnSync('sh', [CLAUDE_RUNNER], {
+    env: { ...env, MODE: 'build' }, encoding: 'utf8',
+  });
+  assert.notEqual(build.status, 0);
+  assert.match(build.stdout, /WORKER_JWT required for build mode/);
+});

@@ -771,17 +771,19 @@ const Home = {
   // what makes `/?shot=card-menu#apps` land on the browse grid even
   // though home rendered first during boot.
   _shotMenuDone: false,
+  _shotMenuPending: false,
 
   _maybeOpenShotMenu(listEl) {
-    if (Home._shotMenuDone) return;
+    if (Home._shotMenuDone || Home._shotMenuPending) return;
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'card-menu') return;
     if (!listEl || listEl.offsetParent === null) return; // not the visible grid
-    Home._shotMenuDone = true;
+    Home._shotMenuPending = true;
     // Deferred a frame: the grid was written synchronously just above,
     // and the kit's flip/clamp placement needs the button's settled rect.
     requestAnimationFrame(() => {
+      Home._shotMenuPending = false;
       // Prefer the grid's own "…" trigger: a real anchor element is what
       // lets the desktop popover toggle closed on a re-click.
       const btn = listEl.querySelector('.card-menu-btn');
@@ -804,6 +806,10 @@ const Home = {
         }
       }
       if (!slug) return;
+      // The first home paint can legitimately be empty while GET /api/apps
+      // is still in flight. Consume the one-shot only after a real target
+      // exists, so the data-bearing repaint gets another chance.
+      Home._shotMenuDone = true;
       Home.openCardMenu(slug, anchor);
       requestAnimationFrame(() => Home._assertMenuOpaque());
     });

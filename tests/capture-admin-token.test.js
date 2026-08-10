@@ -124,6 +124,29 @@ test('migrate.js seeds usernode-capture-admin as an idempotent view-only admin',
   assert.match(fn, /SELECT id FROM users WHERE username = \$1/);
 });
 
+test('owner-scoped declared-check fixtures resolve the exact capture admin', () => {
+  const src = read('src/db/migrate.js');
+  const helper = src.slice(
+    src.indexOf('async function getStagingCheckViewer'),
+    src.indexOf('// SELF-HOSTING.md')
+  );
+  assert.match(helper, /WHERE username = \$1/);
+  assert.match(helper, /\['usernode-capture-admin'\]/);
+  for (const name of [
+    'seedStagingStartScreenSession',
+    'seedStagingSavedDrafts',
+    'devFlowFixtureContext',
+    'seedStagingCcCohortRuns',
+    'seedStagingQuickReplyFallback',
+    'seedStagingRestartRecoveredPills',
+  ]) {
+    const start = src.indexOf(`async function ${name}`);
+    const next = src.indexOf('\nasync function ', start + 1);
+    const fn = src.slice(start, next < 0 ? src.length : next);
+    assert.match(fn, /getStagingCheckViewer/, `${name} uses the proposal-check identity`);
+  }
+});
+
 // ── 2. Source guards: visuals.js routes testsToken to tests only ────────
 
 test('visuals.js signs test URLs with testsToken and screenshots with screenshotToken', () => {

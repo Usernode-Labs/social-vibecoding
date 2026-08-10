@@ -46,46 +46,70 @@ function isPrivateIp(ip) {
   return false;
 }
 
-function internalAuth(req, res, next) {
-  // IP gate first — if this somehow leaks externally, fail fast before
-  // even parsing the JWT.
-  const ip = clientIp(req);
-  if (!isPrivateIp(ip)) {
-    log.warn('internal-auth', 'Rejected non-private source IP', { ip, path: req.path });
-    return res.status(403).json({ ok: false, code: 'forbidden_ip' });
-  }
+// Accepts one of the given worker purposes. `worker:session` (the general
+// claude_code token) is always allowed for backwards-compat on the legacy
+// push/issues surface; narrow purposes (worker:push, worker:issues-read)
+// are allowed per-route so codex workers never hold a worker:session token
+// (review #2 / #6) yet still reach exactly the endpoints they need.
+function verifier(purposes) {
+  return function internalAuth(req, res, next) {
+    // IP gate first — if this somehow leaks externally, fail fast before
+    // even parsing the JWT.
+    const ip = clientIp(req);
+    if (!isPrivateIp(ip)) {
+      log.warn('internal-auth', 'Rejected non-private source IP', { ip, path: req.path });
+      return res.status(403).json({ ok: false, code: 'forbidden_ip' });
+    }
 
-  const header = req.headers.authorization || '';
-  const m = header.match(/^Bearer (.+)$/);
-  if (!m) {
-    return res.status(401).json({ ok: false, code: 'missing_auth' });
-  }
+    const header = req.headers.authorization || '';
+    const m = header.match(/^Bearer (.+)$/);
+    if (!m) {
+      return res.status(401).json({ ok: false, code: 'missing_auth' });
+    }
 
-  if (!process.env.WORKER_JWT_SECRET) {
-    log.error('internal-auth', 'WORKER_JWT_SECRET not configured');
-    return res.status(500).json({ ok: false, code: 'server_misconfigured' });
-  }
+    if (!process.env.WORKER_JWT_SECRET) {
+      log.error('internal-auth', 'WORKER_JWT_SECRET not configured');
+      return res.status(500).json({ ok: false, code: 'server_misconfigured' });
+    }
 
-  let claims;
-  try {
-    claims = platformJwt.verifyWorkerToken(m[1]);
-  } catch (err) {
-    return res.status(401).json({ ok: false, code: 'bad_token', message: err.message });
-  }
+    const purposeToVerify = purposes.includes(platformJwt.PUR_WORKER) && purposes.length === 1
+      ? platformJwt.PUR_WORKER
+      : null;
+    let claims = null;
+    let lastErr = null;
+    // Verify against each accepted purpose; accept on the first success.
+    for (const purpose of purposes) {
+      try {
+        claims = platformJwt.verifyWorkerPurpose(m[1], purpose);
+        break;
+      } catch (err) {
+        lastErr = err;
+        claims = null;
+      }
+    }
+    if (!claims) {
+      return res.status(401).json({ ok: false, code: 'bad_token', message: (lastErr && lastErr.message) || 'unmatched purpose' });
+    }
+    if (typeof claims.session_id === 'undefined') {
+      return res.status(403).json({ ok: false, code: 'bad_scope' });
+    }
 
-  if (!claims || claims.scope !== platformJwt.PUR_WORKER || typeof claims.session_id === 'undefined') {
-    return res.status(403).json({ ok: false, code: 'bad_scope' });
-  }
-
-  req.workerSession = {
-    sessionId: claims.session_id,
-    // #616: set only on the PROD_DEBUG_JWT minted by
-    // worker.mintProdDebugJwt for eligible turns (admin-owned session on
-    // the self-edit app). The prod-debug routes additionally re-check
-    // eligibility in the DB on every request.
-    prodDebug: claims.prod_debug === true,
+    req.workerSession = {
+      sessionId: claims.session_id,
+      // #616: set only on the PROD_DEBUG_JWT minted by
+      // worker.mintProdDebugJwt for eligible turns (admin-owned session on
+      // the self-edit app). The prod-debug routes additionally re-check
+      // eligibility in the DB on every request.
+      prodDebug: claims.prod_debug === true,
+      purpose: claims.pur || claims.scope,
+    };
+    next();
   };
-  next();
 }
 
-module.exports = { internalAuth };
+// Legacy default — worker:session only (the pre-narrow-token behavior).
+function internalAuth(req, res, next) {
+  verifier([platformJwt.PUR_WORKER])(req, res, next);
+}
+
+module.exports = { internalAuth, internalAuthPurpose: verifier };

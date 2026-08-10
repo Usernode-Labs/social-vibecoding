@@ -2142,7 +2142,7 @@ const AppView = {
         const created = await DevChat.createSession(slug);
         if (created) {
           sessionId = created.id;
-        } else if (mine.length) {
+        } else if (created === null && mine.length) {
           // Cap / capacity / repo error — createSession already explained
           // why. Land in the newest existing chat rather than dead-ending.
           sessionId = mine[0].id;
@@ -6322,7 +6322,7 @@ const AppView = {
   _derivedGovApplying(issue) {
     if (!issue || issue.status !== 'open') return null;
     const ctx = AppView._proposalsCtx || {};
-    if (ctx.locked || issue.contested) {
+    if ((ctx.locked && !issue.demo) || issue.contested) {
       delete AppView._govDueSince[issue.id];
       return null;
     }
@@ -12483,6 +12483,16 @@ const AppView = {
         );
       } catch {}
     });
+  },
+
+  // Drop one frame's memo entry. A frame whose ELEMENT was replaced (the
+  // anonymous landing viewer swaps in a fresh iframe on teardown so the old
+  // document can't push history — see AuthScreens._swapViewerFrame) has a
+  // brand-new contentWindow that never received the insets, and a src-less
+  // iframe still HAS a contentWindow, so broadcastSafeArea's own
+  // "no contentWindow" reset never fires for it.
+  forgetSafeAreaFrame(id) {
+    delete AppView._safeAreaSent[id];
   },
 
   // rAF-coalesced entry point — everything that can move a frame's rect

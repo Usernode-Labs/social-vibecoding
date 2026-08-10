@@ -77,6 +77,8 @@ const DENIED_COLUMNS = {
     'wallet_link_token',
     'wallet_link_expires_at',
     'email_confirmation_token', // topochain (SPEC §6)
+    'password_reset_token_hash', // email password-reset capability
+    'password_reset_expires_at',
     'waitlist_ip',              // topochain (SPEC §6)
     'github_oauth_token_enc',   // verified GitHub link: the user's OAuth token
   ],

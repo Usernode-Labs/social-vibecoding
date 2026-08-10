@@ -530,10 +530,16 @@
 
       const panel = el('div', 'px-4 pb-5');
       panel.appendChild(el('div', 'text-lg font-bold py-3', 'Set up your device'));
+      // iOS: requestPermissions() maps to the notification prompt, and v4
+      // turned iOS block production off — so the block-production pitch is
+      // Android-only, and the iOS copy names what the OS will actually ask.
       panel.appendChild(el('p', 'text-sm text-zinc-600 dark:text-zinc-400 mb-3',
-        'Your node can produce blocks while the app is in the background. ' +
-        'That needs permission to wake your device at exact slot times' +
-        (isAndroid ? ' and freedom from battery optimization.' : '.')));
+        isAndroid
+          ? 'Your node can produce blocks while the app is in the ' +
+            'background. That needs permission to wake your device at ' +
+            'exact slot times and freedom from battery optimization.'
+          : 'Allow notifications so Usernode can alert you about node ' +
+            'and account activity.'));
 
       const statusRow = (label, ok) => {
         const row = el('div', 'flex items-center gap-2 mt-1 text-sm');
@@ -556,14 +562,14 @@
         const alarmOk = !!p.exactAlarmGranted;
         const batteryOk = p.batteryOptDisabled === true;
         body.appendChild(statusRow(
-          isAndroid ? 'Exact alarms' : 'Alarm permissions', alarmOk));
+          isAndroid ? 'Exact alarms' : 'Notifications', alarmOk));
         if (isAndroid) body.appendChild(statusRow('Battery optimization', batteryOk));
 
         const btns = el('div', 'mt-4 space-y-2');
         if (!alarmOk) {
           const b = el('button', 'w-full rounded-lg bg-violet-600 ' +
             'hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white',
-          'Grant permissions');
+          isAndroid ? 'Grant permissions' : 'Allow notifications');
           b.addEventListener('click', async () => {
             b.disabled = true;
             try {

@@ -63,8 +63,8 @@ async function migrate(config) {
   await seedStagingPlatformIssueDrafts(pool, config);
   await seedStagingDemoAppCard(pool);
   await seedStagingLandingDirectory(pool);
-  await seedStagingFailedApp(pool);
-  await seedStagingForkLineage(pool);
+  await seedStagingFailedApp(pool, config);
+  await seedStagingForkLineage(pool, config);
   await seedStagingMembersPanel(pool);
   await seedStagingApproverPanel(pool);
   await seedStagingAppAdminsPanel(pool);
@@ -867,6 +867,28 @@ async function seedCaptureAdminUser(pool) {
     // check routes back to today's non-admin behaviour — never abort boot.
     log.warn('db', 'Capture admin user seed failed', { err: err.message });
   }
+}
+
+// Declared dapp.json checks are authenticated as this exact view-only user
+// (services/visuals.js), not as the first administrator in the database.
+// Owner-scoped staging fixtures must therefore resolve their owner by
+// username: production clones can contain older admins with lower ids, and
+// choosing one of those makes every fixed /dev/sessions/:id check return 404.
+async function getStagingCheckViewer(pool, label) {
+  const { rows } = await pool.query(
+    `SELECT id, username, is_admin
+       FROM users
+      WHERE username = $1
+      LIMIT 1`,
+    ['usernode-capture-admin']
+  );
+  if (!rows.length) {
+    log.warn('db', `${label} skipped: proposal-check viewer missing`, {
+      username: 'usernode-capture-admin',
+    });
+    return null;
+  }
+  return rows[0];
 }
 
 // SELF-HOSTING.md sub-step 2f: ensure a single row in `apps` exists
@@ -2108,17 +2130,8 @@ async function seedStagingStartScreenSession(pool, config) {
     return;
   }
 
-  const { rows: userRows } = await pool.query(
-    `SELECT id, username, is_admin
-       FROM users
-      ORDER BY is_admin DESC, id ASC
-      LIMIT 1`
-  );
-  if (!userRows.length) {
-    log.warn('db', 'Staging start-screen session fixture skipped: no users');
-    return;
-  }
-  const owner = userRows[0];
+  const owner = await getStagingCheckViewer(pool, 'Staging start-screen session fixture');
+  if (!owner) return;
 
   // pr_number stays NULL so the header renders its "New change" state,
   // like a real session before its first build. No chat_session_messages
@@ -2129,7 +2142,7 @@ async function seedStagingStartScreenSession(pool, config) {
      VALUES ($1, $2, $3, 'staging-fixture/start-screen', NULL,
              '[staging fixture] Brand-new session — start screen', 'active',
              NOW() - INTERVAL '2 minutes', NOW() - INTERVAL '2 minutes')
-     ON CONFLICT (id) DO NOTHING`,
+     ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id`,
     [STAGING_START_SCREEN_SESSION_ID, appId, owner.id]
   );
 
@@ -2180,19 +2193,8 @@ async function seedStagingSavedDrafts(pool, config) {
     return;
   }
 
-  // Same first-admin selection as the neighbouring session fixtures, so
-  // GET /api/sessions/990402 (owner-scoped) resolves for the tester.
-  const { rows: userRows } = await pool.query(
-    `SELECT id, username, is_admin
-       FROM users
-      ORDER BY is_admin DESC, id ASC
-      LIMIT 1`
-  );
-  if (!userRows.length) {
-    log.warn('db', 'Staging saved-drafts fixture skipped: no users');
-    return;
-  }
-  const owner = userRows[0];
+  const owner = await getStagingCheckViewer(pool, 'Staging saved-drafts fixture');
+  if (!owner) return;
 
   const { rowCount } = await pool.query(
     `INSERT INTO chat_sessions
@@ -2200,7 +2202,7 @@ async function seedStagingSavedDrafts(pool, config) {
      VALUES ($1, $2, $3, 'staging-fixture/saved-drafts', NULL,
              '[staging fixture] Session with saved drafts', 'active',
              NOW() - INTERVAL '8 minutes', NOW() - INTERVAL '4 minutes')
-     ON CONFLICT (id) DO NOTHING`,
+     ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id`,
     [STAGING_SAVED_DRAFTS_SESSION_ID, appId, owner.id]
   );
 
@@ -2209,7 +2211,7 @@ async function seedStagingSavedDrafts(pool, config) {
     const { rowCount: added } = await pool.query(
       `INSERT INTO chat_session_drafts (session_id, user_id, draft_id, content, saved_at)
        VALUES ($1, $2, $3, $4, NOW() - ($5::int * INTERVAL '1 minute'))
-       ON CONFLICT (session_id, draft_id) DO NOTHING`,
+       ON CONFLICT (session_id, draft_id) DO UPDATE SET user_id = EXCLUDED.user_id`,
       [STAGING_SAVED_DRAFTS_SESSION_ID, owner.id, d.id, d.text, d.minutesAgo]
     );
     drafts += added;
@@ -2252,8 +2254,9 @@ const STAGING_DEV_FLOW_WIZARD_SESSION_ID = 990404;
 const STAGING_DEV_FLOW_BRANCH = 'usernode/staging-fixture-1049';
 const STAGING_DEV_FLOW_BASE_SHA = '0123456789abcdef0123456789abcdef01234567';
 
-// Same self-app + first-admin resolution the sibling session fixtures use,
-// so GET /api/sessions/<id> (owner-scoped) resolves for the tester.
+// Same self-app + proposal-check viewer resolution the sibling session
+// fixtures use, so GET /api/sessions/<id> (owner-scoped) resolves for the
+// identity that actually opens every declared check.
 async function devFlowFixtureContext(pool, config, label) {
   const { rows: appRows } = await pool.query(
     'SELECT id FROM apps WHERE slug = $1',
@@ -2264,17 +2267,8 @@ async function devFlowFixtureContext(pool, config, label) {
     log.warn('db', `${label} skipped: self-app row missing`, { slug: config.selfAppSlug });
     return null;
   }
-  const { rows: userRows } = await pool.query(
-    `SELECT id, username, is_admin
-       FROM users
-      ORDER BY is_admin DESC, id ASC
-      LIMIT 1`
-  );
-  if (!userRows.length) {
-    log.warn('db', `${label} skipped: no users`);
-    return null;
-  }
-  return { appId, owner: userRows[0] };
+  const owner = await getStagingCheckViewer(pool, label);
+  return owner ? { appId, owner } : null;
 }
 
 async function seedStagingDevFlowPicker(pool, config) {
@@ -2289,7 +2283,7 @@ async function seedStagingDevFlowPicker(pool, config) {
      VALUES ($1, $2, $3, 'staging-fixture/dev-flow-picker', NULL,
              '[staging fixture] Pick a development flow', 'active',
              NOW() - INTERVAL '3 minutes', NOW() - INTERVAL '3 minutes')
-     ON CONFLICT (id) DO NOTHING`,
+     ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id`,
     [STAGING_DEV_FLOW_PICKER_SESSION_ID, ctx.appId, ctx.owner.id]
   );
 
@@ -2321,7 +2315,7 @@ async function seedStagingDevFlowWizard(pool, config) {
      VALUES ($1, $2, $3, 'staging-fixture/dev-flow-wizard', NULL,
              '[staging fixture] Claude Code walkthrough', 'active',
              NOW() - INTERVAL '9 minutes', NOW() - INTERVAL '2 minutes')
-     ON CONFLICT (id) DO NOTHING`,
+     ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id`,
     [STAGING_DEV_FLOW_WIZARD_SESSION_ID, ctx.appId, ctx.owner.id]
   );
 
@@ -2336,11 +2330,16 @@ async function seedStagingDevFlowWizard(pool, config) {
   let taskInserted = 0;
   const { rows: existingTask } = await pool.query(
     `SELECT id FROM external_agent_tasks
-      WHERE user_id = $1 AND app_id = $2 AND request_key = $3
+      WHERE app_id = $1 AND request_key = $2
       LIMIT 1`,
-    [ctx.owner.id, ctx.appId, 'brief:stagingfixture']
+    [ctx.appId, 'brief:stagingfixture']
   );
-  if (!existingTask.length) {
+  if (existingTask.length) {
+    await pool.query(
+      'UPDATE external_agent_tasks SET user_id = $1, session_id = $2 WHERE id = $3',
+      [ctx.owner.id, STAGING_DEV_FLOW_WIZARD_SESSION_ID, existingTask[0].id]
+    );
+  } else {
     const { rowCount: added } = await pool.query(
       `INSERT INTO external_agent_tasks
          (user_id, app_id, issue_number, fork_owner, fork_repo, branch_name,
@@ -2358,7 +2357,6 @@ async function seedStagingDevFlowWizard(pool, config) {
     );
     taskInserted = added;
   }
-
   log.info('db', 'Staging dev-flow wizard fixture seeded', {
     appId: ctx.appId,
     owner: ctx.owner.username,
@@ -2993,17 +2991,8 @@ async function seedStagingCcCohortRuns(pool, config) {
     return;
   }
 
-  const { rows: userRows } = await pool.query(
-    `SELECT id, username, is_admin
-       FROM users
-      ORDER BY is_admin DESC, id ASC
-      LIMIT 1`
-  );
-  if (!userRows.length) {
-    log.warn('db', 'Staging CC-cohort fixture skipped: no users');
-    return;
-  }
-  const owner = userRows[0];
+  const owner = await getStagingCheckViewer(pool, 'Staging CC-cohort fixture');
+  if (!owner) return;
 
   const baseLog = [
     '[refresh]',
@@ -3046,15 +3035,22 @@ async function seedStagingCcCohortRuns(pool, config) {
       'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
       [appId, run.branch]
     );
-    if (existing.length) continue;
+    if (existing.length) {
+      await pool.query(
+        `UPDATE chat_sessions
+            SET user_id = $1, status = 'active', last_activity_at = NOW()
+          WHERE id = $2`,
+        [owner.id, existing[0].id]
+      );
+      continue;
+    }
 
     await pool.query(
       `INSERT INTO chat_sessions
          (id, app_id, user_id, branch_name, pr_title, status, created_at, last_activity_at)
        VALUES
          ($1, $2, $3, $4, $5, 'active',
-          NOW() - ($6::int * INTERVAL '1 minute'),
-          NOW() - ($6::int * INTERVAL '1 minute'))`,
+          NOW() - ($6::int * INTERVAL '1 minute'), NOW())`,
       [run.id, appId, owner.id, run.branch, run.title, run.minutesAgo + 1]
     );
     const sessionId = run.id;
@@ -3715,17 +3711,18 @@ async function seedStagingSubmittedFeatures(pool, config) {
 // app-tab error screen are exercisable in staging without provisioning
 // a real failing import. Owned by the demo user (900001); admins (the
 // capture user included) pass the involved-user gate and see the log.
-// ID sits in the 900xxx range, the row carries the "Staging demo"
-// prefix, and ON CONFLICT DO NOTHING keeps the every-boot re-run
-// idempotent.
-async function seedStagingFailedApp(pool) {
+// The synthetic slug is the stable key. That matters on a long-lived clone:
+// fixed numeric ids can collide with newer production rows, while the
+// obvious `staging-demo-*` slug cannot. The slug upsert also repairs an older
+// fixture row in place on every preview boot.
+async function seedStagingFailedApp(pool, config) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
   try {
     await pool.query(
-      `INSERT INTO users (id, username, password)
-       VALUES (900001, 'staging-demo-user', 'staging-demo-not-a-login')
-       ON CONFLICT DO NOTHING`
+      `INSERT INTO users (username, password)
+       VALUES ('staging-demo-user', 'staging-demo-not-a-login')
+       ON CONFLICT (username) DO NOTHING`
     );
     const logLines = [
       '# Staging demo build log — synthetic fixture for the build-log panel',
@@ -3767,13 +3764,33 @@ async function seedStagingFailedApp(pool) {
       sha: null,
     };
     await pool.query(
-      `INSERT INTO apps (id, name, slug, status, view_visibility, created_by, retry_count, last_failure)
-       VALUES (900040, 'Staging demo failed app', 'staging-demo-failed-app', 'error', 'public',
-               900001, 0, $1::jsonb)
-       ON CONFLICT DO NOTHING`,
+      `INSERT INTO apps (name, slug, status, view_visibility, created_by, retry_count, last_failure)
+       SELECT 'Staging demo failed app', 'staging-demo-failed-app', 'error', 'public',
+              id, 0, $1::jsonb
+         FROM users WHERE username = 'staging-demo-user'
+       ON CONFLICT (slug) DO UPDATE
+         SET name = EXCLUDED.name,
+             status = EXCLUDED.status,
+             view_visibility = EXCLUDED.view_visibility,
+             created_by = EXCLUDED.created_by,
+             retry_count = EXCLUDED.retry_count,
+             last_failure = EXCLUDED.last_failure`,
       [JSON.stringify(lastFailure)]
     );
-    log.info('db', 'Staging failed-app fixture seeded');
+    const { rows: viewerRows } = await pool.query(
+      'SELECT id FROM users WHERE username = ANY($1::text[])',
+      [[config.adminUsername, 'usernode-capture', 'usernode-capture-admin'].filter(Boolean)]
+    );
+    for (const { id: viewerId } of viewerRows) {
+      await pool.query(
+        `INSERT INTO app_favorites (app_id, user_id, sort_order)
+         SELECT id, $1, 2 FROM apps WHERE slug = 'staging-demo-failed-app'
+         ON CONFLICT (app_id, user_id) DO UPDATE
+           SET hidden = FALSE, sort_order = EXCLUDED.sort_order`,
+        [viewerId]
+      );
+    }
+    log.info('db', 'Staging failed-app fixture seeded', { viewers: viewerRows.length });
   } catch (err) {
     log.warn('db', 'Staging failed-app seeding failed', { message: err.message });
   }
@@ -3790,38 +3807,71 @@ async function seedStagingFailedApp(pool) {
 //      + home-tile ⑂ tag with a working link;
 //   3. an ORPHAN fork whose forked_from points at a non-existent source —
 //      proves the "<deleted>" fallback + inert (non-link) label.
-// IDs sit in the 900xxx range, rows carry the "Staging demo" prefix, and
-// ON CONFLICT DO NOTHING keeps the every-boot re-run idempotent.
-async function seedStagingForkLineage(pool) {
+// The obvious `staging-demo-*` slugs are the stable keys. Numeric ids are
+// allocated by the clone so production growth cannot silently suppress one
+// of these rows; slug upserts repair older fixture rows on every boot.
+async function seedStagingForkLineage(pool, config) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
   try {
     await pool.query(
-      `INSERT INTO users (id, username, password)
-       VALUES (900001, 'staging-demo-user', 'staging-demo-not-a-login')
-       ON CONFLICT DO NOTHING`
+      `INSERT INTO users (username, password)
+       VALUES ('staging-demo-user', 'staging-demo-not-a-login')
+       ON CONFLICT (username) DO NOTHING`
     );
     // 1. Forkable target.
     await pool.query(
-      `INSERT INTO apps (id, name, slug, status, view_visibility, created_by)
-       VALUES (900030, 'Staging demo forkable app', 'staging-demo-forkable', 'running', 'public', 900001)
-       ON CONFLICT DO NOTHING`
+      `INSERT INTO apps (name, slug, status, view_visibility, created_by)
+       SELECT 'Staging demo forkable app', 'staging-demo-forkable', 'running', 'public', id
+         FROM users WHERE username = 'staging-demo-user'
+       ON CONFLICT (slug) DO UPDATE
+         SET name = EXCLUDED.name,
+             status = EXCLUDED.status,
+             view_visibility = EXCLUDED.view_visibility,
+             created_by = EXCLUDED.created_by`
     );
     // 2. Live-name demo fork (reference-only forked_from → the target).
     await pool.query(
-      `INSERT INTO apps (id, name, slug, status, view_visibility, created_by, forked_from)
-       VALUES (900031, 'Staging demo fork', 'staging-demo-fork', 'running', 'public', 900001,
-               '{"appId": 900030, "slug": "staging-demo-forkable"}'::jsonb)
-       ON CONFLICT DO NOTHING`
+      `INSERT INTO apps (name, slug, status, view_visibility, created_by, forked_from)
+       SELECT 'Staging demo fork', 'staging-demo-fork', 'running', 'public', owner.id,
+              jsonb_build_object('appId', source.id, 'slug', source.slug)
+         FROM users owner
+         JOIN apps source ON source.slug = 'staging-demo-forkable'
+        WHERE owner.username = 'staging-demo-user'
+       ON CONFLICT (slug) DO UPDATE
+         SET name = EXCLUDED.name,
+             status = EXCLUDED.status,
+             view_visibility = EXCLUDED.view_visibility,
+             created_by = EXCLUDED.created_by,
+             forked_from = EXCLUDED.forked_from`
     );
     // 3. Orphan fork (source id deliberately does not exist → "<deleted>").
     await pool.query(
-      `INSERT INTO apps (id, name, slug, status, view_visibility, created_by, forked_from)
-       VALUES (900032, 'Staging demo fork (orphan)', 'staging-demo-fork-orphan', 'running', 'public', 900001,
-               '{"appId": 2147483647, "slug": "staging-demo-missing"}'::jsonb)
-       ON CONFLICT DO NOTHING`
+      `INSERT INTO apps (name, slug, status, view_visibility, created_by, forked_from)
+       SELECT 'Staging demo fork (orphan)', 'staging-demo-fork-orphan', 'running', 'public', id,
+              '{"appId": 2147483647, "slug": "staging-demo-missing"}'::jsonb
+         FROM users WHERE username = 'staging-demo-user'
+       ON CONFLICT (slug) DO UPDATE
+         SET name = EXCLUDED.name,
+             status = EXCLUDED.status,
+             view_visibility = EXCLUDED.view_visibility,
+             created_by = EXCLUDED.created_by,
+             forked_from = EXCLUDED.forked_from`
     );
-    log.info('db', 'Staging fork-lineage fixtures seeded');
+    const { rows: viewerRows } = await pool.query(
+      'SELECT id FROM users WHERE username = ANY($1::text[])',
+      [[config.adminUsername, 'usernode-capture', 'usernode-capture-admin'].filter(Boolean)]
+    );
+    for (const { id: viewerId } of viewerRows) {
+      await pool.query(
+        `INSERT INTO app_favorites (app_id, user_id, sort_order)
+         SELECT id, $1, 1 FROM apps WHERE slug = 'staging-demo-fork'
+         ON CONFLICT (app_id, user_id) DO UPDATE
+           SET hidden = FALSE, sort_order = EXCLUDED.sort_order`,
+        [viewerId]
+      );
+    }
+    log.info('db', 'Staging fork-lineage fixtures seeded', { viewers: viewerRows.length });
   } catch (err) {
     log.warn('db', 'Staging fork-lineage seeding failed', { message: err.message });
   }
@@ -4065,30 +4115,42 @@ async function seedStagingReadonlyDevTab(pool) {
 // (app_favorites), keyed to the VIEWER — and the staging tester logs
 // in as the admin account seedAdmin creates, whose personal rows won't
 // exist in a fresh clone. Seed both inclusion paths for that account:
-//   - a membership row on 'Staging demo app' (900001, from
+//   - a membership row on 'Staging demo app' (from
 //     seedStagingDemoAppCard above) → the automatic path;
 //   - a favorite row (with sort_order) on a demo app the admin is NOT
 //     a member of → the manual "Add to Your apps" path + ordering.
 // Also seed a handful of extra running public apps with distinct,
 // searchable names so the search bar has something to filter and the
-// denser multi-column grid actually wraps. All idempotent (fixed
-// 900xxx ids + ON CONFLICT DO NOTHING), obviously fake ("Staging
-// demo …" prefix), and a strict no-op outside staging.
+// denser multi-column grid actually wraps. They upsert by their obviously
+// fake slugs instead of collision-prone ids, and are a strict no-op outside
+// staging.
 async function seedStagingYourApps(pool, config) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
   try {
-    // Searchable demo apps, owned by the existing staging-demo-user
-    // (900001). Must exist before the favorite row below references
-    // one of them.
     await pool.query(
-      `INSERT INTO apps (id, name, slug, status, view_visibility, created_by)
-       VALUES
-         (900040, 'Staging demo Chess Arena',  'staging-demo-chess-arena',  'running', 'public', 900001),
-         (900041, 'Staging demo Puzzle Chain', 'staging-demo-puzzle-chain', 'running', 'public', 900001),
-         (900042, 'Staging demo Word Garden',  'staging-demo-word-garden',  'running', 'public', 900001),
-         (900043, 'Staging demo Pixel Racer',  'staging-demo-pixel-racer',  'running', 'public', 900001)
-       ON CONFLICT DO NOTHING`
+      `INSERT INTO users (username, password)
+       VALUES ('staging-demo-user', 'staging-demo-not-a-login')
+       ON CONFLICT (username) DO NOTHING`
+    );
+    // Searchable demo apps, owned by the existing staging-demo-user. They
+    // must exist before the favorite row below references one of them.
+    await pool.query(
+      `INSERT INTO apps (name, slug, status, view_visibility, created_by)
+       SELECT fixture.name, fixture.slug, 'running', 'public', owner.id
+         FROM (VALUES
+           ('Staging demo Chess Arena',  'staging-demo-chess-arena'),
+           ('Staging demo Puzzle Chain', 'staging-demo-puzzle-chain'),
+           ('Staging demo Word Garden',  'staging-demo-word-garden'),
+           ('Staging demo Pixel Racer',  'staging-demo-pixel-racer')
+         ) AS fixture(name, slug)
+         CROSS JOIN users owner
+        WHERE owner.username = 'staging-demo-user'
+       ON CONFLICT (slug) DO UPDATE
+         SET name = EXCLUDED.name,
+             status = EXCLUDED.status,
+             view_visibility = EXCLUDED.view_visibility,
+             created_by = EXCLUDED.created_by`
     );
 
     // Grant the rows to every identity a tester's eyes look through:
@@ -4105,17 +4167,17 @@ async function seedStagingYourApps(pool, config) {
       // Automatic-membership path: viewer is a member of the demo app.
       await pool.query(
         `INSERT INTO app_collaborators (app_id, user_id, status, invited_by, accepted_at)
-         SELECT 900001, $1, 'member', $1, NOW()
-         WHERE EXISTS (SELECT 1 FROM apps WHERE id = 900001)
+         SELECT id, $1, 'member', $1, NOW()
+           FROM apps WHERE slug = 'staging-demo-app'
          ON CONFLICT (app_id, user_id) DO NOTHING`,
         [viewerId]
       );
       // Manual-favorite path: viewer added Chess Arena (not a member).
       await pool.query(
         `INSERT INTO app_favorites (app_id, user_id, sort_order)
-         SELECT 900040, $1, 0
-         WHERE EXISTS (SELECT 1 FROM apps WHERE id = 900040)
-         ON CONFLICT (app_id, user_id) DO NOTHING`,
+         SELECT id, $1, 0 FROM apps WHERE slug = 'staging-demo-chess-arena'
+         ON CONFLICT (app_id, user_id) DO UPDATE
+           SET hidden = FALSE, sort_order = EXCLUDED.sort_order`,
         [viewerId]
       );
     }
@@ -4228,7 +4290,7 @@ async function seedStagingHomeLayout(pool, config) {
 // row renders on a plain `/` visit with no ?demo=1; the request-time demo
 // tiles in routes/apps.js demoIconApps cover the ?demo=1 path.
 //
-// Chess Arena (900040) is deliberately NOT a candidate: seedStagingYourApps
+// Chess Arena is deliberately NOT a candidate: seedStagingYourApps
 // favorites it for every capture identity, so leaving it out exercises the
 // "already in Your apps → left out of the featured row" branch. The browse
 // screen still lists it, with a ✓ badge.
@@ -4250,13 +4312,15 @@ async function seedStagingFeaturedApps(pool) {
     const { rows: candidates } = await pool.query(
       `SELECT id FROM (
          SELECT id, 0 AS tier, id AS tiebreak FROM apps
-          WHERE id IN (900041, 900042, 900043)
+          WHERE slug IN ('staging-demo-puzzle-chain', 'staging-demo-word-garden',
+                         'staging-demo-pixel-racer')
          UNION ALL
          SELECT id, 1 AS tier, id AS tiebreak FROM apps
           WHERE NOT self_hosted
             AND view_visibility = 'public'
             AND status = 'running'
-            AND id NOT IN (900040, 900041, 900042, 900043)
+            AND slug NOT IN ('staging-demo-chess-arena', 'staging-demo-puzzle-chain',
+                             'staging-demo-word-garden', 'staging-demo-pixel-racer')
        ) c
        ORDER BY tier ASC, tiebreak ASC
        LIMIT $1`,
@@ -5863,17 +5927,8 @@ async function seedStagingQuickReplyFallback(pool, config) {
     return;
   }
 
-  const { rows: userRows } = await pool.query(
-    `SELECT id, username
-       FROM users
-      ORDER BY is_admin DESC, id ASC
-      LIMIT 1`
-  );
-  if (!userRows.length) {
-    log.warn('db', 'Staging quick-reply-fallback fixtures skipped: no users');
-    return;
-  }
-  const owner = userRows[0];
+  const owner = await getStagingCheckViewer(pool, 'Staging quick-reply-fallback fixtures');
+  if (!owner) return;
 
   const specMd = '## User-facing changes\n\nStaging demo spec for the pill-fallback fixture.\n\n'
     + '## Technical implementation\n\nStaging demo: no real change — fixture for the pill bar.';
@@ -6024,7 +6079,10 @@ async function seedStagingQuickReplyFallback(pool, config) {
       'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
       [appId, fixture.branch]
     );
-    if (existing.length) continue;
+    if (existing.length) {
+      await pool.query('UPDATE chat_sessions SET user_id = $1 WHERE id = $2', [owner.id, existing[0].id]);
+      continue;
+    }
 
     await pool.query(
       `INSERT INTO chat_sessions
@@ -6097,17 +6155,17 @@ async function seedStagingRestartRecoveredPills(pool, config) {
     return;
   }
 
-  const { rows: userRows } = await pool.query(
-    `SELECT id, username
-       FROM users
-      ORDER BY is_admin DESC, id ASC
-      LIMIT 1`
+  const owner = await getStagingCheckViewer(pool, 'Staging restart-recovered-pills fixture');
+  if (!owner) return;
+
+  // These ids are declared deep links. Adopt rows from an older staging
+  // boot before the branch-name guards below decide they are already seeded.
+  await pool.query(
+    `UPDATE chat_sessions
+        SET user_id = $1
+      WHERE id = ANY($2::bigint[])`,
+    [owner.id, [900820, 900821, 900822]]
   );
-  if (!userRows.length) {
-    log.warn('db', 'Staging restart-recovered-pills fixture skipped: no users');
-    return;
-  }
-  const owner = userRows[0];
 
   const userAsk = 'Make the leaderboard sort by score';
 
@@ -8915,6 +8973,17 @@ async function seedStagingTopochain(pool, config) {
   };
 
   try {
+    // Do this before the larger fixture block: any later best-effort seed
+    // collision must not make the version-gate warning depend on how far a
+    // long-lived cloned database got through the rest of the fixtures.
+    // Production can carry an active Android rule; changing the staging copy
+    // is deliberate and is reset on every preview boot.
+    await pool.query(
+      `UPDATE app_version_configs
+          SET is_active = FALSE, updated_at = NOW()
+        WHERE os = 'android'`
+    );
+
     // ─── Users (8) ─────────────────────────────────────────────────────
     // Sentinel password for seven of the eight (never-login fixtures, same
     // idiom as seedStagingWalletUsers); the sixth gets a real bcrypt hash
@@ -9550,7 +9619,6 @@ async function seedStagingTopochain(pool, config) {
               )
        ON CONFLICT (id) DO NOTHING`
     );
-
     // ─── Waitlist signups (3) ──────────────────────────────────────────
     // The admin console's Waitlist screen reads `waitlist_signups`
     // directly, and in a staging clone that table is emptied along with

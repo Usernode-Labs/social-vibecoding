@@ -91,7 +91,16 @@
 //      does before calling in here) explain themselves, per SPEC 2889's
 //      400 shape (`{"success": false, "error": "...", "query": "..."}`).
 //
-// ON THE TABLE ALLOW-LIST CHECK, HONESTLY: table references are found by
+// SCOPE (WIDENED): the console lists and queries EVERY table in the
+// platform database, not just the 20 topochain ones — minus the
+// credential-bearing tables and columns. `db-console-scope.js` resolves
+// that scope (from `debug-access.js`'s deny lists plus the topochain
+// export's column exclusions) and is the single source all three layers
+// below read, so the schema browser, this validator, and the role's
+// grants cannot disagree about what is in scope. Read that file's header
+// before changing anything about which tables reach this console.
+//
+// ON THE TABLE SCOPE CHECK, HONESTLY: table references are found by
 // a regex over identifiers following `FROM`/`JOIN` (Global Constraints #9
 // explicitly permits this: "regex over FROM/JOIN identifiers is
 // acceptable... document the approach"). This is NOT a SQL parser and
@@ -114,7 +123,8 @@
 'use strict';
 
 const log = require('../logger');
-const { QUERYABLE_TABLES_SET, EXCLUDED_SECRET_COLUMN_NAMES } = require('./db-allowlist');
+const { EXCLUDED_SECRET_COLUMN_NAMES } = require('./db-allowlist');
+const scope = require('./db-console-scope');
 const consoleRole = require('./db-console-role');
 
 // SPEC 2872: `limit` is optional int, 1..1000, default 100.
@@ -170,18 +180,37 @@ const MUTATING_KEYWORDS_RE = new RegExp(`\\b(${MUTATING_KEYWORDS.join('|')})\\b`
 
 // db-export.js excludes `onchain_accounts.secret_key`/`.registration_code`
 // at the column level; this console reads the SAME live table, and
-// nothing about the table-allow-list check below would stop
-// `SELECT secret_key FROM onchain_accounts` (it references an allowed
+// nothing about the table-scope check below would stop
+// `SELECT secret_key FROM onchain_accounts` (it references an in-scope
 // table with an allowed verb) — so that redaction is repeated here as a
 // query-time deny check, word-bounded and checked anywhere in the
 // statement (not just the column list), same posture as the mutating-
 // keyword scan above. Both excluded names are specific enough that
 // blanket-denying them regardless of which table a query touches costs
 // nothing real (see `db-allowlist.js` — neither name is used as a column
-// on any OTHER topochain table).
+// on any OTHER table in this schema).
 const EXCLUDED_COLUMNS_RE = EXCLUDED_SECRET_COLUMN_NAMES.length
   ? new RegExp(`\\b(${EXCLUDED_SECRET_COLUMN_NAMES.join('|')})\\b`, 'i')
   : null;
+
+// Every OTHER denied column (`users.password`, `apps.llm_proxy_token`,
+// `chat_session_attachments.data`, …) is checked TABLE-AWARELY rather
+// than blanket: the console's scope now spans the whole platform schema,
+// and some denied names are generic enough (`data`, `ip`) that denying
+// them everywhere would reject a pile of perfectly legitimate queries
+// against tables that have no such secret. So the check is built from
+// the deny lists of the tables the query actually references — see
+// `db-console-scope.js`'s `deniedColumnsForTables`. Same caveat as every
+// other regex here: it is the fast-400 layer, and the role's
+// column-level GRANT is what actually refuses the value.
+function deniedColumnMatch(body, tables) {
+  const names = [...scope.deniedColumnsForTables(tables)].filter(
+    (n) => !EXCLUDED_SECRET_COLUMN_NAMES.includes(n)
+  );
+  if (!names.length) return null;
+  const match = body.match(new RegExp(`\\b(${names.join('|')})\\b`, 'i'));
+  return match ? match[1].toLowerCase() : null;
+}
 
 // BEST-EFFORT ONLY — NOT EXHAUSTIVE (see the file header's ⚠ correction).
 // The most common ways to serialize an entire row as one value (dodging
@@ -388,6 +417,40 @@ function validateStatement(query) {
     return { ok: false, reason: `Query contains a disallowed keyword: ${mutatingMatch[1].toUpperCase()}.` };
   }
 
+  // Table scope, checked BEFORE the column rules so an admin gets the
+  // more fundamental reason first ("that table isn't available here"
+  // rather than "that column isn't"). Two distinct failures, because
+  // they mean different things to whoever is typing:
+  //   - DENIED: a real table that this console never exposes (login
+  //     cookies, per-app secrets, mobile OTP/bearer hashes, …). No query
+  //     shape reaches it — the role has no grant on it either.
+  //   - UNKNOWN: an identifier that is not a table in `public` at all.
+  //     Usually a typo, occasionally this regex mistaking a function
+  //     argument for a table (see `EXTRACT(EPOCH FROM created_at)` in the
+  //     file header's blind-spot list).
+  const { tables, cteNames } = extractReferencedTables(body);
+  const referenced = [...tables].filter((t) => !cteNames.has(t));
+  const denied = referenced.filter((t) => scope.isDeniedTable(t));
+  if (denied.length) {
+    return {
+      ok: false,
+      reason: `Query references table(s) that are not available in this console: ${denied.join(', ')}.`,
+    };
+  }
+  // An empty `knownTableSet()` means the live table list has not been
+  // loaded yet (see db-console-scope.js) — fall through on the deny list
+  // alone rather than rejecting every table as "unknown".
+  const known = scope.knownTableSet();
+  if (known.size) {
+    const unknown = referenced.filter((t) => !known.has(t));
+    if (unknown.length) {
+      return {
+        ok: false,
+        reason: `Query references table(s) that do not exist in this database: ${unknown.join(', ')}.`,
+      };
+    }
+  }
+
   if (EXCLUDED_COLUMNS_RE) {
     const columnMatch = body.match(EXCLUDED_COLUMNS_RE);
     if (columnMatch) {
@@ -396,6 +459,13 @@ function validateStatement(query) {
         reason: `Query references a column that is not accessible through this console: ${columnMatch[1].toLowerCase()}.`,
       };
     }
+  }
+  const deniedColumn = deniedColumnMatch(body, referenced);
+  if (deniedColumn) {
+    return {
+      ok: false,
+      reason: `Query references a column that is not accessible through this console: ${deniedColumn}.`,
+    };
   }
 
   // Best-effort only (see this constant's own comment and the file
@@ -407,15 +477,6 @@ function validateStatement(query) {
     return {
       ok: false,
       reason: `Query uses a whole-row serialization function that is not allowed: ${rowFuncMatch[1].toLowerCase()}.`,
-    };
-  }
-
-  const { tables, cteNames } = extractReferencedTables(body);
-  const offenders = [...tables].filter((t) => !QUERYABLE_TABLES_SET.has(t) && !cteNames.has(t));
-  if (offenders.length) {
-    return {
-      ok: false,
-      reason: `Query references table(s) outside the allowed list: ${offenders.join(', ')}.`,
     };
   }
 

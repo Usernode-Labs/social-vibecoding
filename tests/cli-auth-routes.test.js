@@ -123,6 +123,30 @@ test('the gate 404s exactly when isCliSurfaceEnabled says so', async () => {
   }
 });
 
+test('staging permits only the read-only CLI token demo through the early gate', async () => {
+  const previous = process.env.USERNODE_ENV;
+  process.env.USERNODE_ENV = 'staging';
+  const server = await startApp();
+  try {
+    const demo = await fetch(`${base(server)}/api/me/cli-tokens?limit=50&demo=1`);
+    assert.equal(demo.status, 418,
+      'the exact demo GET reaches cookie auth/browser routes instead of the early gate');
+
+    const real = await fetch(`${base(server)}/api/me/cli-tokens?limit=50`);
+    assert.equal(real.status, 404, 'a real credential-list request stays disabled');
+
+    const subpath = await fetch(`${base(server)}/api/me/cli-tokens/42?demo=1`);
+    assert.equal(subpath.status, 404, 'demo cannot bypass a token sub-path');
+
+    const write = await fetch(`${base(server)}/api/me/cli-tokens?demo=1`, { method: 'DELETE' });
+    assert.equal(write.status, 404, 'demo cannot bypass a mutating method');
+  } finally {
+    if (previous == null) delete process.env.USERNODE_ENV;
+    else process.env.USERNODE_ENV = previous;
+    server.close();
+  }
+});
+
 test('the settings screen skips the request when the surface is unavailable', () => {
   const fs = require('node:fs');
   const path = require('node:path');
@@ -135,6 +159,8 @@ test('the settings screen skips the request when the surface is unavailable', ()
   assert.match(settings, /cliAuthEnabled !== false/,
     'only an explicit false suppresses the request — unknown/older shells '
     + 'must behave exactly as before');
+  assert.match(settings, /!this\._cliTokensDemo\(\) && !\(await this\._cliAuthAvailable\(\)\)/,
+    '?demo=1 must reach the staging-only fake rows even though real CLI auth is disabled there');
 
   // The gate has to sit BEFORE the fetch, or the console error still
   // happens. Anchor on the load function and check the order.

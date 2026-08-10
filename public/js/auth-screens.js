@@ -35,6 +35,10 @@
     // Stage-2 waitlist survey ("Want in sooner?"), #more/<token> — the
     // token is the signup's capability from the join response / email.
     more: 'auth-more-screen',
+    // Emailed password-reset magic link, #reset-password/<token> — a
+    // sub-view of the login screen, like signup. The view itself is
+    // runtime-built (frozen-markup contract; see _ensureResetUi).
+    'reset-password': 'auth-login-screen',
   };
 
   // Drives push (deeper) vs pop (back toward landing) transition types.
@@ -42,7 +46,7 @@
   // below the stage-1 screen it is offered from.
   const DEPTH = {
     landing: 0, login: 1, signup: 1, register: 1, waiting: 1, waitlist: 1,
-    more: 2,
+    more: 2, 'reset-password': 1,
   };
 
   const ROUTES = Object.keys(SCREEN_IDS);
@@ -157,6 +161,7 @@
       if (route === 'landing') AuthScreens._landingOnShow();
       if (route === 'login') AuthScreens._loginOnShow(false);
       if (route === 'signup') AuthScreens._loginOnShow(true);
+      if (route === 'reset-password') AuthScreens._resetOnShow(seg);
       if (route === 'register') AuthScreens._registerOnShow(seg);
       if (route === 'waiting') AuthScreens._waitingOnShow();
       if (route === 'waitlist') AuthScreens._waitlistOnShow();
@@ -298,6 +303,41 @@
     _openLandingApp() {},
     _closeLandingApp() {},
 
+    // #1028: teardown REPLACES the <iframe> element instead of pointing the
+    // live one at about:blank. Assigning `src` to a frame that already holds
+    // a real document is a genuine navigation, so it pushed an entry onto
+    // the history stack this shell shares with the app — which is what
+    // desynced the viewer's own marker entry and left `history.back()`
+    // rewinding the iframe instead of closing the viewer (the reported
+    // "empty page"). A fresh, never-navigated frame makes every open the
+    // INITIAL about:blank navigation, which browsers elide. It also kills
+    // the app's JS context outright, which is a stricter stop than blanking.
+    //
+    // Callers must re-resolve the frame by id afterwards — any reference
+    // captured before the swap is stale.
+    _swapViewerFrame() {
+      const old = byId('app-viewer-frame');
+      if (!old || !old.parentNode) return null;
+      const fresh = document.createElement('iframe');
+      fresh.id = old.id;
+      fresh.className = old.className;
+      for (const attr of ['title', 'allow', 'sandbox', 'referrerpolicy', 'allowfullscreen']) {
+        const value = old.getAttribute(attr);
+        if (value !== null) fresh.setAttribute(attr, value);
+      }
+      old.parentNode.replaceChild(fresh, old);
+      // The new contentWindow has never received the shell's safe-area
+      // insets, and the broadcast memo suppresses a repeat post of
+      // unchanged values — drop the memo so the next one reaches it.
+      if (window.AppView && typeof AppView.forgetSafeAreaFrame === 'function') {
+        AppView.forgetSafeAreaFrame('app-viewer-frame');
+        if (typeof AppView.scheduleSafeAreaBroadcast === 'function') {
+          AppView.scheduleSafeAreaBroadcast();
+        }
+      }
+      return fresh;
+    },
+
     // Instant, un-animated teardown of the in-page viewer. Used on the
     // paths that LEAVE the landing screen (Sign in, hash routing, the
     // authed boot): animating a zoom-out into a tile on a screen that's
@@ -313,8 +353,7 @@
       AuthScreens._viewerLaunchId = (AuthScreens._viewerLaunchId || 0) + 1;
       AuthScreens._clearViewerCover();
       viewer.classList.add('hidden');
-      const frame = byId('app-viewer-frame');
-      if (frame) frame.src = 'about:blank';
+      AuthScreens._swapViewerFrame();
       const scroller = byId('auth-landing-scroll');
       if (scroller) scroller.classList.remove('hidden');
       AuthScreens._renderLandingHeader();
@@ -324,12 +363,58 @@
       AuthScreens._renderLandingHeader();
       if (!AuthScreens._landingAppsLoaded) {
         AuthScreens._landingAppsLoaded = true;
-        AuthScreens._loadLandingApps();
+        AuthScreens._landingAppsReady = AuthScreens._loadLandingApps();
       }
       // Warm the survey options (memoised) while the visitor is reading the
       // pitch, so the #waitlist chips and country list are already filled
       // by the time they tap through.
       AuthScreens._waitlistOptions();
+      // Screenshot-state deep link `?shot=anon-back` (#1028) — see below.
+      let shot = null;
+      try { shot = new URLSearchParams(location.search).get('shot'); } catch (_) {}
+      if (shot === 'anon-back' && !AuthScreens._anonBackShotRan) {
+        AuthScreens._anonBackShotRan = true;
+        AuthScreens._runAnonBackShot();
+      }
+    },
+
+    // Screenshot-state deep link `?shot=anon-back` (#1028): scripts the
+    // guest back path end to end — open an app, back out, open again, back
+    // out — because the regression it pins only appears from the SECOND
+    // open onward, and neither the capture nor the proposal check can click
+    // anything. `#app-viewer` is stamped `data-anon-back="done"` at the end
+    // so the dapp.json assertion can't pass vacuously on a directory that
+    // never loaded (an empty list leaves the attribute unset).
+    //
+    // Steps wait on the actual DOM state rather than a fixed delay: the
+    // whole sequence has to finish inside the check runner's ~2s settle.
+    async _runAnonBackShot() {
+      const viewer = byId('app-viewer');
+      if (!viewer) return;
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const until = async (pred, budgetMs) => {
+        const started = Date.now();
+        while (!pred() && Date.now() - started < budgetMs) await wait(30);
+        return pred();
+      };
+      const isOpen = () => !viewer.classList.contains('hidden');
+      try { await AuthScreens._landingAppsReady; } catch (_) {}
+      // First app the directory would actually open: not gated, has a URL.
+      const target = (AuthScreens._landingAppsList || [])
+        .find((a) => a && !a.requires_login && a.url);
+      if (!target) return;
+      for (let cycle = 0; cycle < 2; cycle++) {
+        const tile = AuthScreens._landingTileFor(target.slug);
+        if (!tile) return;
+        tile.click();
+        if (!await until(isOpen, 600)) return;
+        // Let the zoom-in settle before backing out, so each cycle
+        // exercises a fully-open viewer rather than a mid-transition one.
+        await wait(140);
+        byId('landing-back-btn')?.click();
+        await until(() => !isOpen(), 900);
+      }
+      viewer.setAttribute('data-anon-back', 'done');
     },
 
     // Single writer for the persistent landing header + the CTA block's
@@ -428,8 +513,11 @@
       // `outEl` lets the kit hide the scroller for its synchronous
       // pre-paint measurement, so the zoom targets the true settled rect.
       const viewer = byId('app-viewer');
-      const viewerFrame = byId('app-viewer-frame');
       const scroller = byId('auth-landing-scroll');
+      // Re-resolved on every use, never captured: teardown swaps the frame
+      // ELEMENT (see _swapViewerFrame), so a closure const would go stale
+      // after the first close.
+      const viewerFrame = () => byId('app-viewer-frame');
 
       AuthScreens._openLandingApp = (app) => {
         const slug = app.slug || '';
@@ -445,13 +533,17 @@
         AuthScreens._viewerLaunchId = (AuthScreens._viewerLaunchId || 0) + 1;
         const launchId = AuthScreens._viewerLaunchId;
         AuthScreens._clearViewerCover();
+        const frame = viewerFrame();
         if (window.AppView && typeof AppView.mountViewerCover === 'function') {
-          AppView.mountViewerCover(viewer, viewerFrame, app, {
+          AppView.mountViewerCover(viewer, frame, app, {
             timers: AuthScreens._viewerTimers,
             isCurrent: () => launchId === AuthScreens._viewerLaunchId,
           });
         }
-        viewerFrame.src = app.url;
+        // The frame is fresh on every open (teardown swaps the element), so
+        // this is its INITIAL navigation away from about:blank — the one
+        // browsers elide instead of pushing onto the shared history stack.
+        if (frame) frame.src = app.url;
         history.pushState({ svAnonAppViewer: true }, '', location.href);
         zoomFx(() => {
           viewer.classList.remove('hidden');
@@ -490,18 +582,47 @@
           fallback: 'none',
           after: () => {
             viewer.classList.add('hidden');
-            viewerFrame.src = 'about:blank';
+            AuthScreens._swapViewerFrame();
           },
         });
         AuthScreens._renderLandingHeader();
+        // #1028: the UI above has already closed — nothing here waits on
+        // the browser. Unwind our own marker entry AFTERWARDS so the stack
+        // doesn't grow one entry per open, and only when the current entry
+        // really is the marker. The re-entrancy flag swallows exactly the
+        // popstate this triggers; the timer is a backstop for the case
+        // where that popstate never arrives (a foreign entry), so a later
+        // genuine back gesture can't be swallowed instead.
+        if (!AuthScreens._unwindingViewerEntry &&
+            history.state && history.state.svAnonAppViewer) {
+          AuthScreens._unwindingViewerEntry = true;
+          setTimeout(() => { AuthScreens._unwindingViewerEntry = false; }, 600);
+          try { history.back(); } catch (_) {
+            AuthScreens._unwindingViewerEntry = false;
+          }
+        }
       };
       AuthScreens._closeLandingApp = closeViewer;
 
-      byId('landing-back-btn').addEventListener('click', () => {
-        if (history.state && history.state.svAnonAppViewer) history.back();
-        else closeViewer();
+      // The back arrow CLOSES the viewer, it does not ask the browser to
+      // navigate (#1028). Same stance as the signed-in header's back
+      // button, which calls App.navigateHome() directly: "go to the
+      // directory", not "go back one step". A `history.back()` here aims
+      // at a stack shared with a live cross-origin iframe, where the
+      // marker on history.state is no proof the current entry is ours.
+      byId('landing-back-btn').addEventListener('click', () => closeViewer());
+
+      // The browser/OS back gesture still closes the viewer. Ignore a
+      // popstate that LANDS on the marker entry — that is a pop INTO the
+      // open viewer, not out of it — and the one our own unwind provokes.
+      window.addEventListener('popstate', () => {
+        if (AuthScreens._unwindingViewerEntry) {
+          AuthScreens._unwindingViewerEntry = false;
+          return;
+        }
+        if (history.state && history.state.svAnonAppViewer) return;
+        closeViewer();
       });
-      window.addEventListener('popstate', closeViewer);
     },
 
     // ── Waitlist survey (two-stage, ported from topochain) ───────────
@@ -957,6 +1078,10 @@
         if (!res.ok) throw new Error('http ' + res.status);
         const data = await res.json();
         const apps = (data && data.apps) || [];
+        // Kept for `?shot=anon-back`, which needs the first app the
+        // directory would actually open (not gated, has a URL) without
+        // re-deriving it from the rendered tiles.
+        AuthScreens._landingAppsList = apps;
         appsEl.textContent = '';
         if (!apps.length) {
           appsEl.appendChild(el('p', 'text-sm text-zinc-500 col-span-full', 'No public apps yet.'));
@@ -1073,6 +1198,7 @@
     _showLoginBaseView() {
       byId('otp-view').classList.add('hidden');
       byId('recovery-view').classList.add('hidden');
+      AuthScreens._hideResetView();
       byId('login-form').classList.remove('hidden');
       byId('register-link').classList.remove('hidden');
       byId('forgot-link-wrap').classList.remove('hidden');
@@ -1089,6 +1215,7 @@
       byId('otp-link-wrap').classList.add('hidden');
       byId('wallet-auth').classList.add('hidden');
       byId('recovery-view').classList.add('hidden');
+      AuthScreens._hideResetView();
       AuthScreens._otpSetStatus(null);
       AuthScreens._otpShowStep(byId('otp-step-email'));
       byId('otp-view').classList.remove('hidden');
@@ -1109,6 +1236,188 @@
         otpStatus.classList.remove('hidden');
       } else {
         otpStatus.classList.add('hidden');
+      }
+    },
+
+    // ── Email password reset (magic link) ────────────────────────────
+    //
+    // The shell's markup is frozen (tests/shell-markup-parity.test.js), so
+    // the email-request form and the #reset-password/<token> redeem view
+    // are runtime-built here, the way every post-fixture feature adds UI.
+    // Class strings are copied verbatim from the neighbouring frozen
+    // markup, so the compiled Tailwind already covers all of them.
+    _resetToken: null,
+    _resetUiBuilt: false,
+
+    _hideResetView() {
+      const view = byId('reset-password-view');
+      if (view) view.classList.add('hidden');
+    },
+
+    _ensureResetUi() {
+      if (AuthScreens._resetUiBuilt) return;
+      AuthScreens._resetUiBuilt = true;
+
+      const P = 'text-sm text-zinc-500 dark:text-zinc-400';
+      const LABEL = 'block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1';
+      const INPUT = 'w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500';
+      const BUTTON = 'w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white';
+      const EXPIRED_MSG = 'This reset link is invalid or has expired. Go back to login and request a new one from "Forgot password?".';
+
+      // The email-request form, shown above the admin fallback in the
+      // recovery view. Static strings only — nothing user-authored ever
+      // goes through this innerHTML.
+      const emailSec = document.createElement('div');
+      emailSec.id = 'recovery-email';
+      emailSec.className = 'hidden space-y-3';
+      emailSec.innerHTML =
+        '<p class="' + P + '">Enter the email address on your account and we\'ll send you a link to choose a new password.</p>' +
+        '<div>' +
+          '<label class="' + LABEL + '" for="recovery-email-input">Email</label>' +
+          '<input id="recovery-email-input" type="email" autocomplete="email" class="' + INPUT + '" placeholder="you@example.com">' +
+        '</div>' +
+        '<div id="recovery-email-error" class="text-red-400 text-sm hidden"></div>' +
+        '<div id="recovery-email-status" class="text-sm text-zinc-400 hidden"></div>' +
+        '<button id="btn-email-reset" type="button" class="' + BUTTON + '">Email me a reset link</button>';
+      const adminSec = byId('recovery-admin');
+      adminSec.parentNode.insertBefore(emailSec, adminSec);
+
+      // Reposition the admin path as the fallback: the frozen markup's
+      // lead paragraph still claims accounts have no email on file, which
+      // stopped being true when email became a login identifier.
+      const adminLead = adminSec.querySelector('p');
+      if (adminLead) {
+        adminLead.textContent = 'No confirmed email on your account? The link above can only go to a confirmed address — but an admin can still get you back in.';
+      }
+
+      // The redeem view the emailed link lands on — a sibling sub-view of
+      // #recovery-view on the same login card.
+      const recoveryView = byId('recovery-view');
+      const view = document.createElement('div');
+      view.id = 'reset-password-view';
+      view.className = 'hidden space-y-4';
+      view.innerHTML =
+        '<h2 class="text-lg font-bold text-center">Choose a new password</h2>' +
+        '<div>' +
+          '<label class="' + LABEL + '" for="reset-new-password">New password</label>' +
+          '<input id="reset-new-password" type="password" autocomplete="new-password" class="' + INPUT + '" placeholder="at least 8 characters">' +
+        '</div>' +
+        '<div>' +
+          '<label class="' + LABEL + '" for="reset-confirm-password">Confirm new password</label>' +
+          '<input id="reset-confirm-password" type="password" autocomplete="new-password" class="' + INPUT + '" placeholder="re-enter new password">' +
+        '</div>' +
+        '<div id="reset-error" class="text-red-400 text-sm hidden"></div>' +
+        '<div id="reset-status" class="text-sm text-zinc-400 hidden"></div>' +
+        '<button id="btn-reset-confirm" type="button" class="' + BUTTON + '">Set new password</button>' +
+        '<button id="btn-reset-back" type="button" class="w-full text-sm text-zinc-500 hover:text-zinc-300">Back to login</button>';
+      recoveryView.parentNode.insertBefore(view, recoveryView.nextSibling);
+
+      byId('btn-email-reset').addEventListener('click', async () => {
+        const errorEl = byId('recovery-email-error');
+        const statusEl = byId('recovery-email-status');
+        hideError(errorEl);
+        statusEl.classList.add('hidden');
+        if (blockedOffline(errorEl)) return;
+        const email = byId('recovery-email-input').value.trim();
+        if (!email || email.indexOf('@') === -1) {
+          showError(errorEl, 'Enter the email address on your account');
+          return;
+        }
+        const btn = byId('btn-email-reset');
+        btn.disabled = true;
+        try {
+          const res = await fetch('/api/auth/password-reset/request', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email }),
+          });
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            showError(errorEl, data.error || 'Could not send the link — try again in a minute');
+            return;
+          }
+          // Anti-enumeration: the server answers the same whether or not
+          // the address matched, and so does this copy.
+          statusEl.textContent = 'If that address matches an account, a reset link is on its way. It expires in 30 minutes.';
+          statusEl.classList.remove('hidden');
+        } catch {
+          showError(errorEl, 'Network error');
+        } finally {
+          btn.disabled = false;
+        }
+      });
+
+      byId('btn-reset-confirm').addEventListener('click', async () => {
+        const errorEl = byId('reset-error');
+        const statusEl = byId('reset-status');
+        hideError(errorEl);
+        statusEl.classList.add('hidden');
+        if (blockedOffline(errorEl)) return;
+        const newPassword = byId('reset-new-password').value;
+        const confirm = byId('reset-confirm-password').value;
+        if (newPassword.length < 8) {
+          showError(errorEl, 'Password must be at least 8 characters');
+          return;
+        }
+        if (newPassword !== confirm) {
+          showError(errorEl, 'Passwords do not match');
+          return;
+        }
+        const btn = byId('btn-reset-confirm');
+        btn.disabled = true;
+        try {
+          const res = await fetch('/api/auth/password-reset/confirm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: AuthScreens._resetToken, newPassword }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            showError(errorEl, res.status === 401
+              ? EXPIRED_MSG
+              : (data.error || 'Reset failed — try again'));
+            return;
+          }
+          // The reset revoked every session on purpose; signing in with
+          // the new password is the one remaining step.
+          statusEl.textContent = 'Your password has been reset. Head back to login and sign in with it.';
+          statusEl.classList.remove('hidden');
+        } catch {
+          showError(errorEl, 'Network error');
+        } finally {
+          btn.disabled = false;
+        }
+      });
+
+      byId('btn-reset-back').addEventListener('click', () => {
+        // Route change so browser back stays coherent; the direct call
+        // covers the no-hashchange case (already on #login).
+        location.hash = '#login';
+        AuthScreens._showLoginBaseView();
+      });
+    },
+
+    // Per-route side effect for #reset-password/<token>: hide every other
+    // sub-view of the shared login screen and show the redeem form.
+    _resetOnShow(token) {
+      AuthScreens._ensureResetUi();
+      AuthScreens._resetToken = token || null;
+      byId('login-form').classList.add('hidden');
+      byId('register-link').classList.add('hidden');
+      byId('forgot-link-wrap').classList.add('hidden');
+      byId('otp-link-wrap').classList.add('hidden');
+      byId('otp-view').classList.add('hidden');
+      byId('wallet-auth').classList.add('hidden');
+      byId('recovery-view').classList.add('hidden');
+      hideError(byId('reset-error'));
+      byId('reset-status').classList.add('hidden');
+      byId('reset-new-password').value = '';
+      byId('reset-confirm-password').value = '';
+      byId('reset-password-view').classList.remove('hidden');
+      // A mangled link can be refused without a round trip — same message
+      // the server would return.
+      if (!AuthScreens._resetToken || !/^[0-9a-f]{64}$/.test(AuthScreens._resetToken)) {
+        showError(byId('reset-error'), 'This reset link is invalid or has expired. Go back to login and request a new one from "Forgot password?".');
       }
     },
 
@@ -1159,16 +1468,20 @@
         byId('otp-link-wrap').classList.add('hidden');
         byId('otp-view').classList.add('hidden');
         byId('wallet-auth').classList.add('hidden');
+        AuthScreens._hideResetView();
         byId('recovery-view').classList.remove('hidden');
 
         // Wallet self-reset only when in the native app with a linked
-        // wallet; everyone else gets the admin-temporary-password
-        // instructions.
+        // wallet; everyone else gets the emailed magic link, with the
+        // admin-temporary-password instructions as the fallback below it.
+        AuthScreens._ensureResetUi();
         if (isNative() && AuthScreens._walletPubkey && AuthScreens._walletLinked) {
           byId('recovery-wallet').classList.remove('hidden');
+          byId('recovery-email').classList.add('hidden');
           byId('recovery-admin').classList.add('hidden');
         } else {
           byId('recovery-wallet').classList.add('hidden');
+          byId('recovery-email').classList.remove('hidden');
           byId('recovery-admin').classList.remove('hidden');
         }
       };
@@ -1180,6 +1493,8 @@
       byId('btn-recovery-back').addEventListener('click', () => {
         byId('recovery-wallet').classList.add('hidden');
         byId('recovery-admin').classList.add('hidden');
+        const emailSec = byId('recovery-email');
+        if (emailSec) emailSec.classList.add('hidden');
         AuthScreens._showLoginBaseView();
       });
 

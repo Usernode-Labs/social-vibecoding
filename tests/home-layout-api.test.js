@@ -215,6 +215,30 @@ test('PUT writes the whole width in one transaction', async () => {
   assert.equal(tx[tx.length - 1], 'COMMIT', 'a reader never sees a half-written width');
 });
 
+test('PUT serializes concurrent replaces of the same (user, cols)', async () => {
+  // Two racing PUTs — e.g. several freshly-opened tabs each persisting the
+  // same layout repair on load (session 3193's checks run) — interleave the
+  // delete-then-insert under READ COMMITTED: the second DELETE cannot see
+  // the first's uncommitted inserts, and its own inserts then die on
+  // idx_user_home_layout_*. The advisory lock makes them take turns.
+  const { app, calls } = makeApp({}, { user: USER });
+  await put(app, '/api/home-layout', { cols: 5, items: [A('alpha', 0, 0)] });
+  const inTx = [];
+  let open = false;
+  for (const c of calls) {
+    if (/^BEGIN/i.test(c.sql)) open = true;
+    else if (/^(COMMIT|ROLLBACK)/i.test(c.sql)) open = false;
+    else if (open) inTx.push(c);
+  }
+  assert.match(inTx[0].sql, /pg_advisory_xact_lock/,
+    'the per-(user, cols) lock is the first statement inside the transaction');
+  assert.deepEqual(inTx[0].params, [USER.id, 5], 'keyed on user AND width');
+  assert.match(inTx[1].sql, /^DELETE FROM user_home_layout/,
+    'nothing is deleted before the lock is held');
+  // xact-scoped, so an early throw can never leak a held lock.
+  assert.doesNotMatch(ROUTE, /pg_advisory_lock\(/);
+});
+
 // ── PUT: the create widget is never quota-gated ───────────────────────
 
 // The regression guard for the retired "absent for non-creators" rule. The
@@ -400,4 +424,17 @@ test('staging seeds a layout for every capture identity', () => {
   // Idempotent: a rebuild must not clobber a reviewer's own drags.
   assert.match(seed, /SELECT 1 FROM user_home_layout WHERE user_id = \$1 LIMIT 1/);
   assert.match(seed, /ON CONFLICT DO NOTHING/);
+});
+
+test('staging home fixtures are slug-keyed and visible to capture viewers', () => {
+  const migrate = read('src/db/migrate.js');
+  assert.match(migrate, /seedStagingFailedApp\(pool, config\)/);
+  assert.match(migrate, /seedStagingForkLineage\(pool, config\)/);
+  assert.match(migrate, /ON CONFLICT \(slug\) DO UPDATE/,
+    'fixture slugs, not collision-prone cloned ids, are the stable key');
+  assert.match(migrate, /SELECT id, \$1, 2 FROM apps WHERE slug = 'staging-demo-failed-app'/);
+  assert.match(migrate, /SELECT id, \$1, 1 FROM apps WHERE slug = 'staging-demo-fork'/);
+  assert.match(migrate, /SELECT id, \$1, 0 FROM apps WHERE slug = 'staging-demo-chess-arena'/);
+  assert.match(migrate, /SET hidden = FALSE, sort_order = EXCLUDED\.sort_order/,
+    'a stale hidden preference cannot suppress a deterministic capture fixture');
 });

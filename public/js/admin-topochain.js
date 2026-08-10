@@ -13,6 +13,13 @@
 // its own tab state (_setSub/_syncHash) — so admin-console.js's existing
 // single-level setSection/_writeHash needed no changes at all.
 //
+// Season events extends that address with the two screens nested under it:
+// #admin/seasons/season-events/<eventId> is "managing this event's
+// challenges", and .../new-challenge[/<templateId>] is its Add-challenge
+// form, on that template, already filled in. app.js hands this module
+// everything after #admin/<section>, so those segments cost it nothing;
+// _readSeasonEventsDeepLink() parses them and _syncHash() writes them back.
+//
 // NAMING: the section was called "Topochain" until the rename, and the
 // canonical route is now #admin/seasons/<sub> (the Seasons tab itself is
 // #admin/seasons/seasons). #admin/topochain/<sub> is a PERMANENT alias:
@@ -112,50 +119,50 @@
 // double-tap delay that otherwise makes the small row chips feel dead.
 const BTN_BASE = 'inline-flex items-center justify-center gap-1.5 rounded-lg font-medium '
   + 'transition-colors touch-manipulation focus:outline-none focus-visible:ring-2 '
-  + 'focus-visible:ring-violet-500 disabled:opacity-40 disabled:pointer-events-none';
+  + 'focus-visible:ring-indigo-500 disabled:opacity-40 disabled:pointer-events-none';
 const BTN_MD = 'min-h-[44px] sm:min-h-[36px] px-4 py-2 text-sm';
 const BTN_SM = 'min-h-[44px] sm:min-h-[34px] px-3 py-1.5 text-sm';
 const BTN_ROW = 'min-h-[36px] sm:min-h-[30px] px-2.5 py-1 text-xs';
 const BTN = {
   // Page/panel-level primary + secondary (Save, Cancel, Run, Send).
-  primary: `${BTN_BASE} ${BTN_MD} bg-violet-600 hover:bg-violet-500 text-white shadow-sm`,
-  secondary: `${BTN_BASE} ${BTN_MD} border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800`,
+  primary: `${BTN_BASE} ${BTN_MD} bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm`,
+  secondary: `${BTN_BASE} ${BTN_MD} border border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800`,
   // Toolbar variants — same colours, one size down.
-  primarySm: `${BTN_BASE} ${BTN_SM} bg-violet-600 hover:bg-violet-500 text-white shadow-sm`,
-  secondarySm: `${BTN_BASE} ${BTN_SM} border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800`,
+  primarySm: `${BTN_BASE} ${BTN_SM} bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm`,
+  secondarySm: `${BTN_BASE} ${BTN_SM} border border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800`,
   dangerSm: `${BTN_BASE} ${BTN_SM} bg-red-600 hover:bg-red-500 text-white`,
   warnSm: `${BTN_BASE} ${BTN_SM} border border-amber-400 dark:border-amber-700 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/40`,
   // Row actions. Chips, not bare text links: a bordered box is a target
   // you can see and hit, and it wraps predictably inside both the table
   // cell and the card footer _list() renders them into.
-  row: `${BTN_BASE} ${BTN_ROW} border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:border-violet-400 hover:text-violet-600 dark:hover:text-violet-400`,
-  rowPrimary: `${BTN_BASE} ${BTN_ROW} border border-violet-300 dark:border-violet-800 text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/40`,
+  row: `${BTN_BASE} ${BTN_ROW} border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:border-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-800 dark:hover:text-indigo-300`,
+  rowPrimary: `${BTN_BASE} ${BTN_ROW} border border-indigo-300 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40`,
   rowDanger: `${BTN_BASE} ${BTN_ROW} border border-red-200 dark:border-red-900 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40`,
   rowWarn: `${BTN_BASE} ${BTN_ROW} border border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40`,
   // Full-width list entry in a reference sidebar (SQL templates, schema
   // tables). Left-aligned rather than centred, and tall enough to hit.
   sidebar: 'flex w-full items-center min-h-[36px] rounded-lg px-2.5 py-1.5 text-left text-xs '
-    + 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 '
-    + 'touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500',
+    + 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 '
+    + 'touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500',
   // Back control on a nested screen, and the ✕ in a panel header.
-  back: `${BTN_BASE} min-h-[44px] sm:min-h-[36px] -ml-2 px-2 py-1 text-sm text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/40`,
-  close: 'inline-flex shrink-0 items-center justify-center h-9 w-9 rounded-lg text-zinc-500 '
-    + 'hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-zinc-900 dark:hover:text-zinc-100 '
-    + 'touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500',
+  back: `${BTN_BASE} min-h-[44px] sm:min-h-[36px] -ml-2 px-2 py-1 text-sm text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40`,
+  close: 'inline-flex shrink-0 items-center justify-center h-9 w-9 rounded-lg text-gray-500 '
+    + 'hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-gray-100 '
+    + 'touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500',
 };
 
 // Text inputs / selects / textareas. Same 44px-then-36px rule as the
 // buttons so a field and the button beside it line up at every width.
-const FIELD_CLS = 'w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 '
+const FIELD_CLS = 'w-full rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 '
   + 'px-3 py-2 text-sm min-h-[44px] sm:min-h-[36px] focus:outline-none focus:ring-2 '
-  + 'focus:ring-violet-500 focus:border-transparent disabled:opacity-60';
+  + 'focus:ring-indigo-500 focus:border-transparent disabled:opacity-60';
 // Textareas set their height from `rows`, so they take everything but
 // the min-height.
-const TEXTAREA_CLS = 'w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 '
-  + 'px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent';
+const TEXTAREA_CLS = 'w-full rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 '
+  + 'px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent';
 
 // Panel and card surfaces, shared by every form, picker and detail view.
-const PANEL_CLS = 'rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm';
+const PANEL_CLS = AdminUI.card; // identical recipe — one source of truth
 
 const AdminTopochain = {
   _host: null,
@@ -256,9 +263,9 @@ const AdminTopochain = {
   _field(label, innerHtml, help) {
     const esc = AdminTopochain.esc;
     return `<label class="block text-xs">
-      <span class="font-medium text-zinc-600 dark:text-zinc-400">${esc(label)}</span>
+      <span class="font-medium text-gray-600 dark:text-gray-400">${esc(label)}</span>
       <div class="mt-1">${innerHtml}</div>
-      ${help ? `<span class="block mt-1 text-[11px] leading-snug text-zinc-400">${esc(help)}</span>` : ''}
+      ${help ? `<span class="block mt-1 text-[11px] leading-snug text-gray-400">${esc(help)}</span>` : ''}
     </label>`;
   },
 
@@ -269,10 +276,10 @@ const AdminTopochain = {
     const esc = AdminTopochain.esc;
     return `<label class="flex items-start gap-2.5 min-h-[44px] sm:min-h-[36px] py-2 cursor-pointer">
       <input id="${esc(id)}" type="checkbox" ${checked ? 'checked' : ''}
-        class="mt-0.5 h-5 w-5 shrink-0 rounded border-zinc-300 dark:border-zinc-600 text-violet-600 focus:ring-2 focus:ring-violet-500">
+        class="mt-0.5 h-5 w-5 shrink-0 rounded border-gray-300 dark:border-gray-600 text-indigo-600 focus:ring-2 focus:ring-indigo-500">
       <span class="text-xs">
-        <span class="font-medium text-zinc-600 dark:text-zinc-400">${esc(label)}</span>
-        ${help ? `<span class="block mt-0.5 text-[11px] leading-snug text-zinc-400">${esc(help)}</span>` : ''}
+        <span class="font-medium text-gray-600 dark:text-gray-400">${esc(label)}</span>
+        ${help ? `<span class="block mt-0.5 text-[11px] leading-snug text-gray-400">${esc(help)}</span>` : ''}
       </span>
     </label>`;
   },
@@ -291,7 +298,7 @@ const AdminTopochain = {
     if (opts.disabled) parts.push('disabled');
     if (type === 'checkbox') {
       return `<input ${parts.filter((p) => !p.startsWith('class=')).join(' ')}
-        class="h-5 w-5 rounded border-zinc-300 dark:border-zinc-600 text-violet-600 focus:ring-2 focus:ring-violet-500" ${opts.value ? 'checked' : ''}>`;
+        class="h-5 w-5 rounded border-gray-300 dark:border-gray-600 text-indigo-600 focus:ring-2 focus:ring-indigo-500" ${opts.value ? 'checked' : ''}>`;
     }
     return `<input ${parts.join(' ')} value="${esc(val)}">`;
   },
@@ -341,7 +348,7 @@ const AdminTopochain = {
     const n = Math.max(1, Math.min(rows == null ? 4 : rows, 10));
     const bars = Array.from({ length: n }, (_, i) => {
       const w = ['w-3/4', 'w-full', 'w-5/6', 'w-2/3'][i % 4];
-      return `<div class="h-4 ${w} rounded bg-zinc-200 dark:bg-zinc-800"></div>`;
+      return `<div class="h-4 ${w} rounded bg-gray-200 dark:bg-gray-800"></div>`;
     }).join('');
     return `<div class="animate-pulse space-y-2 py-2" aria-hidden="true">${bars}</div>
       <p class="sr-only" role="status">Loading&hellip;</p>`;
@@ -356,13 +363,13 @@ const AdminTopochain = {
     const esc = AdminTopochain.esc;
     const o = opts || {};
     const body = o.body
-      ? `<p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">${esc(o.body)}</p>` : '';
+      ? `<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">${esc(o.body)}</p>` : '';
     const action = (o.actionId && AdminTopochain.canWrite())
       ? `<div class="mt-4 flex justify-center"><button id="${esc(o.actionId)}" type="button"
            class="${BTN.primarySm}">${esc(o.actionLabel || 'Create')}</button></div>`
       : '';
-    return `<div class="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 px-4 py-10 text-center">
-      <p class="text-sm font-medium text-zinc-600 dark:text-zinc-300">${esc(o.title || 'Nothing here yet')}</p>
+    return `<div class="rounded-xl border border-dashed border-gray-300 dark:border-gray-700 px-4 py-10 text-center">
+      <p class="text-sm font-medium text-gray-600 dark:text-gray-300">${esc(o.title || 'Nothing here yet')}</p>
       ${body}${action}
     </div>`;
   },
@@ -426,11 +433,11 @@ const AdminTopochain = {
       : '';
     const headTone = o.tone === 'danger'
       ? 'bg-red-50/90 dark:bg-red-950/40 border-red-200 dark:border-red-900'
-      : 'bg-white/90 dark:bg-zinc-900/90 border-zinc-200 dark:border-zinc-800';
+      : 'bg-white/90 dark:bg-gray-900/90 border-gray-200 dark:border-gray-800';
     const subtitle = o.subtitle
-      ? `<p class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">${esc(o.subtitle)}</p>` : '';
+      ? `<p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">${esc(o.subtitle)}</p>` : '';
     const footer = o.footer
-      ? `<div class="flex flex-wrap items-center gap-2 border-t border-zinc-200 dark:border-zinc-800 px-4 py-3 sm:px-5">${o.footer}</div>`
+      ? `<div class="flex flex-wrap items-center gap-2 border-t border-gray-200 dark:border-gray-800 px-4 py-3 sm:px-5">${o.footer}</div>`
       : '';
     return `<section class="${PANEL_CLS} overflow-hidden mb-4 ${o.class || ''}">
       <header class="sticky top-0 z-10 flex items-start justify-between gap-3 border-b px-4 py-3 sm:px-5 backdrop-blur ${headTone}">
@@ -452,7 +459,7 @@ const AdminTopochain = {
     const esc = AdminTopochain.esc;
     const o = opts || {};
     const subtitle = o.subtitle
-      ? `<p class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">${esc(o.subtitle)}</p>` : '';
+      ? `<p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">${esc(o.subtitle)}</p>` : '';
     const actions = o.actions
       ? `<div class="flex flex-wrap items-center gap-2 sm:justify-end">${o.actions}</div>` : '';
     return `<div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -473,6 +480,14 @@ const AdminTopochain = {
       ? 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3'
       : 'grid-cols-1 md:grid-cols-2';
     return `<div class="grid gap-4 ${wide}">${innerHtml}</div>`;
+  },
+
+  // A labelled rule between groups of fields inside one form panel. The
+  // long forms (challenge template, add challenge) are otherwise a wall
+  // of inputs in which "which of these is the CTA?" has to be answered
+  // by reading every label.
+  _formSection(label) {
+    return `<p class="mt-5 mb-3 border-t border-gray-200 dark:border-gray-800 pt-4 text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">${AdminTopochain.esc(label)}</p>`;
   },
 
   // Save / Cancel pair for a _panel footer, in that visual order with
@@ -534,13 +549,13 @@ const AdminTopochain = {
         ? `<td class="px-3 py-2"><div class="flex flex-wrap items-center justify-end gap-1">${actions(it)}</div></td>`
         : '';
       const ex = extra(it);
-      return `<tr class="border-t border-zinc-100 dark:border-zinc-800 ${rowClass(it)}">${cells}${act}</tr>`
-        + (ex ? `<tr class="border-t border-zinc-100 dark:border-zinc-800"><td colspan="${span}" class="px-3 py-3">${ex}</td></tr>` : '');
+      return `<tr class="border-t border-gray-100 dark:border-gray-800 ${rowClass(it)}">${cells}${act}</tr>`
+        + (ex ? `<tr class="border-t border-gray-100 dark:border-gray-800"><td colspan="${span}" class="px-3 py-3">${ex}</td></tr>` : '');
     }).join('');
 
-    const table = `<div class="hidden md:block overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
+    const table = `<div class="hidden md:block overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-800">
       <table class="w-full text-sm">
-        <thead class="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500"><tr>${head}</tr></thead>
+        <thead class="bg-gray-50 dark:bg-gray-900 text-xs uppercase tracking-wide text-gray-500"><tr>${head}</tr></thead>
         <tbody>${bodyRows}</tbody>
       </table>
     </div>`;
@@ -549,15 +564,15 @@ const AdminTopochain = {
     const cards = `<div class="md:hidden space-y-2">${items.map((it) => {
       const rest = cols.filter((c) => c !== primary && !c.hideOnCard).map((c) => `
         <div class="flex items-start justify-between gap-3 py-1">
-          <dt class="shrink-0 text-xs uppercase tracking-wide text-zinc-500">${esc(c.label)}</dt>
+          <dt class="shrink-0 text-xs uppercase tracking-wide text-gray-500">${esc(c.label)}</dt>
           <dd class="min-w-0 text-right text-sm break-words">${c.cell(it)}</dd>
         </div>`).join('');
       const act = actions(it);
       const ex = extra(it);
       return `<div class="${PANEL_CLS} px-4 py-3 ${rowClass(it)}">
         <p class="text-sm font-medium break-words">${primary ? primary.cell(it) : ''}</p>
-        <dl class="mt-1 divide-y divide-zinc-100 dark:divide-zinc-800">${rest}</dl>
-        ${act ? `<div class="mt-2 flex flex-wrap gap-1 border-t border-zinc-100 dark:border-zinc-800 pt-2">${act}</div>` : ''}
+        <dl class="mt-1 divide-y divide-gray-100 dark:divide-gray-800">${rest}</dl>
+        ${act ? `<div class="mt-2 flex flex-wrap gap-1 border-t border-gray-100 dark:border-gray-800 pt-2">${act}</div>` : ''}
         ${ex ? `<div class="mt-2">${ex}</div>` : ''}
       </div>`;
     }).join('')}</div>`;
@@ -568,7 +583,7 @@ const AdminTopochain = {
   _pagerHtml(meta, idPrefix) {
     if (!meta) return '';
     const esc = AdminTopochain.esc;
-    return `<div class="mt-4 flex flex-col gap-2 text-xs text-zinc-500 sm:flex-row sm:items-center sm:justify-between">
+    return `<div class="mt-4 flex flex-col gap-2 text-xs text-gray-500 sm:flex-row sm:items-center sm:justify-between">
       <span>Page ${esc(meta.page)} of ${esc(Math.max(meta.total_pages, 1))} &middot; ${esc(meta.total)} total</span>
       <div class="flex flex-wrap gap-2">
         <button id="${idPrefix}-prev" type="button" class="${BTN.row}" ${meta.page <= 1 ? 'disabled' : ''}>Prev</button>
@@ -657,8 +672,8 @@ const AdminTopochain = {
     const tones = {
       green: 'bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-400',
       amber: 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400',
-      violet: 'bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-400',
-      zinc: 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300',
+      violet: 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-400',
+      zinc: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300',
     };
     return `<span class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${tones[tone] || tones.zinc}">${esc(label)}</span>`;
   },
@@ -682,6 +697,10 @@ const AdminTopochain = {
   render(host) {
     AdminTopochain._host = host;
     const sub = AdminTopochain._subFromHash() || AdminTopochain._sub || 'seasons';
+    // Season events owns two more segments (the event being managed, and
+    // its Add-challenge form). They are read BEFORE the first paint so a
+    // deep link opens that screen directly instead of the event list.
+    AdminTopochain._readSeasonEventsDeepLink(sub);
     AdminTopochain.setSub(sub);
   },
 
@@ -702,6 +721,30 @@ const AdminTopochain = {
   _subFromHash() {
     const m = /^#admin\/(?:seasons|topochain)\/([^/]+)/.exec(location.hash);
     return m ? decodeURIComponent(m[1]) : null;
+  },
+
+  // The Season-events tail: #admin/seasons/season-events/<eventId>
+  // [/new-challenge[/<templateId>]]. Reading it here is what makes the
+  // nested screens addressable — before this, "manage this event" and
+  // "add a challenge from this template" could only be reached by
+  // clicking, so neither could be linked, bookmarked or screenshotted.
+  // Absent segments RESET the state rather than leaving whatever the last
+  // visit left behind: the address is the source of truth on entry.
+  _readSeasonEventsDeepLink(sub) {
+    if (sub !== 'season-events') return;
+    const m = /^#admin\/(?:seasons|topochain)\/season-events\/(\d+)(\/new-challenge(?:\/(\d+))?)?/
+      .exec(location.hash);
+    AdminTopochain._se.detailId = m ? parseInt(m[1], 10) : null;
+    AdminTopochain._ch.open = !!(m && m[2]);
+    AdminTopochain._ch.pendingTemplateId = (m && m[3]) || null;
+    // The picked template is adopted from the address too, not just
+    // remembered as "pending". _syncHash runs during the event-detail
+    // render — before the form (and its picker) exist — so leaving the
+    // PREVIOUS visit's templateId in place here lets that early sync
+    // overwrite the address we are in the middle of reading, and the
+    // re-render then reads its own stale value back. Deriving both from
+    // the hash makes the whole path idempotent.
+    AdminTopochain._ch.templateId = (m && m[3]) || '';
   },
 
   _groupOf(sub) {
@@ -749,7 +792,18 @@ const AdminTopochain = {
   // accepted as a starting point and rewritten to the canonical one, so
   // an old bookmark self-heals even if it somehow bypassed app.js.
   _syncHash() {
-    const target = `#admin/seasons/${AdminTopochain._sub}`;
+    let target = `#admin/seasons/${AdminTopochain._sub}`;
+    // Season events' nested screens extend the address rather than
+    // hiding behind it (see _readSeasonEventsDeepLink). The template id
+    // is part of it because a prefilled form is a STATE — without the
+    // segment the same URL reopens an empty one.
+    if (AdminTopochain._sub === 'season-events' && AdminTopochain._se.detailId != null) {
+      target += `/${AdminTopochain._se.detailId}`;
+      if (AdminTopochain._ch.open) {
+        target += '/new-challenge';
+        if (AdminTopochain._ch.templateId) target += `/${AdminTopochain._ch.templateId}`;
+      }
+    }
     const h = location.hash;
     if ((h.startsWith('#admin/seasons') || h.startsWith('#admin/topochain')) && h !== target) {
       history.replaceState(null, '', target);
@@ -769,17 +823,17 @@ const AdminTopochain = {
         const isActive = key === active;
         const cls = 'admin-topo-tab shrink-0 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors '
           + (isActive
-            ? 'bg-violet-600/10 text-violet-600 dark:text-violet-400'
-            : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800');
+            ? 'bg-indigo-600 text-white'
+            : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800');
         return `<button type="button" data-topo-sub="${esc(key)}"${isActive ? ' aria-current="page"' : ''} class="${cls}">${esc(AdminTopochain._labelOf(key))}</button>`;
       }).join('');
       return `<div class="min-w-0">
-        <p class="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">${esc(g.label)}</p>
+        <p class="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">${esc(g.label)}</p>
         <div class="flex flex-wrap items-center gap-1">${pills}</div>
       </div>`;
     }).join('');
     return `<nav aria-label="Seasons, events and challenges sections"
-      class="hidden md:flex flex-wrap items-start gap-x-6 gap-y-3 mb-5 pb-4 border-b border-zinc-200 dark:border-zinc-800">${clusters}</nav>`;
+      class="hidden md:flex flex-wrap items-start gap-x-6 gap-y-3 mb-5 pb-4 border-b border-gray-200 dark:border-gray-800">${clusters}</nav>`;
   },
 
   // Below md: the same two-level hierarchy the console itself uses —
@@ -788,20 +842,20 @@ const AdminTopochain = {
   // admin-console.js's _mobileMenuHtml so the two navs feel like one.
   _mobileNavHtml() {
     const esc = AdminTopochain.esc;
-    const chevron = `<svg class="w-4 h-4 shrink-0 text-zinc-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clip-rule="evenodd"/></svg>`;
+    const chevron = `<svg class="w-4 h-4 shrink-0 text-gray-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clip-rule="evenodd"/></svg>`;
 
     if (AdminTopochain._navLevel === 1) {
       const rows = AdminTopochain.SUB_GROUPS.map((g) => `
         <button type="button" data-topo-group="${esc(g.key)}"
-          class="w-full flex items-center justify-between gap-3 min-h-[44px] px-4 py-2 text-left border-b border-zinc-100 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/60">
+          class="w-full flex items-center justify-between gap-3 min-h-[44px] px-4 py-2 text-left border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/60">
           <span class="min-w-0">
             <span class="block text-sm font-medium">${esc(g.label)}</span>
-            <span class="block text-xs text-zinc-500 truncate">${esc(g.subs.map((k) => AdminTopochain._labelOf(k)).join(' · '))}</span>
+            <span class="block text-xs text-gray-500 truncate">${esc(g.subs.map((k) => AdminTopochain._labelOf(k)).join(' · '))}</span>
           </span>
           ${chevron}
         </button>`).join('');
       return `<nav aria-label="Seasons, events and challenges sections"
-        class="md:hidden mb-4 rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-800 [&>button:last-child]:border-b-0">${rows}</nav>`;
+        class="md:hidden mb-4 rounded-lg overflow-hidden border border-gray-200 dark:border-gray-800 [&>button:last-child]:border-b-0">${rows}</nav>`;
     }
 
     const group = AdminTopochain.SUB_GROUPS.find((g) => g.key === AdminTopochain._navGroup)
@@ -811,13 +865,13 @@ const AdminTopochain = {
       const isActive = key === AdminTopochain._sub;
       const cls = 'admin-topo-tab shrink-0 min-h-[36px] px-3 py-1.5 text-sm font-medium rounded-lg transition-colors '
         + (isActive
-          ? 'bg-violet-600/10 text-violet-600 dark:text-violet-400'
-          : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800');
+          ? 'bg-indigo-600 text-white'
+          : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800');
       return `<button type="button" data-topo-sub="${esc(key)}"${isActive ? ' aria-current="page"' : ''} class="${cls}">${esc(AdminTopochain._labelOf(key))}</button>`;
     }).join('');
     return `<nav aria-label="Seasons, events and challenges sections" class="md:hidden mb-4">
       <button type="button" id="admin-topo-nav-back"
-        class="flex items-center gap-1 min-h-[44px] -ml-1 pr-2 text-sm font-medium text-zinc-600 dark:text-zinc-300">
+        class="flex items-center gap-1 min-h-[44px] -ml-1 pr-2 text-sm font-medium text-gray-600 dark:text-gray-300">
         <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M12.79 5.23a.75.75 0 0 1-.02 1.06L8.832 10l3.938 3.71a.75.75 0 1 1-1.04 1.08l-4.5-4.25a.75.75 0 0 1 0-1.08l4.5-4.25a.75.75 0 0 1 1.06.02Z" clip-rule="evenodd"/></svg>
         ${esc(group.label)}
       </button>
@@ -962,11 +1016,11 @@ const AdminTopochain = {
               + (sn.internal ? ` ${AdminTopochain._badgeHtml('Internal', 'violet')}` : '');
           },
         },
-        { label: 'Starts', cell: (sn) => esc(AdminTopochain._fmt(sn.starts_at)), tdClass: 'text-xs text-zinc-500' },
-        { label: 'Ends', cell: (sn) => esc(AdminTopochain._fmt(sn.ends_at)), tdClass: 'text-xs text-zinc-500' },
-        { label: 'Events', cell: (sn) => (sn.season_events_count != null ? esc(sn.season_events_count) : '—'), tdClass: 'text-zinc-500' },
-        { label: 'Users', cell: (sn) => (sn.users_count != null ? esc(sn.users_count) : '—'), tdClass: 'text-zinc-500' },
-        { label: 'Order', cell: (sn) => esc(sn.display_order ?? 0), tdClass: 'text-zinc-500' },
+        { label: 'Starts', cell: (sn) => esc(AdminTopochain._fmt(sn.starts_at)), tdClass: 'text-xs text-gray-500' },
+        { label: 'Ends', cell: (sn) => esc(AdminTopochain._fmt(sn.ends_at)), tdClass: 'text-xs text-gray-500' },
+        { label: 'Events', cell: (sn) => (sn.season_events_count != null ? esc(sn.season_events_count) : '—'), tdClass: 'text-gray-500' },
+        { label: 'Users', cell: (sn) => (sn.users_count != null ? esc(sn.users_count) : '—'), tdClass: 'text-gray-500' },
+        { label: 'Order', cell: (sn) => esc(sn.display_order ?? 0), tdClass: 'text-gray-500' },
       ],
       actions: (sn) => `
         <button data-season-events="${sn.id}" type="button" class="${BTN.rowPrimary}">View events</button>
@@ -1002,15 +1056,15 @@ const AdminTopochain = {
     }
     const esc = AdminTopochain.esc;
     const rows = data.data.map((ev) => `
-      <li class="flex flex-col gap-1 py-2 border-t border-zinc-100 dark:border-zinc-800 first:border-t-0 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-2">
-        <span class="text-sm">${esc(ev.name)} <span class="text-xs text-zinc-500">(${esc(ev.type)})</span></span>
-        <span class="text-xs text-zinc-500">${esc(AdminTopochain._fmt(ev.starts_at))} &ndash; ${esc(AdminTopochain._fmt(ev.ends_at))}</span>
+      <li class="flex flex-col gap-1 py-2 border-t border-gray-100 dark:border-gray-800 first:border-t-0 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-2">
+        <span class="text-sm">${esc(ev.name)} <span class="text-xs text-gray-500">(${esc(ev.type)})</span></span>
+        <span class="text-xs text-gray-500">${esc(AdminTopochain._fmt(ev.starts_at))} &ndash; ${esc(AdminTopochain._fmt(ev.ends_at))}</span>
       </li>`).join('');
     host.innerHTML = `<section class="${PANEL_CLS} overflow-hidden">
-      <header class="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 dark:border-zinc-800 px-4 py-3 sm:px-5">
+      <header class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 dark:border-gray-800 px-4 py-3 sm:px-5">
         <div class="min-w-0">
           <h3 class="text-sm font-semibold">Events not assigned to a season</h3>
-          <p class="mt-0.5 text-xs text-zinc-500">${esc(String(data.data.length))} event${data.data.length === 1 ? '' : 's'} with no season. Edit one to link it.</p>
+          <p class="mt-0.5 text-xs text-gray-500">${esc(String(data.data.length))} event${data.data.length === 1 ? '' : 's'} with no season. Edit one to link it.</p>
         </div>
         <button id="admin-topo-sn-unassigned-go" type="button" class="${BTN.secondarySm}">Show in Season events</button>
       </header>
@@ -1051,9 +1105,9 @@ const AdminTopochain = {
           <div class="md:col-span-2">${field('Pool info', f('admin-topo-sn-f-pool_info', { value: sn?.pool_info }), 'Free text shown with the reward pool, e.g. "1,000,000 TOPO".')}</div>
           <div class="md:col-span-2">${field('Description', AdminTopochain._textareaHtml('admin-topo-sn-f-description', sn?.description || '', 3))}</div>
         `)}
-        <fieldset class="mt-5 border-t border-zinc-200 dark:border-zinc-800 pt-4">
+        <fieldset class="mt-5 border-t border-gray-200 dark:border-gray-800 pt-4">
           <legend class="sr-only">Visibility</legend>
-          <p class="text-xs font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">Visibility</p>
+          <p class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">Visibility</p>
           <div class="grid grid-cols-1 gap-x-6 sm:grid-cols-2">
             ${check('admin-topo-sn-f-is_active', 'Active', sn ? sn.is_active : true)}
             ${check('admin-topo-sn-f-internal', 'Internal', sn?.internal, 'Hidden from the public app; for dry runs.')}
@@ -1265,13 +1319,13 @@ const AdminTopochain = {
           // empty (e.g. an older cached response).
           cell: (ev) => (ev.season?.name ? esc(ev.season.name)
             : (ev.season_id != null ? `#${esc(ev.season_id)}` : '—')),
-          tdClass: 'text-zinc-500',
+          tdClass: 'text-gray-500',
         },
-        { label: 'Type', cell: (ev) => esc(ev.type), tdClass: 'text-zinc-500' },
+        { label: 'Type', cell: (ev) => esc(ev.type), tdClass: 'text-gray-500' },
         { label: 'Active', cell: (ev) => (ev.is_active ? '<span class="text-green-600 dark:text-green-400">yes</span>' : '—') },
-        { label: 'Starts', cell: (ev) => esc(AdminTopochain._fmt(ev.starts_at)), tdClass: 'text-xs text-zinc-500' },
-        { label: 'Ends', cell: (ev) => esc(AdminTopochain._fmt(ev.ends_at)), tdClass: 'text-xs text-zinc-500' },
-        { label: 'Users', cell: (ev) => (ev.users_count != null ? esc(ev.users_count) : '—'), tdClass: 'text-zinc-500' },
+        { label: 'Starts', cell: (ev) => esc(AdminTopochain._fmt(ev.starts_at)), tdClass: 'text-xs text-gray-500' },
+        { label: 'Ends', cell: (ev) => esc(AdminTopochain._fmt(ev.ends_at)), tdClass: 'text-xs text-gray-500' },
+        { label: 'Users', cell: (ev) => (ev.users_count != null ? esc(ev.users_count) : '—'), tdClass: 'text-gray-500' },
       ],
       actions: (ev) => `
         <button data-manage="${ev.id}" type="button" class="${BTN.rowPrimary}">Manage</button>
@@ -1280,6 +1334,8 @@ const AdminTopochain = {
     }) + AdminTopochain._pagerHtml(s.meta, 'admin-topo-se-pg');
     table.querySelectorAll('[data-manage]').forEach((b) => b.addEventListener('click', () => {
       AdminTopochain._se.detailId = parseInt(b.dataset.manage, 10);
+      AdminTopochain._ch.open = false;
+      AdminTopochain._syncHash();
       AdminTopochain._renderSub();
     }));
     table.querySelectorAll('[data-edit]').forEach((b) => b.addEventListener('click', () => AdminTopochain._openSeasonEventForm(parseInt(b.dataset.edit, 10))));
@@ -1327,9 +1383,9 @@ const AdminTopochain = {
           ${field('Scoring: offchain weight *', f('admin-topo-se-f-offchain_weight', { type: 'number', min: 0, step: '0.01', value: scoring.offchain_weight ?? 0 }))}
           <div class="md:col-span-2">${field('Scoring: metrics (comma-separated) *', f('admin-topo-se-f-metrics', { value: (scoring.metrics || []).join(', ') }))}</div>
         `)}
-        <fieldset class="mt-5 border-t border-zinc-200 dark:border-zinc-800 pt-4">
+        <fieldset class="mt-5 border-t border-gray-200 dark:border-gray-800 pt-4">
           <legend class="sr-only">Visibility</legend>
-          <p class="text-xs font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">Visibility</p>
+          <p class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">Visibility</p>
           <div class="grid grid-cols-1 gap-x-6 sm:grid-cols-2 lg:grid-cols-3">
             ${check('admin-topo-se-f-is_active', 'Active', ev ? ev.is_active : true)}
             ${check('admin-topo-se-f-internal', 'Internal', ev?.internal)}
@@ -1338,7 +1394,7 @@ const AdminTopochain = {
             ${check('admin-topo-se-f-display_activities', 'Show activities', ev?.display_activities)}
           </div>
         </fieldset>
-        <div class="grid grid-cols-1 gap-4 mt-5 border-t border-zinc-200 dark:border-zinc-800 pt-4">
+        <div class="grid grid-cols-1 gap-4 mt-5 border-t border-gray-200 dark:border-gray-800 pt-4">
           ${field('Description', AdminTopochain._textareaHtml('admin-topo-se-f-description', ev?.description || '', 3))}
           ${field('Disclaimer', AdminTopochain._textareaHtml('admin-topo-se-f-disclaimer', ev?.disclaimer || '', 3))}
         </div>
@@ -1433,22 +1489,33 @@ const AdminTopochain = {
       <div id="admin-topo-ch-table">${AdminTopochain._skeleton(4)}</div>`;
     document.getElementById('admin-topo-se-back').addEventListener('click', () => {
       AdminTopochain._se.detailId = null;
+      AdminTopochain._ch.open = false;
+      AdminTopochain._syncHash();
       AdminTopochain._renderSub();
     });
     document.getElementById('admin-topo-ch-new')?.addEventListener('click', () => AdminTopochain._openChallengeForm(null));
+    // A /new-challenge deep link (and a re-render while the form is open)
+    // reopens it, on the template the address names. Gated by canWrite
+    // like the button itself — _openChallengeForm returns early for a
+    // view-only admin, so the segment is simply inert for them.
+    if (AdminTopochain._ch.open) {
+      const pending = AdminTopochain._ch.pendingTemplateId;
+      AdminTopochain._ch.pendingTemplateId = null;
+      AdminTopochain._openChallengeForm(null, { templateId: pending });
+    }
 
     const { ok, data, status } = await AdminTopochain.fetchJson(`/api/v4/admin/season-events/${encodeURIComponent(id)}`);
     const hero = document.getElementById('admin-topo-se-detail-hero');
     if (hero) {
       if (ok && data?.success) {
         const ev = data.data;
-        const stat = (label, value) => `<div class="rounded-lg bg-zinc-50 dark:bg-zinc-800/60 px-3 py-2">
-            <dt class="text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500">${esc(label)}</dt>
+        const stat = (label, value) => `<div class="rounded-lg bg-gray-50 dark:bg-gray-800/60 px-3 py-2">
+            <dt class="text-[11px] uppercase tracking-wide text-gray-400 dark:text-gray-500">${esc(label)}</dt>
             <dd class="mt-0.5 text-sm font-medium">${esc(value)}</dd>
           </div>`;
         hero.innerHTML = `<section class="${PANEL_CLS} px-4 py-4 sm:px-5">
           <h2 class="text-base font-semibold sm:text-lg">${esc(ev.name)}</h2>
-          <p class="mt-0.5 text-xs text-zinc-500">${esc(AdminTopochain._fmt(ev.starts_at))} &ndash; ${esc(AdminTopochain._fmt(ev.ends_at))}</p>
+          <p class="mt-0.5 text-xs text-gray-500">${esc(AdminTopochain._fmt(ev.starts_at))} &ndash; ${esc(AdminTopochain._fmt(ev.ends_at))}</p>
           <dl class="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
             ${stat('Users', ev.users_count ?? 0)}
             ${stat('Accounts', ev.onchain_accounts_count ?? 0)}
@@ -1506,9 +1573,9 @@ const AdminTopochain = {
       items,
       columns: [
         { label: 'Goal', primary: true, cell: (c) => esc(c.card_preview?.goal || '') },
-        { label: 'Kind', cell: (c) => esc(c.card_preview?.label || ''), tdClass: 'text-xs text-zinc-500' },
-        { label: 'Enabled', cell: (c) => (c.enabled ? '<span class="text-green-600 dark:text-green-400">enabled</span>' : '<span class="text-zinc-400">disabled</span>') },
-        { label: 'Completed', cell: (c) => (c.completed ? 'completed' : '—'), tdClass: 'text-zinc-500' },
+        { label: 'Kind', cell: (c) => esc(c.card_preview?.label || ''), tdClass: 'text-xs text-gray-500' },
+        { label: 'Enabled', cell: (c) => (c.enabled ? '<span class="text-green-600 dark:text-green-400">enabled</span>' : '<span class="text-gray-400">disabled</span>') },
+        { label: 'Completed', cell: (c) => (c.completed ? 'completed' : '—'), tdClass: 'text-gray-500' },
       ],
       actions: (c) => {
         const i = idx.get(c);
@@ -1591,7 +1658,7 @@ const AdminTopochain = {
         title: 'Move this challenge',
         closeId: 'admin-topo-ch-move-close',
         closeLabel: 'Close the move panel',
-        body: '<p class="text-sm text-zinc-500">There is no other event to move this challenge to.</p>',
+        body: '<p class="text-sm text-gray-500">There is no other event to move this challenge to.</p>',
       })}</div>`;
       document.getElementById('admin-topo-ch-move-close').addEventListener('click', closePanel);
       return;
@@ -1625,32 +1692,137 @@ const AdminTopochain = {
     else AdminTopochain._alert((data && data.error) || 'Move failed.');
   },
 
-  async _openChallengeForm(challengeId) {
-    if (!AdminTopochain.canWrite()) return;
+  // ── Challenge form state + the template-driven prefill ──────────────
+  //
+  // `templates` caches the FULL template objects behind the picker (the
+  // options only carry an id and a label, and the prefill needs every
+  // field). `open` and `templateId` are what _syncHash writes into the
+  // address; `pendingTemplateId` is what a deep link asked for, spent
+  // once by the form that opens.
+  _ch: {
+    templates: [], templateId: '', open: false, pendingTemplateId: null,
+  },
+
+  // Every field the Add-challenge form fills from the picked template.
+  // `id` is BOTH the `admin-topo-ch-f-<id>` input suffix and the key on
+  // the template projection (formatTemplate in
+  // src/routes/topochain/challenge-view.js) — which is also the key the
+  // POST body writes back, so one list drives the render, the prefill
+  // and the save and they cannot drift apart. `type` is only about how
+  // the value crosses the DOM boundary.
+  _CH_TEMPLATE_FIELDS: [
+    { id: 'goal' }, { id: 'reward' }, { id: 'kind' },
+    { id: 'schedule_start', type: 'date' }, { id: 'schedule_end', type: 'date' },
+    { id: 'cta_button' }, { id: 'cta_label' }, { id: 'cta_type' }, { id: 'cta_link' },
+    { id: 'mobile_cta_label' }, { id: 'mobile_cta_type' }, { id: 'mobile_cta_link' },
+    { id: 'metric_type' }, { id: 'metric_label' }, { id: 'metric_target', type: 'number' },
+    { id: 'task' }, { id: 'description' }, { id: 'requirements' }, { id: 'reward_logic' },
+  ],
+
+  // The subset the EDIT form shows and saves. The challenges list is the
+  // only source an edit has, and it reports back exactly the override
+  // keys (buildChallengeListItem's `overrides`) — so the edit form stays
+  // on them. Rendering the rest there would show the TEMPLATE's values
+  // in fields that save as challenge-level overrides, quietly freezing
+  // them into the event on the next save.
+  _CH_EDIT_FIELDS: ['goal', 'reward', 'kind', 'task', 'description'],
+
+  // Write one value into a live control AND into the markup that
+  // serialises it: `.value` alone leaves the DOM's own attributes still
+  // showing the empty form, so a prefilled field is invisible to
+  // anything reading attributes (a snapshot, a selector assertion).
+  // Default value first, live value last, so the live one wins whatever
+  // the element type does with the other.
+  _setFieldValue(el, value) {
+    if (el.tagName === 'TEXTAREA') el.textContent = value;
+    else if (el.tagName === 'SELECT') {
+      Array.from(el.options || []).forEach((o) => {
+        if (String(o.value) === String(value)) o.setAttribute('selected', 'selected');
+        else o.removeAttribute('selected');
+      });
+    } else el.setAttribute('value', value);
+    el.value = value;
+  },
+
+  // Fill the whole Add-challenge form from one template. Runs on EVERY
+  // `change` of the picker, not just the first, and writes every field
+  // in _CH_TEMPLATE_FIELDS unconditionally: a template that leaves a
+  // field null clears the input rather than skipping it, so nothing the
+  // previously-picked template put there can survive the switch. Fields
+  // the template has no say in (display order) are the operator's and
+  // are deliberately left alone.
+  _applyChallengeTemplate(templateId) {
+    const t = AdminTopochain._templateById(templateId);
+    AdminTopochain._ch.templateId = t ? String(t.id) : '';
+    for (const f of AdminTopochain._CH_TEMPLATE_FIELDS) {
+      const el = document.getElementById(`admin-topo-ch-f-${f.id}`);
+      if (!el) continue;
+      AdminTopochain._setFieldValue(el, AdminTopochain._templateFieldText(t, f));
+    }
+    const host = document.getElementById('admin-topo-ch-form');
+    if (host) host.dataset.templateApplied = AdminTopochain._ch.templateId;
+    AdminTopochain._syncHash();
+  },
+
+  _templateById(templateId) {
+    return (AdminTopochain._ch.templates || [])
+      .find((x) => String(x.id) === String(templateId)) || null;
+  },
+
+  // What one template field looks like IN the form. Shared by the fill and
+  // by the save below, which compares against it — if these two ever
+  // disagreed, every untouched field would read as operator-edited.
+  _templateFieldText(t, f) {
+    const raw = t ? t[f.id] : null;
+    if (raw == null) return '';
+    return f.type === 'date' ? AdminTopochain._isoToLocalInput(raw) : String(raw);
+  },
+
+  async _openChallengeForm(challengeId, opts = {}) {
+    if (!AdminTopochain.canWrite()) {
+      // Keeps a view-only admin's address honest: the /new-challenge
+      // segment can be typed, but nothing opens, so it must not persist.
+      AdminTopochain._ch.open = false;
+      AdminTopochain._ch.templateId = '';
+      AdminTopochain._syncHash();
+      return;
+    }
     const eventId = AdminTopochain._se.detailId;
     const existing = challengeId != null ? (AdminTopochain._challenges || []).find((c) => String(c.id) === String(challengeId)) : null;
     const f = AdminTopochain._inputHtml, sel = AdminTopochain._selectHtml, field = AdminTopochain._field;
-    const host = document.getElementById('admin-topo-ch-form');
+    const section = AdminTopochain._formSection;
+    let host = document.getElementById('admin-topo-ch-form');
+    if (!host) return;
 
     let templateOptions = [];
+    AdminTopochain._ch.templates = [];
+    // Held across the await below, so the address keeps naming the template
+    // this form is opening WITH rather than briefly falling back to none.
+    AdminTopochain._ch.templateId = opts.templateId == null ? '' : String(opts.templateId);
+    AdminTopochain._ch.open = !existing;
     if (!existing) {
       const { ok, data } = await AdminTopochain.fetchJson(
         `/api/v4/admin/season-events/${encodeURIComponent(eventId)}/challenges/available-activity-types`);
       if (ok && data?.success) {
+        // The full rows are kept, not just the option pair: they ARE the
+        // prefill source.
+        AdminTopochain._ch.templates = data.data;
         templateOptions = data.data.map((t) => ({ value: t.id, label: `${t.category}: ${t.goal}` }));
       }
+      // The event detail may have re-rendered while that request was in
+      // flight (a deep link renders it twice), which detaches the div we
+      // captured. Writing the form into the orphan would leave no buttons
+      // in the document and throw on the wiring below, so re-resolve and
+      // let the newer call own the screen.
+      host = document.getElementById('admin-topo-ch-form');
+      if (!host) return;
     }
     const ov = existing?.overrides || {};
-    host.innerHTML = AdminTopochain._panel({
-      title: existing ? 'Edit challenge' : 'Add challenge',
-      subtitle: existing
-        ? 'Overrides apply to this event only; the template is untouched.'
-        : 'Pick a template, then override anything that should differ for this event.',
-      closeId: 'admin-topo-ch-close',
-      closeLabel: 'Close the challenge form',
-      body: `
-        ${existing ? '' : `<div class="mb-4">${field('Challenge template *', sel('admin-topo-ch-f-template', templateOptions, '', { blank: 'Choose a template…' }),
-    templateOptions.length ? undefined : 'No unused Challenge templates are available for this event — create one in the Challenge templates tab first.')}</div>`}
+    const ctaOptions = ['', 'url', 'app'].map((v) => ({ value: v, label: v || '(none)' }));
+    // Two bodies, because the two modes have different sources of truth:
+    // create fills from the template (so it shows everything the template
+    // defines), edit shows the per-event overrides the API reports back.
+    const editBody = `
         ${AdminTopochain._formGrid(`
           ${field('Goal override', f('admin-topo-ch-f-goal', { value: ov.goal }))}
           ${field('Reward override', f('admin-topo-ch-f-reward', { value: ov.reward }))}
@@ -1661,10 +1833,74 @@ const AdminTopochain = {
           ${field('Task override', AdminTopochain._textareaHtml('admin-topo-ch-f-task', ov.task || '', 3))}
           ${field('Description override', AdminTopochain._textareaHtml('admin-topo-ch-f-description', ov.description || '', 3))}
         </div>
-        ${AdminTopochain._formErrorSlot('admin-topo-ch-form-err')}`,
+        ${AdminTopochain._formErrorSlot('admin-topo-ch-form-err')}`;
+    const createBody = `
+        <div class="mb-4">${field('Challenge template *',
+    sel('admin-topo-ch-f-template', templateOptions, '', { blank: 'Choose a template…' }),
+    templateOptions.length
+      ? 'Picking a template fills in every field below with its values; switching template fills them in again.'
+      : 'No unused Challenge templates are available for this event — create one in the Challenge templates tab first.')}</div>
+        ${AdminTopochain._formGrid(`
+          ${field('Goal', f('admin-topo-ch-f-goal'))}
+          ${field('Reward', f('admin-topo-ch-f-reward'))}
+          ${field('Kind', f('admin-topo-ch-f-kind'), 'No admin listing endpoint exists for Kinds (documented gap) — must match an existing challenge_kinds id.')}
+          ${field('Display order', f('admin-topo-ch-f-display_order', { type: 'number', min: 0, value: 0 }), 'Not part of a template — where this challenge sits in the event.')}
+          ${field('Schedule start', f('admin-topo-ch-f-schedule_start', { type: 'datetime-local' }))}
+          ${field('Schedule end', f('admin-topo-ch-f-schedule_end', { type: 'datetime-local' }))}
+        `)}
+        ${section('Call to action')}
+        ${AdminTopochain._formGrid(`
+          ${field('CTA button label', f('admin-topo-ch-f-cta_button'))}
+          ${field('CTA label', f('admin-topo-ch-f-cta_label'))}
+          ${field('CTA type', sel('admin-topo-ch-f-cta_type', ctaOptions, ''))}
+          ${field('CTA link', f('admin-topo-ch-f-cta_link'))}
+          ${field('Mobile CTA label', f('admin-topo-ch-f-mobile_cta_label'))}
+          ${field('Mobile CTA type', sel('admin-topo-ch-f-mobile_cta_type', ctaOptions, ''))}
+          ${field('Mobile CTA link', f('admin-topo-ch-f-mobile_cta_link'))}
+        `)}
+        ${section('Metric')}
+        ${AdminTopochain._formGrid(`
+          ${field('Metric type', f('admin-topo-ch-f-metric_type'))}
+          ${field('Metric label', f('admin-topo-ch-f-metric_label'))}
+          ${field('Metric target', f('admin-topo-ch-f-metric_target', { type: 'number', step: '0.01' }))}
+        `, 3)}
+        ${section('Copy')}
+        <div class="grid grid-cols-1 gap-4">
+          ${field('Task', AdminTopochain._textareaHtml('admin-topo-ch-f-task', '', 3))}
+          ${field('Description', AdminTopochain._textareaHtml('admin-topo-ch-f-description', '', 3))}
+          ${field('Requirements', AdminTopochain._textareaHtml('admin-topo-ch-f-requirements', '', 3))}
+          ${field('Reward logic', AdminTopochain._textareaHtml('admin-topo-ch-f-reward_logic', '', 3))}
+        </div>
+        ${AdminTopochain._formErrorSlot('admin-topo-ch-form-err')}`;
+    host.innerHTML = AdminTopochain._panel({
+      title: existing ? 'Edit challenge' : 'Add challenge',
+      subtitle: existing
+        ? 'Overrides apply to this event only; the template is untouched.'
+        : 'Pick a template to fill the form in, then change anything that should differ for this event. Nothing here is written back to the template.',
+      closeId: 'admin-topo-ch-close',
+      closeLabel: 'Close the challenge form',
+      body: existing ? editBody : createBody,
       footer: AdminTopochain._formActions('admin-topo-ch-save', 'admin-topo-ch-cancel', 'Save challenge'),
     });
-    const closeForm = () => { host.innerHTML = ''; };
+    const closeForm = () => {
+      host.innerHTML = '';
+      AdminTopochain._ch.open = false;
+      AdminTopochain._ch.templateId = '';
+      AdminTopochain._syncHash();
+    };
+    if (!existing) {
+      const picker = document.getElementById('admin-topo-ch-f-template');
+      picker?.addEventListener('change', (e) => AdminTopochain._applyChallengeTemplate(e.target.value));
+      // A deep-linked template is applied exactly as if it had just been
+      // picked, so the address and the form always agree.
+      const pre = opts.templateId == null ? '' : String(opts.templateId);
+      if (picker && pre && AdminTopochain._ch.templates.some((t) => String(t.id) === pre)) {
+        AdminTopochain._setFieldValue(picker, pre);
+        AdminTopochain._applyChallengeTemplate(pre);
+      } else {
+        AdminTopochain._syncHash();
+      }
+    }
     document.getElementById('admin-topo-ch-save').addEventListener('click', () => AdminTopochain._saveChallenge(eventId, challengeId));
     document.getElementById('admin-topo-ch-cancel').addEventListener('click', closeForm);
     document.getElementById('admin-topo-ch-close').addEventListener('click', closeForm);
@@ -1674,18 +1910,33 @@ const AdminTopochain = {
     if (!AdminTopochain.canWrite()) return;
     const errEl = document.getElementById('admin-topo-ch-form-err');
     errEl.classList.add('hidden');
-    const val = (id) => document.getElementById(id)?.value ?? '';
-    const body = {
-      goal: val('admin-topo-ch-f-goal').trim() || null,
-      reward: val('admin-topo-ch-f-reward').trim() || null,
-      kind: val('admin-topo-ch-f-kind').trim() || null,
-      task: val('admin-topo-ch-f-task').trim() || null,
-      description: val('admin-topo-ch-f-description').trim() || null,
-      display_order: Number(val('admin-topo-ch-f-display_order') || 0),
-    };
+    const val = (id) => (document.getElementById(`admin-topo-ch-f-${id}`)?.value ?? '').trim();
+    const isCreate = challengeId == null;
+    const body = { display_order: Number(val('display_order') || 0) };
+    // These columns are per-event OVERRIDES of the template, and null means
+    // "keep inheriting". So create sends only what the operator actually
+    // changed away from the prefilled value: a field left exactly as the
+    // template filled it stays null and keeps tracking the template, which
+    // is what a challenge created before the prefill existed did. Sending
+    // the whole form back would freeze a copy of the template into every
+    // new challenge and quietly stop later template edits reaching it.
+    // Edit stays on _CH_EDIT_FIELDS — the only values that form was given,
+    // hence the only ones it may write.
+    const tpl = isCreate ? AdminTopochain._templateById(AdminTopochain._ch.templateId) : null;
+    for (const fld of AdminTopochain._CH_TEMPLATE_FIELDS) {
+      if (!isCreate && !AdminTopochain._CH_EDIT_FIELDS.includes(fld.id)) continue;
+      const raw = val(fld.id);
+      if (isCreate && raw === AdminTopochain._templateFieldText(tpl, fld).trim()) {
+        body[fld.id] = null;
+        continue;
+      }
+      if (fld.type === 'date') body[fld.id] = AdminTopochain._localInputToIso(raw);
+      else if (fld.type === 'number') body[fld.id] = raw === '' ? null : Number(raw);
+      else body[fld.id] = raw || null;
+    }
     let url = `/api/v4/admin/season-events/${encodeURIComponent(eventId)}/challenges`;
     let method = 'POST';
-    if (challengeId == null) {
+    if (isCreate) {
       const templateId = document.getElementById('admin-topo-ch-f-template')?.value;
       if (!templateId) { errEl.textContent = 'Choose a challenge template.'; errEl.classList.remove('hidden'); return; }
       body.challenge_template_id = parseInt(templateId, 10);
@@ -1700,6 +1951,9 @@ const AdminTopochain = {
       return;
     }
     document.getElementById('admin-topo-ch-form').innerHTML = '';
+    AdminTopochain._ch.open = false;
+    AdminTopochain._ch.templateId = '';
+    AdminTopochain._syncHash();
     AdminTopochain._loadChallenges(eventId);
   },
 
@@ -1779,9 +2033,9 @@ const AdminTopochain = {
       items: s.items,
       columns: [
         { label: 'User', primary: true, cell: (u) => esc(u.display_name || ident(u)) },
-        { label: 'Email', cell: (u) => esc(u.email || '—'), tdClass: 'text-xs text-zinc-500' },
-        { label: 'Telegram', cell: (u) => esc(u.telegram || '—'), tdClass: 'text-xs text-zinc-500' },
-        { label: 'Discord', cell: (u) => esc(u.discord || '—'), tdClass: 'text-xs text-zinc-500' },
+        { label: 'Email', cell: (u) => esc(u.email || '—'), tdClass: 'text-xs text-gray-500' },
+        { label: 'Telegram', cell: (u) => esc(u.telegram || '—'), tdClass: 'text-xs text-gray-500' },
+        { label: 'Discord', cell: (u) => esc(u.discord || '—'), tdClass: 'text-xs text-gray-500' },
         { label: 'Podium', cell: (u) => (u.exclude_podium ? '<span class="text-amber-600 dark:text-amber-400">excluded</span>' : '—') },
         { label: 'Accept logs', cell: (u) => (u.accept_logs ? 'yes' : 'no') },
       ],
@@ -1837,7 +2091,7 @@ const AdminTopochain = {
       </p>
       <input data-typed-check="${u.id}" data-expect="${esc(identifier)}" type="text"
         aria-label="Type the identifier to confirm deletion"
-        class="w-full rounded-lg bg-white dark:bg-zinc-900 border border-red-300 dark:border-red-800 px-3 py-2 text-xs font-mono min-h-[44px] sm:min-h-[36px] focus:outline-none focus:ring-2 focus:ring-red-500 sm:max-w-sm">
+        class="w-full rounded-lg bg-white dark:bg-gray-900 border border-red-300 dark:border-red-800 px-3 py-2 text-xs font-mono min-h-[44px] sm:min-h-[36px] focus:outline-none focus:ring-2 focus:ring-red-500 sm:max-w-sm">
       <div class="mt-3 flex flex-wrap items-center gap-2">
         <button data-confirm-delete-u="${u.id}" type="button" disabled class="${BTN.dangerSm}">Delete permanently</button>
         <button data-cancel-delete-u="${u.id}" type="button" class="${BTN.secondarySm}">Cancel</button>
@@ -1885,7 +2139,7 @@ const AdminTopochain = {
           ${field('Discord', f('admin-topo-u-f-discord', { value: u?.discord }))}
           ${field('Display name', f('admin-topo-u-f-display_name', { value: u?.display_name }))}
         `)}
-        <div class="mt-4 border-t border-zinc-200 dark:border-zinc-800 pt-3">
+        <div class="mt-4 border-t border-gray-200 dark:border-gray-800 pt-3">
           ${AdminTopochain._checkField('admin-topo-u-f-accept_logs', 'Accept logs', u ? u.accept_logs : true,
     'Mobile log opt-out lives here — no separate log-payload viewer exists; see Task 15 notes.')}
         </div>
@@ -1950,7 +2204,7 @@ const AdminTopochain = {
           ${field('Users — one "email,username" per line *', AdminTopochain._textareaHtml('admin-topo-u-imp-rows', '', 8),
     'username here maps to the Discord handle column, per the import API.')}
         </div>
-        <div class="mt-3 border-t border-zinc-200 dark:border-zinc-800 pt-3">
+        <div class="mt-3 border-t border-gray-200 dark:border-gray-800 pt-3">
           ${AdminTopochain._checkField('admin-topo-u-imp-link', 'Link onchain accounts too', false)}
         </div>
         <div class="mt-3">${AdminTopochain._formGrid(`
@@ -1958,7 +2212,7 @@ const AdminTopochain = {
           ${field('Max balance', AdminTopochain._inputHtml('admin-topo-u-imp-max', { type: 'number', min: 0 }))}
         `)}</div>
         ${AdminTopochain._formErrorSlot('admin-topo-u-imp-err')}
-        <div id="admin-topo-u-imp-result" class="mt-3 text-xs text-zinc-500"></div>`,
+        <div id="admin-topo-u-imp-result" class="mt-3 text-xs text-gray-500"></div>`,
       footer: `<button id="admin-topo-u-imp-go" type="button" class="${BTN.primary}">Import</button>
         <button id="admin-topo-u-imp-cancel" type="button" class="${BTN.secondary}">Cancel</button>`,
     });
@@ -2023,7 +2277,7 @@ const AdminTopochain = {
         title: 'Export users as CSV',
         closeId: 'admin-topo-u-exp-close',
         closeLabel: 'Close the export panel',
-        body: '<p class="text-sm text-zinc-500">There is no event to export users for yet.</p>',
+        body: '<p class="text-sm text-gray-500">There is no event to export users for yet.</p>',
       });
       document.getElementById('admin-topo-u-exp-close').addEventListener('click', closePanel);
       return;
@@ -2141,14 +2395,14 @@ const AdminTopochain = {
           tdClass: 'font-mono',
           cell: (w) => `${esc(w.email)}${w.confirmed_at
             ? ' <span class="text-emerald-600 dark:text-emerald-400 text-xs" title="Followed the confirm link in the join email">✓ confirmed</span>'
-            : ' <span class="text-zinc-400 text-xs" title="Never followed the confirm link in the join email — this address is unproven">unconfirmed</span>'}`,
+            : ' <span class="text-gray-400 text-xs" title="Never followed the confirm link in the join email — this address is unproven">unconfirmed</span>'}`,
         },
-        { label: 'Joined', cell: (w) => esc(AdminTopochain._fmt(w.submitted_at)), tdClass: 'text-xs text-zinc-500' },
+        { label: 'Joined', cell: (w) => esc(AdminTopochain._fmt(w.submitted_at)), tdClass: 'text-xs text-gray-500' },
         {
           label: 'Account',
           cell: (w) => (w.linked_username
             ? `${esc(w.linked_username)}${w.has_platform_access ? ' <span class="text-emerald-600 dark:text-emerald-400 text-xs">(has access)</span>' : ''}`
-            : '<span class="text-zinc-400">no account yet</span>'),
+            : '<span class="text-gray-400">no account yet</span>'),
         },
         {
           label: 'Status',
@@ -2162,8 +2416,8 @@ const AdminTopochain = {
         : ''),
       extra: (w) => (w.answers ? `
         <details class="text-xs">
-          <summary class="cursor-pointer select-none text-zinc-500 min-h-[36px] flex items-center">Survey answers</summary>
-          <div class="mt-1 space-y-0.5 text-zinc-600 dark:text-zinc-300">${AdminTopochain._wlAnswersHtml(w.answers)}</div>
+          <summary class="cursor-pointer select-none text-gray-500 min-h-[36px] flex items-center">Survey answers</summary>
+          <div class="mt-1 space-y-0.5 text-gray-600 dark:text-gray-300">${AdminTopochain._wlAnswersHtml(w.answers)}</div>
         </details>` : ''),
     }) + AdminTopochain._pagerHtml(s.meta, 'admin-topo-wl-pg');
     table.querySelectorAll('[data-release-wl]').forEach((b) => b.addEventListener('click', () =>
@@ -2178,7 +2432,7 @@ const AdminTopochain = {
     const esc = AdminTopochain.esc;
     const lines = [];
     const line = (label, value) => {
-      if (value) lines.push(`<div><span class="text-zinc-400">${esc(label)}:</span> ${value}</div>`);
+      if (value) lines.push(`<div><span class="text-gray-400">${esc(label)}:</span> ${value}</div>`);
     };
     if (a.made_url) {
       // Escaped text, not an anchor — this module never renders
@@ -2210,11 +2464,11 @@ const AdminTopochain = {
       line('Handles', esc(Object.entries(a.handles).map(([p, h]) => `${p}: ${h}`).join(' · ')));
     }
     if (Array.isArray(a.invites) && a.invites.length) {
-      line('Invites', esc(a.invites.join(', ')) + (a.admit_together ? ' <span class="text-zinc-400">(only together)</span>' : ''));
+      line('Invites', esc(a.invites.join(', ')) + (a.admit_together ? ' <span class="text-gray-400">(only together)</span>' : ''));
     } else if (a.admit_together) {
-      line('Invites', '<span class="text-zinc-400">only together</span>');
+      line('Invites', '<span class="text-gray-400">only together</span>');
     }
-    return lines.join('') || '<div class="text-zinc-400">No survey answers.</div>';
+    return lines.join('') || '<div class="text-gray-400">No survey answers.</div>';
   },
 
   async _releaseWaitlist(id, email) {
@@ -2267,8 +2521,8 @@ const AdminTopochain = {
       items: s.items,
       columns: [
         { label: 'User', primary: true, cell: (u) => esc(u.display_name || u.username || `user #${u.id}`) },
-        { label: 'Email', cell: (u) => esc(u.email || '—'), tdClass: 'text-xs text-zinc-500 font-mono' },
-        { label: 'Requested', cell: (u) => esc(AdminTopochain._fmt(u.bp_requested_at)), tdClass: 'text-xs text-zinc-500' },
+        { label: 'Email', cell: (u) => esc(u.email || '—'), tdClass: 'text-xs text-gray-500 font-mono' },
+        { label: 'Requested', cell: (u) => esc(AdminTopochain._fmt(u.bp_requested_at)), tdClass: 'text-xs text-gray-500' },
         {
           label: 'Status',
           cell: (u) => (u.bp_released_at
@@ -2370,11 +2624,11 @@ const AdminTopochain = {
       items: s.items,
       columns: [
         { label: 'Public key', primary: true, cell: (a) => esc(a.public_key), tdClass: 'text-xs font-mono' },
-        { label: 'Tier', cell: (a) => esc(a.tier), tdClass: 'text-zinc-500' },
+        { label: 'Tier', cell: (a) => esc(a.tier), tdClass: 'text-gray-500' },
         { label: 'Amount', cell: (a) => esc(a.amount), tdClass: 'font-mono text-right', thClass: 'text-right' },
-        { label: 'Event', cell: (a) => (a.event ? esc(a.event.name) : '—'), tdClass: 'text-xs text-zinc-500' },
+        { label: 'Event', cell: (a) => (a.event ? esc(a.event.name) : '—'), tdClass: 'text-xs text-gray-500' },
         { label: 'Status', cell: (a) => (a.is_used ? '<span class="text-amber-600 dark:text-amber-400">used</span>' : '<span class="text-green-600 dark:text-green-400">free</span>') },
-        { label: 'User', cell: (a) => (a.user ? esc(a.user.username) : '—'), tdClass: 'text-xs text-zinc-500' },
+        { label: 'User', cell: (a) => (a.user ? esc(a.user.username) : '—'), tdClass: 'text-xs text-gray-500' },
       ],
       actions: (a) => (canWrite && a.is_used
         ? `<button data-reset="${a.id}" type="button" class="${BTN.rowWarn}">Reset</button>` : ''),
@@ -2414,7 +2668,7 @@ const AdminTopochain = {
     'registration_code is generated server-side; do not include it.')}
         </div>
         ${AdminTopochain._formErrorSlot('admin-topo-oa-imp-err')}
-        <div id="admin-topo-oa-imp-result" class="mt-3 text-xs text-zinc-500"></div>`,
+        <div id="admin-topo-oa-imp-result" class="mt-3 text-xs text-gray-500"></div>`,
       footer: `<button id="admin-topo-oa-imp-go" type="button" class="${BTN.primary}">Import</button>
         <button id="admin-topo-oa-imp-cancel" type="button" class="${BTN.secondary}">Cancel</button>`,
     });
@@ -2514,11 +2768,11 @@ const AdminTopochain = {
       items: s.items,
       columns: [
         { label: 'User', primary: true, cell: (a) => esc(a.user?.display_name || a.user?.email || a.user_id) },
-        { label: 'Event', cell: (a) => esc(a.event?.name || a.season_event_id), tdClass: 'text-xs text-zinc-500' },
-        { label: 'Challenge', cell: (a) => esc(a.challenge?.goal || '—'), tdClass: 'text-xs text-zinc-500' },
+        { label: 'Event', cell: (a) => esc(a.event?.name || a.season_event_id), tdClass: 'text-xs text-gray-500' },
+        { label: 'Challenge', cell: (a) => esc(a.challenge?.goal || '—'), tdClass: 'text-xs text-gray-500' },
         { label: 'Type', cell: (a) => esc(a.activity_type), tdClass: 'text-xs' },
         { label: 'Points', cell: (a) => esc(a.points), tdClass: 'font-mono text-right', thClass: 'text-right' },
-        { label: 'At', cell: (a) => esc(AdminTopochain._fmt(a.activity_at)), tdClass: 'text-xs text-zinc-500' },
+        { label: 'At', cell: (a) => esc(AdminTopochain._fmt(a.activity_at)), tdClass: 'text-xs text-gray-500' },
       ],
       actions: (a) => `
         ${canWrite ? `<button data-edit-act="${a.id}" type="button" class="${BTN.row}">Edit</button>` : ''}
@@ -2636,7 +2890,7 @@ const AdminTopochain = {
         ${AdminTopochain._field('activities JSON *', AdminTopochain._textareaHtml('admin-topo-act-imp-json',
     '[\n  {"user_id":1,"season_event_id":1,"challenge_id":1,"activity_type":"community_contribution","points":10,"activity_at":"2026-01-01T00:00:00.000Z"}\n]', 8))}
         ${AdminTopochain._formErrorSlot('admin-topo-act-imp-err')}
-        <div id="admin-topo-act-imp-result" class="mt-3 text-xs text-zinc-500"></div>`,
+        <div id="admin-topo-act-imp-result" class="mt-3 text-xs text-gray-500"></div>`,
       footer: `<button id="admin-topo-act-imp-go" type="button" class="${BTN.primary}">Import</button>
         <button id="admin-topo-act-imp-cancel" type="button" class="${BTN.secondary}">Cancel</button>`,
     });
@@ -2703,20 +2957,20 @@ const AdminTopochain = {
       }
       const d = data.data;
       const userRows = d.user_totals.slice(0, 50).map((t) => `
-        <tr class="border-t border-zinc-200 dark:border-zinc-800">
+        <tr class="border-t border-gray-200 dark:border-gray-800">
           <td class="px-2 py-1 text-xs">${esc(t.user.display_name || t.user.email || t.user.id)}</td>
           <td class="px-2 py-1 text-xs font-mono text-right">${esc(t.total_points)}</td>
           <td class="px-2 py-1 text-xs font-mono text-right">${esc(t.total_activities)}</td>
         </tr>`).join('');
       const typeRows = d.type_totals.map((t) => `
-        <tr class="border-t border-zinc-200 dark:border-zinc-800">
+        <tr class="border-t border-gray-200 dark:border-gray-800">
           <td class="px-2 py-1 text-xs">${esc(t.activity_type)}</td>
           <td class="px-2 py-1 text-xs font-mono text-right">${esc(t.count)}</td>
           <td class="px-2 py-1 text-xs font-mono text-right">${esc(t.total_points)}</td>
           <td class="px-2 py-1 text-xs font-mono text-right">${esc(t.unique_users)}</td>
         </tr>`).join('');
-      const stat = (label, value) => `<div class="rounded-lg bg-zinc-50 dark:bg-zinc-800/60 px-3 py-2">
-          <dt class="text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500">${esc(label)}</dt>
+      const stat = (label, value) => `<div class="rounded-lg bg-gray-50 dark:bg-gray-800/60 px-3 py-2">
+          <dt class="text-[11px] uppercase tracking-wide text-gray-400 dark:text-gray-500">${esc(label)}</dt>
           <dd class="mt-0.5 text-sm font-medium font-mono">${esc(value)}</dd>
         </div>`;
       body.innerHTML = `
@@ -2727,11 +2981,11 @@ const AdminTopochain = {
         </dl>
         <div class="mt-4 grid grid-cols-1 gap-5 md:grid-cols-2">
           <div class="min-w-0 overflow-x-auto">
-            <div class="text-xs font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500 mb-1">By user (top 50)</div>
-            <table class="w-full"><thead class="text-xs text-zinc-500"><tr><th class="text-left px-2">User</th><th class="text-right px-2">Points</th><th class="text-right px-2">Count</th></tr></thead><tbody>${userRows}</tbody></table></div>
+            <div class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500 mb-1">By user (top 50)</div>
+            <table class="w-full"><thead class="text-xs text-gray-500"><tr><th class="text-left px-2">User</th><th class="text-right px-2">Points</th><th class="text-right px-2">Count</th></tr></thead><tbody>${userRows}</tbody></table></div>
           <div class="min-w-0 overflow-x-auto">
-            <div class="text-xs font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500 mb-1">By type</div>
-            <table class="w-full"><thead class="text-xs text-zinc-500"><tr><th class="text-left px-2">Type</th><th class="text-right px-2">Count</th><th class="text-right px-2">Points</th><th class="text-right px-2">Users</th></tr></thead><tbody>${typeRows}</tbody></table></div>
+            <div class="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500 mb-1">By type</div>
+            <table class="w-full"><thead class="text-xs text-gray-500"><tr><th class="text-left px-2">Type</th><th class="text-right px-2">Count</th><th class="text-right px-2">Points</th><th class="text-right px-2">Users</th></tr></thead><tbody>${typeRows}</tbody></table></div>
         </div>`;
     };
     document.getElementById('admin-topo-act-tot-event').addEventListener('change', loadTotals);
@@ -2824,9 +3078,9 @@ const AdminTopochain = {
       items: s.items,
       columns: [
         { label: 'Goal', primary: true, cell: (t) => esc(t.goal) },
-        { label: 'Category', cell: (t) => esc(t.category), tdClass: 'text-xs text-zinc-500' },
-        { label: 'Reward', cell: (t) => esc(t.reward), tdClass: 'text-zinc-500' },
-        { label: 'Kind', cell: (t) => esc(t.kind || '—'), tdClass: 'text-xs text-zinc-500' },
+        { label: 'Category', cell: (t) => esc(t.category), tdClass: 'text-xs text-gray-500' },
+        { label: 'Reward', cell: (t) => esc(t.reward), tdClass: 'text-gray-500' },
+        { label: 'Kind', cell: (t) => esc(t.kind || '—'), tdClass: 'text-xs text-gray-500' },
       ],
       actions: (t) => `
         ${canWrite ? `<button data-edit-tpl="${t.id}" type="button" class="${BTN.row}">Edit</button>` : ''}
@@ -2857,7 +3111,7 @@ const AdminTopochain = {
     const f = AdminTopochain._inputHtml, sel = AdminTopochain._selectHtml, field = AdminTopochain._field;
     const ctaOptions = ['', 'url', 'app'].map((v) => ({ value: v, label: v || '(none)' }));
     const host = document.getElementById('admin-topo-tpl-form');
-    const section = (label) => `<p class="mt-5 mb-3 border-t border-zinc-200 dark:border-zinc-800 pt-4 text-xs font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">${AdminTopochain.esc(label)}</p>`;
+    const section = AdminTopochain._formSection;
     host.innerHTML = AdminTopochain._panel({
       title: id == null ? 'New challenge template' : `Edit template #${AdminTopochain.esc(id)}`,
       subtitle: 'What the challenge asks for, what it rewards, and how it is presented.',
@@ -2995,9 +3249,9 @@ const AdminTopochain = {
     // The sender address is safe to render — it is in the From header of
     // every mail the platform sends. No key or endpoint is ever returned.
     const sender = `
-      <div class="text-zinc-500 mt-1">
+      <div class="text-gray-500 mt-1">
         Sending as <code class="font-mono text-xs">${esc(m.from || '(unset)')}</code>${
-  m.usingDefaultFrom ? ' <span class="text-zinc-400">(built-in default)</span>' : ''}
+  m.usingDefaultFrom ? ' <span class="text-gray-400">(built-in default)</span>' : ''}
       </div>`;
 
     // A staging preview is a clone of production data, so it can never
@@ -3024,7 +3278,7 @@ const AdminTopochain = {
       host.innerHTML = `
         <div class="${PANEL_CLS} px-4 py-3 text-sm sm:px-5">
           <span class="font-semibold text-emerald-600 dark:text-emerald-400">Email is configured</span>
-          <span class="text-zinc-500"> — login codes and waitlist confirmations are being sent
+          <span class="text-gray-500"> — login codes and waitlist confirmations are being sent
             via <span class="font-medium">${esc(m.provider || 'unknown')}</span>.</span>
           ${sender}
         </div>`;
@@ -3069,7 +3323,7 @@ const AdminTopochain = {
     if (status === 'failed') return 'text-rose-700 dark:text-rose-400';
     if (status === 'suppressed_rate_limit') return 'text-amber-700 dark:text-amber-400';
     if (status === 'no_transport') return 'text-amber-700 dark:text-amber-400';
-    return 'text-zinc-500';
+    return 'text-gray-500';
   },
 
   // Recent email activity. The ONLY place a delivery failure is visible:
@@ -3089,27 +3343,27 @@ const AdminTopochain = {
       .map((k) => `${esc(k)} ${last24h[k]}`).join(' · ');
 
     const rows = recent.map((r) => `
-      <tr class="border-t border-zinc-100 dark:border-zinc-800">
-        <td class="py-1.5 pr-3 whitespace-nowrap text-zinc-500">${esc(
+      <tr class="border-t border-gray-100 dark:border-gray-800">
+        <td class="py-1.5 pr-3 whitespace-nowrap text-gray-500">${esc(
     r.created_at ? String(r.created_at).replace('T', ' ').slice(0, 19) : '')}</td>
         <td class="py-1.5 pr-3 whitespace-nowrap">${esc(r.kind || '')}</td>
         <td class="py-1.5 pr-3">${esc(r.recipient || '')}</td>
-        <td class="py-1.5 pr-3 whitespace-nowrap text-zinc-500">${esc(r.provider || '—')}</td>
+        <td class="py-1.5 pr-3 whitespace-nowrap text-gray-500">${esc(r.provider || '—')}</td>
         <td class="py-1.5 pr-3 whitespace-nowrap font-medium ${
   AdminTopochain._mailStatusClass(r.status)}">${esc(r.status || '')}</td>
-        <td class="py-1.5 text-zinc-500">${esc(r.error || '')}</td>
+        <td class="py-1.5 text-gray-500">${esc(r.error || '')}</td>
       </tr>`).join('');
 
     host.innerHTML = `
       <div class="${PANEL_CLS} px-4 py-3 sm:px-5">
         <div class="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-baseline sm:justify-between sm:gap-2">
           <h3 class="text-sm font-semibold">Recent email activity</h3>
-          <span class="text-xs text-zinc-500">${totals ? `last 24h: ${totals}` : 'nothing in the last 24h'}</span>
+          <span class="text-xs text-gray-500">${totals ? `last 24h: ${totals}` : 'nothing in the last 24h'}</span>
         </div>
         ${recent.length ? `
         <div class="overflow-x-auto mt-3 -mx-4 px-4 sm:mx-0 sm:px-0">
           <table class="w-full text-xs">
-            <thead class="text-zinc-500">
+            <thead class="text-gray-500">
               <tr>
                 <th class="text-left font-medium pb-1 pr-3">When</th>
                 <th class="text-left font-medium pb-1 pr-3">Kind</th>
@@ -3122,7 +3376,7 @@ const AdminTopochain = {
             <tbody>${rows}</tbody>
           </table>
         </div>`
-    : '<p class="text-sm text-zinc-500 mt-2">No mail has been attempted yet.</p>'}
+    : '<p class="text-sm text-gray-500 mt-2">No mail has been attempted yet.</p>'}
       </div>`;
   },
 
@@ -3166,8 +3420,8 @@ const AdminTopochain = {
       columns: [
         { label: 'Key', primary: true, cell: (s) => esc(s.key), tdClass: 'text-xs font-mono' },
         { label: 'Value', cell: (s) => esc(s.value), tdClass: 'font-mono text-right', thClass: 'text-right' },
-        { label: 'Description', cell: (s) => esc(s.description || '—'), tdClass: 'text-xs text-zinc-500' },
-        { label: 'Updated', cell: (s) => esc(AdminTopochain._fmt(s.updated_at)), tdClass: 'text-xs text-zinc-500' },
+        { label: 'Description', cell: (s) => esc(s.description || '—'), tdClass: 'text-xs text-gray-500' },
+        { label: 'Updated', cell: (s) => esc(AdminTopochain._fmt(s.updated_at)), tdClass: 'text-xs text-gray-500' },
       ],
       actions: (s) => `
         ${canWrite ? `<button data-edit-set="${esc(s.key)}" type="button" class="${BTN.row}">Edit</button>` : ''}
@@ -3332,14 +3586,14 @@ const AdminTopochain = {
     };
     if (!a.total) {
       host.innerHTML = `
-        <p class="text-xs text-zinc-500 mt-4">
+        <p class="text-xs text-gray-500 mt-4">
           No version checks in the last ${esc(a.window_days ?? 7)} days — no app
           build has asked this platform whether it needs to update.
         </p>`;
       return;
     }
     const rows = (a.by_os || []).map((r) => `
-      <tr class="border-t border-zinc-200 dark:border-zinc-800">
+      <tr class="border-t border-gray-200 dark:border-gray-800">
         <td class="px-3 py-1.5 text-sm">${esc(r.os || '—')}</td>
         <td class="px-3 py-1.5 text-sm">${esc(UPGRADE_LABEL[r.upgrade] || r.upgrade)}</td>
         <td class="px-3 py-1.5 text-sm font-mono text-right">${esc(r.count)}</td>
@@ -3347,11 +3601,11 @@ const AdminTopochain = {
     host.innerHTML = `
       <h3 class="text-sm font-semibold mt-8 mb-3">
         Version checks &middot; last ${esc(a.window_days ?? 7)} days
-        <span class="font-normal text-zinc-500">(${esc(a.total)} total)</span>
+        <span class="font-normal text-gray-500">(${esc(a.total)} total)</span>
       </h3>
-      <div class="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
+      <div class="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-800">
         <table class="w-full">
-          <thead class="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500">
+          <thead class="bg-gray-50 dark:bg-gray-900 text-xs uppercase tracking-wide text-gray-500">
             <tr><th class="px-3 py-2 text-left">OS</th>
               <th class="px-3 py-2 text-left">Told</th>
               <th class="px-3 py-2 text-right">Checks</th></tr>
@@ -3393,7 +3647,7 @@ const AdminTopochain = {
         { label: 'OS', primary: true, cell: (c) => esc(c.os) },
         { label: 'Min build', cell: (c) => esc(c.min_build_number), tdClass: 'font-mono text-right', thClass: 'text-right' },
         { label: 'Recommended', cell: (c) => (c.recommended_build_number != null ? esc(c.recommended_build_number) : '—'), tdClass: 'font-mono text-right', thClass: 'text-right' },
-        { label: 'Current version', cell: (c) => esc(c.current_version || '—'), tdClass: 'text-xs text-zinc-500' },
+        { label: 'Current version', cell: (c) => esc(c.current_version || '—'), tdClass: 'text-xs text-gray-500' },
         { label: 'Active', cell: (c) => (c.is_active ? '<span class="text-green-600 dark:text-green-400">active</span>' : '—') },
       ],
       actions: (c) => `
@@ -3516,10 +3770,10 @@ const AdminTopochain = {
                 aria-label="SQL query" class="${TEXTAREA_CLS}"></textarea>`,
     footer: `
               <button id="admin-topo-sql-run" type="button" class="${BTN.primary}">Run query</button>
-              <label class="flex items-center gap-2 text-xs text-zinc-500">
+              <label class="flex items-center gap-2 text-xs text-gray-500">
                 <span>Limit</span>
                 <input id="admin-topo-sql-limit" type="number" min="1" max="1000" value="100"
-                  class="w-24 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono min-h-[44px] sm:min-h-[36px] focus:outline-none focus:ring-2 focus:ring-violet-500">
+                  class="w-24 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 px-2 py-1 text-xs font-mono min-h-[44px] sm:min-h-[36px] focus:outline-none focus:ring-2 focus:ring-indigo-500">
               </label>`,
   })}
           <div id="admin-topo-sql-result"></div>
@@ -3531,7 +3785,16 @@ const AdminTopochain = {
   })}
           ${AdminTopochain._panel({
     title: 'Schema',
-    body: `<div id="admin-topo-sql-schema" class="space-y-1 max-h-96 overflow-y-auto">${AdminTopochain._skeleton(3)}</div>`,
+    subtitle: 'Every table in the app database. Click one to draft a SELECT.',
+    // The list covers the whole schema now (~90 tables, not the original
+    // 20 topochain ones), so a filter box is the difference between a
+    // browsable panel and a scroll. Filtering is client-side over the
+    // already-fetched schema — no request per keystroke.
+    body: `
+              <input id="admin-topo-sql-schema-filter" type="search" placeholder="Filter tables&hellip;"
+                aria-label="Filter tables" autocomplete="off" class="${FIELD_CLS} mb-2">
+              <p id="admin-topo-sql-schema-count" class="mb-1 text-xs text-zinc-500" role="status"></p>
+              <div id="admin-topo-sql-schema" class="space-y-1 max-h-96 overflow-y-auto">${AdminTopochain._skeleton(3)}</div>`,
   })}
         </div>
       </div>`;
@@ -3545,7 +3808,7 @@ const AdminTopochain = {
     const host = document.getElementById('admin-topo-sql-templates');
     if (!host) return;
     const esc = AdminTopochain.esc;
-    if (!ok || !data?.success) { host.innerHTML = '<p class="text-xs text-zinc-500">Unavailable.</p>'; return; }
+    if (!ok || !data?.success) { host.innerHTML = '<p class="text-xs text-gray-500">Unavailable.</p>'; return; }
     AdminTopochain._sql.templates = data.data;
     host.innerHTML = data.data.map((t, i) => `
       <button data-tpl="${i}" type="button" title="${esc(t.description)}"
@@ -3559,17 +3822,55 @@ const AdminTopochain = {
     const { ok, data } = await AdminTopochain.fetchJson('/api/v4/admin/sql-query/schema');
     const host = document.getElementById('admin-topo-sql-schema');
     if (!host) return;
-    const esc = AdminTopochain.esc;
-    if (!ok || !data?.success) { host.innerHTML = '<p class="text-xs text-zinc-500">Unavailable.</p>'; return; }
+    if (!ok || !data?.success) { host.innerHTML = '<p class="text-xs text-gray-500">Unavailable.</p>'; return; }
+    // Server order is already alphabetical across the whole schema
+    // (db-console-scope.js sorts it); don't re-sort, just render.
     AdminTopochain._sql.schema = data.data;
-    host.innerHTML = data.data.map((t, i) => `
+    AdminTopochain._renderSqlSchemaList('');
+    const filter = document.getElementById('admin-topo-sql-schema-filter');
+    if (filter) {
+      filter.addEventListener('input', () => AdminTopochain._renderSqlSchemaList(filter.value));
+    }
+  },
+
+  // Renders (or re-renders) the schema list, optionally narrowed to
+  // tables whose name contains `term`. Indexes into `_sql.schema` are
+  // kept as the button's `data-table` so the click handler never has to
+  // re-resolve a name against the filtered view.
+  _renderSqlSchemaList(term) {
+    const host = document.getElementById('admin-topo-sql-schema');
+    if (!host) return;
+    const esc = AdminTopochain.esc;
+    const all = AdminTopochain._sql.schema || [];
+    const needle = String(term || '').trim().toLowerCase();
+    const shown = all
+      .map((t, i) => ({ t, i }))
+      .filter(({ t }) => !needle || t.name.toLowerCase().includes(needle));
+
+    const count = document.getElementById('admin-topo-sql-schema-count');
+    if (count) {
+      count.textContent = needle
+        ? `${shown.length} of ${all.length} tables`
+        : `${all.length} tables`;
+    }
+
+    if (!shown.length) {
+      host.innerHTML = '<p class="text-xs text-zinc-500">No table matches that filter.</p>';
+      return;
+    }
+    host.innerHTML = shown.map(({ t, i }) => `
       <button data-table="${i}" type="button" title="${esc(t.comment || '')}"
-        class="${BTN.sidebar} font-mono">${esc(t.name)}</button>`).join('');
+        class="${BTN.sidebar} font-mono justify-between gap-2">
+        <span class="truncate">${esc(t.name)}</span>
+        <span class="shrink-0 text-zinc-400 dark:text-zinc-500">${t.columns.length}</span>
+      </button>`).join('');
     host.querySelectorAll('[data-table]').forEach((b) => b.addEventListener('click', () => {
       const t = AdminTopochain._sql.schema[parseInt(b.dataset.table, 10)];
       // Never `SELECT *` — the console rejects bare wildcards; list the
       // table's own columns explicitly instead so the inserted query is
-      // guaranteed to pass validation as-is.
+      // guaranteed to pass validation as-is. `t.columns` is already
+      // redaction-filtered server-side, so a credential column is never
+      // in the drafted query either.
       const cols = t.columns.map((c) => c.name).join(', ');
       document.getElementById('admin-topo-sql-query').value = `SELECT ${cols} FROM ${t.name} LIMIT 100`;
     }));
@@ -3586,7 +3887,7 @@ const AdminTopochain = {
     const esc = AdminTopochain.esc;
     const note = (cls, text) => `<p class="mt-3 rounded-lg px-3 py-2 text-sm ${cls}" role="status">${text}</p>`;
     if (!query) { result.innerHTML = note('bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400', 'Enter a query.'); return; }
-    result.innerHTML = note('bg-zinc-100 dark:bg-zinc-800 text-zinc-500', 'Running&hellip;');
+    result.innerHTML = note('bg-gray-100 dark:bg-gray-800 text-gray-500', 'Running&hellip;');
     const { status, ok, data } = await AdminTopochain.fetchJson('/api/v4/admin/sql-query/execute', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -3611,7 +3912,7 @@ const AdminTopochain = {
     }
     const cols = data.columns;
     const rows = data.data.map((row) => `
-      <tr class="border-t border-zinc-200 dark:border-zinc-800">
+      <tr class="border-t border-gray-200 dark:border-gray-800">
         ${cols.map((c) => `<td class="px-2 py-1 text-xs font-mono whitespace-nowrap">${esc(row[c] == null ? '' : String(row[c]))}</td>`).join('')}
       </tr>`).join('');
     // Deliberately NOT the shared _list() card/table pair: the columns
@@ -3620,10 +3921,10 @@ const AdminTopochain = {
     // result grid is the right shape for arbitrary SQL output, on a
     // phone as much as anywhere.
     result.innerHTML = `
-      <p class="text-xs text-zinc-500 mb-2 mt-3">${esc(data.row_count)} row(s)${data.limited ? ' (truncated to the limit)' : ''} in ${esc(data.execution_time_ms)} ms</p>
-      <div class="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
+      <p class="text-xs text-gray-500 mb-2 mt-3">${esc(data.row_count)} row(s)${data.limited ? ' (truncated to the limit)' : ''} in ${esc(data.execution_time_ms)} ms</p>
+      <div class="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-800">
         <table class="w-full">
-          <thead class="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500">
+          <thead class="bg-gray-50 dark:bg-gray-900 text-xs uppercase tracking-wide text-gray-500">
             <tr>${cols.map((c) => `<th class="px-2 py-1 text-left">${esc(c)}</th>`).join('')}</tr>
           </thead>
           <tbody>${rows}</tbody>
@@ -3632,7 +3933,16 @@ const AdminTopochain = {
   },
 
   // ══════════════════════════════════════════════════════════════════
-  // API tester — method + /api/v4 path + JSON body, same-origin fetch.
+  // API tester — pick an endpoint (or "Custom…"), method + JSON body,
+  // same-origin fetch.
+  //
+  // The endpoint list is NOT hardcoded here: it comes from
+  // GET /api/v4/admin/api-catalog, which introspects Express's own router
+  // stack server-side, so the select always offers exactly the routes this
+  // build mounted. (It used to be a single placeholder path,
+  // `/season-events`, which isn't even a mounted route — the real one is
+  // `/admin/season-events` — so the tool only worked for an operator who
+  // already knew the surface.)
   //
   // Deliberately not gated on canWrite(): this is a generic HTTP console
   // that fires requests using the admin's OWN session cookies (same-
@@ -3645,6 +3955,14 @@ const AdminTopochain = {
   // either — see the comment on _runSqlQuery below).
   // ══════════════════════════════════════════════════════════════════
 
+  // Sentinel <option> value for "I'll type the path myself". Not a legal
+  // catalog entry (every real one is `METHOD /path`), so it can never
+  // collide with a route.
+  API_CUSTOM: '__custom__',
+
+  // Filled by _loadApiCatalog(); `null` until the first fetch settles.
+  _apiCatalog: null,
+
   renderApiTester(host) {
     host.innerHTML = `
       ${AdminTopochain._screenHeader({
@@ -3653,24 +3971,33 @@ const AdminTopochain = {
   })}
       ${AdminTopochain._panel({
     title: 'Request',
-    subtitle: 'Method, path under /api/v4, and an optional JSON body.',
+    subtitle: 'Pick a mounted /api/v4 endpoint (or Custom…), then a method and an optional JSON body.',
     body: `
-          <div class="grid grid-cols-1 gap-3 sm:grid-cols-[auto_1fr]">
+          <div class="min-w-0">
+            <label for="admin-topo-api-endpoint" class="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">Endpoint</label>
+            ${AdminTopochain._selectHtml('admin-topo-api-endpoint',
+    [{ value: AdminTopochain.API_CUSTOM, label: 'Custom…' }], AdminTopochain.API_CUSTOM)}
+            <p id="admin-topo-api-catalog-note" class="mt-1 text-xs text-zinc-500" role="status">Loading the endpoint list&hellip;</p>
+          </div>
+          <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-[auto_1fr]">
             <div class="sm:w-32">
-              <label for="admin-topo-api-method" class="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">Method</label>
+              <label for="admin-topo-api-method" class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Method</label>
               ${AdminTopochain._selectHtml('admin-topo-api-method', ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'], 'GET')}
             </div>
-            <div class="min-w-0">
-              <label for="admin-topo-api-path" class="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">
-                Path <span class="font-mono font-normal text-zinc-400">(prefixed with /api/v4)</span>
+            <div class="min-w-0 hidden" id="admin-topo-api-path-row">
+              <label for="admin-topo-api-path" class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                Path <span class="font-mono font-normal text-gray-400">(prefixed with /api/v4)</span>
               </label>
-              <input id="admin-topo-api-path" type="text" placeholder="/season-events" value="/season-events"
+              <input id="admin-topo-api-path" type="text" placeholder="/admin/seasons" value="/admin/seasons"
                 class="${FIELD_CLS} font-mono">
             </div>
           </div>
+          <p class="mt-3 text-xs text-zinc-500">
+            Target <span id="admin-topo-api-target" class="font-mono text-zinc-700 dark:text-zinc-300">GET /api/v4/admin/seasons</span>
+          </p>
           <div class="mt-4">
-            <label for="admin-topo-api-body" class="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">
-              JSON body <span class="font-normal text-zinc-400">(ignored for GET)</span>
+            <label for="admin-topo-api-body" class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+              JSON body <span class="font-normal text-gray-400">(ignored for GET)</span>
             </label>
             ${AdminTopochain._textareaHtml('admin-topo-api-body', '', 6)}
           </div>`,
@@ -3678,13 +4005,22 @@ const AdminTopochain = {
   })}
       <div id="admin-topo-api-result"></div>`;
     document.getElementById('admin-topo-api-send').addEventListener('click', () => AdminTopochain._runApiTest());
+    document.getElementById('admin-topo-api-endpoint')
+      .addEventListener('change', () => AdminTopochain._onApiEndpointChange());
+    document.getElementById('admin-topo-api-method')
+      .addEventListener('change', () => AdminTopochain._syncApiTarget());
+    document.getElementById('admin-topo-api-path')
+      .addEventListener('input', () => AdminTopochain._syncApiTarget());
+    // The path row starts hidden and the select starts at Custom…, so open
+    // the field for that state until the catalog arrives and picks a route.
+    AdminTopochain._onApiEndpointChange();
+    AdminTopochain._loadApiCatalog();
   },
 
   async _runApiTest() {
     const esc = AdminTopochain.esc;
     const method = document.getElementById('admin-topo-api-method').value;
-    let path = document.getElementById('admin-topo-api-path').value.trim();
-    if (!path.startsWith('/')) path = `/${path}`;
+    const path = AdminTopochain._apiTargetPath();
     const fullUrl = `/api/v4${path}`;
     const result = document.getElementById('admin-topo-api-result');
     const opts = { method, credentials: 'same-origin' };
@@ -3700,7 +4036,7 @@ const AdminTopochain = {
         opts.body = raw;
       }
     }
-    result.innerHTML = note('bg-zinc-100 dark:bg-zinc-800 text-zinc-500', 'Sending&hellip;');
+    result.innerHTML = note('bg-gray-100 dark:bg-gray-800 text-gray-500', 'Sending&hellip;');
     try {
       const res = await fetch(fullUrl, opts);
       const text = await res.text();
@@ -3711,16 +4047,116 @@ const AdminTopochain = {
         : 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400';
       result.innerHTML = `
         <div class="mt-4 ${PANEL_CLS} overflow-hidden">
-          <header class="flex flex-wrap items-center gap-2 border-b border-zinc-200 dark:border-zinc-800 px-4 py-3 sm:px-5">
+          <header class="flex flex-wrap items-center gap-2 border-b border-gray-200 dark:border-gray-800 px-4 py-3 sm:px-5">
             <h3 class="text-sm font-semibold">Response</h3>
             <span class="rounded-full px-2 py-0.5 text-xs font-medium ${okTone}">HTTP ${esc(res.status)} ${esc(res.statusText)}</span>
           </header>
-          <pre class="text-xs font-mono bg-zinc-50 dark:bg-zinc-950 p-4 overflow-x-auto whitespace-pre-wrap max-h-[32rem]">${esc(pretty)}</pre>
+          <pre class="text-xs font-mono bg-gray-50 dark:bg-gray-950 p-4 overflow-x-auto whitespace-pre-wrap max-h-[32rem]">${esc(pretty)}</pre>
         </div>`;
     } catch (err) {
       result.innerHTML = note('bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400',
         `Network error: ${esc(err.message)}`);
     }
+  },
+
+  // ─── Endpoint select ──────────────────────────────────────────────
+  //
+  // The path INPUT stays the single source of truth for what gets sent —
+  // the select writes into it and is then hidden for a concrete route, so
+  // _runApiTest() never has to know which of the two the operator used.
+
+  _apiTargetPath() {
+    const el = document.getElementById('admin-topo-api-path');
+    let p = ((el && el.value) || '').trim();
+    if (!p) p = '/';
+    if (!p.startsWith('/')) p = `/${p}`;
+    return p;
+  },
+
+  _syncApiTarget() {
+    const target = document.getElementById('admin-topo-api-target');
+    const methodSel = document.getElementById('admin-topo-api-method');
+    if (!target || !methodSel) return;
+    target.textContent = `${methodSel.value} /api/v4${AdminTopochain._apiTargetPath()}`;
+  },
+
+  _onApiEndpointChange() {
+    const sel = document.getElementById('admin-topo-api-endpoint');
+    const pathRow = document.getElementById('admin-topo-api-path-row');
+    const pathInput = document.getElementById('admin-topo-api-path');
+    const methodSel = document.getElementById('admin-topo-api-method');
+    if (!sel || !pathRow || !pathInput || !methodSel) return;
+    const val = sel.value;
+    if (val === AdminTopochain.API_CUSTOM) {
+      pathRow.classList.remove('hidden');
+      AdminTopochain._syncApiTarget();
+      return;
+    }
+    const sp = val.indexOf(' ');
+    const method = sp > 0 ? val.slice(0, sp) : 'GET';
+    const path = sp > 0 ? val.slice(sp + 1) : val;
+    if ([...methodSel.options].some((o) => o.value === method)) methodSel.value = method;
+    pathInput.value = path;
+    // A `:id`-style route can't be fired as written, so the field stays
+    // OPEN (prefilled) for exactly those — the operator substitutes the
+    // value in place. A concrete route hides it: the select is the target.
+    const route = (AdminTopochain._apiCatalog || []).find((r) => `${r.method} ${r.path}` === val);
+    pathRow.classList.toggle('hidden', !(route && route.has_params));
+    AdminTopochain._syncApiTarget();
+  },
+
+  // GET /api/v4/admin/api-catalog — every route this build actually
+  // mounted, introspected from Express's router stack server-side (see
+  // src/routes/topochain/admin/api-catalog.js). Nothing here is a
+  // hardcoded list, so a route added or renamed anywhere under
+  // src/routes/topochain/ appears in this select with no client change.
+  async _loadApiCatalog() {
+    const esc = AdminTopochain.esc;
+    const sel = document.getElementById('admin-topo-api-endpoint');
+    const note = document.getElementById('admin-topo-api-catalog-note');
+    if (!sel) return;
+    let routes = null;
+    try {
+      const res = await fetch('/api/v4/admin/api-catalog', { credentials: 'same-origin' });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || !data.success) {
+        throw new Error((data && data.error) || `HTTP ${res.status}`);
+      }
+      routes = Array.isArray(data.data) ? data.data : [];
+    } catch (err) {
+      // A tester that can't list the surface still has to be usable: leave
+      // the free-text path exactly as it was and say why the list is gone.
+      AdminTopochain._apiCatalog = [];
+      if (note) note.textContent = `Could not load the endpoint list (${err.message}) — enter a path by hand.`;
+      AdminTopochain._onApiEndpointChange();
+      return;
+    }
+    // The operator may have navigated away while the fetch was in flight.
+    if (!document.body.contains(sel)) return;
+    AdminTopochain._apiCatalog = routes;
+    if (!routes.length) {
+      if (note) note.textContent = 'No /api/v4 endpoints were reported — enter a path by hand.';
+      AdminTopochain._onApiEndpointChange();
+      return;
+    }
+    const groups = [];
+    routes.forEach((r) => { if (!groups.includes(r.group)) groups.push(r.group); });
+    const label = (r) => `${r.method} ${r.path}`;
+    sel.innerHTML = `${groups.map((g) => `
+      <optgroup label="${esc(g)}">${routes.filter((r) => r.group === g).map((r) => `
+        <option value="${esc(label(r))}">${esc(label(r))}</option>`).join('')}</optgroup>`).join('')}
+      <option value="${esc(AdminTopochain.API_CUSTOM)}">Custom&hellip;</option>`;
+    // Default to the Seasons index — this screen lives under Seasons, and
+    // it is a parameter-free GET, so it is safe to have preselected.
+    const preferred = routes.find((r) => r.method === 'GET' && r.path === '/admin/seasons')
+      || routes.find((r) => r.method === 'GET' && !r.has_params)
+      || routes[0];
+    sel.value = label(preferred);
+    if (note) {
+      note.textContent = `${routes.length} endpoint${routes.length === 1 ? '' : 's'} mounted in this build`
+        + ' — pick “Custom…” to send any other path.';
+    }
+    AdminTopochain._onApiEndpointChange();
   },
 };
 

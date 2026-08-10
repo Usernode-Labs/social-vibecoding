@@ -82,11 +82,24 @@ function isCliSurfaceEnabled(config) {
   return process.env.USERNODE_ENV !== 'staging' && !!config.cliAuthEnabled;
 }
 
+// The real CLI surface stays completely disabled in staging: preview code
+// must never mint, approve or use a credential. The one review-only
+// exception is an authenticated GET of the fabricated Settings rows. It
+// reaches cliBrowserRoutes after cookie auth and returns demoCliTokens()
+// before touching cli_access_tokens; every method, sub-path and non-demo
+// request still gets the early 404 below.
+function isStagingCliTokensDemo(req) {
+  return process.env.USERNODE_ENV === 'staging'
+    && req.method === 'GET'
+    && req.path === '/api/me/cli-tokens'
+    && req.query?.demo === '1';
+}
+
 function cliAuthGate(config) {
   return (req, res, next) => {
     if (!isCliSurface(req)) return next();
     res.setHeader('Cache-Control', 'no-store');
-    if (!isCliSurfaceEnabled(config)) {
+    if (!isCliSurfaceEnabled(config) && !isStagingCliTokensDemo(req)) {
       return res.status(404).json({ error: 'not_found' });
     }
     return next();

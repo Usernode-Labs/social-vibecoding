@@ -103,6 +103,29 @@ function waitlistReleased(payload) {
   };
 }
 
+// Password-reset magic link (#login → "Forgot password"). Carries the
+// tokenized link and nothing else the recipient could be phished with —
+// no username, no code to read back to anyone. The 30-minute figure must
+// match RESET_TOKEN_TTL_MS in src/routes/auth.js.
+function passwordReset(payload) {
+  const url = payload.url;
+  return {
+    subject: 'Reset your Usernode password',
+    text: 'Someone asked to reset the password for the Usernode account with this '
+      + 'email address.\n\n'
+      + `Set a new password here: ${url}\n\n`
+      + 'The link expires in 30 minutes and works once. If you did not request '
+      + 'this, you can ignore this email — your password is unchanged.',
+    html: HTML_SHELL(
+      p('Someone asked to reset the password for the Usernode account with this '
+        + 'email address.')
+      + p(`Set a new password here: ${link(url)}`)
+      + p('The link expires in 30 minutes and works once. If you did not request '
+        + 'this, you can ignore this email — your password is unchanged.')
+    ),
+  };
+}
+
 // The admin console's "send a test email" message.
 //
 // Deliberately carries NOTHING sensitive: no code, no token, no link a
@@ -151,6 +174,8 @@ function buildMessage(kind, payload = {}) {
     }
     case 'waitlist_released':
       return waitlistReleased(payload);
+    case 'password_reset':
+      return passwordReset(payload);
     default:
       throw new Error(`unknown mail kind: ${kind}`);
   }
@@ -158,6 +183,6 @@ function buildMessage(kind, payload = {}) {
 
 // Every kind this module can render, for the admin console and for tests
 // that want to assert the set didn't quietly shrink.
-const KINDS = ['otp', 'waitlist_joined', 'waitlist_released', 'admin_test'];
+const KINDS = ['otp', 'waitlist_joined', 'waitlist_released', 'password_reset', 'admin_test'];
 
 module.exports = { buildMessage, KINDS };

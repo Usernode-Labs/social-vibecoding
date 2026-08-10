@@ -9,9 +9,9 @@
 // event stream; `usernode.getNodeStatus()` is only called for the initial
 // value and when the detail sheet opens. No polling.
 //
-// Hidden entirely (row stays display:none) when the bridge lacks the
-// `getNodeStatus` capability — desktop browsers, child-app iframes, old
-// app builds.
+// Hidden entirely (row stays display:none) until either the bridge reports
+// the `getNodeStatus` capability or the native app pushes a node-status event.
+// Desktop browsers, child-app iframes and old app builds provide neither.
 (function () {
   'use strict';
 
@@ -46,11 +46,9 @@
 
     async init() {
       if (!window.NativeChrome) return;
-      if (!(await NativeChrome.has('getNodeStatus'))) return;
 
       const row = document.getElementById('drawer-row-node');
       if (row) {
-        row.classList.remove('hidden');
         row.addEventListener('click', () => {
           // #977: the sheet is a second surface, so it waits for the
           // drawer to be fully gone — one motion at a time, instead of
@@ -64,11 +62,21 @@
         });
       }
 
+      // Wire this BEFORE the asynchronous capability probe. The native app
+      // pushes this event after page load, so it is independent positive proof
+      // that node status is supported and rescues a transient/degraded first
+      // probe instead of leaving the row hidden for the whole document.
       window.addEventListener('usernode:node-status', (e) => {
-        NodePill._status = e.detail || null;
+        const status = e && e.detail;
+        if (!status || typeof status.status !== 'string') return;
+        if (row) row.classList.remove('hidden');
+        NodePill._status = status;
         NodePill._render();
         NodePill._renderSheetBody();
       });
+
+      if (!(await NativeChrome.has('getNodeStatus'))) return;
+      if (row) row.classList.remove('hidden');
 
       try {
         const snap = await window.usernode.getNodeStatus();

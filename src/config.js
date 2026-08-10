@@ -104,6 +104,28 @@ function isLoopbackOrigin(value) {
   }
 }
 
+// Canonicalize the OpenRouter API base URL (review #2 / plan 4.1). Only an
+// HTTPS origin (no credentials/query/fragment) is valid, with an optional
+// path suffix (trailing slashes stripped). Insecure HTTP is permitted ONLY
+// for loopback hosts when both local-dev conditions are true (USERNODE_LOCAL_DEV
+// set AND OPENROUTER_ALLOW_INSECURE_BASE=true). Remote HTTP is always rejected.
+// Returns null for anything invalid.
+function canonicalOpenRouterApiBase(value, source) {
+  if (typeof value !== 'string' || value.length === 0) return null;
+  let url;
+  try { url = new URL(value); } catch { return null; }
+  if (url.username || url.password || url.search || url.hash) return null;
+  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+  const allowLoopbackHttp = !!source
+    && source.isLocalDev
+    && source.allowInsecureBase === 'true';
+  const secure = url.protocol === 'https:';
+  const permittedLocalHttp = allowLoopbackHttp && loopback && url.protocol === 'http:';
+  if (!secure && !permittedLocalHttp) return null;
+  url.pathname = url.pathname.replace(/\/+$/, '');
+  return url.toString().replace(/\/$/, '');
+}
+
 function load() {
   const staging = IS_STAGING();
 
@@ -147,6 +169,19 @@ function load() {
   }
 
   const cliLocalMode = !staging && process.env.USERNODE_LOCAL_DEV === '1';
+
+  // Canonical OpenRouter API base (review #2 / plan 4.2): resolve once here
+  // and FAIL BOOT on an invalid explicit value, so no credential is ever
+  // sent to a non-canonical endpoint. Remote HTTP is rejected even with the
+  // insecure flag; loopback HTTP needs both local-dev conditions.
+  const openrouterApiBase = canonicalOpenRouterApiBase(
+    process.env.OPENROUTER_API_BASE || 'https://openrouter.ai/api/v1',
+    { isLocalDev: cliLocalMode, allowInsecureBase: process.env.OPENROUTER_ALLOW_INSECURE_BASE },
+  );
+  if (!openrouterApiBase) {
+    console.error('[config] OPENROUTER_API_BASE must be an HTTPS URL without credentials, query parameters, or a fragment.');
+    process.exit(1);
+  }
   let cliAuthOrigin = null;
   let cliAuthEnabled = !staging;
   if (cliAuthEnabled && cliLocalMode) {
@@ -196,6 +231,16 @@ function load() {
     iframeJwtPublicKey: (process.env.IFRAME_JWT_PUBLIC_KEY || '').replace(/\\n/g, '\n'),
     workerJwtSecret: process.env.WORKER_JWT_SECRET || '',
     edgeJwtSecret: process.env.EDGE_JWT_SECRET || '',
+    // OpenRouter BYOK + Codex backend. Available alongside Claude by
+    // default; this is an availability/kill switch, never a global provider
+    // choice. Each user explicitly chooses the backend for their session.
+    codexOpenrouterEnabled: String(process.env.CODEX_OPENROUTER_ENABLED || 'true') === 'true',
+    openrouterBetaUserIds: (process.env.CODEX_OPENROUTER_BETA_USER_IDS || '')
+      .split(',').map((s) => s.trim()).filter(Boolean),
+    openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || '',
+    openrouterApiBase,
+    openrouterAllowInsecureBase: String(process.env.OPENROUTER_ALLOW_INSECURE_BASE || 'false') === 'true',
+    openrouterOrigin: process.env.OPENROUTER_ORIGIN || 'https://usernode.dev',
     // The former single shared JWT_SECRET is GONE. All four token
     // authorities (app identity RS256, worker, edge grant, edge cookie)
     // read their own key from env via services/platform-jwt.js, and a
@@ -544,5 +589,6 @@ module.exports = {
   load,
   usesMockGithubForImports,
   canonicalCliOrigin,
+  canonicalOpenRouterApiBase,
   isLoopbackOrigin,
 };

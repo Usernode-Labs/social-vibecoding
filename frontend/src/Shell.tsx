@@ -1431,6 +1431,57 @@ export function Shell() {
                     </div>
                   </div>
                 </div>
+                <div data-settings-section="openrouter" className="hidden">
+                  <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">
+                    OpenRouter &amp; Codex
+                  </h3>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
+                    Use Codex (via OpenRouter) as your coding agent, billed to your own OpenRouter API key. Your platform Claude allowance is not consumed for Codex turns (though the surrounding Mayor/wrap-up still use Claude credits). Your key is stored encrypted by the platform, is injected into the per-turn worker environment where the code running in your worker can see it, and is fully deleted when you remove it below &mdash; it is never persisted in the worker's warm environment or filesystem.
+                  </p>
+                  <div id="settings-openrouter-beta-gated" className="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs text-zinc-600 dark:text-zinc-400 mb-3">
+                    Codex/OpenRouter is being rolled out gradually and isn't available for your account yet.
+                  </div>
+                  <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1" htmlFor="settings-openrouter-key">
+                    OpenRouter API key
+                  </label>
+                  <div id="settings-openrouter-key-display" className="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-700 dark:text-zinc-300 mb-2">
+                    sk-or-&hellip;<span id="settings-openrouter-key-last4"></span>
+                  </div>
+                  <div id="settings-openrouter-key-info" className="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs mb-2 text-zinc-600 dark:text-zinc-400"></div>
+                  <div className="flex gap-2">
+                    <input id="settings-openrouter-key" type="password" placeholder="sk-or-..." autoComplete="off" spellCheck={false} className="flex-1 min-w-0 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono" />
+                    <button id="settings-openrouter-save" className="shrink-0 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">
+                      Test &amp; save
+                    </button>
+                    <button id="settings-openrouter-remove" className="hidden shrink-0 rounded-lg border border-red-400 dark:border-red-700 px-3 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors">
+                      Remove
+                    </button>
+                  </div>
+                  <div id="settings-openrouter-models-wrap" className="hidden mt-4">
+                    <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1" htmlFor="settings-openrouter-model">
+                      Codex model
+                    </label>
+                    <select id="settings-openrouter-model" className="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500"></select>
+                    <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mt-2 mb-1" htmlFor="settings-openrouter-reasoning">
+                      Reasoning effort
+                    </label>
+                    <select id="settings-openrouter-reasoning" className="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
+                      <option value="">Default</option>
+                      <option value="minimal">Minimal</option>
+                      <option value="low">Low</option>
+                      <option value="medium">Medium</option>
+                      <option value="high">High</option>
+                      <option value="xhigh">Extra high</option>
+                    </select>
+                    <button id="settings-openrouter-set-default" className="mt-3 rounded-lg bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 px-4 py-2 text-sm font-medium transition-colors">
+                      Save as my default coding agent
+                    </button>
+                    <button id="settings-claude-set-default" className="mt-2 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
+                      Use Claude Code as my default instead
+                    </button>
+                  </div>
+                  <div id="settings-openrouter-status" className="text-sm mt-3 hidden"></div>
+                </div>
                 <div data-settings-section="app-ai" className="hidden">
                   {/*
                       App AI permissions (issue #34). Lists every app the user has

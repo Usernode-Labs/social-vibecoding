@@ -25,6 +25,7 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt';
 require('./platform-keys').setPlatformKeys();
 
 const recoveryPills = require('../src/services/recovery-pills');
+const turnEffects = require('../src/services/turn-effects');
 
 // ── require.cache stubbing (same shape as recovered-turn-spend) ─────────
 
@@ -72,6 +73,23 @@ function loadSubject({ chat, llmEnabled = true, billing } = {}) {
       recordSpend: async (_pool, userId, costCents, opts) => {
         spendCalls.push({ userId, costCents, byok: !!(opts && opts.byok) });
       },
+      settleTurnSpend: async (pool, userId, costCents, opts = {}) => {
+        const apply = async () => {
+          spendCalls.push({ userId, costCents, byok: !!opts.turnByok });
+          return opts.turnByok
+            ? { platformCents: 0, byokCents: costCents }
+            : { platformCents: costCents, byokCents: 0 };
+        };
+        if (!opts.turnId) return apply();
+        const receipt = await turnEffects.runDbEffect({
+          pool,
+          turnId: opts.turnId,
+          effectKey: opts.effectKey || 'claude_spend',
+          sessionId: opts.sessionId || null,
+          run: apply,
+        });
+        return receipt.value;
+      },
     })],
   ];
   delete require.cache[paths.sessions];
@@ -91,10 +109,34 @@ function loadSubject({ chat, llmEnabled = true, billing } = {}) {
 // Mock pool: records inserts, answers the history + spec lookups.
 function makePool({ history = [] } = {}) {
   const inserts = [];
-  return {
+  const receipts = new Map();
+  const db = {
     inserts,
+    receipts,
     query: async (sql, params = []) => {
       const text = String(sql);
+      if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(text)) return { rows: [], rowCount: 0 };
+      const effectKey = `${params[0]}:${params[1]}`;
+      if (/INSERT INTO turn_effects/i.test(text)) {
+        if (receipts.has(effectKey)) return { rows: [], rowCount: 0 };
+        receipts.set(effectKey, { state: 'pending', result: null });
+        return { rows: [{ state: 'pending' }], rowCount: 1 };
+      }
+      if (/SELECT state, result FROM turn_effects/i.test(text)) {
+        const row = receipts.get(effectKey);
+        return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
+      }
+      if (/SELECT state FROM turn_effects/i.test(text)) {
+        const row = receipts.get(effectKey);
+        return { rows: row ? [{ state: row.state }] : [], rowCount: row ? 1 : 0 };
+      }
+      if (/UPDATE turn_effects/i.test(text)) {
+        const row = receipts.get(effectKey);
+        if (!row || row.state !== 'pending') return { rows: [], rowCount: 0 };
+        row.state = 'completed';
+        row.result = JSON.parse(params[2]);
+        return { rows: [{ result: row.result }], rowCount: 1 };
+      }
       if (/INSERT INTO chat_session_messages/i.test(text)) {
         inserts.push({
           role: /'assistant'/.test(text) ? 'assistant' : 'system',
@@ -112,6 +154,8 @@ function makePool({ history = [] } = {}) {
       return { rows: [], rowCount: 0 };
     },
   };
+  db.connect = async () => ({ query: db.query, release() {} });
+  return db;
 }
 
 const SESSION = {
@@ -133,18 +177,22 @@ async function run(opts = {}, callArgs = {}) {
   const pool = makePool({ history: opts.history || HISTORY });
   const emits = [];
   try {
-    const res = await harness.subject.runRecoveredWrapUp({
-      pool,
-      config: { dataEncryptionKey: 'k' },
-      session: { ...SESSION, ...(callArgs.session || {}) },
-      sessionId: 510,
-      outcome: callArgs.outcome || 'code',
-      dispatchSummary: callArgs.dispatchSummary
-        || 'Commit abc12345 pushed to dev/evan-1. Opened PR #893. Staging redeployed: https://x.example',
-      fallbackPillKind: callArgs.fallbackPillKind || 'code_done',
-      turnModel: callArgs.turnModel === undefined ? 'claude-opus-5' : callArgs.turnModel,
-      emit: (event, data) => emits.push({ event, data }),
-    });
+    let res;
+    for (let i = 0; i < (callArgs.replays || 1); i += 1) {
+      res = await harness.subject.runRecoveredWrapUp({
+        pool,
+        config: { dataEncryptionKey: 'k' },
+        session: { ...SESSION, ...(callArgs.session || {}) },
+        sessionId: 510,
+        outcome: callArgs.outcome || 'code',
+        dispatchSummary: callArgs.dispatchSummary
+          || 'Commit abc12345 pushed to dev/evan-1. Opened PR #893. Staging redeployed: https://x.example',
+        fallbackPillKind: callArgs.fallbackPillKind || 'code_done',
+        turnModel: callArgs.turnModel === undefined ? 'claude-opus-5' : callArgs.turnModel,
+        turnId: callArgs.turnId || null,
+        emit: (event, data) => emits.push({ event, data }),
+      });
+    }
     return { res, pool, emits, ...harness };
   } finally {
     harness.restore();
@@ -173,6 +221,29 @@ test('a recovered build turn ends on an ordinary Mayor assistant row', async () 
 test('the wrap-up bills the session owner like a live turn does', async () => {
   const { spendCalls } = await run();
   assert.deepEqual(spendCalls, [{ userId: 3, costCents: 7, byok: false }]);
+});
+
+test('a durable wrap-up replay does not repeat its provider call, row, pills, or debit', async () => {
+  const turnId = '00000000-0000-4000-8000-000000000510';
+  const { pool, chatCalls, spendCalls, emits } = await run({}, {
+    turnId,
+    replays: 2,
+  });
+
+  assert.equal(chatCalls.length, 1, 'the paid Mayor call is at most once');
+  assert.equal(pool.inserts.length, 1, 'the assistant row is exactly once');
+  assert.equal(spendCalls.length, 1, 'the usage mutation is exactly once');
+  assert.deepEqual(emits.map((e) => e.event), ['mayor_reasoning', 'quick_replies'],
+    'a receipt replay emits no duplicate bubble or pill event');
+  assert.deepEqual(
+    [...pool.receipts.entries()].map(([key, row]) => [key, row.state]).sort(),
+    [
+      [`${turnId}:turn_wrapup_llm`, 'completed'],
+      [`${turnId}:turn_wrapup_message`, 'completed'],
+      [`${turnId}:turn_wrapup_pills`, 'completed'],
+      [`${turnId}:turn_wrapup_spend`, 'completed'],
+    ],
+  );
 });
 
 test('a BYOK owner pays with their own key', async () => {

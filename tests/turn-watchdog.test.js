@@ -48,6 +48,18 @@ test('classifyStaleTurn: no active_turn row is a no-op', () => {
   );
 });
 
+test('classifyStaleTurn: quarantined rows are never reaped', () => {
+  assert.equal(
+    classifyStaleTurn({
+      activeTurn: { phase: 'quarantined', startedAt: OLD },
+      nowMs: NOW,
+      busy: false,
+      executing: false,
+    }),
+    'skip_quarantined'
+  );
+});
+
 test('classifyStaleTurn: fresh rows are skipped (boot/dispatch race guard)', () => {
   assert.equal(
     classifyStaleTurn({ activeTurn: { startedAt: FRESH }, nowMs: NOW, busy: false, executing: false }),

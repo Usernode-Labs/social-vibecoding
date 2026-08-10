@@ -73,6 +73,17 @@ test('prodDebug adds the prod_debug claim and nothing else', () => {
   assert.equal(claims.prod_debug, true);
 });
 
+test('narrow worker capabilities round-trip only under their own purposes', () => {
+  const proxy = pj.signAnthropicProxyToken({ sessionId: 5 });
+  const debug = pj.signProdDebugToken({ sessionId: 5 });
+  assert.equal(pj.verifyAnthropicProxyToken(proxy).scope, 'worker:anthropic-proxy');
+  const debugClaims = pj.verifyProdDebugToken(debug);
+  assert.equal(debugClaims.scope, 'worker:prod-debug');
+  assert.equal(debugClaims.prod_debug, true);
+  assert.throws(() => pj.verifyWorkerToken(proxy), /purpose|scope/);
+  assert.throws(() => pj.verifyWorkerToken(debug), /purpose|scope/);
+});
+
 test('edge grant and edge cookie both round-trip', () => {
   const args = { uid: 7, appId: APP_ID, host: 'app.example.com' };
   const grant = pj.verifyEdgeGrant(pj.signEdgeGrant(args));

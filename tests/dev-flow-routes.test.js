@@ -402,7 +402,14 @@ test('every failure code the service layer can emit has an HTTP status', () => {
   // here or fail this test. An unmapped code answers 400, which tells a
   // client "your request was wrong" for what may be a 429 or a 502.
   const emitted = new Set();
-  for (const src of ['src/services/external-agent-tasks.js', 'src/services/connector-limits.js']) {
+  for (const src of [
+    'src/services/external-agent-tasks.js',
+    'src/services/connector-limits.js',
+    // The update path (#1054). Its refusals reach this mapping the same way
+    // every other service failure does — through submitWork's result — so an
+    // unmapped one is the same bug.
+    'src/services/proposal-update.js',
+  ]) {
     const text = read(src);
     for (const m of text.matchAll(/(?:fail|limitError)\(\s*'([a-z_]+)'/g)) emitted.add(m[1]);
     for (const m of text.matchAll(/\bcode:\s*'([a-z_]+)'/g)) emitted.add(m[1]);
@@ -497,11 +504,12 @@ test('staging never reaches GitHub, and only shows fixtures when asked', () => {
   assert.match(src, /req\.query\.demo === '1'\s*\n?\s*\? demoStatus/,
     'the fixture is opt-in per request');
   assert.match(src, /990501/, 'fixture ids stay in the obviously-fake 99xxxx range');
-  // Both writes are refused in staging: they would open a real pull request
-  // against a real repository from a preview clone.
+  // Every write is refused in staging: they would open a real pull request —
+  // or, on the update path (#1054), force-push a real branch — against a real
+  // repository from a preview clone.
   const prepareBlock = src.slice(src.indexOf("router.post('/api/apps/:slug/external-tasks'"));
-  assert.equal((prepareBlock.match(/if \(IS_STAGING\) \{\s*\n\s*return res\.status\(503\)/g) || []).length, 2,
-    'both POSTs refuse in staging with a 503');
+  assert.equal((prepareBlock.match(/if \(IS_STAGING\) \{\s*\n\s*return res\.status\(503\)/g) || []).length, 3,
+    'all three POSTs refuse in staging with a 503');
 });
 
 test('the client polls this route and nothing else', () => {

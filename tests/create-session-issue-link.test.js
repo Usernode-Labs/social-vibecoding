@@ -57,11 +57,11 @@ function installInsertCapture() {
   return () => insert;
 }
 
-function startServer() {
+function startServer(config = {}) {
   const app = express();
   app.use(express.json());
   app.use((req, res, next) => { req.user = VIEWER; next(); });
-  app.use(sessionRoutes({}));
+  app.use(sessionRoutes(config));
   return new Promise((resolve) => {
     const server = app.listen(0, () => resolve(server));
   });
@@ -100,6 +100,114 @@ test('no body → created_from_issue_number is NULL', async () => {
     const insert = getInsert();
     assert.ok(insert, 'an INSERT was issued');
     assert.strictEqual(insert.params[3], null);
+  } finally {
+    poolQueryHandler = async () => ({ rows: [] });
+    server.close();
+  }
+});
+
+test('an explicit Claude choice is persisted instead of consulting a global provider choice', async () => {
+  const getInsert = installInsertCapture();
+  const server = await startServer({ codexOpenrouterEnabled: false });
+  try {
+    const port = server.address().port;
+    const res = await fetch(`http://127.0.0.1:${port}/api/apps/demo/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        backend: 'claude_code', model: 'must-not-leak', reasoningEffort: 'high',
+      }),
+    });
+    assert.strictEqual(res.status, 201);
+    const insert = getInsert();
+    assert.deepStrictEqual(insert.params.slice(4, 8), [
+      'claude_code', 'anthropic', null, null,
+    ]);
+  } finally {
+    poolQueryHandler = async () => ({ rows: [] });
+    server.close();
+  }
+});
+
+test('an explicit Codex choice without a model fails without creating a session', async () => {
+  const getInsert = installInsertCapture();
+  const server = await startServer({
+    codexOpenrouterEnabled: true,
+    openrouterBetaUserIds: [],
+  });
+  try {
+    const port = server.address().port;
+    const res = await fetch(`http://127.0.0.1:${port}/api/apps/demo/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ backend: 'codex_openrouter' }),
+    });
+    assert.strictEqual(res.status, 400);
+    assert.match((await res.json()).error, /Choose an OpenRouter model/);
+    assert.strictEqual(getInsert(), null, 'no chat_sessions INSERT was issued');
+  } finally {
+    poolQueryHandler = async () => ({ rows: [] });
+    server.close();
+  }
+});
+
+test('an explicit validated Codex choice is persisted exactly', async (t) => {
+  const credentialStore = require('../src/services/credential-store');
+  const agentModels = require('../src/services/agent-models');
+  const originalMetadata = credentialStore.readMetadata;
+  const originalSecret = credentialStore.readSecret;
+  const originalCatalog = agentModels.listOpenRouterModels;
+  credentialStore.readMetadata = async () => ({ status: 'valid', revision: 8 });
+  credentialStore.readSecret = async ({ expectedRevision }) => {
+    assert.strictEqual(expectedRevision, 8);
+    return 'sk-or-test';
+  };
+  agentModels.listOpenRouterModels = async () => ({
+    models: [{ id: 'openai/gpt-5.3-codex' }],
+  });
+  t.after(() => {
+    credentialStore.readMetadata = originalMetadata;
+    credentialStore.readSecret = originalSecret;
+    agentModels.listOpenRouterModels = originalCatalog;
+  });
+
+  const getInsert = installInsertCapture();
+  const server = await startServer({
+    codexOpenrouterEnabled: true,
+    openrouterBetaUserIds: [],
+    dataEncryptionKey: 'test-data-key',
+  });
+  t.after(() => server.close());
+
+  const port = server.address().port;
+  const res = await fetch(`http://127.0.0.1:${port}/api/apps/demo/sessions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      backend: 'codex_openrouter',
+      model: 'openai/gpt-5.3-codex',
+      reasoningEffort: 'medium',
+    }),
+  });
+  assert.strictEqual(res.status, 201);
+  assert.deepStrictEqual(getInsert().params.slice(4, 8), [
+    'codex_openrouter', 'openrouter', 'openai/gpt-5.3-codex', 'medium',
+  ]);
+});
+
+test('an explicit unknown backend fails without creating a session', async () => {
+  const getInsert = installInsertCapture();
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await fetch(`http://127.0.0.1:${port}/api/apps/demo/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ backend: 'not-real' }),
+    });
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual((await res.json()).error, 'Unknown backend');
+    assert.strictEqual(getInsert(), null, 'no chat_sessions INSERT was issued');
   } finally {
     poolQueryHandler = async () => ({ rows: [] });
     server.close();
