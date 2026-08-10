@@ -2917,13 +2917,18 @@
         this._renderUsernodeError(section, readError, loading);
       } else {
         // Device permissions — mirrors the native QuickSettingsPanel.
+        // iOS maps requestPermissions() to the notification prompt and has
+        // no block production since v4 — describe each platform's real ask.
         const permBox = this._unSection(section, 'Usernode app — device permissions',
-          'Block production needs the app to wake your device at exact slot times.');
-        this._unStatusRow(permBox, isAndroid ? 'Exact alarms' : 'Alarm permissions',
+          isAndroid
+            ? 'Block production needs the app to wake your device at exact slot times.'
+            : 'Notifications let Usernode alert you about node and account activity.');
+        this._unStatusRow(permBox, isAndroid ? 'Exact alarms' : 'Notifications',
           !!perms.exactAlarmGranted, 'Granted', 'Not granted');
         if (!perms.exactAlarmGranted) {
-          this._unButton(permBox, 'Request permissions', () =>
-            this._unApply(window.usernode.requestPermissions()));
+          this._unButton(permBox,
+            isAndroid ? 'Request permissions' : 'Allow notifications', () =>
+              this._unApply(window.usernode.requestPermissions()));
         }
         if (isAndroid) {
           this._unStatusRow(permBox, 'Battery optimization',
