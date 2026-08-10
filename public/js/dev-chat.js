@@ -242,8 +242,12 @@ const DevChat = {
       : 'claude_code';
   },
 
+  _isOpenRouterSession(session = DevChat.currentSession) {
+    return DevChat._agentBackend(session) === 'codex_openrouter';
+  },
+
   _agentName(backend) {
-    return backend === 'codex_openrouter' ? 'Codex via OpenRouter' : 'Claude Code';
+    return backend === 'codex_openrouter' ? 'OpenRouter' : 'Claude Code';
   },
 
   // Runtime rows use camelCase metadata, session rows use snake_case, and
@@ -255,13 +259,13 @@ const DevChat = {
       || source?.metadata?.agentBackend
       || source?.agent_backend;
     if (backend === 'codex_openrouter') return 'codex_openrouter';
-    if (/^Codex\b/i.test(String(source?.content || ''))) return 'codex_openrouter';
+    if (/^(?:Codex|OpenRouter)\b/i.test(String(source?.content || ''))) return 'codex_openrouter';
     return 'claude_code';
   },
 
   _activityAgentName(source) {
     return DevChat._activityAgentBackend(source) === 'codex_openrouter'
-      ? 'Codex'
+      ? 'OpenRouter'
       : 'Claude Code';
   },
 
@@ -288,20 +292,20 @@ const DevChat = {
     const backend = DevChat._agentBackend(session);
     if (backend !== 'codex_openrouter') return 'Claude Code';
     const model = String(session?.agent_model || '').trim();
-    return model ? `Codex · ${model}` : 'Codex via OpenRouter';
+    return model ? `OpenRouter · ${model}` : 'OpenRouter';
   },
 
   _agentBillingNote(session) {
     if (DevChat._agentBackend(session) === 'codex_openrouter') {
       const model = String(session?.agent_model || '').trim();
-      return `Coding work runs with Codex${model ? ` (${model})` : ''} and bills your OpenRouter key.`;
+      return `All chat and coding in this session uses ${model || 'your selected model'} through OpenRouter and bills your OpenRouter key.`;
     }
-    return 'Coding work runs with Claude Code through Usernode.';
+    return 'Chat and coding use Usernode’s Claude path and its normal credit rules.';
   },
 
   _busyComposerPlaceholder() {
     const name = DevChat._agentBackend(DevChat.currentSession) === 'codex_openrouter'
-      ? 'Codex'
+      ? 'OpenRouter'
       : 'Claude';
     return `${name} is working — type your next note and tap 💾 to save it for later.`;
   },
@@ -340,12 +344,12 @@ const DevChat = {
 
   _openRouterModelCompatibilitySummary(model) {
     if (!model) return '';
-    if (model.compatibility === 'verified') return 'Verified with Codex.';
+    if (model.compatibility === 'verified') return 'Verified for repository coding.';
     if (model.meetsCodexMinimums) {
-      return 'OpenRouter advertises coding-tool support and enough context, but this model is not yet verified with Codex.';
+      return 'OpenRouter advertises coding-tool support and enough context, but this model is not yet verified for repository coding.';
     }
     return model.compatibilityNote
-      || 'OpenRouter exposes this model, but it may lack coding tools or enough context; the turn may fail.';
+      || 'OpenRouter exposes this model, but it may lack repository tools or enough context; the turn may fail.';
   },
 
   async _loadCodingAgentChoiceData() {
@@ -429,20 +433,20 @@ const DevChat = {
       <div class="w-full max-w-lg rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-5 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="dc-agent-choice-title">
         <div class="flex items-start gap-3">
           <div class="min-w-0 flex-1">
-            <h2 id="dc-agent-choice-title" class="text-lg font-bold text-zinc-900 dark:text-zinc-100">${mode === 'switch' ? 'Choose this session’s coding agent' : 'Choose a coding agent'}</h2>
-            <p class="mt-1 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">${mode === 'switch' ? 'Switching keeps this branch and conversation, but starts a fresh coding-agent context on the next turn.' : 'Both agents stay available. Your saved default is preselected; this choice is pinned to the new session.'}</p>
+            <h2 id="dc-agent-choice-title" class="text-lg font-bold text-zinc-900 dark:text-zinc-100">${mode === 'switch' ? 'Choose how this session runs' : 'Choose how to run this session'}</h2>
+            <p class="mt-1 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">${mode === 'switch' ? 'Switching keeps this branch and conversation, but starts fresh model context on the next turn.' : 'Your saved default is preselected; this choice is pinned to the new session.'}</p>
           </div>
           <button type="button" id="dc-agent-choice-close" class="shrink-0 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200" aria-label="Close">✕</button>
         </div>
-        <div class="mt-4 grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Coding agent">
+        <div class="mt-4 grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Session AI">
           <button type="button" id="dc-agent-choice-claude" role="radio" class="rounded-lg border p-3 text-left transition-colors">
             <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Claude Code</span>
             <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">Usernode’s existing coding-agent path.</span>
             ${data.defaultBackend === 'claude_code' ? '<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-300">Saved default</span>' : ''}
           </button>
           <button type="button" id="dc-agent-choice-codex" role="radio" class="rounded-lg border p-3 text-left transition-colors">
-            <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Codex via OpenRouter</span>
-            <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">Your model and your OpenRouter key.</span>
+            <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">OpenRouter</span>
+            <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">All chat and coding uses your selected model and your OpenRouter key.</span>
             ${data.defaultBackend === 'codex_openrouter' ? '<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-300">Saved default</span>' : ''}
           </button>
         </div>
@@ -502,8 +506,8 @@ const DevChat = {
 
       applyButton.disabled = false;
       applyButton.textContent = mode === 'switch'
-        ? `Switch to ${codex ? 'Codex' : 'Claude Code'}`
-        : `Create with ${codex ? 'Codex' : 'Claude Code'}`;
+        ? `Switch to ${codex ? 'OpenRouter' : 'Claude Code'}`
+        : `Create with ${codex ? 'OpenRouter' : 'Claude Code'}`;
 
       if (!codex) {
         status.textContent = data.loadError
@@ -517,12 +521,12 @@ const DevChat = {
         return;
       }
       if (!data.codexAvailable) {
-        status.textContent = 'Codex via OpenRouter is not enabled for this account or deployment.';
+        status.textContent = 'OpenRouter is not enabled for this account or deployment.';
         applyButton.disabled = true;
         return;
       }
       if (!data.credentialConfigured) {
-        status.textContent = data.catalogError || 'Add your OpenRouter API key before choosing Codex.';
+        status.textContent = data.catalogError || 'Add your OpenRouter API key before choosing OpenRouter.';
         applyButton.textContent = 'Set up OpenRouter';
         return;
       }
@@ -532,7 +536,7 @@ const DevChat = {
         return;
       }
       const model = data.models.find((item) => item.id === selectedModel) || null;
-      status.textContent = `${this._openRouterModelCostSummary(model)}. ${this._openRouterModelCompatibilitySummary(model)} Codex coding turns bill directly to your OpenRouter key.`;
+      status.textContent = `${this._openRouterModelCostSummary(model)}. ${this._openRouterModelCompatibilitySummary(model)} This session bills directly to your OpenRouter key.`;
     };
 
     claudeButton.addEventListener('click', () => { selectedBackend = 'claude_code'; render(); });
@@ -679,6 +683,10 @@ const DevChat = {
   _renderRunnerControls() {
     const host = document.getElementById('dc-runner');
     if (!host) return;
+    if (DevChat._isOpenRouterSession()) {
+      host.innerHTML = '';
+      return;
+    }
     const agent = DevChat._localAgent;
     if (!agent && DevChat._runner !== 'local') {
       host.innerHTML = '';
@@ -860,6 +868,13 @@ const DevChat = {
   },
 
   async refreshBudget() {
+    // OpenRouter sessions never use the platform's Anthropic allowance.
+    // Keep its meter, exhausted banner, and demo refusal card out of this
+    // session instead of showing billing state that cannot affect a turn.
+    if (DevChat._isOpenRouterSession()) {
+      DevChat.renderBudget();
+      return;
+    }
     try {
       // ?demo=1 passthrough so a staging reviewer can see the exhausted
       // state (red meter + three-route banner) without burning a real
@@ -914,6 +929,10 @@ const DevChat = {
     DevChat._applyCreditsBanner();
     const el = document.getElementById('dc-budget');
     if (!el) return;
+    if (DevChat._isOpenRouterSession()) {
+      el.innerHTML = '';
+      return;
+    }
     // BYOK (#30/#119/#212): billing is limit-first — the daily platform
     // allowance is consumed before any spend hits the user's own key —
     // so key-holders see the limit progress first (same red/yellow
@@ -963,6 +982,7 @@ const DevChat = {
   // blocked. Key-holders never match (billing continues on their key),
   // and a missing budget fetch stays quiet rather than guessing.
   _creditsExhausted() {
+    if (DevChat._isOpenRouterSession()) return false;
     const b = DevChat.budget;
     if (!b) return false;
     if (window.Settings?.state?.hasApiKey) return false;
@@ -1768,10 +1788,10 @@ const DevChat = {
       // for active/promoted (paused sessions can't be busy).
       let statusClass;
       let dotTitle;
-      // Preserve the legacy Claude tooltip byte-for-byte; only Codex rows
+      // Preserve the legacy Claude tooltip byte-for-byte; only OpenRouter rows
       // need a different provider name.
       const runningAgent = DevChat._activityAgentBackend(s) === 'codex_openrouter'
-        ? 'Codex'
+        ? 'OpenRouter'
         : 'Claude';
       if (s.status === 'paused') { statusClass = 'dc-active-dot-paused'; dotTitle = 'Paused'; }
       else if (s.status === 'promoted') {
@@ -2428,6 +2448,7 @@ const DevChat = {
       DevAlerts.requestNotifyPermission();
     }
     const model = DevChat.selectedModel;
+    const openRouterSession = DevChat._isOpenRouterSession();
     DevChat.isStreaming = true;
     // #889: defensive — a fresh turn must never paint the previous turn's
     // "Stopping…" button. Every teardown path already clears this, but the
@@ -2478,7 +2499,8 @@ const DevChat = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message, model,
+          message,
+          ...(!openRouterSession ? { model } : {}),
           ...(sentAttachments.length ? { attachmentIds: sentAttachments.map((a) => a.id) } : {}),
         }),
         signal: DevChat._abortController.signal,
@@ -2509,6 +2531,25 @@ const DevChat = {
         // Only the server's billing path sets code: 'budget_exceeded';
         // chatLimiter throttles keep the old wording.
         if (data.code === 'budget_exceeded') {
+          // This response belongs to the Anthropic-backed path. An
+          // OpenRouter session must never turn it into a Claude/Codex
+          // recovery card; surface a plain provider error defensively if
+          // an older server returns the stale billing gate.
+          if (openRouterSession) {
+            DevChat.messages.push({
+              role: 'assistant',
+              content: `**OpenRouter turn could not start.** ${data.error || 'Please try again.'}`,
+              created_at: new Date().toISOString(),
+            });
+            DevChat._finishStreaming();
+            DevChat._restoreComposer(message, { dropOptimisticUser: true });
+            if (sentAttachments.length) {
+              DevChat.pendingAttachments = sentAttachments;
+              DevChat._renderAttachStrip();
+            }
+            DevChat.renderMessages();
+            return;
+          }
           // The refusal renders as a CARD (public/js/credit-options.js) with
           // all three ways to keep building — own API key, a coding tool on
           // your machine, or a connected Claude.ai / ChatGPT subscription —
@@ -4063,7 +4104,7 @@ const DevChat = {
   _isLiveCcRun(m) {
     if (!m || m.role !== 'system' || !m._active) return false;
     if (m.progressLog) return true;
-    return /^(Claude Code is (running|making changes)|Codex is running|Scout reading the codebase|Syncing with main)/i
+    return /^(Claude Code is (running|making changes)|(?:Codex|OpenRouter) is running|Scout reading the codebase|Syncing with main)/i
       .test(String(m.content || ''));
   },
 
@@ -4576,7 +4617,7 @@ const DevChat = {
     // Each is paired with a 'Claude Code progress' system row whose
     // live log we want to attach.
     const ACTIVE_CC_STATUS_RE
-      = /^(Claude Code is (running|making changes)|Codex is running|Scout reading the codebase|Syncing with main)/i;
+      = /^(Claude Code is (running|making changes)|(?:Codex|OpenRouter) is running|Scout reading the codebase|Syncing with main)/i;
     // Helper: is this a viable status candidate for pairing? Stop on
     // any non-system row (status/progress pairs always live inside a
     // single dispatch turn) and skip rows that already carry their
@@ -6441,12 +6482,18 @@ const DevChat = {
 
     if (meta) meta.classList.add('hidden');
 
-    const modelOptions = Object.entries(DevChat.MODELS)
+    const openRouterSession = DevChat._isOpenRouterSession();
+    const modelOptions = openRouterSession ? '' : Object.entries(DevChat.MODELS)
       .map(([id, meta]) => {
         const text = DevChat.modelOptionText(meta);
         return `<option value="${id}" ${id === DevChat.selectedModel ? 'selected' : ''}>${escapeHtml(text)}</option>`;
       })
       .join('');
+    const chatModelControls = openRouterSession ? '' : `
+              <label class="text-xs text-zinc-500" for="dc-model-select">Chat model:</label>
+              <select id="dc-model-select" class="rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-violet-500">
+                ${modelOptions}
+              </select>`;
 
     const viewerOpen = !!DevChat.specViewer.open;
     // Saved viewer width from a previous drag. Applied as inline style
@@ -6491,12 +6538,9 @@ const DevChat = {
                lives inside a template literal, and one would close it.) -->
           <div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2 platform-safe-bar">
             <div class="flex flex-wrap items-center gap-2 mb-2">
-              <label class="text-xs text-zinc-500" for="dc-agent-select">Coding agent:</label>
-              <button type="button" id="dc-agent-select" class="max-w-full truncate rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-900 px-2 py-1 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:border-violet-500 hover:text-violet-500 disabled:cursor-not-allowed disabled:opacity-50" title="Choose Claude Code or Codex for this session. Switching starts fresh agent context but keeps the branch and conversation.">${escapeHtml(agentButtonText)}</button>
-              <label class="text-xs text-zinc-500" for="dc-model-select">Chat model:</label>
-              <select id="dc-model-select" class="rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-violet-500">
-                ${modelOptions}
-              </select>
+              <label class="text-xs text-zinc-500" for="dc-agent-select">Session AI:</label>
+              <button type="button" id="dc-agent-select" class="max-w-full truncate rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-900 px-2 py-1 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:border-violet-500 hover:text-violet-500 disabled:cursor-not-allowed disabled:opacity-50" title="Choose Claude Code or OpenRouter for this session. Switching starts fresh model context but keeps the branch and conversation.">${escapeHtml(agentButtonText)}</button>
+              ${chatModelControls}
               <input type="file" id="dc-file-input" class="hidden" multiple>
               <button type="button" id="dc-attach-btn" title="Attach files — images (≤4 MB), text/code files (≤200 KB), zip archives (≤20 MB), or any other file (≤10 MB); up to 4 per message" aria-label="Attach files"
                 class="dc-attach-btn rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-900 text-zinc-500 hover:text-violet-400 hover:border-violet-500 px-1.5 py-1 shrink-0 transition-colors">
@@ -6523,7 +6567,7 @@ const DevChat = {
                  _renderModelNote(); hidden when the payload carries no
                  guidance copy. Clamped to two lines in CSS: Fable's
                  sentence wraps on a phone and must not crowd the box. -->
-            <span id="dc-model-note" class="dc-model-note hidden"></span>
+            ${openRouterSession ? '' : '<span id="dc-model-note" class="dc-model-note hidden"></span>'}
             <div id="dc-drafts" class="dc-drafts"></div>
             <div id="dc-quick-replies" class="dc-quick-replies"></div>
             <div id="dc-attachments" class="dc-attach-strip"></div>
@@ -6602,7 +6646,7 @@ const DevChat = {
     else if (DevChat._wantsBusyShot()) DevChat._setStreamingUI(true, 'claude');
 
     // #800: caption describing the selected model, kept in sync below.
-    DevChat._renderModelNote();
+    if (!openRouterSession) DevChat._renderModelNote();
     // #907: repaint from whatever the last status poll told us. The poll
     // itself runs a beat later; painting here means a re-render of an already
     // open session doesn't drop the chip for a second.
@@ -6629,14 +6673,17 @@ const DevChat = {
       agentSelect.addEventListener('click', () => DevChat._switchCurrentCodingAgent());
     }
 
-    document.getElementById('dc-model-select').addEventListener('change', (e) => {
-      DevChat.selectedModel = e.target.value;
-      // Persist across refreshes + new sessions (fixes #31). Wrapped
-      // in try/catch so private-mode browsers or quota errors don't
-      // break the selector.
-      try { localStorage.setItem(MODEL_STORAGE_KEY, e.target.value); } catch {}
-      DevChat._renderModelNote();
-    });
+    const chatModelSelect = document.getElementById('dc-model-select');
+    if (!openRouterSession && chatModelSelect) {
+      chatModelSelect.addEventListener('change', (e) => {
+        DevChat.selectedModel = e.target.value;
+        // Persist across refreshes + new sessions (fixes #31). Wrapped
+        // in try/catch so private-mode browsers or quota errors don't
+        // break the selector.
+        try { localStorage.setItem(MODEL_STORAGE_KEY, e.target.value); } catch {}
+        DevChat._renderModelNote();
+      });
+    }
 
     const prHeaderLink = document.getElementById('dc-pr-header-link');
     if (prHeaderLink) {

@@ -239,7 +239,7 @@ test('runtime identity pins Codex reporting to the session model, not the Mayor 
     { ...BASE_CONFIG, openrouterDefaultCodexModel: 'openai/operator-default' },
   );
   assert.equal(out.backend, 'codex_openrouter');
-  assert.equal(out.agentName, 'Codex');
+  assert.equal(out.agentName, 'OpenRouter');
   assert.equal(out.model, 'openai/gpt-5.3-codex');
   assert.equal(out.modelLabel, 'openai/gpt-5.3-codex');
   assert.deepEqual(out.metadata, {

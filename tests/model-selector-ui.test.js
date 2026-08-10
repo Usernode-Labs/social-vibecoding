@@ -209,6 +209,7 @@ function render(overrides) {
   const h = makeHarness();
   h.DevChat.MODELS = (overrides && overrides.models) || guidanceMap();
   h.DevChat.selectedModel = (overrides && overrides.selected) || 'claude-opus-5';
+  if (overrides && overrides.session) h.DevChat.currentSession = overrides.session;
   h.DevChat.renderChatView();
   return { ...h, html: h.getEl('dc-view').innerHTML };
 }
@@ -247,6 +248,27 @@ test('each option reads "<label> — <what it is for>"', () => {
       `missing option "${expected}"; got: ${html.match(/<option[^>]*>[^<]*<\/option>/g)}`
     );
   }
+});
+
+test('OpenRouter sessions show one provider/model control and no Claude chat-model picker', () => {
+  const { html } = render({
+    session: {
+      id: 7,
+      branch_name: 'dev/openrouter',
+      session_title: 'OpenRouter change',
+      agent_backend: 'codex_openrouter',
+      agent_model: 'anthropic/claude-sonnet-4.5',
+    },
+  });
+
+  assert.match(html, /Session AI:/);
+  assert.match(html, /OpenRouter · anthropic\/claude-sonnet-4\.5/);
+  assert.match(html, /All chat and coding in this session uses/);
+  assert.doesNotMatch(html, /Chat model:/);
+  assert.doesNotMatch(html, /id="dc-model-select"/);
+  assert.doesNotMatch(html, /Sonnet 5 — simple, small changes/);
+  assert.doesNotMatch(html, /Opus 5 — general coding work/);
+  assert.doesNotMatch(html, /Fable 5 — design, taste, and difficult coding/);
 });
 
 test('no option implies a size ladder between Opus and Fable', () => {

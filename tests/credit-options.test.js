@@ -262,7 +262,7 @@ test('the dev chat renders the refusal as a card, not as prose', () => {
   // route. Guard against a regression back to that.
   assert.match(
     DEV_CHAT_SRC,
-    /data\.code === 'budget_exceeded'[\s\S]{0,900}creditsCard:/,
+    /data\.code === 'budget_exceeded'[\s\S]{0,1800}creditsCard:/,
     'the budget_exceeded branch pushes a creditsCard row'
   );
   assert.doesNotMatch(

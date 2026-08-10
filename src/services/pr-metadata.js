@@ -247,6 +247,37 @@ function fallbackPrMetadataDraft(username) {
   };
 }
 
+// OpenRouter sessions must not buy a hidden Anthropic call just to name a
+// pull request after their selected model has finished. Build stable metadata
+// from the session's own request and model-authored summary instead. The first
+// request owns the title for the life of the PR; later turns refresh the body
+// without renaming the change after whichever follow-up happened last.
+function deterministicPrMetadataDraft({ userMessage, ccSummary, requests, summaries, username }) {
+  const titleSource = (Array.isArray(requests) && requests.find((item) => typeof item === 'string' && item.trim()))
+    || userMessage
+    || ccSummary
+    || `${username || 'User'}'s changes`;
+  const plainTitle = String(titleSource)
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/[#>*_`~\[\]()]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const title = plainTitle.length > 72
+    ? `${plainTitle.slice(0, 71).trimEnd()}…`
+    : (plainTitle || `${username || 'User'}'s changes`);
+  const latestSummary = String(
+    ccSummary
+      || (Array.isArray(summaries) && summaries[summaries.length - 1])
+      || '',
+  ).trim();
+  return {
+    title,
+    body: '',
+    summary: latestSummary,
+    fallback: false,
+  };
+}
+
 // Keep the paid, non-deterministic provider result separate from the suffixes
 // derived from current session state. Durable turns receipt this draft once;
 // recovery can then re-render fresh issue/testing/visual blocks without buying
@@ -497,6 +528,7 @@ async function applyPrMetadata({
   effectTurnId = null,
   effectSessionId = null,
   effectBillingByok = !!apiKey,
+  metadataMode = null,
 }) {
   if (!repoOwner || !repoName) return null;
 
@@ -528,7 +560,14 @@ async function applyPrMetadata({
   };
   let meta;
   let metadataBillingByok = !!effectBillingByok;
-  if (effectTurnId) {
+  const deterministic = metadataMode === 'deterministic'
+    || (metadataMode == null && session?.agent_backend === 'codex_openrouter');
+  if (deterministic) {
+    meta = renderPrMetadataDraft(
+      deterministicPrMetadataDraft(generationArgs),
+      { username, closingBlock, testingBlock, visualsBlock },
+    );
+  } else if (effectTurnId) {
     try {
       const effect = await turnEffects.runExternalEffectFailClosed({
         pool,
@@ -758,7 +797,7 @@ async function applyPrMetadata({
 }
 
 module.exports = {
-  generatePrMetadata, applyPrMetadata, sanitizeIssueNumbers,
+  generatePrMetadata, applyPrMetadata, deterministicPrMetadataDraft, sanitizeIssueNumbers,
   buildClosingBlock, buildTestingBlock, parseClosingKeywords,
   buildVisualsBlock, upsertVisualsBlock,
   applyIssueDeclarations, stripClosingLines, sameIssueSet,
