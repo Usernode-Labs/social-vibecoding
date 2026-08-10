@@ -58,6 +58,67 @@
 // names, spend, host load, stuck sessions and the event log from
 // non-admins.
 
+// ── AdminUI: shared shadcn-style class recipes (see
+// docs/superpowers/specs/2026-08-10-admin-shadcn-restyle-design.md) ──────
+// Data-only class-string constants used by this file and every admin-*.js
+// section module (all of which load after this file — see the script order
+// in frontend/src/Shell.tsx). Buttons are composed verbatim from the
+// variant table in frontend/@/components/ui/button.tsx so admin buttons
+// pixel-match the shell's React <Button>. Every value is a COMPLETE class
+// literal: Tailwind's extractor is a regex over public/js/** source, and
+// tests/admin-ui-registry.test.js + tests/tailwind-build.test.js enforce
+// the discipline. Never index this registry dynamically.
+window.AdminUI = Object.freeze({
+  // Surfaces — shadcn Card, density-matched to the console's p-4 rhythm.
+  card: 'rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm',
+  cardHeader: 'flex items-center justify-between gap-2 mb-3',
+  cardTitle: 'text-lg font-semibold text-zinc-900 dark:text-zinc-100',
+  cardDescription: 'text-sm text-zinc-500 dark:text-zinc-400',
+  // Tables — shadcn Table. NOTE: deliberately no sideways-scroll utility on
+  // the wrapper — nothing in the console scrolls horizontally (#860, pinned
+  // by admin-console-page.test.js, which regexes this file's raw source).
+  tableWrap: 'w-full rounded-lg border border-zinc-200 dark:border-zinc-800',
+  table: 'w-full text-sm',
+  thead: 'border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50',
+  th: 'px-3 py-2 text-left align-middle text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400',
+  td: 'px-3 py-2 align-middle',
+  trHover: 'border-b border-zinc-100 dark:border-zinc-800/60 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/50',
+  // Buttons — button.tsx variants composed with its default / sm sizes.
+  btn: Object.freeze({
+    primary: 'font-medium transition-colors bg-violet-600 hover:bg-violet-500 text-white rounded-lg px-4 py-2 text-sm',
+    outline: 'font-medium transition-colors border border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg px-4 py-2 text-sm',
+    destructive: 'font-medium transition-colors border border-red-400 dark:border-red-700 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 rounded-lg px-4 py-2 text-sm',
+    ghost: 'font-medium transition-colors text-zinc-400 hover:text-zinc-200',
+    link: 'font-medium transition-colors text-zinc-500 hover:text-violet-400',
+    primarySm: 'font-medium transition-colors bg-violet-600 hover:bg-violet-500 text-white rounded px-3 py-1 text-xs',
+    outlineSm: 'font-medium transition-colors border border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded px-3 py-1 text-xs',
+    destructiveSm: 'font-medium transition-colors border border-red-400 dark:border-red-700 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 rounded px-3 py-1 text-xs',
+  }),
+  // Form controls.
+  input: 'w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:border-violet-500',
+  select: 'w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-violet-500',
+  textarea: 'w-full min-h-[80px] rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:border-violet-500',
+  label: 'text-sm font-medium text-zinc-700 dark:text-zinc-300',
+  // Badges — shadcn Badge shape; success/warn use the console's existing
+  // emerald/amber status conventions.
+  badge: Object.freeze({
+    default: 'inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium bg-violet-600 text-white',
+    secondary: 'inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300',
+    outline: 'inline-flex items-center rounded-md border border-zinc-300 dark:border-zinc-700 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:text-zinc-300',
+    destructive: 'inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium bg-red-100 dark:bg-red-950 text-red-700 dark:text-red-300',
+    success: 'inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300',
+    warn: 'inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300',
+  }),
+  // Overlay.
+  dialogOverlay: 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4',
+  dialogPanel: 'w-full max-w-md rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-6 shadow-xl',
+  // Typography / misc.
+  sectionTitle: 'text-lg font-semibold text-zinc-900 dark:text-zinc-100',
+  muted: 'text-sm text-zinc-500 dark:text-zinc-400',
+  separator: 'border-t border-zinc-200 dark:border-zinc-800',
+  kbd: 'rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 font-mono text-xs text-zinc-700 dark:text-zinc-300',
+});
+
 const AdminConsole = {
   _open: false,
   _section: 'overview',
@@ -524,7 +585,7 @@ const AdminConsole = {
     const groups = AdminConsole._groupedSections().map((g) => `
       <div class="mb-5">
         <div class="px-4 pb-1.5 text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500">${AdminConsole.esc(g.name)}</div>
-        <div class="rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900
+        <div class="${AdminUI.card} overflow-hidden
                     [&>button:last-child]:border-b-0">
           ${g.items.map(rowHtml).join('')}
         </div>
@@ -559,17 +620,17 @@ const AdminConsole = {
       </div>
       <!-- Temporary password modal (issue #282): the reset response is the
            only time the plaintext exists — shown once, never persisted. -->
-      <div id="admin-temp-pw-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-        <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl border border-zinc-200 dark:border-zinc-800">
-          <h2 class="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">Temporary password</h2>
-          <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
+      <div id="admin-temp-pw-modal" class="hidden ${AdminUI.dialogOverlay}">
+        <div class="${AdminUI.dialogPanel}">
+          <h2 class="${AdminUI.cardTitle} mb-1">Temporary password</h2>
+          <p class="${AdminUI.muted} mb-4">
             Give this to <span id="admin-temp-pw-username" class="font-medium text-zinc-800 dark:text-zinc-200"></span> out-of-band (chat, in person). They use it as their password to log in, then set their own from <a href="#settings/password" class="text-violet-500 hover:text-violet-400 underline">Settings → Change password</a>. It signs them out everywhere and <span class="font-medium">won't be shown again</span>.
           </p>
           <div class="flex gap-2">
             <code id="admin-temp-pw-value" class="flex-1 min-w-0 break-all rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-900 dark:text-zinc-100"></code>
-            <button id="admin-temp-pw-copy" class="shrink-0 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Copy</button>
+            <button id="admin-temp-pw-copy" class="${AdminUI.btn.primary} shrink-0">Copy</button>
           </div>
-          <button id="admin-temp-pw-close" class="mt-4 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Done</button>
+          <button id="admin-temp-pw-close" class="${AdminUI.btn.outline} mt-4 w-full">Done</button>
         </div>
       </div>`;
 
@@ -696,7 +757,7 @@ const AdminConsole = {
     if (modName) {
       const mod = window[modName];
       if (!mod || typeof mod.render !== 'function') {
-        host.innerHTML = `<p class="p-4 text-sm text-zinc-500">The ${AdminConsole.esc(key)} console module failed to load.</p>`;
+        host.innerHTML = `<p class="${AdminUI.muted} p-4">The ${AdminConsole.esc(key)} console module failed to load.</p>`;
         return;
       }
       AdminConsole._activeModule = mod;
@@ -753,10 +814,10 @@ const AdminConsole = {
   renderFeaturedAppsSection(host) {
     const canWrite = AdminConsole.canWrite();
     host.innerHTML = `
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+      <div class="${AdminUI.card} p-4">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="text-lg font-semibold">Featured apps</h2>
-          <button id="admin-featured-refresh" class="text-xs text-zinc-400 hover:text-violet-400">Refresh</button>
+          <h2 class="${AdminUI.cardTitle}">Featured apps</h2>
+          <button id="admin-featured-refresh" class="${AdminUI.btn.link} text-xs">Refresh</button>
         </div>
         <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
           These apps appear in the &ldquo;Featured apps&rdquo; row on everyone&rsquo;s
@@ -774,7 +835,7 @@ const AdminConsole = {
           </select>
           <button id="admin-featured-add" class="px-3 py-1.5 rounded-md bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-sm">Add</button>
           <span class="flex-1"></span>
-          <button id="admin-featured-save" class="px-3 py-1.5 rounded-md bg-violet-600 hover:bg-violet-500 text-white text-sm disabled:opacity-50" disabled>Save</button>
+          <button id="admin-featured-save" class="${AdminUI.btn.primary} disabled:opacity-50" disabled>Save</button>
         </div>
         <p id="admin-featured-status" class="mt-2 text-xs text-zinc-500"></p>
         ` : `
@@ -960,10 +1021,10 @@ const AdminConsole = {
   renderRolloverSection(host) {
     const canWrite = AdminConsole.canWrite();
     host.innerHTML = `
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+      <div class="${AdminUI.card} p-4">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="text-lg font-semibold">Container rollover</h2>
-          <button id="admin-refresh-rollover" class="text-xs text-zinc-400 hover:text-violet-400">Refresh</button>
+          <h2 class="${AdminUI.cardTitle}">Container rollover</h2>
+          <button id="admin-refresh-rollover" class="${AdminUI.btn.link} text-xs">Refresh</button>
         </div>
         <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-2">
           Recreates every running app container so it picks up the environment
@@ -993,7 +1054,7 @@ const AdminConsole = {
         </div>
         ${canWrite ? `
         <button id="admin-rollover-btn"
-          class="rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:hover:bg-violet-600 px-4 py-2 text-sm font-medium text-white transition-colors">
+          class="${AdminUI.btn.primary} disabled:opacity-50 disabled:hover:bg-violet-600">
           Roll over all app containers
         </button>` : `
         <p class="text-xs text-zinc-500">View-only admin — you can watch a rollover, but not start one.</p>`}
@@ -1192,10 +1253,10 @@ const AdminConsole = {
   renderStalePreviewsSection(host) {
     const canWrite = AdminConsole.canWrite();
     host.innerHTML = `
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+      <div class="${AdminUI.card} p-4">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="text-lg font-semibold">Stale previews</h2>
-          <button id="admin-refresh-reap" class="text-xs text-zinc-400 hover:text-violet-400">Refresh</button>
+          <h2 class="${AdminUI.cardTitle}">Stale previews</h2>
+          <button id="admin-refresh-reap" class="${AdminUI.btn.link} text-xs">Refresh</button>
         </div>
         <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-2">
           Shuts down every proposal preview that is still running. A preview's
@@ -1233,7 +1294,7 @@ const AdminConsole = {
         <p id="admin-reap-automatic" class="text-xs text-zinc-500 mb-4"></p>
         ${canWrite ? `
         <button id="admin-reap-btn"
-          class="rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:hover:bg-violet-600 px-4 py-2 text-sm font-medium text-white transition-colors">
+          class="${AdminUI.btn.primary} disabled:opacity-50 disabled:hover:bg-violet-600">
           Shut down stale previews
         </button>` : `
         <p class="text-xs text-zinc-500">View-only admin — you can watch a sweep, but not start one.</p>`}
@@ -1446,10 +1507,10 @@ const AdminConsole = {
 
   renderOverviewSection(host) {
     host.innerHTML = `
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+      <div class="${AdminUI.card} p-4">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="text-lg font-semibold">Operations</h2>
-          <button id="admin-refresh-overview" class="text-xs text-zinc-400 hover:text-violet-400">Refresh</button>
+          <h2 class="${AdminUI.cardTitle}">Operations</h2>
+          <button id="admin-refresh-overview" class="${AdminUI.btn.link} text-xs">Refresh</button>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
           <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
@@ -1557,9 +1618,9 @@ const AdminConsole = {
     const canWrite = AdminConsole.canWrite();
     const dis = canWrite ? '' : 'disabled';
     host.innerHTML = `
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+      <div class="${AdminUI.card} p-4">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="text-lg font-semibold">LLM Spend Limits</h2>
+          <h2 class="${AdminUI.cardTitle}">LLM Spend Limits</h2>
           <span class="text-xs text-zinc-500">USD · resets midnight UTC</span>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
@@ -1568,7 +1629,7 @@ const AdminConsole = {
             <div class="relative mt-1">
               <span class="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500 pointer-events-none">$</span>
               <input id="admin-limit-user" type="number" min="0" step="0.01" inputmode="decimal" ${dis}
-                class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 pl-6 pr-3 py-2 text-sm font-mono disabled:opacity-60"
+                class="${AdminUI.input} pl-6 font-mono disabled:opacity-60"
                 placeholder="25.00">
             </div>
           </label>
@@ -1577,7 +1638,7 @@ const AdminConsole = {
             <div class="relative mt-1">
               <span class="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500 pointer-events-none">$</span>
               <input id="admin-limit-global" type="number" min="0" step="0.01" inputmode="decimal" ${dis}
-                class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 pl-6 pr-3 py-2 text-sm font-mono disabled:opacity-60"
+                class="${AdminUI.input} pl-6 font-mono disabled:opacity-60"
                 placeholder="200.00">
             </div>
           </label>
@@ -1586,14 +1647,14 @@ const AdminConsole = {
             <div class="relative mt-1">
               <span class="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500 pointer-events-none">$</span>
               <input id="admin-limit-system" type="number" min="0" step="0.01" inputmode="decimal" ${dis}
-                class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 pl-6 pr-3 py-2 text-sm font-mono disabled:opacity-60"
+                class="${AdminUI.input} pl-6 font-mono disabled:opacity-60"
                 placeholder="25.00">
             </div>
           </label>
         </div>
         <div class="flex flex-wrap items-center justify-between gap-2">
           <p class="text-xs text-zinc-500">Per-user overrides live in the Users section; these are the platform defaults.</p>
-          ${canWrite ? '<button id="admin-save-limits-btn" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Save</button>' : ''}
+          ${canWrite ? `<button id="admin-save-limits-btn" class="${AdminUI.btn.primary}">Save</button>` : ''}
         </div>
         <p id="admin-limits-status" class="text-xs mt-2 hidden"></p>
       </div>
@@ -1607,11 +1668,11 @@ const AdminConsole = {
            This is the ONLY surface for the figure — the drawer's status
            pane carried a matching row until it was removed for reading
            "Not set up" indefinitely. -->
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800 mt-4">
+      <div class="${AdminUI.card} p-4 mt-4">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="text-lg font-semibold">Anthropic credits</h2>
+          <h2 class="${AdminUI.cardTitle}">Anthropic credits</h2>
         </div>
-        <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
+        <p class="${AdminUI.muted} mb-3">
           Anthropic doesn’t publish a remaining-credit figure, only what it has
           billed. Record the balance and the date it was correct, and the platform
           subtracts billed spend since then. Re-record both after every top-up.
@@ -1622,19 +1683,19 @@ const AdminConsole = {
             <div class="relative mt-1">
               <span class="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500 pointer-events-none">$</span>
               <input id="admin-credit-balance" type="number" min="0" step="0.01" inputmode="decimal" ${dis}
-                class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 pl-6 pr-3 py-2 text-sm font-mono disabled:opacity-60"
+                class="${AdminUI.input} pl-6 font-mono disabled:opacity-60"
                 placeholder="5000.00">
             </div>
           </label>
           <label class="block">
             <span class="text-xs uppercase tracking-wide text-zinc-500" title="The date that balance was correct">As of</span>
             <input id="admin-credit-as-of" type="date" ${dis}
-              class="mt-1 w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-3 py-2 text-sm font-mono disabled:opacity-60">
+              class="${AdminUI.input} mt-1 font-mono disabled:opacity-60">
           </label>
         </div>
         <div class="flex flex-wrap items-center justify-between gap-2">
           <p id="admin-credit-derived" class="text-xs text-zinc-500"></p>
-          ${canWrite ? '<button id="admin-save-credits-btn" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Save</button>' : ''}
+          ${canWrite ? `<button id="admin-save-credits-btn" class="${AdminUI.btn.primary}">Save</button>` : ''}
         </div>
         <p id="admin-credits-status" class="text-xs mt-2 hidden"></p>
       </div>`;
@@ -1779,10 +1840,10 @@ const AdminConsole = {
   renderCodesSection(host) {
     const canWrite = AdminConsole.canWrite();
     host.innerHTML = `
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+      <div class="${AdminUI.card} p-4">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="text-lg font-semibold">Activation Codes</h2>
-          ${canWrite ? '<button id="admin-generate-code-btn" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Generate Code</button>' : ''}
+          <h2 class="${AdminUI.cardTitle}">Activation Codes</h2>
+          ${canWrite ? `<button id="admin-generate-code-btn" class="${AdminUI.btn.primary}">Generate Code</button>` : ''}
         </div>
         <div id="admin-code-list" class="space-y-2"></div>
         <p id="admin-code-empty" class="text-sm text-zinc-500 hidden">No activation codes yet.</p>
@@ -1824,7 +1885,7 @@ const AdminConsole = {
         const date = new Date(code.used_at).toLocaleDateString();
         statusHtml = `<span class="text-xs text-zinc-500">Used by <strong class="text-zinc-400">${esc(code.used_by_username)}</strong> on ${date}</span>`;
       } else {
-        statusHtml = '<span class="text-xs text-green-500">Available</span>';
+        statusHtml = `<span class="${AdminUI.badge.success}">Available</span>`;
       }
       el.innerHTML = `
         <div class="flex-1 min-w-0 flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -1869,16 +1930,16 @@ const AdminConsole = {
   renderUsersSection(host) {
     const canWrite = AdminConsole.canWrite();
     host.innerHTML = `
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800">
+      <div class="${AdminUI.card}">
         <div class="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-zinc-200 dark:border-zinc-800">
-          <h2 class="text-lg font-semibold">Users</h2>
+          <h2 class="${AdminUI.cardTitle}">Users</h2>
           ${canWrite ? `
           <div id="admin-bulk-quota-control" class="flex items-center gap-2" title="Set every user's app quota to this number.">
             <span class="text-xs text-zinc-400">Set all quotas to</span>
             <input id="admin-bulk-quota-input" type="number" min="0" step="1" inputmode="numeric"
               class="w-16 rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs font-mono"
               placeholder="0">
-            <button id="admin-bulk-quota-btn" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1 text-xs font-medium text-white transition-colors">Set all</button>
+            <button id="admin-bulk-quota-btn" class="${AdminUI.btn.primarySm}">Set all</button>
           </div>` : ''}
         </div>
         <div id="admin-user-list" class="divide-y divide-zinc-200 dark:divide-zinc-800">
@@ -2378,9 +2439,9 @@ const AdminConsole = {
 
   renderFeaturesSection(host) {
     host.innerHTML = `
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+      <div class="${AdminUI.card} p-4">
         <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-          <h2 class="text-lg font-semibold">Submitted features</h2>
+          <h2 class="${AdminUI.cardTitle}">Submitted features</h2>
           <div class="flex items-center gap-2">
             <select id="admin-features-status" class="rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1 text-xs">
               <option value="all" selected>All</option>
@@ -2388,8 +2449,8 @@ const AdminConsole = {
               <option value="closed">Closed</option>
               <option value="completed">Shipped</option>
             </select>
-            <button id="admin-features-refresh" class="text-xs text-zinc-400 hover:text-violet-400 px-1 py-1">Refresh</button>
-            <button id="admin-features-csv" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1 text-xs font-medium text-white transition-colors">Download CSV</button>
+            <button id="admin-features-refresh" class="${AdminUI.btn.link} text-xs px-1 py-1">Refresh</button>
+            <button id="admin-features-csv" class="${AdminUI.btn.primarySm}">Download CSV</button>
           </div>
         </div>
         <p id="admin-features-summary" class="text-xs text-zinc-500 mb-3"></p>
@@ -2625,10 +2686,10 @@ const AdminConsole = {
           </p>
         </div>
 
-        <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <div class="${AdminUI.card} p-4">
           <div class="flex flex-wrap items-center justify-between gap-3">
             <p id="admin-db-export-target" class="text-sm text-zinc-500">Loading…</p>
-            <button id="admin-db-export-refresh" class="text-xs text-zinc-400 hover:text-violet-400 px-1 py-1">Refresh</button>
+            <button id="admin-db-export-refresh" class="${AdminUI.btn.link} text-xs px-1 py-1">Refresh</button>
           </div>
           <div class="mt-3">
             ${canWrite
@@ -2688,7 +2749,7 @@ const AdminConsole = {
           </ul>
         </details>
 
-        <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <div class="${AdminUI.card} p-4">
           <div class="flex flex-wrap items-center justify-between gap-3 mb-1">
             <h3 class="text-base font-semibold">Export history</h3>
             <span class="text-xs text-zinc-500">Append-only — cannot be cleared</span>

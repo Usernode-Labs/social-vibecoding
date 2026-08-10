@@ -594,7 +594,7 @@ const AdminEstimator = (() => {
 
       <main id="admin-estimator-content" class="hidden space-y-6">
         <!-- Progress estimator accuracy (#891, moved out of Analytics in #898) -->
-        <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <section class="${AdminUI.card} p-4">
           <h3 class="text-lg font-semibold mb-1 inline-flex items-center">Progress estimator accuracy
             <span class="dc-info" data-info="estimator" tabindex="0" role="button" aria-label="What is this?">?</span>
           </h3>

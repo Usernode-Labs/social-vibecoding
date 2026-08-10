@@ -427,7 +427,7 @@ const AdminStatus = {
       }
 
       return `
-        <div class="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40">
+        <div class="${AdminUI.card}">
           <div class="p-3 flex items-start justify-between gap-3 flex-wrap">
             <div class="min-w-0">
               <div class="flex items-center gap-2 flex-wrap">
@@ -589,7 +589,7 @@ const AdminStatus = {
       <div id="admin-status-root">
         <header class="flex items-center justify-between flex-wrap gap-2 mb-4">
           <div class="flex items-center gap-3">
-            <h2 class="text-lg font-semibold">Health &amp; status</h2>
+            <h2 class="${AdminUI.cardTitle}">Health &amp; status</h2>
             <span id="admin-status-version" class="text-xs mono text-zinc-500"></span>
             <span id="admin-status-badge" class="admin-only text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-700/30 text-violet-700 dark:text-violet-300">admin view</span>
           </div>
@@ -631,7 +631,7 @@ const AdminStatus = {
               → full status
             </button>
           </div>
-          <div id="admin-status-node" class="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 p-4 text-sm"></div>
+          <div id="admin-status-node" class="${AdminUI.card} p-4 text-sm"></div>
         </section>
 
         <!-- Block-explorer reachability. Separate card from the node above:
@@ -642,7 +642,7 @@ const AdminStatus = {
           <div class="flex items-baseline justify-between mb-2">
             <h3 class="text-sm font-semibold text-zinc-600 dark:text-zinc-400 uppercase tracking-wide">Block explorer</h3>
           </div>
-          <div id="admin-status-explorer" class="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 p-4 text-sm"></div>
+          <div id="admin-status-explorer" class="${AdminUI.card} p-4 text-sm"></div>
         </section>
 
         <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
@@ -656,7 +656,7 @@ const AdminStatus = {
           <div class="space-y-6 min-w-0">
             <section class="admin-only">
               <h3 class="text-sm font-semibold text-zinc-600 dark:text-zinc-400 uppercase tracking-wide mb-2">Capacity &amp; host</h3>
-              <div id="admin-status-capacity" class="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 p-4 text-sm"></div>
+              <div id="admin-status-capacity" class="${AdminUI.card} p-4 text-sm"></div>
             </section>
 
             <section>

@@ -179,7 +179,7 @@ const AdminCampaigns = (() => {
     const failingChecks = (c.apps || []).filter((a) => a.state === 'pr_open' && a.sessionId
       && (a.checkState === 'failing' || a.checkState === 'error'));
     const recheckAllBtn = (write && failingChecks.length > 0)
-      ? `<button type="button" class="campaign-recheck-all-btn rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1.5 text-xs font-medium text-white transition-colors" data-campaign="${c.id}" data-sessions="${failingChecks.map((a) => a.sessionId).join(',')}">Re-run failing checks (${failingChecks.length})</button>` : '';
+      ? `<button type="button" class="campaign-recheck-all-btn ${AdminUI.btn.primarySm}" data-campaign="${c.id}" data-sessions="${failingChecks.map((a) => a.sessionId).join(',')}">Re-run failing checks (${failingChecks.length})</button>` : '';
     el.innerHTML = `
       <details class="mb-2">
         <summary class="text-xs text-zinc-500 cursor-pointer">Instructions</summary>
@@ -341,12 +341,12 @@ const AdminCampaigns = (() => {
   function markup() {
     const write = canWrite();
     return `
-      <div id="admin-campaigns-root" class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+      <div id="admin-campaigns-root" class="${AdminUI.card} p-4">
         <div class="flex items-center justify-between flex-wrap gap-2 mb-3">
-          <h2 class="text-lg font-semibold">Maintenance campaigns</h2>
+          <h2 class="${AdminUI.cardTitle}">Maintenance campaigns</h2>
           <div class="flex items-center gap-3">
-            <button id="admin-refresh-campaigns" type="button" class="text-xs text-zinc-400 hover:text-violet-400">Refresh</button>
-            ${write ? '<button id="admin-new-campaign-btn" type="button" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">New campaign</button>' : ''}
+            <button id="admin-refresh-campaigns" type="button" class="${AdminUI.btn.link} text-xs">Refresh</button>
+            ${write ? `<button id="admin-new-campaign-btn" type="button" class="${AdminUI.btn.primary}">New campaign</button>` : ''}
           </div>
         </div>
         <p class="text-xs text-zinc-500 mb-3">
@@ -366,7 +366,7 @@ const AdminCampaigns = (() => {
             placeholder="Optional: comma-separated app slugs to target (blank = every app)">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <p class="text-xs text-zinc-500">Submitting opens a governance proposal on the platform app. The campaign starts when the vote passes, or when an admin applies the proposal.</p>
-            <button id="admin-campaign-submit-btn" type="button" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors shrink-0">Propose campaign</button>
+            <button id="admin-campaign-submit-btn" type="button" class="${AdminUI.btn.primary} shrink-0">Propose campaign</button>
           </div>
           <p id="admin-campaign-form-status" class="text-xs hidden"></p>
         </div>` : ''}

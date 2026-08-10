@@ -1340,7 +1340,7 @@ const AdminAnalytics = (() => {
         </section>
 
         <!-- Daily spend -->
-        <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <section class="${AdminUI.card} p-4">
           <div class="flex items-center justify-between flex-wrap gap-2 mb-1">
             <h3 class="text-lg font-semibold inline-flex items-center">Daily spend
               <span class="dc-info" data-info="spend" tabindex="0" role="button" aria-label="What is this?">?</span>
@@ -1356,7 +1356,7 @@ const AdminAnalytics = (() => {
         </section>
 
         <!-- Funnels -->
-        <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <section class="${AdminUI.card} p-4">
           <div class="flex items-center justify-between flex-wrap gap-2 mb-4">
             <h3 class="text-lg font-semibold inline-flex items-center">Funnels
               <span class="dc-info" data-info="funnels" tabindex="0" role="button" aria-label="What is this?">?</span>
@@ -1387,7 +1387,7 @@ const AdminAnalytics = (() => {
         </section>
 
         <!-- Growth -->
-        <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <section class="${AdminUI.card} p-4">
           <h3 class="text-lg font-semibold mb-1 inline-flex items-center">Growth
             <span class="dc-info" data-info="growth" tabindex="0" role="button" aria-label="What is this?">?</span>
           </h3>
@@ -1396,7 +1396,7 @@ const AdminAnalytics = (() => {
         </section>
 
         <!-- General users (DAU / WAU / MAU, daily rolling windows) + retention -->
-        <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <section class="${AdminUI.card} p-4">
           <h3 class="text-lg font-semibold mb-1 inline-flex items-center">General users
             <span class="dc-info" data-info="general-users" tabindex="0" role="button" aria-label="What is this?">?</span>
           </h3>
@@ -1443,7 +1443,7 @@ const AdminAnalytics = (() => {
         </section>
 
         <!-- Power users (rolling WAU + L4 consistency) -->
-        <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <section class="${AdminUI.card} p-4">
           <h3 class="text-lg font-semibold mb-1 inline-flex items-center">Power users
             <span class="dc-info" data-info="power-users" tabindex="0" role="button" aria-label="What is this?">?</span>
           </h3>
@@ -1469,7 +1469,7 @@ const AdminAnalytics = (() => {
         </section>
 
         <!-- Top users by dev sessions -->
-        <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <section class="${AdminUI.card} p-4">
           <h3 class="text-lg font-semibold mb-1 inline-flex items-center">Top builders
             <span class="dc-info" data-info="top-users" tabindex="0" role="button" aria-label="What is this?">?</span>
           </h3>
@@ -1478,7 +1478,7 @@ const AdminAnalytics = (() => {
         </section>
 
         <!-- Spend by builder -->
-        <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <section class="${AdminUI.card} p-4">
           <div class="flex items-center justify-between flex-wrap gap-2 mb-1">
             <h3 class="text-lg font-semibold inline-flex items-center">Spend by builder
               <span class="dc-info" data-info="spend-by-builder" tabindex="0" role="button" aria-label="What is this?">?</span>
@@ -1494,7 +1494,7 @@ const AdminAnalytics = (() => {
         </section>
 
         <!-- Daily spend distribution (user counts per spend bucket) -->
-        <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <section class="${AdminUI.card} p-4">
           <div class="flex items-center justify-between flex-wrap gap-2 mb-1">
             <h3 class="text-lg font-semibold inline-flex items-center">Daily spend distribution
               <span class="dc-info" data-info="spend-distribution" tabindex="0" role="button" aria-label="What is this?">?</span>
@@ -1511,7 +1511,7 @@ const AdminAnalytics = (() => {
         </section>
 
         <!-- Kudos giving distribution -->
-        <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <section class="${AdminUI.card} p-4">
           <h3 class="text-lg font-semibold mb-1 inline-flex items-center">Kudos participation
             <span class="dc-info" data-info="kudos" tabindex="0" role="button" aria-label="What is this?">?</span>
           </h3>

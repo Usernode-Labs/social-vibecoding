@@ -113,7 +113,7 @@ const AdminMail = (() => {
 
     if (data.configured) {
       el.innerHTML = `
-        <div class="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 px-4 py-3 text-sm">
+        <div class="${AdminUI.card} px-4 py-3 text-sm">
           <span class="font-semibold text-emerald-600 dark:text-emerald-400">Email is configured</span>
           <span class="text-zinc-500"> — login codes and waitlist confirmations are being sent
             via <span class="font-medium">${esc(data.provider || 'unknown')}</span>.</span>
@@ -211,7 +211,7 @@ const AdminMail = (() => {
     const subject = outcome.message && outcome.message.subject;
 
     el.innerHTML = `
-      <div class="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 px-4 py-3 text-sm mt-3">
+      <div class="${AdminUI.card} px-4 py-3 text-sm mt-3">
         <div class="font-semibold mb-2">${esc(outcomeHeadline(outcome))}</div>
         <div class="space-y-1">${rows}</div>
         ${subject ? `<div class="text-xs text-zinc-500 mt-2">Subject: ${esc(subject)}</div>` : ''}
@@ -383,7 +383,7 @@ const AdminMail = (() => {
               class="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-3 py-1.5 text-sm">
           </label>
           <button id="admin-mail-send"
-            class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1.5 text-sm font-medium text-white">Send test email</button>
+            class="${AdminUI.btn.primary}">Send test email</button>
         </div>
         <p class="text-xs text-zinc-500 mt-2">
           Sends one message through the configured provider and reports exactly what
@@ -397,7 +397,7 @@ const AdminMail = (() => {
 
       host.innerHTML = `
         <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-          <h2 class="text-lg font-semibold">Email delivery</h2>
+          <h2 class="${AdminUI.cardTitle}">Email delivery</h2>
         </div>
         <p class="text-sm text-zinc-500 mb-4">
           Login codes and waitlist mail are sent on always-200 endpoints, so a user

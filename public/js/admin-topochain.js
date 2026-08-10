@@ -155,7 +155,7 @@ const TEXTAREA_CLS = 'w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border bord
   + 'px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent';
 
 // Panel and card surfaces, shared by every form, picker and detail view.
-const PANEL_CLS = 'rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm';
+const PANEL_CLS = AdminUI.card; // identical recipe — one source of truth
 
 const AdminTopochain = {
   _host: null,

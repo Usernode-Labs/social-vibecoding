@@ -302,7 +302,7 @@ const AdminMerges = (() => {
         </p>
 
         <!-- Filter bar -->
-        <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-3 border border-zinc-200 dark:border-zinc-800
+        <section class="${AdminUI.card} p-3
                         flex flex-wrap items-end gap-3">
           <label class="flex flex-col text-xs text-zinc-500 dark:text-zinc-400">App
             <select id="admin-merges-f-app" class="mt-1 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded px-2 py-1 text-sm text-zinc-900 dark:text-zinc-100">

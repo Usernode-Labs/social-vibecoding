@@ -30,6 +30,19 @@ const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'admin-estimator.js'), 'utf8'
 );
 
+// In the browser, admin-console.js always loads before the section modules
+// (script order in Shell.tsx) and defines window.AdminUI, whose recipes the
+// module's templates interpolate. Mirror that here by evaluating the
+// registry block — same extraction as tests/admin-ui-registry.test.js.
+const ADMIN_UI_SRC = (() => {
+  const consoleSrc = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'js', 'admin-console.js'), 'utf8'
+  );
+  const m = consoleSrc.match(/window\.AdminUI = Object\.freeze\(\{[\s\S]*?\n\}\);/);
+  assert.ok(m, 'admin-console.js defines the AdminUI registry');
+  return m[0];
+})();
+
 // ── A DOM shim: enough for the estimator card, no more ──────────────────
 function makeElement(id) {
   return {
@@ -79,6 +92,11 @@ function loadCard() {
   };
   sandbox.window.document = document;
   vm.createContext(sandbox);
+  // Load the AdminUI registry first, as the browser's script order does,
+  // and expose it as a bare global the way `window.AdminUI = …` does on a
+  // real page.
+  vm.runInContext(ADMIN_UI_SRC, sandbox, { filename: 'admin-console.js#AdminUI' });
+  sandbox.AdminUI = sandbox.window.AdminUI;
 
   // The only edit to the shipped source: hoist the private renderer so the
   // test can call it. Everything it touches is the real module's closure.
