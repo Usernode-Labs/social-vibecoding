@@ -52,6 +52,21 @@
   and screen visibility must be published through
   `frontend/src/lib/visibility-store.ts` rather than by toggling `.hidden` from
   outside React.
+- **The nine modal roots in `PlatformUI.STATIC_MODAL_IDS` cannot host state
+  yet** — that is the one place the rule above bites hardest, so it is worth
+  stating outright. `adoptStaticModal` (`public/js/platform-ui.js`) watches each
+  root's class list and, when `hidden` comes off, **lifts the card element out
+  of the root** — leaving a comment placeholder — into the native kit's
+  `presentModal` shell, adding `platform-modal-adopted` to the root and
+  `platform-modal-card` to the card. So a React re-render of one of those
+  subtrees would reconcile against a parent that no longer holds its child and
+  would overwrite a class the kit just wrote. Their markup lives in
+  `frontend/src/features/dialogs/` as static components; **the open/close/submit
+  behaviour stays in `public/js/**` until the adoption seam itself moves inside
+  React**, which is the hard prerequisite for making any dialog stateful. The
+  same applies to any element the kit or `app.css` writes classes to at runtime
+  — use the `useHiddenClass` / `useClassToggle` refs in
+  `frontend/src/lib/legacy-dom.ts`, never a rendered `className`.
 - Adding or removing a `public/js/**` script means updating `SHELL_ASSETS` in
   `public/sw.js` and the count in `tests/shell-script-order.test.js` too.
 - Step 1 of the React + shadcn migration was a scaffolding-only chassis swap
