@@ -585,7 +585,7 @@ const AdminConsole = {
     const groups = AdminConsole._groupedSections().map((g) => `
       <div class="mb-5">
         <div class="px-4 pb-1.5 text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500">${AdminConsole.esc(g.name)}</div>
-        <div class="rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900
+        <div class="${AdminUI.card} overflow-hidden
                     [&>button:last-child]:border-b-0">
           ${g.items.map(rowHtml).join('')}
         </div>
@@ -620,17 +620,17 @@ const AdminConsole = {
       </div>
       <!-- Temporary password modal (issue #282): the reset response is the
            only time the plaintext exists — shown once, never persisted. -->
-      <div id="admin-temp-pw-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-        <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl border border-zinc-200 dark:border-zinc-800">
-          <h2 class="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">Temporary password</h2>
-          <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
+      <div id="admin-temp-pw-modal" class="hidden ${AdminUI.dialogOverlay}">
+        <div class="${AdminUI.dialogPanel}">
+          <h2 class="${AdminUI.cardTitle} mb-1">Temporary password</h2>
+          <p class="${AdminUI.muted} mb-4">
             Give this to <span id="admin-temp-pw-username" class="font-medium text-zinc-800 dark:text-zinc-200"></span> out-of-band (chat, in person). They use it as their password to log in, then set their own from <a href="#settings/password" class="text-violet-500 hover:text-violet-400 underline">Settings → Change password</a>. It signs them out everywhere and <span class="font-medium">won't be shown again</span>.
           </p>
           <div class="flex gap-2">
             <code id="admin-temp-pw-value" class="flex-1 min-w-0 break-all rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-900 dark:text-zinc-100"></code>
-            <button id="admin-temp-pw-copy" class="shrink-0 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Copy</button>
+            <button id="admin-temp-pw-copy" class="${AdminUI.btn.primary} shrink-0">Copy</button>
           </div>
-          <button id="admin-temp-pw-close" class="mt-4 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Done</button>
+          <button id="admin-temp-pw-close" class="${AdminUI.btn.outline} mt-4 w-full">Done</button>
         </div>
       </div>`;
 
@@ -757,7 +757,7 @@ const AdminConsole = {
     if (modName) {
       const mod = window[modName];
       if (!mod || typeof mod.render !== 'function') {
-        host.innerHTML = `<p class="p-4 text-sm text-zinc-500">The ${AdminConsole.esc(key)} console module failed to load.</p>`;
+        host.innerHTML = `<p class="${AdminUI.muted} p-4">The ${AdminConsole.esc(key)} console module failed to load.</p>`;
         return;
       }
       AdminConsole._activeModule = mod;
