@@ -484,39 +484,149 @@
     // Replaces the native onboarding permission screens: after the first
     // successful login handoff on a device, offer the exact-alarm /
     // battery-optimization prompts the node needs for block production.
-    // One-shot per device (localStorage marker, set on dismiss either
-    // way) — the same rows live permanently in Settings → Usernode app,
-    // so skipping here loses nothing.
+    // One-shot per device (localStorage marker) — the same rows live
+    // permanently in Settings → Usernode app, so skipping here loses
+    // nothing.
+    //
+    // STRICTLY one-shot (#1068). Three independent triggers reach this
+    // step in the same document — init()'s boot handoff, every
+    // `sv:session` (enterAuthed fires more than once: login, boot, and
+    // again on the waiting-room → released transition), and the
+    // `usernode:auth-status` recovery chain during wallet provisioning —
+    // and the localStorage marker alone cannot fence them: the read
+    // happens before two awaits (the capability probe and
+    // getSettingsState), so every trigger crossed them and presented its
+    // own stacked copy. Hence a synchronously-stored in-flight promise
+    // plus a document latch, and a marker written when the sheet is
+    // actually PRESENTED rather than when it is dismissed (abandoning it
+    // re-showed the sheet on the next launch).
     _FIRST_RUN_KEY: 'sv:onboarding_permissions_done',
 
+    // The single in-flight run; stored before the first await so two
+    // callers share it instead of both entering the body.
+    _firstRunPromise: null,
+    // "This document is done with the first-run step." Held in memory,
+    // independent of localStorage, so a blocked/failed write (private
+    // mode, quota) still cannot let a second copy through.
+    _firstRunSettled: false,
+    // Inconclusive attempts (degraded probe / empty read). Capped so an
+    // `usernode:auth-status` storm cannot drive an unbounded number of
+    // 12s getSettingsState reads.
+    _firstRunAttempts: 0,
+    _FIRST_RUN_MAX_ATTEMPTS: 3,
+    _firstRunSheets: 0,
+
     _markFirstRunDone() {
+      // The shot route must never record anything on the device: visiting
+      // it may not suppress a real user's sheet.
+      if (NativeChrome._firstRunShotMode()) return;
       try { localStorage.setItem(NativeChrome._FIRST_RUN_KEY, '1'); } catch (_) {}
     },
 
-    async maybeShowFirstRunPermissions() {
-      try {
-        if (localStorage.getItem(NativeChrome._FIRST_RUN_KEY) === '1') return;
-      } catch (_) {}
-      if (!window.PlatformUI || typeof PlatformUI.sheet !== 'function') return;
-      if (!(await NativeChrome.has('getSettingsState'))) return;
+    // Only ever called when the marker was absent on entry and the kit
+    // then refused to present anything, so nothing a previous launch set
+    // can be lost here.
+    _clearFirstRunDone() {
+      if (NativeChrome._firstRunShotMode()) return;
+      try { localStorage.removeItem(NativeChrome._FIRST_RUN_KEY); } catch (_) {}
+    },
 
-      let state = null;
-      try { state = await window.usernode.getSettingsState(); } catch (_) {}
-      if (!state) {
-        // Silent skip (the permanent Settings rows are the fallback), but
-        // name the reason from the shared record so this and the Settings
-        // section agree on why the read came back empty.
-        const why = NativeChrome.lastReadError('getSettingsState');
-        console.warn('[native-chrome] first-run permissions skipped:',
-          why ? `${why.kind}: ${why.message || 'no message'}` : 'no settings state');
+    // `?shot=first-run-permissions` — screenshot-state deep link so the
+    // before/after capture and the declared dapp.json check can reach a
+    // sheet that plain navigation never opens (same convention as
+    // ?shot=profile-edit). Pure UI state with NO writes — neither the
+    // marker read nor the marker write runs under it — so it is
+    // deliberately not env-gated, and the "exactly one sheet" result it
+    // demonstrates comes purely from the in-memory latch.
+    // Read through window.location inside try/catch: this file is also
+    // evaluated in a VM sandbox by tests/native-session-handoff.test.js,
+    // which binds no `location`.
+    _firstRunShotMode() {
+      try {
+        return new URLSearchParams(window.location.search).get('shot') ===
+          'first-run-permissions';
+      } catch (_) { return false; }
+    },
+
+    // Public entry point: a SYNCHRONOUS guard around the real body, so
+    // concurrent triggers can never both cross the awaits inside it.
+    maybeShowFirstRunPermissions() {
+      if (NativeChrome._firstRunSettled) return Promise.resolve();
+      if (NativeChrome._firstRunPromise) return NativeChrome._firstRunPromise;
+      const promise = NativeChrome._runFirstRunPermissions().catch((e) => {
+        console.warn('[native-chrome] first-run permissions failed:',
+          e && e.message ? e.message : e);
+      }).finally(() => {
+        // Terminal outcomes are already fenced by `_firstRunSettled`;
+        // only a retryable one needs the slot freed so a later legitimate
+        // trigger can retry — never concurrently.
+        if (NativeChrome._firstRunPromise === promise &&
+            !NativeChrome._firstRunSettled) {
+          NativeChrome._firstRunPromise = null;
+        }
+      });
+      NativeChrome._firstRunPromise = promise;
+      return promise;
+    },
+
+    async _runFirstRunPermissions() {
+      const shot = NativeChrome._firstRunShotMode();
+      if (!shot) {
+        try {
+          if (localStorage.getItem(NativeChrome._FIRST_RUN_KEY) === '1') {
+            NativeChrome._firstRunSettled = true;
+            return;
+          }
+        } catch (_) {}
+      }
+      if (!window.PlatformUI || typeof PlatformUI.sheet !== 'function') {
+        // Nothing can be presented in this document, so stop trying here —
+        // but deliberately do NOT mark the device done: a shell whose kit
+        // failed to load must still get its one real chance next launch.
+        NativeChrome._firstRunSettled = true;
         return;
       }
-      const perms = state.permissions || {};
+
+      let perms;
+      if (shot) {
+        // Canned snapshot so the real presentation path, the latch and the
+        // sheet counter all execute in a plain browser with no bridge.
+        perms = {
+          platform: 'android', exactAlarmGranted: false, batteryOptDisabled: false,
+        };
+      } else {
+        NativeChrome._firstRunAttempts++;
+        // A degraded probe / empty read is retryable, so the latch must not
+        // close on it (one cold-start hiccup would suppress the sheet for
+        // good, cf. getInfo()'s refusal to memoise a degraded answer, #978).
+        // The cap is what keeps "retryable" bounded.
+        const capped = NativeChrome._firstRunAttempts >=
+          NativeChrome._FIRST_RUN_MAX_ATTEMPTS;
+        if (!(await NativeChrome.has('getSettingsState'))) {
+          if (capped) NativeChrome._firstRunSettled = true;
+          return;
+        }
+
+        let state = null;
+        try { state = await window.usernode.getSettingsState(); } catch (_) {}
+        if (!state) {
+          // Silent skip (the permanent Settings rows are the fallback), but
+          // name the reason from the shared record so this and the Settings
+          // section agree on why the read came back empty.
+          const why = NativeChrome.lastReadError('getSettingsState');
+          console.warn('[native-chrome] first-run permissions skipped:',
+            why ? `${why.kind}: ${why.message || 'no message'}` : 'no settings state');
+          if (capped) NativeChrome._firstRunSettled = true;
+          return;
+        }
+        perms = state.permissions || {};
+      }
       const isAndroid = perms.platform === 'android';
       const needsAlarm = !perms.exactAlarmGranted;
       // Battery optimization is Android-only; iOS never shows that row.
       const needsBattery = isAndroid && perms.batteryOptDisabled !== true;
       if (!needsAlarm && !needsBattery) {
+        NativeChrome._firstRunSettled = true;
         NativeChrome._markFirstRunDone();
         return;
       }
@@ -529,6 +639,9 @@
       };
 
       const panel = el('div', 'px-4 pb-5');
+      // Stable id so a declared check can assert the sheet rendered (the
+      // panel is built here, not in the frozen shell markup).
+      panel.id = 'first-run-permissions-sheet';
       panel.appendChild(el('div', 'text-lg font-bold py-3', 'Set up your device'));
       // iOS: requestPermissions() maps to the notification prompt, and v4
       // turned iOS block production off — so the block-production pitch is
@@ -573,7 +686,14 @@
           b.addEventListener('click', async () => {
             b.disabled = true;
             try {
-              const next = await window.usernode.requestPermissions();
+              // Bridge-tolerant: the shot route presents this sheet in a
+              // plain browser, where a bare call would be an uncaught
+              // TypeError — and a console error fails every declared check.
+              const bridge = window.usernode;
+              const next = bridge &&
+                typeof bridge.requestPermissions === 'function'
+                ? await bridge.requestPermissions()
+                : null;
               if (next && next.permissions) render(next.permissions);
             } catch (e) {
               console.warn('[native-chrome] requestPermissions failed:', e);
@@ -587,7 +707,9 @@
             'text-zinc-700 dark:text-zinc-200',
           'Open battery settings');
           b.addEventListener('click', () => {
-            window.usernode.openBatterySettings().catch(() => {});
+            const bridge = window.usernode;
+            if (!bridge || typeof bridge.openBatterySettings !== 'function') return;
+            Promise.resolve(bridge.openBatterySettings()).catch(() => {});
           });
           btns.appendChild(b);
         }
@@ -602,13 +724,33 @@
       };
 
       render(perms);
+      // Being presented IS having seen it. Latch the document and record
+      // the device BEFORE handing off to the kit, so neither a later
+      // trigger nor a throw inside presentSheet can stack a second copy or
+      // leave the device unmarked (which is what re-showed the sheet on the
+      // next launch when it was abandoned without a dismiss).
+      NativeChrome._firstRunSettled = true;
+      NativeChrome._markFirstRunDone();
       sheet = PlatformUI.sheet({
         contentEl: panel,
+        // Redundant in the happy path now; kept as a cheap retry in case
+        // the write above threw and storage later became writable.
         onDismiss: () => NativeChrome._markFirstRunDone(),
       });
-      // Kit unavailable (degraded shell) — don't retry every boot; the
-      // permanent Settings rows remain the fallback.
-      if (!sheet) NativeChrome._markFirstRunDone();
+      if (!sheet) {
+        // Kit unavailable (degraded shell): nothing was shown, so take the
+        // device marker back off. The document stays latched — no retry
+        // storm — and a later healthy launch gets one proper chance.
+        NativeChrome._clearFirstRunDone();
+        return;
+      }
+      NativeChrome._firstRunSheets++;
+      // Makes "exactly one copy" observable to a browser-level check
+      // instead of merely inferable.
+      try {
+        document.body.setAttribute('data-first-run-sheets',
+          String(NativeChrome._firstRunSheets));
+      } catch (_) {}
     },
 
     _initAuthStatusEvents() {
@@ -679,6 +821,14 @@
       // already present when this script loaded.
       document.addEventListener('sv:session', runHandoff);
       if (window.App && App.user) runHandoff();
+      // ?shot=first-run-permissions reproduces #1068's trigger storm in a
+      // plain browser: three extra overlapping calls on top of the real
+      // handoff chain must still yield exactly one sheet.
+      if (NativeChrome._firstRunShotMode()) {
+        NativeChrome.maybeShowFirstRunPermissions();
+        NativeChrome.maybeShowFirstRunPermissions();
+        setTimeout(() => NativeChrome.maybeShowFirstRunPermissions(), 0);
+      }
     },
   };
 

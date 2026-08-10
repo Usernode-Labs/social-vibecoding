@@ -357,6 +357,12 @@
   ],
   "tests": [
     {
+      "name": "First-run setup sheet presents exactly once (#1068)",
+      "path": "/?shot=first-run-permissions",
+      "expectSelector": "body[data-first-run-sheets=\"1\"] #first-run-permissions-sheet",
+      "expectText": "Set up your device"
+    },
+    {
       "name": "Guest back arrow returns to the app directory (#1028)",
       "path": "/?shot=anon-back#landing",
       "expectSelector": "#auth-landing-screen:not(.hidden) #app-viewer.hidden[data-anon-back=\"done\"]",
