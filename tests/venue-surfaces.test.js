@@ -199,9 +199,26 @@ test('the client keeps the reason across the navigation into the session', () =>
   // is what carries it across — and clearing it on paint is what stops it
   // reappearing on every later re-render of the same session.
   assert.match(DEV_CHAT_SRC, /DevChat\._venueFallbackReason = data\.agentFallbackReason/);
-  assert.match(DEV_CHAT_SRC, /fallbackReason: DevChat\._venueFallbackReason \|\| null/);
+  assert.match(DEV_CHAT_SRC, /fallbackReason: DevChat\._venueFallbackReason \|\| /,
+    'the stash is what the line reads');
   assert.match(DEV_CHAT_SRC, /DevChat\._venueFallbackReason = null;/,
     'cleared once painted');
+});
+
+test('the note is reviewable on staging without a failing credential', () => {
+  // The reason is a creation-moment fact and is deliberately not stored, so
+  // a seeded fixture row cannot produce one — every other venue state is a
+  // column, this one is not. `?shot=venue-fallback` is the only way the
+  // copy gets reviewed, and it must fall through the SAME fallbackNote
+  // lookup, or a guessed reason would render an invented sentence.
+  const fnStart = DEV_CHAT_SRC.indexOf('_shotVenueFallbackReason() {');
+  assert.ok(fnStart !== -1, '_shotVenueFallbackReason must exist');
+  const fn = DEV_CHAT_SRC.slice(fnStart, DEV_CHAT_SRC.indexOf('\n  },', fnStart));
+  assert.match(fn, /shot !== 'venue-fallback'/, 'gated on the shot name');
+  const fallback = fn.match(/return reason \|\| '([a-z_]+)'/);
+  assert.ok(fallback, 'it names a default reason');
+  assert.ok(BV.fallbackNote(fallback[1]).length > 0,
+    `the default reason '${fallback?.[1]}' renders no copy`);
 });
 
 test('the headless routes report their fallback too', () => {
