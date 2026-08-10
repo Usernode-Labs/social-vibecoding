@@ -43,7 +43,7 @@ test('one breakpoint constant, read through matchMedia, in step with the md: cla
     'no matchMedia degrades to the desktop layout, not a phone layout');
   // If the shell stopped using md: the constant would silently disagree
   // with where the sidebar actually appears.
-  assert.match(consoleJs, /hidden md:block md:w-56/,
+  assert.match(consoleJs, /hidden md:block md:w-64/,
     'the sidebar still switches at md — the constant must match it');
   assert.match(consoleJs, /md:flex md:items-start md:gap-6/,
     'the shell row still switches at md');
