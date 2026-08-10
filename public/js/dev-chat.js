@@ -1275,6 +1275,46 @@ const DevChat = {
     });
   },
 
+  // Screenshot-state deep link `?shot=venue-fallback` (#1086).
+  //
+  // The fallback note is the one venue state a fixture row cannot express.
+  // Every other state is a property of the session — its backend, its
+  // lease, its external agent — and seeding those columns paints the line.
+  // But "you asked for OpenRouter and got Claude" is a property of the
+  // MOMENT the session was created: the reason arrives once, on the 201,
+  // and is deliberately not stored (the session's columns already say
+  // where it ended up, and re-explaining a settled fact on every later
+  // paint is exactly what the `= null` below prevents). So the only way to
+  // review the copy is to name the reason in the URL.
+  //
+  // Ungated by environment for the same reason ?shot=menu is: it paints a
+  // sentence about the session already on screen, reads nothing and writes
+  // nothing. A reason build-venues.js does not know about still renders
+  // silence, so a guessed value cannot invent copy.
+  _shotVenueFallbackReason() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch { return null; }
+    if (shot !== 'venue-fallback') return null;
+    let reason = null;
+    try { reason = new URLSearchParams(location.search).get('reason'); } catch { /* ignore */ }
+    return reason || 'flag_off';
+  },
+
+  // Screenshot-state deep link `?shot=venue-sheet` (#1086): the sheet the
+  // change control opens, with all six venues on it. Once per page load and
+  // only when the control is actually on screen, exactly like the options
+  // menu below — a re-render must not pop it open under the user.
+  _maybeOpenShotVenueSheet() {
+    if (DevChat._shotVenueSheetDone) return;
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch { return; }
+    if (shot !== 'venue-sheet') return;
+    const btn = document.querySelector('#dc-venue-slot [data-venue-change]');
+    if (!btn || btn.offsetParent === null) return;
+    DevChat._shotVenueSheetDone = true;
+    requestAnimationFrame(() => DevChat.openVenueSheet(btn));
+  },
+
   // Screenshot-state deep links (#1055):
   //   ?shot=session-options               → the menu itself, open
   //   ?shot=session-options-instructions  → the CLI instructions card
@@ -6578,7 +6618,7 @@ const DevChat = {
         // venue other than the one the user's default named, and this is
         // the only place that says why. Cleared below so a later repaint of
         // the same session doesn't keep re-explaining a settled fact.
-        fallbackReason: DevChat._venueFallbackReason || null,
+        fallbackReason: DevChat._venueFallbackReason || DevChat._shotVenueFallbackReason(),
       })
       : '';
     DevChat._venueFallbackReason = null;
@@ -6769,6 +6809,7 @@ const DevChat = {
       venueChange.disabled = DevChat.isStreaming;
       venueChange.addEventListener('click', () => DevChat.openVenueSheet(venueChange));
     }
+    DevChat._maybeOpenShotVenueSheet();
 
     // Null when this session's venue has no chat model to pick — see the
     // dc-venue-detail block in renderChatView.

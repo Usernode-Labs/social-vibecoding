@@ -281,9 +281,11 @@ function devFlowRoutes(config) {
         return res.json(req.query.demo === '1' || req.query.demo === 'session'
           ? demoStatus(app, parsed, demoKind)
           : {
-            // The picker's own state: the flow is offerable, nothing is
-            // linked, no work order exists. Fixture session 990403 renders
-            // against exactly this; ?demo=1 moves it on to the walkthrough.
+            // The venue sheet's own state: the web hand-offs are offerable,
+            // nothing is linked, no work order exists. Fixture session
+            // 990403 renders against exactly this, so ?shot=venue-sheet
+            // shows the rows as a first-time user meets them; ?demo=1 moves
+            // it on to the walkthrough behind one of them.
             // Nothing here can DO anything — both writes answer 503 in
             // staging — so this only decides what a reviewer can see.
             available: true,

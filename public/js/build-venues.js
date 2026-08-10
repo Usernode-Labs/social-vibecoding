@@ -307,6 +307,10 @@
     var v = venue(id);
     if (!v) return '';
     if (mode !== 'switch') return v.label;
+    // The row you are already in is a statement, not an instruction —
+    // "Move to Usernode · Claude ✓" reads as a contradiction, and this is
+    // the one row whose job is to confirm rather than offer.
+    if (state && state.current === id) return v.label;
     // In a session already under way, "start new work with Codex" and
     // "continue this proposal with Codex" are different promises, and the
     // label is the only place a phone user sees the difference.

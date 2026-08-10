@@ -605,6 +605,18 @@
       "expectSelector": "[data-plus=\"import-pr\"]"
     },
     {
+      "name": "The Dev '+' menu separates starting work from managing the app (#1086)",
+      "path": "/?demo=1&shot=plus-menu#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-plus-menu [data-plus-group=\"build\"] ~ [data-plus-group=\"settings\"]",
+      "expectText": "Build a change"
+    },
+    {
+      "name": "Starting a change no longer asks where before it asks what (#1086)",
+      "path": "/?demo=1&shot=plus-menu#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-plus-menu button[data-plus=\"proposal\"]",
+      "expectText": "you pick where it is built, and can change that any time"
+    },
+    {
       "name": "Custom category chip renders on a Dev card (#780)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectText": "Staging demo perf"
@@ -1752,16 +1764,49 @@
       "expectSelector": "a#back-btn[href=\"#apps\"]"
     },
     {
-      "name": "A new session asks how you want to build it, naming both hand-offs (#1049)",
+      "name": "Every session states the venue it is building in, unasked (#1086)",
       "path": "/#app/usernode-2d5619/dev/sessions/990403",
-      "expectSelector": "[data-flow-card] [data-flow-option=\"claude-code\"] + [data-flow-option=\"codex\"]",
-      "expectText": "How do you want to build this change?"
+      "expectSelector": "#dc-venue-slot [data-venue-line=\"usernode-claude\"] .dc-venue-name",
+      "expectText": "Building in"
     },
     {
-      "name": "The picker offers the platform itself and can be answered once for good (#1049)",
+      "name": "The venue line carries the only control that changes it (#1086)",
       "path": "/#app/usernode-2d5619/dev/sessions/990403",
-      "expectSelector": "[data-flow-card] [data-flow-option=\"platform\"] button[data-flow-pick=\"platform\"], [data-flow-card] input[type=\"checkbox\"][data-flow-remember]",
-      "expectText": "Remember my choice"
+      "expectSelector": "#dc-venue-slot .dc-venue-line button.dc-venue-change[data-venue-change]",
+      "expectText": "Change how this is built"
+    },
+    {
+      "name": "A pinned OpenRouter session says so, and shows its model (#1086)",
+      "path": "/#app/usernode-2d5619/dev/sessions/990409",
+      "expectSelector": "#dc-venue-slot [data-venue-line=\"usernode-openrouter\"], #dc-venue-detail #dc-model-select",
+      "expectText": "Usernode · OpenRouter"
+    },
+    {
+      "name": "A venue you did not get is explained rather than silently swapped (#1086)",
+      "path": "/?shot=venue-fallback&reason=flag_off#app/usernode-2d5619/dev/sessions/990410",
+      "expectSelector": "#dc-venue-slot .dc-venue-note",
+      "expectText": "this deployment has it turned off"
+    },
+    {
+      "name": "The change control opens one sheet with both venue groups (#1086)",
+      "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990403",
+      "expectSelector": ".un-popover .un-popover-item, .un-popover [role=\"menuitem\"]",
+      "expectText": "Where should the rest of this be built?"
+    },
+    {
+      "name": "The sheet names the in-chat group and ticks the current venue (#1086)",
+      "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990403",
+      "expectText": "— In this chat —"
+    },
+    {
+      "name": "The sheet's other group is the three places that are not this chat (#1086)",
+      "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990403",
+      "expectText": "— Somewhere else —"
+    },
+    {
+      "name": "Your own tools are offered as a venue, with no chat promised (#1086)",
+      "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990403",
+      "expectText": "Your computer · your own tools"
     },
     {
       "name": "Choosing Claude Code opens a five-step walkthrough with one step live (#1049)",
@@ -1792,29 +1837,29 @@
       "expectSelector": ".un-popover[data-surface=\"opaque\"]"
     },
     {
-      "name": "Session options separate running this session locally from starting new work (#1055)",
+      "name": "Session options ask about venue exactly once, in one row (#1086)",
       "path": "/?demo=1&shot=session-options#app/usernode-2d5619/dev/sessions/990405",
       "expectSelector": ".un-popover .un-popover-item, .un-popover [role=\"menuitem\"]",
-      "expectText": "Run this session on your computer"
+      "expectText": "Change how this is built"
     },
     {
-      "name": "Session options hand this session's own code to the web agent (#1071)",
-      "path": "/?demo=1&shot=session-options#app/usernode-2d5619/dev/sessions/990405",
+      "name": "The venue sheet hands this session's own code to the web agent (#1071)",
+      "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990405",
       "expectText": "Continue this session with Claude Code on the web"
     },
     {
       "name": "A paused session is still continuable on the web (#1071)",
-      "path": "/?demo=1&shot=session-options#app/usernode-2d5619/dev/sessions/990407",
+      "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990407",
       "expectText": "Continue this session with Claude Code on the web"
     },
     {
       "name": "A promoted proposal is continued rather than restarted (#1071)",
-      "path": "/?demo=1&shot=session-options#app/usernode-2d5619/dev/sessions/990406",
+      "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990406",
       "expectText": "Continue this proposal with Claude Code on the web"
     },
     {
       "name": "An archived session starts new work instead of resurrecting itself (#1071)",
-      "path": "/?demo=1&shot=session-options#app/usernode-2d5619/dev/sessions/990408",
+      "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990408",
       "expectText": "Start new work with Claude Code on the web"
     },
     {
@@ -1831,7 +1876,13 @@
       "name": "Session options open as an action sheet on touch (#1055)",
       "path": "/?demo=1&shot=session-options&un-platform=ios#app/usernode-2d5619/dev/sessions/990405",
       "expectSelector": ".un-action-sheet .un-action-card .un-action-btn",
-      "expectText": "Continue this session with Codex"
+      "expectText": "Change how this is built"
+    },
+    {
+      "name": "The venue sheet keeps its group headings on touch, where grouping matters most (#1086)",
+      "path": "/?demo=1&shot=venue-sheet&un-platform=ios#app/usernode-2d5619/dev/sessions/990405",
+      "expectSelector": ".un-action-sheet .un-action-card .un-action-btn",
+      "expectText": "— Somewhere else —"
     },
     {
       "name": "The local-CLI card spells the commands for THIS session (#1055)",

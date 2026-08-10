@@ -27,6 +27,10 @@ const CREDIT_OPTIONS_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'credit-options.js'),
   'utf8'
 );
+const BUILD_VENUES_SRC = fs.readFileSync(
+  path.join(__dirname, '..', 'public', 'js', 'build-venues.js'),
+  'utf8'
+);
 
 function makeDevChat({ hasApiKey = false } = {}) {
   let budgetHtml = '';
@@ -65,7 +69,12 @@ function makeDevChat({ hasApiKey = false } = {}) {
   vm.createContext(sandbox);
   // credit-options.js owns the banner's CTA row (and the same routes the
   // in-chat card and the Generate-proposal modal render). index.html loads
-  // it before dev-chat.js, so the sandbox does too.
+  // it before dev-chat.js, so the sandbox does too — and build-venues.js
+  // ahead of both, because every route on that row except the API key is a
+  // build venue and comes from that one list. Without it the banner would
+  // silently render two buttons instead of four, which is the failure the
+  // `#settings/cli` assertions below catch.
+  vm.runInContext(BUILD_VENUES_SRC, sandbox);
   vm.runInContext(CREDIT_OPTIONS_SRC, sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   return {

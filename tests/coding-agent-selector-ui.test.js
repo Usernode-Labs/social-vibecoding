@@ -130,12 +130,32 @@ test('new session creation sends the exact Codex model and effort with the issue
   });
 });
 
-test('cancelling the chooser creates no session', async () => {
+test('creation asks nothing and sends no backend key', async () => {
+  // Creating a session used to open the agent chooser first, so a modal
+  // stood between "Propose a change" and a chat — and cancelling it left
+  // nothing behind. It asks nothing now: the session is created with the
+  // server's own default and the venue line above the composer says which
+  // one that was.
+  //
+  // The three keys must be ABSENT rather than null. A `backend: null` is
+  // still an explicit choice in the request body, and the server would
+  // have to decide what a null choice means; omitting them leaves the
+  // default exactly where it already lives.
   const h = makeHarness();
-  h.DevChat._chooseCodingAgent = async () => null;
+  let chooserOpened = false;
+  h.DevChat._chooseCodingAgent = async () => { chooserOpened = true; return null; };
+  h.respondWith(async () => ({
+    ok: true,
+    status: 201,
+    json: async () => ({ session: { id: 43, agent_backend: 'claude_code' } }),
+  }));
+
   const session = await h.DevChat.createSession('demo');
-  assert.equal(session, undefined);
-  assert.equal(h.requests.length, 0);
+
+  assert.equal(chooserOpened, false, 'no chooser is opened at creation time');
+  assert.equal(session.id, 43);
+  assert.equal(h.requests.length, 1);
+  assert.deepEqual(JSON.parse(h.requests[0].options.body), {});
 });
 
 test('switching an idle session uses reset-agent-context and updates its pinned backend', async () => {
