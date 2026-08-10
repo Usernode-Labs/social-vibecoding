@@ -2540,7 +2540,7 @@ test('somebody else’s proposal is refused as theirs, not as missing', () => {
 });
 
 test('a proposal that is no longer up for a vote is refused before any work starts', () => {
-  for (const status of ['merged', 'archived', 'draft', 'building', 'closed']) {
+  for (const status of ['merged', 'draft', 'building', 'closed']) {
     const described = svc.describeTargetProposal(
       { ...BOT_PROPOSAL, status }, { id: 3 }, APP, ORIGIN
     );
@@ -2548,6 +2548,14 @@ test('a proposal that is no longer up for a vote is refused before any work star
     assert.equal(described.code, 'proposal_closed', status);
     assert.match(described.message, /Start a new change instead/);
   }
+  // 'archived' is refused the same way and gets its own wording (#1071): it is
+  // the one closed status a person chose, so "reopen it" is a real option and
+  // "not up for a vote any more" would be wrong about a session that never was.
+  const archived = svc.describeTargetProposal(
+    { ...BOT_PROPOSAL, status: 'archived' }, { id: 3 }, APP, ORIGIN
+  );
+  assert.equal(archived.code, 'proposal_closed');
+  assert.match(archived.message, /was archived — reopen it, or start a new change/);
 });
 
 test('a proposal id that is not a proposal, or is on another app, is invalid_request', () => {
@@ -2763,6 +2771,153 @@ test('an update work order still starts the branch at the proposal’s head, and
   assert.match(result.workOrder, /NOT the app's main branch/);
   assert.match(result.workOrder, /would drop the/);
   assert.doesNotMatch(result.workOrder, /It must start at upstream commit/);
+});
+
+// ── Continuing a session nobody has voted on (#1071) ───────────────────
+//
+// Mechanically the same continuation: bot-owned branch, fetch-from-upstream
+// setup, submit_work with a proposalId. What differs is every sentence about
+// a VOTE, because there is not one — and an agent that repeats "your
+// submission cleared the votes" back to somebody who never had any is telling
+// them something that did not happen.
+
+const ACTIVE_SESSION = {
+  id: 601, user_id: 3, app_id: 7, status: 'active', source: 'chat',
+  branch_name: 'session-601', imported_pr_head_sha: null,
+  pr_title: null, session_title: 'Fix the failing dark-mode check',
+};
+
+test('active and paused describe as a session; promoted still describes as a proposal', () => {
+  for (const status of ['active', 'paused']) {
+    const d = svc.describeTargetProposal({ ...ACTIVE_SESSION, status }, { id: 3 }, APP, ORIGIN);
+    assert.equal(d.ok, true, `${status} is continuable`);
+    assert.equal(d.targetKind, 'session');
+    assert.equal(d.branchHome, 'app_repo', 'a native session\'s head is always in the app\'s repository');
+    assert.equal(d.title, 'Fix the failing dark-mode check',
+      'a session that was never promoted has no pr_title — its own title is the honest fallback');
+    assert.equal(d.webPath, `${ORIGIN}/#app/recipe-box/dev/sessions/601`);
+  }
+  assert.equal(svc.describeTargetProposal(BOT_PROPOSAL, { id: 3 }, APP, ORIGIN).targetKind, 'proposal');
+  // pr_title wins when there is one: that is the string the group reads on the
+  // vote card, so the work order must name the same thing.
+  assert.equal(
+    svc.describeTargetProposal({ ...ACTIVE_SESSION, status: 'promoted', pr_title: 'Dark mode' }, { id: 3 }, APP, ORIGIN).title,
+    'Dark mode'
+  );
+});
+
+test('an archived session is refused with copy about ARCHIVING, not about voting', () => {
+  const archived = svc.describeTargetProposal({ ...ACTIVE_SESSION, status: 'archived' }, { id: 3 }, APP, ORIGIN);
+  assert.equal(archived.ok, false);
+  assert.equal(archived.code, 'proposal_closed');
+  assert.match(archived.message, /Session 601 was archived — reopen it, or start a new change/);
+  assert.match(archived.message, /resurrect work somebody put away/);
+  assert.doesNotMatch(archived.message, /up for a vote/, 'it never was');
+  // Everything else that is not continuable keeps the vote wording.
+  for (const status of ['draft', 'merged', 'rejected']) {
+    const d = svc.describeTargetProposal({ ...ACTIVE_SESSION, status }, { id: 3 }, APP, ORIGIN);
+    assert.equal(d.code, 'proposal_closed');
+    assert.match(d.message, /not up for a vote any more/);
+  }
+});
+
+test('a session with an unusable branch name says SESSION, not proposal', () => {
+  const d = svc.describeTargetProposal(
+    { ...ACTIVE_SESSION, branch_name: '--upload-pack=evil' }, { id: 3 }, APP, ORIGIN
+  );
+  assert.equal(d.code, 'platform_unavailable');
+  assert.match(d.message, /cannot read session 601's branch/);
+});
+
+test('the session work order says CONTINUING, and names the session it continues', async () => {
+  const gh = baseGh({
+    getBranchSha: async (owner, repo, branch) => (branch === 'session-601' ? BASE_SHA : `ffff${'0'.repeat(34)}ff`),
+  });
+  const { result } = await prepareUpdate(ACTIVE_SESSION, { gh });
+  assert.equal(result.ok, true);
+  assert.equal(result.proposalId, 601);
+  assert.equal(result.branchHome, 'app_repo');
+  const order = result.workOrder;
+  assert.match(order, /You are CONTINUING work in progress on "Recipe Box"/);
+  assert.doesNotMatch(order, /already up for a vote/);
+  assert.match(order, /THE WORK YOU ARE CONTINUING/);
+  assert.match(order, /Usernode session id:\s+601/);
+  assert.match(order, /Its title:\s+Fix the failing dark-mode check/);
+  assert.match(order, new RegExp(`Its current commit:\\s+${BASE_SHA}`));
+  assert.match(order, /Where its owner is reading it:\s+https:\/\/usernode\.example\/#app\/recipe-box\/dev\/sessions\/601/);
+  assert.doesNotMatch(order, /Where the group is reading it/, 'no group is reading it yet');
+});
+
+test('the session work order never claims a vote is being cleared', async () => {
+  const { result } = await prepareUpdate(ACTIVE_SESSION);
+  const order = result.workOrder;
+  assert.doesNotMatch(order, /CLEARS ITS VOTES/);
+  assert.doesNotMatch(order, /asked to re-review/);
+  assert.doesNotMatch(order, /they voted on code that no longer exists/);
+  assert.match(order, /NOBODY HAS VOTED ON THIS YET, so there is nothing to invalidate/);
+  // And what IS true instead: somebody is still working here, and may take
+  // another turn on top of whatever this one leaves behind.
+  assert.match(order, /they may take more turns on it/);
+  assert.match(order, /Land a COMPLETE change rather than a partial one/);
+});
+
+test('the session work order explains what a PAUSED target does with the commit', async () => {
+  // The one outcome an agent would otherwise read as a failed submission: the
+  // push lands, and nothing builds until the owner reopens the session.
+  const { result } = await prepareUpdate({ ...ACTIVE_SESSION, status: 'paused' });
+  assert.match(result.workOrder, /If the session is paused when you submit, your commit still lands on its/);
+  assert.match(result.workOrder, /the session stays paused/);
+  assert.match(result.workOrder, /rebuild when its\s*\n?\s*owner reopens it/);
+  assert.match(result.workOrder, /is not a failure of your submission/);
+});
+
+test('the session work order keeps every mechanical instruction the update path has', async () => {
+  const gh = baseGh({
+    getBranchSha: async (owner, repo, branch) => (branch === 'session-601' ? BASE_SHA : `ffff${'0'.repeat(34)}ff`),
+  });
+  const { result } = await prepareUpdate(ACTIVE_SESSION, { gh });
+  const order = result.workOrder;
+  // Same starting commit, fetched the same way from upstream…
+  assert.match(order, /THE STARTING COMMIT IS IN THE APP'S REPOSITORY, not in your fork/);
+  assert.match(order, /session's own head, on a branch only Usernode writes/);
+  assert.match(order, new RegExp(`git fetch upstream ${BASE_SHA}`));
+  assert.match(order, new RegExp(`git checkout -b ${result.branch} ${BASE_SHA}`));
+  assert.match(order, new RegExp(`It must start at the session's head:\\s+${BASE_SHA}`));
+  assert.match(order, /NOT the app's main branch/);
+  assert.match(order, /work already done here/);
+  // …and the same submission, with the same two refusals and no patch route.
+  assert.match(order, /SUBMIT THE UPDATE, through the Usernode connector/);
+  assert.match(order, /with proposalId 601/);
+  assert.match(order, /base_mismatch/);
+  assert.match(order, /branch_moved/);
+  assert.match(order, /DO NOT SEND A PATCH on this path/);
+  assert.match(order, /update-601/, 'the fresh branch name says which session it continues');
+});
+
+test('the session work order closes on "not up for a vote yet", not on the PR reminder', async () => {
+  const { result } = await prepareUpdate(ACTIVE_SESSION);
+  const order = result.workOrder;
+  assert.match(order, /gate the vote\s*\n?\s*this becomes/, 'the checks matter for the vote this WILL become');
+  assert.doesNotMatch(order, /cannot merge however the vote goes/);
+  assert.doesNotMatch(order, /every submission clears the votes again/);
+  assert.match(order, /Do not open a pull request — this work is not up for a vote yet/);
+  assert.match(order, /who started it promotes it from Usernode when it is ready/);
+  assert.doesNotMatch(order, /this proposal already has one/);
+  // The ownership appendix says session, and says ADD TO rather than revise.
+  assert.match(order, /Session 601 belongs to the same account, which is why you can add to/);
+  assert.match(order, /Usernode only advances a session from a fork owned by the GitHub/);
+});
+
+test('the proposal work order is untouched by all of this', async () => {
+  // The regression that matters most: everything above is additive, so the
+  // promoted-proposal wording every earlier test pins must still be produced
+  // for a promoted target.
+  const { result } = await prepareUpdate(BOT_PROPOSAL);
+  assert.match(result.workOrder, /You are UPDATING a proposal that is already up for a vote/);
+  assert.match(result.workOrder, /SUBMITTING AN UPDATE CLEARS ITS VOTES/);
+  assert.match(result.workOrder, /Proposal 512 belongs to the same account, which is why you can revise/);
+  assert.doesNotMatch(result.workOrder, /CONTINUING work in progress/);
+  assert.doesNotMatch(result.workOrder, /NOBODY HAS VOTED/);
 });
 
 // ── submit_work in UPDATE mode ─────────────────────────────────────────

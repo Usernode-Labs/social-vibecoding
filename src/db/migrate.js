@@ -50,6 +50,7 @@ async function migrate(config) {
   await seedStagingSavedDrafts(pool, config);
   await seedStagingDevFlowPicker(pool, config);
   await seedStagingDevFlowWizard(pool, config);
+  await seedStagingSessionOptions(pool, config);
   await seedStagingSharedSession(pool, config);
   // #945: must run AFTER seedStagingSharedSession — the proposal-thread
   // half hangs off that fixture's session id.
@@ -2377,6 +2378,104 @@ async function seedStagingDevFlowWizard(pool, config) {
     sessionId: STAGING_DEV_FLOW_WIZARD_SESSION_ID,
     sessionInserted: rowCount,
     taskInserted,
+  });
+}
+
+// #1055: a session to open the composer's "session and billing options"
+// menu in. An `active` session with no PR, exactly like its 990403/990404
+// neighbours — the menu hangs off the composer, which every open session
+// has, so the only thing this fixture supplies is a session id a reviewer
+// (and the dapp.json checks) can deep-link to without first creating one.
+//
+//   990405 — /#app/<self-slug>/dev/sessions/990405?demo=1&shot=session-options
+//            the menu itself, open. `?demo=1` is what makes GET
+//            /api/auth/me report a saved key (routes/auth.js, request-time
+//            and staging-only), so the API-key row renders its "Change your
+//            API key (…7f2c)" branch rather than the unset one — both
+//            branches are reachable, the unset one by dropping `demo=1`.
+//   990405 — …?demo=1&shot=session-options-instructions
+//            the "run this session on your computer" card, with the
+//            commands interpolated for THIS session id.
+//
+// Id stays in the 99xxxx fake range beside its neighbours. Idempotent on
+// the session id; a strict no-op outside staging.
+const STAGING_SESSION_OPTIONS_SESSION_ID = 990405;
+
+// #1071: the other two hand-off states the same menu can be in. The web rows
+// read "Continue this session" / "Continue this proposal" / "Start new work"
+// depending only on the session's status, and a reviewer cannot check three
+// states from one row — so there is one fixture per state, all three otherwise
+// identical to 990405 so the difference on screen is the difference in copy.
+//
+//   990406 — promoted, with a PR number: "Continue this proposal with …"
+//   990407 — paused:                     "Continue this session with …",
+//                                        with the paused-specific tooltip
+//   990408 — archived:                   "Start new work with …"
+//
+// Each gets its OWN branch name: branch_name is how several fixtures key
+// themselves and two rows claiming one branch would be a lie about the repo.
+const STAGING_SESSION_OPTIONS_PROMOTED_ID = 990406;
+const STAGING_SESSION_OPTIONS_PAUSED_ID = 990407;
+const STAGING_SESSION_OPTIONS_ARCHIVED_ID = 990408;
+
+async function seedStagingSessionOptions(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const ctx = await devFlowFixtureContext(pool, config, 'Staging session-options fixture');
+  if (!ctx) return;
+
+  const { rowCount } = await pool.query(
+    `INSERT INTO chat_sessions
+       (id, app_id, user_id, branch_name, pr_title, session_title, status, created_at, last_activity_at)
+     VALUES ($1, $2, $3, 'staging-fixture/session-options', NULL,
+             '[staging fixture] Session and billing options', 'active',
+             NOW() - INTERVAL '6 minutes', NOW() - INTERVAL '1 minute')
+     ON CONFLICT (id) DO NOTHING`,
+    [STAGING_SESSION_OPTIONS_SESSION_ID, ctx.appId, ctx.owner.id]
+  );
+
+  // A promoted row needs a pr_number to be a believable proposal, and the
+  // 9xxx range is the fake-PR range the other staging fixtures already use.
+  const { rowCount: promoted } = await pool.query(
+    `INSERT INTO chat_sessions
+       (id, app_id, user_id, branch_name, pr_number, pr_title, session_title, status,
+        created_at, last_activity_at)
+     VALUES ($1, $2, $3, 'staging-fixture/session-options-promoted', 9406,
+             '[staging fixture] Options menu, up for a vote',
+             '[staging fixture] Options menu, up for a vote', 'promoted',
+             NOW() - INTERVAL '40 minutes', NOW() - INTERVAL '3 minutes')
+     ON CONFLICT (id) DO NOTHING`,
+    [STAGING_SESSION_OPTIONS_PROMOTED_ID, ctx.appId, ctx.owner.id]
+  );
+
+  const { rowCount: paused } = await pool.query(
+    `INSERT INTO chat_sessions
+       (id, app_id, user_id, branch_name, pr_title, session_title, status, created_at, last_activity_at)
+     VALUES ($1, $2, $3, 'staging-fixture/session-options-paused', NULL,
+             '[staging fixture] Session and billing options, paused', 'paused',
+             NOW() - INTERVAL '2 hours', NOW() - INTERVAL '30 minutes')
+     ON CONFLICT (id) DO NOTHING`,
+    [STAGING_SESSION_OPTIONS_PAUSED_ID, ctx.appId, ctx.owner.id]
+  );
+
+  const { rowCount: archived } = await pool.query(
+    `INSERT INTO chat_sessions
+       (id, app_id, user_id, branch_name, pr_title, session_title, status, created_at, last_activity_at)
+     VALUES ($1, $2, $3, 'staging-fixture/session-options-archived', NULL,
+             '[staging fixture] Session and billing options, archived', 'archived',
+             NOW() - INTERVAL '3 days', NOW() - INTERVAL '2 days')
+     ON CONFLICT (id) DO NOTHING`,
+    [STAGING_SESSION_OPTIONS_ARCHIVED_ID, ctx.appId, ctx.owner.id]
+  );
+
+  log.info('db', 'Staging session-options fixture seeded', {
+    appId: ctx.appId,
+    owner: ctx.owner.username,
+    sessionId: STAGING_SESSION_OPTIONS_SESSION_ID,
+    inserted: rowCount,
+    promotedInserted: promoted,
+    pausedInserted: paused,
+    archivedInserted: archived,
   });
 }
 

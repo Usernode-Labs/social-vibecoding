@@ -318,9 +318,15 @@
       this.refresh();
     },
 
+    // #1055: the page's ?demo=1 rides along on the /api/auth/me read, so a
+    // staging reviewer sees the key-on-file branch of the composer meter and
+    // the session-options menu without pasting a real key into a preview.
+    // Honoured only in staging (routes/auth.js), so it is safe to send
+    // always — same pass-through as _cliTokensDemo below.
     async refresh() {
       try {
-        const r = await fetch('/api/auth/me', { credentials: 'same-origin' });
+        const meDemoQ = this._cliTokensDemo() ? '?demo=1' : '';
+        const r = await fetch(`/api/auth/me${meDemoQ}`, { credentials: 'same-origin' });
         if (!r.ok) return;
         const j = await r.json();
         this.state.hasApiKey = !!j.user?.hasApiKey;

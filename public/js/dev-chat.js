@@ -641,7 +641,13 @@ const DevChat = {
   // the same request and losing it would leave a live turn showing Send.
   _demoQS() {
     try {
-      return new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : '';
+      const demo = new URLSearchParams(location.search).get('demo');
+      // `demo=session` (#1071) is the second staging demo shape for the
+      // dev-flow walkthrough: the same five steps continuing a session
+      // nobody has voted on rather than a promoted proposal. Forwarding the
+      // discriminator is all the client has to do — every route that reads
+      // it still tests for '1', so the other demo branches stay off.
+      return demo === '1' || demo === 'session' ? `?demo=${demo}` : '';
     } catch { return ''; }
   },
 
@@ -1036,7 +1042,12 @@ const DevChat = {
   // "Use Claude Code" / "Use Codex" from an out-of-credits card or banner.
   // Same walkthrough the picker opens, in the session the user was refused
   // in — the work they were describing is right there in the transcript.
-  _devFlowFromCredits(agent) {
+  //
+  // `targetId` (#1071) is the session whose branch the agent should push back
+  // onto, and only the options menu passes one — a credits card is always a
+  // fresh piece of work, so it keeps calling this with one argument and the
+  // target stays null.
+  _devFlowFromCredits(agent, targetId) {
     if (!window.DevFlowSelect) {
       window.location.hash = '#settings/connectors';
       return;
@@ -1044,6 +1055,7 @@ const DevChat = {
     const flow = DevChat._devFlow;
     flow.mode = 'wizard';
     flow.agent = agent;
+    flow.targetId = targetId == null ? null : targetId;
     flow.dismissed = false;
     flow.error = null;
     flow.notice = null;
@@ -1067,6 +1079,138 @@ const DevChat = {
     });
   },
 
+  // ── Session and billing options — the "⋯" beside the meter (#1055) ─
+  //
+  // All copy, gating and markup live in public/js/session-options.js; this
+  // is the state assembly and the plumbing back into the session. The
+  // button is static markup in renderChatView (see #dc-budget-options), so
+  // it exists in every state of the meter — including the empty one, which
+  // is the state someone with no key and no spend yet is looking at.
+
+  _optionsMenu: null,
+  _optionsCard: null,
+  _shotOptionsDone: false,
+
+  // Everything the menu needs, read from the places that already own each
+  // fact: Settings mirrors /api/auth/me's BYOK state, App.user carries the
+  // two deployment capabilities, and _localAgent is the #907 lease as of
+  // the last status poll.
+  _sessionOptionsState() {
+    const user = (typeof App !== 'undefined' && App.user) || {};
+    const settings = (window.Settings && window.Settings.state) || {};
+    const session = DevChat.currentSession || {};
+    return {
+      hasApiKey: !!settings.hasApiKey,
+      keyLast4: settings.keyLast4 || null,
+      // The whole /api/cli/* family is 404'd in a staging clone, so
+      // cliAuthEnabled is false there and the local-CLI row would be missing
+      // from the very menu a reviewer opened to look at it. ?demo=1 paints
+      // it — the row opens a pure copy card that fetches nothing, so there
+      // is no request to 404 behind it. Production is unaffected: the flag
+      // is only honoured where the page already carries it.
+      cliAuthEnabled: user.cliAuthEnabled !== false || !!DevChat._demoQS(),
+      externalFlowsAvailable: DevChat._externalFlowsAvailable(),
+      localAgent: DevChat._localAgent || null,
+      sessionId: session.id || null,
+      // #1071. The two facts that decide whether the web hand-off can
+      // continue THIS session's code or has to start something separate.
+      // Read straight off the session row the chat is already rendering, so
+      // the menu can never disagree with the header above it.
+      sessionStatus: session.status || null,
+      hasBranch: !!session.branch_name,
+      repoUrl: (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.repo_url) || null,
+    };
+  },
+
+  _closeSessionOptions() {
+    const menu = DevChat._optionsMenu;
+    DevChat._optionsMenu = null;
+    if (menu && typeof menu.dismiss === 'function') menu.dismiss();
+    const card = DevChat._optionsCard;
+    DevChat._optionsCard = null;
+    if (card && typeof card.dismiss === 'function') card.dismiss();
+  },
+
+  // anchorEl: the "⋯" button, so the desktop popover toggles closed on a
+  // re-click. Touch gets the kit's action sheet from the same call.
+  openSessionOptions(anchorEl) {
+    if (!window.SessionOptions) return;
+    DevChat._closeSessionOptions();
+    const menu = SessionOptions.open({
+      anchorEl: anchorEl || document.getElementById('dc-budget-options') || undefined,
+      state: DevChat._sessionOptionsState(),
+      onNavigate: (hash) => { window.location.hash = hash; },
+      onInstructions: (state) => {
+        DevChat._optionsCard = SessionOptions.openInstructions({
+          state,
+          onClose: () => { DevChat._optionsCard = null; },
+        });
+      },
+      onHandBack: () => DevChat._handBackToUsernode(),
+      onFlow: (agent, targetId) => DevChat._devFlowFromCredits(agent, targetId),
+    });
+    DevChat._optionsMenu = menu;
+    if (menu && typeof menu.then === 'function') {
+      menu.then(() => { if (DevChat._optionsMenu === menu) DevChat._optionsMenu = null; });
+    }
+  },
+
+  // Screenshot-state deep links (#1055):
+  //   ?shot=session-options               → the menu itself, open
+  //   ?shot=session-options-instructions  → the CLI instructions card
+  // Once per page load, and only when the composer is actually on screen —
+  // a re-render must not pop the menu back open under the user. `restore` is
+  // the one exception, passed by renderChatView when the menu it just
+  // dismissed was open a moment ago: reopening what was already open is not
+  // popping anything open, and it is what keeps a shot deep link showing its
+  // state across a re-render. Both are still gated on a `?shot=` URL, so a
+  // real session never reaches either path.
+  _maybeOpenShotOptions(restore) {
+    if (DevChat._shotOptionsDone && !restore) return;
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch { /* ignore */ }
+    if (shot !== 'session-options' && shot !== 'session-options-instructions') return;
+    const btn = document.getElementById('dc-budget-options');
+    if (!btn || btn.offsetParent === null) return;
+    DevChat._shotOptionsDone = true;
+    // Deferred a frame: the composer was written synchronously just above
+    // and the kit's flip/clamp placement needs the button's settled rect.
+    requestAnimationFrame(() => {
+      if (shot === 'session-options-instructions') {
+        if (!window.SessionOptions) return;
+        DevChat._optionsCard = SessionOptions.openInstructions({
+          state: DevChat._sessionOptionsState(),
+          onClose: () => { DevChat._optionsCard = null; },
+        });
+        return;
+      }
+      DevChat.openSessionOptions(btn);
+      requestAnimationFrame(() => DevChat._assertOptionsMenuOpaque());
+    });
+  },
+
+  // Same regression lock as home.js's card menu (#847): a translucent
+  // surface is invisible to a selector/text check — every row is present
+  // and correct, you just read the composer through them. Stamp the
+  // verdict for the dapp.json check and console.error on a violation so
+  // the baseline no-console-errors check trips on the same route.
+  _assertOptionsMenuOpaque() {
+    const pop = document.querySelector('.un-popover');
+    if (!pop) return; // touch idiom: an action sheet over the kit's backdrop
+    const bg = getComputedStyle(pop).backgroundColor || '';
+    const m = bg.match(/^rgba?\(([^)]+)\)$/);
+    const parts = m ? m[1].split(',').map((s) => parseFloat(s.trim())) : [];
+    const alpha = parts.length >= 4 ? parts[3] : (parts.length === 3 ? 1 : 0);
+    const opaque = alpha >= 0.99;
+    pop.dataset.surface = opaque ? 'opaque' : 'translucent';
+    if (!opaque) {
+      console.error(
+        `[dev-chat] session options menu surface is translucent (${bg}) — the`
+        + ' composer reads through it. --un-popover-bg must resolve to an opaque color.'
+      );
+    }
+  },
+
   // ── Development-flow picker + walkthrough (#1049) ──────────────────
   //
   // A fresh session used to open with nothing but a text box, and the ONLY
@@ -1088,6 +1232,11 @@ const DevChat = {
     // 'wizard' once a flow is picked, null while the picker is showing.
     mode: null,
     agent: null,
+    // #1071. The session whose branch the agent pushes back onto, when the
+    // hand-off was started from a session that can be continued. null means
+    // "this is new work" and the task is prepared app-scoped, exactly as
+    // #1049 shipped it.
+    targetId: null,
     busy: false,
     error: null,
     notice: null,
@@ -1119,6 +1268,7 @@ const DevChat = {
       loading: false,
       mode: deepLink ? 'wizard' : null,
       agent: deepLink,
+      targetId: null,
       busy: false,
       error: null,
       notice: null,
@@ -1305,6 +1455,11 @@ const DevChat = {
     }
     if (action === 'prepare') return DevChat._devFlowPrepare();
     if (action === 'submit') return DevChat._devFlowSubmit();
+    // #1071. A separate action, not a flag on 'submit': the two hit different
+    // routes with different bodies and different failure modes, and a single
+    // action that silently changed meaning depending on state is exactly the
+    // kind of thing that opens the wrong pull request.
+    if (action === 'submit-update') return DevChat._devFlowSubmitUpdate();
     return undefined;
   },
 
@@ -1329,7 +1484,11 @@ const DevChat = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify({ agent: flow.agent, brief }),
+        body: JSON.stringify(
+          flow.targetId
+            ? { agent: flow.agent, brief, proposalId: Number(flow.targetId) }
+            : { agent: flow.agent, brief }
+        ),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -1390,6 +1549,79 @@ const DevChat = {
         return;
       }
       await DevChat._devFlowEnsureStatus(true);
+    } catch (err) {
+      flow.error = `Network error: ${err.message}`;
+    } finally {
+      flow.busy = false;
+      DevChat.renderMessages();
+    }
+  },
+
+  // Step 5, the continue variant (#1071). The branch already exists — this
+  // moves the session's (or proposal's) head onto what the web agent pushed,
+  // through the same update-from-fork gate the MCP connector uses.
+  //
+  // No expectedHeadSha: the server-side gate compares against the head it
+  // tracks itself, and pinning the task's base commit here would turn an
+  // idempotent re-press into a false "somebody else advanced it".
+  async _devFlowSubmitUpdate() {
+    const flow = DevChat._devFlow;
+    const slug = App.currentApp;
+    const task = flow.status && flow.status.task;
+    const target = task && task.targetProposal;
+    if (!task || !target || !target.id) {
+      flow.error = 'No proposal to update yet.';
+      DevChat.renderMessages();
+      return;
+    }
+    flow.busy = true;
+    DevChat.renderMessages();
+    try {
+      const res = await fetch(
+        `/api/apps/${encodeURIComponent(slug)}/external-tasks/${encodeURIComponent(task.id)}/submit-update`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ proposalId: Number(target.id), branch: task.branch || undefined }),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // base_mismatch and branch_moved carry the commit to act on, and the
+        // server's own sentence is the one that names it. Surfaced verbatim
+        // rather than flattened into "could not submit", which would leave
+        // the user with nothing to do next.
+        flow.error = data.message || data.error || 'Could not submit the update.';
+        return;
+      }
+      if (data.unchanged) {
+        // Nothing landed, so the card stays: the branch is still the thing
+        // the user is waiting on, and dismissing the walkthrough here would
+        // take away the only place to press again.
+        flow.notice = 'Nothing new to submit — this session is already on that commit.';
+        DevChat.renderMessages();
+        return;
+      }
+      if (data.resumeRequired) {
+        // The paused tail: the commit landed, the preview and checks did not
+        // start. Saying so is the whole point — silence here looks broken.
+        PlatformUI.toast('Update landed. Reopen this session to rebuild its preview and re-run its checks.');
+      } else if (data.votesCleared) {
+        PlatformUI.toast(`Update submitted — ${data.votesCleared} vote${data.votesCleared === 1 ? '' : 's'} cleared`);
+      } else {
+        PlatformUI.toast('Update submitted');
+      }
+      flow.dismissed = true;
+      // Re-open the target — the same session in the continue case, the
+      // proposal in the promoted one — so the header, the branch line and
+      // the check state reflect the commit that just landed.
+      const sessionId = data.proposalId || target.id;
+      if (sessionId) {
+        await DevChat.openSession(sessionId);
+        DevChat.renderChatView();
+      }
+      return;
     } catch (err) {
       flow.error = `Network error: ${err.message}`;
     } finally {
@@ -1877,7 +2109,13 @@ const DevChat = {
       // renderChatView treats it as active; other tabs sync via the
       // server's 'resumed' WS event. If resume is refused (e.g. the
       // global cap is hit), leave it paused and tell the user.
-      if (session.status === 'paused') {
+      // …unless this is a screenshot deep link (#1071): `?shot=` names a state
+      // to RENDER, and a shot of a paused session that silently un-pauses it
+      // is a shot of something else. It also made the capture's outcome depend
+      // on the platform's session cap — the refusal toasts a 429, which reads
+      // as a console error on the route and fails the check for a reason that
+      // has nothing to do with what it asserts.
+      if (session.status === 'paused' && !DevChat._isShotDeepLink()) {
         try {
           const rr = await fetch(`/api/sessions/${sessionId}/resume`, { method: 'POST' });
           if (rr.ok) {
@@ -6271,6 +6509,13 @@ const DevChat = {
               <span id="dc-runner" class="dc-runner"></span>
               <span class="flex-1"></span>
               <span id="dc-budget" class="text-xs font-mono"></span>
+              <!-- #1055: session and billing options. STATIC markup rather
+                   than something renderBudget() appends, because
+                   renderBudget() returns early when there is nothing to
+                   paint — and "no key, no spend yet" is exactly the state
+                   this menu exists for. -->
+              <button type="button" id="dc-budget-options" title="Session and billing options" aria-label="Session and billing options" aria-haspopup="menu"
+                class="dc-budget-options">&#8943;</button>
             </div>
             <div id="dc-agent-note" class="mb-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">${escapeHtml(agentBillingNote)}</div>
             <!-- #800: one-line plain-language description of the SELECTED
@@ -6362,6 +6607,21 @@ const DevChat = {
     // itself runs a beat later; painting here means a re-render of an already
     // open session doesn't drop the chip for a second.
     DevChat._renderRunnerControls();
+
+    // #1055: the "⋯" beside the meter. Any menu left open by a previous
+    // render is anchored to a button that no longer exists, so it is
+    // dismissed here rather than left floating over the new composer.
+    // Whether it WAS open is remembered, because on a `?shot=` deep link the
+    // open menu is the thing being rendered: without this, a second render
+    // (any status poll) closed it for good and the capture came back showing
+    // a plain composer (#1071).
+    const optionsWereOpen = !!(DevChat._optionsMenu || DevChat._optionsCard);
+    DevChat._closeSessionOptions();
+    const optionsBtn = document.getElementById('dc-budget-options');
+    if (optionsBtn) {
+      optionsBtn.addEventListener('click', () => DevChat.openSessionOptions(optionsBtn));
+    }
+    DevChat._maybeOpenShotOptions(optionsWereOpen);
 
     const agentSelect = document.getElementById('dc-agent-select');
     if (agentSelect) {
@@ -6826,6 +7086,12 @@ const DevChat = {
       const shot = new URLSearchParams(location.search).get('shot');
       return shot === 'drafts' || shot === 'busy-drafts';
     } catch { return false; }
+  },
+
+  // Any `?shot=` deep link, whichever one. Read by openSession to keep a
+  // capture read-only — see the auto-resume above.
+  _isShotDeepLink() {
+    try { return !!new URLSearchParams(location.search).get('shot'); } catch { return false; }
   },
 
   // Screenshot-state deep link (`?shot=busy-drafts`, #801/#810): paints the

@@ -4709,6 +4709,12 @@ export function Shell() {
           dev-chat.js owns the state and must load AFTER it.
       */}
       <script src="/js/dev-flow-select.js" />
+      {/*
+          #1055: the "session and billing options" menu behind the ⋯ beside
+          the dev-chat credit meter. Pure copy + gating + presentation;
+          dev-chat.js owns the state and must load AFTER it.
+      */}
+      <script src="/js/session-options.js" />
       <script src="/js/settings.js" />
       <script src="/js/group-chat.js" />
       {/*
