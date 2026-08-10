@@ -4744,3 +4744,24 @@ CREATE TABLE IF NOT EXISTS user_avatars (
   sha256       VARCHAR(64) NOT NULL,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- Email-based password reset (magic link from the #login recovery screen).
+-- ═══════════════════════════════════════════════════════════════════════
+
+-- Single outstanding reset token per user, modelled on wallet_link_token
+-- above: the column holds the sha256 hex of a 32-byte token that only ever
+-- travels inside the emailed link (/#reset-password?token=…), so a DB read
+-- alone can never redeem a reset. Minted by POST
+-- /api/auth/password-reset/request only for non-admin accounts with a
+-- CONFIRMED email (admins keep the admin-issued temporary-password path —
+-- the same email-control-must-not-equal-admin-takeover stance as the
+-- mobile OTP guard in src/routes/topochain/mobile-auth.js), consumed and
+-- cleared by POST /api/auth/password-reset/confirm, which runs
+-- accountRecovery() so every session and CLI authorization dies with the
+-- old password.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_token_hash VARCHAR(64);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_expires_at TIMESTAMPTZ;
+
+COMMENT ON COLUMN users.password_reset_token_hash IS 'staging:private';
+COMMENT ON COLUMN users.password_reset_expires_at IS 'staging:private';
