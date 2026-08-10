@@ -9,7 +9,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const worker = require('../src/services/worker');
-const { sanitizeModel } = require('../src/services/agent-models');
+const agentModels = require('../src/services/agent-models');
+const { sanitizeModel } = agentModels;
+const openrouterClient = require('../src/services/openrouter-client');
 
 // Authentic pinned-Codex 0.146.0 JSONL (captured from a real run).
 const AUTHENTIC_CODEX_JSONL = [
@@ -89,4 +91,42 @@ test('sanitizeModel converts per-token prices and uses reasoning metadata', () =
   }, compatibility);
   assert.equal(metadataModel.supportsReasoning, true);
   assert.deepEqual(metadataModel.reasoningEfforts, ['low', 'high']);
+});
+
+test('resolveModelPricing preserves the sanitized per-million catalog prices', async (t) => {
+  const originalFetch = openrouterClient.fetchUserModels;
+  openrouterClient.fetchUserModels = async () => [{
+    id: 'openai/test-codex',
+    name: 'Test Codex',
+    pricing: { prompt: '0.00000125', completion: '0.00001' },
+    supported_parameters: ['tools', 'reasoning'],
+    context_length: 64_000,
+    top_provider: { max_completion_tokens: 8_192 },
+  }];
+  agentModels.invalidateAll();
+  t.after(() => {
+    openrouterClient.fetchUserModels = originalFetch;
+    agentModels.invalidateAll();
+  });
+
+  const model = await agentModels.resolveModelPricing({
+    pool: {
+      query: async () => ({
+        rows: [{ model_id: 'openai/test-codex', status: 'verified', note: null }],
+      }),
+    },
+    userId: 'pricing-test-user',
+    credentialRevision: 1,
+    apiKey: 'sk-or-v1-test',
+    modelId: 'openai/test-codex',
+    config: {
+      openrouterApiBase: 'https://openrouter.ai/api/v1',
+      openrouterOrigin: 'https://usernode.dev',
+      openrouterExperimentalModels: false,
+    },
+  });
+  assert.equal(model.inputPricePerMillion, 1.25);
+  assert.equal(model.outputPricePerMillion, 10);
+  assert.equal(model.contextLength, 64_000);
+  assert.equal(model.compatibility, 'verified');
 });

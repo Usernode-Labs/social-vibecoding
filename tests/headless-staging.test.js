@@ -163,12 +163,36 @@ function makeRunnerPool() {
     terminal: null,   // { status, outcome }
     specMd: '',
     nextId: 1000,
+    effects: new Map(),
   };
   const calls = [];
 
   async function query(sql, params = []) {
     const s = String(sql);
     calls.push({ sql: s, params });
+
+    if (/^(BEGIN|COMMIT|ROLLBACK)$/i.test(s.trim())) {
+      return { rows: [], rowCount: 0 };
+    }
+    if (/INSERT INTO turn_effects/i.test(s)) {
+      const key = `${params[0]}:${params[1]}`;
+      if (state.effects.has(key)) return { rows: [], rowCount: 0 };
+      const effect = { state: 'pending', result: null };
+      state.effects.set(key, effect);
+      return { rows: [{ state: effect.state }], rowCount: 1 };
+    }
+    if (/UPDATE turn_effects/i.test(s)) {
+      const key = `${params[0]}:${params[1]}`;
+      const effect = state.effects.get(key);
+      if (!effect || effect.state !== 'pending') return { rows: [], rowCount: 0 };
+      effect.state = 'completed';
+      effect.result = params[2] == null ? null : JSON.parse(params[2]);
+      return { rows: [{ result: effect.result }], rowCount: 1 };
+    }
+    if (/SELECT state(?:, result)? FROM turn_effects/i.test(s)) {
+      const effect = state.effects.get(`${params[0]}:${params[1]}`);
+      return { rows: effect ? [{ ...effect }] : [], rowCount: effect ? 1 : 0 };
+    }
 
     if (/SELECT id, headless_status FROM chat_sessions/i.test(s)
         && /headless_issue_number/i.test(s)) {
@@ -207,6 +231,9 @@ function makeRunnerPool() {
     }
     if (/SELECT spec_md FROM chat_sessions/i.test(s)) {
       return { rows: [{ spec_md: state.specMd }] };
+    }
+    if (/UPDATE chat_sessions SET headless_step/i.test(s)) {
+      return { rows: [], rowCount: 1 };
     }
     if (/UPDATE chat_sessions SET headless_status = 'ready'/i.test(s)) {
       state.terminal = { status: 'ready', outcome: params[0] };

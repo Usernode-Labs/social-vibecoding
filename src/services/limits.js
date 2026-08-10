@@ -1,6 +1,7 @@
 'use strict';
 
 const log = require('./logger');
+const turnEffects = require('./turn-effects');
 
 // Daily LLM-spend caps. Both values live in `platform_settings` and are
 // admin-tunable from /admin (see src/routes/admin.js endpoints
@@ -256,6 +257,27 @@ async function recordSpend(pool, userId, costCents, { byok = false } = {}) {
   }
 }
 
+async function recordSpendRequired(client, userId, costCents, { byok = false } = {}) {
+  if (!userId || !(costCents > 0)) return;
+  const column = byok ? 'byok_cost_cents' : 'total_cost_cents';
+  await client.query(
+    `INSERT INTO llm_usage (user_id, date, ${column}) VALUES ($1, CURRENT_DATE, $2)
+     ON CONFLICT (user_id, date) DO UPDATE SET ${column} = llm_usage.${column} + EXCLUDED.${column}`,
+    [userId, costCents],
+  );
+}
+
+function splitTurnSpend(totalCents, { turnByok = false, byokObservedCents = 0 } = {}) {
+  const total = Number(totalCents);
+  if (!Number.isFinite(total) || !(total > 0)) {
+    return { platformCents: 0, byokCents: 0 };
+  }
+  if (turnByok) return { platformCents: 0, byokCents: total };
+  const observed = Number(byokObservedCents);
+  const byokCents = Math.min(Number.isFinite(observed) && observed > 0 ? observed : 0, total);
+  return { platformCents: total - byokCents, byokCents };
+}
+
 // #664: turn-end settlement for a CC turn that may have SWITCHED payers
 // mid-flight. The worker Anthropic proxy falls back to the user's own
 // key per-call once the daily allowance is exhausted, so a single turn
@@ -271,22 +293,46 @@ async function recordSpend(pool, userId, costCents, { byok = false } = {}) {
 //     clamped to the turn total — CC's self-reported costUsd is the
 //     authoritative sum). Remainder is platform spend.
 // Returns { platformCents, byokCents } so call sites can emit per-bucket
-// usage events. Same swallow-and-log tolerance as recordSpend.
-async function settleTurnSpend(pool, userId, totalCents, { turnByok = false, byokObservedCents = 0 } = {}) {
-  const total = Number(totalCents);
-  if (!userId || !Number.isFinite(total) || !(total > 0)) {
+// usage events. New durable turns supply turnId: the debit and its receipt
+// then commit in one transaction and recovery can replay the stored split
+// without incrementing llm_usage twice. Legacy callers keep the tolerant
+// best-effort behavior until their old active_turn records have drained.
+async function settleTurnSpend(pool, userId, totalCents, {
+  turnByok = false,
+  byokObservedCents = 0,
+  turnId = null,
+  sessionId = null,
+  effectKey = 'claude_agent_spend',
+} = {}) {
+  if (!userId) {
     return { platformCents: 0, byokCents: 0 };
   }
-  if (turnByok) {
-    await recordSpend(pool, userId, total, { byok: true });
-    return { platformCents: 0, byokCents: total };
+  const split = splitTurnSpend(totalCents, { turnByok, byokObservedCents });
+  const { platformCents, byokCents } = split;
+  if (!(platformCents > 0) && !(byokCents > 0)) return split;
+
+  if (turnId) {
+    const receipt = await turnEffects.runDbEffect({
+      pool,
+      turnId,
+      effectKey,
+      sessionId,
+      run: async (client) => {
+        if (platformCents > 0) {
+          await recordSpendRequired(client, userId, platformCents, { byok: false });
+        }
+        if (byokCents > 0) {
+          await recordSpendRequired(client, userId, byokCents, { byok: true });
+        }
+        return split;
+      },
+    });
+    return receipt.value || split;
   }
-  const observed = Number(byokObservedCents);
-  const byokCents = Math.min(Number.isFinite(observed) && observed > 0 ? observed : 0, total);
-  const platformCents = total - byokCents;
+
   if (platformCents > 0) await recordSpend(pool, userId, platformCents, { byok: false });
   if (byokCents > 0) await recordSpend(pool, userId, byokCents, { byok: true });
-  return { platformCents, byokCents };
+  return split;
 }
 
 // #361: gate for "may the platform incur another merge-conflict /

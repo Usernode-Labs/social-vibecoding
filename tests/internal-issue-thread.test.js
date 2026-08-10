@@ -192,6 +192,27 @@ test('an unauthenticated request reads nothing', async (t) => {
   assert.equal(calls.length, 0);
 });
 
+test('the issues-read token cannot authorize the platform-issue write route', async (t) => {
+  const calls = installPool();
+  const baseUrl = await startServer(t);
+  const token = platformJwt.signIssuesReadToken({ sessionId: SESSION_ID });
+
+  const res = await fetch(
+    `${baseUrl}/api/internal/sessions/${SESSION_ID}/platform-issue`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ title: 'must not write', body: 'read scope only' }),
+    },
+  );
+  assert.equal(res.status, 401);
+  assert.equal((await res.json()).code, 'bad_token');
+  assert.equal(calls.length, 0, 'authorization fails before route or database work');
+});
+
 test('a missing session 404s before any thread read', async (t) => {
   stubGithub(t, { issue: { number: 945, title: 'T', body: 'b' } });
   const calls = installPool({ sessionMissing: true });

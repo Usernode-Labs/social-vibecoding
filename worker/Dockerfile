@@ -105,6 +105,7 @@ RUN npm install -g @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} \
 COPY worker-run.sh   /usr/local/bin/worker-run.sh
 COPY run-cc.sh       /usr/local/bin/run-cc.sh
 COPY run-codex-agent.sh /usr/local/bin/run-codex-agent.sh
+COPY classify-codex-resume.js /usr/local/bin/classify-codex-resume.js
 # usernode-push is the worker's only path to writing anything back to
 # GitHub: it POSTs to the platform's internal push proxy, which runs
 # the actual `git push` from the host side with the bot token injected
@@ -182,13 +183,14 @@ RUN cd /usr/local/lib/node_modules/@playwright/mcp \
 # Bootstrap env via -e on `docker run`:
 #   CLONE_URL          plain HTTPS, no embedded token (public repos only)
 #   BRANCH             session's canonical dev branch
-#   ANTHROPIC_API_KEY  forwarded to claude
-#   WORKER_JWT         session-scoped JWT for usernode-push
 #   SESSION_ID         used in the platform API URL
 #   PLATFORM_URL       internal endpoint of the platform server
 # Per-exec env via -e on `docker exec`:
 #   PROMPT_FILE, MODE, MODEL, COMMIT_MSG, CLAUDE_RESUME_SESSION_ID,
-#   WORKER_JWT (re-minted each turn), SESSION_ID, PLATFORM_URL
+#   SESSION_ID, PLATFORM_URL, plus only the turn's required secrets:
+#   ANTHROPIC_API_KEY, ISSUES_JWT, optional PROD_DEBUG_JWT, and
+#   WORKER_JWT for mutation-capable modes. Scout receives no general
+#   worker:session token under any alias.
 # (The dispatch prompt itself is materialized into the CC volume at
 # PROMPT_FILE before the exec — it must never ride argv/env, which Linux
 # caps at 128 KiB per string. See run-cc.sh / worker.js writeTurnPrompt.)

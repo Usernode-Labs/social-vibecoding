@@ -178,17 +178,22 @@ test('a local scout invokes NONE of the commit or staging machinery', () => {
 });
 
 test('a local scout writes the spec back exactly as a cloud scout does', () => {
-  // The tail below the dispatch is untouched: it reads lastResultText, strips
-  // the wrapper fence, writes spec_md, snapshots a frozen version and emits
-  // spec_updated. Feeding the drafted markdown in through lastResultText is
-  // what makes all of that run byte-identically.
+  // Both venues feed the same receipt-backed publication helper. It writes
+  // spec_md, snapshots a frozen version and gives the caller the metadata for
+  // spec_updated; local execution only adds runner metadata to that receipt.
   assert.match(scoutDispatch, /lastResultText: finished\?\.spec_md/);
-  const tail = sessions.slice(
-    sessions.indexOf('const ccText = stripSpecWrapperFence'),
-    sessions.indexOf("send('spec_updated'")
+  const publication = sessions.slice(
+    sessions.indexOf('async function persistScoutPublication'),
+    sessions.indexOf('// Copy the user\'s DEFAULT coding-agent backend')
   );
-  assert.match(tail, /UPDATE chat_sessions SET spec_md = \$1/);
-  assert.match(tail, /snapshotSessionSpec\(pool, session\.id, ccText\)/);
+  assert.match(publication, /UPDATE chat_sessions SET spec_md = \$1/);
+  assert.match(publication, /snapshotSessionSpec\(/);
+  const scoutTail = sessions.slice(
+    sessions.indexOf('async function runScoutTool'),
+    sessions.indexOf('function describeMarkerlessExit')
+  );
+  assert.match(scoutTail, /persistScoutPublication\(\{[\s\S]{0,300}content: ccText/);
+  assert.match(scoutTail, /localAgentLabel: runLocally \? lease\.label : null/);
 });
 
 test('a local scout skips the worker image, the container and the volume too', () => {
@@ -226,7 +231,8 @@ test('both scout and build report their mode, and both name the machine', () => 
   assert.match(sessions, /recordTurnEvent\(pool, \{[\s\S]{0,200}mode: 'build'/);
   // The transcript rows are how a reader tells the two apart months later,
   // and both state that the platform did not pay for the work.
-  assert.match(sessions, /Drafted on \$\{lease\.label\} — no Usernode credits used/);
+  assert.match(sessions, /Drafted on \$\{localAgentLabel\} — no Usernode credits used/);
+  assert.match(sessions, /localAgentLabel: runLocally \? lease\.label : null/);
   assert.match(sessions, /Coding done on \$\{lease\.label\} — no Usernode credits used/);
 });
 

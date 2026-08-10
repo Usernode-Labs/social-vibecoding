@@ -174,10 +174,13 @@ test('the phase-2 wrap-up resolves by dispatch outcome', () => {
   assert.match(arg, /toolKind === 'scout' \? 'spec_done'/, 'a scout wrap-up gets the spec pills');
   assert.match(arg, /'build_done'/, 'a build wrap-up gets the post-build pills');
 
-  const r = SESSIONS_SRC.match(/const wrapUpResolved = await resolvePills\(wrapUpOutcome, \{([\s\S]{0,400}?)\}\);/);
+  const r = SESSIONS_SRC.match(/const resolveLiveWrapUpPills = \(\) => resolvePills\(wrapUpOutcome, \{([\s\S]{0,400}?)\}\);/);
   assert.ok(r, 'the wrap-up routes through the ladder');
   assert.match(r[1], /modelPills: quickReplies2/, "the wrap-up's own tool call is rung 1");
   assert.match(r[1], /replyText: mayorText2/, 'the enforcement context carries the wrap-up text');
+  assert.match(SESSIONS_SRC,
+    /effectKey: TURN_WRAPUP_EFFECT_KEYS\.pills[\s\S]{0,200}?run: resolveLiveWrapUpPills/,
+    'durable wrap-ups run the ladder behind the at-most-once pill receipt');
   assert.match(SESSIONS_SRC, /JSON\.stringify\(quickReplyMeta\(wrapUpResolved\)\)/,
     'the wrap-up row persists the resolved set plus its telemetry');
   assert.match(SESSIONS_SRC, /if \(wrapUpPills\) send\('quick_replies', \{ replies: wrapUpPills \}\)/,
@@ -368,7 +371,7 @@ test('BANNED_GENERIC_PILLS covers every static pill the platform ships', () => {
 test('every model-backed call site goes through the ladder', () => {
   const sites = [
     [/pills1 = await resolvePills\('chat'/, 'phase-1 reply and dispatch preamble'],
-    [/const wrapUpResolved = await resolvePills\(wrapUpOutcome/, 'phase-2 wrap-up'],
+    [/const resolveLiveWrapUpPills = \(\) => resolvePills\(wrapUpOutcome/, 'phase-2 wrap-up'],
     [/phase: 'recovered-wrapup'/, 'restart-recovered wrap-up'],
     [/phase: 'clone-followup'/, 'auto-session clone follow-up'],
     [/phase: 'fork-followup'/, 'shared-chat fork follow-up'],

@@ -135,7 +135,10 @@ async function resolveModelPricing({ pool, userId, credentialRevision, apiKey, m
       pool, userId, credentialRevision, apiKey, config, forceRefresh: false,
     });
     const matched = (catalog.models || []).find((m) => m.id === String(modelId));
-    return matched ? sanitizeModel(matched, matched.compatibility) : null;
+    // listOpenRouterModels already returned the sanitized catalog shape.
+    // Sanitizing it again treats its per-million prices as raw per-token
+    // pricing and drops fields such as contextLength/compatibility.
+    return matched || null;
   } catch (err) {
     log.warn('agent-models', 'single-model pricing resolution failed', { userId, err: err.message });
     return null;

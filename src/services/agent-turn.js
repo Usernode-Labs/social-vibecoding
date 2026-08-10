@@ -15,6 +15,7 @@ const credentialStore = require('./credential-store');
 const registry = require('../agents/registry');
 const agentModels = require('./agent-models');
 const log = require('./logger');
+const turnLifecycle = require('./turn-lifecycle');
 
 // Resolve the backend for a turn from the session row (pinned at session
 // creation). Falls back to claude_code for legacy sessions.
@@ -137,9 +138,19 @@ async function resolveCodexRuntimeContext({ pool, session, userId, model, reason
 // Called immediately before every worker.execInWorker(). Records the
 // logical turn id, attempt number, credential id/revision, pricing
 // snapshot, agent config version, model and reasoning effort.
-async function startCodexAttempt({ pool, session, userId, logicalTurnId, attemptNumber, model, reasoningEffort, resumeThreadId, runtimeContext }) {
+async function startCodexAttempt({
+  pool, session, userId, logicalTurnId, attemptNumber, model,
+  reasoningEffort, resumeThreadId, runtimeContext, mode = 'build',
+  // A missing-thread retry deliberately keeps attempt one's active_turn
+  // until attempt two is durably registered. Only that exact transition
+  // may replace an existing record; every ordinary dispatch still fails
+  // closed on any active_turn.
+  allowRetryPending = false,
+}) {
   const ctx = runtimeContext || {};
   const turnId = crypto.randomUUID();
+  const durableTurnId = logicalTurnId || crypto.randomUUID();
+  const journal = turnLifecycle.journalPathForAttempt(turnId);
   const expectedConfigVersion = ctx.agentConfigVersion || session.agent_config_version || 1;
   // plan 8.5 (Commit 6): dispatch-side config-version validation. Lock the
   // session row and verify the backend is still Codex and the config
@@ -173,7 +184,20 @@ async function startCodexAttempt({ pool, session, userId, logicalTurnId, attempt
       err.code = 'agent_context_changed';
       throw err;
     }
-    if (sessRow.active_turn) {
+    let activeTurn = sessRow.active_turn || null;
+    if (typeof activeTurn === 'string') {
+      try { activeTurn = JSON.parse(activeTurn); } catch { activeTurn = null; }
+    }
+    const replacingPreparedRetry = !!(
+      allowRetryPending
+      && activeTurn
+      && activeTurn.backend === 'codex_openrouter'
+      && ['tail_pending', 'tail', 'retry_pending'].includes(activeTurn.phase)
+      && activeTurn.retryFresh === true
+      && activeTurn.logicalTurnId === durableTurnId
+      && Number(activeTurn.attemptNumber || 1) === Number(attemptNumber) - 1
+    );
+    if (sessRow.active_turn && !replacingPreparedRetry) {
       const err = new Error('session is busy');
       err.code = 'session_busy';
       throw err;
@@ -193,9 +217,50 @@ async function startCodexAttempt({ pool, session, userId, logicalTurnId, attempt
        ctx.credentialId || null, ctx.credentialRevision || null,
        resumeThreadId || null,
        expectedConfigVersion,
-       logicalTurnId || null, attemptNumber || 1,
+       durableTurnId, attemptNumber || 1,
        JSON.stringify({ pricing: ctx.pricingSnapshot || null })],
     );
+
+    const activeRecord = turnLifecycle.withLifecycle({
+      turnId: durableTurnId,
+      phase: turnLifecycle.PHASE_DISPATCH_PENDING,
+      mode,
+      journal,
+      backend: 'codex_openrouter',
+      turnUuid: turnId,
+      logicalTurnId: durableTurnId,
+      attemptNumber: attemptNumber || 1,
+      model: model || '',
+      startedAt: new Date().toISOString(),
+      byok: false,
+    }, { turnId: durableTurnId, phase: turnLifecycle.PHASE_DISPATCH_PENDING });
+    const registered = await client.query(
+      `UPDATE chat_sessions
+          SET active_turn = $2::jsonb
+        WHERE id = $1
+          AND ${replacingPreparedRetry
+            ? `active_turn IS NOT NULL
+               AND active_turn->>'backend' = 'codex_openrouter'
+               AND active_turn->>'logicalTurnId' = $3
+               AND active_turn->>'turnUuid' = $4
+               AND COALESCE(active_turn->>'phase', 'executing') = ANY($5::text[])`
+            : 'active_turn IS NULL'}
+        RETURNING active_turn`,
+      replacingPreparedRetry
+        ? [
+            session.id,
+            JSON.stringify(activeRecord),
+            durableTurnId,
+            activeTurn.turnUuid,
+            ['tail_pending', 'tail', 'retry_pending'],
+          ]
+        : [session.id, JSON.stringify(activeRecord)],
+    );
+    if ((registered.rowCount ?? registered.rows?.length ?? 0) !== 1) {
+      const err = new Error('turn state changed before attempt registration');
+      err.code = 'session_busy';
+      throw err;
+    }
 
     await client.query('COMMIT');
   } catch (err) {
@@ -209,15 +274,22 @@ async function startCodexAttempt({ pool, session, userId, logicalTurnId, attempt
   } finally {
     client.release();
   }
-  return { turnUuid: turnId };
+  return {
+    turnUuid: turnId,
+    turnId: durableTurnId,
+    logicalTurnId: durableTurnId,
+    journal,
+  };
 }
 
-// Lock the attempt row for transactional completion. Returns the `running`
-// row, or null if it is already terminal / missing.
+// Lock the attempt row for transactional completion/reconciliation. Returns
+// the row in any state, or null only when the identity is genuinely missing.
 async function lockAttempt(client, turnUuid) {
   const { rows } = await client.query(
     `SELECT id, session_id, user_id, backend, requested_model,
             agent_thread_id, status, metadata, logical_turn_id, attempt_number,
+            input_tokens, cached_input_tokens, cache_write_input_tokens,
+            output_tokens, reasoning_output_tokens,
             provider_input_tokens_total,
             provider_cached_input_tokens_total,
             provider_cache_write_input_tokens_total,
@@ -232,9 +304,12 @@ async function lockAttempt(client, turnUuid) {
 }
 
 // ── Phase 3: complete one attempt idempotently ────────────────────────
-// Lock the attempt, return early if already terminal, compute cumulative
-// provider totals (delta vs the latest terminal row for the same thread),
-// estimate cost from the immutable pricing snapshot, then terminalize.
+// Lock the attempt, compute cumulative provider totals (delta vs the latest
+// terminal row for the same thread), estimate cost from the immutable pricing
+// snapshot, then terminalize. A force-stop may terminalize before the journal
+// owner finishes parsing its final usage event; that exact null-usage shape is
+// reconcilable once so the later owner can enrich the cancelled row without
+// changing its status or double-counting.
 // One physical invocation = one attempt; a retry writes a NEW attempt row
 // and never overwrites the prior attempt's usage (plan 6.1, 6.5).
 async function completeCodexAttempt({ pool, turnUuid, status = 'completed', threadId = null, usageTotal = null, errorCode = null, errorDetail = null }) {
@@ -246,19 +321,46 @@ async function completeCodexAttempt({ pool, turnUuid, status = 'completed', thre
     const row = await lockAttempt(client, turnUuid);
     if (!row) {
       await client.query('COMMIT');
-      throw new Error('agent attempt not found');
+      const err = new Error('agent attempt not found');
+      // A durable recovery pointer to a deleted ledger row cannot heal via
+      // backoff. Give the recovery scheduler a stable permanent-state code
+      // while keeping the generic completion helper useful outside recovery.
+      err.code = 'agent_attempt_not_found';
+      throw err;
     }
-    if (row.status !== 'running') {
+    const current = normalizeCumulativeUsage(usageTotal);
+    const providerUsageAlreadyRecorded = [
+      row.provider_input_tokens_total,
+      row.provider_cached_input_tokens_total,
+      row.provider_cache_write_input_tokens_total,
+      row.provider_output_tokens_total,
+      row.provider_reasoning_output_tokens_total,
+    ].some((value) => value != null);
+    const tokenDeltaAlreadyRecorded = [
+      row.input_tokens,
+      row.cached_input_tokens,
+      row.cache_write_input_tokens,
+      row.output_tokens,
+      row.reasoning_output_tokens,
+    ].some((value) => Number(value || 0) !== 0);
+    const reconcileTerminalUsage = row.status !== 'running'
+      && !!current
+      && !providerUsageAlreadyRecorded
+      && !tokenDeltaAlreadyRecorded;
+    if (row.status !== 'running' && !reconcileTerminalUsage) {
       await client.query('COMMIT');
       return { updated: false, alreadyTerminal: true };
     }
 
-    const current = normalizeCumulativeUsage(usageTotal);
     const previous = current && threadId
       ? await findPreviousProviderTotal(client, row.session_id, threadId, turnUuid)
       : null;
     const { delta, resetDetected } = computeProviderUsageDelta(current, previous);
-    const cost = estimateRequestedModelCost(delta, row.metadata?.pricing);
+    // No provider totals means cost is unknown, not a genuine zero-dollar
+    // request. Preserve that distinction even when a pricing snapshot exists.
+    const cost = current
+      ? estimateRequestedModelCost(delta, row.metadata?.pricing)
+      : { costSource: 'unavailable', estimatedCostUsd: null };
     const metadata = row.metadata || {};
     if (previous && resetDetected) {
       metadata.usageReset = {
@@ -269,10 +371,10 @@ async function completeCodexAttempt({ pool, turnUuid, status = 'completed', thre
 
     await client.query(
       `UPDATE agent_turns SET
-         status = $2,
+         status = CASE WHEN $21::boolean THEN status ELSE $2 END,
          completed_at = COALESCE(completed_at, NOW()),
-         error_code = COALESCE($3, error_code),
-         error_detail = COALESCE($4, error_detail),
+         error_code = CASE WHEN $21::boolean THEN error_code ELSE COALESCE($3, error_code) END,
+         error_detail = CASE WHEN $21::boolean THEN error_detail ELSE COALESCE($4, error_detail) END,
          agent_thread_id = COALESCE($5, agent_thread_id),
          input_tokens = input_tokens + $6,
          cached_input_tokens = cached_input_tokens + $7,
@@ -290,7 +392,22 @@ async function completeCodexAttempt({ pool, turnUuid, status = 'completed', thre
          routed_model = COALESCE($19, routed_model),
          billed_by = 'user_openrouter',
          metadata = $20::jsonb
-       WHERE id = $1 AND status = 'running'`,
+       WHERE id = $1
+         AND (
+           status = 'running'
+           OR ($21::boolean
+               AND status IN ('completed', 'failed', 'cancelled')
+               AND provider_input_tokens_total IS NULL
+               AND provider_cached_input_tokens_total IS NULL
+               AND provider_cache_write_input_tokens_total IS NULL
+               AND provider_output_tokens_total IS NULL
+               AND provider_reasoning_output_tokens_total IS NULL
+               AND input_tokens = 0
+               AND cached_input_tokens = 0
+               AND cache_write_input_tokens = 0
+               AND output_tokens = 0
+               AND reasoning_output_tokens = 0)
+         )`,
       [turnUuid, status,
        errorCode || null, errorDetail || null,
        threadId || null,
@@ -305,13 +422,15 @@ async function completeCodexAttempt({ pool, turnUuid, status = 'completed', thre
        cost != null ? cost.costSource : 'unavailable',
        resetDetected,
        row.requested_model || null,
-       JSON.stringify(metadata)],
+       JSON.stringify(metadata),
+       reconcileTerminalUsage],
     );
 
     await client.query('COMMIT');
     return {
       updated: true,
-      alreadyTerminal: false,
+      alreadyTerminal: reconcileTerminalUsage,
+      reconciled: reconcileTerminalUsage,
       delta,
       estimatedCost: cost,
     };
@@ -323,28 +442,72 @@ async function completeCodexAttempt({ pool, turnUuid, status = 'completed', thre
   }
 }
 
-// Find the latest TERMINAL attempt row with the same session/thread/backend
-// and a provider total present, excluding the current attempt id. Terminal
-// rows include failed/cancelled attempts that may have consumed tokens.
+// Find the latest non-null provider total for EACH usage dimension among
+// terminal attempts with the same session/thread/backend. A provider may omit
+// one dimension from an otherwise valid snapshot; taking every baseline from
+// that single row would make the next observed value subtract from zero.
+// Terminal rows include failed/cancelled attempts that may have consumed
+// tokens. The filtered aggregates keep each dimension's last known total
+// without treating an omitted value as an observed zero. Once a counter
+// reset has been observed, older provider totals belong to a different
+// cumulative epoch and must not supply a missing baseline.
 async function findPreviousProviderTotal(client, sessionId, threadId, excludeTurnUuid) {
   const { rows } = await client.query(
-    `SELECT provider_input_tokens_total,
-            provider_cached_input_tokens_total,
-            provider_cache_write_input_tokens_total,
-            provider_output_tokens_total,
-            provider_reasoning_output_tokens_total
-       FROM agent_turns
-      WHERE session_id = $1
-        AND agent_thread_id = $2
-        AND backend = 'codex_openrouter'
-        AND id <> $3
-        AND status IN ('completed', 'failed', 'cancelled')
-        AND provider_input_tokens_total IS NOT NULL
-      ORDER BY completed_at DESC NULLS LAST, id DESC
-      LIMIT 1`,
+    `WITH previous_attempts AS (
+       SELECT provider_input_tokens_total,
+              provider_cached_input_tokens_total,
+              provider_cache_write_input_tokens_total,
+              provider_output_tokens_total,
+              provider_reasoning_output_tokens_total,
+              usage_reset_detected,
+              ROW_NUMBER() OVER (
+                ORDER BY completed_at DESC NULLS LAST, id DESC
+              ) AS recency
+         FROM agent_turns
+        WHERE session_id = $1
+          AND agent_thread_id = $2
+          AND backend = 'codex_openrouter'
+          AND id <> $3
+          AND status IN ('completed', 'failed', 'cancelled')
+          AND (provider_input_tokens_total IS NOT NULL
+               OR provider_output_tokens_total IS NOT NULL)
+     ), current_epoch AS (
+       SELECT *
+         FROM previous_attempts
+        WHERE recency <= COALESCE(
+          (SELECT MIN(recency)
+             FROM previous_attempts
+            WHERE usage_reset_detected),
+          recency
+        )
+     )
+     SELECT
+            (ARRAY_AGG(provider_input_tokens_total
+                       ORDER BY recency ASC)
+             FILTER (WHERE provider_input_tokens_total IS NOT NULL))[1]
+              AS provider_input_tokens_total,
+            (ARRAY_AGG(provider_cached_input_tokens_total
+                       ORDER BY recency ASC)
+             FILTER (WHERE provider_cached_input_tokens_total IS NOT NULL))[1]
+              AS provider_cached_input_tokens_total,
+            (ARRAY_AGG(provider_cache_write_input_tokens_total
+                       ORDER BY recency ASC)
+             FILTER (WHERE provider_cache_write_input_tokens_total IS NOT NULL))[1]
+              AS provider_cache_write_input_tokens_total,
+            (ARRAY_AGG(provider_output_tokens_total
+                       ORDER BY recency ASC)
+             FILTER (WHERE provider_output_tokens_total IS NOT NULL))[1]
+              AS provider_output_tokens_total,
+            (ARRAY_AGG(provider_reasoning_output_tokens_total
+                       ORDER BY recency ASC)
+             FILTER (WHERE provider_reasoning_output_tokens_total IS NOT NULL))[1]
+              AS provider_reasoning_output_tokens_total
+       FROM current_epoch`,
     [sessionId, threadId, excludeTurnUuid]
   );
-  return rows[0] || null;
+  // pg returns snake_case database columns, while the delta calculator
+  // consumes the normalized camelCase usage shape.
+  return rows[0] ? normalizeCumulativeUsage(rows[0]) : null;
 }
 
 function normalizeCumulativeUsage(u) {
@@ -374,29 +537,29 @@ function zeroUsage() {
 // (plan 6.6).
 function computeProviderUsageDelta(current, previous) {
   if (!current) return { delta: zeroUsage(), resetDetected: false };
+  const keys = [
+    'inputTokens', 'cachedInputTokens', 'cacheWriteInputTokens',
+    'outputTokens', 'reasoningOutputTokens',
+  ];
   let resetDetected = false;
   if (previous) {
-    for (const k of ['inputTokens', 'cachedInputTokens', 'cacheWriteInputTokens', 'outputTokens', 'reasoningOutputTokens']) {
-      const c = current[k] ?? 0;
-      const p = previous[k] ?? 0;
-      if (c < p) { resetDetected = true; break; }
+    for (const k of keys) {
+      // An omitted dimension is unknown, not zero. Only compare totals the
+      // provider supplied in both snapshots when detecting a reset.
+      if (current[k] != null && previous[k] != null && current[k] < previous[k]) {
+        resetDetected = true;
+        break;
+      }
     }
   }
-  const baseline = resetDetected ? zeroUsage() : previous ? {
-    inputTokens: previous.inputTokens ?? 0,
-    cachedInputTokens: previous.cachedInputTokens ?? 0,
-    cacheWriteInputTokens: previous.cacheWriteInputTokens ?? 0,
-    outputTokens: previous.outputTokens ?? 0,
-    reasoningOutputTokens: previous.reasoningOutputTokens ?? 0,
-  } : zeroUsage();
+  const delta = zeroUsage();
+  for (const k of keys) {
+    if (current[k] == null) continue;
+    const baseline = !resetDetected && previous?.[k] != null ? previous[k] : 0;
+    delta[k] = current[k] - baseline;
+  }
   return {
-    delta: {
-      inputTokens: (current.inputTokens ?? 0) - baseline.inputTokens,
-      cachedInputTokens: (current.cachedInputTokens ?? 0) - baseline.cachedInputTokens,
-      cacheWriteInputTokens: (current.cacheWriteInputTokens ?? 0) - baseline.cacheWriteInputTokens,
-      outputTokens: (current.outputTokens ?? 0) - baseline.outputTokens,
-      reasoningOutputTokens: (current.reasoningOutputTokens ?? 0) - baseline.reasoningOutputTokens,
-    },
+    delta,
     resetDetected,
   };
 }
@@ -439,8 +602,9 @@ async function resolveCodexTurn(args) {
     reasoningEffort: ctx.agentReasoningEffort,
     resumeThreadId: ctx.resumeThreadId,
     runtimeContext: ctx,
+    mode: args.mode || 'build',
   });
-  return { ...ctx, turnUuid: attempt.turnUuid };
+  return { ...ctx, ...attempt };
 }
 
 // Back-compat terminalization (used by pre-Commit-5 call sites). Delegates
@@ -495,12 +659,50 @@ async function settleRecoveredAgentAttempt({
         outputTokens: result?.outputTokens != null ? result.outputTokens : null,
         reasoningOutputTokens: result?.reasoningOutputTokens != null ? result.reasoningOutputTokens : null,
       },
+      errorCode: result?.agentRetryFresh === true ? 'resume_thread_missing' : null,
     });
   }
   if (typeof settleClaude === 'function') {
     return settleClaude(result);
   }
   return null;
+}
+
+// Persist a thread id discovered while replaying a detached Codex journal.
+// Live dispatches already do this in sessions.js; recovery must do the same
+// before the next turn chooses its resume id. Shared by interactive and
+// headless recovery so the paths cannot drift again.
+async function persistRecoveredAgentThread({ pool, session, result }) {
+  const threadId = result?.agentThreadId || null;
+  if (!threadId || threadId === session?.agent_thread_id) {
+    return { updated: false, threadId };
+  }
+  await pool.query(
+    'UPDATE chat_sessions SET agent_thread_id = $1 WHERE id = $2',
+    [threadId, session.id],
+  );
+  session.agent_thread_id = threadId;
+  return { updated: true, threadId };
+}
+
+// Read immutable attempt context for diagnostics and rolling-deploy recovery.
+// Current restart handling never re-dispatches an ambiguous registered
+// attempt: it fails closed and asks the user for an explicit retry. Older
+// retry_dispatch_pending records remain readable so they can be terminalized
+// safely during the compatibility window.
+async function getCodexAttemptRecoveryState({ pool, turnUuid }) {
+  if (!turnUuid) return null;
+  const { rows } = await pool.query(
+    `SELECT status, session_id, user_id, requested_model, reasoning_effort,
+            credential_id, credential_revision, agent_thread_id,
+            agent_config_version, logical_turn_id, attempt_number
+       FROM agent_turns
+      WHERE id = $1
+        AND backend = 'codex_openrouter'
+        AND provider = 'openrouter'`,
+    [turnUuid],
+  );
+  return rows[0] || null;
 }
 
 // Extract a cumulative-provider-usage object from a terminal worker result
@@ -549,6 +751,8 @@ module.exports = {
   completeCodexTurn,
   resolveCodexTurn,
   settleRecoveredAgentAttempt,
+  persistRecoveredAgentThread,
+  getCodexAttemptRecoveryState,
   usageTotalFromResult,
   classifyErrorCode,
   sanitizeError,

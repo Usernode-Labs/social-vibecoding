@@ -45,12 +45,16 @@ const AUD_EDGE = 'usernode:edge';
 const PUR_IFRAME = 'iframe';
 const PUR_WORKER = 'worker:session';
 // Narrow, purpose-bound worker capabilities (review #2 / #6): the
-// general worker:session token is the only one the Anthropic proxy
-// accepts, and it is reserved for claude_code. Codex workers instead hold
-// exactly these two scoped capabilities and never a worker:session token,
-// so repository code running in a Codex turn cannot spend Anthropic funds.
+// general worker:session token is reserved for build/sync mutations. Agent
+// subprocesses receive only the capabilities their mode needs: proxy auth,
+// issue reads, pushes, or production diagnostics. Keeping these purposes
+// distinct matters for Claude scouts because unrestricted read-only Bash can
+// inspect its own environment; merely renaming a general token would still
+// let it call every endpoint that accepts worker:session.
 const PUR_WORKER_PUSH = 'worker:push';
 const PUR_ISSUES_READ = 'worker:issues-read';
+const PUR_ANTHROPIC_PROXY = 'worker:anthropic-proxy';
+const PUR_PROD_DEBUG = 'worker:prod-debug';
 const PUR_EDGE_GRANT = 'edge:grant';
 const PUR_EDGE_COOKIE = 'edge:cookie';
 
@@ -277,6 +281,28 @@ function signIssuesReadToken({ sessionId }) {
 function verifyIssuesReadToken(token) {
   return verifyWorkerPurpose(token, PUR_ISSUES_READ);
 }
+function signAnthropicProxyToken({ sessionId }) {
+  return signWorkerPurpose({ sessionId, purpose: PUR_ANTHROPIC_PROXY });
+}
+function verifyAnthropicProxyToken(token) {
+  return verifyWorkerPurpose(token, PUR_ANTHROPIC_PROXY);
+}
+function signProdDebugToken({ sessionId }) {
+  if (typeof sessionId === 'undefined' || sessionId === null) {
+    throw new Error('platform-jwt: sessionId required');
+  }
+  return jwt.sign({
+    session_id: sessionId,
+    scope: PUR_PROD_DEBUG,
+    pur: PUR_PROD_DEBUG,
+    prod_debug: true,
+  }, workerSecret(), {
+    algorithm: 'HS256', issuer: ISSUER, audience: AUD_WORKER, expiresIn: WORKER_TTL,
+  });
+}
+function verifyProdDebugToken(token) {
+  return verifyWorkerPurpose(token, PUR_PROD_DEBUG);
+}
 
 // ── Private-app edge gate ─────────────────────────────────────────────
 //
@@ -468,6 +494,8 @@ module.exports = {
   PUR_WORKER,
   PUR_WORKER_PUSH,
   PUR_ISSUES_READ,
+  PUR_ANTHROPIC_PROXY,
+  PUR_PROD_DEBUG,
   PUR_EDGE_GRANT,
   PUR_EDGE_COOKIE,
   IFRAME_TTL,
@@ -486,6 +514,10 @@ module.exports = {
   verifyWorkerPushToken,
   signIssuesReadToken,
   verifyIssuesReadToken,
+  signAnthropicProxyToken,
+  verifyAnthropicProxyToken,
+  signProdDebugToken,
+  verifyProdDebugToken,
   signEdgeGrant,
   verifyEdgeGrant,
   signEdgeCookie,

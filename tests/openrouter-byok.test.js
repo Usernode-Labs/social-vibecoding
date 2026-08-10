@@ -29,6 +29,7 @@ test('buildCodexConfig points directly at OpenRouter and disables agents', () =>
   assert.match(cfg, /model = "openai\/gpt-5.3-codex"/);
   assert.match(cfg, /base_url = "https:\/\/openrouter.ai\/api\/v1"/);
   assert.match(cfg, /env_key = "OPENROUTER_API_KEY"/);
+  assert.match(cfg, /\[shell_environment_policy\][\s\S]*exclude = \["OPENROUTER_API_KEY"\]/);
   assert.match(cfg, /\[agents\][\s\S]*enabled = false/);
   assert.match(cfg, /model_reasoning_effort = "high"/);
 });

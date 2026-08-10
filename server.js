@@ -77,6 +77,9 @@ const llm = require('./src/services/llm');
 const worker = require('./src/services/worker');
 const activeWorkersSvc = require('./src/services/active-workers');
 const turnWatchdog = require('./src/services/turn-watchdog');
+const recoveryRetry = require('./src/services/recovery-retry');
+const turnLifecycle = require('./src/services/turn-lifecycle');
+const turnEffects = require('./src/services/turn-effects');
 const recoveryPills = require('./src/services/recovery-pills');
 const sessionLifecycle = require('./src/services/session-lifecycle');
 const stagingRecovery = require('./src/services/staging-recovery');
@@ -86,6 +89,7 @@ const stagingReap = require('./src/services/staging-reap');
 // stagingSvc because recoverActiveWorkers() already binds a local `staging`.
 const stagingSvc = require('./src/services/staging');
 const limits = require('./src/services/limits');
+const events = require('./src/services/events');
 const ws = require('./src/services/ws');
 const log = require('./src/services/logger');
 const lifecycle = require('./src/services/lifecycle');
@@ -506,7 +510,9 @@ app.use(appRoutes(config));
 app.use(appFileShellRoutes(config));
 app.use(chatRoutes(config));
 app.use(proposalHandoffRoutes(config));
-app.use(sessionRoutes(config));
+app.use(sessionRoutes(config, {
+  scheduleInteractiveRecovery: scheduleInteractiveTurnRecovery,
+}));
 app.use(voteRoutes(config));
 app.use(kudosRoutes(config));
 // Public read-only apps + contributors API. Mounted after authMiddleware
@@ -874,7 +880,11 @@ async function becomeLeader() {
   // orphans are a feature, not a bug: workers are intentionally detached
   // from the server lifecycle so `node --watch` restarts don't interrupt
   // in-flight Claude Code sessions.
-  recoverActiveWorkers(config)
+  reconcilePendingTurnCleanup(config)
+    .catch((err) => {
+      log.warn('server', 'Pending turn cleanup reconciliation failed', { err: err.message });
+    })
+    .then(() => recoverActiveWorkers(config))
     .catch((err) => {
       log.warn('server', 'Worker adoption failed', { err: err.message });
     })
@@ -1857,13 +1867,146 @@ async function recoverActiveWorkers(config) {
 
   for (const orphan of orphans) {
     // Run each adoption in parallel; they're IO-bound and isolated.
-    adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcastGlobal })
+    const deps = { config, pool, staging, ghub, broadcastGlobal };
+    adoptOrphanWorker(orphan, deps)
       .catch((err) => {
+        if (err?.retainActiveTurn && recoveryRetry.shouldRetryRecoveryError(err)) {
+          log.warn('server', 'Orphan adoption paused with durable turn state retained', {
+            name: orphan.name, sessionId: orphan.sessionId, err: err.message,
+          });
+          scheduleRetainedOrphanRecovery(orphan, deps);
+          return;
+        }
         log.warn('server', 'Orphan adoption failed', {
           name: orphan.name, err: err.message,
         });
       });
   }
+}
+
+async function persistedActiveTurnExists(pool, sessionId) {
+  try {
+    const { rows } = await pool.query(
+      'SELECT active_turn FROM chat_sessions WHERE id = $1',
+      [sessionId]
+    );
+    return !!rows[0]?.active_turn;
+  } catch {
+    // An unavailable DB cannot prove the retained state disappeared. Keep
+    // ownership and try again rather than letting the watchdog race us.
+    return null;
+  }
+}
+
+function turnCleanupArgs(activeTurn) {
+  return turnLifecycle.cleanupArgs(activeTurn);
+}
+
+async function reconcilePendingTurnCleanup(config) {
+  const pool = getPool(config);
+  const { rows } = await pool.query(
+    `SELECT id, active_turn
+       FROM chat_sessions
+      WHERE active_turn->>'phase' = $1`,
+    [turnLifecycle.PHASE_CLEANUP_PENDING],
+  );
+  for (const row of rows) {
+    const args = turnCleanupArgs(row.active_turn);
+    const cleared = await worker.finishTurn(row.id, args);
+    if (!cleared) {
+      log.warn('server', 'Pending turn cleanup remains durable for a later sweep', {
+        sessionId: row.id,
+      });
+    }
+  }
+}
+
+function scheduleRetainedOrphanRecovery(orphan, deps) {
+  const sessionId = Number(orphan.sessionId);
+  let releaseReservation = null;
+  return recoveryRetry.scheduleRetainedRecovery({
+    key: `interactive:${sessionId}`,
+    hold: () => {
+      if (!releaseReservation) {
+        releaseReservation = activeWorkersSvc.beginSessionOperation(sessionId);
+      }
+    },
+    release: () => {
+      releaseReservation?.();
+      releaseReservation = null;
+    },
+    // Every retry re-reads the durable phase. The timer is only scheduling;
+    // it never remembers semantic recovery state in a closure.
+    run: async () => {
+      const activeTurn = await turnLifecycle.loadActiveTurn(deps.pool, sessionId);
+      const action = turnLifecycle.recoveryAction(activeTurn);
+      if (action === 'none') return;
+      if (action === 'cleanup') {
+        const args = turnCleanupArgs(activeTurn);
+        recoveryRetry.requireDurableTurnCleanup(
+          await worker.finishTurn(sessionId, args),
+          args,
+        );
+        return;
+      }
+      if (action === 'quarantine') return;
+      await adoptOrphanWorker(orphan, deps);
+    },
+    onError: async (err, { failures }) => {
+      if (!recoveryRetry.shouldRetryRecoveryError(err)) {
+        log.error('server', 'Orphan recovery has invalid durable state; leaving it quarantined', {
+          name: orphan.name, sessionId, err: err.message,
+        });
+        return false;
+      }
+      const retained = err?.retainActiveTurn
+        ? true
+        : await persistedActiveTurnExists(deps.pool, sessionId);
+      if (retained !== false) {
+        log.warn('server', 'Retrying retained orphan recovery', {
+          name: orphan.name, sessionId, failures, err: err.message,
+          activeTurnObservable: retained !== null,
+        });
+        return true;
+      }
+      log.warn('server', 'Retried orphan adoption failed after durable turn cleared', {
+        name: orphan.name, sessionId, err: err.message,
+      });
+      return false;
+    },
+    onComplete: () => log.info('server', 'Retained orphan recovery completed', {
+      name: orphan.name, sessionId,
+    }),
+    onHookError: (err) => log.warn('server', 'Orphan recovery retry hook failed', {
+      name: orphan.name, sessionId, err: err.message,
+    }),
+  });
+}
+
+// Live handlers use the exact orphan-adoption state machine after retaining
+// an active_turn. Supplying it at route construction avoids a circular
+// sessions.js -> server.js import while keeping one semantic recovery path
+// for live failures and process restarts.
+function scheduleInteractiveTurnRecovery(sessionId) {
+  const id = Number(sessionId);
+  if (!Number.isSafeInteger(id) || id <= 0) return false;
+  const key = `interactive:${id}`;
+  const scheduled = scheduleRetainedOrphanRecovery({
+    name: worker.workerContainerName(id),
+    sessionId: id,
+    // Warm workers remain running after their detached turn exits; cleanup
+    // phases bypass this value before adoption is attempted.
+    state: 'running',
+  }, {
+    config,
+    pool: getPool(config),
+    staging: stagingSvc,
+    ghub: github,
+    broadcastGlobal: ws.broadcastGlobal,
+  });
+  // A duplicate request means the retained owner is already scheduled, not
+  // that recovery is absent.
+  return scheduled || recoveryRetry.isScheduled(key);
 }
 
 async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcastGlobal }) {
@@ -1889,8 +2032,29 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
   }
   const session = rows[0];
 
-  if (session.status !== 'active') {
-    // Session archived while we were down — drop the container.
+  const recoveryAction = turnLifecycle.recoveryAction(session.active_turn);
+  if (recoveryAction === 'quarantine') {
+    log.error('server', 'Orphan turn is quarantined; preserving durable state and stopping worker', {
+      sessionId,
+      turnId: turnLifecycle.turnIdentity(session.active_turn),
+      quarantineCode: session.active_turn?.quarantineCode || null,
+    });
+    // destroyWorker removes only the container/registry entry; the session
+    // volume (and therefore the quarantined journal) remains for operators.
+    await worker.destroyWorker(containerName);
+    return;
+  }
+  if (recoveryAction === 'cleanup') {
+    const args = turnCleanupArgs(session.active_turn);
+    recoveryRetry.requireDurableTurnCleanup(
+      await worker.finishTurn(sessionId, args),
+      args,
+    );
+    session.active_turn = null;
+  }
+
+  if (!['active', 'promoted'].includes(session.status)) {
+    // Session became non-runnable while we were down — drop the container.
     await worker.destroyWorker(containerName);
     return;
   }
@@ -2040,7 +2204,40 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     // GitHub, and resending buys a duplicate run (see
     // buildCodeLandedBreadcrumb). Say what landed and repair the preview.
     const codeLanded = !!goneTail.sha && goneTail.pushOk === true;
-    await worker.clearActiveTurn(sessionId);
+    // Codex owns a durable per-attempt ledger row in addition to active_turn.
+    // Once the latter is cleared there is no remaining pointer from this
+    // recovery path to the running attempt, so terminalize it first. A
+    // transient ledger failure retains the turn for retry; a missing attempt
+    // quarantines it through the same policy used by the stale-turn watchdog.
+    if (goneTurn?.backend === 'codex_openrouter' && goneTurn?.turnUuid) {
+      const agentTurn = require('./src/services/agent-turn');
+      try {
+        await agentTurn.completeCodexAttempt({
+          pool,
+          turnUuid: goneTurn.turnUuid,
+          status: 'failed',
+          errorCode: 'recovery_abandoned',
+          errorDetail: 'Durable turn was abandoned after its worker container disappeared.',
+        });
+      } catch (ledgerErr) {
+        const disposition = await recoveryRetry.retainOrQuarantineRecoveryError({
+          pool,
+          sessionId,
+          activeTurn: goneTurn,
+          error: ledgerErr,
+        });
+        log.error('server', disposition.action === 'retry'
+          ? 'Gone Codex turn retained because ledger terminalization failed'
+          : 'Gone Codex turn quarantined because its ledger attempt is missing', {
+          sessionId, err: ledgerErr.message,
+        });
+        throw ledgerErr;
+      }
+    }
+    recoveryRetry.requireDurableTurnCleanup(
+      await worker.clearActiveTurn(sessionId, turnCleanupArgs(goneTurn)),
+      turnCleanupArgs(goneTurn),
+    );
     // Terminal marker so the dead turn's progress card doesn't stay
     // frozen on its last in-progress line ("Pushing", "Editing …").
     await appendTerminalProgressLine(pool, sessionId, '[interrupted]');
@@ -2140,6 +2337,7 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
   await finalizeRecoveredTurn({
     config, pool, staging, session, sessionId, result, repoOwner, repoName,
     emit, containerName,
+    activeTurn: session.active_turn || null,
     // Legacy single-shot containers are per-turn; reap when done.
     keepWorker: false,
   });
@@ -2293,8 +2491,19 @@ async function appendTerminalProgressLine(pool, sessionId, line) {
 async function finalizeRecoveredTurn({
   config, pool, staging, session, sessionId, result, repoOwner, repoName,
   emit, containerName, keepWorker, startedAtMs, alreadyDone = null,
+  activeTurn = null,
 }) {
   const done = alreadyDone && typeof alreadyDone === 'object' ? alreadyDone : {};
+  const noteMilestone = async (milestone) => {
+    if (!activeTurn) return false;
+    const noted = await worker.noteTailMilestone(
+      sessionId,
+      milestone,
+      turnLifecycle.cleanupArgs(activeTurn),
+    );
+    if (noted) Object.assign(done, milestone);
+    return noted;
+  };
   // #183 belt-and-braces: headless rows must never get the interactive
   // post-turn tail (PR on the auto branch + staging + system message) from
   // any recovery transport — resumeHeadlessRuns owns them. adoptOrphanWorker
@@ -2334,19 +2543,38 @@ async function finalizeRecoveredTurn({
       : ccOutcome === 'no_changes'
         ? 'Claude Code made no changes'
         : 'Claude Code did not complete';
-    await pool.query(
-      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-       VALUES ($1, 'system', $2, $3)`,
-      [sessionId, statusText, JSON.stringify({
-        ccOutput: ccText, ccOutcome,
-        ...(durationMs != null ? { durationMs } : {}),
-        recovered: true,
-      })]
-    ).catch(() => {});
-    emit('status', {
-      text: statusText, ccOutput: ccText, ccOutcome,
+    const metadata = {
+      ccOutput: ccText,
+      ccOutcome,
       ...(durationMs != null ? { durationMs } : {}),
-    });
+      recovered: true,
+    };
+    let emitted = true;
+    if (activeTurn?.turnId) {
+      const receipt = await turnEffects.runDbEffect({
+        pool,
+        turnId: activeTurn.turnId,
+        effectKey: 'completion_row',
+        sessionId,
+        run: async (client) => {
+          await client.query(
+            `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+             VALUES ($1, 'system', $2, $3)`,
+            [sessionId, statusText, JSON.stringify(metadata)],
+          );
+          return { persisted: true };
+        },
+      });
+      emitted = receipt.applied;
+    } else {
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+         VALUES ($1, 'system', $2, $3)`,
+        [sessionId, statusText, JSON.stringify(metadata)],
+      );
+    }
+    if (emitted) emit('status', { text: statusText, ...metadata });
+    await noteMilestone({ completionRowPosted: true });
     summaryParts.unshift(`What the agent did:\n${ccText}`);
   };
 
@@ -2456,6 +2684,11 @@ async function finalizeRecoveredTurn({
       session.testing_path = recoveredTesting.testingPath;
     }
 
+    // Recovery has no plaintext user key. A completed/pending live receipt
+    // carries its original payer; only a genuinely unclaimed recovery call
+    // uses this platform-billed default.
+    const prMetadataBillingByok = false;
+
     const wasNewPR = !session.pr_number;
     const prMetadata = require('./src/services/pr-metadata');
     const prResult = await prMetadata.applyPrMetadata({
@@ -2465,6 +2698,9 @@ async function finalizeRecoveredTurn({
       username: session.username,
       broadcast: (event, data) => emit(event, data),
       userId: session.user_id,
+      effectTurnId: activeTurn?.turnId || null,
+      effectSessionId: sessionId,
+      effectBillingByok: prMetadataBillingByok,
     });
     // Live-path parity: a freshly opened PR gets its own transcript row,
     // so the recovered turn reads "PR #N created" like any other.
@@ -2473,13 +2709,56 @@ async function finalizeRecoveredTurn({
     // row we were handed may predate that write.
     const prAnnounced = !!done.prNumber || !!done.prOpenedEventRecorded;
     if (prResult && prResult.prNumber && wasNewPR && !prAnnounced) {
-      await pool.query(
-        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-         VALUES ($1, 'system', $2, $3)`,
-        [sessionId, `PR #${prResult.prNumber} created`,
-          JSON.stringify({ prNumber: prResult.prNumber, recovered: true })]
-      ).catch(() => {});
-      emit('status', { text: `PR #${prResult.prNumber} created` });
+      const prStatus = `PR #${prResult.prNumber} created`;
+      let emitted = true;
+      if (activeTurn?.turnId) {
+        const receipt = await turnEffects.runDbEffect({
+          pool,
+          turnId: activeTurn.turnId,
+          effectKey: 'pr_opened_announcement',
+          sessionId,
+          run: async (client) => {
+            await client.query(
+              `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+               VALUES ($1, 'system', $2, $3)`,
+              [sessionId, prStatus,
+                JSON.stringify({ prNumber: prResult.prNumber, recovered: true })],
+            );
+            await client.query(
+              `INSERT INTO events (user_id, app_id, session_id, event_type, metadata)
+               VALUES ($1, $2, $3, $4, $5::jsonb)`,
+              [
+                session.user_id,
+                session.app_id,
+                sessionId,
+                events.EVENT_TYPES.PR_OPENED,
+                JSON.stringify({ prNumber: prResult.prNumber }),
+              ],
+            );
+            return { prNumber: prResult.prNumber };
+          },
+        });
+        emitted = receipt.applied;
+      } else {
+        await pool.query(
+          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+           VALUES ($1, 'system', $2, $3)`,
+          [sessionId, prStatus,
+            JSON.stringify({ prNumber: prResult.prNumber, recovered: true })],
+        );
+        await events.record(pool, {
+          type: events.EVENT_TYPES.PR_OPENED,
+          userId: session.user_id,
+          appId: session.app_id,
+          sessionId,
+          metadata: { prNumber: prResult.prNumber },
+        });
+      }
+      if (emitted) emit('status', { text: prStatus });
+      await noteMilestone({
+        prNumber: prResult.prNumber,
+        prOpenedEventRecorded: true,
+      });
       summaryParts.push(`Opened PR #${prResult.prNumber}: ${prResult.prUrl}`);
     } else if (session.pr_number || prResult?.prNumber) {
       summaryParts.push(`Pushed to existing PR #${session.pr_number || prResult.prNumber}.`);
@@ -2494,6 +2773,10 @@ async function finalizeRecoveredTurn({
     // tail already performed is never re-announced.
     if (session.status === 'promoted' && done.votesResetFor !== result.sha) {
       try {
+        // Claim before the destructive delete. If recovery dies after this
+        // point, repeating the reset/announcement would be worse than
+        // leaving the already-reset votes unannounced.
+        await noteMilestone({ votesResetFor: result.sha });
         await require('./src/services/app-admins')
           .refreshExplicitApproval(pool, session, session);
         const { rowCount } = await pool.query(
@@ -2519,6 +2802,118 @@ async function finalizeRecoveredTurn({
     }
 
     const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
+
+    const stagingFailureSummary = (failure = {}) => (
+      `Staging build failed.\n\nWhat still happened: commit ${result.sha.substring(0, 8)} was pushed to `
+      + `${session.branch_name}${session.pr_number ? ` and PR #${session.pr_number} was created/updated` : ''}. `
+      + `Only the staging preview container is missing — there is no preview URL for this commit.\n\n`
+      + `${failure.fix || 'Retry the preview build when the staging issue is resolved.'}`
+    );
+
+    // The transcript card and its replay checkpoint commit together. The
+    // staging build itself is external and may already have happened, but a
+    // retained tail must never publish its outcome twice on a later wrap-up
+    // retry. A failed outcome is checkpointed too so retrying Mayor/spend
+    // work does not launch another expensive build known to have failed.
+    const publishRecoveredStaging = async ({ outcome, stagingUrl = null, failure = null }) => {
+      const succeeded = outcome === 'success';
+      const content = succeeded ? 'Staging deployed!' : 'Staging build failed';
+      const metadata = succeeded
+        ? {
+            stagingUrl,
+            changesReady: true,
+            prNumber: prResult?.prNumber || session.pr_number || null,
+            prUrl: prResult?.prUrl || session.pr_url || null,
+            recovered: true,
+          }
+        : {
+            error: failure?.errMsg || 'Staging build failed',
+            changesReady: true,
+            stagingFailed: true,
+            stagingErrorName: failure?.errName || 'Error',
+            stagingMissingKeys: failure?.missingKeys || [],
+            prNumber: prResult?.prNumber || session.pr_number || null,
+            prUrl: prResult?.prUrl || session.pr_url || null,
+            recovered: true,
+          };
+      const checkpoint = succeeded
+        ? { stagingPublished: true }
+        : { stagingPublished: true, stagingFailed: failure || { errMsg: metadata.error } };
+      const persist = async (client) => {
+        await client.query(
+          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+           VALUES ($1, 'system', $2, $3)`,
+          [sessionId, content, JSON.stringify(metadata)],
+        );
+        if (activeTurn) {
+          await turnLifecycle.mergeTailMilestones(client, {
+            sessionId,
+            ...turnLifecycle.cleanupArgs(activeTurn),
+            milestones: checkpoint,
+          });
+        }
+        return { outcome, metadata, failure, checkpoint };
+      };
+
+      let applied = true;
+      let value;
+      if (activeTurn?.turnId) {
+        const receipt = await turnEffects.runDbEffect({
+          pool,
+          turnId: activeTurn.turnId,
+          effectKey: turnEffects.EFFECT_KEYS.RECOVERED_STAGING_PUBLICATION,
+          sessionId,
+          run: persist,
+        });
+        applied = receipt.applied;
+        value = receipt.value || { outcome, metadata, failure, checkpoint };
+      } else {
+        value = await persist(pool);
+      }
+      // A completed receipt is authoritative if two recovery owners reached
+      // this boundary with different observations. Restore the checkpoint
+      // that committed with the card, not the retrying owner's proposal.
+      const settledCheckpoint = value.checkpoint
+        && typeof value.checkpoint === 'object'
+        && !Array.isArray(value.checkpoint)
+        ? value.checkpoint
+        : (value.outcome === 'success'
+            ? { stagingPublished: true }
+            : {
+                stagingPublished: true,
+                stagingFailed: value.failure || { errMsg: value.metadata?.error || 'Staging build failed' },
+              });
+      Object.assign(done, settledCheckpoint);
+
+      if (applied && value.outcome === 'success') {
+        emit('staging_ready', {
+          url: value.metadata.stagingUrl,
+          changesReady: true,
+          testingMd: session.testing_md || null,
+          testingPath: session.testing_path || null,
+        });
+      } else if (applied) {
+        emit('staging_failed', {
+          error: value.metadata.error,
+          errorName: value.metadata.stagingErrorName,
+          missingKeys: value.metadata.stagingMissingKeys,
+          changesReady: true,
+          prNumber: value.metadata.prNumber,
+          prUrl: value.metadata.prUrl,
+        });
+      }
+      return { applied, ...value };
+    };
+
+    if (done.stagingFailed) {
+      log.info('server', 'Recovered turn: staging failure already published — skipping rebuild', {
+        sessionId,
+      });
+      summaryParts.push(stagingFailureSummary(
+        typeof done.stagingFailed === 'object' ? done.stagingFailed : {},
+      ));
+      return { outcome: 'done', summary: summaryParts.join('\n\n') };
+    }
 
     // Did the interrupted tail already build a preview for this commit,
     // and is that container still healthy? Rebuilding one costs minutes
@@ -2560,23 +2955,7 @@ async function finalizeRecoveredTurn({
       log.info('server', 'Recovered turn: reusing healthy staging preview', {
         sessionId, url: reusedStaging,
       });
-      await pool.query(
-        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-         VALUES ($1, 'system', $2, $3)`,
-        [sessionId, 'Staging deployed!', JSON.stringify({
-          stagingUrl: reusedStaging,
-          changesReady: true,
-          prNumber: prResult?.prNumber || session.pr_number || null,
-          prUrl: prResult?.prUrl || session.pr_url || null,
-          recovered: true,
-        })]
-      ).catch(() => {});
-      emit('staging_ready', {
-        url: reusedStaging,
-        changesReady: true,
-        testingMd: session.testing_md || null,
-        testingPath: session.testing_path || null,
-      });
+      await publishRecoveredStaging({ outcome: 'success', stagingUrl: reusedStaging });
       summaryParts.push(`Staging preview is live: ${reusedStaging}`);
       visuals.captureForSession(config, session, app, result.sha, null, { send: () => {} })
         .catch((err) => log.warn('server', 'Recovered turn: reused-preview capture failed (non-fatal)', {
@@ -2606,6 +2985,7 @@ async function finalizeRecoveredTurn({
         `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
         [stagingResult.containerId, stagingResult.stagingUrl, sessionId]
       );
+      await noteMilestone({ stagingUrl: stagingResult.stagingUrl });
 
       // Make the first real request through the edge now that staging_url
       // is persisted and BEFORE staging_ready reveals the preview button,
@@ -2620,27 +3000,9 @@ async function finalizeRecoveredTurn({
         });
       }
 
-      await pool.query(
-        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-         VALUES ($1, 'system', $2, $3)`,
-        [sessionId, 'Staging deployed!', JSON.stringify({
-          stagingUrl: stagingResult.stagingUrl,
-          // #361 parity: `changesReady` (not the incidental stagingUrl) is
-          // what drives the Changes-ready card, and prNumber/prUrl back its
-          // header + "View on GitHub" after a reload. applyPrMetadata
-          // mutates the session row in place, so prefer its own return.
-          changesReady: true,
-          prNumber: prResult?.prNumber || session.pr_number || null,
-          prUrl: prResult?.prUrl || session.pr_url || null,
-          recovered: true,
-        })]
-      );
-
-      emit('staging_ready', {
-        url: stagingResult.stagingUrl,
-        changesReady: true,
-        testingMd: session.testing_md || null,
-        testingPath: session.testing_path || null,
+      await publishRecoveredStaging({
+        outcome: 'success',
+        stagingUrl: stagingResult.stagingUrl,
       });
       summaryParts.push(`Staging redeployed: ${stagingResult.stagingUrl}`);
       log.info('server', 'Orphan finalized', {
@@ -2649,28 +3011,6 @@ async function finalizeRecoveredTurn({
     } else {
       const { describeStagingFailure } = require('./src/routes/sessions');
       const { fix, missingKeys, errMsg, errName } = describeStagingFailure(stagingErr);
-      await pool.query(
-        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-         VALUES ($1, 'system', $2, $3)`,
-        [sessionId, 'Staging build failed', JSON.stringify({
-          error: errMsg,
-          changesReady: true,
-          stagingFailed: true,
-          stagingErrorName: errName,
-          stagingMissingKeys: missingKeys,
-          prNumber: prResult?.prNumber || session.pr_number || null,
-          prUrl: prResult?.prUrl || session.pr_url || null,
-          recovered: true,
-        })]
-      ).catch(() => {});
-      emit('staging_failed', {
-        error: errMsg,
-        errorName: errName,
-        missingKeys,
-        changesReady: true,
-        prNumber: session.pr_number || null,
-        prUrl: session.pr_url || null,
-      });
       // #461: record the failure as a terminal 'error' checks verdict
       // instead of leaving the pending state looking "still running".
       await stagingRecovery.recordStagingBootFailure({
@@ -2678,11 +3018,9 @@ async function finalizeRecoveredTurn({
       }).catch((e) => log.warn('server', 'Recovered turn: recordStagingBootFailure failed (non-fatal)', {
         sessionId, err: e.message,
       }));
-      summaryParts.push(
-        `Staging build failed.\n\nWhat still happened: commit ${result.sha.substring(0, 8)} was pushed to `
-        + `${session.branch_name}${session.pr_number ? ` and PR #${session.pr_number} was created/updated` : ''}. `
-        + `Only the staging preview container is missing — there is no preview URL for this commit.\n\n${fix}`
-      );
+      const failure = { fix, missingKeys, errMsg, errName };
+      await publishRecoveredStaging({ outcome: 'failed', failure });
+      summaryParts.push(stagingFailureSummary(failure));
       log.error('server', 'Recovered turn: staging build failed', {
         sessionId, slug: app.slug, errName, err: errMsg, missingKeys,
       });
@@ -2709,6 +3047,26 @@ async function resumeDetachedTurn(args) {
   activeWorkersSvc.activeWorkers.add(sessionId);
   try {
     return await resumeDetachedTurnInner(args);
+  } catch (err) {
+    let retainedTurn;
+    try {
+      retainedTurn = await turnLifecycle.loadActiveTurn(pool, sessionId);
+    } catch (loadErr) {
+      // A DB outage cannot prove that recovery ownership disappeared.
+      // Retry the durable read rather than demoting the original failure to
+      // an ordinary, reapable orphan.
+      loadErr.retainActiveTurn = true;
+      throw loadErr;
+    }
+    if (retainedTurn) {
+      await recoveryRetry.retainOrQuarantineRecoveryError({
+        pool,
+        sessionId,
+        activeTurn: retainedTurn,
+        error: err,
+      });
+    }
+    throw err;
   } finally {
     activeWorkersSvc.activeWorkers.delete(sessionId);
     // Turn completion counts as activity: give the freshly recovered
@@ -2734,7 +3092,8 @@ async function resumeDetachedTurnInner({
   // The milestone map of an interrupted TAIL (empty for a mid-exec
   // recovery). Read once here and threaded into finalizeRecoveredTurn so
   // the tail's non-idempotent steps aren't repeated.
-  const tailDone = (activeTurn && typeof activeTurn.tail === 'object' && activeTurn.tail) || {};
+  let tailDone = (activeTurn && typeof activeTurn.tail === 'object' && activeTurn.tail) || {};
+  let recoveryActiveTurn = activeTurn;
   log.info('server', 'Resuming detached turn from journal', {
     sessionId, containerName, mode: activeTurn.mode, journal: activeTurn.journal,
     // 'tail' distinguishes "the agent was done, the platform side wasn't"
@@ -2769,22 +3128,24 @@ async function resumeDetachedTurnInner({
     ).catch(() => {});
   };
 
+  const onRecoveredProgress = (text) => {
+    emit('cc_progress', { text });
+    progressLines.push(text);
+    if (!flushQueued) {
+      flushQueued = true;
+      setTimeout(flushProgress, 1000);
+    }
+  };
   let result;
   try {
     result = await worker.resumeTurnFromJournal(sessionId, {
       journal: activeTurn.journal,
+      turnId: activeTurn.turnId || null,
       agentBackend: activeTurn.backend || 'claude_code',
       // #664: seed the per-turn BYOK tally from the persisted record so
       // post-restart switched calls accumulate on top of pre-restart ones.
       byokCentsSoFar: Number(activeTurn.byokCents || 0),
-      onProgress: (text) => {
-        emit('cc_progress', { text });
-        progressLines.push(text);
-        if (!flushQueued) {
-          flushQueued = true;
-          setTimeout(flushProgress, 1000);
-        }
-      },
+      onProgress: onRecoveredProgress,
     });
   } catch (err) {
     log.warn('server', 'Detached-turn resume failed', { sessionId, err: err.message });
@@ -2793,11 +3154,29 @@ async function resumeDetachedTurnInner({
     // the row 'running' / the token usable until expiry.
     if (activeTurn?.backend === 'codex_openrouter' && activeTurn?.turnUuid) {
       const agentTurn = require('./src/services/agent-turn');
-      await agentTurn.completeCodexTurn({
-        pool, turnUuid: activeTurn.turnUuid, status: 'failed',
-      }).catch(() => {});
+      try {
+        await agentTurn.completeCodexTurn({
+          pool,
+          turnUuid: activeTurn.turnUuid,
+          status: 'failed',
+          errorCode: agentTurn.classifyErrorCode(err),
+          errorDetail: agentTurn.sanitizeError(err),
+        });
+      } catch (ledgerErr) {
+        const disposition = await recoveryRetry.retainOrQuarantineRecoveryError({
+          pool,
+          sessionId,
+          activeTurn,
+          error: ledgerErr,
+        });
+        log.error('server', disposition.action === 'retry'
+          ? 'Recovered Codex terminalization failed; retaining durable state'
+          : 'Recovered Codex attempt is missing; durable turn quarantined', {
+          sessionId, err: ledgerErr.message,
+        });
+        throw ledgerErr;
+      }
     }
-    await worker.clearActiveTurn(sessionId);
     // Terminal marker: the card must not stay frozen on the last line
     // the journal managed to deliver before the resume died. When the
     // replay produced no lines at all, append to the persisted row
@@ -2828,24 +3207,44 @@ async function resumeDetachedTurnInner({
       text: recoveryPills.TURN_UNFINISHED_BREADCRUMB,
       quickReplies: failedPills || undefined,
     });
+    // Cleanup is deliberately last: if its durable clear needs a retry, the
+    // retry scheduler can repeat only cleanup without duplicating narration.
+    const cleanupArgs = turnCleanupArgs(activeTurn);
+    recoveryRetry.requireDurableTurnCleanup(
+      await worker.finishTurn(sessionId, cleanupArgs),
+      cleanupArgs,
+    );
     return;
   }
   flushProgress();
 
-  // Terminalize a recovered agent turn through the SHARED settlement
-  // helper (plan 7.5): Codex attempts are completed through the agent_turns
-  // ledger (never the Anthropic ledger); Claude settles through `limits`.
-  // Interactive and headless recovery now share one implementation so they
-  // cannot drift. activeTurn.backend is the backend persisted at dispatch.
-  {
+  // A recovered missing-thread marker still owns its one fresh attempt.
+  // Re-dispatch it before consuming the journal, then make thread + ledger
+  // persistence required. Any failure here deliberately escapes BEFORE the
+  // tail's clearing finally, leaving active_turn and the journal replayable.
+  try {
     const agentTurn = require('./src/services/agent-turn');
+    const sessionsRoutes = require('./src/routes/sessions');
+    const retried = await sessionsRoutes.resumeRecoveredCodexFreshRetry({
+      pool, config, session, activeTurn, result,
+      onProgress: onRecoveredProgress,
+    });
+    if (retried) {
+      result = retried.result;
+      recoveryActiveTurn = retried.activeTurn;
+      tailDone = (recoveryActiveTurn.tail
+        && typeof recoveryActiveTurn.tail === 'object'
+        && recoveryActiveTurn.tail) || {};
+    }
+
+    await agentTurn.persistRecoveredAgentThread({ pool, session, result });
     await agentTurn.settleRecoveredAgentAttempt({
       pool,
-      activeTurn,
+      activeTurn: recoveryActiveTurn,
       result,
       settleClaude: async () => {
         if (!result.costUsd) return null;
-        let byok = activeTurn.byok;
+        let byok = recoveryActiveTurn.byok;
         if (byok === undefined || byok === null) {
           try {
             const { rows } = await pool.query(
@@ -2861,11 +3260,24 @@ async function resumeDetachedTurnInner({
         return limits.settleTurnSpend(pool, session.user_id, Math.round(result.costUsd * 100), {
           turnByok: !!byok,
           byokObservedCents: worker.getTurnByokCents(sessionId),
+          turnId: turnLifecycle.turnIdentity(recoveryActiveTurn),
+          sessionId,
         });
       },
-    }).catch((err) => {
-      log.error('server', 'Recovered agent settlement failed', { sessionId, err: err.message });
     });
+  } catch (err) {
+    const disposition = await recoveryRetry.retainOrQuarantineRecoveryError({
+      pool,
+      sessionId,
+      activeTurn: recoveryActiveTurn,
+      error: err,
+    });
+    log.error('server', disposition.action === 'retry'
+      ? 'Required recovered-turn persistence failed; retaining durable state'
+      : 'Recovered turn has invalid durable state; leaving it quarantined without retry', {
+      sessionId, err: err.message,
+    });
+    throw err;
   }
 
   // Terminal marker for the progress card: pessimistic default so a
@@ -2883,68 +3295,48 @@ async function resumeDetachedTurnInner({
   let wrapUpOutcome = null;
   let wrapUpPillKind = null;
   let wrapUpSummary = null;
+  let durableTailComplete = false;
   try {
-    if (activeTurn.mode === 'scout') {
+    if (recoveryActiveTurn.mode === 'scout') {
       // Scout turns push nothing — their product is the spec text.
       // Persist it the same way runScoutTool does (spec_md + frozen
       // version) so the draft isn't lost with the dead SSE.
       const {
-        stripSpecWrapperFence, snapshotSessionSpec, buildSpecPreview,
+        stripSpecWrapperFence, persistScoutPublication,
       } = require('./src/routes/sessions');
       const ccText = stripSpecWrapperFence((result.lastResultText || '').trim());
       if (ccText) {
         const hadSpec = !!(session.spec_md || '').trim();
-        await pool.query(
-          'UPDATE chat_sessions SET spec_md = $1 WHERE id = $2',
-          [ccText, sessionId]
-        ).catch(() => {});
-        const specVersion = await snapshotSessionSpec(pool, sessionId, ccText);
-        const lineCount = ccText.split('\n').length;
-        // #896: the same wording (and the same specPreview card) a live
-        // scout turn produces — runScoutTool's two status texts.
-        const scoutText = hadSpec
-          ? `Scout revised the spec (now ${lineCount} lines).`
-          : `Scout drafted a ${lineCount}-line spec from the codebase.`;
         // #786: "spec drafted" pills ride the spec row itself rather than
         // the wrap-up — it's the row that describes the state the session
         // actually landed in. They stay as a safety net for the case where
         // the wrap-up below can't run at all.
         const specPills = recoveryPills.buildRecoveryQuickReplies('spec_done');
-        await pool.query(
-          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-           VALUES ($1, 'system', $2, $3)`,
-          [
-            sessionId,
-            scoutText,
-            JSON.stringify({
-              // specPreview drives the tappable spec card in dev-chat;
-              // without it the row claimed a spec existed but offered no
-              // way to open it.
-              specPreview: buildSpecPreview(ccText),
-              specLines: lineCount,
-              scoutOutput: ccText,
-              specVersion,
-              ...(specPills ? { quickReplies: specPills } : {}),
-              recovered: true,
-            }),
-          ]
-        ).catch(() => {});
-        emit('status', {
-          text: scoutText,
-          specPreview: buildSpecPreview(ccText),
-          specLines: lineCount,
-          scoutOutput: ccText,
-          specVersion,
-          quickReplies: specPills || undefined,
+        const publication = await persistScoutPublication({
+          pool,
+          sessionId,
+          turnId: recoveryActiveTurn.turnId || null,
+          content: ccText,
+          hadSpec,
+          quickReplies: specPills,
+          recovered: true,
         });
-        emit('spec_updated', { length: ccText.length, lines: lineCount, version: specVersion });
+        session.spec_md = ccText;
+        if (publication.applied) {
+          emit('status', { text: publication.scoutText, ...publication.metadata });
+          emit('spec_updated', {
+            length: ccText.length,
+            lines: publication.lineCount,
+            version: publication.specVersion,
+          });
+        }
         wrapUpOutcome = 'spec';
         wrapUpPillKind = 'spec_done';
-        wrapUpSummary = hadSpec
-          ? `The scout revised the session's spec doc (now ${lineCount} lines). `
+        wrapUpSummary = publication.hadSpec
+          ? `The scout revised the session's spec doc (now ${publication.lineCount} lines). `
             + 'The user can review it in the dev-chat spec viewer. When they are ready to ship, '
             + 'they will ask you to dispatch the coding agent.'
-          : `The scout investigated the repo and drafted a ${lineCount}-line markdown spec. `
+          : `The scout investigated the repo and drafted a ${publication.lineCount}-line markdown spec. `
             + "It now lives in the session's spec doc; the user can review it in the dev-chat "
             + 'spec viewer. When they are ready to ship, they will ask you to dispatch the coding agent.';
       } else {
@@ -2978,7 +3370,7 @@ async function resumeDetachedTurnInner({
         ).catch(() => {});
       }
       terminalLine = '[done]';
-    } else if (activeTurn.mode === 'sync') {
+    } else if (recoveryActiveTurn.mode === 'sync') {
       // A sync turn is system work: it posts its own status rows via
       // sync-main's sendStatus and has no Mayor reply on the live path
       // either, so there is nothing to wrap up here. Logged only.
@@ -2990,8 +3382,11 @@ async function resumeDetachedTurnInner({
         emit, containerName,
         // Warm contract: the container outlives the turn.
         keepWorker: true,
-        startedAtMs: activeTurn.startedAt ? Date.parse(activeTurn.startedAt) || null : null,
+        startedAtMs: recoveryActiveTurn.startedAt
+          ? Date.parse(recoveryActiveTurn.startedAt) || null
+          : null,
         alreadyDone: tailDone,
+        activeTurn: recoveryActiveTurn,
       });
       terminalLine = finalizeOutcome === 'push_failed' ? '[push_failed]' : '[done]';
       wrapUpPillKind = finalizeOutcome === 'push_failed' ? 'push_failed' : 'code_done';
@@ -3004,8 +3399,9 @@ async function resumeDetachedTurnInner({
     // #896: re-issue the Mayor's phase-2 wrap-up. It used to be skipped
     // outright — the turn ended on a bare recovery breadcrumb and no
     // Mayor reply at all, which is exactly what the issue reported.
-    // runRecoveredWrapUp never throws: a failed model call degrades to a
-    // short static close carrying these pills.
+    // Provider failure degrades to a short static close carrying these pills.
+    // Durable receipt/message/spend failures still throw so this tail remains
+    // owned and is retried from its committed effects.
     // ...unless the interrupted tail already got its wrap-up onto the
     // transcript (a restart in the seconds between the wrap-up persisting
     // and the record being released). Re-issuing it would post a second
@@ -3021,9 +3417,16 @@ async function resumeDetachedTurnInner({
         outcome: wrapUpOutcome,
         dispatchSummary: wrapUpSummary,
         fallbackPillKind: wrapUpPillKind,
-        turnModel: activeTurn.model || null,
+        turnModel: recoveryActiveTurn.model || null,
+        turnId: recoveryActiveTurn.turnId || null,
         emit,
       });
+      await worker.noteTailMilestone(
+        sessionId,
+        { wrapUpPosted: true },
+        turnLifecycle.cleanupArgs(recoveryActiveTurn),
+      );
+      tailDone = { ...tailDone, wrapUpPosted: true };
     }
 
     // #161: the pre-restart SSE is guaranteed dead, so the owner cannot
@@ -3046,6 +3449,7 @@ async function resumeDetachedTurnInner({
         sessionId, err: err.message,
       });
     }
+    durableTailComplete = true;
   } finally {
     // Stamp the terminal marker on the rebuilt log (dedup: journals from
     // new worker images already end with their own [done]/[push_failed])
@@ -3054,7 +3458,18 @@ async function resumeDetachedTurnInner({
       emit('cc_progress', { text: terminalLine });
     }
     flushProgress();
-    await worker.clearActiveTurn(sessionId);
+    if (durableTailComplete) {
+      const cleanupArgs = turnCleanupArgs(recoveryActiveTurn);
+      recoveryRetry.requireDurableTurnCleanup(
+        await worker.finishTurn(sessionId, cleanupArgs),
+        cleanupArgs,
+      );
+    } else {
+      log.warn('server', 'Recovered tail failed; retaining durable turn for replay', {
+        sessionId,
+        turnId: turnLifecycle.turnIdentity(recoveryActiveTurn),
+      });
+    }
   }
 }
 
@@ -3264,6 +3679,19 @@ function startSessionAutoPauseSweeper(config) {
       const nowMs = Date.now();
       const { broadcastGlobal } = require('./src/services/ws');
       for (const row of rows) {
+        // cleanup_pending means all user-visible/economic work committed and
+        // only the identity-safe clear remains. Complete it silently; never
+        // narrate a false interruption or replay the tail.
+        if (turnLifecycle.recoveryAction(row.active_turn) === 'cleanup') {
+          const args = turnCleanupArgs(row.active_turn);
+          const cleared = await worker.finishTurn(row.id, args);
+          if (!cleared) {
+            log.warn('server', 'Watchdog could not finish pending turn cleanup', {
+              sessionId: row.id,
+            });
+          }
+          continue;
+        }
         const busy = activeWorkersSvc.isSessionBusy(row.id);
         // Cheap pre-filter (no docker probe): fresh or busy rows skip.
         if (turnWatchdog.classifyStaleTurn({
@@ -3294,7 +3722,39 @@ function startSessionAutoPauseSweeper(config) {
             sessionId: row.id, startedAt: row.active_turn?.startedAt || null,
             phase: row.active_turn?.phase || 'exec', codeLanded: reapCodeLanded,
           });
-          await worker.clearActiveTurn(row.id);
+          if (row.active_turn?.backend === 'codex_openrouter'
+              && row.active_turn?.turnUuid) {
+            const agentTurn = require('./src/services/agent-turn');
+            try {
+              await agentTurn.completeCodexAttempt({
+                pool,
+                turnUuid: row.active_turn.turnUuid,
+                status: 'failed',
+                errorCode: 'recovery_abandoned',
+                errorDetail: 'Durable turn was abandoned after its worker became stale.',
+              });
+            } catch (ledgerErr) {
+              const disposition = await recoveryRetry.retainOrQuarantineRecoveryError({
+                pool,
+                sessionId: row.id,
+                activeTurn: row.active_turn,
+                error: ledgerErr,
+              });
+              log.error('server', disposition.action === 'retry'
+                ? 'Stale Codex turn retained because ledger terminalization failed'
+                : 'Stale Codex turn quarantined because its ledger attempt is missing', {
+                sessionId: row.id, err: ledgerErr.message,
+              });
+              continue;
+            }
+          }
+          const reaped = await worker.clearActiveTurn(row.id, turnCleanupArgs(row.active_turn));
+          if (!reaped) {
+            log.warn('server', 'Stale turn changed while watchdog was reaping it', {
+              sessionId: row.id,
+            });
+            continue;
+          }
           await appendTerminalProgressLine(pool, row.id, '[interrupted]');
           const msg = reapCodeLanded
             ? recoveryPills.buildCodeLandedBreadcrumb({

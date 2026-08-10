@@ -59,17 +59,41 @@ test('codex_openrouter build env: narrow push + issues tokens, no Anthropic/rela
   assert.ok(!('USERNODE_AGENT_TOKEN' in env));
 });
 
-test('claude_code build env keeps exactly the legacy Anthropic authority', () => {
+test('claude_code build env separates proxy, read, and mutation capabilities', () => {
   const env = worker.buildTurnSecretEnv({
     mode: 'build',
     workerSessionJwt: 'minted.worker.jwt',
+    issuesReadJwt: 'minted.worker.issues-read.jwt',
+    anthropicProxyJwt: 'minted.worker.anthropic-proxy.jwt',
     anthropicApiKey: null,
     prodDebugJwt: null,
     openrouterApiKey: null,
     agentBackend: 'claude_code',
   });
   assert.deepEqual(Object.keys(env).sort(), ['ANTHROPIC_API_KEY', 'ISSUES_JWT', 'WORKER_JWT']);
+  assert.equal(env.ANTHROPIC_API_KEY, 'minted.worker.anthropic-proxy.jwt');
+  assert.equal(env.ISSUES_JWT, 'minted.worker.issues-read.jwt');
+  assert.equal(env.WORKER_JWT, 'minted.worker.jwt');
   assert.ok(!('OPENROUTER_API_KEY' in env), 'Claude turns must not carry the OpenRouter key');
+});
+
+test('claude_code scout env contains no worker:session capability under any alias', () => {
+  const env = worker.buildTurnSecretEnv({
+    mode: 'scout',
+    workerSessionJwt: 'must-not-travel',
+    issuesReadJwt: 'minted.worker.issues-read.jwt',
+    anthropicProxyJwt: 'minted.worker.anthropic-proxy.jwt',
+    anthropicApiKey: null,
+    prodDebugJwt: 'minted.worker.prod-debug.jwt',
+    agentBackend: 'claude_code',
+  });
+  assert.deepEqual(env, {
+    ANTHROPIC_API_KEY: 'minted.worker.anthropic-proxy.jwt',
+    ISSUES_JWT: 'minted.worker.issues-read.jwt',
+    PROD_DEBUG_JWT: 'minted.worker.prod-debug.jwt',
+  });
+  assert.ok(!Object.values(env).includes('must-not-travel'));
+  assert.ok(!('WORKER_JWT' in env));
 });
 
 // ── Runner config (direct transport proof) ──────────────────────────────
@@ -106,4 +130,53 @@ test('codex push/issues tokens are narrow purposes, NOT worker:session', () => {
   const sessionTok = platformJwt.signWorkerToken({ sessionId: 7 });
   assert.throws(() => platformJwt.verifyWorkerPushToken(sessionTok), /purpose|scope/);
   assert.throws(() => platformJwt.verifyIssuesReadToken(sessionTok), /purpose|scope/);
+});
+
+test('Claude scout proxy/debug tokens are narrow purposes, NOT worker:session', () => {
+  const platformJwt = require('../src/services/platform-jwt');
+  process.env.WORKER_JWT_SECRET = 'test-worker-secret-claude-scout';
+  const proxyTok = platformJwt.signAnthropicProxyToken({ sessionId: 8 });
+  const debugTok = platformJwt.signProdDebugToken({ sessionId: 8 });
+  assert.equal(platformJwt.verifyAnthropicProxyToken(proxyTok).session_id, 8);
+  assert.equal(platformJwt.verifyProdDebugToken(debugTok).session_id, 8);
+  assert.throws(() => platformJwt.verifyWorkerToken(proxyTok), /purpose|scope/);
+  assert.throws(() => platformJwt.verifyWorkerToken(debugTok), /purpose|scope/);
+});
+
+test('Anthropic proxy accepts only proxy or rolling-deploy general purpose', () => {
+  const platformJwt = require('../src/services/platform-jwt');
+  const { anthropicProxyAuth } = require('../src/middleware/anthropic-proxy-auth');
+  process.env.WORKER_JWT_SECRET = 'test-worker-secret-proxy-middleware';
+  const run = (token) => {
+    const req = {
+      headers: { 'x-api-key': token },
+      socket: { remoteAddress: '172.18.0.2' },
+      path: '/api/internal/anthropic/v1/messages',
+    };
+    const res = {
+      statusCode: 200,
+      body: null,
+      status(code) { this.statusCode = code; return this; },
+      json(body) { this.body = body; return this; },
+    };
+    let nexted = false;
+    anthropicProxyAuth(req, res, () => { nexted = true; });
+    return { req, res, nexted };
+  };
+
+  const proxy = run(platformJwt.signAnthropicProxyToken({ sessionId: 9 }));
+  assert.equal(proxy.nexted, true);
+  assert.equal(proxy.req.workerSession.purpose, 'worker:anthropic-proxy');
+  const general = run(platformJwt.signWorkerToken({ sessionId: 9 }));
+  assert.equal(general.nexted, true, 'old in-flight Claude turns survive a rolling deploy');
+
+  for (const token of [
+    platformJwt.signIssuesReadToken({ sessionId: 9 }),
+    platformJwt.signWorkerPushToken({ sessionId: 9 }),
+    platformJwt.signProdDebugToken({ sessionId: 9 }),
+  ]) {
+    const rejected = run(token);
+    assert.equal(rejected.nexted, false);
+    assert.equal(rejected.res.statusCode, 401);
+  }
 });

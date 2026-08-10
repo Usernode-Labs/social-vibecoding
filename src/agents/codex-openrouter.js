@@ -41,6 +41,9 @@ function buildCodexConfig({ openRouterBaseUrl, model, reasoningEffort }) {
 model = "${safeModel}"
 ${safeEffort ? `model_reasoning_effort = "${safeEffort}"` : ''}
 
+[shell_environment_policy]
+exclude = ["OPENROUTER_API_KEY"]
+
 [agents]
 enabled = false
 

@@ -434,6 +434,8 @@ test('the per-turn worker env forwards only the minted TOKEN, never the signing 
       const env = worker.buildTurnSecretEnv({
         mode,
         workerSessionJwt: 'minted.worker.jwt',
+        issuesReadJwt: 'minted.issues.jwt',
+        anthropicProxyJwt: 'minted.anthropic-proxy.jwt',
         anthropicApiKey,
         prodDebugJwt: 'minted.proddebug.jwt',
       });
@@ -446,7 +448,8 @@ test('the per-turn worker env forwards only the minted TOKEN, never the signing 
   // Sanity: the token really is what travels, so the check above is not
   // passing on an empty env.
   const build = require('../src/services/worker').buildTurnSecretEnv({
-    mode: 'build', workerSessionJwt: 'minted.worker.jwt', anthropicApiKey: null, prodDebugJwt: null,
+    mode: 'build', workerSessionJwt: 'minted.worker.jwt', issuesReadJwt: 'minted.issues.jwt',
+    anthropicProxyJwt: 'minted.anthropic-proxy.jwt', anthropicApiKey: null, prodDebugJwt: null,
   });
   assert.equal(build.WORKER_JWT, 'minted.worker.jwt');
   assert.ok(!('WORKER_JWT_SECRET' in build));

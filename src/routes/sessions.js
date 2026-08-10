@@ -94,6 +94,20 @@ const {
 } = require('../services/active-workers');
 const sessionState = require('../services/session-state');
 const turnWatchdog = require('../services/turn-watchdog');
+const recoveryRetry = require('../services/recovery-retry');
+const turnLifecycle = require('../services/turn-lifecycle');
+const turnEffects = require('../services/turn-effects');
+const TURN_WRAPUP_EFFECT_KEYS = Object.freeze({
+  llm: 'turn_wrapup_llm',
+  pills: 'turn_wrapup_pills',
+  message: 'turn_wrapup_message',
+  spend: 'turn_wrapup_spend',
+});
+const HEADLESS_WRAPUP_EFFECT_KEYS = Object.freeze({
+  llm: 'headless_wrapup_llm',
+  message: 'headless_wrapup_message',
+  spend: 'headless_wrapup_spend',
+});
 const estimateGuard = require('../services/estimate-guard');
 // #892: what an unearned "nearly done" phrase is replaced with. Mirrors the
 // user-facing wording of ccPhaseLabel() in public/js/cc-progress-summary.js
@@ -123,6 +137,47 @@ const {
 // unit-testable without docker (same pattern as services/turn-watchdog).
 const stopPolicy = require('../services/stop-policy');
 const { stopPendingFor } = stopPolicy;
+
+// A live request can lose its database connection after the detached worker
+// has already produced a result. In that case the durable active_turn is the
+// authority: keep the session reserved and hand it to the same recovery path
+// boot adoption uses. The scheduler itself is injected by server.js to avoid
+// a routes -> server require cycle.
+async function scheduleRetainedInteractiveTurn({
+  pool,
+  sessionId,
+  scheduleInteractiveRecovery,
+  assumeRetained = false,
+}) {
+  let retained = assumeRetained;
+  if (!retained) {
+    try {
+      retained = !!await turnLifecycle.loadActiveTurn(pool, sessionId);
+    } catch (err) {
+      // A failed read cannot prove the owner disappeared. Schedule
+      // conservatively; the retry re-reads the durable phase itself.
+      retained = true;
+      log.warn('sessions', 'Could not inspect interactive durable turn; scheduling recovery', {
+        sessionId, err: err.message,
+      });
+    }
+  }
+  if (!retained) return false;
+  if (typeof scheduleInteractiveRecovery !== 'function') {
+    log.error('sessions', 'Interactive durable turn retained without a recovery scheduler', {
+      sessionId,
+    });
+    return false;
+  }
+  try {
+    return (await scheduleInteractiveRecovery(sessionId)) !== false;
+  } catch (err) {
+    log.error('sessions', 'Could not schedule retained interactive turn recovery', {
+      sessionId, err: err.message,
+    });
+    return false;
+  }
+}
 
 const CLI_CREDENTIAL_MANAGEMENT_ERROR = 'credential_management_not_available_via_cli';
 
@@ -532,9 +587,10 @@ const { stripSpecWrapperFence } = require('../services/spec-format');
 // back to the latest spec. Since #69 retired the manual "Save version"
 // route, this and the native CLI proposal-handoff route are the only writers
 // of new rows in chat_session_specs;
-// it uses MAX(version)+1. Best-effort: returns null on failure so the
-// card falls back to the latest spec rather than blocking the edit.
-async function snapshotSessionSpec(pool, sessionId, content) {
+// it uses MAX(version)+1. Ordinary callers remain best-effort; durable scout
+// publication passes required:true so the version and its receipt/card roll
+// back together instead of committing a partially replayable outcome.
+async function snapshotSessionSpec(pool, sessionId, content, { required = false } = {}) {
   try {
     const { rows } = await pool.query(
       `INSERT INTO chat_session_specs (session_id, version, content)
@@ -545,8 +601,81 @@ async function snapshotSessionSpec(pool, sessionId, content) {
     return rows[0].version;
   } catch (err) {
     log.warn('sessions', 'Failed to snapshot spec version', { err: err.message, sessionId });
+    if (required) throw err;
     return null;
   }
+}
+
+// Publish a completed scout's three database effects as one receipt-backed
+// transaction: latest spec, immutable version, and the transcript card. A
+// crash after commit can then replay the receipt without creating another
+// version or row. Legacy records without a stable turn id retain their
+// historical best-effort path.
+async function persistScoutPublication({
+  pool,
+  sessionId,
+  turnId = null,
+  content,
+  hadSpec = false,
+  durationMs = null,
+  quickReplies = null,
+  recovered = false,
+  localAgentLabel = null,
+  localMode = 'scout',
+}) {
+  const ccText = String(content || '').trim();
+  if (!ccText) throw new Error('persistScoutPublication: spec content required');
+  const lineCount = ccText.split('\n').length;
+  const baseScoutText = hadSpec
+    ? `Scout revised the spec (now ${lineCount} lines).`
+    : `Scout drafted a ${lineCount}-line spec from the codebase.`;
+  const scoutText = localAgentLabel
+    ? `${baseScoutText} Drafted on ${localAgentLabel} — no Usernode credits used.`
+    : baseScoutText;
+  const persist = async (client, { requiredSnapshot }) => {
+    await client.query(
+      'UPDATE chat_sessions SET spec_md = $1 WHERE id = $2',
+      [ccText, sessionId],
+    );
+    const specVersion = await snapshotSessionSpec(
+      client,
+      sessionId,
+      ccText,
+      { required: requiredSnapshot },
+    );
+    const metadata = {
+      specPreview: buildSpecPreview(ccText),
+      specLines: lineCount,
+      scoutOutput: ccText,
+      specVersion,
+      ...(durationMs != null ? { durationMs } : {}),
+      ...(quickReplies ? { quickReplies } : {}),
+      ...(recovered ? { recovered: true } : {}),
+      ...(localAgentLabel
+        ? { runner: 'local', localAgentLabel, localMode }
+        : {}),
+    };
+    await client.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+       VALUES ($1, 'system', $2, $3)`,
+      [sessionId, scoutText, JSON.stringify(metadata)],
+    );
+    return { scoutText, metadata, lineCount, specVersion, hadSpec: !!hadSpec };
+  };
+
+  if (turnId) {
+    const receipt = await turnEffects.runDbEffect({
+      pool,
+      turnId,
+      effectKey: turnEffects.EFFECT_KEYS.SCOUT_SPEC_PUBLICATION,
+      sessionId,
+      run: (client) => persist(client, { requiredSnapshot: true }),
+    });
+    return { applied: receipt.applied, ...(receipt.value || {}) };
+  }
+
+  const value = await persist(pool, { requiredSnapshot: false });
+  return { applied: true, ...value };
 }
 
 // Copy the user's DEFAULT coding-agent backend + model + reasoning effort
@@ -630,7 +759,7 @@ async function resolveDefaultAgentPreference(client, userId, config) {
   };
 }
 
-function sessionRoutes(config) {
+function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   const router = Router();
   const pool = getPool(config);
 
@@ -2076,12 +2205,22 @@ function sessionRoutes(config) {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const { backend, model, reasoningEffort } = req.body || {};
+      if (!Number.isFinite(sessionId)) {
+        return res.status(400).json({ error: 'Bad session id' });
+      }
 
       // ── Phase 1: validate network-dependent inputs BEFORE locking ──
       // (plan 8.1). Backend resolution, feature/allowlist checks, and the
       // OpenRouter credential + model validation can call out over the
       // network (or decrypt); they must NOT run while holding a row lock.
-      const resolved = registry.resolveBackend(backend || registry.DEFAULT_BACKEND);
+      let resolved;
+      try {
+        // Empty is intentionally equivalent to absent/default. Only an
+        // explicit unknown backend is rejected.
+        resolved = registry.resolveBackend(backend || registry.DEFAULT_BACKEND);
+      } catch {
+        return res.status(400).json({ error: 'Unknown backend' });
+      }
       if (reasoningEffort != null && !['minimal', 'low', 'medium', 'high', 'xhigh'].includes(reasoningEffort)) {
         return res.status(400).json({ error: 'Invalid reasoning effort' });
       }
@@ -4150,11 +4289,24 @@ function sessionRoutes(config) {
             send, sendStatus,
             stopHandle,
             userApiKey,
+            deferTurnCleanup: true,
           });
 
           if (stopHandle.stopped) {
             // Same shape as the build stop path: skip the Mayor wrap-up
             // because there's nothing coherent to summarize.
+            if (toolResult.turnId) {
+              const cleared = await worker.finishTurn(session.id, { turnId: toolResult.turnId });
+              if (!cleared) {
+                log.warn('sessions', 'Stopped scout cleanup remains pending', {
+                  sessionId: session.id, turnId: toolResult.turnId,
+                });
+                await scheduleRetainedInteractiveTurn({
+                  pool, sessionId: session.id, scheduleInteractiveRecovery,
+                  assumeRetained: true,
+                });
+              }
+            }
             send('stopped', { phase: 'cc', by: stopHandle.stoppedBy });
             send('done', {});
             res.end();
@@ -4178,14 +4330,27 @@ function sessionRoutes(config) {
             send, sendStatus,
             stopHandle,
             userApiKey,
+            deferTurnCleanup: true,
           });
 
           if (stopHandle.stopped) {
-            // User stopped during the CC run. The worker's finally already
-            // tore it down; we skip the Mayor wrap-up entirely because the
+            // User stopped during the CC run. We skip the Mayor wrap-up
+            // entirely because the
             // Mayor has nothing coherent to summarize (no push, no PR, no
             // staging). The next dispatch resumes CC via --resume so its
             // own session memory is preserved.
+            if (toolResult.turnId) {
+              const cleared = await worker.finishTurn(session.id, { turnId: toolResult.turnId });
+              if (!cleared) {
+                log.warn('sessions', 'Stopped build cleanup remains pending', {
+                  sessionId: session.id, turnId: toolResult.turnId,
+                });
+                await scheduleRetainedInteractiveTurn({
+                  pool, sessionId: session.id, scheduleInteractiveRecovery,
+                  assumeRetained: true,
+                });
+              }
+            }
             send('stopped', { phase: 'cc', by: stopHandle.stoppedBy });
             send('done', {});
             res.end();
@@ -4301,28 +4466,63 @@ function sessionRoutes(config) {
         // ran absolutely can, and the wrap-up should see it.
         discussionBlock = await buildSessionDiscussionBlock(pool, session);
         mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext2, openProposalsBlock, agentFilesBlock, prodDebugEligible, discussionBlock, canDraftIssues);
-        const mayor2 = await llm.streamChat({
-          messages: followUpMessages,
-          systemPrompt: mayorPrompt,
-          model: selectedModel,
-          // Expose ONLY the quick-reply pills tool (#285) so the wrap-up can
-          // suggest next steps but cannot dispatch again — the dispatch tools
-          // are simply absent from the list, preserving the original
-          // "wrap-up can't dispatch" invariant that toolChoice:none gave us.
-          tools: [SUGGEST_REPLIES_TOOL],
-          toolChoice: { type: 'auto' },
-          onToken: (text) => send('token', { text }),
-          apiKey: userApiKey,
-        });
-        await noteModelFallback(mayor2);
+        const wrapUpOutcome = toolResult.isError
+          ? 'failed'
+          : (toolKind === 'scout' ? 'spec_done' : 'build_done');
+        const fallbackMayor2 = {
+          ...snapshotMayorResponse({
+            text: staticWrapUpText(wrapUpOutcome, { toolKind }),
+          }),
+          recoveryFallback: true,
+        };
+        const invokeMayor2 = async () => snapshotMayorResponse(await llm.streamChat({
+            messages: followUpMessages,
+            systemPrompt: mayorPrompt,
+            model: selectedModel,
+            // Expose ONLY the quick-reply pills tool (#285) so the wrap-up can
+            // suggest next steps but cannot dispatch again — the dispatch tools
+            // are simply absent from the list, preserving the original
+            // "wrap-up can't dispatch" invariant that toolChoice:none gave us.
+            tools: [SUGGEST_REPLIES_TOOL],
+            toolChoice: { type: 'auto' },
+            onToken: (text) => send('token', { text }),
+            apiKey: userApiKey,
+          }));
+        let mayor2;
+        let mayor2Disposition = 'executed';
+        if (toolResult.turnId) {
+          const effect = await turnEffects.runExternalEffectFailClosed({
+            pool,
+            turnId: toolResult.turnId,
+            effectKey: TURN_WRAPUP_EFFECT_KEYS.llm,
+            sessionId: session.id,
+            run: invokeMayor2,
+            fallback: fallbackMayor2,
+          });
+          mayor2 = effect.value || fallbackMayor2;
+          mayor2Disposition = effect.disposition;
+          if (effect.disposition === 'fallback') {
+            log.warn('sessions', 'Interactive wrap-up provider call failed closed', {
+              sessionId: session.id,
+              turnId: toolResult.turnId,
+              err: effect.error?.message || 'ambiguous pending provider call',
+            });
+          }
+        } else {
+          mayor2 = await invokeMayor2();
+        }
+        // A replay/fallback did not stream in this request. Paint its complete
+        // text once; mayor_reasoning below reconciles the final bubble after
+        // the durable message insert commits.
+        if (mayor2Disposition !== 'executed' && mayor2.text) {
+          send('token', { text: mayor2.text });
+        }
+        if (mayor2Disposition === 'executed') await noteModelFallback(mayor2);
 
         // Quick-reply pills (#285): the wrap-up reflects the final post-build
         // state, so this is where dispatch turns get their pills. The
         // tool_use is terminal (end of turn) — no tool_result round-trip.
         const quickReplies2 = resolveQuickReplies(mayor2.toolUses);
-        const wrapUpOutcome = toolResult.isError
-          ? 'failed'
-          : (toolKind === 'scout' ? 'spec_done' : 'build_done');
 
         let mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
         log.info('sessions', 'Mayor phase-2 response', {
@@ -4336,12 +4536,14 @@ function sessionRoutes(config) {
           // work already happened — record it and substitute an honest
           // line rather than leaving the build unexplained.
           const refusalCategory2 = (mayor2.stopDetails && mayor2.stopDetails.category) || null;
-          await modelFallback.record(pool, {
-            kind: events.EVENT_TYPES.MODEL_REFUSAL,
-            userId: req.user.id, appId: session.app_id, sessionId: session.id,
-            requested: selectedModel, served: mayor2.servedModel || selectedModel,
-            category: refusalCategory2, source: 'mayor',
-          });
+          if (mayor2Disposition === 'executed') {
+            await modelFallback.record(pool, {
+              kind: events.EVENT_TYPES.MODEL_REFUSAL,
+              userId: req.user.id, appId: session.app_id, sessionId: session.id,
+              requested: selectedModel, served: mayor2.servedModel || selectedModel,
+              category: refusalCategory2, source: 'mayor',
+            });
+          }
           if (!mayorText2.trim()) {
             mayorText2 = '_The wrap-up was declined by the model\'s safety classifiers — the dispatched work above still completed; see the status messages for the outcome._';
             send('token', { text: mayorText2 });
@@ -4362,48 +4564,131 @@ function sessionRoutes(config) {
           }
           send('token', { text: mayorText2 });
         }
-        send('mayor_reasoning', { text: mayorText2 });
-
         const servedModel2 = mayor2.servedModel || selectedModel;
-        const costCents2 = llm.estimateCostCents(mayor2.usage, servedModel2);
+        const costCents2 = mayor2.usage
+          ? llm.estimateCostCents(mayor2.usage, servedModel2)
+          : 0;
+        const tokenCount2 = mayor2.usage
+          ? (mayor2.usage.input_tokens || 0) + (mayor2.usage.output_tokens || 0)
+          : null;
         // #1001: the wrap-up is the row the user is left looking at after a
         // build or a spec, so this is where a generic pill set hurt most —
         // and where the tool was skipped most (a plain `end_turn`). Ask the
         // Mayor again for pills naming what actually shipped. A refused
         // wrap-up skips the extra ask: the text is platform-authored there.
-        const wrapUpResolved = await resolvePills(wrapUpOutcome, {
-          modelPills: quickReplies2,
-          model: servedModel2,
-          replyText: mayorText2,
-          allowModelCalls: mayor2.stopReason !== 'refusal',
-          allowGenerate: mayor2.stopReason !== 'refusal',
-        });
+        const staticWrapUpResolved = {
+          replies: turnPills(wrapUpOutcome),
+          source: 'static',
+          kind: fallbackKindForTurn({
+            outcome: wrapUpOutcome,
+            hasPr: session.pr_number != null,
+            hasSpec: turnHasSpec,
+          }),
+        };
+        const resolveLiveWrapUpPills = () => resolvePills(wrapUpOutcome, {
+            modelPills: quickReplies2,
+            model: servedModel2,
+            replyText: mayorText2,
+            allowModelCalls: mayor2.stopReason !== 'refusal',
+            allowGenerate: mayor2.stopReason !== 'refusal',
+          });
+        let wrapUpResolved;
+        if (mayor2.recoveryFallback) {
+          wrapUpResolved = staticWrapUpResolved;
+        } else if (toolResult.turnId) {
+          const pillEffect = await turnEffects.runExternalEffectFailClosed({
+            pool,
+            turnId: toolResult.turnId,
+            effectKey: TURN_WRAPUP_EFFECT_KEYS.pills,
+            sessionId: session.id,
+            run: resolveLiveWrapUpPills,
+            fallback: staticWrapUpResolved,
+          });
+          wrapUpResolved = pillEffect.value || staticWrapUpResolved;
+        } else {
+          wrapUpResolved = await resolveLiveWrapUpPills();
+        }
         log.info('sessions', 'quick replies resolved', {
           sessionId: session.id, phase: 'wrapup',
           source: wrapUpResolved.source, kind: wrapUpResolved.kind || null,
         });
         const wrapUpPills = wrapUpResolved.replies;
-        await pool.query(
+        const wrapUpParams = [
+          session.id,
+          mayorText2,
+          servedModel2,
+          tokenCount2,
+          costCents2 || null,
+          JSON.stringify(quickReplyMeta(wrapUpResolved)),
+        ];
+        const insertWrapUp = (client) => client.query(
           `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
            VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
-          [session.id, mayorText2, servedModel2, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2,
-           JSON.stringify(quickReplyMeta(wrapUpResolved))]
+          wrapUpParams,
         );
-        if (wrapUpPills) send('quick_replies', { replies: wrapUpPills });
-        // Tail milestone: the wrap-up the recovery path would otherwise
-        // re-issue is on the transcript. A NO-OP in the common case — the
-        // dispatch tool's `finally` already released the record, and
-        // noteTailMilestone is guarded on `active_turn IS NOT NULL` — but
-        // it lands for any future caller that holds the record across
-        // phase 2, and costs one cheap UPDATE either way.
-        await worker.noteTailMilestone(session.id, { wrapUpPosted: true });
-        await limits.recordSpend(pool, req.user.id, costCents2, { byok: !!userApiKey });
-        send('usage', { costCents: costCents2, model: servedModel2, byok: !!userApiKey });
+        let messageApplied = true;
+        if (toolResult.turnId) {
+          const receipt = await turnEffects.runDbEffect({
+            pool,
+            turnId: toolResult.turnId,
+            effectKey: TURN_WRAPUP_EFFECT_KEYS.message,
+            sessionId: session.id,
+            run: async (client) => {
+              await insertWrapUp(client);
+              return { persisted: true };
+            },
+          });
+          messageApplied = receipt.applied;
+        } else {
+          await insertWrapUp(pool);
+        }
+        if (messageApplied) {
+          send('mayor_reasoning', { text: mayorText2 });
+          if (wrapUpPills) send('quick_replies', { replies: wrapUpPills });
+        }
+
+        if (costCents2) {
+          if (toolResult.turnId) {
+            await limits.settleTurnSpend(pool, req.user.id, costCents2, {
+              turnByok: !!userApiKey,
+              turnId: toolResult.turnId,
+              sessionId: session.id,
+              effectKey: TURN_WRAPUP_EFFECT_KEYS.spend,
+            });
+          } else {
+            await limits.recordSpend(pool, req.user.id, costCents2, { byok: !!userApiKey });
+          }
+          send('usage', { costCents: costCents2, model: servedModel2, byok: !!userApiKey });
+        }
+
+        if (toolResult.turnId) {
+          // The wrap-up message and its spend receipt are both committed. Only
+          // now may recovery skip this tail step and only now may the exact
+          // owner release the durable turn.
+          await worker.noteTailMilestone(
+            session.id,
+            { wrapUpPosted: true },
+            { turnId: toolResult.turnId },
+          );
+          const cleared = await worker.finishTurn(session.id, { turnId: toolResult.turnId });
+          if (!cleared) {
+            log.warn('sessions', 'Interactive wrap-up committed; durable cleanup remains pending', {
+              sessionId: session.id, turnId: toolResult.turnId,
+            });
+            await scheduleRetainedInteractiveTurn({
+              pool, sessionId: session.id, scheduleInteractiveRecovery,
+              assumeRetained: true,
+            });
+          }
+        }
       } catch (err) {
         activeWorkers.delete(session.id);
         workerProgress.clear(session.id);
         log.error('sessions', 'Chat error', { message: err.message, stack: err.stack });
         send('error', { error: err.message });
+        const recoveringDurableTurn = await scheduleRetainedInteractiveTurn({
+          pool, sessionId: session.id, scheduleInteractiveRecovery,
+        });
         // Persist the failure as a status row so it survives refresh —
         // the 'error' event above is SSE-only and dies with the stream,
         // which used to make a mid-turn provider error (429 rate limit,
@@ -4413,7 +4698,9 @@ function sessionRoutes(config) {
         if (!stopHandle.stopped) {
           const friendly = describeTurnError(err);
           await sendStatus(
-            `This turn failed: ${friendly}${/[.!?]$/.test(friendly) ? '' : '.'} Send your message again to retry.`,
+            recoveringDurableTurn
+              ? `This turn's finalization was interrupted: ${friendly}${/[.!?]$/.test(friendly) ? '' : '.'} The platform is recovering it automatically.`
+              : `This turn failed: ${friendly}${/[.!?]$/.test(friendly) ? '' : '.'} Send your message again to retry.`,
             // #894: a failed turn is exactly when the user most wants a
             // one-tap retry, and it never reaches a pill-bearing persist.
             { turnError: true, quickReplies: turnPills('failed') }
@@ -4954,6 +5241,9 @@ function sessionRoutes(config) {
       // a machine that went to sleep mid-turn leaves behind.
       await localAgent.requestStop(pool, { sessionId, userId: null }).catch(() => {});
       await forceStopSession(pool, sessionId, req.user.username, null);
+      await scheduleRetainedInteractiveTurn({
+        pool, sessionId, scheduleInteractiveRecovery,
+      });
       return res.json({ ok: true, stopped: true, forced: true, phase: null });
     }
     if (action === 'force_without_stop') {
@@ -5070,6 +5360,9 @@ function sessionRoutes(config) {
       // owning request unwinds, then announce the stop ourselves — that
       // request may itself be wedged and can't be relied on to do it.
       await forceStopSession(pool, sessionId, req.user.username, handle);
+      await scheduleRetainedInteractiveTurn({
+        pool, sessionId, scheduleInteractiveRecovery,
+      });
       return res.json({ ok: true, stopped: true, forced: true, phase: handle.phase });
     }
 
@@ -5765,15 +6058,32 @@ async function postHeadlessQuestionThreadMessage({ pool, appId, issueNumber, que
 // 'wrapping' (Mayor phase-2). `outcome` is persisted alongside the
 // cc_running → wrapping transition so a 'wrapping' resume knows what the
 // dispatch arrived at without re-deriving it.
-async function setHeadlessStep(pool, sessionId, step, outcome) {
+async function setHeadlessStep(pool, sessionId, step, outcome, headlessTurnId = undefined) {
+  const sets = ['headless_step = $1'];
+  const params = [step, sessionId];
+  if (outcome !== undefined) {
+    params.push(outcome);
+    sets.push(`headless_outcome = $${params.length}`);
+  }
+  if (headlessTurnId !== undefined) {
+    params.push(headlessTurnId);
+    sets.push(`headless_turn_id = $${params.length}`);
+  } else if (step === 'planning') {
+    sets.push('headless_turn_id = NULL');
+  }
+  // This is a dispatch/replay boundary, not telemetry. If it cannot commit,
+  // the caller must not make the next paid call under an identity recovery
+  // cannot rediscover.
   await pool.query(
-    outcome !== undefined
-      ? 'UPDATE chat_sessions SET headless_step = $1, headless_outcome = $3 WHERE id = $2'
-      : 'UPDATE chat_sessions SET headless_step = $1 WHERE id = $2',
-    outcome !== undefined ? [step, sessionId, outcome] : [step, sessionId]
-  ).catch((err) => {
-    log.warn('sessions', 'Failed to persist headless_step', { sessionId, step, err: err.message });
-  });
+    `UPDATE chat_sessions SET ${sets.join(', ')} WHERE id = $2`,
+    params,
+  );
+}
+
+async function checkpointHeadlessWrapUp(pool, sessionId, outcome) {
+  const headlessTurnId = crypto.randomUUID();
+  await setHeadlessStep(pool, sessionId, 'wrapping', outcome, headlessTurnId);
+  return headlessTurnId;
 }
 
 // #155: the unattended Mayor turn behind the issue panel's "Generate
@@ -5819,6 +6129,91 @@ function headlessWrapUpMeta(outcome, { suggestions = null } = {}) {
   const replies = buildRecoveryQuickReplies(kind);
   if (!replies) return {};
   return { quickReplies: replies, quickRepliesSource: 'static', quickRepliesKind: kind };
+}
+
+async function runHeadlessMayorEffect({
+  pool, sessionId, headlessTurnId, invoke, fallbackText,
+}) {
+  const fallback = {
+    ...snapshotMayorResponse({ text: fallbackText }),
+    recoveryFallback: true,
+  };
+  if (!headlessTurnId) {
+    return {
+      response: snapshotMayorResponse(await invoke()),
+      disposition: 'legacy',
+    };
+  }
+  const effect = await turnEffects.runExternalEffectFailClosed({
+    pool,
+    turnId: headlessTurnId,
+    effectKey: HEADLESS_WRAPUP_EFFECT_KEYS.llm,
+    sessionId,
+    run: async () => snapshotMayorResponse(await invoke()),
+    fallback,
+  });
+  return {
+    response: effect.value || fallback,
+    disposition: effect.disposition,
+  };
+}
+
+async function persistHeadlessMayorRow({
+  pool, sessionId, headlessTurnId, text, model, usage, costCents, metadata,
+}) {
+  const params = [
+    sessionId,
+    text,
+    model || null,
+    usage ? (usage.input_tokens || 0) + (usage.output_tokens || 0) : 0,
+    costCents || 0,
+    JSON.stringify(metadata || {}),
+  ];
+  const insert = (client) => client.query(
+    `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
+     VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
+    params,
+  );
+  if (!headlessTurnId) {
+    await insert(pool);
+    return true;
+  }
+  const receipt = await turnEffects.runDbEffect({
+    pool,
+    turnId: headlessTurnId,
+    effectKey: HEADLESS_WRAPUP_EFFECT_KEYS.message,
+    sessionId,
+    run: async (client) => {
+      await insert(client);
+      return { persisted: true };
+    },
+  });
+  return receipt.applied;
+}
+
+async function settleHeadlessMayorUsage({
+  pool, userId, sessionId, headlessTurnId, usage, servedModel,
+  selectedModel, userApiKey, emit = null,
+}) {
+  if (!usage) return 0;
+  const billModel = servedModel || selectedModel;
+  const costCents = llm.estimateCostCents(usage, billModel);
+  if (costCents) {
+    if (headlessTurnId) {
+      await limits.settleTurnSpend(pool, userId, costCents, {
+        turnByok: !!userApiKey,
+        turnId: headlessTurnId,
+        sessionId,
+        effectKey: HEADLESS_WRAPUP_EFFECT_KEYS.spend,
+      });
+    } else {
+      await limits.recordSpend(pool, userId, costCents, { byok: !!userApiKey });
+    }
+  }
+  if (typeof emit === 'function') {
+    emit('usage', { costCents, model: billModel, byok: !!userApiKey });
+  }
+  return costCents;
 }
 
 async function runHeadlessSession({
@@ -5885,6 +6280,10 @@ async function runHeadlessSession({
   };
 
   let outcome = 'question';
+  // Stable receipt identity for the next/current post-agent Mayor phase.
+  // It is checkpointed before the coding turn is released, then replaced
+  // when a scout decision legitimately starts a later build wrap-up.
+  let headlessTurnId = null;
   // #178: the reporter-facing question text to post on the issue at the
   // terminal write, set by whichever path produced it — the phase-1
   // pure-text turn, or the decision turn when the scout's spec still
@@ -6052,6 +6451,14 @@ async function runHeadlessSession({
         send, sendStatus,
         stopHandle: null,
         userApiKey,
+        beforeTurnCleanup: async ({ isError }) => {
+          const checkpointOutcome = isError
+            ? 'question'
+            : (toolKind === 'scout' ? 'spec' : 'code');
+          headlessTurnId = await checkpointHeadlessWrapUp(
+            pool, session.id, checkpointOutcome,
+          );
+        },
       };
       // Checkpoint BEFORE the dispatch: if the platform restarts while
       // the (detached) CC turn runs, resumeHeadlessRuns finds
@@ -6091,7 +6498,9 @@ async function runHeadlessSession({
       // resume finalization flips to 'question' when the spec carries a
       // blocking Questions section — without posting a comment, since the
       // decision text died with the old process.)
-      await setHeadlessStep(pool, session.id, 'wrapping', outcome);
+      if (!headlessTurnId) {
+        headlessTurnId = await checkpointHeadlessWrapUp(pool, session.id, outcome);
+      }
 
       // Tool results fed back to the Mayor for phase 2.
       const phase2ToolResults = [];
@@ -6137,19 +6546,32 @@ async function runHeadlessSession({
         // the decision text becomes a posted issue comment and the run
         // finalizes as 'question' so Generate proposal can be re-run with answers.
         const specHasQuestions = specHasBlockingQuestions(currentSpec);
-        const mayor2 = await llm.streamChat({
-          messages: phase2Messages,
-          systemPrompt: wrapPrompt + buildHeadlessDecisionAddendum(issueNumber),
-          model: selectedModel,
-          tools: [DISPATCH_TOOL],
-          apiKey: userApiKey,
+        const decisionTurnId = headlessTurnId;
+        const decisionFallback = specHasQuestions
+          ? '_The spec has open questions — review them before implementation._'
+          : '_Spec drafted — review it in the spec viewer after starting a session from this auto session._';
+        const decisionEffect = await runHeadlessMayorEffect({
+          pool,
+          sessionId: session.id,
+          headlessTurnId: decisionTurnId,
+          fallbackText: decisionFallback,
+          invoke: () => llm.streamChat({
+            messages: phase2Messages,
+            systemPrompt: wrapPrompt + buildHeadlessDecisionAddendum(issueNumber),
+            model: selectedModel,
+            tools: [DISPATCH_TOOL],
+            apiKey: userApiKey,
+          }),
         });
-        await noteModelFallback(mayor2);
+        const mayor2 = decisionEffect.response;
+        if (decisionEffect.disposition === 'executed') await noteModelFallback(mayor2);
         const servedModel2 = mayor2.servedModel || selectedModel;
         const buildCall = mayor2.toolUses.find((t) => t.name === 'dispatch_claude_code');
         const strayCalls = mayor2.toolUses.filter((t) => t.name !== 'dispatch_claude_code');
         const mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
-        const costCents2 = llm.estimateCostCents(mayor2.usage, servedModel2);
+        const costCents2 = mayor2.usage
+          ? llm.estimateCostCents(mayor2.usage, servedModel2)
+          : 0;
 
         if (!mayor2.toolUses.length) {
           // Text only. Without open Questions the decision text IS the
@@ -6167,26 +6589,55 @@ async function runHeadlessSession({
             : (specHasQuestions
               ? '_The spec has open questions — review the Questions section in the spec viewer after starting a session from this auto session._'
               : '_Spec drafted — review it in the spec viewer after starting a session from this auto session._');
-          send('mayor_reasoning', { text: finalText });
-          await pool.query(
-            `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
-             VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
-            [session.id, finalText, servedModel2, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2,
-             JSON.stringify(headlessWrapUpMeta(outcome))]
-          );
-          await debitMayorUsage(mayor2.usage, mayor2.servedModel);
+          const messageApplied = await persistHeadlessMayorRow({
+            pool,
+            sessionId: session.id,
+            headlessTurnId: decisionTurnId,
+            text: finalText,
+            model: servedModel2,
+            usage: mayor2.usage,
+            costCents: costCents2,
+            metadata: headlessWrapUpMeta(outcome),
+          });
+          if (messageApplied) send('mayor_reasoning', { text: finalText });
+          await settleHeadlessMayorUsage({
+            pool,
+            userId: user.id,
+            sessionId: session.id,
+            headlessTurnId: decisionTurnId,
+            usage: mayor2.usage,
+            servedModel: mayor2.servedModel,
+            selectedModel,
+            userApiKey,
+            emit: send,
+          });
         } else {
           // The Mayor called a tool — persist its stated rationale first
           // (same text-plus-dispatch pattern phase-1 uses).
           if (mayorText2.trim()) {
-            send('mayor_reasoning', { text: mayorText2 });
-            await pool.query(
-              `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
-               VALUES ($1, 'assistant', $2, $3, $4, $5)`,
-              [session.id, mayorText2, servedModel2, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2]
-            );
+            const messageApplied = await persistHeadlessMayorRow({
+              pool,
+              sessionId: session.id,
+              headlessTurnId: decisionTurnId,
+              text: mayorText2,
+              model: servedModel2,
+              usage: mayor2.usage,
+              costCents: costCents2,
+              metadata: {},
+            });
+            if (messageApplied) send('mayor_reasoning', { text: mayorText2 });
           }
-          await debitMayorUsage(mayor2.usage, mayor2.servedModel);
+          await settleHeadlessMayorUsage({
+            pool,
+            userId: user.id,
+            sessionId: session.id,
+            headlessTurnId: decisionTurnId,
+            usage: mayor2.usage,
+            servedModel: mayor2.servedModel,
+            selectedModel,
+            userApiKey,
+            emit: send,
+          });
 
           const decisionToolResults = [];
           if (buildCall && specHasQuestions) {
@@ -6231,7 +6682,16 @@ async function runHeadlessSession({
               // disambiguates scout vs build on resume.
               await setHeadlessStep(pool, session.id, 'cc_running');
               buildResult = await runClaudeCodeTool({
-                ...toolArgs, userApiKey, toolPromptArg: buildPromptArg, headless: true,
+                ...toolArgs,
+                userApiKey,
+                toolPromptArg: buildPromptArg,
+                headless: true,
+                beforeTurnCleanup: async ({ isError }) => {
+                  const checkpointOutcome = isError ? 'spec' : 'spec_code';
+                  headlessTurnId = await checkpointHeadlessWrapUp(
+                    pool, session.id, checkpointOutcome,
+                  );
+                },
               });
               // #664: the build itself may have exhausted the allowance —
               // re-resolve so the phase-3 wrap-up bills the fresh payer.
@@ -6250,7 +6710,9 @@ async function runHeadlessSession({
             // phase-1 build path): the spec is the durable artifact and a
             // failed implementation attempt must not mask it.
             outcome = buildResult.isError ? 'spec' : 'spec_code';
-            await setHeadlessStep(pool, session.id, 'wrapping', outcome);
+            if (headlessTurnId === decisionTurnId) {
+              headlessTurnId = await checkpointHeadlessWrapUp(pool, session.id, outcome);
+            }
             decisionToolResults.push({
               type: 'tool_result',
               tool_use_id: buildCall.id,
@@ -6270,22 +6732,37 @@ async function runHeadlessSession({
           }
 
           // --- Phase 3: tool-less wrap-up (mirrors the old phase-2). ---
-          const mayor3 = await llm.streamChat({
-            messages: [
-              ...phase2Messages,
-              { role: 'assistant', content: mayor2.rawContent },
-              { role: 'user', content: decisionToolResults },
-            ],
-            systemPrompt: wrapPrompt,
-            model: selectedModel,
-            // #32: on the rejected-build (question) path the wrap-up
-            // re-asks the human-only questions — expose suggest_answers so
-            // it can attach answer chips, mirroring the phase-1 question
-            // turn. Other wrap-up outcomes ignore the tool.
-            tools: [SUGGEST_ANSWERS_TOOL],
-            apiKey: userApiKey,
+          if (headlessTurnId === decisionTurnId) {
+            headlessTurnId = await checkpointHeadlessWrapUp(pool, session.id, outcome);
+          }
+          const phase3Fallback = outcome === 'spec_code'
+            ? '_Spec drafted and change committed — start a session from this auto session to review it and propose it to the group._'
+            : outcome === 'question'
+              ? '_The spec has open questions — review the Questions section in the spec viewer after starting a session from this auto session._'
+              : '_Spec drafted — the implementation attempt did not complete; review the spec in the spec viewer after starting a session from this auto session._';
+          const phase3Effect = await runHeadlessMayorEffect({
+            pool,
+            sessionId: session.id,
+            headlessTurnId,
+            fallbackText: phase3Fallback,
+            invoke: () => llm.streamChat({
+              messages: [
+                ...phase2Messages,
+                { role: 'assistant', content: mayor2.rawContent || [] },
+                { role: 'user', content: decisionToolResults },
+              ],
+              systemPrompt: wrapPrompt,
+              model: selectedModel,
+              // #32: on the rejected-build (question) path the wrap-up
+              // re-asks the human-only questions — expose suggest_answers so
+              // it can attach answer chips, mirroring the phase-1 question
+              // turn. Other wrap-up outcomes ignore the tool.
+              tools: [SUGGEST_ANSWERS_TOOL],
+              apiKey: userApiKey,
+            }),
           });
-          await noteModelFallback(mayor3);
+          const mayor3 = phase3Effect.response;
+          if (phase3Effect.disposition === 'executed') await noteModelFallback(mayor3);
           let mayorText3 = stripFakeCompletionMarker(mayor3.text, { sessionId: session.id });
           // #32: persist suggestions only on the question outcome — that's
           // the row a cloned session forwards onto its follow-up to render
@@ -6304,29 +6781,55 @@ async function runHeadlessSession({
                 ? '_The spec has open questions — review the Questions section in the spec viewer after starting a session from this auto session._'
                 : '_Spec drafted — the implementation attempt did not complete; review the spec in the spec viewer after starting a session from this auto session._';
           }
-          send('mayor_reasoning', { text: mayorText3 });
           const servedModel3 = mayor3.servedModel || selectedModel;
-          const costCents3 = llm.estimateCostCents(mayor3.usage, servedModel3);
-          await pool.query(
-            `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
-             VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
-            [session.id, mayorText3, servedModel3, mayor3.usage.input_tokens + mayor3.usage.output_tokens, costCents3,
-             JSON.stringify(headlessWrapUpMeta(outcome, { suggestions: decisionSuggestions }))]
-          );
-          await debitMayorUsage(mayor3.usage, mayor3.servedModel);
+          const costCents3 = mayor3.usage
+            ? llm.estimateCostCents(mayor3.usage, servedModel3)
+            : 0;
+          const messageApplied = await persistHeadlessMayorRow({
+            pool,
+            sessionId: session.id,
+            headlessTurnId,
+            text: mayorText3,
+            model: servedModel3,
+            usage: mayor3.usage,
+            costCents: costCents3,
+            metadata: headlessWrapUpMeta(outcome, { suggestions: decisionSuggestions }),
+          });
+          if (messageApplied) send('mayor_reasoning', { text: mayorText3 });
+          await settleHeadlessMayorUsage({
+            pool,
+            userId: user.id,
+            sessionId: session.id,
+            headlessTurnId,
+            usage: mayor3.usage,
+            servedModel: mayor3.servedModel,
+            selectedModel,
+            userApiKey,
+            emit: send,
+          });
         }
       } else {
         // --- Phase 2: Mayor wrap-up (mirrors the chat handler) — scout
         // error, direct phase-1 build, or any other dispatch path. ---
-        const mayor2 = await llm.streamChat({
-          messages: phase2Messages,
-          systemPrompt: wrapPrompt,
-          model: selectedModel,
-          tools,
-          toolChoice: { type: 'none' },
-          apiKey: userApiKey,
+        const directFallback = toolResult.isError
+          ? "_The auto session's dispatch didn't finish successfully — see the status above._"
+          : '_Change committed and pushed — start a session from this auto session to review it and propose it to the group._';
+        const directEffect = await runHeadlessMayorEffect({
+          pool,
+          sessionId: session.id,
+          headlessTurnId,
+          fallbackText: directFallback,
+          invoke: () => llm.streamChat({
+            messages: phase2Messages,
+            systemPrompt: wrapPrompt,
+            model: selectedModel,
+            tools,
+            toolChoice: { type: 'none' },
+            apiKey: userApiKey,
+          }),
         });
-        await noteModelFallback(mayor2);
+        const mayor2 = directEffect.response;
+        if (directEffect.disposition === 'executed') await noteModelFallback(mayor2);
 
         let mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
         if (!mayorText2.trim()) {
@@ -6334,21 +6837,38 @@ async function runHeadlessSession({
             ? "_The auto session's dispatch didn't finish successfully — see the status above._"
             : '_Change committed and pushed — start a session from this auto session to review it and propose it to the group._';
         }
-        send('mayor_reasoning', { text: mayorText2 });
         const servedModelW = mayor2.servedModel || selectedModel;
-        const costCents2 = llm.estimateCostCents(mayor2.usage, servedModelW);
-        await pool.query(
-          `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
-           VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
-          [session.id, mayorText2, servedModelW, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2,
-           JSON.stringify(headlessWrapUpMeta(toolResult.isError ? 'failed' : outcome))]
-        );
-        await debitMayorUsage(mayor2.usage, mayor2.servedModel);
+        const costCents2 = mayor2.usage
+          ? llm.estimateCostCents(mayor2.usage, servedModelW)
+          : 0;
+        const messageApplied = await persistHeadlessMayorRow({
+          pool,
+          sessionId: session.id,
+          headlessTurnId,
+          text: mayorText2,
+          model: servedModelW,
+          usage: mayor2.usage,
+          costCents: costCents2,
+          metadata: headlessWrapUpMeta(toolResult.isError ? 'failed' : outcome),
+        });
+        if (messageApplied) send('mayor_reasoning', { text: mayorText2 });
+        await settleHeadlessMayorUsage({
+          pool,
+          userId: user.id,
+          sessionId: session.id,
+          headlessTurnId,
+          usage: mayor2.usage,
+          servedModel: mayor2.servedModel,
+          selectedModel,
+          userApiKey,
+          emit: send,
+        });
       }
     }
 
     await pool.query(
-      `UPDATE chat_sessions SET headless_status = 'ready', headless_outcome = $1, headless_step = NULL, last_activity_at = NOW()
+      `UPDATE chat_sessions SET headless_status = 'ready', headless_outcome = $1,
+              headless_step = NULL, headless_turn_id = NULL, last_activity_at = NOW()
        WHERE id = $2`,
       [outcome, session.id]
     );
@@ -6388,9 +6908,59 @@ async function runHeadlessSession({
   } catch (err) {
     activeWorkers.delete(session.id);
     workerProgress.clear(session.id);
+    let retainedTurn = null;
+    try {
+      retainedTurn = await turnLifecycle.loadActiveTurn(pool, session.id);
+    } catch (loadErr) {
+      // A DB outage cannot prove there is no replay owner. Keep the run in
+      // generating and let the retained scheduler re-read it later.
+      err.retainActiveTurn = true;
+      log.warn('sessions', 'Could not inspect failed headless turn; retaining recovery ownership', {
+        sessionId: session.id, err: loadErr.message,
+      });
+    }
+    let recoveryDisposition = null;
+    if (retainedTurn) {
+      try {
+        recoveryDisposition = await recoveryRetry.retainOrQuarantineRecoveryError({
+          pool,
+          sessionId: session.id,
+          activeTurn: retainedTurn,
+          error: err,
+        });
+      } catch (quarantineErr) {
+        err = quarantineErr;
+      }
+    }
+    if (recoveryDisposition?.action === 'quarantine') {
+      log.error('sessions', 'Headless run has invalid durable state; leaving turn quarantined', {
+        sessionId: session.id,
+        turnId: turnLifecycle.turnIdentity(retainedTurn),
+        err: err.message,
+      });
+      await failHeadlessRun(
+        pool,
+        session,
+        `Auto session could not be completed: ${String(err.message || err).substring(0, 200)}`,
+      );
+      return;
+    }
+    if (retainedTurn || headlessTurnId || err?.retainActiveTurn) {
+      err.retainActiveTurn = true;
+      log.warn('sessions', 'Headless tail paused with durable state retained', {
+        sessionId: session.id,
+        turnId: turnLifecycle.turnIdentity(retainedTurn),
+        headlessTurnId,
+        err: err.message,
+      });
+      scheduleRetainedHeadlessRecovery({ pool, config, session });
+      return;
+    }
     log.error('sessions', 'Headless session failed', { sessionId: session.id, err: err.message, stack: err.stack });
     await pool.query(
-      `UPDATE chat_sessions SET headless_status = 'failed', headless_step = NULL WHERE id = $1`,
+      `UPDATE chat_sessions
+          SET headless_status = 'failed', headless_step = NULL, headless_turn_id = NULL
+        WHERE id = $1`,
       [session.id]
     ).catch(() => {});
     await sendStatus(`Auto session failed: ${String(err.message || err).substring(0, 200)}`);
@@ -6436,11 +7006,41 @@ async function runHeadlessSession({
 //   emit             — session-event emitter (global WS) so an open tab
 //                      paints the bubble and pills without a reload.
 //
-// NEVER throws and never blocks recovery: any failure degrades to a short
-// static closing line carrying the deterministic pills.
+function snapshotMayorResponse(response) {
+  return {
+    text: typeof response?.text === 'string' ? response.text : '',
+    usage: response?.usage || null,
+    toolUses: Array.isArray(response?.toolUses) ? response.toolUses : [],
+    rawContent: Array.isArray(response?.rawContent) ? response.rawContent : [],
+    servedModel: response?.servedModel || null,
+    fallbackServed: response?.fallbackServed === true,
+    stopReason: response?.stopReason || null,
+    stopDetails: response?.stopDetails || null,
+  };
+}
+
+function staticWrapUpText(outcome, { toolKind = null } = {}) {
+  if (outcome === 'push_failed' || outcome === 'failed') {
+    return toolKind === 'scout'
+      ? "_The scout didn't finish successfully — see the status above._"
+      : "_The coding agent didn't complete successfully — see the status messages above._";
+  }
+  if (outcome === 'spec' || outcome === 'spec_done') {
+    return "_Spec updated — it's in the spec viewer. Tell me to build it whenever you're ready and I'll dispatch the coding agent._";
+  }
+  if (outcome === 'no_changes') {
+    return '_The coding agent finished without changing anything — see the status messages above._';
+  }
+  return '_Done._';
+}
+
+// Durable recovery propagates receipt/message/spend failures so the retained
+// turn can retry its tail. Provider ambiguity itself never throws: it is
+// reconciled with a deterministic closing line and, crucially, is never
+// re-issued. Legacy rows without a turnId retain the old best-effort behavior.
 async function runRecoveredWrapUp({
   pool, config, session, sessionId, outcome, dispatchSummary,
-  fallbackPillKind, turnModel, emit = () => {},
+  fallbackPillKind, turnModel, turnId = null, emit = () => {},
 }) {
   const recoveryPills = require('../services/recovery-pills');
   const fallbackPills = recoveryPills.buildRecoveryQuickReplies(fallbackPillKind);
@@ -6448,13 +7048,7 @@ async function runRecoveredWrapUp({
   // The static closing line used when the model call can't be made or
   // fails — mirrors the live wrap-up's empty-text guards, so a degraded
   // recovery still ends on a normal-looking assistant bubble.
-  const fallbackText = outcome === 'push_failed'
-    ? "_The coding agent didn't complete successfully — see the status messages above._"
-    : outcome === 'spec'
-      ? "_Spec updated — it's in the spec viewer. Tell me to build it whenever you're ready and I'll dispatch the coding agent._"
-      : outcome === 'no_changes'
-        ? '_The coding agent finished without changing anything — see the status messages above._'
-        : '_Done._';
+  const fallbackText = staticWrapUpText(outcome);
 
   // Persist the wrap-up as an ordinary assistant row: same columns the
   // live phase-2 writes, plus metadata.recovered for the audit trail.
@@ -6463,29 +7057,46 @@ async function runRecoveredWrapUp({
   // pill-source telemetry like any live one. Defaults to 'static' because
   // every non-model call site here passes the deterministic fallbackPills.
   const persistWrapUp = async (text, quickReplies, { model, usage, costCents, source = 'static', kind } = {}) => {
-    await pool.query(
+    const params = [
+      sessionId, text, model || null,
+      usage ? (usage.input_tokens || 0) + (usage.output_tokens || 0) : null,
+      costCents || null,
+      JSON.stringify({
+        ...(quickReplies ? { quickReplies, quickRepliesSource: source } : {}),
+        ...(quickReplies && source === 'static' && (kind || fallbackPillKind)
+          ? { quickRepliesKind: kind || fallbackPillKind } : {}),
+        recovered: true,
+      }),
+    ];
+    const insert = (client) => client.query(
       `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
        VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
-      [
-        sessionId, text, model || null,
-        usage ? (usage.input_tokens || 0) + (usage.output_tokens || 0) : null,
-        costCents || null,
-        JSON.stringify({
-          ...(quickReplies ? { quickReplies, quickRepliesSource: source } : {}),
-          ...(quickReplies && source === 'static' && (kind || fallbackPillKind)
-            ? { quickRepliesKind: kind || fallbackPillKind } : {}),
-          recovered: true,
-        }),
-      ]
-    ).catch((err) => log.warn('sessions', 'Recovered wrap-up persist failed', {
-      sessionId, err: err.message,
-    }));
+      params,
+    );
+    let shouldEmit = true;
+    if (turnId) {
+      const receipt = await turnEffects.runDbEffect({
+        pool,
+        turnId,
+        effectKey: TURN_WRAPUP_EFFECT_KEYS.message,
+        sessionId,
+        run: async (client) => {
+          await insert(client);
+          return { persisted: true };
+        },
+      });
+      shouldEmit = receipt.applied;
+    } else {
+      await insert(pool);
+    }
     // mayor_reasoning opens/reconciles the assistant bubble; quick_replies
     // then attaches to it (same emit order as the live phase-2). No 'done'
     // — a concurrent user turn could be streaming, and 'done' would tear
     // its client-side streaming state down.
-    emit('mayor_reasoning', { text });
-    if (quickReplies) emit('quick_replies', { replies: quickReplies });
+    if (shouldEmit) {
+      emit('mayor_reasoning', { text });
+      if (quickReplies) emit('quick_replies', { replies: quickReplies });
+    }
   };
 
   if (!llm.isEnabled()) {
@@ -6566,7 +7177,11 @@ async function runRecoveredWrapUp({
       '', '', false, discussionBlock
     );
 
-    const mayor = await llm.streamChat({
+    const fallbackMayor = {
+      ...snapshotMayorResponse({ text: fallbackText }),
+      recoveryFallback: true,
+    };
+    const invokeMayor = async () => snapshotMayorResponse(await llm.streamChat({
       messages,
       systemPrompt,
       model: selectedModel,
@@ -6575,7 +7190,27 @@ async function runRecoveredWrapUp({
       tools: [SUGGEST_REPLIES_TOOL],
       toolChoice: { type: 'auto' },
       apiKey: userApiKey,
-    });
+    }));
+
+    let mayor;
+    if (turnId) {
+      const effect = await turnEffects.runExternalEffectFailClosed({
+        pool,
+        turnId,
+        effectKey: TURN_WRAPUP_EFFECT_KEYS.llm,
+        sessionId,
+        run: invokeMayor,
+        fallback: fallbackMayor,
+      });
+      mayor = effect.value || fallbackMayor;
+      if (effect.disposition === 'fallback') {
+        log.warn('sessions', 'Recovered wrap-up provider call failed closed', {
+          sessionId, err: effect.error?.message || 'ambiguous pending provider call',
+        });
+      }
+    } else {
+      mayor = await invokeMayor();
+    }
 
     const text = stripFakeCompletionMarker((mayor.text || '').trim(), { sessionId })
       || fallbackText;
@@ -6586,20 +7221,41 @@ async function runRecoveredWrapUp({
     // qualifies for the forced continuation because it has already resolved
     // a user id and an API key here — the constraint that keeps the BOOT
     // BACKFILL sweep on the static set doesn't apply to this path.
-    const resolved = await resolveTurnPills({
-      pool,
-      session,
-      userId: session.user_id,
-      apiKey: userApiKey,
-      model: servedModel,
-      modelPills: resolveQuickReplies(mayor.toolUses),
-      outcome: outcome === 'spec' ? 'spec_done' : (outcome === 'code' ? 'build_done' : 'failed'),
-      hasPr: session.pr_number != null,
-      hasSpec: !!(currentSpec || '').trim(),
-      replyText: text,
-      transcriptTail: history,
-      state: `recovered ${outcome} turn; ${session.pr_number != null ? `PR #${session.pr_number} is open` : 'no PR yet'}`,
-    });
+    const staticResolved = {
+      replies: fallbackPills,
+      source: 'static',
+      kind: fallbackPillKind,
+    };
+    const resolveRecoveredPills = () => resolveTurnPills({
+        pool,
+        session,
+        userId: session.user_id,
+        apiKey: userApiKey,
+        model: servedModel,
+        modelPills: resolveQuickReplies(mayor.toolUses),
+        outcome: outcome === 'spec' ? 'spec_done' : (outcome === 'code' ? 'build_done' : 'failed'),
+        hasPr: session.pr_number != null,
+        hasSpec: !!(currentSpec || '').trim(),
+        replyText: text,
+        transcriptTail: history,
+        state: `recovered ${outcome} turn; ${session.pr_number != null ? `PR #${session.pr_number} is open` : 'no PR yet'}`,
+      });
+    let resolved;
+    if (mayor.recoveryFallback) {
+      resolved = staticResolved;
+    } else if (turnId) {
+      const pillEffect = await turnEffects.runExternalEffectFailClosed({
+        pool,
+        turnId,
+        effectKey: TURN_WRAPUP_EFFECT_KEYS.pills,
+        sessionId,
+        run: resolveRecoveredPills,
+        fallback: staticResolved,
+      });
+      resolved = pillEffect.value || staticResolved;
+    } else {
+      resolved = await resolveRecoveredPills();
+    }
     const quickReplies = resolved.replies || fallbackPills;
     log.info('sessions', 'quick replies resolved', {
       sessionId, phase: 'recovered-wrapup',
@@ -6612,18 +7268,39 @@ async function runRecoveredWrapUp({
       kind: resolved.kind,
     });
     if (costCents) {
-      await limits.recordSpend(pool, session.user_id, costCents, { byok: !!userApiKey })
-        .catch((err) => log.warn('sessions', 'Recovered wrap-up spend record failed', {
-          sessionId, err: err.message,
-        }));
+      if (turnId) {
+        await limits.settleTurnSpend(pool, session.user_id, costCents, {
+          turnByok: !!userApiKey,
+          turnId,
+          sessionId,
+          effectKey: TURN_WRAPUP_EFFECT_KEYS.spend,
+        });
+      } else {
+        await limits.recordSpend(pool, session.user_id, costCents, { byok: !!userApiKey });
+      }
     }
     log.info('sessions', 'Recovered turn wrap-up posted', {
       sessionId, outcome, model: servedModel, textLen: text.length,
     });
-    return { ok: true, text, quickReplies };
+    return {
+      ok: !mayor.recoveryFallback,
+      ...(mayor.recoveryFallback ? { reason: 'llm_failed' } : {}),
+      text,
+      quickReplies,
+    };
   } catch (err) {
-    // A failed wrap-up must never cost the user the recovery itself —
-    // the commit, PR and preview already landed.
+    // Receipt/message/spend failures on a durable turn are recovery work, not
+    // a reason to declare the tail complete. Propagate them so the scheduler
+    // retains ownership and retries from the same effect receipts.
+    if (turnId) {
+      log.warn('sessions', 'Durable recovered wrap-up tail incomplete', {
+        sessionId, outcome, err: err.message,
+      });
+      throw err;
+    }
+
+    // Legacy rows have no stable identity/receipts. Preserve their historical
+    // best-effort behavior: a failed model call still posts a static close.
     log.warn('sessions', 'Recovered wrap-up failed — falling back to static close', {
       sessionId, outcome, err: err.message,
     });
@@ -6657,7 +7334,9 @@ async function resumeHeadlessRuns(config) {
        FROM chat_sessions cs
        JOIN apps a ON cs.app_id = a.id
        JOIN users u ON cs.user_id = u.id
-       WHERE cs.is_headless = TRUE AND cs.headless_status = 'generating'`
+       WHERE cs.is_headless = TRUE
+         AND (cs.headless_status = 'generating'
+              OR cs.active_turn->>'phase' = 'cleanup_pending')`
     ));
   } catch (err) {
     log.error('sessions', 'resumeHeadlessRuns query failed', { err: err.message });
@@ -6669,6 +7348,13 @@ async function resumeHeadlessRuns(config) {
   });
   for (const session of rows) {
     resumeOneHeadlessRun({ pool, config, session }).catch(async (err) => {
+      if (err?.retainActiveTurn && recoveryRetry.shouldRetryRecoveryError(err)) {
+        log.warn('sessions', 'Headless resume paused with durable turn state retained', {
+          sessionId: session.id, err: err.message,
+        });
+        scheduleRetainedHeadlessRecovery({ pool, config, session });
+        return;
+      }
       log.error('sessions', 'Headless resume failed — marking run failed', {
         sessionId: session.id, err: err.message, stack: err.stack,
       });
@@ -6677,14 +7363,170 @@ async function resumeHeadlessRuns(config) {
   }
 }
 
+async function reloadRecoverableHeadlessSession(pool, sessionId) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url,
+              a.self_hosted AS app_self_hosted, u.username
+       FROM chat_sessions cs
+       JOIN apps a ON cs.app_id = a.id
+       JOIN users u ON cs.user_id = u.id
+       WHERE cs.id = $1
+         AND cs.is_headless = TRUE
+         AND (cs.headless_status = 'generating'
+              OR cs.active_turn->>'phase' = 'cleanup_pending')`,
+      [sessionId]
+    );
+    return rows[0] || null;
+  } catch (err) {
+    // This query is part of an already-retained recovery. A transient DB
+    // outage must not demote it to the ordinary "mark failed" path.
+    err.retainActiveTurn = true;
+    throw err;
+  }
+}
+
+function scheduleRetainedHeadlessRecovery({
+  pool,
+  config,
+  session,
+}) {
+  const sessionId = Number(session.id);
+  let releaseReservation = null;
+  let latestSession = session;
+  return recoveryRetry.scheduleRetainedRecovery({
+    key: `headless:${sessionId}`,
+    hold: () => {
+      if (!releaseReservation) releaseReservation = beginSessionOperation(sessionId);
+    },
+    release: () => {
+      releaseReservation?.();
+      releaseReservation = null;
+    },
+    run: async () => {
+      const fresh = await reloadRecoverableHeadlessSession(pool, sessionId);
+      if (!fresh) return;
+      latestSession = fresh;
+      const action = turnLifecycle.recoveryAction(fresh.active_turn);
+      if (action === 'cleanup') {
+        const cleanupArgs = turnLifecycle.cleanupArgs(fresh.active_turn);
+        recoveryRetry.requireDurableTurnCleanup(
+          await worker.finishTurn(sessionId, cleanupArgs),
+          cleanupArgs,
+        );
+        // cleanup_pending can be the last coding-turn state while the
+        // independently identified headless Mayor wrap-up is still pending.
+        // Clearing that obsolete coding owner must hand back to wrapping,
+        // not strand a generating row forever.
+        fresh.active_turn = null;
+        if (fresh.headless_status !== 'generating') return;
+      }
+      if (action === 'quarantine') {
+        await failHeadlessRun(
+          pool,
+          fresh,
+          'Auto session could not be completed because its durable coding-turn state is inconsistent.',
+        );
+        return;
+      }
+      if (fresh.headless_status !== 'generating') return;
+      await resumeOneHeadlessRun({ pool, config, session: fresh });
+    },
+    onError: async (err, { failures }) => {
+      if (err?.retainActiveTurn && recoveryRetry.shouldRetryRecoveryError(err)) {
+        log.warn('sessions', 'Retrying retained headless recovery', {
+          sessionId, failures, err: err.message,
+        });
+        return true;
+      }
+      log.error('sessions', 'Retried headless resume failed — marking run failed', {
+        sessionId, err: err.message, stack: err.stack,
+      });
+      await failHeadlessRun(
+        pool,
+        latestSession,
+        `Auto session could not be completed: ${String(err.message || err).substring(0, 200)}`
+      );
+      return false;
+    },
+    onComplete: () => log.info('sessions', 'Retained headless recovery completed', { sessionId }),
+    onHookError: (err) => log.warn('sessions', 'Headless recovery retry hook failed', {
+      sessionId, err: err.message,
+    }),
+  });
+}
+
+// A missing Codex provider thread can be retried once while the original
+// process is still alive: its stop state, prompt hand-off and exact dispatch
+// boundary are all observable there. After a platform restart that boundary
+// is ambiguous. Recovery therefore never creates or re-dispatches a paid
+// attempt. It converts the durable record into a terminal tail and asks the
+// user to retry explicitly; the ordinary shared settlement below then closes
+// the existing ledger attempt exactly once.
+async function resumeRecoveredCodexFreshRetry({ pool, session, activeTurn, result }) {
+  if (activeTurn?.backend !== 'codex_openrouter') return null;
+  const legacyRetryPhase = activeTurn.phase === 'retry_pending'
+    || activeTurn.phase === 'retry_dispatch_pending';
+  if (result?.agentRetryFresh !== true && !legacyRetryPhase) return null;
+
+  const message = 'The saved Codex thread became unavailable during a platform restart. '
+    + 'For safety, no automatic retry was dispatched; retry this turn to start fresh.';
+  const patch = {
+    retryFresh: false,
+    recoveryFailure: 'restart_retry_requires_user',
+    tail: {
+      ...((activeTurn.tail && typeof activeTurn.tail === 'object') ? activeTurn.tail : {}),
+      sha: activeTurn.tail?.sha || result?.sha || null,
+      pushOk: activeTurn.tail?.pushOk === true || result?.pushOk === true,
+    },
+  };
+
+  const transition = await turnLifecycle.markTailPending(pool, {
+    sessionId: session.id,
+    turnId: activeTurn.turnId || null,
+    journal: activeTurn.turnId ? null : activeTurn.journal,
+    turnUuid: activeTurn.turnUuid || null,
+    patch,
+  });
+  const recoveredTurn = transition.activeTurn || {
+    ...activeTurn,
+    phase: turnLifecycle.PHASE_TAIL_PENDING,
+    ...patch,
+  };
+  return {
+    result: {
+      ...result,
+      resultSeen: true,
+      execExitSeen: true,
+      exitCode: result?.exitCode && result.exitCode !== 0 ? result.exitCode : 1,
+      agentExit: result?.agentExit && result.agentExit !== 0 ? result.agentExit : 1,
+      agentRetryFresh: false,
+      ccIsError: true,
+      fatalError: message,
+    },
+    activeTurn: recoveredTurn,
+  };
+}
+
 // Terminal failure for a resumed headless run: same row updates + WS
 // broadcast the live runner's catch block performs.
-async function failHeadlessRun(pool, session, message) {
+async function failHeadlessRun(pool, session, message, { activeTurn = null } = {}) {
   const { broadcastGlobal } = require('../services/ws');
-  await pool.query(
-    `UPDATE chat_sessions SET headless_status = 'failed', headless_step = NULL WHERE id = $1`,
-    [session.id]
-  ).catch(() => {});
+  if (activeTurn) {
+    const identity = turnLifecycle.cleanupArgs(activeTurn);
+    await turnLifecycle.markHeadlessTerminal(pool, {
+      sessionId: session.id,
+      ...identity,
+      status: 'failed',
+    });
+  } else {
+    await pool.query(
+      `UPDATE chat_sessions
+          SET headless_status = 'failed', headless_step = NULL, headless_turn_id = NULL
+        WHERE id = $1`,
+      [session.id]
+    ).catch(() => {});
+  }
   await pool.query(
     `INSERT INTO chat_session_messages (session_id, role, content, metadata)
      VALUES ($1, 'system', $2, $3)`,
@@ -6710,6 +7552,23 @@ async function resumeOneHeadlessRun(args) {
   activeWorkers.add(args.session.id);
   try {
     return await resumeOneHeadlessRunInner(args);
+  } catch (err) {
+    let retainedTurn;
+    try {
+      retainedTurn = await turnLifecycle.loadActiveTurn(args.pool, args.session.id);
+    } catch (loadErr) {
+      loadErr.retainActiveTurn = true;
+      throw loadErr;
+    }
+    if (retainedTurn) {
+      await recoveryRetry.retainOrQuarantineRecoveryError({
+        pool: args.pool,
+        sessionId: args.session.id,
+        activeTurn: retainedTurn,
+        error: err,
+      });
+    }
+    throw err;
   } finally {
     activeWorkers.delete(args.session.id);
   }
@@ -6717,6 +7576,23 @@ async function resumeOneHeadlessRun(args) {
 
 async function resumeOneHeadlessRunInner({ pool, config, session }) {
   const { broadcastGlobal } = require('../services/ws');
+  const initialRecoveryAction = turnLifecycle.recoveryAction(session.active_turn);
+  if (initialRecoveryAction === 'quarantine') {
+    return failHeadlessRun(
+      pool,
+      session,
+      'Auto session could not be completed because its durable coding-turn state is inconsistent.',
+    );
+  }
+  if (initialRecoveryAction === 'cleanup') {
+    const cleanupArgs = turnLifecycle.cleanupArgs(session.active_turn);
+    recoveryRetry.requireDurableTurnCleanup(
+      await worker.finishTurn(session.id, cleanupArgs),
+      cleanupArgs,
+    );
+    session.active_turn = null;
+    if (session.headless_status !== 'generating') return;
+  }
   const issueNumber = session.headless_issue_number;
   const user = { id: session.user_id, username: session.username };
   const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
@@ -6764,12 +7640,25 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
 
   let outcome = session.headless_outcome || 'question';
   let dispatchSummary = null;
+  let recoveredJournal = null;
+  let recoveredTurnForCleanup = null;
+  let headlessTurnId = session.headless_turn_id || null;
+
+  // New live runners checkpoint wrapping before releasing their coding
+  // owner. If the process died in that narrow hand-off, the exec/tail is
+  // already complete and this record now exists solely to make cleanup CAS
+  // safe after the receipt-backed wrap-up below.
+  if (step === 'wrapping' && session.active_turn) {
+    recoveredTurnForCleanup = session.active_turn;
+    recoveredJournal = session.active_turn.journal || null;
+  }
 
   if (step === 'cc_running') {
     const activeTurn = session.active_turn || null;
     if (!activeTurn || !activeTurn.journal) {
       return failHeadlessRun(pool, session, 'Auto session failed: its coding turn left no resumable record.');
     }
+    recoveredJournal = activeTurn.journal;
     // Replay/follow the detached turn's journal. Progress lines are
     // rebuilt WHOLESALE onto the latest progress row (replay re-feeds
     // every line from the start of the turn).
@@ -6789,21 +7678,70 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
         [JSON.stringify(progressLines), session.id]
       ).catch(() => {});
     };
-    const result = await worker.resumeTurnFromJournal(session.id, {
+    const onRecoveredProgress = (text) => {
+      broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'cc_progress', text });
+      progressLines.push(text);
+      if (!flushQueued) {
+        flushQueued = true;
+        setTimeout(flushProgress, 1000);
+      }
+    };
+    let result = await worker.resumeTurnFromJournal(session.id, {
       journal: activeTurn.journal,
+      turnId: activeTurn.turnId || null,
       agentBackend: activeTurn.backend || 'claude_code',
       // #664: seed the per-turn BYOK tally from the persisted record so
       // post-restart switched calls accumulate on top of pre-restart ones.
       byokCentsSoFar: Number(activeTurn.byokCents || 0),
-      onProgress: (text) => {
-        broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'cc_progress', text });
-        progressLines.push(text);
-        if (!flushQueued) {
-          flushQueued = true;
-          setTimeout(flushProgress, 1000);
-        }
-      },
+      onProgress: onRecoveredProgress,
     });
+    let recoveryActiveTurn = activeTurn;
+    try {
+      const retried = await resumeRecoveredCodexFreshRetry({
+        pool, config, session, activeTurn, result,
+        onProgress: onRecoveredProgress,
+      });
+      if (retried) {
+        result = retried.result;
+        recoveryActiveTurn = retried.activeTurn;
+      }
+
+      // These writes are part of consuming the journal, not optional tail
+      // decoration. If either fails, leave active_turn and every journal in
+      // place so the next recovery can replay idempotently.
+      await agentTurn.persistRecoveredAgentThread({ pool, session, result });
+      await agentTurn.settleRecoveredAgentAttempt({
+        pool,
+        activeTurn: recoveryActiveTurn,
+        result,
+        settleClaude: async () => {
+          // Guard (plan 7.6): recovered Codex spend never reaches Anthropic
+          // `limits` — only the Claude branch settles through it here.
+          if (!result.costUsd) return null;
+          const byok = recoveryActiveTurn.byok ?? !!userApiKey;
+          return limits.settleTurnSpend(pool, user.id, Math.round(result.costUsd * 100), {
+            turnByok: byok,
+            byokObservedCents: worker.getTurnByokCents(session.id),
+            turnId: turnLifecycle.turnIdentity(recoveryActiveTurn),
+            sessionId: session.id,
+          });
+        },
+      });
+    } catch (err) {
+      const disposition = await recoveryRetry.retainOrQuarantineRecoveryError({
+        pool,
+        sessionId: session.id,
+        activeTurn: recoveryActiveTurn,
+        error: err,
+      });
+      log.error('sessions', disposition.action === 'retry'
+        ? 'Required recovered-turn persistence failed; retaining durable state'
+        : 'Recovered turn has invalid durable state; leaving it quarantined without retry', {
+        sessionId: session.id, err: err.message,
+      });
+      throw err;
+    }
+    recoveredTurnForCleanup = recoveryActiveTurn;
     // Terminal marker for the recovered turn's progress card (dedup:
     // journals from new worker images already end with their own
     // [done]/[push_failed] marker). Decided before flushing so the
@@ -6812,54 +7750,27 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
       || !!(result.lastResultText || '').trim();
     const headlessTerminal = !producedAnythingEarly
       ? '[interrupted]'
-      : (activeTurn.mode !== 'scout' && result.pushOk === false && result.ahead > 0)
+      : (recoveryActiveTurn.mode !== 'scout' && result.pushOk === false && result.ahead > 0)
         ? '[push_failed]'
         : '[done]';
     if (turnWatchdog.appendTerminalLine(progressLines, headlessTerminal)) {
       broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'cc_progress', text: headlessTerminal });
     }
     flushProgress();
-    // Persist a recovered Codex thread id so the next turn can resume it
-    // (review: recovered Codex thread IDs were discarded because the live
-    // dispatch persists agent_thread_id but the recovery path did not).
-    const recoveredThreadId = result.agentThreadId || null;
-    if (recoveredThreadId && recoveredThreadId !== session.agent_thread_id) {
-      await pool.query(
-        'UPDATE chat_sessions SET agent_thread_id = $1 WHERE id = $2',
-        [recoveredThreadId, session.id],
-      ).catch(() => {});
-      session.agent_thread_id = recoveredThreadId;
-    }
-    // Complete the recovered agent turn through the SHARED settlement
-    // helper (plan 7.5): Codex attempts terminalize in the agent_turns
-    // ledger with their observed usage; Claude settles Anthropic spend.
-    // turnUuid is stored in active_turn at dispatch, so a turn that
-    // survived a restart can still be marked terminal idempotently instead
-    // of being left 'running' forever.
-    await agentTurn.settleRecoveredAgentAttempt({
-      pool,
-      activeTurn,
-      result,
-      settleClaude: async () => {
-        // Guard (plan 7.6): recovered Codex spend never reaches Anthropic
-        // `limits` — only the Claude branch settles through it here.
-        if (!result.costUsd) return null;
-        const byok = activeTurn.byok ?? !!userApiKey;
-        return limits.settleTurnSpend(pool, user.id, Math.round(result.costUsd * 100), {
-          turnByok: byok,
-          byokObservedCents: worker.getTurnByokCents(session.id),
-        });
-      },
-    });
-    // Release the record AND the journal it points at (the resume above
-    // consumed it, and holdTurnRecord callers no longer delete it in
-    // execInWorker's finally).
-    await worker.finishTurn(session.id, { journal: activeTurn.journal });
-
     const producedAnything = result.execExitSeen || result.resultSeen
       || !!(result.lastResultText || '').trim();
     if (!producedAnything) {
-      return failHeadlessRun(pool, session, "Auto session failed: its coding turn didn't finish.");
+      await failHeadlessRun(
+        pool,
+        session,
+        "Auto session failed: its coding turn didn't finish.",
+        { activeTurn: recoveryActiveTurn },
+      );
+      recoveryRetry.requireDurableTurnCleanup(
+        await worker.finishTurn(session.id, turnLifecycle.cleanupArgs(recoveryActiveTurn)),
+        turnLifecycle.cleanupArgs(recoveryActiveTurn),
+      );
+      return;
     }
 
     // Persist the CC session id for later cloned sessions' --resume.
@@ -6874,29 +7785,24 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
     // Headless post-processing — mirrors runScoutTool / runClaudeCodeTool's
     // headless success paths (spec persist / testing notes), never PR or
     // staging (the headless contract).
-    if (activeTurn.mode === 'scout') {
+    if (recoveryActiveTurn.mode === 'scout') {
       const ccText = stripSpecWrapperFence((result.lastResultText || '').trim());
       if (ccText && !result.fatalError) {
-        await pool.query(
-          'UPDATE chat_sessions SET spec_md = $1 WHERE id = $2',
-          [ccText, session.id]
-        );
-        const specVersion = await snapshotSessionSpec(pool, session.id, ccText);
-        const lineCount = ccText.split('\n').length;
-        await pool.query(
-          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-           VALUES ($1, 'system', $2, $3)`,
-          [session.id, `Scout drafted a ${lineCount}-line spec from the codebase.`,
-            // specPreview drives the tappable spec card in dev-chat; omitting
-            // it here left recovered scout turns (and their clones) with a
-            // message claiming a spec exists but no card to open it.
-            JSON.stringify({ specPreview: buildSpecPreview(ccText), specLines: lineCount, scoutOutput: ccText, specVersion })]
-        ).catch(() => {});
+        const publication = await persistScoutPublication({
+          pool,
+          sessionId: session.id,
+          turnId: recoveryActiveTurn.turnId || null,
+          content: ccText,
+          hadSpec: !!(session.spec_md || '').trim(),
+        });
+        session.spec_md = ccText;
         // #178: blocking Questions in the recovered spec finalize as
         // 'question' so the answer-and-re-run loop survives the restart
         // (no comment is posted — there is no decision turn on resume).
         outcome = specHasBlockingQuestions(ccText) ? 'question' : 'spec';
-        dispatchSummary = `The scout investigated the repo and drafted a ${lineCount}-line markdown spec. It now lives in the session's spec doc.`;
+        dispatchSummary = publication.hadSpec
+          ? `The scout revised the session's spec doc (now ${publication.lineCount} lines). It now lives in the session's spec doc.`
+          : `The scout investigated the repo and drafted a ${publication.lineCount}-line markdown spec. It now lives in the session's spec doc.`;
       } else {
         outcome = 'question';
         dispatchSummary = 'The scout did not complete successfully — no spec was produced.';
@@ -6993,7 +7899,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
           + (session.spec_md ? ' The spec drafted earlier this run is still the reviewable artifact.' : '');
       }
     }
-    await setHeadlessStep(pool, session.id, 'wrapping', outcome);
+    headlessTurnId = await checkpointHeadlessWrapUp(pool, session.id, outcome);
   }
 
   // #178: a 'wrapping' checkpoint written before/during the decision turn
@@ -7028,15 +7934,34 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
   const wrapPrompt = getMayorSystemPrompt(session.app_name, false, currentSpec, !!session.app_self_hosted, null) + headlessAddendum;
   // No tools passed → plain text turn; the API can't call anything, so
   // tool_choice is unnecessary (and invalid without a tools array).
-  const mayor2 = await llm.streamChat({
-    messages: convo,
-    systemPrompt: wrapPrompt,
-    model: selectedModel,
-    apiKey: userApiKey,
+  if (!headlessTurnId) {
+    // Rolling-deploy compatibility: wrapping rows created before
+    // headless_turn_id existed get an identity before any new provider call.
+    headlessTurnId = await checkpointHeadlessWrapUp(pool, session.id, outcome);
+  }
+  const fallbackMayorText = outcome === 'spec'
+    ? '_Spec drafted — review it in the spec viewer after starting a session from this auto session._'
+    : outcome === 'spec_code'
+      ? '_Spec drafted and change committed — start a session from this auto session to open the PR._'
+      : outcome === 'code'
+        ? '_Change committed and pushed — start a session from this auto session to open the PR._'
+        : "_The auto session's dispatch didn't finish successfully — see the status above._";
+  const recoveredEffect = await runHeadlessMayorEffect({
+    pool,
+    sessionId: session.id,
+    headlessTurnId,
+    fallbackText: fallbackMayorText,
+    invoke: () => llm.streamChat({
+        messages: convo,
+        systemPrompt: wrapPrompt,
+        model: selectedModel,
+        apiKey: userApiKey,
+      }),
   });
+  const mayor2 = recoveredEffect.response;
   // Fable 5 fallback: admin record only on this rare resume path (there's
   // no sendStatus plumbing here); attribution below uses the served model.
-  if (mayor2.fallbackServed) {
+  if (mayor2.fallbackServed && recoveredEffect.disposition === 'executed') {
     await modelFallback.record(pool, {
       kind: events.EVENT_TYPES.MODEL_FALLBACK,
       userId: user.id, appId: session.app_id, sessionId: session.id,
@@ -7048,33 +7973,49 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
 
   let mayorText2 = (mayor2.text || '').trim();
   if (!mayorText2) {
-    mayorText2 = outcome === 'spec'
-      ? '_Spec drafted — review it in the spec viewer after starting a session from this auto session._'
-      : outcome === 'spec_code'
-        ? '_Spec drafted and change committed — start a session from this auto session to open the PR._'
-        : outcome === 'code'
-          ? '_Change committed and pushed — start a session from this auto session to open the PR._'
-          : "_The auto session's dispatch didn't finish successfully — see the status above._";
+    mayorText2 = fallbackMayorText;
   }
   const servedModelR = mayor2.servedModel || selectedModel;
   const costCents2 = mayor2.usage ? llm.estimateCostCents(mayor2.usage, servedModelR) : 0;
-  await pool.query(
-    `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
-     VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
-    [session.id, mayorText2, servedModelR,
-      mayor2.usage ? mayor2.usage.input_tokens + mayor2.usage.output_tokens : 0, costCents2,
-      // #1001: this row was the single biggest no-pills hole in production —
-      // it wrote no metadata column at all, so every restart-resumed auto
-      // session fell through to the client's generic default.
-      JSON.stringify(headlessWrapUpMeta(outcome))]
-  );
-  await limits.recordSpend(pool, user.id, costCents2, { byok: !!userApiKey });
+  await persistHeadlessMayorRow({
+    pool,
+    sessionId: session.id,
+    headlessTurnId,
+    text: mayorText2,
+    model: servedModelR,
+    usage: mayor2.usage,
+    costCents: costCents2,
+    // #1001: this row was the single biggest no-pills hole in production —
+    // it wrote no metadata column at all, so every restart-resumed auto
+    // session fell through to the client's generic default.
+    metadata: headlessWrapUpMeta(outcome),
+  });
+  await settleHeadlessMayorUsage({
+    pool,
+    userId: user.id,
+    sessionId: session.id,
+    headlessTurnId,
+    usage: mayor2.usage,
+    servedModel: mayor2.servedModel,
+    selectedModel,
+    userApiKey,
+  });
 
-  await pool.query(
-    `UPDATE chat_sessions SET headless_status = 'ready', headless_outcome = $1, headless_step = NULL, last_activity_at = NOW()
-     WHERE id = $2`,
-    [outcome, session.id]
-  );
+  if (recoveredJournal && recoveredTurnForCleanup) {
+    recoveredTurnForCleanup = await turnLifecycle.markHeadlessTerminal(pool, {
+      sessionId: session.id,
+      ...turnLifecycle.cleanupArgs(recoveredTurnForCleanup),
+      status: 'ready',
+      outcome,
+    });
+  } else {
+    await pool.query(
+      `UPDATE chat_sessions SET headless_status = 'ready', headless_outcome = $1,
+              headless_step = NULL, headless_turn_id = NULL, last_activity_at = NOW()
+       WHERE id = $2`,
+      [outcome, session.id]
+    );
+  }
   broadcastGlobal({
     type: 'session_event', sessionId: session.id, event: 'headless_update',
     status: 'ready', outcome, issueNumber, appSlug: session.app_slug,
@@ -7086,6 +8027,15 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
     userId: user.id, appId: session.app_id, sessionId: session.id, detail: outcome,
   });
   log.info('sessions', 'Headless session resumed to ready', { sessionId: session.id, issueNumber, outcome });
+  if (recoveredTurnForCleanup) {
+    // Release the durable record and its journal only after every recovered
+    // tail step has completed. A failed clear is then safe to retry alone.
+    const cleanupArgs = turnLifecycle.cleanupArgs(recoveredTurnForCleanup);
+    recoveryRetry.requireDurableTurnCleanup(
+      await worker.finishTurn(session.id, cleanupArgs),
+      cleanupArgs,
+    );
+  }
 }
 
 // Tools the Mayor can call. Each user message produces at most one
@@ -8226,6 +9176,20 @@ function buildMayorMessages(history, attachmentsByMessageId = new Map()) {
   return messages;
 }
 
+// A headless dispatch cannot move on to its independently identified Mayor
+// wrap-up while the coding owner is only *partly* released. If cleanup cannot
+// commit, retain both durable records and let the recovery scheduler finish
+// the handoff. Ordinary non-headless callers preserve the historical
+// best-effort cleanup behavior; interactive dispatches defer cleanup until
+// their own wrap-up and therefore do not call this helper here.
+async function finishToolTurnCleanup(sessionId, turnId, { required = false } = {}) {
+  const cleared = await worker.finishTurn(sessionId, { turnId }).catch(() => false);
+  if (required) {
+    recoveryRetry.requireDurableTurnCleanup(cleared, { turnId });
+  }
+  return cleared;
+}
+
 // Runs Claude Code in read-only PLAN MODE (the spec-stage scout). CC
 // reads the repo and produces a markdown spec as its final result text;
 // we capture that into chat_sessions.spec_md. No commit, no push, no
@@ -8250,6 +9214,12 @@ async function runScoutTool({
   stopHandle,
   userApiKey,
   headless = false,
+  // Interactive callers own the Mayor phase-2 wrap-up and therefore keep
+  // this turn's durable record until that final tail is committed. A headless
+  // caller supplies beforeTurnCleanup to checkpoint the next paid Mayor phase
+  // (and its stable receipt id) before this per-dispatch owner is released.
+  deferTurnCleanup = false,
+  beforeTurnCleanup = null,
 }) {
   activeWorkers.add(session.id);
   // #50: wall-clock start for the durationMs persisted on terminal
@@ -8261,6 +9231,7 @@ async function runScoutTool({
   const isCodexSession = registry.resolveBackend(session.agent_backend) === 'codex_openrouter';
   const turnModel = isCodexSession ? (session.agent_model || config.openrouterDefaultCodexModel || selectedModel) : selectedModel;
   const turnApiKey = isCodexSession ? null : (userApiKey || null);
+  let durableTurnId = null;
 
   // #937: the single way this tool ends on a stop, used by every
   // pre-dispatch gate below AND by the post-run branch, so the two can't
@@ -8290,6 +9261,7 @@ async function runScoutTool({
     return {
       toolResultText: `The scout was stopped${byStr} before it finished. The spec doc was not updated.`,
       isError: true,
+      turnId: durableTurnId,
     };
   };
 
@@ -8477,6 +9449,10 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
 
   let isError = false;
   const summaryParts = [];
+  // Once dispatch begins, an exception means the durable tail must remain
+  // replayable. Normal/handled exits flip this back only after every required
+  // tail effect has landed.
+  let durableTailComplete = true;
 
   try {
     // #937 gate 5 of 5 — immediately before the dispatch. Placed ahead of
@@ -8607,6 +9583,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
 
     let result;
     let codexCtx = null;
+    durableTailComplete = false;
     try {
       const resumeThreadId = isCodexSession ? (session.agent_thread_id || null) : (session.cc_session_id || null);
       // Shared dispatcher for BOTH the Codex attempt loop and the Claude
@@ -8639,63 +9616,96 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         }
       } else {
         // Backend-aware per-attempt dispatch (plan §7): for a Codex session
-        // this resolves the runtime context ONCE, then starts/completes one
-        // agent_turns attempt per physical worker.execInWorker (a headless
-        // auto-retry gets attempt_number=2, never overwriting attempt 1). For
-        // a Claude session the helper returns null and we fall through to the
-        // legacy path below. plan.md PR5/PR6.
-        const routed = await runCodexAttemptLoop({
-          pool, session, userId: req.user.id, config, isCodexSession,
-          turnModel, resumeThreadId,
-          resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
-            pool, session, userId: req.user.id, model: turnModel,
-            resumeThreadId, config,
-          }),
-          dispatchOnce: (ctx) => doScout(ctx),
-          retryPredicate: (r) => headless && shouldRetryHeadlessTurn(r, stopHandle, !!(r.lastResultText || '').trim()),
-          sendStatus: async (msg) => { await sendStatus(msg); },
-          waitForStopped: waitForTurnStopped,
-          containerName,
-        });
+      // this resolves the runtime context ONCE, then starts/completes one
+      // agent_turns attempt per physical worker.execInWorker (a headless
+      // auto-retry gets attempt_number=2, never overwriting attempt 1). For
+      // a Claude session the helper returns null and we fall through to the
+      // legacy path below. plan.md PR5/PR6.
+      const routed = await runCodexAttemptLoop({
+        pool, session, userId: req.user.id, config, isCodexSession,
+        turnModel, resumeThreadId, mode: 'scout',
+        resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
+          pool, session, userId: req.user.id, model: turnModel,
+          resumeThreadId, config,
+        }),
+        dispatchOnce: (ctx) => doScout(ctx),
+        retryPredicate: (r) => headless && shouldRetryHeadlessTurn(r, stopHandle, !!(r.lastResultText || '').trim()),
+        sendStatus: async (msg) => { await sendStatus(msg); },
+        waitForStopped: waitForTurnStopped,
+        prepareRetry: async (retry) => {
+          if (stopPendingFor(stopHandle)) return false;
+          if (retry.retryFresh) {
+            await worker.markTurnRetryPending(session.id, {
+              turnUuid: retry.attempt.turnUuid,
+              logicalTurnId: retry.logicalTurnId,
+              attemptNumber: retry.attemptNumber,
+            });
+          } else {
+            if (!retry.result?.turnId
+                || !await worker.finishTurn(session.id, { turnId: retry.result.turnId })) return false;
+          }
+          // The required DB write / journal cleanup above yields. Re-check
+          // before resetting the old attempt's stop marker so a stop that
+          // landed in that window remains authoritative for attempt two.
+          if (stopPendingFor(stopHandle)) return false;
+          worker.clearPendingStop(session.id);
+          return true;
+        },
+        classifyAttemptStatus: ({ failed }) => stopPendingFor(stopHandle)
+          ? 'cancelled'
+          : (failed ? 'failed' : 'completed'),
+        containerName,
+      });
 
-        if (routed?.error) {
-          codexCtx = { error: routed.error };
-          // SSE is already open; terminate through the SSE protocol (review #5)
-          // instead of res.json (which would throw ERR_HTTP_HEADERS_SENT or
-          // inject JSON into the stream). Mark the stop handle so the caller's
-          // stop branch tears the turn down cleanly and skips the Mayor wrap-up.
-          const code = routed.error;
-          const msg = code === 'backend_disabled' || code === 'backend_not_available'
-            ? 'Codex/OpenRouter is not available for your account right now.'
-            : code === 'model_required'
-              ? 'Pick a Codex model in Settings for this session.'
-              : code === 'invalid_base_url'
-                ? 'The OpenRouter endpoint is misconfigured.'
-                : code === 'ledger_start_failed'
-                  ? 'Could not start the Codex turn. Please retry.'
-                  : code === 'agent_context_changed'
-                    ? 'The agent configuration changed while starting this turn. Please retry.'
-                    : code === 'session_busy'
-                      ? 'The session became busy. Stop the current turn before retrying.'
-                      : 'Add your OpenRouter API key in Settings to use Codex.';
-          await sendStatus(msg);
+      if (routed?.error) {
+        codexCtx = { error: routed.error };
+        durableTurnId = routed.logicalTurnId || null;
+        isError = true;
+        // SSE is already open; terminate through the SSE protocol (review #5)
+        // instead of res.json (which would throw ERR_HTTP_HEADERS_SENT or
+        // inject JSON into the stream). Mark the stop handle so the caller's
+        // stop branch tears the turn down cleanly and skips the Mayor wrap-up.
+        const code = routed.error;
+        const msg = code === 'backend_disabled' || code === 'backend_not_available'
+          ? 'Codex/OpenRouter is not available for your account right now.'
+          : code === 'model_required'
+            ? 'Pick a Codex model in Settings for this session.'
+            : code === 'invalid_base_url'
+              ? 'The OpenRouter endpoint is misconfigured.'
+              : code === 'ledger_start_failed'
+                ? 'Could not start the Codex turn. Please retry.'
+                : code === 'agent_context_changed'
+                  ? 'The agent configuration changed while starting this turn. Please retry.'
+                  : code === 'session_busy'
+                    ? 'The session became busy. Stop the current turn before retrying.'
+                    : 'Add your OpenRouter API key in Settings to use Codex.';
+        await sendStatus(msg);
+        if (stopHandle) {
           stopHandle.stopped = true;
           stopHandle.stoppedBy = 'agent_error';
-          if (typeof send === 'function') send('error', { code, error: msg });
-          return { toolResultText: msg, isError: true };
         }
-        // For a Claude session (routed === null) keep the legacy combined
-        // path exactly as before (shared dispatcher above).
-        if (routed === null) {
-          result = await doScout({});
-          if (headless && shouldRetryHeadlessTurn(result, stopHandle, !!(result.lastResultText || '').trim())) {
-            await sendStatus('The coding step failed unexpectedly — retrying once…');
-            await waitForTurnStopped(session.id, containerName);
-            result = await doScout({});
+        if (typeof send === 'function') send('error', { code, error: msg });
+        durableTailComplete = true;
+        return { toolResultText: msg, isError: true, turnId: durableTurnId };
+      }
+      // For a Claude session (routed === null) keep the legacy combined path
+      // exactly as before (shared dispatcher above).
+      if (routed === null) {
+        // Claude session — legacy combined path (no agent_turns ledger),
+        // but keep the headless auto-retry that the Codex loop provides
+        // for its own attempts (one extra dispatch, never more).
+        result = await doScout({});
+        if (headless && shouldRetryHeadlessTurn(result, stopHandle, !!(result.lastResultText || '').trim())) {
+          await sendStatus('The coding step failed unexpectedly — retrying once…');
+          await waitForTurnStopped(session.id, containerName);
+          if (!result.turnId || !await worker.finishTurn(session.id, { turnId: result.turnId })) {
+            throw new Error('Could not durably finish the first scout attempt before retry');
           }
-        } else {
-          result = routed.result;
+          result = await doScout({});
         }
+      } else {
+        result = routed.result;
+      }
       }
     } catch (e) {
       // A thrown dispatch must still terminalize any Codex ledger attempt
@@ -8707,6 +9717,8 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
     } finally {
       clearInterval(heartbeat);
     }
+
+    durableTurnId = result?.turnId || null;
 
     // Same cc_session_id thread-through as runClaudeCodeTool — a scout
     // call early in the session is remembered when the user later
@@ -8736,6 +9748,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
     // pre-dispatch gates so the wording, pills and duration can't drift.
     if (stopPendingFor(stopHandle)) {
       isError = true;
+      durableTailComplete = true;
       return stoppedResult();
     }
 
@@ -8761,42 +9774,29 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       await sendStatus(msg);
       summaryParts.push(msg);
     } else {
-      await pool.query(
-        'UPDATE chat_sessions SET spec_md = $1 WHERE id = $2',
-        [ccText, session.id]
-      );
-
-      const lineCount = ccText.split('\n').length;
-      const preview = buildSpecPreview(ccText);
-      // #27: freeze the scout's draft so the inline card opens its own content.
-      const specVersion = await snapshotSessionSpec(pool, session.id, ccText);
-      // #907: a locally-drafted spec says so, and says it cost nothing. The
-      // transcript is the record of who did the work — a row that reads like
-      // a platform scout would be claiming spend the platform never made.
-      const localSuffix = runLocally
-        ? ` Drafted on ${lease.label} — no Usernode credits used.`
-        : '';
-      await sendStatus(
-        (existingSpec
-          ? `Scout revised the spec (now ${lineCount} lines).`
-          : `Scout drafted a ${lineCount}-line spec from the codebase.`) + localSuffix,
-        {
-          specPreview: preview,
-          specLines: lineCount,
-          scoutOutput: ccText,
-          specVersion,
-          durationMs: Date.now() - turnStartedMs,
-          ...(runLocally
-            ? { runner: 'local', localAgentLabel: lease.label, localMode: 'scout' }
-            : {}),
-        }
-      );
-      send('spec_updated', { length: ccText.length, lines: lineCount, version: specVersion });
+      const publication = await persistScoutPublication({
+        pool,
+        sessionId: session.id,
+        turnId: durableTurnId,
+        content: ccText,
+        hadSpec: !!existingSpec,
+        durationMs: Date.now() - turnStartedMs,
+        localAgentLabel: runLocally ? lease.label : null,
+      });
+      session.spec_md = ccText;
+      if (publication.applied) {
+        send('status', { text: publication.scoutText, ...publication.metadata });
+        send('spec_updated', {
+          length: ccText.length,
+          lines: publication.lineCount,
+          version: publication.specVersion,
+        });
+      }
       summaryParts.push(
-        existingSpec
-          ? `The scout revised the session's spec doc (now ${lineCount} lines). `
+        publication.hadSpec
+          ? `The scout revised the session's spec doc (now ${publication.lineCount} lines). `
             + `The user can review it in the dev-chat spec viewer. When they're ready to ship, they'll ask you to dispatch the coding agent.`
-          : `The scout investigated the repo and drafted a ${lineCount}-line markdown spec. `
+          : `The scout investigated the repo and drafted a ${publication.lineCount}-line markdown spec. `
             + `It now lives in the session's spec doc; the user can review it in the dev-chat spec viewer. When they're ready to ship, they'll ask you to dispatch the coding agent.`
       );
     }
@@ -8820,28 +9820,35 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       const split = await limits.settleTurnSpend(pool, req.user.id, ccCostCents, {
         turnByok: !!userApiKey,
         byokObservedCents: worker.getTurnByokCents(session.id),
+        turnId: result.turnId || null,
+        sessionId: session.id,
       });
       if (split.platformCents > 0) send('usage', { costCents: split.platformCents, model: `scout/${selectedModel}`, byok: false });
       if (split.byokCents > 0) send('usage', { costCents: split.byokCents, model: `scout/${selectedModel}`, byok: true });
     }
+    durableTailComplete = true;
   } finally {
     activeWorkers.delete(session.id);
     workerProgress.clear(session.id);
-    // The scout tail is over (spec persisted or not): release the held
-    // turn record + its journal. Must run for EVERY exit path out of this
-    // tool — a held record with nobody to consume it is what the stale
-    // active_turn watchdog exists to reap, and reaping narrates.
-    await worker.finishTurn(session.id).catch(() => {});
-    // #907: remember where this turn ran so the dev-chat chip survives a
-    // reload, and record the outcome with mode='scout' so a read-only local
-    // turn is distinguishable from a local build in analytics. Both are
-    // best-effort, both run after finishTurn, neither can fail the turn.
-    //
-    // Recorded for a platform scout too, symmetrically with the build path: a
-    // cloud scout genuinely IS the session's most recent turn, so leaving a
-    // stale "ran on Evan's laptop" behind would be a lie. While a lease is
-    // live the chip renders from the lease itself, so this only affects the
-    // past-tense chip a detached machine leaves behind.
+    if (durableTailComplete && durableTurnId && typeof beforeTurnCleanup === 'function') {
+      try {
+        await beforeTurnCleanup({ turnId: durableTurnId, isError });
+      } catch (err) {
+        err.retainActiveTurn = true;
+        throw err;
+      }
+    }
+    if (durableTailComplete && durableTurnId && (!deferTurnCleanup || headless)) {
+      await finishToolTurnCleanup(session.id, durableTurnId, { required: headless });
+    } else {
+      if (!durableTailComplete) {
+        log.warn('sessions', 'Scout tail failed; retaining durable turn for recovery', {
+          sessionId: session.id,
+        });
+      }
+    }
+    // #907: persist the execution venue after the durable worker lifecycle
+    // has either completed or been retained for recovery.
     await localAgent.recordTurnRunner(
       pool, session.id, runLocally ? 'local' : 'platform', lease?.label
     );
@@ -8873,6 +9880,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
     toolResultText: summaryParts.join('\n\n').slice(0, 4000)
       || (isError ? 'Scout did not complete successfully.' : 'Scout finished with no summary.'),
     isError,
+    turnId: durableTurnId,
   };
 }
 
@@ -8913,13 +9921,14 @@ function describeMarkerlessExit(cause) {
 async function runCodexAttemptLoop({
   pool, session, userId, config, isCodexSession, turnModel,
   resumeThreadId, resolveRuntime, dispatchOnce, retryPredicate,
-  sendStatus, waitForStopped, containerName,
+  sendStatus, waitForStopped, prepareRetry, classifyAttemptStatus,
+  containerName, mode = 'build',
 }) {
   // One logical turn id per coding-tool invocation (plan 7.1); attempt 1
   // gets attempt_number=1, a retry gets attempt_number=2.
   const logicalTurnId = crypto.randomUUID();
   const runtimeContext = await resolveRuntime();
-  if (runtimeContext?.error) return { error: runtimeContext.error };
+  if (runtimeContext?.error) return { error: runtimeContext.error, logicalTurnId };
   if (!runtimeContext) return null; // Claude turn — caller handles it.
 
   const completeAttempt = async (attempt, result, status, err) => {
@@ -8929,7 +9938,9 @@ async function runCodexAttemptLoop({
       status,
       threadId: result?.agentThreadId || null,
       usageTotal: agentTurn.usageTotalFromResult(result),
-      errorCode: err ? agentTurn.classifyErrorCode(err) : null,
+      errorCode: err
+        ? agentTurn.classifyErrorCode(err)
+        : result?.agentRetryFresh ? 'resume_thread_missing' : null,
       errorDetail: err ? agentTurn.sanitizeError(err) : null,
     });
   };
@@ -8937,6 +9948,16 @@ async function runCodexAttemptLoop({
   let lastResult = null;
   let lastError = null;
   let attemptNumber = 0;
+  let attemptResumeThreadId = resumeThreadId ?? runtimeContext.resumeThreadId ?? null;
+  let allowRetryPendingForAttempt = false;
+  const statusFor = ({ result = null, error = null, failed = false } = {}) => {
+    const fallback = failed || error ? 'failed' : 'completed';
+    if (typeof classifyAttemptStatus !== 'function') return fallback;
+    const classified = classifyAttemptStatus({ result, error, failed });
+    return ['completed', 'failed', 'cancelled'].includes(classified)
+      ? classified
+      : fallback;
+  };
   for (;;) {
     attemptNumber += 1;
     let attempt;
@@ -8945,51 +9966,96 @@ async function runCodexAttemptLoop({
         pool, session, userId, logicalTurnId, attemptNumber,
         model: runtimeContext.agentModel,
         reasoningEffort: runtimeContext.agentReasoningEffort,
-        resumeThreadId,
+        resumeThreadId: attemptResumeThreadId,
         runtimeContext,
+        allowRetryPending: allowRetryPendingForAttempt,
+        mode,
       });
     } catch (startErr) {
       // plan 8.5 (Commit 6): a stale-version/busy race surfaces as a
       // structured code so the caller can tell the user the agent context
       // changed under it (no paid dispatch with stale credentials/model).
       if (startErr?.code === 'agent_context_changed') {
-        return { error: 'agent_context_changed', errorDetail: agentTurn.sanitizeError(startErr) };
+        return { error: 'agent_context_changed', errorDetail: agentTurn.sanitizeError(startErr), logicalTurnId };
       }
       if (startErr?.code === 'session_busy') {
-        return { error: 'session_busy', errorDetail: agentTurn.sanitizeError(startErr) };
+        return { error: 'session_busy', errorDetail: agentTurn.sanitizeError(startErr), logicalTurnId };
       }
-      return { error: 'ledger_start_failed', errorDetail: agentTurn.sanitizeError(startErr) };
+      return { error: 'ledger_start_failed', errorDetail: agentTurn.sanitizeError(startErr), logicalTurnId };
     }
 
+    let dispatchResult;
     try {
-      lastResult = await dispatchOnce({
+      dispatchResult = await dispatchOnce({
         ...runtimeContext,
+        // execInWorker consumes resumeSessionId; resumeThreadId is also
+        // overridden so custom dispatchers never observe the stale value.
+        resumeThreadId: attemptResumeThreadId,
+        resumeSessionId: attemptResumeThreadId,
         turnUuid: attempt.turnUuid,
         logicalTurnId,
         attemptNumber,
+        journalPath: attempt.journal,
+        // A same-process missing-thread retry leaves attempt one in
+        // tail_pending until startCodexAttempt atomically installs attempt
+        // two's dispatch intent. Persistence stays mandatory at this boundary.
+        requireActiveTurnPersistence: allowRetryPendingForAttempt,
       });
-      lastError = null;
-      const failed = !!(lastResult?.fatalError || lastResult?.ccIsError
-        || (lastResult?.agentExit != null && lastResult?.agentExit !== 0)
-        || (lastResult?.exitCode != null && lastResult?.exitCode !== 0));
-      await completeAttempt(attempt, lastResult, failed ? 'failed' : 'completed');
     } catch (err) {
       lastError = err;
-      await completeAttempt(attempt, null, 'failed', err);
+      const observedResult = err?.turnResult || null;
+      await completeAttempt(attempt, observedResult, statusFor({
+        result: observedResult,
+        error: err,
+        failed: true,
+      }), err);
       throw err;
     }
 
-    // Retry only when the caller's predicate says so (markerless headless
-    // turn). Attempt 1 is ALREADY terminal before attempt 2 starts.
-    if (!retryPredicate || !retryPredicate(lastResult)) break;
+    lastResult = dispatchResult;
+    lastError = null;
+    const failed = !!(lastResult?.fatalError || lastResult?.ccIsError
+      || (lastResult?.agentExit != null && lastResult?.agentExit !== 0)
+      || (lastResult?.exitCode != null && lastResult?.exitCode !== 0));
+    // Keep ledger completion outside the dispatch catch. If this required
+    // write fails, retrying it with `result = null` would erase the usage we
+    // just observed and falsely terminalize the attempt as an empty failure.
+    await completeAttempt(attempt, lastResult, statusFor({ result: lastResult, failed }));
+
+    // A stale resume is a runner-to-host retry request for every Codex
+    // turn. Markerless headless retries remain caller-controlled. Attempt
+    // 1 is ALREADY terminal before attempt 2 starts.
+    const retryFresh = lastResult?.agentRetryFresh === true;
+    const retryRequested = retryFresh
+      || (typeof retryPredicate === 'function' && retryPredicate(lastResult));
+    if (!retryRequested) break;
     // Guard against spinning: exactly one retry.
     if (attemptNumber >= 2) break;
     if (typeof sendStatus === 'function') {
-      try { await sendStatus('The coding step failed unexpectedly — retrying once…'); } catch {}
+      const status = retryFresh
+        ? 'The saved Codex thread is unavailable — retrying fresh once…'
+        : 'The coding step failed unexpectedly — retrying once…';
+      try { await sendStatus(status); } catch {}
     }
-    if (typeof waitForStopped === 'function') {
+    if (!retryFresh && typeof waitForStopped === 'function') {
       try { await waitForStopped(session.id, containerName); } catch {}
     }
+    // Retry preparation is also the last stop boundary before attempt two.
+    // A callback returns false when a user stop landed during the status /
+    // wait / durable-state transition; in that case do not create another
+    // ledger row and, most importantly, do not launch another paid request.
+    if (typeof prepareRetry === 'function') {
+      const prepared = await prepareRetry({
+        retryFresh,
+        attempt,
+        logicalTurnId,
+        attemptNumber,
+        result: lastResult,
+      });
+      if (prepared === false) break;
+    }
+    if (retryFresh) attemptResumeThreadId = null;
+    allowRetryPendingForAttempt = retryFresh;
   }
   return { result: lastResult, error: lastError, logicalTurnId };
 }
@@ -9096,8 +10162,61 @@ async function forceStopSession(pool, sessionId, username, handle) {
     await worker.evictWorker(sessionId).catch(
       (err) => log.warn('sessions', 'force stop evict failed', { sessionId, err: err.message })
     );
+    // Give the owning journal consumer a short chance to terminalize with
+    // any usage it already observed. The fallback below is for the wedged
+    // owner this force path exists to rescue.
+    await sleepMs(250);
   }
-  await worker.clearActiveTurn(sessionId).catch(() => {});
+  try {
+    const activeTurn = await turnLifecycle.loadActiveTurn(pool, sessionId);
+    if (activeTurn) {
+      let ledgerReady = true;
+      if (activeTurn.backend === 'codex_openrouter' && activeTurn.turnUuid) {
+        let attempt = await agentTurn.getCodexAttemptRecoveryState({
+          pool,
+          turnUuid: activeTurn.turnUuid,
+        });
+        if (attempt?.status === 'running') {
+          await sleepMs(250);
+          attempt = await agentTurn.getCodexAttemptRecoveryState({
+            pool,
+            turnUuid: activeTurn.turnUuid,
+          });
+        }
+        if (attempt?.status === 'running' || !attempt) {
+          try {
+            await agentTurn.completeCodexAttempt({
+              pool,
+              turnUuid: activeTurn.turnUuid,
+              status: 'cancelled',
+              errorCode: 'user_cancelled',
+              errorDetail: 'Turn was force-stopped by the user.',
+            });
+          } catch (ledgerErr) {
+            ledgerReady = false;
+            const disposition = await recoveryRetry.retainOrQuarantineRecoveryError({
+              pool,
+              sessionId,
+              activeTurn,
+              error: ledgerErr,
+            });
+            log.warn('sessions', disposition.action === 'retry'
+              ? 'Force stop retained durable turn because ledger cancellation failed'
+              : 'Force stop quarantined a turn with a missing ledger attempt', {
+              sessionId, turnUuid: activeTurn.turnUuid, err: ledgerErr.message,
+            });
+          }
+        }
+      }
+      if (ledgerReady) {
+        await worker.clearActiveTurn(sessionId, turnLifecycle.cleanupArgs(activeTurn));
+      }
+    }
+  } catch (err) {
+    log.warn('sessions', 'Force stop could not clear the owned durable turn', {
+      sessionId, err: err.message,
+    });
+  }
   activeWorkers.delete(sessionId);
 
   const byStr = username ? ` by @${username}` : '';
@@ -9221,6 +10340,8 @@ async function runClaudeCodeTool({
   // variant (staging, no PR); everything else (worker exec, push
   // accounting, cost debit) is identical.
   headless = false,
+  deferTurnCleanup = false,
+  beforeTurnCleanup = null,
 }) {
   activeWorkers.add(session.id);
   // #50: wall-clock start for the durationMs persisted on terminal
@@ -9236,6 +10357,7 @@ async function runClaudeCodeTool({
   const isCodexSession = registry.resolveBackend(session.agent_backend) === 'codex_openrouter';
   const turnModel = isCodexSession ? (session.agent_model || config.openrouterDefaultCodexModel || selectedModel) : selectedModel;
   const turnApiKey = isCodexSession ? null : (userApiKey || null);
+  let durableTurnId = null;
 
   // #937: the single way this tool ends on a stop — used by all five
   // pre-dispatch gates below AND by the post-run branch, so wording,
@@ -9286,6 +10408,7 @@ async function runClaudeCodeTool({
       isError: true,
       ccLog: result ? ((result.rawStderr || '').substring(0, 5000) || null) : null,
       stagingUrl: null,
+      turnId: durableTurnId,
     };
   };
 
@@ -9584,6 +10707,7 @@ path: /another/changed/view
   // branches that emit status events so the two stay in sync.
   const summaryParts = [];
   let isError = false;
+  let durableTailComplete = true;
 
   try {
     // #937 gate 5 of 5 — immediately before the dispatch. Placed ahead of
@@ -10004,6 +11128,7 @@ path: /another/changed/view
 
     let result;
     let codexCtx = null;
+    durableTailComplete = false;
     try {
       const resumeThreadId = isCodexSession ? (session.agent_thread_id || null) : (session.cc_session_id || null);
       // Shared dispatcher for BOTH the Codex attempt loop and the Claude
@@ -10044,57 +11169,84 @@ path: /another/changed/view
         }
       } else {
         // Backend-aware per-attempt dispatch (plan §7): same contract as the
-        // scout path — one logical turn, one agent_turns attempt per physical
-        // worker.execInWorker, and a headless auto-retry as attempt_number=2
-        // that never overwrites the first attempt's usage.
-        const routed = await runCodexAttemptLoop({
-          pool, session, userId: req.user.id, config, isCodexSession,
-          turnModel, resumeThreadId,
-          resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
-            pool, session, userId: req.user.id, model: turnModel,
-            resumeThreadId, config,
-          }),
-          dispatchOnce: (ctx) => doBuild(ctx),
-          retryPredicate: (r) => headless && shouldRetryHeadlessTurn(r, stopHandle, r.ahead > 0),
-          sendStatus: async (msg) => { await sendStatus(msg); },
-          waitForStopped: waitForTurnStopped,
-          containerName,
-        });
+      // scout path — one logical turn, one agent_turns attempt per physical
+      // worker.execInWorker, and a headless auto-retry as attempt_number=2
+      // that never overwrites the first attempt's usage.
+      const routed = await runCodexAttemptLoop({
+        pool, session, userId: req.user.id, config, isCodexSession,
+        turnModel, resumeThreadId, mode: 'build',
+        resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
+          pool, session, userId: req.user.id, model: turnModel,
+          resumeThreadId, config,
+        }),
+        dispatchOnce: (ctx) => doBuild(ctx),
+        retryPredicate: (r) => headless && shouldRetryHeadlessTurn(r, stopHandle, r.ahead > 0),
+        sendStatus: async (msg) => { await sendStatus(msg); },
+        waitForStopped: waitForTurnStopped,
+        prepareRetry: async (retry) => {
+          if (stopPendingFor(stopHandle)) return false;
+          if (retry.retryFresh) {
+            await worker.markTurnRetryPending(session.id, {
+              turnUuid: retry.attempt.turnUuid,
+              logicalTurnId: retry.logicalTurnId,
+              attemptNumber: retry.attemptNumber,
+            });
+          } else {
+            if (!retry.result?.turnId
+                || !await worker.finishTurn(session.id, { turnId: retry.result.turnId })) return false;
+          }
+          if (stopPendingFor(stopHandle)) return false;
+          worker.clearPendingStop(session.id);
+          return true;
+        },
+        classifyAttemptStatus: ({ failed }) => stopPendingFor(stopHandle)
+          ? 'cancelled'
+          : (failed ? 'failed' : 'completed'),
+        containerName,
+      });
 
-        if (routed?.error) {
-          codexCtx = { error: routed.error };
-          // SSE is already open; terminate through the SSE protocol (review #5).
-          const code = routed.error;
-          const msg = code === 'backend_disabled' || code === 'backend_not_available'
-            ? 'Codex/OpenRouter is not available for your account right now.'
-            : code === 'model_required'
-              ? 'Pick a Codex model in Settings for this session.'
-              : code === 'invalid_base_url'
-                ? 'The OpenRouter endpoint is misconfigured.'
-                : code === 'ledger_start_failed'
-                  ? 'Could not start the Codex turn. Please retry.'
-                  : code === 'agent_context_changed'
-                    ? 'The agent configuration changed while starting this turn. Please retry.'
-                    : code === 'session_busy'
-                      ? 'The session became busy. Stop the current turn before retrying.'
-                      : 'Add your OpenRouter API key in Settings to use Codex.';
-          await sendStatus(msg);
+      if (routed?.error) {
+        codexCtx = { error: routed.error };
+        durableTurnId = routed.logicalTurnId || null;
+        isError = true;
+        // SSE is already open; terminate through the SSE protocol (review #5).
+        const code = routed.error;
+        const msg = code === 'backend_disabled' || code === 'backend_not_available'
+          ? 'Codex/OpenRouter is not available for your account right now.'
+          : code === 'model_required'
+            ? 'Pick a Codex model in Settings for this session.'
+            : code === 'invalid_base_url'
+              ? 'The OpenRouter endpoint is misconfigured.'
+              : code === 'ledger_start_failed'
+                ? 'Could not start the Codex turn. Please retry.'
+                : code === 'agent_context_changed'
+                  ? 'The agent configuration changed while starting this turn. Please retry.'
+                  : code === 'session_busy'
+                    ? 'The session became busy. Stop the current turn before retrying.'
+                    : 'Add your OpenRouter API key in Settings to use Codex.';
+        await sendStatus(msg);
+        if (stopHandle) {
           stopHandle.stopped = true;
           stopHandle.stoppedBy = 'agent_error';
-          if (typeof send === 'function') send('error', { code, error: msg });
-          return { toolResultText: msg, isError: true };
         }
-        if (routed === null) {
-          // Claude session — legacy combined path, keep the headless retry.
-          result = await doBuild({});
-          if (headless && shouldRetryHeadlessTurn(result, stopHandle, result.ahead > 0)) {
-            await sendStatus('The coding step failed unexpectedly — retrying once…');
-            await waitForTurnStopped(session.id, containerName);
-            result = await doBuild({});
+        if (typeof send === 'function') send('error', { code, error: msg });
+        durableTailComplete = true;
+        return { toolResultText: msg, isError: true, turnId: durableTurnId };
+      }
+      if (routed === null) {
+        // Claude session — legacy combined path, keep the headless retry.
+        result = await doBuild({});
+        if (headless && shouldRetryHeadlessTurn(result, stopHandle, result.ahead > 0)) {
+          await sendStatus('The coding step failed unexpectedly — retrying once…');
+          await waitForTurnStopped(session.id, containerName);
+          if (!result.turnId || !await worker.finishTurn(session.id, { turnId: result.turnId })) {
+            throw new Error('Could not durably finish the first build attempt before retry');
           }
-        } else {
-          result = routed.result;
+          result = await doBuild({});
         }
+      } else {
+        result = routed.result;
+      }
       }
     } catch (e) {
       // A thrown dispatch must still terminalize any in-flight Codex ledger
@@ -10136,6 +11288,8 @@ path: /another/changed/view
       }
     }
 
+    durableTurnId = result?.turnId || null;
+
     const newCcId = result.sessionId || result.initSessionId || null;
     if (newCcId && newCcId !== session.cc_session_id) {
       await pool.query(
@@ -10171,6 +11325,7 @@ path: /another/changed/view
       // hanging next to "Claude Code stopped." — idempotent, so this is
       // a no-op when teardown already happened.
       stopEstimator('stopped');
+      durableTailComplete = true;
       return stoppedResult(result);
     }
 
@@ -10409,6 +11564,11 @@ path: /another/changed/view
         session.testing_paths = testing.testingPaths || [];
       }
 
+      // The external-effect receipt stores this payer as its pending intent,
+      // so recovery can settle an ambiguous call without guessing from its
+      // own keyless boot context.
+      const prMetadataBillingByok = !!userApiKey;
+
       const wasNewPR = !session.pr_number;
       let prResult = null;
       try {
@@ -10418,8 +11578,12 @@ path: /another/changed/view
           broadcast: (event, data) => send(event, data),
           apiKey: userApiKey,
           userId: req.user.id,
+          effectTurnId: durableTurnId,
+          effectSessionId: session.id,
+          effectBillingByok: prMetadataBillingByok,
         });
       } catch (prErr) {
+        if (prErr?.retainActiveTurn) throw prErr;
         // applyPrMetadata throws typed errors ('github_unavailable' — a
         // GitHub-side outage like 2026-07-24's create-PR 500s — and, in
         // principle, 'no_commits'). None of them may abort the turn: the
@@ -10436,20 +11600,50 @@ path: /another/changed/view
         }
       }
       if (prResult && wasNewPR) {
-        await sendStatus(`PR #${prResult.prNumber} created`);
+        const prStatus = `PR #${prResult.prNumber} created`;
+        if (result.turnId) {
+          const receipt = await turnEffects.runDbEffect({
+            pool,
+            turnId: result.turnId,
+            effectKey: 'pr_opened_announcement',
+            sessionId: session.id,
+            run: async (client) => {
+              await client.query(
+                `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+                 VALUES ($1, 'system', $2, $3)`,
+                [session.id, prStatus, JSON.stringify({})],
+              );
+              await client.query(
+                `INSERT INTO events (user_id, app_id, session_id, event_type, metadata)
+                 VALUES ($1, $2, $3, $4, $5::jsonb)`,
+                [
+                  req.user.id,
+                  session.app_id,
+                  session.id,
+                  events.EVENT_TYPES.PR_OPENED,
+                  JSON.stringify({ prNumber: prResult.prNumber }),
+                ],
+              );
+              return { prNumber: prResult.prNumber };
+            },
+          });
+          if (receipt.applied) send('status', { text: prStatus });
+        } else {
+          await sendStatus(prStatus);
+          events.record(pool, {
+            type: events.EVENT_TYPES.PR_OPENED,
+            userId: req.user.id,
+            appId: session.app_id,
+            sessionId: session.id,
+            metadata: { prNumber: prResult.prNumber },
+          });
+        }
         summaryParts.push(`Opened PR #${prResult.prNumber}: ${prResult.prUrl}`);
-        events.record(pool, {
-          type: events.EVENT_TYPES.PR_OPENED,
-          userId: req.user.id,
-          appId: session.app_id,
-          sessionId: session.id,
-          metadata: { prNumber: prResult.prNumber },
-        });
         // Tail milestone: a resume must not open a second PR-opened event
         // (applyPrMetadata itself is update-safe once pr_number is set).
         await worker.noteTailMilestone(session.id, {
           prNumber: prResult.prNumber, prOpenedEventRecorded: true,
-        });
+        }, { turnId: durableTurnId });
       } else if (session.pr_number && !wasNewPR) {
         summaryParts.push(`Pushed to existing PR #${session.pr_number}.`);
       }
@@ -10499,7 +11693,7 @@ path: /another/changed/view
         // ~5 minutes.
         await worker.noteTailMilestone(session.id, {
           stagingUrl: stagingResult.stagingUrl,
-        });
+        }, { turnId: durableTurnId });
 
         // Make one real end-to-end request through the edge now that
         // staging_url is persisted and BEFORE emitting `staging_ready`
@@ -10550,7 +11744,11 @@ path: /another/changed/view
           // so claim it up front — a crash between the stamp and the
           // delete leaves at worst an unannounced reset, which the next
           // push redoes anyway.
-          await worker.noteTailMilestone(session.id, { votesResetFor: commitHash });
+          await worker.noteTailMilestone(
+            session.id,
+            { votesResetFor: commitHash },
+            { turnId: durableTurnId },
+          );
           // #788: the new commit may have added or removed a name in
           // dapp.json's `admins` block, so re-classify alongside the
           // vote reset. Best-effort (swallows GitHub failures) and
@@ -10675,6 +11873,8 @@ path: /another/changed/view
       const split = await limits.settleTurnSpend(pool, req.user.id, ccCostCents, {
         turnByok: !!userApiKey,
         byokObservedCents: worker.getTurnByokCents(session.id),
+        turnId: result.turnId || null,
+        sessionId: session.id,
       });
       if (split.platformCents > 0) send('usage', { costCents: split.platformCents, model: `claude-code/${selectedModel}`, byok: false });
       if (split.byokCents > 0) send('usage', { costCents: split.byokCents, model: `claude-code/${selectedModel}`, byok: true });
@@ -10702,41 +11902,68 @@ path: /another/changed/view
       if (runLocally) {
         statusText += ` Coding done on ${lease.label} — no Usernode credits used.`;
       }
-      await sendStatus(statusText, {
+      const completionMeta = {
         ccOutput: ccText,
         ccOutcome,
         durationMs: Date.now() - turnStartedMs,
         ...(runLocally
           ? { runner: 'local', localAgentLabel: lease.label, localMode: 'build' }
           : {}),
-      });
+      };
+      if (result.turnId) {
+        const receipt = await turnEffects.runDbEffect({
+          pool,
+          turnId: result.turnId,
+          effectKey: 'completion_row',
+          sessionId: session.id,
+          run: async (client) => {
+            await client.query(
+              `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+               VALUES ($1, 'system', $2, $3)`,
+              [session.id, statusText, JSON.stringify(completionMeta)],
+            );
+            return { persisted: true };
+          },
+        });
+        if (receipt.applied) send('status', { text: statusText, ...completionMeta });
+      } else {
+        await sendStatus(statusText, completionMeta);
+      }
       // Tail milestone: the agent's own summary card is on the transcript.
       // A resumed tail must not post a second one (finalizeRecoveredTurn's
       // persistCompletionRow is otherwise unconditional).
-      await worker.noteTailMilestone(session.id, { completionRowPosted: true });
+      await worker.noteTailMilestone(
+        session.id,
+        { completionRowPosted: true },
+        { turnId: durableTurnId },
+      );
       // Prepend CC's own description so the Mayor leads with what was
       // actually built, with our outcome bullets as supplementary context.
       summaryParts.unshift(`What the agent did:\n${ccText}`);
     }
+    durableTailComplete = true;
   } finally {
     activeWorkers.delete(session.id);
     workerProgress.clear(session.id);
-    // The tail is over — release the held turn record and its journal.
-    // Deliberately in the `finally`: every exit path out of this tool
-    // (stop, staging failure, a throw in the PR block) must release it,
-    // or the stale-active_turn watchdog reaps the row 5 minutes later and
-    // narrates an interruption that didn't happen.
-    //
-    // NOTE the ordering with the Mayor wrap-up: phase 2 runs in the chat
-    // handler AFTER this tool returns, so a restart in that last window
-    // is covered by the resume's own `wrapUpPosted` check rather than by
-    // this record. The window is seconds, and re-issuing a wrap-up is the
-    // benign direction to fail in.
-    await worker.finishTurn(session.id).catch(() => {});
-    // #907: remember where this turn ran so the dev-chat "Running on your
-    // machine" chip survives a reload, and record the outcome for analytics.
-    // Both are best-effort and neither can fail the turn — and both run
-    // AFTER finishTurn so nothing can delay releasing the held record.
+    if (durableTailComplete && durableTurnId && typeof beforeTurnCleanup === 'function') {
+      try {
+        await beforeTurnCleanup({ turnId: durableTurnId, isError });
+      } catch (err) {
+        err.retainActiveTurn = true;
+        throw err;
+      }
+    }
+    if (durableTailComplete && durableTurnId && (!deferTurnCleanup || headless)) {
+      await finishToolTurnCleanup(session.id, durableTurnId, { required: headless });
+    } else {
+      if (!durableTailComplete) {
+        log.warn('sessions', 'Build tail failed; retaining durable turn for recovery', {
+          sessionId: session.id,
+        });
+      }
+    }
+    // #907: persist the execution venue after the durable worker lifecycle
+    // has either completed or been retained for recovery.
     await localAgent.recordTurnRunner(
       pool, session.id, runLocally ? 'local' : 'platform', lease?.label
     );
@@ -10769,7 +11996,14 @@ path: /another/changed/view
   // commitSha is exposed (in addition to ccLog/stagingUrl) for the
   // caller's bookkeeping (PR card metadata, etc.). Null if CC made no
   // changes.
-  return { toolResultText, ccLog, stagingUrl, isError, commitSha: commitHash || null };
+  return {
+    toolResultText,
+    ccLog,
+    stagingUrl,
+    isError,
+    commitSha: commitHash || null,
+    turnId: durableTurnId,
+  };
 }
 
 // `prodDebug` (default false — headless call sites never set it): the
@@ -11091,4 +12325,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { runCodexAttemptLoop, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, resolveDefaultAgentPreference };
+module.exports = { runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, resolveDefaultAgentPreference };

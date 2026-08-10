@@ -1249,7 +1249,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS chat_session_messages_handoff_event_idx
 
 -- Restart-proof turns + resumable headless runs.
 --   active_turn   = durable record of an in-flight detached CC turn:
---                   { mode, journal, model, startedAt }. Set by
+--                   { turnId, phase, mode, journal, model, startedAt }. Set by
 --                   worker.execInWorker before the detached `docker exec`
 --                   dispatch and cleared after post-turn processing. On boot,
 --                   server.js's adoption path uses it to replay the turn's
@@ -1266,17 +1266,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS chat_session_messages_handoff_event_idx
 --                   silently dropped (the incident: a turn's chat froze on
 --                   "Building staging preview..." forever because a
 --                   self-app deploy replaced the process mid-build):
---                     phase — 'tail' once the exec is over and the tail
---                             owns the record. Absent means the exec may
---                             still be running. server.js's adoption
---                             branches read it to log which shape they
---                             resumed; both go down the same resume path.
+--                     phase — 'tail_pending' once the exec is over and the tail
+--                             owns the record. New rows otherwise use
+--                             'dispatch_pending' / 'executing' and finish via
+--                             'cleanup_pending'; an absent phase is interpreted
+--                             as executing only for rolling-deploy compatibility.
 --                     tail  — milestone map of what the tail ALREADY did,
 --                             so a resumed tail repeats none of the steps
 --                             that aren't idempotent:
 --                             { sha, pushOk, prNumber,
 --                               prOpenedEventRecorded, stagingUrl,
 --                               votesResetFor, completionRowPosted,
+--                               stagingPublished, stagingFailed,
 --                               wrapUpPosted }.
 --                             finalizeRecoveredTurn takes it as
 --                             `alreadyDone`. Written with jsonb_set
@@ -1292,6 +1293,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS chat_session_messages_handoff_event_idx
 --                   existed.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS active_turn   JSONB;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS headless_step VARCHAR(20);
+-- Stable identity for the current post-agent headless Mayor phase. A single
+-- auto-session may scout and then build (two coding turns), so wrap-up
+-- receipts cannot safely borrow whichever active_turn happens to exist.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS headless_turn_id UUID;
 
 -- #161: "owner left while a turn was in flight; notify on completion".
 -- Armed/disarmed by the client via POST /api/sessions/:id/notify-on-done
@@ -4860,6 +4865,27 @@ UPDATE agent_turns SET logical_turn_id = id WHERE logical_turn_id IS NULL AND at
 CREATE UNIQUE INDEX IF NOT EXISTS agent_turns_logical_attempt_unique
   ON agent_turns (logical_turn_id, attempt_number)
   WHERE logical_turn_id IS NOT NULL;
+
+-- Durable idempotency receipts for replayable post-agent work. A platform
+-- restart may re-enter a turn tail, but a stable (turn_id, effect_key) means
+-- database-local effects (spend settlement, cards, notifications, terminal
+-- state) can be committed exactly once in the same transaction as the
+-- receipt. External effects use pending/completed plus reconciliation.
+CREATE TABLE IF NOT EXISTS turn_effects (
+  turn_id       UUID NOT NULL,
+  effect_key    VARCHAR(96) NOT NULL,
+  session_id    BIGINT REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  state         VARCHAR(16) NOT NULL DEFAULT 'pending',
+  result        JSONB,
+  started_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at  TIMESTAMPTZ,
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (turn_id, effect_key),
+  CONSTRAINT turn_effects_state_check
+    CHECK (state IN ('pending', 'completed', 'failed'))
+);
+CREATE INDEX IF NOT EXISTS idx_turn_effects_session
+  ON turn_effects (session_id, started_at);
 -- Nonnegativity (idempotent DO blocks; an already-created table will not
 -- pick up constraints from CREATE TABLE IF NOT EXISTS).
 DO $$

@@ -714,7 +714,10 @@ function internalRoutes(_config) {
 
   router.post(
     '/api/internal/sessions/:sessionId/platform-issue',
-    internalAuthPurpose([platformJwt.PUR_ISSUES_READ, platformJwt.PUR_WORKER]),
+    // Drafting an issue mutates platform state. The read-only Codex scout
+    // token must never authorize it; only the general Claude worker token
+    // used by build-capable sessions may reach this route.
+    internalAuthPurpose([platformJwt.PUR_WORKER]),
     platformIssueLimiter,
     async (req, res) => {
       const sessionId = parseInt(req.params.sessionId, 10);
@@ -765,8 +768,9 @@ function internalRoutes(_config) {
   // ── Prod-debug surface (#616) ─────────────────────────────────────────
   //
   // Read-only production access for the usernode-debug worker CLI. Only
-  // reachable with a PROD_DEBUG_JWT (worker.mintProdDebugJwt — carries
-  // the `prod_debug: true` claim), which the dispatch path mints solely
+  // reachable with a purpose-bound PROD_DEBUG_JWT (worker.mintProdDebugJwt
+  // — carries `worker:prod-debug` plus the `prod_debug: true` claim), which
+  // the dispatch path mints solely
   // for build/scout turns of admin-owned sessions on the self-edit app.
   // The guard below ALSO re-checks eligibility in the DB on every request
   // so revoking admin (or the session moving off the self-edit app) cuts
@@ -787,6 +791,7 @@ function internalRoutes(_config) {
       res.status(429).json({ ok: false, code: 'rate_limited' });
     },
   });
+  const prodDebugAuth = internalAuthPurpose([platformJwt.PUR_PROD_DEBUG]);
 
   const requireProdDebug = async (req, res, next) => {
     const sessionId = parseInt(req.params.sessionId, 10);
@@ -834,7 +839,7 @@ function internalRoutes(_config) {
   // can self-correct its query.
   router.post(
     '/api/internal/sessions/:sessionId/prod-debug/sql',
-    internalAuth,
+    prodDebugAuth,
     debugLimiter,
     requireProdDebug,
     async (req, res) => {
@@ -876,7 +881,7 @@ function internalRoutes(_config) {
   // the status service's existing helpers.
   router.get(
     '/api/internal/sessions/:sessionId/prod-debug/containers',
-    internalAuth,
+    prodDebugAuth,
     debugLimiter,
     requireProdDebug,
     async (req, res) => {
@@ -908,7 +913,7 @@ function internalRoutes(_config) {
   // not, so redact here as defense in depth.
   router.get(
     '/api/internal/sessions/:sessionId/prod-debug/logs/:container',
-    internalAuth,
+    prodDebugAuth,
     debugLimiter,
     requireProdDebug,
     async (req, res) => {
@@ -950,7 +955,7 @@ function internalRoutes(_config) {
   // redacted platform log ring.
   router.get(
     '/api/internal/sessions/:sessionId/prod-debug/status',
-    internalAuth,
+    prodDebugAuth,
     debugLimiter,
     requireProdDebug,
     async (req, res) => {

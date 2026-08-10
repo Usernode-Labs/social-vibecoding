@@ -95,6 +95,13 @@ ${ESCAPED_EFFORT:+model_reasoning_effort = "$ESCAPED_EFFORT"}
 sandbox_mode = "$SANDBOX_MODE"
 approval_policy = "never"
 
+[shell_environment_policy]
+# Codex itself needs the key for provider authentication, but commands it
+# launches do not. Keeping it out of the command environment prevents an
+# ordinary `printenv`/`env` tool call from echoing the credential into the
+# model transcript or Codex's persistent rollout history.
+exclude = ["OPENROUTER_API_KEY"]
+
 [agents]
 enabled = false
 
@@ -123,9 +130,30 @@ TMP_JSONL=$(mktemp /home/node/.usernode/turn-codex-XXXX.jsonl 2>/dev/null || mkt
 CODEX_RUN_EXIT=0
 TMP_STATUS=$(mktemp /home/node/.usernode/turn-codex-status-XXXX 2>/dev/null || mktemp)
 
+# Codex JSONL includes command output. Scrub the exact per-turn credential
+# before it reaches either tee's temporary copy or the host's durable turn
+# journal. awk's index/substr path is literal (not regex based), so keys that
+# contain replacement or regex metacharacters are handled safely.
+redact_codex_stream() {
+  awk '
+    BEGIN { secret = ENVIRON["OPENROUTER_API_KEY"] }
+    {
+      if (secret != "") {
+        while ((at = index($0, secret)) > 0) {
+          $0 = substr($0, 1, at - 1) "****" substr($0, at + length(secret))
+        }
+      }
+      print
+      fflush()
+    }
+  '
+}
+
 start_codex() {
   # shellcheck disable=SC2086
-  ( "$@" < "$PROMPT_FILE"; echo $? > "$TMP_STATUS" ) 2>&1 | tee "$TMP_JSONL"
+  ( "$@" < "$PROMPT_FILE"; echo $? > "$TMP_STATUS" ) 2>&1 \
+    | redact_codex_stream \
+    | tee "$TMP_JSONL"
   CODEX_RUN_EXIT=$(cat "$TMP_STATUS")
 }
 
@@ -135,12 +163,18 @@ if [ -n "$AGENT_THREAD_ID" ]; then
   if [ "$CODEX_RUN_EXIT" -ne 0 ]; then
     # Only retry fresh for a genuinely missing/stale thread (review P4):
     # auth/credit/rate-limit/unknown failures must NOT re-run (they'd
-    # repeat billed work against a partially modified tree). Decide here
-    # from the error content in $TMP_JSONL (already streamed to the journal).
-    if grep -qiE 'thread not found|session not found|local rollout unavailable' "$TMP_JSONL"; then
-      echo "__USERNODE_WARN__ codex thread missing (exit $CODEX_RUN_EXIT); retrying fresh"
-      start_codex codex exec - --json
-      AGENT_THREAD_OUT=""
+    # repeat billed work against a partially modified tree). The JSONL also
+    # contains agent messages and command output, so classify only top-level
+    # terminal errors and fail closed if any turn/item activity was observed.
+    RESUME_CLASSIFIER="$(dirname "$0")/classify-codex-resume.js"
+    if node "$RESUME_CLASSIFIER" "$TMP_JSONL"; then
+      # Do not run a second physical Codex request inside this runner. The
+      # host owns attempt accounting, so ask it to dispatch a fresh attempt
+      # with a new agent_turns row and no resume id.
+      echo "__USERNODE_WARN__ codex thread missing (exit $CODEX_RUN_EXIT); requesting fresh retry"
+      rm -f "$TMP_STATUS" "$TMP_JSONL" 2>/dev/null
+      echo "__USERNODE_RESULT__ cc_exit=$CODEX_RUN_EXIT ahead=0 behind=0 sha= push_ok=0 mode=$MODE agent_backend=codex_openrouter agent_model=$AGENT_MODEL agent_thread_id= agent_exit=$CODEX_RUN_EXIT agent_retry_fresh=1"
+      exit "$CODEX_RUN_EXIT"
     else
       echo "__USERNODE_WARN__ codex resume failed (exit $CODEX_RUN_EXIT); NOT retrying fresh"
       CODEX_EXIT=$CODEX_RUN_EXIT

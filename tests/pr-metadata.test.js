@@ -14,7 +14,15 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 // Install module stubs before requiring the unit under test.
-function loadWithStubs({ onGenerate, githubCalls, createPR, summary = '', findOpenPrByBranch }) {
+function loadWithStubs({
+  onGenerate,
+  githubCalls,
+  createPR,
+  summary = '',
+  usage,
+  costCents = 0,
+  findOpenPrByBranch,
+}) {
   const llmPath = require.resolve('../src/services/llm');
   const ghPath = require.resolve('../src/services/github');
   const subjectPath = require.resolve('../src/services/pr-metadata');
@@ -27,10 +35,10 @@ function loadWithStubs({ onGenerate, githubCalls, createPR, summary = '', findOp
   require.cache[llmPath] = {
     exports: {
       isEnabled: () => true,
-      estimateCostCents: () => 0,
+      estimateCostCents: () => costCents,
       generatePrMetadata: async (args) => {
         onGenerate(args);
-        return { title: 'Cumulative title', body: 'Cumulative body', summary, usage: undefined, model: 'claude-haiku-4-5' };
+        return { title: 'Cumulative title', body: 'Cumulative body', summary, usage, model: 'claude-haiku-4-5' };
       },
     },
     loaded: true, id: llmPath, filename: llmPath, paths: orig.llm ? orig.llm.paths : [],
@@ -84,6 +92,115 @@ function mockPool(rows, {
     },
   };
 }
+
+function durableMockPool(rows, options = {}) {
+  const base = mockPool(rows, options);
+  const receipts = new Map();
+  const debits = [];
+  const query = async (sql, params = []) => {
+    const text = String(sql);
+    if (/^(BEGIN|COMMIT|ROLLBACK)$/i.test(text.trim())) return { rows: [], rowCount: 0 };
+    const receiptKey = `${params[0]}:${params[1]}`;
+    if (/INSERT INTO turn_effects/i.test(text)) {
+      if (receipts.has(receiptKey)) return { rows: [], rowCount: 0 };
+      receipts.set(receiptKey, {
+        state: 'pending',
+        result: params[3] === undefined ? null : JSON.parse(params[3]),
+      });
+      return { rows: [{ state: 'pending' }], rowCount: 1 };
+    }
+    if (/SELECT state, result FROM turn_effects/i.test(text)) {
+      const row = receipts.get(receiptKey);
+      return { rows: row ? [{ ...row }] : [], rowCount: row ? 1 : 0 };
+    }
+    if (/SELECT state FROM turn_effects/i.test(text)) {
+      const row = receipts.get(receiptKey);
+      return { rows: row ? [{ state: row.state }] : [], rowCount: row ? 1 : 0 };
+    }
+    if (/UPDATE turn_effects/i.test(text)) {
+      const row = receipts.get(receiptKey);
+      if (!row || row.state !== 'pending') return { rows: [], rowCount: 0 };
+      row.state = 'completed';
+      row.result = JSON.parse(params[2]);
+      return { rows: [{ result: row.result }], rowCount: 1 };
+    }
+    const debit = /INSERT INTO llm_usage \(user_id, date, (\w+)\)/i.exec(text);
+    if (debit) {
+      debits.push({ column: debit[1], userId: params[0], costCents: params[1] });
+      return { rows: [], rowCount: 1 };
+    }
+    return base.query.call(base, sql, params);
+  };
+  return {
+    ...base,
+    receipts,
+    debits,
+    query,
+    async connect() { return { query, release() {} }; },
+  };
+}
+
+test('durable PR metadata replays one generated draft and one spend debit', async () => {
+  let generateCalls = 0;
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => { generateCalls += 1; },
+    githubCalls,
+    usage: { input_tokens: 40, output_tokens: 10 },
+    costCents: 7,
+  });
+  try {
+    const pool = durableMockPool([{ role: 'user', content: 'Update it', metadata: {} }]);
+    const session = {
+      id: 17,
+      branch_name: 'feat/durable-metadata',
+      pr_number: 42,
+      pr_url: 'https://example/pr/42',
+      pr_title: 'Old title',
+    };
+    const args = {
+      pool,
+      session,
+      repoOwner: 'acme',
+      repoName: 'app',
+      userMessage: 'Update it',
+      ccSummary: 'Updated it',
+      username: 'evan',
+      userId: 9,
+      apiKey: 'user-key',
+      effectTurnId: '00000000-0000-4000-8000-000000000017',
+      effectSessionId: 17,
+      effectBillingByok: true,
+    };
+
+    const first = await subject.applyPrMetadata(args);
+    const replay = await subject.applyPrMetadata({
+      ...args,
+      // Recovery has no plaintext key, but the completed receipt remains
+      // authoritative for both content and original billing attribution.
+      apiKey: null,
+      effectBillingByok: false,
+    });
+
+    assert.deepEqual(replay, first);
+    assert.equal(generateCalls, 1, 'tail replay cannot buy another metadata model call');
+    assert.equal(githubCalls.filter((call) => call.type === 'update').length, 1,
+      'replaying the same generated title does not touch GitHub again');
+    assert.deepEqual(pool.debits, [{
+      column: 'byok_cost_cents', userId: 9, costCents: 7,
+    }], 'the original BYOK payer is debited exactly once');
+    assert.equal(
+      pool.receipts.get(`${args.effectTurnId}:pr_metadata_generation`)?.state,
+      'completed',
+    );
+    assert.equal(
+      pool.receipts.get(`${args.effectTurnId}:pr_metadata_spend`)?.state,
+      'completed',
+    );
+  } finally {
+    restore();
+  }
+});
 
 test('applyPrMetadata feeds ALL turns (requests + summaries) to the LLM on a PR update', async () => {
   const captured = [];
