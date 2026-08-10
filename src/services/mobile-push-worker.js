@@ -209,6 +209,8 @@ class MobilePushWorker {
               d.created_at AS delivery_created_at,
               n.id AS notification_id, n.user_id AS notification_user_id,
               n.kind, n.read_at,
+              policy.category AS push_category,
+              COALESCE(preference.enabled, policy.default_enabled, FALSE) AS push_enabled,
               d.environment AS delivery_environment,
               d.installation_id AS delivery_installation_id,
               state.send_enabled AS deployment_send_enabled,
@@ -220,6 +222,10 @@ class MobilePushWorker {
               r.session_expires_at AS registration_session_expires_at
          FROM mobile_push_deliveries d
          JOIN notifications n ON n.id = d.notification_id
+         LEFT JOIN mobile_push_kind_categories policy ON policy.kind = n.kind
+         LEFT JOIN mobile_push_preferences preference
+           ON preference.user_id = n.user_id
+          AND preference.category = policy.category
          LEFT JOIN mobile_push_deployment_state state ON state.environment = d.environment
          LEFT JOIN mobile_push_registrations r ON r.id = d.registration_id
         WHERE d.id = $1 AND d.status = 'sending'`,
@@ -230,7 +236,8 @@ class MobilePushWorker {
 
   invalidReason(row) {
     if (row.read_at) return 'notification_read';
-    if (!ALLOWED_KINDS.has(row.kind)) return 'kind_not_allowed';
+    if (!ALLOWED_KINDS.has(row.kind) || !row.push_category) return 'kind_not_allowed';
+    if (row.push_enabled !== true) return 'preference_disabled';
     if (!row.registration_id) return 'registration_missing';
     if (row.delivery_environment !== this.config.mobilePushEnvironment
         || row.registration_environment !== row.delivery_environment) {

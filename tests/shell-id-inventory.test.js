@@ -42,7 +42,9 @@ const after = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
 const RETIRED_IDS = Object.create(null);
 
 // Ids a conversion chunk deliberately added, each with the reason.
-const ADDED_IDS = Object.create(null);
+const ADDED_IDS = {
+  'settings-mobile-push-preferences': 'Account-level Social mobile-push category controls in Settings → Alerts.',
+};
 
 test('the shell still carries every id in the frozen baseline', () => {
   // The baseline was taken from main's hand-written markup at the point the
