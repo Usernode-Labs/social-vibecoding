@@ -13,8 +13,9 @@
 //  2. Every SHELL_ASSETS entry maps to a real file under public/ (no
 //     dead precache entries, which would 404 during install).
 //  3. manifest.webmanifest is valid and its icon files exist.
-//  4. index.html carries the manifest link, theme-color, the offline
-//     banner element, and loads offline.js (which registers the SW).
+//  4. index.html carries the manifest link, theme-color and the offline
+//     banner element, and loads the React bundle — which registers the SW
+//     and owns the connectivity engine since #1078 retired /js/offline.js.
 //  5. static-cache treats sw.js and the manifest as revalidate-every-load
 //     shell assets.
 //
@@ -120,12 +121,19 @@ test('manifest.webmanifest is valid and installable', () => {
   assert.ok(purposes.includes('maskable'), 'manifest needs a maskable icon');
 });
 
-test('index.html wires up the manifest, banner, and offline.js', () => {
+test('index.html wires up the manifest, the banner, and the React bundle', () => {
   const html = readPublic('index.html');
   assert.match(html, /<link rel="manifest" href="\/manifest\.webmanifest">/);
   assert.match(html, /<meta name="theme-color"/);
   assert.match(html, /id="offline-banner"/);
-  assert.match(html, /<script src="\/js\/offline\.js"><\/script>/);
+  // The SW used to be registered by <script src="/js/offline.js">. #1078
+  // converted the offline banner to a React island and retired that module,
+  // so the registration moved into the React bundle — which is the one
+  // module script the document loads.
+  assert.doesNotMatch(html, /\/js\/offline\.js/,
+    'offline.js was retired in #1078; index.html must not still load it');
+  assert.match(html, /<script type="module"[^>]+src="\/shell\/assets\/shell\.js"/,
+    'the React bundle (which now registers the SW) must be loaded');
 });
 
 test('login.html is a redirect stub with no shell wiring of its own', () => {
@@ -137,10 +145,50 @@ test('login.html is a redirect stub with no shell wiring of its own', () => {
   assert.doesNotMatch(html, /manifest\.webmanifest/);
 });
 
-test('offline.js registers the service worker at root scope', () => {
-  const js = readPublic('js/offline.js');
-  assert.match(js, /serviceWorker/);
-  assert.match(js, /register\('\/sw\.js'\)/);
+test('the React bundle registers the service worker at root scope', () => {
+  // Source-level, because the built bundle is minified: the registration
+  // module is asserted by name, and main.tsx must actually call it. Root
+  // scope ('/sw.js', not '/js/sw.js') is what lets the SW control every
+  // navigation — a scope regression only shows up as "offline boot stopped
+  // working", long after the change.
+  const mod = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'lib', 'service-worker.ts'), 'utf8',
+  );
+  assert.match(mod, /serviceWorker/);
+  assert.match(mod, /register\('\/sw\.js'\)/);
+
+  const entry = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'main.tsx'), 'utf8',
+  );
+  assert.match(entry, /registerServiceWorker\(\)/,
+    'main.tsx must call registerServiceWorker() — nothing else does');
+
+  // And the shipped bundle really contains it (the source could be right
+  // while the committed artifact is stale).
+  assert.match(readPublic('shell/assets/shell.js'), /register\("\/sw\.js"\)|register\('\/sw\.js'\)/,
+    'public/shell/assets/shell.js is stale — run npm run build:shell');
+});
+
+test('the offline engine kept window.Offline and its consumers', () => {
+  // Six call sites across app.js, app-view.js, home.js and auth-screens.js
+  // reach for this global, and app.js's ?shot=offline / ?shot=offline-signin
+  // deep links depend on forceOffline() specifically — those captures are the
+  // only way the offline UI can be photographed on a working network.
+  const mod = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'lib', 'offline.ts'), 'utf8',
+  );
+  assert.match(mod, /Offline: OfflineApi \}\)\.Offline = api/,
+    'lib/offline.ts must install window.Offline');
+  for (const member of ['isOffline', 'nudge', 'forceOffline', 'probe']) {
+    assert.ok(mod.includes(member), `window.Offline lost its ${member}() member`);
+  }
+  // The body class every offline affordance in app.css hangs off, and the
+  // event other modules re-render on.
+  assert.match(mod, /classList\.toggle\('is-offline'/);
+  assert.match(mod, /usernode:offline-change/);
+  // /health, uncached — the SW bypasses it so the probe reflects real
+  // reachability rather than a cached copy.
+  assert.match(mod, /fetch\('\/health', \{ cache: 'no-store' \}\)/);
 });
 
 test('sw.js and manifest.webmanifest get the revalidate-every-load header', () => {
@@ -170,7 +218,7 @@ test('offline affordances only gate the anonymous auth screens (#1021)', () => {
 });
 
 test('the offline state is styled from the committed stylesheet, not inline', () => {
-  // body.is-offline is toggled by offline.js and every visual consequence
+  // body.is-offline is toggled by src/lib/offline.ts and every visual consequence
   // lives in app.css — nothing here depends on a Tailwind utility that
   // would have to be generated for a class name built at runtime.
   const css = readPublic('css/app.css');

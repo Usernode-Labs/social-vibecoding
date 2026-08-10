@@ -1065,8 +1065,11 @@ const AppView = {
     // full-bleed geometry the launch it depicts would have.
     AppView._setSurface('app');
     document.getElementById('app-launch-cover-spinner')?.classList.remove('hidden');
-    document.getElementById('home-screen')?.classList.add('hidden');
-    document.getElementById('app-view')?.classList.remove('hidden');
+    // Through the visibility seam (#1078): either root may be React-owned
+    // by now, and a classList write into React-owned DOM gets reconciled
+    // away on the next render.
+    App._setScreenVisible('home-screen', false);
+    App._setScreenVisible('app-view', true);
     document.getElementById('back-btn')?.classList.remove('hidden');
   },
 

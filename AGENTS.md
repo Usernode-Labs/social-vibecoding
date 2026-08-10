@@ -21,26 +21,44 @@
   markup scans the previous document and leaves `tests/tailwind-build.test.js`
   reporting a stale artifact. There is no loop — `tailwind.css` is not a shell
   input — so the two-step order is all it takes.
-- **Merging main into a branch that has already done the chassis swap:** take
-  main's `public/index.html` wholesale (it is the hand-written markup on that
-  side), copy it over `tests/fixtures/pre-migration-index.html`, then re-run
-  `frontend/scripts/html-to-jsx.cjs` and
-  `frontend/scripts/apply-step1-edits.cjs` to re-derive `Shell.tsx` and
-  `head.html` from it. Never hand-merge the generated artifacts — regenerate
-  them, and let the parity test prove the result still matches main's markup.
-- Three constraints in `frontend/src/Shell.tsx` are load-bearing, and its
-  header comment explains each: the component is **static** (no state, no
-  effects — otherwise React reconciles over DOM that `public/js/**` owns), it
-  **renders the 48 legacy `<script>` tags** in their original order (`app.js`
-  must stay last), and its **markup is frozen** — 422 ids and every class
-  string are asserted against a pre-migration fixture by
-  `tests/shell-markup-parity.test.js`, and `dapp.json`'s 227 declared tests
-  select against those exact structures.
+- **`Shell.tsx` is now hand-maintained; resolve conflicts in it directly.** The
+  one-time generators that derived it from the hand-written document
+  (`html-to-jsx.cjs`, `apply-step1-edits.cjs`) and the pre-migration fixture
+  they read are gone — step 2 changes the markup on purpose, so re-deriving it
+  from main would throw the conversion away. Merge `Shell.tsx` like any other
+  source file.
+- Two constraints in `frontend/src/Shell.tsx` are load-bearing, and its header
+  comment explains each: it **renders the legacy `<script>` tags** in their
+  original order (`app.js` must stay last), and **converted markup is
+  like-for-like** — same ids, class strings, `hidden` semantics and `data-*`
+  attributes as the hand-written shell, because `public/js/**` looks those up
+  by `getElementById` and `dapp.json`'s 227 declared tests select on deep
+  chains of them. The structural baseline is
+  `tests/baselines/shell-markup.json` (ids, `data-*` names, script order,
+  stylesheet order), enforced by `tests/shell-id-inventory.test.js`,
+  `tests/dapp-selectors-resolve.test.js` and
+  `tests/shell-script-order.test.js`. **Never refresh the baseline to go
+  green** — record each deliberate change in that chunk's commit in the
+  `RETIRED_IDS`/`ADDED_IDS` and `RETIRED_SCRIPTS`/`ADDED_SCRIPTS` maps, with a
+  reason. `scripts/derive-shell-baseline.js` exists for a reviewed wholesale
+  refresh only.
+- **A region may become stateful only when its entire subtree is React-owned**
+  — no `public/js/**` module may write into any node inside it. The shell is a
+  static tree containing stateful islands; React reconciling over DOM that a
+  legacy module also mutates is the failure this rule prevents. Two corollaries:
+  an island's *initial* render must emit exactly the empty/hidden markup the
+  hand-written shell shipped (data loads in effects, never in initial render —
+  otherwise hydration mismatches `console.error`, which fails proposal checks),
+  and screen visibility must be published through
+  `frontend/src/lib/visibility-store.ts` rather than by toggling `.hidden` from
+  outside React.
 - Adding or removing a `public/js/**` script means updating `SHELL_ASSETS` in
   `public/sw.js` and the count in `tests/shell-script-order.test.js` too.
-- This is step 1 of the React + shadcn migration: a scaffolding-only chassis
-  swap with **zero visual change**. Step 2 converts screens to real components
-  one at a time; until then, leave the markup alone.
+- Step 1 of the React + shadcn migration was a scaffolding-only chassis swap
+  with zero visual change. **Step 2 converts screens to real components one
+  chunk at a time, strictly like-for-like:** component boundaries, props and
+  state are free; rendered output is not. No restyling, no
+  information-architecture changes, no drive-by fixes.
 
 ## Shell CSS is a committed build artifact — rebuild it
 

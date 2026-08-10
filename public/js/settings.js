@@ -301,15 +301,10 @@
           window.location.reload();
         });
       }
-      // The persistent header banner has its own "Switch back" link
-      // for admins who notice they're in preview mode mid-session.
-      const bannerOff = document.getElementById('view-as-non-admin-disable');
-      if (bannerOff) {
-        bannerOff.addEventListener('click', () => {
-          localStorage.removeItem('viewAsNonAdmin');
-          window.location.reload();
-        });
-      }
+      // The persistent header banner has its own "Switch back" link for
+      // admins who notice they're in preview mode mid-session. That banner
+      // is a React island now (#1078) and owns its own click handler —
+      // binding it from here too would run the reload path twice.
 
       // No backdrop / Escape dismissal any more: Settings is a screen, not
       // a modal. Leaving it is a real hash navigation (the header back
@@ -1009,8 +1004,8 @@
     // live, which is exactly the machinery the external flows depend on.
     //
     // The markup is BUILT HERE rather than in frontend/src/Shell.tsx: the
-    // shell's body is frozen against tests/fixtures/pre-migration-index.html
-    // by tests/shell-markup-parity.test.js (no new elements, no attribute
+    // shell's body is id-pinned against tests/baselines/shell-markup.json
+    // by tests/shell-id-inventory.test.js (no undeclared elements, no attribute
     // changes), so a new settings control has to be injected at runtime.
     // Idempotent — _renderAllSections and refresh() both call it.
     _renderDevFlowSection() {

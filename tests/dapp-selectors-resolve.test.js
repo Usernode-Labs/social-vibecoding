@@ -54,10 +54,16 @@ const ROOT = path.join(__dirname, '..');
 
 const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'dapp.json'), 'utf8'));
 const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
-const fixture = fs.readFileSync(path.join(__dirname, 'fixtures', 'pre-migration-index.html'), 'utf8');
+
+// The "what the hand-written shell had" side is the frozen baseline now, not
+// an HTML fixture: scripts/derive-shell-baseline.js took the id set and the
+// data-* name set from tests/fixtures/pre-migration-index.html once, and
+// #1078 deleted the fixture. Everything below reads exactly the two lists it
+// ever needed from that document, so the coverage is unchanged.
+const baseline = require('./baselines/shell-markup.json');
 
 const shipped = new Set(idsOf(html));
-const shippedBefore = new Set(idsOf(fixture));
+const shippedBefore = new Set(baseline.ids);
 
 // Every `#id` mentioned anywhere in a selector, including inside :not(…) and
 // :has(…), which the shell's selectors use heavily.
@@ -76,8 +82,8 @@ test('dapp.json still declares its full test suite', () => {
   assert.ok(
     declared.length >= 227,
     `dapp.json declares ${declared.length} tests; it had 227 before the React chassis swap. `
-    + 'Step 1 must not remove any: they accumulate across proposals and are the migration\'s '
-    + 'real acceptance criteria.',
+    + 'NO conversion chunk may remove one to go green: they accumulate across proposals and are '
+    + 'the migration\'s real acceptance criteria.',
   );
   for (const t of declared) {
     assert.ok(t.path && t.path.startsWith('/'), `test "${t.name}" has no relative path`);
@@ -86,10 +92,11 @@ test('dapp.json still declares its full test suite', () => {
 
 test('every id a dapp.json selector anchors on is still in the shipped markup', () => {
   // Ids that legitimately do not exist in the static document because
-  // public/js/** creates them at runtime. Derived, not hand-listed: an id the
-  // PRE-MIGRATION document also lacked was always runtime-injected, so it is
-  // not something this migration could have dropped. That keeps the exemption
-  // honest — it can only ever excuse ids that were never in the markup.
+  // public/js/** (or, now, a React island's effect) creates them at runtime.
+  // Derived, not hand-listed: an id the PRE-MIGRATION baseline also lacked was
+  // always runtime-injected, so it is not something this migration could have
+  // dropped. That keeps the exemption honest — it can only ever excuse ids
+  // that were never in the markup.
   const failures = [];
 
   for (const t of declared) {
@@ -111,7 +118,7 @@ test('every id a dapp.json selector anchors on is still in the shipped markup', 
 
 test('every data-* attribute a dapp.json selector anchors on is still present', () => {
   const shippedAttrs = dataAttrsUsed(html);
-  const shippedAttrsBefore = dataAttrsUsed(fixture);
+  const shippedAttrsBefore = new Set(baseline.dataAttributes);
 
   const failures = [];
   for (const t of declared) {

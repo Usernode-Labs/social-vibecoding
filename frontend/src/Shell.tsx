@@ -1,34 +1,51 @@
-// The platform shell's markup, as a single static React component.
+// The platform shell's markup: a STATIC TREE CONTAINING STATEFUL ISLANDS.
 //
-// GENERATED ONCE from the pre-migration public/index.html by
-// frontend/scripts/html-to-jsx.cjs, then maintained here by hand. This file
-// is the SOURCE OF TRUTH for the shell's markup; public/index.html is now a
-// committed build artifact produced from it (see frontend/scripts/build-shell.mjs).
+// Generated once from the pre-migration public/index.html and maintained here
+// by hand ever since. This file is the SOURCE OF TRUTH for the shell's markup;
+// public/index.html is a committed build artifact produced from it (see
+// frontend/scripts/build-shell.mjs).
 //
 // ── Three constraints this component must keep ─────────────────────────
 //
-// 1. IT IS STATIC. No state, no props, no context, no effects, no event
-//    handlers. React therefore never schedules a re-render after the initial
-//    hydration, so nothing ever reconciles over the DOM that public/js/**
-//    writes into these containers. Making this component stateful would
-//    reintroduce exactly the "React clobbers the legacy DOM" class of bug the
-//    migration is designed to avoid. Statefulness arrives per-region in step 2,
-//    when that region's legacy module is retired in the same change.
+// 1. A REGION MAY BECOME STATEFUL ONLY WHEN ITS ENTIRE SUBTREE IS
+//    REACT-OWNED. This component itself has no state: it renders 57,000 lines
+//    of public/js/**'s containers, and React reconciling over DOM another
+//    owner writes into is the failure mode the whole migration is designed to
+//    avoid. So statefulness arrives one island at a time, and only for a
+//    region whose legacy module is retired in the SAME change — after which
+//    no public/js/** module writes into any node inside it. Everything else
+//    stays inert markup. (Step 1's rule was "this component is static
+//    everywhere"; #1078 replaced it with this one.)
 //
-// 2. IT RENDERS THE LEGACY <script> TAGS. All 47 of them, in their original
-//    order, at the end of <body> — because that order is load-bearing:
-//    app.js is last, so App.init() registers its DOMContentLoaded handler
-//    last and therefore runs after every other module's init.
+//    Two corollaries hold for every island:
+//      - Its FIRST render must emit exactly the markup the hand-written shell
+//        shipped — hidden regions render hidden, empty lists render empty.
+//        Data loads in effects. A first render that disagrees with the
+//        prerendered document is a hydration mismatch, and a console error on
+//        any route fails proposal checks.
+//      - It must not re-render `className` on a node public/js/** also writes
+//        classes to (the native kit's modal adoption does, at runtime). Those
+//        class strings are constant props and the toggles go through
+//        lib/legacy-dom.ts. Screen visibility is published through
+//        lib/visibility-store.ts rather than toggled from outside React.
 //
-// 3. ITS MARKUP IS FROZEN. 422 ids, every class string, every hidden class,
-//    every data-*/aria-* attribute and the sibling order of all 35 top-level
-//    regions are asserted against a checked-in pre-migration fixture by
-//    tests/shell-markup-parity.test.js, and the ids again by
-//    tests/shell-id-inventory.test.js. dapp.json's 227 declared tests select
-//    against these exact structures. Do not restructure, rename, reorder or
-//    tidy anything here without changing those tests deliberately.
+// 2. IT RENDERS THE LEGACY <script> TAGS in their original order, at the end
+//    of <body> — because that order is load-bearing: app.js is last, so
+//    App.init() registers its DOMContentLoaded handler last and therefore runs
+//    after every other module's init. Adding or retiring one means updating
+//    public/sw.js's SHELL_ASSETS and tests/shell-script-order.test.js.
+//
+// 3. CONVERSION IS LIKE-FOR-LIKE. Component boundaries, props and state are
+//    free; rendered output is not. Same ids, same class strings, same `hidden`
+//    semantics, same data-*/aria-* attributes — public/js/** looks these up by
+//    getElementById and dapp.json's 227 declared tests select against these
+//    exact structures. tests/baselines/shell-markup.json is the frozen
+//    inventory; deliberate changes are recorded in the RETIRED_*/ADDED_* maps
+//    in tests/shell-id-inventory.test.js and tests/shell-script-order.test.js,
+//    never by refreshing the baseline.
 
 import { Button } from '@/components/ui/button';
+import { OfflineBanner, ViewAsNonAdminBanner } from './features/shell/banners';
 
 export function Shell() {
   return (
@@ -325,16 +342,12 @@ export function Shell() {
         </div>
       </header>
       {/*
-          Offline indicator (#487): shown by /js/offline.js while the /health
-          connectivity probe fails; everything on screen is the last version
-          that loaded successfully. Hidden the moment the probe succeeds.
+          Offline indicator (#487) — a React island since #1078. Shown while
+          the /health connectivity probe in src/lib/offline.ts fails;
+          everything on screen is the last version that loaded successfully.
+          Hidden the moment the probe succeeds.
       */}
-      <div
-        id="offline-banner"
-        className="hidden shrink-0 bg-amber-500/15 border-b border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs text-center px-3 py-1.5"
-      >
-        You're offline — showing saved content
-      </div>
+      <OfflineBanner />
       {/*
           Slide-out navigation drawer (all viewport widths — #122).
           Overlay dims the page; panel slides in from the right. Both are
@@ -848,23 +861,13 @@ export function Shell() {
       </div>
       {/*
           Persistent banner shown only while an admin has flipped the
-          "View as non-admin" toggle in Settings. Sits between the header
-          and the main content so the admin can't forget they're in
-          preview mode (which would otherwise look indistinguishable from
-          a plain non-admin session). Visibility is driven entirely by
-          the `is-view-as-non-admin` body class set in app.js.
+          "View as non-admin" toggle in Settings — a React island since
+          #1078. Visibility is still driven entirely by the
+          `is-view-as-non-admin` body class app.js sets, through app.css:
+          a JS error elsewhere on the page then can't strand an admin in
+          masked mode without the visible reminder.
       */}
-      <div
-        id="view-as-non-admin-banner"
-        className="hidden bg-amber-500/15 text-amber-700 dark:text-amber-300 border-b border-amber-500/30 px-4 py-2 text-xs flex items-center justify-center gap-2"
-      >
-        <span>
-          Viewing as non-admin (admin UI hidden).
-        </span>
-        <button id="view-as-non-admin-disable" className="underline hover:text-amber-600 dark:hover:text-amber-200">
-          Switch back
-        </button>
-      </div>
+      <ViewAsNonAdminBanner />
       {/*
           The "Platform updating… write actions are paused" banner that used
           to live here is GONE (#1015). It existed because a self-app merge
@@ -4670,7 +4673,14 @@ export function Shell() {
       */}
       <script src="/js/nav-link.js" />
       <script src="/js/platform-ui.js" />
-      <script src="/js/offline.js" />
+      {/*
+          /js/offline.js used to load here. #1078 retired it: the banner it
+          owned is a React island (features/shell/banners.tsx), the
+          connectivity engine is src/lib/offline.ts and still installs
+          `window.Offline` before DOMContentLoaded, and service-worker
+          registration is src/lib/service-worker.ts. Both are imported by
+          main.tsx, which runs after every script below.
+      */}
       {/*
           App-as-SV-chrome (NATIVE-BRIDGE.md): shared capability probe +
           drawer native rows, then the header node pill and wallet sheet.

@@ -696,8 +696,7 @@ const Notifications = {
       // Pull the fresh state (the invite row is now read) and refresh
       // the home grid — a view-private app just became visible.
       Notifications.refresh();
-      if (typeof Home !== 'undefined' && document.getElementById('home-screen') &&
-          !document.getElementById('home-screen').classList.contains('hidden')) {
+      if (typeof Home !== 'undefined' && App._isScreenVisible('home-screen')) {
         Home.load();
       }
       const target = data.appSlug || slug;
