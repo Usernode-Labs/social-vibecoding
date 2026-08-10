@@ -620,6 +620,15 @@ test('?demo=1 mock 9100005 renders the spinner state the staging check asserts',
   assert.match(h.AppView._renderGovCard(row, { noNav: true }), /dc-status-spinner-arc/);
 });
 
+test('?demo=1 apply mocks stay reviewable when the cloned self-app is locked', () => {
+  const h = makeSandbox();
+  const { gov } = stagingMocks();
+  h.AppView._proposalsCtx = { majority: 2, locked: true };
+  const row = gov.find((g) => g.id === 9100005);
+  assert.equal(row.demo, true);
+  assert.match(h.AppView._renderGovCard(row), /dc-status-spinner-arc/);
+});
+
 test('?demo=1 mock 9100006 renders the retry copy with no spinner', () => {
   const h = makeSandbox();
   const { gov } = stagingMocks();

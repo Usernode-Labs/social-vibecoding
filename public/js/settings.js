@@ -1367,7 +1367,11 @@
       // Hiding the section is the same outcome the 404 branch produces,
       // so staging and production differ only in whether the request is
       // made at all.
-      if (!(await this._cliAuthAvailable())) {
+      // Staging disables the real CLI surface, but ?demo=1 is a read-only
+      // fixture endpoint specifically meant to make this section reviewable.
+      // Let that mock path through while still suppressing every real token
+      // request when auth/me advertises cliAuthEnabled=false.
+      if (!this._cliTokensDemo() && !(await this._cliAuthAvailable())) {
         section.classList.add('hidden');
         return;
       }

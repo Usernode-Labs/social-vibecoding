@@ -401,3 +401,13 @@ test('staging seeds a layout for every capture identity', () => {
   assert.match(seed, /SELECT 1 FROM user_home_layout WHERE user_id = \$1 LIMIT 1/);
   assert.match(seed, /ON CONFLICT DO NOTHING/);
 });
+
+test('staging home fixtures use distinct app ids and are visible to capture viewers', () => {
+  const migrate = read('src/db/migrate.js');
+  assert.match(migrate, /VALUES \(900044, 'Staging demo failed app'/);
+  assert.match(migrate, /\(900040, 'Staging demo Chess Arena'/);
+  assert.match(migrate, /seedStagingFailedApp\(pool, config\)/);
+  assert.match(migrate, /seedStagingForkLineage\(pool, config\)/);
+  assert.match(migrate, /SELECT id, \$1, 2 FROM apps WHERE slug = 'staging-demo-failed-app'/);
+  assert.match(migrate, /VALUES \(900031, \$1, 1\)/);
+});

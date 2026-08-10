@@ -241,6 +241,10 @@ function stagingMockGovernance() {
     votes_required: gate.required ?? Math.max(up, 1),
     merge_window_ends_at: gate.windowEndsAt ?? null,
     contested: gate.contested ?? false,
+    // Request-time staging fixture marker. The client uses this only to
+    // keep the synthetic apply-state examples visible even when the cloned
+    // self-app is locked; real governance rows never carry it.
+    demo: true,
   });
   return [
     // Unopposed rename, threshold met, window still running → countdown.
@@ -1241,7 +1245,7 @@ function issueRoutes(config) {
         // affordance is reviewable. Saving still fails (no real GitHub
         // issue behind the mock); purely visual. No-op in production.
         for (const issue of issues) {
-          if (issue.number === 900008 && !issue.created_by_username) {
+          if (issue.number === 900008 && String(issue.title || '').startsWith('[Mock]')) {
             issue.created_by_username = req.user.username;
           }
         }

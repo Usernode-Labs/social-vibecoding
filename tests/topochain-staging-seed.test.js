@@ -513,6 +513,8 @@ test('1 app_version_config per OS (ios, android)', () => {
   assert.match(block, /'android'/);
   const ids = block.match(/^\s*\(9005\d\d,/gm) || [];
   assert.equal(ids.length, 2);
+  assert.match(body, /UPDATE app_version_configs[\s\S]*?SET is_active = FALSE[\s\S]*?WHERE os = 'android'/,
+    'the cloned staging DB always carries one deterministic inactive-rule warning');
 });
 
 test('1 account_delegation_period', () => {

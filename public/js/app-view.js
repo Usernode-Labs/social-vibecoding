@@ -6322,7 +6322,7 @@ const AppView = {
   _derivedGovApplying(issue) {
     if (!issue || issue.status !== 'open') return null;
     const ctx = AppView._proposalsCtx || {};
-    if (ctx.locked || issue.contested) {
+    if ((ctx.locked && !issue.demo) || issue.contested) {
       delete AppView._govDueSince[issue.id];
       return null;
     }

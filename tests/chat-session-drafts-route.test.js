@@ -426,8 +426,8 @@ test('the fixture is staging-gated, idempotent and obviously fake', () => {
     MIGRATE.indexOf('async function seedStagingSharedSession')
   );
   assert.match(fn, /if \(process\.env\.USERNODE_ENV !== 'staging'\) return;/);
-  assert.match(fn, /ON CONFLICT \(id\) DO NOTHING/);
-  assert.match(fn, /ON CONFLICT \(session_id, draft_id\) DO NOTHING/);
+  assert.match(fn, /ON CONFLICT \(id\) DO UPDATE SET user_id = EXCLUDED\.user_id/);
+  assert.match(fn, /ON CONFLICT \(session_id, draft_id\) DO UPDATE SET user_id = EXCLUDED\.user_id/);
   assert.match(fn, /\[staging fixture\]/);
   assert.match(MIGRATE, /STAGING_SAVED_DRAFTS_SESSION_ID = 990402/);
   assert.match(MIGRATE, /Staging demo draft: also make the header sticky when scrolling\./);

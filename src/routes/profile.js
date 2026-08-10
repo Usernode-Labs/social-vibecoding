@@ -173,7 +173,20 @@ function shapeProfile(row) {
 // returns null and every profile would show an empty list of completions
 // people genuinely earned. This mirrors what the profile screen itself has
 // always done client-side: the active season, else the newest one.
-async function fetchProfileSeason(pool) {
+async function fetchProfileSeason(pool, preferredSeasonId = null) {
+  // A staging clone can carry a newer production season than the synthetic
+  // 900500 catalogue whose challenge activity migrate.js seeds for the
+  // capture identities. Prefer that fixture only when the caller asks for
+  // it; production keeps the ordinary latest-active/latest-season rule.
+  if (preferredSeasonId != null) {
+    const { rows: preferred } = await pool.query(
+      `SELECT id, name FROM seasons
+        WHERE id = $1 AND internal = FALSE
+        LIMIT 1`,
+      [preferredSeasonId]
+    );
+    if (preferred[0]) return preferred[0];
+  }
   const { rows } = await pool.query(
     `SELECT id, name FROM seasons
       WHERE internal = FALSE AND is_active = TRUE
@@ -334,7 +347,10 @@ function profileRoutes(config) {
   // is exactly what belongs in this list.
   router.get('/api/me/challenges/completed', requireUser, async (req, res) => {
     try {
-      const season = await fetchProfileSeason(pool);
+      const season = await fetchProfileSeason(
+        pool,
+        process.env.USERNODE_ENV === 'staging' ? 900500 : null
+      );
       if (!season) {
         return res.json({ season: null, total: 0, done: 0, completed: [] });
       }

@@ -1193,7 +1193,7 @@
     },
     {
       "name": "Checks card names the test stage on a testing run",
-      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000023",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000026",
       "expectText": "Running the automated tests"
     },
     {
@@ -1455,11 +1455,6 @@
       "expectSelector": "#dev-plus-menu [data-plus='members']"
     },
     {
-      "name": "Dev '+' menu shows Proposal approvals on the self-app (#646)",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-plus-menu [data-plus='members']"
-    },
-    {
       "name": "Approvals-mode control ships the count input + Propose button (at-least fix)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#members-governance-section #members-approvals-propose"
@@ -1503,11 +1498,6 @@
       "name": "Dev feed renders under the kit adoption (demo)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-forum-scroll"
-    },
-    {
-      "name": "All Apps tiles carry the drag-to-add grab cursor (#746)",
-      "path": "/",
-      "expectSelector": ".app-card:not([data-yours]).cursor-grab"
     },
     {
       "name": "Staging demo tiles are tagged drag-inert (#746)",

@@ -78,6 +78,9 @@ function makeMockPool(state) {
       const sql = collapse(rawSql);
       calls.push({ sql, params });
 
+      if (sql.includes('FROM seasons') && sql.includes('WHERE id = $1')) {
+        return { rows: state.preferredSeason ? [state.preferredSeason] : [] };
+      }
       if (sql.includes('FROM seasons') && sql.includes('is_active = TRUE')) {
         return { rows: state.activeSeason ? [state.activeSeason] : [] };
       }
@@ -204,6 +207,17 @@ test('season resolver picks an is_active season whose window has CLOSED', async 
 test('season resolver falls back to the newest season when none is active', async () => {
   const { pool } = makeMockPool({ activeSeason: null, anySeason: { id: 2, name: 'Season 2' } });
   assert.deepEqual(await fetchProfileSeason(pool), { id: 2, name: 'Season 2' });
+});
+
+test('season resolver honors an explicit staging fixture before a newer clone season', async () => {
+  const fixture = { id: 900500, name: 'Staging Demo Season' };
+  const { pool, calls } = makeMockPool({
+    preferredSeason: fixture,
+    activeSeason: { id: 42, name: 'Newer cloned season' },
+  });
+  assert.deepEqual(await fetchProfileSeason(pool, 900500), fixture);
+  assert.equal(calls.length, 1, 'the preferred fixture resolves without consulting the clone ordering');
+  assert.deepEqual(calls[0].params, [900500]);
 });
 
 test('no season at all is an empty payload, not an error', async () => {

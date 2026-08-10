@@ -135,6 +135,8 @@ test('the settings screen skips the request when the surface is unavailable', ()
   assert.match(settings, /cliAuthEnabled !== false/,
     'only an explicit false suppresses the request — unknown/older shells '
     + 'must behave exactly as before');
+  assert.match(settings, /!this\._cliTokensDemo\(\) && !\(await this\._cliAuthAvailable\(\)\)/,
+    '?demo=1 must reach the staging-only fake rows even though real CLI auth is disabled there');
 
   // The gate has to sit BEFORE the fetch, or the console error still
   // happens. Anchor on the load function and check the order.
