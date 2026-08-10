@@ -297,8 +297,16 @@ test('the update route is on the list only because it refuses anything but the c
     'and the service refuses a proposal that is not the caller\'s');
   assert.equal((UPDATE_SRC.match(/ownershipGate\(/g) || []).length, 3,
     'defined once, applied twice — before the queue and again under the lock');
-  // Nothing on this path votes, merges or withdraws.
-  assert.doesNotMatch(UPDATE_SRC, /admin-merge|INSERT INTO pr_votes|archive/);
+  // Nothing on this path votes, merges or withdraws. Checked against the CODE
+  // with its prose stripped: the predicate that decides what a push may land
+  // on names the archived status in a comment to say a push must NOT reopen
+  // one (#1071), and reading that as a write would be exactly backwards.
+  const code = UPDATE_SRC
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .filter((line) => !/^\s*\/\//.test(line))
+    .join('\n');
+  assert.doesNotMatch(code, /admin-merge|INSERT INTO pr_votes|archive/);
 });
 
 test('the connector cannot reach GitHub except through the app’s own repo plumbing', () => {

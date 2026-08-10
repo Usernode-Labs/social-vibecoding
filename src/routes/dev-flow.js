@@ -171,19 +171,58 @@ async function connectorCount(pool, userId) {
 // the prepare path uses, against the same row, so the resumed order cannot
 // disagree with the original one — including its refusals: a proposal that
 // merged while the agent worked stops being offered here too.
+// One loader for both callers, so the prepare path and the resume path read
+// the same columns. `session_title` is here for #1071: a session that was
+// never promoted has no `pr_title`, and the work order still wants to name the
+// work it is continuing.
+async function loadTargetSession(pool, proposalId) {
+  const { rows } = await pool.query(
+    `SELECT id, user_id, app_id, status, source, branch_name,
+            imported_pr_head_sha, pr_title, session_title
+       FROM chat_sessions
+      WHERE id = $1`,
+    [proposalId]
+  );
+  return rows[0] || null;
+}
+
+// The prepare path's version: the caller named a target, so its refusals are
+// the CALLER's answer and are returned rather than swallowed. Shares the row
+// and the describe function with the resume path below, so a hand-off the
+// menu offered cannot be described one way here and another way on reload.
+async function describeRequestedTarget(pool, user, app, origin, proposalId) {
+  let session = null;
+  try {
+    session = await loadTargetSession(pool, proposalId);
+  } catch (err) {
+    log.warn('dev-flow', 'target proposal load failed', { proposalId, err: err.message });
+    return {
+      session: null,
+      described: {
+        ok: false,
+        code: 'platform_unavailable',
+        message: 'Usernode cannot read that session right now. Try again shortly.',
+      },
+    };
+  }
+  if (!session) {
+    return {
+      session: null,
+      described: { ok: false, code: 'invalid_request', message: `Proposal ${proposalId} does not exist.` },
+    };
+  }
+  return {
+    session,
+    described: externalAgentTasks.describeTargetProposal(session, user, app, origin),
+  };
+}
+
 async function reloadTargetProposal(pool, user, app, origin, task) {
   const proposalId = Number(task && task.target_session_id);
   if (!Number.isSafeInteger(proposalId) || proposalId <= 0) return null;
   let session = null;
   try {
-    const { rows } = await pool.query(
-      `SELECT id, user_id, app_id, status, source, branch_name,
-              imported_pr_head_sha, pr_title
-         FROM chat_sessions
-        WHERE id = $1`,
-      [proposalId]
-    );
-    session = rows[0] || null;
+    session = await loadTargetSession(pool, proposalId);
   } catch (err) {
     log.warn('dev-flow', 'target proposal reload failed', { proposalId, err: err.message });
     return null;
@@ -234,8 +273,13 @@ function devFlowRoutes(config) {
       // "unavailable" branch and can review nothing. Obviously-fake,
       // read-only, written nowhere, and a strict no-op in production.
       if (IS_STAGING) {
-        return res.json(req.query.demo === '1'
-          ? demoStatus(app, parsed)
+        // `?demo=1` is the promoted-proposal update order; `?demo=session`
+        // (#1071) is the same walkthrough continuing a session nobody has
+        // voted on. Two payloads because the difference a reviewer has to
+        // check is entirely in the copy, and one of them cannot show both.
+        const demoKind = req.query.demo === 'session' ? 'session' : 'proposal';
+        return res.json(req.query.demo === '1' || req.query.demo === 'session'
+          ? demoStatus(app, parsed, demoKind)
           : {
             // The picker's own state: the flow is offerable, nothing is
             // linked, no work order exists. Fixture session 990403 renders
@@ -344,6 +388,10 @@ function devFlowRoutes(config) {
             ? {
               id: targetProposal.proposalId,
               title: targetProposal.title,
+              // 'proposal' | 'session' (#1071). The walkthrough says "Submit
+              // the update" either way, and everything it says ABOUT the
+              // submission — votes cleared or not — branches on this.
+              targetKind: targetProposal.targetKind || 'proposal',
               branchHome: targetProposal.branchHome,
               webPath: targetProposal.webPath,
             }
@@ -369,7 +417,14 @@ function devFlowRoutes(config) {
 
   // ── Prepare a work order ─────────────────────────────────────────────
   //
-  // body { agent, brief?, issueNumber?, restart? }
+  // body { agent, brief?, issueNumber?, restart?, proposalId? }
+  //
+  // `proposalId` (#1071) names an existing session or promoted proposal this
+  // work order CONTINUES rather than opening new work beside it. The options
+  // menu sends it whenever it offered "Continue this session" or "Continue
+  // this proposal"; the same predicate that decided the label is applied again
+  // here, so a target that stopped being continuable in between is refused
+  // instead of silently downgraded to a new change.
   //
   // Idempotent per (user, app, request) exactly as the connector's
   // prepare_work is — asking twice returns the task that already exists,
@@ -387,6 +442,15 @@ function devFlowRoutes(config) {
     const brief = typeof req.body?.brief === 'string' ? req.body.brief : '';
     const rawIssue = req.body?.issueNumber;
     const issueNumber = Number.isInteger(rawIssue) && rawIssue > 0 ? rawIssue : null;
+    // Same shape the submit-update route validates: an integer id, or absent.
+    // A malformed one is a 400 rather than a quietly ignored field, because
+    // ignoring it would open NEW work when the user asked to continue.
+    const rawProposal = req.body?.proposalId;
+    const hasProposal = rawProposal !== undefined && rawProposal !== null;
+    if (hasProposal && !(Number.isInteger(rawProposal) && rawProposal > 0)) {
+      return res.status(400).json({ error: 'proposalId must be a positive integer', code: 'invalid_request' });
+    }
+    const proposalId = hasProposal ? rawProposal : null;
     if (!brief.trim() && !issueNumber) {
       return res.status(400).json({
         error: 'Describe the change you want first — the work order needs something to hand your agent.',
@@ -404,12 +468,25 @@ function devFlowRoutes(config) {
         });
       }
 
+      let targetSession = null;
+      if (proposalId) {
+        const target = await describeRequestedTarget(
+          pool, req.user, app, originOf(config), proposalId
+        );
+        if (!target.described.ok) return sendFailure(res, target.described);
+        targetSession = target.session;
+      }
+
       const result = await externalAgentTasks.prepareWork(taskDeps(pool, config), {
         user: req.user,
         app,
         issueNumber,
         brief,
         agent,
+        // prepareWork describes it again itself, which is deliberate: the
+        // describe above is what turns a stale target into the caller's error
+        // instead of a 500 further in.
+        targetProposal: targetSession,
         // Recorded on the row, and the SAME string normalizeAgent reads
         // back on the status route — so the picked agent survives a reload
         // without adding a column.
@@ -616,11 +693,14 @@ function devFlowRoutes(config) {
 // The work order is an UPDATE one (#1054): the update branch is the harder of
 // the two to review, it renders every ordinary step as well, and a reviewer
 // who only ever sees the new-proposal copy cannot check the difference.
-function demoStatus(app, parsed) {
+function demoStatus(app, parsed, targetKind) {
   const owner = (parsed && parsed.owner) || 'usernode-apps';
   const repo = (parsed && parsed.repo) || app.slug;
   const login = 'octo-contributor';
-  const branch = 'usernode/staging-fixture-1049';
+  const continuing = targetKind === 'session';
+  const branch = continuing
+    ? 'staging-fixture/session-options'
+    : 'usernode/staging-fixture-1049';
   const baseSha = '0123456789abcdef0123456789abcdef01234567';
   return {
     available: true,
@@ -646,7 +726,9 @@ function demoStatus(app, parsed) {
       forkUrl: `https://github.com/${login}/${repo}`,
       forkPageUrl: `https://github.com/${owner}/${repo}/fork`,
       issueNumber: null,
-      brief: 'Add a dark-mode toggle to the settings screen.',
+      brief: continuing
+        ? 'Finish the options menu this session started.'
+        : 'Add a dark-mode toggle to the settings screen.',
       // An array, exactly as renderPreparedTask returns — a reviewer looking
       // at the demo payload should see the real shape, not a stand-in one.
       guidance: [
@@ -656,32 +738,66 @@ function demoStatus(app, parsed) {
         'Paste the work order below in exactly as written.',
         'Come back here when it has pushed; Usernode submits the change itself.',
       ],
-      workOrder: [
-        `You are UPDATING a proposal on the Usernode app "${app.name || app.slug}".`,
-        '',
-        `Repository to fork from: https://github.com/${owner}/${repo}`,
-        `Your fork: https://github.com/${login}/${repo}`,
-        `Branch to create: ${branch}`,
-        `Base commit: ${baseSha}`,
-        '',
-        'THE PROPOSAL YOU ARE UPDATING',
-        '- Usernode proposal id:                  990601',
-        '- Its title:                             Add a dark-mode toggle',
-        '- Where its head lives:                  a branch in your own fork',
-        '',
-        'TASK',
-        'The dark-mode toggle proposal has a failing check. Fix it.',
-        '',
-        'When you are done, commit and push the branch, then come back to',
-        'Usernode and press "Submit the update".',
-      ].join('\n'),
-      // The proposal this order revises. `null` on an ordinary work order.
-      targetProposal: {
-        id: 990601,
-        title: 'Add a dark-mode toggle',
-        branchHome: 'user_fork',
-        webPath: `/#app/${app.slug}/dev/sessions/990601`,
-      },
+      workOrder: (continuing
+        ? [
+          `You are CONTINUING work in progress on the Usernode app "${app.name || app.slug}".`,
+          '',
+          `Repository to fork from: https://github.com/${owner}/${repo}`,
+          `Your fork: https://github.com/${login}/${repo}`,
+          `Branch to create: ${branch}`,
+          `Base commit: ${baseSha}`,
+          '',
+          'THE WORK YOU ARE CONTINUING',
+          '- Usernode session id:                   990405',
+          '- Its title:                             [staging fixture] Session and billing options',
+          '- Where its head lives:                  a branch in the app\'s own repository',
+          '',
+          'NOBODY HAS VOTED ON THIS YET, so there is nothing to invalidate — but this is',
+          'a session somebody is still working in, and they may take more turns on it',
+          'after you.',
+          '',
+          'TASK',
+          'Finish the options menu this session started.',
+          '',
+          'When you are done, commit and push the branch, then come back to',
+          'Usernode and press "Submit the update".',
+        ]
+        : [
+          `You are UPDATING a proposal on the Usernode app "${app.name || app.slug}".`,
+          '',
+          `Repository to fork from: https://github.com/${owner}/${repo}`,
+          `Your fork: https://github.com/${login}/${repo}`,
+          `Branch to create: ${branch}`,
+          `Base commit: ${baseSha}`,
+          '',
+          'THE PROPOSAL YOU ARE UPDATING',
+          '- Usernode proposal id:                  990601',
+          '- Its title:                             Add a dark-mode toggle',
+          '- Where its head lives:                  a branch in your own fork',
+          '',
+          'TASK',
+          'The dark-mode toggle proposal has a failing check. Fix it.',
+          '',
+          'When you are done, commit and push the branch, then come back to',
+          'Usernode and press "Submit the update".',
+        ]).join('\n'),
+      // The proposal or session this order continues. `null` on an ordinary
+      // work order.
+      targetProposal: continuing
+        ? {
+          id: 990405,
+          title: '[staging fixture] Session and billing options',
+          targetKind: 'session',
+          branchHome: 'app_repo',
+          webPath: `/#app/${app.slug}/dev/sessions/990405`,
+        }
+        : {
+          id: 990601,
+          title: 'Add a dark-mode toggle',
+          targetKind: 'proposal',
+          branchHome: 'user_fork',
+          webPath: `/#app/${app.slug}/dev/sessions/990601`,
+        },
     },
     branch: shapeBranch('missing'),
   };

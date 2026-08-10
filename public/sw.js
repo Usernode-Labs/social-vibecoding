@@ -152,6 +152,7 @@ const SHELL_ASSETS = [
   '/js/credit-options.js',
   '/js/profile.js',
   '/js/screenshot-select.js',
+  '/js/session-options.js',
   '/js/session-transcript.js',
   '/js/settings.js',
   '/js/spec-sections.js',
