@@ -58,65 +58,65 @@
 // names, spend, host load, stuck sessions and the event log from
 // non-admins.
 
-// ── AdminUI: shared shadcn-style class recipes (see
-// docs/superpowers/specs/2026-08-10-admin-shadcn-restyle-design.md) ──────
+// ── AdminUI: shared class recipes, topochain admin vocabulary (see
+// docs/superpowers/specs/2026-08-10-admin-topochain-skin-design.md) ──────
 // Data-only class-string constants used by this file and every admin-*.js
 // section module (all of which load after this file — see the script order
-// in frontend/src/Shell.tsx). Buttons are composed verbatim from the
-// variant table in frontend/@/components/ui/button.tsx so admin buttons
-// pixel-match the shell's React <Button>. Every value is a COMPLETE class
+// in frontend/src/Shell.tsx). Light mode matches ../topochain's admin
+// verbatim (gray neutrals, indigo accent); dark: variants are the fixed
+// translation documented in the spec. Every value is a COMPLETE class
 // literal: Tailwind's extractor is a regex over public/js/** source, and
 // tests/admin-ui-registry.test.js + tests/tailwind-build.test.js enforce
 // the discipline. Never index this registry dynamically.
 window.AdminUI = Object.freeze({
-  // Surfaces — shadcn Card, density-matched to the console's p-4 rhythm.
-  card: 'rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm',
-  cardHeader: 'flex items-center justify-between gap-2 mb-3',
-  cardTitle: 'text-lg font-semibold text-zinc-900 dark:text-zinc-100',
-  cardDescription: 'text-sm text-zinc-500 dark:text-zinc-400',
-  // Tables — shadcn Table. NOTE: deliberately no sideways-scroll utility on
-  // the wrapper — nothing in the console scrolls horizontally (#860, pinned
-  // by admin-console-page.test.js, which regexes this file's raw source).
-  tableWrap: 'w-full rounded-lg border border-zinc-200 dark:border-zinc-800',
+  // Surfaces — topochain card: white, rounded-xl, gray-200 hairline, soft shadow.
+  card: 'bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 shadow-sm',
+  cardHeader: 'flex items-center justify-between gap-2 mb-4',
+  cardTitle: 'text-lg font-semibold text-gray-900 dark:text-gray-100',
+  cardDescription: 'text-sm text-gray-500 dark:text-gray-400',
+  // Tables — topochain data-table. NOTE: deliberately no sideways-scroll
+  // utility on the wrapper — nothing in the console scrolls horizontally
+  // (#860, pinned by admin-console-page.test.js, which regexes this file's
+  // raw source).
+  tableWrap: 'w-full rounded-lg border border-gray-200 dark:border-gray-800',
   table: 'w-full text-sm',
-  thead: 'border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50',
-  th: 'px-3 py-2 text-left align-middle text-[11px] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400',
-  td: 'px-3 py-2 align-middle',
-  trHover: 'border-b border-zinc-100 dark:border-zinc-800/60 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/50',
-  // Buttons — button.tsx variants composed with its default / sm sizes.
+  thead: 'border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50',
+  th: 'px-6 py-3 text-left align-middle text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400',
+  td: 'px-6 py-4 align-middle',
+  trHover: 'border-b border-gray-100 dark:border-gray-800/60 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/50',
+  // Buttons — topochain's canonical button strings.
   btn: Object.freeze({
-    primary: 'font-medium transition-colors bg-violet-600 hover:bg-violet-500 text-white rounded-lg px-4 py-2 text-sm',
-    outline: 'font-medium transition-colors border border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded-lg px-4 py-2 text-sm',
-    destructive: 'font-medium transition-colors border border-red-400 dark:border-red-700 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 rounded-lg px-4 py-2 text-sm',
-    ghost: 'font-medium transition-colors text-zinc-400 hover:text-zinc-200',
-    link: 'font-medium transition-colors text-zinc-500 hover:text-violet-400',
-    primarySm: 'font-medium transition-colors bg-violet-600 hover:bg-violet-500 text-white rounded px-3 py-1 text-xs',
-    outlineSm: 'font-medium transition-colors border border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900 rounded px-3 py-1 text-xs',
-    destructiveSm: 'font-medium transition-colors border border-red-400 dark:border-red-700 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 rounded px-3 py-1 text-xs',
+    primary: 'bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg transition-colors text-sm font-medium',
+    outline: 'inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors',
+    destructive: 'bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg transition-colors text-sm font-medium',
+    ghost: 'font-medium transition-colors text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200',
+    link: 'font-medium transition-colors text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300',
+    primarySm: 'bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg transition-colors text-xs font-medium',
+    outlineSm: 'inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors',
+    destructiveSm: 'bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded-lg transition-colors text-xs font-medium',
   }),
-  // Form controls.
-  input: 'w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:border-violet-500',
-  select: 'w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-violet-500',
-  textarea: 'w-full min-h-[80px] rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:border-violet-500',
-  label: 'text-sm font-medium text-zinc-700 dark:text-zinc-300',
-  // Badges — shadcn Badge shape; success/warn use the console's existing
-  // emerald/amber status conventions.
+  // Form controls — topochain's canonical input string (+ dark translation).
+  input: 'w-full border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500',
+  select: 'w-full border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500',
+  textarea: 'w-full min-h-[80px] border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500',
+  label: 'text-sm font-medium text-gray-700 dark:text-gray-300',
+  // Badges — topochain's ring-tinted rounded-full pills.
   badge: Object.freeze({
-    default: 'inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium bg-violet-600 text-white',
-    secondary: 'inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300',
-    outline: 'inline-flex items-center rounded-md border border-zinc-300 dark:border-zinc-700 px-2 py-0.5 text-xs font-medium text-zinc-600 dark:text-zinc-300',
-    destructive: 'inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium bg-red-100 dark:bg-red-950 text-red-700 dark:text-red-300',
-    success: 'inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300',
-    warn: 'inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300',
+    default: 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-gray-50 text-gray-600 ring-1 ring-inset ring-gray-500/10 dark:bg-gray-500/10 dark:text-gray-300 dark:ring-gray-400/20',
+    secondary: 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-700/10 dark:bg-indigo-500/10 dark:text-indigo-300 dark:ring-indigo-400/20',
+    outline: 'inline-flex items-center rounded-full border border-gray-300 dark:border-gray-700 px-2 py-0.5 text-xs font-medium text-gray-600 dark:text-gray-300',
+    destructive: 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-red-50 text-red-700 ring-1 ring-inset ring-red-700/10 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-400/20',
+    success: 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-700/10 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-400/20',
+    warn: 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-700/10 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-400/20',
   }),
-  // Overlay.
-  dialogOverlay: 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4',
-  dialogPanel: 'w-full max-w-md rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-6 shadow-xl',
+  // Overlay — topochain modal: black/50 backdrop, xl-rounded white panel.
+  dialogOverlay: 'fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4',
+  dialogPanel: 'w-full max-w-md bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-6 shadow-xl',
   // Typography / misc.
-  sectionTitle: 'text-lg font-semibold text-zinc-900 dark:text-zinc-100',
-  muted: 'text-sm text-zinc-500 dark:text-zinc-400',
-  separator: 'border-t border-zinc-200 dark:border-zinc-800',
-  kbd: 'rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 font-mono text-xs text-zinc-700 dark:text-zinc-300',
+  sectionTitle: 'text-lg font-semibold text-gray-900 dark:text-gray-100',
+  muted: 'text-sm text-gray-500 dark:text-gray-400',
+  separator: 'border-t border-gray-200 dark:border-gray-800',
+  kbd: 'rounded border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 font-mono text-xs text-gray-700 dark:text-gray-300',
 });
 
 const AdminConsole = {
