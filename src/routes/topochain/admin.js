@@ -34,6 +34,7 @@ const { appVersionConfigsAdminRoutes } = require('./admin/app-version-configs');
 const { settingsAdminRoutes } = require('./admin/settings');
 const { dbToolsAdminRoutes } = require('./admin/db-tools');
 const { waitlistAdminRoutes } = require('./admin/waitlist');
+const { apiCatalogAdminRoutes } = require('./admin/api-catalog');
 
 function topochainAdminRoutes(config) {
   const router = Router();
@@ -133,6 +134,12 @@ function topochainAdminRoutes(config) {
   // release-bp)` paths don't collide with users.js (whose `/users/:id`
   // routes are one segment shorter and never POST to a sub-action).
   router.use(waitlistAdminRoutes(config));
+
+  // The route catalog the admin console's API tester populates its
+  // endpoint select from. Its own `/api-catalog` path is unused
+  // elsewhere, and it introspects Express's router stack rather than
+  // touching the database, so mount order is irrelevant to it.
+  router.use(apiCatalogAdminRoutes(config));
 
   return router;
 }
