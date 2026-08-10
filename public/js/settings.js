@@ -2941,7 +2941,7 @@
       return box;
     },
 
-    _unToggle(parent, label, checked, onChange) {
+    _unToggle(parent, label, checked, onChange, opts = {}) {
       const wrap = this._unEl('label',
         'flex items-center gap-2 cursor-pointer select-none mt-2');
       const input = this._unEl('input', 'un-switch');
@@ -2954,7 +2954,11 @@
         } catch (err) {
           console.warn('[settings] usernode toggle failed:', err);
           input.checked = !e.target.checked;
-          if (window.PlatformUI) PlatformUI.toast('Could not save the setting');
+          if (window.PlatformUI) {
+            const detail = opts.includeErrorDetail && err && err.message
+              ? `: ${err.message}` : '';
+            PlatformUI.toast(`Could not save the setting${detail}`);
+          }
         } finally {
           input.disabled = false;
         }
@@ -3341,13 +3345,26 @@
       const render = (state) => {
         holder.textContent = '';
         if (!state) {
+          const admissionPending = window.NativeChrome &&
+            typeof NativeChrome.isSessionAdmitted === 'function' &&
+            !NativeChrome.isSessionAdmitted();
           holder.appendChild(this._unEl('p',
             'text-xs text-zinc-500 dark:text-zinc-400',
-            'Notification settings are temporarily unavailable.'));
+            admissionPending
+              ? 'Finishing secure app sign-in before enabling notifications…'
+              : 'Notification settings are temporarily unavailable.'));
+          if (admissionPending &&
+              typeof NativeChrome.recoverSessionAdmission === 'function') {
+            this._unButton(holder, 'Try again', async () => {
+              await NativeChrome.recoverSessionAdmission();
+              render(await SocialPush.getState());
+            });
+          }
           return;
         }
         this._unToggle(holder, 'Activity notifications', state.enabled,
-          async (enabled) => render(await SocialPush.setEnabled(enabled)));
+          async (enabled) => render(await SocialPush.setEnabled(enabled)),
+          { includeErrorDetail: true });
         let status = 'Off on this device.';
         if (state.deliveryActive) {
           status = 'On — this device is registered for activity notifications.';
