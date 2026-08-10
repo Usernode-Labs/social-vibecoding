@@ -59,6 +59,10 @@
     _connectorLoadId: 0,
     _githubLink: null,
     _openRouterModels: [],
+    _mobilePushPreferences: null,
+    _mobilePushLoading: false,
+    _mobilePushSaving: false,
+    _mobilePushLoadToken: 0,
 
     // ── Screen state ─────────────────────────────────────────────────────
     _open: false,
@@ -118,7 +122,7 @@
       { key: 'wallet', label: 'Usernode Wallet', group: 'Account', gate: 'wallet-section' },
 
       { key: 'language', label: 'Language', group: 'Preferences' },
-      { key: 'alerts', label: 'Dev-chat sound & alerts', group: 'Preferences' },
+      { key: 'alerts', label: 'Notifications & alerts', group: 'Preferences' },
       { key: 'home-panels', label: 'Home screen widgets', group: 'Preferences' },
 
       { key: 'cli', label: 'CLI & coding-agent access', group: 'Developer' },
@@ -291,6 +295,21 @@
         });
       }
 
+      // Account-level remote-push categories. These are deliberately
+      // separate from the native bridge's per-device Activity notifications
+      // switch: every signed-in browser can edit them, while a phone still
+      // has to be registered and enabled before any category can deliver.
+      document.querySelectorAll(
+        '#settings-mobile-push-preferences [data-mobile-push-category]'
+      ).forEach((row) => {
+        const input = row.querySelector('input[type="checkbox"]');
+        const category = row.dataset.mobilePushCategory;
+        if (!input || !category) return;
+        input.addEventListener('change', () => {
+          this._saveMobilePushPreference(category, input.checked);
+        });
+      });
+
       // "View as non-admin" admin tool. Mirror state to localStorage
       // and reload — the simplest way to flush every admin-gated
       // render path (home buttons, app-secrets editor, etc.) without
@@ -386,6 +405,7 @@
       this._renderChangePasswordSection();
       this._renderDevConsoleSection();
       this._renderLanguageSection();
+      this._loadMobilePushPreferences();
       this._renderHomePanelsSection();
       this._renderExperimentalSection();
       this._renderAdminSection();
@@ -1679,6 +1699,7 @@
       this._stopWalletPolling();
       this._clearAlertsTestCountdown();
       this._clearUsernodeAuthStatusRetry();
+      this._mobilePushLoadToken += 1;
     },
 
     // Clear the "Send a test alert" countdown interval (#138). Idempotent —
@@ -1687,6 +1708,107 @@
       if (this._alertsTestTimer) {
         clearInterval(this._alertsTestTimer);
         this._alertsTestTimer = null;
+      }
+    },
+
+    _mobilePushRows() {
+      return [...document.querySelectorAll(
+        '#settings-mobile-push-preferences [data-mobile-push-category]'
+      )];
+    },
+
+    _setMobilePushPreferences(preferences) {
+      if (!Array.isArray(preferences)) throw new Error('Invalid preferences response.');
+      const next = {};
+      for (const preference of preferences) {
+        if (!preference || typeof preference.key !== 'string'
+            || typeof preference.enabled !== 'boolean') {
+          throw new Error('Invalid preferences response.');
+        }
+        next[preference.key] = preference.enabled;
+      }
+      for (const row of this._mobilePushRows()) {
+        if (typeof next[row.dataset.mobilePushCategory] !== 'boolean') {
+          throw new Error('Incomplete preferences response.');
+        }
+      }
+      this._mobilePushPreferences = next;
+    },
+
+    _renderMobilePushPreferences(message, error) {
+      const disabled = this._mobilePushLoading
+        || this._mobilePushSaving
+        || !this._mobilePushPreferences;
+      for (const row of this._mobilePushRows()) {
+        const input = row.querySelector('input[type="checkbox"]');
+        if (!input) continue;
+        const saved = this._mobilePushPreferences?.[row.dataset.mobilePushCategory];
+        if (typeof saved === 'boolean') input.checked = saved;
+        input.disabled = disabled;
+      }
+      const status = document.querySelector(
+        '#settings-mobile-push-preferences [data-mobile-push-status]'
+      );
+      if (!status) return;
+      status.textContent = message || (disabled ? 'Loading mobile push preferences…' : 'Saved to your account.');
+      status.className = 'text-xs mt-3 ' + (error
+        ? 'text-red-600 dark:text-red-400'
+        : 'text-zinc-500 dark:text-zinc-400');
+    },
+
+    async _loadMobilePushPreferences() {
+      const token = ++this._mobilePushLoadToken;
+      this._mobilePushLoading = true;
+      this._renderMobilePushPreferences('Loading mobile push preferences…');
+      try {
+        const response = await fetch('/api/me/mobile-push-preferences', {
+          credentials: 'same-origin',
+          cache: 'no-store',
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+        if (token !== this._mobilePushLoadToken) return;
+        this._setMobilePushPreferences(body.preferences);
+        this._mobilePushLoading = false;
+        this._renderMobilePushPreferences('Saved to your account.');
+      } catch (err) {
+        if (token !== this._mobilePushLoadToken) return;
+        this._mobilePushLoading = false;
+        this._mobilePushPreferences = null;
+        this._renderMobilePushPreferences(
+          `Could not load mobile push preferences: ${err.message}`, true
+        );
+      }
+    },
+
+    async _saveMobilePushPreference(category, enabled) {
+      if (!this._mobilePushPreferences || this._mobilePushSaving
+          || typeof this._mobilePushPreferences[category] !== 'boolean') {
+        this._renderMobilePushPreferences();
+        return;
+      }
+      const previous = this._mobilePushPreferences[category];
+      this._mobilePushPreferences[category] = !!enabled;
+      this._mobilePushSaving = true;
+      this._renderMobilePushPreferences('Saving…');
+      try {
+        const response = await fetch('/api/me/mobile-push-preferences', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          cache: 'no-store',
+          body: JSON.stringify({ preferences: { [category]: !!enabled } }),
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+        this._setMobilePushPreferences(body.preferences);
+        this._mobilePushSaving = false;
+        this._renderMobilePushPreferences('Saved to your account.');
+      } catch (err) {
+        this._mobilePushPreferences[category] = previous;
+        this._mobilePushSaving = false;
+        this._renderMobilePushPreferences(`Could not save: ${err.message}`, true);
+        if (window.PlatformUI) PlatformUI.toast('Could not save mobile push preferences');
       }
     },
 

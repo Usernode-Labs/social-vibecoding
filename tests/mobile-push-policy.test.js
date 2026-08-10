@@ -52,8 +52,9 @@ test('FCM message carries only the generic, environment-bound contract', () => {
   assert.doesNotMatch(JSON.stringify(message.data), /session_done|user_id|token/);
 });
 
-test('unreviewed kinds and invalid notification ids cannot become pushes', () => {
-  assert.throws(() => buildMessage({ ...INPUT, kind: 'mention' }), /kind_not_allowed/);
+test('reviewed interaction kinds use the generic payload and unknown kinds stay closed', () => {
+  assert.equal(buildMessage({ ...INPUT, kind: 'mention' }).data.notification_id, '42');
+  assert.throws(() => buildMessage({ ...INPUT, kind: 'future_kind' }), /kind_not_allowed/);
   assert.throws(() => buildMessage({ ...INPUT, notificationId: 2147483648 }), /id_invalid/);
 });
 
