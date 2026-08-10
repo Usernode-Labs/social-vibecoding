@@ -1822,12 +1822,7 @@
 
     _syncOpenRouterModelDetails() {
       const select = document.getElementById('settings-openrouter-model');
-      const effort = document.getElementById('settings-openrouter-reasoning');
       const model = this._openRouterModels.find((item) => item.id === select?.value) || null;
-      if (effort) {
-        effort.disabled = model?.supportsReasoning !== true;
-        if (effort.disabled) effort.value = '';
-      }
       if (!model) {
         if (select) select.title = 'Models are sorted by average input/output price. Actual spend depends on token usage.';
         return;
@@ -1976,10 +1971,7 @@
 
     async _saveOpenRouterDefault() {
       const model = document.getElementById('settings-openrouter-model')?.value;
-      const selected = this._openRouterModels.find((item) => item.id === model) || null;
-      const reasoningEffort = selected?.supportsReasoning
-        ? (document.getElementById('settings-openrouter-reasoning')?.value || null)
-        : null;
+      const reasoningEffort = document.getElementById('settings-openrouter-reasoning')?.value || null;
       // Preserve the user's existing cost cap across this save (review P3):
       // include it explicitly so an omission can't drop the safety limit,
       // and the server also COALESCEs when omitted.

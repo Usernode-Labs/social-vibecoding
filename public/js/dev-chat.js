@@ -532,9 +532,6 @@ const DevChat = {
         return;
       }
       const model = data.models.find((item) => item.id === selectedModel) || null;
-      const supportsReasoning = model?.supportsReasoning === true;
-      effortSelect.disabled = !supportsReasoning;
-      effortSelect.value = supportsReasoning ? selectedEffort : '';
       status.textContent = `${this._openRouterModelCostSummary(model)}. ${this._openRouterModelCompatibilitySummary(model)} Codex coding turns bill directly to your OpenRouter key.`;
     };
 
@@ -574,9 +571,7 @@ const DevChat = {
           backend: selectedBackend,
           model: selectedBackend === 'codex_openrouter' ? modelSelect.value : null,
           reasoningEffort: selectedBackend === 'codex_openrouter'
-            ? (data.models.find((model) => model.id === modelSelect.value)?.supportsReasoning
-              ? (effortSelect.value || null)
-              : null)
+            ? (effortSelect.value || null)
             : null,
         });
       });
