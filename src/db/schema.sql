@@ -1814,6 +1814,15 @@ CREATE TABLE IF NOT EXISTS system_token_usage (
 --                      (display only — never considered by any cap)
 ALTER TABLE llm_usage ADD COLUMN IF NOT EXISTS byok_cost_cents NUMERIC(10,4) NOT NULL DEFAULT 0;
 
+-- #1088: stamped the first time — for this UTC day — the owner is TOLD
+-- that their own Anthropic key took over once the free daily allowance
+-- ran out. The proxy's per-turn registry flag only made the notice
+-- once-per-turn, so it re-fired on every chat after credits ran out.
+-- Claimed race-free by limits.claimByokSwitchNotice (a conditional
+-- upsert); NULL means "not yet told today". Rides on the row's `date`,
+-- so it expires exactly when the credits themselves reset — no sweeper.
+ALTER TABLE llm_usage ADD COLUMN IF NOT EXISTS byok_notice_at TIMESTAMPTZ;
+
 -- Platform-level admin-tunable settings. Currently only used for the
 -- daily LLM spend caps; designed as a generic key/value store so future
 -- admin knobs can land here without another migration. Values are

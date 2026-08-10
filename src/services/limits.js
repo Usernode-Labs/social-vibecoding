@@ -267,6 +267,37 @@ async function recordSpendRequired(client, userId, costCents, { byok = false } =
   );
 }
 
+// #1088: claim the once-per-UTC-day right to TELL this user that their own
+// Anthropic key took over. Returns true for the caller that won the claim and
+// false for everyone after it, until llm_usage rolls to the next `date` — which
+// is exactly when the free allowance resets, so the marker expires by
+// construction and needs no sweeper.
+//
+// It has to be an upsert, not a bare UPDATE: a *global* cap crossing can switch
+// a user who has spent nothing today and so has no llm_usage row yet. The
+// conditional DO UPDATE ... WHERE byok_notice_at IS NULL makes the whole thing
+// one statement, so concurrent proxy calls (or processes) can't both win.
+//
+// Unlike recordSpend, a DB error here fails QUIET rather than open: suppressing
+// a notice is the fix this issue asked for, and the always-visible credit meter
+// still tells the story.
+async function claimByokSwitchNotice(pool, userId) {
+  if (!userId) return false;
+  try {
+    const { rowCount } = await pool.query(
+      `INSERT INTO llm_usage (user_id, date, byok_notice_at) VALUES ($1, CURRENT_DATE, NOW())
+       ON CONFLICT (user_id, date) DO UPDATE SET byok_notice_at = NOW()
+         WHERE llm_usage.byok_notice_at IS NULL
+       RETURNING id`,
+      [userId]
+    );
+    return rowCount === 1;
+  } catch (err) {
+    log.warn('limits', 'Failed to claim BYOK switch notice', { userId, err: err.message });
+    return false;
+  }
+}
+
 function splitTurnSpend(totalCents, { turnByok = false, byokObservedCents = 0 } = {}) {
   const total = Number(totalCents);
   if (!Number.isFinite(total) || !(total > 0)) {
@@ -392,6 +423,7 @@ module.exports = {
   loadUserApiKey,
   resolveBillingPath,
   recordSpend,
+  claimByokSwitchNotice,
   settleTurnSpend,
   invalidate,
   KEY_USER,
