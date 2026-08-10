@@ -147,3 +147,21 @@ test('no budget fetched yet → stays quiet', () => {
   assert.equal(DevChat._creditsExhausted(), false);
   assert.equal(DevChat._renderCreditsBannerHtml(), '');
 });
+
+test('OpenRouter sessions ignore exhausted Claude credits and hide the Claude meter', () => {
+  const { DevChat, meterHtml } = makeDevChat();
+  DevChat.currentSession = {
+    id: 7,
+    agent_backend: 'codex_openrouter',
+    agent_model: 'openai/gpt-5.3-codex',
+  };
+  DevChat.budget = budget({
+    spentCents: 2500,
+    globalSpentCents: 20000,
+  });
+
+  assert.equal(DevChat._creditsExhausted(), false);
+  assert.equal(DevChat._renderCreditsBannerHtml(), '');
+  DevChat.renderBudget();
+  assert.equal(meterHtml(), '', 'Claude allowance is irrelevant to an OpenRouter turn');
+});

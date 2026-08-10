@@ -110,7 +110,7 @@
       // deep-link #settings/connectors as one of its three routes; see
       // public/js/credit-options.js.
       { key: 'connectors', label: 'Claude & ChatGPT connectors', group: 'AI & agents' },
-      { key: 'openrouter', label: 'OpenRouter & Codex', group: 'AI & agents' },
+      { key: 'openrouter', label: 'OpenRouter', group: 'AI & agents' },
       { key: 'app-ai', label: 'App AI permissions', group: 'AI & agents' },
       { key: 'agent-files', label: 'Agent instructions & skills', group: 'AI & agents' },
 
@@ -143,6 +143,12 @@
       // (see the "MOVE, DON'T REWRITE" note on #settings-screen).
       document.getElementById('settings-save').addEventListener('click', () => this.save());
       document.getElementById('settings-remove').addEventListener('click', () => this.remove());
+
+      // The static shell is still under the markup-parity migration guard,
+      // so provider copy is normalized at runtime while this hidden section
+      // mounts. Users should only see the provider they configured; the
+      // worker implementation behind OpenRouter is not a product choice.
+      this._normalizeOpenRouterCopy();
 
       // OpenRouter & Codex (BYOK). Section bindings — all guarded on
       // existence so the section degrades cleanly if the feature flag is
@@ -1788,7 +1794,22 @@
       }
     },
 
-    // ── OpenRouter & Codex (BYOK) ───────────────────────────────
+    // ── OpenRouter (BYOK) ──────────────────────────────────────
+    _normalizeOpenRouterCopy() {
+      const section = document.querySelector('[data-settings-section="openrouter"]');
+      if (!section) return;
+      const heading = section.querySelector('h3');
+      const intro = section.querySelector('p');
+      const modelLabel = section.querySelector('label[for="settings-openrouter-model"]');
+      if (heading) heading.textContent = 'OpenRouter';
+      if (intro) {
+        intro.textContent = 'Use any compatible model exposed by your OpenRouter key for all chat and coding in an OpenRouter session. These sessions do not use your platform Claude allowance. Your key is encrypted at rest, injected only for each turn, and removed completely when you delete it here.';
+      }
+      if (modelLabel) modelLabel.textContent = 'OpenRouter model';
+      const betaGate = document.getElementById('settings-openrouter-beta-gated');
+      if (betaGate) betaGate.textContent = 'OpenRouter is being rolled out gradually and is not available for your account yet.';
+    },
+
     _formatOpenRouterPrice(value) {
       if (value == null || value === '') return null;
       const price = Number(value);
@@ -1828,11 +1849,11 @@
         if (select) select.title = 'Models are sorted by average input/output price. Actual spend depends on token usage.';
         return;
       }
-      let compatibility = 'Not yet verified with Codex.';
-      if (model.compatibility === 'verified') compatibility = 'Verified with Codex.';
+      let compatibility = 'Not yet verified for repository coding.';
+      if (model.compatibility === 'verified') compatibility = 'Verified for repository coding.';
       else if (!model.meetsCodexMinimums) {
         compatibility = model.compatibilityNote
-          || 'This model may lack coding tools or enough context, so a Codex turn may fail.';
+          || 'This model may lack repository tools or enough context, so an OpenRouter turn may fail.';
       }
       if (select) select.title = `${this._openRouterModelCostSummary(model)}. ${compatibility} Actual spend depends on token usage.`;
     },
@@ -1942,7 +1963,7 @@
         });
         const j = await r.json();
         if (!r.ok) { this._setOrStatus(j.error || 'Failed to save key.', 'error'); return; }
-        this._setOrStatus('Saved and encrypted. Codex turns bill to your OpenRouter key.', 'ok');
+        this._setOrStatus('Saved and encrypted. OpenRouter sessions bill to this key.', 'ok');
         input.value = '';
         await this._refreshOpenRouter();
       } catch (err) {
@@ -1988,7 +2009,7 @@
           body: JSON.stringify({ defaultBackend: 'codex_openrouter', model, reasoningEffort, maxTurnCostUsd }),
         });
         if (!r.ok) { const j = await r.json().catch(() => ({})); this._setOrStatus(j.error || 'Failed to save.', 'error'); return; }
-        this._setOrStatus('Codex saved as your default coding agent.', 'ok');
+        this._setOrStatus('OpenRouter saved as your default session AI.', 'ok');
       } catch { this._setOrStatus('Network error.', 'error'); }
     },
 

@@ -2009,6 +2009,20 @@ function scheduleInteractiveTurnRecovery(sessionId) {
   return scheduled || recoveryRetry.isScheduled(key);
 }
 
+function recoveredAgentIdentity(session, activeTurn = null) {
+  const backend = activeTurn?.backend || session?.agent_backend || 'claude_code';
+  const isOpenRouter = backend === 'codex_openrouter';
+  return {
+    backend,
+    isOpenRouter,
+    name: isOpenRouter ? 'OpenRouter' : 'Claude Code',
+    metadata: {
+      agentBackend: backend,
+      agentModel: activeTurn?.model || session?.agent_model || null,
+    },
+  };
+}
+
 async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcastGlobal }) {
   const { name: containerName, sessionId, state: containerState } = orphan;
 
@@ -2312,11 +2326,15 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
 
   // #896: the same in-flight label a live turn shows. The recovery is
   // plumbing; from the user's side a coding agent is simply running.
-  emit('status', { text: 'Claude Code is running...' });
+  const recoveryAgent = recoveredAgentIdentity(session, session.active_turn);
+  emit('status', {
+    text: `${recoveryAgent.name} is running...`,
+    ...recoveryAgent.metadata,
+  });
 
   const result = await worker.watchWorker(containerName, {
     onProgress: (text) => {
-      emit('cc_progress', { text });
+      emit('cc_progress', { text, ...recoveryAgent.metadata });
       pool.query(
         `UPDATE chat_session_messages
          SET metadata = jsonb_set(
@@ -2334,13 +2352,25 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     },
   });
 
-  await finalizeRecoveredTurn({
+  const finalized = await finalizeRecoveredTurn({
     config, pool, staging, session, sessionId, result, repoOwner, repoName,
     emit, containerName,
     activeTurn: session.active_turn || null,
     // Legacy single-shot containers are per-turn; reap when done.
     keepWorker: false,
   });
+  if (recoveryAgent.isOpenRouter && finalized?.summary) {
+    const { runRecoveredWrapUp } = require('./src/routes/sessions');
+    await runRecoveredWrapUp({
+      pool, config, session, sessionId,
+      outcome: result.ahead > 0 && result.sha ? 'code' : 'no_changes',
+      dispatchSummary: finalized.summary,
+      fallbackPillKind: result.ahead > 0 && result.sha ? 'code_done' : 'chat_generic',
+      turnModel: recoveryAgent.metadata.agentModel,
+      turnId: session.active_turn?.turnId || null,
+      emit,
+    });
+  }
 }
 
 // Shared post-turn finalization for both recovery transports (legacy
@@ -2494,6 +2524,7 @@ async function finalizeRecoveredTurn({
   activeTurn = null,
 }) {
   const done = alreadyDone && typeof alreadyDone === 'object' ? alreadyDone : {};
+  const recoveryAgent = recoveredAgentIdentity(session, activeTurn);
   const noteMilestone = async (milestone) => {
     if (!activeTurn) return false;
     const noted = await worker.noteTailMilestone(
@@ -2524,58 +2555,66 @@ async function finalizeRecoveredTurn({
 
   // #896: the live path persists an outcome-aware completion row carrying
   // the agent's own summary (sessions.js runClaudeCodeTool). Recovery
-  // persisted none, so the green "Claude Code finished" card was missing
+  // persisted none, so the coding-agent completion card was missing
   // AND every later Mayor turn was blind to what this turn built
   // (buildMayorMessages folds ccOutput rows into the model's context).
   const persistCompletionRow = async (ccText, ccOutcome) => {
     if (!ccText) return;
+    const directOpenRouterReply = recoveryAgent.isOpenRouter && ccOutcome === 'no_changes';
     // The interrupted tail already wrote this card — a second one would
     // duplicate the agent's summary in the transcript AND double-count it
     // in every later Mayor turn's context (buildMayorMessages folds
     // ccOutput rows in). The summary still goes to the wrap-up below.
     if (done.completionRowPosted) {
       log.info('server', 'Recovered turn: completion card already posted — skipping', { sessionId });
-      summaryParts.unshift(`What the agent did:\n${ccText}`);
+      if (directOpenRouterReply) summaryParts.unshift(ccText);
+      else summaryParts.unshift(`What the agent did:\n${ccText}`);
       return;
     }
     const statusText = ccOutcome === 'success'
-      ? 'Claude Code finished'
+      ? `${recoveryAgent.name} finished`
       : ccOutcome === 'no_changes'
-        ? 'Claude Code made no changes'
-        : 'Claude Code did not complete';
+        ? (recoveryAgent.isOpenRouter
+          ? `${recoveryAgent.name} replied`
+          : `${recoveryAgent.name} made no changes`)
+        : `${recoveryAgent.name} did not complete`;
     const metadata = {
       ccOutput: ccText,
       ccOutcome,
+      ...recoveryAgent.metadata,
       ...(durationMs != null ? { durationMs } : {}),
       recovered: true,
     };
     let emitted = true;
-    if (activeTurn?.turnId) {
-      const receipt = await turnEffects.runDbEffect({
-        pool,
-        turnId: activeTurn.turnId,
-        effectKey: 'completion_row',
-        sessionId,
-        run: async (client) => {
-          await client.query(
-            `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-             VALUES ($1, 'system', $2, $3)`,
-            [sessionId, statusText, JSON.stringify(metadata)],
-          );
-          return { persisted: true };
-        },
-      });
-      emitted = receipt.applied;
-    } else {
-      await pool.query(
-        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-         VALUES ($1, 'system', $2, $3)`,
-        [sessionId, statusText, JSON.stringify(metadata)],
-      );
+    if (!directOpenRouterReply) {
+      if (activeTurn?.turnId) {
+        const receipt = await turnEffects.runDbEffect({
+          pool,
+          turnId: activeTurn.turnId,
+          effectKey: 'completion_row',
+          sessionId,
+          run: async (client) => {
+            await client.query(
+              `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+               VALUES ($1, 'system', $2, $3)`,
+              [sessionId, statusText, JSON.stringify(metadata)],
+            );
+            return { persisted: true };
+          },
+        });
+        emitted = receipt.applied;
+      } else {
+        await pool.query(
+          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+           VALUES ($1, 'system', $2, $3)`,
+          [sessionId, statusText, JSON.stringify(metadata)],
+        );
+      }
+      if (emitted) emit('status', { text: statusText, ...metadata });
     }
-    if (emitted) emit('status', { text: statusText, ...metadata });
     await noteMilestone({ completionRowPosted: true });
-    summaryParts.unshift(`What the agent did:\n${ccText}`);
+    if (directOpenRouterReply) summaryParts.unshift(ccText);
+    else summaryParts.unshift(`What the agent did:\n${ccText}`);
   };
 
   // #127 parity: peel the TESTING block off the agent's summary once, up
@@ -2602,9 +2641,11 @@ async function finalizeRecoveredTurn({
     // emit — and so the wrap-up below has something honest to describe.
     const noChangeOutcome = (result.fatalError || result.ccIsError) ? 'error' : 'no_changes';
     await persistCompletionRow(recoveredCcSummary, noChangeOutcome);
-    summaryParts.push(result.fatalError
-      ? `The coding agent hit an error: ${String(result.fatalError).substring(0, 200)}`
-      : 'The coding agent finished without committing any changes.');
+    if (result.fatalError) {
+      summaryParts.push(`The coding agent hit an error: ${String(result.fatalError).substring(0, 200)}`);
+    } else if (!recoveryAgent.isOpenRouter) {
+      summaryParts.push('The coding agent finished without committing any changes.');
+    }
     if (!keepWorker) await worker.destroyWorker(containerName);
     return { outcome: 'done', summary: summaryParts.join('\n\n') };
   }
@@ -3094,6 +3135,7 @@ async function resumeDetachedTurnInner({
   // the tail's non-idempotent steps aren't repeated.
   let tailDone = (activeTurn && typeof activeTurn.tail === 'object' && activeTurn.tail) || {};
   let recoveryActiveTurn = activeTurn;
+  const recoveryAgent = recoveredAgentIdentity(session, activeTurn);
   log.info('server', 'Resuming detached turn from journal', {
     sessionId, containerName, mode: activeTurn.mode, journal: activeTurn.journal,
     // 'tail' distinguishes "the agent was done, the platform side wasn't"
@@ -3104,7 +3146,10 @@ async function resumeDetachedTurnInner({
   });
   // #896: the same in-flight label a live turn shows — see the note in
   // adoptOrphanWorker. Emit-only (never persisted), as before.
-  emit('status', { text: 'Claude Code is running...' });
+  emit('status', {
+    text: `${recoveryAgent.name} is running...`,
+    ...recoveryAgent.metadata,
+  });
 
   // The journal replay re-feeds every line from the start of the turn,
   // including ones the previous process already appended to the latest
@@ -3129,7 +3174,7 @@ async function resumeDetachedTurnInner({
   };
 
   const onRecoveredProgress = (text) => {
-    emit('cc_progress', { text });
+    emit('cc_progress', { text, ...recoveryAgent.metadata });
     progressLines.push(text);
     if (!flushQueued) {
       flushQueued = true;
@@ -3407,10 +3452,14 @@ async function resumeDetachedTurnInner({
         activeTurn: recoveryActiveTurn,
       });
       terminalLine = finalizeOutcome === 'push_failed' ? '[push_failed]' : '[done]';
+      const recoveredNoChanges = !(result.ahead > 0 && result.sha);
       wrapUpPillKind = finalizeOutcome === 'push_failed' ? 'push_failed' : 'code_done';
+      if (recoveryAgent.isOpenRouter && finalizeOutcome !== 'push_failed' && recoveredNoChanges) {
+        wrapUpPillKind = 'chat_generic';
+      }
       wrapUpOutcome = finalizeOutcome === 'push_failed'
         ? 'push_failed'
-        : (result.ahead > 0 && result.sha ? 'code' : 'no_changes');
+        : (recoveredNoChanges ? 'no_changes' : 'code');
       wrapUpSummary = summary;
     }
 

@@ -28,7 +28,11 @@ poolMod.getPool = () => ({
 // The bail happens before any billing spend, but the payer is resolved
 // up front — stub it so no real key/budget lookup runs.
 const limits = require('../src/services/limits');
-limits.resolveBillingPath = async () => ({ apiKey: null });
+let billingCalls = 0;
+limits.resolveBillingPath = async () => {
+  billingCalls += 1;
+  return { apiKey: null };
+};
 
 // First-message titling is fire-and-forget Haiku work — keep it inert.
 const sessionTitles = require('../src/services/session-title');
@@ -69,6 +73,7 @@ const SESSION_ROW = {
 
 function installHandlers() {
   capturedQueries = [];
+  billingCalls = 0;
   poolQueryHandler = async (sql, params) => {
     const s = String(sql);
     if (/FROM chat_sessions cs/.test(s)) return { rows: [{ ...SESSION_ROW }] };
@@ -132,6 +137,34 @@ test('repo-less turn persists a turnError status row and emits done', async (t) 
     assert.equal(JSON.parse(systemInsert.params[2]).turnError, true);
   } finally {
     t.mock.timers.runAll();
+    poolQueryHandler = async () => ({ rows: [] });
+    server.close();
+  }
+});
+
+test('OpenRouter chat bypasses the Claude billing preflight', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  SESSION_ROW.agent_backend = 'codex_openrouter';
+  SESSION_ROW.agent_provider = 'openrouter';
+  SESSION_ROW.agent_model = 'anthropic/claude-sonnet-4.5';
+  installHandlers();
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await fetch(`http://127.0.0.1:${port}/api/sessions/2585/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: 'which model is handling this?' }),
+    });
+    assert.equal(res.status, 200);
+    const events = parseSse(await res.text());
+    assert.ok(events.some((event) => event.type === 'done'));
+    assert.equal(billingCalls, 0, 'OpenRouter must not inspect or gate on Claude credits');
+  } finally {
+    t.mock.timers.runAll();
+    delete SESSION_ROW.agent_backend;
+    delete SESSION_ROW.agent_provider;
+    delete SESSION_ROW.agent_model;
     poolQueryHandler = async () => ({ rows: [] });
     server.close();
   }
