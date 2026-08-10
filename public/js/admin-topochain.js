@@ -3632,7 +3632,16 @@ const AdminTopochain = {
   },
 
   // ══════════════════════════════════════════════════════════════════
-  // API tester — method + /api/v4 path + JSON body, same-origin fetch.
+  // API tester — pick an endpoint (or "Custom…"), method + JSON body,
+  // same-origin fetch.
+  //
+  // The endpoint list is NOT hardcoded here: it comes from
+  // GET /api/v4/admin/api-catalog, which introspects Express's own router
+  // stack server-side, so the select always offers exactly the routes this
+  // build mounted. (It used to be a single placeholder path,
+  // `/season-events`, which isn't even a mounted route — the real one is
+  // `/admin/season-events` — so the tool only worked for an operator who
+  // already knew the surface.)
   //
   // Deliberately not gated on canWrite(): this is a generic HTTP console
   // that fires requests using the admin's OWN session cookies (same-
@@ -3645,6 +3654,14 @@ const AdminTopochain = {
   // either — see the comment on _runSqlQuery below).
   // ══════════════════════════════════════════════════════════════════
 
+  // Sentinel <option> value for "I'll type the path myself". Not a legal
+  // catalog entry (every real one is `METHOD /path`), so it can never
+  // collide with a route.
+  API_CUSTOM: '__custom__',
+
+  // Filled by _loadApiCatalog(); `null` until the first fetch settles.
+  _apiCatalog: null,
+
   renderApiTester(host) {
     host.innerHTML = `
       ${AdminTopochain._screenHeader({
@@ -3653,21 +3670,30 @@ const AdminTopochain = {
   })}
       ${AdminTopochain._panel({
     title: 'Request',
-    subtitle: 'Method, path under /api/v4, and an optional JSON body.',
+    subtitle: 'Pick a mounted /api/v4 endpoint (or Custom…), then a method and an optional JSON body.',
     body: `
-          <div class="grid grid-cols-1 gap-3 sm:grid-cols-[auto_1fr]">
+          <div class="min-w-0">
+            <label for="admin-topo-api-endpoint" class="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">Endpoint</label>
+            ${AdminTopochain._selectHtml('admin-topo-api-endpoint',
+    [{ value: AdminTopochain.API_CUSTOM, label: 'Custom…' }], AdminTopochain.API_CUSTOM)}
+            <p id="admin-topo-api-catalog-note" class="mt-1 text-xs text-zinc-500" role="status">Loading the endpoint list&hellip;</p>
+          </div>
+          <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-[auto_1fr]">
             <div class="sm:w-32">
               <label for="admin-topo-api-method" class="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">Method</label>
               ${AdminTopochain._selectHtml('admin-topo-api-method', ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'], 'GET')}
             </div>
-            <div class="min-w-0">
+            <div class="min-w-0 hidden" id="admin-topo-api-path-row">
               <label for="admin-topo-api-path" class="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">
                 Path <span class="font-mono font-normal text-zinc-400">(prefixed with /api/v4)</span>
               </label>
-              <input id="admin-topo-api-path" type="text" placeholder="/season-events" value="/season-events"
+              <input id="admin-topo-api-path" type="text" placeholder="/admin/seasons" value="/admin/seasons"
                 class="${FIELD_CLS} font-mono">
             </div>
           </div>
+          <p class="mt-3 text-xs text-zinc-500">
+            Target <span id="admin-topo-api-target" class="font-mono text-zinc-700 dark:text-zinc-300">GET /api/v4/admin/seasons</span>
+          </p>
           <div class="mt-4">
             <label for="admin-topo-api-body" class="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">
               JSON body <span class="font-normal text-zinc-400">(ignored for GET)</span>
@@ -3678,13 +3704,22 @@ const AdminTopochain = {
   })}
       <div id="admin-topo-api-result"></div>`;
     document.getElementById('admin-topo-api-send').addEventListener('click', () => AdminTopochain._runApiTest());
+    document.getElementById('admin-topo-api-endpoint')
+      .addEventListener('change', () => AdminTopochain._onApiEndpointChange());
+    document.getElementById('admin-topo-api-method')
+      .addEventListener('change', () => AdminTopochain._syncApiTarget());
+    document.getElementById('admin-topo-api-path')
+      .addEventListener('input', () => AdminTopochain._syncApiTarget());
+    // The path row starts hidden and the select starts at Custom…, so open
+    // the field for that state until the catalog arrives and picks a route.
+    AdminTopochain._onApiEndpointChange();
+    AdminTopochain._loadApiCatalog();
   },
 
   async _runApiTest() {
     const esc = AdminTopochain.esc;
     const method = document.getElementById('admin-topo-api-method').value;
-    let path = document.getElementById('admin-topo-api-path').value.trim();
-    if (!path.startsWith('/')) path = `/${path}`;
+    const path = AdminTopochain._apiTargetPath();
     const fullUrl = `/api/v4${path}`;
     const result = document.getElementById('admin-topo-api-result');
     const opts = { method, credentials: 'same-origin' };
@@ -3721,6 +3756,106 @@ const AdminTopochain = {
       result.innerHTML = note('bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400',
         `Network error: ${esc(err.message)}`);
     }
+  },
+
+  // ─── Endpoint select ──────────────────────────────────────────────
+  //
+  // The path INPUT stays the single source of truth for what gets sent —
+  // the select writes into it and is then hidden for a concrete route, so
+  // _runApiTest() never has to know which of the two the operator used.
+
+  _apiTargetPath() {
+    const el = document.getElementById('admin-topo-api-path');
+    let p = ((el && el.value) || '').trim();
+    if (!p) p = '/';
+    if (!p.startsWith('/')) p = `/${p}`;
+    return p;
+  },
+
+  _syncApiTarget() {
+    const target = document.getElementById('admin-topo-api-target');
+    const methodSel = document.getElementById('admin-topo-api-method');
+    if (!target || !methodSel) return;
+    target.textContent = `${methodSel.value} /api/v4${AdminTopochain._apiTargetPath()}`;
+  },
+
+  _onApiEndpointChange() {
+    const sel = document.getElementById('admin-topo-api-endpoint');
+    const pathRow = document.getElementById('admin-topo-api-path-row');
+    const pathInput = document.getElementById('admin-topo-api-path');
+    const methodSel = document.getElementById('admin-topo-api-method');
+    if (!sel || !pathRow || !pathInput || !methodSel) return;
+    const val = sel.value;
+    if (val === AdminTopochain.API_CUSTOM) {
+      pathRow.classList.remove('hidden');
+      AdminTopochain._syncApiTarget();
+      return;
+    }
+    const sp = val.indexOf(' ');
+    const method = sp > 0 ? val.slice(0, sp) : 'GET';
+    const path = sp > 0 ? val.slice(sp + 1) : val;
+    if ([...methodSel.options].some((o) => o.value === method)) methodSel.value = method;
+    pathInput.value = path;
+    // A `:id`-style route can't be fired as written, so the field stays
+    // OPEN (prefilled) for exactly those — the operator substitutes the
+    // value in place. A concrete route hides it: the select is the target.
+    const route = (AdminTopochain._apiCatalog || []).find((r) => `${r.method} ${r.path}` === val);
+    pathRow.classList.toggle('hidden', !(route && route.has_params));
+    AdminTopochain._syncApiTarget();
+  },
+
+  // GET /api/v4/admin/api-catalog — every route this build actually
+  // mounted, introspected from Express's router stack server-side (see
+  // src/routes/topochain/admin/api-catalog.js). Nothing here is a
+  // hardcoded list, so a route added or renamed anywhere under
+  // src/routes/topochain/ appears in this select with no client change.
+  async _loadApiCatalog() {
+    const esc = AdminTopochain.esc;
+    const sel = document.getElementById('admin-topo-api-endpoint');
+    const note = document.getElementById('admin-topo-api-catalog-note');
+    if (!sel) return;
+    let routes = null;
+    try {
+      const res = await fetch('/api/v4/admin/api-catalog', { credentials: 'same-origin' });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || !data.success) {
+        throw new Error((data && data.error) || `HTTP ${res.status}`);
+      }
+      routes = Array.isArray(data.data) ? data.data : [];
+    } catch (err) {
+      // A tester that can't list the surface still has to be usable: leave
+      // the free-text path exactly as it was and say why the list is gone.
+      AdminTopochain._apiCatalog = [];
+      if (note) note.textContent = `Could not load the endpoint list (${err.message}) — enter a path by hand.`;
+      AdminTopochain._onApiEndpointChange();
+      return;
+    }
+    // The operator may have navigated away while the fetch was in flight.
+    if (!document.body.contains(sel)) return;
+    AdminTopochain._apiCatalog = routes;
+    if (!routes.length) {
+      if (note) note.textContent = 'No /api/v4 endpoints were reported — enter a path by hand.';
+      AdminTopochain._onApiEndpointChange();
+      return;
+    }
+    const groups = [];
+    routes.forEach((r) => { if (!groups.includes(r.group)) groups.push(r.group); });
+    const label = (r) => `${r.method} ${r.path}`;
+    sel.innerHTML = `${groups.map((g) => `
+      <optgroup label="${esc(g)}">${routes.filter((r) => r.group === g).map((r) => `
+        <option value="${esc(label(r))}">${esc(label(r))}</option>`).join('')}</optgroup>`).join('')}
+      <option value="${esc(AdminTopochain.API_CUSTOM)}">Custom&hellip;</option>`;
+    // Default to the Seasons index — this screen lives under Seasons, and
+    // it is a parameter-free GET, so it is safe to have preselected.
+    const preferred = routes.find((r) => r.method === 'GET' && r.path === '/admin/seasons')
+      || routes.find((r) => r.method === 'GET' && !r.has_params)
+      || routes[0];
+    sel.value = label(preferred);
+    if (note) {
+      note.textContent = `${routes.length} endpoint${routes.length === 1 ? '' : 's'} mounted in this build`
+        + ' — pick “Custom…” to send any other path.';
+    }
+    AdminTopochain._onApiEndpointChange();
   },
 };
 

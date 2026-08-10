@@ -1580,6 +1580,17 @@
       "expectSelector": "#admin-topo-se-season-filter"
     },
     {
+      "name": "Admin API tester offers an endpoint select instead of one placeholder path",
+      "path": "/#admin/seasons/api-tester",
+      "expectSelector": "select#admin-topo-api-endpoint"
+    },
+    {
+      "name": "Admin API tester select lists the real mounted /api/v4 routes",
+      "path": "/#admin/seasons/api-tester",
+      "expectSelector": "#admin-topo-api-endpoint optgroup option[value=\"GET /admin/seasons\"]",
+      "expectText": "mounted in this build"
+    },
+    {
       "name": "Native kit: pull-to-refresh builds its clipped puck layer (the puck hangs below the header, never over it)",
       "path": "/usernode-native/v1/demo.html?un-platform=ios",
       "expectSelector": ".un-ptr-layer > .un-ptr-puck"
