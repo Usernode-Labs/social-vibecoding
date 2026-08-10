@@ -22,6 +22,11 @@ const PUBLIC_PATHS = [
   // Self-service wallet password reset is pre-login by definition — the
   // wallet signature is the only credential (issue #282).
   '/api/auth/wallet-reset-verify',
+  // Email password reset is pre-login by definition — the emailed magic
+  // link is the only credential. Request mints it, confirm redeems it;
+  // both are anti-enumeration (see src/routes/auth.js).
+  '/api/auth/password-reset/request',
+  '/api/auth/password-reset/confirm',
   '/api/auth/wallet-register',
   '/api/auth/wallet-link-login',
   // Read-only kudos leaderboard (Top PRs / Top users). Public so the
@@ -40,6 +45,15 @@ const PUBLIC_PATHS = [
   '/health',
   '/css/',
   '/js/',
+  // The React shell bundle (public/shell/assets/shell.js). Same public tier
+  // as /css/ and /js/, and public for exactly the reason spelled out under
+  // /vendor/ below: index.html loads it from its head on EVERY load,
+  // including the anonymous landing/login screens, so an anonymous request
+  // that redirected to the shell would answer a module script request with an
+  // HTML body. The browser rejects that on MIME type, React never hydrates,
+  // and the service-worker precache fills with redirects. Static JS only, no
+  // data access.
+  '/shell/',
   // Vendored third-party browser libs (public/vendor/ — marked, DOMPurify,
   // qrcodejs). Same public tier as /css/ and /js/, and public for the same
   // reason: index.html loads them from its <head> on EVERY load including

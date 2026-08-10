@@ -35,6 +35,10 @@
     // Stage-2 waitlist survey ("Want in sooner?"), #more/<token> — the
     // token is the signup's capability from the join response / email.
     more: 'auth-more-screen',
+    // Emailed password-reset magic link, #reset-password/<token> — a
+    // sub-view of the login screen, like signup. The view itself is
+    // runtime-built (frozen-markup contract; see _ensureResetUi).
+    'reset-password': 'auth-login-screen',
   };
 
   // Drives push (deeper) vs pop (back toward landing) transition types.
@@ -42,7 +46,7 @@
   // below the stage-1 screen it is offered from.
   const DEPTH = {
     landing: 0, login: 1, signup: 1, register: 1, waiting: 1, waitlist: 1,
-    more: 2,
+    more: 2, 'reset-password': 1,
   };
 
   const ROUTES = Object.keys(SCREEN_IDS);
@@ -157,6 +161,7 @@
       if (route === 'landing') AuthScreens._landingOnShow();
       if (route === 'login') AuthScreens._loginOnShow(false);
       if (route === 'signup') AuthScreens._loginOnShow(true);
+      if (route === 'reset-password') AuthScreens._resetOnShow(seg);
       if (route === 'register') AuthScreens._registerOnShow(seg);
       if (route === 'waiting') AuthScreens._waitingOnShow();
       if (route === 'waitlist') AuthScreens._waitlistOnShow();
@@ -1193,6 +1198,7 @@
     _showLoginBaseView() {
       byId('otp-view').classList.add('hidden');
       byId('recovery-view').classList.add('hidden');
+      AuthScreens._hideResetView();
       byId('login-form').classList.remove('hidden');
       byId('register-link').classList.remove('hidden');
       byId('forgot-link-wrap').classList.remove('hidden');
@@ -1209,6 +1215,7 @@
       byId('otp-link-wrap').classList.add('hidden');
       byId('wallet-auth').classList.add('hidden');
       byId('recovery-view').classList.add('hidden');
+      AuthScreens._hideResetView();
       AuthScreens._otpSetStatus(null);
       AuthScreens._otpShowStep(byId('otp-step-email'));
       byId('otp-view').classList.remove('hidden');
@@ -1229,6 +1236,188 @@
         otpStatus.classList.remove('hidden');
       } else {
         otpStatus.classList.add('hidden');
+      }
+    },
+
+    // ── Email password reset (magic link) ────────────────────────────
+    //
+    // The shell's markup is frozen (tests/shell-markup-parity.test.js), so
+    // the email-request form and the #reset-password/<token> redeem view
+    // are runtime-built here, the way every post-fixture feature adds UI.
+    // Class strings are copied verbatim from the neighbouring frozen
+    // markup, so the compiled Tailwind already covers all of them.
+    _resetToken: null,
+    _resetUiBuilt: false,
+
+    _hideResetView() {
+      const view = byId('reset-password-view');
+      if (view) view.classList.add('hidden');
+    },
+
+    _ensureResetUi() {
+      if (AuthScreens._resetUiBuilt) return;
+      AuthScreens._resetUiBuilt = true;
+
+      const P = 'text-sm text-zinc-500 dark:text-zinc-400';
+      const LABEL = 'block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1';
+      const INPUT = 'w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500';
+      const BUTTON = 'w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white';
+      const EXPIRED_MSG = 'This reset link is invalid or has expired. Go back to login and request a new one from "Forgot password?".';
+
+      // The email-request form, shown above the admin fallback in the
+      // recovery view. Static strings only — nothing user-authored ever
+      // goes through this innerHTML.
+      const emailSec = document.createElement('div');
+      emailSec.id = 'recovery-email';
+      emailSec.className = 'hidden space-y-3';
+      emailSec.innerHTML =
+        '<p class="' + P + '">Enter the email address on your account and we\'ll send you a link to choose a new password.</p>' +
+        '<div>' +
+          '<label class="' + LABEL + '" for="recovery-email-input">Email</label>' +
+          '<input id="recovery-email-input" type="email" autocomplete="email" class="' + INPUT + '" placeholder="you@example.com">' +
+        '</div>' +
+        '<div id="recovery-email-error" class="text-red-400 text-sm hidden"></div>' +
+        '<div id="recovery-email-status" class="text-sm text-zinc-400 hidden"></div>' +
+        '<button id="btn-email-reset" type="button" class="' + BUTTON + '">Email me a reset link</button>';
+      const adminSec = byId('recovery-admin');
+      adminSec.parentNode.insertBefore(emailSec, adminSec);
+
+      // Reposition the admin path as the fallback: the frozen markup's
+      // lead paragraph still claims accounts have no email on file, which
+      // stopped being true when email became a login identifier.
+      const adminLead = adminSec.querySelector('p');
+      if (adminLead) {
+        adminLead.textContent = 'No confirmed email on your account? The link above can only go to a confirmed address — but an admin can still get you back in.';
+      }
+
+      // The redeem view the emailed link lands on — a sibling sub-view of
+      // #recovery-view on the same login card.
+      const recoveryView = byId('recovery-view');
+      const view = document.createElement('div');
+      view.id = 'reset-password-view';
+      view.className = 'hidden space-y-4';
+      view.innerHTML =
+        '<h2 class="text-lg font-bold text-center">Choose a new password</h2>' +
+        '<div>' +
+          '<label class="' + LABEL + '" for="reset-new-password">New password</label>' +
+          '<input id="reset-new-password" type="password" autocomplete="new-password" class="' + INPUT + '" placeholder="at least 8 characters">' +
+        '</div>' +
+        '<div>' +
+          '<label class="' + LABEL + '" for="reset-confirm-password">Confirm new password</label>' +
+          '<input id="reset-confirm-password" type="password" autocomplete="new-password" class="' + INPUT + '" placeholder="re-enter new password">' +
+        '</div>' +
+        '<div id="reset-error" class="text-red-400 text-sm hidden"></div>' +
+        '<div id="reset-status" class="text-sm text-zinc-400 hidden"></div>' +
+        '<button id="btn-reset-confirm" type="button" class="' + BUTTON + '">Set new password</button>' +
+        '<button id="btn-reset-back" type="button" class="w-full text-sm text-zinc-500 hover:text-zinc-300">Back to login</button>';
+      recoveryView.parentNode.insertBefore(view, recoveryView.nextSibling);
+
+      byId('btn-email-reset').addEventListener('click', async () => {
+        const errorEl = byId('recovery-email-error');
+        const statusEl = byId('recovery-email-status');
+        hideError(errorEl);
+        statusEl.classList.add('hidden');
+        if (blockedOffline(errorEl)) return;
+        const email = byId('recovery-email-input').value.trim();
+        if (!email || email.indexOf('@') === -1) {
+          showError(errorEl, 'Enter the email address on your account');
+          return;
+        }
+        const btn = byId('btn-email-reset');
+        btn.disabled = true;
+        try {
+          const res = await fetch('/api/auth/password-reset/request', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email }),
+          });
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            showError(errorEl, data.error || 'Could not send the link — try again in a minute');
+            return;
+          }
+          // Anti-enumeration: the server answers the same whether or not
+          // the address matched, and so does this copy.
+          statusEl.textContent = 'If that address matches an account, a reset link is on its way. It expires in 30 minutes.';
+          statusEl.classList.remove('hidden');
+        } catch {
+          showError(errorEl, 'Network error');
+        } finally {
+          btn.disabled = false;
+        }
+      });
+
+      byId('btn-reset-confirm').addEventListener('click', async () => {
+        const errorEl = byId('reset-error');
+        const statusEl = byId('reset-status');
+        hideError(errorEl);
+        statusEl.classList.add('hidden');
+        if (blockedOffline(errorEl)) return;
+        const newPassword = byId('reset-new-password').value;
+        const confirm = byId('reset-confirm-password').value;
+        if (newPassword.length < 8) {
+          showError(errorEl, 'Password must be at least 8 characters');
+          return;
+        }
+        if (newPassword !== confirm) {
+          showError(errorEl, 'Passwords do not match');
+          return;
+        }
+        const btn = byId('btn-reset-confirm');
+        btn.disabled = true;
+        try {
+          const res = await fetch('/api/auth/password-reset/confirm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: AuthScreens._resetToken, newPassword }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            showError(errorEl, res.status === 401
+              ? EXPIRED_MSG
+              : (data.error || 'Reset failed — try again'));
+            return;
+          }
+          // The reset revoked every session on purpose; signing in with
+          // the new password is the one remaining step.
+          statusEl.textContent = 'Your password has been reset. Head back to login and sign in with it.';
+          statusEl.classList.remove('hidden');
+        } catch {
+          showError(errorEl, 'Network error');
+        } finally {
+          btn.disabled = false;
+        }
+      });
+
+      byId('btn-reset-back').addEventListener('click', () => {
+        // Route change so browser back stays coherent; the direct call
+        // covers the no-hashchange case (already on #login).
+        location.hash = '#login';
+        AuthScreens._showLoginBaseView();
+      });
+    },
+
+    // Per-route side effect for #reset-password/<token>: hide every other
+    // sub-view of the shared login screen and show the redeem form.
+    _resetOnShow(token) {
+      AuthScreens._ensureResetUi();
+      AuthScreens._resetToken = token || null;
+      byId('login-form').classList.add('hidden');
+      byId('register-link').classList.add('hidden');
+      byId('forgot-link-wrap').classList.add('hidden');
+      byId('otp-link-wrap').classList.add('hidden');
+      byId('otp-view').classList.add('hidden');
+      byId('wallet-auth').classList.add('hidden');
+      byId('recovery-view').classList.add('hidden');
+      hideError(byId('reset-error'));
+      byId('reset-status').classList.add('hidden');
+      byId('reset-new-password').value = '';
+      byId('reset-confirm-password').value = '';
+      byId('reset-password-view').classList.remove('hidden');
+      // A mangled link can be refused without a round trip — same message
+      // the server would return.
+      if (!AuthScreens._resetToken || !/^[0-9a-f]{64}$/.test(AuthScreens._resetToken)) {
+        showError(byId('reset-error'), 'This reset link is invalid or has expired. Go back to login and request a new one from "Forgot password?".');
       }
     },
 
@@ -1279,16 +1468,20 @@
         byId('otp-link-wrap').classList.add('hidden');
         byId('otp-view').classList.add('hidden');
         byId('wallet-auth').classList.add('hidden');
+        AuthScreens._hideResetView();
         byId('recovery-view').classList.remove('hidden');
 
         // Wallet self-reset only when in the native app with a linked
-        // wallet; everyone else gets the admin-temporary-password
-        // instructions.
+        // wallet; everyone else gets the emailed magic link, with the
+        // admin-temporary-password instructions as the fallback below it.
+        AuthScreens._ensureResetUi();
         if (isNative() && AuthScreens._walletPubkey && AuthScreens._walletLinked) {
           byId('recovery-wallet').classList.remove('hidden');
+          byId('recovery-email').classList.add('hidden');
           byId('recovery-admin').classList.add('hidden');
         } else {
           byId('recovery-wallet').classList.add('hidden');
+          byId('recovery-email').classList.remove('hidden');
           byId('recovery-admin').classList.remove('hidden');
         }
       };
@@ -1300,6 +1493,8 @@
       byId('btn-recovery-back').addEventListener('click', () => {
         byId('recovery-wallet').classList.add('hidden');
         byId('recovery-admin').classList.add('hidden');
+        const emailSec = byId('recovery-email');
+        if (emailSec) emailSec.classList.add('hidden');
         AuthScreens._showLoginBaseView();
       });
 

@@ -364,6 +364,11 @@
       "allowConsoleErrors": true
     },
     {
+      "name": "Dev board: session cards carry the live working spinner (#1038)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-body [data-session-chip=\"990102\"] .dc-status-spinner-arc, #dev-body [data-shared-session-row=\"990001\"] .dc-status-spinner-arc"
+    },
+    {
       "name": "Platform variables panel renders on the platform app (#826 folded into app secrets)",
       "path": "/?shot=secrets#app/usernode-2d5619/dev",
       "expectSelector": "#app-secrets-list code"
@@ -400,6 +405,11 @@
       "path": "/?shot=work-drawer&demo=1",
       "expectSelector": "#work-drawer-panel:not(.hidden) #work-drawer-list",
       "expectText": "[Mock] Session titled but not yet proposed"
+    },
+    {
+      "name": "Work drawer: a busy session row spins from live state (#1038)",
+      "path": "/?shot=work-drawer&demo=1",
+      "expectSelector": "#work-drawer-panel:not(.hidden) #work-drawer-list a[href$=\"/sessions/990102\"] .dc-status-spinner-arc"
     },
     {
       "name": "Send Feedback offers a kudos bounty, unchecked by default (#964)",
@@ -635,7 +645,7 @@
       "name": "Pills from a forced retry render identically (#1001)",
       "path": "/#app/usernode-2d5619/dev/sessions/900806",
       "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
-      "expectText": "Build the avatar upload flow"
+      "expectText": "Build the spec"
     },
     {
       "name": "A wrap-up's pills supersede the dispatch preamble's (#1001)",
@@ -1560,6 +1570,52 @@
       "expectSelector": "#admin-topo-mail-status"
     },
     {
+      "name": "Admin Seasons screen lists real seasons from /api/v4/admin/seasons with per-row actions",
+      "path": "/#admin/seasons/seasons",
+      "expectSelector": "[data-season-events]",
+      "expectText": "The top tier"
+    },
+    {
+      "name": "Admin Seasons screen surfaces season events that belong to no season",
+      "path": "/#admin/seasons/seasons",
+      "expectSelector": "#admin-topo-sn-unassigned-go",
+      "expectText": "Events not assigned to a season"
+    },
+    {
+      "name": "Admin Season events screen can filter by season",
+      "path": "/#admin/seasons/season-events",
+      "expectSelector": "#admin-topo-se-season-filter"
+    },
+    {
+      "name": "Admin API tester offers an endpoint select instead of one placeholder path",
+      "path": "/#admin/seasons/api-tester",
+      "expectSelector": "select#admin-topo-api-endpoint"
+    },
+    {
+      "name": "Admin API tester select lists the real mounted /api/v4 routes",
+      "path": "/#admin/seasons/api-tester",
+      "expectSelector": "#admin-topo-api-endpoint optgroup option[value=\"GET /admin/seasons\"]",
+      "expectText": "mounted in this build"
+    },
+    {
+      "name": "Admin SQL console lists platform tables, not just the topochain ones",
+      "path": "/#admin/seasons/sql-console",
+      "expectSelector": "#admin-topo-sql-schema button[data-table]",
+      "expectText": "chat_sessions"
+    },
+    {
+      "name": "Admin SQL console schema browser has a filter and a table count for the full schema",
+      "path": "/#admin/seasons/sql-console",
+      "expectSelector": "#admin-topo-sql-schema-filter",
+      "expectText": "Every table in the app database"
+    },
+    {
+      "name": "Admin SQL console reports how many tables the schema browser holds",
+      "path": "/#admin/seasons/sql-console",
+      "expectSelector": "#admin-topo-sql-schema-count",
+      "expectText": "tables"
+    },
+    {
       "name": "Native kit: pull-to-refresh builds its clipped puck layer (the puck hangs below the header, never over it)",
       "path": "/usernode-native/v1/demo.html?un-platform=ios",
       "expectSelector": ".un-ptr-layer > .un-ptr-puck"
@@ -1664,6 +1720,50 @@
       "path": "/?shot=offline-signin#login",
       "expectSelector": "body.is-offline #auth-login-screen:not(.hidden) .offline-only",
       "expectText": "Signing in needs a connection"
+    },
+    {
+      "name": "Back from a dev session is a real link you can open in a new tab (#1036)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
+      "expectSelector": "a#dc-back[href=\"#app/usernode-2d5619/dev\"]"
+    },
+    {
+      "name": "The header home button is a real link, not a button (#1036)",
+      "path": "/#leaderboard",
+      "expectSelector": "header#platform-header a#back-btn:not(.hidden)[href]"
+    },
+    {
+      "name": "Inside an app's detail page the header arrow links back to the list (#1036)",
+      "path": "/#apps/usernode-2d5619",
+      "expectSelector": "a#back-btn[href=\"#apps\"]"
+    },
+    {
+      "name": "A new session asks how you want to build it, naming both hand-offs (#1049)",
+      "path": "/#app/usernode-2d5619/dev/sessions/990403",
+      "expectSelector": "[data-flow-card] [data-flow-option=\"claude-code\"] + [data-flow-option=\"codex\"]",
+      "expectText": "How do you want to build this change?"
+    },
+    {
+      "name": "The picker offers the platform itself and can be answered once for good (#1049)",
+      "path": "/#app/usernode-2d5619/dev/sessions/990403",
+      "expectSelector": "[data-flow-card] [data-flow-option=\"platform\"] button[data-flow-pick=\"platform\"], [data-flow-card] input[type=\"checkbox\"][data-flow-remember]",
+      "expectText": "Remember my choice"
+    },
+    {
+      "name": "Choosing Claude Code opens a five-step walkthrough with one step live (#1049)",
+      "path": "/?demo=1&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
+      "expectSelector": "[data-flow-wizard] [data-flow-step-state=\"current\"]",
+      "expectText": "Check again"
+    },
+    {
+      "name": "Settings can answer the build-flow question for good (#1049)",
+      "path": "/#settings/connectors",
+      "expectSelector": "#settings-dev-flow option[value=\"claude-code\"]",
+      "expectText": "Preferred build flow"
+    },
+    {
+      "name": "A connector-imported proposal names the coding agent that built it (#967)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals",
+      "expectText": "Built with Claude Code"
     }
   ],
   "governance": {

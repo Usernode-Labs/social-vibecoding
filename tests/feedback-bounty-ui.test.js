@@ -170,14 +170,27 @@ test('dapp.json checks both shot links and the unchecked/disabled states', () =>
   }
 });
 
-test('the two shot checks are inside app-manifest\'s MAX_TESTS cap', () => {
-  // dapp.json carries far more declared tests than the reader keeps, so a
-  // check appended to the end of the array is silently dropped and never
-  // runs against the staging preview. These two must stay near the top.
+test('both shot checks survive the manifest reader', () => {
+  // dapp.json used to carry far more declared tests than the reader kept, so
+  // a check appended to the end was silently dropped and never ran. #1019
+  // runs every declared check; the reader now only refuses entries that are
+  // malformed or past MAX_DECLARED_TESTS, and both of those are just as
+  // invisible from the manifest as the old cap was.
   const appManifest = require('../src/services/app-manifest');
-  const kept = appManifest.read(root).tests.filter((t) => /shot=feedback/.test(t.path));
-  assert.equal(kept.length, 2,
-    'both bounty-row checks must survive the cap — keep them at the top of dapp.json\'s tests array');
+  const meta = appManifest.readTestsWithMeta(
+    JSON.parse(fs.readFileSync(path.join(root, 'dapp.json'), 'utf8'))
+  );
+  assert.equal(meta.ceilingDropped, 0,
+    `dapp.json declares more than ${appManifest.MAX_DECLARED_TESTS} valid checks — `
+    + 'checks past the ceiling never run');
+  const kept = meta.tests.filter((t) => /shot=feedback/.test(t.path));
+  // Four of them run now, where the cap used to admit two. Assert the two
+  // ROUTES rather than a count, so declaring another assertion against the
+  // same screens doesn't fail a test that is about neither.
+  for (const route of ['/?shot=feedback', '/?shot=feedback-spent']) {
+    assert.ok(kept.some((t) => t.path === route),
+      `${route} must survive the reader — a dropped check gates nothing`);
+  }
 });
 
 // ── The 5 → 20 sweep ─────────────────────────────────────────────────

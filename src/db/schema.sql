@@ -112,6 +112,26 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panel_positions JSONB NOT NULL D
 -- 35 chars is the RFC 5646 recommended buffer for BCP-47 tags.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS locale VARCHAR(35);
 
+-- Preferred development flow (issue #1049). NULL = "ask me every time", the
+-- default: the dev-chat picker renders and the user chooses per proposal.
+-- A non-NULL value is the "remember my option" checkbox — 'platform' builds
+-- here with the platform's own agent, 'claude-code' / 'codex' hand the work
+-- order to the user's own Claude Code / Codex web UI (the external-agent
+-- flow in services/external-agent-tasks.js).
+--
+-- Written by POST /api/me/dev-flow, echoed by GET /api/auth/me as
+-- `devFlowPreference`, and clearable back to NULL from Settings →
+-- Connections. The CHECK is the same allowlist the route enforces, so a
+-- direct DB write can never park an unrenderable value here.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS dev_flow_preference TEXT;
+DO $$
+BEGIN
+  ALTER TABLE users DROP CONSTRAINT IF EXISTS users_dev_flow_preference_chk;
+  ALTER TABLE users ADD CONSTRAINT users_dev_flow_preference_chk
+    CHECK (dev_flow_preference IS NULL
+           OR dev_flow_preference IN ('platform', 'claude-code', 'codex'));
+END $$;
+
 CREATE TABLE IF NOT EXISTS sessions (
   token      VARCHAR(64) PRIMARY KEY,
   user_id    INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -136,6 +156,7 @@ CREATE TABLE IF NOT EXISTS cli_device_authorizations (
     CHECK (
       scopes = ARRAY['rpc:identity:read']::TEXT[]
       OR scopes = ARRAY['rpc:identity:read', 'api:access']::TEXT[]
+      OR scopes = ARRAY['rpc:identity:read', 'api:access', 'agent:local']::TEXT[]
     ),
   request_ip INET NOT NULL,
   user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -200,8 +221,8 @@ CREATE TABLE IF NOT EXISTS cli_access_tokens (
   scopes TEXT[] NOT NULL
     CONSTRAINT cli_access_tokens_scopes_check
     CHECK (
-      cardinality(scopes) <= 2
-      AND scopes <@ ARRAY['rpc:identity:read', 'api:access']::TEXT[]
+      cardinality(scopes) <= 3
+      AND scopes <@ ARRAY['rpc:identity:read', 'api:access', 'agent:local']::TEXT[]
     ),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_used_at TIMESTAMPTZ,
@@ -231,13 +252,14 @@ CREATE TABLE IF NOT EXISTS cli_auth_audit_events (
     CONSTRAINT cli_auth_audit_events_scopes_check
     CHECK (
       (event_type IN ('token_used', 'token_revoked')
-       AND cardinality(scopes) <= 2
-       AND scopes <@ ARRAY['rpc:identity:read', 'api:access']::TEXT[])
+       AND cardinality(scopes) <= 3
+       AND scopes <@ ARRAY['rpc:identity:read', 'api:access', 'agent:local']::TEXT[])
       OR
       (event_type NOT IN ('token_used', 'token_revoked')
        AND (
          scopes = ARRAY['rpc:identity:read']::TEXT[]
          OR scopes = ARRAY['rpc:identity:read', 'api:access']::TEXT[]
+         OR scopes = ARRAY['rpc:identity:read', 'api:access', 'agent:local']::TEXT[]
        ))
     ),
   outcome TEXT NOT NULL DEFAULT 'success'
@@ -309,13 +331,14 @@ BEGIN
    WHERE conrelid = 'cli_device_authorizations'::regclass
      AND conname = 'cli_device_authorizations_scopes_check';
   IF constraint_def IS NOT NULL
-      AND position('api:access' IN constraint_def) = 0 THEN
+      AND position('agent:local' IN constraint_def) = 0 THEN
     ALTER TABLE cli_device_authorizations
       DROP CONSTRAINT cli_device_authorizations_scopes_check;
     ALTER TABLE cli_device_authorizations
       ADD CONSTRAINT cli_device_authorizations_scopes_check CHECK (
         scopes = ARRAY['rpc:identity:read']::TEXT[]
         OR scopes = ARRAY['rpc:identity:read', 'api:access']::TEXT[]
+        OR scopes = ARRAY['rpc:identity:read', 'api:access', 'agent:local']::TEXT[]
       );
   END IF;
 
@@ -324,13 +347,13 @@ BEGIN
    WHERE conrelid = 'cli_access_tokens'::regclass
      AND conname = 'cli_access_tokens_scopes_check';
   IF constraint_def IS NOT NULL
-      AND position('api:access' IN constraint_def) = 0 THEN
+      AND position('agent:local' IN constraint_def) = 0 THEN
     ALTER TABLE cli_access_tokens
       DROP CONSTRAINT cli_access_tokens_scopes_check;
     ALTER TABLE cli_access_tokens
       ADD CONSTRAINT cli_access_tokens_scopes_check CHECK (
-        cardinality(scopes) <= 2
-        AND scopes <@ ARRAY['rpc:identity:read', 'api:access']::TEXT[]
+        cardinality(scopes) <= 3
+        AND scopes <@ ARRAY['rpc:identity:read', 'api:access', 'agent:local']::TEXT[]
       );
   END IF;
 
@@ -347,7 +370,7 @@ BEGIN
    ORDER BY oid
    LIMIT 1;
   IF constraint_def IS NOT NULL
-      AND position('api:access' IN constraint_def) = 0 THEN
+      AND position('agent:local' IN constraint_def) = 0 THEN
     EXECUTE format(
       'ALTER TABLE cli_auth_audit_events DROP CONSTRAINT %I',
       constraint_name
@@ -355,13 +378,14 @@ BEGIN
     ALTER TABLE cli_auth_audit_events
       ADD CONSTRAINT cli_auth_audit_events_scopes_check CHECK (
         (event_type IN ('token_used', 'token_revoked')
-         AND cardinality(scopes) <= 2
-         AND scopes <@ ARRAY['rpc:identity:read', 'api:access']::TEXT[])
+         AND cardinality(scopes) <= 3
+         AND scopes <@ ARRAY['rpc:identity:read', 'api:access', 'agent:local']::TEXT[])
         OR
         (event_type NOT IN ('token_used', 'token_revoked')
          AND (
            scopes = ARRAY['rpc:identity:read']::TEXT[]
            OR scopes = ARRAY['rpc:identity:read', 'api:access']::TEXT[]
+           OR scopes = ARRAY['rpc:identity:read', 'api:access', 'agent:local']::TEXT[]
          ))
       );
   END IF;
@@ -561,6 +585,45 @@ CREATE TABLE IF NOT EXISTS app_activity (
   date           DATE NOT NULL DEFAULT CURRENT_DATE,
   UNIQUE(app_id, user_id, date)
 );
+
+-- Per-check history: which of an app's declared dapp.json checks have ever
+-- been OBSERVED PASSING, and are therefore allowed to block a merge.
+--
+-- Background: the manifest reader used to keep only the first 12 declared
+-- checks, so this repo's own ~229 tail checks had never executed once. The
+-- capture container now runs every declared check on every build, and this
+-- table is what stops that from blocking the next proposal on hundreds of
+-- pre-existing failures it did not cause. A check is BLOCKING iff
+-- `first_passed_at IS NOT NULL` (derived, never stored as a flag); one that
+-- has never passed is ADVISORY — it runs and reports, but does not gate.
+-- There is no demotion: a graduated check that starts failing stays
+-- blocking, which is the whole point of graduating it.
+--
+-- `check_key` is sha256(name || '\n' || path) — the same (name+path) pair
+-- app-manifest.readTests de-duplicates on, so renaming a check mints a new
+-- key and drops it back to advisory (an edited check re-earns its status).
+--
+-- PUBLIC (no `staging:private` tag) and deliberately so: it holds check
+-- names and pass/fail timestamps for app code, which every viewer of a
+-- proposal's checks card can already see. No credentials, no user content.
+CREATE TABLE IF NOT EXISTS app_check_history (
+  id              BIGSERIAL PRIMARY KEY,
+  app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  check_key       VARCHAR(64) NOT NULL,
+  check_name      TEXT,
+  check_path      TEXT,
+  first_passed_at TIMESTAMPTZ,
+  last_passed_at  TIMESTAMPTZ,
+  last_failed_at  TIMESTAMPTZ,
+  last_seen_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  pass_count      INTEGER NOT NULL DEFAULT 0,
+  fail_count      INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (app_id, check_key)
+);
+CREATE INDEX IF NOT EXISTS idx_app_check_history_app ON app_check_history(app_id);
+-- The graduated-set load is the hot read (once per checks run).
+CREATE INDEX IF NOT EXISTS idx_app_check_history_graduated
+  ON app_check_history(app_id) WHERE first_passed_at IS NOT NULL;
 
 -- Group chat messages
 CREATE TABLE IF NOT EXISTS chat_messages (
@@ -990,6 +1053,186 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS handoff_upload_checked_sha VA
 CREATE UNIQUE INDEX IF NOT EXISTS chat_sessions_handoff_request_idx
   ON chat_sessions(user_id, handoff_request_id)
   WHERE handoff_request_id IS NOT NULL;
+
+-- ===================================================================
+-- #907: local coding agents.
+--
+-- A user can attach a coding agent running on their own machine to one of
+-- their dev sessions and have the Mayor dispatch that session's coding turns
+-- to it instead of to a platform worker container. Everything after the agent
+-- finishes — commit upload, staging, checks, visuals, PR metadata — is the
+-- SAME pipeline the platform worker and the MCP proposal handoff already use,
+-- so a local turn produces an ordinary proposal that anyone can review.
+--
+-- The platform never receives, stores, or proxies the user's own model
+-- credentials: the local runtime authenticates to Anthropic itself, out of
+-- band, exactly as it does when the user runs `claude` by hand.
+-- ===================================================================
+
+-- One machine's claim on one session. The unique partial index is the whole
+-- exclusivity story: at most one unreleased lease per session, so a second
+-- laptop attaching to the same chat is refused rather than racing.
+--
+-- `expires_at` is a hard TTL refreshed by heartbeat. A laptop that closes its
+-- lid, loses Wi-Fi, or is killed simply stops heartbeating; the lease lapses
+-- and the session falls back to the platform worker on its next turn without
+-- anyone having to click anything.
+CREATE TABLE IF NOT EXISTS session_agent_leases (
+  id BIGSERIAL PRIMARY KEY,
+  session_id INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  -- Which credential this machine attached with. ON DELETE SET NULL rather
+  -- than CASCADE: revocation is a soft `revoked_at` (and detaches the lease
+  -- explicitly, in the same transaction), while the row itself is only ever
+  -- hard-deleted by the expiry prune long afterwards — which must not
+  -- retroactively erase the record of where a session's turns ran.
+  access_token_id BIGINT REFERENCES cli_access_tokens(id) ON DELETE SET NULL,
+  -- User-chosen, display-only ("Evan's laptop"). Never a hostname the
+  -- platform discovered by itself.
+  label TEXT NOT NULL CHECK (char_length(label) BETWEEN 1 AND 64),
+  -- Which local runtime is driving. Only 'claude-code' exists in phase 1;
+  -- the column is here so a second adapter does not need a migration.
+  runtime TEXT NOT NULL DEFAULT 'claude-code'
+    CHECK (runtime IN ('claude-code')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  released_at TIMESTAMPTZ,
+  -- 'detached' = the CLI left cleanly; 'revoked' = the owner clicked
+  -- "Hand back to Usernode" in the browser or Settings; 'expired' = the
+  -- heartbeat lapsed and a sweeper reaped it.
+  release_reason TEXT
+    CHECK (release_reason IN ('detached', 'revoked', 'expired')),
+  CHECK (released_at IS NULL OR released_at >= created_at),
+  CHECK ((released_at IS NULL) = (release_reason IS NULL)),
+  CHECK (last_seen_at >= created_at)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS session_agent_leases_active_uidx
+  ON session_agent_leases (session_id)
+  WHERE released_at IS NULL;
+CREATE INDEX IF NOT EXISTS session_agent_leases_user_idx
+  ON session_agent_leases (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS session_agent_leases_expiry_idx
+  ON session_agent_leases (expires_at) WHERE released_at IS NULL;
+
+-- One dispatched coding turn, offered to the lease that owns the session.
+--
+-- The lifecycle is deliberately explicit rather than a boolean pair: the
+-- platform must be able to tell "the laptop never picked this up" (queued →
+-- abandoned) apart from "the laptop picked it up and the run failed"
+-- (accepted → running → failed), because only the first is safe to silently
+-- re-route to a platform worker.
+CREATE TABLE IF NOT EXISTS local_agent_turns (
+  id BIGSERIAL PRIMARY KEY,
+  session_id INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  lease_id BIGINT NOT NULL REFERENCES session_agent_leases(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'queued'
+    CHECK (status IN (
+      'queued', 'offered', 'accepted', 'declined',
+      'running', 'completed', 'failed', 'stopped', 'abandoned'
+    )),
+  -- Which KIND of turn this is. 'build' writes code and produces a commit;
+  -- 'scout' is read-only and produces the session's spec document instead.
+  -- The distinction is load-bearing rather than cosmetic: it drives the
+  -- read-only invariant below, the runtime's permission mode on the user's
+  -- machine, and whether the platform runs the staging/checks tail at all.
+  mode VARCHAR(16) NOT NULL DEFAULT 'build'
+    CHECK (mode IN ('build', 'scout')),
+  -- The Mayor's dispatch prompt plus the platform context blocks. Bounded so
+  -- a runaway spec cannot turn this table into a document store.
+  prompt TEXT NOT NULL CHECK (char_length(prompt) <= 262144),
+  -- The base the local checkout must be sitting on for this turn to be safe
+  -- to accept. The CLI refuses a turn whose base it cannot reproduce.
+  base_sha VARCHAR(40) CHECK (base_sha IS NULL OR base_sha ~ '^[0-9a-f]{40}$'),
+  branch_name TEXT,
+  -- Free-text progress the local runtime streams back, rendered in dev chat
+  -- exactly like worker progress lines. Capped by the route, not the column.
+  progress JSONB NOT NULL DEFAULT '[]'::JSONB
+    CHECK (jsonb_typeof(progress) = 'array'),
+  -- What the run produced: the local commit the CLI then uploads through the
+  -- existing exact-tree commit-upload endpoint, and the agent's own summary.
+  head_sha VARCHAR(40) CHECK (head_sha IS NULL OR head_sha ~ '^[0-9a-f]{40}$'),
+  summary TEXT CHECK (summary IS NULL OR char_length(summary) <= 32768),
+  -- A scout turn's actual product: the markdown spec document the local agent
+  -- drafted, which the platform writes to chat_sessions.spec_md exactly as it
+  -- does for a worker-container scout. Separate from `summary` because it is
+  -- the deliverable, not a description of one, and it is bounded like `prompt`
+  -- rather than like a summary.
+  spec_md TEXT CHECK (spec_md IS NULL OR char_length(spec_md) <= 262144),
+  error_detail TEXT CHECK (error_detail IS NULL OR char_length(error_detail) <= 4096),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  offered_at TIMESTAMPTZ,
+  accepted_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (offered_at IS NULL OR offered_at >= created_at),
+  CHECK (accepted_at IS NULL OR accepted_at >= created_at),
+  CHECK (finished_at IS NULL OR finished_at >= created_at),
+  -- A terminal row must say when it ended; a live one must not claim to have.
+  CHECK (
+    (status IN ('declined', 'completed', 'failed', 'stopped', 'abandoned')
+     AND finished_at IS NOT NULL)
+    OR (status IN ('queued', 'offered', 'accepted', 'running')
+     AND finished_at IS NULL)
+  ),
+  -- THE read-only invariant, in the schema rather than only in the route: a
+  -- scout turn can never carry a commit, and a build turn can never carry a
+  -- spec. The protocol validates both too, but a scout turn that smuggled a
+  -- head SHA would reach the staging/checks tail and put unreviewed code on
+  -- the managed branch — so the database refuses it as well.
+  CHECK (mode = 'build' OR head_sha IS NULL),
+  CHECK (mode = 'scout' OR spec_md IS NULL)
+);
+
+-- At most one live turn per session. Same reasoning as the lease index: the
+-- Mayor dispatching twice (a retry, a double-submit) must collide loudly
+-- here rather than have two laptops commit onto the same branch.
+CREATE UNIQUE INDEX IF NOT EXISTS local_agent_turns_live_uidx
+  ON local_agent_turns (session_id)
+  WHERE status IN ('queued', 'offered', 'accepted', 'running');
+CREATE INDEX IF NOT EXISTS local_agent_turns_lease_idx
+  ON local_agent_turns (lease_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS local_agent_turns_session_idx
+  ON local_agent_turns (session_id, created_at DESC);
+
+-- Scout support, added after the table already existed on some databases.
+-- CREATE TABLE IF NOT EXISTS skips the whole definition above once the table
+-- is there, so the two columns and their invariants need explicit migrations.
+ALTER TABLE local_agent_turns
+  ADD COLUMN IF NOT EXISTS mode VARCHAR(16) NOT NULL DEFAULT 'build';
+ALTER TABLE local_agent_turns ADD COLUMN IF NOT EXISTS spec_md TEXT;
+DO $$
+BEGIN
+  ALTER TABLE local_agent_turns DROP CONSTRAINT IF EXISTS local_agent_turns_mode_check;
+  ALTER TABLE local_agent_turns ADD CONSTRAINT local_agent_turns_mode_check
+    CHECK (mode IN ('build', 'scout'));
+  ALTER TABLE local_agent_turns DROP CONSTRAINT IF EXISTS local_agent_turns_spec_len_check;
+  ALTER TABLE local_agent_turns ADD CONSTRAINT local_agent_turns_spec_len_check
+    CHECK (spec_md IS NULL OR char_length(spec_md) <= 262144);
+  -- The read-only invariant again, for databases that predate it. Named so a
+  -- re-run replaces rather than duplicates it (an unnamed CHECK added by the
+  -- CREATE TABLE above gets a generated name and is left alone, which is
+  -- fine — the two express the same rule).
+  ALTER TABLE local_agent_turns DROP CONSTRAINT IF EXISTS local_agent_turns_readonly_check;
+  ALTER TABLE local_agent_turns ADD CONSTRAINT local_agent_turns_readonly_check
+    CHECK ((mode = 'build' OR head_sha IS NULL) AND (mode = 'scout' OR spec_md IS NULL));
+END $$;
+
+-- Both tables describe a specific person's machine and the prompts sent to
+-- it, so a staging clone must never carry them. See tools/clone-db.
+COMMENT ON TABLE session_agent_leases IS 'staging:private';
+COMMENT ON TABLE local_agent_turns IS 'staging:private';
+
+-- Where this session's LAST coding turn actually ran ('platform' | 'local'),
+-- and the label of the machine that ran it. Both are display state: the
+-- authoritative "can this session run locally right now" answer is always a
+-- live row in session_agent_leases. They exist so a reloaded dev chat can
+-- paint the "Ran on Evan's laptop" chip without waiting for a lease lookup,
+-- and so the chip survives the laptop detaching afterwards.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS last_turn_runner  VARCHAR(16);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS local_agent_label TEXT;
 
 -- Each local transcript item carries a stable handoffEventId in metadata.
 -- This partial expression index makes append/retry idempotent without
@@ -4204,6 +4447,104 @@ CREATE UNIQUE INDEX IF NOT EXISTS external_agent_tasks_open_branch_idx
 CREATE INDEX IF NOT EXISTS external_agent_tasks_user_idx
   ON external_agent_tasks (user_id, created_at DESC);
 
+-- ── Idempotency and submission provenance ────────────────────────────
+--
+-- The branch index above DOCUMENTS "at most one open task per request" and
+-- has never once delivered it: prepare_work invents a fresh random nonce for
+-- every branch name, so the index can only ever catch a nonce collision.
+-- Production proved it — three OPEN rows for one request (#50 on app 156),
+-- minted 15:29 / 16:02 / 17:35 UTC on 2026-08-07, each burning a slot of the
+-- caller's hourly bound and each with a different branch the agent then felt
+-- obliged to rewrite its finished commit to match.
+--
+-- request_key is the key the behaviour actually needs: `issue:<n>` when the
+-- work implements a numbered request, else `brief:<sha256 prefix>` of the
+-- brief. prepare_work now looks it up and RETURNS the existing task instead
+-- of minting a second one.
+ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS request_key TEXT;
+
+-- How the submission actually reached GitHub, recorded so the 2026-08-07
+-- failure is answerable from SQL alone next time:
+--   branch           — the plain cross-fork create worked
+--   branch_head_repo — it only worked once head_repo disambiguated the fork
+--   mirror           — the fork branch had to be copied into the app's repo
+--   patch            — the agent could not push at all and sent a patch
+--   pr               — the caller named an already-open pull request
+-- `branch` vs `branch_head_repo` is precisely the question "was the missing
+-- head_repo parameter the whole bug?".
+ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS submitted_branch TEXT;
+ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS submitted_via TEXT;
+ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS submitted_source TEXT;
+ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS submitted_client_id TEXT;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'external_agent_tasks_submitted_via_chk'
+  ) THEN
+    ALTER TABLE external_agent_tasks ADD CONSTRAINT external_agent_tasks_submitted_via_chk
+      CHECK (submitted_via IS NULL OR submitted_via IN ('branch','branch_head_repo','mirror','patch','pr'));
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'external_agent_tasks_submitted_source_chk'
+  ) THEN
+    ALTER TABLE external_agent_tasks ADD CONSTRAINT external_agent_tasks_submitted_source_chk
+      CHECK (submitted_source IS NULL OR submitted_source IN ('work_order','assistant'));
+  END IF;
+END $$;
+
+-- Forward-only backfill, same shape as the chat_sessions one below.
+--
+-- DEDUPE BEFORE BACKFILL, not after. Filling the key first would make two
+-- open rows collide the moment they got their keys, which fails outright on
+-- any boot where the unique index already exists — and this file is applied
+-- on EVERY boot, not once. So the duplicate check computes the key inline
+-- (`COALESCE(request_key, <what it would be>)`) and closes the losers first;
+-- by the time the backfill runs, no two open rows can share a key.
+--
+-- Newest kept, because that is the one whose branch the agent actually
+-- pushed — production's three rows for request #50 differ only in their
+-- branch nonce, and only the last one exists on GitHub.
+UPDATE external_agent_tasks t
+SET status = 'abandoned'
+WHERE t.status = 'open'
+  AND EXISTS (
+    SELECT 1 FROM external_agent_tasks newer
+     WHERE newer.status = 'open'
+       AND newer.user_id = t.user_id
+       AND newer.app_id = t.app_id
+       AND newer.id > t.id
+       AND COALESCE(
+             newer.request_key,
+             CASE WHEN newer.issue_number IS NOT NULL
+                  THEN 'issue:' || newer.issue_number::text
+                  ELSE 'brief:' || substr(encode(sha256(convert_to(coalesce(newer.brief, ''), 'UTF8')), 'hex'), 1, 32)
+             END
+           ) = COALESCE(
+             t.request_key,
+             CASE WHEN t.issue_number IS NOT NULL
+                  THEN 'issue:' || t.issue_number::text
+                  ELSE 'brief:' || substr(encode(sha256(convert_to(coalesce(t.brief, ''), 'UTF8')), 'hex'), 1, 32)
+             END
+           )
+  );
+
+-- sha256 over the stored (already-trimmed) brief, hex, first 32 chars —
+-- byte-identical to what services/external-agent-tasks.js computes, so a row
+-- backfilled here is FOUND by the next prepare_work rather than duplicated.
+UPDATE external_agent_tasks
+SET request_key = CASE
+      WHEN issue_number IS NOT NULL THEN 'issue:' || issue_number::text
+      ELSE 'brief:' || substr(encode(sha256(convert_to(coalesce(brief, ''), 'UTF8')), 'hex'), 1, 32)
+    END
+WHERE request_key IS NULL;
+
+-- At most one OPEN task per (user, app, request). This is the constraint the
+-- branch index above was always meant to be.
+CREATE UNIQUE INDEX IF NOT EXISTS external_agent_tasks_open_request_idx
+  ON external_agent_tasks (user_id, app_id, request_key)
+  WHERE status = 'open';
+
 -- ── Generic agent backend (Codex/OpenRouter BYOK; plan.md PR1) ───────
 -- chat_sessions today pins Claude continuity via cc_session_id. To add a
 -- second coding-agent backend (codex_openrouter) without breaking the
@@ -4403,3 +4744,24 @@ CREATE TABLE IF NOT EXISTS user_avatars (
   sha256       VARCHAR(64) NOT NULL,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- Email-based password reset (magic link from the #login recovery screen).
+-- ═══════════════════════════════════════════════════════════════════════
+
+-- Single outstanding reset token per user, modelled on wallet_link_token
+-- above: the column holds the sha256 hex of a 32-byte token that only ever
+-- travels inside the emailed link (/#reset-password?token=…), so a DB read
+-- alone can never redeem a reset. Minted by POST
+-- /api/auth/password-reset/request only for non-admin accounts with a
+-- CONFIRMED email (admins keep the admin-issued temporary-password path —
+-- the same email-control-must-not-equal-admin-takeover stance as the
+-- mobile OTP guard in src/routes/topochain/mobile-auth.js), consumed and
+-- cleared by POST /api/auth/password-reset/confirm, which runs
+-- accountRecovery() so every session and CLI authorization dies with the
+-- old password.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_token_hash VARCHAR(64);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_expires_at TIMESTAMPTZ;
+
+COMMENT ON COLUMN users.password_reset_token_hash IS 'staging:private';
+COMMENT ON COLUMN users.password_reset_expires_at IS 'staging:private';

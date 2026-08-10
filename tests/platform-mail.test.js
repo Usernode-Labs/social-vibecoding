@@ -368,11 +368,30 @@ test('a re-join carries neither link and no stray "undefined"', async () => {
   assert.equal(msg.text.includes('Want in sooner?'), false);
 });
 
+test('the password-reset mail carries the reset link and no secrets beyond it', async () => {
+  const seen = [];
+  const token = 'deadbeef'.repeat(8); // 64 hex chars, like the real token
+  await mail.sendPasswordResetMail(
+    { mailTransport: { send: async (m) => { seen.push(m); } } },
+    'a@b.invalid', token);
+  // Segment style (#reset-password/<token>), not a query string — the SPA
+  // router (AuthScreens.routeFromHash) splits hash routes on '/'.
+  assert.match(seen[0].url, /\/#reset-password\/(deadbeef){8}$/);
+  assert.equal(seen[0].kind, 'password_reset');
+
+  const msg = templates.buildMessage('password_reset', seen[0]);
+  assert.ok(msg.text.includes(seen[0].url), 'the reset link must be in the copy');
+  assert.match(msg.text, /30 minutes/);
+  assert.match(msg.text, /ignore this email/i);
+  assert.ok(msg.html.includes('<a href='), 'the HTML part must link, not just print');
+});
+
 test('every kind renders subject, text and html with no leaked undefined', () => {
   const payloads = {
     otp: { code: '123456' },
     waitlist_joined: { url: 'https://x.invalid/#more/aa', confirmUrl: 'https://x.invalid/c/aa' },
     waitlist_released: { url: 'https://x.invalid/#login', hasAccount: true },
+    password_reset: { url: 'https://x.invalid/#reset-password?token=aa' },
     admin_test: {
       provider: 'gmail', from: 'Usernode <no-reply@x.invalid>',
       sentAt: '2026-01-01T00:00:00.000Z', reference: 'abcd1234',

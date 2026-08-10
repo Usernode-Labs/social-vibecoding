@@ -300,12 +300,19 @@ test('the four row states all have a badge', () => {
 
 // ── The rendered check ────────────────────────────────────────────────
 
-test('dapp.json has a rendered check for the panel, inside the parse cap', () => {
+test('dapp.json has a rendered check for the panel, and the reader keeps it', () => {
+  // Position no longer matters (#1019 removed the parse cap and every
+  // declared check runs), but being KEPT still does: the reader silently
+  // drops a malformed entry, and the manifest silently sheds anything past
+  // MAX_DECLARED_TESTS. Both are invisible from the manifest alone.
   const appManifest = require('../src/services/app-manifest');
-  const parsed = appManifest.read(root);
-  const entries = parsed.tests.filter((t) => /shot=secrets/.test(t.path));
+  const meta = appManifest.readTestsWithMeta(manifest);
+  assert.equal(meta.ceilingDropped, 0,
+    `dapp.json declares more than ${appManifest.MAX_DECLARED_TESTS} valid checks — `
+    + 'checks past the ceiling never run');
+  const entries = meta.tests.filter((t) => /shot=secrets/.test(t.path));
   assert.ok(entries.length >= 1,
-    'the check must survive app-manifest\'s MAX_TESTS cap — put it near the top of the array');
+    'the check must survive the manifest reader — a dropped check gates nothing');
   // Deliberately NOT scoped under `#app-secrets-modal`: PlatformUI adopts the
   // modal into the native kit, which reparents the list out of that wrapper,
   // so a descendant selector matches nothing in a real browser. The list

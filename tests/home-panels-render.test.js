@@ -1510,10 +1510,11 @@ test('dapp.json’s home-widget checks describe markup this module emits', () =>
   const desktop = renderDiscover();
   assert.ok(desktop.includes('home-discover-popular') && desktop.includes('app-card'),
     'and this module emits both classes that selector chains');
-  // The manifest parses only the first MAX_TESTS entries, so the tile-face
-  // invariant that used to have a check of its own rides along on this
-  // selector instead — scoped to the discovery tiles, which is where a
-  // "popular" lane makes a user-count badge tempting in the first place.
+  // The tile-face invariant rides along on this selector rather than having
+  // a check of its own — it dates from when the manifest parsed only the
+  // first MAX_TESTS entries and a slot was a real cost. #1019 runs every
+  // declared check, so a separate entry would be free now; folding it in is
+  // still the tighter assertion (one navigation proves both), so it stays.
   assert.match(discover.expectSelector, /:not\(:has\(\.users-badge\)\)/);
   assert.doesNotMatch(desktop, /users-badge/,
     'a discovery tile states popularity by its rank, not by a badge');

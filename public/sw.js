@@ -29,6 +29,11 @@
 // /vendor/), so the CDN cache and its stale-while-revalidate strategy are
 // gone. The activate handler prunes any `usernode-*` cache not listed in
 // ALL_CACHES, which retires the old usernode-cdn-v5 entries automatically.
+//
+// The React + shadcn chassis swap added one local asset to the shell —
+// /shell/assets/shell.js — and SHELL_ASSETS below precaches it like any
+// other. It needed no version bump of its own: a byte change to this file
+// re-runs install(), which re-runs the precache with the current list.
 const SW_VERSION = 'v7';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
@@ -87,6 +92,12 @@ const SHELL_ASSETS = [
   '/index.html',
   '/css/tailwind.css',
   '/css/app.css',
+  // The React chassis: the runtime plus the shell tree, hydrating the markup
+  // index.html already ships (frontend/src/main.tsx). Deliberately UNHASHED —
+  // this list is hand-maintained and content-hashed filenames would make it
+  // churn on every build; freshness comes from `no-cache, must-revalidate`
+  // (src/services/static-cache.js) plus this worker being network-first.
+  '/shell/assets/shell.js',
   // Vendored third-party libs (public/vendor/README.md records provenance).
   '/vendor/qrcode-1.0.0.min.js',
   '/vendor/marked-15.0.12.min.js',
@@ -110,6 +121,9 @@ const SHELL_ASSETS = [
   '/js/admin-mail.js',
   '/js/app-secrets.js',
   '/js/browse.js',
+  // #1036: the real-anchor / new-tab seam. Loads ahead of every other
+  // module in index.html, so a cache miss here breaks the whole shell.
+  '/js/nav-link.js',
   '/js/platform-ui.js',
   '/js/app-view.js',
   '/js/app.js',
@@ -120,6 +134,7 @@ const SHELL_ASSETS = [
   '/js/dev-alerts.js',
   '/js/dev-chat.js',
   '/js/dev-console.js',
+  '/js/dev-flow-select.js',
   '/js/dev-host.js',
   '/js/group-chat.js',
   '/js/header-layout.js',
@@ -143,6 +158,7 @@ const SHELL_ASSETS = [
   '/js/spec-sections.js',
   '/js/streaming-markdown.js',
   '/js/theme.js',
+  '/js/session-state.js',
   '/js/topochain-event-context.js',
   '/js/topochain-leaderboard.js',
   '/js/topochain-challenges.js',

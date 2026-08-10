@@ -248,38 +248,29 @@ test('?shot=menu-nav opens the drawer and taps a navigation row', () => {
   assert.match(appJs, /App\._applyMenuNavShot\(\);/, 'the hook must be called at boot');
 });
 
-test('the load-bearing check survives app-manifest\'s MAX_TESTS cap', () => {
-  // Only the FIRST MAX_TESTS (10) declared checks are kept — everything
-  // after is dropped with a warning and never runs against the staging
-  // preview. dapp.json declares 200+, so a check appended at the end is
-  // indistinguishable from no check at all.
+test('the load-bearing check is declared and the reader keeps it', () => {
+  // Slots used to be zero-sum: the reader kept only the first MAX_TESTS
+  // declared checks, so five of ten were pinned near the top by other
+  // issues' tests and this one spent the sixth. #1019 removed the parse cap
+  // — every declared check runs through the capture pool — so position no
+  // longer buys anything and the pinning arithmetic is gone.
   //
-  // Slots are therefore zero-sum, and five of the ten are already pinned
-  // in-cap by other issues' tests (#971 work-drawer, #964 ×2 feedback,
-  // #911 and #947 challenges-widget). This change spends exactly ONE, on
-  // the check that gates the whole fix: reaching it at all means the shot
-  // hook ran, the drawer opened, the row tap navigated — and
-  // data-entered="none" means the screen swap was cut, which IS the fix.
-  // The other two stay declared (they run if the cap ever rises) and are
-  // covered here statically instead.
+  // What replaces it: the reader must still KEEP this check (a malformed
+  // entry is silently dropped, which would be just as invisible as the old
+  // cap), and the manifest as a whole must stay under MAX_DECLARED_TESTS so
+  // no tail is being shed.
   const appManifest = require('../src/services/app-manifest');
-  const kept = appManifest.read(root).tests
-    .filter((t) => /shot=menu-nav/.test(t.path));
+  const meta = appManifest.readTestsWithMeta(dapp);
+  assert.equal(meta.ceilingDropped, 0,
+    `dapp.json declares more than ${appManifest.MAX_DECLARED_TESTS} valid checks — `
+    + 'checks past the ceiling never run');
+  const kept = meta.tests.filter((t) => /shot=menu-nav/.test(t.path));
   assert.ok(kept.length >= 1,
-    'the #977 check must be inside the cap — a check declared at the bottom '
-    + 'of dapp.json\'s tests array never runs, so it gates nothing');
+    'the #977 check must survive the reader — a dropped check gates nothing');
   assert.equal(kept[0].path, '/?shot=menu-nav&un-platform=ios',
-    'the forced-touch route is the one to spend the slot on: the kit side '
-    + 'panel is where the two competing motions were actually visible');
+    'the forced-touch route is the load-bearing one: the kit side panel is '
+    + 'where the two competing motions were actually visible');
   assert.match(kept[0].expectSelector, /data-entered="none"/);
-  // Don't quietly starve a check another issue pinned in-cap.
-  const keptPaths = appManifest.read(root).tests.map((t) => t.path);
-  for (const pinned of ['/?shot=work-drawer&demo=1', '/?shot=feedback',
-    '/?shot=feedback-spent', '/?demo=1', '/?demo=1&challenges=none']) {
-    assert.ok(keptPaths.includes(pinned),
-      `${pinned} is pinned in-cap by another issue's test — this change must `
-      + 'not push it out');
-  }
 });
 
 test('dapp checks pin the single-motion result on both presentations', () => {

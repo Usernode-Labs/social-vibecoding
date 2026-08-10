@@ -23,6 +23,94 @@ precedence:
 
 ---
 
+## Essentials — the offline excerpt
+
+Everything below this section is the full document. This short section
+is the excerpt the platform ships INSIDE a connector work order, for a
+coding agent whose container cannot reach this host to read the rest.
+It is delimited by the `work-order` markers below and extracted by
+`getWorkOrderEssentials()` in `src/services/prompts.js` — one source of
+truth, so an edit here reaches both the full prompt and the excerpt.
+
+Ordered by how badly an agent working offline gets each one wrong.
+
+<!-- work-order:begin -->
+1. **Three files are centrally hosted — never vendor them, never swap in
+   a CDN.** Every app loads the bridge, the native UI kit and (on the
+   runtime path) Tailwind from the platform's own origin. If your
+   container cannot reach that host the app renders unstyled and
+   native-kit assertions fail *locally* — that is the sandbox, not your
+   change. Copying those files into the repo or pointing them at
+   `cdn.tailwindcss.com` is forbidden and is rejected by two automated
+   checks. The staging preview the platform builds is the authority on
+   styling.
+2. **`USERNODE_ENV` is `staging` or `production`.** Gate DATA and
+   irreversible outbound side effects on it — `const IS_STAGING =
+   process.env.USERNODE_ENV === 'staging'` — never a feature, a screen,
+   an endpoint, an auth check, or which code path runs. If flipping it
+   to `production` would make something STOP WORKING, you gated the
+   wrong thing.
+3. **A blank staging page usually means missing seed data, not a bug.**
+   Staging starts from a copy of production, so tables your change
+   creates and `staging:private` tables are EMPTY. Seed what a testing
+   step needs in the same commit, in a boot-time block gated on
+   `IS_STAGING`: idempotent (`ON CONFLICT DO NOTHING`), obviously fake
+   ("Staging demo …"), a handful of rows, never cloned from real users.
+4. **Tables are public by default; mark the sensitive ones private.**
+   `COMMENT ON TABLE foo IS 'staging:private'` copies the schema to
+   staging without the rows. Use it for auth material, direct messages,
+   financial data, credentials and personal information beyond a public
+   username. A public table must never carry a foreign key to a private
+   one. Schema is applied idempotently on boot: `CREATE TABLE IF NOT
+   EXISTS`, `ADD COLUMN IF NOT EXISTS`.
+5. **Add or extend a `dapp.json` test in the same commit as any
+   user-visible screen.** Each entry is `{ name, path, expectSelector? ,
+   expectText? }`; every proposal also gets a free "loads with no
+   console errors" check. Checks GATE MERGE — a proposal whose checks
+   are not passing cannot merge even with a winning vote. The test route
+   renders against an empty staging database, so seed what it needs.
+   If the changed UI is only reachable by interacting, add a deep link
+   (a query param handled at boot) so a URL can reach it — and point the
+   testing route you report (`path:` in your final message, or
+   `testingPaths` when you submit through the connector) at THAT screen,
+   never at the home page. That route is what the before/after
+   screenshots the voters see are shot from, so a defaulted one shows
+   nothing of what you changed.
+6. **Auth is iframe token injection — do not roll your own login.** The
+   shell mints an RS256 JWT per user per app and injects it as
+   `?token=`; the app verifies it with `USERNODE_JWT_PUBLIC_KEY`,
+   pinning `algorithms: ['RS256']`, `issuer: 'usernode'` and audience
+   `usernode:app:<USERNODE_APP_ID>`. All non-GET and all `/api/*`
+   requests are deny-by-default; `req.user` is `{ id, username,
+   usernode_pubkey, locale }`.
+7. **Per-app config goes in `dapp.json`'s `secrets` array, never
+   hardcoded.** Declare `key` / `description` / `required` / `private`;
+   values are set by users through the platform's Secrets UI. A
+   `required: true` key with no value BLOCKS the deploy. A
+   `required` + `private` key must commit a `staging_default`.
+   `DATABASE_URL`, `USERNODE_JWT_PUBLIC_KEY`, `USERNODE_APP_ID`, `PORT`
+   and `USERNODE_ENV` are reserved and injected for you.
+8. **The platform provides an LLM proxy and file storage — don't call
+   third-party APIs directly and never ask users for API keys.** AI goes
+   through `USERNODE_LLM_PROXY_URL` with the app token plus the user's
+   forwarded iframe token, billed to their own budget under a consent
+   grant. Uploads go through `usernode.uploadFile()` (bridge) or
+   `USERNODE_STORAGE_URL` (server); persist the returned URL, never
+   image bytes in Postgres. Both are absent in staging — detect and
+   degrade.
+9. **Install a SIGTERM/SIGINT shutdown handler** that stops accepting
+   connections, drains for ~3 seconds, closes the pool and exits. Use
+   exec-form `CMD ["node", "server.js"]`.
+
+One thing NOT to apply: the full document contains a section titled
+"Don't `git push` yourself". That is addressed to Usernode's own build
+worker, which runs with no GitHub credentials. It does not apply to a
+coding agent working in the user's own fork — pushing your branch is
+exactly what you are being asked to do.
+<!-- work-order:end -->
+
+---
+
 ## Stack
 
 Each app is a Node.js / Express server with an HTML + JS + Tailwind

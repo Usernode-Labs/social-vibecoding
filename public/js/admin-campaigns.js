@@ -88,14 +88,14 @@ const AdminCampaigns = (() => {
 
   function campaignAppBadge(state) {
     const map = {
-      pending: ['bg-zinc-500/10 text-zinc-500', 'Pending'],
-      running: ['bg-violet-500/10 text-violet-500', 'Running'],
+      pending: ['bg-gray-500/10 text-gray-500', 'Pending'],
+      running: ['bg-indigo-500/10 text-indigo-500', 'Running'],
       pr_open: ['bg-sky-500/10 text-sky-600 dark:text-sky-400', 'PR open'],
       merged: ['bg-green-500/10 text-green-600 dark:text-green-400', 'Merged'],
-      skipped: ['bg-zinc-500/10 text-zinc-400', 'Skipped'],
+      skipped: ['bg-gray-500/10 text-gray-400', 'Skipped'],
       failed: ['bg-red-500/10 text-red-500', 'Failed'],
     };
-    const [cls, label] = map[state] || ['bg-zinc-500/10 text-zinc-400', state || '—'];
+    const [cls, label] = map[state] || ['bg-gray-500/10 text-gray-400', state || '—'];
     return `<span class="text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${cls} shrink-0">${esc(label)}</span>`;
   }
 
@@ -109,17 +109,17 @@ const AdminCampaigns = (() => {
     list.innerHTML = '';
     for (const c of campaigns) {
       const row = document.createElement('div');
-      row.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3';
+      row.className = 'rounded-lg bg-gray-100 dark:bg-gray-800 p-3';
       row.id = `admin-campaign-${c.id}`;
-      const statusCls = c.status === 'running' ? 'text-violet-500'
-        : c.status === 'done' ? 'text-green-600 dark:text-green-400' : 'text-zinc-400';
+      const statusCls = c.status === 'running' ? 'text-indigo-500'
+        : c.status === 'done' ? 'text-green-600 dark:text-green-400' : 'text-gray-400';
       const failedNote = c.failed_apps
         ? ` · <span class="text-red-500">${c.failed_apps} failed</span>` : '';
       row.innerHTML = `
         <div class="flex items-center justify-between gap-3 cursor-pointer" data-campaign-toggle="${c.id}">
           <div class="min-w-0">
             <div class="font-medium truncate">${esc(c.title)}</div>
-            <div class="text-xs text-zinc-500">
+            <div class="text-xs text-gray-500">
               #${c.id} · <span class="${statusCls}">${esc(c.status)}</span>
               · by ${esc(c.created_by_username || 'platform')}
               · ${new Date(c.created_at).toLocaleString()}
@@ -144,22 +144,22 @@ const AdminCampaigns = (() => {
     const write = canWrite();
     const rows = (c.apps || []).map((a) => {
       const pr = a.prUrl
-        ? `<a href="${esc(a.prUrl)}" target="_blank" rel="noopener" class="text-violet-500 dark:text-violet-400 hover:underline text-xs">PR #${a.prNumber || '?'}</a>` : '';
+        ? `<a href="${esc(a.prUrl)}" target="_blank" rel="noopener" class="text-indigo-500 dark:text-indigo-400 hover:underline text-xs">PR #${a.prNumber || '?'}</a>` : '';
       const check = a.checkState
-        ? `<span class="text-xs ${a.checkState === 'passing' ? 'text-green-500' : a.checkState === 'failing' || a.checkState === 'error' ? 'text-red-500 dark:text-red-400' : 'text-zinc-500'}">checks: ${esc(a.checkState)}</span>` : '';
+        ? `<span class="text-xs ${a.checkState === 'passing' ? 'text-green-500' : a.checkState === 'failing' || a.checkState === 'error' ? 'text-red-500 dark:text-red-400' : 'text-gray-500'}">checks: ${esc(a.checkState)}</span>` : '';
       const err = a.error
         ? `<div class="text-xs text-red-500 dark:text-red-400 mt-0.5 break-words">${esc(a.error)}</div>` : '';
       const retry = (write && (a.state === 'failed' || a.state === 'skipped'))
-        ? `<button type="button" class="campaign-retry-btn text-xs text-violet-500 dark:text-violet-400 hover:text-violet-400 dark:hover:text-violet-300 shrink-0" data-campaign="${c.id}" data-app="${a.appId}">Retry</button>` : '';
+        ? `<button type="button" class="campaign-retry-btn text-xs text-indigo-500 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 dark:hover:text-indigo-300 shrink-0" data-campaign="${c.id}" data-app="${a.appId}">Retry</button>` : '';
       // Failing/error checks on an open campaign PR: offer the same manual
       // re-run as the proposal card (#447). POSTs to the session recheck
       // endpoint, which stamps 'pending' and rebuilds staging if the preview
       // is gone — the 8s poll refreshes the row.
       const recheck = (write && a.state === 'pr_open' && a.sessionId
         && (a.checkState === 'failing' || a.checkState === 'error'))
-        ? `<button type="button" class="campaign-recheck-btn text-xs text-violet-500 dark:text-violet-400 hover:text-violet-400 dark:hover:text-violet-300 shrink-0" data-campaign="${c.id}" data-session="${a.sessionId}">Re-run checks</button>` : '';
+        ? `<button type="button" class="campaign-recheck-btn text-xs text-indigo-500 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 dark:hover:text-indigo-300 shrink-0" data-campaign="${c.id}" data-session="${a.sessionId}">Re-run checks</button>` : '';
       return `
-        <li class="p-2 rounded bg-white dark:bg-zinc-900">
+        <li class="p-2 rounded bg-white dark:bg-gray-900">
           <div class="flex items-center justify-between gap-3">
             <span class="font-mono text-sm truncate">${esc(a.slug)}</span>
             <span class="flex items-center gap-2">${pr}${check}${campaignAppBadge(a.state)}${recheck}${retry}</span>
@@ -179,15 +179,15 @@ const AdminCampaigns = (() => {
     const failingChecks = (c.apps || []).filter((a) => a.state === 'pr_open' && a.sessionId
       && (a.checkState === 'failing' || a.checkState === 'error'));
     const recheckAllBtn = (write && failingChecks.length > 0)
-      ? `<button type="button" class="campaign-recheck-all-btn rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1.5 text-xs font-medium text-white transition-colors" data-campaign="${c.id}" data-sessions="${failingChecks.map((a) => a.sessionId).join(',')}">Re-run failing checks (${failingChecks.length})</button>` : '';
+      ? `<button type="button" class="campaign-recheck-all-btn ${AdminUI.btn.primarySm}" data-campaign="${c.id}" data-sessions="${failingChecks.map((a) => a.sessionId).join(',')}">Re-run failing checks (${failingChecks.length})</button>` : '';
     el.innerHTML = `
       <details class="mb-2">
-        <summary class="text-xs text-zinc-500 cursor-pointer">Instructions</summary>
-        <pre class="text-xs text-zinc-500 whitespace-pre-wrap mt-1 p-2 rounded bg-white dark:bg-zinc-900 max-h-48 overflow-y-auto">${esc(c.instructions || '')}</pre>
+        <summary class="text-xs text-gray-500 cursor-pointer">Instructions</summary>
+        <pre class="text-xs text-gray-500 whitespace-pre-wrap mt-1 p-2 rounded bg-white dark:bg-gray-900 max-h-48 overflow-y-auto">${esc(c.instructions || '')}</pre>
       </details>
-      <ul class="space-y-1">${rows || '<li class="text-xs text-zinc-500">No target apps.</li>'}</ul>
+      <ul class="space-y-1">${rows || '<li class="text-xs text-gray-500">No target apps.</li>'}</ul>
       <div class="flex items-center justify-end gap-2 mt-2">
-        <span class="campaign-detail-status text-xs text-zinc-500"></span>
+        <span class="campaign-detail-status text-xs text-gray-500"></span>
         ${recheckAllBtn}
         ${mergeBtn}
       </div>`;
@@ -341,37 +341,37 @@ const AdminCampaigns = (() => {
   function markup() {
     const write = canWrite();
     return `
-      <div id="admin-campaigns-root" class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+      <div id="admin-campaigns-root" class="${AdminUI.card} p-4">
         <div class="flex items-center justify-between flex-wrap gap-2 mb-3">
-          <h2 class="text-lg font-semibold">Maintenance campaigns</h2>
+          <h2 class="${AdminUI.cardTitle}">Maintenance campaigns</h2>
           <div class="flex items-center gap-3">
-            <button id="admin-refresh-campaigns" type="button" class="text-xs text-zinc-400 hover:text-violet-400">Refresh</button>
-            ${write ? '<button id="admin-new-campaign-btn" type="button" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">New campaign</button>' : ''}
+            <button id="admin-refresh-campaigns" type="button" class="${AdminUI.btn.link} text-xs">Refresh</button>
+            ${write ? `<button id="admin-new-campaign-btn" type="button" class="${AdminUI.btn.primary}">New campaign</button>` : ''}
           </div>
         </div>
-        <p class="text-xs text-zinc-500 mb-3">
+        <p class="text-xs text-gray-500 mb-3">
           Fleet-wide platform maintenance. A campaign fans one set of AI instructions out across every app as its own PR;
           this list tracks per-app progress.
         </p>
         ${write ? `
-        <div id="admin-campaign-form" class="hidden mb-4 rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3 space-y-2">
+        <div id="admin-campaign-form" class="hidden mb-4 rounded-lg bg-gray-100 dark:bg-gray-800 p-3 space-y-2">
           <input id="admin-campaign-title" type="text" maxlength="200"
-            class="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 px-3 py-2 text-sm"
+            class="w-full rounded-lg bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-3 py-2 text-sm"
             placeholder="Campaign title — becomes each app's PR title">
           <textarea id="admin-campaign-instructions" rows="6" maxlength="20000"
-            class="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 px-3 py-2 text-sm font-mono"
+            class="w-full rounded-lg bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-3 py-2 text-sm font-mono"
             placeholder="Instructions for the AI — what to change in each app, with code snippets where helpful. The AI reads each repo and applies these per-app."></textarea>
           <input id="admin-campaign-targets" type="text"
-            class="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 px-3 py-2 text-sm font-mono"
+            class="w-full rounded-lg bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 px-3 py-2 text-sm font-mono"
             placeholder="Optional: comma-separated app slugs to target (blank = every app)">
           <div class="flex flex-wrap items-center justify-between gap-2">
-            <p class="text-xs text-zinc-500">Submitting opens a governance proposal on the platform app. The campaign starts when the vote passes, or when an admin applies the proposal.</p>
-            <button id="admin-campaign-submit-btn" type="button" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors shrink-0">Propose campaign</button>
+            <p class="text-xs text-gray-500">Submitting opens a governance proposal on the platform app. The campaign starts when the vote passes, or when an admin applies the proposal.</p>
+            <button id="admin-campaign-submit-btn" type="button" class="${AdminUI.btn.primary} shrink-0">Propose campaign</button>
           </div>
           <p id="admin-campaign-form-status" class="text-xs hidden"></p>
         </div>` : ''}
         <div id="admin-campaign-list" class="space-y-2"></div>
-        <p id="admin-campaign-empty" class="text-sm text-zinc-500 hidden">No campaigns yet.</p>
+        <p id="admin-campaign-empty" class="text-sm text-gray-500 hidden">No campaigns yet.</p>
       </div>`;
   }
 

@@ -2669,6 +2669,47 @@
     return promise;
   }
 
+  // Has the document painted at least one frame yet?
+  //
+  // A View Transition animates BETWEEN two rendered states, so it needs an
+  // "old" state to snapshot. Start one before the first frame and there is
+  // nothing to capture: the browser aborts it with
+  // `InvalidStateError: Transition was aborted because of invalid state`.
+  //
+  // The shell hits that window on a DEEP-LINK BOOT. Landing directly on
+  // `#profile` / `#leaderboard` / `#settings` means App.init() routes on
+  // DOMContentLoaded and immediately asks for a 'push' — while the very
+  // first paint may still be pending. Whether it lands is a race against
+  // however long the page took to get there, which is why it showed up as
+  // a flaky-looking spray of route failures rather than one reproducible
+  // bug, and why it got measurably worse when the shell started hydrating
+  // React before DOMContentLoaded (more main-thread work inside the same
+  // window, so the paint lands after the transition more often).
+  //
+  // Skipping the animation here is not a behaviour change: an aborted
+  // transition already produced no animation. It just makes the outcome
+  // deterministic instead of timing-dependent — and a boot deep link has
+  // no previous screen to animate away from in the first place.
+  var framePainted = false;
+  function markFramePainted() { framePainted = true; }
+  if (typeof requestAnimationFrame === 'function') {
+    // Two nested rAFs: the callback of the first runs BEFORE that frame is
+    // painted, the second is the earliest point a frame is known to have
+    // reached the screen.
+    requestAnimationFrame(function () { requestAnimationFrame(markFramePainted); });
+  } else {
+    framePainted = true;
+  }
+  function hasRenderedAFrame() {
+    // `visibilityState === 'hidden'` is the other documented abort: a
+    // background tab is not being rendered, so there is no frame to
+    // capture however long the page has been open.
+    if (typeof document.visibilityState === 'string' && document.visibilityState === 'hidden') {
+      return false;
+    }
+    return framePainted;
+  }
+
   function transition(fn, opts) {
     var o = opts || {};
     var type = o.type || 'none';
@@ -2681,7 +2722,7 @@
       ? function () { fn(); o.after(); }
       : fn;
     if (
-      type === 'none' || vtActive || prefersReducedMotion ||
+      type === 'none' || vtActive || prefersReducedMotion || !hasRenderedAFrame() ||
       typeof document.startViewTransition !== 'function'
     ) {
       run();
@@ -2697,6 +2738,25 @@
       document.documentElement.removeAttribute('data-un-vt');
       run();
       return Promise.resolve();
+    }
+    // A ViewTransition hands back THREE promises, and an aborted transition
+    // rejects two of them. `finished` is handled below, but `ready` and
+    // `updateCallbackDone` were observed by nobody — so when the browser
+    // aborted a transition (`InvalidStateError: Transition was aborted
+    // because of invalid state`), that rejection surfaced as an UNHANDLED
+    // PROMISE REJECTION. Playwright reports one as a `pageerror`, and a
+    // page error on any route fails the platform's proposal checks — so a
+    // transition the browser silently declined to animate became a merge
+    // blocker on dozens of routes.
+    //
+    // Attaching no-op handlers is the whole fix: an aborted transition
+    // already ran its mutation callback (the DOM is correct, it just does
+    // not animate), so there is nothing to recover from and nothing to
+    // report. Do NOT "improve" this by logging — console.error fails the
+    // same checks.
+    if (vt.ready && typeof vt.ready.catch === 'function') vt.ready.catch(function () {});
+    if (vt.updateCallbackDone && typeof vt.updateCallbackDone.catch === 'function') {
+      vt.updateCallbackDone.catch(function () {});
     }
     return vt.finished.catch(function () {}).then(function () {
       vtActive = false;

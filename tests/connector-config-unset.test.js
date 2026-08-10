@@ -162,7 +162,7 @@ const okLimits = {
 const baseGh = () => ({
   isEnabled: () => true,
   parseGithubUrl: () => ({ owner: 'usernode-bot', repo: 'recipe-box' }),
-  getBranchSha: async () => 'base00000000000000000000000000000000sha',
+  getBranchSha: async () => '0123456789abcdef0123456789abcdef01234567',
 });
 
 // The real module, reading the real (unset) environment — not a stub. That

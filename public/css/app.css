@@ -1840,6 +1840,212 @@ html, body {
   color: white;
 }
 
+/* ── Development-flow picker + walkthrough (#1049) ──────────────────────
+   Markup comes from public/js/dev-flow-select.js. Reuses the out-of-credits
+   card's geometry on purpose: both are "here are your routes forward"
+   cards in the message stream, and they render metres apart. */
+.dc-flow-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  padding: 12px 14px;
+  margin: 6px 0;
+}
+
+.dc-flow-card-lead {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dc-flow-card-detail,
+.dc-flow-card-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+.dc-flow-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.dc-flow-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-primary);
+}
+
+.dc-flow-option-text { flex: 1 1 220px; min-width: 0; }
+
+.dc-flow-option-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dc-flow-option-blurb {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+.dc-flow-go {
+  background: #7c3aed;
+  color: white;
+  flex: 0 0 auto;
+}
+.dc-flow-go:hover { background: #6d28d9; }
+
+.dc-flow-remember {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.dc-flow-remember-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* Walkthrough. Exactly one step is 'current' at a time — the numbered mark
+   carries that state so the card is scannable without reading it. */
+.dc-flow-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 10px;
+}
+
+.dc-flow-step {
+  display: flex;
+  gap: 10px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.dc-flow-step:first-child { border-top: none; }
+
+.dc-flow-step-mark {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  background: var(--bg-primary);
+}
+
+.dc-flow-step-body { flex: 1 1 auto; min-width: 0; }
+
+.dc-flow-step-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dc-flow-step-detail {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+.dc-flow-step-done .dc-flow-step-mark {
+  background: #059669;
+  border-color: #059669;
+  color: white;
+}
+.dc-flow-step-done .dc-flow-step-title { color: var(--text-muted); }
+
+.dc-flow-step-current .dc-flow-step-mark {
+  background: #7c3aed;
+  border-color: #7c3aed;
+  color: white;
+}
+
+.dc-flow-step-todo { opacity: 0.65; }
+
+.dc-flow-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.dc-flow-actions-footer { margin-top: 10px; }
+
+.dc-flow-action {
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+.dc-flow-action:hover { background: var(--bg-tertiary); }
+.dc-flow-action:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.dc-flow-action-primary {
+  background: #7c3aed;
+  border-color: #7c3aed;
+  color: white;
+}
+.dc-flow-action-primary:hover { background: #6d28d9; }
+
+.dc-flow-error {
+  font-size: 12px;
+  color: rgb(185 28 28);
+  margin-top: 6px;
+  line-height: 1.4;
+}
+.dark .dc-flow-error { color: rgb(252 165 165); }
+
+.dc-flow-notice {
+  font-size: 12px;
+  color: rgb(4 120 87);
+  margin-top: 6px;
+}
+.dark .dc-flow-notice { color: rgb(110 231 183); }
+
+.dc-flow-order { margin-top: 10px; }
+
+.dc-flow-order > summary {
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.dc-flow-order-text {
+  margin-top: 6px;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
 /* Modal variant: the same three options rendered by the Generate-proposal
    flow when the headless route refuses for the same reason. */
 .dc-credits-modal-card .dc-credits-card {
@@ -5476,23 +5682,22 @@ button.attr-chip { cursor: pointer; }
   white-space: nowrap;
 }
 #admin-status-root .pill .dot { width: 0.5rem; height: 0.5rem; border-radius: 9999px; }
-#admin-status-root .pill-running { background: rgba(34, 197, 94, 0.1); color: #4ade80; }
-#admin-status-root .pill-running .dot { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
-#admin-status-root .pill-stopped { background: rgba(250, 204, 21, 0.1); color: #facc15; }
-#admin-status-root .pill-stopped .dot { background: #facc15; }
+#admin-status-root .pill-running { background: rgba(16, 185, 129, 0.1); color: #34d399; }
+#admin-status-root .pill-running .dot { background: #10b981; box-shadow: 0 0 6px #10b981; }
+#admin-status-root .pill-stopped { background: rgba(245, 158, 11, 0.1); color: #fbbf24; }
+#admin-status-root .pill-stopped .dot { background: #f59e0b; }
 #admin-status-root .pill-missing { background: rgba(239, 68, 68, 0.1); color: #f87171; }
 #admin-status-root .pill-missing .dot { background: #ef4444; }
-#admin-status-root .pill-creating { background: rgba(167, 139, 250, 0.1); color: #a78bfa; }
-#admin-status-root .pill-creating .dot { background: #8b5cf6; }
+#admin-status-root .pill-creating { background: rgba(99, 102, 241, 0.1); color: #818cf8; }
+#admin-status-root .pill-creating .dot { background: #6366f1; }
 
-/* Light-mode pill overrides: the 10%-opacity tint over white is too pale
-   for the bright dark-mode fill colors, so darken the text and slightly
-   strengthen the tint. The shell toggles `.dark` on <html>, so target the
+/* Light-mode pill overrides — topochain's badge tints (50-shade bg,
+   700-shade text). The shell toggles `.dark` on <html>, so target the
    light state via html:not(.dark). Dots stay solid and saturated. */
-html:not(.dark) #admin-status-root .pill-running { background: rgba(34, 197, 94, 0.15); color: #15803d; }
-html:not(.dark) #admin-status-root .pill-stopped { background: rgba(202, 138, 4, 0.15); color: #a16207; }
-html:not(.dark) #admin-status-root .pill-missing { background: rgba(239, 68, 68, 0.15); color: #b91c1c; }
-html:not(.dark) #admin-status-root .pill-creating { background: rgba(139, 92, 246, 0.15); color: #6d28d9; }
+html:not(.dark) #admin-status-root .pill-running { background: #ecfdf5; color: #047857; }
+html:not(.dark) #admin-status-root .pill-stopped { background: #fffbeb; color: #b45309; }
+html:not(.dark) #admin-status-root .pill-missing { background: #fef2f2; color: #b91c1c; }
+html:not(.dark) #admin-status-root .pill-creating { background: #eef2ff; color: #4338ca; }
 
 #admin-status-root .mono,
 #admin-node-root .mono {
@@ -5508,121 +5713,6 @@ html:not(.dark) #admin-status-root .pill-creating { background: rgba(139, 92, 24
    withheld server-side by src/services/status.js redact(); this only hides
    the now-empty headings. */
 #admin-status-root:not(.is-admin) .admin-only { display: none !important; }
-
-/* ── Node & chain (was public/node-status.html) ──────────────────────────
-   Deliberately keeps the dapp-server.js status-page look rather than being
-   restyled into Tailwind, so the two viewers stay comparable. Its palette
-   variables are re-namespaced --un-ns-* and declared on the section root
-   (not :root) so they can't leak into the shell. */
-
-#admin-node-root {
-  --un-ns-fg: #e7edf7;
-  --un-ns-muted: #a8b3c7;
-  --un-ns-card: #141b26;
-  --un-ns-border: rgba(255, 255, 255, 0.12);
-  --un-ns-accent: #6ea8fe;
-  --un-ns-danger: #ff6b6b;
-  --un-ns-ok: #5dd39e;
-  --un-ns-warn: #e6a817;
-  --un-ns-soft: rgba(255, 255, 255, 0.04);
-  color: var(--un-ns-fg);
-  line-height: 1.5;
-}
-html:not(.dark) #admin-node-root {
-  --un-ns-fg: #0b1220;
-  --un-ns-muted: #4b5568;
-  --un-ns-card: #ffffff;
-  --un-ns-border: rgba(15, 23, 42, 0.12);
-  --un-ns-accent: #2563eb;
-  --un-ns-danger: #c81e1e;
-  --un-ns-ok: #0f766e;
-  --un-ns-warn: #b45309;
-  --un-ns-soft: rgba(15, 23, 42, 0.03);
-}
-
-#admin-node-root .header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 4px;
-}
-#admin-node-root h2 { font-size: 20px; margin: 0; font-weight: 600; }
-#admin-node-root .conn { font-size: 11px; color: var(--un-ns-muted); }
-#admin-node-root .conn .led {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--un-ns-muted);
-  margin-right: 5px;
-  vertical-align: middle;
-}
-#admin-node-root .conn.live .led { background: var(--un-ns-ok); }
-#admin-node-root .conn.dead .led { background: var(--un-ns-danger); }
-#admin-node-root .header-pill { font-size: 13px; color: var(--un-ns-muted); margin-bottom: 24px; }
-#admin-node-root .card {
-  background: var(--un-ns-card);
-  border: 1px solid var(--un-ns-border);
-  border-radius: 12px;
-  padding: 16px 18px;
-  margin: 14px 0;
-}
-#admin-node-root .card h3 {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--un-ns-muted);
-  margin: 0 0 12px;
-  font-weight: 600;
-}
-#admin-node-root .badge {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1.6;
-  vertical-align: middle;
-}
-#admin-node-root .badge.ok { background: rgba(93, 211, 158, 0.15); color: var(--un-ns-ok); }
-#admin-node-root .badge.warn { background: rgba(230, 168, 23, 0.15); color: var(--un-ns-warn); }
-#admin-node-root .badge.err { background: rgba(255, 107, 107, 0.18); color: var(--un-ns-danger); }
-#admin-node-root .badge.muted { background: var(--un-ns-soft); color: var(--un-ns-muted); }
-#admin-node-root .badge.accent { background: rgba(110, 168, 254, 0.18); color: var(--un-ns-accent); }
-#admin-node-root .kv {
-  display: grid;
-  grid-template-columns: 160px 1fr;
-  gap: 4px 12px;
-  font-size: 13px;
-}
-#admin-node-root .kv .label { color: var(--un-ns-muted); }
-#admin-node-root .kv .val { word-break: break-all; }
-#admin-node-root code {
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 12px;
-}
-#admin-node-root .sync-bar {
-  width: 100%;
-  height: 6px;
-  background: var(--un-ns-border);
-  border-radius: 3px;
-  overflow: hidden;
-  margin: 8px 0 4px;
-}
-#admin-node-root .sync-fill { height: 100%; background: var(--un-ns-accent); transition: width 0.4s ease; }
-#admin-node-root .sync-fill.full { background: var(--un-ns-ok); }
-#admin-node-root details { background: var(--un-ns-soft); border-radius: 8px; padding: 6px 12px; margin: 8px 0; }
-#admin-node-root details[open] { padding-bottom: 12px; }
-#admin-node-root summary { cursor: pointer; font-size: 13px; padding: 4px 0; font-weight: 500; user-select: none; }
-#admin-node-root summary::marker { color: var(--un-ns-muted); }
-#admin-node-root .err-text { color: var(--un-ns-danger); font-size: 12px; margin: 8px 0; }
-#admin-node-root .warn-text { color: var(--un-ns-warn); font-size: 12px; margin: 8px 0; }
-#admin-node-root .small { font-size: 11px; color: var(--un-ns-muted); }
-#admin-node-root .empty { color: var(--un-ns-muted); font-size: 12px; padding: 6px 0; font-style: italic; }
-#admin-node-root a { color: var(--un-ns-accent); text-decoration: none; }
-#admin-node-root a:hover { text-decoration: underline; }
 
 /* ── Analytics (was public/dashboard.html) + Estimator accuracy ──────── */
 /* Both console sections share the .dc-* chart idiom: the estimator card was
@@ -5742,6 +5832,56 @@ html:not(.dark) #admin-node-root {
     transition: none;
   }
 }
+
+/* ── Dev-chat "Run on" runner controls (#907) ─────────────────────────────
+   The selector + chip that appear in the composer's status row when a
+   local coding agent has attached to this session. Painted by
+   DevChat._renderRunnerControls(); the host span is always in the markup
+   and is empty (and therefore invisible, no gap, no min-height) for every
+   session that has never had a machine attached. */
+.dc-runner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.dc-runner:empty { display: none; }
+
+/* Green so it reads as "connected", not as a warning: a turn running on
+   the user's own machine is the state they asked for. */
+.dc-runner-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(34, 197, 94, 0.35);
+  background: rgba(34, 197, 94, 0.12);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.dc-runner-chip::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #22c55e;
+  flex: none;
+}
+
+/* The machine has gone. Same shape, drained of colour, and the dot stops
+   claiming something live is happening. */
+.dc-runner-chip-past {
+  border-color: var(--border);
+  background: var(--bg-code);
+  color: var(--text-muted);
+}
+.dc-runner-chip-past::before { background: var(--text-faint); }
 
 /* ── Offline mode: the visible state (#1021) ──────────────────────────
    `body.is-offline` is toggled by Offline._set() and is the single hook

@@ -482,19 +482,27 @@ test('the season caption replaces the "nothing is running" caption', () => {
   assert.match(ctxJs, /const statusLabel = isSeason \? 'season'/, 'so does the hero badge');
 });
 
-test('both #981 checks survive app-manifest\'s MAX_TESTS cap', () => {
-  // The declared checks are a CAPPED resource: src/services/app-manifest.js
-  // keeps only the first MAX_TESTS (10) entries and this repo declares 200+,
-  // so a check's POSITION in the array decides whether it ever runs. Appended
-  // at the bottom these two would be pure decoration — a declared check that
-  // never executes reads as coverage and isn't. Hence the top of the array,
-  // which costs the two unasserted #962 home-panel fill checks their slots.
+test('both #981 checks are declared and the reader keeps them', () => {
+  // This used to assert POSITION: the reader kept only the first MAX_TESTS
+  // entries, so a check appended at the bottom of dapp.json was decoration —
+  // declared, never parsed, never run. #1019 ended that; every declared
+  // check runs through the capture pool and the only bound left is
+  // MAX_DECLARED_TESTS, a ceiling this repo is nowhere near.
+  //
+  // So the assertion that still means something is not "these two are near
+  // the top" but "the reader kept them and refused NOTHING for ceiling
+  // reasons" — which is what would break if the manifest ever grew past the
+  // ceiling and started silently shedding its tail again.
   const appManifest = require('../src/services/app-manifest');
-  const kept = appManifest.read(root).tests;
+  const meta = appManifest.readTestsWithMeta(manifest);
+  assert.equal(meta.ceilingDropped, 0,
+    `dapp.json declares more than ${appManifest.MAX_DECLARED_TESTS} valid checks — `
+    + 'the tail is being dropped again, which is exactly the bug #1019 fixed');
+  const kept = meta.tests;
   const summary = kept.find((t) => t.path === '/#leaderboard/challenges');
   const crossLink = kept.find((t) => t.path === '/#leaderboard');
-  assert.ok(summary, 'the challenges-summary check is inside the parse cap');
-  assert.ok(crossLink, 'the standings cross-link check is inside the parse cap');
+  assert.ok(summary, 'the challenges-summary check must survive the reader');
+  assert.ok(crossLink, 'the standings cross-link check must survive the reader');
   assert.match(summary.expectSelector, /#tc-se-challenge-summary/);
   assert.match(crossLink.expectSelector, /#tc-lb-to-challenges/);
 

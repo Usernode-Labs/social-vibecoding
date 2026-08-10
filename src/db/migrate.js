@@ -7,6 +7,9 @@ const log = require('../services/logger');
 const appManifest = require('../services/app-manifest');
 const dbManager = require('../services/db-manager');
 const { encrypt } = require('../services/secrets');
+// #1037: the draft-card row copy lives with the service that writes real
+// drafts, so the staging fixture can't drift from what production emits.
+const issueDraftSvc = require('../services/issue-draft');
 
 async function migrate(config) {
   const pool = getPool(config);
@@ -36,6 +39,7 @@ async function migrate(config) {
   await seedStagingMergedPrs(pool, config);
   await seedStagingMyOpenPr(pool, config);
   await seedStagingImportedPrProposal(pool, config);
+  await seedStagingChecksAdvisoryCard(pool, config);
   await seedStagingExternalAgentProposal(pool, config);
   await seedStagingRestartEligibleMerge(pool, config);
   await seedStagingOtherUserProposal(pool, config);
@@ -44,6 +48,8 @@ async function migrate(config) {
   await seedStagingActiveSessions(pool, config);
   await seedStagingStartScreenSession(pool, config);
   await seedStagingSavedDrafts(pool, config);
+  await seedStagingDevFlowPicker(pool, config);
+  await seedStagingDevFlowWizard(pool, config);
   await seedStagingSharedSession(pool, config);
   // #945: must run AFTER seedStagingSharedSession — the proposal-thread
   // half hangs off that fixture's session id.
@@ -2217,6 +2223,150 @@ async function seedStagingSavedDrafts(pool, config) {
   });
 }
 
+// #1049: the two states of the alternate-development-flow picker.
+//
+// Both are message-less `active` sessions with no PR, because that is the
+// ONLY state in which the picker renders (DevChat._devFlowTarget) — a
+// session with a typed message or a proposal is past the choice. They exist
+// for the same reason the drafts fixture does: external_agent_tasks is
+// staging:private and a staging clone has no GitHub OAuth app, so a
+// reviewer opening a fresh session sees the picker's unavailable branch and
+// can review nothing.
+//
+//   990403 — /#app/<self-slug>/dev/sessions/990403
+//            the picker itself: platform vs Claude Code vs Codex, plus
+//            "remember my choice".
+//   990404 — /#app/<self-slug>/dev/sessions/990404?demo=1
+//            the five-step walkthrough, resumed from a real open
+//            external_agent_tasks row. `?demo=1` is what unlocks
+//            GET /api/apps/:slug/dev-flow/status's staging fixture (the
+//            #555 convention), so the steps render against a linked
+//            account, a ready fork and a branch not yet pushed.
+//
+// Ids stay in the 99xxxx fake range beside their neighbours (990401,
+// 990402). Idempotent on both the session ids and the task's request_key;
+// a strict no-op outside staging.
+const STAGING_DEV_FLOW_PICKER_SESSION_ID = 990403;
+const STAGING_DEV_FLOW_WIZARD_SESSION_ID = 990404;
+const STAGING_DEV_FLOW_BRANCH = 'usernode/staging-fixture-1049';
+const STAGING_DEV_FLOW_BASE_SHA = '0123456789abcdef0123456789abcdef01234567';
+
+// Same self-app + first-admin resolution the sibling session fixtures use,
+// so GET /api/sessions/<id> (owner-scoped) resolves for the tester.
+async function devFlowFixtureContext(pool, config, label) {
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', `${label} skipped: self-app row missing`, { slug: config.selfAppSlug });
+    return null;
+  }
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username, is_admin
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 1`
+  );
+  if (!userRows.length) {
+    log.warn('db', `${label} skipped: no users`);
+    return null;
+  }
+  return { appId, owner: userRows[0] };
+}
+
+async function seedStagingDevFlowPicker(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const ctx = await devFlowFixtureContext(pool, config, 'Staging dev-flow picker fixture');
+  if (!ctx) return;
+
+  const { rowCount } = await pool.query(
+    `INSERT INTO chat_sessions
+       (id, app_id, user_id, branch_name, pr_title, session_title, status, created_at, last_activity_at)
+     VALUES ($1, $2, $3, 'staging-fixture/dev-flow-picker', NULL,
+             '[staging fixture] Pick a development flow', 'active',
+             NOW() - INTERVAL '3 minutes', NOW() - INTERVAL '3 minutes')
+     ON CONFLICT (id) DO NOTHING`,
+    [STAGING_DEV_FLOW_PICKER_SESSION_ID, ctx.appId, ctx.owner.id]
+  );
+
+  // The picker only renders while the preference is unset — that null IS
+  // "ask me every time". A staging clone that had somehow saved one would
+  // hide the fixture, so clear it for the tester.
+  await pool.query(
+    'UPDATE users SET dev_flow_preference = NULL WHERE id = $1',
+    [ctx.owner.id]
+  );
+
+  log.info('db', 'Staging dev-flow picker fixture seeded', {
+    appId: ctx.appId,
+    owner: ctx.owner.username,
+    sessionId: STAGING_DEV_FLOW_PICKER_SESSION_ID,
+    inserted: rowCount,
+  });
+}
+
+async function seedStagingDevFlowWizard(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const ctx = await devFlowFixtureContext(pool, config, 'Staging dev-flow wizard fixture');
+  if (!ctx) return;
+
+  const { rowCount } = await pool.query(
+    `INSERT INTO chat_sessions
+       (id, app_id, user_id, branch_name, pr_title, session_title, status, created_at, last_activity_at)
+     VALUES ($1, $2, $3, 'staging-fixture/dev-flow-wizard', NULL,
+             '[staging fixture] Claude Code walkthrough', 'active',
+             NOW() - INTERVAL '9 minutes', NOW() - INTERVAL '2 minutes')
+     ON CONFLICT (id) DO NOTHING`,
+    [STAGING_DEV_FLOW_WIZARD_SESSION_ID, ctx.appId, ctx.owner.id]
+  );
+
+  // One OPEN work order, matching demoStatus() in routes/dev-flow.js field
+  // for field — the branch, the base commit and the fake fork login — so
+  // the fixture row and the ?demo=1 status payload describe the same piece
+  // of work rather than two different ones. client_id carries the picked
+  // agent exactly as the browser flow records it.
+  //
+  // Keyed on request_key: that is the column prepare_work dedupes on, so a
+  // re-run adopts this row instead of minting a second.
+  let taskInserted = 0;
+  const { rows: existingTask } = await pool.query(
+    `SELECT id FROM external_agent_tasks
+      WHERE user_id = $1 AND app_id = $2 AND request_key = $3
+      LIMIT 1`,
+    [ctx.owner.id, ctx.appId, 'brief:stagingfixture']
+  );
+  if (!existingTask.length) {
+    const { rowCount: added } = await pool.query(
+      `INSERT INTO external_agent_tasks
+         (user_id, app_id, issue_number, fork_owner, fork_repo, branch_name,
+          base_sha, brief, client_id, status, request_key, session_id,
+          created_at, expires_at)
+       VALUES ($1, $2, NULL, 'octo-contributor', $3, $4, $5,
+               'Add a dark-mode toggle to the settings screen.',
+               'usernode-web:claude-code', 'open', 'brief:stagingfixture', $6,
+               NOW() - INTERVAL '8 minutes', NOW() + INTERVAL '14 days')
+       ON CONFLICT DO NOTHING`,
+      [
+        ctx.owner.id, ctx.appId, config.selfAppSlug, STAGING_DEV_FLOW_BRANCH,
+        STAGING_DEV_FLOW_BASE_SHA, STAGING_DEV_FLOW_WIZARD_SESSION_ID,
+      ]
+    );
+    taskInserted = added;
+  }
+
+  log.info('db', 'Staging dev-flow wizard fixture seeded', {
+    appId: ctx.appId,
+    owner: ctx.owner.username,
+    sessionId: STAGING_DEV_FLOW_WIZARD_SESSION_ID,
+    sessionInserted: rowCount,
+    taskInserted,
+  });
+}
+
 // Fixture for the Dev board's shared-session cards: a session owned by a
 // synthetic OTHER user with shared_at set, so it renders at the bottom of
 // every tester's "In progress" area (chat_sessions is staging:private, so
@@ -2928,17 +3078,22 @@ async function seedStagingCcCohortRuns(pool, config) {
   }
 }
 
-// #699: platform-issue draft-card fixture. The "Suggested platform report"
-// card only appears when a build agent escalates via
-// usernode-report-platform-issue, which a tester can't trigger on demand —
-// so seed one dev-chat session whose timeline carries all three card
-// shapes: a long (>300-char) PENDING draft that must show the
-// "Show full report" expand toggle, a short pending draft that must NOT,
-// and a FILED draft (fake issueUrl/issueNumber) proving resolved cards
-// stay expandable. chat_sessions is staging:private, so this is invisible
-// without seeding. Idempotent on the fixture branch name; strict no-op in
-// production. Testers should use Dismiss (not confirm) on the pending
-// cards — confirm would attempt a real GitHub call.
+// #699: issue-report draft-card fixture. The card appears when a build
+// agent escalates via usernode-report-platform-issue, or (#1037) when the
+// Mayor answers an explicit "create an issue for this" — neither of which
+// a tester can trigger on demand — so seed one dev-chat session whose
+// timeline carries every card shape: a long (>300-char) PENDING draft
+// that must show the "Show full report" expand toggle, a short pending
+// draft that must NOT, a FILED draft (fake issueUrl/issueNumber) proving
+// resolved cards stay expandable, and (#1037) a user-requested
+// APP-targeted pending draft carrying the "Issue draft — <app>" header
+// and the "File issue" button, preceded by the user message that produced
+// it. The first three deliberately carry NO `target`, proving legacy rows
+// still render as platform-destined.
+// chat_sessions is staging:private, so this is invisible without seeding.
+// Idempotent on the fixture branch name; strict no-op in production.
+// Testers should use Dismiss (not confirm) on the pending cards — confirm
+// would attempt a real GitHub call.
 async function seedStagingPlatformIssueDrafts(pool, config) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
@@ -2966,7 +3121,9 @@ async function seedStagingPlatformIssueDrafts(pool, config) {
   }
   const owner = userRows[0];
 
-  const fixtureBranch = 'staging-fixture/platform-issue-drafts';
+  // #1037: re-keyed so a staging clone that already carries the v1
+  // fixture re-seeds and picks up the new app-targeted card.
+  const fixtureBranch = 'staging-fixture/platform-issue-drafts-v2';
   const { rows: existing } = await pool.query(
     'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
     [appId, fixtureBranch]
@@ -3030,6 +3187,19 @@ async function seedStagingPlatformIssueDrafts(pool, config) {
     'the fact. END OF STAGING DEMO REPORT — full text visible.',
   ].join(' ');
 
+  // #1037: an APP-targeted body — a bug in the app itself, not in the
+  // platform — so the card's destination copy is obviously different from
+  // the three platform cards above.
+  const appTargetBody = [
+    '[staging fixture] The leaderboard keeps showing the previous round\'s',
+    'scores after a new round settles. Reproduce: finish a round on the demo',
+    'screen, then open Leaderboard — the top row still shows the score from',
+    'the round before, and a manual refresh corrects it. Expected: the',
+    'leaderboard reflects the settled round without a refresh. Filed against',
+    'this app\'s own repo rather than the platform, since nothing outside the',
+    'app is involved. END OF STAGING DEMO REPORT — full text visible.',
+  ].join(' ');
+
   const drafts = [
     {
       minutesAgo: 45,
@@ -3063,6 +3233,25 @@ async function seedStagingPlatformIssueDrafts(pool, config) {
         issueNumber: 9001,
       },
     },
+    // #1037: the user-requested, APP-targeted card. Carries `target`,
+    // `source` and the fulfilment status line, so a tester sees the
+    // "Issue draft — <app>" header and the "File issue" button next to
+    // the three legacy platform cards above.
+    {
+      minutesAgo: 25,
+      content: issueDraftSvc.CONTENT_USER,
+      draft: {
+        title: 'Staging demo: leaderboard shows stale scores after a round',
+        body: appTargetBody,
+        status: 'pending',
+        target: 'app',
+        source: 'user_request',
+        owner: 'example',
+        repo: 'staging-demo',
+        appSlug: 'staging-demo-app',
+        appName: 'Staging demo app',
+      },
+    },
   ];
 
   await pool.query(
@@ -3070,13 +3259,20 @@ async function seedStagingPlatformIssueDrafts(pool, config) {
      VALUES ($1, 'user', $2, '{}', NOW() - INTERVAL '48 minutes')`,
     [sessionId, '[staging fixture] Please wire the wallet flow into the demo screen.']
   );
+  // #1037: the request that produces the app-targeted card below, so the
+  // new conversational entry point reads end-to-end in the timeline.
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+     VALUES ($1, 'user', $2, '{}', NOW() - INTERVAL '26 minutes')`,
+    [sessionId, '[staging fixture] create an issue for the stale leaderboard scores']
+  );
   for (const d of drafts) {
     await pool.query(
       `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
        VALUES ($1, 'system', $2, $3, NOW() - ($4::int * INTERVAL '1 minute'))`,
       [
         sessionId,
-        'The AI suggests reporting this to the platform',
+        d.content || issueDraftSvc.CONTENT_AGENT,
         JSON.stringify({ platformIssueDraft: d.draft }),
         d.minutesAgo,
       ]
@@ -5479,8 +5675,8 @@ async function seedStagingCloneQuestionSuggestions(pool, config) {
 
 // #330: a cloned-from-auto session whose auto run ended in a SPEC outcome.
 // The appended follow-up message (the last row) carries metadata.quickReplies
-// so the above-box pill bar renders next-step pills ("Build it" / "Revise the
-// spec" / "What will this change?") — the bug this fixes was that bar being
+// so the above-box pill bar renders next-step pills (a whole-spec "Build the
+// spec" plus this run's own specifics) — the bug this fixes was that bar being
 // empty. Sibling of seedStagingCloneQuestionSuggestions (that one covers the
 // chips/question path; this one the pills/spec path). chat_sessions /
 // chat_session_messages are staging:private (schema-only in staging), hence
@@ -5550,8 +5746,12 @@ async function seedStagingCloneSpecPills(pool, config) {
   // now asks the Mayor to author them from the auto run's own output, with the
   // fixed set only as the fallback — so the fixture carries a set naming the
   // issue and the spec, matching what the live path now produces.
+  //
+  // #1046: the build pill names the WHOLE spec. It used to read "Build the
+  // nicer header" — a component out of a plan that covered more than that,
+  // which reads as "build only that bit". The other two stay specific.
   const quickReplies = [
-    'Build the nicer header',
+    'Build the spec',
     'What does the plan for #42 change?',
     'Revise the spec first',
   ];
@@ -5659,7 +5859,7 @@ async function seedStagingQuickReplyFallback(pool, config) {
       title: '[staging fixture] Staging demo: pills fall back after a spec',
       prNumber: null,
       specMd,
-      // Expect: 'Build it' / 'Revise the spec' / 'What will this change?'
+      // Expect: 'Build the spec' / 'Revise the spec' / 'What will this change?'
       rows: [
         ['user', 'Plan out a dark mode toggle before we build anything.', {}, 12],
         ['assistant', 'The scout drafted the spec — it\'s in the spec viewer.', {}, 10],
@@ -5738,7 +5938,10 @@ async function seedStagingQuickReplyFallback(pool, config) {
         ['user', 'Plan how avatar uploads should work before building anything.', {}, 14],
         ['assistant', 'The scout drafted a spec for avatar uploads — it adds a user_avatars '
           + 'table and a crop step, and it\'s in the spec viewer now.', {
-          quickReplies: ['Build the avatar upload flow', 'Drop the crop step from the plan', 'What does this add to the database?'],
+          // #1046: post-spec, so the build pill is the whole-spec literal
+          // and the other two carry this spec's specifics. Its dapp.json
+          // check asserts the 'Build the spec' pill renders.
+          quickReplies: ['Build the spec', 'Drop the crop step from the plan', 'What does this add to the database?'],
           quickRepliesSource: 'enforced',
         }, 12],
       ],
@@ -7024,7 +7227,7 @@ async function seedStagingHeadlessFixtures(pool, config) {
       spec: {
         text: '_Spec drafted — review it in the spec viewer after starting a session from this auto session._',
         kind: 'spec_done',
-        pills: ['Build it', 'Revise the spec', 'What will this change?'],
+        pills: ['Build the spec', 'Revise the spec', 'What will this change?'],
       },
       code: {
         text: '_Change committed and pushed — start a session from this auto session to open the PR._',
@@ -7726,6 +7929,193 @@ async function seedStagingImportedPrProposal(pool, config) {
 
   log.info('db', 'Staging imported-PR fixtures seeded', {
     appId, healthy: id1, headChanged: id2, justImported: id3,
+  });
+}
+
+// #1019: staging fixtures for the checks card at REALISTIC scale. Every
+// declared dapp.json check now runs on every build, so this repo's own card
+// went from ~12 rows to ~240 — and the rows stopped being equal in weight
+// (blocking vs advisory vs pass). None of that is reviewable from a staging
+// preview otherwise: a fresh staging DB's proposals have a handful of
+// synthesized baseline checks at most, so the folding, the ordering, the
+// advisory chip and the summary line all render on a sample too small to
+// show whether they work.
+//
+// Two rows:
+//   1. A big FAILING suite — 40 passes, one blocking failure with console
+//      errors, two advisory failures, and the collapsed "didn't finish in
+//      the run budget" row. Exercises ordering, the amber wrapper, the
+//      badge count (which must say 1, not 4), and the pass fold.
+//   2. A PASSING suite that still carries an advisory failure. This is the
+//      case that reads wrong if the card keys its heading off row status
+//      instead of the stored verdict: green wrapper, "every merge-blocking
+//      check passed", merge NOT blocked.
+// Also seeds the matching app_check_history so the Dev-side graduation
+// story is coherent with what the cards claim.
+// Idempotent (keyed on branch name), obviously-fake "[staging fixture]"
+// content, strict no-op outside staging.
+async function seedStagingChecksAdvisoryCard(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1', [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging checks-card fixture skipped: self-app row missing', { slug: config.selfAppSlug });
+    return;
+  }
+  const { rows: users } = await pool.query(
+    'SELECT id, username FROM users ORDER BY is_admin DESC, id ASC LIMIT 2'
+  );
+  if (!users.length) {
+    log.warn('db', 'Staging checks-card fixture skipped: no users');
+    return;
+  }
+  const author = users[0];
+  const votesRequired = Math.max(1, Math.ceil(users.length / 2));
+
+  const passRow = (i) => ({
+    index: i,
+    name: `[staging fixture] check ${i + 1} renders`,
+    path: `/fixture/route-${i + 1}`,
+    status: 'pass',
+    advisory: false,
+    consoleErrors: [],
+    failureReason: '',
+  });
+  const passes = [];
+  for (let i = 0; i < 40; i += 1) passes.push(passRow(i));
+
+  const blockingFailure = {
+    index: 40,
+    name: '[staging fixture] standings screen shows a ranked list',
+    path: '/standings',
+    status: 'fail',
+    advisory: false,
+    consoleErrors: [
+      { kind: 'console', message: 'TypeError: Cannot read properties of undefined (reading \'rank\')', source: '/js/standings.js:214' },
+      { kind: 'pageerror', message: 'Uncaught (in promise) TypeError: rows.map is not a function', source: '' },
+    ],
+    failureReason: 'Expected element "[data-standings-row]" was not found',
+  };
+  const advisoryFailures = [
+    {
+      index: 41,
+      name: '[staging fixture] legacy export screen loads',
+      path: '/export',
+      status: 'fail',
+      advisory: true,
+      consoleErrors: [{ kind: 'console', message: 'Failed to load resource: 404 (/api/export/manifest)', source: '' }],
+      failureReason: 'Page returned HTTP 404',
+    },
+    {
+      index: 42,
+      name: '[staging fixture] archive filter chips render',
+      path: '/archive',
+      status: 'fail',
+      advisory: true,
+      consoleErrors: [],
+      failureReason: 'Expected text "Filter" was not found on the page',
+    },
+  ];
+  const unfinishedRow = {
+    index: -1,
+    name: '3 checks did not finish in the run budget',
+    path: '',
+    status: 'fail',
+    advisory: true,
+    consoleErrors: [],
+    failureReason: 'These checks have never been observed passing, so they do not block the merge.',
+  };
+
+  const failingResults = [blockingFailure, ...advisoryFailures, unfinishedRow, ...passes];
+  const passingResults = [
+    ...passes,
+    {
+      index: 41,
+      name: '[staging fixture] legacy export screen loads',
+      path: '/export',
+      status: 'fail',
+      advisory: true,
+      consoleErrors: [],
+      failureReason: 'Page returned HTTP 404',
+    },
+  ];
+
+  const seedOne = async (branch, prNumber, title, checkState, results, sha) => {
+    const { rows: have } = await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+      [appId, branch]
+    );
+    if (have[0]?.id) {
+      await pool.query(
+        `UPDATE chat_sessions
+            SET check_state = $2, test_results = $3::jsonb,
+                checks_commit_sha = $4, checks_checked_at = NOW() - INTERVAL '6 minutes',
+                check_phase = NULL, check_error_detail = NULL
+          WHERE id = $1`,
+        [have[0].id, checkState, JSON.stringify(results), sha]
+      );
+      return have[0].id;
+    }
+    const { rows } = await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_number, pr_url, pr_title, pr_summary_md,
+          status, check_state, test_results, checks_commit_sha, checks_checked_at,
+          votes_required, promoted_at, created_at)
+       VALUES
+         ($1, $2, $3, $4, $5, $6,
+          'In plain terms: a fixture proposal that exists so the checks card can be reviewed at the row counts it now really sees.',
+          'promoted', $7, $8::jsonb, $9, NOW() - INTERVAL '6 minutes',
+          $10, NOW() - INTERVAL '8 minutes', NOW() - INTERVAL '8 minutes')
+       RETURNING id`,
+      [appId, author.id, branch, prNumber,
+       `https://github.com/example/example/pull/${prNumber}`, title,
+       checkState, JSON.stringify(results), sha, votesRequired]
+    );
+    return rows[0].id;
+  };
+
+  const failingId = await seedOne(
+    'staging-fixture/checks-advisory-failing', 9401,
+    '[staging fixture] Big check suite — one blocking failure, two advisory',
+    'failing', failingResults, '11223344556677889900aabbccddeeff00112233'
+  );
+  const passingId = await seedOne(
+    'staging-fixture/checks-advisory-passing', 9402,
+    '[staging fixture] Big check suite — passing, with an advisory failure',
+    'passing', passingResults, '445566778899aabbccddeeff0011223344556677'
+  );
+
+  // Matching history: the 40 passes and the blocking failure have all been
+  // observed passing at some point (so they gate), the advisory ones never
+  // have (first_passed_at NULL). Without these rows the cards would claim a
+  // graduation state the Dev-side data doesn't back up.
+  const crypto = require('crypto');
+  const key = (name, p) => crypto.createHash('sha256').update(`${name}\n${p}`).digest('hex');
+  const graduated = passes.concat([blockingFailure]);
+  for (const r of graduated) {
+    await pool.query(
+      `INSERT INTO app_check_history
+         (app_id, check_key, check_name, check_path, first_passed_at, last_passed_at, last_seen_at, pass_count)
+       VALUES ($1, $2, $3, $4, NOW() - INTERVAL '30 days', NOW() - INTERVAL '1 day', NOW(), 12)
+       ON CONFLICT (app_id, check_key) DO NOTHING`,
+      [appId, key(r.name, r.path), r.name, r.path]
+    );
+  }
+  for (const r of advisoryFailures) {
+    await pool.query(
+      `INSERT INTO app_check_history
+         (app_id, check_key, check_name, check_path, last_failed_at, last_seen_at, fail_count)
+       VALUES ($1, $2, $3, $4, NOW() - INTERVAL '1 day', NOW(), 5)
+       ON CONFLICT (app_id, check_key) DO NOTHING`,
+      [appId, key(r.name, r.path), r.name, r.path]
+    );
+  }
+
+  log.info('db', 'Staging checks-card fixtures seeded', {
+    appId, failing: failingId, passing: passingId, rows: failingResults.length,
   });
 }
 
@@ -8450,6 +8840,23 @@ async function seedStagingTopochain(pool, config) {
   const EVENT_ARCHIVE_ID = 900503; // on SEASON_CLOSED_ID; has challenges
   const EVENT_EMPTY_ID = 900504;   // on SEASON_ID; deliberately has NONE
 
+  // A THIRD season and a season-less event, added with the Seasons admin
+  // CRUD (/api/v4/admin/seasons). Both exist to make a state reachable in
+  // a preview that the two seasons above cannot produce:
+  //   - SEASON_INTERNAL_ID is internal = TRUE (the Internal badge) AND
+  //     has NO events, enrollments, onchain accounts or allocations —
+  //     which makes it the one season whose DELETE actually succeeds.
+  //     Deleting either of the other two returns the 409 `season_in_use`
+  //     guard, so without this row the happy path could only be reviewed
+  //     by first creating a season.
+  //   - EVENT_UNASSIGNED_ID carries season_id = NULL, which nothing else
+  //     in this fixture does: it is what the Seasons screen's "Events not
+  //     assigned to a season" panel and the events list's `season_id=none`
+  //     filter are for. Kept is_active = FALSE so no public surface picks
+  //     it up (it has no season to scope a leaderboard to anyway).
+  const SEASON_INTERNAL_ID = 900502;
+  const EVENT_UNASSIGNED_ID = 900505;
+
   const USERS = {
     seasonWide1: 900500, // exclude_podium = TRUE
     seasonWide2: 900501,
@@ -8508,7 +8915,7 @@ async function seedStagingTopochain(pool, config) {
        USERS.eventB1, USERS.mixed, realHash, USERS.bpPending, USERS.bpReleased]
     );
 
-    // ─── Seasons (2): one running, one closed ───────────────────────────
+    // ─── Seasons (3): one running, one closed, one internal + empty ─────
     // The closed one is not decoration: the admin console's Seasons screen
     // renders an active/closed badge and orders by display_order, and with
     // a single always-active row neither the inactive badge nor the sort
@@ -8527,9 +8934,13 @@ async function seedStagingTopochain(pool, config) {
          ($2, 'Staging Demo Season — Archive',
           'Closed fixture season: ended months ago and is_active = FALSE, so the admin Seasons list has a non-running row to render.',
           NOW() - INTERVAL '240 days', NOW() - INTERVAL '150 days', FALSE, FALSE, 1,
-          'Staging demo token pool (closed)', NOW(), NOW())
+          'Staging demo token pool (closed)', NOW(), NOW()),
+         ($3, 'Staging Demo Season — Internal Dry Run',
+          'Internal fixture season with nothing hanging off it: renders the Internal badge, and is the one row whose admin DELETE is not blocked by the season_in_use guard.',
+          NOW() - INTERVAL '5 days', NOW() + INTERVAL '25 days', TRUE, TRUE, 2,
+          'Staging demo token pool (internal)', NOW(), NOW())
        ON CONFLICT (id) DO NOTHING`,
-      [SEASON_ID, SEASON_CLOSED_ID]
+      [SEASON_ID, SEASON_CLOSED_ID, SEASON_INTERNAL_ID]
     );
 
     // ─── Season events (2): one 'regular' with epochs + scoring_formula,
@@ -8579,10 +8990,17 @@ async function seedStagingTopochain(pool, config) {
           'Event with NO challenges, so the per-event empty state is reachable in a preview.',
           NOW() + INTERVAL '20 days', NOW() + INTERVAL '50 days', FALSE,
           '{"metrics": [], "offchain_weight": 1}'::jsonb, NULL, NULL, FALSE, FALSE,
+          NULL, NULL, FALSE, NULL, FALSE, 'regular', NOW(), NOW()),
+         -- season_id NULL: the only unassigned event in the fixture. See
+         -- the EVENT_UNASSIGNED_ID note in the id block above.
+         ($8, NULL, 'Staging Demo Event — Unassigned Sprint',
+          'Event with no season at all, so the Seasons screen''s unassigned panel and the events list''s season_id=none filter both have something to show.',
+          NOW() + INTERVAL '10 days', NOW() + INTERVAL '40 days', FALSE,
+          '{"metrics": [], "offchain_weight": 1}'::jsonb, NULL, NULL, FALSE, FALSE,
           NULL, NULL, FALSE, NULL, FALSE, 'regular', NOW(), NOW())
        ON CONFLICT (id) DO NOTHING`,
       [EVENT_REGULAR_ID, EVENT_SEASON_ID, SEASON_ID, EVENT_ENDED_ID,
-       EVENT_ARCHIVE_ID, SEASON_CLOSED_ID, EVENT_EMPTY_ID]
+       EVENT_ARCHIVE_ID, SEASON_CLOSED_ID, EVENT_EMPTY_ID, EVENT_UNASSIGNED_ID]
     );
 
     // ─── Challenge kinds (4) ────────────────────────────────────────────

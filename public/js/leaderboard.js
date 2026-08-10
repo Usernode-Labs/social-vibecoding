@@ -400,7 +400,7 @@ const Leaderboard = {
       const initial = (who[0] || '?').toUpperCase();
       root.innerHTML = `
         <header class="mb-4">
-          <button data-lb-back class="text-sm font-medium text-violet-600 dark:text-violet-400 hover:underline mb-3">← Top users</button>
+          <a data-lb-back href="#leaderboard/users" class="inline-block text-sm font-medium text-violet-600 dark:text-violet-400 hover:underline mb-3">← Top users</a>
           <div class="flex items-center gap-3">
             <div class="w-12 h-12 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-lg">${escapeHtml(initial)}</div>
             <div class="min-w-0">
@@ -411,7 +411,12 @@ const Leaderboard = {
         </header>
         <div id="leaderboard-body" class="mt-2"></div>
       `;
-      root.querySelector('[data-lb-back]').addEventListener('click', () => {
+      root.querySelector('[data-lb-back]').addEventListener('click', (e) => {
+        // #1036: real anchor — a modified click is the browser's.
+        // `inline-block` on it is load-bearing: an <a> is inline, and an
+        // inline element silently drops the mb-3 the <button> honoured.
+        if (window.NavLink && NavLink.isNativeClick(e)) return;
+        e.preventDefault();
         // Real hash navigation so browser/WebView back behaves; the
         // hashchange route clears profileUser via _setSub('users').
         window.location.hash = '#leaderboard/users';
