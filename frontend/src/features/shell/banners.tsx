@@ -16,12 +16,11 @@ import { useVisibility } from '../../lib/visibility-store';
  * CSS on a body class and owns an interactive control. Both are wholly
  * React-owned subtrees: nothing in public/js/** writes into either any more.
  *
- * The rendered DOM is identical to the hand-written markup, which is what
- * makes the before/after screenshots a real test of the wiring rather than an
- * assertion about it. `class` attribute ORDER differs on the offline banner
- * (`hidden` now trails the variant's utilities instead of leading them) —
- * `cn`/tailwind-merge composes variant classes first, and the class SET, the
- * cascade and the computed style are unchanged.
+ * The rendered DOM is byte-identical to the hand-written markup — same
+ * attribute order, same class-string order, not merely the same class set —
+ * which is what makes the before/after screenshots a real test of the wiring
+ * rather than an assertion about it. In `public/index.html` the only change
+ * either banner produces is the removal of the `/js/offline.js` script tag.
  */
 
 /**
@@ -51,7 +50,7 @@ export function OfflineBanner() {
   useHiddenClass(ref, !visible);
 
   return (
-    <Alert ref={ref} id={OFFLINE_BANNER_ID} variant="banner" className="hidden">
+    <Alert ref={ref} id={OFFLINE_BANNER_ID} variant="banner" startHidden>
       You&apos;re offline — showing saved content
     </Alert>
   );

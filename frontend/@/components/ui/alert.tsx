@@ -47,6 +47,18 @@ import { cn } from '@/lib/utils';
  */
 const alertVariants = cva('', {
   variants: {
+    // Declared BEFORE `variant` on purpose. cva emits variant groups in
+    // declaration order, so this puts `hidden` at the FRONT of the class
+    // string — which is where the hand-written shell had it, and what keeps
+    // the prerendered public/index.html byte-identical. It is a variant rather
+    // than a caller-supplied `className` for the same reason: `cn(variants,
+    // className)` would append it and reverse the order.
+    //
+    // This is the element's INITIAL, prerendered visibility only. Once
+    // hydrated, the class is owned by a ref (see lib/legacy-dom.ts) — a
+    // re-render must not rewrite the whole `class` attribute on a node
+    // public/js/** also writes to.
+    startHidden: { true: 'hidden', false: '' },
     variant: {
       // #offline-banner — a full-bleed strip under the header. `shrink-0`
       // keeps it out of the flex column's height negotiation.
@@ -54,16 +66,24 @@ const alertVariants = cva('', {
         'shrink-0 bg-amber-500/15 border-b border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs text-center px-3 py-1.5',
     },
   },
-  defaultVariants: { variant: 'banner' },
+  defaultVariants: { variant: 'banner', startHidden: false },
 });
 
 export interface AlertProps
   extends React.HTMLAttributes<HTMLDivElement>,
     VariantProps<typeof alertVariants> {}
 
+// `{...props}` is spread BEFORE className (stock shadcn does the reverse).
+// React serializes attributes in prop order, so this emits `id` ahead of
+// `class` — again, the order the hand-written markup had. className is
+// destructured out above, so the spread can never clobber it.
 const Alert = React.forwardRef<HTMLDivElement, AlertProps>(
-  ({ className, variant, ...props }, ref) => (
-    <div ref={ref} className={cn(alertVariants({ variant }), className)} {...props} />
+  ({ className, variant, startHidden, ...props }, ref) => (
+    <div
+      ref={ref}
+      {...props}
+      className={cn(alertVariants({ variant, startHidden }), className)}
+    />
   ),
 );
 Alert.displayName = 'Alert';
