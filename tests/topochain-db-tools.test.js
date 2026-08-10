@@ -38,6 +38,7 @@ const {
 } = require('../src/services/topochain/sql-console');
 const { TEMPLATES } = require('../src/services/topochain/db-query-templates');
 const { QUERYABLE_TABLES } = require('../src/services/topochain/db-allowlist');
+const scopeMod = require('../src/services/topochain/db-console-scope');
 const consoleRoleMod = require('../src/services/topochain/db-console-role');
 
 // `sql-console.js` holds a reference to this whole module object (`const
@@ -133,11 +134,84 @@ test('validateStatement: rejects denied substrings case-insensitively (pg_read_f
   assert.equal(r2.ok, false);
 });
 
-test('validateStatement: rejects a query referencing a non-topochain table', () => {
-  const r = validateStatement('SELECT * FROM users');
+// ── Table scope: the whole `public` schema, minus the denied tables ────
+//
+// The console started out scoped to the 20 topochain tables. It now
+// covers every base table in the database except the credential-bearing
+// ones — see db-console-scope.js's header for why, and note that what
+// changed is which tables are BROWSABLE, not which columns are readable.
+
+test('validateStatement: allows a non-topochain platform table (the scope is the whole schema now)', () => {
+  // Cold cache: the live table list has not been loaded, so the deny list
+  // alone decides. That is the deliberate fallback — an unloaded cache
+  // must not read as "no table exists".
+  scopeMod._resetForTests();
+  for (const q of [
+    'SELECT id, slug FROM apps LIMIT 10',
+    'SELECT id, title FROM chat_sessions LIMIT 10',
+    'SELECT id, event_type FROM events LIMIT 10',
+    'SELECT a.slug, e.event_type FROM apps a JOIN events e ON e.app_id = a.id',
+  ]) {
+    const r = validateStatement(q);
+    assert.equal(r.ok, true, `${q} was rejected: ${r.reason}`);
+  }
+});
+
+test('validateStatement: rejects a credential-bearing table, and says so as a table problem rather than a column one', () => {
+  // `sessions` (login cookies) is on debug-access.js's DENIED_TABLES, so
+  // it is out of scope for the console at every layer: no grant, not
+  // listed in the schema browser, and rejected here.
+  const r = validateStatement('SELECT id, user_id FROM sessions');
   assert.equal(r.ok, false);
-  assert.match(r.reason, /outside the allowed list/);
-  assert.match(r.reason, /users/);
+  assert.match(r.reason, /not available in this console/);
+  assert.match(r.reason, /sessions/);
+});
+
+test('validateStatement: rejects a credential COLUMN of an in-scope table, table-awarely', () => {
+  const r = validateStatement('SELECT id, password FROM users LIMIT 5');
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /not accessible through this console/);
+  assert.match(r.reason, /password/);
+});
+
+test('validateStatement: a denied column name is NOT blanket-denied for tables that do not have it', () => {
+  // `data` is denied for `chat_session_attachments` and nowhere else, and
+  // `ip` for `waitlist_signups` and nowhere else — but six other tables
+  // have a `data` column and two more have an `ip` column. Denying the
+  // WORD would have made a chunk of the schema unqueryable the moment the
+  // scope widened, hence `deniedColumnsForTables`, keyed by the tables the
+  // query actually references.
+  assert.equal(validateStatement('SELECT id, data FROM app_icons LIMIT 5').ok, true);
+  assert.equal(validateStatement('SELECT id, ip FROM user_terms_consents LIMIT 5').ok, true);
+  // …and the tables it IS denied for are still refused.
+  const denied = validateStatement('SELECT id, data FROM chat_session_attachments LIMIT 5');
+  assert.equal(denied.ok, false);
+  assert.match(denied.reason, /not accessible through this console/);
+});
+
+test('validateStatement: once the live table list is loaded, a typo is a specific "does not exist", and a cold cache never claims that', () => {
+  scopeMod._resetForTests();
+  // Cold: no table list, so an unknown name cannot be distinguished from
+  // a real one — let it through to the database (and the role's grants)
+  // rather than inventing a reason.
+  assert.equal(validateStatement('SELECT id FROM nope_not_a_table').ok, true);
+
+  scopeMod._setKnownTablesForTests(['apps', 'seasons']);
+  try {
+    const r = validateStatement('SELECT id FROM nope_not_a_table');
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /do not exist in this database/);
+    assert.match(r.reason, /nope_not_a_table/);
+    // A table on the list still passes, and a CTE name is not mistaken
+    // for a missing table.
+    assert.equal(validateStatement('SELECT id FROM apps').ok, true);
+    assert.equal(
+      validateStatement('WITH recent AS (SELECT id FROM apps) SELECT id FROM recent').ok,
+      true
+    );
+  } finally {
+    scopeMod._resetForTests();
+  }
 });
 
 test('validateStatement: allows a JOIN across two allowed topochain tables', () => {
@@ -202,8 +276,15 @@ test('BYPASS 1 (comma join) — validateStatement now catches SELECT u.password 
     'SELECT u.password FROM onchain_accounts a, users u WHERE a.user_id = u.id'
   );
   assert.equal(r.ok, false);
-  assert.match(r.reason, /outside the allowed list/);
-  assert.match(r.reason, /users/);
+  // `users` is IN scope now (the console lists every non-credential
+  // table), so what stops this query is no longer "that table is not on
+  // the list" — it is the per-table column deny that `users.password`
+  // trips, which is the check that mattered all along. The comma-join
+  // parse is still what makes the column check see `users` at all: with
+  // the pre-fix regex, `password` would have been checked against
+  // `onchain_accounts` only and sailed through.
+  assert.match(r.reason, /not accessible through this console/);
+  assert.match(r.reason, /password/);
 });
 
 test('BYPASS 1 (comma join) — three-way comma list still surfaces every table, not just the first', () => {
@@ -325,21 +406,35 @@ test('templates: all six pass validateStatement (the exact execute-endpoint gate
   }
 });
 
-test('db-console-role: buildGrantStatements excludes secret_key/registration_code from onchain_accounts and grants everything else plainly', async () => {
+test('db-console-role: buildGrantStatements grants the whole schema minus the denied tables, column-level wherever a table has denied columns', async () => {
   const mockPool = {
-    async query(sql, params) {
+    async query(sql) {
+      // The scope now comes from the whole `public` schema rather than a
+      // hardcoded table list, so the query is unparameterised and filtered
+      // to base tables.
       assert.match(sql, /information_schema\.columns/);
-      assert.deepEqual(params[0], QUERYABLE_TABLES);
+      assert.match(sql, /BASE TABLE/);
       return {
         rows: [
           { table: 'seasons', columns: ['id', 'name', 'description'] },
+          { table: 'apps', columns: ['id', 'slug', 'db_password', 'llm_proxy_token', 'storage_api_token'] },
           { table: 'onchain_accounts', columns: ['id', 'amount', 'secret_key', 'registration_code', 'tier'] },
+          { table: 'users', columns: ['id', 'username', 'password'] },
+          // Credential-bearing tables: no grant of any kind.
+          { table: 'sessions', columns: ['id', 'user_id', 'token'] },
+          { table: 'app_secrets', columns: ['id', 'app_id', 'value'] },
+          { table: 'mobile_auth_tokens', columns: ['id', 'token_hash'] },
         ],
       };
     },
   };
   const stmts = await consoleRoleMod.buildGrantStatements(mockPool);
+  // Resolving the scope also primes the validator's table cache; clear it
+  // so this test cannot change what a later one sees.
+  scopeMod._resetForTests();
 
+  // Plain table grants for tables with nothing denied — including the
+  // non-topochain ones the widened scope brought in.
   const seasonsStmt = stmts.find((s) => s.includes('"seasons"'));
   assert.match(seasonsStmt, /^GRANT SELECT ON public\."seasons" TO topochain_console_ro$/);
 
@@ -348,6 +443,26 @@ test('db-console-role: buildGrantStatements excludes secret_key/registration_cod
   assert.doesNotMatch(onchainStmt, /secret_key/);
   assert.doesNotMatch(onchainStmt, /registration_code/);
   assert.match(onchainStmt, /"tier"/);
+
+  // The platform tables get the same column-level treatment — this is
+  // what keeps "browse every table" from meaning "read every column".
+  const usersStmt = stmts.find((s) => s.includes('"users"'));
+  assert.match(usersStmt, /^GRANT SELECT \(/);
+  assert.doesNotMatch(usersStmt, /password/);
+  assert.match(usersStmt, /"username"/);
+
+  const appsStmt = stmts.find((s) => s.includes('"apps"'));
+  assert.match(appsStmt, /^GRANT SELECT \(/);
+  assert.doesNotMatch(appsStmt, /db_password|llm_proxy_token|storage_api_token/);
+  assert.match(appsStmt, /"slug"/);
+
+  // Denied tables produce NO statement at all, not a narrowed one.
+  for (const table of ['sessions', 'app_secrets', 'mobile_auth_tokens']) {
+    assert.ok(
+      !stmts.some((s) => s.includes(`"${table}"`)),
+      `${table} must never be granted to the console role`
+    );
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -362,6 +477,13 @@ function handleQuery(sql) {
   if (/^SET LOCAL/i.test(t)) return { rows: [] };
   if (/^COMMIT/i.test(t)) return { rows: [] };
   if (/^ROLLBACK/i.test(t)) return { rows: [] };
+
+  // db-console-scope.js's table inventory — the scope resolution that
+  // both the schema endpoint and the role's grants start from. Matched
+  // BEFORE the plain information_schema.columns branch below, because it
+  // reads that view too (joined against information_schema.tables) and
+  // returns a different row shape: `{ table, columns: [...] }`.
+  if (/BASE TABLE/.test(t) && /array_agg/.test(t)) return { rows: scenario.inventoryRows || [] };
 
   // GET /sql-query/schema's two introspection queries.
   if (/pg_class/.test(t) && /reltuples/.test(t)) return { rows: scenario.schemaTableRows || [] };
@@ -450,17 +572,33 @@ test('execute: a blocked pattern is rejected before ever touching the pool (400,
   } finally { server.close(); }
 });
 
-test('execute: a table outside the allow-list is rejected with an explanation', async () => {
+test('execute: a table outside the console scope is rejected with an explanation', async () => {
   const { server, base } = await listen(buildApp('admin'));
   try {
     const res = await fetch(`${base}/api/v4/admin/sql-query/execute`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ query: 'SELECT * FROM users' }),
+      body: JSON.stringify({ query: 'SELECT id, user_id FROM sessions' }),
     });
     assert.equal(res.status, 400);
     const body = await res.json();
-    assert.match(body.error, /outside the allowed list/);
+    assert.match(body.error, /not available in this console/);
+  } finally { server.close(); }
+});
+
+test('execute: an in-scope platform table is accepted (the widened scope reaches the endpoint, not just the validator)', async () => {
+  scenario.executeRows = [{ id: 1, slug: 'demo' }];
+  const { server, base } = await listen(buildApp('admin'));
+  try {
+    const res = await fetch(`${base}/api/v4/admin/sql-query/execute`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ query: 'SELECT id, slug FROM apps' }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.success, true);
+    assert.deepEqual(body.data, [{ id: 1, slug: 'demo' }]);
   } finally { server.close(); }
 });
 
@@ -618,7 +756,20 @@ test('execute: a non-admin gets the platform 403, never reaching the console', a
 
 // ── GET /sql-query/schema ───────────────────────────────────────────────
 
-test('schema: shape per SPEC, real row estimate (not a lifetime counter), all 20 queryable tables present', async () => {
+test('schema: shape per SPEC, real row estimate (not a lifetime counter), every in-scope table present and alphabetical', async () => {
+  // The inventory the scope is resolved from: platform tables and
+  // topochain tables side by side, plus two credential-bearing tables the
+  // service itself must drop (the mock is not what filters them).
+  scenario.inventoryRows = [
+    { table: 'seasons', columns: ['id', 'name'] },
+    { table: 'apps', columns: ['id', 'slug', 'db_password'] },
+    { table: 'chat_sessions', columns: ['id', 'title'] },
+    { table: 'events', columns: ['id', 'event_type'] },
+    { table: 'chains', columns: ['id'] },
+    { table: 'onchain_accounts', columns: ['id', 'tier', 'secret_key', 'registration_code'] },
+    { table: 'sessions', columns: ['id', 'user_id'] },
+    { table: 'mobile_otp_codes', columns: ['id', 'code_hash'] },
+  ];
   scenario.schemaTableRows = [{ name: 'seasons', comment: null, estimated_rows: 42.4 }];
   scenario.schemaColumnRows = [
     { table_name: 'seasons', column_name: 'id', data_type: 'bigint', nullable: false, default_value: null, comment: null, key_type: 'primary' },
@@ -626,7 +777,7 @@ test('schema: shape per SPEC, real row estimate (not a lifetime counter), all 20
     // A row simulating what the raw information_schema.columns query
     // WOULD return for onchain_accounts' two secret columns — the
     // service itself must filter these out; the mock is not what does
-    // the filtering (see db-schema-info.js's `isExcludedColumn`).
+    // the filtering (see db-schema-info.js's `isDeniedColumn`).
     { table_name: 'onchain_accounts', column_name: 'secret_key', data_type: 'character varying', nullable: false, default_value: null, comment: null, key_type: null },
     { table_name: 'onchain_accounts', column_name: 'registration_code', data_type: 'character varying', nullable: false, default_value: null, comment: null, key_type: 'unique' },
     { table_name: 'onchain_accounts', column_name: 'tier', data_type: 'character varying', nullable: false, default_value: null, comment: null, key_type: null },
@@ -637,9 +788,21 @@ test('schema: shape per SPEC, real row estimate (not a lifetime counter), all 20
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body.success, true);
-    assert.equal(body.data.length, QUERYABLE_TABLES.length);
-    assert.ok(!body.data.some((t) => t.name === 'mobile_otp_codes'));
-    assert.ok(!body.data.some((t) => t.name === 'mobile_auth_tokens'));
+
+    // Every non-credential table in the inventory, denied ones dropped.
+    const names = body.data.map((t) => t.name);
+    assert.deepEqual(names, ['apps', 'chains', 'chat_sessions', 'events', 'onchain_accounts', 'seasons']);
+    // Alphabetical, so a ~90-entry list is scannable — and stable
+    // regardless of the order Postgres answered in.
+    assert.deepEqual(names, [...names].sort());
+    // The non-topochain tables are the point of the widening.
+    for (const platformTable of ['apps', 'chat_sessions', 'events']) {
+      assert.ok(names.includes(platformTable), `${platformTable} must be listed`);
+    }
+    // Credential-bearing tables are still absent.
+    for (const deniedTable of ['sessions', 'mobile_otp_codes']) {
+      assert.ok(!names.includes(deniedTable), `${deniedTable} must never be listed`);
+    }
 
     const seasons = body.data.find((t) => t.name === 'seasons');
     assert.equal(seasons.estimated_rows, 42); // rounded, and NOT a lifetime write counter
