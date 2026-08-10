@@ -242,6 +242,96 @@ test('the walkthrough card renders each step and the work order', () => {
   assert.match(html, /dc-flow-actions-footer/);
 });
 
+// ── Continuing something that already exists (#1054 + #1071) ────────
+
+// The same full status, with a target on the prepared task. `targetKind`
+// 'proposal' is the #1054 shape (a promoted proposal, votes to clear);
+// 'session' is the #1071 one (work in progress, nobody has voted).
+function continuingStatus(targetKind, over) {
+  const base = fullStatus(over);
+  base.task = Object.assign({}, base.task, {
+    targetProposal: {
+      id: targetKind === 'session' ? 990405 : 990406,
+      title: targetKind === 'session' ? 'Session and billing options' : 'Add a dark-mode toggle',
+      targetKind,
+      branchHome: targetKind === 'session' ? 'app_repo' : 'user_fork',
+      webPath: '/#app/demo/dev/sessions/990406',
+    },
+  });
+  return base;
+}
+
+const stepsOf = (status) => Object.fromEntries(
+  DevFlowSelect.steps(status, 'claude-code').map((s) => [s.key, s])
+);
+
+test('a continuation ends in submitting an update, not a new proposal', () => {
+  for (const kind of ['session', 'proposal']) {
+    const submit = stepsOf(continuingStatus(kind)).submit;
+    assert.equal(submit.title, 'Submit the update', `${kind}: the step is renamed`);
+    assert.deepEqual(submit.actions, [
+      { action: 'submit-update', label: 'Submit the update', primary: true },
+    ], `${kind}: a distinct action id, so the client cannot post the new-proposal body`);
+  }
+  // Without a target it is still the ordinary new-proposal submission.
+  const plain = stepsOf(fullStatus()).submit;
+  assert.equal(plain.title, 'Submit for review');
+  assert.deepEqual(plain.actions, [
+    { action: 'submit', label: 'Submit for review', primary: true },
+  ]);
+});
+
+test('the update step says what submitting costs, and only where it costs it', () => {
+  const session = stepsOf(continuingStatus('session')).submit;
+  const proposal = stepsOf(continuingStatus('proposal')).submit;
+  // The vote clearing is the warning people most need — and it is false for
+  // a session nobody has voted on, so it must not appear there.
+  assert.match(proposal.detail, /votes are cleared/i);
+  assert.doesNotMatch(session.detail, /vote/i);
+  assert.match(session.detail, /same session, further along/i);
+  assert.match(session.detail, /No new proposal/i);
+});
+
+test('step 3 names what is being continued, and step 4 where the agent talks', () => {
+  const session = stepsOf(continuingStatus('session', {
+    branch: { state: 'missing', pushed: false, missing: true },
+  }));
+  assert.match(session.prepare.detail, /^Continuing "Session and billing options"\. /);
+  assert.match(session.prepare.detail, /Branch usernode\/add-a-button/);
+  assert.match(session.handoff.detail, /this transcript stays where it is/);
+
+  const proposal = stepsOf(continuingStatus('proposal', {
+    branch: { state: 'missing', pushed: false, missing: true },
+  }));
+  assert.match(proposal.prepare.detail, /^Updating "Add a dark-mode toggle"\. /);
+  assert.match(proposal.handoff.detail, /this transcript stays where it is/);
+
+  // New work has no "over there" to explain, so it says nothing about it.
+  const plain = stepsOf(fullStatus({
+    branch: { state: 'missing', pushed: false, missing: true },
+  }));
+  assert.doesNotMatch(plain.prepare.detail, /Continuing|Updating/);
+  assert.doesNotMatch(plain.handoff.detail, /transcript/);
+});
+
+test('a target with no targetKind is treated as a proposal', () => {
+  // Older payloads (#1054 shipped before the field existed) carried a
+  // promoted proposal and nothing else. Defaulting the other way would tell
+  // somebody their votes are safe when submitting clears them.
+  const status = continuingStatus('proposal');
+  delete status.task.targetProposal.targetKind;
+  const submit = stepsOf(status).submit;
+  assert.equal(submit.title, 'Submit the update');
+  assert.match(submit.detail, /votes are cleared/i);
+});
+
+test('the update button is rendered with its own action id', () => {
+  const html = DevFlowSelect.wizardHtml({ status: continuingStatus('session') });
+  assert.match(html, /data-flow-action="submit-update"/);
+  assert.ok(!/data-flow-action="submit"/.test(html),
+    'the new-proposal submit must not also be offered');
+});
+
 test('busy disables the buttons rather than reordering the card', () => {
   const status = fullStatus({ task: null, branch: null });
   const idle = DevFlowSelect.wizardHtml({ status });

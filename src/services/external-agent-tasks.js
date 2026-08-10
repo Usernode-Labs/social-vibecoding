@@ -524,6 +524,13 @@ function buildWorkOrder({
   const update = targetProposal && Number(targetProposal.id) > 0 ? targetProposal : null;
   const updateRef = update ? String(Number(update.id)) : null;
   const forkIsHome = !!(update && update.branchHome === 'user_fork');
+  // #1071. The same continuation, against a session that is still being built
+  // rather than a proposal up for a vote. Everything mechanical is identical —
+  // same bot-owned branch, same fetch-from-upstream setup, same submit_work
+  // call with a proposalId — and every sentence about VOTES is wrong, because
+  // nobody has cast one. An imported PR is never active or paused, so a
+  // session target is always the bot-owned case.
+  const continuing = !!(update && update.targetKind === 'session');
 
   // The clone block above cuts a NEW branch from the base commit, which is
   // right for new work and wrong twice over for an update: the branch may
@@ -545,7 +552,9 @@ function buildWorkOrder({
     setup.push(
       '',
       'THE STARTING COMMIT IS IN THE APP\'S REPOSITORY, not in your fork — it is the',
-      'proposal\'s own head, on a branch only Usernode writes. Fetch it from upstream',
+      continuing
+        ? 'session\'s own head, on a branch only Usernode writes. Fetch it from upstream'
+        : 'proposal\'s own head, on a branch only Usernode writes. Fetch it from upstream',
       'before you branch:',
       `${CMD}git fetch upstream ${baseSha}`,
       `${CMD}git checkout -b ${branch} ${baseSha}`
@@ -557,9 +566,11 @@ function buildWorkOrder({
   const agentValue = AGENTS.includes(agentLabelText) ? agentLabelText : 'external';
 
   const lines = [
-    update
-      ? `You are UPDATING a proposal that is already up for a vote on "${appName}" (Usernode app \`${appSlug}\`).`
-      : `You are making a change to "${appName}" (Usernode app \`${appSlug}\`).`,
+    continuing
+      ? `You are CONTINUING work in progress on "${appName}" (Usernode app \`${appSlug}\`).`
+      : update
+        ? `You are UPDATING a proposal that is already up for a vote on "${appName}" (Usernode app \`${appSlug}\`).`
+        : `You are making a change to "${appName}" (Usernode app \`${appSlug}\`).`,
     '',
     'WHAT TO BUILD',
     brief || '(no description was supplied — ask the user what they want before writing code)',
@@ -568,11 +579,17 @@ function buildWorkOrder({
 
   if (update) {
     lines.push(
-      'THE PROPOSAL YOU ARE UPDATING',
-      `- Usernode proposal id:                  ${updateRef}`,
+      continuing ? 'THE WORK YOU ARE CONTINUING' : 'THE PROPOSAL YOU ARE UPDATING',
+      continuing
+        ? `- Usernode session id:                   ${updateRef}`
+        : `- Usernode proposal id:                  ${updateRef}`,
       ...(update.title ? [`- Its title:                             ${update.title}`] : []),
       `- Its current commit:                    ${baseSha}`,
-      ...(update.webPath ? [`- Where the group is reading it:          ${update.webPath}`] : []),
+      ...(update.webPath
+        ? [continuing
+          ? `- Where its owner is reading it:          ${update.webPath}`
+          : `- Where the group is reading it:          ${update.webPath}`]
+        : []),
       '',
       ...(forkIsHome
         ? [
@@ -585,10 +602,22 @@ function buildWorkOrder({
           'would for new work, and Usernode moves the proposal onto your branch.',
         ]),
       '',
-      'SUBMITTING AN UPDATE CLEARS ITS VOTES. Everyone who has already approved it',
-      'is asked to re-review, and its checks and staging preview rebuild against your',
-      'new commit. That is correct — they voted on code that no longer exists — but it',
-      'is not free. Finish the change before you submit, rather than submitting twice.',
+      ...(continuing
+        ? [
+          'NOBODY HAS VOTED ON THIS YET, so there is nothing to invalidate — but this is',
+          'a session somebody is still working in, and they may take more turns on it',
+          'after you. Land a COMPLETE change rather than a partial one: the next turn',
+          'starts from whatever you leave on the branch.',
+          'If the session is paused when you submit, your commit still lands on its',
+          'branch, the session stays paused, and its preview and checks rebuild when its',
+          'owner reopens it. That is expected and is not a failure of your submission.',
+        ]
+        : [
+          'SUBMITTING AN UPDATE CLEARS ITS VOTES. Everyone who has already approved it',
+          'is asked to re-review, and its checks and staging preview rebuild against your',
+          'new commit. That is correct — they voted on code that no longer exists — but it',
+          'is not free. Finish the change before you submit, rather than submitting twice.',
+        ]),
       '',
     );
   }
@@ -609,17 +638,24 @@ function buildWorkOrder({
         '   a branch at the right commit, keep it. All that matters is that you name',
         '   the branch you actually pushed when you submit.)',
       ]),
-    ...(update
+    ...(continuing
       ? [
-        `- It must start at the proposal's head:   ${baseSha}`,
-        '  (all 40 characters, exactly as written. That is the PROPOSAL\'s current',
+        `- It must start at the session's head:    ${baseSha}`,
+        '  (all 40 characters, exactly as written. That is THIS SESSION\'s current',
         '   commit, NOT the app\'s main branch — starting anywhere else would drop the',
-        '   commits already under review. See SETUP if git rejects it.)',
+        '   work already done here. See SETUP if git rejects it.)',
       ]
-      : [
-        `- It must start at upstream commit:      ${baseSha}`,
-        '  (all 40 characters, exactly as written — see SETUP if git rejects it)',
-      ]),
+      : update
+        ? [
+          `- It must start at the proposal's head:   ${baseSha}`,
+          '  (all 40 characters, exactly as written. That is the PROPOSAL\'s current',
+          '   commit, NOT the app\'s main branch — starting anywhere else would drop the',
+          '   commits already under review. See SETUP if git rejects it.)',
+        ]
+        : [
+          `- It must start at upstream commit:      ${baseSha}`,
+          '  (all 40 characters, exactly as written — see SETUP if git rejects it)',
+        ]),
   );
   if (hasTask) {
     lines.push(
@@ -710,8 +746,12 @@ function buildWorkOrder({
     if (update) {
       lines.push(
         '',
-        `Proposal ${updateRef} belongs to the same account, which is why you can revise`,
-        'it at all: Usernode only advances a proposal from a fork owned by the GitHub',
+        continuing
+          ? `Session ${updateRef} belongs to the same account, which is why you can add to`
+          : `Proposal ${updateRef} belongs to the same account, which is why you can revise`,
+        continuing
+          ? 'it at all: Usernode only advances a session from a fork owned by the GitHub'
+          : 'it at all: Usernode only advances a proposal from a fork owned by the GitHub',
         'account its author linked. Nobody else\'s branch can move it, and yours cannot',
         'move anybody else\'s.'
       );
@@ -813,24 +853,45 @@ function buildWorkOrder({
       '   name you pushed and the proposal id, and tell the user to hand both back',
       '   to the assistant that started this — it can submit the update for you.',
       '',
-      '7. THEN CHECK THE CHECKS. They GATE MERGE: a proposal whose checks are not',
-      `   passing cannot merge however the vote goes. Call \`get_proposal\` with`,
-      `   proposal id ${updateRef} — it reports \`checks\` with the state, the number`,
-      '   of tests and the names of the failing ones, and `branch.headSha`, which',
-      '   should now be your commit. If a check is failing, fix it and submit',
-      forkIsHome
-        ? '   again the same way: push to the same branch and call `submit_work` again.'
-        : '   the same way again — push to your fork, then call `submit_work` with the',
-      ...(forkIsHome
-        ? []
-        : [`   same proposalId ${updateRef}. Pushing to your fork alone does NOT move the`,
-          '   proposal: its head is in the app\'s repository, and `submit_work` is what',
-          '   moves it.']),
-      '   Remember that every submission clears the votes again, so fix everything',
-      '   you know about before you submit.',
-      '',
-      'Do not open a pull request: this proposal already has one, and Usernode moves',
-      'it onto your new commit for you.'
+      // Step 7 and the closing line are the two places where "a proposal the
+      // group is voting on" and "somebody's work in progress" genuinely differ:
+      // nothing gates a merge yet and there are no votes to clear, so saying
+      // either would be a lie the agent then repeats back to the user.
+      ...(continuing
+        ? ['7. THEN CHECK THE CHECKS. They run against your commit and gate the vote',
+          `   this becomes. Call \`get_proposal\` with proposal id ${updateRef} — it`,
+          '   reports `checks` with the state, the number of tests and the names of',
+          '   the failing ones, and `branch.headSha`, which should now be your',
+          '   commit. If a check is failing, fix it and submit',
+          forkIsHome
+            ? '   again the same way: push to the same branch and call `submit_work` again.'
+            : '   the same way again — push to your fork, then call `submit_work` with the',
+          ...(forkIsHome
+            ? []
+            : [`   same proposalId ${updateRef}. Pushing to your fork alone does NOT move`,
+              '   the session: its head is in the app\'s repository, and `submit_work` is',
+              '   what moves it.']),
+          '',
+          'Do not open a pull request — this work is not up for a vote yet; the person',
+          'who started it promotes it from Usernode when it is ready.']
+        : ['7. THEN CHECK THE CHECKS. They GATE MERGE: a proposal whose checks are not',
+          `   passing cannot merge however the vote goes. Call \`get_proposal\` with`,
+          `   proposal id ${updateRef} — it reports \`checks\` with the state, the number`,
+          '   of tests and the names of the failing ones, and `branch.headSha`, which',
+          '   should now be your commit. If a check is failing, fix it and submit',
+          forkIsHome
+            ? '   again the same way: push to the same branch and call `submit_work` again.'
+            : '   the same way again — push to your fork, then call `submit_work` with the',
+          ...(forkIsHome
+            ? []
+            : [`   same proposalId ${updateRef}. Pushing to your fork alone does NOT move the`,
+              '   proposal: its head is in the app\'s repository, and `submit_work` is what',
+              '   moves it.']),
+          '   Remember that every submission clears the votes again, so fix everything',
+          '   you know about before you submit.',
+          '',
+          'Do not open a pull request: this proposal already has one, and Usernode moves',
+          'it onto your new commit for you.'])
     );
   } else if (hasTask) {
     lines.push(
@@ -985,6 +1046,11 @@ function hostedAssetWarning(webPath) {
 // is answerable before a line is written. The same three checks run again at
 // submission time against a freshly-read row, because a proposal can merge
 // while the agent works — this is the early refusal, not the only one.
+function proposalTitle(session) {
+  const raw = session && (session.pr_title || session.session_title);
+  return raw ? String(raw).slice(0, MAX_TITLE_CHARS) : '';
+}
+
 function describeTargetProposal(session, user, app, origin) {
   const id = Number(session && session.id);
   if (!Number.isSafeInteger(id) || id <= 0) {
@@ -1004,13 +1070,21 @@ function describeTargetProposal(session, user, app, origin) {
   if (Number(session.app_id) !== Number(app.id)) {
     return fail('invalid_request', `Proposal ${id} is not on ${app.slug}.`);
   }
-  // 'promoted' is the one status that means "up for a vote". A proposal still
-  // being built is edited where it is being built; a merged or archived one
-  // cannot be revised at all, and the honest answer is to open a new change.
-  if (String(session.status) !== 'promoted') {
+  // Two kinds of continuation, one predicate — shared with the ownership gate
+  // that will be applied again at submission time, so this cannot offer a
+  // hand-off the submit route would then refuse (#1071):
+  //   'proposal' — promoted: up for a vote, and a push clears those votes.
+  //   'session'  — active or paused: still being built, nobody is voting.
+  // Anything else genuinely cannot take a revision, and the honest answer is
+  // to start a new change.
+  const targetKind = proposalUpdate.isContinuableStatus(session.status);
+  if (!targetKind) {
     return fail(
       'proposal_closed',
-      `Proposal ${id} is not up for a vote any more, so there is nothing to update. Start a new change instead.`
+      String(session.status) === 'archived'
+        ? `Session ${id} was archived — reopen it, or start a new change. Continuing it from here would quietly `
+          + 'resurrect work somebody put away.'
+        : `Proposal ${id} is not up for a vote any more, so there is nothing to update. Start a new change instead.`
     );
   }
 
@@ -1023,6 +1097,13 @@ function describeTargetProposal(session, user, app, origin) {
   if (branchHome === 'user_fork' && !isValidBranchName(branchName)) {
     return fail('platform_unavailable', `Usernode cannot read proposal ${id}'s branch. Try again shortly.`);
   }
+  // A native continuation is based at the head of THIS branch and pushed back
+  // onto it. Without a usable name there is no base to hand the agent and
+  // nowhere for its work to land, so refuse now rather than write a work order
+  // whose "Base commit" line is a guess.
+  if (branchHome === 'app_repo' && !isValidBranchName(branchName)) {
+    return fail('platform_unavailable', `Usernode cannot read ${targetKind === 'session' ? `session ${id}` : `proposal ${id}`}'s branch. Try again shortly.`);
+  }
   const trackedHead = branchHome === 'user_fork'
     ? String(session.imported_pr_head_sha || '').trim().toLowerCase()
     : null;
@@ -1034,10 +1115,15 @@ function describeTargetProposal(session, user, app, origin) {
     ok: true,
     id,
     proposalId: id,
+    // 'proposal' | 'session'. Everything downstream that has to say something
+    // different about a vote branches on this, rather than re-deriving it from
+    // a status it would then have to keep in sync.
+    targetKind,
     // `pr_title` is the proposal's own heading, the same string the group
-    // reads on the vote card. Advisory: the work order prints it only when
-    // there is one.
-    title: session.pr_title ? String(session.pr_title).slice(0, MAX_TITLE_CHARS) : '',
+    // reads on the vote card. A session that was never promoted has no PR yet,
+    // so its own title is the honest fallback. Advisory either way: the work
+    // order prints it only when there is one.
+    title: proposalTitle(session),
     webPath: origin ? `${origin}/#app/${app.slug}/dev/sessions/${id}` : '',
     branchHome,
     branchName,
@@ -1885,6 +1971,13 @@ async function submitUpdate(deps, params, proposalId) {
     votesCleared: Number(result.votesCleared) || 0,
     checksRerun: result.checksRerun === true,
     previewRebuilding: result.previewRebuilding === true,
+    // #1071. A paused session takes the commit but deliberately does NOT
+    // start a staging build for it — the caller has to be told, or the
+    // absence of a rebuilding preview reads as a failure.
+    resumeRequired: result.resumeRequired === true,
+    // 'proposal' | 'session' | null — what the push actually landed on, as
+    // decided under the lock rather than as the work order predicted.
+    targetKind: result.targetKind || null,
     externalAgent: label,
     submittedVia: result.submittedVia || null,
   };

@@ -293,6 +293,13 @@ async function updateProposalFromForkBranch(deps, params) {
         pool, config, gh, head, votes, prImportSync, githubPublic,
         session, owner, repo, forkOwner: link.login, forkRepo, branch,
         expectedLogin: link.login, expectedHeadSha, sessionId,
+        // Carried through so the session tails' three real-work modules stay
+        // injectable from the caller's deps — sessionParts() below fills in
+        // the live modules for every key nobody overrode.
+        visuals: deps.visuals,
+        pipeline: deps.pipeline,
+        lifecycle: deps.lifecycle,
+        pushSessionUpdate: deps.pushSessionUpdate,
       };
       return branchHomeOf(session) === 'user_fork'
         ? await advanceForkHead(ctx)
@@ -301,6 +308,29 @@ async function updateProposalFromForkBranch(deps, params) {
       releaseOperation();
     }
   }));
+}
+
+// ── What a push may land on ────────────────────────────────────────────
+//
+// One predicate, three answers, and every caller shares it — the options menu
+// (through describeTargetProposal), the ownership gate below, and the tails of
+// advanceAppRepoBranch. That matters more than it looks: if the menu offered
+// "continue this session" for a status the gate then refused, the user would
+// have followed a button straight into an error, and a second copy of this
+// list is exactly how that drifts into being.
+//
+//   'proposal' — promoted: up for a vote. A push moves it and CLEARS the votes
+//                it has already collected.
+//   'session'  — active or paused: still being built, nobody is voting on it,
+//                so a push is just the next commit.
+//   null       — everything else. merging/merged are frozen by definition, and
+//                archived is an explicit put-away that a push must not
+//                silently reopen.
+function isContinuableStatus(status) {
+  const s = status == null ? '' : String(status);
+  if (s === 'promoted') return 'proposal';
+  if (s === 'active' || s === 'paused') return 'session';
+  return null;
 }
 
 // Whose proposal it is, and whether it can still take a revision. Applied
@@ -316,7 +346,7 @@ function ownershipGate(session, user) {
       { retryable: false }
     );
   }
-  if (session.status !== 'promoted') {
+  if (!isContinuableStatus(session.status)) {
     return fail(
       'proposal_closed',
       session.status === 'merging' || session.status === 'merged'
@@ -358,6 +388,11 @@ async function advanceAppRepoBranch(ctx) {
     pool, config, gh, head, votes, githubPublic, session,
     owner, repo, forkOwner, forkRepo, branch, expectedLogin, expectedHeadSha, sessionId,
   } = ctx;
+  // The session tails talk to three modules that do real work — a staging
+  // build, a container teardown, a websocket fan-out. Injectable for the same
+  // reason `votes` and `head` are: a test about which tail ran must not have
+  // to start a container to find out.
+  const parts = sessionParts(ctx);
 
   const targetBranch = session.branch_name;
   if (!targetBranch || !head.validRef(targetBranch)) {
@@ -403,7 +438,17 @@ async function advanceAppRepoBranch(ctx) {
   const ancestry = await checkAncestry({ gh, owner, repo, base: liveHead, head: verified.headSha, branch });
   if (ancestry) return ancestry;
 
-  const votesCleared = await countVotes(pool, sessionId);
+  // Which of the three tails this push takes, decided from the row read UNDER
+  // the lock — `params.session` is the caller's snapshot and may be minutes
+  // old, which is long enough for a proposal to have been promoted or a
+  // session to have been paused.
+  const kind = isContinuableStatus(session.status);
+  const promoted = kind === 'proposal';
+
+  // Votes exist only on a proposal that is up for a vote, and the count has to
+  // happen BEFORE the write that deletes them. A session nobody is voting on
+  // has nothing to count and nothing to clear.
+  const votesCleared = promoted ? await countVotes(pool, sessionId) : 0;
 
   const pushed = await head.pushForkBranchToAppBranch({
     githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
@@ -411,7 +456,76 @@ async function advanceAppRepoBranch(ctx) {
   });
   if (!pushed.ok) return renameHeadFailure(pushed, branch);
 
-  // ── The existing machinery, unchanged ───────────────────────────────
+  // Everything the three tails agree on. They differ only in what they do to
+  // the session afterwards and in the three booleans that describe it.
+  const landed = {
+    ok: true,
+    updated: true,
+    proposalId: sessionId,
+    appSlug: session.app_slug || null,
+    prNumber: session.pr_number || null,
+    prUrl: session.pr_url || null,
+    branchHome: 'app_repo',
+    branch: targetBranch,
+    headSha: verified.headSha,
+    previousHeadSha: liveHead,
+    // What this push actually landed on, decided here and not by the work
+    // order — which was written before the agent started and may be an hour
+    // out of date. `submittedVia` stays 'update_branch' in all three: the
+    // schema's widened CHECK already allows it and a third value would need a
+    // migration for no gain.
+    targetKind: promoted ? 'proposal' : 'session',
+    submittedVia: 'update_branch',
+  };
+
+  // ── Tail 2: an ACTIVE session (#1071) ───────────────────────────────
+  //
+  // No votes, no re-review note, no reconciliation — nobody is voting on it.
+  // What it needs is the thing a native session gets after every other commit:
+  // its checks marked pending against the new head and the staging pipeline
+  // started, so its preview describes the code that just arrived.
+  if (kind === 'session' && session.status === 'active') {
+    const settled = await settleActiveSession({
+      config, pool, session, sessionId, headSha: verified.headSha, parts,
+    });
+    log.info('proposal-update', 'advanced an active session from its author\'s fork', {
+      sessionId, owner, repo, targetBranch, previousHeadSha: liveHead,
+      headSha: verified.headSha, rebuilding: settled.rebuilding,
+    });
+    return {
+      ...landed,
+      votesCleared: 0,
+      checksRerun: settled.rebuilding,
+      previewRebuilding: settled.rebuilding,
+      ...(settled.rebuilding ? {} : { resumeRequired: true }),
+    };
+  }
+
+  // ── Tail 3: a PAUSED session (#1071) ────────────────────────────────
+  //
+  // The commit is welcome; the build is not. A paused session has no
+  // container, and handoff-pipeline's persistence UPDATE is scoped to
+  // `status = 'active'` — so starting the pipeline here would build a preview,
+  // fail to attach it, and then discard it. Instead: forget the verdict that
+  // described the OLD commit (a green tick beside code nobody has run is
+  // worse than no tick), tear the stale preview down, and tell the caller the
+  // session has to be reopened for the rest to happen.
+  if (kind === 'session') {
+    await settlePausedSession({ pool, session, sessionId, parts });
+    log.info('proposal-update', 'advanced a paused session from its author\'s fork', {
+      sessionId, owner, repo, targetBranch, previousHeadSha: liveHead,
+      headSha: verified.headSha,
+    });
+    return {
+      ...landed,
+      votesCleared: 0,
+      checksRerun: false,
+      previewRebuilding: false,
+      resumeRequired: true,
+    };
+  }
+
+  // ── Tail 1: the existing machinery, unchanged ───────────────────────
   //
   // Nothing about clearing votes, posting the re-review note or rebuilding
   // the preview is reimplemented here: the branch moved, and the platform
@@ -445,24 +559,147 @@ async function advanceAppRepoBranch(ctx) {
   });
 
   return {
-    ok: true,
-    updated: true,
-    proposalId: sessionId,
-    appSlug: session.app_slug || null,
-    prNumber: session.pr_number || null,
-    prUrl: session.pr_url || null,
-    branchHome: 'app_repo',
-    branch: targetBranch,
-    headSha: verified.headSha,
-    previousHeadSha: liveHead,
+    ...landed,
     // Honest about what actually happened: the votes were counted before the
     // write and are only reported cleared when the reconciliation that
     // clears them ran.
     votesCleared: settled ? votesCleared : 0,
     checksRerun: settled,
     previewRebuilding: settled,
-    submittedVia: 'update_branch',
   };
+}
+
+// The active-session tail, in the words the rest of the platform uses for the
+// same moment (see routes/proposal-handoff.js's submit_build): pin the checks
+// to the new head, clear the old verdict, drop the pointers to the preview
+// that described the previous commit, then run the SAME staging pipeline every
+// other native commit runs, detached from this request.
+//
+// Returns { rebuilding } — false when the session stopped being active between
+// the lock and here, which is the one case where the commit landed and the
+// build deliberately did not.
+// The three modules the session tails reach for, resolved once. Every one is
+// overridable through ctx, and the defaults are the real ones — so production
+// behaviour needs no wiring at the call sites and a test needs no container.
+function sessionParts(ctx) {
+  const c = ctx || {};
+  return {
+    visuals: c.visuals || require('./visuals'),
+    pipeline: c.pipeline || require('./handoff-pipeline'),
+    lifecycle: c.lifecycle || require('./session-lifecycle'),
+    // A function rather than the module: ws is required lazily elsewhere in
+    // this file for the same reason — it pulls in the server's socket state.
+    pushSessionUpdate: c.pushSessionUpdate
+      || ((payload) => require('./ws').pushSessionUpdate(payload)),
+  };
+}
+
+async function settleActiveSession({ config, pool, session, sessionId, headSha, parts }) {
+  const { visuals, pipeline } = parts;
+  const { beginHandoffPipeline, startHandoffPipeline, OWNED_SOURCE_SQL } = pipeline;
+
+  // Guarded on `status = 'active'`: a manual pause or archive between the
+  // ownership gate and here is allowed to win, and it must not be undone by a
+  // write that re-arms a check pipeline for a session that is no longer live.
+  // Guarded on `checks_commit_sha` as well — the value read UNDER THE LOCK, so
+  // a newer head that took the session while this push was in flight keeps it
+  // rather than being regressed to an older commit's pending state.
+  const adopted = await pool.query(
+    `UPDATE chat_sessions
+        SET check_state = 'pending', checks_commit_sha = $1,
+            check_error_detail = NULL,
+            staging_container_id = NULL, staging_url = NULL,
+            last_activity_at = NOW()
+      WHERE id = $2 AND status = 'active' AND ${OWNED_SOURCE_SQL}
+        AND checks_commit_sha IS NOT DISTINCT FROM $3`,
+    [headSha, sessionId, session.checks_commit_sha || null]
+  );
+  if (!adopted.rowCount) {
+    await settlePausedSession({ pool, session, sessionId, parts });
+    return { rebuilding: false };
+  }
+
+  const pending = await visuals.setChecksPending(pool, sessionId, headSha)
+    .catch((err) => {
+      log.warn('proposal-update', 'setChecksPending failed (non-fatal)', { sessionId, err: err.message });
+      return true;
+    });
+  if (pending === false) return { rebuilding: false };
+  try { visuals.notifyChecksPending(sessionId, headSha); } catch { /* notify only */ }
+
+  const app = {
+    id: session.app_id,
+    slug: session.app_slug,
+    name: session.app_name,
+    repo_url: session.repo_url,
+  };
+  const fresh = { ...session, checks_commit_sha: headSha };
+  const releasePipeline = beginHandoffPipeline(sessionId);
+  try {
+    // Detached on purpose: the build and the visual capture take minutes, and
+    // the caller is an HTTP request that has already been told the push
+    // landed. startHandoffPipeline owns the release.
+    startHandoffPipeline(config, pool, fresh, app, headSha, releasePipeline);
+  } catch (err) {
+    releasePipeline();
+    log.error('proposal-update', 'could not start the staging pipeline after an update', {
+      sessionId, headSha, err: err.message,
+    });
+    return { rebuilding: false };
+  }
+  return { rebuilding: true };
+}
+
+// The paused-session tail. Deliberately does NOT start the pipeline: a paused
+// session is one nobody is watching, its preview has been reclaimed, and
+// handoff-pipeline's persistence UPDATE only matches `status = 'active'` — so
+// a build started here would run for minutes and then throw its own result
+// away.
+//
+// What it MUST do is stop the old verdict from describing the new code.
+// `checks_commit_sha` is left ALONE on purpose: it names the commit the last
+// verdict was about, and the resume path compares it against the branch head
+// to decide that a re-check is owed. Null it here and the session comes back
+// looking like it had never been checked at all.
+async function settlePausedSession({ pool, session, sessionId, parts }) {
+  const { lifecycle: sessionLifecycle, pushSessionUpdate } = parts;
+  // The same column list the CLI commit-upload route clears for a commit
+  // nothing has run yet, minus the 'pending' verdict itself — nothing IS
+  // running, and a 'pending' no pipeline will ever resolve is a spinner
+  // forever. NULL check_state is the honest "no verdict for the current code",
+  // and it blocks merge, which is the correct answer here.
+  await pool.query(
+    `UPDATE chat_sessions
+        SET check_state = NULL, check_phase = NULL,
+            check_error_detail = NULL, check_error_notified_at = NULL,
+            check_next_retry_at = NULL,
+            test_results = '[]'::jsonb, checks_checked_at = NULL,
+            consecutive_check_failures = 0,
+            first_check_failure_at = NULL, last_check_failure_at = NULL,
+            capture_state = NULL, capture_detail = NULL, captured_at = NULL,
+            last_activity_at = NOW()
+      WHERE id = $1 AND status = 'paused'`,
+    [sessionId]
+  ).catch((err) => log.warn('proposal-update', 'could not clear the stale verdict', {
+    sessionId, err: err.message,
+  }));
+
+  // Best effort: a leaked container is retried by the stale-preview sweeper
+  // through the same chokepoint, and a teardown failure must not be reported
+  // as a failed update — the commit is already on the branch.
+  await sessionLifecycle.teardownStagingForSession({
+    pool, sessionId, reason: 'external_update',
+  }).catch((err) => log.warn('proposal-update', 'staging teardown after an update failed (non-fatal)', {
+    sessionId, err: err.message,
+  }));
+
+  try {
+    pushSessionUpdate({
+      action: 'session_update', sessionId, appSlug: session.app_slug || null,
+    });
+  } catch (err) {
+    log.warn('proposal-update', 'session-update notify failed (non-fatal)', { sessionId, err: err.message });
+  }
 }
 
 // ── The imported pull request ──────────────────────────────────────────
@@ -478,6 +715,20 @@ async function advanceForkHead(ctx) {
     pool, config, gh, head, prImportSync, githubPublic, session,
     owner, repo, forkOwner, forkRepo, branch, expectedLogin, expectedHeadSha, sessionId,
   } = ctx;
+
+  // #1071 widened the ownership gate to active and paused sessions, and every
+  // one of those is a NATIVE session whose branch lives in the app repo. An
+  // imported pull request is only ever continuable while it is up for a vote,
+  // and this tail — advancing the head the platform tracks for a PR — has no
+  // meaning outside that. Refuse rather than guess.
+  if (session.status !== 'promoted') {
+    return fail(
+      'proposal_closed',
+      `That proposal is ${session.status || 'no longer open'}, so it cannot take a new revision. Open a new `
+      + 'proposal with prepare_work.',
+      { retryable: false }
+    );
+  }
 
   const prNumber = Number(session.pr_number);
   if (!Number.isSafeInteger(prNumber) || prNumber <= 0) {
@@ -675,6 +926,7 @@ function unchanged(session, headSha, via) {
 module.exports = {
   branchHomeOf,
   authorCanPush,
+  isContinuableStatus,
   withProposalLock,
   updateProposalFromForkBranch,
 };

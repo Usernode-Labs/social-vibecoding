@@ -37,7 +37,12 @@ let poolCalls = [];
 poolMod.getPool = () => ({
   async query(sql, params) {
     poolCalls.push({ sql, params });
-    // The only query the route itself makes: the advisory connector count.
+    // The hand-off target's row (#1071), read when the caller named one.
+    if (/FROM chat_sessions/.test(sql)) {
+      if (stub.targetThrows) throw new Error('database is on fire');
+      return { rows: stub.target ? [stub.target] : [] };
+    }
+    // The only other query the route itself makes: the advisory connector count.
     return { rows: [{ n: 2 }] };
   },
 });
@@ -69,7 +74,26 @@ function resetStubs() {
     submit: { ok: true, proposalId: 91, submittedVia: 'pull_request' },
     prepareArgs: null,
     submitArgs: null,
+    target: null,
+    targetThrows: false,
   };
+}
+
+// A hand-off target row, as the prepare route reads it (#1071). Native and
+// owned by the caller unless a test says otherwise, because that is the shape
+// the options menu offers "Continue this session" for.
+function targetRow(status, over) {
+  return Object.assign({
+    id: 990405,
+    user_id: 42,
+    app_id: 7,
+    status,
+    source: 'native',
+    branch_name: 'dev/evan-1786376421087',
+    imported_pr_head_sha: null,
+    pr_title: null,
+    session_title: 'Add a button',
+  }, over || {});
 }
 
 appAccess.getAppForUser = async () => stub.app;
@@ -258,6 +282,37 @@ test('an open work order is re-rendered from its stored values', async () => {
   }
 });
 
+test('a resumed update work order says WHICH kind of thing it continues (#1071)', async () => {
+  // targetKind is what the walkthrough's copy branches on: continuing a
+  // promoted proposal clears votes, continuing a session nobody has voted on
+  // does not. It has to survive a reload, so it is re-derived here from the
+  // target's CURRENT status rather than stored on the task row.
+  stub.task = openTask({ target_session_id: 990405 });
+
+  for (const [sessionStatus, kind] of [['active', 'session'], ['paused', 'session'], ['promoted', 'proposal']]) {
+    stub.target = targetRow(sessionStatus);
+    const j = await (await status()).json();
+    assert.equal(j.task.targetProposal.targetKind, kind, `${sessionStatus} → ${kind}`);
+    assert.equal(j.task.targetProposal.id, 990405);
+    assert.equal(j.task.targetProposal.branchHome, 'app_repo');
+    assert.equal(j.task.targetProposal.title, 'Add a button',
+      'a session that was never promoted has no pr_title, so its own title is shown');
+  }
+
+  // A target that stopped being continuable is dropped rather than described:
+  // the walkthrough goes back to "open a new proposal", which is the truth.
+  stub.target = targetRow('archived');
+  assert.equal((await (await status()).json()).task.targetProposal, null);
+});
+
+test('an ordinary work order has no target at all', async () => {
+  stub.task = openTask();
+  const j = await (await status()).json();
+  assert.equal(j.task.targetProposal, null);
+  assert.equal(poolCalls.some((c) => /FROM chat_sessions/.test(c.sql)), false,
+    'nothing is read for a work order that continues nothing');
+});
+
 test('a branch read that throws leaves the step unknown, not the request failed', async () => {
   // GitHub being briefly unreadable must not blank the work order the user
   // is in the middle of — the last step just cannot answer yet.
@@ -328,6 +383,93 @@ test('the picked agent is recorded on the row as usernode-web:<agent>', async ()
     // And that stamp is exactly what the status route reads back.
     assert.equal(svc.normalizeAgent(null, stub.prepareArgs.clientId), agent);
   }
+});
+
+// ── 3b. Continuing existing work (#1071) ────────────────────────────────
+
+test('a named target is described and handed to the service', async () => {
+  for (const [sessionStatus, kind] of [['active', 'session'], ['paused', 'session'], ['promoted', 'proposal']]) {
+    stub.target = targetRow(sessionStatus);
+    const r = await prepare({ agent: 'codex', brief: 'Fix the button.', proposalId: 990405 });
+    assert.equal(r.status, 200, `${sessionStatus} is continuable`);
+    assert.equal(stub.prepareArgs.targetProposal.id, 990405,
+      'the ROW reaches prepareWork, which describes it again itself');
+    assert.equal(stub.prepareArgs.targetProposal.status, sessionStatus);
+    // And the describe that gated it agrees with what the menu offered.
+    assert.equal(
+      svc.describeTargetProposal(stub.target, user, APP, ORIGIN).targetKind, kind,
+      `${sessionStatus} → ${kind}`
+    );
+  }
+});
+
+test('a malformed proposalId is a 400, never a quietly ignored field', async () => {
+  // Ignoring it would open NEW work when the user asked to continue — the one
+  // outcome the options menu must never produce by accident.
+  for (const proposalId of ['990405', 0, -3, 1.5, true, {}, ['990405']]) {
+    const r = await prepare({ agent: 'codex', brief: 'x', proposalId });
+    assert.equal(r.status, 400, `expected 400 for ${JSON.stringify(proposalId)}`);
+    assert.equal((await r.json()).code, 'invalid_request');
+    assert.equal(stub.prepareArgs, null, 'no slot is spent, and no target is guessed');
+  }
+  // Absent and null both mean "this is new work", which is not an error.
+  for (const body of [{ agent: 'codex', brief: 'x' }, { agent: 'codex', brief: 'x', proposalId: null }]) {
+    const r = await prepare(body);
+    assert.equal(r.status, 200);
+    assert.equal(stub.prepareArgs.targetProposal, null);
+  }
+});
+
+test('a target that stopped being continuable is refused with its own wording', async () => {
+  // The same predicate that chose the menu's label is applied again here, so
+  // a session archived between the click and the request is a refusal rather
+  // than a silent downgrade to a new change.
+  stub.target = targetRow('archived');
+  const r = await prepare({ agent: 'codex', brief: 'x', proposalId: 990405 });
+  assert.equal(r.status, 409);
+  const j = await r.json();
+  assert.equal(j.code, 'proposal_closed');
+  assert.match(j.error, /was archived/, 'the archived case gets its own copy');
+  assert.equal(stub.prepareArgs, null, 'no work order is written for it');
+
+  for (const [sessionStatus, expected] of [['merged', 409], ['draft', 409]]) {
+    stub.target = targetRow(sessionStatus);
+    assert.equal((await prepare({ agent: 'codex', brief: 'x', proposalId: 990405 })).status, expected);
+  }
+});
+
+test('somebody else\'s session, another app\'s session, and one that is gone', async () => {
+  stub.target = targetRow('active', { user_id: 99 });
+  let j = await (await prepare({ agent: 'codex', brief: 'x', proposalId: 990405 })).json();
+  assert.equal(j.code, 'not_your_proposal');
+
+  stub.target = targetRow('active', { app_id: 8 });
+  j = await (await prepare({ agent: 'codex', brief: 'x', proposalId: 990405 })).json();
+  assert.equal(j.code, 'invalid_request');
+
+  stub.target = null;
+  const gone = await prepare({ agent: 'codex', brief: 'x', proposalId: 990405 });
+  assert.equal(gone.status, 400);
+  assert.match((await gone.json()).error, /does not exist/);
+  assert.equal(stub.prepareArgs, null);
+});
+
+test('a target row that cannot be read is a 503, not a 500', async () => {
+  stub.targetThrows = true;
+  const r = await prepare({ agent: 'codex', brief: 'x', proposalId: 990405 });
+  assert.equal(r.status, 503);
+  const j = await r.json();
+  assert.equal(j.code, 'platform_unavailable');
+  assert.doesNotMatch(j.error, /on fire/, 'the internal message stays internal');
+});
+
+test('a session with no usable branch name cannot be continued', async () => {
+  // A native continuation is based at the head of THIS branch and pushed back
+  // onto it: without a name there is no base to hand the agent.
+  stub.target = targetRow('active', { branch_name: '' });
+  const r = await prepare({ agent: 'codex', brief: 'x', proposalId: 990405 });
+  assert.equal(r.status, 503);
+  assert.match((await r.json()).error, /session 990405's branch/);
 });
 
 test('restart is a boolean the caller cannot smuggle a value through', async () => {
@@ -501,8 +643,12 @@ test('staging never reaches GitHub, and only shows fixtures when asked', () => {
   // review; with it, the walkthrough renders at its most interesting step.
   const src = read('src/routes/dev-flow.js');
   assert.match(src, /const IS_STAGING = process\.env\.USERNODE_ENV === 'staging'/);
-  assert.match(src, /req\.query\.demo === '1'\s*\n?\s*\? demoStatus/,
+  // Two fixtures now (#1071): ?demo=1 is the promoted-proposal update order,
+  // ?demo=session the session continuation. Both are opt-in per request.
+  assert.match(src, /req\.query\.demo === '1' \|\| req\.query\.demo === 'session'\s*\n?\s*\? demoStatus/,
     'the fixture is opt-in per request');
+  assert.match(src, /req\.query\.demo === 'session' \? 'session' : 'proposal'/,
+    'the demo payload picks its target kind from the query, not from a guess');
   assert.match(src, /990501/, 'fixture ids stay in the obviously-fake 99xxxx range');
   // Every write is refused in staging: they would open a real pull request —
   // or, on the update path (#1054), force-push a real branch — against a real

@@ -154,6 +154,13 @@
     var task = st.task || null;
     var branch = st.branch || null;
     var label = agentLabel(agent || (task && task.agent));
+    // #1054 + #1071. When the prepared task carries a target, this run is a
+    // CONTINUATION and the last two steps say something different: the branch
+    // goes back onto something that already exists, and the final press is an
+    // update, not a new pull request. `targetKind` distinguishes the proposal
+    // the group is voting on from the session still being built.
+    var target = (task && task.targetProposal) || null;
+    var targetKind = target ? (target.targetKind || 'proposal') : null;
 
     var list = [
       {
@@ -179,7 +186,7 @@
         title: 'Prepare the work order',
         done: !!task,
         detail: task
-          ? 'Branch ' + (task.branch || '') + ', starting from ' + shortSha(task.baseSha) + '.'
+          ? prepareDetail(task, target, targetKind)
           : 'Describe the change in the message box below, then Usernode writes the work order — the repository, the branch, the exact base commit and the platform rules your agent has to follow.',
         actions: task ? [] : [{ action: 'prepare', label: 'Prepare work order', primary: true }],
       },
@@ -187,18 +194,20 @@
         key: 'handoff',
         title: 'Hand it to ' + label,
         done: !!(branch && branch.pushed),
-        detail: handoffDetail(branch, task, label),
+        detail: handoffDetail(branch, task, label, targetKind),
         actions: task ? handoffActions(agent || task.agent) : [],
       },
       {
         key: 'submit',
-        title: 'Submit for review',
+        title: target ? 'Submit the update' : 'Submit for review',
         done: false,
         detail: branch && branch.pushed
-          ? 'Usernode opens the pull request for you and imports it as a proposal you can put to a vote.'
+          ? submitDetail(targetKind)
           : 'Available once your branch is pushed.',
         actions: branch && branch.pushed
-          ? [{ action: 'submit', label: 'Submit for review', primary: true }]
+          ? [target
+            ? { action: 'submit-update', label: 'Submit the update', primary: true }
+            : { action: 'submit', label: 'Submit for review', primary: true }]
           : [],
       },
     ];
@@ -250,14 +259,45 @@
     return actions;
   }
 
-  function handoffDetail(branch, task, label) {
+  // Step 3's detail. The branch and base commit are the same facts either
+  // way; what changes is that a continuation names WHAT it is continuing,
+  // because "starting from 4f2a1c9" on its own gives no clue that this run
+  // will move an existing session or proposal rather than open a new one.
+  function prepareDetail(task, target, targetKind) {
+    var line = 'Branch ' + (task.branch || '') + ', starting from ' + shortSha(task.baseSha) + '.';
+    if (!target) return line;
+    var title = target.title ? '"' + target.title + '"' : (targetKind === 'session' ? 'this session' : 'this proposal');
+    return (targetKind === 'session' ? 'Continuing ' : 'Updating ') + title + '. ' + line;
+  }
+
+  // Step 5's detail. Three sentences for three consequences — the vote
+  // clearing is the one people most need warning about, and a continuation of
+  // an unpromoted session has no votes to clear, so saying so there would be
+  // false.
+  function submitDetail(targetKind) {
+    if (targetKind === 'session') {
+      return 'Usernode moves this session onto the commit your agent pushed. No new proposal, no new pull request — the same session, further along.';
+    }
+    if (targetKind === 'proposal') {
+      return 'Usernode moves this proposal onto the commit your agent pushed. Its existing votes are cleared and its checks re-run, because the group would otherwise be approving code it never saw.';
+    }
+    return 'Usernode opens the pull request for you and imports it as a proposal you can put to a vote.';
+  }
+
+  function handoffDetail(branch, task, label, targetKind) {
     if (!task) return 'Paste the work order into ' + label + ' and let it build.';
     if (branch && branch.pushed) return 'Branch ' + task.branch + ' is pushed and ready to submit.';
     if (branch && branch.unpushed) {
       return 'Branch ' + task.branch + ' exists on your fork but is still on the base commit — it looks like the commits were made locally and never pushed.';
     }
-    return 'Copy the work order, paste it into ' + label
+    var base = 'Copy the work order, paste it into ' + label
       + ', and let it push branch ' + task.branch + ' to your fork. Usernode checks for the branch when you come back to this tab.';
+    // The one thing that trips people up on a continuation: the agent gets
+    // its own conversation over there, and this transcript will not grow.
+    if (targetKind === 'session' || targetKind === 'proposal') {
+      base += ' The agent talks to you in ' + label + ', not here — this transcript stays where it is until the update lands.';
+    }
+    return base;
   }
 
   function handoffActions(agent) {

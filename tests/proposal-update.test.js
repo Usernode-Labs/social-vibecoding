@@ -679,3 +679,275 @@ test('a reconciliation that fails after a successful push still reports the upda
   assert.equal(result.checksRerun, false);
   assert.equal(log.push.length, 1);
 });
+
+// ── 8. Continuing a session nobody has voted on (#1071) ────────────────
+//
+// The same push, onto a session that is still being built rather than a
+// proposal up for a vote. The mechanics are identical — same bot-owned branch,
+// same lease, same attribution gate — and everything AFTERWARDS is different:
+// there are no votes to clear, no re-review note to post, and what the session
+// needs instead is its checks re-pointed at the new commit.
+
+// The three modules the session tails reach for, as observable stubs. The real
+// ones start a container, tear one down and fan out over a websocket; a test
+// about which tail ran must not do any of that.
+function sessionParts(log, over = {}) {
+  return Object.assign({
+    visuals: {
+      setChecksPending: async (...args) => {
+        (log.pending = log.pending || []).push(args);
+        return true;
+      },
+      notifyChecksPending: (...args) => { (log.notified = log.notified || []).push(args); },
+    },
+    pipeline: {
+      OWNED_SOURCE_SQL: "source = 'native'",
+      beginHandoffPipeline: (id) => {
+        (log.pipelineBegan = log.pipelineBegan || []).push(id);
+        return () => { (log.pipelineReleased = log.pipelineReleased || []).push(id); };
+      },
+      startHandoffPipeline: (config, pool, session, app, headSha) => {
+        (log.started = log.started || []).push({ sessionId: session.id, headSha, app });
+      },
+    },
+    lifecycle: {
+      teardownStagingForSession: async (args) => {
+        (log.tornDown = log.tornDown || []).push(args);
+        return { ok: true };
+      },
+    },
+    pushSessionUpdate: (payload) => { (log.pushed = log.pushed || []).push(payload); },
+  }, over);
+}
+
+// A session (not a proposal) whose row answers the tail's guarded UPDATE.
+function sessionRow(status, over) {
+  return nativeSession(Object.assign({
+    status,
+    pr_number: null,
+    pr_url: null,
+    checks_commit_sha: OTHER_HEAD,
+  }, over));
+}
+
+function runSession(status, over = {}, log = {}, params = {}) {
+  const session = over.session || sessionRow(status);
+  const pool = over.pool || fakePool([
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+    ['UPDATE chat_sessions', () => (over.adopted === false ? [] : [{ id: session.id }])],
+    ['FROM pr_votes', [{ n: 4 }]],
+  ]);
+  // rowCount, which the tails branch on, is not what fakePool reports — wrap
+  // it so an UPDATE answers with the count the service actually reads.
+  const counting = {
+    queries: pool.queries,
+    async query(sql, params2) {
+      const res = await pool.query(sql, params2);
+      return Object.assign({}, res, { rowCount: res.rows.length });
+    },
+  };
+  log.queries = pool.queries;
+  return svc.updateProposalFromForkBranch(
+    Object.assign(deps({ ...over, session, pool: counting }, log), over.parts || sessionParts(log)),
+    Object.assign({
+      user: USER, session, branch: 'fix/failing-check', origin: 'https://usernode.test',
+    }, params)
+  );
+}
+
+// The queries a run actually issued — used both ways round: to assert an
+// UPDATE's shape, and to assert that pr_votes was never read.
+const sqlsOf = (log) => (log.queries || []).map((q) => String(q.sql));
+const queryOf = (log, needle) => (log.queries || []).find((q) => String(q.sql).includes(needle));
+
+test('active and paused are continuable; archived and merged are not', () => {
+  // ONE predicate, shared with describeTargetProposal — the options menu's
+  // label and this gate cannot disagree, which is the whole point of it being
+  // exported rather than copied.
+  assert.equal(svc.isContinuableStatus('promoted'), 'proposal');
+  assert.equal(svc.isContinuableStatus('active'), 'session');
+  assert.equal(svc.isContinuableStatus('paused'), 'session');
+  for (const status of ['archived', 'merging', 'merged', 'closed', 'building', '', null, undefined]) {
+    assert.equal(svc.isContinuableStatus(status), null, `${String(status)} is not continuable`);
+  }
+  // And the gate is written in terms of it, not in terms of a second list.
+  assert.match(CODE, /if \(!isContinuableStatus\(session\.status\)\)/);
+});
+
+test('an archived session is refused before anything is pushed', async () => {
+  const log = {};
+  const result = await runSession('archived', {}, log);
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'proposal_closed');
+  assert.equal(log.push, undefined, 'an explicit put-away is not silently reopened');
+});
+
+test('an ACTIVE session gets the commit, pending checks and a staging rebuild', async () => {
+  const log = {};
+  const result = await runSession('active', {}, log);
+  assert.equal(result.ok, true);
+  assert.equal(result.targetKind, 'session');
+  assert.equal(result.submittedVia, 'update_branch');
+  assert.equal(result.votesCleared, 0, 'nobody has voted, so nothing is cleared');
+  assert.equal(result.checksRerun, true);
+  assert.equal(result.previewRebuilding, true);
+  assert.equal(result.resumeRequired, undefined, 'the build is running now, not on reopen');
+
+  // The commit landed on the session's own branch, with the lease pinned to
+  // the head read under the lock.
+  assert.equal(log.push.length, 1);
+  assert.equal(log.push[0].targetBranch, 'dev/evan-1786376366569');
+  assert.equal(log.push[0].expectedRemoteSha, NATIVE_HEAD);
+
+  // And the platform's ordinary post-commit machinery ran, rather than a
+  // second implementation of it.
+  assert.deepEqual(log.pending[0].slice(1), [501, FORK_HEAD]);
+  assert.equal(log.notified.length, 1);
+  assert.deepEqual(log.pipelineBegan, [501]);
+  assert.equal(log.started.length, 1);
+  assert.equal(log.started[0].headSha, FORK_HEAD);
+  assert.equal(log.started[0].sessionId, 501);
+
+  // Nothing about votes: no count, no reconciliation.
+  assert.equal(log.reconcile, undefined);
+  assert.ok(!sqlsOf(log).some((s) => /FROM pr_votes/.test(s)),
+    'a session with no votes is not asked how many it has');
+});
+
+test('the checks UPDATE is guarded on the status and the commit it replaces', async () => {
+  const log = {};
+  await runSession('active', {}, log);
+  const update = queryOf(log, 'UPDATE chat_sessions');
+  assert.match(update.sql, /status = 'active'/, 'a pause between the lock and here wins');
+  assert.match(update.sql, /checks_commit_sha IS NOT DISTINCT FROM \$3/,
+    'a newer head that took the session is not regressed to an older pending state');
+  assert.match(update.sql, /check_state = 'pending'/);
+  assert.deepEqual(update.params, [FORK_HEAD, 501, OTHER_HEAD]);
+});
+
+test('an active session that stopped being active falls back to the paused tail', async () => {
+  // The guarded UPDATE matched nothing: something paused or archived the
+  // session between the lock and the write. The commit is already on the
+  // branch, so the answer is "it landed, reopen to rebuild" — never a failure.
+  const log = {};
+  const result = await runSession('active', { adopted: false }, log);
+  assert.equal(result.ok, true);
+  assert.equal(result.checksRerun, false);
+  assert.equal(result.previewRebuilding, false);
+  assert.equal(result.resumeRequired, true);
+  assert.equal(log.started, undefined, 'no build is started for a session that is not active');
+  assert.equal(log.tornDown.length, 1, 'and the stale preview is reclaimed');
+});
+
+test('a PAUSED session takes the commit and defers the build to its reopen', async () => {
+  const log = {};
+  const result = await runSession('paused', {}, log);
+  assert.equal(result.ok, true);
+  assert.equal(result.targetKind, 'session');
+  assert.equal(result.votesCleared, 0);
+  assert.equal(result.checksRerun, false);
+  assert.equal(result.previewRebuilding, false);
+  assert.equal(result.resumeRequired, true);
+
+  // The push happened; the pipeline deliberately did not. handoff-pipeline's
+  // persistence UPDATE only matches an active row, so a build started here
+  // would run for minutes and discard its own result.
+  assert.equal(log.push.length, 1);
+  assert.equal(log.started, undefined);
+  assert.equal(log.pipelineBegan, undefined);
+
+  // The stale verdict is cleared and the stale preview torn down.
+  const cleared = queryOf(log, 'UPDATE chat_sessions');
+  assert.match(cleared.sql, /status = 'paused'/);
+  assert.match(cleared.sql, /check_state = NULL/,
+    "a 'pending' no pipeline will resolve is a spinner forever");
+  assert.doesNotMatch(cleared.sql, /checks_commit_sha =/,
+    'the commit the last verdict described is what the resume path compares against');
+  assert.deepEqual(log.tornDown[0].sessionId, 501);
+  assert.equal(log.tornDown[0].reason, 'external_update');
+
+  // And the page the session is open in hears about it.
+  assert.equal(log.pushed.length, 1);
+  assert.equal(log.pushed[0].action, 'session_update');
+  assert.equal(log.pushed[0].sessionId, 501);
+});
+
+test('a teardown that throws does not turn a landed commit into a failed update', async () => {
+  const log = {};
+  const result = await runSession('paused', {
+    parts: sessionParts(log, {
+      lifecycle: {
+        teardownStagingForSession: async () => { throw new Error('docker is down'); },
+      },
+    }),
+  }, log);
+  assert.equal(result.ok, true, 'the commit is on the branch either way');
+  assert.equal(result.resumeRequired, true);
+  // Same for the websocket fan-out.
+  const log2 = {};
+  const result2 = await runSession('paused', {
+    parts: sessionParts(log2, {
+      pushSessionUpdate: () => { throw new Error('no sockets'); },
+    }),
+  }, log2);
+  assert.equal(result2.ok, true);
+});
+
+test('the tail is chosen by the status read UNDER THE LOCK, not the caller\'s copy', async () => {
+  // The caller's snapshot says active; the row read under the lock says
+  // promoted — it was promoted while the agent worked. The push must take the
+  // PROPOSAL tail, votes and all, because that is what it is landing on now.
+  const log = {};
+  const locked = nativeSession({ status: 'promoted' });
+  const pool = fakePool([
+    ['FROM chat_sessions cs JOIN apps a', [locked]],
+    ['FROM pr_votes', [{ n: 4 }]],
+  ]);
+  const result = await svc.updateProposalFromForkBranch(
+    Object.assign(deps({ pool, session: locked }, log), sessionParts(log)),
+    {
+      user: USER,
+      session: sessionRow('active'),
+      branch: 'fix/failing-check',
+      origin: 'https://usernode.test',
+    }
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.targetKind, 'proposal');
+  assert.equal(result.votesCleared, 4, 'it IS up for a vote now, so the votes are cleared');
+  assert.equal(log.reconcile.length, 1);
+  assert.equal(log.started, undefined, 'and the session tails did not run');
+
+  // And the reverse: a caller who thinks it is promoted, against a row that
+  // was paused back. No votes are counted for a session that has none.
+  const log2 = {};
+  const paused = sessionRow('paused');
+  const pool2 = fakePool([
+    ['FROM chat_sessions cs JOIN apps a', [paused]],
+    ['UPDATE chat_sessions', [{ id: 501 }]],
+  ]);
+  const result2 = await svc.updateProposalFromForkBranch(
+    Object.assign(deps({ pool: pool2, session: paused }, log2), sessionParts(log2)),
+    {
+      user: USER,
+      session: nativeSession({ status: 'promoted' }),
+      branch: 'fix/failing-check',
+      origin: 'https://usernode.test',
+    }
+  );
+  assert.equal(result2.ok, true);
+  assert.equal(result2.targetKind, 'session');
+  assert.equal(result2.resumeRequired, true);
+  assert.equal(log2.reconcile, undefined);
+});
+
+test('a fork-owned proposal is refused unless it is up for a vote', () => {
+  // advanceForkHead only ever meant "the author pushed to their own PR
+  // branch", which exists only for an imported, promoted proposal — a native
+  // session is always app_repo. The guard is there so a future caller cannot
+  // reach it with a session and quietly skip the whole session tail.
+  assert.match(CODE, /async function advanceForkHead/);
+  const fork = CODE.slice(CODE.indexOf('async function advanceForkHead'));
+  assert.match(fork.slice(0, 900), /proposal_closed/,
+    'the fork path states the one status it accepts');
+});

@@ -154,6 +154,120 @@ test('the local CLI continues THIS session; the web hand-offs start new work', (
   );
 });
 
+// ── The three-way web hand-off (#1071) ──────────────────────────────
+
+const webRows = (state) => SessionOptions.items(Object.assign(
+  { externalFlowsAvailable: true }, state
+)).filter((i) => i.kind === 'flow');
+
+test('the hand-off state is derived from the session, in every direction', () => {
+  // The predicate is the one place that decides, so it is driven directly:
+  // a wrong answer here is a row that says "continue" and then starts
+  // something separate, or the reverse.
+  const cases = [
+    [{ sessionStatus: 'active', hasBranch: true }, 'session'],
+    [{ sessionStatus: 'paused', hasBranch: true }, 'session'],
+    [{ sessionStatus: 'promoted', hasBranch: true }, 'proposal'],
+    // A promoted proposal is the proposal, branch or not — its head is
+    // whatever the platform recorded, and the server refuses it if that is
+    // unreadable rather than the menu guessing.
+    [{ sessionStatus: 'promoted', hasBranch: false }, 'proposal'],
+    // An explicit put-away. Pushing onto it would resurrect work somebody
+    // deliberately closed, so this starts new work instead.
+    [{ sessionStatus: 'archived', hasBranch: true }, 'new'],
+    [{ sessionStatus: 'merging', hasBranch: true }, 'new'],
+    [{ sessionStatus: 'merged', hasBranch: true }, 'new'],
+    // No branch yet: there is no commit to start from and nowhere to land.
+    [{ sessionStatus: 'active', hasBranch: false }, 'new'],
+    [{ sessionStatus: 'paused', hasBranch: false }, 'new'],
+    [{}, 'new'],
+  ];
+  for (const [state, expected] of cases) {
+    assert.equal(
+      SessionOptions.webTargetKind(state), expected,
+      `${JSON.stringify(state)} → ${expected}`
+    );
+  }
+});
+
+test('each state gets its own verb, and only the continue states carry a target', () => {
+  const active = webRows({ sessionId: 990405, sessionStatus: 'active', hasBranch: true });
+  const promoted = webRows({ sessionId: 990406, sessionStatus: 'promoted', hasBranch: true });
+  const archived = webRows({ sessionId: 990408, sessionStatus: 'archived', hasBranch: true });
+
+  assert.deepEqual(active.map((i) => i.label), [
+    'Continue this session with Claude Code on the web',
+    'Continue this session with Codex',
+  ]);
+  assert.deepEqual(promoted.map((i) => i.label), [
+    'Continue this proposal with Claude Code on the web',
+    'Continue this proposal with Codex',
+  ]);
+  assert.deepEqual(archived.map((i) => i.label), [
+    'Start new work with Claude Code on the web',
+    'Start new work with Codex',
+  ]);
+
+  // targetId is what makes the difference real: the prepare call continues
+  // that session, and `null` is what opens separate work.
+  assert.deepEqual(active.map((i) => i.targetId), [990405, 990405]);
+  assert.deepEqual(promoted.map((i) => i.targetId), [990406, 990406]);
+  assert.deepEqual(archived.map((i) => i.targetId), [null, null]);
+  assert.deepEqual(active.map((i) => i.targetKind), ['session', 'session']);
+  assert.deepEqual(promoted.map((i) => i.targetKind), ['proposal', 'proposal']);
+  assert.deepEqual(archived.map((i) => i.targetKind), ['new', 'new']);
+
+  // A continuable session the page has no id for cannot be continued, and
+  // saying so with a null target is better than sending `undefined`.
+  assert.deepEqual(
+    webRows({ sessionStatus: 'active', hasBranch: true }).map((i) => i.targetId),
+    [null, null]
+  );
+});
+
+test('active and paused read identically and differ only in the tooltip', () => {
+  const active = webRows({ sessionId: 990405, sessionStatus: 'active', hasBranch: true });
+  const paused = webRows({ sessionId: 990407, sessionStatus: 'paused', hasBranch: true });
+
+  // Byte-identical labels on purpose: one selector assertion covers both
+  // staging fixtures, and the two cases cannot drift apart in the menu.
+  assert.deepEqual(active.map((i) => i.label), paused.map((i) => i.label));
+
+  // The tooltip is where the difference belongs, because it IS different:
+  // a paused session's preview and checks do not rebuild until it reopens.
+  for (const row of paused) {
+    assert.match(row.title, /reopen/i);
+    assert.match(row.title, /stays paused|catch up when you reopen/i);
+  }
+  for (const row of active) {
+    assert.doesNotMatch(row.title, /reopen/i);
+    assert.match(row.title, /rebuild/i);
+  }
+  assert.notDeepEqual(active.map((i) => i.title), paused.map((i) => i.title));
+});
+
+test('the continue tooltips say where the agent talks and what a push costs', () => {
+  for (const state of [
+    { sessionId: 1, sessionStatus: 'active', hasBranch: true },
+    { sessionId: 1, sessionStatus: 'paused', hasBranch: true },
+    { sessionId: 1, sessionStatus: 'promoted', hasBranch: true },
+  ]) {
+    for (const row of webRows(state)) {
+      // The one thing a continuation gets wrong if left implied: the agent's
+      // conversation is not this transcript.
+      assert.match(row.title, /not in this transcript/i);
+    }
+  }
+  // Votes are cleared by updating a promoted proposal and by nothing else —
+  // a session nobody has voted on has none to clear.
+  for (const row of webRows({ sessionId: 1, sessionStatus: 'promoted', hasBranch: true })) {
+    assert.match(row.title, /clears the votes/i);
+  }
+  for (const row of webRows({ sessionId: 1, sessionStatus: 'active', hasBranch: true })) {
+    assert.doesNotMatch(row.title, /vote/i);
+  }
+});
+
 test('a session already leased to a machine offers the way back instead', () => {
   const items = SessionOptions.items({
     cliAuthEnabled: true,
@@ -277,7 +391,12 @@ test('the composer paints the button statically and wires it', () => {
   // Both halves of the state come from the places that already own them.
   assert.match(DEV_CHAT_SRC, /_sessionOptionsState\(\)/);
   assert.match(DEV_CHAT_SRC, /onHandBack: \(\) => DevChat\._handBackToUsernode\(\)/);
-  assert.match(DEV_CHAT_SRC, /onFlow: \(agent\) => DevChat\._devFlowFromCredits\(agent\)/);
+  // The target id travels with the agent (#1071): without it the prepare
+  // call would open new work for a row that said "continue this session".
+  assert.match(
+    DEV_CHAT_SRC,
+    /onFlow: \(agent, targetId\) => DevChat\._devFlowFromCredits\(agent, targetId\)/
+  );
 });
 
 test('the shell loads the module and the button has styles', () => {
@@ -294,4 +413,22 @@ test('both screenshot states are declared checks', () => {
     'the instructions card has a declared check');
   assert.ok(paths.some((p) => p.includes('shot=session-options&un-platform=ios')),
     'the touch action-sheet idiom has its own check (#929)');
+});
+
+test('all three hand-off states have a declared check (#1071)', () => {
+  // One fixture per state, because the difference is entirely in the copy
+  // and no single session can show three of them.
+  const expected = [
+    ['990405', 'Continue this session with Claude Code on the web'],
+    ['990407', 'Continue this session with Claude Code on the web'],
+    ['990406', 'Continue this proposal with Claude Code on the web'],
+    ['990408', 'Start new work with Claude Code on the web'],
+  ];
+  for (const [sessionId, text] of expected) {
+    assert.ok(
+      DAPP.tests.some((t) => (t.path || '').includes(`/dev/sessions/${sessionId}`)
+        && t.expectText === text),
+      `session ${sessionId} has a check asserting "${text}"`
+    );
+  }
 });

@@ -15,12 +15,17 @@
  * Those two are genuinely different mechanisms and the copy here must keep
  * them apart:
  *
- *   • the local CLI lease (#907) CONTINUES THIS SESSION. The transcript,
- *     the branch and the proposal stay exactly where they are; the turns
- *     just execute on the user's machine and their own Claude plan.
- *   • the web walkthrough (#1049) STARTS SEPARATE WORK. It writes an
- *     app-scoped work order that comes back as its own proposal — it does
- *     not move this session anywhere.
+ *   • the local CLI lease (#907) CONTINUES THIS SESSION, conversation and
+ *     all. The transcript, the branch and the proposal stay exactly where
+ *     they are; the turns just execute on the user's machine and their own
+ *     Claude plan.
+ *   • the web walkthrough (#1049 + #1071) continues this session's CODE, or
+ *     starts separate work, depending on where the session is. With a
+ *     target it pushes the agent's commits back onto this session's own
+ *     branch (or onto the proposal the group is voting on); without one it
+ *     writes an app-scoped work order that returns as its own proposal.
+ *     Either way the agent's own conversation happens in Claude Code or
+ *     Codex — only the local option continues the transcript.
  *
  * Everything user-visible lives in this module so the menu, its header and
  * the instructions card cannot drift from each other, exactly like
@@ -56,19 +61,103 @@
     return (typeof window !== 'undefined' && window.PlatformUI) || null;
   }
 
+  // ── What a web hand-off does from HERE (#1071) ─────────────────────
+  //
+  // Three states, and only one pair of rows shows at a time. The module
+  // derives this itself rather than taking a pre-computed flag, so the one
+  // place that decides is the one place the tests drive — and so the copy
+  // and the target id cannot disagree.
+  //
+  //   'session'  — an `active` or `paused` session WITH a branch of its own.
+  //                The agent starts from that branch's head and its commits
+  //                land back on it. Paused is included because pausing is
+  //                bookkeeping, not a decision about the work: the platform
+  //                auto-pauses idle sessions on the user's behalf, so
+  //                refusing here would be arbitrary.
+  //   'proposal' — `promoted`: the session IS the proposal the group is
+  //                voting on, and the agent's commits move it — clearing the
+  //                votes it has already collected.
+  //   'new'      — anywhere else: archived (an explicit put-away, which a
+  //                push must not silently reopen), merging/merged (frozen by
+  //                definition), or a session with no branch at all.
+  //
+  // `archived` deliberately falls through to "start new work" rather than
+  // being hidden: starting new work IS available there, it is just not a
+  // continuation.
+  function webTargetKind(state) {
+    var s = state || {};
+    var status = s.sessionStatus ? String(s.sessionStatus) : '';
+    if (status === 'promoted') return 'proposal';
+    if ((status === 'active' || status === 'paused') && s.hasBranch) return 'session';
+    return 'new';
+  }
+
+  // The two web products, in menu order. Each row's tooltip is its own
+  // product sentence plus the shared consequence sentence for the state the
+  // session is in — the label is single-line by construction (the kit sets
+  // it with textContent), so every nuance has to live in the tooltip.
+  var WEB_AGENTS = [
+    {
+      id: 'claude-code',
+      agent: 'claude-code',
+      noun: 'Claude Code on the web',
+      lead: 'Claude Code on the web does the work on your own Claude plan.',
+    },
+    {
+      id: 'codex',
+      agent: 'codex',
+      noun: 'Codex',
+      lead: 'Codex does the work on the ChatGPT plan you already pay for.',
+    },
+  ];
+
+  // The verb, and the consequence sentence behind it. Keyed on the three-way
+  // state above plus — for a session — whether it is paused, which changes
+  // ONLY the tooltip: the labels are byte-identical for `active` and
+  // `paused` on purpose, so one selector assertion covers both fixtures and
+  // the two cases cannot drift apart in the menu.
+  function webVerb(kind) {
+    if (kind === 'session') return 'Continue this session with ';
+    if (kind === 'proposal') return 'Continue this proposal with ';
+    return 'Start new work with ';
+  }
+
+  function webNote(kind, paused) {
+    if (kind === 'session') {
+      return paused
+        ? 'It starts from this session\'s latest commit and pushes its work back onto this session\'s own branch — '
+          + 'the code lands on this session\'s branch, and its preview and checks catch up when you reopen the '
+          + 'session. The agent\'s own conversation happens there, not in this transcript.'
+        : 'It starts from this session\'s latest commit and pushes its work back onto this session\'s own branch — '
+          + 'the code lands here, and its preview and checks rebuild. The agent\'s own conversation happens there, '
+          + 'not in this transcript.';
+    }
+    if (kind === 'proposal') {
+      return 'It starts from this proposal\'s latest commit and pushes back onto the same proposal — submitting '
+        + 'clears the votes it has already collected and re-runs its checks. The agent\'s own conversation happens '
+        + 'there, not in this transcript.';
+    }
+    return 'Usernode prepares a task for the web agent; what it builds comes back as its own proposal, not as more '
+      + 'turns in this session.';
+  }
+
   // The menu rows, in order. `state`:
   //   hasApiKey, keyLast4          — GET /api/auth/me, mirrored on Settings
   //   cliAuthEnabled               — deployment offers /api/cli/* at all
   //   externalFlowsAvailable       — deployment can offer the web hand-offs
   //   localAgent {label, leaseId, demo}  — a machine holds this session's lease
   //   sessionId, repoUrl           — interpolated into the instructions card
+  //   sessionStatus, hasBranch     — DevChat.currentSession's status and
+  //                                  branch_name: what the web rows say and
+  //                                  whether they carry a target (#1071)
   //
   // Each row carries `kind`, which is what the caller switches on:
   //   'navigate'      → go to `hash` (a real Settings section, so the device
   //                     back gesture returns to the chat)
   //   'instructions'  → open the CLI card (openInstructions below)
   //   'hand-back'     → release the lease, turns come back to Usernode
-  //   'flow'          → start the #1049 walkthrough for `agent`
+  //   'flow'          → start the #1049 walkthrough for `agent`, against
+  //                     `targetId` when there is something to continue
   function items(state) {
     var s = state || {};
     var out = [];
@@ -112,23 +201,28 @@
       });
     }
 
-    // #1049. Deliberately worded as NEW work: the walkthrough writes an
-    // app-scoped work order that returns as its own proposal. It does not
-    // move this session, and copy that implied it would be a lie.
+    // #1049 + #1071. What the walkthrough DOES depends on where this session
+    // is, so the labels change with it — in a session still being built, or
+    // a proposal the group is voting on, "start new work" is almost never
+    // what someone means, so the continue pair REPLACES it rather than
+    // sitting beside it. `targetId` is the session the agent's commits land
+    // on, or null when the hand-off genuinely starts something separate.
     if (s.externalFlowsAvailable) {
-      out.push({
-        id: 'claude-code',
-        kind: 'flow',
-        agent: 'claude-code',
-        label: 'Start new work with Claude Code on the web',
-        title: 'Usernode writes a work order, Claude Code on the web builds it on your own Claude plan, and the result comes back as its own proposal. This session stays as it is.',
-      });
-      out.push({
-        id: 'codex',
-        kind: 'flow',
-        agent: 'codex',
-        label: 'Start new work with Codex',
-        title: 'The same hand-off for Codex and the ChatGPT plan you already pay for. The result comes back as its own proposal — this session stays as it is.',
+      var kind = webTargetKind(s);
+      var paused = String(s.sessionStatus || '') === 'paused';
+      var verb = webVerb(kind);
+      var note = webNote(kind, paused);
+      var targetId = kind === 'new' ? null : (s.sessionId == null ? null : s.sessionId);
+      WEB_AGENTS.forEach(function (web) {
+        out.push({
+          id: web.id,
+          kind: 'flow',
+          agent: web.agent,
+          targetKind: kind,
+          targetId: targetId,
+          label: verb + web.noun,
+          title: web.lead + ' ' + note,
+        });
       });
     }
 
@@ -311,7 +405,7 @@
         return;
       }
       if (item.kind === 'flow') {
-        if (typeof o.onFlow === 'function') o.onFlow(item.agent);
+        if (typeof o.onFlow === 'function') o.onFlow(item.agent, item.targetId);
       }
     }
 
@@ -333,6 +427,7 @@
   var SessionOptions = {
     SETTINGS_HASHES: SETTINGS_HASHES,
     items: items,
+    webTargetKind: webTargetKind,
     headerHtml: headerHtml,
     commands: commands,
     instructionsHtml: instructionsHtml,
