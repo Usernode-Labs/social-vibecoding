@@ -817,7 +817,7 @@ const AdminConsole = {
       <div class="${AdminUI.card} p-4">
         <div class="flex items-center justify-between mb-3">
           <h2 class="${AdminUI.cardTitle}">Featured apps</h2>
-          <button id="admin-featured-refresh" class="text-xs text-zinc-400 hover:text-violet-400">Refresh</button>
+          <button id="admin-featured-refresh" class="${AdminUI.btn.link} text-xs">Refresh</button>
         </div>
         <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
           These apps appear in the &ldquo;Featured apps&rdquo; row on everyone&rsquo;s
@@ -835,7 +835,7 @@ const AdminConsole = {
           </select>
           <button id="admin-featured-add" class="px-3 py-1.5 rounded-md bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-sm">Add</button>
           <span class="flex-1"></span>
-          <button id="admin-featured-save" class="px-3 py-1.5 rounded-md bg-violet-600 hover:bg-violet-500 text-white text-sm disabled:opacity-50" disabled>Save</button>
+          <button id="admin-featured-save" class="${AdminUI.btn.primary} disabled:opacity-50" disabled>Save</button>
         </div>
         <p id="admin-featured-status" class="mt-2 text-xs text-zinc-500"></p>
         ` : `
@@ -1024,7 +1024,7 @@ const AdminConsole = {
       <div class="${AdminUI.card} p-4">
         <div class="flex items-center justify-between mb-3">
           <h2 class="${AdminUI.cardTitle}">Container rollover</h2>
-          <button id="admin-refresh-rollover" class="text-xs text-zinc-400 hover:text-violet-400">Refresh</button>
+          <button id="admin-refresh-rollover" class="${AdminUI.btn.link} text-xs">Refresh</button>
         </div>
         <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-2">
           Recreates every running app container so it picks up the environment
@@ -1054,7 +1054,7 @@ const AdminConsole = {
         </div>
         ${canWrite ? `
         <button id="admin-rollover-btn"
-          class="rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:hover:bg-violet-600 px-4 py-2 text-sm font-medium text-white transition-colors">
+          class="${AdminUI.btn.primary} disabled:opacity-50 disabled:hover:bg-violet-600">
           Roll over all app containers
         </button>` : `
         <p class="text-xs text-zinc-500">View-only admin — you can watch a rollover, but not start one.</p>`}
@@ -1256,7 +1256,7 @@ const AdminConsole = {
       <div class="${AdminUI.card} p-4">
         <div class="flex items-center justify-between mb-3">
           <h2 class="${AdminUI.cardTitle}">Stale previews</h2>
-          <button id="admin-refresh-reap" class="text-xs text-zinc-400 hover:text-violet-400">Refresh</button>
+          <button id="admin-refresh-reap" class="${AdminUI.btn.link} text-xs">Refresh</button>
         </div>
         <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-2">
           Shuts down every proposal preview that is still running. A preview's
@@ -1294,7 +1294,7 @@ const AdminConsole = {
         <p id="admin-reap-automatic" class="text-xs text-zinc-500 mb-4"></p>
         ${canWrite ? `
         <button id="admin-reap-btn"
-          class="rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:hover:bg-violet-600 px-4 py-2 text-sm font-medium text-white transition-colors">
+          class="${AdminUI.btn.primary} disabled:opacity-50 disabled:hover:bg-violet-600">
           Shut down stale previews
         </button>` : `
         <p class="text-xs text-zinc-500">View-only admin — you can watch a sweep, but not start one.</p>`}
@@ -1510,7 +1510,7 @@ const AdminConsole = {
       <div class="${AdminUI.card} p-4">
         <div class="flex items-center justify-between mb-3">
           <h2 class="${AdminUI.cardTitle}">Operations</h2>
-          <button id="admin-refresh-overview" class="text-xs text-zinc-400 hover:text-violet-400">Refresh</button>
+          <button id="admin-refresh-overview" class="${AdminUI.btn.link} text-xs">Refresh</button>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
           <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
@@ -2449,8 +2449,8 @@ const AdminConsole = {
               <option value="closed">Closed</option>
               <option value="completed">Shipped</option>
             </select>
-            <button id="admin-features-refresh" class="text-xs text-zinc-400 hover:text-violet-400 px-1 py-1">Refresh</button>
-            <button id="admin-features-csv" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1 text-xs font-medium text-white transition-colors">Download CSV</button>
+            <button id="admin-features-refresh" class="${AdminUI.btn.link} text-xs px-1 py-1">Refresh</button>
+            <button id="admin-features-csv" class="${AdminUI.btn.primarySm}">Download CSV</button>
           </div>
         </div>
         <p id="admin-features-summary" class="text-xs text-zinc-500 mb-3"></p>
@@ -2689,7 +2689,7 @@ const AdminConsole = {
         <div class="${AdminUI.card} p-4">
           <div class="flex flex-wrap items-center justify-between gap-3">
             <p id="admin-db-export-target" class="text-sm text-zinc-500">Loading…</p>
-            <button id="admin-db-export-refresh" class="text-xs text-zinc-400 hover:text-violet-400 px-1 py-1">Refresh</button>
+            <button id="admin-db-export-refresh" class="${AdminUI.btn.link} text-xs px-1 py-1">Refresh</button>
           </div>
           <div class="mt-3">
             ${canWrite
