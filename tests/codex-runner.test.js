@@ -18,16 +18,19 @@ const CLAUDE_RUNNER = path.join(__dirname, '..', 'worker', 'run-cc.sh');
 
 test('worker runtime contract invalidates warm images from before the new runners', () => {
   const dockerfile = fs.readFileSync(path.join(__dirname, '..', 'worker', 'Dockerfile'), 'utf8');
+  const workerRun = fs.readFileSync(path.join(__dirname, '..', 'worker', 'worker-run.sh'), 'utf8');
   const workerHost = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'worker.js'), 'utf8');
   assert.match(dockerfile, /COPY classify-codex-resume\.js \/usr\/local\/bin\/classify-codex-resume\.js/);
 
   const match = workerHost.match(/const WORKER_BOOTSTRAP_ENV_VERSION = '(v\d+)'/);
   assert.ok(match, 'warm-worker contract version is declared');
-  assert.ok(Number(match[1].slice(1)) >= 4,
-    'v3 containers predate the capability-scoped runners and must be evicted');
+  assert.ok(Number(match[1].slice(1)) >= 5,
+    'v4 containers carry the unsafe Codex config writer and must be evicted');
   assert.match(workerHost,
     /labels\['usernode\.proxy'\] !== WORKER_BOOTSTRAP_ENV_VERSION/,
     'the warm path compares the persisted container contract label');
+  assert.match(workerRun, /rm -f \/home\/node\/\.claude\/codex-home\/config\.toml/,
+    'a fixed bootstrap removes the v4-generated config from the persistent volume');
 });
 
 function makeEnv(run) {
@@ -172,6 +175,56 @@ exit 1
   assert.doesNotMatch(r.stdout, /agent_retry_fresh=1/);
   const invocations = fs.readFileSync(env.INVOKE_LOG, 'utf8').trim().split('\n').filter(Boolean);
   assert.equal(invocations.length, 1);
+});
+
+test('runner: generated config is deterministic TOML and never expands the worker environment', () => {
+  const fakeCodex = `#!/bin/sh
+cat >/dev/null
+exit 1
+`;
+  const { env } = makeEnv(fakeCodex);
+  env.MODE = 'build';
+  env.AGENT_REASONING_EFFORT = 'medium';
+  env.CONFIG_INJECTION_SENTINEL = 'must-never-enter-codex-config';
+  // Let build mode reach the shared config writer without needing a real
+  // remote branch. Codex exits non-zero immediately afterward, before the
+  // runner's commit/push block.
+  const fakeGit = path.join(env.PATH.split(path.delimiter)[0], 'git');
+  fs.writeFileSync(fakeGit, '#!/bin/sh\nexit 0\n');
+  fs.chmodSync(fakeGit, 0o755);
+
+  // A non-zero fake Codex keeps this focused on the real runner's
+  // config-generation path; config generation is shared by scout/build.
+  const r = spawnSync('sh', [RUNNER], { env, encoding: 'utf8' });
+  assert.notEqual(r.status, 0);
+
+  const config = fs.readFileSync(path.join(env.CODEX_HOME, 'config.toml'), 'utf8');
+  assert.equal(config, [
+    'model_provider = "usernode_openrouter"',
+    'model = "openai/gpt-5.3-codex"',
+    'model_reasoning_effort = "medium"',
+    '',
+    'sandbox_mode = "workspace-write"',
+    'approval_policy = "never"',
+    '',
+    '[shell_environment_policy]',
+    'exclude = ["OPENROUTER_API_KEY"]',
+    '',
+    '[agents]',
+    'enabled = false',
+    '',
+    '[model_providers.usernode_openrouter]',
+    'name = "OpenRouter"',
+    'base_url = "https://openrouter.ai/api/v1"',
+    'wire_api = "responses"',
+    'env_key = "OPENROUTER_API_KEY"',
+    '',
+  ].join('\n'));
+  assert.doesNotMatch(config, /CONFIG_INJECTION_SENTINEL|must-never-enter-codex-config/);
+  assert.doesNotMatch(config, /sk-or-v1-test/,
+    'the provider credential is never persisted into the generated config');
+  assert.equal(fs.statSync(path.join(env.CODEX_HOME, 'config.toml')).mode & 0o777, 0o600,
+    'the generated config remains private to the worker user');
 });
 
 test('runner: exact OpenRouter key is redacted before streamed JSONL', () => {
