@@ -13,6 +13,13 @@
 // its own tab state (_setSub/_syncHash) — so admin-console.js's existing
 // single-level setSection/_writeHash needed no changes at all.
 //
+// Season events extends that address with the two screens nested under it:
+// #admin/seasons/season-events/<eventId> is "managing this event's
+// challenges", and .../new-challenge[/<templateId>] is its Add-challenge
+// form, on that template, already filled in. app.js hands this module
+// everything after #admin/<section>, so those segments cost it nothing;
+// _readSeasonEventsDeepLink() parses them and _syncHash() writes them back.
+//
 // NAMING: the section was called "Topochain" until the rename, and the
 // canonical route is now #admin/seasons/<sub> (the Seasons tab itself is
 // #admin/seasons/seasons). #admin/topochain/<sub> is a PERMANENT alias:
@@ -475,6 +482,14 @@ const AdminTopochain = {
     return `<div class="grid gap-4 ${wide}">${innerHtml}</div>`;
   },
 
+  // A labelled rule between groups of fields inside one form panel. The
+  // long forms (challenge template, add challenge) are otherwise a wall
+  // of inputs in which "which of these is the CTA?" has to be answered
+  // by reading every label.
+  _formSection(label) {
+    return `<p class="mt-5 mb-3 border-t border-gray-200 dark:border-gray-800 pt-4 text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">${AdminTopochain.esc(label)}</p>`;
+  },
+
   // Save / Cancel pair for a _panel footer, in that visual order with
   // the primary first so it is under the thumb on a phone.
   _formActions(saveId, cancelId, saveLabel) {
@@ -682,6 +697,10 @@ const AdminTopochain = {
   render(host) {
     AdminTopochain._host = host;
     const sub = AdminTopochain._subFromHash() || AdminTopochain._sub || 'seasons';
+    // Season events owns two more segments (the event being managed, and
+    // its Add-challenge form). They are read BEFORE the first paint so a
+    // deep link opens that screen directly instead of the event list.
+    AdminTopochain._readSeasonEventsDeepLink(sub);
     AdminTopochain.setSub(sub);
   },
 
@@ -702,6 +721,30 @@ const AdminTopochain = {
   _subFromHash() {
     const m = /^#admin\/(?:seasons|topochain)\/([^/]+)/.exec(location.hash);
     return m ? decodeURIComponent(m[1]) : null;
+  },
+
+  // The Season-events tail: #admin/seasons/season-events/<eventId>
+  // [/new-challenge[/<templateId>]]. Reading it here is what makes the
+  // nested screens addressable — before this, "manage this event" and
+  // "add a challenge from this template" could only be reached by
+  // clicking, so neither could be linked, bookmarked or screenshotted.
+  // Absent segments RESET the state rather than leaving whatever the last
+  // visit left behind: the address is the source of truth on entry.
+  _readSeasonEventsDeepLink(sub) {
+    if (sub !== 'season-events') return;
+    const m = /^#admin\/(?:seasons|topochain)\/season-events\/(\d+)(\/new-challenge(?:\/(\d+))?)?/
+      .exec(location.hash);
+    AdminTopochain._se.detailId = m ? parseInt(m[1], 10) : null;
+    AdminTopochain._ch.open = !!(m && m[2]);
+    AdminTopochain._ch.pendingTemplateId = (m && m[3]) || null;
+    // The picked template is adopted from the address too, not just
+    // remembered as "pending". _syncHash runs during the event-detail
+    // render — before the form (and its picker) exist — so leaving the
+    // PREVIOUS visit's templateId in place here lets that early sync
+    // overwrite the address we are in the middle of reading, and the
+    // re-render then reads its own stale value back. Deriving both from
+    // the hash makes the whole path idempotent.
+    AdminTopochain._ch.templateId = (m && m[3]) || '';
   },
 
   _groupOf(sub) {
@@ -749,7 +792,18 @@ const AdminTopochain = {
   // accepted as a starting point and rewritten to the canonical one, so
   // an old bookmark self-heals even if it somehow bypassed app.js.
   _syncHash() {
-    const target = `#admin/seasons/${AdminTopochain._sub}`;
+    let target = `#admin/seasons/${AdminTopochain._sub}`;
+    // Season events' nested screens extend the address rather than
+    // hiding behind it (see _readSeasonEventsDeepLink). The template id
+    // is part of it because a prefilled form is a STATE — without the
+    // segment the same URL reopens an empty one.
+    if (AdminTopochain._sub === 'season-events' && AdminTopochain._se.detailId != null) {
+      target += `/${AdminTopochain._se.detailId}`;
+      if (AdminTopochain._ch.open) {
+        target += '/new-challenge';
+        if (AdminTopochain._ch.templateId) target += `/${AdminTopochain._ch.templateId}`;
+      }
+    }
     const h = location.hash;
     if ((h.startsWith('#admin/seasons') || h.startsWith('#admin/topochain')) && h !== target) {
       history.replaceState(null, '', target);
@@ -1280,6 +1334,8 @@ const AdminTopochain = {
     }) + AdminTopochain._pagerHtml(s.meta, 'admin-topo-se-pg');
     table.querySelectorAll('[data-manage]').forEach((b) => b.addEventListener('click', () => {
       AdminTopochain._se.detailId = parseInt(b.dataset.manage, 10);
+      AdminTopochain._ch.open = false;
+      AdminTopochain._syncHash();
       AdminTopochain._renderSub();
     }));
     table.querySelectorAll('[data-edit]').forEach((b) => b.addEventListener('click', () => AdminTopochain._openSeasonEventForm(parseInt(b.dataset.edit, 10))));
@@ -1433,9 +1489,20 @@ const AdminTopochain = {
       <div id="admin-topo-ch-table">${AdminTopochain._skeleton(4)}</div>`;
     document.getElementById('admin-topo-se-back').addEventListener('click', () => {
       AdminTopochain._se.detailId = null;
+      AdminTopochain._ch.open = false;
+      AdminTopochain._syncHash();
       AdminTopochain._renderSub();
     });
     document.getElementById('admin-topo-ch-new')?.addEventListener('click', () => AdminTopochain._openChallengeForm(null));
+    // A /new-challenge deep link (and a re-render while the form is open)
+    // reopens it, on the template the address names. Gated by canWrite
+    // like the button itself — _openChallengeForm returns early for a
+    // view-only admin, so the segment is simply inert for them.
+    if (AdminTopochain._ch.open) {
+      const pending = AdminTopochain._ch.pendingTemplateId;
+      AdminTopochain._ch.pendingTemplateId = null;
+      AdminTopochain._openChallengeForm(null, { templateId: pending });
+    }
 
     const { ok, data, status } = await AdminTopochain.fetchJson(`/api/v4/admin/season-events/${encodeURIComponent(id)}`);
     const hero = document.getElementById('admin-topo-se-detail-hero');
@@ -1625,32 +1692,137 @@ const AdminTopochain = {
     else AdminTopochain._alert((data && data.error) || 'Move failed.');
   },
 
-  async _openChallengeForm(challengeId) {
-    if (!AdminTopochain.canWrite()) return;
+  // ── Challenge form state + the template-driven prefill ──────────────
+  //
+  // `templates` caches the FULL template objects behind the picker (the
+  // options only carry an id and a label, and the prefill needs every
+  // field). `open` and `templateId` are what _syncHash writes into the
+  // address; `pendingTemplateId` is what a deep link asked for, spent
+  // once by the form that opens.
+  _ch: {
+    templates: [], templateId: '', open: false, pendingTemplateId: null,
+  },
+
+  // Every field the Add-challenge form fills from the picked template.
+  // `id` is BOTH the `admin-topo-ch-f-<id>` input suffix and the key on
+  // the template projection (formatTemplate in
+  // src/routes/topochain/challenge-view.js) — which is also the key the
+  // POST body writes back, so one list drives the render, the prefill
+  // and the save and they cannot drift apart. `type` is only about how
+  // the value crosses the DOM boundary.
+  _CH_TEMPLATE_FIELDS: [
+    { id: 'goal' }, { id: 'reward' }, { id: 'kind' },
+    { id: 'schedule_start', type: 'date' }, { id: 'schedule_end', type: 'date' },
+    { id: 'cta_button' }, { id: 'cta_label' }, { id: 'cta_type' }, { id: 'cta_link' },
+    { id: 'mobile_cta_label' }, { id: 'mobile_cta_type' }, { id: 'mobile_cta_link' },
+    { id: 'metric_type' }, { id: 'metric_label' }, { id: 'metric_target', type: 'number' },
+    { id: 'task' }, { id: 'description' }, { id: 'requirements' }, { id: 'reward_logic' },
+  ],
+
+  // The subset the EDIT form shows and saves. The challenges list is the
+  // only source an edit has, and it reports back exactly the override
+  // keys (buildChallengeListItem's `overrides`) — so the edit form stays
+  // on them. Rendering the rest there would show the TEMPLATE's values
+  // in fields that save as challenge-level overrides, quietly freezing
+  // them into the event on the next save.
+  _CH_EDIT_FIELDS: ['goal', 'reward', 'kind', 'task', 'description'],
+
+  // Write one value into a live control AND into the markup that
+  // serialises it: `.value` alone leaves the DOM's own attributes still
+  // showing the empty form, so a prefilled field is invisible to
+  // anything reading attributes (a snapshot, a selector assertion).
+  // Default value first, live value last, so the live one wins whatever
+  // the element type does with the other.
+  _setFieldValue(el, value) {
+    if (el.tagName === 'TEXTAREA') el.textContent = value;
+    else if (el.tagName === 'SELECT') {
+      Array.from(el.options || []).forEach((o) => {
+        if (String(o.value) === String(value)) o.setAttribute('selected', 'selected');
+        else o.removeAttribute('selected');
+      });
+    } else el.setAttribute('value', value);
+    el.value = value;
+  },
+
+  // Fill the whole Add-challenge form from one template. Runs on EVERY
+  // `change` of the picker, not just the first, and writes every field
+  // in _CH_TEMPLATE_FIELDS unconditionally: a template that leaves a
+  // field null clears the input rather than skipping it, so nothing the
+  // previously-picked template put there can survive the switch. Fields
+  // the template has no say in (display order) are the operator's and
+  // are deliberately left alone.
+  _applyChallengeTemplate(templateId) {
+    const t = AdminTopochain._templateById(templateId);
+    AdminTopochain._ch.templateId = t ? String(t.id) : '';
+    for (const f of AdminTopochain._CH_TEMPLATE_FIELDS) {
+      const el = document.getElementById(`admin-topo-ch-f-${f.id}`);
+      if (!el) continue;
+      AdminTopochain._setFieldValue(el, AdminTopochain._templateFieldText(t, f));
+    }
+    const host = document.getElementById('admin-topo-ch-form');
+    if (host) host.dataset.templateApplied = AdminTopochain._ch.templateId;
+    AdminTopochain._syncHash();
+  },
+
+  _templateById(templateId) {
+    return (AdminTopochain._ch.templates || [])
+      .find((x) => String(x.id) === String(templateId)) || null;
+  },
+
+  // What one template field looks like IN the form. Shared by the fill and
+  // by the save below, which compares against it — if these two ever
+  // disagreed, every untouched field would read as operator-edited.
+  _templateFieldText(t, f) {
+    const raw = t ? t[f.id] : null;
+    if (raw == null) return '';
+    return f.type === 'date' ? AdminTopochain._isoToLocalInput(raw) : String(raw);
+  },
+
+  async _openChallengeForm(challengeId, opts = {}) {
+    if (!AdminTopochain.canWrite()) {
+      // Keeps a view-only admin's address honest: the /new-challenge
+      // segment can be typed, but nothing opens, so it must not persist.
+      AdminTopochain._ch.open = false;
+      AdminTopochain._ch.templateId = '';
+      AdminTopochain._syncHash();
+      return;
+    }
     const eventId = AdminTopochain._se.detailId;
     const existing = challengeId != null ? (AdminTopochain._challenges || []).find((c) => String(c.id) === String(challengeId)) : null;
     const f = AdminTopochain._inputHtml, sel = AdminTopochain._selectHtml, field = AdminTopochain._field;
-    const host = document.getElementById('admin-topo-ch-form');
+    const section = AdminTopochain._formSection;
+    let host = document.getElementById('admin-topo-ch-form');
+    if (!host) return;
 
     let templateOptions = [];
+    AdminTopochain._ch.templates = [];
+    // Held across the await below, so the address keeps naming the template
+    // this form is opening WITH rather than briefly falling back to none.
+    AdminTopochain._ch.templateId = opts.templateId == null ? '' : String(opts.templateId);
+    AdminTopochain._ch.open = !existing;
     if (!existing) {
       const { ok, data } = await AdminTopochain.fetchJson(
         `/api/v4/admin/season-events/${encodeURIComponent(eventId)}/challenges/available-activity-types`);
       if (ok && data?.success) {
+        // The full rows are kept, not just the option pair: they ARE the
+        // prefill source.
+        AdminTopochain._ch.templates = data.data;
         templateOptions = data.data.map((t) => ({ value: t.id, label: `${t.category}: ${t.goal}` }));
       }
+      // The event detail may have re-rendered while that request was in
+      // flight (a deep link renders it twice), which detaches the div we
+      // captured. Writing the form into the orphan would leave no buttons
+      // in the document and throw on the wiring below, so re-resolve and
+      // let the newer call own the screen.
+      host = document.getElementById('admin-topo-ch-form');
+      if (!host) return;
     }
     const ov = existing?.overrides || {};
-    host.innerHTML = AdminTopochain._panel({
-      title: existing ? 'Edit challenge' : 'Add challenge',
-      subtitle: existing
-        ? 'Overrides apply to this event only; the template is untouched.'
-        : 'Pick a template, then override anything that should differ for this event.',
-      closeId: 'admin-topo-ch-close',
-      closeLabel: 'Close the challenge form',
-      body: `
-        ${existing ? '' : `<div class="mb-4">${field('Challenge template *', sel('admin-topo-ch-f-template', templateOptions, '', { blank: 'Choose a template…' }),
-    templateOptions.length ? undefined : 'No unused Challenge templates are available for this event — create one in the Challenge templates tab first.')}</div>`}
+    const ctaOptions = ['', 'url', 'app'].map((v) => ({ value: v, label: v || '(none)' }));
+    // Two bodies, because the two modes have different sources of truth:
+    // create fills from the template (so it shows everything the template
+    // defines), edit shows the per-event overrides the API reports back.
+    const editBody = `
         ${AdminTopochain._formGrid(`
           ${field('Goal override', f('admin-topo-ch-f-goal', { value: ov.goal }))}
           ${field('Reward override', f('admin-topo-ch-f-reward', { value: ov.reward }))}
@@ -1661,10 +1833,74 @@ const AdminTopochain = {
           ${field('Task override', AdminTopochain._textareaHtml('admin-topo-ch-f-task', ov.task || '', 3))}
           ${field('Description override', AdminTopochain._textareaHtml('admin-topo-ch-f-description', ov.description || '', 3))}
         </div>
-        ${AdminTopochain._formErrorSlot('admin-topo-ch-form-err')}`,
+        ${AdminTopochain._formErrorSlot('admin-topo-ch-form-err')}`;
+    const createBody = `
+        <div class="mb-4">${field('Challenge template *',
+    sel('admin-topo-ch-f-template', templateOptions, '', { blank: 'Choose a template…' }),
+    templateOptions.length
+      ? 'Picking a template fills in every field below with its values; switching template fills them in again.'
+      : 'No unused Challenge templates are available for this event — create one in the Challenge templates tab first.')}</div>
+        ${AdminTopochain._formGrid(`
+          ${field('Goal', f('admin-topo-ch-f-goal'))}
+          ${field('Reward', f('admin-topo-ch-f-reward'))}
+          ${field('Kind', f('admin-topo-ch-f-kind'), 'No admin listing endpoint exists for Kinds (documented gap) — must match an existing challenge_kinds id.')}
+          ${field('Display order', f('admin-topo-ch-f-display_order', { type: 'number', min: 0, value: 0 }), 'Not part of a template — where this challenge sits in the event.')}
+          ${field('Schedule start', f('admin-topo-ch-f-schedule_start', { type: 'datetime-local' }))}
+          ${field('Schedule end', f('admin-topo-ch-f-schedule_end', { type: 'datetime-local' }))}
+        `)}
+        ${section('Call to action')}
+        ${AdminTopochain._formGrid(`
+          ${field('CTA button label', f('admin-topo-ch-f-cta_button'))}
+          ${field('CTA label', f('admin-topo-ch-f-cta_label'))}
+          ${field('CTA type', sel('admin-topo-ch-f-cta_type', ctaOptions, ''))}
+          ${field('CTA link', f('admin-topo-ch-f-cta_link'))}
+          ${field('Mobile CTA label', f('admin-topo-ch-f-mobile_cta_label'))}
+          ${field('Mobile CTA type', sel('admin-topo-ch-f-mobile_cta_type', ctaOptions, ''))}
+          ${field('Mobile CTA link', f('admin-topo-ch-f-mobile_cta_link'))}
+        `)}
+        ${section('Metric')}
+        ${AdminTopochain._formGrid(`
+          ${field('Metric type', f('admin-topo-ch-f-metric_type'))}
+          ${field('Metric label', f('admin-topo-ch-f-metric_label'))}
+          ${field('Metric target', f('admin-topo-ch-f-metric_target', { type: 'number', step: '0.01' }))}
+        `, 3)}
+        ${section('Copy')}
+        <div class="grid grid-cols-1 gap-4">
+          ${field('Task', AdminTopochain._textareaHtml('admin-topo-ch-f-task', '', 3))}
+          ${field('Description', AdminTopochain._textareaHtml('admin-topo-ch-f-description', '', 3))}
+          ${field('Requirements', AdminTopochain._textareaHtml('admin-topo-ch-f-requirements', '', 3))}
+          ${field('Reward logic', AdminTopochain._textareaHtml('admin-topo-ch-f-reward_logic', '', 3))}
+        </div>
+        ${AdminTopochain._formErrorSlot('admin-topo-ch-form-err')}`;
+    host.innerHTML = AdminTopochain._panel({
+      title: existing ? 'Edit challenge' : 'Add challenge',
+      subtitle: existing
+        ? 'Overrides apply to this event only; the template is untouched.'
+        : 'Pick a template to fill the form in, then change anything that should differ for this event. Nothing here is written back to the template.',
+      closeId: 'admin-topo-ch-close',
+      closeLabel: 'Close the challenge form',
+      body: existing ? editBody : createBody,
       footer: AdminTopochain._formActions('admin-topo-ch-save', 'admin-topo-ch-cancel', 'Save challenge'),
     });
-    const closeForm = () => { host.innerHTML = ''; };
+    const closeForm = () => {
+      host.innerHTML = '';
+      AdminTopochain._ch.open = false;
+      AdminTopochain._ch.templateId = '';
+      AdminTopochain._syncHash();
+    };
+    if (!existing) {
+      const picker = document.getElementById('admin-topo-ch-f-template');
+      picker?.addEventListener('change', (e) => AdminTopochain._applyChallengeTemplate(e.target.value));
+      // A deep-linked template is applied exactly as if it had just been
+      // picked, so the address and the form always agree.
+      const pre = opts.templateId == null ? '' : String(opts.templateId);
+      if (picker && pre && AdminTopochain._ch.templates.some((t) => String(t.id) === pre)) {
+        AdminTopochain._setFieldValue(picker, pre);
+        AdminTopochain._applyChallengeTemplate(pre);
+      } else {
+        AdminTopochain._syncHash();
+      }
+    }
     document.getElementById('admin-topo-ch-save').addEventListener('click', () => AdminTopochain._saveChallenge(eventId, challengeId));
     document.getElementById('admin-topo-ch-cancel').addEventListener('click', closeForm);
     document.getElementById('admin-topo-ch-close').addEventListener('click', closeForm);
@@ -1674,18 +1910,33 @@ const AdminTopochain = {
     if (!AdminTopochain.canWrite()) return;
     const errEl = document.getElementById('admin-topo-ch-form-err');
     errEl.classList.add('hidden');
-    const val = (id) => document.getElementById(id)?.value ?? '';
-    const body = {
-      goal: val('admin-topo-ch-f-goal').trim() || null,
-      reward: val('admin-topo-ch-f-reward').trim() || null,
-      kind: val('admin-topo-ch-f-kind').trim() || null,
-      task: val('admin-topo-ch-f-task').trim() || null,
-      description: val('admin-topo-ch-f-description').trim() || null,
-      display_order: Number(val('admin-topo-ch-f-display_order') || 0),
-    };
+    const val = (id) => (document.getElementById(`admin-topo-ch-f-${id}`)?.value ?? '').trim();
+    const isCreate = challengeId == null;
+    const body = { display_order: Number(val('display_order') || 0) };
+    // These columns are per-event OVERRIDES of the template, and null means
+    // "keep inheriting". So create sends only what the operator actually
+    // changed away from the prefilled value: a field left exactly as the
+    // template filled it stays null and keeps tracking the template, which
+    // is what a challenge created before the prefill existed did. Sending
+    // the whole form back would freeze a copy of the template into every
+    // new challenge and quietly stop later template edits reaching it.
+    // Edit stays on _CH_EDIT_FIELDS — the only values that form was given,
+    // hence the only ones it may write.
+    const tpl = isCreate ? AdminTopochain._templateById(AdminTopochain._ch.templateId) : null;
+    for (const fld of AdminTopochain._CH_TEMPLATE_FIELDS) {
+      if (!isCreate && !AdminTopochain._CH_EDIT_FIELDS.includes(fld.id)) continue;
+      const raw = val(fld.id);
+      if (isCreate && raw === AdminTopochain._templateFieldText(tpl, fld).trim()) {
+        body[fld.id] = null;
+        continue;
+      }
+      if (fld.type === 'date') body[fld.id] = AdminTopochain._localInputToIso(raw);
+      else if (fld.type === 'number') body[fld.id] = raw === '' ? null : Number(raw);
+      else body[fld.id] = raw || null;
+    }
     let url = `/api/v4/admin/season-events/${encodeURIComponent(eventId)}/challenges`;
     let method = 'POST';
-    if (challengeId == null) {
+    if (isCreate) {
       const templateId = document.getElementById('admin-topo-ch-f-template')?.value;
       if (!templateId) { errEl.textContent = 'Choose a challenge template.'; errEl.classList.remove('hidden'); return; }
       body.challenge_template_id = parseInt(templateId, 10);
@@ -1700,6 +1951,9 @@ const AdminTopochain = {
       return;
     }
     document.getElementById('admin-topo-ch-form').innerHTML = '';
+    AdminTopochain._ch.open = false;
+    AdminTopochain._ch.templateId = '';
+    AdminTopochain._syncHash();
     AdminTopochain._loadChallenges(eventId);
   },
 
@@ -2857,7 +3111,7 @@ const AdminTopochain = {
     const f = AdminTopochain._inputHtml, sel = AdminTopochain._selectHtml, field = AdminTopochain._field;
     const ctaOptions = ['', 'url', 'app'].map((v) => ({ value: v, label: v || '(none)' }));
     const host = document.getElementById('admin-topo-tpl-form');
-    const section = (label) => `<p class="mt-5 mb-3 border-t border-gray-200 dark:border-gray-800 pt-4 text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">${AdminTopochain.esc(label)}</p>`;
+    const section = AdminTopochain._formSection;
     host.innerHTML = AdminTopochain._panel({
       title: id == null ? 'New challenge template' : `Edit template #${AdminTopochain.esc(id)}`,
       subtitle: 'What the challenge asks for, what it rewards, and how it is presented.',

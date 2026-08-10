@@ -1587,6 +1587,18 @@
       "expectSelector": "#admin-topo-se-season-filter"
     },
     {
+      "name": "Admin Season events deep-links one event's challenges screen",
+      "path": "/#admin/seasons/season-events/900504",
+      "expectSelector": "#admin-topo-se-detail-hero ~ #admin-topo-ch-table",
+      "expectText": "Unfilled Sprint"
+    },
+    {
+      "name": "Admin Add-challenge deep link lands on the challenges screen",
+      "path": "/#admin/seasons/season-events/900504/new-challenge/900501",
+      "expectSelector": "#admin-topo-ch-table",
+      "expectText": "Unfilled Sprint"
+    },
+    {
       "name": "Admin API tester offers an endpoint select instead of one placeholder path",
       "path": "/#admin/seasons/api-tester",
       "expectSelector": "select#admin-topo-api-endpoint"
