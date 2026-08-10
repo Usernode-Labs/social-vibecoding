@@ -168,7 +168,7 @@ test('the header back/home control is a real anchor', () => {
   assert.match(inner, /id="back-icon-home"/, 'the house icon');
   assert.match(inner, /id="back-icon-arrow"/, 'the chevron');
   assert.match(html, /<div class="w-5 h-7 shrink-0 flex items-center">/,
-    'the fixed 20x28 wrapper header-layout.js measures must not change');
+    'the fixed 20x28 wrapper the header-layout hook measures must not change');
 });
 
 test('the header click handler guards before it preventDefaults', () => {

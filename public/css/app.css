@@ -4850,7 +4850,8 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
    from the right when the right group eats its width). When there's
    enough horizontal room for it to be perfectly viewport-centered
    without overlapping the back-btn area or the right group,
-   public/js/header-layout.js toggles `.is-centered` and the title flips
+   frontend/src/features/header/use-header-layout.ts toggles `.is-centered`
+   (it was public/js/header-layout.js) and the title flips
    to absolute positioning at exactly 50% of the header. The user-facing
    contract is: "centered if room, left-aligned otherwise". No
    in-between state where the title is truncated *while* centered. */

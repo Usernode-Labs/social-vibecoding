@@ -23,8 +23,9 @@ const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
 const appJs = read('public/js/app.js');
-const nodePillJs = read('public/js/node-pill.js');
-const walletSheetJs = read('public/js/wallet-sheet.js');
+// #1079 chunk B moved both modules into the React bundle; same files.
+const nodePillJs = read('frontend/src/features/header/node-pill.js');
+const walletSheetJs = read('frontend/src/features/header/wallet-sheet.js');
 const dapp = JSON.parse(read('dapp.json'));
 
 // The App._entryTransition body.

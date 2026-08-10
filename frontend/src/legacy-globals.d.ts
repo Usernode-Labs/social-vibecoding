@@ -31,5 +31,22 @@ declare global {
       open: boolean;
       [key: string]: unknown;
     };
+    /** features/header/node-pill.js */
+    NodePill?: {
+      init(): Promise<void>;
+      [key: string]: unknown;
+    };
+    /** features/header/wallet-sheet.js */
+    WalletSheet?: {
+      init(): void;
+      [key: string]: unknown;
+    };
+    /** The inline head-blocking theme module in src/head.html. */
+    Theme?: {
+      get(): 'light' | 'dark' | 'system';
+      set(mode: string): void;
+      apply(): void;
+      onChange(fn: (mode: string) => void): void;
+    };
   }
 }

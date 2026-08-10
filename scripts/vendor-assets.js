@@ -58,7 +58,7 @@ const ASSETS = [
     version: '1.0.0',
     from: 'qrcode.min.js',
     to: 'qrcode-1.0.0.min.js',
-    purpose: 'Wallet address QR codes (public/js/wallet-sheet.js, public/js/settings.js). npm mirror of davidshimjs/qrcodejs, which the old /gh/ CDN URL served UNPINNED.',
+    purpose: 'Wallet address QR codes (frontend/src/features/header/wallet-sheet.js, public/js/settings.js). npm mirror of davidshimjs/qrcodejs, which the old /gh/ CDN URL served UNPINNED.',
   },
 ];
 

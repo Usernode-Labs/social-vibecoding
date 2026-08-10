@@ -11,8 +11,18 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const PUBLIC = path.join(__dirname, '..', 'public');
+const ROOT = path.join(__dirname, '..');
+const PUBLIC = path.join(ROOT, 'public');
 const read = (...p) => fs.readFileSync(path.join(PUBLIC, ...p), 'utf8');
+
+// #1079 chunk B: public/js/theme.js is gone. The module is an INLINE
+// head-blocking <script> in frontend/src/head.html now, which is also where
+// the old duplicate three-line no-flash guard used to sit — the module ends by
+// calling apply(), so it is the guard. It could not move into the React bundle
+// with the rest of chunk B: that bundle is deferred, and deciding "is this page
+// dark" after the document parses means a visible light-to-dark repaint on
+// every load. The assertions below are unchanged; only their source is.
+const themeSrc = () => fs.readFileSync(path.join(ROOT, 'frontend/src/head.html'), 'utf8');
 
 // login.html / register.html dropped: they're redirect stubs into the
 // SPA's hash routes now (fold-auth-pages-into-SPA) — the in-SPA auth
@@ -26,10 +36,10 @@ const THEMED_PAGES = [
   'index.html',
 ];
 
-// ── theme.js module contract ─────────────────────────────────────────────
+// ── Theme module contract ────────────────────────────────────────────────
 
-test('public/js/theme.js exists and exposes the Theme API', () => {
-  const src = read('js', 'theme.js');
+test('the inline head module exposes the Theme API', () => {
+  const src = themeSrc();
   assert.match(src, /window\.Theme\s*=/, 'theme.js must assign window.Theme');
   for (const fn of ['get', 'set', 'apply', 'onChange']) {
     assert.match(src, new RegExp(`function ${fn}\\b`), `theme.js must define ${fn}()`);
@@ -37,7 +47,7 @@ test('public/js/theme.js exists and exposes the Theme API', () => {
 });
 
 test('theme.js implements the localStorage.theme storage contract', () => {
-  const src = read('js', 'theme.js');
+  const src = themeSrc();
   // 'light' / 'dark' stored explicitly; system removes the key.
   assert.match(src, /setItem\(\s*KEY/, 'set() must persist the key for light/dark');
   assert.match(src, /removeItem\(\s*KEY/, 'set() must remove the key for system');
@@ -45,14 +55,14 @@ test('theme.js implements the localStorage.theme storage contract', () => {
 });
 
 test('theme.js defines the three modes', () => {
-  const src = read('js', 'theme.js');
+  const src = themeSrc();
   for (const mode of ['light', 'dark', 'system']) {
     assert.ok(src.includes(`'${mode}'`), `theme.js must reference the '${mode}' mode`);
   }
 });
 
 test('theme.js registers prefers-color-scheme and storage listeners', () => {
-  const src = read('js', 'theme.js');
+  const src = themeSrc();
   assert.match(
     src,
     /matchMedia\(\s*'\(prefers-color-scheme: dark\)'\s*\)\.addEventListener\(\s*'change'/,
@@ -68,15 +78,28 @@ test('theme.js registers prefers-color-scheme and storage listeners', () => {
 // ── Per-page includes + no-flash guard ───────────────────────────────────
 
 for (const page of THEMED_PAGES) {
-  test(`${page} includes /js/theme.js`, () => {
-    assert.ok(read(page).includes('/js/theme.js'), `${page} must load /js/theme.js`);
+  test(`${page} carries the theme module inline, before any stylesheet`, () => {
+    const src = read(page);
+    assert.ok(!src.includes('src="/js/theme.js"'),
+      `${page} must not load a second copy from a classic tag`);
+    const themeAt = src.indexOf('window.Theme =');
+    assert.ok(themeAt > 0, `${page} must inline the theme module in <head>`);
+    // Head-blocking and ahead of the stylesheets: the class it puts on <html>
+    // has to be there before the first style that reads it is applied.
+    const cssAt = src.indexOf('<link rel="stylesheet"');
+    assert.ok(cssAt > 0 && themeAt < cssAt,
+      `${page}'s theme module must run before the first stylesheet link`);
   });
 
   test(`${page} carries the inline no-flash guard`, () => {
-    assert.ok(
-      read(page).includes('localStorage.theme'),
-      `${page} must contain the inline no-flash guard reading localStorage.theme`,
-    );
+    const src = read(page);
+    // The module IS the guard: it ends by calling apply(), inline in <head>.
+    const themeAt = src.indexOf('window.Theme =');
+    const applyAt = src.indexOf('apply();\n', themeAt);
+    assert.ok(applyAt > themeAt,
+      `${page}'s inline theme module must call apply() before first paint`);
+    assert.ok(src.includes("const KEY = 'theme'"),
+      `${page} must contain the localStorage 'theme' storage contract`);
   });
 }
 

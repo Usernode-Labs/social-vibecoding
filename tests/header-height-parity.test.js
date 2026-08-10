@@ -24,8 +24,9 @@
 //
 //   FLOOR   — the lead back-button wrapper (present in every state of both
 //             headers) carries h-7, so the row survives the title being
-//             display:none. It stays w-5: header-layout.js measures it as
-//             the title's left side group.
+//             display:none. It stays w-5: the header-layout hook
+//             (frontend/src/features/header/use-header-layout.ts) measures it
+//             as the title's left side group.
 //   CEILING — no child of either header exceeds 28px.
 //
 // Prose version of the same contract lives in the "Header height invariant"
@@ -107,11 +108,11 @@ test('FLOOR: the lead back-button wrapper is 28px tall (and still 20px wide)', (
       `#${bar.id}'s back-btn wrapper carries h-7 — the header's 28px content-row floor`);
     assert.ok(classes.includes('flex') && classes.includes('items-center'),
       `#${bar.id}'s back-btn wrapper centres its icon in those 28px`);
-    // public/js/header-layout.js measures this element as the title's left
-    // side group (leftGroup.offsetWidth) — the WIDTH must stay fixed at
-    // 20px or the centering measurement drifts.
+    // features/header/use-header-layout.ts measures this element as the
+    // title's left side group (leftGroup.offsetWidth) — the WIDTH must stay
+    // fixed at 20px or the centering measurement drifts.
     assert.ok(classes.includes('w-5') && classes.includes('shrink-0'),
-      `#${bar.id}'s back-btn wrapper stays w-5 shrink-0 (header-layout.js measures it)`);
+      `#${bar.id}'s back-btn wrapper stays w-5 shrink-0 (the header-layout hook measures it)`);
   }
 });
 
@@ -211,8 +212,8 @@ test('the invariant is documented where the next editor will look', () => {
   assert.match(head, /#platform-header/, 'the block names both bars');
   assert.match(head, /#landing-header/, 'the block names both bars');
   assert.match(head, /28px/, 'the block states the content-row height');
-  assert.match(head, /header-layout\.js/,
-    'the block warns that the w-5 width is measured by header-layout.js');
+  assert.match(head, /header-layout/,
+    'the block warns that the w-5 width is measured by the header-layout code');
   // The stale "Kept at 28px tall" claim on #app-mode-switch was wrong for as
   // long as it existed (it omitted the border) — the shell comment must now
   // describe the pinned height instead of asserting an arithmetic result.
@@ -225,12 +226,14 @@ test('the invariant is documented where the next editor will look', () => {
 });
 
 test('no JS sets a header height — the contract lives entirely in markup + CSS', () => {
-  // header-layout.js measures WIDTHS to decide the title's centering mode;
+  // The header-layout hook measures WIDTHS to decide the title's centering mode;
   // it must never start writing heights (that would put the invariant in
   // two places, one of them racing first paint).
-  const layoutJs = fs.readFileSync(path.join(root, 'public/js/header-layout.js'), 'utf8');
+  // #1079 chunk B ported header-layout.js into the header island as a hook.
+  const layoutJs = fs.readFileSync(
+    path.join(root, 'frontend/src/features/header/use-header-layout.ts'), 'utf8');
   assert.doesNotMatch(layoutJs, /style\.(?:height|minHeight|paddingTop|paddingBottom)/,
-    'header-layout.js never writes header box metrics');
+    'the header-layout hook never writes header box metrics');
   const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
   assert.doesNotMatch(appJs, /getElementById\('platform-header'\)\.style/,
     'app.js never writes #platform-header inline styles');

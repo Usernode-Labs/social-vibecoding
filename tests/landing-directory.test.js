@@ -128,7 +128,7 @@ test('the stage-1 survey lives on its own #waitlist screen', () => {
   }
   // Back goes to the landing page via the shared delegated handler.
   assert.match(screen[0], /data-auth-back/);
-  // NOT a <header>: header-layout.js measures document.querySelector
+  // NOT a <header>: the header-layout code used to measure document.querySelector
   // ('header') and must keep resolving to #platform-header.
   assert.doesNotMatch(screen[0], /<header/);
 });

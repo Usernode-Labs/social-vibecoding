@@ -307,7 +307,7 @@ test('#app-mode-switch lives inside the header, before the icon group', () => {
     INDEX.indexOf('id="platform-header"'),
     INDEX.indexOf('</header>')
   );
-  // header-layout.js resolves the title's side groups as
+  // The header-layout code used to resolve the title's side groups as
   // previousElementSibling / nextElementSibling, so the switch has to be
   // INSIDE the existing right-group div — a sibling wedged between the
   // <h1> and that div silently breaks the centering measurement.

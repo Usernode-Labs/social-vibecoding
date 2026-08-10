@@ -1,3 +1,9 @@
+// MOVED, NOT REWRITTEN (#1079 chunk B). This file was public/js/ai-credit.js;
+// it renders into #ai-budget-slot / #drawer-row-ai-budget, both inside the
+// now-React #header-menu-panel, so it moved into the bundle with them. The
+// body is unchanged — it never self-initialised (App.init calls
+// AiCredit.Budget.init()), so there was nothing to defer.
+//
 // The AI-credit row in the drawer's status pane (#555).
 //
 // One renderer, modelled on Kudos.Budget in kudos.js — poll an endpoint,
@@ -179,5 +185,8 @@
     },
   };
 
-  window.AiCredit = AiCredit;
+  // `typeof window` guard: the shell's markup is PRERENDERED in Node
+  // (frontend/scripts/build-shell.mjs), which imports this island's module
+  // graph. Same guard as features/notifications/notifications.js.
+  if (typeof window !== 'undefined') window.AiCredit = AiCredit;
 })();

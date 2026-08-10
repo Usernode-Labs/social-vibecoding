@@ -1,3 +1,8 @@
+// MOVED, NOT REWRITTEN (#1079 chunk B). This file was public/js/node-pill.js;
+// #header-menu-panel became a React island and this module owns nodes inside
+// it, so it moved into the bundle with the region it writes to. The body below
+// is unchanged apart from the init call at the bottom — see the note there.
+//
 // Node status row (top of the hamburger drawer) — surfaces the embedded
 // Usernode node's sync state when the platform runs inside the Usernode
 // app (app-as-SV-chrome migration, see NATIVE-BRIDGE.md). Lived in the
@@ -181,6 +186,14 @@
     },
   };
 
-  window.NodePill = NodePill;
-  NodePill.init();
+  // Published for the legacy callers that still reach for it by name, exactly
+  // as before. init() is NOT called here any more: this module now evaluates
+  // while the bundle is being imported, i.e. BEFORE hydration, and its init
+  // removes `hidden` from #drawer-row-node — a class React is about to hydrate
+  // against. The island calls it from a layout effect instead (see
+  // features/header/header-menu.tsx), which is still before DOMContentLoaded.
+  // `typeof window` guard: the shell's markup is PRERENDERED in Node
+  // (frontend/scripts/build-shell.mjs), which imports this island's module
+  // graph. Same guard as features/notifications/notifications.js.
+  if (typeof window !== 'undefined') window.NodePill = NodePill;
 })();
