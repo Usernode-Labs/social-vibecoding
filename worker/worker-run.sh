@@ -14,15 +14,22 @@
 # script (run-cc.sh) inline after bootstrap and then exit, matching the
 # pre-refactor behaviour.
 #
-# Required env (set via -e on `docker run`):
+# Required env (set via -e on `docker run`, MODE=warm):
 #   CLONE_URL            plain HTTPS git clone URL (no embedded creds —
 #                        public repos only, see app-conventions.md /
 #                        src/services/github.js::getCloneUrl)
 #   BRANCH               branch name to check out
-#   ANTHROPIC_API_KEY    forwarded to `claude`
-#   WORKER_JWT           session-scoped JWT used by usernode-push
 #   SESSION_ID           session id, used in platform API URLs
 #   PLATFORM_URL         base URL of the platform's internal API
+#
+# NOTE (Commit 1): the warm bootstrap environment deliberately contains NO
+# provider keys and NO worker capability tokens. Every credential / narrow
+# capability is injected on the individual per-turn `docker exec` (see
+# worker.js buildTurnSecretEnv), never at docker run. The warm wrapper only
+# clones, checks out, restores ~/.claude.json, and sleeps; the legacy
+# single-shot build|scout path below is the only one that consumed
+# ANTHROPIC_API_KEY / WORKER_JWT directly, and even it no longer receives
+# them at bootstrap.
 # Optional env:
 #   MODE                 warm (default) | build | scout
 #   PAT                  legacy — kept for back-compat only; not set by

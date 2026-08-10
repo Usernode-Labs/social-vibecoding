@@ -43,7 +43,10 @@ require.cache[workerPath].exports = {
   isWorkerExecuting: async () => { workerCalls.push(['isWorkerExecuting']); return false; },
   watchWorker: async (name) => { workerCalls.push(['watchWorker', name]); return {}; },
   stopTurn: async () => { workerCalls.push(['stopTurn']); return false; },
-  clearActiveTurn: async (sessionId) => { workerCalls.push(['clearActiveTurn', sessionId]); },
+  clearActiveTurn: async (sessionId, args) => {
+    workerCalls.push(['clearActiveTurn', sessionId, args]);
+    return true;
+  },
 };
 
 // Module-level code in server.js's require graph schedules a couple of
@@ -101,6 +104,84 @@ const HEADLESS_SESSION = {
 };
 
 test.beforeEach(() => { workerCalls.length = 0; });
+
+test('gone Codex worker terminalizes its attempt before durable cleanup', async () => {
+  const agentTurn = require('../src/services/agent-turn');
+  const originalComplete = agentTurn.completeCodexAttempt;
+  agentTurn.completeCodexAttempt = async (args) => {
+    workerCalls.push(['completeCodexAttempt', args]);
+    return { updated: true };
+  };
+  const activeTurn = {
+    turnId: '00000000-0000-4000-8000-000000000042',
+    turnUuid: '10000000-0000-4000-8000-000000000042',
+    backend: 'codex_openrouter',
+    phase: 'executing',
+    journal: '/turns/turn-42.jsonl',
+    tail: {},
+  };
+  const pool = makePool({
+    ...HEADLESS_SESSION,
+    is_headless: false,
+    active_turn: activeTurn,
+  });
+  try {
+    await adoptOrphanWorker(
+      { name: 'usernode-worker-42', sessionId: 42, state: 'exited' },
+      { config: {}, pool, staging: makeStaging(), ghub: {}, broadcastGlobal: () => {} },
+    );
+
+    const completeIndex = workerCalls.findIndex((call) => call[0] === 'completeCodexAttempt');
+    const clearIndex = workerCalls.findIndex((call) => call[0] === 'clearActiveTurn');
+    assert.ok(completeIndex >= 0 && completeIndex < clearIndex,
+      'the ledger reaches a terminal state before its only recovery pointer is cleared');
+    const completeArgs = workerCalls[completeIndex][1];
+    assert.equal(completeArgs.turnUuid, activeTurn.turnUuid);
+    assert.equal(completeArgs.status, 'failed');
+    assert.equal(completeArgs.errorCode, 'recovery_abandoned');
+    assert.deepEqual(workerCalls[clearIndex].slice(1), [42, {
+      turnId: activeTurn.turnId,
+      journal: activeTurn.journal,
+    }]);
+  } finally {
+    agentTurn.completeCodexAttempt = originalComplete;
+  }
+});
+
+test('gone Codex worker retains ownership when ledger terminalization is transiently unavailable', async () => {
+  const agentTurn = require('../src/services/agent-turn');
+  const originalComplete = agentTurn.completeCodexAttempt;
+  const ledgerError = new Error('ledger database unavailable');
+  agentTurn.completeCodexAttempt = async () => { throw ledgerError; };
+  const activeTurn = {
+    turnId: '00000000-0000-4000-8000-000000000043',
+    turnUuid: '10000000-0000-4000-8000-000000000043',
+    backend: 'codex_openrouter',
+    phase: 'executing',
+    journal: '/turns/turn-43.jsonl',
+    tail: {},
+  };
+  const pool = makePool({
+    ...HEADLESS_SESSION,
+    id: 43,
+    is_headless: false,
+    active_turn: activeTurn,
+  });
+  try {
+    await assert.rejects(
+      adoptOrphanWorker(
+        { name: 'usernode-worker-43', sessionId: 43, state: 'exited' },
+        { config: {}, pool, staging: makeStaging(), ghub: {}, broadcastGlobal: () => {} },
+      ),
+      ledgerError,
+    );
+    assert.equal(ledgerError.retainActiveTurn, true);
+    assert.ok(!workerCalls.some((call) => call[0] === 'clearActiveTurn'),
+      'cleanup cannot erase the attempt pointer before a retry succeeds');
+  } finally {
+    agentTurn.completeCodexAttempt = originalComplete;
+  }
+});
 
 // ── 1. exited headless container is left alone ──────────────────────────
 

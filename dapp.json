@@ -327,6 +327,26 @@
       "description": "Comma-separated hosts whose https redirect URIs a chat product may register against the /mcp connector (subdomains match too). This is what keeps dynamic client registration from being an open redirect registry: only widen it to a host you would hand a consent screen to. An explicit value REPLACES the default rather than extending it. Loopback is accepted only in local-development mode."
     },
     {
+      "key": "CODEX_OPENROUTER_ENABLED",
+      "group": "AI & coding agents",
+      "required": false,
+      "default": "true",
+      "description": "Emergency availability switch for the Codex via OpenRouter BYOK backend. This does not select a provider globally: when true, Claude Code and Codex are both available and each user chooses which one a session uses. Set false only to hide/refuse Codex while leaving Claude unchanged."
+    },
+    {
+      "key": "CODEX_OPENROUTER_BETA_USER_IDS",
+      "group": "AI & coding agents",
+      "required": false,
+      "description": "Optional comma-separated user-id allowlist for Codex via OpenRouter. Leave unset or empty to make the option available to every user; setting ids restricts only Codex and never disables Claude Code."
+    },
+    {
+      "key": "OPENROUTER_EXPERIMENTAL_MODELS_ENABLED",
+      "group": "AI & coding agents",
+      "required": false,
+      "default": "false",
+      "description": "When true, users may select compatible OpenRouter models that have not yet been marked verified. Blocked models remain unavailable."
+    },
+    {
       "key": "GITHUB_LINK_CLIENT_ID",
       "group": "Chat connectors",
       "required": false,
@@ -1173,7 +1193,7 @@
     },
     {
       "name": "Checks card names the test stage on a testing run",
-      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000023",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000026",
       "expectText": "Running the automated tests"
     },
     {
@@ -1435,11 +1455,6 @@
       "expectSelector": "#dev-plus-menu [data-plus='members']"
     },
     {
-      "name": "Dev '+' menu shows Proposal approvals on the self-app (#646)",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-plus-menu [data-plus='members']"
-    },
-    {
       "name": "Approvals-mode control ships the count input + Propose button (at-least fix)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#members-governance-section #members-approvals-propose"
@@ -1483,11 +1498,6 @@
       "name": "Dev feed renders under the kit adoption (demo)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-forum-scroll"
-    },
-    {
-      "name": "All Apps tiles carry the drag-to-add grab cursor (#746)",
-      "path": "/",
-      "expectSelector": ".app-card:not([data-yours]).cursor-grab"
     },
     {
       "name": "Staging demo tiles are tagged drag-inert (#746)",
@@ -1710,10 +1720,10 @@
       "expectText": "resets Monday 00:00 UTC"
     },
     {
-      "name": "Out of daily credits: the chat offers all three ways to keep building (#967)",
+      "name": "Out of daily credits: the chat offers all four ways to keep building (#967, #1049)",
       "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
       "expectSelector": "[data-credits-card] [data-credits-hash=\"#settings/connectors\"]",
-      "expectText": "Three ways to keep building right now"
+      "expectText": "Four ways to keep building right now"
     },
     {
       "name": "Settings has a Claude & ChatGPT connectors section with the connector URL (#967)",

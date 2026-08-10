@@ -120,6 +120,7 @@ test('watchdog: the default budget is unchanged for non-stopped turns', () => {
 test('newWatchState initializes markerlessCause to null', () => {
   const state = worker.newWatchState();
   assert.equal(state.markerlessCause, null);
+  assert.equal(state.agentRetryFresh, false);
 });
 
 // ── __USERNODE_WARN__ forwarding ────────────────────────────────────────
@@ -161,7 +162,7 @@ test('parseLine: backend-neutral terminal result fields are captured (plan.md PR
   worker.parseLine(
     '__USERNODE_RESULT__ agent_backend=codex_openrouter agent_provider=openrouter '
       + 'agent_model=openai/gpt-5.3-codex agent_thread_id=thr-0199 '
-      + 'agent_exit=0 cc_exit=0 ahead=3 behind=0 sha=abc123 push_ok=1 mode=build',
+      + 'agent_exit=0 agent_retry_fresh=1 cc_exit=0 ahead=3 behind=0 sha=abc123 push_ok=1 mode=build',
     (t) => progressLines.push(t),
     state,
   );
@@ -171,6 +172,7 @@ test('parseLine: backend-neutral terminal result fields are captured (plan.md PR
   assert.equal(state.agentModel, 'openai/gpt-5.3-codex');
   assert.equal(state.agentThreadId, 'thr-0199');
   assert.equal(state.agentExit, 0);
+  assert.equal(state.agentRetryFresh, true);
   // Legacy fields still parsed for compatibility.
   assert.equal(state.ccExit, 0);
   assert.equal(state.ahead, 3);

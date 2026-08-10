@@ -16,12 +16,13 @@ const log = require('../services/logger');
 // holds the platform's real ANTHROPIC_API_KEY, any user can ask CC to
 // `echo $ANTHROPIC_API_KEY` and exfiltrate the platform-wide key.
 //
-// Instead, the worker holds only its session-scoped WORKER_JWT (in
-// ANTHROPIC_API_KEY env var, picked up by the SDK as x-api-key) and
-// points ANTHROPIC_BASE_URL at /api/internal/anthropic on the platform.
-// This proxy verifies the JWT, swaps the header for the real key, and
-// forwards to api.anthropic.com. Exfiltrated JWTs are useless against
-// Anthropic directly and expire with WORKER_JWT_TTL.
+// Instead, the worker holds a session-scoped worker:anthropic-proxy token
+// (in ANTHROPIC_API_KEY, picked up by the SDK as x-api-key) and points
+// ANTHROPIC_BASE_URL at /api/internal/anthropic on the platform. This proxy
+// verifies that narrow purpose, swaps the header for the real key, and
+// forwards to api.anthropic.com. An exfiltrated proxy token cannot call the
+// platform's push/draft APIs or Anthropic directly, and expires with the
+// worker-token TTL.
 //
 // The proxy also enforces the daily LLM cap mid-stream:
 //   1. Start-of-call gate. Cheap pre-check; if today's recorded spend

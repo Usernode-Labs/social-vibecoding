@@ -31,10 +31,11 @@ const STALE_TURN_MIN_AGE_MS = 5 * 60 * 1000;
 //                pass false for the cheap pre-filter and probe only
 //                when that pre-filter says 'reap'.
 //
-// Returns 'skip_no_turn' | 'skip_fresh' | 'skip_busy' |
+// Returns 'skip_no_turn' | 'skip_quarantined' | 'skip_fresh' | 'skip_busy' |
 //         'skip_executing' | 'reap'.
 function classifyStaleTurn({ activeTurn, nowMs, busy, executing }) {
   if (!activeTurn) return 'skip_no_turn';
+  if (activeTurn.phase === 'quarantined') return 'skip_quarantined';
   const startedMs = Date.parse(activeTurn.startedAt || '');
   // An unparsable/missing startedAt can't prove freshness — treat it as
   // old and let the busy/executing gates decide.

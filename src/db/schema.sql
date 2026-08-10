@@ -1249,7 +1249,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS chat_session_messages_handoff_event_idx
 
 -- Restart-proof turns + resumable headless runs.
 --   active_turn   = durable record of an in-flight detached CC turn:
---                   { mode, journal, model, startedAt }. Set by
+--                   { turnId, phase, mode, journal, model, startedAt }. Set by
 --                   worker.execInWorker before the detached `docker exec`
 --                   dispatch and cleared after post-turn processing. On boot,
 --                   server.js's adoption path uses it to replay the turn's
@@ -1266,17 +1266,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS chat_session_messages_handoff_event_idx
 --                   silently dropped (the incident: a turn's chat froze on
 --                   "Building staging preview..." forever because a
 --                   self-app deploy replaced the process mid-build):
---                     phase — 'tail' once the exec is over and the tail
---                             owns the record. Absent means the exec may
---                             still be running. server.js's adoption
---                             branches read it to log which shape they
---                             resumed; both go down the same resume path.
+--                     phase — 'tail_pending' once the exec is over and the tail
+--                             owns the record. New rows otherwise use
+--                             'dispatch_pending' / 'executing' and finish via
+--                             'cleanup_pending'; an absent phase is interpreted
+--                             as executing only for rolling-deploy compatibility.
 --                     tail  — milestone map of what the tail ALREADY did,
 --                             so a resumed tail repeats none of the steps
 --                             that aren't idempotent:
 --                             { sha, pushOk, prNumber,
 --                               prOpenedEventRecorded, stagingUrl,
 --                               votesResetFor, completionRowPosted,
+--                               stagingPublished, stagingFailed,
 --                               wrapUpPosted }.
 --                             finalizeRecoveredTurn takes it as
 --                             `alreadyDone`. Written with jsonb_set
@@ -1292,6 +1293,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS chat_session_messages_handoff_event_idx
 --                   existed.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS active_turn   JSONB;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS headless_step VARCHAR(20);
+-- Stable identity for the current post-agent headless Mayor phase. A single
+-- auto-session may scout and then build (two coding turns), so wrap-up
+-- receipts cannot safely borrow whichever active_turn happens to exist.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS headless_turn_id UUID;
 
 -- #161: "owner left while a turn was in flight; notify on completion".
 -- Armed/disarmed by the client via POST /api/sessions/:id/notify-on-done
@@ -4765,3 +4770,146 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_expires_at TIMESTAMPTZ
 
 COMMENT ON COLUMN users.password_reset_token_hash IS 'staging:private';
 COMMENT ON COLUMN users.password_reset_expires_at IS 'staging:private';
+
+-- ── OpenRouter BYOK with Codex — full feature (plan.md PR3+) ────────
+-- All additions are idempotent and live alongside the merged foundation
+-- (PR #943: chat_sessions.agent_* + credentials.user_ai_credentials).
+
+-- Per-user per-backend agent preferences (model, reasoning effort, cost
+-- ceiling, which backend is the default). One row per (user_id, backend).
+CREATE TABLE IF NOT EXISTS user_agent_preferences (
+  user_id            BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  backend            VARCHAR(32) NOT NULL,
+  model_id           VARCHAR(255),
+  reasoning_effort   VARCHAR(16),
+  max_turn_cost_usd  NUMERIC(18,8),
+  is_default         BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, backend),
+  CONSTRAINT user_agent_preferences_backend_check
+    CHECK (backend IN ('claude_code', 'codex_openrouter')),
+  CONSTRAINT user_agent_preferences_reasoning_check
+    CHECK (reasoning_effort IS NULL
+           OR reasoning_effort IN ('minimal', 'low', 'medium', 'high', 'xhigh')),
+  -- Cost ceiling (review #7): reject negatives at the DB so a buggy client
+  -- cannot store a value that disables the cap. The cap is advisory (the
+  -- platform does not mediate direct Codex requests), but it must still be
+  -- a sane nonnegative number.
+  CONSTRAINT user_agent_preferences_cost_check
+    CHECK (max_turn_cost_usd IS NULL OR max_turn_cost_usd >= 0)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS user_agent_preferences_one_default
+  ON user_agent_preferences (user_id) WHERE is_default = TRUE;
+
+-- Durable per-turn ledger for multi-provider usage, retries, and proxy
+-- settlement. Idempotent settlement keys on the turn id.
+CREATE TABLE IF NOT EXISTS agent_turns (
+  id                       UUID PRIMARY KEY,
+  session_id               BIGINT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  user_id                  BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  backend                  VARCHAR(32) NOT NULL,
+  provider                 VARCHAR(32),
+  requested_model          VARCHAR(255),
+  routed_model             VARCHAR(255),
+  routed_provider          VARCHAR(128),
+  reasoning_effort         VARCHAR(16),
+  credential_id            BIGINT REFERENCES credentials.user_ai_credentials(id),
+  credential_revision      INTEGER,
+  agent_thread_id          VARCHAR(128),
+  agent_config_version     INTEGER NOT NULL DEFAULT 1,
+  status                   VARCHAR(24) NOT NULL,
+  input_tokens             BIGINT NOT NULL DEFAULT 0,
+  cached_input_tokens      BIGINT NOT NULL DEFAULT 0,
+  cache_write_input_tokens BIGINT NOT NULL DEFAULT 0,
+  output_tokens            BIGINT NOT NULL DEFAULT 0,
+  reasoning_output_tokens  BIGINT NOT NULL DEFAULT 0,
+  actual_cost_usd          NUMERIC(18,8) NOT NULL DEFAULT 0,
+  estimated_cost_usd       NUMERIC(18,8),
+  cost_source              VARCHAR(32),
+  billed_by                VARCHAR(32),
+  logical_turn_id          UUID,
+  attempt_number           INTEGER NOT NULL DEFAULT 1,
+  provider_input_tokens_total          BIGINT,
+  provider_cached_input_tokens_total   BIGINT,
+  provider_cache_write_input_tokens_total BIGINT,
+  provider_output_tokens_total         BIGINT,
+  provider_reasoning_output_tokens_total BIGINT,
+  usage_reset_detected     BOOLEAN NOT NULL DEFAULT FALSE,
+  error_code               VARCHAR(64),
+  error_detail             TEXT,
+  started_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at             TIMESTAMPTZ,
+  metadata                 JSONB NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_agent_turns_session
+  ON agent_turns (session_id, started_at);
+-- Idempotent upgrade (review P7): an environment that already applied a
+-- preceding PR revision has agent_turns without agent_config_version, and
+-- CREATE TABLE IF NOT EXISTS is a no-op there. This ALTER covers that path.
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS agent_config_version INTEGER NOT NULL DEFAULT 1;
+-- Commit 4 (plan §6): per-attempt + cumulative provider totals.
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS logical_turn_id UUID;
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS attempt_number INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS cache_write_input_tokens BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS provider_input_tokens_total BIGINT;
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS provider_cached_input_tokens_total BIGINT;
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS provider_cache_write_input_tokens_total BIGINT;
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS provider_output_tokens_total BIGINT;
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS provider_reasoning_output_tokens_total BIGINT;
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS estimated_cost_usd NUMERIC(18,8);
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS usage_reset_detected BOOLEAN NOT NULL DEFAULT FALSE;
+-- Backfill legacy single-turn rows: a lone row IS its own logical turn.
+UPDATE agent_turns SET logical_turn_id = id WHERE logical_turn_id IS NULL AND attempt_number = 1;
+-- One physical Codex invocation = one attempt under a logical turn.
+CREATE UNIQUE INDEX IF NOT EXISTS agent_turns_logical_attempt_unique
+  ON agent_turns (logical_turn_id, attempt_number)
+  WHERE logical_turn_id IS NOT NULL;
+
+-- Durable idempotency receipts for replayable post-agent work. A platform
+-- restart may re-enter a turn tail, but a stable (turn_id, effect_key) means
+-- database-local effects (spend settlement, cards, notifications, terminal
+-- state) can be committed exactly once in the same transaction as the
+-- receipt. External effects use pending/completed plus reconciliation.
+CREATE TABLE IF NOT EXISTS turn_effects (
+  turn_id       UUID NOT NULL,
+  effect_key    VARCHAR(96) NOT NULL,
+  session_id    BIGINT REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  state         VARCHAR(16) NOT NULL DEFAULT 'pending',
+  result        JSONB,
+  started_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at  TIMESTAMPTZ,
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (turn_id, effect_key),
+  CONSTRAINT turn_effects_state_check
+    CHECK (state IN ('pending', 'completed', 'failed'))
+);
+CREATE INDEX IF NOT EXISTS idx_turn_effects_session
+  ON turn_effects (session_id, started_at);
+-- Nonnegativity (idempotent DO blocks; an already-created table will not
+-- pick up constraints from CREATE TABLE IF NOT EXISTS).
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'agent_turns_provider_totals_nonneg') THEN
+    ALTER TABLE agent_turns ADD CONSTRAINT agent_turns_provider_totals_nonneg CHECK (
+      provider_input_tokens_total IS NULL OR provider_input_tokens_total >= 0
+    );
+  END IF;
+END$$;
+
+-- Compatibility overlay: verified / experimental / blocked per model.
+CREATE TABLE IF NOT EXISTS agent_model_compatibility (
+  backend             VARCHAR(32) NOT NULL,
+  model_id            VARCHAR(255) NOT NULL,
+  status              VARCHAR(16) NOT NULL,
+  minimum_cli_version VARCHAR(32),
+  note                TEXT,
+  checked_at          TIMESTAMPTZ,
+  PRIMARY KEY (backend, model_id)
+);
+
+-- Seed a verified Codex model so the user-filtered catalog is not empty
+-- on first use (review F7). Operators add more rows as fixtures pass.
+INSERT INTO agent_model_compatibility (backend, model_id, status, note, checked_at)
+VALUES ('codex_openrouter', 'openai/gpt-5.3-codex', 'verified', 'Default verified Codex model', NOW())
+ON CONFLICT (backend, model_id) DO NOTHING;

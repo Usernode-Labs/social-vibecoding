@@ -2142,7 +2142,7 @@ const AppView = {
         const created = await DevChat.createSession(slug);
         if (created) {
           sessionId = created.id;
-        } else if (mine.length) {
+        } else if (created === null && mine.length) {
           // Cap / capacity / repo error — createSession already explained
           // why. Land in the newest existing chat rather than dead-ending.
           sessionId = mine[0].id;
@@ -6322,7 +6322,7 @@ const AppView = {
   _derivedGovApplying(issue) {
     if (!issue || issue.status !== 'open') return null;
     const ctx = AppView._proposalsCtx || {};
-    if (ctx.locked || issue.contested) {
+    if ((ctx.locked && !issue.demo) || issue.contested) {
       delete AppView._govDueSince[issue.id];
       return null;
     }
