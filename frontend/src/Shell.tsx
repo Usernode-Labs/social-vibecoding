@@ -46,6 +46,7 @@
 
 import { Button } from '@/components/ui/button';
 import { AdminScreen } from './features/admin';
+import { AppViewIsland } from './features/app-frame';
 import { BrowseScreen } from './features/apps/browse-screen';
 import { ProfileScreen } from './features/profile';
 import { LandingScreen } from './features/auth/landing';
@@ -63,7 +64,9 @@ import { NotificationsPanel } from './features/notifications';
 import { SettingsScreen } from './features/settings';
 import { WorkDrawerPanel } from './features/work-drawer';
 import { Dialogs } from './features/dialogs';
+import { StagingOverlay, VisualCompareOverlay } from './features/staging';
 import { OfflineBanner, ViewAsNonAdminBanner } from './features/shell/banners';
+import { LegacyPortals } from './lib/legacy-portals';
 
 export function Shell() {
   return (
@@ -303,17 +306,16 @@ export function Shell() {
           `platform` so a first paint before any render behaves as before,
           and chromeless needs no special case any more — it always lands on
           an app surface.
+
+          An ISLAND since #1085 chunk H (step 2), and the last region the
+          step-2 migration converts: features/app-frame owns #app-view, keeps
+          #app-content exactly as it was (empty, filled by public/js/** with
+          innerHTML) and adds one sibling, #app-frame-host, which owns the
+          embedded app's <iframe> end to end. That split is what lets the frame
+          survive a tab switch instead of being reloaded by the next
+          #app-content write — see features/app-frame/app-frame.tsx.
       */}
-      <div
-        id="app-view"
-        className="hidden flex flex-col"
-        data-app-surface="platform"
-        style={{ flex: "1", minHeight: "0", height: "0" }}
-      >
-        <div id="app-content" className="flex-1" style={{ minHeight: "0", overflow: "hidden" }}>
-          {/* Tab content renders here */}
-        </div>
-      </div>
+      <AppViewIsland />
       {/* Notifications dropdown (top-right anchored) — an ISLAND since #1079
           chunk B: features/notifications owns the whole subtree and
           public/js/notifications.js is retired. */}
@@ -326,198 +328,40 @@ export function Shell() {
           since #1079 chunk B: features/dev-console owns the whole subtree and
           public/js/dev-console.js is retired. */}
       <DevConsolePanel />
-      {/* Staging preview (fullscreen overlay) */}
-      <div id="staging-overlay" className="hidden fixed inset-0 z-40 bg-zinc-950 flex flex-col">
-        {/*
-            `staging-chrome-bar` is a STYLE HOOK, not decoration: fullscreen,
-            this overlay is `inset: 0` and covers the status bar, so app.css
-            adds the top safe-area inset to this bar (and only in the
-            non-docked state — a docked panel is pinned mid-page and needs
-            none). The bar's bottom edge needs nothing: everything below it
-            is the staging iframe, which reaches the true bottom edge and
-            receives the real insets over the safe-area bridge.
-        */}
-        <div className="staging-chrome-bar flex items-center gap-3 px-4 py-2 border-b border-zinc-800 shrink-0">
-          <button id="staging-back" className="text-zinc-400 hover:text-zinc-100 text-sm flex items-center gap-1">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
-            </svg>
-            Back to session
-          </button>
-          <span className="flex-1">
-          </span>
-          {/*
-              #127: bot-generated testing guidance. Hidden unless the session
-              carries testing_md / testing_path; wired in AppView.swapToStaging.
-          */}
-          <button
-            id="staging-test-btn"
-            className="hidden text-xs font-medium px-2.5 py-1 rounded bg-violet-500/15 text-violet-300 hover:bg-violet-500/25 shrink-0"
-          >
-            Test this change
-          </button>
-          {/*
-              #771: docked-mode toggle. In the docked side panel it reads
-              "Full screen" (expand to today's fullscreen overlay); in
-              fullscreen — when the preview was opened from dev chat and can
-              re-dock — it reads "Exit full screen". Same element, same
-              iframe: toggling never reloads the preview. Wired in
-              AppView._updateStagingModeUi.
-          */}
-          <button
-            id="staging-fullscreen-btn"
-            className="hidden text-xs font-medium px-2.5 py-1 rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700 shrink-0"
-          >
-            Full screen
-          </button>
-          <span id="staging-url-label" className="text-xs text-zinc-500 font-mono truncate">
-          </span>
-          {/*
-              Mirror of the main dev-console button. The overlay covers the
-              global header (z-40), so the original button is obscured —
-              we surface a duplicate inside the overlay's own chrome and
-              delegate its click to DevConsole.toggle().
-          */}
-          <button
-            id="staging-dev-console-btn"
-            className="relative text-zinc-400 hover:text-zinc-200"
-            aria-label="Open developer console"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M8 9l3 3-3 3m5 0h3M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z"
-              />
-            </svg>
-            <span
-              id="staging-dev-console-badge"
-              className="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
-            >
-            </span>
-          </button>
-          {/*
-              #771: close button for the docked side panel. CSS shows it only
-              in docked mode (where "Back to session" is hidden — closing the
-              panel IS going back to the session, which never left).
-          */}
-          <button
-            id="staging-dock-close"
-            className="staging-dock-only text-zinc-400 hover:text-zinc-100 text-lg leading-none px-1 shrink-0"
-            aria-label="Close preview"
-          >
-            &times;
-          </button>
-        </div>
-        {/*
-            Explains why this change isn't live yet — a common point of
-            confusion the first time someone previews their own PR.
-        */}
-        <div className="px-4 py-1.5 bg-violet-500/10 border-b border-violet-500/20 text-xs text-zinc-400 shrink-0">
-          Private preview — only you can see this until the app's users vote your change in.
-        </div>
-        <div className="relative flex-1">
-          <iframe
-            id="staging-iframe"
-            className="absolute inset-0 w-full h-full border-0"
-            style={{ background: "#08080f" }}
-            allow="pointer-lock"
-          >
-          </iframe>
-          {/*
-              #127: collapsible "How to test" panel overlaying the top of the
-              preview. Hidden until requested via the "Test this change" button
-              (auto-shown only for that explicit entry path, #237). Content is
-              bot-authored markdown rendered through the escaping markdown
-              pipeline in AppView._renderTestingControls.
-          */}
-          <div
-            id="staging-testing-panel"
-            className="hidden absolute top-2 left-2 right-2 sm:left-auto sm:w-96 z-10 rounded-lg border border-violet-500/30 bg-zinc-900/95 backdrop-blur shadow-xl"
-          >
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-800">
-              <span className="text-xs font-semibold text-violet-300">
-                How to test
-              </span>
-              <span className="flex-1">
-              </span>
-              <button
-                id="staging-testing-close"
-                className="text-zinc-500 hover:text-zinc-200 text-sm leading-none px-1"
-                aria-label="Dismiss testing instructions"
-              >
-                &times;
-              </button>
-            </div>
-            <div
-              id="staging-testing-content"
-              className="px-3 py-2 text-xs text-zinc-300 leading-relaxed max-h-48 overflow-y-auto"
-            >
-            </div>
-          </div>
-          {/*
-              Spinner shown over the iframe while a preview is being opened, so
-              the load never reads as a black void. app-view.js owns the copy:
-              a neutral "Opening preview…" while ensure-staging is asked,
-              "Loading the preview…" across the iframe's own render, the
-              rebuild estimate ONLY when a rebuild is genuinely running, and a
-              waiting state when the host hasn't answered yet. The defaults
-              below are neutral on purpose (#816) — a first paint before JS
-              sets the text must not promise a wait that isn't happening.
-          */}
-          <div
-            id="staging-loader"
-            className="hidden absolute inset-0 flex flex-col items-center justify-center gap-4 bg-zinc-950 text-center px-6"
-          >
-            <div className="w-9 h-9 border-2 border-zinc-700 border-t-violet-400 rounded-full animate-spin">
-            </div>
-            <div id="staging-loader-title" className="text-sm text-zinc-200 font-medium">
-              Opening preview…
-            </div>
-            <div id="staging-loader-sub" className="text-xs text-zinc-500 max-w-xs leading-relaxed">
-            </div>
-          </div>
-        </div>
-      </div>
+      {/* Staging preview (fullscreen overlay) — an ISLAND since #1085 chunk H:
+          features/staging owns the whole subtree, #staging-iframe included.
+          public/js/app-view.js publishes state through the bridge on
+          window.UsernodeReact.staging (it keeps the file, and every
+          responsibility that is not shell markup). */}
+      <StagingOverlay />
       {/*
           #353: before/after comparison (fullscreen overlay). Opened by
           clicking either tile rendered by AppView.visualsTilesHtml — shows
           the before + after for one capture group side-by-side at full size
           (stacked on narrow screens), instead of dumping the raw asset into
           a new tab. Built dynamically by AppView.openVisualComparison;
-          closed via Back / backdrop / Escape (closeVisualComparison).
+          closed via Back / backdrop / Escape (closeVisualComparison). An
+          ISLAND since #1085 chunk H — it is not one of
+          PlatformUI.STATIC_MODAL_IDS, so nothing lifts its card out at
+          runtime and it may hold state.
       */}
-      <div
-        id="visual-compare-overlay"
-        className="hidden fixed inset-0 z-50 bg-zinc-950/95 flex flex-col"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Before / after comparison"
-      >
-        <div className="flex items-center gap-3 px-4 py-2 border-b border-zinc-800 shrink-0">
-          <button
-            id="visual-compare-back"
-            className="text-zinc-400 hover:text-zinc-100 text-sm flex items-center gap-1"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
-            </svg>
-            Close
-          </button>
-          <span className="flex-1">
-          </span>
-          <span id="visual-compare-label" className="text-xs text-zinc-400 font-mono truncate">
-          </span>
-        </div>
-        <div id="visual-compare-body" className="usn-compare-body flex-1 overflow-auto p-4">
-        </div>
-      </div>
+      <VisualCompareOverlay />
       {/*
           Every dialog in the shell (#1078 chunk A). One component per modal
           root, rendered in the same order they were spelled out here — see
           features/dialogs/index.tsx.
       */}
       <Dialogs />
+      {/*
+          #1085 chunk H, step 3: the Dev board's runtime-injected regions.
+          Renders NO DOM of its own — it is the anchor that lets
+          features/dev-board portal React subtrees into hosts the legacy
+          renderers created with innerHTML, inside THIS tree. Chunk G mounted
+          those with a second createRoot; folding them in means one reconciler,
+          no root to leak, and no `createRoot` on a live container. See
+          lib/legacy-portals.tsx.
+      */}
+      <LegacyPortals />
       {/*
           PlatformUI — the platform's single wrapper over the native kit
           (toasts, alerts, confirms, sheets). Loaded FIRST in the bundle:

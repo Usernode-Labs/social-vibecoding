@@ -602,20 +602,16 @@ const AppView = {
   // Screenshot-state deep link only (see the `?shot=` block above) — never
   // reached by a real Preview click, which goes through ensureStaging.
   showPreviewLoaderShot(shot) {
-    const overlay = document.getElementById('staging-overlay');
-    if (!overlay) return;
+    const staging = AppView._staging();
     // Take a load id so the Back button's teardown (and any later real
     // preview) supersedes this exactly as it would a genuine open.
     AppView._stagingLoadId += 1;
     AppView._stagingDockable = false;
     AppView._setStagingMode('fullscreen');
-    const iframe = document.getElementById('staging-iframe');
-    if (iframe) iframe.src = '';
-    const label = document.getElementById('staging-url-label');
-    if (label) label.textContent = 'https://staging-demo-preview.example';
-    overlay.classList.remove('hidden');
-    const back = document.getElementById('staging-back');
-    if (back) back.onclick = () => AppView.closeStagingOverlay();
+    staging.clearSrc();
+    staging.setUrlLabel('https://staging-demo-preview.example');
+    staging.open();
+    staging.setHandlers({ onBack: () => AppView.closeStagingOverlay() });
     if (shot === 'preview-rebuilding') {
       // The ONE state that still promises 20–60 seconds: a real rebuild.
       AppView._setStagingLoader(true, {
@@ -784,13 +780,19 @@ const AppView = {
     AppView.tokenRefreshInterval = setInterval(async () => {
       await AppView.refreshToken(AppView.appData && AppView.appData.slug);
       // Rewrite the iframe src so the child app picks up the fresh token.
-      // Only when the App tab is the visible one; other tabs re-fetch on
-      // next render anyway. Reuses the inner deep link so a mid-session
-      // refresh doesn't yank the viewer back to the app root (#743).
-      const iframe = document.getElementById('app-iframe');
-      if (iframe && AppView.appData?.url
+      // Only when a frame is actually mounted. Reuses the inner deep link so a
+      // mid-session refresh doesn't yank the viewer back to the app root (#743).
+      //
+      // #1085 chunk H: through the frame seam, and note what "mounted" now
+      // covers. The frame survives a switch to the Dev tab (it is parked, not
+      // rebuilt), so this refresh reaches a parked frame too — which it must:
+      // "other tabs re-fetch on next render anyway" stopped being true the
+      // moment coming back stopped being a rebuild, and a parked app whose
+      // token expired is a running app whose API calls start failing.
+      const frame = AppView._appFrame();
+      if (frame.hasFrame() && AppView.appData?.url
           && AppView.tokenForSlug(AppView.appData.slug)) {
-        iframe.src = AppView.buildAppIframeSrc();
+        frame.setSrc(AppView.buildAppIframeSrc());
       }
     }, AppView.TOKEN_REFRESH_MS);
   },
@@ -972,21 +974,140 @@ const AppView = {
       ></iframe>`;
   },
 
-  // The cover: app icon + name on the theme background. `pinned` marks a
-  // cover that must never be revealed away (the screenshot state).
-  _launchCoverHtml(record, { id = 'app-launch-cover', pinned = false } = {}) {
+  // The cover's CONTENT, as data rather than markup (#1085 chunk H): the icon
+  // tile's kind and inner HTML (from Home.iconTileFor, the helper that paints
+  // every icon tile on the platform) plus the app's RAW name. The React cover
+  // and the DOM cover below are both built from this one descriptor — React
+  // escapes the text itself, _coverHtml calls escapeHtml — so the two can't
+  // drift apart.
+  _coverDescriptor(record) {
     const home = AppView._home();
     const tile = home && typeof home.iconTileFor === 'function'
       ? home.iconTileFor(record || {})
       : { kind: 'letter', html: escapeHtml(((record && record.name) || '?').charAt(0).toUpperCase()) };
-    const name = escapeHtml((record && record.name) || '');
+    return {
+      iconKind: tile.kind,
+      iconHtml: tile.html,
+      name: (record && record.name) || '',
+      note: 'Opening…',
+      spinner: false,
+    };
+  },
+
+  // The cover: app icon + name on the theme background. `pinned` marks a
+  // cover that must never be revealed away (the screenshot state).
+  _launchCoverHtml(record, opts = {}) {
+    return AppView._coverHtml(AppView._coverDescriptor(record), opts);
+  },
+
+  _coverHtml(cover, { id = 'app-launch-cover', pinned = false } = {}) {
     return `
       <div id="${id}" class="app-launch-cover"${pinned ? ' data-pinned="true"' : ''} aria-hidden="true">
-        <div class="app-icon-tile app-launch-cover-icon" data-icon="${tile.kind}">${tile.html}</div>
-        <p class="app-launch-cover-name">${name}</p>
-        <p class="app-launch-cover-note" id="${id}-note">Opening…</p>
+        <div class="app-icon-tile app-launch-cover-icon" data-icon="${cover.iconKind}">${cover.iconHtml}</div>
+        <p class="app-launch-cover-name">${escapeHtml(cover.name)}</p>
+        <p class="app-launch-cover-note" id="${id}-note">${escapeHtml(cover.note)}</p>
         <div class="dc-status-spinner-arc app-launch-cover-spinner hidden" id="${id}-spinner"></div>
       </div>`;
+  },
+
+  // ── The React seam for the App tab's app frame (#1085 chunk H, step 2) ──
+  //
+  // #app-iframe is React-owned now — frontend/src/features/app-frame/ — and it
+  // is the one element in this shell that must never be re-created behind the
+  // user's back: it holds ANOTHER APP'S live document, so a new element is a
+  // reload that throws away whatever they had inside it. Every path that used
+  // to build, rebuild, hide or drop that frame therefore goes through this
+  // seam, whose whole contract is "mutate the element you already have".
+  //
+  // Same adopt-or-fall-back resolution as _staging() further down.
+  _appFrame() {
+    return (typeof window !== 'undefined' && window.UsernodeReact
+      && window.UsernodeReact.appFrame) || AppView._appFrameDom;
+  },
+
+  // The DOM half of the pair: the pre-chunk-H code path, kept verbatim. Live
+  // only where the bundle is not — the node-side render tests load this file as
+  // a classic script into a stubbed document — and in that world it is the SOLE
+  // writer of these nodes, the same single-owner rule the island lives under.
+  //
+  // One method answers differently from the React bridge, deliberately:
+  // `keeps()` is always false here. This adapter has no frame that can survive
+  // an #app-content write, so "rebuild" is the only truthful answer it can
+  // give, and it is exactly the behaviour chunk H replaces.
+  _appFrameDom: {
+    _el(id) {
+      return (typeof document !== 'undefined' && document.getElementById)
+        ? document.getElementById(id) : null;
+    },
+    mount({ slug, cover = null, faded = true } = {}) {
+      const dom = AppView._appFrameDom;
+      const content = dom._el('app-content');
+      if (!content || !slug) return false;
+      content.innerHTML = `
+      <div class="app-launch-host w-full h-full">
+        ${AppView._appIframeHtml({ hidden: faded })}${cover ? AppView._coverHtml(cover) : ''}
+      </div>`;
+      return !!dom._el('app-iframe');
+    },
+    keeps() { return false; },
+    activate() { return !!AppView._appFrameDom._el('app-iframe'); },
+    // No-ops: in a DOM-only shell the next #app-content write is what removes
+    // the frame, exactly as it always was.
+    park() {},
+    unmount() {},
+    isActive() { return !!AppView._appFrameDom._el('app-iframe'); },
+    frame() { return AppView._appFrameDom._el('app-iframe'); },
+    hasFrame() { return !!AppView._appFrameDom._el('app-iframe'); },
+    setSrc(src) {
+      const el = AppView._appFrameDom._el('app-iframe');
+      if (!el || !src) return false;
+      el.src = src;
+      return true;
+    },
+    setOnLoad(fn) {
+      const el = AppView._appFrameDom._el('app-iframe');
+      if (!el) return false;
+      el.onload = fn || null;
+      return true;
+    },
+    hasCover() { return !!AppView._appFrameDom._el('app-launch-cover'); },
+    coverSpinner(visible) {
+      AppView._appFrameDom._el('app-launch-cover-spinner')
+        ?.classList.toggle('hidden', !visible);
+    },
+    coverNote(text) {
+      const note = AppView._appFrameDom._el('app-launch-cover-note');
+      if (note) note.textContent = text || '';
+    },
+    reveal({ reduceMotion = false } = {}) {
+      const dom = AppView._appFrameDom;
+      const iframe = dom._el('app-iframe');
+      if (iframe) iframe.style.opacity = '1';
+      const cover = dom._el('app-launch-cover');
+      if (!cover) return false;
+      // The screenshot state pins its cover: it is the subject of the shot.
+      if (cover.dataset && cover.dataset.pinned === 'true') return false;
+      if (reduceMotion) { cover.remove(); return false; }
+      cover.classList.add('app-launch-cover--out');
+      return true;
+    },
+    dropCover() { AppView._appFrameDom._el('app-launch-cover')?.remove(); },
+    stats() { return { mounts: 0, navigations: 0 }; },
+  },
+
+  // Hide the frame without dropping it: the App tab is no longer the surface on
+  // screen, but the app it holds keeps running. Called by every path that takes
+  // #app-content over for something else.
+  _parkAppFrame() {
+    AppView._appFrame().park();
+  },
+
+  // Drop the frame for good — the app is being LEFT, not parked. Also
+  // invalidates the issue-state announcement (#685): the WindowProxy that made
+  // it is going away with the frame.
+  _unmountAppFrame() {
+    AppView._issueStateSource = null;
+    AppView._appFrame().unmount();
   },
 
   // Mount the launch surface and start the app loading. Called from inside
@@ -1012,16 +1133,18 @@ const AppView = {
     // consistent to read. open() replaces it with the full detail payload.
     AppView.appData = rec;
 
-    content.innerHTML = `
-      <div class="app-launch-host w-full h-full">
-        ${AppView._appIframeHtml({ hidden: true })}
-        ${AppView._launchCoverHtml(rec)}
-      </div>`;
+    // #1085 chunk H: through the frame seam. The store write is flushed
+    // synchronously, so the element exists on the next line — which it has to,
+    // because this runs inside PlatformUI.transition's reveal callback and the
+    // whole point is that the document request goes out in the same tick as the
+    // tap.
+    const frame = AppView._appFrame();
+    frame.mount({ slug, cover: AppView._coverDescriptor(rec), faded: true });
     // #970: an app frame is on screen from this moment — the shell stops
     // reserving the home-indicator strip and forwards it to the app.
     AppView._setSurface('app');
 
-    const iframe = document.getElementById('app-iframe');
+    const iframe = frame.frame();
     if (!iframe) return false;
 
     const proceed = (src) => {
@@ -1032,7 +1155,7 @@ const AppView = {
       // refresh, different app) rebuilds instead of adopting.
       AppView._launchAdopt = { launchId, slug, src };
       AppView._watchLaunchLoad(iframe, launchId);
-      iframe.src = src;
+      frame.setSrc(src);
     };
 
     if (AppView.hasFreshToken(slug)) {
@@ -1091,7 +1214,14 @@ const AppView = {
       fn();
     }, ms));
 
+    // #1085 chunk H: the App tab's cover is React-owned, so its spinner and its
+    // note are store writes — a classList / textContent write into React-owned
+    // DOM gets reconciled away on the next render. The landing viewer's cover is
+    // still a hand-written node appended to a long-lived frame, and keeps the
+    // DOM path.
+    const isReactCover = coverId === 'app-launch-cover';
     at(AppView.LAUNCH_SPINNER_MS, () => {
+      if (isReactCover) { AppView._appFrame().coverSpinner(true); return; }
       document.getElementById(`${coverId}-spinner`)?.classList.remove('hidden');
     });
     at(AppView.LAUNCH_REVEAL_CAP_MS, () => {
@@ -1102,8 +1232,10 @@ const AppView = {
       reveal();
     });
     at(AppView.LAUNCH_SLOW_MS, () => {
+      const text = 'This is taking longer than expected…';
+      if (isReactCover) { AppView._appFrame().coverNote(text); return; }
       const note = document.getElementById(`${coverId}-note`);
-      if (note) note.textContent = 'This is taking longer than expected…';
+      if (note) note.textContent = text;
     });
   },
 
@@ -1130,6 +1262,25 @@ const AppView = {
     const timers = opts.timers || AppView._launchTimers;
     timers.forEach((t) => clearTimeout(t));
     timers.length = 0;
+
+    // #1085 chunk H: the App tab's frame and cover are React-owned, so the
+    // cross-fade is a pair of store writes rather than a style write and a
+    // `cover.remove()`. The fade-out timer stays HERE, with the constant it
+    // reads and the generation counter it belongs to; only the removal itself
+    // moved into the store.
+    //
+    // The landing viewer's surface (`app-viewer-cover` over #app-viewer-frame)
+    // is still hand-written DOM and keeps the path below.
+    if (iframeId === 'app-iframe' && coverId === 'app-launch-cover') {
+      const frame = AppView._appFrame();
+      if (frame.hasFrame() || frame.hasCover()) {
+        if (frame.reveal({ reduceMotion: AppView._reduceMotion() })) {
+          setTimeout(() => frame.dropCover(), AppView.LAUNCH_FADE_MS + 40);
+        }
+        return;
+      }
+    }
+
     const iframe = document.getElementById(iframeId);
     if (iframe) iframe.style.opacity = '1';
     const cover = document.getElementById(coverId);
@@ -1178,6 +1329,11 @@ const AppView = {
     // #1084 chunk G: this path replaces #app-content by hand, so retire any
     // interim React root that owns it first — see _teardownDevRoots.
     AppView._teardownDevRoots();
+    // #1085 chunk H: the shot paints its own (pinned, frameless) cover into
+    // #app-content, so the React frame host has to go — it would otherwise sit
+    // over it. Deliberately NOT converted: the shot is the one launch surface
+    // with no app behind it, and a React frame would try to load a real origin.
+    AppView._unmountAppFrame();
 
     const home = AppView._home();
     const apps = (home && Array.isArray(home._apps)) ? home._apps : [];
@@ -1212,11 +1368,13 @@ const AppView = {
     const content = document.getElementById('app-content');
     const appData = AppView.appData;
 
-    // #685: every render replaces the iframe (or removes it), so any
-    // prior issue-state announcement is stale. A WindowProxy keeps its
-    // identity across same-iframe navigations, so clearing here (not
-    // just on close) is what invalidates it on re-render.
-    AppView._issueStateSource = null;
+    // #685: an issue-state announcement is invalidated by the frame that made
+    // it going away, and a WindowProxy keeps its identity across same-iframe
+    // navigations, so it has to be cleared wherever the frame is replaced or
+    // dropped. That used to be "every render" — #1085 chunk H made a render
+    // that keeps the frame a real case, so the clear moved down into the three
+    // branches that don't keep it (both placeholder paths via
+    // _unmountAppFrame, and the rebuild at the bottom).
 
     // #1084 chunk G: every branch below replaces #app-content by hand, so
     // retire any interim React root that owns it first — see
@@ -1228,6 +1386,10 @@ const AppView = {
       // it is gone — retire the generation so its pending callbacks and the
       // adoption offer can't outlive the frame they belong to.
       AppView._teardownLaunch();
+      // #1085 chunk H: and drop the frame outright rather than parking it. The
+      // app is no longer running (creating / awaiting_secrets / error / gone),
+      // so there is nothing worth keeping alive behind the placeholder.
+      AppView._unmountAppFrame();
       let inner;
       if (appData?.status === 'creating') {
         inner = '<div class="status-dot creating"></div><p class="text-sm">App is spinning up...</p>';
@@ -1300,6 +1462,9 @@ const AppView = {
     // instead and re-render automatically once connectivity returns.
     if (window.Offline && Offline.isOffline()) {
       AppView._teardownLaunch();
+      // Same as the status branch above: offline, the frame would render a
+      // broken cross-origin document, so it goes rather than parks.
+      AppView._unmountAppFrame();
       content.innerHTML = `
         <div class="flex flex-col items-center justify-center h-full text-zinc-500 dark:text-zinc-400 gap-2 p-4 text-center">
           <p class="text-sm">This app needs a connection — reconnect to open it.</p>
@@ -1317,41 +1482,53 @@ const AppView = {
     }
 
     const iframeSrc = AppView.buildAppIframeSrc();
+    const frame = AppView._appFrame();
 
     // #931: one-shot adoption. beginLaunch may already have mounted this
     // exact frame during the open animation; read the offer and null it in
     // the same breath, so only the FIRST render after a launch can adopt.
-    // Every later render (WS status flip, swapToProduction, the offline
-    // retry, a post-merge reload) rebuilds as it always did.
     const adopt = AppView._launchAdopt;
     AppView._launchAdopt = null;
-    if (adopt
-        && adopt.launchId === AppView._launchId
-        && adopt.slug === appData.slug
-        && adopt.src === iframeSrc
-        && document.getElementById('app-iframe')) {
-      // Same app, same URL, frame already loading (or loaded) — touching
-      // the DOM here would restart the document load and undo the whole
-      // point of the eager launch. The surface flag still has to be
-      // asserted (#970): beginLaunch set it, but a render that adopts must
-      // not depend on that, or an adopted launch could keep a stale flag.
+    const adopts = !!adopt
+      && adopt.launchId === AppView._launchId
+      && adopt.slug === appData.slug
+      && adopt.src === iframeSrc
+      && frame.hasFrame();
+
+    // #1085 chunk H generalises that one-shot into a standing rule: if the
+    // frame React holds is ALREADY this app at ALREADY this url, this render
+    // must touch nothing. Rebuilding it would restart the document load —
+    // which is what App → Dev → App used to do, silently discarding whatever
+    // the user had on screen inside someone else's app. (The DOM adapter
+    // answers false here: it has no frame that survives an #app-content write,
+    // so for it every later render still rebuilds, exactly as before.)
+    if (adopts || frame.keeps({ slug: appData.slug, src: iframeSrc })) {
+      // The surface flag still has to be asserted (#970): beginLaunch set it,
+      // but a render that keeps the frame must not depend on that, or it could
+      // carry a stale flag over from the Dev surface it just left.
+      frame.activate();
       AppView._setSurface('app');
       return;
     }
     AppView._teardownLaunch();
+    // #685: this render DOES replace the frame, so the announcement goes.
+    AppView._issueStateSource = null;
 
-    content.innerHTML = AppView._appIframeHtml({ src: iframeSrc });
+    frame.mount({ slug: appData.slug, faded: false });
     // #970: full-bleed frame; the insets go to the app instead.
     AppView._setSurface('app');
 
-    const iframe = document.getElementById('app-iframe');
-    iframe.addEventListener('load', () => {
+    // `onload`, not addEventListener: the element outlives a render now, so a
+    // listener added per render would stack. It is the same single slot the
+    // reveal ladder writes, and the two are alternative paths over one frame.
+    frame.setOnLoad(() => {
       AppView.iframeFocused = true;
       // #970: the app's document is up — hand it the insets that apply to
       // this frame's rect. Also covers the token-refresh re-src, which
       // reloads the frame without re-rendering.
       AppView.scheduleSafeAreaBroadcast();
     });
+    frame.setSrc(iframeSrc);
   },
 
   // #21: fetch + render the "live on <sha> · PR #N" pill. Called on App
@@ -1576,6 +1753,13 @@ const AppView = {
     // chat, session, topic) and wants clearance above the home indicator.
     // Set once here rather than per branch — they all replace #app-content.
     AppView._setSurface('platform');
+
+    // #1085 chunk H: PARK the app frame, don't drop it. Dev mode takes
+    // #app-content over, but the app the user was just looking at is still the
+    // app they are working on — hiding its host leaves its document, its
+    // sockets and its unsaved state alive, so switching back is instant and
+    // lossless instead of a reload.
+    AppView._parkAppFrame();
 
     // Capture the Dev list's scroll position before any branch below
     // overwrites #app-content. #dev-forum-scroll only exists when the
@@ -2199,7 +2383,10 @@ const AppView = {
       if (mine && item.source !== 'imported') {
         rows.push(`<button class="gc-vote-btn" title="Open the dev session behind this proposal" onclick="AppView.openProposalSession(${item.id})">Open the dev session behind this</button>`);
       }
-      if (!mine && !AppView.readOnly) rows.push(AppView._exploreChatBtnHtml(item));
+      // _showExplorePill, not `!mine`: the viewer's own IMPORTED proposal has
+      // no session behind the row above (#687), so Explore is its only AI
+      // affordance (#1045). The shared predicate owns that rule.
+      if (AppView._showExplorePill(item) && !AppView.readOnly) rows.push(AppView._exploreChatBtnHtml(item));
       if (!AppView.readOnly && !isMerged && mine && item.status === 'promoted') {
         rows.push(`<button class="gc-vote-btn" title="Withdraw this proposal (closes the PR, removes it from the vote panel)" onclick="AppView.withdrawProposal(${item.id})">Withdraw</button>`);
       }
@@ -2312,16 +2499,23 @@ const AppView = {
   //
   //   • at most ACTION_PRIMARY_MAX text pills (the actions you'd actually
   //     take from a list),
-  //   • one icon-only Preview affordance (kept as an icon precisely so a
-  //     read-only viewer — who gets no vote buttons — still has a visible
-  //     "go look at this" affordance),
+  //   • one icon-only Preview affordance on the detail head (kept as an icon
+  //     precisely so a read-only viewer — who gets no vote buttons — still has
+  //     a visible "go look at this" affordance; on a dense card it moved to
+  //     the rail),
   //   • one ⋯ trigger holding everything else.
   //
   // `spec` is an object, not an array:
   //   primary — ordered array of button-HTML strings (falsy dropped, sliced
   //             to the cap; anything past it is a bug, not a silent trim, so
   //             the overflow is where extra actions belong)
-  //   preview — the icon affordance HTML ('' when there's nothing to preview)
+  //   preview — the icon affordance HTML ('' when there's nothing to preview),
+  //             emitted LAST, after every primary. DENSE cards no longer pass
+  //             it here at all: the eye is pinned to the bottom of the card's
+  //             rail (see _cardRailHtml), under the ⋯ it shares a column with.
+  //             It stays a band affordance on the UNCAPPED detail-head variant
+  //             (noNav), which has no chevron to sit under and whose action
+  //             list is a wrapping left-to-right row.
   //   menu    — DESCRIPTORS (see _cardMenuTriggerHtml), not HTML, so the same
   //             list renders as an anchored dropdown on pointer devices and as
   //             a PlatformUI action sheet on touch
@@ -2331,7 +2525,12 @@ const AppView = {
   // An array is still accepted (legacy shape) and treated as `{ primary }`
   // with no cap, so the transcript/roster call sites and any external caller
   // keep working. Returns '' when there is nothing at all to show.
-  ACTION_PRIMARY_MAX: 2,
+  // Three, not two: the four-band card reserves an action row on EVERY
+  // card, so a card type with one lone action would show a mostly-empty
+  // band. One action per thin card type was promoted out of ⋯ to fill it
+  // (issue: in-progress; own session: visibility; proposal: Explore;
+  // merged: kudos), which needs the third slot next to Yes/No.
+  ACTION_PRIMARY_MAX: 3,
   _cardActionsHtml(spec) {
     if (Array.isArray(spec) || spec == null) {
       const legacy = (spec || []).filter(Boolean).join('');
@@ -2360,19 +2559,38 @@ const AppView = {
   //             sit beside the icon, so it gets the card's own width — which
   //             is also what stops it ellipsising after three words in a
   //             kanban column, where the indent cost it a fifth of the row.
-  //   badges  — the metadata chips (priority, assignee, category) plus the
-  //             💬 count, on their own FULL-WIDTH wrapping row. They used to
-  //             share the title's line, which cost them the icon's 36px of
-  //             indent and made them wrap after two chips in a kanban
-  //             column; four chips now fit on one line there.
-  //   pill    — the composite status pill, FULL WIDTH on its own row. A
-  //             proportional tally reads far better as a bar than as a
-  //             thumbnail-sized capsule wedged between chips, and giving it
-  //             the whole width is what makes the fill legible at a glance.
-  //   actions — the ≤2 text pills plus the icon Preview.
+  //   status  — ONE band carrying the composite status pill, the 💬 count,
+  //             the linked-issue pills and the metadata chips (priority,
+  //             assignee, category). Full width, one line, clipped.
+  //   actions — the ≤3 text pills plus the icon Preview.
+  //
+  // ── Dense mode: every band is RESERVED ───────────────────────────────
+  //
+  // On the board (list, kanban, pm) all four bands are emitted whether or
+  // not they have content, and each is height-capped in app.css: the title
+  // clamps to two lines and reserves both, the meta line reserves one, and
+  // the status and action bands reserve one row each. That is the whole
+  // point of the contract — a card's bands land at the same y offsets as
+  // its neighbour's regardless of how much any one card has to say, so a
+  // column of them scans as a grid instead of as ragged blocks. Cards used
+  // to be 3–6 bands tall depending on what happened to be set, and the eye
+  // had to re-find the status line on every row.
+  //
+  // The bands CLIP rather than shrink: `overflow: hidden` on a band whose
+  // height is exactly one row, with the pills allowed to wrap, means a
+  // second row of pills is cut off whole. Nothing is ever half-visible and
+  // nothing has to be measured in JS to decide what fits.
+  //
+  // `dense: false` is the detail head (`noNav`), which is a page header
+  // rather than a row in a list: there is nothing to align it against, it
+  // has the full page width, and hiding a chip behind a clip on the one
+  // screen that is supposed to show everything would be wrong. It keeps the
+  // old collapse-when-empty behaviour, the uncapped chip list, the
+  // `inlinePill` capsule and an unclamped title.
   //
   // opts: { icon, titleHtml, titleAttrs, metaHtml, badges, chatCount,
-  //         uncapped, pill, inlinePill, actions, extraHtml }
+  //         uncapped, pill, inlinePill, linkedHtml, actions, extraHtml,
+  //         dense }
   //
   // `icon` — the type chip. It is passed IN here (rather than emitted as the
   // card's own first flex child, which is where it used to live) so that it
@@ -2404,28 +2622,84 @@ const AppView = {
   // row as a capsule instead — same full-width row as everywhere else, it
   // just shares it with the chips — which is also why it is exempt from the
   // badge cap.
+  //
+  // In dense mode the pill leads the SAME band as the chips for the same
+  // reason, just as a flexible bar rather than a capsule: two separate rows
+  // for "state" and "metadata" is one band more than the layout can reserve,
+  // and the pill has never needed the entire width — only more of it than a
+  // chip. `linkedHtml` (the Closes-#N pills) joins that band too, ahead of
+  // the chips and OUTSIDE the chip cap: it used to ride at the end of the
+  // meta line, where it was the first thing that line's ellipsis ate.
+  //
+  // #1139 narrows the reserve by exactly one case: a status band with NO
+  // VISIBLE pill in it is still emitted (the node has to stay — app.css caps
+  // the action band through `.dev-card-status + .gc-card-actions`, and three
+  // dapp.json checks walk that chain) but is stamped `data-empty="1"` and
+  // hidden by CSS. Bands 1, 2 and 4 stay unconditionally reserved, so a
+  // column can differ by at most this one row. The common case is an issue
+  // card nobody has voted on, claimed or commented on — on most apps, that
+  // is every issue card, and 22px + 5px of blank band on each was the most
+  // visible thing on the board.
+  //
+  // Emptiness is computed from the INPUTS, never from `badges`: the 💬 badge
+  // is emitted at count 0 carrying Tailwind's `hidden` (so live bumps have a
+  // target — see _devChatBadge), which makes the band's HTML string non-empty
+  // on every issue card. A string test, or `:empty` in CSS, would therefore
+  // never fire. Everything else in the band returns '' when it has nothing to
+  // say, so a truthy check on the chips is enough for them.
   _cardContentHtml(opts) {
     const o = opts || {};
-    const chips = o.inlinePill
-      ? [o.inlinePill, ...(o.badges || [])]
-      : (o.badges || []);
+    const dense = o.dense !== false;
+    const chips = dense
+      ? (o.badges || [])
+      : [
+        ...(o.inlinePill ? [o.inlinePill] : []),
+        ...(o.linkedHtml ? [o.linkedHtml] : []),
+        ...(o.badges || []),
+      ];
     const badges = AppView._cardBadgesHtml(chips, o.chatCount, {
       uncapped: o.uncapped || !!o.inlinePill,
+      dense,
+      pill: dense ? o.pill : '',
+      lead: dense ? o.linkedHtml : '',
     });
-    const badgeRow = badges ? `<div class="dev-card-badges">${badges}</div>` : '';
-    const pillRow = o.pill ? `<div class="dev-status-row">${o.pill}</div>` : '';
-    const metaRow = o.metaHtml ? `<div class="dev-card-meta">${o.metaHtml}</div>` : '';
+    // #1139: does the band have anything a reader can actually see? `chips`
+    // already folds in `inlinePill` / `linkedHtml` for the non-dense head;
+    // the dense branch passes those two through separate opts, so they are
+    // checked here. A 0 chat count is NOT content (the badge is hidden).
+    const statusHasContent = chips.some(Boolean)
+      || (dense && !!o.pill)
+      || (dense && !!o.linkedHtml)
+      || (o.chatCount !== null && o.chatCount !== undefined
+          && (parseInt(o.chatCount) || 0) > 0);
+    const titleCls = dense ? 'dev-card-title dev-card-title-clamp' : 'dev-card-title';
+    // Dense: reserved bands, emitted whether or not they carry anything, so
+    // every card in a column has its rows at the same height. Non-dense (the
+    // detail head): collapse when empty, exactly as before.
+    const metaRow = dense
+      ? `<div class="dev-card-meta">${o.metaHtml || ''}</div>`
+      : (o.metaHtml ? `<div class="dev-card-meta">${o.metaHtml}</div>` : '');
+    // The class attribute is deliberately left byte-identical in both cases —
+    // the flag rides as a data attribute so existing selectors (unit tests,
+    // dapp.json, bumpThreadBadge) keep matching, and
+    // `.dev-card-badges.dev-card-status[data-empty="1"]` outranks
+    // `.dev-card-badges` regardless of where it lands in app.css.
+    const statusRow = dense
+      ? `<div class="dev-card-badges dev-card-status"${statusHasContent ? '' : ' data-empty="1"'}>${badges}</div>`
+      : (statusHasContent ? `<div class="dev-card-badges">${badges}</div>` : '');
+    const actionRow = dense
+      ? (o.actions || '<div class="gc-card-actions"></div>')
+      : (o.actions || '');
     return `<div class="flex-1 min-w-0">
           <div class="dev-card-head">
             ${o.icon || ''}
             <div class="dev-card-head-main">
-              <div class="dev-card-title"${o.titleAttrs || ''}>${o.titleHtml || ''}</div>
+              <div class="${titleCls}"${o.titleAttrs || ''}>${o.titleHtml || ''}</div>
             </div>
           </div>
           ${metaRow}
-          ${badgeRow}
-          ${pillRow}
-          ${o.actions || ''}
+          ${statusRow}
+          ${actionRow}
           ${o.extraHtml || ''}
         </div>`;
   },
@@ -2720,23 +2994,39 @@ const AppView = {
   },
 
   // The card's right-edge rail: the ⋯ trigger pinned to the TOP-RIGHT
-  // corner with the tap-through chevron centred below it.
+  // corner, the icon Preview to the BOTTOM-RIGHT one, and the tap-through
+  // chevron centred in what is left between them.
   //
-  // Both are right-edge controls, so they share ONE column rather than each
-  // taking its own. That matters more than it sounds: a kanban column gives
+  // All three are right-edge controls, so they share ONE column rather than
+  // each taking its own. That matters more than it sounds: a kanban column gives
   // a card about 175px of text width, and giving the ⋯ its own flex slot
   // beside the head cost 30px of it — enough to push a single assignee chip
   // onto its own line. Sharing the rail costs 8px instead.
   //
   // `chevron` is false on the topic head's static variants (you are already
   // on the page it would navigate to).
+  //
+  // `preview` is the icon Preview affordance (see cardPreviewHtml), and the
+  // rail is where it lives on a dense card: the two ends of this column are
+  // both meaningful — ⋯ at the top is "more about this card", the eye at the
+  // bottom is "go look at the thing itself" — and both then sit in one
+  // vertical line down a whole column of cards, found by position rather than
+  // by reading past two or three variable-width vote pills in the action
+  // band. It is emitted LAST so `.dev-card-rail > svg`'s auto margins (which
+  // match the chevron and nothing else — the trigger and the preview are a
+  // <button>/<span>) centre the chevron in the gap BETWEEN them. With no
+  // preview the rail is byte-for-byte what it was before, so a card with
+  // nothing to preview keeps today's appearance and reserves no empty slot.
   _cardRailHtml(menuKey, menu, opts) {
     const o = opts || {};
     const trigger = AppView._cardMenuTriggerHtml(menuKey, menu);
     const chevron = o.chevron === false ? '' : AppView.DEV_CARD_CHEVRON;
-    if (!trigger && !chevron) return '';
-    if (!trigger) return chevron;
-    return `<div class="dev-card-rail">${trigger}${chevron}</div>`;
+    const preview = o.preview || '';
+    if (!trigger && !chevron && !preview) return '';
+    // A lone chevron needs no column to be centred in — it is already the
+    // card's only right-edge child. Anything stacked on top of it does.
+    if (!trigger && !preview) return chevron;
+    return `<div class="dev-card-rail">${trigger}${chevron}${preview}</div>`;
   },
 
   // A lightweight section divider for a column that groups its cards
@@ -6484,21 +6774,15 @@ const AppView = {
     // chat — its working surface, and its canonical destination; the public
     // discussion of a shared session is one ⋯ row rather than a competing
     // affordance on the card face.
-    const menu = [
-      shared
-        ? {
-          label: 'Hide',
-          icon: 'hide',
-          title: "Make this session private again (removes it from everyone's In progress area, and stops anyone reading the chat)",
-          act: () => AppView._setSessionShared(s.id, false, null),
-        }
-        : {
-          label: 'Make visible',
-          icon: 'visible',
-          title: "Show this session in everyone's In progress area — others can comment and open its live preview, but can't read your chat unless you also share it",
-          act: () => AppView._setSessionShared(s.id, true, null),
-        },
-    ];
+    //
+    // Visibility is PROMOTED to the face and is no longer a ⋯ row: it is the
+    // one thing you do to your own session card, the subtitle right above it
+    // states the current state, and the card now reserves an action band that
+    // otherwise held nothing but the icon Preview.
+    const visibilityBtn = AppView.readOnly ? '' : (shared
+      ? `<button class="gc-vote-btn" title="Make this session private again (removes it from everyone&#39;s In progress area, and stops anyone reading the chat)" onclick="AppView._setSessionShared(${s.id}, false, null)">Hide</button>`
+      : `<button class="gc-vote-btn" title="Show this session in everyone&#39;s In progress area — others can comment and open its live preview, but can&#39;t read your chat unless you also share it" onclick="AppView._setSessionShared(${s.id}, true, null)">Make visible</button>`);
+    const menu = [];
     // The SECOND opt-in, offered only once the session is visible (there is
     // nowhere for a reader to reach an invisible session's chat from).
     if (shared) {
@@ -6535,7 +6819,8 @@ const AppView = {
         })();
       },
     });
-    const actions = AppView._cardActionsHtml({ preview });
+    // `preview` goes to the rail, not in here — see _cardRailHtml below.
+    const actions = AppView._cardActionsHtml({ primary: [visibilityBtn] });
 
     // A private session gets the muted/draft shell — that IS the signal
     // nobody else can see it, replacing the caption that used to sit above
@@ -6547,12 +6832,15 @@ const AppView = {
       ${AppView._cardContentHtml({
         icon: AppView._devCardIcon('session'),
         titleHtml: label,
+        // The clamp can hide the end of a long title, so the truncating
+        // element itself carries the full text (`label` is already escaped).
+        titleAttrs: ` title="${label}"`,
         metaHtml: subtitle,
         badges: [statusTag, AppView._sessionVenueChipHtml(s), AppView.issueChipsHtml(s.linked_issues)],
         chatCount: null,
         actions,
       })}
-      ${AppView._cardRailHtml(`session:${s.id}`, menu)}
+      ${AppView._cardRailHtml(`session:${s.id}`, menu, { preview })}
     </div>`;
   },
 
@@ -6571,18 +6859,26 @@ const AppView = {
     const statusTag = AppView._sessionStatusTagHtml(s);
     const preview = AppView.cardPreviewHtml(s, { kind: 'shared-session', sessionId: s.id });
     const nav = noNav ? '' : ` data-shared-session-row="${s.id}" role="button" tabindex="0"`;
-    const chevron = noNav ? '' : AppView.DEV_CARD_CHEVRON;
-    const actions = noNav ? '' : AppView._cardActionsHtml({ preview });
+    // This card has no ⋯ menu of its own, so the rail is the chevron alone
+    // until there is a preview to pin under it — at which point it becomes a
+    // real column (chevron centred above the eye).
+    const rail = AppView._cardRailHtml('', null, {
+      chevron: !noNav, preview: noNav ? '' : preview,
+    });
     return `<div${nav} class="${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" title="${label}">
       ${AppView._cardContentHtml({
         icon: AppView._devCardIcon('session'),
         titleHtml: label,
+        titleAttrs: ` title="${label}"`,
         metaHtml: `${owner} is working on this`,
         badges: [statusTag, AppView.issueChipsHtml(s.linked_issues)],
         chatCount: s.chat_count,
-        actions,
+        // No pills of its own: reading the chat IS the whole-card tap, so the
+        // dense band renders reserved-and-empty (see _cardContentHtml).
+        actions: '',
+        dense: !noNav,
       })}
-      ${chevron}
+      ${rail}
     </div>`;
   },
 
@@ -7272,6 +7568,11 @@ const AppView = {
     // external GitHub links — those issues are closed, so the in-app
     // topic (resolved from the open-issues cache) would dead-end and
     // GitHub is their permanent record.
+    //
+    // These are pills, and they go in the PILL band (`linkedHtml`), not on
+    // the end of the meta line where they used to sit: that line is one
+    // ellipsising row, so on a kanban card the linkage — the thing that says
+    // what this change is FOR — was the first thing to disappear.
     const closesPills = isMerged
       ? AppView.closesPillHtml(pr)
       : AppView.issueChipsHtml(pr.linked_issues, { label: 'Closes' });
@@ -7284,23 +7585,38 @@ const AppView = {
     const imported = pr.source === 'imported';
     const chatN = parseInt(pr.chat_count) || 0;
 
-    // ── Badges: the composite pill + at most three metadata chips ──
+    // ── Badges: at most four metadata chips ──
     // The pill absorbs the tally, the pulsing "Vote" badge, the merge-state
     // badge, the checks badge, the console-errors badge, the advisory chip
     // and the explicit-approval chip. Unset metadata chips don't render.
     const badges = AppView._attrChipsHtml('proposal', pr.id, pr, {
       readonly: isMerged, omitUnset: !noNav, asArray: true,
     });
-    // The pill is its own FULL-WIDTH row now, not one of the four badges.
-    // The detail head keeps the inline capsule — it already has a wide
-    // header and a second full-width bar there would just be a rule.
+    // The pill LEADS the status band as a flexible bar. The detail head keeps
+    // the inline capsule — it already has a wide header, and a bar that wide
+    // there would just read as a rule.
     const pill = AppView.statusPillHtml(pr, { majority, locked: ctx.locked, inline: noNav });
 
-    // ── Actions: Yes / No + icon Preview; ⋯ is pinned in the head ──
+    // ── Actions: Yes / No / Explore + icon Preview; ⋯ is in the rail ──
+    // Explore is PROMOTED off the ⋯ menu for a live proposal the pill rule
+    // covers — someone else's proposal (the one thing a reader does short of
+    // voting on it) and the viewer's own IMPORTED proposal (which has no
+    // "Open session", so this is its only AI affordance, #1045). Whether a
+    // row gets one at all is _showExplorePill's call — the one predicate
+    // every render site shares. It stays a ⋯ row on a merged card, where the
+    // action band belongs to kudos instead, and on the detail head, which
+    // already spells it out in full in its own action list below the header.
     const preview = AppView.cardPreviewHtml(pr, { kind: 'proposal', sessionId: pr.id });
-    const primary = (isMerged || AppView.readOnly) ? [] : AppView._cardVoteButtonsHtml(pr);
-    const menu = AppView._proposalMenuItems(pr, { mine, imported, isMerged, isMerging, noNav });
-    const actions = AppView._cardActionsHtml({ primary, preview });
+    const exploreBtn = (!noNav && AppView._showExplorePill(pr) && !isMerged && !AppView.readOnly)
+      ? AppView._exploreChatBtnHtml(pr) : '';
+    const primary = (isMerged || AppView.readOnly)
+      ? [] : [...AppView._cardVoteButtonsHtml(pr), exploreBtn];
+    const menu = AppView._proposalMenuItems(pr, {
+      mine, imported, isMerged, isMerging, noNav, exploreOnFace: !!exploreBtn,
+    });
+    // The eye is a rail affordance on the dense card and a band affordance on
+    // the uncapped detail head, which has no chevron for it to sit under.
+    const actions = AppView._cardActionsHtml({ primary, preview: noNav ? preview : '' });
 
     // #195/#211: the before/after capture tiles no longer live on the card —
     // they are a detail-view concern (see _renderTopicHead's actions block),
@@ -7314,15 +7630,20 @@ const AppView = {
         ${AppView._cardContentHtml({
           icon: AppView._devCardIcon(isMerged ? 'done' : (mine ? 'proposalMine' : 'proposal'), mine && !isMerged ? { title: 'This is your PR — open its session.' } : undefined),
           titleHtml,
-          metaHtml: metaParts.join(' · ') + (closesPills ? ` ${closesPills}` : ''),
+          titleAttrs: ` title="${escapeAttr(pr.pr_title || `Change by ${pr.username || ''}`)}"`,
+          metaHtml: metaParts.join(' · '),
+          linkedHtml: closesPills,
           badges,
           chatCount: chatN,
           uncapped: noNav,
           pill: noNav ? '' : pill,
           inlinePill: noNav ? pill : '',
           actions,
+          dense: !noNav,
         })}
-        ${AppView._cardRailHtml(`proposal:${pr.id}`, menu, { chevron: !noNav })}
+        ${AppView._cardRailHtml(`proposal:${pr.id}`, menu, {
+          chevron: !noNav, preview: noNav ? '' : preview,
+        })}
       </div>`;
   },
 
@@ -7434,7 +7755,10 @@ const AppView = {
     // click routing (retract a direct kudos, otherwise give) and the same
     // self-kudos / bounty-credit disables the button carries, so the row
     // never offers a POST the server would refuse.
-    if (window.Kudos && !ro) {
+    // st.kudosOnFace — the merged card promotes the kudos button back onto
+    // its action band (it has no votes to cast, so the band was empty), and
+    // two ways to give the same kudos on one card is one too many.
+    if (window.Kudos && !ro && !st.kudosOnFace) {
       const entry = Kudos._ensureCache ? Kudos._ensureCache(pr.id) : {};
       const isSelf = !!(App.user && pr.user_id && pr.user_id === App.user.id);
       const mineKudos = !!entry.my_kudos;
@@ -7458,8 +7782,12 @@ const AppView = {
       });
     }
     // #313/#827: owners reach the Mayor via "Open session" on their own PR,
-    // so Explore is offered only on proposals the viewer does NOT own.
-    if (!st.mine && !ro) {
+    // so Explore is offered only where _showExplorePill says so — proposals
+    // the viewer does NOT own, plus their own IMPORTED ones, which have no
+    // session for "Open session" to open (#1045).
+    // st.exploreOnFace — a live board card promotes it into its action band,
+    // and the row would then be a duplicate of the button beside it.
+    if (AppView._showExplorePill(pr) && !ro && !st.exploreOnFace) {
       items.push({
         label: 'Explore in dev chat',
         icon: 'explore',
@@ -8656,6 +8984,7 @@ const AppView = {
         ${AppView._cardContentHtml({
           icon: AppView._devCardIcon('gov'),
           titleHtml: escapeHtml(titleText),
+          titleAttrs: ` title="${escapeAttr(titleText)}"`,
           metaHtml: metaParts.join(' · '),
           badges: [applyBadge],
           chatCount: govChatN,
@@ -8663,6 +8992,7 @@ const AppView = {
           pill: noNav ? '' : statusPill,
           inlinePill: noNav ? statusPill : '',
           actions,
+          dense: !noNav,
         })}
         ${AppView._cardRailHtml(`gov:${issue.id}`, menu, { chevron: !noNav })}
       </div>`;
@@ -9631,6 +9961,13 @@ const AppView = {
       el.innerHTML = `&#128172; ${n}`;
       el.classList.remove('hidden', 'bg-zinc-500/10', 'text-zinc-500');
       el.classList.add('bg-violet-500/10', 'text-violet-400');
+      // #1139: this is the one path that makes a pill visible WITHOUT a
+      // repaint, so it owns clearing the band's empty flag — otherwise the
+      // freshly-revealed 💬 badge would sit inside a display:none row until
+      // the board next re-rendered. Every other pill change goes through
+      // _repaintCards, which recomputes the flag from the render inputs.
+      const band = el.closest('.dev-card-status');
+      if (band) band.removeAttribute('data-empty');
     }
   },
 
@@ -9880,8 +10217,16 @@ const AppView = {
       ...AppView._attrChipsHtml('issue', n, issue, { omitUnset: !noNav, asArray: true }),
     ];
 
-    // ── Actions: ONE state-driven primary + icon Preview + ⋯ ──
+    // ── Actions: the state-driven primary + In progress + icon Preview + ⋯ ──
     const primaryBtn = AppView.readOnly ? '' : AppView._issuePrimaryActionHtml(issue);
+    // Promoted off the ⋯ menu: claiming an issue is what a reader does with
+    // it before writing any code, and the chip it toggles is right above in
+    // the status band — so the toggle belongs beside it, not two taps away.
+    // Board only: the detail view already spells this action out in full in
+    // its own action list, so promoting it into the head as well would show
+    // the same toggle twice on one screen.
+    const progressBtn = (noNav || AppView.readOnly)
+      ? '' : AppView._issueProgressActionHtml(issue);
     // A ready auto-solve run with a live preview gets the same icon
     // affordance every other previewable thing on the board gets.
     const hasRunPreview = !!(h && h.status === 'ready' && h.stagingUrl
@@ -9890,8 +10235,12 @@ const AppView = {
       ? AppView.cardPreviewHtml({ staging_url: h.stagingUrl },
         { kind: 'issue-run', sessionId: h.sessionId })
       : '';
-    const menu = AppView._issueMenuItems(issue, { noNav });
-    const actions = AppView._cardActionsHtml({ primary: [primaryBtn], preview });
+    const menu = AppView._issueMenuItems(issue, { noNav, progressOnFace: !!progressBtn });
+    // Dense: the eye is pinned to the bottom of the rail. Detail head: it stays
+    // in the (uncapped, chevron-less) action list.
+    const actions = AppView._cardActionsHtml({
+      primary: [primaryBtn, progressBtn], preview: noNav ? preview : '',
+    });
 
     // Topic-view-only admin escape hatch: the live claimer list with a
     // per-claim clear control, so a stuck claim can be removed without
@@ -9933,8 +10282,11 @@ const AppView = {
           uncapped: noNav,
           actions,
           extraHtml: adminClaimList,
+          dense: !noNav,
         })}
-        ${AppView._cardRailHtml(`issue:${n}`, menu, { chevron: !noNav })}
+        ${AppView._cardRailHtml(`issue:${n}`, menu, {
+          chevron: !noNav, preview: noNav ? '' : preview,
+        })}
       </div>`;
   },
 
@@ -9995,6 +10347,21 @@ const AppView = {
       : `<button class="gc-vote-btn" title="Start a dev chat to solve this issue" onclick="AppView.createPrForIssue(${n})">Create proposal</button>`;
   },
 
+  // The issue card's SECOND action: the in-progress claim toggle, promoted
+  // out of the ⋯ menu. Reads `mine` off the claim list exactly as the menu
+  // row it replaces did, so the button never offers a POST the server would
+  // refuse. The long "expires after ~7 days" explanation stays in the
+  // tooltip — it is the reason the mark is safe to leave on, not something
+  // the label has room for.
+  _issueProgressActionHtml(issue) {
+    const n = issue.number;
+    const claims = (issue.in_progress && Array.isArray(issue.in_progress.claims))
+      ? issue.in_progress.claims : [];
+    return claims.some((c) => c.mine)
+      ? `<button class="gc-vote-btn" title="Remove your in-progress mark from this issue" onclick="AppView.clearIssueClaim(${n})">Clear in progress</button>`
+      : `<button class="gc-vote-btn" title="Mark this issue as in progress — you&#39;re working on it. Expires on its own after ~7 days without activity; discussion in the issue&#39;s thread keeps it alive." onclick="AppView.markIssueInProgress(${n})">Mark in progress</button>`;
+  },
+
   // Everything an issue card demoted off its face, as ⋯ descriptors.
   _issueMenuItems(issue, state) {
     const st = state || {};
@@ -10040,22 +10407,28 @@ const AppView = {
       // Manual "In progress" claim, keyed strictly off the VIEWER's own
       // claim: they can always add theirs alongside others' (claims are
       // per-user, never exclusive) and can only clear their own from here.
+      //
+      // st.progressOnFace — the board card promotes this to a button
+      // (_issueProgressActionHtml), so the row would duplicate it. It is
+      // still a row wherever the face doesn't carry it (read-only boards).
       const ipClaims = (issue.in_progress && Array.isArray(issue.in_progress.claims))
         ? issue.in_progress.claims : [];
       const myClaim = ipClaims.some((c) => c.mine);
-      items.push(myClaim
-        ? {
-          label: 'Clear in progress',
-          icon: 'clear',
-          title: 'Remove your in-progress mark from this issue',
-          act: () => AppView.clearIssueClaim(n),
-        }
-        : {
-          label: 'Mark in progress',
-          icon: 'progress',
-          title: 'Mark this issue as in progress — you’re working on it. Expires on its own after ~7 days without activity; discussion in the issue’s thread keeps it alive.',
-          act: () => AppView.markIssueInProgress(n),
-        });
+      if (!st.progressOnFace) {
+        items.push(myClaim
+          ? {
+            label: 'Clear in progress',
+            icon: 'clear',
+            title: 'Remove your in-progress mark from this issue',
+            act: () => AppView.clearIssueClaim(n),
+          }
+          : {
+            label: 'Mark in progress',
+            icon: 'progress',
+            title: 'Mark this issue as in progress — you’re working on it. Expires on its own after ~7 days without activity; discussion in the issue’s thread keeps it alive.',
+            act: () => AppView.markIssueInProgress(n),
+          });
+      }
       // While a close proposal is already open for this issue the row is
       // disabled rather than hidden, so it still explains itself. The
       // server also 409s a duplicate.
@@ -10346,10 +10719,22 @@ const AppView = {
     });
     const pill = AppView.statusPillHtml(pr, { majority: maj });
 
-    // No text actions on a settled card: Undo / Kudos / Explore all live in
-    // ⋯, and the read-only "You voted X" box is gone from the card face —
+    // ONE text action on a settled card: kudos. Undo and Explore stay in ⋯
+    // (both are follow-up work rather than a response to the change), and
+    // the read-only "You voted X" box is still gone from the card face —
     // the pill's tooltip and the detail view's vote roster carry that.
-    const menu = AppView._proposalMenuItems(pr, { mine, imported: pr.source === 'imported', isMerged: true });
+    //
+    // Kudos is the exception because thanking the author is the whole of what
+    // a settled card asks of a reader, and it is the only action here that
+    // shows STATE (the count) — which a ⋯ row can't while it's closed. The
+    // board's existing Kudos.attach() call hydrates it; the button is left
+    // out entirely when kudos.js isn't loaded.
+    const kudosBtn = (window.Kudos && !AppView.readOnly)
+      ? Kudos.renderButton(pr, { compact: true }) : '';
+    const menu = AppView._proposalMenuItems(pr, {
+      mine, imported: pr.source === 'imported', isMerged: true, kudosOnFace: !!kudosBtn,
+    });
+    const actions = AppView._cardActionsHtml({ primary: [kudosBtn] });
 
     return `
         <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-ref-pr="${pr.pr_number || pr.id}" data-proposal-row="${pr.id}" title="Open this proposal's discussion">
@@ -10357,10 +10742,12 @@ const AppView = {
             icon: AppView._devCardIcon('done'),
             titleHtml: mergedLabel,
             titleAttrs: ` title="${escapeHtml(mergedQuoteTitle)}"`,
-            metaHtml: metaParts.join(' · ') + (closes ? ` ${closes}` : ''),
+            metaHtml: metaParts.join(' · '),
+            linkedHtml: closes,
             badges,
             chatCount: parseInt(pr.chat_count) || 0,
             pill,
+            actions,
           })}
           ${AppView._cardRailHtml(`merged:${pr.id}`, menu)}
         </div>`;
@@ -10407,7 +10794,10 @@ const AppView = {
       votes_required: p.required != null ? p.required : null,
       status: 'merged',
     }, { majority: parseInt(p.required) || 1, kind: 'gov' });
-    // No actions at all on a settled close-issue row, so no ⋯ either.
+    // No actions at all on a settled close-issue row, so no ⋯ either. Its
+    // action band is still RESERVED (empty) by the dense contract — this row
+    // sits in the same Done column as merged PR cards, and an inch-shorter
+    // card there is exactly the raggedness the four bands exist to remove.
     return `
         <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-gov-row="${row.id}"${issueN ? ` data-ref-issue="${issueN}"` : ''} title="Open this proposal's discussion">
           ${AppView._cardContentHtml({
@@ -11303,10 +11693,13 @@ const AppView = {
   //   3 assignee   — only when set
   //   4 category   — only when set
   //
-  // The composite status pill USED to lead this row and count against the
-  // cap. It is now its own full-width row below the head (see
-  // _cardContentHtml), so the cap governs the metadata chips only — which
-  // is also why four is still the right number: that is exactly the set.
+  // The composite status pill leads this row (`opts.pill`) and the linked
+  // issue pills follow it (`opts.lead`) — both only on the board, where the
+  // merged status band holds all three — but NEITHER counts against the cap:
+  // the cap governs the metadata chips only — which is also why four is
+  // still the right number, that is exactly the set. State and linkage are
+  // not "one more chip"; they are the two things the row exists to show, so
+  // a card with four chips set must not be able to push them out.
   //
   // Everything that used to compete for this row — Auto-title pending,
   // Imported PR, Built with <agent>, Platform maintenance, Explicit
@@ -11315,12 +11708,20 @@ const AppView = {
   // into the pill (lock glyph / tooltip) and spelled out in the detail view.
   BADGE_MAX: 4,
   _cardBadgesHtml(badges, chatCount, opts) {
+    const o = opts || {};
     const all = (badges || []).filter(Boolean);
-    // opts.uncapped — the topic detail head, which has the full page width
+    // o.uncapped — the topic detail head, which has the full page width
     // and is where every chip must be reachable. The BOARD always caps.
-    const kept = (opts && opts.uncapped) ? all : all.slice(0, AppView.BADGE_MAX);
+    const kept = o.uncapped ? all : all.slice(0, AppView.BADGE_MAX);
     const chat = (chatCount === null || chatCount === undefined)
       ? '' : AppView._devChatBadge(chatCount);
+    // Dense (board) order: state bar, then linkage, then the metadata chips,
+    // then the 💬 count. The pill and the linked-issue pills are PREPENDED —
+    // they are what the merged band exists to show, and the band clips at its
+    // end, so they must never be what gets cut. Everything after them keeps
+    // the historical `chips + chat` order, which is also what the detail head
+    // renders (it never clips, and its pill/linkage arrive inside `badges`).
+    if (o.dense) return (o.pill || '') + (o.lead || '') + kept.join('') + chat;
     return kept.join('') + chat;
   },
 
@@ -11734,10 +12135,12 @@ const AppView = {
   // click away. A side with no artifacts renders a "no version" note
   // (e.g. a brand-new screen with no production "before").
   openVisualComparison(triggerEl) {
-    const overlay = document.getElementById('visual-compare-overlay');
-    const body = document.getElementById('visual-compare-body');
-    const labelEl = document.getElementById('visual-compare-label');
-    if (!overlay || !body || !triggerEl) return;
+    // #1085 chunk H: the overlay is a React island
+    // (frontend/src/features/staging/visual-compare-overlay.tsx) — this
+    // function still BUILDS the comparison, it just publishes it as state
+    // instead of writing innerHTML and class names into React-owned DOM.
+    const compare = AppView._visualCompare();
+    if (!triggerEl) return;
     const d = triggerEl.dataset || {};
     const idOk = (id) => typeof id === 'string' && /^[a-f0-9]{32}$/.test(id);
     const pick = (...ids) => ids.find((id) => idOk(id)) || null;
@@ -11756,10 +12159,8 @@ const AppView = {
     ));
     const path = d.path || '/';
     const mobile = d.viewport === 'mobile';
-    if (labelEl) {
-      const base = (path && path !== '/') ? path : (mobile ? '/' : '');
-      labelEl.textContent = base ? `${base}${mobile ? ' (mobile)' : ''}` : '';
-    }
+    const base = (path && path !== '/') ? path : (mobile ? '/' : '');
+    const label = base ? `${base}${mobile ? ' (mobile)' : ''}` : '';
 
     const colStyle = 'flex:1 1 320px;min-width:0;display:flex;flex-direction:column;gap:6px';
     const mediaStyle = 'display:block;width:100%;max-height:78vh;object-fit:contain;object-position:top;background:rgba(0,0,0,0.35);border:1px solid rgba(127,127,127,0.25);border-radius:8px';
@@ -11782,22 +12183,26 @@ const AppView = {
     const pathLabel = ((path && path !== '/') || mobile)
       ? `<div class="text-xs text-zinc-400" style="margin-bottom:10px">Before / after — <code>${esc(path)}</code>${mobile ? ' (mobile)' : ''}</div>`
       : '';
-    body.innerHTML = `${pathLabel}<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">${column('Before', before)}${column('After', after)}</div>`;
+    const bodyHtml = `${pathLabel}<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">${column('Before', before)}${column('After', after)}</div>`;
 
     // Reveal now + stamp openedAt so modalDismissGuarded can swallow the
-    // opening tap's ghost click (same as the share/members modals).
-    AppView.revealModal(overlay);
+    // opening tap's ghost click (same as the share/members modals). The
+    // stamp is rendered as `data-opened-at`, which is where
+    // modalDismissGuarded already looks — see revealModal.
+    compare.open({ label, bodyHtml, openedAt: Date.now() });
 
     // Close affordances: Back button, backdrop click (the overlay root
-    // itself, not its children), and Escape. The Escape handler is added
-    // on open / removed on close so it never lingers. modalDismissGuarded
-    // swallows the opening tap's ghost click (matches the share modal).
-    const back = document.getElementById('visual-compare-back');
-    if (back) back.onclick = () => AppView.closeVisualComparison();
-    overlay.onclick = (e) => {
-      if (window.AppView && AppView.modalDismissGuarded && AppView.modalDismissGuarded(overlay)) return;
-      if (e.target === overlay) AppView.closeVisualComparison();
-    };
+    // itself, not its children — the island applies that test), and Escape.
+    // The Escape handler is added on open / removed on close so it never
+    // lingers. modalDismissGuarded swallows the opening tap's ghost click
+    // (matches the share modal).
+    compare.setHandlers({
+      onBack: () => AppView.closeVisualComparison(),
+      onBackdrop: () => {
+        if (AppView._visualCompareDismissGuarded()) return;
+        AppView.closeVisualComparison();
+      },
+    });
     AppView._visualCompareKeyHandler = (e) => {
       if (e.key === 'Escape') AppView.closeVisualComparison();
     };
@@ -11808,13 +12213,7 @@ const AppView = {
   // display:none) so any looping <video> actually stops, mirroring
   // toggleVisuals, and remove the Escape handler installed on open.
   closeVisualComparison() {
-    const overlay = document.getElementById('visual-compare-overlay');
-    const body = document.getElementById('visual-compare-body');
-    if (body) body.innerHTML = '';
-    if (overlay) {
-      overlay.classList.add('hidden');
-      overlay.onclick = null;
-    }
+    AppView._visualCompare().close();
     if (AppView._visualCompareKeyHandler) {
       document.removeEventListener('keydown', AppView._visualCompareKeyHandler);
       AppView._visualCompareKeyHandler = null;
@@ -13121,8 +13520,7 @@ const AppView = {
   //                (the caller must have mounted #dc-staging-panel first —
   //                see DevChat.previewStaging / openStagingPanel).
   async ensureStaging(sessionId, fallbackUrl, testing, opts) {
-    const overlay = document.getElementById('staging-overlay');
-    if (!overlay) return;
+    const staging = AppView._staging();
     const jump = !!(opts && opts.jump);
     const dock = !!(opts && opts.dock);
 
@@ -13136,7 +13534,7 @@ const AppView = {
 
     // Open the overlay + "spinning back up" loader right away, and take a
     // fresh load id so backing out (closeStagingOverlay) cancels this wait.
-    overlay.classList.remove('hidden');
+    staging.open();
     // #771: apply the requested mode before anything paints, so the loader
     // shows inside the side panel on a docked open (and a stale docked
     // class can't leak into a fullscreen open from the vote panel).
@@ -13149,7 +13547,7 @@ const AppView = {
     }
     if (window.DevConsole) DevConsole.setButtonVisible(true);
     const loadId = ++AppView._stagingLoadId;
-    document.getElementById('staging-iframe').src = '';
+    staging.clearSrc();
     AppView._pendingStagingPreview = null;
     // #816: a NEUTRAL opening state. This used to assert "the preview was
     // paused… this usually takes 20–60 seconds" before the server had even
@@ -13158,7 +13556,7 @@ const AppView = {
     // fronted by a screen promising a minute's wait. The rebuild copy now
     // lives in the `rebuilding` branch below, where it is actually true.
     AppView._setStagingLoader(true, { title: 'Opening preview…', sub: '' });
-    document.getElementById('staging-back').onclick = () => AppView.closeStagingOverlay();
+    staging.setHandlers({ onBack: () => AppView.closeStagingOverlay() });
 
     let data;
     try {
@@ -13274,10 +13672,7 @@ const AppView = {
   // `opts.checksRunning` adds one line explaining a legitimately slower
   // first load while the post-build checks pass runs.
   swapToStaging(stagingUrl, testing, opts) {
-    const overlay = document.getElementById('staging-overlay');
-    const iframe = document.getElementById('staging-iframe');
-    const label = document.getElementById('staging-url-label');
-    if (!overlay || !iframe) return;
+    const staging = AppView._staging();
 
     if (opts && typeof opts.dock === 'boolean') {
       if (opts.dock && document.getElementById('dc-staging-panel')) {
@@ -13321,19 +13716,17 @@ const AppView = {
     // retargets the pending load instead of being clobbered by it.
     const pending = { src: buildSrc(jump ? safePath : null) };
 
-    if (label) label.textContent = resolved;
-    overlay.classList.remove('hidden');
+    staging.setUrlLabel(resolved);
+    staging.open();
     // #771: the toggle's visibility depends on the overlay being open.
     AppView._updateStagingModeUi();
     if (window.DevConsole) DevConsole.setButtonVisible(true);
 
     AppView._renderTestingControls(buildSrc, pending, jump);
 
-    document.getElementById('staging-back').onclick = () => {
-      AppView.closeStagingOverlay();
-    };
+    staging.setHandlers({ onBack: () => AppView.closeStagingOverlay() });
 
-    iframe.src = '';
+    staging.clearSrc();
     const loadId = ++AppView._stagingLoadId;
     const checksRunning = !!(opts && opts.checksRunning);
 
@@ -13350,8 +13743,8 @@ const AppView = {
           ? 'Automated checks are running against this preview, so the first load may be a little slower.'
           : '',
       });
-      AppView._watchStagingIframeLoad(iframe, loadId);
-      iframe.src = pending.src;
+      AppView._watchStagingIframeLoad(staging.frame(), loadId);
+      staging.setSrc(pending.src);
       return;
     }
 
@@ -13368,8 +13761,8 @@ const AppView = {
       if (!ready) return;
       // Keep the spinner up across the render, same as the fast path.
       AppView._setStagingLoader(true, { title: 'Loading the preview…', sub: '' });
-      AppView._watchStagingIframeLoad(iframe, loadId);
-      iframe.src = pending.src;
+      AppView._watchStagingIframeLoad(staging.frame(), loadId);
+      staging.setSrc(pending.src);
     });
   },
 
@@ -13470,22 +13863,15 @@ const AppView = {
   // own the DevChat slot state (see expandStagingFullscreen /
   // dockStagingPanel / closeStagingOverlay).
   _setStagingMode(mode) {
-    const overlay = document.getElementById('staging-overlay');
     AppView._stagingMode = mode === 'docked' ? 'docked' : 'fullscreen';
-    if (overlay) {
-      if (AppView._stagingMode === 'docked') {
-        overlay.classList.add('staging-overlay-docked');
-        AppView._ensureStagingDockListeners();
-        AppView.rebindStagingDock();
-      } else {
-        overlay.classList.remove('staging-overlay-docked');
-        // Back to the CSS `inset: 0` fullscreen geometry.
-        overlay.style.top = '';
-        overlay.style.left = '';
-        overlay.style.width = '';
-        overlay.style.height = '';
-        if (AppView._stagingDockObserver) AppView._stagingDockObserver.disconnect();
-      }
+    // Mode is state on the SAME overlay — the docked class and the pinned rect
+    // change, the element (and therefore the iframe's document) never does.
+    AppView._staging().setMode(AppView._stagingMode);
+    if (AppView._stagingMode === 'docked') {
+      AppView._ensureStagingDockListeners();
+      AppView.rebindStagingDock();
+    } else if (AppView._stagingDockObserver) {
+      AppView._stagingDockObserver.disconnect();
     }
     AppView._updateStagingModeUi();
   },
@@ -13537,15 +13923,10 @@ const AppView = {
   // Pin the overlay over the slot's current bounding rect.
   _syncStagingDockGeometry() {
     if (AppView._stagingMode !== 'docked') return;
-    const overlay = document.getElementById('staging-overlay');
-    if (!overlay) return;
     const slot = document.getElementById('dc-staging-panel');
     if (!slot) { AppView.closeStagingOverlay(); return; }
     const r = slot.getBoundingClientRect();
-    overlay.style.top = `${Math.round(r.top)}px`;
-    overlay.style.left = `${Math.round(r.left)}px`;
-    overlay.style.width = `${Math.round(r.width)}px`;
-    overlay.style.height = `${Math.round(r.height)}px`;
+    AppView._staging().setDockRect({ top: r.top, left: r.left, width: r.width, height: r.height });
   },
 
   // "Full screen" (docked header button, and the narrow-viewport
@@ -13580,22 +13961,23 @@ const AppView = {
   // screen toggle and the docked ×-close. Idempotent; safe with the
   // overlay hidden.
   _updateStagingModeUi() {
-    const overlay = document.getElementById('staging-overlay');
-    const btn = document.getElementById('staging-fullscreen-btn');
-    const dockClose = document.getElementById('staging-dock-close');
-    if (dockClose) dockClose.onclick = () => AppView.closeStagingOverlay();
-    if (!btn) return;
-    btn.onclick = () => AppView.toggleStagingFullscreen();
+    const staging = AppView._staging();
+    staging.setHandlers({
+      onDockClose: () => AppView.closeStagingOverlay(),
+      onFullscreen: () => AppView.toggleStagingFullscreen(),
+    });
     const docked = AppView._stagingMode === 'docked';
-    const overlayOpen = !!overlay && !overlay.classList.contains('hidden');
+    const overlayOpen = staging.isOpen();
     const canRedock = AppView._stagingDockable
       && typeof DevChat !== 'undefined' && !!DevChat.currentSession
       && AppView._stagingDockViewport();
-    btn.classList.toggle('hidden', !overlayOpen || (!docked && !canRedock));
-    btn.textContent = docked ? 'Full screen' : 'Exit full screen';
-    btn.title = docked
-      ? 'Expand the preview to fill the screen'
-      : 'Dock the preview back beside the chat';
+    staging.setFullscreenBtn({
+      hidden: !overlayOpen || (!docked && !canRedock),
+      text: docked ? 'Full screen' : 'Exit full screen',
+      title: docked
+        ? 'Expand the preview to fill the screen'
+        : 'Dock the preview back beside the chat',
+    });
     // #970: docking / un-docking moves the preview frame's rect, so the
     // insets that apply to it change (a docked panel is nowhere near the
     // home indicator; a fullscreen one sits right on it).
@@ -13616,18 +13998,13 @@ const AppView = {
   // only when the preview was entered via an explicit "Test this change"
   // button — the one path where the panel auto-opens (#237).
   _renderTestingControls(buildSrc, pending, jump) {
-    const btn = document.getElementById('staging-test-btn');
-    const panel = document.getElementById('staging-testing-panel');
-    const content = document.getElementById('staging-testing-content');
-    const closeBtn = document.getElementById('staging-testing-close');
-    const iframe = document.getElementById('staging-iframe');
-    if (!btn || !panel || !content) return;
+    const staging = AppView._staging();
 
-    panel.classList.add('hidden');
+    staging.setTestPanelHidden(true);
     const t = AppView._stagingTesting;
     if (!t) {
-      btn.classList.add('hidden');
-      content.innerHTML = '';
+      staging.setTestBtn({ hidden: true, title: '' });
+      staging.setTestHtml('');
       return;
     }
 
@@ -13638,39 +14015,44 @@ const AppView = {
     // `const`, which never becomes a `window` property (#237; same pitfall
     // documented in group-chat.js).
     if (t.md) {
-      content.innerHTML = (typeof DevChat !== 'undefined' && typeof DevChat.renderMarkdown === 'function')
+      staging.setTestHtml((typeof DevChat !== 'undefined' && typeof DevChat.renderMarkdown === 'function')
         ? DevChat.renderMarkdown(t.md)
-        : `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(t.md)}</pre>`;
+        : `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(t.md)}</pre>`);
     } else {
-      content.innerHTML = '<span class="text-zinc-500">Use the button above to jump to the changed feature.</span>';
+      staging.setTestHtml('<span class="text-zinc-500">Use the button above to jump to the changed feature.</span>');
     }
 
-    btn.classList.remove('hidden');
-    btn.title = t.path ? 'Open the preview at the changed feature' : 'Show the testing instructions';
-    btn.onclick = () => {
-      // Toggle: a second click (panel already open) just closes it.
-      if (t.md && !panel.classList.contains('hidden')) {
-        panel.classList.add('hidden');
-        return;
-      }
-      if (t.path) {
-        // Retarget the (possibly still pending) load at the deep link —
-        // only if it isn't already pointing there, so re-opening the
-        // panel doesn't reload the iframe.
-        const target = buildSrc(t.path);
-        if (pending.src !== target) {
-          pending.src = target;
-          if (iframe && iframe.src) iframe.src = target;
+    staging.setTestBtn({
+      hidden: false,
+      title: t.path ? 'Open the preview at the changed feature' : 'Show the testing instructions',
+    });
+    staging.setHandlers({
+      onTest: () => {
+        // Toggle: a second click (panel already open) just closes it.
+        if (t.md && !staging.isTestPanelHidden()) {
+          staging.setTestPanelHidden(true);
+          return;
         }
-      }
-      if (t.md) panel.classList.remove('hidden');
-    };
-    if (closeBtn) closeBtn.onclick = () => panel.classList.add('hidden');
+        if (t.path) {
+          // Retarget the (possibly still pending) load at the deep link —
+          // only if it isn't already pointing there, so re-opening the
+          // panel doesn't reload the iframe.
+          const target = buildSrc(t.path);
+          if (pending.src !== target) {
+            pending.src = target;
+            const frame = staging.frame();
+            if (frame && frame.src) staging.setSrc(target);
+          }
+        }
+        if (t.md) staging.setTestPanelHidden(false);
+      },
+      onTestingClose: () => staging.setTestPanelHidden(true),
+    });
 
     // #237: the panel no longer auto-opens on every preview. It auto-shows
     // only when the user entered through an explicit "Test this change"
     // button (jump) — plain Preview keeps it hidden until asked for.
-    if (jump && t.md) panel.classList.remove('hidden');
+    if (jump && t.md) staging.setTestPanelHidden(false);
   },
 
   // Incremented on every swap/close so an in-flight readiness poll for a
@@ -13678,22 +14060,234 @@ const AppView = {
   // iframe.
   _stagingLoadId: 0,
 
+  // ── The staging overlay's state seam (#1085 chunk H) ────────────────
+  //
+  // #staging-overlay is a React island now
+  // (frontend/src/features/staging/staging-overlay.tsx). Its whole subtree —
+  // #staging-iframe included — is React-owned, so this module may no longer
+  // write classes, text, HTML or `.onclick` into it: the next render would
+  // reconcile those away, and the two owners would fight. It publishes STATE
+  // through the bridge below instead, and the bridge's members are exactly the
+  // writes the call sites used to make by hand.
+  //
+  // The one thing that stays imperative is the iframe's `src` (setSrc /
+  // clearSrc, through a ref the island registers). That is deliberate and it is
+  // the whole point: `src` as state would let a re-render re-apply it, and
+  // re-applying `src` RELOADS the preview — destroying whatever the user was
+  // doing inside the previewed app. #771's docked ↔ fullscreen toggle makes the
+  // same promise ("the same overlay, so the iframe keeps its state either way")
+  // and now keeps it through React.
+  //
+  // `_stagingDom` implements the same API against the raw document, for
+  // contexts where the React bundle is not present at all: the node-side render
+  // tests load this file as a classic script into a stubbed document, and a
+  // browser that somehow failed to load the bundle keeps a working preview
+  // rather than a dead overlay. EXACTLY ONE adapter is live in any context —
+  // `window.UsernodeReact.staging` exists only when the island does — so these
+  // nodes never have two writers.
+  _staging() {
+    return (typeof window !== 'undefined' && window.UsernodeReact && window.UsernodeReact.staging)
+      || AppView._stagingDom;
+  },
+
+  // The state below mirrors the React store's, and for the same reason the
+  // store exists: these are QUERIES the call sites make (`isOpen`,
+  // `isTestPanelHidden`) and reading them back off `classList` would make this
+  // adapter's answers depend on the DOM implementation it is talking to. It is
+  // sound because in a DOM-only context this adapter is the SOLE writer of
+  // those classes — the same single-owner rule the React island lives under —
+  // and the initial values are the ones the shipped markup carries.
+  _stagingDom: {
+    _handlers: {},
+    _open: false,
+    _mode: 'fullscreen',
+    _testPanelHidden: true,
+    _el(id) {
+      return (typeof document !== 'undefined' && document.getElementById)
+        ? document.getElementById(id) : null;
+    },
+    _setHidden(id, hidden) {
+      const el = this._el(id);
+      if (!el || !el.classList) return;
+      if (hidden) el.classList.add('hidden');
+      else el.classList.remove('hidden');
+    },
+    _setText(id, text) {
+      const el = this._el(id);
+      if (el) el.textContent = text;
+    },
+    open() {
+      this._open = true;
+      this._setHidden('staging-overlay', false);
+    },
+    close() {
+      this._open = false;
+      this._testPanelHidden = true;
+      this._setHidden('staging-overlay', true);
+      this._setHidden('staging-loader', true);
+      this._setHidden('staging-test-btn', true);
+      this._setHidden('staging-testing-panel', true);
+      this._setHidden('staging-fullscreen-btn', true);
+    },
+    isOpen() { return this._open; },
+    setMode(mode) {
+      this._mode = mode === 'docked' ? 'docked' : 'fullscreen';
+      const el = this._el('staging-overlay');
+      if (!el || !el.classList) return;
+      if (mode === 'docked') {
+        el.classList.add('staging-overlay-docked');
+        return;
+      }
+      el.classList.remove('staging-overlay-docked');
+      // Back to the CSS `inset: 0` fullscreen geometry.
+      if (el.style) { el.style.top = ''; el.style.left = ''; el.style.width = ''; el.style.height = ''; }
+    },
+    mode() { return this._mode; },
+    setDockRect(rect) {
+      const el = this._el('staging-overlay');
+      if (!el || !el.style || !rect) return;
+      el.style.top = `${Math.round(rect.top)}px`;
+      el.style.left = `${Math.round(rect.left)}px`;
+      el.style.width = `${Math.round(rect.width)}px`;
+      el.style.height = `${Math.round(rect.height)}px`;
+    },
+    setUrlLabel(text) { this._setText('staging-url-label', text || ''); },
+    setLoader(visible, { title, sub } = {}) {
+      this._setHidden('staging-loader', !visible);
+      if (title !== undefined) this._setText('staging-loader-title', title);
+      if (sub !== undefined) this._setText('staging-loader-sub', sub);
+    },
+    setTestBtn({ hidden, title } = {}) {
+      this._setHidden('staging-test-btn', !!hidden);
+      const el = this._el('staging-test-btn');
+      if (el && title !== undefined) el.title = title || '';
+    },
+    setTestHtml(html) {
+      const el = this._el('staging-testing-content');
+      if (el) el.innerHTML = html || '';
+    },
+    setTestPanelHidden(hidden) {
+      this._testPanelHidden = !!hidden;
+      this._setHidden('staging-testing-panel', !!hidden);
+    },
+    isTestPanelHidden() { return this._testPanelHidden; },
+    setFullscreenBtn({ hidden, text, title } = {}) {
+      this._setHidden('staging-fullscreen-btn', !!hidden);
+      const el = this._el('staging-fullscreen-btn');
+      if (!el) return;
+      if (text !== undefined) el.textContent = text;
+      if (title !== undefined) el.title = title || '';
+    },
+    frame() { return this._el('staging-iframe'); },
+    setSrc(src) {
+      const el = this.frame();
+      if (!el || !src) return false;
+      el.src = src;
+      return true;
+    },
+    clearSrc() {
+      const el = this.frame();
+      if (el) el.src = '';
+    },
+    setHandlers(patch) {
+      Object.assign(this._handlers, patch || {});
+      const bind = (id, key) => {
+        const el = this._el(id);
+        if (!el) return;
+        el.onclick = (ev) => {
+          const fn = this._handlers[key];
+          if (typeof fn === 'function') fn(ev);
+        };
+      };
+      bind('staging-back', 'onBack');
+      bind('staging-dock-close', 'onDockClose');
+      bind('staging-fullscreen-btn', 'onFullscreen');
+      bind('staging-test-btn', 'onTest');
+      bind('staging-testing-close', 'onTestingClose');
+    },
+    stats() { return { navigations: 0 }; },
+  },
+
+  // #1085 chunk H: the same seam for #visual-compare-overlay
+  // (frontend/src/features/staging/visual-compare-overlay.tsx). Smaller than
+  // the staging one because the overlay has no iframe and no modes: a label, a
+  // body, and the open timestamp the ghost-click guard reads.
+  //
+  // openVisualComparison still BUILDS the comparison markup as a string — that
+  // generator is out of chunk H's scope — so `bodyHtml` crosses the seam as
+  // HTML. Everything variable in it is either a 32-hex artifact id validated at
+  // the call site or escaped there.
+  _visualCompare() {
+    return (typeof window !== 'undefined' && window.UsernodeReact && window.UsernodeReact.visualCompare)
+      || AppView._visualCompareDom;
+  },
+
+  _visualCompareDom: {
+    _handlers: {},
+    _el(id) {
+      return (typeof document !== 'undefined' && document.getElementById)
+        ? document.getElementById(id) : null;
+    },
+    open({ label, bodyHtml, openedAt } = {}) {
+      const body = this._el('visual-compare-body');
+      if (body) body.innerHTML = bodyHtml || '';
+      const labelEl = this._el('visual-compare-label');
+      if (labelEl) labelEl.textContent = label || '';
+      const overlay = this._el('visual-compare-overlay');
+      if (!overlay) return;
+      // Same stamp revealModal makes, so modalDismissGuarded keeps working.
+      if (overlay.dataset) overlay.dataset.openedAt = String(openedAt || 0);
+      if (overlay.classList) overlay.classList.remove('hidden');
+    },
+    close() {
+      const overlay = this._el('visual-compare-overlay');
+      if (overlay && overlay.classList) overlay.classList.add('hidden');
+      // Clearing the body is what actually stops a looping <video> (#353).
+      const body = this._el('visual-compare-body');
+      if (body) body.innerHTML = '';
+      const labelEl = this._el('visual-compare-label');
+      if (labelEl) labelEl.textContent = '';
+    },
+    openedAt() {
+      const overlay = this._el('visual-compare-overlay');
+      const at = overlay && overlay.dataset ? Number(overlay.dataset.openedAt || 0) : 0;
+      return Number.isFinite(at) ? at : 0;
+    },
+    setHandlers(patch) {
+      Object.assign(this._handlers, patch || {});
+      const back = this._el('visual-compare-back');
+      if (back) {
+        back.onclick = (ev) => {
+          const fn = this._handlers.onBack;
+          if (typeof fn === 'function') fn(ev);
+        };
+      }
+      const overlay = this._el('visual-compare-overlay');
+      if (overlay) {
+        overlay.onclick = (ev) => {
+          // Backdrop only — the overlay root itself, never a child.
+          if (ev && ev.target !== overlay) return;
+          const fn = this._handlers.onBackdrop;
+          if (typeof fn === 'function') fn(ev);
+        };
+      }
+    },
+  },
+
+  // The compare overlay's half of modalDismissGuarded: it lives behind the
+  // bridge because the open time is React state now, not a DOM attribute this
+  // module may read back.
+  _visualCompareDismissGuarded() {
+    const at = AppView._visualCompare().openedAt();
+    return at > 0 && (Date.now() - at) < AppView.MODAL_GESTURE_GUARD_MS;
+  },
+
   // #816: an EXPLICIT empty string clears the line; only `undefined` leaves
   // it alone. The old truthiness check made '' a no-op, which would leave a
   // previous state's sub-line (the rebuild estimate, the checks note)
   // stranded under a title that no longer matches it.
   _setStagingLoader(visible, { title, sub } = {}) {
-    const loader = document.getElementById('staging-loader');
-    if (!loader) return;
-    loader.classList.toggle('hidden', !visible);
-    if (title !== undefined) {
-      const t = document.getElementById('staging-loader-title');
-      if (t) t.textContent = title;
-    }
-    if (sub !== undefined) {
-      const s = document.getElementById('staging-loader-sub');
-      if (s) s.textContent = sub;
-    }
+    AppView._staging().setLoader(visible, { title, sub });
   },
 
   // #816: retry schedule for the fallback readiness poll below.
@@ -13773,8 +14367,8 @@ const AppView = {
   },
 
   closeStagingOverlay() {
-    const overlay = document.getElementById('staging-overlay');
-    const iframe = document.getElementById('staging-iframe');
+    const staging = AppView._staging();
+    const iframe = staging.frame();
     // #771: leave docked mode first (strips the docked class + pinned
     // geometry, disconnects the slot observer) and collapse the dev-chat
     // placeholder slot. The open check on stagingPanel makes this safe to
@@ -13787,8 +14381,7 @@ const AppView = {
       DevChat.stagingPanel.open = false;
       DevChat.renderChatView();
     }
-    const fsBtn = document.getElementById('staging-fullscreen-btn');
-    if (fsBtn) fsBtn.classList.add('hidden');
+    staging.setFullscreenBtn({ hidden: true });
     // Invalidate any in-flight readiness poll and hide the loader.
     AppView._stagingLoadId += 1;
     // #439: drop any pending on-demand rebuild marker + its give-up timer so
@@ -13800,14 +14393,13 @@ const AppView = {
     if (AppView._stagingIframeTimer) { clearTimeout(AppView._stagingIframeTimer); AppView._stagingIframeTimer = null; }
     if (iframe) { iframe.onload = null; iframe.onerror = null; }
     AppView._setStagingLoader(false);
-    if (overlay) overlay.classList.add('hidden');
-    if (iframe) iframe.src = '';
+    // The overlay hides and the preview is dropped — but the ELEMENT stays,
+    // so the next Preview click re-points the same iframe instead of paying
+    // for a fresh one.
+    staging.close();
+    staging.clearSrc();
     // #127: reset the testing affordances so the next preview starts clean.
     AppView._stagingTesting = null;
-    const testBtn = document.getElementById('staging-test-btn');
-    if (testBtn) testBtn.classList.add('hidden');
-    const testPanel = document.getElementById('staging-testing-panel');
-    if (testPanel) testPanel.classList.add('hidden');
     // Restore dev-console button visibility based on whatever tab the
     // user lands back on.
     if (window.DevConsole) {

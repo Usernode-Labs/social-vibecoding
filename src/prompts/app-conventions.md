@@ -580,6 +580,28 @@ test that depends on missing seed data will fail and block your merge.
 Because checks gate merge, verify your declared tests pass (use the in-loop
 browser on a build turn) before you commit.
 
+## Repo test suites on build turns — run them efficiently
+
+Some repos (the platform itself included) carry their own local test
+suite (`npm test`). Inside the worker container a full-suite pass can
+take several minutes, so wasted runs directly slow your turn down.
+Discipline:
+
+- **While iterating on a single fix, run only the affected test
+  file(s)** (e.g. `node --test tests/foo.test.js`) — never the full
+  suite.
+- **Batch-fix before retesting.** When your change breaks many tests,
+  run the full suite ONCE to collect the complete failure list, fix
+  ALL the failures, and only then rerun to confirm. Do not loop
+  "fix one test → rerun the suite → fix the next".
+- **At most two full-suite passes per turn**: one to collect failures,
+  one to confirm the fixes. The proposal checks re-run everything
+  against staging after you commit anyway, so a third local pass buys
+  nothing.
+- **Keep the output small.** Pipe suite output through
+  `grep "^not ok"` / `tail` so a full-suite dump doesn't crowd your
+  context.
+
 ## Public vs private tables — **IMPORTANT**
 
 Staging containers get a **copy of the production database** so PRs

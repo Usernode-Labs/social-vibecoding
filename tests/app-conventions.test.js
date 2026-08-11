@@ -42,6 +42,16 @@ test('conventions doc carries the escalation section, covering feature requests'
   assert.match(doc, /Feature requests are as valid as bug reports/);
 });
 
+test('conventions doc carries the test-suite discipline section', () => {
+  const doc = getAppConventions();
+  assert.match(doc, /^## Repo test suites on build turns — run them efficiently$/m);
+  // The batch-fix rule is the load-bearing instruction: it is what stops
+  // the fix-one-rerun-all loop that made big build turns (e.g. session
+  // 3255) spend 20+ minutes on redundant full-suite passes.
+  assert.match(doc, /Batch-fix before retesting/);
+  assert.match(doc, /At most two full-suite passes per turn/);
+});
+
 test('conventions doc carries the issue-state snapshots section (#685)', () => {
   const doc = getAppConventions();
   assert.match(doc, /^## Issue-state snapshots — opt-in app state in filed issues$/m);

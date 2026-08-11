@@ -201,17 +201,20 @@ test('read-only viewers get no attribute rows at all', () => {
 
 // ── The four badges that survive, in order ──────────────────────────────
 
-test('proposal: the pill is its own FULL-WIDTH row, below the badge row', () => {
+test('proposal: the pill LEADS one merged status band, chips beside it', () => {
   const AppView = makeAppView();
   const html = AppView._renderProposalCard(PR({ ...ATTRS, my_vote: 'yes', check_state: 'passing' }));
-  // It used to lead the badge row and count against the cap. A proportional
-  // tally reads as a progress bar at full width and as noise at chip width,
-  // so it now spans the card's content on its own row underneath.
-  assert.match(html, /dev-status-row/);
-  assert.match(html, /dev-status-pill-block/);
-  assert.ok(html.indexOf('dev-status-row') > html.indexOf('Bug'),
-    'the pill row comes AFTER the badge row');
-  // The chips keep their own order within the badge row.
+  // History: the pill first led the badge row and counted against the cap,
+  // then got a full-width row of its own (.dev-status-row) underneath. The
+  // four-band card merges those two rows back into ONE reserved status band,
+  // because two variable rows are what made card heights disagree. The pill
+  // keeps its bar shape — it just flexes to whatever width the chips leave.
+  assert.doesNotMatch(html, /dev-status-row/, '.dev-status-row is retired');
+  assert.match(html, /dev-card-badges dev-card-status/, 'one merged band');
+  assert.match(html, /dev-status-pill-block/, 'the pill keeps its bar treatment');
+  assert.ok(html.indexOf('dev-status-pill-block') < html.indexOf('Bug'),
+    'the pill LEADS the band now — it is the card\'s headline state');
+  // The chips keep their own order within the band.
   assert.ok(html.indexOf('High') < html.indexOf('@maya'));
   assert.ok(html.indexOf('@maya') < html.indexOf('Bug'));
 });
@@ -221,7 +224,9 @@ test('the detail head keeps the INLINE capsule, not a second full-width bar', ()
   const head = AppView._renderProposalCard(PR({ my_vote: 'yes', check_state: 'passing' }), { noNav: true });
   assert.match(head, /gc-vote-count/, 'the pill is still there');
   assert.doesNotMatch(head, /dev-status-pill-block/, 'as a capsule — that page is already full width');
-  assert.doesNotMatch(head, /dev-status-row/);
+  // And no reserved band either: the detail head is the one non-dense caller,
+  // so its rows still collapse when they have nothing to say.
+  assert.doesNotMatch(head, /dev-card-status/);
 });
 
 test('the pill is exempt from the cap, so four chips still fit beside it', () => {

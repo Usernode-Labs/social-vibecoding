@@ -280,8 +280,13 @@ export class DevConsoleStore {
       && (this.mode === this.MODE_ALWAYS || hasErrors || this.panelOpen);
 
     // #dev-console-btn lives in #platform-header and #staging-dev-console-btn
-    // in #staging-overlay — neither region is React-owned, so these stay
-    // getElementById + classList exactly as the classic module had them.
+    // in #staging-overlay. #1085 chunk H made the staging overlay an island, so
+    // that one IS React-owned now — but this write stays legal, and stays
+    // getElementById + classList exactly as the classic module had it, because
+    // the button's rendered `className` is CONSTANT and it renders no children:
+    // React never issues an attribute update that could reconcile this class
+    // away. Same for the badge's text below. See the note in
+    // features/staging/staging-overlay.tsx's header.
     const btn = doc()?.getElementById('dev-console-btn');
     const stagingBtn = doc()?.getElementById('staging-dev-console-btn');
     if (btn) btn.classList.toggle('hidden', !show);

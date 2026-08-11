@@ -61,6 +61,15 @@ const ADDED_IDS = {
   'admin-temp-pw-value': 'The one-time plaintext temporary password (#1082).',
   'admin-temp-pw-copy': 'Copy button in the temporary-password dialog (#1082).',
   'admin-temp-pw-close': 'Done button in the temporary-password dialog (#1082).',
+  // #1085 chunk H, step 2 — the ONE new id in the chunk. #app-content keeps its
+  // id, its classes and its role as a hand-written innerHTML host; the embedded
+  // app's iframe moves out from under it into this React-owned sibling, because a
+  // region may only become stateful when its whole subtree is React-owned and
+  // #app-content is written by half of public/js/**. Ships hidden and empty, so
+  // the prerendered document is unchanged in what it renders. Exactly one of the
+  // two is visible; both are flex-1 + min-height:0 children of #app-view's
+  // column flex, so the visible one gets the box #app-content used to have.
+  'app-frame-host': "React-owned host for the embedded app's #app-iframe, a hidden empty sibling of #app-content (#1085).",
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

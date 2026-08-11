@@ -4323,6 +4323,12 @@ const App = {
         // root on #app-content, so clear that root before blanking the node —
         // otherwise its store subscription and effects outlive the screen.
         AppView._teardownDevRoots();
+        // #1085 chunk H: and drop the React-owned app frame, for the same
+        // reason and at the same moment. It is unmounted HERE rather than in
+        // AppView.close() (which runs in `fn`, at the START of the zoom)
+        // precisely so the shrinking card keeps showing the app until it
+        // lands — the same reason #app-content is blanked here and not there.
+        AppView._unmountAppFrame();
         const content = document.getElementById('app-content');
         if (content) content.innerHTML = '';
       },
