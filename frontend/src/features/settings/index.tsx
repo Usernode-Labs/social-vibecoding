@@ -31,11 +31,28 @@
  *
  * max-w-5xl (not the admin console's full width): every section here is a form
  * column, none is a wide chart grid.
+ *
+ * ./settings.js is the retired public/js/settings.js, moved into this bundle
+ * unchanged apart from its two bootstrap lines: it still publishes
+ * window.Settings at module scope (app.js, app-view.js, dev-chat.js and
+ * credit-options.js all call it unguarded), and its DOMContentLoaded handler
+ * is replaced by the init() below.
  */
 
+import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { SettingsSections } from './sections';
+import './settings.js';
 
 export function SettingsScreen() {
+  // A LAYOUT effect, like the other islands: init() binds every control on
+  // this screen by id, and it has to have run before app.js's DOMContentLoaded
+  // handler routes an initial #settings/<section> hash at it. The React entry
+  // is a deferred module, so this still lands in the same window the classic
+  // <script> tag's own DOMContentLoaded handler used to.
+  useIsomorphicLayoutEffect(() => {
+    window.Settings?.init();
+  }, []);
+
   return (
     <main
       id="settings-screen"

@@ -31,7 +31,7 @@ const path = require('node:path');
 const SessionOptions = require('../public/js/session-options.js');
 
 const SETTINGS_SRC = fs.readFileSync(
-  path.join(__dirname, '../public/js/settings.js'), 'utf8'
+  path.join(__dirname, '../frontend/src/features/settings/settings.js'), 'utf8'
 );
 const DEV_CHAT_SRC = fs.readFileSync(
   path.join(__dirname, '../public/js/dev-chat.js'), 'utf8'

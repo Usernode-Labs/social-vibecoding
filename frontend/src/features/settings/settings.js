@@ -3701,6 +3701,16 @@
     },
   };
 
-  window.Settings = Settings;
-  document.addEventListener('DOMContentLoaded', () => Settings.init());
+  // Published at module scope, not from the island's effect: app.js,
+  // app-view.js, dev-chat.js and credit-options.js call window.Settings
+  // unguarded, and the bundle's entry runs before any of their init()s. The
+  // typeof guard is for the SSG prerender pass, which evaluates this whole
+  // module graph in Node (#1081 chunk D).
+  if (typeof window !== 'undefined') window.Settings = Settings;
+
+  // init() is called from SettingsScreen's layout effect (../index.tsx), not
+  // from DOMContentLoaded. Same moment in practice — the React entry is a
+  // deferred module, so it hydrates before DOMContentLoaded fires — but it now
+  // happens after the island's own markup is in the document, which is the
+  // ordering every id-bound listener below depends on.
 })();

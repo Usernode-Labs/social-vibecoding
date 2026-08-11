@@ -274,7 +274,8 @@ test('DevAlerts.TEST_DELAY_MS is a whole number of seconds (clean countdown)', (
 });
 
 test('settings.js runs a ticking countdown for the test-alert button', () => {
-  const src = read('js', 'settings.js');
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'settings', 'settings.js'), 'utf8');
   // A real interval that rewrites the status text each second, plus cleanup.
   assert.match(src, /setInterval\(/);
   assert.match(src, /_clearAlertsTestCountdown/);
@@ -285,7 +286,8 @@ test('settings.js runs a ticking countdown for the test-alert button', () => {
 });
 
 test('settings.js wires the toggle and the test-alert button', () => {
-  const src = read('js', 'settings.js');
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'settings', 'settings.js'), 'utf8');
   assert.match(src, /devchat-alerts-toggle/);
   assert.match(src, /DevAlerts\.setEnabled\(/);
   assert.match(src, /devchat-alerts-test/);

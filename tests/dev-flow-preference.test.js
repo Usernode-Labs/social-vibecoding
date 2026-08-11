@@ -206,7 +206,7 @@ test('schema adds the nullable column and constrains its values', () => {
 });
 
 test('Settings offers the same preference as a dropdown', () => {
-  const js = read('public/js/settings.js');
+  const js = read('frontend/src/features/settings/settings.js');
   assert.match(js, /_renderDevFlowSection/);
   assert.match(js, /_saveDevFlow/);
   assert.match(js, /\/api\/me\/dev-flow/);
@@ -226,7 +226,7 @@ test('Settings offers the same preference as a dropdown', () => {
 });
 
 test('Settings disables the hand-offs when the deployment cannot offer them', () => {
-  const js = read('public/js/settings.js');
+  const js = read('frontend/src/features/settings/settings.js');
   assert.match(js, /externalFlowsAvailable/,
     'a deployment with no GitHub link must not offer a preference it cannot honour');
 });

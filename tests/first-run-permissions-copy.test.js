@@ -22,7 +22,7 @@ const root = path.join(__dirname, '..');
 const nativeChromeSource = fs.readFileSync(
   path.join(root, 'public', 'js', 'native-chrome.js'), 'utf8');
 const settingsJs = fs.readFileSync(
-  path.join(root, 'public', 'js', 'settings.js'), 'utf8');
+  path.join(root, 'frontend', 'src', 'features', 'settings', 'settings.js'), 'utf8');
 
 // Minimal DOM node: enough for the el()/appendChild/textContent usage in
 // maybeShowFirstRunPermissions. Setting textContent clears children,

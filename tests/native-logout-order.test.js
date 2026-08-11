@@ -5,7 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const settingsSource = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'settings.js'),
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'settings', 'settings.js'),
   'utf8'
 );
 

@@ -808,7 +808,6 @@ export function Shell() {
           dev-chat.js owns the state and must load AFTER it.
       */}
       <script src="/js/session-options.js" />
-      <script src="/js/settings.js" />
       <script src="/js/group-chat.js" />
       {/*
           Pure two-half spec splitter (#196). Must load BEFORE dev-chat.js,

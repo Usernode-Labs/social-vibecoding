@@ -233,7 +233,7 @@ test('approval shell consumes a one-click fragment without leaking it in navigat
 
 test('Settings exposes only the hint-based CLI credential list and revocation API', () => {
   const html = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
-  const script = fs.readFileSync(path.join(__dirname, '../public/js/settings.js'), 'utf8');
+  const script = fs.readFileSync(path.join(__dirname, '../frontend/src/features/settings/settings.js'), 'utf8');
   assert.match(html, /id="cli-tokens-section"/);
   assert.match(script, /\/api\/me\/cli-tokens/);
   assert.match(script, /token_hint/);

@@ -12,40 +12,16 @@ import { SwitchRow } from '@/components/ui/switch';
  * top-aligned) and their checkbox writes `type`/`class`/`disabled` in that
  * order, which the primitive's prop order does not produce. They stay literal
  * — the same call alert.tsx makes for the banner with a display conflict.
+ *
+ * They are also six WRITTEN-OUT rows rather than a map over a table, which
+ * looks like the obvious deduplication and is not one:
+ * tests/settings-mobile-push.test.js reads the label and blurb of every
+ * category out of this file's SOURCE, and asserts that no internal
+ * notification identifier (`mention`, `stale_pr`, `pr_proposed`, …) ever
+ * appears between a `>` and a `<`. Hoisting the copy into a table would leave
+ * that last check matching nothing at all — green, and no longer testing
+ * anything.
  */
-const MOBILE_PUSH_CATEGORIES = [
-  {
-    key: 'direct_interactions',
-    title: 'Direct interactions',
-    blurb: 'Mentions and replies to your messages.',
-  },
-  {
-    key: 'invitations',
-    title: 'Invitations',
-    blurb: 'Collaboration and approver invitations, including when yours are accepted.',
-  },
-  {
-    key: 'shared_work',
-    title: 'Shared work',
-    blurb: 'Specs that someone privately shares with you.',
-  },
-  {
-    key: 'developer_sessions',
-    title: 'Developer sessions',
-    blurb: 'Interactive and unattended coding sessions that finish while you are away.',
-  },
-  {
-    key: 'proposal_alerts',
-    title: 'Proposal alerts',
-    blurb: 'Proposals needing attention, failed previews, and new proposals ready for voting.',
-  },
-  {
-    key: 'lightweight_activity',
-    title: 'Lightweight activity',
-    blurb: 'Reactions and kudos on your work.',
-  },
-];
-
 export function AlertsSection() {
   return (
     <div data-settings-section="alerts" className="hidden">
@@ -81,15 +57,48 @@ export function AlertsSection() {
             Choose which Social activity can send a phone notification. Your phone&apos;s Activity notifications switch remains the master control for that device.
           </SectionHeading>
           <div className="space-y-3">
-            {MOBILE_PUSH_CATEGORIES.map((category) => (
-              <label key={category.key} className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category={category.key}>
-                <span>
-                  <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">{category.title}</span>
-                  <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{category.blurb}</span>
-                </span>
-                <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
-              </label>
-            ))}
+            <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="direct_interactions">
+              <span>
+                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Direct interactions</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Mentions and replies to your messages.</span>
+              </span>
+              <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
+            </label>
+            <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="invitations">
+              <span>
+                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Invitations</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Collaboration and approver invitations, including when yours are accepted.</span>
+              </span>
+              <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
+            </label>
+            <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="shared_work">
+              <span>
+                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Shared work</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Specs that someone privately shares with you.</span>
+              </span>
+              <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
+            </label>
+            <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="developer_sessions">
+              <span>
+                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Developer sessions</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Interactive and unattended coding sessions that finish while you are away.</span>
+              </span>
+              <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
+            </label>
+            <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="proposal_alerts">
+              <span>
+                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Proposal alerts</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Proposals needing attention, failed previews, and new proposals ready for voting.</span>
+              </span>
+              <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
+            </label>
+            <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="lightweight_activity">
+              <span>
+                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Lightweight activity</span>
+                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Reactions and kudos on your work.</span>
+              </span>
+              <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
+            </label>
           </div>
           <p data-mobile-push-status aria-live="polite" className="text-xs mt-3 text-zinc-500 dark:text-zinc-400">
             Loading mobile push preferences…

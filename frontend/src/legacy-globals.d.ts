@@ -31,6 +31,12 @@ declare global {
       open: boolean;
       [key: string]: unknown;
     };
+    /** features/settings/settings.js */
+    Settings?: {
+      init(): void;
+      open(section?: string | null, opts?: unknown): void;
+      [key: string]: unknown;
+    };
     /** public/js/app.js — the shell's router. */
     App?: {
       currentApp?: string | null;

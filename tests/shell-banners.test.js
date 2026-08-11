@@ -26,7 +26,7 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const BANNERS = read('frontend/src/features/shell/banners.tsx');
 const ALERT = read('frontend/@/components/ui/alert.tsx');
-const SETTINGS = read('public/js/settings.js');
+const SETTINGS = read('frontend/src/features/settings/settings.js');
 const INDEX_HTML = read('public/index.html');
 
 test('the offline banner reads the visibility store and writes its class by ref', () => {

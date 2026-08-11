@@ -218,7 +218,7 @@ test('Settings markup has the Language section', () => {
 });
 
 test('settings.js wires the picker to POST /api/me/locale and the live push', () => {
-  const js = read('public/js/settings.js');
+  const js = read('frontend/src/features/settings/settings.js');
   assert.match(js, /_renderLanguageSection/);
   assert.match(js, /_saveLocale/);
   assert.match(js, /\/api\/me\/locale/);
