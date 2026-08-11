@@ -627,7 +627,17 @@ export function Shell() {
           bundle as of #1083 chunk F either way.)
       */}
       <script src="/js/merge-status.js" />
-      <script src="/js/dev-chat.js" />
+      {/*
+          /js/dev-chat.js used to load here, last of the chat cluster, after
+          every pure helper above that it consumes. #1084 chunk G moved it into
+          the React bundle (features/dev-chat/dev-chat.js) and the relative
+          order still holds: the bundle is a deferred module in <head>, so it
+          runs after ALL of these classic tags, which is exactly the position
+          the tag occupied. window.DevChat is published at module scope there,
+          before hydration, so app.js's DOMContentLoaded bootstrap still finds
+          it. Note the eight helpers above are NOT retired — group-chat.js,
+          app-view.js and the session drawer still read them as globals.
+      */}
       {/*
           /js/kudos.js and /js/ai-credit.js used to load here — same
           status-pane slot pattern, same poll-then-render shape. #1079 chunk B

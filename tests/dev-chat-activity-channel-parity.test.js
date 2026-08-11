@@ -30,7 +30,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const read = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8');
-const DEV_CHAT = read('public', 'js', 'dev-chat.js');
+const DEV_CHAT = read('frontend', 'src', 'features', 'dev-chat', 'dev-chat.js');
 const APP = read('public', 'js', 'app.js');
 const SESSIONS = read('src', 'routes', 'sessions.js');
 

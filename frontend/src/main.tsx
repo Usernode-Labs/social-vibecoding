@@ -69,6 +69,14 @@ import { registerServiceWorker } from './lib/service-worker';
 // ./lib/interim-root.ts. app-view.js can reach the API from the moment
 // DOMContentLoaded fires, which is the earliest App.switchTab() can run.
 import './features/dev-board/mount';
+// #1084 chunk G: the retired public/js/dev-chat.js, moved into the bundle
+// verbatim. Imported HERE rather than from a Shell island for the same reason
+// as the dev board above — #dc-view is written into an empty #app-content at
+// runtime, so there is no island to hang it off — and importing it at the
+// browser entry (never from Shell.tsx) keeps its 8,800 lines out of the
+// prerender graph entirely. Its `window.DevChat` publication and its
+// visibility/focus/pagehide listeners are guarded anyway.
+import './features/dev-chat/dev-chat.js';
 
 registerServiceWorker();
 initOffline();

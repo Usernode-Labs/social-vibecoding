@@ -23,7 +23,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const devChatSrc = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'dev-chat.js'),
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
   'utf8'
 );
 

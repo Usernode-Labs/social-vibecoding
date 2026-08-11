@@ -1,4 +1,42 @@
-// Build trigger: no-op change to force a fresh staging build (2026-06-16).
+// The dev session chat. MOVED here from public/js/dev-chat.js by #1084 chunk G
+// (React migration step 2, #1040) — a MOVE, not a rewrite, per AGENTS.md.
+//
+// Nothing below this header changed except the tail, so the diff stays
+// reviewable: the same 8,800 lines, the same `DevChat` object, the same
+// behaviour. What changed is HOW it loads and what it publishes:
+//
+//   * it is bundled into /shell/assets/shell.js instead of being the 26th
+//     classic <script> at the end of <body>. Its tag is gone from
+//     frontend/src/Shell.tsx, its entry is gone from SHELL_ASSETS in
+//     public/sw.js, and tests/shell-script-order.test.js records the
+//     retirement in RETIRED_SCRIPTS with the body count dropped to 25;
+//   * `const DevChat = {…}` no longer creates a global by itself, so the tail
+//     publishes `window.DevChat` explicitly. Every legacy caller (app.js,
+//     app-view.js, group-chat.js, settings.js, dev-flow-select.js,
+//     credit-options.js, session-options.js, …) is untouched and keeps
+//     reading the bare global;
+//   * the publication and the three document/window listeners it used to
+//     install at classic-script time are guarded by
+//     `typeof window !== 'undefined'`, because the SSG prerender pass
+//     evaluates this module's graph in Node.
+//
+// The load ORDER is preserved: the bundle is a deferred `type="module"` in
+// <head>, so it runs after the last body script and before DOMContentLoaded —
+// the same window the tag occupied. That is only safe because no other module
+// reads `DevChat` at its own top level; every consumer reads it from inside a
+// handler or a DOMContentLoaded bootstrap, which run strictly later. A grep
+// for module-scope `DevChat` across public/js/** finds comments only.
+//
+// Being an ES module also means STRICT MODE, where the classic script was
+// sloppy. Nothing here depended on sloppy semantics (no implicit globals, no
+// `with`, no octal literals, no `arguments.callee`).
+//
+// renderChatView() is still a template that writes `#dc-view.innerHTML`, so
+// the chat screen is not React-owned yet: this commit makes the conversion
+// POSSIBLE by putting the module in the bundle, and does not attempt it. That
+// conversion has to take the frame and the composer's streaming state
+// together — see the note at renderChatView().
+//
 // localStorage key for the user's last-chosen model. Single global
 // key (not per-app/per-session) so the preference is sticky wherever
 // the user goes — nobody wants "I set Opus here, but the next app
@@ -8773,11 +8811,27 @@ if (typeof window !== 'undefined' && window.SessionState) {
   });
 }
 
-DevChat._sanitizeStoredModel();
-// Fire-and-forget: refreshes MODELS from the server's allowlist. If
-// the page rendered the dropdown before this resolves, the next
-// renderChatView() pass will pick up the new entries.
-DevChat.loadModels();
+// ── module bootstrap ────────────────────────────────────────────────
+//
+// #1084 chunk G: everything from here down used to run unconditionally, as
+// the last thing the classic <script> did. It is now inside a `window` guard
+// because the SSG prerender pass (frontend/scripts/build-shell.mjs) evaluates
+// this module's graph in Node, where `localStorage`, `fetch` and
+// `document.addEventListener` do not exist. The vm-based tests all provide
+// both `window` and `document` — `window.addEventListener` below was already
+// unguarded — so the guard changes nothing for them.
+if (typeof window !== 'undefined') {
+  // `const DevChat` no longer becomes a global on its own now that this is a
+  // module, and roughly a dozen legacy modules read the bare `DevChat`. Kept
+  // first in the block so the API exists before anything below can fail.
+  window.DevChat = DevChat;
+
+  DevChat._sanitizeStoredModel();
+  // Fire-and-forget: refreshes MODELS from the server's allowlist. If
+  // the page rendered the dropdown before this resolves, the next
+  // renderChatView() pass will pick up the new entries.
+  DevChat.loadModels();
+}
 
 // Combined away/return handler (#142, #161). On leaving (tab hidden or
 // window blurred) while a turn is streaming, arm the server-side
@@ -8799,19 +8853,21 @@ DevChat._awayReturnHandler = () => {
     }
   }
 };
-document.addEventListener('visibilitychange', DevChat._awayReturnHandler);
-window.addEventListener('focus', DevChat._awayReturnHandler);
-window.addEventListener('blur', DevChat._awayReturnHandler);
+if (typeof window !== 'undefined') {
+  document.addEventListener('visibilitychange', DevChat._awayReturnHandler);
+  window.addEventListener('focus', DevChat._awayReturnHandler);
+  window.addEventListener('blur', DevChat._awayReturnHandler);
 
-// Tab close / hard navigation while a turn is streaming: a normal fetch
-// may be killed mid-flight, so arm via sendBeacon (cookies ride along;
-// the endpoint parses the JSON blob body like any other request).
-window.addEventListener('pagehide', () => {
-  if (!DevChat.isStreaming || !DevChat.currentSession) return;
-  try {
-    if (navigator.sendBeacon) {
-      const blob = new Blob([JSON.stringify({ armed: true })], { type: 'application/json' });
-      navigator.sendBeacon(`/api/sessions/${DevChat.currentSession.id}/notify-on-done`, blob);
-    }
-  } catch { /* best-effort */ }
-});
+  // Tab close / hard navigation while a turn is streaming: a normal fetch
+  // may be killed mid-flight, so arm via sendBeacon (cookies ride along;
+  // the endpoint parses the JSON blob body like any other request).
+  window.addEventListener('pagehide', () => {
+    if (!DevChat.isStreaming || !DevChat.currentSession) return;
+    try {
+      if (navigator.sendBeacon) {
+        const blob = new Blob([JSON.stringify({ armed: true })], { type: 'application/json' });
+        navigator.sendBeacon(`/api/sessions/${DevChat.currentSession.id}/notify-on-done`, blob);
+      }
+    } catch { /* best-effort */ }
+  });
+}

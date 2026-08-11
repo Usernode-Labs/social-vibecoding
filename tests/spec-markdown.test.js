@@ -2,7 +2,7 @@
 //
 // Two layers:
 //   1. Rendering assertions — configure `marked` exactly as
-//      public/js/dev-chat.js renderMarkdown() does and assert the
+//      frontend/src/features/dev-chat/dev-chat.js renderMarkdown() does and assert the
 //      structural output the fixes guarantee (distinct heading levels,
 //      ordered-list `start`, table class, task-item spans, and the
 //      per-call `breaks` option). marked's tokenizer is the half that's
@@ -130,7 +130,7 @@ test('a malformed (unterminated) fence auto-closes and the rest still parses (F6
 
 // ── 2. Source guards on the shipped renderer ──
 
-const devChatSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'dev-chat.js'), 'utf8');
+const devChatSrc = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'), 'utf8');
 
 test('DOMPurify allowlist keeps h5 and ol start (F2/F3)', () => {
   const tags = devChatSrc.match(/ALLOWED_TAGS:\s*\[([\s\S]*?)\]/);

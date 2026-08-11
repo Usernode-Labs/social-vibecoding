@@ -258,7 +258,11 @@ test('notifications.js routes completions through DevAlerts.onCompletion', () =>
 });
 
 test('dev-chat.js no longer plays the tone directly (chime is arrival-driven)', () => {
-  const src = read('js', 'dev-chat.js');
+  // #1084 chunk G moved this module into the React bundle (same file, new
+  // path — see the note at the top of it); only the path changed here.
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'), 'utf8',
+  );
   // #138: the redundant foreground-tone hook is removed — the chime is now
   // fired solely from Notifications.handleIncoming → DevAlerts.onCompletion
   // on the WS notification's arrival. dev-chat.js must not call playDoneTone.

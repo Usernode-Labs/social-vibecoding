@@ -39,7 +39,7 @@ const APP_CSS = read('public/css/app.css');
 const INDEX = read('public/index.html');
 const APP_JS = read('public/js/app.js');
 const APP_VIEW = read('public/js/app-view.js');
-const DEV_CHAT = read('public/js/dev-chat.js');
+const DEV_CHAT = read('frontend/src/features/dev-chat/dev-chat.js');
 const BOARD_FRAME = read('frontend/src/features/dev-board/board-frame.tsx');
 const GROUP_CHAT = read('public/js/group-chat.js');
 

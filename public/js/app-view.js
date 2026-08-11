@@ -3058,20 +3058,15 @@ const AppView = {
       || (a.collab_visibility === 'private' && a.can_collaborate)
       || (a.approver_policy === 'invited' && a.can_collaborate));
   },
-  // A non-interactive group label inside the "+" menu.
-  //
-  // The menu grew to eight entries with no shape: "Propose a change" sat
-  // one keystroke from "App secrets", and two of the eight were different
-  // spellings of the same act. It is two groups now — what you do to the
-  // CODE, then what you do to the APP's settings — and this is the row
-  // that says so. Deliberately a <div>, not a <button>: _wirePlusMenu
-  // collects `button[data-plus]` for the touch action sheet, so anything
-  // that is not an action must not be a button or it would arrive in that
-  // sheet as a tappable row that does nothing.
-  _plusMenuHeading(label, key, divider) {
-    return `<div data-plus-group="${key}" class="px-3 pt-2.5 pb-1 text-[10px] uppercase font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 select-none${
-      divider ? ' border-t border-zinc-200 dark:border-zinc-800 mt-1' : ''}">${label}</div>`;
-  },
+  // The "+" menu's non-interactive group label used to be built here, by
+  // `_plusMenuHeading(label, key, divider)`. #1084 chunk G converted the whole
+  // menu to JSX, so the primitive is `<PlusMenuHeading>` in
+  // frontend/src/features/dev-board/board-frame.tsx now — same <div>, same
+  // `data-plus-group`, same classes, and the same reason for not being a
+  // <button>: _wirePlusMenu (below) collects `button[data-plus]` for the touch
+  // action sheet, and a heading that matched would arrive there as a tappable
+  // row that does nothing. Nothing called this after the conversion, so it went
+  // with the template rather than staying behind as dead code.
 
   _wirePlusMenu(content) {
     const btn = document.getElementById('dev-plus-btn');

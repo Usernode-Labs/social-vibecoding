@@ -42,7 +42,7 @@ const SERVER = read('server.js');
 const LIMITS = read('src/middleware/rate-limits.js');
 const MIGRATE = read('src/db/migrate.js');
 const SESSIONS = read('src/routes/sessions.js');
-const DEV_CHAT = read('public/js/dev-chat.js');
+const DEV_CHAT = read('frontend/src/features/dev-chat/dev-chat.js');
 const DAPP = JSON.parse(read('dapp.json'));
 
 const USER = { id: 7, username: 'tester', isAdmin: false };

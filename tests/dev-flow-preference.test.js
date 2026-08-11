@@ -232,7 +232,7 @@ test('Settings disables the hand-offs when the deployment cannot offer them', ()
 });
 
 test('the dev chat honours the preference instead of asking again', () => {
-  const devChat = read('public/js/dev-chat.js');
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
   // The saved value is no longer read as a raw string here: it is one input
   // to BuildVenues.currentVenue, which resolves the whole precedence chain
   // (imported > lease > backend > saved flow) in one place. 'platform' and
@@ -250,7 +250,7 @@ test('the walkthrough only appears where the hand-off can still be started', () 
   // Otherwise it would sit above a conversation already in progress, or on a
   // session whose proposal exists — offering to start work somewhere else
   // when the work is already underway here.
-  const devChat = read('public/js/dev-chat.js');
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
   const fnStart = devChat.indexOf('_devFlowTarget() {');
   assert.ok(fnStart !== -1, '_devFlowTarget must exist');
   const fn = devChat.slice(fnStart, devChat.indexOf('\n  },', fnStart));
@@ -283,15 +283,21 @@ test('the "+" menu asks nothing about venue', () => {
 
 test('the "+" menu is two named groups, not one flat list', () => {
   const appView = read('public/js/app-view.js');
-  assert.match(appView, /_plusMenuHeading\('Build a change', 'build', false\)/);
-  assert.match(appView, /_plusMenuHeading\('Settings &amp; rules', 'settings', true\)/);
+  // #1084 chunk G converted the menu to JSX: the two headings are
+  // <PlusMenuHeading> elements in the board frame now, not
+  // AppView._plusMenuHeading() calls. Same two groups, same labels.
+  const frame = read('frontend/src/features/dev-board/board-frame.tsx');
+  assert.match(frame, /label="Build a change" groupKey="build" divider=\{false\}/);
+  assert.match(frame, /label="Settings &amp; rules"[\s\S]{0,80}groupKey="settings"[\s\S]{0,40}divider/);
   // A heading must not be a <button>: _wirePlusMenu collects
   // `button[data-plus]` for the touch action sheet, and a heading that
   // matched would arrive there as a tappable row that does nothing.
-  const fnStart = appView.indexOf('_plusMenuHeading(label, key, divider) {');
-  assert.ok(fnStart !== -1, '_plusMenuHeading must exist');
-  const fn = appView.slice(fnStart, appView.indexOf('\n  },', fnStart));
-  assert.match(fn, /<div data-plus-group=/, 'headings render as a div');
+  const fnStart = frame.indexOf('function PlusMenuHeading(');
+  assert.ok(fnStart !== -1, 'the PlusMenuHeading primitive must exist');
+  // Slice from the RETURN, not the signature: the destructured props' type
+  // annotation closes with a `}` in column 0, which is not the function's end.
+  const fn = frame.slice(fnStart, frame.indexOf('\n}\n', frame.indexOf('return (', fnStart)));
+  assert.match(fn, /<div\s+data-plus-group=/, 'headings render as a div');
   assert.ok(!fn.includes('data-plus="'), 'a heading carries no data-plus');
   // The touch sheet renders them too, since it has no heading primitive.
   assert.match(appView, /button\[data-plus\], \[data-plus-group\]/,

@@ -314,7 +314,7 @@ test('the announcement runs before the build, and every outcome posts after it',
 // ── 4. The client honours the hint ──────────────────────────────────────
 
 const DEV_CHAT_SRC = fs.readFileSync(
-  path.join(__dirname, '../public/js/dev-chat.js'), 'utf8'
+  path.join(__dirname, '../frontend/src/features/dev-chat/dev-chat.js'), 'utf8'
 );
 
 test('a persisted running-rebuild row re-spins on load, but only while trailing', () => {
