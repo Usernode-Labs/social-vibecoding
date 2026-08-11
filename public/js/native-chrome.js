@@ -31,7 +31,9 @@
   const NativeChrome = {
     _infoPromise: null,
 
-    // Resolves { version, capabilities: [...] } — never rejects.
+    // Resolves { version, capabilities: [...], appVersion?, buildNumber? }
+    // — never rejects. The optional pair identifies the installed Flutter
+    // binary on app builds that advertise it through the public probe.
     //
     // Concurrent callers share ONE in-flight probe, but a DEGRADED answer
     // (the bridge's marker for a probe that timed out or errored inside

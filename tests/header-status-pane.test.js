@@ -1,13 +1,13 @@
-// Header slim-down: the fork label, the platform + dApp build pills, the kudos
+// Header slim-down: the fork label, the web revision, the kudos
 // badge, the trophy and the admin shield all left the header for the slide-out
-// drawer. #1101 later added the native app version directly to that drawer.
+// drawer. #1101 later added the installed mobile-app version directly to it and
+// removed the unrelated per-dApp SHA.
 //
 // The load-bearing property for the moved slots is that they kept their ids
 // while changing parent — renderers across app.js / app-view.js / kudos.js
-// resolve them with getElementById, and one of them
-// (renderAppVersionPillHTML) is shared with the home-screen cards. A
-// well-meaning rename or a "tidy up the header" edit that re-adds a slot
-// would break the pane silently, so all of it is pinned here.
+// resolve them with getElementById. A well-meaning rename or a "tidy up the
+// header" edit that re-adds a slot would break the pane silently, so all of it
+// is pinned here.
 //
 // Static-assertion style (cf. tests/theme-mode.test.js): read the
 // shipped source files and assert the wiring is present.
@@ -30,7 +30,6 @@ const header = html.slice(0, html.indexOf('</header>'));
 const DRAWER_SLOTS = [
   'platform-version-pill-slot',
   'native-app-version-slot',
-  'app-version-pill-slot',
   'app-fork-badge-slot',
   'kudos-budget-slot',
 ];
@@ -54,7 +53,7 @@ test('each drawer status slot exists exactly once in its assigned region', () =>
   const PANE_SLOTS = ['kudos-budget-slot'];
   const FOOTER_SLOTS = [
     'platform-version-pill-slot', 'native-app-version-slot',
-    'app-version-pill-slot', 'app-fork-badge-slot',
+    'app-fork-badge-slot',
   ];
   for (const id of DRAWER_SLOTS) {
     const hits = html.match(new RegExp(`id="${id}"`, 'g')) || [];
@@ -145,29 +144,23 @@ test('the deploy dot is derived from the rendered pills, not a duplicate flag', 
   // rolling deploy with .drawer-ver--deploying instead of the pill class.
   assert.match(fn.slice(0, 600), /#drawer-footer \.drawer-ver--deploying/,
     'reads the deploying state off the rendered pills — the single source of truth');
-  // Every renderer that can paint (or clear) a deploying pill must sync
-  // the dot, or the hamburger keeps signalling a finished deploy.
+  // The platform-revision renderer and the drawer lifecycle both synchronize
+  // the dot. dApp deploy pills live on home cards and are out of scope.
   const calls = (appJs.match(/DrawerStatus\.refreshDeployDot\(\)/g) || []).length
-    + (appViewJs.match(/DrawerStatus\.refreshDeployDot\(\)/g) || []).length
-    // setAppOpen's own call moved with the object.
     + (headerMenuJs.match(/DrawerStatus\.refreshDeployDot\(\)/g) || []).length;
-  assert.ok(calls >= 4,
-    `refreshDeployDot is called from each pill renderer (found ${calls}, expect >= 4)`);
+  assert.ok(calls >= 2,
+    `refreshDeployDot is called from the revision renderer and lifecycle (found ${calls})`);
 });
 
 // ─── App-scoped row lifecycle ────────────────────────────────────────────
 
-test('the native app, dApp build, and fork rows ship hidden', () => {
+test('the mobile app version and fork rows ship hidden', () => {
   const nativeRow = html.match(/<div id="drawer-row-native-app-version"[^>]*>/);
-  const appRow = html.match(/<div id="drawer-row-app-version"[^>]*>/);
   const forkRow = html.match(/<div id="drawer-row-app-fork"[^>]*>/);
   assert.ok(nativeRow, '#drawer-row-native-app-version exists');
-  assert.ok(appRow, '#drawer-row-app-version exists');
   assert.ok(forkRow, '#drawer-row-app-fork exists');
   assert.match(nativeRow[0], /class="hidden /,
-    'the installed app version ships hidden until the native bridge answers');
-  assert.match(appRow[0], /class="hidden /,
-    'the dApp build row ships hidden (no app open at boot)');
+    'the mobile app version ships hidden until the native bridge answers');
   assert.match(forkRow[0], /class="hidden /, 'the fork row ships hidden');
 
   // Hidden from every navigate* that leaves an app behind — one call per
@@ -176,27 +169,20 @@ test('the native app, dApp build, and fork rows ship hidden', () => {
   const shareHides = (appJs.match(/if \(_drs\) _drs\.classList\.add\('hidden'\);/g) || []).length;
   assert.ok(hides > shareHides,
     'setAppOpen(false) runs everywhere the Share row is hidden, plus navigateHome');
-  assert.match(appJs, /DrawerStatus\.setAppOpen\(true\)/, 'and is revealed when an app opens');
+  assert.match(appJs, /DrawerStatus\.setAppOpen\(true\)/,
+    'the app-open lifecycle still drives the header mode switch');
   assert.match(appViewJs, /DrawerStatus\.setAppOpen\(false\)/,
-    'AppView.close() hides it too, so a closed app leaves no stale build line');
+    'AppView.close() clears app-scoped lineage too');
 });
 
-test('the dApp build is labelled distinctly and hidden for the self-hosted platform', () => {
-  const rowAt = html.indexOf('id="drawer-row-app-version"');
-  const row = html.slice(rowAt, html.indexOf('</div>', rowAt));
-  assert.match(row, /dApp version/,
-    'the deployed app SHA cannot be confused with the installed native app build');
-
-  const headerMenuJs = fs.readFileSync(
-    path.join(root, 'frontend/src/features/header/header-menu-controller.js'), 'utf8');
-  const fn = headerMenuJs.slice(headerMenuJs.indexOf('  setAppOpen(open) {'));
-  const body = fn.slice(0, fn.indexOf('  setForkVisible('));
-  assert.match(body,
-    /const showDappVersion = !!open && !window\.AppView\?\.appData\?\.self_hosted/,
-    'a self-hosted platform view suppresses its duplicate dApp SHA');
-  assert.match(body,
-    /row\.classList\.toggle\('hidden', !showDappVersion\)/,
-    'the row follows that derived visibility');
+test('version information contains no particular dApp version', () => {
+  assert.doesNotMatch(html, /drawer-row-app-version|app-version-pill-slot|dApp version/);
+  assert.doesNotMatch(appViewJs, /\b(?:refreshVersionPill|applyHeaderDeployProgress)\b/,
+    'opening a dApp no longer fetches or paints its SHA into the drawer');
+  assert.match(html, /Web revision/,
+    'the Git SHA is accurately described as a revision rather than a version');
+  assert.match(html, /Mobile app version/,
+    'the semantic version/build is labelled as the installed mobile app');
 });
 
 test('the fork row visibility is driven by renderForkBadge', () => {
@@ -217,8 +203,7 @@ test('status-pane rows are plain divs — the pills carry their own anchors', ()
   // onclick="location.reload()">, and the live state an <a>. Nesting
   // those inside a clickable row would be invalid markup.
   for (const id of ['drawer-row-platform-version',
-    'drawer-row-native-app-version', 'drawer-row-app-version',
-    'drawer-row-app-fork', 'drawer-row-kudos',
+    'drawer-row-native-app-version', 'drawer-row-app-fork', 'drawer-row-kudos',
     'drawer-row-ai-budget']) {
     const row = html.match(new RegExp(`<(\\w+) id="${id}"`));
     assert.ok(row, `${id} exists`);
@@ -282,8 +267,6 @@ test('the ≤640px collapse rule no longer hides the drawer slots', () => {
   const block = mq.slice(0, mq.indexOf('\n}\n'));
   assert.ok(!block.includes('#platform-version-pill-slot'),
     'the platform pill renders at every width now — it is in the drawer');
-  assert.ok(!block.includes('#app-version-pill-slot'),
-    'the app pill renders at every width now — it is in the drawer');
   // The home-card class slot still collapses: those pills DO crowd the
   // app name on a narrow card.
   assert.ok(block.includes('.app-version-pill-slot:not(:has(.app-version-pill--deploying))'),

@@ -612,7 +612,7 @@ test('open mints the token alongside the detail fetch instead of after it', asyn
       return new Promise((r) => { detailResolve = () => r({ ok: true, json: async () => ({ app: { ...RUNNING } }) }); });
     },
   });
-  ['startActivityTracking', 'startTokenRefresh', 'refreshVersionPill', 'renderForkBadge']
+  ['startActivityTracking', 'startTokenRefresh', 'renderForkBadge']
     .forEach((m) => { AppView[m] = () => {}; });
 
   const p = AppView.open('notes');

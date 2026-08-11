@@ -425,10 +425,6 @@ const AppView = {
     AppView.startActivityTracking(slug);
     AppView.startTokenRefresh();
     if (window.DevConsole) DevConsole.setCurrentApp(slug);
-    // Populate the deployed-version pill in the header. It lives in the
-    // shared header so it's visible across tabs (App / group-chat /
-    // dev-chat) for the duration this app is open; close() clears it.
-    AppView.refreshVersionPill();
     // Amber "⑂ Forked from <name>" lineage label in the shared header
     // (cleared by close()). No-op for non-forks.
     AppView.renderForkBadge();
@@ -618,11 +614,8 @@ const AppView = {
     }
     if (window.Secrets) Secrets.hide();
     AppView.pendingInnerPath = null;
-    // Both slots live in the drawer's bottom-anchored footer now (same
-    // ids, new parent). Blank them AND hide their rows, or the previous
-    // app's build/fork lines linger in the menu on the home feed.
-    const slot = document.getElementById('app-version-pill-slot');
-    if (slot) slot.innerHTML = '';
+    // Fork lineage lives in the drawer's bottom-anchored footer. Blank it and
+    // hide its row, or the previous app's lineage lingers on the home feed.
     const forkSlot = document.getElementById('app-fork-badge-slot');
     if (forkSlot) forkSlot.innerHTML = '';
     if (window.App?.DrawerStatus) App.DrawerStatus.setAppOpen(false);
@@ -1302,63 +1295,9 @@ const AppView = {
     });
   },
 
-  // #21: fetch + render the "live on <sha> · PR #N" pill. Called on App
-  // tab render and again whenever an `app_version_changed` or
-  // `app_redeploy_status` WS event fires for this app (so the pill
-  // updates live when a PR merges in another tab/session, and turns
-  // yellow + spinning while the rebuild is in flight).
-  async refreshVersionPill() {
-    const slot = document.getElementById('app-version-pill-slot');
-    if (!slot || !AppView.appData) return;
-    try {
-      const res = await fetch(`/api/apps/${AppView.appData.slug}/version`);
-      if (!res.ok) return;
-      const info = await res.json();
-      slot.innerHTML = AppView.renderAppVersionPillHTML({
-        slug: AppView.appData.slug,
-        version: info.sha ? info : null,
-        deployProgress: info.deployProgress || null,
-        // The drawer footer's line gets the richer PR-context tooltip
-        // (title + author + merge time). The home-screen card uses the
-        // same helper without this and gets the plain commit-hash tip.
-        includePrContext: true,
-        // Text form, not a pill — the footer line is labelled "App".
-        plain: true,
-      });
-      // Mirror the deploying state onto the hamburger — the pill itself
-      // is only visible with the drawer open.
-      if (window.App?.DrawerStatus) App.DrawerStatus.refreshDeployDot();
-    } catch {
-      // Non-critical; if the fetch fails the pill just doesn't render.
-    }
-  },
-
-  // Apply a deploy-progress update to the header pill without going
-  // back to the server. Called from the `app_redeploy_status` WS
-  // handler so the pill flips into its yellow/spinner state the
-  // instant the broadcast arrives, even before refreshVersionPill
-  // would re-fetch on the trailing `app_version_changed` event.
-  applyHeaderDeployProgress(deployProgress) {
-    const slot = document.getElementById('app-version-pill-slot');
-    if (!slot || !AppView.appData) return;
-    // Preserve whatever version data the previous render captured by
-    // re-querying the DOM — the slot stores all the fields we'd need
-    // via dataset. We don't need them, though: while deploying we
-    // render a stripped-down pill that doesn't show the prior SHA.
-    slot.innerHTML = AppView.renderAppVersionPillHTML({
-      slug: AppView.appData.slug,
-      version: null, // hidden during deploy; the next refresh fills it in
-      deployProgress,
-      includePrContext: true,
-      plain: true,
-    });
-    if (window.App?.DrawerStatus) App.DrawerStatus.refreshDeployDot();
-  },
-
-  // Single source of truth for the per-app version pill. Used by both
-  // the header (AppView) and the home-screen cards (Home), so the two
-  // surfaces stay visually identical and stay in lockstep when new
-  // states (e.g. a future "rollback available" variant) are added.
+  // Single source of truth for the per-app version pill on home cards.
+  // The drawer deliberately carries platform information only; it no longer
+  // has a slot for the currently-open dApp's SHA.
   //
   // `version` shape: { sha, shortSha, prNumber, prUrl?, commitUrl?,
   // prTitle?, mergedBy?, mergedAt? } — null means "no SHA yet".

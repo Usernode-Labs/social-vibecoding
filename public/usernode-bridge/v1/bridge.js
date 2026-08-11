@@ -4087,7 +4087,10 @@
     });
   }
 
-  // getBridgeInfo() → { version, capabilities: [...] }. Resolves
+  // getBridgeInfo() → { version, capabilities: [...], appVersion?,
+  //   buildNumber? }. The optional release identifiers describe the installed
+  // Flutter binary and remain on this public probe so SV staging can render
+  // them without privileged settings access. Resolves
   // { version: 0, capabilities: [] } outside the app and on old builds,
   // so chrome can always `await` it and gate UI on capabilities
   // (`capabilities.includes('getNodeStatus')` etc), never on version.

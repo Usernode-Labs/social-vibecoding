@@ -1313,9 +1313,9 @@
       "expectSelector": "#drawer-main-rows > #drawer-row-theme:first-child + #drawer-status-pane"
     },
     {
-      "name": "Drawer footer identifies the deployed platform version",
+      "name": "Drawer footer distinguishes the mobile app version from the web revision",
       "path": "/?shot=menu",
-      "expectText": "Platform version"
+      "expectText": "Web revision"
     },
     {
       "name": "Drawer footer is bottom-anchored and holds GitHub + Share as its last two items",

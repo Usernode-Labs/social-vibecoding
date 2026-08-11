@@ -9,7 +9,7 @@
  *
  *   ./node-pill.js               #drawer-row-node    (native node status)
  *   ./wallet-sheet.js            #drawer-row-wallet  (native wallet balance)
- *   ./native-app-version.js      #native-app-version-slot (installed build)
+ *   ./native-app-version.js      #native-app-version-slot (Flutter app release)
  *   ./ai-credit.js               #drawer-row-ai-budget / #ai-budget-slot
  *   ./header-menu-controller.js  the drawer's own open/close (was
  *                                App.HeaderMenu / App.DrawerStatus in app.js)
@@ -556,20 +556,17 @@ export function HeaderMenu() {
           </div>
           {/*
               ── Drawer footer ────────────────────────────────────────────────
-              Reference + app-scoped link rows, pinned to the FOOT of the
+              Platform information + app-scoped link rows, pinned to the FOOT of the
               panel: `mt-auto` inside #header-menu-rows' column flex hugs the
               bottom of the viewport whenever the rows above leave free space,
               and degrades to "just at the end of the scroll" when they don't
               (touch sheet, short viewport). No JS, no measurement.
               
-              The build lines render as PLAIN TEXT rather than pills — the
+              The revision/version lines render as PLAIN TEXT rather than pills — the
               old "usernode · 1a2b3c4" pill overflowed the 15rem panel, and a
               version you can't act on doesn't need pill chrome. The slots keep
-              their ids, so App.renderPlatformVersionPill /
-              AppView.refreshVersionPill / AppView.renderForkBadge all still
-              resolve them by getElementById; the renderers just emit the
-              .drawer-ver text form for these two (see the `plain` flag on
-              AppView.renderAppVersionPillHTML).
+              their ids, so App.renderPlatformVersionPill and
+              AppView.renderForkBadge still resolve them by getElementById.
               
               GitHub + Share are the last two items, on the same
               app-open lifecycle they had as mid-list rows (App.openApp /
@@ -585,7 +582,7 @@ export function HeaderMenu() {
             */}
             <div id="drawer-row-platform-version" className="drawer-ver-row flex items-center gap-2 px-4">
               <span className="drawer-ver-label">
-                Platform version
+                Web revision
               </span>
               <span
                 id="platform-version-pill-slot"
@@ -594,14 +591,15 @@ export function HeaderMenu() {
               </span>
             </div>
             {/*
-                Installed Usernode app build (#1101) — populated from the
-                native bridge's getSettingsState().buildInfo and revealed only
-                in the native top frame. It is independent of both the deployed
-                platform SHA above and the currently-open dApp SHA below.
+                Installed Flutter app release (#1101) — requested from the
+                native bridge and formatted as version/build (for example
+                0.4.0/1223). It is deliberately independent of the deployed
+                web revision above and never uses the currently-open dApp's
+                commit hash. Hidden outside the mobile app.
             */}
             <div id="drawer-row-native-app-version" className="hidden drawer-ver-row flex items-center gap-2 px-4">
               <span className="drawer-ver-label">
-                App version
+                Mobile app version
               </span>
               <span
                 id="native-app-version-slot"
@@ -610,24 +608,10 @@ export function HeaderMenu() {
               </span>
             </div>
             {/*
-                dApp build — revealed by App.DrawerStatus.setAppOpen() whenever
-                a non-self-hosted app is open, on the same lifecycle as
-                #drawer-row-github / #drawer-row-share. The self-hosted
-                platform would duplicate "Platform version", so it stays
-                hidden there.
-            */}
-            <div id="drawer-row-app-version" className="hidden drawer-ver-row flex items-center gap-2 px-4">
-              <span className="drawer-ver-label">
-                dApp version
-              </span>
-              <span id="app-version-pill-slot" className="drawer-ver-value ml-auto inline-flex min-w-0 justify-end">
-              </span>
-            </div>
-            {/*
                 Fork lineage: amber "⑂ Forked from <name>" label, written by
                 AppView.renderForkBadge() and revealed by
-                App.DrawerStatus.setForkVisible(). Sits directly under the app
-                build line so the two read as one app-scoped block.
+                App.DrawerStatus.setForkVisible(). This is app context, not a
+                second version of the platform.
             */}
             <div id="drawer-row-app-fork" className="hidden drawer-ver-row items-center gap-2 px-4">
               <span id="app-fork-badge-slot" className="ml-auto inline-flex min-w-0 justify-end">
