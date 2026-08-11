@@ -21,6 +21,13 @@ const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'home.js'),
   'utf8'
 );
+// The "Create app" tile moved out of home.js: it is a home-screen WIDGET
+// now (HomePanels.renderCreatePanel), so it is loaded here to keep it under
+// the same shared-icon-treatment assertions the app tiles are.
+const PANELS_SRC = fs.readFileSync(
+  path.join(__dirname, '..', 'public', 'js', 'home-panels.js'),
+  'utf8'
+);
 
 // Minimal functional stand-in for the DOM bits home.js's escapeHtml
 // leans on (createElement + textContent/innerHTML round-trip).
@@ -59,9 +66,10 @@ function makeHome() {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
-  vm.runInContext(`${SRC}\n;globalThis.__Home = Home;`, sandbox);
+  vm.runInContext(`${SRC}\n${PANELS_SRC}\n;globalThis.__Home = Home;`, sandbox);
   const Home = sandbox.__Home;
   Home.__sandbox = sandbox;
+  Home.__HP = sandbox.HomePanels;
   return Home;
 }
 
@@ -111,7 +119,7 @@ test('every icon tile carries .app-icon-tile and no violet colouring', () => {
     Home.renderAppCard(baseApp()),
     Home.renderAppCard(baseApp({ icon_emoji: '🎮' })),
     Home.renderAppCard(baseApp({ icon_url: '/app-icons/' + 'a'.repeat(32) })),
-    Home.renderCreateTile(),
+    Home.__HP.renderCreatePanel({ key: 'create' }),
     Home.renderWidgetTile({ id: 'w1', name: 'Demo App', slug: 'demo' }),
   ];
   for (const html of variants) {
@@ -124,7 +132,7 @@ test('every icon tile carries .app-icon-tile and no violet colouring', () => {
     assert.doesNotMatch(tile[0], /text-violet/, 'no violet glyph colour');
   }
   // The create-tile placeholder keeps its "empty slot" variant.
-  assert.match(Home.renderCreateTile(), /app-icon-tile app-icon-tile--empty/);
+  assert.match(Home.__HP.renderCreatePanel({ key: 'create' }), /app-icon-tile app-icon-tile--empty/);
 });
 
 // The fainter letter is CSS-side: the tile tags its kind with
@@ -178,6 +186,16 @@ test('the tile hairline steps down to --border in dark mode', () => {
     /\.app-icon-tile \{[^}]*border: 1px solid var\(--border-light\);/,
     'light mode keeps the faint --border-light hairline'
   );
+  // The widget strip mirrors the pinned homescreen grid, and on a
+  // dual-icon shell the widget wears exactly these per-theme faces — so
+  // the strip gets them by routing through the shared class, with no
+  // scoped override of its own. (An appearance-neutral translucent
+  // override lived here briefly and was reverted with the approach.)
+  assert.doesNotMatch(
+    css,
+    /\.widget-tile \.app-icon-tile\s*\{/,
+    'strip tiles take the shared face, not a scoped one'
+  );
   assert.match(
     css,
     /\.dark \.app-icon-tile \{[^}]*border-color: var\(--border\);/,
@@ -226,6 +244,112 @@ test('the widget palette keys off the system scheme, not the .dark class', () =>
   assert.doesNotMatch(scheme[0], /classList/, 'does not read the .dark class');
   assert.doesNotMatch(scheme[0], /Theme/, 'does not read the in-app theme');
   assert.match(src, /_schemeQuery\(\) \{[\s\S]*?prefers-color-scheme: dark/);
+});
+
+// ── Dual-icon capability (#948) ──────────────────────────────────────
+//
+// Where the shell can hold a light/dark pair, SV sends both and the
+// widget picks natively — the only way a pinned tile follows a flip
+// with SV closed. Where it can't, everything stays on the gen-5 path.
+
+test('the dark-icon capability string is pinned', () => {
+  const Home = makeHome();
+  assert.equal(Home.WIDGET_DARK_ICON_CAPABILITY, 'homeScreenShortcutDarkIcon',
+    'the exact string the shell advertises — the two repos agree on this');
+});
+
+// An explicit variant must win over the live appearance, always. That
+// is what lets the capable path build a payload that is byte-identical
+// in light and dark: if the renderer peeked at prefers-color-scheme,
+// the pair itself would drift with the appearance and re-send forever.
+test('an explicit variant beats the system appearance in the renderer', () => {
+  const Home = makeHome();
+  const paints = [];
+  Home.__sandbox.document.createElement = () => ({
+    getContext: () => ({
+      fillStyle: null, strokeStyle: null,
+      beginPath() {}, closePath() {}, moveTo() {}, arcTo() {}, roundRect() {},
+      fill() { paints.push(this.fillStyle); },
+      stroke() { paints.push(this.strokeStyle); },
+      fillRect() {}, fillText() { paints.push(this.fillStyle); },
+    }),
+    toDataURL: () => 'data:image/png;base64,FAKE',
+  });
+  // System says dark…
+  Home.__sandbox.matchMedia = () => ({ matches: true, addEventListener: () => {} });
+  Home._widgetIconDataUrl(baseApp(), 'light');
+  assert.equal(paints[0], '#ffffff', '…but an explicit light variant paints white');
+  paints.length = 0;
+  // …and the other way round.
+  Home.__sandbox.matchMedia = () => ({ matches: false, addEventListener: () => {} });
+  Home._widgetIconDataUrl(baseApp(), 'dark');
+  assert.equal(paints[0], '#1a1a30', 'an explicit dark variant paints the dark face');
+});
+
+// The marker records WHICH artwork was baked. On the capable path that
+// is 'dual' in both appearances, so a flip marks nothing stale (there
+// is nothing to repaint). On the fallback path it is the scheme, byte
+// for byte as gen 5 recorded it — that identity is what guarantees
+// non-capable users see zero churn from this change.
+test('the marker variant is dual when capable, the scheme when not', () => {
+  const Home = makeHome();
+  let dark = false;
+  Home.__sandbox.matchMedia = () => ({ get matches() { return dark; }, addEventListener: () => {} });
+
+  const letter = baseApp();
+  const emoji = baseApp({ icon_emoji: '🎮' });
+  const image = baseApp({ icon_url: '/app-icons/' + 'a'.repeat(32) });
+  const imageSrc = Home._desiredIconSrcFor(image);
+
+  // Capability absent (unprobed null and explicit false both count).
+  for (const state of [null, false]) {
+    Home._widgetDarkIcons = state;
+    dark = false;
+    assert.equal(Home._desiredIconSrcFor(letter), `tile:${Home.WIDGET_ICON_GEN}:light:`);
+    assert.equal(Home._desiredIconSrcFor(emoji), `tile:${Home.WIDGET_ICON_GEN}:light:🎮`);
+    dark = true;
+    assert.equal(Home._desiredIconSrcFor(letter), `tile:${Home.WIDGET_ICON_GEN}:dark:`);
+    assert.equal(Home._desiredIconSrcFor(emoji), `tile:${Home.WIDGET_ICON_GEN}:dark:🎮`);
+  }
+
+  // Capability present: identical in both appearances, and with no
+  // matchMedia at all.
+  Home._widgetDarkIcons = true;
+  for (const state of [false, true]) {
+    dark = state;
+    assert.equal(Home._desiredIconSrcFor(letter), `tile:${Home.WIDGET_ICON_GEN}:dual:`);
+    assert.equal(Home._desiredIconSrcFor(emoji), `tile:${Home.WIDGET_ICON_GEN}:dual:🎮`);
+  }
+  delete Home.__sandbox.matchMedia;
+  assert.equal(Home._desiredIconSrcFor(letter), `tile:${Home.WIDGET_ICON_GEN}:dual:`);
+
+  // Image icons keep one marker in every state — their payload really
+  // is identical, so folding the variant in would re-send for nothing.
+  assert.equal(Home._desiredIconSrcFor(image), imageSrc);
+});
+
+// The capability probe answers false wherever there is no native shell
+// to ask, and never throws — _desiredIconSrcFor runs on every heal
+// pass, so a rejection here would break icon healing outright.
+test('the capability probe degrades to false without NativeChrome', async () => {
+  const Home = makeHome();
+  assert.equal(Home.__sandbox.window.NativeChrome, undefined, 'sandbox has no NativeChrome');
+  assert.equal(await Home._ensureDarkIconCapability(), false);
+  assert.equal(Home._widgetDarkIcons, false);
+
+  const rejecting = makeHome();
+  rejecting.__sandbox.NativeChrome = { has: async () => { throw new Error('nope'); } };
+  assert.equal(await rejecting._ensureDarkIconCapability(), false, 'a rejection is not fatal');
+});
+
+// The contract spans two repos, so the doc is the only thing keeping
+// the Flutter side in sync. Changing the code without the doc is the
+// drift this catches.
+test('NATIVE-BRIDGE.md documents the dual-icon contract', () => {
+  const doc = fs.readFileSync(path.join(__dirname, '..', 'NATIVE-BRIDGE.md'), 'utf8');
+  assert.match(doc, /icon_url_dark/, 'the additive payload field');
+  assert.match(doc, /has_icon_dark/, 'the registry read-back flag');
+  assert.match(doc, /homeScreenShortcutDarkIcon/, 'the capability string');
 });
 
 test('image icons fill the tile inside its hairline (w-full/h-full)', () => {

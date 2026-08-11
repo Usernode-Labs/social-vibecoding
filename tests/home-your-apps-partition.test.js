@@ -203,23 +203,29 @@ test('render: no "All Apps" section header anywhere in home.js', () => {
     'the All Apps section moved to the #apps browse screen');
 });
 
-test('render: the grid maps the yours partition, never rest', () => {
+test('render: the grid places the yours partition, never rest', () => {
   const render = HOME_SRC.slice(
     HOME_SRC.indexOf('\n  render() {'),
-    HOME_SRC.indexOf('\n  renderFindMore(')
+    HOME_SRC.indexOf('\n  renderGridItem(')
   );
   assert.ok(render.length > 200, 'located render()');
   assert.match(render, /const \{ yours \} = Home\.partitionApps\(apps\)/);
-  assert.match(render, /yours\.map\(/, 'renders the yours cards');
   assert.doesNotMatch(render, /rest\.map\(/, 'no All Apps grid on home');
   // Search is scoped to the personal list; browse.js owns search-all.
   assert.match(render, /Home\.filterApps\(yours, query\)/);
+  // The un-queried view no longer MAPS the partition into cards directly —
+  // it renders the LAYOUT, and the partition feeds that (presentIds /
+  // currentLayout) instead. Placing from the layout is what allows holes.
+  assert.match(render, /HomeLayout\.canvasItems\(layout\)/);
+  assert.match(HOME_SRC, /presentIds\(\) \{[\s\S]*?Home\.partitionApps/);
 });
 
-test('render: an empty section is one compact line, not a full-height hero', () => {
-  assert.match(HOME_SRC, /You haven&rsquo;t added any apps yet/);
-  // The old centered #empty-state block (and its permissions helper) is
-  // gone — the create CTA lives in the "Create an app" section now.
+test('render: an empty home is the widgets, not an empty-state hero', () => {
+  // The old "You haven't added any apps yet — pick one below" line is gone
+  // with the sections it pointed at: with Discover and Create sitting in the
+  // grid, an empty home already shows you what to do next.
+  assert.doesNotMatch(HOME_SRC, /You haven&rsquo;t added any apps yet/);
+  // The centered #empty-state block (and its permissions helper) stays gone.
   assert.doesNotMatch(HOME_SRC, /applyEmptyStateForPermissions/);
   assert.doesNotMatch(HOME_SRC, /getElementById\('empty-state'\)/);
 });

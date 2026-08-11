@@ -23,6 +23,7 @@
 const { Router } = require('express');
 const { ok } = require('./helpers');
 const { adminReadGate } = require('./admin/auth');
+const { seasonsAdminRoutes } = require('./admin/seasons');
 const { seasonEventsAdminRoutes } = require('./admin/season-events');
 const { usersAdminRoutes } = require('./admin/users');
 const { userActivitiesAdminRoutes } = require('./admin/user-activities');
@@ -33,6 +34,7 @@ const { appVersionConfigsAdminRoutes } = require('./admin/app-version-configs');
 const { settingsAdminRoutes } = require('./admin/settings');
 const { dbToolsAdminRoutes } = require('./admin/db-tools');
 const { waitlistAdminRoutes } = require('./admin/waitlist');
+const { apiCatalogAdminRoutes } = require('./admin/api-catalog');
 
 function topochainAdminRoutes(config) {
   const router = Router();
@@ -96,6 +98,14 @@ function topochainAdminRoutes(config) {
   // the real endpoints below.
   router.get('/api/v4/admin/__ping', (_req, res) => ok(res, {}));
 
+  // Seasons — the top tier of Season -> Event -> Challenge, and the last
+  // one to get an admin API (the console's Seasons screen used to derive
+  // itself by grouping season-events). No path collision with
+  // season-events.js: `/seasons` and `/season-events` are distinct literal
+  // path segments, so `/api/v4/admin/seasons/:id` can never swallow
+  // `/api/v4/admin/season-events` regardless of mount order.
+  router.use(seasonsAdminRoutes(config));
+
   // Task 11: D1 season-events, D2 users, D3 user-activities.
   router.use(seasonEventsAdminRoutes(config));
   router.use(usersAdminRoutes(config));
@@ -124,6 +134,12 @@ function topochainAdminRoutes(config) {
   // release-bp)` paths don't collide with users.js (whose `/users/:id`
   // routes are one segment shorter and never POST to a sub-action).
   router.use(waitlistAdminRoutes(config));
+
+  // The route catalog the admin console's API tester populates its
+  // endpoint select from. Its own `/api-catalog` path is unused
+  // elsewhere, and it introspects Express's router stack rather than
+  // touching the database, so mount order is irrelevant to it.
+  router.use(apiCatalogAdminRoutes(config));
 
   return router;
 }

@@ -48,13 +48,13 @@ const AdminAnalytics = (() => {
 
   // Admin accent colour (#341). A single amber, layered as the "admin" marker
   // on every colour-differentiated chart — verified unused in the existing
-  // palette (violet #8b5cf6, lilac #a78bfa, green #34d399, blue #60a5fa, and
+  // palette (indigo #6366f1, periwinkle #818cf8, green #34d399, blue #60a5fa, and
   // the kudos ramp). It only appears while the "Include admin users" box is
   // ticked; with the box off every chart looks exactly as it did before.
   const ADMIN_COLOR = '#f59e0b';
 
   // #361: system-token spend colour for the Daily-spend chart. A distinct
-  // sky/cyan, clearly separate from platform violet (#8b5cf6), user-key
+  // sky/cyan, clearly separate from platform indigo (#6366f1), user-key
   // green (#34d399), and admin amber (#f59e0b).
   const SYSTEM_COLOR = '#06b6d4';
 
@@ -86,16 +86,16 @@ const AdminAnalytics = (() => {
   let spendDistIncludeZero = localStorage.getItem(SPEND_DIST_ZERO_KEY) === 'true';
 
   const dollars = (c) => `$${(Number(c || 0) / 100).toFixed(2)}`;
-  const SPEND_PLATFORM = '#8b5cf6';
+  const SPEND_PLATFORM = '#6366f1';
   const SPEND_USERKEY = '#34d399';
 
   // The small "Non-admin / Admin" swatch legend, reusing the inline-swatch
   // markup the spend "Both" legend already uses. Rendered only while admins
-  // are included; the non-admin swatch defaults to violet but can be set to a
+  // are included; the non-admin swatch defaults to indigo but can be set to a
   // chart's own base colour.
-  function adminLegend(nonAdminColor = '#8b5cf6') {
+  function adminLegend(nonAdminColor = '#6366f1') {
     if (!includeAdmins) return '';
-    return `<div class="flex items-center gap-3 text-[10px] text-zinc-400 mb-2">
+    return `<div class="flex items-center gap-3 text-[10px] text-gray-400 mb-2">
       <span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:${nonAdminColor}"></span> Non-admin</span>
       <span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:${ADMIN_COLOR}"></span> Admin</span>
     </div>`;
@@ -114,7 +114,7 @@ const AdminAnalytics = (() => {
       t = document.createElement('div');
       t.id = 'dc-tip';
       t.style.cssText = 'position:fixed;z-index:50;pointer-events:none;display:none;max-width:260px;';
-      t.className = 'rounded-md bg-zinc-900 text-zinc-100 text-xs px-2 py-1.5 shadow-lg border border-zinc-700';
+      t.className = 'rounded-md bg-gray-900 text-gray-100 text-xs px-2 py-1.5 shadow-lg border border-gray-700';
       document.body.appendChild(t);
     }
     return t;
@@ -175,7 +175,7 @@ const AdminAnalytics = (() => {
     'power-users': 'A power user, evaluated over a 7-day window, both used dapps &ge; 3 times that week (counting each use of any dapp) AND did &ge; 3 visible developer actions (each a kudos given, vote cast, or proposal made). <b>Power-user WAU</b> is a 7-day rolling count; <b>Consistency (L4)</b> stacks, per day, how many of the trailing 4 weeks each user was a power user (1/4…4/4). Hover for exact counts.',
     'top-users': 'The 30 most prolific builders by lifetime dev sessions started, highest on the left. Hover a bar for the per-outcome breakdown (PRs produced, promoted, voted, merged).',
     'spend-by-builder': 'The 30 biggest LLM spenders, highest on the left. The toggle re-ranks by <b>Platform key</b> spend, <b>User key</b> (BYOK) spend, or <b>Both</b>. Hover a bar for the full breakdown.',
-    kudos: 'Per ISO week, how many users gave 0–5 kudos (everyone gets a budget of 5/week). The 0 bucket is registered users who gave none that week, making this a participation view rather than a raw count.',
+    kudos: 'Per ISO week, how many users gave 0, 1, 2, 3, 4–5, 6–10 or 11+ kudos (everyone gets a budget of 20/week). The 0 bucket is registered users who gave none that week, making this a participation view rather than a raw count. Counts direct PR kudos only — issue-bounty pledges draw on the same weekly allowance but are not in this series.',
     'spend-distribution': 'Per day, how many users\' platform-key AI spend (what the daily caps track) fell into each dollar bucket. The <b>$0</b> bucket is every registered user (as of that day) with no platform spend — it usually dwarfs the paid buckets, so it is hidden by default; use the <b>Show $0</b> toggle to include it. The top tier splits <b>$20+ capped</b> (heavy spenders with no usable own key — blocked at the cap) from <b>$20+ own key</b> (heavy spenders who had a personal Anthropic key configured, or spent on it that day, so could keep going). The "has own key" signal is a current snapshot corrected by that day\'s own-key spend, so past-day attribution is approximate.',
   };
 
@@ -270,9 +270,9 @@ const AdminAnalytics = (() => {
     const el = $('counters');
     if (!el) return;
     el.innerHTML = cards.map((c) => `
-      <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
+      <div class="rounded-lg bg-gray-100 dark:bg-gray-800 p-3">
         <div class="flex items-start justify-between gap-1">
-          <div class="text-xs uppercase tracking-wide text-zinc-500">${esc(c.label)}</div>
+          <div class="text-xs uppercase tracking-wide text-gray-500">${esc(c.label)}</div>
           <span class="dc-info" data-card-info="${c.id}" tabindex="0" role="button" aria-label="What is this?">?</span>
         </div>
         <div class="text-2xl font-bold mt-1">${esc(c.value)}</div>
@@ -289,7 +289,7 @@ const AdminAnalytics = (() => {
   // stages: [{ label, value, admin }]. Bar width is relative to the first
   // stage's total; the caption shows the absolute count and the step-over-step
   // conversion. When admins are included (#341) each stage bar splits into a
-  // non-admin (violet) segment plus an amber admin segment.
+  // non-admin (indigo) segment plus an amber admin segment.
   function renderFunnel(containerId, stages) {
     const stageTotal = (s) => (Number(s.value) || 0) + (Number(s.admin) || 0);
     const top = stages[0] ? stageTotal(stages[0]) : 0;
@@ -312,17 +312,17 @@ const AdminAnalytics = (() => {
       return `
         <div>
           <div class="flex items-center justify-between text-xs mb-1">
-            <span class="text-zinc-600 dark:text-zinc-300">${esc(s.label)}</span>
-            <span class="text-zinc-500">${count} · ${conv}</span>
+            <span class="text-gray-600 dark:text-gray-300">${esc(s.label)}</span>
+            <span class="text-gray-500">${count} · ${conv}</span>
           </div>
-          <div class="h-6 rounded bg-zinc-200 dark:bg-zinc-800 overflow-hidden flex">
-            <div class="h-full bg-violet-600" style="width:${(naW + floor).toFixed(2)}%"></div>
+          <div class="h-6 rounded bg-gray-200 dark:bg-gray-800 overflow-hidden flex">
+            <div class="h-full bg-indigo-600" style="width:${(naW + floor).toFixed(2)}%"></div>
             <div class="h-full" style="width:${adW.toFixed(2)}%;background:${ADMIN_COLOR}"></div>
           </div>
         </div>`;
     }).join('');
     const el = $(containerId);
-    if (el) el.innerHTML = adminLegend('#7c3aed') + html;
+    if (el) el.innerHTML = adminLegend('#4f46e5') + html;
   }
 
   function renderFunnels(f) {
@@ -395,15 +395,15 @@ const AdminAnalytics = (() => {
       return `<rect x="${x0}" y="${yBase}" width="${w}" height="${hBase}" fill="${color}" rx="1">
         <title>${esc(labels[i])}: ${v}</title></rect>${adminRect}`;
     }).join('');
-    return `<svg viewBox="0 0 ${W} ${H}" class="w-full text-zinc-500" preserveAspectRatio="none" style="height:90px">${grid}${bars}</svg>`;
+    return `<svg viewBox="0 0 ${W} ${H}" class="w-full text-gray-500" preserveAspectRatio="none" style="height:90px">${grid}${bars}</svg>`;
   }
 
   function renderGrowth(g) {
     const weeks = g.weeks || [];
     const labels = weeks.map((w) => weekLabel(w.wk));
     const series = [
-      { key: 'new_users', label: 'New users', color: '#8b5cf6' },
-      { key: 'new_apps', label: 'New apps', color: '#a78bfa' },
+      { key: 'new_users', label: 'New users', color: '#6366f1' },
+      { key: 'new_apps', label: 'New apps', color: '#818cf8' },
       { key: 'promoted_prs', label: 'Promoted PRs', color: '#34d399' },
       { key: 'merged_prs', label: 'Merged PRs', color: '#60a5fa' },
     ];
@@ -416,16 +416,16 @@ const AdminAnalytics = (() => {
       const totalAdmin = adminVals.reduce((a, b) => a + b, 0);
       const showAdmin = includeAdmins && totalAdmin > 0;
       const tip = (i) => `<div class="font-semibold">${esc(s.label)}</div>
-        <div class="text-zinc-300">Week of ${esc(labels[i] || '')}</div>
-        <div class="text-zinc-300">${fmtInt(vals[i] + adminVals[i])}${includeAdmins && adminVals[i] > 0 ? ` · ${fmtInt(adminVals[i])} admin` : ''}</div>`;
+        <div class="text-gray-300">Week of ${esc(labels[i] || '')}</div>
+        <div class="text-gray-300">${fmtInt(vals[i] + adminVals[i])}${includeAdmins && adminVals[i] > 0 ? ` · ${fmtInt(adminVals[i])} admin` : ''}</div>`;
       return `
         <div>
           <div class="flex items-center justify-between text-xs mb-1">
-            <span class="text-zinc-600 dark:text-zinc-300">${esc(s.label)}</span>
-            <span class="text-zinc-500">${fmtInt(total + totalAdmin)} total${showAdmin ? ` · ${fmtInt(totalAdmin)} admin` : ''}</span>
+            <span class="text-gray-600 dark:text-gray-300">${esc(s.label)}</span>
+            <span class="text-gray-500">${fmtInt(total + totalAdmin)} total${showAdmin ? ` · ${fmtInt(totalAdmin)} admin` : ''}</span>
           </div>
           ${barChart(vals, labels, s.color, { grid: true, tipPrefix: `growth-${s.key}`, tip, adminValues: adminVals })}
-          <div class="flex justify-between text-[10px] text-zinc-500 mt-1">
+          <div class="flex justify-between text-[10px] text-gray-500 mt-1">
             <span>${esc(labels[0] || '')}</span>
             <span>${esc(labels[labels.length - 1] || '')}</span>
           </div>
@@ -439,7 +439,7 @@ const AdminAnalytics = (() => {
   }
 
   // Empty-state markup shared by the daily charts.
-  const EMPTY_MSG = '<p class="text-sm text-zinc-500">Not enough data yet.</p>';
+  const EMPTY_MSG = '<p class="text-sm text-gray-500">Not enough data yet.</p>';
 
   // ── Daily line chart ──────────────────────────────────────────
   // A polyline over ~90 daily points (too dense for per-day bars). Each
@@ -463,7 +463,7 @@ const AdminAnalytics = (() => {
       const dot = `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="1.5" fill="${color}"></circle>`;
       return band + dot;
     }).join('');
-    return `<svg viewBox="0 0 ${W} ${H}" class="w-full text-zinc-500" style="height:90px">${grid}` +
+    return `<svg viewBox="0 0 ${W} ${H}" class="w-full text-gray-500" style="height:90px">${grid}` +
       `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" />${overlay}</svg>`;
   }
 
@@ -499,7 +499,7 @@ const AdminAnalytics = (() => {
       }
       return rects + hover;
     }).join('');
-    return `<svg viewBox="0 0 ${W} ${H}" class="w-full text-zinc-500" preserveAspectRatio="none" style="height:90px">${grid}${bars}</svg>`;
+    return `<svg viewBox="0 0 ${W} ${H}" class="w-full text-gray-500" preserveAspectRatio="none" style="height:90px">${grid}${bars}</svg>`;
   }
 
   // ── Retention cohort grid ─────────────────────────────────────
@@ -522,34 +522,34 @@ const AdminAnalytics = (() => {
 
     // One coloured cell. `key` makes the tooltip id unique within the row.
     const cell = (v, size, headLabel, ci, key) => {
-      if (v == null) return '<td class="px-2 py-1 text-center text-zinc-400 dark:text-zinc-700">·</td>';
+      if (v == null) return '<td class="px-2 py-1 text-center text-gray-400 dark:text-gray-700">·</td>';
       const p = pct(v, size);
       const alpha = Math.max(0.06, Math.min(1, p / 100));
       const tipId = `ret-${ci}-${key}`;
       tipStore[tipId] = `<div class="font-semibold">${esc(headLabel)}</div>
-        <div class="text-zinc-300">${fmtInt(v)} of ${fmtInt(size)} active</div>
-        <div class="text-zinc-300">${p}% retained</div>`;
+        <div class="text-gray-300">${fmtInt(v)} of ${fmtInt(size)} active</div>
+        <div class="text-gray-300">${p}% retained</div>`;
       return `<td class="px-2 py-1 text-center" data-tip-id="${tipId}" style="background:rgba(139,92,246,${alpha});cursor:pointer">
-        <span class="text-[11px] ${p >= 45 ? 'text-white' : 'text-zinc-600 dark:text-zinc-300'}">${p}%</span></td>`;
+        <span class="text-[11px] ${p >= 45 ? 'text-white' : 'text-gray-600 dark:text-gray-300'}">${p}%</span></td>`;
     };
 
-    const head = ['<th class="text-left px-2 py-1 font-medium text-zinc-400">Cohort</th>',
-      '<th class="px-2 py-1 font-medium text-zinc-400">Users</th>'];
+    const head = ['<th class="text-left px-2 py-1 font-medium text-gray-400">Cohort</th>',
+      '<th class="px-2 py-1 font-medium text-gray-400">Users</th>'];
     let rows;
 
     if (m === 'cohort') {
       let maxOffset = 0;
       for (const c of cohorts) for (const k of Object.keys(c.offsets)) maxOffset = Math.max(maxOffset, Number(k));
       maxOffset = Math.min(maxOffset, 11); // keep the triangle readable
-      for (let k = 0; k <= maxOffset; k++) head.push(`<th class="px-2 py-1 font-medium text-zinc-400">W${k}</th>`);
+      for (let k = 0; k <= maxOffset; k++) head.push(`<th class="px-2 py-1 font-medium text-gray-400">W${k}</th>`);
       rows = cohorts.map((c, ci) => {
         const cells = [];
         for (let k = 0; k <= maxOffset; k++) {
           cells.push(cell(c.offsets[k], c.cohortSize, `${weekLabel(c.cohortWeek)} cohort · Week ${k}`, ci, `w${k}`));
         }
         return `<tr>
-          <td class="px-2 py-1 whitespace-nowrap text-zinc-600 dark:text-zinc-300">${esc(weekLabel(c.cohortWeek))}</td>
-          <td class="px-2 py-1 text-center text-zinc-400">${fmtInt(c.cohortSize)}</td>
+          <td class="px-2 py-1 whitespace-nowrap text-gray-600 dark:text-gray-300">${esc(weekLabel(c.cohortWeek))}</td>
+          <td class="px-2 py-1 text-center text-gray-400">${fmtInt(c.cohortSize)}</td>
           ${cells.join('')}
         </tr>`;
       }).join('');
@@ -567,14 +567,14 @@ const AdminAnalytics = (() => {
       });
       const allCols = Array.from(weekSet).sort(); // ascending YYYY-MM-DD
       const cols = allCols.slice(Math.max(0, allCols.length - 12)); // keep readable
-      for (const wk of cols) head.push(`<th class="px-2 py-1 font-medium text-zinc-400 whitespace-nowrap">${esc(weekLabel(wk))}</th>`);
+      for (const wk of cols) head.push(`<th class="px-2 py-1 font-medium text-gray-400 whitespace-nowrap">${esc(weekLabel(wk))}</th>`);
       rows = cohorts.map((c, ci) => {
         const map = cal[ci];
         const cells = cols.map((wk) =>
           cell(map[wk], c.cohortSize, `${weekLabel(c.cohortWeek)} cohort · week of ${weekLabel(wk)}`, ci, wk)).join('');
         return `<tr>
-          <td class="px-2 py-1 whitespace-nowrap text-zinc-600 dark:text-zinc-300">${esc(weekLabel(c.cohortWeek))}</td>
-          <td class="px-2 py-1 text-center text-zinc-400">${fmtInt(c.cohortSize)}</td>
+          <td class="px-2 py-1 whitespace-nowrap text-gray-600 dark:text-gray-300">${esc(weekLabel(c.cohortWeek))}</td>
+          <td class="px-2 py-1 text-center text-gray-400">${fmtInt(c.cohortSize)}</td>
           ${cells}
         </tr>`;
       }).join('');
@@ -595,28 +595,28 @@ const AdminAnalytics = (() => {
       if (!daily.length) { el.innerHTML = EMPTY_MSG; if (latestEl) latestEl.textContent = ''; return; }
       const vals = daily.map((r) => Number(r[key]) || 0);
       const tip = (i) => `<div class="font-semibold">${esc(labels[i] || '')}</div>
-        <div class="text-zinc-300">${fmtInt(vals[i])} users</div>
-        <div class="text-zinc-500 mt-1 text-[11px]">${def}</div>`;
+        <div class="text-gray-300">${fmtInt(vals[i])} users</div>
+        <div class="text-gray-500 mt-1 text-[11px]">${def}</div>`;
       el.innerHTML = `${lineChart(vals, labels, color, { grid: true, tipPrefix: `gu-${key}`, tip })}
-        <div class="flex justify-between text-[10px] text-zinc-500 mt-1">
+        <div class="flex justify-between text-[10px] text-gray-500 mt-1">
           <span>${esc(labels[0] || '')}</span>
           <span>${esc(labels[labels.length - 1] || '')}</span>
         </div>`;
       attachTooltip(el);
       if (latestEl) latestEl.textContent = `${fmtInt(vals[vals.length - 1])} latest`;
     };
-    block('gu-dau', 'gu-dau-latest', 'dau', '#8b5cf6', 'Distinct users active that day.');
+    block('gu-dau', 'gu-dau-latest', 'dau', '#6366f1', 'Distinct users active that day.');
     block('gu-wau', 'gu-wau-latest', 'wau', '#60a5fa', 'Distinct users active in the trailing 7 days.');
     block('gu-mau', 'gu-mau-latest', 'mau', '#34d399', 'Distinct users active in the trailing 30 days.');
   }
 
   // ── Power users (rolling WAU + L4 consistency) ────────────────
-  // Four violet shades for the L4 buckets: light (1/4) → dark (4/4).
-  const L4_COLORS = ['#ddd6fe', '#a78bfa', '#7c3aed', '#5b21b6'];
+  // Four indigo shades for the L4 buckets: light (1/4) → dark (4/4).
+  const L4_COLORS = ['#c7d2fe', '#818cf8', '#4f46e5', '#3730a3'];
 
   function l4Legend() {
     const items = [['1/4', L4_COLORS[0]], ['2/4', L4_COLORS[1]], ['3/4', L4_COLORS[2]], ['4/4', L4_COLORS[3]]];
-    return '<div class="flex items-center gap-3 text-[10px] text-zinc-400 mb-2">' +
+    return '<div class="flex items-center gap-3 text-[10px] text-gray-400 mb-2">' +
       items.map(([lab, c]) => `<span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:${c}"></span> ${lab}</span>`).join('') +
       '</div>';
   }
@@ -632,10 +632,10 @@ const AdminAnalytics = (() => {
         const labels = wau.map((r) => dayLabel(r.day));
         const vals = wau.map((r) => Number(r.count) || 0);
         const tip = (i) => `<div class="font-semibold">${esc(labels[i] || '')}</div>
-          <div class="text-zinc-300">${fmtInt(vals[i])} power users</div>
-          <div class="text-zinc-500 mt-1 text-[11px]">Trailing 7-day window.</div>`;
-        wEl.innerHTML = `${lineChart(vals, labels, '#8b5cf6', { grid: true, tipPrefix: 'pu-wau', tip })}
-          <div class="flex justify-between text-[10px] text-zinc-500 mt-1">
+          <div class="text-gray-300">${fmtInt(vals[i])} power users</div>
+          <div class="text-gray-500 mt-1 text-[11px]">Trailing 7-day window.</div>`;
+        wEl.innerHTML = `${lineChart(vals, labels, '#6366f1', { grid: true, tipPrefix: 'pu-wau', tip })}
+          <div class="flex justify-between text-[10px] text-gray-500 mt-1">
             <span>${esc(labels[0] || '')}</span>
             <span>${esc(labels[labels.length - 1] || '')}</span>
           </div>`;
@@ -656,12 +656,12 @@ const AdminAnalytics = (() => {
         const s = stacks[i];
         const total = s.reduce((a, b) => a + b, 0);
         return `<div class="font-semibold">${esc(labels[i] || '')}</div>
-          <div class="text-zinc-300">${fmtInt(total)} power users (trailing 4 wks)</div>
-          <div class="text-zinc-400 mt-1 text-[11px]">4/4 ${fmtInt(s[3])} · 3/4 ${fmtInt(s[2])} · 2/4 ${fmtInt(s[1])} · 1/4 ${fmtInt(s[0])}</div>`;
+          <div class="text-gray-300">${fmtInt(total)} power users (trailing 4 wks)</div>
+          <div class="text-gray-400 mt-1 text-[11px]">4/4 ${fmtInt(s[3])} · 3/4 ${fmtInt(s[2])} · 2/4 ${fmtInt(s[1])} · 1/4 ${fmtInt(s[0])}</div>`;
       };
       lEl.innerHTML = `${l4Legend()}
         ${stackedBarChart(stacks, labels, L4_COLORS, { grid: true, tipPrefix: 'pu-l4', tip })}
-        <div class="flex justify-between text-[10px] text-zinc-500 mt-1">
+        <div class="flex justify-between text-[10px] text-gray-500 mt-1">
           <span>${esc(labels[0] || '')}</span>
           <span>${esc(labels[labels.length - 1] || '')}</span>
         </div>`;
@@ -709,28 +709,28 @@ const AdminAnalytics = (() => {
       const receivedVote = Number(u.received_vote) || 0;
       const merged = Number(u.merged) || 0;
       const tipRow = (label, n) =>
-        `<div class="flex justify-between gap-3 text-zinc-400"><span>${label}</span><span class="text-zinc-300">${n}</span></div>`;
+        `<div class="flex justify-between gap-3 text-gray-400"><span>${label}</span><span class="text-gray-300">${n}</span></div>`;
       // Each bar is a single user, so an admin builder gets the whole bar in
-      // amber (#341) instead of the usual violet, and "(admin)" in the header.
+      // amber (#341) instead of the usual indigo, and "(admin)" in the header.
       const isAdmin = includeAdmins && !!u.is_admin;
-      const barColor = isAdmin ? ADMIN_COLOR : '#8b5cf6';
+      const barColor = isAdmin ? ADMIN_COLOR : '#6366f1';
       tipStore[tipId] = `<div class="font-semibold">${esc(u.name)}${isAdmin ? ' (admin)' : ''}</div>
-        <div class="text-zinc-300 mb-1">#${i + 1} · ${v} dev session${v === 1 ? '' : 's'}</div>
+        <div class="text-gray-300 mb-1">#${i + 1} · ${v} dev session${v === 1 ? '' : 's'}</div>
         ${tipRow('Produced a PR', producedPr)}
         ${tipRow('Promoted to group', promoted)}
         ${tipRow('Received a vote', receivedVote)}
         ${tipRow('Merged', merged)}`;
       return `
         <rect x="${(x + 3).toFixed(1)}" y="${y}" width="${bw - 6}" height="${h}" fill="${barColor}" rx="2"></rect>
-        <text x="${cx}" y="${y - 3}" text-anchor="middle" font-size="9" fill="currentColor" class="text-zinc-400">${v}</text>
+        <text x="${cx}" y="${y - 3}" text-anchor="middle" font-size="9" fill="currentColor" class="text-gray-400">${v}</text>
         <text x="${cx}" y="${H - botPad + 12}" text-anchor="end" font-size="9" fill="currentColor"
-              class="text-zinc-400" transform="rotate(-55 ${cx} ${H - botPad + 12})">${esc(short)}</text>
+              class="text-gray-400" transform="rotate(-55 ${cx} ${H - botPad + 12})">${esc(short)}</text>
         <rect class="dc-hover" x="${x.toFixed(1)}" y="${topPad}" width="${bw.toFixed(1)}" height="${plot}"
-              fill="#8b5cf6" fill-opacity="0" pointer-events="all" data-tip-id="${tipId}"></rect>`;
+              fill="#6366f1" fill-opacity="0" pointer-events="all" data-tip-id="${tipId}"></rect>`;
     }).join('');
     el.innerHTML = `${adminLegend()}
       <div class="overflow-x-auto">
-        <svg viewBox="0 0 ${W} ${H}" style="height:200px;min-width:${W}px" class="text-zinc-500">
+        <svg viewBox="0 0 ${W} ${H}" style="height:200px;min-width:${W}px" class="text-gray-500">
           ${grid}${bars}
         </svg>
       </div>`;
@@ -738,8 +738,10 @@ const AdminAnalytics = (() => {
   }
 
   // ── Kudos giving distribution (weekly) ────────────────────────
-  // One stacked bar per week. Segments = number of users who gave exactly
-  // 0/1/2/3/4/5 kudos that week (0 = registered users who gave none).
+  // One stacked bar per week. Segments = number of users whose kudos-giving
+  // that week fell in each band: 0, 1, 2, 3, 4–5, 6–10, 11+ (0 = registered
+  // users who gave none). Bands, not exact counts, since #964 raised the
+  // weekly allowance to 20 — see the endpoint's comment in routes/dashboard.js.
   function renderKudos(d) {
     const weeks = d.weeks || [];
     const el = $('kudos-weekly');
@@ -748,14 +750,19 @@ const AdminAnalytics = (() => {
       el.innerHTML = EMPTY_MSG;
       return;
     }
-    // 0 first (drawn at the bottom, muted); 1..5 stacked above in a ramp.
+    // 0 first (drawn at the bottom, muted); the giving bands stacked above
+    // in the same six-step ramp. #964 rebanded the top three steps from the
+    // exact counts 3/4/5 to 3, 4–5, 6–10, 11+ when the weekly allowance rose
+    // to 20 — the colours are unchanged, so a week's bar keeps reading the
+    // same way; only what the upper segments mean widened.
     const segs = [
       { key: 'g0', label: '0', color: '#3f3f5a' },
       { key: 'g1', label: '1', color: '#c4b5fd' },
-      { key: 'g2', label: '2', color: '#a78bfa' },
-      { key: 'g3', label: '3', color: '#8b5cf6' },
-      { key: 'g4', label: '4', color: '#7c3aed' },
-      { key: 'g5', label: '5', color: '#5b21b6' },
+      { key: 'g2', label: '2', color: '#818cf8' },
+      { key: 'g3', label: '3', color: '#6366f1' },
+      { key: 'g4_5', label: '4–5', color: '#4f46e5' },
+      { key: 'g6_10', label: '6–10', color: '#3730a3' },
+      { key: 'g11p', label: '11+', color: '#4c1d95' },
     ];
     const totals = weeks.map((w) => segs.reduce((a, s) => a + (Number(w[s.key]) || 0), 0));
     const max = Math.max(1, ...totals);
@@ -785,20 +792,24 @@ const AdminAnalytics = (() => {
         return `<rect x="${(x + 1).toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(1, bw - 2).toFixed(1)}" height="${h.toFixed(1)}" fill="${s.color}"></rect>`;
       }).join('');
 
-      // Per-week breakdown tooltip covering the full column height.
-      const n5 = Number(w.g5) || 0, n4 = Number(w.g4) || 0, n3 = Number(w.g3) || 0;
-      const n2 = Number(w.g2) || 0, n1 = Number(w.g1) || 0, n0 = Number(w.g0) || 0;
-      const totalKudos = n5 * 5 + n4 * 4 + n3 * 3 + n2 * 2 + n1;
-      const givers = n5 + n4 + n3 + n2 + n1;
-      const row = (label, num) => `<div class="flex justify-between gap-3"><span class="text-zinc-400">${label}</span><span>${num}</span></div>`;
+      // Per-week breakdown tooltip covering the full column height. Banded
+      // buckets can't yield an exact kudos total any more (a "6–10" bucket
+      // is 6..10 each), so the headline reports the one figure the bands DO
+      // give exactly — how many people gave at all that week — rather than a
+      // weighted guess dressed up as a count.
+      const n11p = Number(w.g11p) || 0, n6_10 = Number(w.g6_10) || 0, n4_5 = Number(w.g4_5) || 0;
+      const n3 = Number(w.g3) || 0, n2 = Number(w.g2) || 0, n1 = Number(w.g1) || 0;
+      const n0 = Number(w.g0) || 0;
+      const givers = n11p + n6_10 + n4_5 + n3 + n2 + n1;
+      const row = (label, num) => `<div class="flex justify-between gap-3"><span class="text-gray-400">${label}</span><span>${num}</span></div>`;
       const tipId = `kudos-${i}`;
       tipStore[tipId] = `<div class="font-semibold mb-1">${esc(labels[i])}${isCurrent(i) ? ' (current)' : ''}</div>
-        <div class="mb-1">${totalKudos} kudo${totalKudos === 1 ? '' : 's'} from ${givers} giver${givers === 1 ? '' : 's'}</div>
+        <div class="mb-1">${givers} giver${givers === 1 ? '' : 's'} this week</div>
         <div class="text-[11px] leading-tight">
-          ${row('gave 5', n5)}${row('gave 4', n4)}${row('gave 3', n3)}${row('gave 2', n2)}${row('gave 1', n1)}${row('gave 0', n0)}
+          ${row('gave 11+', n11p)}${row('gave 6–10', n6_10)}${row('gave 4–5', n4_5)}${row('gave 3', n3)}${row('gave 2', n2)}${row('gave 1', n1)}${row('gave 0', n0)}
         </div>`;
       const overlay = `<rect class="dc-hover" x="${x.toFixed(1)}" y="${topPad}" width="${bw.toFixed(1)}" height="${plot}"
-        fill="#8b5cf6" fill-opacity="0" pointer-events="all" data-tip-id="${tipId}"></rect>`;
+        fill="#6366f1" fill-opacity="0" pointer-events="all" data-tip-id="${tipId}"></rect>`;
       return segRects + overlay;
     }).join('');
     const legend = segs.slice().reverse().map((s) =>
@@ -806,13 +817,13 @@ const AdminAnalytics = (() => {
     ).join('');
     const lastLabel = labels[labels.length - 1] || '';
     el.innerHTML = `
-      <div class="flex flex-wrap items-center gap-3 text-xs text-zinc-400 mb-2">
-        <span class="text-zinc-500">Kudos given that week:</span>${legend}
+      <div class="flex flex-wrap items-center gap-3 text-xs text-gray-400 mb-2">
+        <span class="text-gray-500">Kudos given that week:</span>${legend}
       </div>
-      <svg viewBox="0 0 ${W} ${H}" class="w-full text-zinc-500" preserveAspectRatio="none" style="height:180px">
+      <svg viewBox="0 0 ${W} ${H}" class="w-full text-gray-500" preserveAspectRatio="none" style="height:180px">
         ${grid}${bars}
       </svg>
-      <div class="flex justify-between text-[10px] text-zinc-500 mt-1">
+      <div class="flex justify-between text-[10px] text-gray-500 mt-1">
         <span>${esc(labels[0] || '')}</span>
         <span>${esc(lastLabel)} (current)</span>
       </div>`;
@@ -830,7 +841,7 @@ const AdminAnalytics = (() => {
       return;
     }
     // b0 first (bottom, muted), paid buckets ascending, $20+ split at the top:
-    // capped (red) then kept-going-on-own-key (violet). The $0 bucket is dropped
+    // capped (red) then kept-going-on-own-key (indigo). The $0 bucket is dropped
     // when the "Hide $0" toggle is active so the paid buckets rescale to fill the
     // chart; totals/max, bars, legend and tooltip all derive from `segs`.
     const allSegs = [
@@ -872,7 +883,7 @@ const AdminAnalytics = (() => {
       }).join('');
       // Per-day breakdown tooltip covering the full column height.
       const row = (label, color, v) =>
-        `<div class="flex justify-between gap-3"><span class="text-zinc-400"><span class="inline-block w-2 h-2 rounded-sm align-middle mr-1" style="background:${color}"></span>${label}</span><span>${fmtInt(v)}</span></div>`;
+        `<div class="flex justify-between gap-3"><span class="text-gray-400"><span class="inline-block w-2 h-2 rounded-sm align-middle mr-1" style="background:${color}"></span>${label}</span><span>${fmtInt(v)}</span></div>`;
       const tipId = `spend-dist-${i}`;
       tipStore[tipId] = `<div class="font-semibold mb-1">${esc(labels[i])}${isCurrent(i) ? ' (today)' : ''}</div>
         <div class="mb-1">${fmtInt(totals[i])} user${totals[i] === 1 ? '' : 's'}</div>
@@ -880,18 +891,18 @@ const AdminAnalytics = (() => {
           ${segs.slice().reverse().map((s) => row(s.label, s.color, Number(x[s.key]) || 0)).join('')}
         </div>`;
       const overlay = `<rect class="dc-hover" x="${barX.toFixed(1)}" y="${topPad}" width="${bw.toFixed(1)}" height="${plot}"
-        fill="#8b5cf6" fill-opacity="0" pointer-events="all" data-tip-id="${tipId}"></rect>`;
+        fill="#6366f1" fill-opacity="0" pointer-events="all" data-tip-id="${tipId}"></rect>`;
       return segRects + overlay;
     }).join('');
     const legend = segs.slice().reverse().map((s) =>
       `<span class="inline-flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-sm" style="background:${s.color}"></span>${s.label}</span>`
     ).join('');
     el.innerHTML = `
-      <div class="flex flex-wrap items-center gap-3 text-xs text-zinc-400 mb-2">${legend}</div>
-      <svg viewBox="0 0 ${W} ${H}" class="w-full text-zinc-500" preserveAspectRatio="none" style="height:180px">
+      <div class="flex flex-wrap items-center gap-3 text-xs text-gray-400 mb-2">${legend}</div>
+      <svg viewBox="0 0 ${W} ${H}" class="w-full text-gray-500" preserveAspectRatio="none" style="height:180px">
         ${grid}${bars}
       </svg>
-      <div class="flex justify-between text-[10px] text-zinc-500 mt-1">
+      <div class="flex justify-between text-[10px] text-gray-500 mt-1">
         <span>${esc(labels[0] || '')}</span>
         <span>${esc(labels[labels.length - 1] || '')} (today)</span>
       </div>`;
@@ -967,10 +978,10 @@ const AdminAnalytics = (() => {
       }
       const tipId = `spend-${i}`;
       const detail = spendMode === 'both'
-        ? `<div class="flex justify-between gap-3"><span class="text-zinc-400">Platform</span><span>${dollars(plat[i])}</span></div>
-           <div class="flex justify-between gap-3"><span class="text-zinc-400">User key</span><span>${dollars(byok[i])}</span></div>
-           <div class="flex justify-between gap-3 border-t border-zinc-700 mt-1 pt-1"><span class="text-zinc-400">Total</span><span>${dollars(plat[i] + byok[i])}</span></div>`
-        : `<div class="text-zinc-300">${dollars(totals[i])}</div>`;
+        ? `<div class="flex justify-between gap-3"><span class="text-gray-400">Platform</span><span>${dollars(plat[i])}</span></div>
+           <div class="flex justify-between gap-3"><span class="text-gray-400">User key</span><span>${dollars(byok[i])}</span></div>
+           <div class="flex justify-between gap-3 border-t border-gray-700 mt-1 pt-1"><span class="text-gray-400">Total</span><span>${dollars(plat[i] + byok[i])}</span></div>`
+        : `<div class="text-gray-300">${dollars(totals[i])}</div>`;
       // Admin portion for the active mode (#341): tooltip-only breakout.
       const adminCents = spendMode === 'platform' ? platAdmin[i]
         : spendMode === 'user' ? byokAdmin[i] : platAdmin[i] + byokAdmin[i];
@@ -983,12 +994,12 @@ const AdminAnalytics = (() => {
         : '';
       tipStore[tipId] = `<div class="font-semibold">${esc(labels[i])}</div>${detail}${systemLine}${adminLine}`;
       const overlay = `<rect class="dc-hover" x="${barX.toFixed(1)}" y="${topPad}" width="${bw.toFixed(1)}" height="${plot}"
-        fill="#8b5cf6" fill-opacity="0" pointer-events="all" data-tip-id="${tipId}"></rect>`;
+        fill="#6366f1" fill-opacity="0" pointer-events="all" data-tip-id="${tipId}"></rect>`;
       return segs + overlay;
     }).join('');
     // Amber "Admin spend" swatch appears whenever the box is on and the active
     // mode has any admin spend. Not reusing adminLegend() here: its "Non-admin"
-    // swatch is hard-coded violet and would mismatch the green (User key) and
+    // swatch is hard-coded indigo and would mismatch the green (User key) and
     // dual-colour (Both) cases.
     const adminTotals = days.map((_, i) =>
       spendMode === 'platform' ? platAdmin[i]
@@ -1008,17 +1019,17 @@ const AdminAnalytics = (() => {
       ? `<span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:${SYSTEM_COLOR}"></span> System tokens</span>`
       : '';
     const legend = (modeSwatches || adminSwatch || systemSwatch)
-      ? `<div class="flex flex-wrap items-center gap-3 text-[10px] text-zinc-400 mb-2">${modeSwatches}${adminSwatch}${systemSwatch}</div>`
+      ? `<div class="flex flex-wrap items-center gap-3 text-[10px] text-gray-400 mb-2">${modeSwatches}${adminSwatch}${systemSwatch}</div>`
       : '';
     // #361: "System tokens today: $X.XX / $cap" readout — today is the last
     // day in the series; cap from /api/admin/limits (loaded in loadAll).
     const systemToday = sys.length ? sys[sys.length - 1] : 0;
     const systemReadout = `<div class="text-[11px] mb-2" style="color:${SYSTEM_COLOR}">System tokens today: ${dollars(systemToday)} / ${dollars(systemCapCents)}</div>`;
     el.innerHTML = `${systemReadout}${legend}
-      <svg viewBox="0 0 ${W} ${H}" class="w-full text-zinc-500" preserveAspectRatio="none" style="height:180px">
+      <svg viewBox="0 0 ${W} ${H}" class="w-full text-gray-500" preserveAspectRatio="none" style="height:180px">
         ${grid}${bars}
       </svg>
-      <div class="flex justify-between text-[10px] text-zinc-500 mt-1">
+      <div class="flex justify-between text-[10px] text-gray-500 mt-1">
         <span>${esc(labels[0] || '')}</span>
         <span>${esc(labels[labels.length - 1] || '')} (today)</span>
       </div>`;
@@ -1064,13 +1075,13 @@ const AdminAnalytics = (() => {
       const short = b.name.length > 10 ? b.name.slice(0, 9) + '…' : b.name;
       const tipId = `builder-${i}`;
       const tipRow = (label, val) =>
-        `<div class="flex justify-between gap-3 text-zinc-400"><span>${label}</span><span class="text-zinc-300">${dollars(val)}</span></div>`;
+        `<div class="flex justify-between gap-3 text-gray-400"><span>${label}</span><span class="text-gray-300">${dollars(val)}</span></div>`;
       // Admin builders get an amber OUTLINE (#341), not a fill swap — the fill
       // is already occupied by the platform/user/both colours.
       const isAdmin = includeAdmins && !!b.is_admin;
       const outline = isAdmin ? ` stroke="${ADMIN_COLOR}" stroke-width="2"` : '';
       tipStore[tipId] = `<div class="font-semibold">${esc(b.name)}${isAdmin ? ' (admin)' : ''}</div>
-        <div class="text-zinc-300 mb-1">#${i + 1} · ${dollars(valueOf(b))}</div>
+        <div class="text-gray-300 mb-1">#${i + 1} · ${dollars(valueOf(b))}</div>
         ${tipRow('Platform key', p)}
         ${tipRow('User key (BYOK)', u)}
         ${tipRow('Total', p + u)}${isAdmin ? `<div class="mt-1 text-[11px]" style="color:${ADMIN_COLOR}">admin</div>` : ''}`;
@@ -1090,9 +1101,9 @@ const AdminAnalytics = (() => {
       }
       return segs +
         `<text x="${cx}" y="${H - botPad + 12}" text-anchor="end" font-size="9" fill="currentColor"
-              class="text-zinc-400" transform="rotate(-55 ${cx} ${H - botPad + 12})">${esc(short)}</text>` +
+              class="text-gray-400" transform="rotate(-55 ${cx} ${H - botPad + 12})">${esc(short)}</text>` +
         `<rect class="dc-hover" x="${x.toFixed(1)}" y="${topPad}" width="${bw.toFixed(1)}" height="${plot}"
-              fill="#8b5cf6" fill-opacity="0" pointer-events="all" data-tip-id="${tipId}"></rect>`;
+              fill="#6366f1" fill-opacity="0" pointer-events="all" data-tip-id="${tipId}"></rect>`;
     }).join('');
     const modeLegend = builderMode === 'both'
       ? `<span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="background:${SPEND_PLATFORM}"></span> Platform key</span>
@@ -1103,11 +1114,11 @@ const AdminAnalytics = (() => {
       ? `<span><span class="inline-block w-3 h-3 rounded-sm align-middle" style="border:2px solid ${ADMIN_COLOR}"></span> Admin builder</span>`
       : '';
     const legend = (modeLegend || adminSwatch)
-      ? `<div class="flex flex-wrap items-center gap-3 text-[10px] text-zinc-400 mb-2">${modeLegend}${adminSwatch}</div>`
+      ? `<div class="flex flex-wrap items-center gap-3 text-[10px] text-gray-400 mb-2">${modeLegend}${adminSwatch}</div>`
       : '';
     el.innerHTML = `${legend}
       <div class="overflow-x-auto">
-        <svg viewBox="0 0 ${W} ${H}" style="height:200px;min-width:${W}px" class="text-zinc-500">
+        <svg viewBox="0 0 ${W} ${H}" style="height:200px;min-width:${W}px" class="text-gray-500">
           ${grid}${bars}
         </svg>
       </div>`;
@@ -1124,7 +1135,7 @@ const AdminAnalytics = (() => {
       btn.addEventListener('click', () => {
         group.querySelectorAll('.spend-btn').forEach((b) => {
           const active = b === btn;
-          b.className = `spend-btn px-2 py-1 rounded ${active ? 'bg-violet-600 text-white' : 'bg-zinc-200 dark:bg-zinc-800'}`;
+          b.className = `spend-btn px-2 py-1 rounded ${active ? 'bg-indigo-600 text-white' : 'bg-gray-200 dark:bg-gray-800'}`;
         });
         onChange(btn.dataset.mode);
       });
@@ -1138,7 +1149,7 @@ const AdminAnalytics = (() => {
     const want = spendDistIncludeZero ? 'show' : 'hide';
     group.querySelectorAll('.zero-btn').forEach((b) => {
       const active = b.dataset.zero === want;
-      b.className = `zero-btn px-2 py-1 rounded ${active ? 'bg-violet-600 text-white' : 'bg-zinc-200 dark:bg-zinc-800'}`;
+      b.className = `zero-btn px-2 py-1 rounded ${active ? 'bg-indigo-600 text-white' : 'bg-gray-200 dark:bg-gray-800'}`;
     });
     group.querySelectorAll('.zero-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -1146,7 +1157,7 @@ const AdminAnalytics = (() => {
         localStorage.setItem(SPEND_DIST_ZERO_KEY, String(spendDistIncludeZero));
         group.querySelectorAll('.zero-btn').forEach((b) => {
           const active = b === btn;
-          b.className = `zero-btn px-2 py-1 rounded ${active ? 'bg-violet-600 text-white' : 'bg-zinc-200 dark:bg-zinc-800'}`;
+          b.className = `zero-btn px-2 py-1 rounded ${active ? 'bg-indigo-600 text-white' : 'bg-gray-200 dark:bg-gray-800'}`;
         });
         renderSpendDistribution();
       });
@@ -1179,7 +1190,7 @@ const AdminAnalytics = (() => {
         currentCohort = btn.dataset.cohort;
         host.querySelectorAll('.cohort-btn').forEach((b) => {
           const active = b.dataset.cohort === currentCohort;
-          b.className = `cohort-btn px-2 py-1 rounded ${active ? 'bg-violet-600 text-white' : 'bg-zinc-200 dark:bg-zinc-800'}`;
+          b.className = `cohort-btn px-2 py-1 rounded ${active ? 'bg-indigo-600 text-white' : 'bg-gray-200 dark:bg-gray-800'}`;
         });
         try { await loadFunnels(); } catch { /* keep the previous funnel */ }
       });
@@ -1194,7 +1205,7 @@ const AdminAnalytics = (() => {
         retAlign = btn.dataset.retalign;
         host.querySelectorAll('.retalign-btn').forEach((b) => {
           const active = b.dataset.retalign === retAlign;
-          b.className = `retalign-btn px-2 py-1 rounded ${active ? 'bg-violet-600 text-white' : 'bg-zinc-200 dark:bg-zinc-800'}`;
+          b.className = `retalign-btn px-2 py-1 rounded ${active ? 'bg-indigo-600 text-white' : 'bg-gray-200 dark:bg-gray-800'}`;
         });
         if (lastRetention) renderRetention(lastRetention, retAlign);
       });
@@ -1304,14 +1315,14 @@ const AdminAnalytics = (() => {
   const MARKUP = `
     <div id="admin-analytics-root">
       <h2 class="text-lg font-semibold mb-4">Analytics</h2>
-      <div id="admin-analytics-gate" class="hidden text-zinc-500 text-center py-20"></div>
+      <div id="admin-analytics-gate" class="hidden text-gray-500 text-center py-20"></div>
 
       <main id="admin-analytics-content" class="hidden space-y-6">
         <!-- Global controls -->
         <section class="flex items-center gap-2">
-          <label class="inline-flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400 cursor-pointer select-none">
+          <label class="inline-flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 cursor-pointer select-none">
             <input id="include-admins" type="checkbox"
-                   class="h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-violet-600 focus:ring-violet-500">
+                   class="h-4 w-4 rounded border-gray-600 bg-gray-800 text-indigo-600 focus:ring-indigo-500">
             <span>Include admin users in stats</span>
           </label>
           <span class="dc-info" data-info="include-admins" tabindex="0" role="button" aria-label="What is this?">?</span>
@@ -1320,190 +1331,193 @@ const AdminAnalytics = (() => {
         <!-- Counters -->
         <section>
           <div class="flex items-center mb-2">
-            <h3 class="text-sm font-semibold text-zinc-500 dark:text-zinc-400">Overview</h3>
+            <h3 class="text-sm font-semibold text-gray-500 dark:text-gray-400">Overview</h3>
             <span class="dc-info" data-info="counters" tabindex="0" role="button" aria-label="What is this?">?</span>
           </div>
-          <div id="counters" class="grid grid-cols-2 sm:grid-cols-4 gap-3"></div>
+          <!-- Ten cards: 5-across from xl fills the now-full-width console
+               with two even rows instead of four very wide tiles. -->
+          <div id="counters" class="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-5 gap-3"></div>
         </section>
 
         <!-- Daily spend -->
-        <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <section class="${AdminUI.card} p-4">
           <div class="flex items-center justify-between flex-wrap gap-2 mb-1">
             <h3 class="text-lg font-semibold inline-flex items-center">Daily spend
               <span class="dc-info" data-info="spend" tabindex="0" role="button" aria-label="What is this?">?</span>
             </h3>
             <div class="flex items-center gap-1 text-xs" data-spend-toggle="spend">
-              <button data-mode="platform" class="spend-btn px-2 py-1 rounded bg-violet-600 text-white">Platform key</button>
-              <button data-mode="user" class="spend-btn px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800">User key</button>
-              <button data-mode="both" class="spend-btn px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800">Both</button>
+              <button data-mode="platform" class="spend-btn px-2 py-1 rounded bg-indigo-600 text-white">Platform key</button>
+              <button data-mode="user" class="spend-btn px-2 py-1 rounded bg-gray-200 dark:bg-gray-800">User key</button>
+              <button data-mode="both" class="spend-btn px-2 py-1 rounded bg-gray-200 dark:bg-gray-800">Both</button>
             </div>
           </div>
-          <p class="text-xs text-zinc-500 mb-4">LLM spend per day, last 30 days. Hover a bar for the amount.</p>
+          <p class="text-xs text-gray-500 mb-4">LLM spend per day, last 30 days. Hover a bar for the amount.</p>
           <div id="spend"></div>
         </section>
 
         <!-- Funnels -->
-        <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <section class="${AdminUI.card} p-4">
           <div class="flex items-center justify-between flex-wrap gap-2 mb-4">
             <h3 class="text-lg font-semibold inline-flex items-center">Funnels
               <span class="dc-info" data-info="funnels" tabindex="0" role="button" aria-label="What is this?">?</span>
             </h3>
             <div class="flex flex-wrap items-center gap-1 text-xs">
-              <span class="text-zinc-500 mr-1">Cohort:</span>
-              <button data-cohort="all" class="cohort-btn px-2 py-1 rounded bg-violet-600 text-white">All time</button>
-              <button data-cohort="90d" class="cohort-btn px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800">Last 90d</button>
-              <button data-cohort="30d" class="cohort-btn px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800">Last 30d</button>
-              <button data-cohort="14d" class="cohort-btn px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800">Last 14d</button>
-              <button data-cohort="7d" class="cohort-btn px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800">Last 7d</button>
-              <button data-cohort="3d" class="cohort-btn px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800">Last 3d</button>
-              <button data-cohort="1d" class="cohort-btn px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800">Last 1d</button>
+              <span class="text-gray-500 mr-1">Cohort:</span>
+              <button data-cohort="all" class="cohort-btn px-2 py-1 rounded bg-indigo-600 text-white">All time</button>
+              <button data-cohort="90d" class="cohort-btn px-2 py-1 rounded bg-gray-200 dark:bg-gray-800">Last 90d</button>
+              <button data-cohort="30d" class="cohort-btn px-2 py-1 rounded bg-gray-200 dark:bg-gray-800">Last 30d</button>
+              <button data-cohort="14d" class="cohort-btn px-2 py-1 rounded bg-gray-200 dark:bg-gray-800">Last 14d</button>
+              <button data-cohort="7d" class="cohort-btn px-2 py-1 rounded bg-gray-200 dark:bg-gray-800">Last 7d</button>
+              <button data-cohort="3d" class="cohort-btn px-2 py-1 rounded bg-gray-200 dark:bg-gray-800">Last 3d</button>
+              <button data-cohort="1d" class="cohort-btn px-2 py-1 rounded bg-gray-200 dark:bg-gray-800">Last 1d</button>
             </div>
           </div>
           <div class="grid md:grid-cols-2 gap-6">
             <div>
-              <h4 class="text-sm font-semibold text-zinc-500 dark:text-zinc-400 mb-3">Users using dapps</h4>
+              <h4 class="text-sm font-semibold text-gray-500 dark:text-gray-400 mb-3">Users using dapps</h4>
               <div id="funnel-dapp" class="space-y-2"></div>
             </div>
             <div>
-              <h4 class="text-sm font-semibold text-zinc-500 dark:text-zinc-400 mb-3">Promoting PRs (dev sessions)</h4>
+              <h4 class="text-sm font-semibold text-gray-500 dark:text-gray-400 mb-3">Promoting PRs (dev sessions)</h4>
               <div id="funnel-pr" class="space-y-2"></div>
-              <h4 class="text-sm font-semibold text-zinc-500 dark:text-zinc-400 mt-5 mb-3">Promoting PRs (distinct users)</h4>
+              <h4 class="text-sm font-semibold text-gray-500 dark:text-gray-400 mt-5 mb-3">Promoting PRs (distinct users)</h4>
               <div id="funnel-pr-users" class="space-y-2"></div>
             </div>
           </div>
         </section>
 
         <!-- Growth -->
-        <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <section class="${AdminUI.card} p-4">
           <h3 class="text-lg font-semibold mb-1 inline-flex items-center">Growth
             <span class="dc-info" data-info="growth" tabindex="0" role="button" aria-label="What is this?">?</span>
           </h3>
-          <p class="text-xs text-zinc-500 mb-4">New signups, apps, promoted &amp; merged PRs per week.</p>
+          <p class="text-xs text-gray-500 mb-4">New signups, apps, promoted &amp; merged PRs per week.</p>
           <div id="growth" class="grid sm:grid-cols-2 gap-6"></div>
         </section>
 
         <!-- General users (DAU / WAU / MAU, daily rolling windows) + retention -->
-        <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <section class="${AdminUI.card} p-4">
           <h3 class="text-lg font-semibold mb-1 inline-flex items-center">General users
             <span class="dc-info" data-info="general-users" tabindex="0" role="button" aria-label="What is this?">?</span>
           </h3>
-          <p class="text-xs text-zinc-500 mb-4">Anyone active during the period. Daily over the last 90 days — DAU per day, WAU a 7-day rolling window, MAU a 30-day rolling window.</p>
+          <p class="text-xs text-gray-500 mb-4">Anyone active during the period. Daily over the last 90 days — DAU per day, WAU a 7-day rolling window, MAU a 30-day rolling window.</p>
           <div class="grid lg:grid-cols-3 gap-6">
             <div>
               <div class="flex items-center justify-between text-sm mb-1">
-                <span class="font-semibold text-zinc-700 dark:text-zinc-300">DAU</span>
-                <span id="gu-dau-latest" class="text-zinc-500"></span>
+                <span class="font-semibold text-gray-700 dark:text-gray-300">DAU</span>
+                <span id="gu-dau-latest" class="text-gray-500"></span>
               </div>
-              <p class="text-[11px] text-zinc-500 mb-2">Distinct users active that day.</p>
+              <p class="text-[11px] text-gray-500 mb-2">Distinct users active that day.</p>
               <div id="gu-dau"></div>
             </div>
             <div>
               <div class="flex items-center justify-between text-sm mb-1">
-                <span class="font-semibold text-zinc-700 dark:text-zinc-300">WAU</span>
-                <span id="gu-wau-latest" class="text-zinc-500"></span>
+                <span class="font-semibold text-gray-700 dark:text-gray-300">WAU</span>
+                <span id="gu-wau-latest" class="text-gray-500"></span>
               </div>
-              <p class="text-[11px] text-zinc-500 mb-2">Distinct users active in the trailing 7 days.</p>
+              <p class="text-[11px] text-gray-500 mb-2">Distinct users active in the trailing 7 days.</p>
               <div id="gu-wau"></div>
             </div>
             <div>
               <div class="flex items-center justify-between text-sm mb-1">
-                <span class="font-semibold text-zinc-700 dark:text-zinc-300">MAU</span>
-                <span id="gu-mau-latest" class="text-zinc-500"></span>
+                <span class="font-semibold text-gray-700 dark:text-gray-300">MAU</span>
+                <span id="gu-mau-latest" class="text-gray-500"></span>
               </div>
-              <p class="text-[11px] text-zinc-500 mb-2">Distinct users active in the trailing 30 days.</p>
+              <p class="text-[11px] text-gray-500 mb-2">Distinct users active in the trailing 30 days.</p>
               <div id="gu-mau"></div>
             </div>
           </div>
 
           <div class="flex items-center justify-between flex-wrap gap-2 mt-8 mb-3">
-            <h4 class="text-sm font-semibold text-zinc-500 dark:text-zinc-400">Retention cohorts</h4>
+            <h4 class="text-sm font-semibold text-gray-500 dark:text-gray-400">Retention cohorts</h4>
             <div class="flex flex-wrap items-center gap-1 text-xs">
-              <span class="text-zinc-500 mr-1">Align:</span>
-              <button data-retalign="calendar" class="retalign-btn px-2 py-1 rounded bg-violet-600 text-white">Calendar aligned</button>
-              <button data-retalign="cohort" class="retalign-btn px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800">By cohort age</button>
+              <span class="text-gray-500 mr-1">Align:</span>
+              <button data-retalign="calendar" class="retalign-btn px-2 py-1 rounded bg-indigo-600 text-white">Calendar aligned</button>
+              <button data-retalign="cohort" class="retalign-btn px-2 py-1 rounded bg-gray-200 dark:bg-gray-800">By cohort age</button>
             </div>
           </div>
-          <p class="text-xs text-zinc-500 mb-3">
+          <p class="text-xs text-gray-500 mb-3">
             Cohort = signup week. Each cell is the share of that cohort active (any action) in a given week.
           </p>
           <div id="retention-cohorts" class="overflow-x-auto"></div>
         </section>
 
         <!-- Power users (rolling WAU + L4 consistency) -->
-        <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <section class="${AdminUI.card} p-4">
           <h3 class="text-lg font-semibold mb-1 inline-flex items-center">Power users
             <span class="dc-info" data-info="power-users" tabindex="0" role="button" aria-label="What is this?">?</span>
           </h3>
-          <p class="text-xs text-zinc-500 mb-4">A power user (per week) used dapps &ge; 3&times; AND did &ge; 3 developer actions (kudos, votes, or proposals). Daily over the last 90 days.</p>
+          <p class="text-xs text-gray-500 mb-4">A power user (per week) used dapps &ge; 3&times; AND did &ge; 3 developer actions (kudos, votes, or proposals). Daily over the last 90 days.</p>
           <div class="grid lg:grid-cols-2 gap-6">
             <div>
               <div class="flex items-center justify-between text-sm mb-1">
-                <span class="font-semibold text-zinc-700 dark:text-zinc-300">Power-user WAU</span>
-                <span id="pu-wau-latest" class="text-zinc-500"></span>
+                <span class="font-semibold text-gray-700 dark:text-gray-300">Power-user WAU</span>
+                <span id="pu-wau-latest" class="text-gray-500"></span>
               </div>
-              <p class="text-[11px] text-zinc-500 mb-2">Distinct power users over the trailing 7 days.</p>
+              <p class="text-[11px] text-gray-500 mb-2">Distinct power users over the trailing 7 days.</p>
               <div id="pu-wau"></div>
             </div>
             <div>
               <div class="flex items-center justify-between text-sm mb-1">
-                <span class="font-semibold text-zinc-700 dark:text-zinc-300">Consistency (L4)</span>
-                <span id="pu-l4-latest" class="text-zinc-500"></span>
+                <span class="font-semibold text-gray-700 dark:text-gray-300">Consistency (L4)</span>
+                <span id="pu-l4-latest" class="text-gray-500"></span>
               </div>
-              <p class="text-[11px] text-zinc-500 mb-2">Per day, users stacked by how many of the trailing 4 weeks they were a power user.</p>
+              <p class="text-[11px] text-gray-500 mb-2">Per day, users stacked by how many of the trailing 4 weeks they were a power user.</p>
               <div id="pu-l4"></div>
             </div>
           </div>
         </section>
 
         <!-- Top users by dev sessions -->
-        <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <section class="${AdminUI.card} p-4">
           <h3 class="text-lg font-semibold mb-1 inline-flex items-center">Top builders
             <span class="dc-info" data-info="top-users" tabindex="0" role="button" aria-label="What is this?">?</span>
           </h3>
-          <p class="text-xs text-zinc-500 mb-4">Top 30 users by lifetime dev sessions started, highest on the left. Hover a bar for the per-outcome breakdown.</p>
+          <p class="text-xs text-gray-500 mb-4">Top 30 users by lifetime dev sessions started, highest on the left. Hover a bar for the per-outcome breakdown.</p>
           <div id="top-users"></div>
         </section>
 
         <!-- Spend by builder -->
-        <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <section class="${AdminUI.card} p-4">
           <div class="flex items-center justify-between flex-wrap gap-2 mb-1">
             <h3 class="text-lg font-semibold inline-flex items-center">Spend by builder
               <span class="dc-info" data-info="spend-by-builder" tabindex="0" role="button" aria-label="What is this?">?</span>
             </h3>
             <div class="flex items-center gap-1 text-xs" data-spend-toggle="spend-by-builder">
-              <button data-mode="platform" class="spend-btn px-2 py-1 rounded bg-violet-600 text-white">Platform key</button>
-              <button data-mode="user" class="spend-btn px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800">User key</button>
-              <button data-mode="both" class="spend-btn px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800">Both</button>
+              <button data-mode="platform" class="spend-btn px-2 py-1 rounded bg-indigo-600 text-white">Platform key</button>
+              <button data-mode="user" class="spend-btn px-2 py-1 rounded bg-gray-200 dark:bg-gray-800">User key</button>
+              <button data-mode="both" class="spend-btn px-2 py-1 rounded bg-gray-200 dark:bg-gray-800">Both</button>
             </div>
           </div>
-          <p class="text-xs text-zinc-500 mb-4">Top 30 users by lifetime LLM spend, highest on the left. Hover a bar for the platform / user-key breakdown.</p>
+          <p class="text-xs text-gray-500 mb-4">Top 30 users by lifetime LLM spend, highest on the left. Hover a bar for the platform / user-key breakdown.</p>
           <div id="spend-by-builder"></div>
         </section>
 
         <!-- Daily spend distribution (user counts per spend bucket) -->
-        <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <section class="${AdminUI.card} p-4">
           <div class="flex items-center justify-between flex-wrap gap-2 mb-1">
             <h3 class="text-lg font-semibold inline-flex items-center">Daily spend distribution
               <span class="dc-info" data-info="spend-distribution" tabindex="0" role="button" aria-label="What is this?">?</span>
             </h3>
             <div class="flex items-center gap-1 text-xs" data-zero-toggle="spend-distribution">
-              <button data-zero="hide" class="zero-btn px-2 py-1 rounded bg-violet-600 text-white">Hide $0</button>
-              <button data-zero="show" class="zero-btn px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800">Show $0</button>
+              <button data-zero="hide" class="zero-btn px-2 py-1 rounded bg-indigo-600 text-white">Hide $0</button>
+              <button data-zero="show" class="zero-btn px-2 py-1 rounded bg-gray-200 dark:bg-gray-800">Show $0</button>
             </div>
           </div>
-          <p class="text-xs text-zinc-500 mb-4">
+          <p class="text-xs text-gray-500 mb-4">
             Number of users by daily AI spend bucket, last 30 days. The two $20+ bars split users who hit the daily cap from those who continued on their own API key. $0 (no-spend) users are hidden by default — use "Show $0" to include them.
           </p>
           <div id="spend-distribution"></div>
         </section>
 
         <!-- Kudos giving distribution -->
-        <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <section class="${AdminUI.card} p-4">
           <h3 class="text-lg font-semibold mb-1 inline-flex items-center">Kudos participation
             <span class="dc-info" data-info="kudos" tabindex="0" role="button" aria-label="What is this?">?</span>
           </h3>
-          <p class="text-xs text-zinc-500 mb-4">
-            Per week, how many users gave 0&ndash;5 kudos (everyone gets a budget of 5/week).
+          <p class="text-xs text-gray-500 mb-4">
+            Per week, how many users gave 0, 1, 2, 3, 4&ndash;5, 6&ndash;10 or 11+ kudos
+            (everyone gets a budget of 20/week).
             The 0 bucket is registered users who gave none that week.
           </p>
           <div id="kudos-weekly"></div>

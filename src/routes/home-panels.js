@@ -13,7 +13,8 @@
 //
 // Surface:
 //   GET  /api/home-panels
-//        → { registry: [{ key, title }], hidden: [key…], panels: [ … ] }
+//        → { registry: [{ key, title, removable, sizes }], hidden: [key…],
+//            panels: [ … ] }
 //        `registry` + `hidden` always describe every panel this platform
 //        has (so Settings can render its checkboxes from the same
 //        response); `panels` carries the BUILT payload for the visible
@@ -21,15 +22,21 @@
 //   POST /api/home-panels/:key/visibility  body { hidden: boolean }
 //        → { hidden: [key…] }
 //
-// Placement model: `users.home_panels_hidden` is a TEXT[] of keys the
-// viewer has dismissed. ABSENCE MEANS VISIBLE — that's what makes the
-// challenges panel default-on for every existing and future account
-// with no backfill. Keys are validated against PANEL_REGISTRY on write
-// so the column can never accumulate junk.
+// Visibility model: `users.home_panels_hidden` is a TEXT[] of keys the
+// viewer has dismissed. ABSENCE MEANS VISIBLE — that's what makes every
+// widget default-on for every existing and future account with no
+// backfill. Keys are validated against PANEL_REGISTRY on write so the
+// column can never accumulate junk.
 //
-// Only ONE panel exists today (`challenges`). The registry indirection is
-// deliberate: adding a second panel is a new entry + a builder, not a
-// refactor of the route or the client.
+// PLACEMENT lives elsewhere now: src/routes/home-layout.js owns the
+// free-form (column, row) cell each widget and app tile occupies, in the
+// same table and the same write as the app tiles. This file is the widget
+// REGISTRY plus per-widget CONTENT; it no longer stores a position.
+//
+// Three widgets today: `challenges` (the only one with a real builder),
+// `discover` (featured apps + the way into the app directory) and `create`
+// (the create-an-app tile). The registry indirection is deliberate: adding
+// a fourth is a new entry + a builder, not a refactor of route or client.
 
 'use strict';
 
@@ -38,6 +45,8 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const { homePanelPrefLimiter } = require('../middleware/rate-limits');
 const { TEMPLATE_JOIN_COLUMNS_SQL } = require('./topochain/challenge-view');
+const { rankedUsers } = require('../services/leaderboard-users');
+const { eventStandingsBoard } = require('../services/topochain/event-standings');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
@@ -223,10 +232,159 @@ const ALL_CHALLENGE_WHERE = `
 // screen — the footer's own button goes there for the full list.
 const CHALLENGE_EXPANDED_LIMIT = 40;
 
+// ─── The desktop LEADERBOARD fill ────────────────────────────────────
+//
+// At five columns the widget is a TILE in a grid of app icons: it holds a
+// fixed 2x2 footprint whatever it has to say, so a short challenge list used
+// to buy nothing but a blank band. Whenever the collapsed list leaves room,
+// the client spends it on the platform's LEADERBOARD — the top few rows plus
+// the viewer's own, when they have one (public/js/home-panels.js decides how
+// many rows fit; this just supplies enough of them).
+//
+// WHICH BOARD: the Topochain standings, i.e. the same board the Leaderboard
+// screen's primary tab shows — one thing called "Leaderboard" everywhere.
+// The two objections the kudos board used to be chosen over are both answered
+// SERVER-SIDE here rather than by picking a different board:
+//   - "/api/v4/leaderboard 404s between seasons": that endpoint's strict
+//     "currently running" resolution is not what the SCREEN uses either. The
+//     screen falls back through TopochainEvents.pickDefault, and so do we —
+//     see resolveDefaultPublicEvent in services/topochain/event-standings.js.
+//     (Production is in exactly that state today: no event is running and the
+//     newest one with standings is a type='season' event, whose rows come
+//     from the shared §4.10 standings query, not from stored snapshots. Both
+//     paths are handled because fetchEventLeaderboardRows handles both.)
+//   - "wallet identity means most viewers have no row": true, and the fill
+//     simply omits the "you" line for them and spends the slot on the next
+//     participant. It does NOT fall back to the kudos board per viewer — two
+//     people's home screens showing different boards under one label is worse
+//     than one of them not being on the board.
+// The KUDOS board stays as the whole-board fallback for a deployment with no
+// public standings at all, labelled "Kudos" so it never mislabels itself.
+const FILL_TOP_ROWS = 3;
+
+// Both boards are IDENTICAL for every viewer — only the "which row is me"
+// step is per-request — so one execution serves everyone who loads their home
+// screen inside the TTL. Short by design: standings that lag a minute are
+// fine, standings that need a query per home-screen paint are not.
+const FILL_TTL_MS = 30 * 1000;
+let _fillCache = { at: 0, rows: null };
+let _boardCache = { at: 0, board: null };
+
+async function rankedUsersCached(pool) {
+  const now = Date.now();
+  if (_fillCache.rows && now - _fillCache.at < FILL_TTL_MS) return _fillCache.rows;
+  // `slim` drops the three display-only LATERALs (kudos_given, issues_created,
+  // active_apps): none of them appears in the ORDER BY, so the ranking is
+  // identical and the widget doesn't pay for columns it can't render.
+  const rows = await rankedUsers(pool, { window: 'all', slim: true });
+  _fillCache = { at: now, rows };
+  return rows;
+}
+
+async function standingsBoardCached(pool) {
+  const now = Date.now();
+  if (_boardCache.board && now - _boardCache.at < FILL_TTL_MS) return _boardCache.board;
+  const board = await eventStandingsBoard(pool, { topRows: FILL_TOP_ROWS });
+  _boardCache = { at: now, board };
+  return board;
+}
+
+// Exported for tests: a cached ranking/board would otherwise leak across cases.
+function _resetFillCache() {
+  _fillCache = { at: 0, rows: null };
+  _boardCache = { at: 0, board: null };
+}
+
+// The PRIMARY board: { kind: 'topochain', label, event, top, viewer, total }.
+// Rows are { rank, name, score, you } — `name` is the same public display
+// name the standings table shows (discord -> display_name -> masked
+// identifier), `score` the row's total points, and `you` is decided HERE
+// rather than by the client string-matching names.
+//
+// The viewer is matched on user_id: the platform `users.id` IS the topochain
+// `users.id` (migration plan Global Constraint #7), so this needs no wallet
+// and leaks no id (only the row's public fields are serialized).
+async function buildTopochainFill(pool, user) {
+  const board = await standingsBoardCached(pool);
+  if (!board || !board.top.length) return null;
+  const mine = user?.id != null ? board.byUserId.get(Number(user.id)) : null;
+  const isMine = (row) => !!mine && row.rank === mine.rank && row.name === mine.name;
+  return {
+    kind: 'topochain',
+    label: 'Leaderboard',
+    event: board.event,
+    top: board.top.map((r) => ({ ...r, you: isMine(r) })),
+    viewer: mine ? { ...mine, you: true } : null,
+    total: board.total,
+  };
+}
+
+// The FALLBACK board: the platform's own ranked-users list, used only when
+// there are no public Topochain standings at all. `score` is
+// kudos_received_prs_merged — the same headline metric the Kudos tab ranks
+// and badges on, so the widget's number and the screen's number are the same
+// number. Same row shape as the primary board, and it says which it is.
+async function buildLeaderboardFill(pool, user) {
+  const rows = await rankedUsersCached(pool);
+  if (!Array.isArray(rows) || !rows.length) return null;
+  // Case-insensitive, like every other username match on the platform.
+  const me = String(user?.username || '').toLowerCase();
+  const isMe = (r) => !!me && String(r.username || '').toLowerCase() === me;
+  const shape = (r, i) => ({
+    rank: i + 1,
+    name: r.username,
+    score: Number(r.kudos_received_prs_merged) || 0,
+    you: isMe(r),
+  });
+  const top = rows.slice(0, FILL_TOP_ROWS).map(shape);
+  const myIndex = me ? rows.findIndex(isMe) : -1;
+  return {
+    kind: 'kudos',
+    label: 'Kudos',
+    event: null,
+    top,
+    viewer: myIndex >= 0 ? shape(rows[myIndex], myIndex) : null,
+    total: rows.length,
+  };
+}
+
+// Attach the fill when the collapsed list leaves room for it. Never fatal: a
+// leaderboard hiccup must not change the challenges panel, which is the
+// invariant this whole route is built on (one broken panel never blanks the
+// home screen). Skipped when EXPANDED — an expanded block is all challenges.
+//
+// Topochain first, kudos only if that board doesn't exist (or blew up) — the
+// two are tried independently so a standings failure degrades to the other
+// board rather than to no board.
+async function attachLeaderboardFill(pool, user, panel) {
+  if (!panel || panel.expanded) return panel;
+  if ((panel.challenges || []).length >= CHALLENGE_ROW_LIMIT) return panel;
+  let fill = null;
+  try {
+    fill = await buildTopochainFill(pool, user);
+  } catch (err) {
+    log.error('home-panels', 'topochain leaderboard fill failed', {
+      userId: user?.id, message: err.message,
+    });
+  }
+  if (!fill) {
+    try {
+      fill = await buildLeaderboardFill(pool, user);
+    } catch (err) {
+      log.error('home-panels', 'leaderboard fill failed', {
+        userId: user?.id, message: err.message,
+      });
+    }
+  }
+  if (fill) panel.leaderboard = fill;
+  return panel;
+}
+
 // The current active PUBLIC season — the same predicate GET /challenges
 // resolves its default scope with (mobile.js). Null when nothing is
 // running, which is production's state between seasons and is what makes
-// the card silently absent rather than an empty box on every home screen.
+// the card render its compact "nothing running" state (and, on desktop,
+// spend the tile on the leaderboard fill above).
 async function fetchCurrentSeason(pool) {
   const { rows } = await pool.query(
     `SELECT id, name FROM seasons
@@ -248,10 +406,13 @@ async function buildChallengesPanel(pool, user, opts) {
 
   const season = await fetchCurrentSeason(pool);
   if (!season) {
-    return {
+    // Between seasons. The panel still renders — a compact "nothing running"
+    // line on a phone, that line plus the LEADERBOARD fill on desktop — so
+    // the widget explains itself instead of vanishing.
+    return attachLeaderboardFill(pool, user, {
       season: null, total: 0, done: 0, points_remaining: null,
       challenges: [], expanded,
-    };
+    });
   }
 
   // Rows: one statement, per-user aggregates as correlated subqueries so
@@ -319,13 +480,55 @@ async function buildChallengesPanel(pool, user, opts) {
     pointsRemaining += n;
   }
 
-  return {
+  return attachLeaderboardFill(pool, user, {
     season: { id: Number(season.id), name: season.name },
     total: totalRows[0]?.total ?? challenges.length,
     done: totalRows[0]?.done ?? 0,
     points_remaining: pointsRemaining,
     challenges,
     expanded,
+  });
+}
+
+// The demo LEADERBOARD fill. The real fill reads public tables that staging
+// clones from production, so a preview HAS standings without any seeding —
+// but the dapp.json checks and the before/after screenshots need the tile to
+// be the SAME tile every run, and the viewer's own row has to exist whoever
+// is signed in. Obviously fake, read-only, written nowhere.
+//
+// `board` picks WHICH of the two boards the demo shows: the Topochain
+// standings (the default, five-figure points) or the kudos fallback the tile
+// only reaches on a deployment with no public standings at all. Both are
+// URL-reachable so each is screenshot- and check-able; a real response can
+// never carry either (the names below are the giveaway, and a test asserts
+// they never escape the demo path).
+function demoLeaderboardFill(username, board) {
+  const name = String(username || '').trim() || 'you';
+  if (board === 'kudos') {
+    return {
+      kind: 'kudos',
+      label: 'Kudos',
+      event: null,
+      top: [
+        { rank: 1, name: 'staging-demo-lead', score: 41, you: false },
+        { rank: 2, name: 'staging-demo-builder', score: 27, you: false },
+        { rank: 3, name: 'staging-demo-tester', score: 18, you: false },
+      ],
+      viewer: { rank: 7, name, score: 6, you: true },
+      total: 42,
+    };
+  }
+  return {
+    kind: 'topochain',
+    label: 'Leaderboard',
+    event: { id: 900500, name: 'Staging Demo Event — Block Production Sprint' },
+    top: [
+      { rank: 1, name: 'staging-demo-validator', score: 59146, you: false },
+      { rank: 2, name: 'staging-demo-lead', score: 41230, you: false },
+      { rank: 3, name: 'staging-demo-builder', score: 27515, you: false },
+    ],
+    viewer: { rank: 12, name, score: 6480, you: true },
+    total: 137,
   };
 }
 
@@ -335,8 +538,33 @@ async function buildChallengesPanel(pool, user, opts) {
 // identity would see zero progress; this makes every state visible
 // deterministically regardless of who is looking. Read-only, obviously
 // fake, written nowhere, and a strict no-op outside staging.
+//
+// `variant` (from ?demo=1&challenges=few|none) picks the SHORT-LIST states,
+// which a staging clone cannot otherwise reach while the seeded season is
+// live — they are the whole point of this change and so have to be
+// URL-reachable for the checks and the screenshots:
+//   'few'  → two open rows: the shrink on a phone, two challenge lines plus
+//            two leaderboard lines on desktop.
+//   'none' → nothing open: the compact one-line block on a phone, that line
+//            plus the leaderboard section on desktop.
+// Absent/unknown → the four-row payload exactly as before.
 function demoChallengesPanel(opts) {
   const expanded = !!(opts && opts.expanded);
+  const variant = opts && opts.variant;
+  const username = opts && opts.username;
+  // ?board=kudos swaps the demo fill to the FALLBACK board — the one a real
+  // deployment only reaches with no public standings at all, and which no
+  // amount of clicking around a seeded staging clone can otherwise produce.
+  const board = opts && opts.board;
+
+  if (variant === 'none') {
+    return {
+      season: null, total: 0, done: 0, points_remaining: null,
+      challenges: [], expanded,
+      leaderboard: demoLeaderboardFill(username, board),
+      demo: true,
+    };
+  }
   const rows = [
     {
       id: 900512,
@@ -435,11 +663,31 @@ function demoChallengesPanel(opts) {
     },
   ];
 
+  // The SHORT-LIST variant: two open rows, one metered and one binary, so
+  // the progress-bar lane is still exercised at the smaller size. `total`
+  // matches the rows shown — there is nothing past the cap to "see all" of.
+  if (variant === 'few') {
+    const few = [rows[0], rows[1]];
+    return {
+      season: { id: 900500, name: 'Staging Demo Season — Topochain' },
+      total: 2,
+      done: 0,
+      points_remaining: null,
+      challenges: expanded ? [...few, ...finished] : few,
+      expanded,
+      leaderboard: demoLeaderboardFill(username, board),
+      demo: true,
+    };
+  }
+
   // Collapsed `total` deliberately exceeds the four-slot budget so the
   // footer reads "See all 7 challenges" and the expand toggle has
   // something to reveal. Expanded returns the open rows PLUS the finished
   // ones, which is exactly what the real builder does when it drops the
   // not-completed filter.
+  //
+  // No `leaderboard` here: four rows fill the tile, so there is no room to
+  // fill and the existing ?demo=1 check sees exactly the markup it always saw.
   const all = expanded ? [...rows, ...overflow, ...finished] : rows;
   return {
     season: { id: 900500, name: 'Staging Demo Season — Topochain' },
@@ -454,49 +702,140 @@ function demoChallengesPanel(opts) {
 
 // ─── Registry ────────────────────────────────────────────────────────
 //
-// key → { title, build(pool, user), demo() }. Order here IS the order the
-// panels render in on the home screen.
+// key → { title, removable, sizes, build(pool, user), demo() }. Order here
+// is the order Settings renders its checkboxes in, and the fallback
+// placement order for any widget the client has no designed home cell for.
+// The three shipped widgets do have one — see HomeLayout.WIDGET_HOME_CELLS,
+// which is the source of truth for where a fresh home screen puts them.
+//
+// `sizes` is the widget's FOOTPRINT in grid cells, per column count:
+// { 4: [w, h], 5: [w, h] }. It lives here — not in the stored layout — so a
+// widget can be resized in code without migrating anyone's saved cells; the
+// client's HomeLayout.repair() nudges anything a size change made overlap.
+// 2x2 at five columns is ~397px inside the 1024px .home-column, under the
+// --home-panel-max-w 32rem cap, so the cap never binds in the grid.
+//
+// `removable: false` means the ⋮ menu and Settings must refuse to hide it.
+// Only `discover` carries it, because #home-browse-btn (now that widget's
+// footer) is the ONLY navigation into the #apps directory in the whole
+// shell — hiding it would strand the viewer with no way to find apps.
+//
+// THE REGISTRY TAKES NO VIEWER ARGUMENT, AND MUST NOT GROW ONE. Every entry
+// is unconditional: `create` is in the registry, in `panels`, in Settings and
+// in the layout for EVERY account, including one with no app quota. Whether
+// the create widget is tappable is decided client-side from the derived
+// `canCreateApps` boolean (/api/auth/me), which is quota-derived and can flip
+// mid-session — a per-viewer registry would turn each of those flips into a
+// layout mutation that re-packs the user's grid.
+//
+// `discover` and `create` are MARKER entries: they build no payload at all.
+// Discover's featured tiles are already served per-viewer by GET /api/apps
+// (`featured` / `featured_order`, derived client-side by Home.featuredApps),
+// and the create widget has nothing to fetch — so neither costs a query.
 const PANEL_REGISTRY = [
   {
     key: 'challenges',
     title: 'Challenges',
+    removable: true,
+    // ASYMMETRIC ON PURPOSE (#968), for exactly the reason Discover's is
+    // below. #947 made the phone block draw at its CONTENT height, but the
+    // footprint stayed two rows — so the height it gave up became a band of
+    // blank grid between the widget and the first row of app icons rather
+    // than space handed back to the page. The between-seasons state was a
+    // ~68px box inside a 238px reservation.
+    //
+    //   4 columns (phone): [4, 1] — full width, so the row it gives back is
+    //     a clean full-width gap rather than a notch mid-grid. The client
+    //     reshapes the CONTENT to fit that one 116px cell (title bar with the
+    //     leaderboard link, up to two rows, no footer) — see
+    //     HomePanels.renderChallengesPanel's compact branch.
+    //   5 columns (desktop): [2, 2] — UNCHANGED, so no stored desktop
+    //     arrangement moves and the tile keeps its four rows, its footer and
+    //     the leaderboard fill that spends the leftover height.
+    //
+    // At four columns all three widgets are one row tall now.
+    sizes: { 4: [4, 1], 5: [2, 2] },
     build: buildChallengesPanel,
     demo: demoChallengesPanel,
+  },
+  {
+    key: 'discover',
+    title: 'Discover',
+    removable: false,
+    // ASYMMETRIC ON PURPOSE (#949). Discover's curated lane is ONE row of
+    // 40px tiles, so two grid rows was half a widget of dead space at both
+    // widths — worst on a phone, where a viewer who has added the featured
+    // apps got a one-line note inside a 238px box.
+    //
+    //   4 columns (phone): [4, 1] — full width, so the row it gives back is
+    //     a clean full-width gap rather than a notch mid-grid.
+    //   5 columns (desktop): [2, 2] — UNCHANGED, so no stored desktop
+    //     arrangement moves. The second row is earned rather than trimmed:
+    //     the client fills it with the "Popular" lane (HomePanels
+    //     .renderDiscoverPanel + Home.popularApps).
+    //
+    // Differing heights per column count need no new mechanism: widgetSize()
+    // below, HomeLayout.sizeOf() and reflow() all read this map per-cols,
+    // and the two breakpoints' layouts are stored and validated separately.
+    sizes: { 4: [4, 1], 5: [2, 2] },
+    build: async () => ({}),
+    demo: () => ({ demo: true }),
+  },
+  {
+    key: 'create',
+    title: 'Create app',
+    removable: true,
+    // Full-width strip on a phone, a single tile on desktop. At four columns
+    // a 1x1 create tile read as one more app icon in a row of app icons —
+    // the one thing on the grid that is an ACTION rather than a launcher had
+    // the least presence of anything on it. One row of its own at 4x1 gives
+    // it the same weight as the two full-width widgets without spending a
+    // second row; the tile itself lays its icon and label out side by side
+    // below 640px (see .home-create-tile in home-panels.js / app.css).
+    sizes: { 4: [4, 1], 5: [1, 1] },
+    build: async () => ({}),
+    demo: () => ({ demo: true }),
   },
 ];
 
 const PANEL_KEYS = new Set(PANEL_REGISTRY.map((p) => p.key));
 
-// Upper bound on a stored drag position (cards above the panel). Nobody has
-// a thousand apps pinned to their home screen; the cap exists so a hostile
-// or buggy client can't park a panel at index 1e9 and so the value stays
-// obviously reasonable in the column.
-const MAX_PANEL_POSITION = 500;
+// The registry as the layout route and the client need it — keys, titles,
+// removability and footprints, with no builders. Exported so
+// src/routes/home-layout.js validates footprints against the SAME numbers
+// the client lays out with.
+function panelRegistryPublic() {
+  return PANEL_REGISTRY.map((p) => ({
+    key: p.key,
+    title: p.title,
+    removable: p.removable !== false,
+    sizes: { 4: [...p.sizes[4]], 5: [...p.sizes[5]] },
+  }));
+}
+
+// Footprint of one widget at one column count, or null for an unknown key.
+// The layout route's overlap check runs on these, so a buggy or hostile
+// client can never persist a self-overlapping arrangement.
+function widgetSize(key, cols) {
+  const entry = PANEL_REGISTRY.find((p) => p.key === key);
+  if (!entry) return null;
+  const size = entry.sizes[cols] || entry.sizes[5];
+  return [size[0], size[1]];
+}
 
 // The viewer's dismissed keys, filtered to the live registry so a key
 // retired from the code stops affecting anything without a migration.
+// `home_panel_positions` is NOT read any more — free-form placement lives in
+// user_home_layout (see the retired-column comment in schema.sql).
 async function readPrefs(pool, userId) {
   const { rows } = await pool.query(
-    'SELECT home_panels_hidden, home_panel_positions FROM users WHERE id = $1',
+    'SELECT home_panels_hidden FROM users WHERE id = $1',
     [userId]
   );
   const rawHidden = rows[0]?.home_panels_hidden;
   const hidden = Array.isArray(rawHidden)
     ? rawHidden.filter((k) => PANEL_KEYS.has(k)) : [];
-
-  // Positions: { key: cardsAbove }. Filtered to the live registry and to
-  // sane integers, so neither a retired key nor a junk value can reach the
-  // client. An absent key means "the default slot, under the whole grid".
-  const rawPos = rows[0]?.home_panel_positions;
-  const positions = {};
-  if (rawPos && typeof rawPos === 'object' && !Array.isArray(rawPos)) {
-    for (const [key, value] of Object.entries(rawPos)) {
-      if (!PANEL_KEYS.has(key)) continue;
-      const n = Number(value);
-      if (Number.isInteger(n) && n >= 0 && n <= MAX_PANEL_POSITION) positions[key] = n;
-    }
-  }
-  return { hidden, positions };
+  return { hidden };
 }
 
 function homePanelRoutes() {
@@ -505,21 +844,30 @@ function homePanelRoutes() {
 
   router.get('/api/home-panels', async (req, res) => {
     if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
-    const registry = PANEL_REGISTRY.map((p) => ({ key: p.key, title: p.title }));
+    const registry = panelRegistryPublic();
     try {
-      const { hidden, positions } = await readPrefs(pool, req.user.id);
+      const { hidden } = await readPrefs(pool, req.user.id);
       const demo = IS_STAGING && req.query.demo === '1';
       // ?expand=<key> asks one panel for its expanded list (finished
       // challenges included, row cap lifted). Per-visit UI state, so it
       // rides on the request rather than being stored.
       const expandKey = typeof req.query.expand === 'string' ? req.query.expand : '';
+      // ?demo=1&challenges=few|none picks a demo variant of the challenges
+      // payload — the short-list states a seeded staging season can't reach.
+      // Staging-only (it rides on `demo`, which is already IS_STAGING-gated)
+      // and read-only; an unknown value falls through to the default payload.
+      const variant = typeof req.query.challenges === 'string' ? req.query.challenges : '';
+      // ?demo=1&board=kudos picks the demo fill's FALLBACK board (the kudos
+      // one). Same gating and the same read-only nature as `challenges`
+      // above; an unknown value falls through to the primary board.
+      const board = typeof req.query.board === 'string' ? req.query.board : '';
       const panels = [];
       for (const panel of PANEL_REGISTRY) {
         if (hidden.includes(panel.key)) continue;
         const expanded = expandKey === panel.key;
         try {
           const data = demo && panel.demo
-            ? panel.demo({ expanded })
+            ? panel.demo({ expanded, variant, board, username: req.user.username })
             : await panel.build(pool, req.user, { expanded });
           panels.push({ key: panel.key, title: panel.title, ...data });
         } catch (err) {
@@ -530,7 +878,7 @@ function homePanelRoutes() {
           });
         }
       }
-      return res.json({ registry, hidden, positions, panels });
+      return res.json({ registry, hidden, panels });
     } catch (err) {
       log.error('home-panels', 'GET /api/home-panels failed', {
         userId: req.user.id, message: err.message,
@@ -539,10 +887,20 @@ function homePanelRoutes() {
     }
   });
 
+  // Show / hide one widget. Deliberately NOT gated on anything about the
+  // viewer beyond being signed in: hiding `create` must work for an account
+  // with no app quota exactly as it does for a creator, since the widget is
+  // on every home screen either way.
   router.post('/api/home-panels/:key/visibility', homePanelPrefLimiter, async (req, res) => {
     if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
     const key = String(req.params.key || '');
     if (!PANEL_KEYS.has(key)) return res.status(400).json({ error: 'Unknown panel' });
+    const entry = PANEL_REGISTRY.find((p) => p.key === key);
+    // Discover is the shell's only door to the app directory — refuse to
+    // hide it rather than leaving someone with no way to find apps.
+    if (entry && entry.removable === false && req.body && req.body.hidden === true) {
+      return res.status(400).json({ error: 'This widget cannot be hidden' });
+    }
     const { hidden } = req.body || {};
     if (typeof hidden !== 'boolean') {
       return res.status(400).json({ error: 'hidden must be a boolean' });
@@ -575,52 +933,44 @@ function homePanelRoutes() {
     }
   });
 
-  // Where the panel sits among the app-grid rows, after an iOS-style drag.
-  // `index` counts APP CARDS above the block (see the schema comment on
-  // home_panel_positions for why cards and not rows). jsonb_set with the
-  // create-missing flag keeps this a single statement whether or not the
-  // key is already there.
-  router.post('/api/home-panels/:key/position', homePanelPrefLimiter, async (req, res) => {
-    if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
-    const key = String(req.params.key || '');
-    if (!PANEL_KEYS.has(key)) return res.status(400).json({ error: 'Unknown panel' });
-    const { index } = req.body || {};
-    const n = Number(index);
-    if (!Number.isInteger(n) || n < 0 || n > MAX_PANEL_POSITION) {
-      return res.status(400).json({ error: 'index must be an integer within range' });
-    }
-    try {
-      const { rows } = await pool.query(
-        `UPDATE users
-            SET home_panel_positions =
-                  jsonb_set(COALESCE(home_panel_positions, '{}'::jsonb),
-                            ARRAY[$2::text], to_jsonb($3::int), TRUE)
-          WHERE id = $1
-          RETURNING home_panel_positions`,
-        [req.user.id, key, n]
-      );
-      const raw = rows[0]?.home_panel_positions || {};
-      const positions = {};
-      for (const [k, v] of Object.entries(raw)) {
-        if (PANEL_KEYS.has(k)) positions[k] = Number(v);
-      }
-      return res.json({ positions });
-    } catch (err) {
-      log.error('home-panels', 'position write failed', {
-        userId: req.user.id, key, message: err.message,
-      });
-      return res.status(500).json({ error: 'Internal server error' });
-    }
-  });
+  // NOTE: POST /api/home-panels/:key/position is GONE. A widget's place on
+  // the home screen is a real (column, row) cell now, written through
+  // PUT /api/home-layout (src/routes/home-layout.js) alongside the app
+  // tiles — one write for the whole arrangement instead of a card-count
+  // per widget.
 
   return router;
 }
 
 module.exports = {
   homePanelRoutes,
-  // Exported for tests / future panels.
+  // Exported for tests / future panels, and for src/routes/home-layout.js —
+  // which validates footprints against the SAME registry the client lays
+  // out with, so the two can't disagree about how big a widget is.
   PANEL_REGISTRY,
+  PANEL_KEYS,
+  panelRegistryPublic,
+  widgetSize,
   parseRewardPoints,
   resolveProgress,
   buildChallengeRow,
+  // The per-user done-ness rule, in both languages, plus the scope
+  // predicate — exported so the #profile screen's completed-challenges
+  // endpoint (src/routes/profile.js, issue #982) asks the SAME question
+  // this widget asks instead of becoming a third, drifting copy. See
+  // resolveProgress's own comment: when a real per-user progress feed
+  // lands, that function is still the single place to replace.
+  DONE_EXPR,
+  MY_COUNT_SQL,
+  MY_BLOCKS_SQL,
+  OPEN_CHALLENGE_WHERE,
+  ALL_CHALLENGE_WHERE,
+  // The desktop LEADERBOARD fill (exported for tests; the cache reset keeps a
+  // memoised ranking or board from leaking between cases).
+  buildTopochainFill,
+  buildLeaderboardFill,
+  demoLeaderboardFill,
+  demoChallengesPanel,
+  _resetFillCache,
+  FILL_TOP_ROWS,
 };

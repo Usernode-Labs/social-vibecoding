@@ -26,11 +26,18 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
 const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
-const creditJs = fs.readFileSync(path.join(root, 'public/js/ai-credit.js'), 'utf8');
+// #1079 chunk B: same module, moved into the React bundle with the drawer
+// rows it renders into.
+const creditJs = fs.readFileSync(
+  path.join(root, 'frontend/src/features/header/ai-credit.js'), 'utf8');
 
-test('the shell loads /js/ai-credit.js', () => {
-  assert.match(html, /<script src="\/js\/ai-credit\.js"><\/script>/,
-    'ai-credit.js is script-tagged in the shell');
+test('the shell still carries the renderer, now via the React bundle', () => {
+  assert.ok(!html.includes('src="/js/ai-credit.js"'),
+    'the classic tag is retired — a surviving one would load a second copy');
+  const menu = fs.readFileSync(
+    path.join(root, 'frontend/src/features/header/header-menu.tsx'), 'utf8');
+  assert.match(menu, /import '\.\/ai-credit\.js'/,
+    'the header-menu island must import it, or nothing defines window.AiCredit');
 });
 
 test('the renderer resolves its slot by the shell-owned id', () => {
@@ -43,7 +50,12 @@ test('the authed boot initialises the renderer', () => {
 });
 
 test('opening the drawer refreshes the row, before the touch early-return', () => {
-  const open = appJs.slice(appJs.indexOf('    open() {'));
+  // #1079 chunk B moved App.HeaderMenu into the React bundle as
+  // frontend/src/features/header/header-menu-controller.js; the ordering
+  // contract is unchanged.
+  const headerMenuJs = fs.readFileSync(
+    path.join(root, 'frontend/src/features/header/header-menu-controller.js'), 'utf8');
+  const open = headerMenuJs.slice(headerMenuJs.indexOf('  open() {'));
   const body = open.slice(0, open.indexOf('PlatformUI.isTouch()'));
   assert.match(body, /AiCredit\.refreshAll\(\)/,
     'HeaderMenu.open() refreshes the row above the touch branch, which returns early');
@@ -72,7 +84,10 @@ test('the budget row carries no global spend or cap', () => {
 });
 
 test('the pill carries the class hook the dapp.json check asserts on', () => {
-  assert.match(creditJs, /ai-budget-pill/, '#ai-budget-slot pill has a stable hook class');
+  // The sidebar reorg (#913) renamed the hook from ai-budget-pill to
+  // ai-budget-meter and updated dapp.json's rendered check to match;
+  // keep this pin aligned with the selector dapp.json asserts on.
+  assert.match(creditJs, /ai-budget-meter/, '#ai-budget-slot meter has a stable hook class');
 });
 
 test('?shot=menu opens the drawer and is not env-gated', () => {

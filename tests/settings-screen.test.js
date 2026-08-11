@@ -62,11 +62,16 @@ function registrySections() {
 // ── The screen host ────────────────────────────────────────────────────
 
 test('the settings screen ships hidden with its four render slots', () => {
-  assert.match(
-    html,
-    /<main id="settings-screen" class="hidden flex-1 overflow-y-auto"/,
-    'screen container ships hidden like its sibling screens',
-  );
+  // Matched per-class rather than as one closed string so an added
+  // utility (e.g. `platform-safe-scroll`, which reserves the
+  // home-indicator strip for the last row) doesn't fail this on a
+  // substring.
+  const openTag = /<main id="settings-screen"[^>]*>/.exec(html);
+  assert.ok(openTag, '#settings-screen is missing from the shell');
+  for (const cls of ['hidden', 'flex-1', 'overflow-y-auto']) {
+    assert.match(openTag[0], new RegExp(`(?:class="|\\s)${cls}(?:\\s|")`),
+      `screen container must keep ${cls} like its sibling screens`);
+  }
   for (const id of [
     'settings-root', 'settings-sidebar-col', 'settings-content-col',
     'settings-nav-desktop', 'settings-mobile-menu-host',
@@ -225,10 +230,24 @@ test('navigateToSettings mounts the screen and routes when already mounted', () 
   const head = fn.slice(0, 2600);
   assert.match(head, /if \(App\._inSettings && window\.Settings\?\.isOpen\?\.\(\)\) \{\s*Settings\.route\(section\);/,
     'an in-screen navigation is handed to the module, not re-mounted');
-  assert.match(head, /getElementById\('settings-screen'\)/, 'reveals #settings-screen');
+  assert.match(head, /App\._showOnlyScreen\('settings-screen'\)/,
+    'reveals #settings-screen (and hides every sibling root) through the shared primitive');
   assert.match(head, /App\.setHeaderTitle\('Settings'\)/, 'sets the header title');
   assert.match(head, /App\._inSettings = true;/, 'records that we are on the screen');
-  assert.match(head, /Settings\.open\(section\)/, 'hands the section to the module');
+  assert.match(head, /Settings\.open\(section, \{ chrome: false \}\)/,
+    'hands the section to the module, holding its header write for the transition');
+  assert.match(head, /Settings\.syncChrome\(\)/,
+    'and applies that header write inside the transition callback');
+  // #979: the reveal, the header title and the module's own chrome sync
+  // all belong INSIDE the transition callback — a View Transition captures
+  // the outgoing page a frame later, so anything mutated before the call
+  // shows up in the snapshot of the page the user is leaving.
+  const beforeTransition = head.slice(0, head.indexOf('PlatformUI.transition('));
+  assert.ok(beforeTransition.length > 0, 'navigateToSettings runs a transition');
+  for (const forbidden of ['setHeaderTitle', 'setBackIcon', 'classList', 'syncChrome']) {
+    assert.ok(!beforeTransition.includes(forbidden),
+      `no ${forbidden} before the transition — it would land in the outgoing snapshot`);
+  }
   // Every sibling screen is torn down on entry. (_exitChallenges and
   // _exitTopochainSeasons dropped off this list in the leaderboard merge:
   // both screens became tabs of the Leaderboard screen, so _exitLeaderboard
@@ -238,13 +257,19 @@ test('navigateToSettings mounts the screen and routes when already mounted', () 
   }
 });
 
-test('_exitSettings hides the screen, hands the back icon back and closes', () => {
+test('_exitSettings is state-only and closes the module', () => {
   const fn = appJs.slice(appJs.indexOf('  _exitSettings() {'), appJs.indexOf('  _exitSettings() {') + 600);
   assert.match(fn, /App\._inSettings = false;/);
-  assert.match(fn, /getElementById\('settings-screen'\)[\s\S]*classList\.add\('hidden'\)/);
-  assert.match(fn, /App\.setBackIcon\('home'\)/,
-    'the arrow is handed back or every later screen inherits it');
   assert.match(fn, /Settings\.close\(\)/);
+  // #979: hiding the screen here would delete the outgoing page before the
+  // View Transition captured it — the incoming navigation's
+  // _showOnlyScreen does it inside the transition callback instead. Same
+  // for the back chevron the mobile section view borrowed.
+  const body = fn.slice(0, fn.indexOf('\n  },'));
+  assert.ok(!body.includes('classList'),
+    'no classList work — the screen is hidden by the next _showOnlyScreen');
+  assert.ok(!body.includes('setBackIcon'),
+    'no setBackIcon — _showOnlyScreen hands the chevron back');
 });
 
 test('every sibling-exit site tears the settings screen down too', () => {
@@ -287,8 +312,11 @@ test('the drawer row is a real anchor to #settings', () => {
   assert.match(html, /<a id="drawer-row-settings" href="#settings"/,
     'navigation rides the anchor hash, like Challenges / Profile');
   assert.match(html, /id="drawer-byok-dot"/, 'the BYOK indicator dot survives');
-  const init = appJs.slice(appJs.indexOf("getElementById('drawer-row-settings')"));
-  assert.match(init.slice(0, 250), /App\.HeaderMenu\.close\(\)/,
+  // #1079 chunk B: the drawer's row handlers moved into the React bundle with
+  // its markup (frontend/src/features/header/header-menu-controller.js).
+  const headerMenuJs = read('frontend/src/features/header/header-menu-controller.js');
+  const init = headerMenuJs.slice(headerMenuJs.indexOf("getElementById('drawer-row-settings')"));
+  assert.match(init.slice(0, 250), /HeaderMenu\.close\(\)/,
     'the click handler just closes the drawer');
   assert.doesNotMatch(init.slice(0, 250), /Settings\.open\(/,
     'it does NOT call Settings.open — the hash does the navigating');
@@ -316,7 +344,7 @@ test('level state and the viewport listener exist', () => {
     'and whether the current level-2 entry was pushed by a menu tap');
   assert.match(settingsJs, /_ensureMediaListener\(\)\s*\{/,
     'a viewport listener re-resolves the layout on a breakpoint crossing');
-  const openFn = settingsJs.slice(settingsJs.indexOf('    open(section) {'));
+  const openFn = settingsJs.slice(settingsJs.indexOf('    open(section, opts) {'));
   assert.match(openFn.slice(0, 900), /_ensureMediaListener\(\)/,
     'the listener is bound lazily on the first open');
   assert.match(openFn.slice(0, 900), /_pushedFromMenu = false/,
@@ -324,7 +352,7 @@ test('level state and the viewport listener exist', () => {
 });
 
 test('a bare #settings means the MENU on mobile, the default on desktop', () => {
-  const openFn = settingsJs.slice(settingsJs.indexOf('    open(section) {'));
+  const openFn = settingsJs.slice(settingsJs.indexOf('    open(section, opts) {'));
   const head = openFn.slice(0, 1800);
   assert.match(head, /if \(Settings\._isMobile\(\) && !valid\)/,
     'mobile + no section segment lands on level 1');
@@ -373,7 +401,9 @@ test('the sidebar and the mobile menu share one grouping', () => {
 test('_syncChrome drives the header through App, not the DOM', () => {
   const fn = settingsJs.slice(settingsJs.indexOf('    _syncChrome() {'));
   const head = fn.slice(0, 800);
-  assert.match(head, /App\.setBackIcon\(inSection \? 'arrow' : 'home'\)/);
+  // #1036: the second argument is the anchor's href — inside a section
+  // the chevron pops to the settings menu, so that is where it points.
+  assert.match(head, /App\.setBackIcon\(inSection \? 'arrow' : 'home', inSection \? '#settings' : undefined\)/);
   assert.match(head, /App\.setHeaderTitle\(/,
     'setHeaderTitle mirrors document.title for the native AppBar');
   assert.doesNotMatch(head, /getElementById\('header-title'\)/,
@@ -385,7 +415,7 @@ test('_syncChrome drives the header through App, not the DOM', () => {
 test('the menu re-resolves when gate state lands after first paint', () => {
   assert.match(settingsJs, /_renderNavIfOpen\(\)\s*\{/, 'the re-resolve helper exists');
   const refresh = settingsJs.slice(settingsJs.indexOf('    async refresh() {'));
-  assert.match(refresh.slice(0, 1400), /_renderNavIfOpen\(\)/,
+  assert.match(refresh.slice(0, 1800), /_renderNavIfOpen\(\)/,
     'walletLinkEnabled arrives with /api/auth/me — re-render the menu');
   const usernode = settingsJs.slice(settingsJs.indexOf('    async _renderUsernodeSection() {'));
   assert.match(usernode.slice(0, 1200), /_renderNavIfOpen\(\)/,
@@ -409,12 +439,25 @@ test('close() tears down the two lifecycle timers', () => {
 
 // ── Other callers ──────────────────────────────────────────────────────
 
-test('the credits banner deep-links the API-key section', () => {
+test('the credits banner deep-links all three ways to keep building', () => {
+  // The banner used to offer BYOK alone and navigate itself. It now
+  // delegates to CreditOptions, which owns the same three routes the
+  // in-chat card and the Generate-proposal modal render — so the wiring
+  // assertion moved with it.
   const fn = devChatJs.slice(devChatJs.indexOf('  _wireCreditsBanner() {'));
-  assert.match(fn.slice(0, 800), /location\.hash = '#settings\/api-key'/,
-    'a real navigation, so back returns to the chat');
+  // #1049 added a second argument: the two hand-off routes are handled in
+  // place (they start the walkthrough in this chat) rather than navigated.
+  assert.match(fn.slice(0, 800), /CreditOptions\.wire\(banner, \{ onFlow:/,
+    'the shared module wires the banner');
   assert.doesNotMatch(fn.slice(0, 800), /Settings\.open\(/,
     'no direct module call any more');
+
+  const creditOptions = read('public/js/credit-options.js');
+  assert.match(creditOptions, /window\.location\.hash = hash/,
+    'a real navigation, so back returns to the chat');
+  for (const hash of ['#settings/api-key', '#settings/cli', '#settings/connectors']) {
+    assert.ok(creditOptions.includes(`'${hash}'`), `offers ${hash}`);
+  }
 });
 
 test('the "Settings → Change password" prose is a real link', () => {
@@ -444,8 +487,12 @@ test('the CLI credentials list has a staging ?demo=1 injection', () => {
 
 test('settings.js passes ?demo=1 through to the credentials list', () => {
   assert.match(settingsJs, /_cliTokensDemo\(\)\s*\{/, 'the passthrough helper exists');
+  // Scoped to _loadCliTokens, not the whole module — the point is that the
+  // passthrough is on the request this function builds. The window grew
+  // when the capability gate (_cliAuthAvailable — skip the fetch entirely
+  // where the CLI surface is 404'd) landed above the query construction.
   const load = settingsJs.slice(settingsJs.indexOf('    async _loadCliTokens(reset) {'));
-  assert.match(load.slice(0, 1600), /_cliTokensDemo\(\) \? '&demo=1' : ''/,
+  assert.match(load.slice(0, 2600), /_cliTokensDemo\(\) \? '&demo=1' : ''/,
     'the page-level ?demo=1 reaches the endpoint');
   assert.match(settingsJs, /!token\.demo/, 'Revoke is suppressed on demo rows');
 });
@@ -490,4 +537,247 @@ test('dapp.json covers the settings screen and its deep links', () => {
         `${t.path} needs ?demo=1 — its table is staging:private / not cloned`);
     }
   }
+});
+
+// ── Usernode-app section: a failed native read is diagnosable ───────────
+//
+// The bridge's chrome reads resolve null on a timeout, on a native
+// rejection AND on a refused privileged handshake alike, so the section
+// used to collapse all of them into one dead-end line with no reason and
+// no way back (issue #978). What is pinned here:
+//   - the failure REASON is rendered from the bridge's out-of-band record,
+//     mapped per `kind`, with the app's own message beside it;
+//   - "Try again" retries in place;
+//   - the blocks that DON'T need the snapshot still render, so a failed
+//     read is not a dead end;
+//   - the auth-status re-attempt is removed as well as added, and bounded.
+// This section is the sanctioned exception to MOVE, DON'T REWRITE: the
+// #settings-usernode-section node ships EMPTY in index.html and is built
+// entirely by settings.js, so its controls are bound per render.
+
+test('the usernode section renders a reason, not just "could not load"', () => {
+  assert.match(settingsJs, /USERNODE_READ_ERROR_REASONS: \{/,
+    'the kind -> sentence map exists');
+  for (const kind of [
+    'timeout', 'rejected', 'probe-inconclusive', 'no-transport', 'not-native',
+  ]) {
+    assert.match(settingsJs, new RegExp(`'${kind}':`),
+      `${kind} has a plain-language sentence`);
+  }
+  assert.match(settingsJs, /USERNODE_READ_ERROR_FALLBACK: '[^']+'/,
+    'an unknown/absent kind still says something concrete');
+  assert.match(settingsJs, /_usernodeReadError\(\)\s*\{/,
+    'the reason is read through one helper');
+  assert.match(settingsJs, /NativeChrome\.lastReadError\('getSettingsState'\)/,
+    'it comes from the shared bridge record, not a settings-local guess');
+  assert.match(settingsJs, /'Could not load Usernode app settings\.'/,
+    'the headline is unchanged so existing reports stay recognisable');
+  assert.match(settingsJs, /font-mono[^']*', *\n? *readError\.message/,
+    "the app's own message is rendered verbatim");
+});
+
+test('the failed read is recoverable in place', () => {
+  const box = settingsJs.slice(
+    settingsJs.indexOf('    _renderUsernodeError(parent, readError, loading) {'),
+    settingsJs.indexOf('    _renderSocialPushSection(section) {'),
+  );
+  assert.ok(box, '_renderUsernodeError exists');
+  assert.match(box, /box\.id = 'settings-usernode-error'/,
+    'the error box has a stable id');
+  assert.match(box, /retry\.id = 'settings-usernode-retry'/,
+    'the retry button has a stable id');
+  assert.match(box, /'Try again'/, 'the retry is offered on the screen');
+  assert.match(box, /_renderUsernodeBody\(readError, true\)/,
+    'a retry swaps the box for a progress line instead of blanking the section');
+  assert.match(box, /await this\._renderUsernodeSection\(\)/,
+    'the retry re-runs the read');
+  // The JS-built ids must NOT be in the static shell — that is what makes
+  // this section the exception to the id-binding rule.
+  for (const id of ['settings-usernode-error', 'settings-usernode-retry']) {
+    assert.doesNotMatch(html, new RegExp(`id="${id}"`),
+      `#${id} is built by settings.js, never shipped in the markup`);
+  }
+});
+
+test('a failed read still leaves the snapshot-independent blocks up', () => {
+  const body = settingsJs.slice(
+    settingsJs.indexOf('    _renderUsernodeBody(readError, loading) {'),
+    settingsJs.indexOf('    _renderUsernodeError(parent, readError, loading) {'),
+  );
+  assert.ok(body, '_renderUsernodeBody takes the failure record');
+  assert.match(body, /if \(!s\) \{\n\s+this\._renderUsernodeError\(/,
+    'the error box replaces ONLY the snapshot-dependent permissions block');
+  // These need no snapshot, so they must not sit behind an `if (s)`.
+  for (const call of [
+    'this._renderSocialPushSection(section);',
+    'this._renderBpSection(section);',
+    'this._renderUsernodeFaq(aboutBox,',
+    "this._openNativeScreen('benchmark',",
+    "this._openNativeScreen('httpLogs',",
+  ]) {
+    assert.ok(body.includes(call), `${call} runs with or without a snapshot`);
+  }
+  // These read the snapshot, so every one of them must be guarded.
+  for (const guarded of [
+    's.nodeSleepEnabled', 's.facematchStrict', 's.debugMode', 's.authStatus',
+  ]) {
+    const at = body.indexOf(guarded);
+    assert.ok(at > -1, `${guarded} still drives its control`);
+    assert.match(body.slice(0, at), /if \(s\) \{|if \(s && /,
+      `${guarded} is only read behind a snapshot guard`);
+  }
+  assert.match(body, /const perms = \(s && s\.permissions\) \|\| \{\}/,
+    'no snapshot means no permission rows, not a TypeError');
+  assert.match(body, /const bi = \(s && s\.buildInfo\) \|\| \{\}/,
+    'the build line simply goes missing without a snapshot');
+});
+
+test('the usernode read is retried once on readiness and never leaks a listener', () => {
+  assert.match(settingsJs, /_armUsernodeAuthStatusRetry\(\)\s*\{/);
+  assert.match(settingsJs, /_clearUsernodeAuthStatusRetry\(\)\s*\{/);
+  const arm = settingsJs.slice(
+    settingsJs.indexOf('    _armUsernodeAuthStatusRetry() {'),
+    settingsJs.indexOf('    _clearUsernodeAuthStatusRetry() {'),
+  );
+  assert.match(arm, /if \(this\._usernodeAuthStatusListener\) return;/,
+    'never double-registers');
+  assert.match(arm, /if \(this\._usernodeAuthRetryUsed\) return;/,
+    'bounded: one re-attempt per mount, not a retry loop');
+  assert.match(arm, /d\.phase !== 'ready'/,
+    'it waits for a ready identity, the same signal native-chrome.js uses');
+  assert.match(arm,
+    /window\.addEventListener\('usernode:auth-status', listener\)/);
+  const clear = settingsJs.slice(
+    settingsJs.indexOf('    _clearUsernodeAuthStatusRetry() {'),
+    settingsJs.indexOf('    _renderUsernodeBody(readError, loading) {'),
+  );
+  assert.match(clear,
+    /window\.removeEventListener\(\n?\s*'usernode:auth-status'/,
+    'the listener is removed, following the social-push discipline');
+  // Removed on a successful read, on close, and reset per mount.
+  const section = settingsJs.slice(
+    settingsJs.indexOf('    async _renderUsernodeSection() {'),
+    settingsJs.indexOf('    _usernodeReadError() {'),
+  );
+  assert.match(section, /this\._clearUsernodeAuthStatusRetry\(\);\n\s+this\._renderUsernodeBody\(\);/,
+    'a successful read stops listening');
+  const close = settingsJs.slice(settingsJs.indexOf('    close() {'));
+  assert.match(close.slice(0, 500), /_clearUsernodeAuthStatusRetry\(\)/,
+    'leaving Settings stops listening');
+  const openIdx = settingsJs.indexOf('    open(section, opts) {');
+  assert.ok(openIdx >= 0, 'Settings.open(section, opts) exists');
+  const open = settingsJs.slice(openIdx);
+  assert.match(open.slice(0, 900), /_usernodeAuthRetryUsed = false/,
+    'the one re-attempt is offered again on the next visit');
+});
+
+test('activity notifications wait for native admission and surface failures', () => {
+  const section = settingsJs.slice(
+    settingsJs.indexOf('    _renderSocialPushSection(section) {'),
+    settingsJs.indexOf('    // Block production queue')
+  );
+  assert.match(section, /NativeChrome\.isSessionAdmitted\(\)/,
+    'a closed handoff renders recovery instead of a stale toggle');
+  assert.match(section, /NativeChrome\.recoverSessionAdmission\(\)/,
+    'the notification section offers an explicit handoff retry');
+  assert.match(section, /Finishing secure app sign-in/);
+  assert.match(section, /includeErrorDetail: true/,
+    'native storage and admission errors remain visible to the user');
+});
+
+test('only the newest usernode read attempt paints', () => {
+  const section = settingsJs.slice(
+    settingsJs.indexOf('    async _renderUsernodeSection() {'),
+    settingsJs.indexOf('    _usernodeReadError() {'),
+  );
+  assert.match(section, /const token = \+\+this\._usernodeRenderToken;/,
+    'each attempt is tagged');
+  assert.match(section, /if \(token !== this\._usernodeRenderToken\) return;/,
+    'a stale 12s read cannot overwrite a fresher result');
+});
+
+// ── #907: the "Local coding agent" block ───────────────────────────────────
+
+test('the local-agent block lives in Experimental and ships hidden', () => {
+  // Experimental, not the CLI section: this is a preview of the same feature
+  // the dev chat's "Run on" selector exposes, and a lease is not a credential
+  // — revoking a token is a security action, detaching a machine is a
+  // routing one, and putting them side by side would blur that.
+  const experimental = html.slice(
+    html.indexOf('data-settings-section="experimental"'),
+    html.indexOf('data-settings-section="experimental"') + 12000
+  );
+  assert.match(experimental, /id="settings-local-agents-section"/);
+  assert.match(experimental, /id="settings-local-agents-list"/);
+  assert.match(experimental, /id="settings-local-agents-status"/);
+  // Hidden by default and only revealed when the user actually has one,
+  // so it costs nothing for the overwhelming majority who never run the CLI.
+  assert.match(experimental, /id="settings-local-agents-section" class="hidden/);
+  assert.match(experimental, /Local coding agent/);
+  // The copy has to answer "what still happens on Usernode?", because
+  // "runs on your machine" otherwise reads as "Usernode stops working".
+  assert.match(experimental, /Usernode still opens the pull request/);
+});
+
+test('the machine list is built as DOM nodes, never innerHTML', () => {
+  const render = settingsJs.slice(
+    settingsJs.indexOf('_renderLocalAgentsSection()'),
+    settingsJs.indexOf('_detachLocalAgent(')
+  );
+  // The label is free text typed on someone's own laptop and arrives here
+  // verbatim. This section follows the screen's MOVE-DON'T-REWRITE rule too:
+  // it only ever writes into its own list host.
+  assert.ok(!/innerHTML\s*=\s*`/.test(render), 'no template-literal innerHTML');
+  assert.match(render, /createElement\(/);
+  assert.match(render, /\.textContent = /);
+  assert.match(render, /list\.textContent = '';/, 'the list host is emptied, not rewritten');
+});
+
+test('the machine list hides itself when there is nothing to list', () => {
+  const render = settingsJs.slice(
+    settingsJs.indexOf('_renderLocalAgentsSection()'),
+    settingsJs.indexOf('_detachLocalAgent(')
+  );
+  assert.match(render, /section\.classList\.toggle\('hidden', agents\.length === 0\)/);
+  // The status line starts hidden on every pass, so a stale error from a
+  // previous attempt cannot survive a successful one.
+  assert.match(render, /status\.classList\.add\('hidden'\);/);
+  assert.match(render, /status\.classList\.remove\('hidden'/);
+  // A read failure leaves `agents` empty, which hides the block rather than
+  // leaving a half-painted list up.
+  assert.match(render, /\} catch \{\}/);
+});
+
+test('the machine list reads the account route, not the CLI surface', () => {
+  assert.match(settingsJs, /\/api\/me\/local-agents/);
+  // Staging demo rows come from the same request-time ?demo=1 convention the
+  // token list uses, so a staging clone can review this block at all.
+  const render = settingsJs.slice(
+    settingsJs.indexOf('_renderLocalAgentsSection()'),
+    settingsJs.indexOf('_detachLocalAgent(')
+  );
+  assert.match(render, /_cliTokensDemo\(\) \? '\?demo=1' : ''/);
+  assert.match(render, /Demo data/);
+});
+
+test('detaching is confirmed, and an already-gone lease is not an error', () => {
+  const detach = settingsJs.slice(
+    settingsJs.indexOf('_detachLocalAgent('),
+    settingsJs.indexOf('_detachLocalAgent(') + 1800
+  );
+  assert.match(detach, /method: 'DELETE'/);
+  assert.match(detach, /204|404/);
+  assert.match(detach, /confirm/i);
+  // Demo rows have no Detach button at all — there is nothing to detach.
+  const card = settingsJs.slice(
+    settingsJs.indexOf('_localAgentCard('),
+    settingsJs.indexOf('_detachLocalAgent(')
+  );
+  assert.match(card, /!agent\.demo/);
+});
+
+test('the Experimental toggle still gates the whole section', () => {
+  // The block is painted from _renderExperimentalSection, so it inherits the
+  // existing preview gate rather than inventing a second one.
+  assert.match(settingsJs, /_renderExperimentalSection\(\)[\s\S]{0,4000}_renderLocalAgentsSection\(\)/);
 });

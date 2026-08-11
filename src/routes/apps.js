@@ -183,6 +183,65 @@ function demoIconApps() {
       featured: true,
       featured_order: 1,
     },
+    // A deliberately LONG name (#951). The tile label is two 11px lines
+    // clamped with an ellipsis, and the only way a reviewer can see that
+    // working — here and in the before/after screenshots — is a name that
+    // actually overflows one line at phone width.
+    {
+      ...base,
+      id: 900012,
+      slug: 'staging-demo-long-name',
+      name: 'Staging demo photo album and journal',
+      icon_emoji: '📔',
+    },
+    // Four more featured rows so the Discover widget's curated lane is
+    // reviewable AT ITS CAP (#949): the lane holds six tiles — one per
+    // Home.FEATURED_LIMIT slot — and the whole point of the six-track grid
+    // is that all six fit on ONE row. With only the two rows above, a
+    // staging capture showed a third-full lane and proved nothing.
+    {
+      ...base, id: 900004, slug: 'staging-demo-featured-2',
+      name: 'Staging demo featured 2', icon_emoji: '🎲',
+      featured: true, featured_order: 2,
+    },
+    {
+      ...base, id: 900005, slug: 'staging-demo-featured-3',
+      name: 'Staging demo featured 3', icon_emoji: '🧩',
+      featured: true, featured_order: 3,
+    },
+    {
+      ...base, id: 900006, slug: 'staging-demo-featured-4',
+      name: 'Staging demo featured 4', icon_emoji: '🚀',
+      featured: true, featured_order: 4,
+    },
+    {
+      ...base, id: 900007, slug: 'staging-demo-featured-5',
+      name: 'Staging demo featured 5', icon_emoji: '🎨',
+      featured: true, featured_order: 5,
+    },
+    // ...and four NON-featured rows carrying an active-user count, for the
+    // desktop widget's second lane (Home.popularApps ranks by
+    // `active_users` and drops anything at zero). Without these the Popular
+    // lane is empty in every staging preview — the clone's own rows keep
+    // their real counts, but a check runs against a fresh database.
+    // Numbers here where production sends bigint STRINGS; the client
+    // coerces either, and tests cover both shapes.
+    {
+      ...base, id: 900008, slug: 'staging-demo-popular-1',
+      name: 'Staging demo popular 1', icon_emoji: '🔥', active_users: 12,
+    },
+    {
+      ...base, id: 900009, slug: 'staging-demo-popular-2',
+      name: 'Staging demo popular 2', icon_emoji: '📈', active_users: 9,
+    },
+    {
+      ...base, id: 900010, slug: 'staging-demo-popular-3',
+      name: 'Staging demo popular 3', icon_emoji: '🎧', active_users: 7,
+    },
+    {
+      ...base, id: 900011, slug: 'staging-demo-popular-4',
+      name: 'Staging demo popular 4', icon_emoji: '🗺️', active_users: 5,
+    },
   ];
 }
 
@@ -1134,7 +1193,15 @@ function appRoutes(config) {
   //     privacy flag, and who changed it.
   async function setPlatformVariable(req, res, app) {
     const key = String(req.params.key || '');
-    const value = typeof req.body?.value === 'string' ? req.body.value : null;
+    // Trimmed before anything else looks at it (see
+    // platform-env.normalizeValue): a pasted value's surrounding
+    // whitespace is invisible in the panel and would otherwise survive
+    // all the way into /opt/usernode/.env. The DAO normalizes too — this
+    // call is what makes a whitespace-only value a 400 from here rather
+    // than a throw from setValue() caught into a 500 below.
+    const value = platformEnv.normalizeValue(
+      typeof req.body?.value === 'string' ? req.body.value : null
+    );
 
     if (!platformEnv.isWritableKey(key)) {
       log.warn('apps', 'Platform-env write refused: unwritable key', {
@@ -1428,7 +1495,12 @@ function appRoutes(config) {
 
   router.put('/api/apps/:slug/secrets/:key', drainGuard, async (req, res) => {
     if (!req.user?.canAdminWrite) return res.status(403).json({ error: 'Full admin access required' });
-    const value = req.body && typeof req.body.value === 'string' ? req.body.value : '';
+    // Trimmed before the emptiness check, so a whitespace-only value is a
+    // 400 here rather than passing this gate and throwing inside
+    // appSecrets.setValue() (which the catch below would turn into a 500).
+    const value = appSecrets.normalizeValue(
+      req.body && typeof req.body.value === 'string' ? req.body.value : ''
+    );
     if (!value.length) return res.status(400).json({ error: 'value is required' });
 
     try {
@@ -1521,7 +1593,14 @@ function appRoutes(config) {
   router.post('/api/apps/:slug/secret-declaration-pr', drainGuard, issueCreateLimiter, async (req, res) => {
     const body = req.body || {};
     const key = typeof body.key === 'string' ? body.key.trim() : '';
-    const value = typeof body.value === 'string' ? body.value : '';
+    // Trimmed up front so every value rule below (the length cap, the
+    // required-needs-a-value rule, .env representability) and every
+    // downstream write — the immediate admin write, the held pending value —
+    // all see the same normalized string. Both DAOs implement the identical
+    // rule, so either normalizeValue serves both scopes.
+    const value = platformEnv.normalizeValue(
+      typeof body.value === 'string' ? body.value : ''
+    );
     const description = typeof body.description === 'string' ? body.description.trim() : '';
     const defaultValue = typeof body.default === 'string' && body.default.length ? body.default : null;
     const stagingDefault = typeof body.stagingDefault === 'string' && body.stagingDefault.length

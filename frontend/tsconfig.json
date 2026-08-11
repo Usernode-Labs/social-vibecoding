@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    // #1079 chunk B moved two legacy modules into src/features/** as .js. They
+    // are resolvable imports but deliberately NOT type-checked (checkJs stays
+    // off): they are verbatim moves of untyped DOM code, and retyping them
+    // would obscure that.
+    "allowJs": true,
+    "checkJs": false,
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "types": ["vite/client"],
+    "baseUrl": ".",
+    "paths": { "@/*": ["./@/*"] }
+  },
+  "include": ["src", "@"]
+}

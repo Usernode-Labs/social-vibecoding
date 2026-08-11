@@ -36,7 +36,7 @@ integrity attribute at all.
 
 - **marked-15.0.12.min.js** — Markdown → HTML for renderMarkdown() in public/js/dev-chat.js (also used by group-chat.js and app-view.js).
 - **purify-3.4.4.min.js** — Sanitizes that rendered markdown before it reaches innerHTML. Never bypass it.
-- **qrcode-1.0.0.min.js** — Wallet address QR codes (public/js/wallet-sheet.js, public/js/settings.js). npm mirror of davidshimjs/qrcodejs, which the old /gh/ CDN URL served UNPINNED.
+- **qrcode-1.0.0.min.js** — Wallet address QR codes (frontend/src/features/header/wallet-sheet.js, public/js/settings.js). npm mirror of davidshimjs/qrcodejs, which the old /gh/ CDN URL served UNPINNED.
 
 ## Centrally-hosted Tailwind runtime (served to child apps)
 

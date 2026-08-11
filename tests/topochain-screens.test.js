@@ -105,8 +105,12 @@ test('the hash router aliases both #topochain sub-routes onto the sections', () 
   assert.ok(branch.length > 0, 'the topochain router branch is located');
   assert.match(branch, /parts\[1\] === 'seasons' \? 'challenges' : 'topochain'/,
     'seasons maps onto the challenges tab, everything else onto standings');
-  assert.match(branch, /history\.replaceState\(null, '', `#leaderboard\/\$\{_tcSection\}`\)/,
-    'the legacy hash is rewritten to its canonical #leaderboard/<section> form');
+  // Canonical form per section: the standings are the screen's PRIMARY tab,
+  // so their address is the bare #leaderboard (rewriting to
+  // #leaderboard/topochain here would only make Leaderboard._syncHash
+  // rewrite it a second time).
+  assert.match(branch, /_tcSection === 'challenges' \? '#leaderboard\/challenges' : '#leaderboard'/,
+    'the legacy hash is rewritten to its canonical form');
   assert.match(branch, /App\.navigateToLeaderboard\(_tcSection, null\)/,
     'then dispatches to the Leaderboard screen on that section');
   assert.ok(branch.indexOf('replaceState') < branch.indexOf('navigateToLeaderboard'),
@@ -114,8 +118,10 @@ test('the hash router aliases both #topochain sub-routes onto the sections', () 
 });
 
 test('the Leaderboard screen carries no isAdmin gate', () => {
+  // Anchored on the name, not the full parameter list — the signature grew a
+  // third argument for the #982 challenge deep link and will grow again.
   const lbFn = appJs.slice(
-    appJs.indexOf('  navigateToLeaderboard(sub, profileUser)'),
+    appJs.indexOf('  navigateToLeaderboard(sub, profileUser'),
     appJs.indexOf('  _exitLeaderboard()')
   );
   assert.ok(lbFn.length > 0, 'navigateToLeaderboard exists in app.js');
@@ -181,7 +187,10 @@ test('TopochainChallenges defines the expected surface', () => {
   // The hero and the event list moved to the shared context module.
   assert.ok(!challengesJs.includes('_renderHero()'),
     'the challenges pane no longer renders an event hero of its own');
-  assert.ok(!challengesJs.includes('loadEvents()'),
+  // Same comment-stripping as the standings pane above: the subscriber in
+  // open() explains itself by naming the context module's initial
+  // loadEvents(), and prose about another module's method is not a call.
+  assert.ok(!challengesJs.replace(/\/\/[^\n]*/g, '').includes('loadEvents()'),
     'the challenges pane no longer loads the event list itself');
 });
 

@@ -137,9 +137,36 @@ test('truncateRows: caps by serialized byte size', () => {
 // ── Container-log allowlist + tail clamp ───────────────────────────────
 
 test('isAllowedLogContainer: exact platform names allowed', () => {
-  for (const n of ['usernode', 'usernode-db', 'usernode-node', 'caddy', 'acme-dns']) {
+  for (const n of ['usernode', 'usernode-blue', 'usernode-green',
+    'usernode-db', 'usernode-node', 'usernode-minio', 'caddy', 'acme-dns']) {
     assert.equal(debugAccess.isAllowedLogContainer(n), true, n);
   }
+});
+
+test('every container_name in docker-compose.yml is a readable log container', () => {
+  // Derived from the compose file rather than restated, because the last
+  // time these two lists drifted it cost a whole production investigation:
+  // the platform moved to blue-green (`usernode-blue` / `usernode-green`)
+  // while the allowlist still named the retired single `usernode` service,
+  // so `usernode-debug logs usernode` answered "No such container" and the
+  // connector's PR failure went uncharacterised for an afternoon.
+  //
+  // The check runs the other way round on purpose: a container the platform
+  // RUNS but the debugger cannot READ is the failure mode. Extra names in
+  // the allowlist (`usernode` itself, kept for pre-blue-green and
+  // self-hosted single-instance deploys) are fine.
+  const compose = fs.readFileSync(path.join(__dirname, '../docker-compose.yml'), 'utf8');
+  const names = [...compose.matchAll(/^\s*container_name:\s*(\S+)\s*$/gm)].map((m) => m[1]);
+  assert.ok(names.length >= 7, `found the compose services (got ${names.length})`);
+  for (const name of names) {
+    assert.equal(
+      debugAccess.isAllowedLogContainer(name), true,
+      `docker-compose.yml runs "${name}" but prod-debug cannot read its logs — `
+      + 'add it to LOG_CONTAINER_EXACT in src/services/debug-access.js'
+    );
+  }
+  // The two colours specifically: this is the case that actually broke.
+  assert.ok(names.includes('usernode-blue') && names.includes('usernode-green'));
 });
 
 test('isAllowedLogContainer: managed prefixes allowed, bare prefix rejected', () => {
@@ -237,7 +264,8 @@ test('mayorPromptBlock names the Mayor tool, dispatch direction, pages, and the 
 test('secret env: PROD_DEBUG_JWT present for build + scout when granted', () => {
   for (const mode of ['build', 'scout']) {
     const env = worker.buildTurnSecretEnv({
-      mode, workerJwt: 'wjwt', anthropicApiKey: null, prodDebugJwt: 'dbgjwt',
+      mode, workerSessionJwt: 'session-jwt', issuesReadJwt: 'issues-jwt',
+      anthropicProxyJwt: 'proxy-jwt', anthropicApiKey: null, prodDebugJwt: 'dbgjwt',
     });
     assert.equal(env.PROD_DEBUG_JWT, 'dbgjwt', mode);
   }
@@ -245,37 +273,45 @@ test('secret env: PROD_DEBUG_JWT present for build + scout when granted', () => 
 
 test('secret env: never on sync turns, never when not granted', () => {
   const sync = worker.buildTurnSecretEnv({
-    mode: 'sync', workerJwt: 'wjwt', anthropicApiKey: null, prodDebugJwt: 'dbgjwt',
+    mode: 'sync', workerSessionJwt: 'session-jwt', issuesReadJwt: 'issues-jwt',
+    anthropicProxyJwt: 'proxy-jwt', anthropicApiKey: null, prodDebugJwt: 'dbgjwt',
   });
   assert.ok(!('PROD_DEBUG_JWT' in sync));
   for (const mode of ['build', 'scout', 'sync']) {
     const env = worker.buildTurnSecretEnv({
-      mode, workerJwt: 'wjwt', anthropicApiKey: null, prodDebugJwt: null,
+      mode, workerSessionJwt: 'session-jwt', issuesReadJwt: 'issues-jwt',
+      anthropicProxyJwt: 'proxy-jwt', anthropicApiKey: null, prodDebugJwt: null,
     });
     assert.ok(!('PROD_DEBUG_JWT' in env), mode);
   }
 });
 
-test('secret env: pre-existing shape is preserved (scout has no WORKER_JWT)', () => {
+test('secret env: Claude scout has no general worker-token alias', () => {
   const scout = worker.buildTurnSecretEnv({
-    mode: 'scout', workerJwt: 'wjwt', anthropicApiKey: null, prodDebugJwt: null,
+    mode: 'scout', workerSessionJwt: 'must-not-travel', issuesReadJwt: 'issues-jwt',
+    anthropicProxyJwt: 'proxy-jwt', anthropicApiKey: null, prodDebugJwt: null,
   });
-  assert.deepEqual(scout, { ANTHROPIC_API_KEY: 'wjwt', ISSUES_JWT: 'wjwt' });
+  assert.deepEqual(scout, { ANTHROPIC_API_KEY: 'proxy-jwt', ISSUES_JWT: 'issues-jwt' });
+  assert.ok(!Object.values(scout).includes('must-not-travel'));
   const build = worker.buildTurnSecretEnv({
-    mode: 'build', workerJwt: 'wjwt', anthropicApiKey: 'sk-byok', prodDebugJwt: null,
+    mode: 'build', workerSessionJwt: 'session-jwt', issuesReadJwt: 'issues-jwt',
+    anthropicProxyJwt: null, anthropicApiKey: 'sk-byok', prodDebugJwt: null,
   });
   assert.deepEqual(build, {
-    ANTHROPIC_API_KEY: 'sk-byok', WORKER_JWT: 'wjwt', ISSUES_JWT: 'wjwt',
+    ANTHROPIC_API_KEY: 'sk-byok', WORKER_JWT: 'session-jwt', ISSUES_JWT: 'issues-jwt',
   });
 });
 
 // ── JWT claims ─────────────────────────────────────────────────────────
 
 test('mintProdDebugJwt carries the prod_debug claim; mintWorkerJwt does not', () => {
-  const dbg = platformJwt.verifyWorkerToken(worker.mintProdDebugJwt(7));
-  assert.equal(dbg.scope, 'worker:session');
+  const dbgToken = worker.mintProdDebugJwt(7);
+  const dbg = platformJwt.verifyProdDebugToken(dbgToken);
+  assert.equal(dbg.scope, 'worker:prod-debug');
   assert.equal(dbg.session_id, 7);
   assert.equal(dbg.prod_debug, true);
+  assert.throws(() => platformJwt.verifyWorkerToken(dbgToken), /purpose|scope/,
+    'read-only debug token cannot authenticate a worker mutation');
 
   const plain = platformJwt.verifyWorkerToken(worker.mintWorkerJwt(7));
   assert.equal(plain.scope, 'worker:session');

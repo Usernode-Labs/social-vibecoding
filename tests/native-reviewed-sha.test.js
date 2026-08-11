@@ -46,6 +46,11 @@ function loadVotes({
   liveHead = NEW,
   mergeImpl = async () => ({ sha: 'merge-sha' }),
   getPRImpl = null,
+  // #955: platform-push provenance rows the classifier reads, keyed by SHA,
+  // plus whether a platform sync is currently in flight for the session.
+  platformPushes = {},
+  syncing = false,
+  commitParents = {},
 } = {}) {
   const ids = {
     logger: require.resolve('../src/services/logger'),
@@ -66,6 +71,7 @@ function loadVotes({
     worker: require.resolve('../src/services/worker'),
     visuals: require.resolve('../src/services/visuals'),
     prImportSync: require.resolve('../src/services/pr-import-sync'),
+    syncMain: require.resolve('../src/services/sync-main'),
     subject: require.resolve('../src/routes/votes'),
   };
   const original = {};
@@ -77,6 +83,8 @@ function loadVotes({
   const voteUpdates = [];
   const messages = [];
   const rebuilds = [];
+  const backfills = [];
+  const resolveKicks = [];
 
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.pool, { getPool: () => recordingPool() });
@@ -89,6 +97,7 @@ function loadVotes({
       mergeCalls.push({ owner, repo, prNumber, sha });
       return mergeImpl({ owner, repo, prNumber, sha });
     },
+    getCommitParents: async (_owner, _repo, sha) => commitParents[String(sha).toLowerCase()] || [],
     invalidateIssuesCache() {},
     noteIssuesClosed() {},
   });
@@ -98,7 +107,7 @@ function loadVotes({
   });
   stub(ids.docker, {});
   stub(ids.resolver, {
-    checkAndResolveConflicts: async () => {},
+    checkAndResolveConflicts: async (_config, trigger) => { resolveKicks.push(trigger); },
     resolveAndMaybeRetry: async () => ({ ok: true }),
     isResolving: () => false,
   });
@@ -149,6 +158,11 @@ function loadVotes({
   stub(ids.prImportSync, {
     rerunChecksForNewHead: async (args) => { rerunCalls.push(args); },
   });
+  stub(ids.syncMain, {
+    getSyncState: () => (syncing ? { phase: 'pushing', startedAt: Date.now() } : null),
+    findPlatformPush: async (_pool, _sessionId, sha) => platformPushes[String(sha).toLowerCase()] || null,
+    backfillPlatformPushParent: async () => { backfills.push(true); },
+  });
 
   delete require.cache[ids.subject];
   const subject = require(ids.subject);
@@ -160,7 +174,7 @@ function loadVotes({
   };
   return {
     subject, mergeCalls, pendingCalls, rerunCalls, voteUpdates, messages,
-    rebuilds, restore,
+    rebuilds, backfills, resolveKicks, restore,
   };
 }
 
@@ -217,6 +231,285 @@ test('native head reconciliation clears stale votes and re-runs checks at the ne
     assert.deepEqual(ctx.pendingCalls, [{ sessionId: session.id, sha: NEW }]);
     assert.equal(ctx.rerunCalls[0].newHead, NEW);
     assert.ok(ctx.messages.some((m) => /earlier votes were cleared/i.test(m)));
+  } finally {
+    ctx.restore();
+  }
+});
+
+// #955 --------------------------------------------------------------------
+// The platform resolves conflicts on a proposal branch by merging main into
+// it and pushing. That commit changes the branch without changing the patch
+// under review, so the approvals it already earned must survive it — only an
+// AUTHOR push may clear them.
+
+const PLATFORM_PUSH = { sha: NEW, first_parent_sha: OLD, kind: 'sync_main', sync_result: 'resolved' };
+
+test('the platform\'s own conflict-resolution commit carries votes instead of clearing them', async () => {
+  const ctx = loadVotes({
+    liveHead: NEW,
+    platformPushes: { [NEW]: PLATFORM_PUSH },
+  });
+  const pool = recordingPool([
+    [/WITH claimed AS[\s\S]*UPDATE chat_sessions/, [{
+      reviewed_head_sha: NEW, votes_moved: 2, votes_deleted: 0,
+    }]],
+  ]);
+  const session = nativeSession();
+  try {
+    const result = await ctx.subject.reconcileNativeReviewedHead({
+      config: {}, pool, session, fresh: true,
+    });
+    assert.equal(result.headSha, NEW);
+    assert.equal(result.platformAdvance, true);
+    assert.equal(result.votesKept, true);
+    assert.equal(result.votesCarried, 2);
+    assert.equal(result.votesDropped, 0);
+
+    const update = pool.queries.find((q) => /WITH claimed AS/.test(q.sql));
+    assert.match(update.sql, /UPDATE pr_votes SET head_sha = \$1/,
+      'approvals for the previous revision move onto the platform commit');
+    assert.match(update.sql, /head_sha IS DISTINCT FROM \$3::varchar/,
+      'the delete is disjoint from the carried set — two data-modifying CTEs '
+      + 'touching one row in a single statement is undefined behaviour');
+    assert.ok(!ctx.messages.some((m) => /votes were cleared/i.test(m)),
+      'nobody is asked to re-review code they already approved');
+    assert.ok(ctx.messages.some((m) => /votes were kept/i.test(m)));
+    assert.ok(ctx.voteUpdates.some((u) => u.votesKept === true),
+      'open cards re-read the advanced pin so their next click is not rejected');
+  } finally {
+    ctx.restore();
+  }
+});
+
+test('a Claude-resolved platform tree re-runs checks; a clean git merge carries its verdict', async () => {
+  const resolved = loadVotes({ liveHead: NEW, platformPushes: { [NEW]: PLATFORM_PUSH } });
+  const resolvedPool = recordingPool([
+    [/WITH claimed AS[\s\S]*UPDATE chat_sessions/, [{
+      reviewed_head_sha: NEW, votes_moved: 1, votes_deleted: 0,
+    }]],
+  ]);
+  try {
+    await resolved.subject.reconcileNativeReviewedHead({
+      config: {}, pool: resolvedPool, session: nativeSession(), fresh: true,
+    });
+    assert.deepEqual(resolved.pendingCalls, [{ sessionId: 41, sha: NEW }],
+      'a tree Claude edited is unverified — the old verdict cannot stand');
+    assert.equal(resolved.rerunCalls[0].newHead, NEW);
+  } finally {
+    resolved.restore();
+  }
+
+  const clean = loadVotes({
+    liveHead: NEW,
+    platformPushes: { [NEW]: { ...PLATFORM_PUSH, sync_result: 'clean' } },
+  });
+  const cleanPool = recordingPool([
+    [/WITH claimed AS[\s\S]*UPDATE chat_sessions/, [{
+      reviewed_head_sha: NEW, votes_moved: 1, votes_deleted: 0,
+    }]],
+  ]);
+  const cleanSession = nativeSession();
+  try {
+    await clean.subject.reconcileNativeReviewedHead({
+      config: {}, pool: cleanPool, session: cleanSession, fresh: true,
+    });
+    assert.equal(clean.pendingCalls.length, 0,
+      'a pure git merge of tested main into a tested branch keeps its verdict');
+    assert.equal(clean.rerunCalls.length, 0);
+    assert.ok(cleanPool.queries.some((q) => /SET checks_commit_sha = \$1/.test(q.sql)),
+      'the carried verdict is re-stamped onto the new commit so the gate sees it');
+    assert.equal(cleanSession.checks_commit_sha, NEW);
+  } finally {
+    clean.restore();
+  }
+});
+
+test('a head move the platform never pushed still clears the tally', async () => {
+  const ctx = loadVotes({ liveHead: NEW, platformPushes: {} });
+  const pool = recordingPool([
+    [/WITH claimed AS[\s\S]*UPDATE chat_sessions/, [{
+      reviewed_head_sha: NEW, votes_moved: 0, votes_deleted: 2,
+    }]],
+  ]);
+  try {
+    const result = await ctx.subject.reconcileNativeReviewedHead({
+      config: {}, pool, session: nativeSession(), fresh: true,
+    });
+    assert.equal(result.platformAdvance, false);
+    assert.equal(result.votesDropped, 2);
+    const update = pool.queries.find((q) => /WITH claimed AS/.test(q.sql));
+    assert.match(update.sql, /DELETE FROM pr_votes/);
+    assert.ok(!/UPDATE pr_votes SET head_sha/.test(update.sql),
+      'an author push must never inherit approvals');
+    assert.ok(ctx.messages.some((m) => /votes were cleared/i.test(m)));
+  } finally {
+    ctx.restore();
+  }
+});
+
+test('a merge commit shaped like ours but never pushed by us is an author push', async () => {
+  // The first-parent shape is trivially forgeable — an author can merge main
+  // locally and push. Only recorded provenance may preserve votes.
+  const ctx = loadVotes({
+    liveHead: NEW,
+    platformPushes: {},
+    commitParents: { [NEW]: [OLD, 'c'.repeat(40)] },
+  });
+  const pool = recordingPool([
+    [/WITH claimed AS[\s\S]*UPDATE chat_sessions/, [{
+      reviewed_head_sha: NEW, votes_moved: 0, votes_deleted: 1,
+    }]],
+  ]);
+  try {
+    const result = await ctx.subject.reconcileNativeReviewedHead({
+      config: {}, pool, session: nativeSession(), fresh: true,
+    });
+    assert.equal(result.platformAdvance, false);
+    assert.equal(result.votesDropped, 1);
+  } finally {
+    ctx.restore();
+  }
+});
+
+test('stacked platform syncs are followed back to the reviewed revision', async () => {
+  // Prod shape (session 3015 / PR #952): the drain resolved, failed to merge,
+  // and resolved again before anything reconciled the row.
+  const MID = 'c'.repeat(40);
+  const ctx = loadVotes({
+    liveHead: NEW,
+    platformPushes: {
+      [NEW]: { sha: NEW, first_parent_sha: MID, sync_result: 'resolved' },
+      [MID]: { sha: MID, first_parent_sha: OLD, sync_result: 'resolved' },
+    },
+  });
+  const pool = recordingPool([
+    [/WITH claimed AS[\s\S]*UPDATE chat_sessions/, [{
+      reviewed_head_sha: NEW, votes_moved: 1, votes_deleted: 0,
+    }]],
+  ]);
+  try {
+    const result = await ctx.subject.reconcileNativeReviewedHead({
+      config: {}, pool, session: nativeSession(), fresh: true,
+    });
+    assert.equal(result.platformAdvance, true);
+    assert.equal(result.votesCarried, 1);
+  } finally {
+    ctx.restore();
+  }
+});
+
+test('a chain hop with an unrecorded parent falls back to the author-push reset', async () => {
+  const MID = 'c'.repeat(40);
+  const ctx = loadVotes({
+    liveHead: NEW,
+    // MID sits between the review and our commit but nobody recorded pushing
+    // it — it is author work being swept into a merge, so votes cannot ride it.
+    platformPushes: { [NEW]: { sha: NEW, first_parent_sha: MID, sync_result: 'clean' } },
+  });
+  const pool = recordingPool([
+    [/WITH claimed AS[\s\S]*UPDATE chat_sessions/, [{
+      reviewed_head_sha: NEW, votes_moved: 0, votes_deleted: 1,
+    }]],
+  ]);
+  try {
+    const result = await ctx.subject.reconcileNativeReviewedHead({
+      config: {}, pool, session: nativeSession(), fresh: true,
+    });
+    assert.equal(result.platformAdvance, false);
+  } finally {
+    ctx.restore();
+  }
+});
+
+test('a head move mid-sync defers instead of guessing, and writes nothing', async () => {
+  const ctx = loadVotes({ liveHead: NEW, platformPushes: {}, syncing: true });
+  const pool = recordingPool();
+  try {
+    const result = await ctx.subject.reconcileNativeReviewedHead({
+      config: {}, pool, session: nativeSession(), fresh: true,
+    });
+    assert.equal(result.blocked, true);
+    assert.equal(result.transient, true);
+    assert.match(result.reason, /synced with main/i);
+    assert.ok(!pool.queries.some((q) => /UPDATE|DELETE/.test(q.sql)),
+      'a vote that races our own push must not destroy the tally');
+    assert.equal(ctx.messages.length, 0);
+  } finally {
+    ctx.restore();
+  }
+});
+
+test('a live head differing only in letter case is the same revision', async () => {
+  const ctx = loadVotes({ liveHead: NEW.toUpperCase() });
+  const pool = recordingPool();
+  const session = nativeSession({ reviewed_head_sha: NEW });
+  try {
+    const result = await ctx.subject.reconcileNativeReviewedHead({
+      config: {}, pool, session, fresh: true,
+    });
+    assert.equal(result.unchanged, true);
+    assert.equal(pool.queries.length, 0, 'an identical commit clears nothing');
+  } finally {
+    ctx.restore();
+  }
+});
+
+test('a lazily-backfilled first parent proves provenance without a second GitHub read', async () => {
+  const ctx = loadVotes({
+    liveHead: NEW,
+    // Recorded, but its parents read failed at push time.
+    platformPushes: { [NEW]: { sha: NEW, first_parent_sha: null, sync_result: 'clean' } },
+    commitParents: { [NEW]: [OLD, 'd'.repeat(40)] },
+  });
+  const pool = recordingPool([
+    [/WITH claimed AS[\s\S]*UPDATE chat_sessions/, [{
+      reviewed_head_sha: NEW, votes_moved: 3, votes_deleted: 0,
+    }]],
+  ]);
+  try {
+    const result = await ctx.subject.reconcileNativeReviewedHead({
+      config: {}, pool, session: nativeSession(), fresh: true,
+    });
+    assert.equal(result.platformAdvance, true);
+    assert.equal(result.votesCarried, 3);
+    assert.equal(ctx.backfills.length, 1, 'the parent is cached for later passes');
+  } finally {
+    ctx.restore();
+  }
+});
+
+test('a merge whose pin was superseded by our own sync re-pins, keeps votes, and re-queues', async () => {
+  // The exact prod failure: the drain synced the branch, then pinned the merge
+  // to the pre-sync commit, GitHub 409'd, and the recovery wiped the tally.
+  const moved = new Error('head changed');
+  moved.headMoved = true;
+  const ctx = loadVotes({
+    liveHead: NEW,
+    mergeImpl: async () => { throw moved; },
+    platformPushes: { [NEW]: PLATFORM_PUSH },
+  });
+  const pool = recordingPool([
+    [/SET status = 'merging'/, [{ id: 41 }]],
+    [/SET status = 'promoted'/, { rows: [], rowCount: 1 }],
+    [/WITH claimed AS[\s\S]*UPDATE chat_sessions/, [{
+      reviewed_head_sha: NEW, votes_moved: 1, votes_deleted: 0,
+    }]],
+  ]);
+  try {
+    const result = await ctx.subject.checkAndMerge({}, pool, nativeSession(), {
+      force: true,
+      forceBy: { id: 1, username: 'admin' },
+    });
+    assert.equal(result.merged, false);
+    assert.equal(result.votesKept, true);
+    assert.equal(result.reviewedHeadSha, NEW);
+    const reconcile = pool.queries.find((q) => /WITH claimed AS/.test(q.sql));
+    assert.match(reconcile.sql, /UPDATE pr_votes SET head_sha = \$1/,
+      'approvals are carried onto our own sync commit, never dropped');
+    assert.ok(ctx.messages.some((m) => /votes were kept/i.test(m)));
+    assert.ok(ctx.resolveKicks.some((t) => t && t.app_id === 7),
+      'the drain is re-driven immediately so the merge retries against the '
+      + 'corrected pin instead of waiting out the hourly sweeper');
   } finally {
     ctx.restore();
   }
@@ -350,8 +643,8 @@ test('native head-moved merge returns to review and resets against the new live 
     assert.ok(ctx.voteUpdates.some((u) => u.headMoved === true
       && u.merging === false && u.merged === false),
       'the un-latch broadcast carries the terminal merging:false + '
-      + 'merged:false shape so self-app tabs drop the "Platform updating…" '
-      + 'banner (no deploy — hence no SHA flip — follows an aborted merge)');
+      + 'merged:false shape, so every client surface that advanced to '
+      + '"Merging…" falls back when the merge aborts');
   } finally {
     ctx.restore();
   }
@@ -411,7 +704,8 @@ test('an ambiguous native 409 defers when GitHub cannot verify the live head', a
     assert.ok(pool.queries.some((q) => /SET status = 'promoted'/.test(q.sql)),
       'the merge claim is released for a safe retry');
     assert.ok(ctx.voteUpdates.some((u) => u.merging === false && u.merged === false),
-      'the deferred outcome still un-latches self-app "Platform updating…" banners');
+      'the deferred outcome still broadcasts the terminal un-latch shape, '
+      + 'so no client is left showing "Merging…"');
   } finally {
     ctx.restore();
   }

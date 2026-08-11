@@ -25,7 +25,8 @@ const APP_VIEW_SRC = fs.readFileSync(
   'utf8'
 );
 const WORK_DRAWER_SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'work-drawer.js'),
+  // #1079 chunk B: same module, now inside the React bundle.
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'work-drawer', 'work-drawer.js'),
   'utf8'
 );
 // #405: the proposal card / cog-drawer section now derive their merge-state
@@ -87,7 +88,8 @@ test("card: a 'conflict' snapshot (merge attempt failed) shows the red 'Merge fa
     conflict_files: ['src/app.js', 'public/index.html'],
     behind_main: 2,
   }));
-  assert.match(html, /⚠ Merge failed — conflict/, 'red merge-failed badge present after a real attempt');
+  assert.match(html, /Merge conflict/, 'the pill names the conflict after a real attempt');
+  assert.match(html, /gc-vote-count-blocked/, 'blocked tone');
   assert.match(html, /creator needs to finish the merge/, 'tooltip names the way out');
   assert.doesNotMatch(html, /Behind main/, 'merge-failed outranks the neutral behind badge');
   assert.doesNotMatch(html, /Conflict resolution failed/, "the 'failed' affordance stays distinct");
@@ -111,7 +113,8 @@ test("card: a 'failed' snapshot shows the red 'Conflict resolution failed' affor
     conflict_files: ['src/server.js'],
     behind_main: 1,
   }));
-  assert.match(html, /⚠ Conflict resolution failed/, 'red failed badge present after a failed attempt');
+  assert.match(html, /Conflict resolution failed/, 'the pill names the failed auto-resolve');
+  assert.match(html, /gc-vote-count-blocked/, 'blocked tone');
   assert.doesNotMatch(html, /Behind main/, 'failed outranks the behind badge');
 });
 

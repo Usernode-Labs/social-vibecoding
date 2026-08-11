@@ -135,6 +135,35 @@ const baseApp = (over) => ({
   ...over,
 });
 
+test('card-menu shot retries after the initial empty home paint', () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  const frames = [];
+  const opened = [];
+  sandbox.location.search = '?demo=1&shot=card-menu';
+  sandbox.URLSearchParams = URLSearchParams;
+  sandbox.requestAnimationFrame = (fn) => { frames.push(fn); };
+  Home.openCardMenu = (slug) => { opened.push(slug); };
+
+  const empty = { offsetParent: {}, querySelector: () => null };
+  Home._maybeOpenShotMenu(empty);
+  assert.equal(Home._shotMenuPending, true);
+  frames.shift()();
+  assert.equal(Home._shotMenuPending, false);
+  assert.equal(Home._shotMenuDone, false,
+    'an empty pre-fetch paint must not consume the one-shot');
+
+  const button = { dataset: { slug: 'demo-app' } };
+  const populated = {
+    offsetParent: {},
+    querySelector: (selector) => (selector === '.card-menu-btn' ? button : null),
+  };
+  Home._apps = [baseApp()];
+  Home._maybeOpenShotMenu(populated);
+  frames.shift()();
+  assert.equal(Home._shotMenuDone, true);
+  assert.deepEqual(opened, ['demo-app']);
+});
+
 // ── Compact card markup ───────────────────────────────────────────
 
 test('card: one hamburger trigger, none of the old corner buttons', () => {
@@ -212,10 +241,10 @@ test('card layout: centered launcher tile, no visible border, capped title width
   const html = Home.renderAppCard(baseApp());
   // Icon + title block center horizontally in the tile.
   assert.match(html, /app-card[^"]*flex flex-col items-center text-center/, 'centered column');
-  assert.match(html, /flex items-center justify-center[^"]*max-w-full/, 'centered, width-capped title row');
-  // Long names truncate with an ellipsis instead of stretching:
-  // min-w-0 lets the flex item shrink, truncate clips it.
-  assert.match(html, /font-medium text-sm truncate min-w-0/, 'name truncates');
+  // Long names wrap to two iOS-sized lines and ellipsise there (#951):
+  // .app-card-title in app.css owns the size, the clamp and the fixed
+  // two-line lane that keeps every tile the same height.
+  assert.match(html, /<div class="app-card-title" title="[^"]*">/, 'clamped title lane');
   // The card element itself draws no border — hover tint (app.css) is
   // the affordance. (The hamburger badge keeps its own tiny border.)
   const cardCls = html.match(/class="(app-card [^"]*)"/)[1];
@@ -232,15 +261,25 @@ test('card: Retry pins to the card corner on errored cards, outside the hamburge
   assert.doesNotMatch(Home.renderAppCard(baseApp({ created_by: ME })), /retry-btn/);
 });
 
-test('card: active users render as a compact badge beside the title', () => {
+// A launcher tile is an icon and a label. The active-users badge and the
+// status dot that used to flank the name are both gone from the tile face:
+// the count still shows in the Browse-all DIRECTORY (a ranked list, where
+// popularity is the point), and every non-running status still says so in
+// words right below the name.
+test('card: the tile carries no users badge and no status dot', () => {
   const Home = makeHome({ id: ME });
-  const html = Home.renderAppCard(baseApp({ active_users: '12' }));
-  assert.match(html, /users-badge[^>]*title="12 active users"[\s\S]*?>12</, 'count + tooltip');
-  assert.doesNotMatch(html, /active user(s)?</, 'no spelled-out footer line');
-  // Uniform signal: the badge renders at zero too.
-  const zero = Home.renderAppCard(baseApp({ active_users: '0' }));
-  assert.match(zero, /users-badge[^>]*title="0 active users"/);
-  assert.doesNotMatch(zero, /No active users yet/, 'old empty-state line gone');
+  for (const users of ['12', '0']) {
+    const html = Home.renderAppCard(baseApp({ active_users: users }));
+    assert.doesNotMatch(html, /users-badge/, `users=${users}`);
+    assert.doesNotMatch(html, /status-dot/, `users=${users}`);
+    assert.doesNotMatch(html, /active user/, `users=${users}`);
+  }
+  // The word-form status signal survives — that is what makes dropping the
+  // dot safe for every state except an in-flight redeploy of a RUNNING app,
+  // which now shows only in the "…" menu's version pill.
+  assert.match(Home.renderAppCard(baseApp({ status: 'creating' })), /Spinning up/);
+  assert.match(Home.renderAppCard(baseApp({ status: 'awaiting_secrets' })), /Awaiting secrets/);
+  assert.match(Home.renderAppCard(baseApp({ status: 'error' })), /Error/);
 });
 
 test('card: no pills/chips of any kind on the card face', () => {
@@ -1126,6 +1165,412 @@ test('scheme watching is inert without the widget mechanism', async () => {
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(added.length, 0, 'no bridge traffic off the widget path');
 });
+
+// ── Dual-icon sender half (#948) ─────────────────────────────────────
+//
+// Where the shell advertises homeScreenShortcutDarkIcon, SV sends BOTH
+// faces and the widget picks per system appearance — natively, with SV
+// closed, which is the only way a pinned tile can follow a flip. Where
+// it doesn't, every assertion above still holds: the gen-5 single-face
+// path is untouched.
+
+// Installs a NativeChrome answering the capability probe. `capable`
+// false still installs one, so the "shell exists but lacks the flag"
+// case is covered as well as the plain-browser no-NativeChrome case.
+function stubCapability(sandbox, capable) {
+  sandbox.NativeChrome = {
+    has: async (cap) => capable === true && cap === 'homeScreenShortcutDarkIcon',
+  };
+}
+
+function stubCanvas(sandbox, paints) {
+  let n = 0;
+  sandbox.document.createElement = () => {
+    const mine = ++n;
+    return {
+      getContext: () => fakeCtx(paints),
+      // Distinct bytes per render, so a test can prove the payload
+      // carries two DIFFERENT images rather than the same one twice.
+      toDataURL: () => `data:image/png;base64,FAKE${mine}`,
+    };
+  };
+}
+
+test('payload: capable shell gets both faces, light first', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  stubCapability(sandbox, true);
+  stubScheme(sandbox, true); // system dark — must not shift the pair
+  const paints = [];
+  stubCanvas(sandbox, paints);
+  await Home._ensureDarkIconCapability();
+
+  const payload = Home._shortcutPayloadFor(baseApp());
+  assert.ok(payload.icon_url, 'light asset present');
+  assert.ok(payload.icon_url_dark, 'dark asset present');
+  assert.notEqual(payload.icon_url, payload.icon_url_dark, 'two distinct images');
+  // Face fills, in render order: light tile first, then the dark one.
+  const faces = paints.filter((p) => p.op === 'fill').map((p) => p.color);
+  assert.ok(faces.includes('#ffffff'), 'light face painted');
+  assert.ok(faces.includes('#1a1a30'), 'dark face painted');
+  assert.ok(faces.indexOf('#ffffff') < faces.indexOf('#1a1a30'),
+    'icon_url is the LIGHT asset — a shell that renders only it stays sane');
+});
+
+test('payload: the pair does not move with the system appearance', async () => {
+  const shots = [];
+  for (const dark of [false, true]) {
+    const { Home, sandbox } = makeHomeEnv({ id: ME });
+    stubCapability(sandbox, true);
+    stubScheme(sandbox, dark);
+    const paints = [];
+    stubCanvas(sandbox, paints);
+    await Home._ensureDarkIconCapability();
+    Home._shortcutPayloadFor(baseApp());
+    shots.push(paints.filter((p) => p.op === 'fill' || p.op === 'stroke')
+      .map((p) => p.color).join(','));
+  }
+  assert.equal(shots[0], shots[1],
+    'identical paints in light and dark — nothing to re-send on a flip');
+});
+
+test('payload: non-capable shell keeps the single per-appearance face', async () => {
+  for (const [dark, face] of [[false, '#ffffff'], [true, '#1a1a30']]) {
+    const { Home, sandbox } = makeHomeEnv({ id: ME });
+    stubCapability(sandbox, false);
+    stubScheme(sandbox, dark);
+    const paints = [];
+    stubCanvas(sandbox, paints);
+    await Home._ensureDarkIconCapability();
+
+    const payload = Home._shortcutPayloadFor(baseApp());
+    assert.ok(payload.icon_url, 'the one asset is sent');
+    assert.ok(!('icon_url_dark' in payload),
+      'the key is OMITTED, not null — byte-identical to the pre-change payload');
+    assert.equal(paints.find((p) => p.op === 'fill').color, face,
+      'the face matches the current system appearance');
+  }
+});
+
+test('payload: no NativeChrome at all behaves exactly like not-capable', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  assert.equal(sandbox.NativeChrome, undefined);
+  stubScheme(sandbox, false);
+  stubCanvas(sandbox, []);
+  await Home._ensureDarkIconCapability();
+  const payload = Home._shortcutPayloadFor(baseApp());
+  assert.ok(!('icon_url_dark' in payload));
+});
+
+test('payload: image icons never get a dark twin', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  stubCapability(sandbox, true);
+  stubScheme(sandbox, false);
+  stubCanvas(sandbox, []);
+  await Home._ensureDarkIconCapability();
+
+  const payload = Home._shortcutPayloadFor(baseApp({ icon_url: '/icons/x.png' }));
+  assert.equal(payload.icon_url, 'https://sv.test/icons/x.png');
+  assert.ok(!('icon_url_dark' in payload),
+    "the author's artwork is appearance-independent — a second copy is pure waste");
+});
+
+// The capable path's whole point: a flip is a non-event, because both
+// faces are already on the device and the widget picks between them.
+test('icon heal: on a capable shell a light↔dark flip re-sends nothing', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  stubCapability(sandbox, true);
+  const setDark = stubScheme(sandbox, false);
+  stubCanvas(sandbox, []);
+  const added = [];
+  sandbox.usernode = {
+    isNative: true,
+    addHomeScreenShortcut: async (opts) => { added.push(opts); return { added: true }; },
+    getHomeScreenShortcuts: async () => ({
+      items: [
+        { id: 'w1', name: 'Demo App', url: 'https://sv.test/#app/demo-app', has_icon: true, has_icon_dark: true },
+      ],
+    }),
+  };
+  Home._shortcutSupport = { mechanism: 'widget' };
+  Home._apps = [baseApp()];
+  await Home._ensureDarkIconCapability();
+  sandbox.localStorage.setItem('sv:widget_icon_src', JSON.stringify({
+    w1: `tile:${Home.WIDGET_ICON_GEN}:dual:`,
+  }));
+  Home._watchWidgetScheme();
+  await Home._refreshWidgetItems();
+  assert.equal(added.length, 0, 'nothing stale to begin with');
+
+  setDark(true);
+  await new Promise((r) => setTimeout(r, 0));
+  setDark(false);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(added.length, 0, 'the appearance is not an input on this path');
+  const srcMap = JSON.parse(sandbox.localStorage.getItem('sv:widget_icon_src'));
+  assert.equal(srcMap.w1, `tile:${Home.WIDGET_ICON_GEN}:dual:`, 'marker unmoved');
+});
+
+// Installing a capable shell is the one transition that costs a
+// re-send: the stored single face has to become a pair.
+test('icon heal: gaining the capability re-sends each canvas tile once', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  stubCapability(sandbox, true);
+  stubScheme(sandbox, false);
+  stubCanvas(sandbox, []);
+  const added = [];
+  sandbox.usernode = {
+    isNative: true,
+    addHomeScreenShortcut: async (opts) => { added.push(opts); return { added: true }; },
+    getHomeScreenShortcuts: async () => ({
+      items: [
+        { id: 'w1', name: 'Demo App', url: 'https://sv.test/#app/demo-app', has_icon: true, has_icon_dark: true },
+        { id: 'w2', name: 'Iconed', url: 'https://sv.test/#app/iconed', has_icon: true, has_icon_dark: false },
+      ],
+    }),
+  };
+  Home._shortcutSupport = { mechanism: 'widget' };
+  Home._apps = [
+    baseApp(),
+    baseApp({ slug: 'iconed', name: 'Iconed', icon_url: '/icons/x.png' }),
+  ];
+  // Pinned by a pre-capability build: single light face, image URL.
+  sandbox.localStorage.setItem('sv:widget_icon_src', JSON.stringify({
+    w1: `tile:${Home.WIDGET_ICON_GEN}:light:`,
+    w2: 'https://sv.test/icons/x.png',
+  }));
+  await Home._refreshWidgetItems();
+  assert.equal(added.length, 1, 'exactly the canvas tile upgrades');
+  assert.ok(added[0].icon_url_dark, 'and it now carries both faces');
+  assert.equal(added[0].silent, true, 'silently — no walkthrough, order kept');
+  const srcMap = JSON.parse(sandbox.localStorage.getItem('sv:widget_icon_src'));
+  assert.equal(srcMap.w1, `tile:${Home.WIDGET_ICON_GEN}:dual:`);
+  assert.equal(srcMap.w2, 'https://sv.test/icons/x.png', 'image tile untouched');
+
+  Home._iconHealTried = null; // a later page load
+  await Home._refreshWidgetItems();
+  assert.equal(added.length, 1, 'and then settles');
+});
+
+// The guarantee for everyone on a shell without the flag: this whole
+// change is a no-op for them. Same marker, same payload, no churn.
+test('icon heal: a non-capable shell sends nothing for a gen-5 entry', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  stubCapability(sandbox, false);
+  stubScheme(sandbox, false);
+  stubCanvas(sandbox, []);
+  const added = [];
+  sandbox.usernode = {
+    isNative: true,
+    addHomeScreenShortcut: async (opts) => { added.push(opts); return { added: true }; },
+    getHomeScreenShortcuts: async () => ({
+      items: [
+        { id: 'w1', name: 'Demo App', url: 'https://sv.test/#app/demo-app', has_icon: true },
+      ],
+    }),
+  };
+  Home._shortcutSupport = { mechanism: 'widget' };
+  Home._apps = [baseApp()];
+  sandbox.localStorage.setItem('sv:widget_icon_src', JSON.stringify({
+    w1: `tile:${Home.WIDGET_ICON_GEN}:light:`,
+  }));
+  await Home._refreshWidgetItems();
+  assert.equal(added.length, 0, 'zero churn for the shells people actually have');
+});
+
+// has_icon_dark is what catches an entry whose marker already matches
+// but whose second asset never landed.
+test('icon heal: has_icon_dark:false re-sends a canvas tile once', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  stubCapability(sandbox, true);
+  stubScheme(sandbox, false);
+  stubCanvas(sandbox, []);
+  const added = [];
+  sandbox.usernode = {
+    isNative: true,
+    addHomeScreenShortcut: async (opts) => { added.push(opts); return { added: true }; },
+    getHomeScreenShortcuts: async () => ({
+      items: [
+        { id: 'w1', name: 'Demo App', url: 'https://sv.test/#app/demo-app', has_icon: true, has_icon_dark: false },
+      ],
+    }),
+  };
+  Home._shortcutSupport = { mechanism: 'widget' };
+  Home._apps = [baseApp()];
+  await Home._ensureDarkIconCapability();
+  // Marker already current — only the flag betrays the missing asset.
+  sandbox.localStorage.setItem('sv:widget_icon_src', JSON.stringify({
+    w1: `tile:${Home.WIDGET_ICON_GEN}:dual:`,
+  }));
+  await Home._refreshWidgetItems();
+  assert.equal(added.length, 1, 'the missing dark asset is re-sent');
+  assert.ok(added[0].icon_url_dark);
+});
+
+test('icon heal: an absent has_icon_dark key never triggers a send', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  stubCapability(sandbox, true);
+  stubScheme(sandbox, false);
+  stubCanvas(sandbox, []);
+  const added = [];
+  sandbox.usernode = {
+    isNative: true,
+    addHomeScreenShortcut: async (opts) => { added.push(opts); return { added: true }; },
+    // An older shell reports neither key.
+    getHomeScreenShortcuts: async () => ({
+      items: [
+        { id: 'w1', name: 'Demo App', url: 'https://sv.test/#app/demo-app', has_icon: true },
+      ],
+    }),
+  };
+  Home._shortcutSupport = { mechanism: 'widget' };
+  Home._apps = [baseApp()];
+  await Home._ensureDarkIconCapability();
+  sandbox.localStorage.setItem('sv:widget_icon_src', JSON.stringify({
+    w1: `tile:${Home.WIDGET_ICON_GEN}:dual:`,
+  }));
+  await Home._refreshWidgetItems();
+  assert.equal(added.length, 0, 'undefined is not false — no send');
+});
+
+// Image-icon entries are dark-assetless forever by design, so without
+// the !app.icon_url clause they would look stale on every single pass.
+test('icon heal: an image-icon entry with has_icon_dark:false is left alone', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  stubCapability(sandbox, true);
+  stubScheme(sandbox, false);
+  stubCanvas(sandbox, []);
+  const added = [];
+  sandbox.usernode = {
+    isNative: true,
+    addHomeScreenShortcut: async (opts) => { added.push(opts); return { added: true }; },
+    getHomeScreenShortcuts: async () => ({
+      items: [
+        { id: 'w1', name: 'Iconed', url: 'https://sv.test/#app/iconed', has_icon: true, has_icon_dark: false },
+      ],
+    }),
+  };
+  Home._shortcutSupport = { mechanism: 'widget' };
+  Home._apps = [baseApp({ slug: 'iconed', name: 'Iconed', icon_url: '/icons/x.png' })];
+  await Home._ensureDarkIconCapability();
+  sandbox.localStorage.setItem('sv:widget_icon_src', JSON.stringify({
+    w1: 'https://sv.test/icons/x.png',
+  }));
+  await Home._refreshWidgetItems();
+  assert.equal(added.length, 0, 'no per-pass re-send loop for image icons');
+});
+
+// ── Foreground re-heal + pass serialisation ──────────────────────────
+//
+// The shell can restore the webview without a page load, so neither
+// Home.load() nor the probe necessarily re-runs on reopen. This is also
+// how a freshly installed capable shell gets picked up.
+
+// Settable document.visibilityState plus a real listener registry, so a
+// test can background and foreground the app the way the shell would.
+function stubForeground(sandbox) {
+  const listeners = [];
+  sandbox.document.visibilityState = 'visible';
+  sandbox.document.addEventListener = (type, fn) => {
+    if (type === 'visibilitychange') listeners.push(fn);
+  };
+  return async (state) => {
+    sandbox.document.visibilityState = state;
+    listeners.forEach((fn) => fn());
+    await new Promise((r) => setTimeout(r, 0));
+  };
+}
+
+test('icon heal: a foreground re-runs the pass despite an earlier attempt', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  stubCapability(sandbox, false);
+  stubScheme(sandbox, false);
+  stubCanvas(sandbox, []);
+  const foreground = stubForeground(sandbox);
+  const added = [];
+  sandbox.usernode = {
+    isNative: true,
+    addHomeScreenShortcut: async (opts) => { added.push(opts); return { added: true }; },
+    getHomeScreenShortcuts: async () => ({
+      items: [
+        { id: 'w1', name: 'Demo App', url: 'https://sv.test/#app/demo-app', has_icon: false },
+      ],
+    }),
+  };
+  Home._shortcutSupport = { mechanism: 'widget' };
+  Home._apps = [baseApp()];
+  Home._watchWidgetForeground();
+  await Home._refreshWidgetItems();
+  assert.equal(added.length, 1, 'healed once on load');
+  assert.ok(Home._iconHealTried?.has('w1'), 'id marked tried');
+
+  // The registry still reports has_icon:false — the send didn't stick.
+  Home._widgetForegroundHealedAt = 0; // an app switch later than the throttle
+  await foreground('hidden');
+  await foreground('visible');
+  assert.equal(added.length, 2, 'the foreground retries despite the earlier attempt');
+  assert.equal(added[1].silent, true, 'and stays silent');
+
+  // …but an immediate second foreground is throttled, so rapid app
+  // switching can't hammer the bridge with a persistently failing icon.
+  await foreground('hidden');
+  await foreground('visible');
+  assert.equal(added.length, 2, 'throttled — no send on a rapid re-foreground');
+});
+
+test('foreground healing is inert without the widget mechanism', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  const foreground = stubForeground(sandbox);
+  const added = [];
+  sandbox.usernode = {
+    isNative: false,
+    addHomeScreenShortcut: async (opts) => { added.push(opts); return { added: true }; },
+    getHomeScreenShortcuts: async () => ({ items: [] }),
+  };
+  Home._shortcutSupport = null; // plain browser / Android
+  Home._apps = [baseApp()];
+  Home._watchWidgetForeground();
+  await foreground('hidden');
+  await foreground('visible');
+  assert.equal(added.length, 0, 'no bridge traffic off the widget path');
+  assert.equal(Home._widgetForegroundHealedAt, 0, 'the throttle never even armed');
+});
+
+// Two overlapping passes would each write a srcMap snapshot taken
+// before the other's sends, so the last writer drops the other's
+// records and those tiles re-send on the next load.
+test('icon heal: concurrent passes send once per id and keep both records', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  stubCapability(sandbox, false);
+  stubScheme(sandbox, false);
+  stubCanvas(sandbox, []);
+  const added = [];
+  sandbox.usernode = {
+    isNative: true,
+    addHomeScreenShortcut: async (opts) => {
+      // Yield, so a second pass would interleave if it were allowed to.
+      await new Promise((r) => setTimeout(r, 0));
+      added.push(opts);
+      return { added: true };
+    },
+    getHomeScreenShortcuts: async () => ({ items: Home._widgetItems }),
+  };
+  Home._shortcutSupport = { mechanism: 'widget' };
+  Home._widgetItems = [
+    { id: 'w1', name: 'Demo App', url: 'https://sv.test/#app/demo-app', has_icon: false },
+    { id: 'w2', name: 'Iconed', url: 'https://sv.test/#app/iconed', has_icon: false },
+  ];
+  Home._apps = [
+    baseApp(),
+    baseApp({ slug: 'iconed', name: 'Iconed', icon_url: '/icons/x.png' }),
+  ];
+  await Promise.all([Home._healWidgetIcons(), Home._healWidgetIcons()]);
+  assert.equal(added.length, 2, 'exactly one send per stale id');
+  const srcMap = JSON.parse(sandbox.localStorage.getItem('sv:widget_icon_src'));
+  assert.equal(srcMap.w1, `tile:${Home.WIDGET_ICON_GEN}:light:`, 'canvas record survives');
+  assert.equal(srcMap.w2, 'https://sv.test/icons/x.png', 'image record survives');
+  assert.equal(Home._healInFlight, null, 'the guard clears when the pass settles');
+});
+
 
 test('icon heal: unpinned shortcut records are pruned from the source map', async () => {
   const { Home, sandbox } = makeHomeEnv({ id: ME });

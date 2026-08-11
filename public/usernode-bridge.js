@@ -106,6 +106,11 @@
     startNode: true,
     stopNode: true,
     getAuthStatus: true,
+    getSocialPushState: true,
+    setSocialPushEnabled: true,
+    claimPendingSocialNotification: true,
+    ackPendingSocialNotification: true,
+    manageStaking: true,
   };
   var _SESSION_WALLET_METHODS = {
     getNodeAddress: true,
@@ -196,6 +201,17 @@
     else entry.resolve(value);
   };
 
+  // Errors raised BY the bridge (as opposed to relayed from native) carry
+  // a machine-readable `usernodeKind` so the chrome-read failure record
+  // below can tell "the page cannot reach the app" from "the app said no"
+  // without matching on message text. Native's own rejections carry no
+  // tag and classify as "rejected".
+  function taggedNativeError(message, kind) {
+    var err = new Error(message);
+    err.usernodeKind = kind;
+    return err;
+  }
+
   // 15 s is well above the Flutter confirm-screen turnaround (single
   // digits of ms in the relay leg + however long the user takes to
   // approve), so a timeout firing means the parent never picked up the
@@ -219,9 +235,10 @@
           if (!entry) return;
           delete window.__usernodeBridge.pending[id];
           console.warn("[usernode-bridge] relay timeout for", method, "id", id);
-          reject(new Error(
+          reject(taggedNativeError(
             "Usernode relay timed out (parent page never responded). " +
-            "Reload the host page so it picks up the latest bridge."
+            "Reload the host page so it picks up the latest bridge.",
+            "timeout"
           ));
         }, _RELAY_TIMEOUT_MS);
         // Wrap resolve/reject so the timeout is cleared on completion.
@@ -257,14 +274,17 @@
       console.warn(_BRIDGE_TAG, "no transport for", method,
         "(useIframeRelay=false, hasNativeChannel=false) — rejecting");
       delete window.__usernodeBridge.pending[id];
-      reject(new Error("Usernode native bridge not available"));
+      reject(taggedNativeError(
+        "Usernode native bridge not available", "no-transport"
+      ));
     });
   }
 
   function ensurePrivilegedCapability() {
     if (_inIframe) {
-      return Promise.reject(new Error(
-        "Privileged Usernode methods are only available to the top-level page"
+      return Promise.reject(taggedNativeError(
+        "Privileged Usernode methods are only available to the top-level page",
+        "no-transport"
       ));
     }
     if (_privilegedCapability) {
@@ -277,6 +297,20 @@
 
     var attempt = window.usernode.getBridgeInfo().then(function (info) {
       var capabilities = info && info.capabilities;
+      // A DEGRADED probe (timeout / native error inside the app) is "don't
+      // know", not "this build predates the privileged handshake" — the two
+      // used to be the same `{ version: 0, capabilities: [] }` value, so one
+      // unlucky 4s probe during a cold start latched `supported = false` and
+      // every privileged call for the rest of the document went unsigned,
+      // which a hardened build refuses (issue #978). Fail THIS attempt
+      // closed and leave the latch unset so the next call re-probes — the
+      // same discipline NativeChrome.prepareWebLogout() already applies to
+      // its cached probe.
+      if (info && info.degraded === true) {
+        throw taggedNativeError(
+          "Native bridge probe was inconclusive", "probe-inconclusive"
+        );
+      }
       var supported = Array.isArray(capabilities) &&
         capabilities.indexOf("privilegedBridgeCapability") !== -1;
       _privilegedCapabilitySupported = supported;
@@ -3819,11 +3853,21 @@
     });
   };
 
-  // addHomeScreenShortcut({ name, url, icon_url }) asks the app to add a
-  // homescreen entry that reopens `url` inside the Usernode app. The app
-  // shows its own native confirmation UI. Resolves the app's result
-  // object ({ added: bool, mechanism, ... }); rejects when the user
-  // declines or the environment has no native channel.
+  // addHomeScreenShortcut({ name, url, icon_url, icon_url_dark }) asks
+  // the app to add a homescreen entry that reopens `url` inside the
+  // Usernode app. The app shows its own native confirmation UI. Resolves
+  // the app's result object ({ added: bool, mechanism, ... }); rejects
+  // when the user declines or the environment has no native channel.
+  //
+  // icon_url_dark is OPTIONAL and appearance-paired: when both are
+  // given, icon_url is the LIGHT-appearance asset and icon_url_dark the
+  // dark one, and the iOS widget picks between them per system
+  // appearance — which is the only way a pinned tile can follow a
+  // light/dark flip, since the page isn't running to repaint it (#948).
+  // Either field may be an https URL or a `data:image/png;base64,...`
+  // URI. Only shells advertising the `homeScreenShortcutDarkIcon`
+  // capability store the second asset; older builds ignore the extra
+  // arg, and a re-add without it clears the dark slot.
   window.usernode.addHomeScreenShortcut = function (opts) {
     opts = opts || {};
     if (!opts.name || !opts.url) {
@@ -3840,6 +3884,10 @@
       name: opts.name,
       url: opts.url,
       icon_url: opts.icon_url || null,
+      // Dark-appearance companion asset (see the note above). Null on
+      // every caller that doesn't supply one, which is what old shells
+      // have always seen.
+      icon_url_dark: opts.icon_url_dark || null,
       // Background refresh (e.g. re-sending a missing widget icon): the
       // app skips user-facing follow-ups like the add-the-widget
       // walkthrough.
@@ -3884,6 +3932,15 @@
           if (done) return;
           done = true;
           clearTimeout(timer);
+          // An inconclusive capability probe is a "can't answer", not a
+          // native refusal — take the same policy this method already
+          // declares for a dropped request (reads resolve their fallback,
+          // mutations reject) instead of turning a read into a rejection.
+          if (err && err.usernodeKind === "probe-inconclusive") {
+            console.warn(_BRIDGE_TAG, method, "probe inconclusive");
+            onTimeout(resolve, reject);
+            return;
+          }
           reject(err);
         }
       );
@@ -3950,6 +4007,53 @@
   // native wallet provider waits for the node); don't cut it off early.
   var _WALLET_STATE_TIMEOUT_MS = 12000;
 
+  // ── Out-of-band failure record for the chrome reads ───────────────────
+  //
+  // The reads above must keep RESOLVING a fallback rather than rejecting —
+  // every caller `await`s them and renders "unavailable". The cost is that
+  // "timed out", "the app reported X" and "the privileged handshake is
+  // unavailable" all arrive as the same `null`, which is what made issue
+  // #978 undiagnosable from the device. So keep the resolving contract and
+  // record the reason beside it.
+  //
+  // A record is { method, kind, message, at }, with `kind` one of
+  // "timeout" | "rejected" | "no-transport" | "not-native" |
+  // "probe-inconclusive". It holds a method name plus the app's own error
+  // string ONLY: the privileged capability lives in this closure and never
+  // reaches an error message, and each frame keeps its own map, so a child
+  // frame can only ever read failures of calls it made itself.
+  var _lastNativeReadErrors = {};
+
+  function nativeReadErrorKind(err) {
+    return (err && typeof err.usernodeKind === "string")
+      ? err.usernodeKind
+      : "rejected";
+  }
+
+  function recordNativeReadError(method, kind, message) {
+    _lastNativeReadErrors[method] = {
+      method: method,
+      kind: kind,
+      message: message || null,
+      at: Date.now(),
+    };
+  }
+
+  // getLastNativeReadError(method) → { method, kind, message, at } for the
+  // most recent FAILED chrome read of that method, or null when its last
+  // read succeeded (or it was never called). Copied on the way out so a
+  // caller cannot mutate the record.
+  window.usernode.getLastNativeReadError = function (method) {
+    var rec = _lastNativeReadErrors[method];
+    if (!rec) return null;
+    return {
+      method: rec.method,
+      kind: rec.kind,
+      message: rec.message,
+      at: rec.at,
+    };
+  };
+
   function callNativeChromeRead(method, args, timeoutMs, fallbackValue) {
     return new Promise(function (resolve) {
       var done = false;
@@ -3957,6 +4061,8 @@
         if (done) return;
         done = true;
         console.log(_BRIDGE_TAG, method, "timed out (old app build?)");
+        recordNativeReadError(method, "timeout",
+          method + " did not respond within " + timeoutMs + "ms");
         resolve(fallbackValue);
       }, timeoutMs);
       callNative(method, args).then(
@@ -3964,6 +4070,7 @@
           if (done) return;
           done = true;
           clearTimeout(timer);
+          delete _lastNativeReadErrors[method];
           resolve(v);
         },
         function (err) {
@@ -3971,6 +4078,9 @@
           done = true;
           clearTimeout(timer);
           console.warn(_BRIDGE_TAG, method, "failed:", err && err.message);
+          recordNativeReadError(
+            method, nativeReadErrorKind(err), err && err.message
+          );
           resolve(fallbackValue);
         }
       );
@@ -3981,13 +4091,22 @@
   // { version: 0, capabilities: [] } outside the app and on old builds,
   // so chrome can always `await` it and gate UI on capabilities
   // (`capabilities.includes('getNodeStatus')` etc), never on version.
+  //
+  // A probe that FAILS inside the app additionally carries
+  // `degraded: true`. The empty shape alone cannot distinguish "this build
+  // has no capabilities" from "the one probe timed out", and treating the
+  // second as the first is how a cold-start hiccup used to disable
+  // privileged calls for the whole document (issue #978). Callers that
+  // latch or cache a negative MUST check `degraded` and re-probe;
+  // callers that only read `capabilities` need no change.
   window.usernode.getBridgeInfo = function () {
     var empty = { version: 0, capabilities: [] };
     if (!window.usernode.isNative) return Promise.resolve(empty);
     return callNativeChromeRead(
-      "getBridgeInfo", {}, _CHROME_PROBE_TIMEOUT_MS, empty
+      "getBridgeInfo", {}, _CHROME_PROBE_TIMEOUT_MS, null
     ).then(function (info) {
-      return info && Array.isArray(info.capabilities) ? info : empty;
+      if (info && Array.isArray(info.capabilities)) return info;
+      return { version: 0, capabilities: [], degraded: true };
     });
   };
 
@@ -4010,6 +4129,19 @@
     return callNativeChromeRead(
       "getWalletState", {}, _WALLET_STATE_TIMEOUT_MS, null
     );
+  };
+
+  // manageStaking() -> { delegate, delegated_since }. Opens the native
+  // delegation screen and resolves after it closes. The native app owns the
+  // fixed target, confirmation, persistence, backend sync and node changes;
+  // this top-frame wrapper deliberately accepts and sends no staking input.
+  window.usernode.manageStaking = function () {
+    if (!window.usernode.isNative) {
+      return Promise.reject(new Error(
+        "manageStaking is only available inside the Usernode mobile app."
+      ));
+    }
+    return callNative("manageStaking", {});
   };
 
   // getTransactionRecords() → { items: [...] } (newest first, capped at
@@ -4127,11 +4259,21 @@
 
   // getSettingsState() → { buildInfo: { appVersion, buildNumber,
   //   nodeVersion, commitHash, branch }, nodeSleepEnabled, debugMode,
-  //   facematchStrict, termsAccepted, authStatus,
+  //   facematchStrict, authStatus,
   //   permissions: { platform, exactAlarmGranted, batteryOptDisabled,
-  //   deviceManufacturer, iosKeepAliveActive } } or null.
+  //   deviceManufacturer } } or null. (v4 dropped `termsAccepted` — terms
+  //   moved to the session-authed /challenges-api routes — and
+  //   `iosKeepAliveActive` with the iOS keep-alive service.)
+  //
+  // On null, the reason is available out of band from
+  // usernode.getLastNativeReadError("getSettingsState"); SV's Settings
+  // screen renders it rather than a bare "could not load".
   window.usernode.getSettingsState = function () {
-    if (!window.usernode.isNative) return Promise.resolve(null);
+    if (!window.usernode.isNative) {
+      recordNativeReadError("getSettingsState", "not-native",
+        "getSettingsState is only available inside the Usernode mobile app.");
+      return Promise.resolve(null);
+    }
     return callNativeChromeRead(
       "getSettingsState", {}, _SETTINGS_STATE_TIMEOUT_MS, null
     );
@@ -4285,6 +4427,44 @@
     if (!window.usernode.isNative) return Promise.resolve(null);
     return callNativeChromeRead(
       "getAuthStatus", {}, _CHROME_PROBE_TIMEOUT_MS, null
+    );
+  };
+
+  // =====================================================================
+  //  Public API: Social activity notifications
+  // =====================================================================
+  // These methods are available only to the trusted top-level Social shell
+  // and use the same per-navigation capability as the other native settings
+  // actions. Push content and credentials never cross this bridge; a tap
+  // exposes one opaque notification id after the normal v4 session admission.
+
+  var _SOCIAL_PUSH_TIMEOUT_MS = 12000;
+  var _SOCIAL_PUSH_PERMISSION_TIMEOUT_MS = 120000;
+
+  window.usernode.getSocialPushState = function () {
+    if (!window.usernode.isNative) return Promise.resolve(null);
+    return callNativeChromeRead(
+      "getSocialPushState", {}, _SOCIAL_PUSH_TIMEOUT_MS, null
+    );
+  };
+
+  window.usernode.setSocialPushEnabled = function (enabled) {
+    return callNativeChromeAction(
+      "setSocialPushEnabled", { enabled: !!enabled },
+      _SOCIAL_PUSH_PERMISSION_TIMEOUT_MS
+    );
+  };
+
+  window.usernode.claimPendingSocialNotification = function () {
+    return callNativeChromeAction(
+      "claimPendingSocialNotification", {}, _SOCIAL_PUSH_TIMEOUT_MS
+    );
+  };
+
+  window.usernode.ackPendingSocialNotification = function (notificationId) {
+    return callNativeChromeAction(
+      "ackPendingSocialNotification", { notificationId: notificationId },
+      _SOCIAL_PUSH_TIMEOUT_MS
     );
   };
 
@@ -4633,6 +4813,124 @@
       };
     }
   })();
+
+  // =====================================================================
+  //  Public API: safe-area insets (usernode.safeAreaInsets) — additive v1
+  // =====================================================================
+  //
+  // Screen safe areas inside the app frame (SV issue #970).
+  //
+  // `env(safe-area-inset-*)` resolves to 0px inside a cross-origin iframe
+  // in every engine, so an app embedded in the platform shell cannot see
+  // the notch or the home indicator — every safe-area rule it writes is
+  // silently inert. The shell used to compensate by reserving the bottom
+  // strip itself, which is what left apps visibly cut off short of a
+  // phone's rounded bottom edge. Now the frame runs edge-to-edge and the
+  // shell FORWARDS the insets that apply to this frame's rect over a
+  // `__usernode_safe_area` message family. This block turns them into:
+  //
+  //   1. CSS custom properties on <html> — `--un-safe-inset-top` /
+  //      `-right` / `-bottom` / `-left`, in px. The usernode-native kit's
+  //      CSS reads them as `var(--un-safe-inset-bottom,
+  //      env(safe-area-inset-bottom, 0px))`, so kit bars, sheets, toasts
+  //      and nav bars inset themselves with no app change at all. Apps
+  //      with custom fixed chrome should use the same `var(..., env(...))`
+  //      form — it works both inside the shell and standalone.
+  //   2. `usernode.safeAreaInsets` — { top, right, bottom, left } in px,
+  //      all zeros until the first answer arrives.
+  //   3. A `usernode:safe-area-changed` CustomEvent on window with the
+  //      same object as `detail` (same convention as
+  //      `usernode:locale-changed`), for apps that lay out in JS.
+  //
+  // These are the SAFE AREA only — independent of the kit's
+  // `--un-kb-inset` keyboard tracking, which the app's own visualViewport
+  // already reports correctly inside the frame.
+  //
+  // Standalone (no parent frame, or a host that never answers) the
+  // properties are deliberately left UNSET rather than zeroed, so the
+  // `env()` fallback in that `var()` form wins — which is the correct
+  // value outside an iframe. There is nothing to time out on.
+  /* __USERNODE_SAFE_AREA_BEGIN__ */
+  (function () {
+    var EDGES = ["top", "right", "bottom", "left"];
+    var _insets = { top: 0, right: 0, bottom: 0, left: 0 };
+
+    window.usernode.safeAreaInsets = _insets;
+
+    function normalize(value) {
+      if (!value || typeof value !== "object") return null;
+      var out = {};
+      for (var i = 0; i < EDGES.length; i++) {
+        var n = Number(value[EDGES[i]]);
+        out[EDGES[i]] = isFinite(n) && n > 0 ? n : 0;
+      }
+      return out;
+    }
+
+    function apply(value) {
+      var next = normalize(value);
+      if (!next) return;
+      var changed = false;
+      for (var i = 0; i < EDGES.length; i++) {
+        if (_insets[EDGES[i]] !== next[EDGES[i]]) changed = true;
+      }
+      if (!changed) return;
+      for (var j = 0; j < EDGES.length; j++) {
+        _insets[EDGES[j]] = next[EDGES[j]];
+        try {
+          document.documentElement.style.setProperty(
+            "--un-safe-inset-" + EDGES[j],
+            next[EDGES[j]] + "px"
+          );
+        } catch (_) {}
+      }
+      try {
+        window.dispatchEvent(new CustomEvent("usernode:safe-area-changed", {
+          detail: {
+            top: _insets.top,
+            right: _insets.right,
+            bottom: _insets.bottom,
+            left: _insets.left,
+          },
+        }));
+      } catch (_) {}
+    }
+
+    // Standalone: no shell to ask, and env() already works here. Leave the
+    // custom properties unset so CSS falls through to it.
+    if (window === window.parent) return;
+
+    var _getId = "safe-area-" + String(Date.now()) + "-" +
+      Math.random().toString(16).slice(2);
+
+    window.addEventListener("message", function (e) {
+      if (e.source !== window.parent) return;
+      var data = e.data;
+      if (!data || !data.__usernode_safe_area) return;
+      // The shell PUSHES `changed` on rotation, keyboard/toolbar moves and
+      // whenever the frame's rect shifts; `response` answers our startup
+      // request. Both carry the same value shape.
+      if (data.__usernode_safe_area === "changed") {
+        apply(data.value);
+        return;
+      }
+      if (data.__usernode_safe_area === "response" && data.id === _getId) {
+        apply(data.value);
+      }
+    });
+
+    // Ask once at load so an app never has to wait for a resize to learn
+    // its insets — and so a `changed` posted before this listener existed
+    // can't be missed. A host that doesn't answer simply leaves the
+    // properties unset (see above).
+    try {
+      window.parent.postMessage(
+        { __usernode_safe_area: "get", id: _getId },
+        "*"
+      );
+    } catch (_) {}
+  })();
+  /* __USERNODE_SAFE_AREA_END__ */
 
   // Rendering invariants (issue #360) — additive within v1.
   //

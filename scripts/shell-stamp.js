@@ -1,0 +1,135 @@
+// Shared stamp logic for the React shell's committed build artifacts.
+//
+// public/index.html and public/shell/assets/shell.js are GENERATED from
+// frontend/ and committed. Unlike Tailwind, the React shell remains a source
+// artifact because tests and non-Docker checkouts need its rendered markup and
+// executable bundle without installing the separate frontend workspace. The
+// deploy-time CSS builder consumes that already-generated index.html.
+//
+// A committed artifact is only safe if staleness is detectable. So
+// frontend/scripts/build-shell.mjs writes a stamp — a sha256 over every
+// input that can change the output — into both artifacts, and
+// tests/shell-build.test.js recomputes it from the working tree and fails
+// the suite when they no longer match.
+//
+// Both sides MUST agree byte-for-byte, hence this shared module. It uses
+// node builtins only: the test must be able to verify freshness without
+// frontend/node_modules being installed at all.
+
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+
+const ROOT = path.join(__dirname, '..');
+
+const HTML_OUTPUT = 'public/index.html';
+const JS_OUTPUT = 'public/shell/assets/shell.js';
+
+// Every directory/file under frontend/ whose contents can change what the
+// build emits. `package.json` is in the list because a dependency version
+// bump changes the bundled React; `node_modules` is not, because the
+// lockfile-pinned versions it resolves to are already implied by it.
+const INPUT_PATHS = [
+  'frontend/src',
+  'frontend/@',
+  'frontend/vite.config.ts',
+  'frontend/vite.ssr.config.ts',
+  'frontend/tsconfig.json',
+  'frontend/package.json',
+  'frontend/scripts/build-shell.mjs',
+];
+
+const HTML_STAMP_PREFIX = '<!-- shell-build stamp: ';
+const HTML_STAMP_SUFFIX = ' -->';
+const JS_STAMP_PREFIX = '/*! shell-build stamp: ';
+const JS_STAMP_SUFFIX = ' */';
+
+const SKIP_DIRS = new Set(['node_modules', '.git', '.ssr']);
+
+function walk(rel, out) {
+  const abs = path.join(ROOT, rel);
+  let stat;
+  try {
+    stat = fs.statSync(abs);
+  } catch {
+    return;
+  }
+  if (stat.isFile()) {
+    out.push(rel);
+    return;
+  }
+  if (!stat.isDirectory()) return;
+  for (const entry of fs.readdirSync(abs, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    if (entry.name.startsWith('.') || SKIP_DIRS.has(entry.name)) continue;
+    walk(`${rel}/${entry.name}`, out);
+  }
+}
+
+// Every file the artifacts depend on, as repo-relative POSIX paths, sorted
+// and de-duplicated. Resolved against the working tree, so a NEW component
+// under frontend/@/components/ui/ changes the stamp too.
+function resolveInputs() {
+  const files = [];
+  for (const rel of INPUT_PATHS) walk(rel, files);
+  return [...new Set(files)].sort();
+}
+
+// sha256 over (path, byte length, bytes) of every input. Lengths are hashed
+// explicitly so no concatenation of two files can collide with another pair.
+function computeStamp(files) {
+  const hash = crypto.createHash('sha256');
+  for (const rel of files) {
+    const bytes = fs.readFileSync(path.join(ROOT, rel));
+    hash.update(rel);
+    hash.update('\0');
+    hash.update(String(bytes.length));
+    hash.update('\0');
+    hash.update(bytes);
+    hash.update('\0');
+  }
+  return hash.digest('hex');
+}
+
+function expectedStamp() {
+  const files = resolveInputs();
+  return { stamp: computeStamp(files), files };
+}
+
+// Pull the stamp out of the generated HTML. It is the first line inside
+// <head> rather than the first line of the file, because a comment ahead of
+// <!DOCTYPE html> is what puts old browsers into quirks mode.
+function readHtmlStamp(html) {
+  const m = /<head>\s*\n\s*<!-- shell-build stamp: ([0-9a-f]{64}) -->/.exec(String(html));
+  return m ? m[1] : null;
+}
+
+function readJsStamp(js) {
+  const firstLine = String(js).split('\n', 1)[0];
+  if (!firstLine.startsWith(JS_STAMP_PREFIX) || !firstLine.endsWith(JS_STAMP_SUFFIX)) return null;
+  const value = firstLine.slice(JS_STAMP_PREFIX.length, -JS_STAMP_SUFFIX.length).trim();
+  return /^[0-9a-f]{64}$/.test(value) ? value : null;
+}
+
+function formatHtmlStamp(stamp) {
+  return `${HTML_STAMP_PREFIX}${stamp}${HTML_STAMP_SUFFIX}`;
+}
+
+function formatJsStamp(stamp) {
+  return `${JS_STAMP_PREFIX}${stamp}${JS_STAMP_SUFFIX}`;
+}
+
+module.exports = {
+  ROOT,
+  HTML_OUTPUT,
+  JS_OUTPUT,
+  INPUT_PATHS,
+  computeStamp,
+  expectedStamp,
+  resolveInputs,
+  readHtmlStamp,
+  readJsStamp,
+  formatHtmlStamp,
+  formatJsStamp,
+};

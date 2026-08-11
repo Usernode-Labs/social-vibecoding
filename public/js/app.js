@@ -62,12 +62,82 @@ const App = {
   // actually leave the page.
   _isRestoring: false,
 
+  // ── Display-only session snapshot (#1021) ───────────────────────────
+  // A tiny durable record that THIS DEVICE was signed in, written on every
+  // successful boot/login and read only when /api/auth/me cannot be
+  // reached at all. Without it an offline reload is indistinguishable from
+  // a sign-out: `fetch` throws, and the shell drops the user on the
+  // landing screen with no way back until the network returns.
+  //
+  // It is DISPLAY-ONLY and grants nothing. The session cookie remains the
+  // sole credential — every request still authenticates normally and the
+  // server is free to reject them. All the snapshot decides is which
+  // *screen* an offline boot paints, and the moment the network answers
+  // again the real /api/auth/me reconciles it (see _reconcileSession).
+  // It is cleared on logout, on any answered non-ok /me, and when it ages
+  // out, so a stale one can't strand a signed-out device in a signed-in
+  // looking shell.
+  SESSION_SNAPSHOT_KEY: 'usernode.session.v1',
+  SESSION_SNAPSHOT_MAX_AGE_MS: 30 * 24 * 60 * 60 * 1000, // 30 days
+
+  // How long boot waits for /api/auth/me before falling back to the
+  // snapshot. Deliberately just past the service worker's own API deadline
+  // (API_TIMEOUT_MS) so the SW gets first refusal at answering from cache;
+  // this only catches the no-SW / SW-bypassed cases.
+  BOOT_SESSION_TIMEOUT_MS: 5000,
+
+  saveSessionSnapshot(user) {
+    if (!user || !user.id) return;
+    try {
+      localStorage.setItem(App.SESSION_SNAPSHOT_KEY, JSON.stringify({
+        user, savedAt: Date.now(),
+      }));
+    } catch (err) { /* private mode / quota — offline boot just degrades */ }
+  },
+
+  readSessionSnapshot() {
+    try {
+      const raw = localStorage.getItem(App.SESSION_SNAPSHOT_KEY);
+      if (!raw) return null;
+      const snap = JSON.parse(raw);
+      if (!snap || !snap.user || !snap.user.id) return null;
+      const age = Date.now() - Number(snap.savedAt || 0);
+      if (!(age >= 0) || age > App.SESSION_SNAPSHOT_MAX_AGE_MS) {
+        App.clearSessionSnapshot();
+        return null;
+      }
+      return snap;
+    } catch (err) {
+      return null;
+    }
+  },
+
+  clearSessionSnapshot() {
+    try { localStorage.removeItem(App.SESSION_SNAPSHOT_KEY); } catch (err) { /* ignore */ }
+  },
+
+  // Ask the service worker to drop the cached API responses of a session
+  // that is definitively over. Fire-and-forget: the snapshot has already
+  // been cleared, so a worker that never answers changes nothing.
+  _dropCachedSession() {
+    App.clearSessionSnapshot();
+    try {
+      navigator.serviceWorker?.controller?.postMessage({ type: 'clear-api-cache' });
+    } catch (err) { /* no SW — nothing cached to drop */ }
+  },
+
+  // True while the shell is running on the snapshot rather than a verified
+  // /api/auth/me. Read by the boot path (skip the session-gated fetches
+  // and the events socket) and cleared by _reconcileSession.
+  _sessionFromSnapshot: false,
+
   async init() {
-    // Install fetch wrap and (if we were mid-restart on a previous load)
-    // restore the platform-updating banner state BEFORE any other init
-    // step that might fire a write. See PlatformUpdating below.
-    App.PlatformUpdating.installFetchWrap();
-    App.PlatformUpdating.restoreFromSessionStorage();
+    // FIRST, before any screen paints: the synthetic-inset shot state.
+    // Runs here rather than beside the other ?shot= handlers below
+    // because it must cover the anonymous shell too (the landing / login
+    // / waitlist screens are part of what it reviews) and because a
+    // later application would repaint every inset mid-boot.
+    App._applySafeAreaShot();
 
     // Chrome wiring is session-independent and has no re-entry guards
     // (double listeners otherwise), so it runs exactly once per document
@@ -77,7 +147,7 @@ const App = {
     App.bindEvents();
 
     // Screenshot-state deep links for the ANONYMOUS shell (`?shot=anon`,
-    // `?shot=waitlist-joined`). Captures and proposal checks carry a
+    // `?shot=waitlist-joined`, `?shot=anon-back`). Captures and proposal checks carry a
     // capture token, so a session always exists for them and
     // restoreFromHash would strip #landing / #waitlist to the home feed —
     // the signed-out screens would be unreachable to every shot. These
@@ -88,27 +158,113 @@ const App = {
       await App.enterAnonymous();
       return;
     }
+    // `?shot=offline` / `?shot=offline-signin` pin the offline state before
+    // the boot check runs, so the shot never depends on real connectivity.
+    // The signed-out variant boots the anonymous shell directly, exactly
+    // as _anonShot does, so it doesn't depend on the capture's session.
+    if (App._applyOfflineShot() === 'offline-signin') {
+      await App.enterAnonymous();
+      return;
+    }
 
+    // Boot has THREE outcomes, not two (#1021). The old code collapsed
+    // "the server said no" and "the server said nothing" into the same
+    // anonymous boot, so a signed-in user who reloaded on a dead network
+    // landed on the landing page — signed out, in effect, by a dropped
+    // packet.
+    //
+    //   answered, ok       → the real session; refresh the snapshot.
+    //   answered, not ok   → genuinely signed out; drop every cached trace.
+    //   never answered     → unknown. Fall back to the snapshot and show
+    //                        the signed-in shell in read-only offline mode,
+    //                        reconciling as soon as the network returns.
+    let res = null;
     try {
-      // Offline note (#487): the service worker serves this network-first
-      // with a cached fallback, so an offline reload by a logged-in user
-      // resolves `res.ok` from the last successful copy and boot proceeds
-      // to the cached shell. A real 401 (only reachable online — errors
-      // never enter the SW cache) boots the anonymous shell below.
-      const res = await fetch('/api/auth/me');
-      if (!res.ok) {
-        await App.enterAnonymous();
+      res = await App._fetchSession();
+    } catch (err) {
+      res = null;
+    }
+
+    if (res && res.ok) {
+      let user = null;
+      try { user = (await res.json()).user; } catch (err) { user = null; }
+      if (user) {
+        App.enterAuthed(user);
         return;
       }
-      const data = await res.json();
-      App.enterAuthed(data.user);
-    } catch {
-      // Network failure with no service-worker-cached /api/auth/me —
-      // i.e. offline on a device that never logged in (or predates the
-      // SW). Boot the anonymous shell; offline.js owns the connectivity
-      // banner and the login screen refuses submits while offline.
+    } else if (res) {
+      // A real answer with a real "no" (401/403). Only reachable online —
+      // error responses never enter the SW cache — so this is authoritative.
+      App._dropCachedSession();
       await App.enterAnonymous();
+      return;
     }
+
+    // No answer at all: offline, captive portal, or a connection that
+    // stalled past the deadline. Probe so the strip appears, then decide
+    // from the snapshot.
+    try { window.Offline?.nudge(); } catch (err) { /* ignore */ }
+    const snap = App.readSessionSnapshot();
+    if (snap) {
+      App._sessionFromSnapshot = true;
+      App.enterAuthed(snap.user);
+      return;
+    }
+    // Offline on a device that was never signed in. The anonymous shell
+    // shows its own offline state and refuses submits (see auth-screens.js).
+    await App.enterAnonymous();
+  },
+
+  // /api/auth/me with a deadline. Resolves to the Response, or throws when
+  // nothing arrived in time — an open-but-stalled socket must not hold the
+  // whole boot, which is what left the reported blank screen.
+  async _fetchSession() {
+    let timer = null;
+    const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+    if (ctrl) timer = setTimeout(() => ctrl.abort(), App.BOOT_SESSION_TIMEOUT_MS);
+    try {
+      return await fetch('/api/auth/me', ctrl ? { signal: ctrl.signal } : undefined);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  },
+
+  // Once connectivity is back, replace the snapshot-derived session with a
+  // verified one. Three outcomes again, and each matters:
+  //   401/403     → the session really did end while we were away.
+  //   another id  → a different user; a full reload is the only way to
+  //                 rebuild a shell that was painted for someone else.
+  //   same id     → promote to a live session: connect the events socket
+  //                 and resync whatever screen is on top.
+  async _reconcileSession() {
+    if (!App._sessionFromSnapshot) return;
+    let res;
+    try {
+      res = await fetch('/api/auth/me');
+    } catch (err) {
+      return; // still unreachable — stay on the snapshot.
+    }
+    if (!res.ok) {
+      App._dropCachedSession();
+      App._sessionFromSnapshot = false;
+      location.reload();
+      return;
+    }
+    let user = null;
+    try { user = (await res.json()).user; } catch (err) { user = null; }
+    if (!user) return;
+    if (String(user.id) !== String(App.user?.id)) {
+      App.clearSessionSnapshot();
+      location.reload();
+      return;
+    }
+    App._sessionFromSnapshot = false;
+    App.user = user;
+    App.saveSessionSnapshot(user);
+    App.connectEvents();
+    if (window.Kudos?.Budget?.init) Kudos.Budget.init();
+    if (window.AiCredit?.Budget?.init) AiCredit.Budget.init();
+    try { App.resyncCurrentView(); } catch (err) { /* ignore */ }
   },
 
   // ── Staged boot (fold-auth-pages-into-SPA) ──────────────────────────
@@ -128,9 +284,9 @@ const App = {
       await NativeChrome.enterAnonymous();
     }
     // Capture the platform SHA this document booted with. The anonymous
-    // shell has no WS "platform updating" banner, so pull-to-refresh is
-    // its only recovery path after a deploy — and platformMovedOn()
-    // needs a boot-time baseline to compare against.
+    // shell has no drawer (so no stale-version pill), which makes
+    // pull-to-refresh its only recovery path after a deploy — and
+    // platformMovedOn() needs a boot-time baseline to compare against.
     App.loadVersion();
     if (window.AuthScreens) AuthScreens.enter();
   },
@@ -143,12 +299,65 @@ const App = {
   _anonShot() {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
-    if (shot !== 'anon' && shot !== 'waitlist-joined') return false;
+    // `anon-back` (#1028) scripts the guest back path on the landing
+    // directory. It matters that it routes through here and not the
+    // ordinary boot: this path skips /api/auth/me, so the capture or
+    // proposal check's own session can't promote the page into the
+    // signed-in shell and stop exercising the guest viewer at all.
+    if (shot !== 'anon' && shot !== 'waitlist-joined' && shot !== 'anon-back') {
+      return false;
+    }
     if (shot === 'waitlist-joined' &&
         (!location.hash || location.hash === '#')) {
       try { history.replaceState(null, '', location.search + '#waitlist'); } catch (err) { /* ignore */ }
     }
     return true;
+  },
+
+  // Screenshot-state deep links for the offline experience (#1021):
+  //   ?shot=offline         — the signed-in shell in read-only offline mode
+  //                           (the fixed strip above everything).
+  //   ?shot=offline-signin  — the signed-out login screen while offline:
+  //                           the explanation block, and the credential
+  //                           fields greyed out because they cannot work.
+  //
+  // Both pin connectivity rather than reading it, because the one thing a
+  // capture runner and a reviewer's browser always have is a working
+  // network — without this the offline UI is literally unphotographable,
+  // and the "before" side of the comparison could never be produced.
+  // Pure UI state, no writes, so deliberately NOT env-gated (same
+  // reasoning as ?shot=menu). Returns the shot name, or null.
+  _applyOfflineShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'offline' && shot !== 'offline-signin') return null;
+    if (shot === 'offline-signin' && (!location.hash || location.hash === '#')) {
+      try { history.replaceState(null, '', location.search + '#login'); } catch (err) { /* ignore */ }
+    }
+    try { window.Offline?.forceOffline(); } catch (err) { /* ignore */ }
+    return shot;
+  },
+
+  // Swap the drawer's Profile row between the generic person glyph and the
+  // viewer's own picture (#982). Called on sign-in and again after the
+  // profile editor saves, so removing a photo puts the glyph back. Both
+  // nodes are static in index.html — only which one is `hidden` changes,
+  // and the <img> gets no src until there is one, so a user with no
+  // picture never issues a request.
+  applyUserAvatar() {
+    const img = document.getElementById('drawer-avatar');
+    const glyph = document.getElementById('drawer-profile-glyph');
+    if (!img || !glyph) return;
+    const url = App.user && App.user.avatarUrl;
+    if (url) {
+      img.src = url;
+      img.classList.remove('hidden');
+      glyph.classList.add('hidden');
+    } else {
+      img.removeAttribute('src');
+      img.classList.add('hidden');
+      glyph.classList.remove('hidden');
+    }
   },
 
   enterAuthed(user) {
@@ -177,6 +386,16 @@ const App = {
       App.user.role = 'user';
       document.body.classList.add('is-view-as-non-admin');
     }
+
+    // #982: paint the drawer's Profile row with the viewer's picture.
+    App.applyUserAvatar();
+
+    // Remember that this device is signed in, so a later boot that can't
+    // reach /api/auth/me still knows which shell to paint (#1021). Skipped
+    // when the shell is running FROM the snapshot — re-writing it then
+    // would keep refreshing savedAt and an offline device would never age
+    // its session out.
+    if (!App._sessionFromSnapshot) App.saveSessionSnapshot(App.user);
 
     // A web session exists (platform access or not). The native login
     // handoff listens for this — wallet provisioning and the node work
@@ -208,17 +427,25 @@ const App = {
     // view-only) once App.user is resolved. bindEvents already ran, so
     // the click handler is attached before the button can be seen.
     App.renderAdminButton();
-    App.connectEvents();
+    // On a snapshot-derived boot every one of these is a guaranteed
+    // failure: the socket can't open and the budget endpoints can't
+    // answer. _reconcileSession runs them the moment the network is back.
+    if (!App._sessionFromSnapshot) App.connectEvents();
     App.loadVersion();
     // Header kudos budget badge polls /api/me/kudos-budget once at
     // load and then on a long interval (hourly safety-net for the
     // Monday-UTC rollover). Refreshes opportunistically on every
     // successful give + on the leaderboard screen mount.
-    if (window.Kudos?.Budget?.init) Kudos.Budget.init();
+    if (!App._sessionFromSnapshot && window.Kudos?.Budget?.init) Kudos.Budget.init();
     // AI-credit status row (#555), same boot shape as the kudos badge:
     // the viewer's own daily allowance. Refreshes again on every drawer
     // open (App.HeaderMenu.open), throttled inside the module.
-    if (window.AiCredit?.Budget?.init) AiCredit.Budget.init();
+    if (!App._sessionFromSnapshot && window.AiCredit?.Budget?.init) AiCredit.Budget.init();
+    // #1038: seed the live session-state store and arm its adaptive
+    // reconcile tick. Same snapshot-boot guard as the meters above — the
+    // endpoint is session-gated, so firing it on an offline snapshot boot is
+    // a guaranteed 401.
+    if (!App._sessionFromSnapshot && window.SessionState) SessionState.start();
     // Session-gated boot fetches (notifications bell, work drawer)
     // defer to this event instead of firing a guaranteed 401 on an
     // anonymous document load.
@@ -227,18 +454,21 @@ const App = {
     }));
     App.restoreFromHash();
     App._applyMenuShot();
+    App._applyMenuNavShot();
     App._applyLaunchShot();
+    App._applyFeedbackShot();
 
-    // Re-poll the platform version every 10s so the header pill flips to
-    // its "deploying" state within seconds of the deploy workflow signaling
-    // start, and back to "current" (or "stale") when it finishes. Cheap
-    // endpoint — just reads one tiny file off disk on the server.
-    //
-    // While the Phase 3 platform-updating banner is active we kick the
-    // cadence up to 2s (see PlatformUpdating.startFastPolling) so the
-    // banner clears within ~2s of the new container coming up. The slow
-    // interval is the steady-state baseline and remains scheduled
-    // unconditionally.
+    // Promote a snapshot-derived shell to a verified session as soon as
+    // the connectivity probe reports we're back.
+    window.addEventListener('usernode:offline-change', (e) => {
+      if (e.detail && e.detail.offline === false) App._reconcileSession();
+    });
+
+    // Re-poll the platform version every 10s so the drawer's platform
+    // row flips to its "deploying" state within seconds of a deploy
+    // signaling start, and to "stale" (a tappable reload) once a new
+    // build is live and this tab is behind it. Cheap endpoint — just
+    // reads one tiny file off disk on the server.
     setInterval(App.loadVersion, 10_000);
   },
 
@@ -278,6 +508,71 @@ const App = {
     }, 50);
   },
 
+  // Screenshot-state deep link `?shot=safe-bottom`: paint the whole shell
+  // as if it were on a notched phone, so the safe-area treatment is
+  // REVIEWABLE. No desktop browser reports a bottom inset and Chrome's
+  // device emulation doesn't synthesise one, so without this every
+  // before/after capture and every manual check of the home-indicator
+  // clearance renders with zero insets — i.e. shows nothing.
+  //
+  // It writes the KIT's two custom properties rather than our own
+  // --platform-safe-* tokens, and that is the whole trick: our tokens are
+  // defined as `var(--un-safe-inset-X, env(...))`, so setting the kit
+  // property drives the platform utilities AND every `.un-safe-*` kit
+  // class (the header included) from one place — the shell shifts as a
+  // whole instead of insets appearing in a few places and not others.
+  //
+  // Pure paint state — nothing is written and no layout code branches on
+  // it — so it is deliberately NOT env-gated (same reasoning as
+  // ?shot=menu above). It also cannot lie to an app frame: the insets
+  // forwarded over the safe-area bridge are read from the hidden
+  // env()-valued probe element (AppView._readRootInsets), never from
+  // these properties, so an embedded app still receives its real ones.
+  //
+  // 47/34 are the iPhone 14/15-class status-bar and home-indicator
+  // insets in portrait — the frame the captures use (390x844).
+  SAFE_AREA_SHOT_INSETS: { top: '47px', bottom: '34px' },
+
+  _applySafeAreaShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'safe-bottom') return;
+    try {
+      const root = document.documentElement;
+      root.style.setProperty('--un-safe-inset-top', App.SAFE_AREA_SHOT_INSETS.top);
+      root.style.setProperty('--un-safe-inset-bottom', App.SAFE_AREA_SHOT_INSETS.bottom);
+    } catch (err) { /* ignore */ }
+  },
+
+  // Screenshot-state deep link `?shot=menu-nav` (#977): open the drawer
+  // and TAP a navigation row, so the single-motion rule — the drawer's
+  // exit is the only animation, the destination screen is swapped
+  // underneath it with no push — is reachable by URL. The defect it
+  // fixes lives entirely inside the ~400ms both animations used to
+  // overlap, which no still frame and no plain route can reach; the
+  // dapp.json checks assert the resulting state (the destination screen
+  // carrying data-entered="none", the drawer fully torn down).
+  //
+  // Ungated for the same reason as ?shot=menu above: pure UI state, no
+  // writes, and an env-gated link would starve the production "before"
+  // shot forever. The row is a real anchor, so .click() follows its href
+  // and the whole hash → restoreFromHash → navigate* path is exercised
+  // exactly as a finger would.
+  _applyMenuNavShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'menu-nav') return;
+    setTimeout(() => {
+      try { App.HeaderMenu.open(); } catch (err) { /* ignore */ }
+      // After the entrance spring has settled, so the tap lands on a
+      // presented drawer rather than one still sliding in.
+      setTimeout(() => {
+        const row = document.getElementById('drawer-row-leaderboard');
+        if (row) row.click();
+      }, 200);
+    }, 50);
+  },
+
   // Screenshot-state deep link `?shot=app-launching` (#931): paint the app
   // launch surface — icon, name and spinner over the theme background —
   // which otherwise exists only for the few hundred milliseconds between a
@@ -302,6 +597,43 @@ const App = {
       try { AppView.showLaunchCoverShot(); } catch (err) { /* ignore */ }
     };
     setTimeout(paint, 50);
+  },
+
+  // Screenshot-state deep links `?shot=feedback` / `?shot=feedback-spent`
+  // (#964): open the Send Feedback dialog at boot. The dialog — and with it
+  // the new "Put a kudos bounty on this" row — is reachable ONLY by tapping
+  // the header speech-bubble or the Dev plus-menu, so without this link the
+  // before/after screenshots, the "Test this change" button and the
+  // dapp.json checks would all show the home feed instead of the change.
+  //
+  // `feedback-spent` additionally forces a client-side remaining:0 budget
+  // BEFORE opening, so the greyed-out/exhausted state is reviewable without
+  // writing kudos rows for a real cloned user (which the staging seed rules
+  // forbid). That override is display-only: it never posts, and the server
+  // remains the real allowance gate on submit.
+  //
+  // Pure UI state, no writes, deliberately NOT env-gated — same reasoning as
+  // ?shot=menu above: an IS_STAGING-only link would starve the production
+  // "before" shot forever.
+  _applyFeedbackShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'feedback' && shot !== 'feedback-spent') return;
+    const spent = shot === 'feedback-spent';
+    // One tick after restoreFromHash so the screen it navigated to has
+    // painted and the dialog opens over a settled shell.
+    setTimeout(() => {
+      try {
+        if (spent && window.Kudos?.Budget) {
+          const limit = Kudos.Budget.state?.limit || 20;
+          // Pin the exhausted figure and stop the hourly poll from
+          // replacing it mid-screenshot with the real (unspent) budget.
+          Kudos.Budget.state = { given_this_week: limit, remaining: 0, limit };
+          Kudos.Budget.refresh = () => Promise.resolve();
+        }
+        App.openFeedbackModal();
+      } catch (err) { /* ignore */ }
+    }, 50);
   },
 
   renderAdminButton() {
@@ -337,12 +669,6 @@ const App = {
       if (!App.loadedPlatformSha && info.sha && info.sha !== 'dev') {
         App.loadedPlatformSha = info.sha;
       }
-      // Phase 3: if we're in the platform-updating window, dismiss the
-      // banner the moment /api/version reports a SHA different from the
-      // one we recorded at trigger time. Independent of WebSocket health
-      // — this is exactly the path that recovers the tab after the WS
-      // dropped during the GHA rolling restart.
-      App.PlatformUpdating.observeVersion(info);
       App.renderPlatformVersionPill(info);
     } catch {}
   },
@@ -482,491 +808,6 @@ const App = {
     })[c]);
   },
 
-  // ─────────────────────────────────────────────────────────────────
-  // SELF-HOSTING.md Phase 3: "Platform updating…" banner.
-  //
-  // Lifecycle:
-  //   1. server broadcasts vote_update { merging:true, selfHosted:true }
-  //      when a self-app PR transitions promoted → merging.
-  //   2. handleVoteUpdate calls PlatformUpdating.begin(...).
-  //   3. begin() persists { fromSha, since } to sessionStorage, shows
-  //      the banner, kicks the version poll up to 2s, and arms a 5min
-  //      "stuck" timer that swaps the banner to its red+Reload variant.
-  //   4. App.loadVersion calls observeVersion(info) on every poll. As
-  //      soon as info.sha differs from fromSha (and isn't 'dev'),
-  //      end() clears state, hides the banner, and reloads the page —
-  //      the new server may ship new client code, so a hard reload
-  //      avoids version-skew bugs.
-  //   5. The wrapped fetch (installFetchWrap) rejects all non-GET
-  //      requests while the banner is up — this is the actual write
-  //      block; the banner is just the signal. GETs flow through so
-  //      the version poll, auth check, etc. still work.
-  //
-  // Page-load recovery: restoreFromSessionStorage() runs early in
-  // init() so a tab that loaded mid-restart (or was reloaded by the
-  // user) re-renders the banner immediately and re-arms the poll.
-  //
-  // #239 second mode — "resolving merge conflicts". When a self-app
-  // merge fails on a conflict and the auto-resolver kicks in
-  // (vote_update { resolving:true } / { mergeFailed:true,
-  // resolving:true }), the banner switches to a non-blocking amber
-  // state instead of silently dismissing. Crucially isActive() stays
-  // false in this mode, so the fetch wrap never blocks writes — the
-  // platform isn't actually restarting. The state persists in
-  // sessionStorage (verified against /api/sessions/:id/status on
-  // restore), polls that endpoint every ~5s as the missed-WS-event
-  // safety net, and ends on the resolver's terminal broadcast:
-  // merged → begin() has already upgraded us to full updating mode;
-  // synced/noop → quiet dismiss; failed → red variant + Dismiss
-  // button, auto-hiding after ~20s.
-  // ─────────────────────────────────────────────────────────────────
-  PlatformUpdating: {
-    SS_KEY: 'usernode:platform_updating',
-    POLL_FAST_MS: 2000,
-    STUCK_AFTER_MS: 5 * 60 * 1000,
-    RESOLVE_POLL_MS: 5000,
-    RESOLVE_FAILED_HIDE_MS: 20 * 1000,
-
-    // Mutable runtime state. Persisted shape (in sessionStorage) is
-    // just { fromSha, since } — or { mode:'resolving', sessionId,
-    // appSlug, since } for the resolving mode — the timer ids and DOM
-    // refs are ephemeral and must be re-derived on page load.
-    fromSha: null,
-    since: null,
-    // Session whose merge armed the banner — lets restore / the stuck
-    // timer verify against /api/sessions/:id/status that the merge is
-    // still in flight (see verifyMergeStillInFlight).
-    sessionId: null,
-    fastPollTimer: null,
-    stuckTimer: null,
-    fetchWrapInstalled: false,
-    // #239 resolving-mode state: { sessionId, appSlug, since } | null.
-    resolvingSession: null,
-    resolvePollTimer: null,
-    resolveStuckTimer: null,
-    resolveFailedTimer: null,
-
-    isActive() {
-      return !!this.fromSha;
-    },
-
-    begin({ appSlug, sessionId } = {}) {
-      // Idempotent: a second begin() (e.g. server resends the merging
-      // event) is a no-op. The fromSha must be captured at first entry
-      // — re-capturing on a duplicate call would defeat the SHA-flip
-      // dismissal if the new container had already booted in between.
-      if (this.isActive()) return;
-      // #239 upgrade path: the resolver fixed the conflicts and the
-      // retried merge is now in flight (merging:true arrives before the
-      // resolver's terminal event). Clear the resolving state quietly —
-      // no hide, the banner transitions in place to full updating mode
-      // — so the late endResolving('merged') is a guaranteed no-op.
-      if (this.resolvingSession) this._clearResolvingState();
-      const fromSha = App.loadedPlatformSha || null;
-      this.fromSha = fromSha;
-      this.since = Date.now();
-      this.sessionId = sessionId || null;
-      try {
-        sessionStorage.setItem(this.SS_KEY, JSON.stringify({
-          fromSha, since: this.since, appSlug: appSlug || null, sessionId: sessionId || null,
-        }));
-      } catch {}
-      this.show(/* stuck */ false);
-      this.startFastPolling();
-      this.armStuckTimer();
-      console.log('[platform-updating] banner armed', { fromSha, appSlug });
-    },
-
-    restoreFromSessionStorage() {
-      let raw = null;
-      try { raw = sessionStorage.getItem(this.SS_KEY); } catch {}
-      if (!raw) return;
-      let parsed = null;
-      try { parsed = JSON.parse(raw); } catch {}
-      if (!parsed || typeof parsed !== 'object') {
-        try { sessionStorage.removeItem(this.SS_KEY); } catch {}
-        return;
-      }
-      // #239: resolving-mode payload. Verify against the server before
-      // re-showing — the resolve may have finished while this tab was
-      // reloading, and a stale banner with no terminal event coming
-      // would sit until the stuck timer. Drop the state on anything
-      // but a confirmed in-flight resolve.
-      if (parsed.mode === 'resolving') {
-        const since = parsed.since || Date.now();
-        if (!parsed.sessionId || Date.now() - since >= this.STUCK_AFTER_MS) {
-          try { sessionStorage.removeItem(this.SS_KEY); } catch {}
-          return;
-        }
-        fetch(`/api/sessions/${parsed.sessionId}/status`)
-          .then((r) => (r.ok ? r.json() : null))
-          .then((data) => {
-            // A WS event may have armed either mode while we awaited.
-            if (this.isActive() || this.resolvingSession) return;
-            if (data && data.resolving) {
-              this.resolvingSession = {
-                sessionId: parsed.sessionId, appSlug: parsed.appSlug || null, since,
-              };
-              this.showResolving();
-              this.startResolvePolling();
-              this.armResolveStuckTimer();
-              console.log('[platform-updating] resolving banner restored from session');
-            } else {
-              try { sessionStorage.removeItem(this.SS_KEY); } catch {}
-            }
-          })
-          .catch(() => {});
-        return;
-      }
-      this.fromSha = parsed.fromSha || null;
-      this.since = parsed.since || Date.now();
-      this.sessionId = parsed.sessionId || null;
-      const elapsed = Date.now() - this.since;
-      this.show(elapsed >= this.STUCK_AFTER_MS);
-      this.startFastPolling();
-      this.armStuckTimer();
-      console.log('[platform-updating] banner restored from session', { elapsedMs: elapsed });
-      // The restored merge may have aborted while this tab was
-      // reloading (its merging:false counter-event is gone for good) —
-      // verify before holding the tab read-only until the stuck timer.
-      this.verifyMergeStillInFlight();
-    },
-
-    observeVersion(info) {
-      if (!this.isActive()) return;
-      const sha = info && info.sha;
-      // Wait for a real, deploy-pinned SHA different from the one we
-      // captured. 'dev' means GIT_SHA wasn't set on the responding
-      // container — almost certainly a misconfigured rebuild rather
-      // than the legitimate post-restart steady state, so don't
-      // dismiss off it.
-      if (!sha || sha === 'dev' || sha === this.fromSha) return;
-      this.end({ newSha: sha });
-    },
-
-    // The merge behind this banner ended without merging — failed, head
-    // moved, or deferred (vote_update { merging:false, merged:false }).
-    // No new code is coming, so there's no SHA flip to wait for and no
-    // reason to reload — just clear the latch and lift the write block.
-    // Safe when the banner isn't armed (no-op).
-    cancel() {
-      if (!this.isActive()) return;
-      console.log('[platform-updating] cancelled (merge failed, no deploy)');
-      try { sessionStorage.removeItem(this.SS_KEY); } catch {}
-      this.fromSha = null;
-      this.since = null;
-      this.sessionId = null;
-      this.stopFastPolling();
-      this.disarmStuckTimer();
-      this.hide();
-    },
-
-    // ── #239 resolving mode ──────────────────────────────────────────
-    // Non-blocking sibling of begin(): the merge hit conflicts and the
-    // auto-resolver is fixing the branch (1–2 min worker turn). The
-    // platform is NOT restarting, so isActive() stays false and writes
-    // keep flowing — the banner is purely informational.
-    beginResolving({ sessionId, appSlug } = {}) {
-      // Idempotent + first-wins: a no-op while updating mode is active
-      // (that banner outranks this one) or while already tracking a
-      // resolve (a second concurrent resolve on a different session is
-      // covered by the vote-panel badges instead).
-      if (this.isActive() || this.resolvingSession) return;
-      if (sessionId == null) return;
-      const since = Date.now();
-      this.resolvingSession = { sessionId, appSlug: appSlug || null, since };
-      try {
-        sessionStorage.setItem(this.SS_KEY, JSON.stringify({
-          mode: 'resolving', sessionId, appSlug: appSlug || null, since,
-        }));
-      } catch {}
-      this.showResolving();
-      this.startResolvePolling();
-      this.armResolveStuckTimer();
-      console.log('[platform-updating] resolving banner armed', { sessionId, appSlug });
-    },
-
-    // Terminal handler for the resolver lifecycle. `sessionId` (when
-    // provided — the WS event carries it; the status poll doesn't)
-    // must match the tracked resolve.
-    endResolving(outcome, sessionId) {
-      // Ordering guard: on the success path the retried merge's
-      // merging:true broadcast precedes the resolver's terminal event,
-      // and begin() has already upgraded the banner to full updating
-      // mode (clearing resolvingSession on the way). A late
-      // endResolving('merged') must not touch that banner.
-      if (!this.resolvingSession) return;
-      if (sessionId != null && this.resolvingSession.sessionId !== sessionId) return;
-      console.log('[platform-updating] resolving ended', { outcome });
-      this._clearResolvingState();
-      if (outcome === 'failed') {
-        this.showResolveFailed();
-      } else {
-        // merged (when begin() somehow hasn't fired yet) / synced /
-        // noop → quiet dismiss; group chat carries the details.
-        this.hide();
-      }
-    },
-
-    // Clears the resolving runtime state without touching the banner
-    // DOM — callers decide whether to hide, swap variants, or (on the
-    // begin() upgrade path) leave it for show() to repaint in place.
-    _clearResolvingState() {
-      this.resolvingSession = null;
-      this.stopResolvePolling();
-      this.disarmResolveStuckTimer();
-      // Only drop the persisted payload when it's ours: on the upgrade
-      // path begin() overwrites SS_KEY right after this anyway, and
-      // updating mode is never active while resolving mode is.
-      if (!this.isActive()) {
-        try { sessionStorage.removeItem(this.SS_KEY); } catch {}
-      }
-    },
-
-    showResolving() {
-      const el = document.getElementById('platform-updating-banner');
-      if (!el) return;
-      this._clearResolveFailedTimer();
-      el.classList.remove('hidden');
-      this._setBannerTone('amber');
-      const text = document.getElementById('platform-updating-text');
-      const spinner = document.getElementById('platform-updating-spinner');
-      const reload = document.getElementById('platform-updating-reload');
-      const dismiss = document.getElementById('platform-updating-dismiss');
-      if (text) text.textContent = 'Merge hit conflicts with main — resolving them automatically, then retrying the merge. This usually takes a minute or two.';
-      if (spinner) spinner.classList.remove('hidden');
-      if (reload) reload.classList.add('hidden');
-      if (dismiss) dismiss.classList.add('hidden');
-    },
-
-    // Red terminal variant: Claude couldn't resolve the conflicts (or
-    // the sync errored / owner over budget). No deploy is coming, so
-    // there's nothing to wait for — Dismiss button + ~20s auto-hide.
-    showResolveFailed() {
-      const el = document.getElementById('platform-updating-banner');
-      if (!el) return;
-      this._clearResolveFailedTimer();
-      el.classList.remove('hidden');
-      this._setBannerTone('red');
-      const text = document.getElementById('platform-updating-text');
-      const spinner = document.getElementById('platform-updating-spinner');
-      const reload = document.getElementById('platform-updating-reload');
-      const dismiss = document.getElementById('platform-updating-dismiss');
-      if (text) text.textContent = "Automatic conflict resolution failed — check the app's group chat for details";
-      if (spinner) spinner.classList.add('hidden');
-      if (reload) reload.classList.add('hidden');
-      if (dismiss) dismiss.classList.remove('hidden');
-      this.resolveFailedTimer = setTimeout(() => this.dismissResolveFailure(), this.RESOLVE_FAILED_HIDE_MS);
-    },
-
-    // Wired to #platform-updating-dismiss (and the auto-hide timer).
-    // Guarded so a stale timer can't hide a banner that a later
-    // begin()/beginResolving() has since re-armed.
-    dismissResolveFailure() {
-      this._clearResolveFailedTimer();
-      if (this.isActive() || this.resolvingSession) return;
-      this.hide();
-    },
-
-    _clearResolveFailedTimer() {
-      if (this.resolveFailedTimer != null) {
-        clearTimeout(this.resolveFailedTimer);
-        this.resolveFailedTimer = null;
-      }
-    },
-
-    // ~5s safety-net poll of /api/sessions/:id/status — WS is
-    // fire-and-forget, so a dropped connection could eat the terminal
-    // event and strand the banner until the stuck timer.
-    startResolvePolling() {
-      if (this.resolvePollTimer != null) return;
-      this.resolvePollTimer = setInterval(() => {
-        const rs = this.resolvingSession;
-        if (!rs) return;
-        fetch(`/api/sessions/${rs.sessionId}/status`)
-          .then((r) => (r.ok ? r.json() : null))
-          .then((data) => {
-            if (data && data.resolving === false && this.resolvingSession === rs) {
-              this.endResolving('noop');
-            }
-          })
-          .catch(() => {});
-      }, this.RESOLVE_POLL_MS);
-    },
-
-    stopResolvePolling() {
-      if (this.resolvePollTimer != null) {
-        clearInterval(this.resolvePollTimer);
-        this.resolvePollTimer = null;
-      }
-    },
-
-    // 5-minute hard ceiling, mirroring the updating banner's stuck
-    // timer — but the failure mode here is benign (no write block), so
-    // on fire we just dismiss quietly instead of going red.
-    armResolveStuckTimer() {
-      this.disarmResolveStuckTimer();
-      const since = this.resolvingSession?.since || Date.now();
-      const remaining = Math.max(0, this.STUCK_AFTER_MS - (Date.now() - since));
-      this.resolveStuckTimer = setTimeout(() => {
-        if (this.resolvingSession) this.endResolving('noop');
-      }, remaining);
-    },
-
-    disarmResolveStuckTimer() {
-      if (this.resolveStuckTimer != null) {
-        clearTimeout(this.resolveStuckTimer);
-        this.resolveStuckTimer = null;
-      }
-    },
-
-    // Shared amber/red class swap for all banner variants. Swapping
-    // classes rather than re-rendering keeps the spinner animation
-    // uninterrupted when a variant flips mid-flight.
-    _setBannerTone(tone) {
-      const el = document.getElementById('platform-updating-banner');
-      if (!el) return;
-      const amber = ['bg-amber-100', 'text-amber-900', 'border-amber-300',
-        'dark:bg-amber-900/40', 'dark:text-amber-100', 'dark:border-amber-800/60'];
-      const red = ['bg-red-100', 'text-red-900', 'border-red-300',
-        'dark:bg-red-900/40', 'dark:text-red-100', 'dark:border-red-800/60'];
-      el.classList.remove(...(tone === 'red' ? amber : red));
-      el.classList.add(...(tone === 'red' ? red : amber));
-    },
-
-    end({ newSha } = {}) {
-      console.log('[platform-updating] dismissing', { fromSha: this.fromSha, newSha });
-      try { sessionStorage.removeItem(this.SS_KEY); } catch {}
-      this.fromSha = null;
-      this.since = null;
-      this.sessionId = null;
-      this.stopFastPolling();
-      this.disarmStuckTimer();
-      this.hide();
-      // Hard reload: the new server may ship new client code, so
-      // reusing the in-memory App / AppView / Home from the pre-restart
-      // SHA against a freshly-deployed backend is exactly the version-
-      // skew minefield the rest of this codebase tries to avoid (see
-      // the 'stale' pill in renderPlatformVersionPill — same design,
-      // different trigger). loadedPlatformSha is updated by the next
-      // load anyway, so a soft refresh + version-pill flip would also
-      // work, but reload is simpler and unambiguous.
-      try { location.reload(); } catch {}
-    },
-
-    show(stuck) {
-      const el = document.getElementById('platform-updating-banner');
-      if (!el) return;
-      this._clearResolveFailedTimer();
-      el.classList.remove('hidden');
-      const reload = document.getElementById('platform-updating-reload');
-      const text = document.getElementById('platform-updating-text');
-      const spinner = document.getElementById('platform-updating-spinner');
-      const dismiss = document.getElementById('platform-updating-dismiss');
-      if (dismiss) dismiss.classList.add('hidden');
-      if (stuck) {
-        // Swap to the red "stuck" variant (class swap keeps the
-        // animation uninterrupted if we flip mid-flight, e.g. on
-        // session-storage restore for a tab backgrounded >5 min).
-        this._setBannerTone('red');
-        if (text) text.textContent = 'Platform update is taking longer than expected. You can reload manually.';
-        if (spinner) spinner.classList.add('hidden');
-        if (reload) reload.classList.remove('hidden');
-      } else {
-        this._setBannerTone('amber');
-        if (text) text.textContent = 'Platform updating… sit tight, write actions are paused.';
-        if (spinner) spinner.classList.remove('hidden');
-        if (reload) reload.classList.add('hidden');
-      }
-    },
-
-    hide() {
-      const el = document.getElementById('platform-updating-banner');
-      if (el) el.classList.add('hidden');
-    },
-
-    startFastPolling() {
-      if (this.fastPollTimer != null) return;
-      this.fastPollTimer = setInterval(() => App.loadVersion(), this.POLL_FAST_MS);
-    },
-
-    stopFastPolling() {
-      if (this.fastPollTimer != null) {
-        clearInterval(this.fastPollTimer);
-        this.fastPollTimer = null;
-      }
-    },
-
-    armStuckTimer() {
-      this.disarmStuckTimer();
-      const remaining = Math.max(0, this.STUCK_AFTER_MS - (Date.now() - this.since));
-      this.stuckTimer = setTimeout(() => {
-        if (!this.isActive()) return;
-        this.show(/* stuck */ true);
-        // A banner this old usually means the merging:false
-        // counter-event was missed (WS drop). If the server says the
-        // merge is no longer in flight, unlatch instead of sitting red
-        // forever.
-        this.verifyMergeStillInFlight();
-      }, remaining);
-    },
-
-    // Missed-WS-event recovery: ask the server whether the merge that
-    // armed this banner is still on the merging → merged → deploy path.
-    // The merging:false counter-event un-latches live tabs, but a tab
-    // that was reloading (or whose WS had dropped) when it fired restores the
-    // banner from sessionStorage and would block writes forever — the
-    // dismissal condition (a /api/version SHA flip) never comes for an
-    // aborted merge. 'merged' keeps the banner: the GHA deploy and its
-    // SHA flip are still on the way. Fail-safe on any error or an older
-    // server without `status` in the payload: keep the banner armed.
-    verifyMergeStillInFlight() {
-      const sessionId = this.sessionId;
-      if (sessionId == null) return;
-      fetch(`/api/sessions/${sessionId}/status`)
-        .then((r) => (r.ok ? r.json() : null))
-        .then((data) => {
-          if (!this.isActive() || this.sessionId !== sessionId) return;
-          const status = data && typeof data.status === 'string' ? data.status : null;
-          if (status && status !== 'merging' && status !== 'merged') {
-            console.log('[platform-updating] merge no longer in flight — unlatching', { status });
-            this.cancel();
-          }
-        })
-        .catch(() => {});
-    },
-
-    disarmStuckTimer() {
-      if (this.stuckTimer != null) {
-        clearTimeout(this.stuckTimer);
-        this.stuckTimer = null;
-      }
-    },
-
-    // Wraps window.fetch to reject any non-GET (write) request while
-    // the banner is up. This is the actual block — the banner itself
-    // is purely a signal. GETs flow through unchanged so /api/version
-    // polling, the global events WS reconnect path, and any other
-    // read-only chrome can keep running.
-    //
-    // Idempotent: only installs once even if init() runs twice
-    // (defensive — DOMContentLoaded should fire exactly once but we
-    // don't want to double-wrap if a future flow triggers re-init).
-    installFetchWrap() {
-      if (this.fetchWrapInstalled) return;
-      this.fetchWrapInstalled = true;
-      const orig = window.fetch.bind(window);
-      const self = this;
-      window.fetch = function (resource, init) {
-        const method = (init && init.method ? String(init.method) : 'GET').toUpperCase();
-        if (self.isActive() && method !== 'GET' && method !== 'HEAD') {
-          return Promise.reject(new Error('Platform is updating — write actions paused. Try again in a few seconds.'));
-        }
-        return orig(resource, init);
-      };
-    },
-  },
-
   // Per-app redeploy WS handler. Flips affected pills into / out of
   // the yellow + spinner state. Reacts to BOTH the start broadcast
   // (deploying:true → render the deploying pill) and the end
@@ -999,8 +840,7 @@ const App = {
     }
 
     // Home-screen card pill (only if the home screen is visible).
-    const homeVisible = document.getElementById('home-screen')
-      && !document.getElementById('home-screen').classList.contains('hidden');
+    const homeVisible = App._isScreenVisible('home-screen');
     if (homeVisible && typeof Home !== 'undefined') {
       if (data.deploying) {
         // We don't have the row's `version` data on hand here, but
@@ -1064,6 +904,12 @@ const App = {
           case 'session_update':
             App.handleSessionUpdate(data);
             break;
+          case 'session_state':
+            // #1038: live working state for one session. The store repaints
+            // every surface that shows it (cog, board cards, session list)
+            // with no refetch at all.
+            App.handleSessionState(data);
+            break;
           case 'vote_update':
             App.handleVoteUpdate(data);
             break;
@@ -1088,6 +934,15 @@ const App = {
             // _loadDevData) and repaints, so every open board converges.
             if (typeof AppView !== 'undefined' && AppView.refreshDevData) {
               AppView.refreshDevData('board-order');
+            }
+            break;
+          case 'session_drafts_changed':
+            // #940: another device of THIS user saved or trashed a draft.
+            // No-ops unless that session is the one on screen; a dropped
+            // socket costs nothing, since opening the session or returning
+            // to the tab reconciles anyway.
+            if (typeof DevChat !== 'undefined' && DevChat.applyDraftsUpdate) {
+              DevChat.applyDraftsUpdate(data.sessionId);
             }
             break;
           case 'notification_new':
@@ -1121,8 +976,7 @@ const App = {
             // Home screen: re-pull the apps list so the home-screen
             // pill picks up the new SHA. Cheap; only fires on a real
             // version change.
-            if (typeof Home !== 'undefined' && document.getElementById('home-screen')
-                && !document.getElementById('home-screen').classList.contains('hidden')) {
+            if (typeof Home !== 'undefined' && App._isScreenVisible('home-screen')) {
               Home.load();
             }
             // #405: the merge that triggered this rebuild also flips the
@@ -1181,11 +1035,17 @@ const App = {
     // so `window.Home` / `window.AppView` would silently be undefined.
     // `Notifications` is explicitly assigned to `window` in
     // notifications.js, so that one is fine.
-    if (typeof Home !== 'undefined' && document.getElementById('home-screen') && !document.getElementById('home-screen').classList.contains('hidden')) {
+    if (typeof Home !== 'undefined' && App._isScreenVisible('home-screen')) {
       Home.load();
     }
     if (window.Notifications) Notifications.refresh?.();
     if (window.WorkDrawer) WorkDrawer.refresh?.();
+    // #1038: `session_state` is fire-and-forget like every other broadcast,
+    // so anything that transitioned during the disconnect window was lost.
+    // The reconcile endpoint is the authority — it also clears overrides for
+    // sessions that finished while we were away, and detects a platform
+    // restart (new bootId) that invalidated all of them.
+    if (window.SessionState) SessionState.sync?.();
     // Admin console's container-rollover section: its live table is driven
     // by `admin_rollover_status`, so a dropped socket means missed
     // transitions. The loader no-ops unless that section is mounted.
@@ -1212,10 +1072,13 @@ const App = {
     // Update home screen card if visible
     const card = document.querySelector(`.app-card[data-slug="${data.slug}"]`);
     if (card) {
-      const dot = card.querySelector('.status-dot');
-      if (dot) {
-        dot.className = `status-dot ${data.status}`;
-      }
+      // The tile carries no status dot any more (a launcher icon should
+      // read as an app, not a dashboard row), so `data-status` IS the
+      // update: it gates the tap-to-open handler and the cursor, and it is
+      // what a full re-render reads back. The visible copy — "Spinning
+      // up…" / "Error" and the Retry button — comes from the Home.load()
+      // below, which every status worth showing already triggers.
+      card.dataset.status = data.status;
       // #416: 'error' also triggers a re-pull — the fresh list carries
       // the (server-gated) last_failure_reason for the card tooltip and
       // the "View build log" menu item.
@@ -1250,6 +1113,32 @@ const App = {
         AppView.renderAppTab();
       }
     }
+  },
+
+  // #1038: a pushed session working-state change. The spinner half needs no
+  // fetch — SessionState.applyEvent repaints every subscribed surface. The
+  // only thing that still warrants a refetch is a LIFECYCLE change
+  // (active → paused / promoted / archived), because that changes which rows
+  // exist on the board and in the drawer, not just how they're decorated.
+  // Debounced so a burst of transitions costs one reload.
+  _sessionStatusSeen: Object.create(null),
+  _sessionRowsTimer: null,
+  handleSessionState(data) {
+    if (!window.SessionState || data == null || data.sessionId == null) return;
+    const key = String(data.sessionId);
+    const prevStatus = App._sessionStatusSeen[key];
+    const nextStatus = data.status || null;
+    App._sessionStatusSeen[key] = nextStatus;
+    SessionState.applyEvent(data);
+    if (prevStatus === undefined || prevStatus === nextStatus) return;
+    if (App._sessionRowsTimer) return;
+    App._sessionRowsTimer = setTimeout(() => {
+      App._sessionRowsTimer = null;
+      App.refreshHomeProposals();
+      if (typeof AppView !== 'undefined' && AppView.refreshDevData) {
+        AppView.refreshDevData('session');
+      }
+    }, 500);
   },
 
   handleSessionUpdate(data) {
@@ -1348,7 +1237,7 @@ const App = {
         // paths broadcast pills on the status event, not 'quick_replies'
         // (that handler attaches to the last ASSISTANT row, which a
         // recovered turn doesn't have).
-        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, scoutOutput: data.scoutOutput, quickReplies: data.quickReplies, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
+        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, scoutOutput: data.scoutOutput, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         break;
@@ -1424,7 +1313,7 @@ const App = {
         }
         break;
       case 'cc_progress':
-        DevChat._appendProgressLine(data.text);
+        DevChat._appendProgressLine(data.text, data);
         DevChat.scrollToBottom();
         // Also arm the /status polling fallback when cc_progress arrives via
         // WS (e.g. the SSE POST itself died before getting here). Without
@@ -1571,7 +1460,14 @@ const App = {
         });
         break;
       case 'cc_log':
-        DevChat.messages.push({ role: 'system', ccLog: data.log, content: 'Claude Code log', created_at: new Date().toISOString() });
+        DevChat.messages.push({
+          role: 'system',
+          ccLog: data.log,
+          content: data.agentBackend === 'codex_openrouter' ? 'Codex log' : 'Claude Code log',
+          agentBackend: data.agentBackend,
+          agentModel: data.agentModel,
+          created_at: new Date().toISOString(),
+        });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         break;
@@ -1708,58 +1604,20 @@ const App = {
     }
   },
 
+  // #1015: a self-app merge no longer latches any platform-wide chrome.
+  // The "Platform updating… write actions are paused" banner (and its
+  // fetch write-block, 2s version poll, stuck timer and forced reload)
+  // existed because a self-app merge restarted the ONE platform
+  // container. Blue-green deploys (#1008, scripts/platform-rollout.sh)
+  // keep the live color serving until the new one is health-gated and
+  // cut over, so there is no downtime to announce and no reason to
+  // pause writes. `data.selfHosted` still rides along on these
+  // broadcasts (it's a cheap, honest fact) — this handler simply
+  // doesn't branch on it, and per-proposal state is carried by the
+  // proposal's own badges. A tab left open across a platform deploy is
+  // caught up by the drawer's stale-version pill
+  // (renderPlatformVersionPill) or by pull-to-refresh (_refreshOrReload).
   handleVoteUpdate(data) {
-    // Phase 3 trigger: when a self-hosted PR transitions promoted →
-    // merging, latch the "Platform updating…" banner. The dismissal
-    // (SHA flip on /api/version) happens via App.loadVersion's poll
-    // loop. Fires before the panel refresh so all open tabs (including
-    // ones not currently looking at this app) latch into the state.
-    if (data.merging && data.selfHosted) {
-      App.PlatformUpdating.begin({
-        appSlug: data.appSlug,
-        sessionId: data.sessionId,
-      });
-    }
-    // Counter-event: the self-app merge attempt ended without a merge
-    // (failed, head moved since review, revision unverifiable), so no
-    // SHA flip is coming — unlatch instead of holding the platform
-    // read-only until the stuck timer. `merging === false` (field
-    // present) + no merge is the terminal shape every abort path
-    // broadcasts; keying on it rather than just `mergeFailed` covers the
-    // head-moved / deferred aborts, which are deliberately not flagged
-    // as failures. #239: when the auto-resolver is kicking in
-    // (resolving:true rides on the mergeFailed event for conflict-class
-    // failures), immediately re-arm in the non-blocking resolving state
-    // so the banner transitions in place instead of silently vanishing
-    // while the resolver spends 1–2 min on the fix.
-    if (data.merging === false && !data.merged && data.selfHosted) {
-      App.PlatformUpdating.cancel();
-      if (data.resolving) {
-        App.PlatformUpdating.beginResolving({
-          sessionId: data.sessionId,
-          appSlug: data.appSlug,
-        });
-      }
-    }
-    // #239 resolver start broadcast — covers resolutions that never
-    // armed a banner (behind-main pre-gate, drift poller, post-merge
-    // sweep) and doubles as a late confirm for the mergeFailed path
-    // above (beginResolving is idempotent). No cancel() here: a bare
-    // start event must not kill an updating banner that's legitimately
-    // active for a different, already-merged PR's deploy.
-    if (data.resolving === true && data.selfHosted && !data.mergeFailed) {
-      App.PlatformUpdating.beginResolving({
-        sessionId: data.sessionId,
-        appSlug: data.appSlug,
-      });
-    }
-    // Terminal event: the resolver finished (merged / synced / failed /
-    // noop). endResolving ignores it unless the sessionId matches the
-    // tracked resolve — and is a no-op once begin() has upgraded the
-    // banner to full updating mode on the merged path.
-    if (data.resolving === false) {
-      App.PlatformUpdating.endResolving(data.resolutionOutcome, data.sessionId);
-    }
     // Refresh the proposals tab / inline chat vote state if we're in
     // this app's Dev view.
     if (App.currentApp === data.appSlug && App.currentTab === 'dev') {
@@ -1782,265 +1640,37 @@ const App = {
     }
   },
 
-  // Drawer status/version rows (header slim-down): the kudos + AI-credit
-  // meters render into #drawer-status-pane, and the platform/app build
-  // lines + fork lineage label into #drawer-footer — none of them in the
-  // header any more. Their RENDERERS are untouched — every slot kept its
-  // id through both moves — so all this owns is the two app-scoped rows'
-  // visibility plus the hamburger's amber deploy dot.
+  // Drawer status/version rows + the hamburger drawer itself (#1079 chunk
+  // B): both objects moved into the React bundle, beside the markup they
+  // drive, as frontend/src/features/header/header-menu-controller.js. What
+  // stays here is a forwarder apiece, because the call sites are spread over
+  // app.js, app-view.js, native-chrome.js, node-pill.js and wallet-sheet.js
+  // and none of them had any reason to change.
+  //
+  // Explicit method-by-method forwarding rather than a getter for App.X:
+  // app.js is a classic script and the bundle is a module, so there is a
+  // window in which window.DrawerStatus does not exist yet, and the two
+  // unguarded refreshDeployDot() / setAppOpen() callers below would throw on
+  // a bare getter. Forwarding no-ops instead, which is what those calls did
+  // when the drawer was not on screen anyway.
   DrawerStatus: {
-    // The "App" build row follows the same lifecycle as
-    // #drawer-row-github / #drawer-row-share: visible only while an app
-    // is open. Called from openApp and from every navigate* that leaves
-    // an app behind.
-    //
-    // The header's App/Dev switch rides the SAME lifecycle, which is why
-    // it's owned here rather than in a seventh place: this one call
-    // already covers openApp, navigateHome, AppView.close() and all six
-    // other-screen navigations (leaderboard, challenges, profile, admin,
-    // settings, topochain). It used to be free — the old #app-tabs bar
-    // was a child of #app-view and disappeared whenever that did — but a
-    // header-resident control has to be hidden explicitly.
-    setAppOpen(open) {
-      const row = document.getElementById('drawer-row-app-version');
-      if (row) row.classList.toggle('hidden', !open);
-      // Fork lineage is app-scoped too — closing an app can never leave
-      // the previous app's "Forked from" line behind.
-      if (!open) App.DrawerStatus.setForkVisible(false);
-      // Self-hosted apps (the platform's own row) have no App mode at
-      // all — appData.url maps to a slug-derived subdomain that doesn't
-      // resolve, so switchTab coerces them to the Dev forum. A switch
-      // with one reachable option is noise, so hide the whole control
-      // rather than shipping a dead segment. setAppOpen(true) runs after
-      // the /api/apps/:slug fetch resolves, so self_hosted is known by
-      // the time this reads it.
-      const modeSwitch = document.getElementById('app-mode-switch');
-      if (modeSwitch) {
-        const show = !!open && !window.AppView?.appData?.self_hosted;
-        modeSwitch.classList.toggle('hidden', !show);
-        // The control materially changes the header's right-group width,
-        // which is one of the two inputs to the title's centered-vs-flow
-        // decision. The group's ResizeObserver would catch this on its
-        // own a frame later; the explicit hook exists so the title
-        // doesn't visibly jump.
-        window.HeaderLayout?.refresh?.();
-      }
-      App.DrawerStatus.refreshDeployDot();
-    },
-
-    // Driven by AppView.renderForkBadge(): shown only when it actually
-    // wrote a badge (i.e. the open app is a fork). `flex`, not the row
-    // default, because the row ships `hidden` and Tailwind's `hidden`
-    // would otherwise fight an inline display.
-    setForkVisible(visible) {
-      const row = document.getElementById('drawer-row-app-fork');
-      if (!row) return;
-      row.classList.toggle('hidden', !visible);
-      row.classList.toggle('flex', !!visible);
-    },
-
-    // Mirror "a deploy is in flight" onto the hamburger. Read straight
-    // off the rendered version lines rather than threading state: their
-    // markup is already the single source of truth for the deploying
-    // state (renderAppVersionPillHTML / renderPlatformVersionPill both
-    // stamp .drawer-ver--deploying on the footer's text form), and both
-    // may change independently. Scoped to #drawer-footer — where the two
-    // version lines live since the footer split — so a deploying home-tile
-    // pill elsewhere in the document can never light this dot.
-    refreshDeployDot() {
-      const dot = document.getElementById('header-menu-deploy-dot');
-      if (!dot) return;
-      const deploying = !!document.querySelector(
-        '#drawer-footer .drawer-ver--deploying');
-      dot.classList.toggle('hidden', !deploying);
-    },
+    setAppOpen(open) { window.DrawerStatus?.setAppOpen(open); },
+    setForkVisible(visible) { window.DrawerStatus?.setForkVisible(visible); },
+    refreshDeployDot() { window.DrawerStatus?.refreshDeployDot(); },
   },
 
-  // Slide-out navigation drawer — available at every viewport width
-  // (#122). Top to bottom: the kudos/AI-credit status pane, the theme
-  // selector directly below it, the native Node/Wallet rows, the four
-  // main nav rows (Profile, Leaderboard, Settings, Admin & moderation),
-  // and a bottom-anchored footer carrying the platform/app build lines
-  // plus GitHub + Share. (Members & visibility moved to the Dev "+"
-  // menu — #645.)
   HeaderMenu: {
-    _panel: null,
-    open() {
-      const panel = document.getElementById('header-menu-panel');
-      const overlay = document.getElementById('header-menu-overlay');
-      const btn = document.getElementById('header-menu-btn');
-      if (!panel) return;
-      // #555: the AI-credit row only ever renders in this drawer, so
-      // opening it is exactly when its number matters. The refresh is
-      // throttled inside AiCredit, so this is cheap on every open —
-      // and it must run BEFORE the touch branch below, which returns.
-      if (window.AiCredit?.refreshAll) AiCredit.refreshAll();
-      // Touch platforms: present the drawer as a kit side panel — a
-      // right-edge slide-in with 1:1 drag-to-dismiss, matching what
-      // desktop's CSS slide-over already does positionally (it used to
-      // come up from the bottom as a sheet capped at 70vh, which cut the
-      // bottom-anchored footer off). The panel element itself is adopted
-      // via contentEl — its row listeners ride along — and is restored to
-      // <body> (off-screen, as usual) when the panel dismisses. Desktop
-      // keeps the right-side slide-over below.
-      if (PlatformUI.isTouch()) {
-        App.HeaderMenu._renderThemeButtons();
-        panel.classList.add('platform-panel-adopted');
-        // Assigned right below; captured here so onDismiss can tell its own
-        // teardown apart from a newer one's (see the guard).
-        let handle = null;
-        const kitPanel = PlatformUI.panel({
-          contentEl: panel,
-          side: 'right',
-          onDismiss: () => {
-            // Teardown is deferred behind the exit spring, so a tap on the
-            // hamburger during that window can re-adopt the drawer into a
-            // NEW kit panel before this fires. Restoring it to <body> then
-            // would yank the node straight back out of the panel the user
-            // just opened, leaving an empty drawer. Only the CURRENT
-            // handle's teardown owns the node.
-            if (handle && App.HeaderMenu._panel !== handle) return;
-            panel.classList.remove('platform-panel-adopted');
-            document.body.appendChild(panel);
-            App.HeaderMenu._panel = null;
-            // The hamburger's state is not the kit's business, so it is
-            // reset here on EVERY exit path (backdrop, Escape, ✕, row
-            // navigation) — they all route through the kit dismiss.
-            btn.setAttribute('aria-expanded', 'false');
-            btn.setAttribute('aria-label', 'Open menu');
-          },
-        });
-        handle = kitPanel;
-        if (kitPanel) {
-          App.HeaderMenu._panel = kitPanel;
-          // The touch path used to return before the aria writes below,
-          // leaving the button reading "Open menu" / collapsed while the
-          // drawer was open.
-          btn.setAttribute('aria-expanded', 'true');
-          btn.setAttribute('aria-label', 'Close menu');
-          return;
-        }
-        panel.classList.remove('platform-panel-adopted');
-      }
-      overlay.classList.remove('hidden');
-      // Force a reflow so the transition fires (element was display:none).
-      overlay.getBoundingClientRect();
-      overlay.setAttribute('data-open', '');
-      panel.setAttribute('data-open', '');
-      btn.setAttribute('aria-expanded', 'true');
-      btn.setAttribute('aria-label', 'Close menu');
-      // Reflect the current theme mode every time the drawer opens (covers
-      // cross-tab changes and explicit values that happen to match the OS).
-      App.HeaderMenu._renderThemeButtons();
-      const closeBtn = document.getElementById('header-menu-close');
-      if (closeBtn) closeBtn.focus();
-    },
-    // Order of the three segments in the DOM — also the caret's stop
-    // index, so the two can never disagree.
-    THEME_MODES: ['light', 'dark', 'system'],
-
-    // Sync the Light/Dark/System segmented control from Theme.get(): the
-    // raised active segment, its aria-checked state, and the position of
-    // the caret underneath it. Safe to call before Theme/DOM exist
-    // (guards both).
-    //
-    // The caret is moved by writing --theme-caret-index (0|1|2) on the
-    // track and letting CSS translate a thirds-width element by
-    // index * 100%. Deliberately NOT an offsetLeft measurement: this runs
-    // once from open() BEFORE PlatformUI.panel resizes the panel from
-    // w-60 to the kit drawer's --un-panel-width, so a pixel read here
-    // would be stale the moment the panel presents. Percentages are
-    // correct at both widths with no re-measure, and the transition in
-    // CSS is what makes the caret slide between segments.
-    _renderThemeButtons() {
-      if (!window.Theme) return;
-      const current = Theme.get();
-      document.querySelectorAll('#drawer-theme-track [data-theme-mode]').forEach((b) => {
-        const active = b.dataset.themeMode === current;
-        b.classList.toggle('theme-seg-active', active);
-        b.setAttribute('aria-checked', active ? 'true' : 'false');
-      });
-      const track = document.getElementById('drawer-theme-track');
-      if (track) {
-        const idx = Math.max(0, App.HeaderMenu.THEME_MODES.indexOf(current));
-        track.style.setProperty('--theme-caret-index', String(idx));
-      }
-    },
+    open() { window.HeaderMenu?.open(); },
+    // close() is awaited by callers that present a surface of their own (the
+    // Node / Wallet sheets, the Share dialog), so the forwarder has to keep
+    // returning a thenable even when the controller is not up yet.
     close() {
-      if (App.HeaderMenu._panel) {
-        App.HeaderMenu._panel.dismiss();
-        return;
-      }
-      const panel = document.getElementById('header-menu-panel');
-      const overlay = document.getElementById('header-menu-overlay');
-      const btn = document.getElementById('header-menu-btn');
-      if (!panel) return;
-      panel.removeAttribute('data-open');
-      overlay.removeAttribute('data-open');
-      btn.setAttribute('aria-expanded', 'false');
-      btn.setAttribute('aria-label', 'Open menu');
-      // Hide overlay after the slide-out transition finishes.
-      setTimeout(() => overlay.classList.add('hidden'), 200);
+      return window.HeaderMenu
+        ? window.HeaderMenu.close()
+        : Promise.resolve();
     },
-    init() {
-      const btn = document.getElementById('header-menu-btn');
-      if (!btn) return;
-      btn.addEventListener('click', () => App.HeaderMenu.open());
-      document.getElementById('header-menu-close')
-        .addEventListener('click', () => App.HeaderMenu.close());
-      document.getElementById('header-menu-overlay')
-        .addEventListener('click', () => App.HeaderMenu.close());
-      document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') {
-          // Adopted into a kit panel: the kit's own modal-stack handler
-          // owns Escape (it dismisses the topmost surface, which may be a
-          // modal opened above the drawer). Don't double-handle it.
-          if (App.HeaderMenu._panel) return;
-          const panel = document.getElementById('header-menu-panel');
-          if (panel && panel.hasAttribute('data-open')) App.HeaderMenu.close();
-        }
-      });
-      // Drawer row actions — each closes the menu after triggering its action.
-      document.getElementById('drawer-row-github')
-        .addEventListener('click', () => App.HeaderMenu.close());
-      // Leaderboard (the merged Kudos + Topochain + Challenges screen) —
-      // same real-anchor idiom as Profile below: navigation rides the
-      // anchor's hash, the click handler here just closes the drawer. The
-      // separate Challenges / Topochain-seasons rows that used to sit
-      // beside it are gone; they're tabs of this one screen now.
-      document.getElementById('drawer-row-leaderboard')
-        ?.addEventListener('click', () => App.HeaderMenu.close());
-      document.getElementById('drawer-row-share')
-        .addEventListener('click', () => {
-          App.HeaderMenu.close();
-          if (window.AppView) AppView.openShareModal();
-        });
-      // Settings — the #settings screen (settings-modal-to-screen
-      // conversion). Same real-anchor idiom as Challenges / Profile above:
-      // navigation rides the anchor's hash, this handler just closes the
-      // drawer.
-      document.getElementById('drawer-row-settings')
-        ?.addEventListener('click', () => App.HeaderMenu.close());
-      // Admin & moderation — visibility is App.renderAdminButton()'s job
-      // (isAdmin gate); navigation rides the anchor's #admin hash, which
-      // navigateToAdminConsole re-gates. Same idiom as Settings above.
-      document.getElementById('drawer-row-admin')
-        ?.addEventListener('click', () => App.HeaderMenu.close());
-      // Theme segmented control — a live control, NOT a navigation row: it
-      // sets the mode and re-highlights WITHOUT closing the drawer, so the
-      // user can see the recolor and switch again.
-      if (window.Theme) {
-        document.querySelectorAll('#drawer-theme-track [data-theme-mode]').forEach((b) => {
-          b.addEventListener('click', () => {
-            Theme.set(b.dataset.themeMode);
-            App.HeaderMenu._renderThemeButtons();
-          });
-        });
-        // Storage/OS-driven changes (other tab, OS sunset switch) re-highlight too.
-        Theme.onChange(() => App.HeaderMenu._renderThemeButtons());
-        App.HeaderMenu._renderThemeButtons();
-      }
-    },
+    isPresenting() { return !!window.HeaderMenu?.isPresenting(); },
+    consumeNavPending() { return !!window.HeaderMenu?.consumeNavPending(); },
   },
 
   // Pull-to-refresh on the static full-screen scrollers (element mode —
@@ -2080,15 +1710,19 @@ const App = {
         return Leaderboard._load();
       });
     }
-    const notifList = document.getElementById('notifications-list');
-    if (notifList) PlatformUI.pullToRefresh(notifList, () => Notifications.refresh());
+    // #notifications-list's pull-to-refresh moved with the panel (#1079
+    // chunk B) — it is attached from the island's layout effect in
+    // frontend/src/features/notifications/index.tsx, so the whole panel has
+    // exactly one owner.
   },
 
   bindEvents() {
     // Note: the "Create new app" entry point lives in the home feed
     // now (see Home.wireCreateButtons) — no static header button to
     // bind here anymore.
-    App.HeaderMenu.init();
+    // The drawer's own wiring is HeaderMenu.init(), called from the React
+    // island's layout effect now (#1079 chunk B) — it has to run after
+    // hydration has adopted #header-menu-panel, which is earlier than this.
     App._wirePullToRefresh();
     document.getElementById('create-cancel').addEventListener('click', App.hideCreateModal);
     document.getElementById('create-modal').addEventListener('click', (e) => {
@@ -2171,7 +1805,14 @@ const App = {
     // and pops to that screen's section menu (handleBack returns true when
     // it consumed the press). Gating on App._inAdmin / App._inSettings
     // means there is no override state that can go stale.
-    document.getElementById('back-btn').addEventListener('click', () => {
+    //
+    // #1036: the button is an <a href> now, so a cmd/ctrl/shift/middle
+    // click is the BROWSER's to handle (new tab / new window) — bail out
+    // before preventDefault and let it. The guard is the first statement
+    // in the callback; the screen-hook chain below it is unchanged.
+    document.getElementById('back-btn').addEventListener('click', (e) => {
+      if (window.NavLink && NavLink.isNativeClick(e)) return;
+      e.preventDefault();
       if (App._inAdmin && window.AdminConsole?.handleBack?.()) return;
       if (App._inSettings && window.Settings?.handleBack?.()) return;
       // Browse's detail level (#apps/<slug>) claims the button as "up to
@@ -2261,6 +1902,30 @@ const App = {
     let stateAvailable = false;
     const stateRow = document.getElementById('feedback-state-row');
     const stateCheckbox = document.getElementById('feedback-state-checkbox');
+    // #964: the opt-in kudos-bounty row. Unlike the state row this shows for
+    // BOTH targets — "This app" and "Social Vibecoding Platform" alike file
+    // into a repository the platform tracks as an app, so either can carry a
+    // bounty.
+    const bountyRow = document.getElementById('feedback-bounty-row');
+    const bountyCheckbox = document.getElementById('feedback-bounty-checkbox');
+    const bountyNote = document.getElementById('feedback-bounty-note');
+    // Paint the row from the viewer's live weekly allowance and return it to
+    // its unchecked default. Budget state is null only when the first-load
+    // fetch failed — show the row enabled with no count rather than hiding a
+    // working feature; the server is the real gate.
+    const resetBountyRow = () => {
+      bountyCheckbox.checked = false;
+      const budget = window.Kudos?.Budget?.state || null;
+      const remaining = budget ? budget.remaining : null;
+      const limit = budget ? budget.limit : null;
+      const exhausted = remaining === 0;
+      bountyCheckbox.disabled = exhausted;
+      bountyRow.classList.toggle('opacity-60', exhausted);
+      if (remaining === null) bountyNote.textContent = '';
+      else if (exhausted) bountyNote.textContent = `You've used all ${limit} kudos this week — resets Monday 00:00 UTC.`;
+      else bountyNote.textContent = `${remaining} of ${limit} kudos left this week`;
+      bountyRow.classList.remove('hidden');
+    };
     // The selected option uses a darker violet on hover so it keeps its
     // active look; the unselected option uses the neutral zinc hover.
     const activeTargetClasses = ['bg-violet-600', 'text-white', 'border-violet-600', 'hover:bg-violet-500'];
@@ -2523,6 +2188,14 @@ const App = {
         const customTitle = feedbackTitle.value.trim();
         if (customTitle && (titleDirty || text === lastGeneratedFor)) body.title = customTitle;
         if (target === 'app') body.appSlug = App.currentApp;
+        // #964: pledge a kudos bounty on the issue this submit files.
+        // Captured at submit time alongside the target, and only when the
+        // box is both ticked and enabled — a disabled (allowance-spent)
+        // checkbox must never send the flag. The server files the issue
+        // regardless of what happens to the bounty.
+        const wantBounty = bountyCheckbox.checked && !bountyCheckbox.disabled
+          && !bountyRow.classList.contains('hidden');
+        if (wantBounty) body.bounty = true;
         // #683: attach the uploaded screenshot — the server appends the
         // embed line and links the row to the filed issue.
         if (screenshotId) body.screenshotId = screenshotId;
@@ -2551,9 +2224,30 @@ const App = {
         });
         const data = await res.json();
         if (res.ok) {
-          feedbackStatus.textContent = (target === 'app'
-            ? `Thanks! Filed against ${AppView?.appData?.name || 'this app'}.`
-            : 'Thanks! Filed against Social Vibecoding.') + stateNotice;
+          // #964: report both outcomes on one line. A declined bounty
+          // (allowance ran out between opening and submitting, repo isn't
+          // an app the platform can attach one to) never reads as a
+          // failure — the issue IS filed, and the bounty can still be added
+          // later from the Dev screen's Topics row.
+          let bountyNotice = '';
+          if (data.bounty) {
+            if (data.bounty.placed) {
+              bountyNotice = ` — and pledged 1 kudos as a bounty. ${data.bounty.remaining} left this week.`;
+              // The drawer's Kudos meter must show the number the user
+              // just spent down to, not the one they saw before.
+              window.Kudos?.Budget?.refresh?.();
+            } else {
+              bountyNotice = ` Couldn't add the bounty: ${data.bounty.error || 'the bounty could not be placed'}.`;
+            }
+          }
+          const filedAgainst = (target === 'app'
+            ? `Thanks! Filed against ${AppView?.appData?.name || 'this app'}`
+            : 'Thanks! Filed against Social Vibecoding');
+          // The success variant continues the sentence ("… — and pledged");
+          // every other variant ends it before appending.
+          feedbackStatus.textContent = (data.bounty?.placed
+            ? filedAgainst + bountyNotice
+            : `${filedAgainst}.${bountyNotice}`) + stateNotice;
           feedbackStatus.className = 'text-sm mt-2 text-emerald-400';
           feedbackStatus.classList.remove('hidden');
           feedbackText.value = '';
@@ -2646,6 +2340,18 @@ const App = {
         && typeof AppView.issueStateAvailable === 'function'
         && AppView.issueStateAvailable();
       stateCheckbox.checked = true;
+      // #964: the bounty row paints from the budget the badge already
+      // holds, then a refresh lands the current figure a moment later — a
+      // long-lived tab could otherwise show an hour-stale count. Both the
+      // immediate paint and the post-refresh repaint reset the checkbox to
+      // unchecked, which is the whole point of the row: a pledge is always
+      // a deliberate tick, never a side effect of filing feedback.
+      resetBountyRow();
+      Promise.resolve(window.Kudos?.Budget?.refresh?.()).then(() => {
+        // Only if the dialog is still open and untouched by the user.
+        const modal = document.getElementById('feedback-modal');
+        if (!modal.classList.contains('hidden') && !bountyCheckbox.checked) resetBountyRow();
+      }).catch(() => { /* budget unavailable — row stays as painted */ });
       if (canTargetApp) {
         feedbackTargetApp.textContent = appData?.name ? `This app (${appData.name})` : 'This app';
         setAppTargetEnabled(true);
@@ -2683,6 +2389,8 @@ const App = {
       // #683: cancelling discards the attachment client-side; an already
       // uploaded (now orphaned) row is GC'd server-side after 24h.
       resetScreenshotState();
+      // #964: drop any pledge intent with the rest of the draft.
+      bountyCheckbox.checked = false;
     });
     document.getElementById('feedback-modal').addEventListener('click', (e) => {
       if (e.target === e.currentTarget || e.target.dataset.modalBackdrop !== undefined) document.getElementById('feedback-cancel').click();
@@ -2733,11 +2441,24 @@ const App = {
     // session / chat / topic sub-view to the card list, which is the
     // conventional "tap the active tab to go to its root" behaviour the
     // bottom bar already had.
+    //
+    // #1036: these segments stay <button role="radio"> — an anchor
+    // cannot carry that ARIA role inside a role="radiogroup" — so the
+    // new-tab gesture is intercepted by hand (NavLink mechanism B)
+    // rather than delegated to an href. The "re-tapping the active App
+    // segment is a no-op" guard above applies to the PLAIN click only:
+    // a cmd-click on the active segment isn't re-mounting this tab's
+    // iframe, so it should still open the app view in a new one.
     document.querySelectorAll('.app-mode-seg').forEach((btn) => {
-      btn.addEventListener('click', () => {
+      const hrefFor = () => (App.currentApp
+        ? `#app/${App.currentApp}/${btn.dataset.tab === 'dev' ? 'dev' : 'app'}`
+        : null);
+      const activate = () => {
         if (btn.dataset.tab === 'app' && App.currentTab === 'app') return;
         App.switchTab(btn.dataset.tab);
-      });
+      };
+      if (window.NavLink) NavLink.wireModified(btn, hrefFor, activate);
+      else btn.addEventListener('click', activate);
     });
 
     // popstate fires on browser/device back when the new history
@@ -2865,16 +2586,31 @@ const App = {
         App.setChromeless(false);
         // Optional sub-view segment (#leaderboard/history etc.) — pass
         // it through so deep links land on the right tab. Bare
-        // #leaderboard keeps whatever tab was last active (Top PRs on
-        // first visit). A third segment on the users tab
-        // (#leaderboard/users/<username>) deep-links a user profile
-        // (#60). #leaderboard/topochain and #leaderboard/challenges
-        // select the screen's second / third SECTION instead of a Kudos
-        // sub-tab.
+        // #leaderboard keeps whatever tab was last active (the Topochain
+        // standings — the primary tab — on first visit). A third segment
+        // on the users tab (#leaderboard/users/<username>) deep-links a
+        // user profile (#60). #leaderboard/kudos, #leaderboard/topochain
+        // and #leaderboard/challenges select a SECTION rather than a
+        // Kudos sub-tab; the first two then self-heal their hash
+        // (#leaderboard/topochain -> #leaderboard, #leaderboard/kudos ->
+        // #leaderboard/prs) through Leaderboard._syncHash.
         const profileUser = parts[1] === 'users' && parts[2]
           ? decodeURIComponent(parts[2])
           : null;
-        App.navigateToLeaderboard(parts[1], profileUser);
+        // #leaderboard/challenges/<eventId>[/<challengeId>] (#982) — the
+        // address the profile's completed-challenge rows link to. The
+        // event id is part of the path because a challenge id alone is
+        // meaningless: the challenge list is fetched per season event, so
+        // without it the router would have to guess which event to load.
+        // Non-numeric segments resolve to null and the whole target is
+        // dropped, leaving a plain #leaderboard/challenges navigation.
+        const challengeTarget = parts[1] === 'challenges' && parts[2]
+          ? {
+            eventId: App._numericSegment(parts[2]),
+            challengeId: App._numericSegment(parts[3]),
+          }
+          : null;
+        App.navigateToLeaderboard(parts[1], profileUser, challengeTarget);
         return;
       }
       if (parts[0] === 'challenges') {
@@ -2911,7 +2647,26 @@ const App = {
         // (#admin/users etc.) deep-links a menu section; the gate on
         // App.user.isAdmin lives inside navigateToAdminConsole.
         App.setChromeless(false);
-        App.navigateToAdminConsole(parts[1] || null);
+        let _adminSection = parts[1] || null;
+        // Permanent alias for the renamed Topochain section. Everything
+        // after the section segment is owned by AdminTopochain and has to
+        // survive the rewrite VERBATIM — not just the sub-tab, but the
+        // Season-events tail below it
+        // (season-events/<eventId>/new-challenge/<templateId>) — otherwise
+        // a deep bookmark silently lands on the section's default tab or,
+        // worse, on the right tab with the wrong event. Same idiom as the
+        // #topochain branch below: rewrite the address BEFORE navigating so
+        // the module's own _syncHash sees the canonical prefix, and the
+        // bookmark self-heals.
+        if (_adminSection === 'topochain') {
+          _adminSection = 'seasons';
+          const tail = parts.slice(2).join('/');
+          try {
+            history.replaceState(null, '',
+              tail ? `#admin/seasons/${tail}` : '#admin/seasons');
+          } catch (err) { /* non-fatal: navigation below still works */ }
+        }
+        App.navigateToAdminConsole(_adminSection);
         return;
       }
       if (parts[0] === 'settings') {
@@ -2933,13 +2688,16 @@ const App = {
         // to the canonical form, then hand off. 'seasons' -> the
         // challenges tab (its challenge grid; its event hero became that
         // screen's shared event bar); anything else, including a bare
-        // #topochain, -> the standings tab. The replaceState fires BEFORE
-        // the navigate so Leaderboard._syncHash sees a #leaderboard hash
-        // and doesn't skip its own sync.
+        // #topochain, -> the standings tab, whose canonical address is the
+        // BARE #leaderboard now that it is the primary tab (so this is one
+        // replaceState, not one here and a second from _syncHash). The
+        // replaceState fires BEFORE the navigate so Leaderboard._syncHash
+        // sees a #leaderboard hash and doesn't skip its own sync.
         App.setChromeless(false);
         const _tcSection = parts[1] === 'seasons' ? 'challenges' : 'topochain';
         try {
-          history.replaceState(null, '', `#leaderboard/${_tcSection}`);
+          history.replaceState(null, '',
+            _tcSection === 'challenges' ? '#leaderboard/challenges' : '#leaderboard');
         } catch (err) { /* non-fatal: navigation below still works */ }
         App.navigateToLeaderboard(_tcSection, null);
         return;
@@ -3043,11 +2801,18 @@ const App = {
           App.switchTab(tab, ref, subTab);
         }
       } else {
+        // Unrecognised hash: fall back to the home feed. The screen swap
+        // is explicit here because the _exitX helpers are state-only
+        // (#979) — without it the screen we were on would stay painted
+        // under a "dApps" title.
         App.setChromeless(false);
         if (App._inLeaderboard) App._exitLeaderboard();
         if (App._inProfile) App._exitProfile();
         if (App._inAdmin) App._exitAdminConsole();
         if (App._inSettings) App._exitSettings();
+        if (App._inBrowse) App._exitBrowse();
+        App._showOnlyScreen('home-screen');
+        document.getElementById('back-btn').classList.add('hidden');
         App.setHeaderTitle('dApps');
         Home.load();
       }
@@ -3085,128 +2850,287 @@ const App = {
   // INSIDE #platform-header (it used to be the separate #app-tabs bar at
   // the foot of #app-view), so hiding the header hides it too.
   //
-  // What does need handling is the safe-area inset that moved off that
-  // bar onto #app-view: a chromeless share link is meant to be truly
-  // edge-to-edge (its only chrome is the floating pill, which insets
-  // itself via env(safe-area-inset-bottom)), so strip the padding while
-  // the mode is on and restore it on the way out.
+  // The bottom safe-area inset needs NO special case here any more
+  // (#970). It used to: #app-view carried `un-safe-bottom` for every
+  // surface, so chromeless had to strip the class to render truly
+  // edge-to-edge. The inset is now surface-dependent
+  // (`data-app-surface`, set by AppView._setSurface) and chromeless
+  // always lands on the app surface — which reserves nothing and
+  // forwards the insets into the app instead. The floating pill still
+  // insets itself via env(safe-area-inset-bottom).
+  //
+  // Hiding the header changes #app-view's rect, so re-broadcast the
+  // per-frame insets: the app's top inset is 0 while the header covers
+  // it and becomes the real status-bar inset once it doesn't.
+  // Both DOM effects are React's now (#1079 chunk B): #platform-header is an
+  // island, and the floating pill is a component beside it
+  // (frontend/src/features/header/chromeless-pill.tsx). So this publishes two
+  // flags through the shell's visibility store — the ONE way a converted
+  // region's visibility may be driven from outside React — and the two
+  // subscribers produce exactly the DOM the classList toggle and the
+  // createElement/appendChild pair used to produce by hand.
+  //
+  // App.chromeless itself stays here: the router (restoreFromHash, the
+  // navigate* methods, the iframe surface logic) reads it on every hash
+  // change, and it is a routing fact, not a rendering one. Publishing before
+  // the deferred bundle has evaluated is fine — the store is a plain object
+  // on window, and the islands read it on mount.
   setChromeless(on) {
     const enable = !!on;
     if (App.chromeless === enable) return;
     App.chromeless = enable;
-    const header = document.getElementById('platform-header');
-    const appView = document.getElementById('app-view');
-    if (header) header.classList.toggle('hidden', enable);
-    if (appView) appView.classList.toggle('un-safe-bottom', !enable);
-    if (enable) App._mountChromelessPill();
-    else App._unmountChromelessPill();
+    App.Visibility.publish('platform-header', !enable);
+    App.Visibility.publish('chromeless-pill', enable);
+    if (typeof AppView !== 'undefined' && AppView.scheduleSafeAreaBroadcast) {
+      AppView.scheduleSafeAreaBroadcast();
+    }
   },
 
-  // Floating pill, visually matching the bridge's share-view pill
-  // (public/usernode-bridge.js __USERNODE_PLATFORM_LINK__) so users see
-  // one consistent affordance. Unlike the bridge pill it is NOT
-  // dismissible — in chromeless mode it's the only way into the full
-  // platform view. The slug is read at click time so the pill survives
-  // app-to-app hash navigation without a remount.
-  _mountChromelessPill() {
-    if (document.getElementById('chromeless-pill')) return;
-    const link = document.createElement('a');
-    link.id = 'chromeless-pill';
-    link.href = '#';
-    link.setAttribute('aria-label', 'Open this app on Usernode');
-    link.style.cssText = 'position:fixed;'
-      + 'right:calc(12px + env(safe-area-inset-right,0px));'
-      + 'bottom:calc(12px + env(safe-area-inset-bottom,0px));'
-      + 'z-index:40;display:flex;align-items:center;gap:4px;'
-      + 'background:rgba(15,20,32,0.82);color:#e7edf7;border-radius:999px;'
-      + 'padding:6px 12px;font:12px/1.2 -apple-system,system-ui,sans-serif;'
-      + 'text-decoration:none;box-shadow:0 2px 10px rgba(0,0,0,0.3);opacity:0.85';
-    link.addEventListener('mouseenter', () => { link.style.opacity = '1'; });
-    link.addEventListener('mouseleave', () => { link.style.opacity = '0.85'; });
-    const label = document.createElement('span');
-    label.textContent = 'Open in Usernode';
-    const glyph = document.createElement('span');
-    glyph.textContent = '\u2197'; // ↗ (escaped like the bridge pill's)
-    glyph.style.cssText = 'font-size:11px;opacity:0.75';
-    glyph.setAttribute('aria-hidden', 'true');
-    link.appendChild(label);
-    link.appendChild(glyph);
-    link.addEventListener('click', (ev) => {
-      ev.preventDefault();
-      if (App.currentApp) {
-        // hashchange → restoreFromHash clears the mode; the already-
-        // loaded iframe stays mounted (same app, same tab).
-        location.hash = `#app/${App.currentApp}/app`;
+  // The single decision point for "what animation does entering this
+  // screen get?" (#977). Every navigate* method passes the type it WANTS
+  // and takes back the type it gets.
+  //
+  // One rule: a screen swap that begins while the slide-out drawer is on
+  // screen — or that a link inside the drawer just started — runs with no
+  // animation at all. The drawer's own exit spring is already a motion in
+  // flight, and the kit's push/pop is a View Transition over the whole
+  // document root: it snapshots the open drawer and parallaxes that
+  // snapshot away while the live panel springs the other way, which is
+  // the two-competing-motions bug. Cutting the screen swap leaves exactly
+  // one motion — the drawer leaving, revealing the destination behind it.
+  // (It also matches the kit's own guidance that panels and other
+  // high-frequency UI must use type:'none'.)
+  //
+  // The resolved type is stamped on the screen element as `data-entered`,
+  // mirroring the kit's own data-un-vt. Nothing reads it at runtime — it
+  // exists so the dapp.json checks can assert an ordering that is
+  // otherwise only observable mid-animation.
+  _entryTransition(preferred, screenEl) {
+    const menu = App.HeaderMenu;
+    // consumeNavPending() FIRST and unconditionally — it is one-shot, so
+    // letting isPresenting() short-circuit it would leave the flag armed
+    // for whatever navigation came next.
+    const fromDrawer = !!menu && menu.consumeNavPending();
+    const suppress = fromDrawer || (!!menu && menu.isPresenting());
+    const type = suppress ? 'none' : preferred;
+    if (screenEl && screenEl.setAttribute) screenEl.setAttribute('data-entered', type);
+    return type;
+  },
+
+  // ── Screen swap — THE ORDERING RULE (issue #979) ────────────────────
+  // The mutually exclusive full-screen roots. Exactly one of these is
+  // visible at a time (they are `flex-1` siblings in the body column, so
+  // two visible roots split the viewport 50/50 — see the #764 note on
+  // the zoom transition).
+  SCREEN_IDS: ['app-view', 'home-screen', 'browse-screen',
+    'leaderboard-screen', 'profile-screen', 'admin-screen',
+    'settings-screen'],
+
+  // Reveal `revealId`, hide every other screen root (except any id in
+  // `keepAlso`), and hand the header's back chevron back to its default
+  // "home" meaning — the incoming module's own chrome sync flips it to
+  // 'arrow' afterwards when it owns a level-2 view.
+  //
+  // *** CALL THIS INSIDE THE PlatformUI.transition CALLBACK, NEVER
+  // BEFORE IT. *** A View Transition captures the OUTGOING page at the
+  // next rendering opportunity, not at the startViewTransition() call —
+  // so every DOM mutation made synchronously after that call, but before
+  // the callback runs, is baked into the "previous page" snapshot the
+  // animation slides out. That is exactly how the settings animation
+  // ended up showing the INCOMING page behind itself (#979): the sibling
+  // screens were hidden and the header retitled before the snapshot
+  // existed. Same rule for the header title, the back button, and the
+  // drawer's app-scoped rows: they are part of the swap, so they belong
+  // in the same callback. The kit already documents the analogue for its
+  // zoom types ("fn reveals the incoming screen, after conceals the
+  // outgoing one" — usernode-native/v1/native.js).
+  _showOnlyScreen(revealId, keepAlso) {
+    const keep = keepAlso || [];
+    for (const id of App.SCREEN_IDS) {
+      if (id === revealId || keep.includes(id)) continue;
+      App._setScreenVisible(id, false);
+    }
+    App._setScreenVisible(revealId, true);
+    App.setBackIcon('home');
+  },
+
+  // ── The React seam (#1078) ─────────────────────────────────────────
+  // Screen roots whose markup React owns. For these, visibility is
+  // PUBLISHED as data and the component renders its own `hidden` class;
+  // toggling the class from here would be a write into React-owned DOM
+  // that the next render reconciles away. Everything not listed keeps
+  // the classList path, so converted and unconverted screens coexist for
+  // the whole migration. A conversion chunk adds its id here in the same
+  // commit that converts the screen.
+  REACT_SCREEN_IDS: [
+    // #1080 chunk C — the anonymous shell's screens, converted in order.
+    'auth-landing-screen',
+    'auth-login-screen',
+    'auth-register-screen',
+    'auth-waiting-screen',
+    'auth-waitlist-screen',
+    'auth-more-screen',
+  ],
+
+  // The publish/read half of that seam. The state is a plain object on
+  // `window` because load order demands it: these classic scripts run
+  // before the deferred React module, so app.js routes — and publishes —
+  // first. The identical factory lives in
+  // frontend/src/lib/visibility-store.ts; keep the two in sync.
+  Visibility: {
+    _store() {
+      let store = window.__usernodeVisibility;
+      if (!store) {
+        store = { visible: Object.create(null), listeners: new Set() };
+        window.__usernodeVisibility = store;
       }
-    });
-    document.body.appendChild(link);
+      return store;
+    },
+    publish(id, visible) {
+      const store = App.Visibility._store();
+      if (store.visible[id] === visible) return;
+      store.visible[id] = visible;
+      // Copy first: a listener unsubscribing mid-notification would
+      // otherwise mutate the set being iterated.
+      for (const listener of [...store.listeners]) {
+        try { listener(); } catch (e) { console.error('[visibility] listener failed', e); }
+      }
+    },
+    // `undefined` when nothing has published it yet — deliberately not
+    // `false`, so a converted region can fall back to whatever its
+    // markup shipped with rather than flashing hidden on first render.
+    read(id) { return App.Visibility._store().visible[id]; },
   },
 
-  _unmountChromelessPill() {
-    const link = document.getElementById('chromeless-pill');
-    if (link && link.parentNode) link.parentNode.removeChild(link);
+  // Show/hide one screen root through whichever half owns it.
+  _setScreenVisible(id, visible) {
+    if (App.REACT_SCREEN_IDS.includes(id)) { App.Visibility.publish(id, visible); return; }
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('hidden', !visible);
+  },
+
+  // Is a screen root on screen? Reads the store for converted roots and
+  // the DOM for the rest, so callers don't have to know which is which.
+  _isScreenVisible(id) {
+    if (App.REACT_SCREEN_IDS.includes(id)) return App.Visibility.read(id) === true;
+    const el = document.getElementById(id);
+    return !!el && !el.classList.contains('hidden');
+  },
+
+  // The chrome every platform screen (leaderboard / profile / browse /
+  // admin / settings) enters with: the header's back button visible, the
+  // drawer's app-scoped rows hidden, the drawer's build/fork footer
+  // closed. The per-screen title is set by the caller right after this,
+  // so `setHeaderTitle('<Screen>')` stays greppable at each call site.
+  // Same ordering rule as _showOnlyScreen: inside the transition
+  // callback only.
+  _enterScreenChrome() {
+    document.getElementById('back-btn').classList.remove('hidden');
+    const drg = document.getElementById('drawer-row-github');
+    const drs = document.getElementById('drawer-row-share');
+    if (drg) drg.classList.add('hidden');
+    if (drs) drs.classList.add('hidden');
+    App.DrawerStatus.setAppOpen(false);
   },
 
   // Show the Leaderboard screen. Sibling to navigateToApp/navigateHome —
   // hides home + app, reveals the dedicated #leaderboard-screen, lets
-  // the Leaderboard module render the tab strip + the Kudos pane into
-  // #leaderboard-root (and hand the two Topochain panes to
-  // TopochainLeaderboard / TopochainChallenges).
+  // the Leaderboard module render the tab strip and hand the standings /
+  // challenges panes to TopochainLeaderboard / TopochainChallenges (it
+  // renders the Kudos pane into #leaderboard-root itself).
   //
   // `sub` is the hash's second segment: 'prs' | 'users' | 'history'
-  // select a Kudos sub-tab, and the special values 'topochain' /
-  // 'challenges' select the screen's second / third SECTION instead.
-  // `profileUser` (#60) opens the per-user PR profile drill-in instead of
-  // a plain tab.
-  navigateToLeaderboard(sub, profileUser) {
+  // select a Kudos sub-tab, and the SECTION values 'topochain' (the
+  // primary standings tab), 'kudos' and 'challenges' select a whole
+  // section instead. `profileUser` (#60) opens the per-user PR profile
+  // drill-in instead of a plain tab.
+  // A hash segment that must be a positive integer id, or nothing. Returns
+  // null for anything else (empty, '12abc', '-1', a username) so a
+  // hand-typed or truncated address degrades to the plain screen rather
+  // than sending NaN into a fetch URL.
+  _numericSegment(raw) {
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isInteger(n) && n > 0 ? n : null;
+  },
+
+  navigateToLeaderboard(sub, profileUser, challengeTarget) {
+    // Already mounted: an in-screen change (a tab, the deep-linked
+    // section, a user drill-in), not a screen entry — hand it to the
+    // module instead of replaying the whole swap. Same idiom as
+    // navigateToBrowse / navigateToAdminConsole / navigateToSettings,
+    // and load-bearing for the entry animation (#979): a fragment
+    // navigation fires BOTH popstate and hashchange, so restoreFromHash
+    // runs twice in one tick, and without this guard the second run's
+    // mutation lands while the first run's View Transition is still
+    // pending — the kit applies it instantly, i.e. BEFORE the outgoing
+    // page is captured, which is exactly how the incoming screen ended
+    // up painted behind its own entry animation.
+    if (App._inLeaderboard && window.Leaderboard?.isOpen?.()) {
+      App._routeLeaderboard(sub, profileUser, challengeTarget);
+      if (window.Leaderboard?.open) Leaderboard.open();
+      return;
+    }
     // Same iframe caveat as navigateHome: no animated snapshot over a
     // live App-tab iframe.
     const fromIframe = !!(App.currentApp && App.currentTab === 'app');
-    if (App.currentApp) {
-      AppView.close();
-      App.currentApp = null;
-    }
+    // The app teardown is a VISIBLE mutation (it blanks the drawer's
+    // build/fork slots and resets the dev-chat panes), so it rides in the
+    // transition callback below; only the flag flips synchronously, since
+    // navigateToApp's async tail reads it as "what is on screen now".
+    const leavingApp = !!App.currentApp;
+    App.currentApp = null;
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
+    // Screen reveal + chrome, all inside the transition callback so the
+    // outgoing page is snapshotted as it actually looked (#979).
     const screen = document.getElementById('leaderboard-screen');
     PlatformUI.transition(() => {
-      document.getElementById('app-view').classList.add('hidden');
-      document.getElementById('home-screen').classList.add('hidden');
-      const br = document.getElementById('browse-screen');
-      if (br) br.classList.add('hidden');
-      if (screen) screen.classList.remove('hidden');
-    }, { type: fromIframe ? 'none' : 'push' });
-    document.getElementById('back-btn').classList.remove('hidden');
-    const _drg = document.getElementById('drawer-row-github');
-    const _drs = document.getElementById('drawer-row-share');
-    if (_drg) _drg.classList.add('hidden');
-    if (_drs) _drs.classList.add('hidden');
-    App.DrawerStatus.setAppOpen(false);
-    App.setHeaderTitle('Leaderboard');
+      if (leavingApp) AppView.close();
+      App._showOnlyScreen('leaderboard-screen');
+      App._enterScreenChrome();
+      App.setHeaderTitle('Leaderboard');
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
     App._inLeaderboard = true;
-    // Apply the deep-linked section / sub-view / user profile before
-    // open() renders — _setSection and _setSub both validate their value
-    // and no-op on garbage. openProfile must run INSTEAD of _setSub (not
-    // after): _setSub clears profile state and would replaceState the
-    // profile hash away. When the screen is already open they
-    // re-render in place; open() below dedupes the in-flight load.
+    App._routeLeaderboard(sub, profileUser, challengeTarget);
+    if (window.Leaderboard?.open) Leaderboard.open();
+  },
+
+  // Apply the deep-linked section / sub-view / user profile before open()
+  // renders — _setSection and _setSub both validate their value and no-op
+  // on garbage. openProfile must run INSTEAD of _setSub (not after):
+  // _setSub clears profile state and would replaceState the profile hash
+  // away. When the screen is already open they re-render in place; the
+  // open() each caller runs afterwards dedupes the in-flight load.
+  _routeLeaderboard(sub, profileUser, challengeTarget) {
     if (profileUser && window.Leaderboard?.openProfile) {
       Leaderboard.openProfile(profileUser);
-    } else if ((sub === 'topochain' || sub === 'challenges')
+    } else if ((sub === 'topochain' || sub === 'kudos' || sub === 'challenges')
                && window.Leaderboard?._setSection) {
+      // Register the challenge deep link BEFORE the section mounts (#982).
+      // Selecting the event first means the pane's very first fetch is
+      // already for the right event — ordering it after _setSection would
+      // load the default event, then throw that list away and reload.
+      if (sub === 'challenges' && challengeTarget
+          && window.TopochainChallenges?.openFromHash) {
+        TopochainChallenges.openFromHash(
+          challengeTarget.eventId, challengeTarget.challengeId
+        );
+      }
       Leaderboard._setSection(sub);
     } else if (sub && window.Leaderboard?._setSub) {
       Leaderboard._setSub(sub);
     }
-    if (window.Leaderboard?.open) Leaderboard.open();
   },
 
+  // State-only teardown (#979): hiding #leaderboard-screen is the job of
+  // the incoming navigation's _showOnlyScreen call, INSIDE its transition
+  // callback — hiding it here would delete the outgoing page before the
+  // View Transition has captured it.
   _exitLeaderboard() {
     App._inLeaderboard = false;
-    const screen = document.getElementById('leaderboard-screen');
-    if (screen) screen.classList.add('hidden');
     if (window.Leaderboard?.close) Leaderboard.close();
   },
 
@@ -3222,40 +3146,36 @@ const App = {
   // dedicated #profile-screen, lets the Profile module render itself
   // into #profile-root.
   navigateToProfile() {
-    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
-    if (App.currentApp) {
-      AppView.close();
-      App.currentApp = null;
+    // Already mounted: nothing to swap, just re-render in place. Same
+    // reason as navigateToLeaderboard's guard above — popstate AND
+    // hashchange both reach restoreFromHash, and a second entry run would
+    // apply its mutation before the first run's View Transition captured
+    // the outgoing page (#979).
+    if (App._inProfile && window.Profile?.isOpen?.()) {
+      if (window.Profile?.open) Profile.open();
+      return;
     }
+    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
+    const leavingApp = !!App.currentApp;
+    App.currentApp = null;
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
     const screen = document.getElementById('profile-screen');
     PlatformUI.transition(() => {
-      document.getElementById('app-view').classList.add('hidden');
-      document.getElementById('home-screen').classList.add('hidden');
-      const lb = document.getElementById('leaderboard-screen');
-      if (lb) lb.classList.add('hidden');
-      const br = document.getElementById('browse-screen');
-      if (br) br.classList.add('hidden');
-      if (screen) screen.classList.remove('hidden');
-    }, { type: fromIframe ? 'none' : 'push' });
-    document.getElementById('back-btn').classList.remove('hidden');
-    const _drg = document.getElementById('drawer-row-github');
-    const _drs = document.getElementById('drawer-row-share');
-    if (_drg) _drg.classList.add('hidden');
-    if (_drs) _drs.classList.add('hidden');
-    App.DrawerStatus.setAppOpen(false);
-    App.setHeaderTitle('Profile');
+      if (leavingApp) AppView.close();
+      App._showOnlyScreen('profile-screen');
+      App._enterScreenChrome();
+      App.setHeaderTitle('Profile');
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
     App._inProfile = true;
     if (window.Profile?.open) Profile.open();
   },
 
+  // State-only (#979) — see _exitLeaderboard.
   _exitProfile() {
     App._inProfile = false;
-    const screen = document.getElementById('profile-screen');
-    if (screen) screen.classList.add('hidden');
     if (window.Profile?.close) Profile.close();
   },
 
@@ -3280,49 +3200,33 @@ const App = {
       return;
     }
     const fromIframe = !!(App.currentApp && App.currentTab === 'app');
-    if (App.currentApp) {
-      AppView.close();
-      App.currentApp = null;
-    }
+    const leavingApp = !!App.currentApp;
+    App.currentApp = null;
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
     const screen = document.getElementById('browse-screen');
-    PlatformUI.transition(() => {
-      document.getElementById('app-view').classList.add('hidden');
-      document.getElementById('home-screen').classList.add('hidden');
-      const lb = document.getElementById('leaderboard-screen');
-      if (lb) lb.classList.add('hidden');
-      const pf = document.getElementById('profile-screen');
-      if (pf) pf.classList.add('hidden');
-      const ad = document.getElementById('admin-screen');
-      if (ad) ad.classList.add('hidden');
-      const st = document.getElementById('settings-screen');
-      if (st) st.classList.add('hidden');
-      if (screen) screen.classList.remove('hidden');
-    }, { type: fromIframe ? 'none' : 'push' });
-    document.getElementById('back-btn').classList.remove('hidden');
-    const _drg = document.getElementById('drawer-row-github');
-    const _drs = document.getElementById('drawer-row-share');
-    if (_drg) _drg.classList.add('hidden');
-    if (_drs) _drs.classList.add('hidden');
-    App.DrawerStatus.setAppOpen(false);
-    App.setHeaderTitle('All apps');
     App._inBrowse = true;
-    // Browse.open sets the header title / back icon for whichever level
-    // the slug selects, so it runs after setHeaderTitle above.
-    if (window.Browse?.open) Browse.open(slug || null);
+    // Renders into the still-hidden screen; `chrome: false` holds back its
+    // level-dependent title/back-icon so the header only changes inside
+    // the transition callback below (#979).
+    if (window.Browse?.open) Browse.open(slug || null, { chrome: false });
+    PlatformUI.transition(() => {
+      if (leavingApp) AppView.close();
+      App._showOnlyScreen('browse-screen');
+      App._enterScreenChrome();
+      App.setHeaderTitle('All apps');
+      // Browse owns the header title / back icon for whichever level the
+      // slug selected, so its sync runs after setHeaderTitle above.
+      if (window.Browse?.syncChrome) Browse.syncChrome();
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
 
+  // State-only (#979) — see _exitLeaderboard. The back chevron the detail
+  // level borrowed is handed back by the next screen's _showOnlyScreen.
   _exitBrowse() {
     App._inBrowse = false;
-    const screen = document.getElementById('browse-screen');
-    if (screen) screen.classList.add('hidden');
-    // The detail level borrows the header's back button as its own back
-    // arrow — hand it back on the way out, or every later screen inherits
-    // a chevron that means "home" (same reason as _exitAdminConsole).
-    App.setBackIcon('home');
     if (window.Browse?.close) Browse.close();
   },
 
@@ -3368,45 +3272,33 @@ const App = {
       return;
     }
     const fromIframe = !!(App.currentApp && App.currentTab === 'app');
-    if (App.currentApp) {
-      AppView.close();
-      App.currentApp = null;
-    }
+    const leavingApp = !!App.currentApp;
+    App.currentApp = null;
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inProfile) App._exitProfile();
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
     const screen = document.getElementById('admin-screen');
-    PlatformUI.transition(() => {
-      document.getElementById('app-view').classList.add('hidden');
-      document.getElementById('home-screen').classList.add('hidden');
-      const lb = document.getElementById('leaderboard-screen');
-      if (lb) lb.classList.add('hidden');
-      const pf = document.getElementById('profile-screen');
-      if (pf) pf.classList.add('hidden');
-      const br = document.getElementById('browse-screen');
-      if (br) br.classList.add('hidden');
-      if (screen) screen.classList.remove('hidden');
-    }, { type: fromIframe ? 'none' : 'push' });
-    document.getElementById('back-btn').classList.remove('hidden');
-    const _drg = document.getElementById('drawer-row-github');
-    const _drs = document.getElementById('drawer-row-share');
-    if (_drg) _drg.classList.add('hidden');
-    if (_drs) _drs.classList.add('hidden');
-    App.DrawerStatus.setAppOpen(false);
-    App.setHeaderTitle(publicMode ? 'Platform status' : 'Admin & moderation');
     App._inAdmin = true;
-    if (window.AdminConsole?.open) AdminConsole.open(section, { public: publicMode });
+    // Renders into the still-hidden screen; `chrome: false` holds its
+    // section title / back arrow back for the callback below (#979).
+    if (window.AdminConsole?.open) {
+      AdminConsole.open(section, { public: publicMode, chrome: false });
+    }
+    PlatformUI.transition(() => {
+      if (leavingApp) AppView.close();
+      App._showOnlyScreen('admin-screen');
+      App._enterScreenChrome();
+      App.setHeaderTitle(publicMode ? 'Platform status' : 'Admin & moderation');
+      if (window.AdminConsole?.syncChrome) AdminConsole.syncChrome();
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
 
+  // State-only (#979) — see _exitLeaderboard. The back chevron the mobile
+  // section view borrowed is handed back by the next screen's
+  // _showOnlyScreen.
   _exitAdminConsole() {
     App._inAdmin = false;
-    const screen = document.getElementById('admin-screen');
-    if (screen) screen.classList.add('hidden');
-    // The mobile section view borrows the header's back button as its own
-    // back arrow — hand it back on the way out, or every later screen
-    // inherits a chevron that means "home".
-    App.setBackIcon('home');
     if (window.AdminConsole?.close) AdminConsole.close();
   },
 
@@ -3428,47 +3320,37 @@ const App = {
       return;
     }
     const fromIframe = !!(App.currentApp && App.currentTab === 'app');
-    if (App.currentApp) {
-      AppView.close();
-      App.currentApp = null;
-    }
+    const leavingApp = !!App.currentApp;
+    App.currentApp = null;
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inBrowse) App._exitBrowse();
     const screen = document.getElementById('settings-screen');
-    PlatformUI.transition(() => {
-      document.getElementById('app-view').classList.add('hidden');
-      document.getElementById('home-screen').classList.add('hidden');
-      const lb = document.getElementById('leaderboard-screen');
-      if (lb) lb.classList.add('hidden');
-      const pf = document.getElementById('profile-screen');
-      if (pf) pf.classList.add('hidden');
-      const ad = document.getElementById('admin-screen');
-      if (ad) ad.classList.add('hidden');
-      const br = document.getElementById('browse-screen');
-      if (br) br.classList.add('hidden');
-      if (screen) screen.classList.remove('hidden');
-    }, { type: fromIframe ? 'none' : 'push' });
-    document.getElementById('back-btn').classList.remove('hidden');
-    const _drg = document.getElementById('drawer-row-github');
-    const _drs = document.getElementById('drawer-row-share');
-    if (_drg) _drg.classList.add('hidden');
-    if (_drs) _drs.classList.add('hidden');
-    App.DrawerStatus.setAppOpen(false);
-    App.setHeaderTitle('Settings');
     App._inSettings = true;
-    if (window.Settings?.open) Settings.open(section);
+    // Renders every section into the still-hidden screen — invisible, so
+    // it may stay synchronous (which keeps Settings.isOpen() truthful for
+    // the re-entry guard above). `chrome: false` holds back the one
+    // VISIBLE thing it does: writing the header title / back icon, which
+    // now happens inside the transition callback (#979).
+    if (window.Settings?.open) Settings.open(section, { chrome: false });
+    PlatformUI.transition(() => {
+      if (leavingApp) AppView.close();
+      App._showOnlyScreen('settings-screen');
+      App._enterScreenChrome();
+      App.setHeaderTitle('Settings');
+      // Runs after app.js's own setHeaderTitle, so on a mobile deep link
+      // the header ends up showing the section's name rather than
+      // "Settings".
+      if (window.Settings?.syncChrome) Settings.syncChrome();
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
 
+  // State-only (#979) — see _exitLeaderboard. The back chevron the mobile
+  // section view borrowed is handed back by the next screen's
+  // _showOnlyScreen.
   _exitSettings() {
     App._inSettings = false;
-    const screen = document.getElementById('settings-screen');
-    if (screen) screen.classList.add('hidden');
-    // The mobile section view borrows the header's back button as its own
-    // back arrow — hand it back on the way out (same reason as the admin
-    // console above).
-    App.setBackIcon('home');
     if (window.Settings?.close) Settings.close();
   },
 
@@ -3826,8 +3708,25 @@ const App = {
   // flex-sibling split doesn't skew the destination rect) and in `after`
   // (concealed once the zoom lands). Getting this wrong leaves the
   // outgoing grid painted behind the opened app.
+  //
+  // It must name whichever screen root is ACTUALLY visible, not just the
+  // two launcher grids (#979): since the _exitX helpers became state-only,
+  // the settings / admin / profile / leaderboard roots stay visible until
+  // the transition callback runs, so opening an app straight out of one of
+  // them (a work notification, a deep link) would otherwise leave that
+  // root in the flex flow and skew the zoom's destination rect (#764).
+  //
+  // Read from the DOM rather than the _inX flags on purpose: callers reach
+  // here both before and after those flags are cleared (restoreFromHash
+  // runs the exits itself), and "which root is on screen" is exactly the
+  // question the kit is asking. Home is the fallback — it's the root that
+  // ships visible.
   _departingScreen() {
-    return document.getElementById(App._inBrowse ? 'browse-screen' : 'home-screen');
+    for (const id of App.SCREEN_IDS) {
+      if (id === 'app-view') continue;
+      if (App._isScreenVisible(id)) return document.getElementById(id);
+    }
+    return document.getElementById('home-screen');
   },
 
   // Origins we've already asked the browser to connect to this page-load.
@@ -3877,10 +3776,19 @@ const App = {
     // navigation into any app, but without it a direct app-A → app-B
     // jump (e.g. via hash) would carry the previous app's dev-chat
     // session state into the new view.
+    //
+    // Deliberately NOT deferred into the reveal callback the way the
+    // screen navigations defer theirs (#979): restoreFromHash re-stashes
+    // AppView.pendingInnerPath immediately after this call *because* this
+    // teardown clears it (#743), and the outgoing page here is the other
+    // app's, which the incoming app view covers either way.
     if (App.currentApp && App.currentApp !== slug) {
       AppView.close();
     }
     App.currentApp = slug;
+    // Resolved BEFORE the _exitX flags are cleared — _departingScreen
+    // reads them to name whichever screen root is actually on screen.
+    const departing = App._departingScreen();
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
@@ -3902,15 +3810,19 @@ const App = {
     // too: either way it runs exactly when #app-view is revealed.
     // The departing screen stays visible beneath the zoom (fn reveals,
     // `after` conceals — kit contract).
-    const departing = App._departingScreen();
+    // #977: reachable from the drawer too (the footer's "Forked from"
+    // link opens the source app), so the zoom goes through the same
+    // single-motion gate — 'none' still runs fn + after as one mutation.
+    const appViewEl = document.getElementById('app-view');
     PlatformUI.transition(() => {
-      document.getElementById('app-view').classList.remove('hidden');
+      App._setScreenVisible('app-view', true);
+      document.getElementById('back-btn').classList.remove('hidden');
       // Best-effort: returns false (and changes nothing) for anything whose
       // App tab wouldn't be a plain production iframe — self-hosted apps,
       // demo cards, non-running apps, an explicit non-app tab, offline.
       try { AppView.beginLaunch(slug, tab); } catch (err) { /* fall back to the plain path */ }
     }, {
-      type: 'zoom-in',
+      type: App._entryTransition('zoom-in', appViewEl),
       el: document.getElementById('app-view'),
       fromEl: () => App._tileFor(slug),
       // The outgoing screen: the kit hides it while measuring the
@@ -3918,9 +3830,11 @@ const App = {
       // rect (see the comment block above).
       outEl: departing,
       fallback: 'push',
-      after: () => { if (departing) departing.classList.add('hidden'); },
+      // Conceal EVERY other screen root, not just `departing`: the _exitX
+      // helpers no longer hide theirs (#979), so a screen entered before
+      // this app would otherwise stay painted behind it.
+      after: () => { App._showOnlyScreen('app-view'); },
     });
-    document.getElementById('back-btn').classList.remove('hidden');
     // Intentionally NOT setting the header to `slug` here. Slugs are
     // generated as `${name}-${randomHex}` (see routes/apps.js), so a
     // slug-as-placeholder shows up to users as something like
@@ -3987,7 +3901,6 @@ const App = {
     // snapshot), so it's iframe-safe; the fallback still cuts
     // instantly when leaving the App tab's iframe.
     const fallbackType = (App.currentApp && App.currentTab === 'app') ? 'none' : 'pop';
-    AppView.close();
     App.currentApp = null;
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inProfile) App._exitProfile();
@@ -3999,11 +3912,28 @@ const App = {
     // hides the app view and clears its content — exactly once on
     // every path, so the shrinking overlay keeps showing the app's
     // content until it lands).
+    //
+    // The screen the viewer is LEAVING (settings, admin, a grid…) is
+    // hidden in `fn`, not in `after` (#979): on the pop fallback `fn` runs
+    // after the View Transition captured it, so it still slides away with
+    // its own content; and on the real zoom-out there is no snapshot at
+    // all, so it must go before the pinned card starts moving or two
+    // `flex-1` siblings would split the height behind it ('zoom-out'
+    // ignores `outEl`, so the kit can't correct for that). #app-view is
+    // the one root kept alive into `after` — that IS the shrinking card.
     const av = document.getElementById('app-view');
     PlatformUI.transition(() => {
-      document.getElementById('home-screen').classList.remove('hidden');
+      AppView.close();
+      App._showOnlyScreen('home-screen', ['app-view']);
+      document.getElementById('back-btn').classList.add('hidden');
+      const drgH = document.getElementById('drawer-row-github');
+      const drsH = document.getElementById('drawer-row-share');
+      if (drgH) drgH.classList.add('hidden');
+      if (drsH) drsH.classList.add('hidden');
+      App.DrawerStatus.setAppOpen(false);
+      App.setHeaderTitle('dApps');
     }, {
-      type: 'zoom-out',
+      type: App._entryTransition('zoom-out', av),
       el: av,
       fromEl: () => (leavingSlug ? App._tileFor(leavingSlug) : null),
       fallback: fallbackType,
@@ -4013,13 +3943,6 @@ const App = {
         if (content) content.innerHTML = '';
       },
     });
-    document.getElementById('back-btn').classList.add('hidden');
-    const _drgH = document.getElementById('drawer-row-github');
-    const _drsH = document.getElementById('drawer-row-share');
-    if (_drgH) _drgH.classList.add('hidden');
-    if (_drsH) _drsH.classList.add('hidden');
-    App.DrawerStatus.setAppOpen(false);
-    App.setHeaderTitle('dApps');
     App.updateHash();
     Home.load();
   },
@@ -4031,14 +3954,27 @@ const App = {
   // section view, which is what #back-icon-arrow in index.html was
   // shipped for. Always reset to 'home' when leaving the screen that
   // asked for the arrow (see _exitAdminConsole).
-  setBackIcon(mode) {
+  //
+  // #1036: the control is a real <a href>, so this also owns its TARGET.
+  // `href` is where the button would go if pressed — omit it and it
+  // defaults to home, which is correct for every state except the three
+  // screens that claim the chevron as "up one level" (Browse detail,
+  // and the mobile section views of Settings / the Admin console). Those
+  // pass their own up-level hash. Because App._showOnlyScreen calls this
+  // on EVERY screen change, there is no state in which the href can go
+  // stale — same reasoning that makes the icon itself reliable.
+  setBackIcon(mode, href) {
     const arrow = mode === 'arrow';
     const home = document.getElementById('back-icon-home');
     const chevron = document.getElementById('back-icon-arrow');
     if (home) home.classList.toggle('hidden', arrow);
     if (chevron) chevron.classList.toggle('hidden', !arrow);
     const btn = document.getElementById('back-btn');
-    if (btn) btn.setAttribute('aria-label', arrow ? 'Back' : 'Home');
+    if (btn) {
+      btn.setAttribute('aria-label', arrow ? 'Back' : 'Home');
+      const target = href || (window.NavLink ? NavLink.homeHref() : '/');
+      btn.setAttribute('href', target);
+    }
   },
 
   // Mirror the visible header text into both the on-screen <h1> and
@@ -4209,6 +4145,10 @@ const App = {
       DevConsole.setButtonVisible(showForApp);
     }
 
+    // #970: the switch changed which surface is mounted, so #app-view's
+    // rect (and therefore the frame's own insets) may have changed.
+    if (AppView.scheduleSafeAreaBroadcast) AppView.scheduleSafeAreaBroadcast();
+
     App.updateHash();
   },
 
@@ -4236,4 +4176,29 @@ const App = {
 };
 
 window.App = App;
+
+// #1038: stale-tab recovery for live session state. A tab that was
+// backgrounded (or a laptop that slept, or a phone that locked) can have
+// missed every `session_state` push while its socket was frozen, and comes
+// back showing a spinner for a turn that finished an hour ago. Reconcile on
+// the way back in — throttled by SessionState.FOREGROUND_STALE_MS so
+// alt-tabbing doesn't spam the endpoint.
+//
+// Deliberately global rather than per-screen: the cog is in the header on
+// every route, so no single view owns this. Both events matter —
+// visibilitychange fires on browser-tab switches, focus on window-to-window
+// switches where the tab stays "visible" throughout.
+App._foregroundResync = () => {
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+  if (window.SessionState) SessionState.syncIfStale?.();
+};
+// Guarded: app.js is loaded into bare vm sandboxes by several unit tests,
+// which stub `document` / `window` with only the members they need.
+if (typeof document !== 'undefined' && document.addEventListener) {
+  document.addEventListener('visibilitychange', App._foregroundResync);
+}
+if (typeof window !== 'undefined' && window.addEventListener) {
+  window.addEventListener('focus', App._foregroundResync);
+}
+
 document.addEventListener('DOMContentLoaded', () => App.init());

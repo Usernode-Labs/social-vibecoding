@@ -49,6 +49,15 @@ const { getPool } = require('../../db/pool');
 const log = require('../../services/logger');
 const { optionalSessionAuth } = require('../../middleware/topochain-auth');
 const { computeStandings } = require('../../services/topochain/standings');
+// The per-event standings vocabulary — identifier masking, the display-name
+// fallback chain, EVENT_LEADERBOARD_SQL and the type-branch that resolves one
+// event's rows — moved into this service when the home screen's Challenges
+// widget started previewing the same standings. One definition of a rank and
+// one of a display name, shared by the routes and the widget.
+const {
+  resolveIdentifier, maskIdentifier, resolveDisplayName, fetchEventLeaderboardRows,
+  resolveDefaultPublicEvent,
+} = require('../../services/topochain/event-standings');
 const {
   ok, fail, iso, num, paginate, meta, ValidationError,
 } = require('./helpers');
@@ -116,133 +125,13 @@ function eventStatus(startsAt, endsAt, now = new Date()) {
   return { hasStarted, hasEnded, status: hasEnded ? 'ended' : (hasStarted ? 'active' : 'upcoming') };
 }
 
-// ─── Identifier masking + display-name fallback (SPEC 958, 1246) ────────
-
-// Which raw channel backs this user's public "identifier" (judgment
-// call #2: email > telegram > discord, no priority given in the spec).
-function resolveIdentifier(user) {
-  if (user.email) return { type: 'email', value: user.email };
-  if (user.telegram) return { type: 'telegram', value: user.telegram };
-  if (user.discord) return { type: 'discord', value: user.discord };
-  return { type: null, value: null };
-}
-
-function maskGeneric(value) {
-  return `${String(value).slice(0, 3)}***`;
-}
-
-// email -> abc***@***.tld; telegram/discord -> abc*** (SPEC 958).
-function maskIdentifier({ type, value }) {
-  if (!value) return null;
-  if (type === 'email') {
-    const at = value.indexOf('@');
-    if (at === -1) return maskGeneric(value);
-    const local = value.slice(0, at);
-    const domain = value.slice(at + 1);
-    const dot = domain.lastIndexOf('.');
-    const tld = dot === -1 ? '' : domain.slice(dot);
-    return `${local.slice(0, 3)}***@***${tld}`;
-  }
-  return maskGeneric(value);
-}
-
-// discord -> display_name -> masked identifier (SPEC 1246's fallback
-// chain, reused everywhere a display name is shown in this file).
+// ─── Identifier masking, display names, per-event rows ──────────────────
 //
-// `includeDiscord: false` (security-review finding) drops the raw discord
-// handle from the head of the chain — used ONLY by /leaderboard/global for
-// non-admin callers: SPEC 988 marks `discord` ADMIN ONLY on that endpoint
-// ("key absent for anonymous callers"), and emitting the same handle
-// verbatim as `display_name` would defeat that redaction entirely. Every
-// other endpoint keeps the full SPEC 1246 chain (spec mandates it there);
-// note the masked-identifier tail may still derive from discord, but only
-// in its masked `abc***` form (SPEC 958), never the raw handle.
-function resolveDisplayName(user, { includeDiscord = true } = {}) {
-  if (includeDiscord && user.discord) return user.discord;
-  if (user.display_name) return user.display_name;
-  return maskIdentifier(resolveIdentifier(user));
-}
-
-// ─── GET /leaderboard: per-event row shape + fetch ───────────────────────
-
-// Single-event leaderboard rows: the latest snapshot per user (SPEC 960)
-// joined to the user's identity columns and their onchain account for
-// this event (falling back to a season-wide account when no event-scoped
-// one exists — same nullable-event-scope idiom `onchain_accounts` itself
-// uses). Rank comes straight off the stored `leaderboard_snapshots.rank`
-// column — this is the 'regular' event path (see fetchEventLeaderboardRows).
-const EVENT_LEADERBOARD_SQL = `
-  WITH latest AS (
-    SELECT DISTINCT ON (ls.user_id) ls.*
-      FROM leaderboard_snapshots ls
-     WHERE ls.season_event_id = $1
-     ORDER BY ls.user_id, ls.snapshot_at DESC, ls.id DESC
-  ),
-  accounts AS (
-    SELECT DISTINCT ON (oa.user_id) oa.user_id, oa.public_key, oa.address
-      FROM onchain_accounts oa
-     WHERE oa.user_id IS NOT NULL
-       AND (oa.season_event_id = $1
-            OR (oa.season_event_id IS NULL
-                AND oa.season_id = (SELECT season_id FROM season_events WHERE id = $1)))
-     ORDER BY oa.user_id, (oa.season_event_id IS NULL) ASC, oa.id DESC
-  )
-  SELECT l.*, u.email, u.telegram, u.discord, u.display_name, u.exclude_podium,
-         a.public_key AS wallet_address, a.address AS bech32m
-    FROM latest l
-    JOIN users u ON u.id = l.user_id
-    LEFT JOIN accounts a ON a.user_id = l.user_id
-   ORDER BY l.rank ASC, l.total_points DESC
-`;
-
-// Resolves the leaderboard rows for one `season_events` row. 'regular'
-// events (the common case, and every event Task 4's fixtures create for
-// day-to-day display) read the stored per-event snapshot rows straight —
-// SPEC 960. Any other `type` (e.g. the 'season' wrap-up fixture event) has
-// no per-event snapshots of its own to rank; SPEC 2935/2957 says this
-// rank column is instead "served by the standings query", so it's
-// computed live via the shared §4.10 aggregate (judgment call #1) and
-// mapped onto the same row shape — per-event-only breakdown fields
-// (bug_report_points and friends) aren't part of that aggregate and are
-// reported as 0 for this path.
-async function fetchEventLeaderboardRows(pool, event) {
-  if (event.type === 'regular') {
-    const { rows } = await pool.query(EVENT_LEADERBOARD_SQL, [event.id]);
-    return rows;
-  }
-
-  const seasonId = event.type === 'season' ? Number(event.season_id) : null;
-  const standings = await computeStandings(pool, { seasonId });
-  return standings.map((s) => ({
-    rank: s.rank,
-    total_points: s.total_points,
-    extra_points: s.extra_points,
-    exclude_podium: s.is_non_podium,
-    email: s.email,
-    telegram: s.telegram,
-    discord: s.discord,
-    display_name: s.display_name,
-    wallet_address: null,
-    bech32m: null,
-    bug_report_points: 0,
-    inviting_new_participant_points: 0,
-    community_contribution_points: 0,
-    last_epoch_total_produced_blocks: 0,
-    event_total_produced_blocks: s.total_produced_blocks,
-    vrf_total_won_slots: 0,
-    canonical_total_won_slots: 0,
-    canonical_total_produced_blocks: 0,
-    canonical_won_slots_up_to_current: 0,
-    canonical_produced_blocks_up_to_current: 0,
-    max_bp_success_rate_up_to_current: 0,
-    event_success_rate: 0,
-    epoch_success_rate: 0,
-    first_block_points: 0,
-    produced_half_blocks_points: 0,
-    top_3_points: 0,
-    success_50_percent_points: 0,
-  }));
-}
+// resolveIdentifier / maskIdentifier / resolveDisplayName (SPEC 958, 1246),
+// EVENT_LEADERBOARD_SQL and fetchEventLeaderboardRows all live in
+// src/services/topochain/event-standings.js now — see the require at the top
+// of this file, and that module's header for why they moved. Their behaviour
+// is unchanged; the SQL text is byte-identical.
 
 function formatLeaderboardRow(r) {
   const identifier = resolveIdentifier(r);
@@ -340,21 +229,43 @@ function topochainPublicRoutes(config) {
         event = rows[0];
         if (!event || event.internal) return fail(res, 404, 'Event not found.');
       } else {
-        // "current" (SPEC 910) is read as temporally ongoing — starts_at
-        // has passed and ends_at has not — rather than merely `is_active`
-        // (an admin on/off switch that says nothing about timing): an
-        // upcoming event with is_active=TRUE should not outrank one that
-        // is actually running right now.
-        const { rows } = await pool.query(
-          `SELECT id, name, disclaimer, display_leaderboard, starts_at, ends_at,
-                  internal, season_id, type
-             FROM season_events
-            WHERE internal = FALSE AND is_active = TRUE
-              AND starts_at <= NOW() AND ends_at >= NOW()
-            ORDER BY starts_at DESC, id DESC
-            LIMIT 1`
-        );
-        event = rows[0];
+        // The default event is resolved by the SHARED rule
+        // (resolveDefaultPublicEvent, src/services/topochain/
+        // event-standings.js) rather than by a strict reading of SPEC 910's
+        // "current" (temporally ongoing AND is_active). DO NOT "restore"
+        // the strict query — three things depend on this being the shared
+        // rule:
+        //
+        //   1. It is what the season default of issue #999 means. The
+        //      shared rule prefers the season's own `type = 'season'`
+        //      event, so a caller that asks for "the leaderboard" with no
+        //      id gets the whole-season standings, not whichever sub-event
+        //      started last.
+        //   2. It stops this endpoint 404ing between events — production's
+        //      normal state. The client already overrides the strict rule
+        //      (public/js/topochain-events.js exists for exactly that), so
+        //      the strict answer was only ever visible as a flash of "No
+        //      events have been published yet." on first paint, before the
+        //      picker's list landed and the pane refetched with an id.
+        //   3. The home-screen widget already resolves its board this way
+        //      (home-panels.js -> eventStandingsBoard), so the two agreed
+        //      on the event only by accident before.
+        //
+        // The 404 below now means what it says: there is no public event
+        // with standings at all.
+        event = await resolveDefaultPublicEvent(pool);
+        if (event) {
+          // resolveDefaultPublicEvent selects the columns its own callers
+          // need; this endpoint additionally serializes `disclaimer` /
+          // `display_leaderboard`, so re-read the row by id.
+          const { rows } = await pool.query(
+            `SELECT id, name, disclaimer, display_leaderboard, starts_at, ends_at,
+                    internal, season_id, type
+               FROM season_events WHERE id = $1`,
+            [event.id]
+          );
+          event = rows[0];
+        }
         if (!event) return fail(res, 404, 'No active event found. Please specify a season_event_id.');
       }
 
@@ -369,6 +280,12 @@ function topochainPublicRoutes(config) {
         has_started: hasStarted,
         has_ended: hasEnded,
         status,
+        // Additive to the v1 shape, for the same reason `display_leaderboard`
+        // is additive on /season-events: `type = 'season'` means these rows
+        // are the WHOLE season's aggregate (fetchEventLeaderboardRows routes
+        // them through computeStandings), so the pane must be able to say so
+        // and to drop the per-event-only columns that can only read 0.
+        type: event.type,
       };
 
       // SPEC 961: display_leaderboard=false -> identical envelope, empty
@@ -611,7 +528,7 @@ function topochainPublicRoutes(config) {
       const where = includePast ? 'internal = FALSE' : 'internal = FALSE AND is_active = TRUE';
       const { rows } = await pool.query(
         `SELECT id, name, description, starts_at, ends_at, start_epoch, end_epoch,
-                is_active, display_activities, display_leaderboard
+                is_active, display_activities, display_leaderboard, type, season_id
            FROM season_events WHERE ${where} ORDER BY starts_at DESC`
       );
 
@@ -632,6 +549,13 @@ function topochainPublicRoutes(config) {
         // one whose leaderboard is switched off and looks empty. See
         // public/js/topochain-events.js#pickDefault.
         display_leaderboard: r.display_leaderboard,
+        // Additive for the same reason (issue #999): `type = 'season'`
+        // identifies the event whose standings are the WHOLE season's
+        // aggregate, which is the dataset pickDefault must prefer and the
+        // one the picker should not label "(past)". `season_id` rides along
+        // so a client can label the season without a second round trip.
+        type: r.type,
+        season_id: r.season_id != null ? Number(r.season_id) : null,
       }));
 
       return ok(res, { data });
@@ -695,7 +619,13 @@ function topochainPublicRoutes(config) {
       if (!event || event.internal) return fail(res, 404, 'Event not found.');
 
       const { rows } = await pool.query(
+        // `c.completed` is the organiser's "this challenge is over" flag.
+        // The `c.enabled = TRUE` filter below deliberately does NOT exclude
+        // it — a finished challenge is still an enabled row and still
+        // belongs in the list; the flag rides along so the client can group
+        // and count them (buildChallengeListItem publishes it).
         `SELECT c.id, c.season_event_id, c.challenge_template_id, c.enabled,
+                c.completed,
                 c.goal, c.task, c.reward, c.description, c.requirements,
                 c.schedule_start, c.schedule_end, c.reward_logic,
                 c.cta_button, c.cta_label, c.cta_link,

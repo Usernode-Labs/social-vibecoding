@@ -74,6 +74,15 @@ const EVENT_TYPES = Object.freeze({
   // No backfill: before this shipped, changing a platform variable meant
   // editing deploy.yml, which leaves its trace in git, not here.
   PLATFORM_ENV_CHANGED: 'platform_env_changed',
+  // An admin sent a diagnostic email from Admin → Email delivery
+  // (src/routes/admin.js POST /api/admin/mail/test). Metadata carries
+  // { status, provider, recipient } — the same fields the mail_deliveries
+  // ledger already holds, never the message body and never a credential.
+  // Emitted for every outcome, including `failed` and `no_transport`: an
+  // operator probing an address is worth a durable trace whether or not
+  // the provider accepted it. No backfill — the button didn't exist
+  // before this shipped.
+  MAIL_TEST_SENT: 'mail_test_sent',
   // An admin ran the bulk container rollover (src/services/app-rollover.js
   // via POST /api/admin/rollover): every running child-app container
   // recreated with freshly assembled env. Metadata carries the tally
@@ -104,6 +113,14 @@ const EVENT_TYPES = Object.freeze({
   // build, which is indistinguishable from "no app is calling" unless the
   // calls themselves are counted. metadata: { os, upgrade }.
   APP_VERSION_CHECKED: 'app_version_checked',
+
+  // #907: a coding turn was dispatched to a coding agent on the user's own
+  // machine instead of a platform worker container. Recorded on the turn's
+  // terminal transition so the ratio of local to platform turns — and how
+  // often a local turn is abandoned or declined — is visible without
+  // reading the staging:private local_agent_turns table.
+  // metadata: { outcome, runtime, durationMs }.
+  LOCAL_AGENT_TURN: 'local_agent_turn',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise

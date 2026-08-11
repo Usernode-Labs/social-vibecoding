@@ -20,7 +20,9 @@ const CACHE_TTL_MS = 30 * 60 * 1000;
 const GITHUB_USER_AGENT = 'usernode-platform';
 
 // Headers for the read-only public fetch paths (fetchPublicIssues,
-// fetchPublicIssue, fetchIssueComments). When the bot PAT is configured
+// fetchPublicIssue, fetchIssueComments, and — exported as
+// `publicApiHeaders` — the connector's fork inspection in
+// services/external-agent-tasks). When the bot PAT is configured
 // these requests authenticate as the bot — 5,000 req/hr on the token —
 // instead of burning the per-IP ANONYMOUS 60 req/hr budget, which is
 // shared by every app on the host and was routinely exhausted in prod
@@ -690,6 +692,24 @@ async function compareCommitAncestry(owner, repo, baseSha, headSha) {
   };
 }
 
+// #955: the parent SHAs of one commit, oldest-first as Git stores them —
+// so `[0]` is the FIRST parent, i.e. the branch the merge was made ONTO.
+// The platform's sync turn merges origin/main into a proposal branch, so a
+// pushed sync commit whose first parent is the reviewed head proves it sits
+// directly on top of the reviewed revision and swept in no unreviewed author
+// commit. Throws on transport errors; callers fail closed (skip the vote
+// carry) rather than guessing provenance.
+async function getCommitParents(owner, repo, sha) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.request(
+    'GET /repos/{owner}/{repo}/git/commits/{commit_sha}',
+    { owner, repo, commit_sha: sha }
+  );
+  return (data.parents || [])
+    .map((p) => (typeof p?.sha === 'string' ? p.sha.toLowerCase() : null))
+    .filter(Boolean);
+}
+
 async function getBranchSha(owner, repo, branchName) {
   const octokit = await getOctokit(owner);
   const { data: ref } = await octokit.request(
@@ -952,16 +972,33 @@ async function createProposalCommit(owner, repo, {
 // RequestError.message is EMPTY when GitHub answers with an empty or
 // non-JSON body (the 2026-07-24 create-PR outage logged `{"err":""}` for
 // hours), so warn sites should spread this instead of logging err.message.
+//
+// `scopes` carries GitHub's own `x-oauth-scopes` response header — the
+// authoritative answer to "what can this token actually do", which no
+// amount of source-reading can supply. It is the HEADER STRING ONLY and
+// never the token: a classic PAT's powers are its scopes, and the 2026-08-07
+// connector failure took a live production run to characterise precisely
+// because nothing logged it. Null for an App installation token, which
+// GitHub does not report scopes for.
 function describeGithubError(err) {
-  if (!err) return { status: null, requestId: null, message: 'unknown error', data: null };
+  if (!err) return { status: null, requestId: null, message: 'unknown error', data: null, scopes: null };
+  const headers = (err.response && err.response.headers) || null;
   const status = err.status || (err.response && err.response.status) || null;
-  const requestId = (err.response && err.response.headers
-    && err.response.headers['x-github-request-id']) || null;
+  const requestId = (headers && headers['x-github-request-id']) || null;
+  const rawScopes = headers && headers['x-oauth-scopes'];
+  const scopes = typeof rawScopes === 'string' ? rawScopes.slice(0, 300) : null;
   let data = (err.response && err.response.data !== undefined) ? err.response.data : null;
   if (typeof data === 'string') data = data.slice(0, 300) || null;
   const message = (err.message && String(err.message).trim())
     || (status ? `HTTP ${status} from GitHub (empty response body)` : String(err));
-  return { status, requestId, message, data };
+  return { status, requestId, message, data, scopes };
+}
+
+// Which credential `getOctokit` would have used for this call. Mirrors the
+// preference order in getOctokit itself; reported on failure paths so a log
+// line answers "was this the PAT or the App?" without a second deploy.
+function credentialClass() {
+  return process.env.GITHUB_BOT_TOKEN ? 'pat' : 'installation';
 }
 
 // createPR retries transient GitHub failures (5xx / status-less network
@@ -974,8 +1011,30 @@ function _setCreatePrRetryDelaysForTests(delays) {
   createPrRetryDelaysMs = delays || [2000, 8000];
 }
 
-async function createPR(owner, repo, { branch, title, body }) {
+// `head` is optional and defaults to `branch` — the same-repo shape every
+// pre-existing caller uses. The hosted MCP connector passes an explicit
+// `owner:branch` instead: app repos are bot-owned, so work written by a
+// user's own coding agent lives on a branch in THEIR fork and the PR is
+// cross-fork. Everything below (the retry schedule, the typed no_commits /
+// pr_exists / github_unavailable errors) is identical either way.
+//
+// `headRepo` ("owner/name") is forwarded to GitHub as `head_repo`. A bare
+// `owner:branch` head makes GitHub SEARCH the base's fork network for a repo
+// owned by that login, which is ambiguous the moment the user owns more than
+// one repo in the network — the exact case CONFLICT_FORK_SUFFIX exists to
+// create. Octokit forwards unknown body params, but this function
+// destructures a fixed list, so the parameter has to be named here or it is
+// silently dropped. Omitted entirely (not sent as undefined) when unset, so
+// every same-repo caller's request body is byte-identical to before.
+//
+// `maintainerCanModify` is forwarded as `maintainer_can_modify` and carries
+// the same fixed-list caveat. Cross-fork callers must pass `false`; see the
+// note at the call below for why the default is not safe there.
+async function createPR(owner, repo, {
+  branch, title, body, head, headRepo, maintainerCanModify,
+}) {
   const octokit = await getOctokit(owner);
+  const headRef = head || branch;
   const attempts = createPrRetryDelaysMs.length + 1;
   let data;
   for (let attempt = 1; ; attempt++) {
@@ -984,7 +1043,23 @@ async function createPR(owner, repo, { branch, title, body }) {
         owner, repo,
         title: safeMention(title),
         body: safeMention(body),
-        head: branch,
+        head: headRef,
+        ...(headRepo ? { head_repo: headRepo } : {}),
+        // Sent ONLY when a caller asks for it — every same-repo caller omits
+        // it and keeps GitHub's default, unchanged. A cross-fork caller
+        // passes `false`: GitHub treats the parameter as true when omitted,
+        // which for a fork head is a request to grant the BASE repo's
+        // maintainers push access to the HEAD branch, and only a
+        // collaborator on the head repo may grant that. `usernode-bot` is
+        // not a collaborator on anybody's fork and by design never will be
+        // (services/github-link.js is identity-only), so the implicit
+        // request made GitHub 422 the whole create with
+        // `field: "fork_collab"` — the failure that made every cross-fork
+        // submission fall through to the mirror. Boolean-checked rather
+        // than truthy-checked: `false` is the whole point.
+        ...(typeof maintainerCanModify === 'boolean'
+          ? { maintainer_can_modify: maintainerCanModify }
+          : {}),
         base: 'main',
       }));
       break;
@@ -997,7 +1072,7 @@ async function createPR(owner, repo, { branch, title, body }) {
       const detail = err && (err.message || '') +
         ' ' + JSON.stringify(err?.response?.data?.errors || err?.response?.data || '');
       if (err && err.status === 422 && /No commits between/i.test(detail)) {
-        const e = new Error(`No commits between main and ${branch} — the branch has no pushed commits.`);
+        const e = new Error(`No commits between main and ${headRef} — the branch has no pushed commits.`);
         e.code = 'no_commits';
         throw e;
       }
@@ -1007,8 +1082,29 @@ async function createPR(owner, repo, { branch, title, body }) {
       // pr_number to the DB (session 2262, 2026-07-14). Type it so callers can
       // look the existing PR up and adopt it instead of failing forever.
       if (err && err.status === 422 && /pull request already exists/i.test(detail)) {
-        const e = new Error(`A pull request already exists for ${owner}:${branch}.`);
+        const e = new Error(`A pull request already exists for ${head ? headRef : `${owner}:${branch}`}.`);
         e.code = 'pr_exists';
+        throw e;
+      }
+      // GitHub answers 422 `field: "fork_collab"` — "Fork collab can't be
+      // granted by someone without permission" — when the create asks to
+      // give the base repo's maintainers write access to a HEAD branch in
+      // somebody else's fork. That grant is only a head-repo collaborator's
+      // to make. It is a bug in the REQUEST, not a condition of the
+      // repository: the caller either sends `maintainerCanModify: false` or
+      // it must not open a cross-fork PR at all, so retrying, re-sending
+      // with `head_repo`, or mirroring around it all miss the point. Typed
+      // so `resolvePullRequest` stops the ladder and says what happened.
+      // Unreachable once every cross-fork caller sends `false`, which is
+      // exactly why it is worth naming if it ever comes back.
+      if (err && err.status === 422 && /fork_collab/i.test(detail)) {
+        const e = new Error(
+          `GitHub refused to open the pull request for ${headRef} because the request asked to grant `
+          + `${owner}/${repo}'s maintainers write access to that branch, and only a collaborator on the `
+          + 'fork can grant it. Open the pull request with maintainer edits disabled.'
+        );
+        e.code = 'fork_collab_denied';
+        e.status = 422;
         throw e;
       }
       // Transient: a GitHub 5xx or a status-less network failure. Retry on
@@ -1029,7 +1125,7 @@ async function createPR(owner, repo, { branch, title, body }) {
         // truth — GitHub-side, wait and retry — instead of the generic
         // "re-run your request in the session".
         const e = new Error(
-          `GitHub failed to create the PR for ${owner}:${branch} after ${attempts} attempts `
+          `GitHub failed to create the PR for ${head ? headRef : `${owner}:${branch}`} after ${attempts} attempts `
           + `(${desc.status ? `HTTP ${desc.status}` : 'network error'}`
           + `${desc.requestId ? `, request id ${desc.requestId}` : ''}).`
         );
@@ -1045,14 +1141,16 @@ async function createPR(owner, repo, { branch, title, body }) {
   return data;
 }
 
-// Look up the open PR whose head is `branch` (same-repo branches — the
-// only shape this platform creates). Returns the PR data or null. Used by
+// Look up the open PR whose head is `branch`. Defaults to a same-repo head
+// (`owner:branch`) — the shape every pre-existing caller means. Used by
 // applyPrMetadata to adopt a PR that exists on GitHub but was never
-// persisted to the session row (createPR 422 'pr_exists').
-async function findOpenPrByBranch(owner, repo, branch) {
+// persisted to the session row (createPR 422 'pr_exists'), and by the MCP
+// connector with an explicit `headOwner` to find the cross-fork PR for a
+// branch in the user's own fork.
+async function findOpenPrByBranch(owner, repo, branch, { headOwner } = {}) {
   const octokit = await getOctokit(owner);
   const { data } = await octokit.rest.pulls.list({
-    owner, repo, head: `${owner}:${branch}`, state: 'open', per_page: 1,
+    owner, repo, head: `${headOwner || owner}:${branch}`, state: 'open', per_page: 1,
   });
   return (data && data[0]) || null;
 }
@@ -1982,11 +2080,13 @@ module.exports = {
   createBranch,
   ensureBranchAtSha,
   compareCommitAncestry,
+  getCommitParents,
   getBranchSha,
   advanceBranchToSha,
   createProposalCommit,
   createPR,
   describeGithubError,
+  credentialClass,
   _setCreatePrRetryDelaysForTests,
   findOpenPrByBranch,
   listOpenPulls,
@@ -2013,6 +2113,10 @@ module.exports = {
   verifyBotAccess,
   checkRepoPublic,
   fetchPublicRepoInfo,
+  // The header builder for read-only PUBLIC GitHub reads, exported so other
+  // services (services/external-agent-tasks) inherit the bot-PAT-when-present
+  // rate-limit posture instead of re-implementing it anonymously.
+  publicApiHeaders: publicFetchHeaders,
   fetchPublicIssues,
   fetchPublicIssue,
   fetchIssueComments,

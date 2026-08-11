@@ -1,0 +1,229 @@
+// Guards for #1012: "Copy markdown" on both full-spec surfaces.
+//
+// The button's whole value is that it yields the WHOLE document — both
+// halves plus their marker headings — for the version on screen. That is
+// exactly the property a later refactor can silently break (by copying
+// the rendered half, or the active tab's slice), so these guards pin the
+// copy SOURCE, not just the button's presence.
+//
+// public/js/*.js are plain browser scripts with no module.exports and the
+// suite has no jsdom, so the UI layers assert on stable source tokens —
+// the same coarse style as tests/spec-viewer-session-reset.test.js and
+// layer 2 of tests/spec-sections.test.js. The staging mock is checked
+// through the REAL splitter so the mock document and the two-half
+// convention can't drift apart.
+//
+// Run with: node --test tests/spec-copy-markdown.test.js
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const { splitSpecSections } = require('../public/js/spec-sections.js');
+
+const ROOT = path.join(__dirname, '..');
+const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
+
+const platformUiSrc = read('public', 'js', 'platform-ui.js');
+const devChatSrc = read('public', 'js', 'dev-chat.js');
+const groupChatSrc = read('public', 'js', 'group-chat.js');
+const appCss = read('public', 'css', 'app.css');
+const sessionsSrc = read('src', 'routes', 'sessions.js');
+
+// Slice out a method body by name. Coarse but stable: starts at the
+// method's `name(` declaration and ends at the next method declaration
+// sharing its indentation. Same helper as
+// tests/spec-viewer-session-reset.test.js, generalised over indent width
+// because platform-ui.js's object literal lives inside an IIFE (4 spaces)
+// while dev-chat.js / group-chat.js are top-level (2).
+function methodSource(src, name, label, indent = '  ') {
+  const startRe = new RegExp(`\\n${indent}(?:async )?${name}\\(`);
+  const startMatch = src.match(startRe);
+  assert.ok(startMatch, `method ${name} not found in ${label}`);
+  const start = startMatch.index;
+  const rest = src.slice(start + startMatch[0].length);
+  const endMatch = rest.match(new RegExp(`\\n${indent}(?:async )?[_A-Za-z][\\w]*\\((?:[^)]*)\\)\\s*\\{`));
+  const end = endMatch ? start + startMatch[0].length + endMatch.index : src.length;
+  return src.slice(start, end);
+}
+
+// The GET /api/sessions/:id/specs/:version handler, sliced out so the
+// mock-fallback assertions can't accidentally match an earlier route's
+// `if (!rows.length)`.
+function specVersionRouteSource() {
+  const start = sessionsSrc.indexOf("router.get('/api/sessions/:id/specs/:version'");
+  assert.ok(start !== -1, 'spec-version route not found in src/routes/sessions.js');
+  const rest = sessionsSrc.slice(start + 1);
+  const nextRoute = rest.search(/\n  router\.(get|post|put|patch|delete)\(/);
+  return nextRoute === -1 ? sessionsSrc.slice(start) : sessionsSrc.slice(start, start + 1 + nextRoute);
+}
+
+// ── 1. The shared clipboard helper ──────────────────────────────────────
+
+test('PlatformUI exposes copyText with a clipboard path and an execCommand fallback', () => {
+  const src = methodSource(platformUiSrc, 'copyText', 'platform-ui.js', '    ');
+  assert.ok(/navigator\.clipboard\?\.writeText/.test(src),
+    'copyText must try navigator.clipboard.writeText first');
+  assert.ok(src.includes("document.execCommand('copy')"),
+    'copyText must fall back to execCommand for insecure/blocked contexts');
+  assert.ok(src.includes('createElement(\'textarea\')'),
+    'the fallback needs a real (off-screen) textarea to select');
+  // The fallback element must always be torn down, whichever branch ran.
+  assert.ok(/finally\s*\{[\s\S]*removeChild/.test(src),
+    'the fallback textarea must be removed in a finally block');
+});
+
+test('copyText resolves a boolean instead of throwing', () => {
+  const src = methodSource(platformUiSrc, 'copyText', 'platform-ui.js', '    ');
+  assert.ok(/catch\s*\{\s*\}/.test(src) || /catch\s*\{\s*return false;/.test(src),
+    'copyText must swallow clipboard rejections so callers can branch on the result');
+  assert.ok(/return false;/.test(src) && /return true;/.test(src),
+    'copyText must return both success and failure booleans');
+});
+
+// ── 2. Dev-chat spec viewer ─────────────────────────────────────────────
+
+test('_renderSpecViewer renders a copy button and binds it', () => {
+  const src = methodSource(devChatSrc, '_renderSpecViewer', 'dev-chat.js');
+  assert.ok(src.includes('dc-spec-viewer-copy'),
+    '_renderSpecViewer must render the copy button');
+  assert.ok(src.includes("querySelector('#dc-spec-viewer-copy')"),
+    'the copy button must be looked up and bound after the innerHTML write');
+  assert.ok(/disabled title="No spec to copy yet"/.test(src),
+    'an empty spec must render the copy button disabled, mirroring the share buttons');
+});
+
+test('the dev-chat copy button copies displayContent — the WHOLE document', () => {
+  const src = methodSource(devChatSrc, '_renderSpecViewer', 'dev-chat.js');
+  assert.ok(/PlatformUI\.copyText\(displayContent\)/.test(src),
+    'the copy handler must pass displayContent (the raw selected version) to copyText');
+  // The crux of #1012: never the rendered half, never the active tab.
+  assert.ok(!/copyText\((?:[^)]*\b(?:split|activeTab|userFacing|technical)\b[^)]*)\)/.test(src),
+    'the copy source must not be a split half or keyed off activeTab');
+});
+
+test('the copy button sits after the version select and before the share buttons', () => {
+  const src = methodSource(devChatSrc, '_renderSpecViewer', 'dev-chat.js');
+  const selectIdx = src.indexOf('id="dc-spec-viewer-version"');
+  const copyIdx = src.indexOf('${copyBtnHtml}');
+  const shareUserIdx = src.indexOf('${shareUserBtnHtml}');
+  assert.ok(selectIdx !== -1, 'version select missing from the header template');
+  assert.ok(copyIdx !== -1, 'copy button missing from the header template');
+  assert.ok(shareUserIdx !== -1, 'share-to-user button missing from the header template');
+  assert.ok(selectIdx < copyIdx && copyIdx < shareUserIdx,
+    'header order must be: version select, copy, share buttons (close stays trailing)');
+});
+
+test('the copy button flashes its own label and reports failure', () => {
+  const src = methodSource(devChatSrc, '_renderSpecViewer', 'dev-chat.js');
+  assert.ok(src.includes("'Copied!'") && src.includes("'Copy failed'"),
+    'both the success and failure labels must be present');
+  assert.ok(/setTimeout\(\(\) => \{ copyBtn\.textContent = 'Copy markdown'; \}, 1500\)/.test(src),
+    'the label must be restored after the flash');
+  assert.ok(/if \(!ok\) PlatformUI\.toast\(/.test(src),
+    'a failed copy must also explain the manual fallback via a toast');
+});
+
+// ── 3. Group-chat shared-spec panel ─────────────────────────────────────
+
+test('_showSpecPanel stashes the raw markdown in JS state', () => {
+  const src = methodSource(groupChatSrc, '_showSpecPanel', 'group-chat.js');
+  assert.ok(/GroupChat\._specPanelRaw = content/.test(src),
+    '_showSpecPanel must stash `content` on _specPanelRaw (the panel rewrites its innerHTML)');
+  // Multi-KB markdown with quotes/newlines must never be inlined into markup.
+  assert.ok(!/data-spec-(?:raw|content|markdown)/.test(src),
+    'the raw spec must not be interpolated into a data- attribute');
+  assert.ok(/PlatformUI\.copyText\(GroupChat\._specPanelRaw\)/.test(src),
+    'the panel copy handler must copy the stashed raw markdown');
+});
+
+test('the panel copy button is gated on canCopy and a non-error body', () => {
+  const src = methodSource(groupChatSrc, '_showSpecPanel', 'group-chat.js');
+  assert.ok(/canCopy = true/.test(src),
+    '_showSpecPanel must accept a canCopy option defaulting to true');
+  assert.ok(/\(canCopy && !isError && content\)/.test(src),
+    'the button must render only for a copyable, non-error, non-empty body');
+  const copyIdx = src.indexOf('${copyBtnHtml}');
+  const closeIdx = src.indexOf('gc-spec-panel-close" aria-label');
+  assert.ok(copyIdx !== -1 && closeIdx !== -1, 'header template missing copy/close buttons');
+  assert.ok(copyIdx < closeIdx, 'the copy button must sit left of the close ✕');
+});
+
+test('the reload-restore skeleton is not copyable', () => {
+  const src = methodSource(groupChatSrc, '_restoreSpecPanelIfSaved', 'group-chat.js');
+  assert.ok(/content: 'Loading…',[\s\S]{0,240}canCopy: false/.test(src),
+    "the 'Loading…' skeleton render must pass canCopy: false");
+});
+
+test('_closeSpecPanel clears the stashed document', () => {
+  const src = methodSource(groupChatSrc, '_closeSpecPanel', 'group-chat.js');
+  assert.ok(/GroupChat\._specPanelRaw = null/.test(src),
+    'a closed panel must not leave its document copyable');
+});
+
+test('both group-chat spec fetches forward the ?demo=1 flag', () => {
+  const fetches = groupChatSrc.match(/fetch\(`\/api\/sessions\/\$\{sessionId\}\/specs\/\$\{version\}[^`]*`\)/g) || [];
+  assert.equal(fetches.length, 2,
+    'expected exactly the two spec-version fetches (click delegate + reload restore)');
+  for (const f of fetches) {
+    assert.ok(f.includes('GroupChat._specDemoQS()'),
+      `spec fetch must forward the demo flag: ${f}`);
+  }
+  const helper = methodSource(groupChatSrc, '_specDemoQS', 'group-chat.js');
+  assert.ok(/get\('demo'\) === '1' \? '\?demo=1' : ''/.test(helper),
+    '_specDemoQS must only forward demo=1 when the page URL carries it');
+});
+
+// ── 4. CSS ──────────────────────────────────────────────────────────────
+
+test('both copy buttons reserve width for the label flash', () => {
+  assert.ok(/\.dc-spec-copy-btn\s*\{[^}]*min-width:\s*108px/.test(appCss),
+    '.dc-spec-copy-btn needs a min-width so "Copied!" cannot re-wrap the header');
+  assert.ok(/\.gc-spec-panel-copy\s*\{[^}]*min-width:\s*108px/.test(appCss),
+    '.gc-spec-panel-copy needs the same reserved width');
+  assert.ok(/\.gc-spec-panel-copy\s*\{[^}]*flex-shrink:\s*0/.test(appCss),
+    'the panel copy button must not be compressed by a long spec title');
+});
+
+// ── 5. Staging mock spec version ────────────────────────────────────────
+
+test('the mock spec version is gated on staging AND ?demo=1', () => {
+  const route = specVersionRouteSource();
+  const gate = route.match(
+    /process\.env\.USERNODE_ENV === 'staging' && req\.query\.demo === '1'\) \{\s*return res\.json\(\{ spec: stagingMockSpecVersion\(version\) \}\);/
+  );
+  assert.ok(gate, 'the mock must require both USERNODE_ENV=staging and demo=1');
+  // A real row must always win: the fallback lives inside the empty-result branch.
+  const emptyBranch = route.indexOf('if (!rows.length) {');
+  const mockCall = route.indexOf('stagingMockSpecVersion(version)');
+  const realJson = route.indexOf('res.json({ spec: rows[0] })');
+  assert.ok(emptyBranch !== -1 && mockCall !== -1 && realJson !== -1,
+    'spec-version route shape changed unexpectedly');
+  assert.ok(emptyBranch < mockCall && mockCall < realJson,
+    'the mock must only be reachable when the real query returned no rows');
+});
+
+test('the mock spec document conforms to the two-half convention', () => {
+  // Parsed out of the shipped source rather than duplicated here, so this
+  // can't pass against a stale copy of the document.
+  const split = splitSpecSections(extractMockMd());
+  assert.ok(split, 'the mock spec must split into two halves (both marker headings present)');
+  assert.ok(split.preamble.includes('[Mock]'),
+    'the mock must be obviously fake per the staging-seed convention');
+  assert.ok(split.userFacing.trim(), 'the mock needs a non-empty user-facing half');
+  assert.ok(split.technical.trim(), 'the mock needs a non-empty technical half');
+});
+
+// The mock lives in a joined array literal in src/routes/sessions.js; parse
+// it out of the source so this test can't pass against a stale copy.
+function extractMockMd() {
+  const m = sessionsSrc.match(/const STAGING_MOCK_SPEC_MD = \[([\s\S]*?)\]\.join\('\\n'\);/);
+  assert.ok(m, 'STAGING_MOCK_SPEC_MD literal not found in src/routes/sessions.js');
+  return m[1]
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.startsWith("'"))
+    .map((l) => l.replace(/,$/, '').replace(/^'/, '').replace(/'$/, ''))
+    .join('\n');
+}

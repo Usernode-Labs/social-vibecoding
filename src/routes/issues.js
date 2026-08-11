@@ -13,6 +13,7 @@ const { encrypt, decrypt } = require('../services/secrets');
 const { issueKindLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
 const { weekStartUtc, countWeeklyAllowanceUsed, WEEKLY_KUDOS_LIMIT } = require('./kudos');
+const { placeBounty } = require('../services/bounties');
 const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
 const topicAttrs = require('../services/topic-attributes');
@@ -184,6 +185,17 @@ function stagingMockIssues(repoUrl) {
       + 'the most recent and is NOT part of the saved drag order, so it '
       + 'must appear at the top of the Issues column, above the manually '
       + 'ordered cards.', 1),
+    // Card-as-pointer revision: a deliberately BARE issue — no attributes,
+    // no bounty, no claim, no headless run — so the "a card with no metadata
+    // carries no grey Set-priority / Set-category / Unassigned chips" rule is
+    // visible in a preview. Every other mock row is enriched by the
+    // staging-attributes block in GET /github-issues; this number is
+    // deliberately absent from that map (as is 900002, which keeps its own
+    // unset-dropdown demo).
+    mk(900013, '[Mock] Bare issue — no priority, no category, nobody assigned',
+      'Staging-only mock issue with NO community-voted attributes, so the '
+      + 'card renders with just its icon, title, meta line and one primary '
+      + 'action. Compare it against #900001, which has all three chips set.', 6),
     // #683: dedicated row for reviewing the inline screenshot embed in
     // the topic view. Real filed issues embed the public
     // /issue-images/:id URL; the mock points at an existing same-origin
@@ -195,6 +207,20 @@ function stagingMockIssues(repoUrl) {
       + 'same way a reporter-captured screenshot attached from the '
       + 'feedback modal does.\n\n'
       + '**Screenshot:**\n![Screenshot](/icons/icon-192.png)', 4),
+    // #1010: the two targets of the applying / retry-pending mock close
+    // proposals below (stagingMockGovernance 9100005 / 9100006), so the
+    // ?demo=1 preview shows the governance card's spinner state AND the
+    // matching "Closing…" state on the target issue's own row.
+    mk(900011, '[Mock] Close vote passed — issue is being closed',
+      'Staging-only mock issue for previewing the #1010 in-progress close '
+      + 'indicator. A mock close proposal for this issue has passed its '
+      + 'vote and its window has just elapsed, so both the governance card '
+      + 'and this row render the "Closing…" spinner state.', 6),
+    mk(900012, '[Mock] Close vote passed a while ago — retry pending',
+      'Staging-only mock issue for previewing the #1010 stalled-apply '
+      + 'state. Its mock close proposal passed long enough ago that the '
+      + 'spinner has timed out, so the card reads "Close pending — will '
+      + 'retry automatically" instead of spinning forever.', 8),
   ];
 }
 
@@ -206,6 +232,7 @@ function stagingMockIssues(repoUrl) {
 function stagingMockGovernance() {
   const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
   const hoursAhead = (h) => new Date(Date.now() + h * 3600 * 1000).toISOString();
+  const secsAgo = (s) => new Date(Date.now() - s * 1000).toISOString();
   const mk = (id, kind, title, payload, hours, up, down, gate = {}) => ({
     id,
     app_id: 0,
@@ -225,6 +252,10 @@ function stagingMockGovernance() {
     votes_required: gate.required ?? Math.max(up, 1),
     merge_window_ends_at: gate.windowEndsAt ?? null,
     contested: gate.contested ?? false,
+    // Request-time staging fixture marker. The client uses this only to
+    // keep the synthetic apply-state examples visible even when the cloned
+    // self-app is locked; real governance rows never carry it.
+    demo: true,
   });
   return [
     // Unopposed rename, threshold met, window still running → countdown.
@@ -259,6 +290,49 @@ function stagingMockGovernance() {
       approvals_required: 1,
       qualified_yes_count: 0,
       qualified_no_count: 0,
+    },
+    // #1010: the two DERIVED "being applied" states. Both have passed their
+    // gate (up_count >= required, uncontested) with the visibility window
+    // already elapsed — the shape a proposal has in the seconds between the
+    // deciding vote and the apply landing. They differ only in HOW LONG ago
+    // the window ended, which is what selects the state:
+    //   9100005 — 30s ago  → inside the 120s grace → spinner, "Closing issue #900011…"
+    //   9100006 — 10m ago  → past the grace        → "Close pending — will retry automatically"
+    mk(9100005, 'close_issue',
+      '[Mock] Close issue #900011: "Close vote passed — issue is being closed"',
+      {
+        issueNumber: 900011,
+        issueTitle: 'Close vote passed — issue is being closed',
+        reason: 'Fixed by the theme rework — closing.',
+      }, 5, 2, 0,
+      { required: 2, windowEndsAt: secsAgo(30) }),
+    mk(9100006, 'close_issue',
+      '[Mock] Close issue #900012: "Close vote passed a while ago — retry pending"',
+      {
+        issueNumber: 900012,
+        issueTitle: 'Close vote passed a while ago — retry pending',
+        reason: 'Duplicate of an older report.',
+      }, 7, 2, 0,
+      { required: 2, windowEndsAt: secsAgo(600) }),
+    // Card-as-pointer revision: a SETTLED governance row. The vote is
+    // history, so it renders the frozen pill and — with nothing left to
+    // demote — no ⋯ trigger at all. Every other mock here is 'open', so
+    // without this row the "no dead ⋯ button" rule is invisible in a
+    // preview. (The Done column's own applied close-issue cards come from
+    // stagingMockCompletedCloseIssues in votes.js; this one exercises the
+    // gov card renderer's settled branch in the In-review column's shape.)
+    {
+      ...mk(9100007, 'close_issue',
+        '[Mock] Settled: closed issue #900003 by vote — pill only, no ⋯',
+        {
+          issueNumber: 900003,
+          issueTitle: '[Mock] Topic cards overflow on narrow phones',
+          reason: 'Fixed by the responsive rework.',
+          appliedAt: hoursAgo(2),
+          appliedBy: 'group-vote',
+          required: 2,
+        }, 20, 2, 0, { required: 2 }),
+      status: 'closed',
     },
   ];
 }
@@ -476,7 +550,17 @@ function issueRoutes(config) {
       if (kind === 'secret_change') {
         const key = typeof payload?.key === 'string' ? payload.key.trim() : '';
         const action = typeof payload?.action === 'string' ? payload.action : 'set';
-        const value = typeof payload?.value === 'string' ? payload.value : '';
+        // Trimmed HERE, at proposal creation, not at apply. The apply path
+        // for a child app writes app_secrets with raw SQL (see
+        // maybeApplySecretChangeProposal below) and never reaches
+        // appSecrets.setValue, so creation is the only boundary that covers
+        // both stores — and normalizing before encrypt/valueLast4 keeps the
+        // proposal card's preview identical to what will actually be stored.
+        // Both DAOs implement the identical rule, so either normalizeValue
+        // serves both scopes.
+        const value = platformEnv.normalizeValue(
+          typeof payload?.value === 'string' ? payload.value : ''
+        );
         if (!appManifest.KEY_RE.test(key)) {
           return res.status(400).json({ error: 'payload.key must be UPPER_SNAKE_CASE' });
         }
@@ -832,6 +916,15 @@ function issueRoutes(config) {
         { type: 'governance', ref: issue.id }
       );
 
+      // #1010: broadcast the VOTE before the apply, not after. A deciding
+      // up-vote on a governance proposal runs the whole apply (GitHub close
+      // + comment for close_issue — seconds of latency) inside this request,
+      // and the old ordering held this event behind all of it, so every other
+      // client's tally sat stale for the duration and none of them could
+      // derive the "being applied" state. The apply pushes its own events
+      // when it settles, so this one is purely "a vote landed".
+      pushIssueUpdate({ action: 'voted', appSlug: issue.app_slug, appId: issue.app_id, issueId: issue.id, vote });
+
       let renamed = null;
       let secretChanged = null;
       let issueClosed = null;
@@ -845,8 +938,6 @@ function issueRoutes(config) {
       } else if (vote === 'up' && issue.kind === 'maintenance_campaign') {
         campaignStarted = await maybeApplyMaintenanceCampaignProposal(config, pool, issue);
       }
-
-      pushIssueUpdate({ action: 'voted', appSlug: issue.app_slug, appId: issue.app_id, issueId: issue.id, vote });
 
       res.json({ ok: true, renamed, secretChanged, issueClosed, campaignStarted });
     } catch (err) {
@@ -1184,9 +1275,38 @@ function issueRoutes(config) {
         // by the viewer — only where no real creator resolved — so the
         // affordance is reviewable. Saving still fails (no real GitHub
         // issue behind the mock); purely visual. No-op in production.
+        //
+        // "No real creator resolved" has to include the mock's OWN author
+        // sentinel: stagingMockIssues stamps every row `user:
+        // 'staging-tester'`, and the enrichment above promotes that to
+        // created_by_username as a GitHub login — so the `!created_by_username`
+        // guard never fired and the pencil never rendered. Only the sentinel
+        // is treated as unresolved; a genuinely prod-cloned row that happens
+        // to be numbered 900008 keeps its real author.
         for (const issue of issues) {
-          if (issue.number === 900008 && !issue.created_by_username) {
+          if (issue.number === 900008
+            && (!issue.created_by_username || issue.created_by_username === 'staging-tester')) {
             issue.created_by_username = req.user.username;
+          }
+        }
+        // #964: `issue_bounties` is staging:private, so it arrives
+        // schema-only and EVERY row in a preview shows a bounty count of 0 —
+        // the ★ pill and the "★ Bountied" button state would be unreviewable,
+        // and the Send Feedback dialog's new create-with-bounty checkbox
+        // couldn't be seen to have done anything (staging also has no
+        // GITHUB_BOT_TOKEN, so no issue is really filed there). Attach
+        // synthetic bounty state to two dedicated [Mock] rows — only where no
+        // real row already claimed the number, so prod-cloned data is never
+        // overridden. Request-time, read-only, no-op in production.
+        const mockBounties = new Map([
+          [900002, { bounty_count: 2, my_bounty: false }],
+          [900004, { bounty_count: 1, my_bounty: true }],
+        ]);
+        for (const issue of issues) {
+          const b = mockBounties.get(issue.number);
+          if (b && !issue.bounty_count) {
+            issue.bounty_count = b.bounty_count;
+            issue.my_bounty = b.my_bounty;
           }
         }
         // "In progress" chip states on dedicated [Mock] rows, so every
@@ -1510,9 +1630,14 @@ function issueRoutes(config) {
   //
   // Place a "Give kudos" bounty on a GitHub issue. A bounty is a symbolic
   // off-chain pledge (no tokens) that debits the giver's SHARED weekly kudos
-  // allowance (the same 5/week cap PR kudos uses, counted across both
-  // ledgers). When a merged PR closes this issue, the open bounty is awarded
-  // to that PR's author (see routes/votes.js checkAndMerge).
+  // allowance (the same WEEKLY_KUDOS_LIMIT cap PR kudos uses, counted across
+  // both ledgers). When a merged PR closes this issue, the open bounty is
+  // awarded to that PR's author (see routes/votes.js checkAndMerge).
+  //
+  // The same pledge can also be made at issue-CREATION time, from the Send
+  // Feedback dialog's "Put a kudos bounty on this" checkbox — both surfaces
+  // run services/bounties.js placeBounty, so the ledger row, the chat posts
+  // and the WS broadcast are identical whichever one was used.
   //
   // Status codes:
   //   200 ok        — bounty recorded; body carries { remaining, limit }
@@ -1561,67 +1686,32 @@ function issueRoutes(config) {
         });
       }
 
-      const weekStart = weekStartUtc();
-
-      // Shared weekly allowance check. Same bounded race as the PR-kudos
-      // give path (two parallel POSTs could each pass and overshoot by ≤1);
-      // not security-critical, documented there.
-      const used = await countWeeklyAllowanceUsed(pool, req.user.id, weekStart);
-      if (used >= WEEKLY_KUDOS_LIMIT) {
-        return res.status(429).json({
-          error: `Weekly kudos quota exceeded (${WEEKLY_KUDOS_LIMIT}/week). Resets every Monday 00:00 UTC.`,
-          remaining: 0,
-          limit: WEEKLY_KUDOS_LIMIT,
-        });
-      }
-
-      let inserted;
-      try {
-        const { rows } = await pool.query(
-          `INSERT INTO issue_bounties (app_id, github_issue_number, giver_user_id, week_start, status)
-           VALUES ($1, $2, $3, $4, 'open')
-           RETURNING id, created_at`,
-          [app.id, issueNumber, req.user.id, weekStart]
-        );
-        inserted = rows[0];
-      } catch (err) {
-        // Partial unique index on open bounties → already pledged.
-        if (err.code === '23505') {
-          return res.status(409).json({ error: 'You already placed a bounty on this issue' });
+      // Ledger + side effects live in services/bounties.js, shared with the
+      // Send Feedback dialog's create-with-bounty path (POST /api/feedback).
+      // This route keeps what is ITS OWN: the collab gate and the
+      // open-issue verification above, plus the status-code mapping below.
+      const result = await placeBounty(pool, {
+        app, user: req.user, issueNumber,
+      });
+      if (!result.ok) {
+        const status = result.code === 'quota' ? 429 : 409;
+        const body = { error: result.error };
+        // The quota response has always carried the budget figures; the
+        // duplicate one never did. Keep both shapes exactly as they were.
+        if (result.code === 'quota') {
+          body.remaining = result.remaining;
+          body.limit = result.limit;
         }
-        throw err;
+        return res.status(status).json(body);
       }
 
-      events.record(pool, {
-        type: events.EVENT_TYPES.BOUNTY_CREATED,
-        userId: req.user.id,
-        appId: app.id,
-        metadata: { issueNumber },
+      res.json({
+        ok: true,
+        bountyId: result.bountyId,
+        bountyCount: result.bountyCount,
+        remaining: result.remaining,
+        limit: result.limit,
       });
-
-      // Open-bounty count for this issue after the insert, for live FE update.
-      const { rows: countRows } = await pool.query(
-        `SELECT COUNT(*)::int AS c FROM issue_bounties
-          WHERE app_id = $1 AND github_issue_number = $2 AND status = 'open'`,
-        [app.id, issueNumber]
-      );
-      const bountyCount = countRows[0]?.c || 0;
-
-      const bountyMsg = `${req.user.username} placed a bounty (kudos) on issue #${issueNumber}`;
-      await sendSystemMessage(pool, app.id, bountyMsg, 'system')
-        .catch((err) => log.warn('issues', 'Bounty chat message failed', { err: err.message }));
-      // Dual-post into the issue's thread (lifecycle in context).
-      await sendSystemMessage(pool, app.id, bountyMsg, 'system',
-        null, { type: 'issue', ref: issueNumber }).catch(() => {});
-
-      pushIssueUpdate({
-        action: 'bounty', appSlug: app.slug, appId: app.id,
-        issueNumber, bountyCount,
-      });
-
-      const remaining = Math.max(0, WEEKLY_KUDOS_LIMIT - (used + 1));
-      log.info('issues', 'Bounty created', { appId: app.id, issueNumber, giverId: req.user.id, remaining });
-      res.json({ ok: true, bountyId: inserted.id, bountyCount, remaining, limit: WEEKLY_KUDOS_LIMIT });
     } catch (err) {
       log.error('issues', 'Bounty create failed', { issueNumber, message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -2567,6 +2657,26 @@ async function maybeApplyCloseIssueProposal(pool, issue, options = {}) {
   }
 
   // ---- Side effects: best-effort, outside the txn. ----
+
+  // #1010: announce the decision the moment it is DURABLE, ahead of the
+  // bounty/chat/GitHub tail below. Two reasons the old single broadcast at
+  // the very end wasn't enough: (1) it sat behind the GitHub close+comment
+  // round-trips, so every open card kept rendering the proposal as live for
+  // seconds after it was decided, and (2) it lived inside the
+  // `github.isEnabled() && parsed` branch — an app with GitHub off or an
+  // unparsable repo_url got NO event at all and its cards lingered until a
+  // manual reload. Same event shape the withdraw path emits, so clients need
+  // no new handling; the trailing `github_synced` push stays where it is
+  // (it additionally means "the open-issues cache is now correct").
+  try {
+    pushIssueUpdate({
+      action: 'closed', appSlug, appId: issue.app_id, issueId: locked.id,
+    });
+  } catch (err) {
+    log.warn('issues', 'Close-issue applied broadcast failed', {
+      issueId: locked.id, err: err.message,
+    });
+  }
 
   // Void open bounties on the target: the issue is closing without a merged
   // PR, so no one earns the kudos — and an 'open' row would linger forever

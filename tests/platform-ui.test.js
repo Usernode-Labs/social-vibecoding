@@ -271,10 +271,29 @@ test('settings toggles are kit switches (un-switch)', () => {
 
 test('header and app view carry safe-area classes', () => {
   assert.ok(/<header id="platform-header"[^>]*un-safe-top/.test(INDEX));
-  // The bottom inset moved off the deleted #app-tabs bar onto #app-view
-  // itself — that bar was the only thing keeping app content clear of the
-  // iOS home indicator.
-  assert.ok(/<div id="app-view"[^>]*un-safe-bottom/.test(INDEX));
+  // #970: the bottom inset is SURFACE-DEPENDENT now, so #app-view must NOT
+  // carry a blanket `un-safe-bottom`. That class reserved the
+  // home-indicator strip for every surface inside #app-content — the
+  // running app's iframe included — which is what left apps cut off short
+  // of a phone's rounded bottom edge. The `data-app-surface` attribute
+  // (AppView._setSurface) plus the app.css rules replace it; the default
+  // is `platform` so a first paint before any render is well-defined.
+  //
+  // The follow-up moved the inset off #app-view entirely: the surface
+  // rules publish the `--platform-safe-bottom` TOKEN (real value on a
+  // platform surface, 0px on an app one) and the padding itself lives on
+  // each inner scroller / composer bar, so Dev mode paints edge to edge
+  // like the app surface. tests/app-safe-area.test.js and
+  // tests/platform-safe-bottom.test.js pin that contract; here we only
+  // check the surface hook still exists for app.css to key on.
+  assert.ok(!/<div id="app-view"[^>]*un-safe-bottom/.test(INDEX),
+    '#app-view must not reserve the bottom inset for the app frame (#970)');
+  assert.ok(/<div id="app-view"[^>]*data-app-surface="platform"/.test(INDEX),
+    '#app-view needs the surface flag, defaulting to platform');
+  assert.ok(
+    read('public/css/app.css').includes('#app-view[data-app-surface="platform"]'),
+    'app.css must carry the platform-surface rule'
+  );
 });
 
 test('the bottom App/Dev tab bar is gone, replaced by the header switch', () => {
@@ -288,7 +307,7 @@ test('#app-mode-switch lives inside the header, before the icon group', () => {
     INDEX.indexOf('id="platform-header"'),
     INDEX.indexOf('</header>')
   );
-  // header-layout.js resolves the title's side groups as
+  // The header-layout code used to resolve the title's side groups as
   // previousElementSibling / nextElementSibling, so the switch has to be
   // INSIDE the existing right-group div — a sibling wedged between the
   // <h1> and that div silently breaks the centering measurement.
@@ -331,7 +350,9 @@ test('app.js wires the switch and guards the same-segment App tap', () => {
 });
 
 test('setAppOpen owns the switch and hides it for self-hosted apps', () => {
-  const src = read('public/js/app.js');
+  // #1079 chunk B moved App.DrawerStatus into the React bundle alongside the
+  // drawer markup it drives; app.js keeps a forwarder.
+  const src = read('frontend/src/features/header/header-menu-controller.js');
   const fn = src.slice(src.indexOf('setAppOpen(open) {'), src.indexOf('setForkVisible(visible)'));
   assert.ok(fn.includes("getElementById('app-mode-switch')"), fn);
   assert.ok(fn.includes('self_hosted'), 'self-hosted apps must not get a dead App segment');

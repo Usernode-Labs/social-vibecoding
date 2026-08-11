@@ -24,6 +24,10 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
 const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
+// #1079 chunk B moved App.HeaderMenu into the React bundle, beside the markup
+// it drives; the drawer-row handlers came with it.
+const headerMenuJs = fs.readFileSync(
+  path.join(root, 'frontend/src/features/header/header-menu-controller.js'), 'utf8');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'dapp.json'), 'utf8'));
 
 test('the admin row ships in the drawer, hidden by default', () => {
@@ -93,7 +97,9 @@ test('the admin row is not gated on the environment', () => {
 test('clicking closes the drawer; the gate is re-checked on the route', () => {
   // The row is an anchor, so its href does the navigating and the click
   // handler only dismisses the menu — the same idiom as Settings.
-  assert.match(appJs, /getElementById\('drawer-row-admin'\)\s*\r?\n?\s*\?\.addEventListener\('click', \(\) => App\.HeaderMenu\.close\(\)\)/,
+  // #1079 chunk B: the drawer's wiring lives beside its markup now, in
+  // frontend/src/features/header/header-menu-controller.js. Same handler.
+  assert.match(headerMenuJs, /getElementById\('drawer-row-admin'\)\s*\r?\n?\s*\?\.addEventListener\('click', \(\) => HeaderMenu\.close\(\)\)/,
     'the drawer row closes the menu on click');
   // openAdminConsole stays the programmatic entry point and keeps its
   // own gate, so a scripted call can't open the console either.

@@ -194,9 +194,13 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005 only', 
     const body = await res.json();
     const byNumber = new Map(body.issues.map((i) => [i.number, i]));
 
-    // 5 live issues + 10 appended mocks (900008 joined in #556, 900009 in
-    // #617, 900010 in #683).
-    assert.strictEqual(body.issues.length, 15);
+    // 5 live issues + 13 appended mocks (900008 joined in #556, 900009 in
+    // #617, 900010 in #683, 900011/900012 in #1010 as the targets of the
+    // applying / retry-pending mock close proposals, and 900013 with the
+    // card-as-pointer revision — the deliberately BARE row, which the
+    // staging attribute-enrichment block leaves alone so the 'no grey
+    // placeholder chips' rule is reviewable).
+    assert.strictEqual(body.issues.length, 18);
 
     const generating = byNumber.get(900003).headless;
     assert.ok(generating, '900003 carries synthetic headless state');
@@ -768,6 +772,8 @@ test('staging ?demo=1 seeds in_progress mock states on 900004/900006/900007/9000
     assert.strictEqual(p8.mine, false);
     assert.strictEqual(p8.claims.length, 1);
     assert.strictEqual(p8.claims[0].username, 'maya-builder');
+    assert.strictEqual(byNumber.get(900008).created_by_username, 'tester',
+      'the dedicated mock is authored by the actual capture viewer, not its synthetic GitHub login');
 
     // The kanban-demo anchors and live issues stay untouched.
     for (const n of [900001, 900002, 900009, 1, 2, 3, 4, 5]) {

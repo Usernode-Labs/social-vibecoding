@@ -34,7 +34,15 @@ const {
   assertNoDuplicateJsonKeys,
 } = require('../services/cli-auth');
 const { isCliApiPath } = require('../services/cli-api-policy');
+const {
+  READ_SCOPE: CONNECTOR_READ_SCOPE,
+  WRITE_SCOPE: CONNECTOR_WRITE_SCOPE,
+} = require('../services/mcp-connect-constants');
 const { clientIp } = require('../services/client-ip');
+// #907: the Settings "Local coding agent" block reads its list here, next to
+// the CLI token list it sits under.
+const localAgent = require('../services/local-agent');
+const localAgentDemo = require('../services/local-agent-demo');
 const log = require('../services/logger');
 
 const APPROVAL_CSP = [
@@ -56,11 +64,42 @@ function isCliSurface(req) {
     || pathname.startsWith('/api/me/cli-tokens/');
 }
 
+// Is the CLI surface reachable at all in this deployment?
+//
+// THE ONE predicate — the two 404 gates below and the `cliAuthEnabled`
+// capability flag on GET /api/auth/me all call it, so what the shell is
+// told can never drift from what the server actually serves. That
+// matters: the flag exists precisely so the Settings screen doesn't
+// REQUEST a surface that is gated off (a 404 the client swallows is
+// still a console error in the page, which fails proposal checks).
+//
+// Staging is deliberately excluded: a preview runs unreviewed PR code,
+// and device-authorization / CLI token minting must not be reachable
+// there. `config.cliAuthEnabled` carries the same exclusion (src/config.js
+// derives it as `!staging`) plus the canonical-origin requirement; the
+// explicit USERNODE_ENV check stays as defence in depth.
+function isCliSurfaceEnabled(config) {
+  return process.env.USERNODE_ENV !== 'staging' && !!config.cliAuthEnabled;
+}
+
+// The real CLI surface stays completely disabled in staging: preview code
+// must never mint, approve or use a credential. The one review-only
+// exception is an authenticated GET of the fabricated Settings rows. It
+// reaches cliBrowserRoutes after cookie auth and returns demoCliTokens()
+// before touching cli_access_tokens; every method, sub-path and non-demo
+// request still gets the early 404 below.
+function isStagingCliTokensDemo(req) {
+  return process.env.USERNODE_ENV === 'staging'
+    && req.method === 'GET'
+    && req.path === '/api/me/cli-tokens'
+    && req.query?.demo === '1';
+}
+
 function cliAuthGate(config) {
   return (req, res, next) => {
     if (!isCliSurface(req)) return next();
     res.setHeader('Cache-Control', 'no-store');
-    if (process.env.USERNODE_ENV === 'staging' || !config.cliAuthEnabled) {
+    if (!isCliSurfaceEnabled(config) && !isStagingCliTokensDemo(req)) {
       return res.status(404).json({ error: 'not_found' });
     }
     return next();
@@ -72,24 +111,33 @@ function noStore(_req, res, next) {
   next();
 }
 
-function json4kb(req, res, next) {
-  if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(req.headers['content-type'] || '')) {
-    return res.status(400).json({ error: 'invalid_request' });
-  }
-  express.json({
-    limit: '4kb',
-    strict: true,
-    verify(_request, _response, buffer) {
-      assertNoDuplicateJsonKeys(buffer.toString('utf8'));
-    },
-  })(req, res, (err) => {
-    if (!err) return next();
-    if (err.type === 'entity.too.large') {
-      return res.status(413).json({ error: 'payload_too_large' });
+// Strict JSON body parser for the CLI surface: exact content-type, hard size
+// cap, duplicate-key rejection. Parameterized by limit because the local
+// coding-agent protocol (#907) posts progress batches and run summaries that
+// legitimately exceed the 4kb every auth-flow payload fits in — the strictness
+// is the point, not the specific number.
+function jsonBody(limit) {
+  return function parse(req, res, next) {
+    if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(req.headers['content-type'] || '')) {
+      return res.status(400).json({ error: 'invalid_request' });
     }
-    return res.status(400).json({ error: 'invalid_request' });
-  });
+    return express.json({
+      limit,
+      strict: true,
+      verify(_request, _response, buffer) {
+        assertNoDuplicateJsonKeys(buffer.toString('utf8'));
+      },
+    })(req, res, (err) => {
+      if (!err) return next();
+      if (err.type === 'entity.too.large') {
+        return res.status(413).json({ error: 'payload_too_large' });
+      }
+      return res.status(400).json({ error: 'invalid_request' });
+    });
+  };
 }
+
+const json4kb = jsonBody('4kb');
 
 function rateLimited(res, retryAfter) {
   res.setHeader('Retry-After', String(Math.max(1, retryAfter || 1)));
@@ -252,6 +300,101 @@ function bearerIpGuard(pool, namespace = 'rpc-ip') {
   };
 }
 
+// Is this request carrying a HOSTED CONNECTOR bearer (svmcp_…) rather than
+// a CLI one (svcli_…)? The two credentials live in different tables with
+// different policies, so the entry point routes on the token's shape.
+function looksLikeConnectorBearer(req) {
+  for (let i = 0; i < req.rawHeaders.length; i += 2) {
+    if (String(req.rawHeaders[i]).toLowerCase() !== 'authorization') continue;
+    if (/^Bearer svmcp_/i.test(String(req.rawHeaders[i + 1] || ''))) return true;
+  }
+  return false;
+}
+
+// Connector chain. Deliberately NOT the CLI's `api:access` denylist: a token
+// held by a third-party chat product gets an exhaustive, fail-closed
+// allowlist of (method, path) pairs instead, so a new platform endpoint can
+// never silently widen it.
+//
+// The tool handlers in services/mcp-tools.js reach the platform's ordinary
+// routes through here over loopback, replaying the caller's own token —
+// which is what makes "a connector can only do what this user can do" true
+// by construction rather than by review.
+function connectorApiBearerChain(config) {
+  const pool = getPool(config);
+  const { authenticateConnector, readConnectorBearer } = require('./mcp-remote');
+  const { isConnectorApiRequest } = require('../services/cli-api-policy');
+  // The tool handlers call these same routes over loopback, and every such
+  // call arrives from the platform container's own address — so bucketing
+  // them by IP would make one busy connector throttle every other one. Those
+  // requests already paid a per-token budget at the /mcp edge, so the guard
+  // is skipped for them and applied to everyone else. A direct external
+  // caller holding a stolen token is bucketed normally.
+  //
+  // The check is on the real socket peer, never on a header: `trust proxy`
+  // is off and only the configured proxy may supply req.clientIp, so a
+  // request cannot claim to be loopback.
+  const isInternalPeer = (req) => {
+    const peer = (req.socket && req.socket.remoteAddress) || '';
+    return peer === '127.0.0.1' || peer === '::1' || peer === '::ffff:127.0.0.1'
+      || (!!req.socket && peer === req.socket.localAddress);
+  };
+
+  return async (req, res, next) => {
+    if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+      return res.status(405).json({ error: 'method_not_allowed' });
+    }
+    if (!isInternalPeer(req)) {
+      // enforceBucket answers the response itself on refusal (429 with
+      // Retry-After) or on limiter failure (503) and returns false.
+      const allowed = await enforceBucket(pool, res, {
+        namespace: 'connector-ip',
+        subject: clientIp(req),
+        ratePerMinute: 300,
+        capacity: 300,
+      });
+      if (!allowed) return undefined;
+    }
+    if (!isConnectorApiRequest(req.method, req.path)) {
+      return res.status(403).json({ error: 'insufficient_scope' });
+    }
+    const bearer = readConnectorBearer(req);
+    if (bearer.error) {
+      res.setHeader('WWW-Authenticate', `Bearer error="${bearer.error}"`);
+      return res.status(401).json({ error: bearer.error });
+    }
+    let auth;
+    try {
+      auth = await authenticateConnector(pool, bearer.token);
+    } catch (err) {
+      log.error('cli-auth', 'connector token lookup failed', { message: err.message });
+      return res.status(503).json({ error: 'temporarily_unavailable' });
+    }
+    if (auth.error) {
+      res.setHeader('WWW-Authenticate', `Bearer error="${auth.error}"`);
+      return res.status(401).json({ error: auth.error });
+    }
+    // Writes need the write scope; reads need only the read scope. The
+    // per-token request budget is enforced once, at the /mcp edge — these
+    // loopback calls are downstream of a request that already paid it.
+    const needsWrite = req.method !== 'GET';
+    if (needsWrite && !auth.scopes.includes(CONNECTOR_WRITE_SCOPE)) {
+      return res.status(403).json({ error: 'insufficient_scope' });
+    }
+    if (!needsWrite && !auth.scopes.includes(CONNECTOR_READ_SCOPE)) {
+      return res.status(403).json({ error: 'insufficient_scope' });
+    }
+    req.user = auth.user;
+    // The existing req.cliAuthenticated guards (issues.js's secret_change
+    // refusal, the credential-management session check, the archive/vote
+    // paths) all express "this is an automated non-browser caller", which
+    // is exactly true here — so a connector inherits every one of them.
+    req.cliAuthenticated = true;
+    req.connectorClientId = auth.clientId;
+    return next();
+  };
+}
+
 function cliApiBearerAuth(config) {
   const pool = getPool(config);
   const chain = [
@@ -268,21 +411,23 @@ function cliApiBearerAuth(config) {
       (req) => req.path
     ),
   ];
+  const connectorChain = [connectorApiBearerChain(config)];
   return (req, res, next) => {
     const hasAuthorization = req.rawHeaders.some(
       (value, index) => index % 2 === 0
         && String(value).toLowerCase() === 'authorization'
     );
     if (!hasAuthorization || !isCliApiPath(req.path)) return next();
-    if (process.env.USERNODE_ENV === 'staging' || !config.cliAuthEnabled) {
+    if (!isCliSurfaceEnabled(config)) {
       res.setHeader('Cache-Control', 'no-store');
       return res.status(404).json({ error: 'not_found' });
     }
+    const active = looksLikeConnectorBearer(req) ? connectorChain : chain;
     const dispatch = (index, err) => {
       if (err) return next(err);
-      if (index >= chain.length) return next();
+      if (index >= active.length) return next();
       try {
-        const result = chain[index](req, res, (nextError) => {
+        const result = active[index](req, res, (nextError) => {
           dispatch(index + 1, nextError);
         });
         if (result && typeof result.catch === 'function') result.catch(next);
@@ -576,6 +721,7 @@ function cliPreAuthRoutes(config) {
     next();
   }, retained, async (req, res) => {
     try {
+      let detached = null;
       await withTransaction(pool, async (client) => {
         const { rows } = await client.query(
           `WITH db_now AS (SELECT clock_timestamp() AS now)
@@ -596,8 +742,12 @@ function cliPreAuthRoutes(config) {
             scopes: req.cliToken.scopes,
             metadata: { reason: 'self' },
           });
+          // #907: a machine attached with this credential is detached by the
+          // same act, inside the same transaction.
+          detached = await localAgent.releaseLeasesForTokens(client, req.cliToken.id);
         }
       });
+      localAgent.notifyReleased(detached);
       return res.status(204).end();
     } catch (err) {
       log.error('cli-auth', 'Self revocation failed', { message: err.message });
@@ -624,6 +774,19 @@ function cliPreAuthRoutes(config) {
   router.all('/api/cli/rpc/*', (_req, res) => {
     res.status(404).json({ error: 'not_found' });
   });
+
+  // #907: the local coding-agent protocol. Mounted here — bearer-only, before
+  // the terminal /api/cli 404 and before any cookie middleware — so it gets
+  // the same no-store headers, the same staging gate, and the same "an
+  // ambient browser session cannot influence this" property as device login.
+  // Required lazily: cli-agent.js needs the middleware built above.
+  // eslint-disable-next-line global-require
+  const { cliAgentRoutes } = require('./cli-agent');
+  router.use('/api/cli/agent', cliAgentRoutes(config, {
+    pool,
+    auth: { jsonBody, activeTokenMiddleware, bearerIpGuard },
+  }));
+
   // The two browser-session device paths intentionally continue into cookie
   // auth. Every other unmatched CLI path terminates here so an ambient
   // session or the SPA fallback cannot change its behavior.
@@ -725,16 +888,20 @@ function cliBrowserRoutes(config) {
     '/api/cli/device/approve',
     '/api/me/cli-tokens',
     '/api/me/cli-tokens/*',
+    '/api/me/local-agents',
+    '/api/me/local-agents/*',
   ], noStore);
 
   async function userRate(req, res, next) {
+    // Both Settings lists share the generous settings bucket; only the
+    // device-approval paths keep the tight one.
+    const settings = req.path.startsWith('/api/me/cli-tokens')
+      || req.path.startsWith('/api/me/local-agents');
     const ok = await enforceBucket(pool, res, {
-      namespace: req.path.startsWith('/api/me/cli-tokens')
-        ? 'settings-user'
-        : 'approval-user',
+      namespace: settings ? 'settings-user' : 'approval-user',
       subject: String(req.user.id),
-      ratePerMinute: req.path.startsWith('/api/me/cli-tokens') ? 60 : 10,
-      capacity: req.path.startsWith('/api/me/cli-tokens') ? 60 : 10,
+      ratePerMinute: settings ? 60 : 10,
+      capacity: settings ? 60 : 10,
     });
     if (ok) next();
   }
@@ -926,6 +1093,7 @@ function cliBrowserRoutes(config) {
     const id = parseCanonicalPositiveBigint(req.params.id);
     if (!id) return res.status(400).json({ error: 'invalid_request' });
     try {
+      let detached = null;
       const found = await withTransaction(pool, async (client) => {
         const { rows } = await client.query(
           `SELECT id, user_id, scopes, revoked_at
@@ -951,12 +1119,67 @@ function cliBrowserRoutes(config) {
             scopes: rows[0].scopes,
             metadata: { reason: 'settings' },
           });
+          // #907: revoking from Settings also detaches whatever machine had
+          // attached with this credential.
+          detached = await localAgent.releaseLeasesForTokens(client, id);
         }
         return true;
       });
+      localAgent.notifyReleased(detached);
       return found ? res.status(204).end() : res.status(404).json({ error: 'not_found' });
     } catch (err) {
       log.error('cli-auth', 'Settings revocation failed', { message: err.message });
+      return res.status(503).json({ error: 'temporarily_unavailable' });
+    }
+  });
+
+  // #907: the machines currently holding a coding lease, for the Settings
+  // "Local coding agent" block. Deliberately NOT under /api/me/cli-tokens and
+  // NOT an isCliSurface() path: a lease is not a credential (it grants
+  // nothing — it only says "this session's next turn goes to that machine"),
+  // and unlike the token list it stays reviewable on staging, where the whole
+  // CLI surface 404s.
+  router.get('/api/me/local-agents', userRate, async (req, res) => {
+    const keys = Object.keys(req.query || {});
+    if (keys.some((key) => key !== 'demo') || Array.isArray(req.query.demo)) {
+      return res.status(400).json({ error: 'invalid_request' });
+    }
+    if (localAgentDemo.isStagingDemo(req)) {
+      return res.json({ agents: localAgentDemo.demoLocalAgents(), demo: true });
+    }
+    try {
+      const rows = await localAgent.activeLeasesForUser(pool, req.user.id);
+      return res.json({
+        agents: rows.map((row) => ({
+          ...localAgent.publicLease(row),
+          appSlug: row.app_slug,
+          appName: row.app_name,
+          sessionTitle: row.session_title,
+          branch: row.branch_name,
+        })),
+      });
+    } catch (err) {
+      log.error('cli-auth', 'Local agent list failed', { message: err.message });
+      return res.status(503).json({ error: 'temporarily_unavailable' });
+    }
+  });
+
+  // Detach from the browser. The machine finds out on its next heartbeat and
+  // stops long-polling; this is the escape hatch for a laptop that was closed
+  // without running `social-vibecoding agent detach`, so it must not require
+  // that laptop to cooperate.
+  router.delete('/api/me/local-agents/:leaseId', userRate, async (req, res) => {
+    if (!browserCsrf(config, req, res)) return undefined;
+    if (!noRequestPayload(req)) return res.status(400).json({ error: 'invalid_request' });
+    const leaseId = parseCanonicalPositiveBigint(req.params.leaseId);
+    if (!leaseId) return res.status(400).json({ error: 'invalid_request' });
+    try {
+      const released = await localAgent.release(pool, {
+        leaseId, userId: req.user.id, reason: 'settings',
+      });
+      return released ? res.status(204).end() : res.status(404).json({ error: 'not_found' });
+    } catch (err) {
+      log.error('cli-auth', 'Local agent detach failed', { message: err.message });
       return res.status(503).json({ error: 'temporarily_unavailable' });
     }
   });
@@ -966,6 +1189,8 @@ function cliBrowserRoutes(config) {
     '/api/cli/device/approve',
     '/api/me/cli-tokens',
     '/api/me/cli-tokens/*',
+    '/api/me/local-agents',
+    '/api/me/local-agents/*',
   ], (_req, res) => {
     res.status(404).json({ error: 'not_found' });
   });
@@ -979,7 +1204,14 @@ module.exports = {
   cliPreAuthRoutes,
   cliBrowserRoutes,
   isCliSurface,
+  isCliSurfaceEnabled,
   json4kb,
+  jsonBody,
+  // #907: the local coding-agent protocol reuses the exact bearer/scope/
+  // rate-limit chain the rest of the CLI surface runs on, rather than
+  // growing a parallel one that could drift out of step with it.
+  activeTokenMiddleware,
+  bearerIpGuard,
   readBearer,
   decodeCursor,
 };

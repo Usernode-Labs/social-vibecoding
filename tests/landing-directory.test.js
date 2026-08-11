@@ -27,6 +27,12 @@ const path = require('node:path');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
+// The landing screen crossed over to React in #1080 chunk C, so the pins that
+// used to read public/js/auth-screens.js read the component instead. Same
+// contracts, same behaviour — a different file owns them.
+const LANDING_TSX = 'frontend/src/features/auth/landing.tsx';
+const WAITLIST_TSX = 'frontend/src/features/auth/waitlist.tsx';
+
 // ─── index.html: persistent header ────────────────────────────────
 
 test('landing CTAs: Sign in + Join waitlist only — no Create account', () => {
@@ -61,18 +67,18 @@ test('the landing header is a persistent, non-scrolling sibling of the scroller'
 });
 
 test('the header keeps Sign in / Join waitlist while an app is open', () => {
-  const js = read('public/js/auth-screens.js');
-  const fn = js.match(/_renderLandingHeader\(\)\s*\{[\s\S]*?\n    \},/);
-  assert.ok(fn, '_renderLandingHeader exists');
+  const tsx = read(LANDING_TSX);
   // Only Back and the title react to an app being open — the CTA row is
   // toggled by session state (signed-in → queue status), never by the viewer.
-  assert.match(fn[0], /_openAppSlug/);
-  assert.match(fn[0], /landing-back-btn/);
-  assert.match(fn[0], /landing-header-title/);
-  assert.match(fn[0], /landing-header-ctas/);
-  assert.doesNotMatch(fn[0], /landing-header-ctas[\s\S]{0,120}_openAppSlug/);
+  const back = tsx.slice(tsx.indexOf('id="landing-back-btn"'));
+  assert.match(back.slice(0, 400), /hiddenLast\(\s*\n?\s*!openApp/,
+    'the back button is what the open app toggles');
+  assert.match(tsx, /const headerTitle = openApp \?/);
+  assert.match(tsx, /id="landing-header-ctas" className=\{hiddenLast\(session,/,
+    'the CTA row is toggled by session state, not by the viewer');
+  assert.match(tsx, /id="landing-back-to-waiting" className=\{session \?/);
   // AppBar mirroring for the Flutter WebView.
-  assert.match(fn[0], /document\.title/);
+  assert.match(tsx, /document\.title = headerTitle/);
 });
 
 // ─── the landing CTA area vs the #waitlist screen ─────────────────
@@ -99,17 +105,23 @@ test('the header CTA is an anchor to #waitlist, not a scroll-to-form', () => {
   const cta = html.match(/<a[^>]*id="landing-waitlist-cta"[^>]*>/);
   assert.ok(cta, 'landing-waitlist-cta is an anchor');
   assert.match(cta[0], /href="#waitlist"/);
-  const js = read('public/js/auth-screens.js');
-  // Both header CTAs leave the landing screen, so both tear the viewer down
-  // first — nothing scrolls or focuses on the landing page any more.
-  assert.match(js, /'landing-waitlist-cta', 'landing-signin-cta'/);
-  assert.match(js, /_resetLandingViewer\(\);/);
-  assert.doesNotMatch(js, /scrollIntoView/);
+  const tsx = read(LANDING_TSX);
+  // Every CTA that leaves the landing screen tears the viewer down first —
+  // nothing scrolls or focuses on the landing page any more.
+  for (const id of ['landing-signin-cta', 'landing-waitlist-cta', 'landing-waitlist-link']) {
+    const tag = tsx.slice(tsx.indexOf(`id="${id}"`));
+    assert.match(tag.slice(0, 600), /onClick=\{onLeaveCta\}/, `${id} leaves via onLeaveCta`);
+  }
+  assert.match(tsx, /const onLeaveCta[\s\S]{0,200}resetViewer\(\)/);
+  assert.doesNotMatch(tsx, /scrollIntoView/);
 });
 
 test('the stage-1 survey lives on its own #waitlist screen', () => {
   const html = read('public/index.html');
-  const screen = html.match(/id="auth-waitlist-screen"[\s\S]*?\n  <\/main>/);
+  // Not anchored on indentation: public/index.html is generated from
+  // frontend/src/Shell.tsx now and ships without the hand-written line
+  // breaks. <main> cannot nest, so the first close tag is this screen's.
+  const screen = html.match(/id="auth-waitlist-screen"[\s\S]*?<\/main>/);
   assert.ok(screen, 'auth-waitlist-screen exists');
   const classes = html.match(/id="auth-waitlist-screen"[^>]*class="([^"]*)"/);
   // Same overlay shape as the other anonymous screens (#more, #login).
@@ -125,7 +137,7 @@ test('the stage-1 survey lives on its own #waitlist screen', () => {
   }
   // Back goes to the landing page via the shared delegated handler.
   assert.match(screen[0], /data-auth-back/);
-  // NOT a <header>: header-layout.js measures document.querySelector
+  // NOT a <header>: the header-layout code used to measure document.querySelector
   // ('header') and must keep resolving to #platform-header.
   assert.doesNotMatch(screen[0], /<header/);
 });
@@ -145,19 +157,23 @@ test('#waitlist is a registered route ordered under landing, above #more', () =>
 });
 
 test('the waitlist screen swaps the form for the queued note on a session', () => {
-  const js = read('public/js/auth-screens.js');
-  const fn = js.match(/_waitlistOnShow\(\)\s*\{[\s\S]*?\n    \},/);
-  assert.ok(fn, '_waitlistOnShow exists');
-  // Same predicate _renderLandingHeader uses.
-  assert.match(fn[0], /window\.App && App\.user/);
-  assert.match(fn[0], /waitlist-form/);
-  assert.match(fn[0], /waitlist-queued/);
+  // Stage 1 is React since #1080 chunk C, so both branches are derived from
+  // one piece of state rather than toggled onto two elements.
+  const tsx0 = read(WAITLIST_TSX);
+  const fn = tsx0.match(/const waitlistOnShow = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[/);
+  assert.ok(fn, 'waitlistOnShow exists');
+  // Same predicate the landing header uses — shared.ts's hasSession.
+  assert.match(fn[0], /sessionExists\(\)/);
+  assert.match(read('frontend/src/features/auth/shared.ts'),
+    /export function hasSession\(\)[\s\S]*?legacy\(\)\.App\?\.user/);
+  assert.match(tsx0, /id="waitlist-form"[\s\S]{0,200}hiddenLast\(hasSession \|\| joined/);
+  assert.match(tsx0, /id="waitlist-queued"[\s\S]{0,200}hiddenFirst\(!hasSession/);
   // AppBar mirroring for the Flutter WebView, same as the landing header.
   assert.match(fn[0], /document\.title/);
   // The landing CTA block toggles its LINK now, not a form.
-  const header = js.match(/_renderLandingHeader\(\)\s*\{[\s\S]*?\n    \},/);
-  assert.match(header[0], /landing-waitlist-link/);
-  assert.doesNotMatch(header[0], /waitlist-form/);
+  const tsx = read(LANDING_TSX);
+  assert.match(tsx, /id="landing-waitlist-link"/);
+  assert.doesNotMatch(tsx, /waitlist-form/);
 });
 
 test('a gated (waiting-room) session can still reach #waitlist', () => {
@@ -176,9 +192,13 @@ test('the anonymous screens are reachable to shots via ?shot=anon', () => {
   const init = js.match(/async init\(\) \{[\s\S]*?\n  \},/);
   assert.ok(init, 'init exists');
   const shotAt = init[0].indexOf('_anonShot()');
-  const meAt = init[0].indexOf("fetch('/api/auth/me')");
+  // The fetch itself moved into App._fetchSession when boot gained a
+  // deadline (#1021); init calls it, and the ordering is what matters.
+  const meAt = init[0].indexOf('_fetchSession()');
   assert.ok(shotAt > -1 && meAt > -1, 'both the shot check and the /me fetch are in init');
   assert.ok(shotAt < meAt, 'the shot override runs before the /me fetch');
+  assert.match(js.match(/async _fetchSession\(\) \{[\s\S]*?\n  \},/)[0],
+    /fetch\('\/api\/auth\/me'/);
   const fn = js.match(/_anonShot\(\) \{[\s\S]*?\n  \},/);
   assert.ok(fn, '_anonShot exists');
   assert.match(fn[0], /'anon'/);
@@ -186,30 +206,36 @@ test('the anonymous screens are reachable to shots via ?shot=anon', () => {
   // Pure UI state: no env gate, and no request of its own.
   assert.doesNotMatch(fn[0], /USERNODE_ENV|fetch\(/);
   // The joined shot paints the success state client-side — it never POSTs.
-  const auth = read('public/js/auth-screens.js');
-  const joined = auth.match(/_showWaitlistJoinedShot\(\) \{[\s\S]*?\n    \},/);
-  assert.ok(joined, '_showWaitlistJoinedShot exists');
-  assert.doesNotMatch(joined[0], /fetch\(/);
-  assert.match(joined[0], /waitlist-more-offer/);
+  const tsx1 = read(WAITLIST_TSX);
+  const shot = tsx1.match(/const shotJoined = shot === 'waitlist-joined';[\s\S]*?\n    \}/);
+  assert.ok(shot, 'the waitlist-joined shot branch exists');
+  assert.doesNotMatch(shot[0], /fetch\(/);
+  // It shows the stage-2 offer with no token, so the link keeps the inert
+  // prerendered href.
+  assert.match(shot[0], /setOffer\(true\)/);
+  assert.doesNotMatch(shot[0], /setMoreToken/);
+  assert.match(tsx1, /id="waitlist-more-offer"[\s\S]{0,200}hiddenFirst\(\s*!offer/);
 });
 
-test('the stage-1 submit handler is wired before the options fetch', () => {
-  const js = read('public/js/auth-screens.js');
-  const fn = js.match(/async _wireStage1Form\(\) \{[\s\S]*?\n    \},/);
-  assert.ok(fn, '_wireStage1Form exists');
-  const wireAt = fn[0].indexOf('_wireStage1Submit(');
-  const awaitAt = fn[0].indexOf('await AuthScreens._waitlistOptions()');
-  assert.ok(wireAt > -1 && awaitAt > -1, 'both the submit wiring and the await are present');
-  // The email field is focused on arrival, so a submit inside the fetch
-  // window must not fall through to a native GET navigation.
-  assert.ok(wireAt < awaitAt, 'submit is wired before the await');
-  const submit = js.match(/_wireStage1Submit\(form, btn, showMsg\) \{[\s\S]*?\n    \},/);
-  assert.ok(submit, '_wireStage1Submit exists');
-  assert.match(submit[0], /preventDefault/);
+test('the stage-1 submit handler cannot be later than the first render', () => {
+  // The imperative version wired the submit listener BEFORE awaiting the
+  // options fetch on purpose: the email field is focused on arrival, so a
+  // submit inside the fetch window would otherwise fall through to a native
+  // GET navigation off the SPA. React removes the window rather than ordering
+  // it — onSubmit is part of the element, and the options arrive in an effect
+  // that cannot run before the render that attached it.
+  const tsx = read(WAITLIST_TSX);
+  assert.match(tsx, /id="waitlist-form"[\s\S]{0,200}onSubmit=\{onSubmit\}/);
+  const submit = tsx.match(/const onSubmit = useCallback\([\s\S]*?\n    \[discovery\],\s*\n  \);/);
+  assert.ok(submit, 'onSubmit exists');
+  assert.match(submit[0], /e\.preventDefault\(\)/);
   assert.match(submit[0], /'\/api\/public\/waitlist'/);
+  // The options really are effect-scoped, not fetched during render.
+  const shared = read('frontend/src/features/auth/waitlist-shared.tsx');
+  assert.match(shared, /export function useWaitlistOptions\(\)[\s\S]*?useEffect\(/);
 });
 
-// ─── index.html + auth-screens.js: in-flow app viewer ─────────────
+// ─── index.html + landing.tsx: in-flow app viewer ─────────────────
 
 test('#app-viewer is an in-flow flex sibling, not a stacked overlay', () => {
   const html = read('public/index.html');
@@ -226,33 +252,84 @@ test('#app-viewer is an in-flow flex sibling, not a stacked overlay', () => {
 });
 
 test('landing app open/close use the kit zoom with the flex-sibling outEl', () => {
-  const js = read('public/js/auth-screens.js');
-  assert.match(js, /type: 'zoom-in'/);
-  assert.match(js, /type: 'zoom-out'/);
+  const tsx = read(LANDING_TSX);
+  assert.match(tsx, /type: 'zoom-in'/);
+  assert.match(tsx, /type: 'zoom-out'/);
   // fromEl is the tapped tile, scoped to the landing grid.
-  assert.match(js, /_landingTileFor/);
-  assert.match(js, /#landing-apps \.app-card\[data-slug=/);
+  assert.match(tsx, /landingTileFor/);
+  assert.match(tsx, /#landing-apps \.app-card\[data-slug=/);
   // #764: two visible flex:1 siblings split the height 50/50, so the kit's
   // synchronous pre-paint measurement needs the outgoing element handed to
   // it explicitly.
-  assert.match(js, /outEl: scroller/);
+  assert.match(tsx, /outEl: scroller/);
   // Leaving a LIVE iframe must not take a View-Transition snapshot (iOS
   // Safari flash) — mirrors App.navigateHome.
-  assert.match(js, /fallback: 'none'/);
+  assert.match(tsx, /fallback: 'none'/);
   // The no-kit path has to run BOTH halves of the split mutation.
-  assert.match(js, /function zoomFx/);
-  assert.match(js, /opts\.after === 'function'/);
+  const shared = read('frontend/src/features/auth/shared.ts');
+  assert.match(shared, /export function zoomFx/);
+  assert.match(shared, /opts\.after === 'function'/);
 });
 
 test('leaving the landing screen tears the viewer down instead of stranding it', () => {
-  const js = read('public/js/auth-screens.js');
-  assert.match(js, /_resetLandingViewer/);
-  // The live iframe is dropped, not just hidden.
-  assert.match(js, /frame\.src = 'about:blank'/);
+  const tsx = read(LANDING_TSX);
+  // The router still calls the teardown on every route change off landing.
+  assert.match(read('public/js/auth-screens.js'), /_resetLandingViewer\(\)/);
+  assert.match(tsx, /_resetLandingViewer: \(\) => live\.current\.resetViewer\(\)/);
+  // #1028: the live iframe is dropped by replacing the ELEMENT, not by
+  // pointing it at about:blank — that assignment is a real navigation and
+  // pushed an entry onto the history stack shared with the app.
+  assert.match(tsx, /swapViewerFrame/);
+  assert.match(tsx, /replaceChild\(fresh, old\)/);
+  assert.doesNotMatch(tsx, /src = 'about:blank'/);
+  // The replacement carries no src, so the next open is the initial
+  // about:blank navigation browsers elide.
+  assert.doesNotMatch(tsx, /fresh\.src\s*=/);
   // OS/browser back closes the viewer via a history marker, so the hash
   // router is never disturbed.
-  assert.match(js, /svAnonAppViewer/);
-  assert.match(js, /addEventListener\('popstate'/);
+  assert.match(tsx, /svAnonAppViewer/);
+  assert.match(tsx, /addEventListener\('popstate'/);
+});
+
+test('the guest back arrow closes the viewer directly (#1028)', () => {
+  const tsx = read(LANDING_TSX);
+  // The button performs the navigation; it never delegates to the browser
+  // (the old `if (history.state...) history.back()` is what broke).
+  const back = tsx.slice(tsx.indexOf('id="landing-back-btn"'));
+  assert.match(back.slice(0, 500), /onClick=\{\(\) => live\.current\.closeLandingApp\(\)\}/);
+  // The marker entry is unwound AFTER the close, behind a re-entrancy flag.
+  assert.match(tsx, /unwindingViewerEntry/);
+  // The popstate listener ignores a pop that lands ON the marker entry.
+  assert.match(tsx, /if \(history\.state && history\.state\.svAnonAppViewer\) return;/);
+  // The frame is re-resolved per use — a captured const goes stale on swap.
+  assert.match(tsx, /byId<HTMLIFrameElement>\('app-viewer-frame'\)/);
+});
+
+test('?shot=anon-back scripts two guest open/back cycles', () => {
+  const app = read('public/js/app.js');
+  // Must skip /api/auth/me, or the check runner's own session promotes the
+  // page into the signed-in shell and the guest viewer is never exercised.
+  assert.match(app, /shot !== 'anon-back'/);
+  const tsx = read(LANDING_TSX);
+  assert.match(tsx, /runAnonBackShot/);
+  // Two cycles: the bug only appears from the second open onward.
+  assert.match(tsx, /cycle < 2/);
+  // The completion stamp the dapp.json test asserts on.
+  assert.match(tsx, /setAttribute\('data-anon-back', 'done'\)/);
+  const manifest = JSON.parse(read('dapp.json'));
+  const t = manifest.tests.find((x) => /anon-back/.test(x.path || ''));
+  assert.ok(t, 'dapp.json declares the guest-back test');
+  assert.match(t.expectSelector, /#app-viewer\.hidden\[data-anon-back="done"\]/);
+  // The shot deliberately loads a real app in the viewer iframe, and the
+  // staging fixture's own hostname isn't deployed — its 404 reaches the
+  // runner's console listener. The behaviour is asserted by the selector;
+  // console health on this screen is covered by the plain `?shot=anon#landing`
+  // test, which opens no iframe.
+  assert.equal(t.allowConsoleErrors, true);
+  assert.ok(manifest.tests.some((x) => x.path === '/?shot=anon#landing'),
+    'the console-clean landing test still exists');
+  // Only the first 12 entries run (src/services/app-manifest readTests).
+  assert.ok(manifest.tests.indexOf(t) < 12, 'inside the run window');
 });
 
 test('App._tileFor is scoped to the authed grid', () => {
@@ -269,13 +346,13 @@ test('public apps list is sorted by usage (active users first)', () => {
 });
 
 test('landing scroller has kit pull-to-refresh with overscroll containment', () => {
-  const js = read('public/js/auth-screens.js');
+  const tsx = read(LANDING_TSX);
   // PTR must attach to the INNER scroller, never the fixed overlay: the
   // kit's rubber-band translateY on the overlay itself slides the whole
   // opaque screen down and exposes the authed shell's header behind it.
-  assert.match(js, /PlatformUI\.pullToRefresh\(byId\('auth-landing-scroll'\)/);
-  assert.doesNotMatch(js, /pullToRefresh\(byId\('auth-landing-screen'\)/);
-  assert.match(js, /_loadLandingApps\(\)\)/);
+  assert.match(tsx, /pullToRefresh\(byId\('auth-landing-scroll'\)/);
+  assert.doesNotMatch(tsx, /pullToRefresh\(byId\('auth-landing-screen'\)/);
+  assert.match(tsx, /loadLandingApps\(\)\)/);
   // Containment keeps the browser's native pull-refresh from competing
   // with the kit gesture — same treatment as #home-screen.
   const css = read('public/css/app.css');
@@ -311,21 +388,21 @@ test('landing directory uses the homescreen launcher-grid shape', () => {
   assert.match(grid[1], /md:grid-cols-3/);
 });
 
-// ─── auth-screens.js: tile renderer ───────────────────────────────
+// ─── landing.tsx: tile renderer ────────────────────────────────────
 
 test('landing tiles mirror home cards and gate on requires_login', () => {
-  const js = read('public/js/auth-screens.js');
-  assert.match(js, /_buildLandingAppTile/);
+  const tsx = read(LANDING_TSX);
+  assert.match(tsx, /function LandingTile/);
   // Gated presentation: dimmed + lock + caption.
-  assert.match(js, /opacity-50 grayscale/);
-  assert.match(js, /Account required/);
+  assert.match(tsx, /opacity-50 grayscale/);
+  assert.match(tsx, /Account required/);
   // Gated tap: remember the app deep link, then the signup flow.
-  assert.match(js, /rememberDeepLink\('#app\/' \+ \(app\.slug \|\| ''\)\)/);
-  assert.match(js, /location\.hash = '#signup'/);
+  assert.match(tsx, /rememberDeepLink[\s\S]{0,160}'#app\/' \+ \(app\.slug \|\| ''\)/);
+  assert.match(tsx, /location\.hash = '#signup'/);
   // Icon priority mirrors home.js iconTileFor: image > emoji > letter.
-  assert.match(js, /data-icon', 'image'/);
-  assert.match(js, /data-icon', 'emoji'/);
-  assert.match(js, /data-icon', 'letter'/);
+  assert.match(tsx, /data-icon="image"/);
+  assert.match(tsx, /data-icon="emoji"/);
+  assert.match(tsx, /data-icon="letter"/);
 });
 
 // ─── probe wiring ─────────────────────────────────────────────────

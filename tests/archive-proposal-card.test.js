@@ -56,6 +56,18 @@ function makeAppView(userId, opts) {
 }
 
 const ME = 42;
+
+// Withdraw and "Explore in dev chat" were card pills; the card-as-pointer
+// budget demoted both into the ⋯ menu, whose descriptors live in
+// AppView._cardMenus keyed by the trigger's data-card-menu.
+function menuLabels(AppView, html) {
+  const m = html.match(/data-card-menu="([^"]+)"/);
+  if (!m) return [];
+  return (AppView._cardMenus[m[1]] || []).map((it) => it.label);
+}
+function menuHas(AppView, html, re) {
+  return menuLabels(AppView, html).some((l) => re.test(l));
+}
 const baseProposal = (over) => ({
   id: 7, pr_number: 700, pr_title: 'Tidy the header', username: 'me',
   user_id: ME, status: 'promoted', created_at: '2026-06-01T00:00:00Z',
@@ -65,29 +77,31 @@ const baseProposal = (over) => ({
 test('my own promoted proposal renders the Withdraw control', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderProposalCard(baseProposal());
-  assert.match(html, /withdrawProposal\(7\)/, 'Withdraw button wired to withdrawProposal(id)');
-  assert.match(html, />Withdraw</, 'button is labelled Withdraw');
-  assert.doesNotMatch(html, />Archive</, 'proposal card no longer says Archive');
-  assert.match(html, /openProposalSession\(7\)/, 'Open session still present');
+  assert.ok(menuHas(AppView, html, /^Withdraw$/), 'Withdraw offered from ⋯');
+  // The descriptor's label is the wording, not the markup — the ⋯ rows are
+  // built from descriptors so the same list can render as a dropdown or as a
+  // touch action sheet.
+  assert.ok(!menuHas(AppView, html, /Archive/), 'proposal card never says Archive');
+  assert.ok(menuHas(AppView, html, /Open session/), 'Open session still offered');
 });
 
 test("someone else's promoted proposal does NOT render Withdraw", () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderProposalCard(baseProposal({ user_id: 999 }));
-  assert.doesNotMatch(html, /withdrawProposal/, 'not the proposer — no Withdraw');
-  assert.doesNotMatch(html, /openProposalSession/, 'not the proposer — no Open session');
+  assert.ok(!menuHas(AppView, html, /^Withdraw$/), 'not the proposer — no Withdraw');
+  assert.ok(!menuHas(AppView, html, /Open session/), 'not the proposer — no Open session');
 });
 
 test('my merged proposal does NOT render Withdraw', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderProposalCard(baseProposal({ status: 'merged' }));
-  assert.doesNotMatch(html, /withdrawProposal/, 'merged card has no Withdraw');
+  assert.ok(!menuHas(AppView, html, /^Withdraw$/), 'merged card has no Withdraw');
 });
 
 test('my merging proposal does NOT render Withdraw', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderProposalCard(baseProposal({ status: 'merging' }));
-  assert.doesNotMatch(html, /withdrawProposal/, 'merging card has no Withdraw');
+  assert.ok(!menuHas(AppView, html, /^Withdraw$/), 'merging card has no Withdraw');
 });
 
 // Rename and visibility PRs are ordinary promoted chat_sessions rows, so
@@ -95,7 +109,7 @@ test('my merging proposal does NOT render Withdraw', () => {
 test('my own rename PR proposal renders Withdraw', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderProposalCard(baseProposal({ pr_title: 'Rename to "Cooler App"' }));
-  assert.match(html, /withdrawProposal\(7\)/, 'rename PR shows Withdraw');
+  assert.ok(menuHas(AppView, html, /^Withdraw$/), 'rename PR shows Withdraw in ⋯');
 });
 
 // #313/#827: the card-level "Explore in dev chat" button renders on
@@ -104,20 +118,33 @@ test('my own rename PR proposal renders Withdraw', () => {
 test("someone else's proposal renders the Explore-in-dev-chat card button", () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderProposalCard(baseProposal({ user_id: 999 }));
-  assert.match(html, /gc-explore-chat-btn/, 'Explore pill present on a foreign proposal');
-  assert.match(html, /data-proposal-id="7"/, 'wired to the proposal id');
+  assert.ok(menuHas(AppView, html, /Explore in dev chat/), 'Explore offered from ⋯ on a foreign proposal');
+  assert.equal(html.match(/data-card-menu="([^"]+)"/)[1], 'proposal:7', 'menu keyed by the proposal id');
 });
 
 test('my own proposal does NOT render the Explore-in-dev-chat card button', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderProposalCard(baseProposal());
-  assert.doesNotMatch(html, /gc-explore-chat-btn/, 'own card has none (Open session covers it)');
+  assert.ok(!menuHas(AppView, html, /Explore in dev chat/), 'own card has none (Open session covers it)');
 });
 
 test("someone else's merged proposal renders the Explore-in-dev-chat button", () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderProposalCard(baseProposal({ user_id: 999, status: 'merged' }));
-  assert.match(html, /gc-explore-chat-btn/, 'Explore pill present on a foreign merged card');
+  assert.ok(menuHas(AppView, html, /Explore in dev chat/), 'Explore offered from ⋯ on a foreign merged card');
+});
+
+// #1045: the exception to "own cards have none". An imported proposal has no
+// platform-owned dev session, so #687 hides "Open session" on it — which
+// left the owner of a PR they imported with no AI affordance at all.
+test('my own IMPORTED proposal DOES render the Explore-in-dev-chat button (#1045)', () => {
+  const AppView = makeAppView(ME);
+  const html = AppView._renderProposalCard(baseProposal({ source: 'imported' }));
+  assert.match(html, /gc-explore-chat-btn/, 'Explore pill present on my imported proposal');
+  assert.match(html, /data-proposal-id="7"/, 'wired to the proposal id');
+  assert.doesNotMatch(html, /openProposalSession/,
+    'still no Open session — an imported PR has no dev session (#687)');
+  assert.match(html, /withdrawProposal\(7\)/, 'Withdraw is unaffected');
 });
 
 // #321/#827: the topic detail view (_renderTopicHead) shows exactly ONE AI
@@ -224,6 +251,26 @@ test("topic head for the viewer's OWN proposal shows no AI button", () => {
   assert.doesNotMatch(head._html, /gc-explore-chat-btn/, 'no card pill on own proposal');
 });
 
+test("topic head for the viewer's OWN IMPORTED proposal wires the pill (#1045)", () => {
+  // The head has no delegated handler, so it must both PAINT the pill and
+  // bind it — a head whose gate disagrees with the card leaves an inert
+  // button. This is the case that regressed: mine && imported.
+  const { AppView, els, opened } = makeTopicHarness(ME);
+  const head = fakeHead();
+  els['gc-thread-head'] = head;
+  AppView._devTopic = { kind: 'proposal', id: 7 };
+  AppView._findTopicItem = () => baseProposal({ user_id: ME, source: 'imported' });
+
+  AppView._renderTopicHead();
+
+  assert.match(head._html, /gc-explore-chat-btn/, 'the pill is present on my imported proposal');
+  assert.doesNotMatch(head._html, /openProposalSession/, 'still no Open session (#687)');
+  assert.ok(head._pill && typeof head._pill._click === 'function', 'pill click is wired');
+  head._pill._click();
+  assert.deepEqual(opened, [[7, head._pill]],
+    'pill click reaches exploreProposalInDevChat with the id and the button node');
+});
+
 test('topic head for a governance proposal has NO AI button at all (#827)', () => {
   // A dev chat can't act on a rename / secret change / close-issue vote, so
   // the governance-only standalone button was dropped with no replacement.
@@ -287,14 +334,13 @@ const baseGov = (over) => ({
 test('my own governance proposal renders a creator-only Withdraw button', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderGovCard(baseGov());
-  assert.match(html, /withdrawGovProposal\(31\)/, 'Withdraw wired to withdrawGovProposal(id)');
-  assert.match(html, />Withdraw</, 'button labelled Withdraw');
+  assert.ok(menuHas(AppView, html, /^Withdraw$/), 'Withdraw offered from ⋯');
 });
 
 test("someone else's governance proposal does NOT render Withdraw", () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderGovCard(baseGov({ created_by: 999 }));
-  assert.doesNotMatch(html, /withdrawGovProposal/, 'not the creator — no Withdraw');
+  assert.ok(!menuHas(AppView, html, /^Withdraw$/), 'not the creator — no Withdraw');
 });
 
 test('withdrawGovProposal POSTs to the gated close endpoint and reloads', async () => {

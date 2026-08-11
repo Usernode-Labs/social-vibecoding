@@ -23,6 +23,94 @@ precedence:
 
 ---
 
+## Essentials — the offline excerpt
+
+Everything below this section is the full document. This short section
+is the excerpt the platform ships INSIDE a connector work order, for a
+coding agent whose container cannot reach this host to read the rest.
+It is delimited by the `work-order` markers below and extracted by
+`getWorkOrderEssentials()` in `src/services/prompts.js` — one source of
+truth, so an edit here reaches both the full prompt and the excerpt.
+
+Ordered by how badly an agent working offline gets each one wrong.
+
+<!-- work-order:begin -->
+1. **Three files are centrally hosted — never vendor them, never swap in
+   a CDN.** Every app loads the bridge, the native UI kit and (on the
+   runtime path) Tailwind from the platform's own origin. If your
+   container cannot reach that host the app renders unstyled and
+   native-kit assertions fail *locally* — that is the sandbox, not your
+   change. Copying those files into the repo or pointing them at
+   `cdn.tailwindcss.com` is forbidden and is rejected by two automated
+   checks. The staging preview the platform builds is the authority on
+   styling.
+2. **`USERNODE_ENV` is `staging` or `production`.** Gate DATA and
+   irreversible outbound side effects on it — `const IS_STAGING =
+   process.env.USERNODE_ENV === 'staging'` — never a feature, a screen,
+   an endpoint, an auth check, or which code path runs. If flipping it
+   to `production` would make something STOP WORKING, you gated the
+   wrong thing.
+3. **A blank staging page usually means missing seed data, not a bug.**
+   Staging starts from a copy of production, so tables your change
+   creates and `staging:private` tables are EMPTY. Seed what a testing
+   step needs in the same commit, in a boot-time block gated on
+   `IS_STAGING`: idempotent (`ON CONFLICT DO NOTHING`), obviously fake
+   ("Staging demo …"), a handful of rows, never cloned from real users.
+4. **Tables are public by default; mark the sensitive ones private.**
+   `COMMENT ON TABLE foo IS 'staging:private'` copies the schema to
+   staging without the rows. Use it for auth material, direct messages,
+   financial data, credentials and personal information beyond a public
+   username. A public table must never carry a foreign key to a private
+   one. Schema is applied idempotently on boot: `CREATE TABLE IF NOT
+   EXISTS`, `ADD COLUMN IF NOT EXISTS`.
+5. **Add or extend a `dapp.json` test in the same commit as any
+   user-visible screen.** Each entry is `{ name, path, expectSelector? ,
+   expectText? }`; every proposal also gets a free "loads with no
+   console errors" check. Checks GATE MERGE — a proposal whose checks
+   are not passing cannot merge even with a winning vote. The test route
+   renders against an empty staging database, so seed what it needs.
+   If the changed UI is only reachable by interacting, add a deep link
+   (a query param handled at boot) so a URL can reach it — and point the
+   testing route you report (`path:` in your final message, or
+   `testingPaths` when you submit through the connector) at THAT screen,
+   never at the home page. That route is what the before/after
+   screenshots the voters see are shot from, so a defaulted one shows
+   nothing of what you changed.
+6. **Auth is iframe token injection — do not roll your own login.** The
+   shell mints an RS256 JWT per user per app and injects it as
+   `?token=`; the app verifies it with `USERNODE_JWT_PUBLIC_KEY`,
+   pinning `algorithms: ['RS256']`, `issuer: 'usernode'` and audience
+   `usernode:app:<USERNODE_APP_ID>`. All non-GET and all `/api/*`
+   requests are deny-by-default; `req.user` is `{ id, username,
+   usernode_pubkey, locale }`.
+7. **Per-app config goes in `dapp.json`'s `secrets` array, never
+   hardcoded.** Declare `key` / `description` / `required` / `private`;
+   values are set by users through the platform's Secrets UI. A
+   `required: true` key with no value BLOCKS the deploy. A
+   `required` + `private` key must commit a `staging_default`.
+   `DATABASE_URL`, `USERNODE_JWT_PUBLIC_KEY`, `USERNODE_APP_ID`, `PORT`
+   and `USERNODE_ENV` are reserved and injected for you.
+8. **The platform provides an LLM proxy and file storage — don't call
+   third-party APIs directly and never ask users for API keys.** AI goes
+   through `USERNODE_LLM_PROXY_URL` with the app token plus the user's
+   forwarded iframe token, billed to their own budget under a consent
+   grant. Uploads go through `usernode.uploadFile()` (bridge) or
+   `USERNODE_STORAGE_URL` (server); persist the returned URL, never
+   image bytes in Postgres. Both are absent in staging — detect and
+   degrade.
+9. **Install a SIGTERM/SIGINT shutdown handler** that stops accepting
+   connections, drains for ~3 seconds, closes the pool and exits. Use
+   exec-form `CMD ["node", "server.js"]`.
+
+One thing NOT to apply: the full document contains a section titled
+"Don't `git push` yourself". That is addressed to Usernode's own build
+worker, which runs with no GitHub credentials. It does not apply to a
+coding agent working in the user's own fork — pushing your branch is
+exactly what you are being asked to do.
+<!-- work-order:end -->
+
+---
+
 ## Stack
 
 Each app is a Node.js / Express server with an HTML + JS + Tailwind
@@ -1510,6 +1598,52 @@ Expected app behavior:
 - `null` means "no preference set", NOT "English" — keep it
   distinguishable so device-language auto-detection still works.
 
+## Safe-area insets inside the app frame
+
+On a phone with a notch or a home indicator, the platform shell runs
+edge to edge and so does your app's iframe — it reaches the true bottom
+of the screen, past the rounded corners. **But `env(safe-area-inset-*)`
+resolves to `0px` inside a cross-origin iframe in every browser**, so an
+embedded app cannot see those insets on its own: any safe-area CSS it
+writes is silently inert, and bottom-anchored chrome would sit under the
+home indicator.
+
+The platform therefore forwards the insets **that apply to your frame's
+rectangle** (the shell's own header already covers the status bar, so
+your top inset is normally `0` and becomes the real one only in the
+chromeless full-screen view). The hosted bridge publishes them three
+ways — no app-side plumbing, just the bridge `<script>`:
+
+- **CSS custom properties on `<html>`** — `--un-safe-inset-top`,
+  `--un-safe-inset-right`, `--un-safe-inset-bottom`,
+  `--un-safe-inset-left`, in `px`. **This is the one to reach for.** Write
+  every safe-area value as
+  `var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px))`: the
+  property wins inside the platform frame, and the `env()` fallback keeps
+  it exact when the app is opened standalone (where the property is
+  deliberately left unset). The usernode-native kit's own CSS already
+  uses this form, so **kit bars, sheets, action sheets, modals, toasts
+  and nav bars inset themselves correctly with no change to your app.**
+- **`usernode.safeAreaInsets`** — `{ top, right, bottom, left }` in px
+  (all zeros until the first value arrives), for layout you compute in
+  JS rather than CSS.
+- **`usernode:safe-area-changed`** — a `CustomEvent` on `window` whose
+  `detail` is that same object. The shell pushes a new value on rotation,
+  on keyboard/toolbar moves, and whenever your frame's rect shifts;
+  listen if your app re-measures in JS.
+
+Notes:
+
+- These are the **safe area only**. On-screen keyboard clearance is a
+  separate concern your app already sees correctly through
+  `visualViewport` (and the kit's `--un-kb-inset` / `attachKeyboardAvoidance`).
+- Values are `0` on desktop and on devices with no notch — every branch
+  collapses to today's behaviour, so the `var(..., env(...))` form is
+  safe to adopt unconditionally.
+- Your app's own viewport meta does **not** need `viewport-fit=cover` for
+  the forwarded properties to work (it is still required for bare `env()`
+  to work standalone).
+
 ## Native-feel UI kit — centrally hosted (`usernode-native`)
 
 An **opt-in** CSS + JS kit that makes an app's mobile UI feel native on
@@ -1609,6 +1743,58 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   swipe actions first, then reorder on the container — the items are
   the `.un-swipe` wrappers) and with pull-to-refresh via the gesture
   arbiter. Returns `{ detach() }`; never throws on bad input.
+- **Free-form grid placement (the homescreen model).**
+  `unNative.attachGridPlacement(listEl, { cellFromPoint, itemSelector?,
+  handle?, longPressMs?, canPlace?, onLift?, onHover?, rectForCell?,
+  onPlace?, onSettle? })`. Reach for this instead of `attachReorder` when
+  your grid
+  is a CANVAS rather than a list — when a tile should be droppable in any
+  cell, gaps included, and nothing should re-pack behind it. Same physics
+  as reorder's grid mode (long-press lift on touch, drag past the slop on
+  desktop, a fixed ghost tracking the finger on both axes, edge
+  auto-scroll, haptics, spring settle, gesture arbiter), but the real item
+  holds its cell as a dashed slot and siblings never move. **The kit owns
+  the gesture; you own the geometry**: it never computes a cell, it calls
+  your `cellFromPoint(x, y, info)` (returning `{ col, row }` or `null`), asks
+  `canPlace(item, cell)` on each cell change, calls `onHover(item, cell,
+  ok)` so you can paint the target highlight, and finally
+  `onPlace(item, cell)` on a committed drop. **Resolve the target from the
+  dragged TILE, not from the finger.** `x`/`y` are the pointer, and the ghost
+  tracks it from wherever the tile was grabbed — so answering from `x`/`y`
+  puts the tile's top-left corner under the finger and the highlight a
+  grab-offset away from the tile the user is looking at (a whole tile's worth
+  for a multi-cell item). The third argument carries the tile's live geometry
+  — `{ item, rect: { left, top, width, height }, centerX, centerY, pointerX,
+  pointerY }` — so take `centerX`/`centerY` and subtract half the item's own
+  footprint: the **centroid** rule, which puts the highlight under the tile
+  whichever corner it was picked up by. Note an even-width footprint centres
+  exactly on a cell seam, so derive the column as a rounded fraction of the
+  cell pitch rather than hit-testing the centre and subtracting `floor(w/2)`.
+  `x`/`y` keep their meaning, so a host that ignores `info` behaves as
+  before. **If your drop displaces
+  occupants rather than refusing, preview that in `onHover`** — move the
+  items that would be pushed to the cells they'd land in. A flow reorder
+  shows that for free (everything shuffles as you drag); free placement
+  only moves what actually collides, so without the preview an occupied
+  target is a guess. Compute the plan once in `canPlace` and reuse it in
+  `onHover`, or the highlight and the drop can disagree. **Give it
+  `rectForCell(item, cell)` too** — return where a committed drop lands
+  (`{ left, top }` in viewport coords; the target cell's own
+  `getBoundingClientRect()` is the natural answer) and the release glide
+  settles there. Omit it and the ghost settles on the dragged element's own
+  rect, which in this mode is still the cell it was picked up from: the tile
+  flies away from the finger, back to its origin, and only then pops into the
+  drop cell. Answer from the same plan the highlight used, so the glide lands
+  where the highlight promised even when the plan nudged the item to fit.
+  Everything else — the ghost, the origin slot, the highlight, your
+  `onPlace` re-render — is held until that glide finishes, so the whole
+  release reads as one motion. `onLift` / `onSettle` carry
+  the same deferral contract as `attachReorder` (hold a re-render flag in
+  the first, flush it in the second — it fires on drops, cancels and
+  detach alike). Rendering the grid as real cell elements while dragging
+  makes `cellFromPoint` a one-line `elementFromPoint(...).closest(...)`
+  and gives the user the drop target for free. Returns `{ detach() }`;
+  never throws on bad input.
 - **Bottom sheet.** `unNative.presentSheet({ content | contentEl,
   onDismiss })` — grabber, spring presentation, 1:1 drag-to-dismiss
   with momentum commit (a touch mid-spring inherits position and
@@ -1784,9 +1970,17 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   combined mutation. Push/pop remain the default for plain screen
   navigation.
 - **Safe areas.** Opt-in helpers `.un-safe-top` / `.un-safe-top-extend`
-  / `.un-safe-bottom` / `.un-safe-bottom-extend` / `.un-safe-x` apply
-  `env(safe-area-inset-*)` padding to fixed bars. They require
+  / `.un-safe-bottom` / `.un-safe-bottom-extend` / `.un-safe-x` inset
+  fixed bars from the notch and the home indicator. They require
   `viewport-fit=cover` in the page's viewport meta.
+  **Inside the platform app frame, bare `env(safe-area-inset-*)` is
+  always `0px`** — browsers only expose safe areas to the top-level
+  document, so an iframed app can't see them. The platform forwards the
+  real values instead (see "Safe-area insets inside the app frame"
+  below) and the kit helpers already read them, so the helpers above
+  work in both hosts. Your own fixed chrome should follow the same
+  pattern — `var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px))`
+  rather than bare `env()` — which is correct embedded *and* standalone.
 - **Spring engine.** `unNative.spring(elOrCallback, { from, to,
   velocity, preset })` — the kit's own rAF damped-spring integrator,
   available for custom gestures so they match the kit's motion family.
@@ -1844,7 +2038,10 @@ apps.
 1. Add the two hosted tags above to the HTML shell's `<head>`.
 2. Add `viewport-fit=cover` to the viewport meta; put `.un-safe-top` /
    `.un-safe-bottom` (or the `-extend` variants) on fixed headers /
-   bottom bars.
+   bottom bars. For fixed chrome the helpers don't cover, write
+   `var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px))` —
+   bare `env()` is `0px` inside the platform frame (see "Safe-area
+   insets inside the app frame").
 3. Add `future: { hoverOnlyWhenSupported: true }` so `hover:` styles stop
    sticking after taps on touch screens — in `tailwind.config.js` on the
    precompiled path (the scaffold already sets it), or in the page's inline

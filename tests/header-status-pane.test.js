@@ -36,19 +36,35 @@ const MOVED_SLOTS = [
 
 // ─── The slots moved, and kept their ids ─────────────────────────────────
 
+// The sidebar reorg (#913) split the old status pane in two: the budget
+// slots (kudos, AI credit) stayed in #drawer-status-pane at the top,
+// while the version pills + fork badge moved to the anchored
+// #drawer-footer at the bottom of the panel. Same load-bearing property
+// as before: every slot keeps its id, exactly once, in its region.
 test('each moved slot exists exactly once, inside the drawer status pane', () => {
   const paneStart = html.indexOf('id="drawer-status-pane"');
   assert.ok(paneStart > -1, '#drawer-status-pane is missing from the shell');
   // The pane runs until the first drawer navigation row after it.
   const paneEnd = html.indexOf('id="drawer-row-node"');
   assert.ok(paneEnd > paneStart, 'the status pane sits above the Node row');
+  const footerStart = html.indexOf('id="drawer-footer"');
+  assert.ok(footerStart > paneEnd, '#drawer-footer sits below the nav rows');
 
+  const PANE_SLOTS = ['kudos-budget-slot'];
+  const FOOTER_SLOTS = [
+    'platform-version-pill-slot', 'app-version-pill-slot', 'app-fork-badge-slot',
+  ];
   for (const id of MOVED_SLOTS) {
     const hits = html.match(new RegExp(`id="${id}"`, 'g')) || [];
     assert.equal(hits.length, 1, `exactly one #${id} in the shell`);
     const at = html.indexOf(`id="${id}"`);
-    assert.ok(at > paneStart && at < paneEnd,
-      `#${id} lives inside #drawer-status-pane`);
+    if (PANE_SLOTS.includes(id)) {
+      assert.ok(at > paneStart && at < paneEnd,
+        `#${id} lives inside #drawer-status-pane`);
+    } else {
+      assert.ok(FOOTER_SLOTS.includes(id), `#${id} is assigned a region`);
+      assert.ok(at > footerStart, `#${id} lives inside #drawer-footer`);
+    }
   }
 });
 
@@ -117,14 +133,22 @@ test('the hamburger carries the amber deploy dot, hidden by default', () => {
 });
 
 test('the deploy dot is derived from the rendered pills, not a duplicate flag', () => {
-  assert.match(appJs, /refreshDeployDot\(\)\s*\{/, 'DrawerStatus.refreshDeployDot is defined');
-  const fn = appJs.slice(appJs.indexOf('    refreshDeployDot() {'));
-  assert.match(fn.slice(0, 600), /#drawer-status-pane \.app-version-pill--deploying/,
+  // #1079 chunk B moved App.DrawerStatus into the React bundle, beside the
+  // drawer markup it drives; app.js keeps a forwarder for its call sites.
+  const headerMenuJs = fs.readFileSync(
+    path.join(root, 'frontend/src/features/header/header-menu-controller.js'), 'utf8');
+  assert.match(headerMenuJs, /refreshDeployDot\(\)\s*\{/, 'DrawerStatus.refreshDeployDot is defined');
+  const fn = headerMenuJs.slice(headerMenuJs.indexOf('  refreshDeployDot() {'));
+  // Post-#913 the version rows live in #drawer-footer and signal a
+  // rolling deploy with .drawer-ver--deploying instead of the pill class.
+  assert.match(fn.slice(0, 600), /#drawer-footer \.drawer-ver--deploying/,
     'reads the deploying state off the rendered pills — the single source of truth');
   // Every renderer that can paint (or clear) a deploying pill must sync
   // the dot, or the hamburger keeps signalling a finished deploy.
   const calls = (appJs.match(/DrawerStatus\.refreshDeployDot\(\)/g) || []).length
-    + (appViewJs.match(/DrawerStatus\.refreshDeployDot\(\)/g) || []).length;
+    + (appViewJs.match(/DrawerStatus\.refreshDeployDot\(\)/g) || []).length
+    // setAppOpen's own call moved with the object.
+    + (headerMenuJs.match(/DrawerStatus\.refreshDeployDot\(\)/g) || []).length;
   assert.ok(calls >= 4,
     `refreshDeployDot is called from each pill renderer (found ${calls}, expect >= 4)`);
 });
@@ -241,10 +265,12 @@ test('the ≤640px collapse rule no longer hides the drawer slots', () => {
 });
 
 test('the drawer constrains a long pill so it cannot widen the 15rem panel', () => {
-  assert.match(css, /#drawer-status-pane \.app-version-pill \{[^}]*max-width/,
-    'pills in the status pane are width-capped');
-  assert.match(css, /#drawer-status-pane \.app-version-pill-label \{[^}]*text-overflow:\s*ellipsis/,
-    'and their label truncates rather than overflowing');
+  // Post-#913 the version rows are .drawer-ver entries in the footer;
+  // the width constraint moved onto that class (max-width + ellipsis).
+  assert.match(css, /\.drawer-ver \{[^}]*max-width/,
+    'version rows in the drawer footer are width-capped');
+  assert.match(css, /\.drawer-ver \{[^}]*text-overflow:\s*ellipsis/,
+    'and their value truncates rather than overflowing');
 });
 
 // ─── One scroller, with the theme control and status pane inside it ──────

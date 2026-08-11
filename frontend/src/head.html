@@ -1,0 +1,191 @@
+
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>dApps</title>
+  <script>
+    // Theme module — Light / Dark / System mode selector.
+    // Storage contract:
+    //   'light'  → light mode
+    //   'dark'   → dark mode
+    //   key absent → system (follows OS preference)
+    // System removes the key; Light and Dark store the value explicitly.
+    //
+    // INLINE AND HEAD-BLOCKING ON PURPOSE (#1079 chunk B). This was
+    // public/js/theme.js — an external tag here, preceded by a duplicate
+    // three-line "no-flash guard" that re-implemented get()+apply() so the
+    // stored mode landed on <html> before first paint. Both are this one
+    // block now: the module ends by calling apply(), so it IS the no-flash
+    // guard, and there is no longer a second copy of the storage contract to
+    // drift from the first.
+    //
+    // It could not move into the React bundle with the rest of chunk B's
+    // modules. That bundle is a deferred module: it runs after the document
+    // is parsed, which is several frames too late to decide whether the page
+    // is dark — the user would watch a light shell repaint dark on every
+    // load. `window.Theme` also has to exist before app.js's init reads
+    // Theme.get(), and the drawer's theme segments in
+    // features/header/header-menu.tsx call Theme.set().
+    window.Theme = (function () {
+      const KEY = 'theme';
+      const _listeners = [];
+
+      function get() {
+        try {
+          const val = window.localStorage.getItem(KEY);
+          if (val === 'light' || val === 'dark') return val;
+          return 'system';
+        } catch {
+          return 'system';
+        }
+      }
+
+      function apply() {
+        const mode = get();
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const wantDark = mode === 'dark' || (mode === 'system' && prefersDark);
+        if (wantDark) {
+          document.documentElement.classList.add('dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+        }
+      }
+
+      function set(mode) {
+        try {
+          if (mode === 'light' || mode === 'dark') {
+            window.localStorage.setItem(KEY, mode);
+          } else {
+            window.localStorage.removeItem(KEY);
+          }
+        } catch {}
+        apply();
+        _listeners.forEach(function (fn) { try { fn(mode); } catch {} });
+      }
+
+      function onChange(fn) {
+        _listeners.push(fn);
+      }
+
+      // Re-apply when OS preference changes (only meaningful in system mode).
+      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
+        if (get() === 'system') {
+          apply();
+          _listeners.forEach(function (fn) { try { fn('system'); } catch {} });
+        }
+      });
+
+      // Sync across tabs when another tab writes localStorage.theme.
+      window.addEventListener('storage', function (e) {
+        if (e.key === KEY) {
+          apply();
+          _listeners.forEach(function (fn) { try { fn(get()); } catch {} });
+        }
+      });
+
+      // Apply before first paint. This is the no-flash guard.
+      apply();
+
+      return { get, set, apply, onChange };
+    }());
+  </script>
+  <script src="/usernode-bridge.js"></script>
+  <script>
+    // Hide the header title when running as the top frame of the
+    // Usernode Flutter WebView. The native shell already shows the
+    // app/screen name in its own header chrome, so the in-page title
+    // would just be redundant noise. We toggle a `.in-native-webview`
+    // class on <html> rather than waiting until app.js runs so the
+    // title never flashes in before being hidden — the bridge sets
+    // `window.usernode.isNative` synchronously at load time based on
+    // the presence of the injected `Usernode` JS channel.
+    if (window.usernode && window.usernode.isNative) {
+      document.documentElement.classList.add('in-native-webview');
+    }
+  </script>
+  <!-- Third-party browser libs, vendored into public/vendor/ by
+       `npm run vendor:assets` (was cdn.jsdelivr.net). Version-stamped
+       filenames ARE the pin; sha384 provenance lives in
+       public/vendor/README.md, since same-origin tags can't use SRI. Same
+       order as before: QR first, then marked + DOMPurify, which power
+       renderMarkdown() in dev-chat.js — if either fails to load,
+       renderMarkdown still falls back to a raw <pre> view. -->
+  <script src="/vendor/qrcode-1.0.0.min.js"></script>
+  <script src="/vendor/marked-15.0.12.min.js"></script>
+  <script src="/vendor/purify-3.4.4.min.js"></script>
+  <!-- usernode-native kit: the platform dogfoods its own hosted kit
+       (same-origin absolute path — the canonical copy this server
+       serves to every app). Loaded before app.css so the platform's
+       --un-* overrides there win the cascade. -->
+  <link rel="stylesheet" href="/usernode-native/v1/native.css">
+  <script src="/usernode-native/v1/native.js"></script>
+  <link rel="stylesheet" href="/css/app.css">
+  <!-- Tailwind, COMPILED and served by this app (was cdn.tailwindcss.com's
+       in-browser JIT plus an inline `tailwind.config` here). The config moved
+       verbatim to tailwind.config.js at the repo root. Dockerfile runs
+       `npm run build:css` in a disposable builder stage for every image and
+       copies only the generated stylesheet into the production runtime. The
+       output is ignored locally and never committed.
+
+       POSITION MATTERS — KEEP THIS LINK LAST, after native.css and app.css.
+       The Play CDN did NOT inject its <style> up where its <script> tag sat:
+       it compiled asynchronously (it awaits PostCSS) and then ran
+       `document.head.append(...)`, so the generated stylesheet always landed
+       at the END of <head>, i.e. after both of those links. Utilities
+       therefore won every equal-specificity conflict against them, and
+       app.css was written against exactly that cascade. Linking the compiled
+       file first inverted it and silently broke every such collision —
+       `.attr-chip { font: inherit; background: none }` in app.css, for one,
+       started beating `text-[0.65rem] font-medium bg-zinc-500/10` and blew up
+       the "Set priority" / "Set category" / "Unassigned" chips on the dev
+       screen (#938 fallout). tests/tailwind-build.test.js asserts this
+       ordering so it cannot regress again. -->
+  <link rel="stylesheet" href="/css/tailwind.css">
+  <script>
+    // Cascade self-check. The source-order contract above is asserted at build
+    // time by tests/tailwind-build.test.js, but that only sees THIS file — it
+    // cannot see a stale service-worker precache, a proxy that reorders, or a
+    // deploy that ships a half-built stylesheet. So verify the outcome in the
+    // browser: probe the exact trio that regressed (an app.css `.attr-chip`
+    // shorthand vs. the utilities it collides with) and report if a utility
+    // lost. The only cost on a healthy load is one detached span.
+    //
+    // console.error is the point, not a side effect: the dev console forwards
+    // it, and the platform's proposal checks fail any route that logs one — so
+    // a reordered stylesheet blocks the merge instead of shipping a screen of
+    // 16px unstyled chips.
+    // Runs on DOMContentLoaded, not inline: a probe appended while <body> is
+    // still unparsed has no layout box, and getComputedStyle returns empty
+    // strings for it.
+    document.addEventListener('DOMContentLoaded', function () {
+      try {
+        var probe = document.createElement('span');
+        probe.className = 'attr-chip text-[0.65rem] font-medium bg-zinc-500/10';
+        probe.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none';
+        document.body.appendChild(probe);
+        // Read everything BEFORE detaching — getComputedStyle is live, and a
+        // removed element resolves back to empty strings.
+        var s = getComputedStyle(probe);
+        var fontSize = s.fontSize;
+        var size = parseFloat(fontSize);
+        var weight = s.fontWeight;
+        var bg = s.backgroundColor;
+        probe.remove();
+        var tinted = bg && !/^(transparent|rgba\(0, 0, 0, 0\))$/.test(bg);
+        if (!(size > 0 && size < 12) || weight !== '500' || !tinted) {
+          console.error(
+            '[tailwind] compiled utilities are losing the cascade to app.css — '
+            + '/css/tailwind.css must be the LAST stylesheet in <head>. Probe got '
+            + 'font-size:' + fontSize + ' font-weight:' + weight
+            + ' background:' + bg + ' (expected ~10.4px / 500 / a tint).');
+        }
+      } catch (e) { /* never let a self-check break the shell */ }
+    });
+  </script>
+  <!-- PWA (#487): installable shell + read-only offline mode. The service
+       worker is registered by src/lib/service-worker.ts, from the React
+       bundle loaded at the end of this head (#1078 retired the
+       /js/offline.js module that used to do it). -->
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#08080f">
+  <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">

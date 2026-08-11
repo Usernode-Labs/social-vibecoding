@@ -4,14 +4,18 @@
 // screen and its drawer row read "Leaderboard" now.)
 //
 // The contract that's easy to break later:
-//   - the screen opens on Kudos, so the merge can't quietly change what
-//     the trophy/menu entry shows;
-//   - every existing #leaderboard deep link (prs / users / history /
+//   - the screen opens on the TOPOCHAIN STANDINGS, which the tab strip
+//     labels simply "Leaderboard" — it is the platform's primary ranking,
+//     and the trophy/menu entry, the bare #leaderboard hash and the home
+//     widget's fill must all agree on that;
+//   - the kudos board is still all there, one tab over, named "Kudos";
+//   - every existing #leaderboard/<sub> deep link (prs / users / history /
 //     users/<name>) still resolves to a Kudos sub-tab;
-//   - #leaderboard/topochain and #leaderboard/challenges are the canonical
-//     addresses for the other two tabs, and the three legacy hashes
-//     (#topochain/leaderboard, #topochain/seasons, #challenges) alias onto
-//     them, so old bookmarks work;
+//   - the bare #leaderboard and #leaderboard/challenges are the canonical
+//     addresses for the standings and challenges tabs, and the legacy
+//     hashes (#leaderboard/topochain, #topochain/leaderboard,
+//     #topochain/seasons, #challenges) alias onto them, so old bookmarks
+//     work;
 //   - the three panes keep SEPARATE data state — routing Topochain
 //     through Leaderboard._cache would break its event/page paging;
 //   - the two Topochain-domain panes share ONE event selection, owned by
@@ -52,8 +56,8 @@ test('the Leaderboard screen hosts a tab strip, an event bar and all three panes
   // Wide enough for the Topochain table; the Kudos lists keep their
   // narrower reading column.
   assert.match(screen, /max-w-5xl/, 'the shell is the wider column');
-  assert.match(screen, /id="leaderboard-root" class="max-w-3xl"/,
-    'the Kudos pane keeps its reading width');
+  assert.match(screen, /id="leaderboard-root" class="hidden max-w-3xl"/,
+    'the Kudos pane keeps its reading width (and now ships hidden — see below)');
 });
 
 test('the retired screens are gone from the shell', () => {
@@ -63,8 +67,15 @@ test('the retired screens are gone from the shell', () => {
     '#topochain-seasons-screen was folded into the Leaderboard screen');
 });
 
-test('only the Kudos pane ships visible — Kudos is the default section', () => {
-  for (const id of ['topochain-leaderboard-root', 'challenges-root', 'leaderboard-event-bar']) {
+test('the standings pane + event bar ship visible — standings are the default section', () => {
+  // The DEFAULT pane and the event bar it reads from must ship visible, or
+  // the screen paints the Kudos pane for a frame before _applySection runs.
+  for (const id of ['topochain-leaderboard-root', 'leaderboard-event-bar']) {
+    const el = html.match(new RegExp(`<div id="${id}"[^>]*>`));
+    assert.ok(el, `#${id} exists`);
+    assert.doesNotMatch(el[0], /class="hidden/, `#${id} ships visible`);
+  }
+  for (const id of ['leaderboard-root', 'challenges-root']) {
     const el = html.match(new RegExp(`<div id="${id}"[^>]*>`));
     assert.ok(el, `#${id} exists`);
     assert.match(el[0], /class="hidden/, `#${id} ships hidden`);
@@ -73,8 +84,24 @@ test('only the Kudos pane ships visible — Kudos is the default section', () =>
 
 // ─── Section state ───────────────────────────────────────────────────────
 
-test('Leaderboard.section defaults to kudos', () => {
-  assert.match(lbJs, /section: 'kudos',/, "the screen opens on the Kudos tab");
+test('Leaderboard.section defaults to the standings', () => {
+  assert.match(lbJs, /section: 'topochain',/,
+    "the screen opens on the primary standings tab, not on Kudos");
+});
+
+test('the tab strip leads with the standings, labelled simply "Leaderboard"', () => {
+  const fn = lbJs.slice(lbJs.indexOf('  _renderSectionTabs() {'), lbJs.indexOf('  // Re-fetch every cached pane'));
+  assert.ok(fn.length > 0, '_renderSectionTabs located');
+  const labels = [...fn.matchAll(/\{ key: '([a-z]+)', label: '([^']+)' \}/g)]
+    .map((m) => [m[1], m[2]]);
+  assert.deepEqual(labels, [
+    ['topochain', 'Leaderboard'],
+    ['kudos', 'Kudos'],
+    ['challenges', 'Challenges'],
+  ], 'standings first and called Leaderboard; the kudos board is the Kudos tab');
+  // The KEYS are the platform's vocabulary for these tabs (hash aliases in
+  // app.js, dapp.json checks) and must survive the relabelling.
+  assert.match(fn, /data-standings-tab="\$\{s\.key\}"/, 'tab keys are unchanged');
 });
 
 test('_setSection validates its input and syncs the hash', () => {
@@ -82,8 +109,8 @@ test('_setSection validates its input and syncs the hash', () => {
   assert.ok(fn.length > 0, '_setSection located');
   assert.match(fn, /if \(!Leaderboard\.SECTIONS\.includes\(section\)\) return;/,
     'garbage sections are a no-op, mirroring _setSub');
-  assert.match(lbJs, /SECTIONS: \['kudos', 'topochain', 'challenges'\],/,
-    'all three sections are declared in one place');
+  assert.match(lbJs, /SECTIONS: \['topochain', 'kudos', 'challenges'\],/,
+    'all three sections are declared in one place, in tab order');
   assert.match(lbJs, /EVENT_SECTIONS: \['topochain', 'challenges'\],/,
     'the two event-scoped sections are declared in one place');
   assert.match(fn, /Leaderboard\._syncHash\(\);/, 'the hash follows the tab');
@@ -100,10 +127,13 @@ test('_setSub still rejects garbage, and pins the section back to kudos', () => 
     "a Kudos sub-tab deep link must not land on a Topochain tab left over from earlier");
 });
 
-test('_syncHash emits the canonical topochain and challenges addresses', () => {
+test('_syncHash emits the canonical standings and challenges addresses', () => {
   const fn = lbJs.slice(lbJs.indexOf('  _syncHash() {'), lbJs.indexOf('  _setWindow(win)'));
   assert.ok(fn.length > 0, '_syncHash located');
-  assert.match(fn, /'#leaderboard\/topochain'/, 'the Topochain tab addresses as #leaderboard/topochain');
+  assert.match(fn, /\? '#leaderboard'\n/,
+    'the primary standings tab addresses as the BARE #leaderboard');
+  assert.doesNotMatch(fn, /'#leaderboard\/topochain'/,
+    'so an arriving #leaderboard/topochain bookmark self-heals to it');
   assert.match(fn, /'#leaderboard\/challenges'/, 'the Challenges tab addresses as #leaderboard/challenges');
   assert.match(fn, /#leaderboard\/users\/\$\{encodeURIComponent/, 'the profile drill-in hash is unchanged');
   assert.match(fn, /location\.hash\.startsWith\('#leaderboard'\)/,
@@ -112,14 +142,16 @@ test('_syncHash emits the canonical topochain and challenges addresses', () => {
 
 // ─── Router ──────────────────────────────────────────────────────────────
 
-test('navigateToLeaderboard routes both section segments to the section', () => {
+test('navigateToLeaderboard routes every section segment to the section', () => {
+  // Anchored on the name, not the full parameter list — the signature grew a
+  // third argument for the #982 challenge deep link and will grow again.
   const fn = appJs.slice(
-    appJs.indexOf('  navigateToLeaderboard(sub, profileUser)'),
+    appJs.indexOf('  navigateToLeaderboard(sub, profileUser'),
     appJs.indexOf('  _exitLeaderboard()')
   );
   assert.ok(fn.length > 0, 'navigateToLeaderboard located');
-  assert.match(fn, /sub === 'topochain' \|\| sub === 'challenges'/,
-    "both section segments select the section rather than falling through to _setSub");
+  assert.match(fn, /sub === 'topochain' \|\| sub === 'kudos' \|\| sub === 'challenges'/,
+    "every section segment selects the section rather than falling through to _setSub");
   assert.match(fn, /App\.setHeaderTitle\('Leaderboard'\)/, 'the screen is titled Leaderboard');
   // openProfile must still win over both — _setSub/_setSection would
   // replaceState the profile hash away.
@@ -136,8 +168,8 @@ test('the legacy #topochain hashes self-heal to the canonical form', () => {
   );
   assert.match(branch, /parts\[1\] === 'seasons' \? 'challenges' : 'topochain'/,
     'seasons maps onto the challenges tab, everything else onto standings');
-  assert.match(branch, /history\.replaceState\(null, '', `#leaderboard\/\$\{_tcSection\}`\)/,
-    'the address is rewritten in place');
+  assert.match(branch, /_tcSection === 'challenges' \? '#leaderboard\/challenges' : '#leaderboard'/,
+    'the address is rewritten in place — standings to the bare hash, one replaceState not two');
   assert.match(branch, /App\.navigateToLeaderboard\(_tcSection, null\)/, 'then hands off');
   assert.match(branch, /catch \(err\)/,
     'a replaceState failure must not swallow the navigation');
@@ -286,6 +318,211 @@ test('the challenges pane decorates the public grid with your own points', () =>
     'the retired season-leaderboard block is replaced by a link to the standings tab');
   assert.match(chJs, /window\.location\.hash = '#leaderboard\/topochain'/,
     'and that link goes through the router, so the shared event selection survives');
+});
+
+// ─── Completed challenges live here now (#981) ───────────────────────────
+//
+// The profile screen's season-wide completed-challenges list is gone; this
+// pane owns the flag, and the standings pane cross-links to it.
+
+test('the challenges pane reads `completed` from the PUBLIC row, not just the personalization map', () => {
+  // This is what makes the chip/grouping/count correct on first paint AND
+  // for a signed-out visitor. Reading it only from `_mine` (as it did before)
+  // meant an anonymous viewer saw no completion state at all.
+  const fn = chJs.slice(chJs.indexOf('  _isDone(c) {'), chJs.indexOf('  _ordered() {'));
+  assert.ok(fn.length > 0, '_isDone located');
+  assert.match(fn, /c\.completed === true/,
+    'the public row is the source of truth');
+  const publicFirst = fn.indexOf('c.completed === true');
+  const mineFallback = fn.indexOf('m.completed === true');
+  assert.ok(publicFirst > -1 && mineFallback > publicFirst,
+    'the personalization row is only a fallback, checked after the public one');
+});
+
+test('the challenges grid sorts unfinished challenges ahead of completed ones', () => {
+  const fn = chJs.slice(chJs.indexOf('  _ordered() {'), chJs.indexOf('  _renderGrid() {'));
+  assert.match(fn, /_isDone\(a\.c\)/);
+  assert.match(fn, /_isDone\(b\.c\)/);
+  // The completed split is the FIRST key, ahead of the featured lift.
+  assert.ok(fn.indexOf('ad !== bd') < fn.indexOf('af !== bf'),
+    'not-completed must outrank featured, or a featured finished challenge leads the grid');
+});
+
+test('the challenges grid summarises and groups the completed set', () => {
+  assert.match(chJs, /id="tc-se-challenge-summary"/,
+    'the summary line carries a stable id the dapp.json check anchors on');
+  assert.match(chJs, /challenges completed/, 'and states the tally in words');
+  assert.match(chJs, />Completed<\/div>/,
+    'the grouping subheading exists');
+  // Suppressed when everything (or nothing) is finished — every public event
+  // in production is currently 100% completed, where the heading says nothing.
+  const fn = chJs.slice(chJs.indexOf('const GRID_CLASS'),
+    chJs.indexOf('id="tc-se-challenge-summary"'));
+  assert.match(fn, /firstDone > 0 && doneCount > 0/,
+    'the subheading is gated on BOTH groups being non-empty');
+  assert.match(chJs, /opacity-60/, 'completed cards are dimmed');
+});
+
+test('the standings pane cross-links to the challenges tab without ever painting an error', () => {
+  const load = topoJs.slice(
+    topoJs.indexOf('  async _loadChallengeCounts(eventId) {'),
+    topoJs.indexOf('  // ── Rendering'));
+  assert.ok(load.length > 0, '_loadChallengeCounts located');
+  assert.ok(!/_error/.test(load),
+    'a failed tally must never paint a banner over the standings table');
+  assert.match(load, /_eventId\(\) !== eventId/,
+    'and a fast event switch must not paint one event\'s tally over another');
+  assert.match(topoJs, /id="tc-lb-challenge-link"/);
+  assert.match(topoJs, /counts\.total > 0/,
+    'no line at all when the event has no challenges (never "0 of 0")');
+  assert.match(topoJs, /window\.location\.hash = '#leaderboard\/challenges'/,
+    'the link goes through the router, so the shared event selection survives');
+});
+
+// ─── Season aggregate vs per-event board (#999) ──────────────────────────
+//
+// The standings pane renders two DIFFERENT datasets through one table: one
+// event's stored snapshots (`event.type === 'regular'`), or the whole
+// season's aggregate (`'season'`, resolved server-side through
+// computeStandings). The season path has no per-EVENT breakdown to report —
+// the server hard-codes event_success_rate and friends to 0 — so a "Success
+// rate" column there can only print "0%", indistinguishable from a real zero.
+//
+// Behavioural, not regex: render the real _renderBody against both payloads
+// with a stub host and diff the HTML it produces.
+function renderStandings(payload) {
+  const host = { innerHTML: '', querySelectorAll: () => [] };
+  const sandbox = {
+    window: {},
+    document: {
+      getElementById: (id) => (id === 'tc-lb-body' ? host : null),
+    },
+    console,
+  };
+  sandbox.window.document = sandbox.document;
+  // Classic script: evaluate it with the globals it closes over, then drive
+  // the real object. A fresh evaluation per call keeps the module's own
+  // state from leaking between the two payloads.
+  const TL = new Function('window', 'document', 'module',
+    `${topoJs}\nreturn TopochainLeaderboard;`)(sandbox.window, sandbox.document, undefined);
+  TL._open = true;
+  TL._loading = false;
+  TL._data = payload;
+  TL._meta = { page: 1, per_page: 25, total: 1, total_pages: 1 };
+  TL._renderBody();
+  return host.innerHTML;
+}
+
+const SEASON_ROW = {
+  rank: 1, is_non_podium: false, display_name: 'Ocank14', identifier: 'oca***',
+  total_points: 67973.66, extra_points: 0, event_total_produced_blocks: 42,
+  event_success_rate: 0, wallet_address: null, bech32m: null, discord: 'ocank14',
+};
+
+test('the standings table drops the Success rate column on a season board', () => {
+  const seasonHtml = renderStandings({
+    event: { id: 7, name: 'Season 1', display_leaderboard: true, type: 'season' },
+    leaderboard: [SEASON_ROW],
+  });
+  assert.doesNotMatch(seasonHtml, /Success rate/,
+    'the season aggregate has no per-event success rate to report');
+  assert.doesNotMatch(seasonHtml, /0%/,
+    'and must not print the hard-coded 0 as if it were measured');
+  // The points and blocks columns are real on both paths and must survive.
+  assert.match(seasonHtml, /67973\.66/, 'the season total is the headline number');
+  assert.match(seasonHtml, /Blocks produced/, 'blocks IS a real season-wide sum');
+  assert.match(seasonHtml, /Season points/, 'the column says which total it is');
+});
+
+test('the standings table keeps the Success rate column on a per-event board', () => {
+  const eventHtml = renderStandings({
+    event: { id: 8, name: 'Season 1 Beta', display_leaderboard: true, type: 'regular' },
+    leaderboard: [{ ...SEASON_ROW, total_points: 1900, event_success_rate: 80 }],
+  });
+  assert.match(eventHtml, /Success rate/, 'a single event measures it');
+  assert.match(eventHtml, /80%/);
+  assert.match(eventHtml, />Points</, 'and the points column is unqualified');
+  // Header cell count must match the body cell count, or the table skews.
+  const headers = (eventHtml.match(/<th /g) || []).length;
+  const cells = (eventHtml.match(/<td /g) || []).length;
+  assert.equal(headers, 5);
+  assert.equal(cells, 5, 'a dropped <th> without its <td> misaligns every row');
+});
+
+test('the season board and the per-event board stay column-aligned', () => {
+  const seasonHtml = renderStandings({
+    event: { id: 7, name: 'Season 1', display_leaderboard: true, type: 'season' },
+    leaderboard: [SEASON_ROW],
+  });
+  const headers = (seasonHtml.match(/<th /g) || []).length;
+  const cells = (seasonHtml.match(/<td /g) || []).length;
+  assert.equal(headers, 4, 'rank, user, season points, blocks');
+  assert.equal(cells, 4, 'header and body must drop the SAME column');
+});
+
+test('the season caption replaces the "nothing is running" caption', () => {
+  // The season event has usually ENDED by the time it is the default
+  // (production's closed 2026-06-30), so hasEnded() is true for it and the
+  // old caption would read "Nothing is running right now" above the very
+  // board the screen exists to show. The two flags are mutually exclusive.
+  assert.match(ctxJs, /_endedFallback\s*=\s*\n?\s*!TopochainEvents\.isSeasonAggregate\(pick\)/,
+    'a season pick suppresses the ended-event caption rather than stacking with it');
+  assert.match(ctxJs, /Whole-season standings/, 'the season caption exists');
+  // The caption must key off the SELECTION, not off "pickDefault landed
+  // here": the standings pane's first fetch resolves the default server-side
+  // and writes the id back silently, usually before this module's list lands,
+  // so pickDefault never runs on most real loads. Keying off a flag set in
+  // that branch left the caption missing exactly when it was needed.
+  assert.match(ctxJs, /\$\{isSeason \? `\s*\n\s*<p id="tc-ev-season-note"/,
+    'the caption renders from isSeasonSelected(), not from a default-pick flag');
+  assert.ok(!/_seasonDefault/.test(ctxJs),
+    'the default-pick flag is gone — the selection is the single source of truth');
+  // The picker and the hero must not label the season event "(past)".
+  assert.match(ctxJs, /isSeason \? ' \(season\)'/, 'the option reads (season)');
+  assert.match(ctxJs, /const statusLabel = isSeason \? 'season'/, 'so does the hero badge');
+});
+
+test('both #981 checks are declared and the reader keeps them', () => {
+  // This used to assert POSITION: the reader kept only the first MAX_TESTS
+  // entries, so a check appended at the bottom of dapp.json was decoration —
+  // declared, never parsed, never run. #1019 ended that; every declared
+  // check runs through the capture pool and the only bound left is
+  // MAX_DECLARED_TESTS, a ceiling this repo is nowhere near.
+  //
+  // So the assertion that still means something is not "these two are near
+  // the top" but "the reader kept them and refused NOTHING for ceiling
+  // reasons" — which is what would break if the manifest ever grew past the
+  // ceiling and started silently shedding its tail again.
+  const appManifest = require('../src/services/app-manifest');
+  const meta = appManifest.readTestsWithMeta(manifest);
+  assert.equal(meta.ceilingDropped, 0,
+    `dapp.json declares more than ${appManifest.MAX_DECLARED_TESTS} valid checks — `
+    + 'the tail is being dropped again, which is exactly the bug #1019 fixed');
+  const kept = meta.tests;
+  const summary = kept.find((t) => t.path === '/#leaderboard/challenges');
+  const crossLink = kept.find((t) => t.path === '/#leaderboard');
+  assert.ok(summary, 'the challenges-summary check must survive the reader');
+  assert.ok(crossLink, 'the standings cross-link check must survive the reader');
+  assert.match(summary.expectSelector, /#tc-se-challenge-summary/);
+  assert.match(crossLink.expectSelector, /#tc-lb-to-challenges/);
+
+  // Both of these paths already had a check, and two suites locate those by
+  // path with `.find()` — so ours, sitting earlier in the array, SHADOWS
+  // them. It therefore has to carry their assertions too, or moving a check
+  // to the top of the array silently weakens what the older ones pinned.
+  assert.match(crossLink.expectSelector, /\[data-standings-tab="challenges"\]/,
+    'the shadowing /#leaderboard check must still assert the three-tab strip');
+
+  // #999 rides on this SAME entry rather than declaring its own. The cap is
+  // full of load-bearing checks — every one of the ten is pinned by a suite
+  // like this — so two new entries at the top would have silently pushed the
+  // #911 and #947 home-panel checks out of the parse window and broken their
+  // guards. Same route, one more assertion, nothing displaced: the default
+  // /#leaderboard board must be the whole-season one.
+  assert.equal(crossLink.expectText, 'Whole-season standings',
+    'the /#leaderboard check must also assert the season board is the default');
+  assert.match(summary.expectSelector, /#challenges-root:not\(\.hidden\)/,
+    'and the shadowing /#leaderboard/challenges check the revealed pane');
 });
 
 test('the challenge-detail screenshot deep link is scoped to its one param', () => {

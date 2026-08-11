@@ -1,0 +1,160 @@
+#!/usr/bin/env node
+// Builds the platform shell's two committed artifacts:
+//
+//   public/shell/assets/shell.js   the React runtime + the shell tree
+//   public/index.html              the document Express serves at /
+//
+// Run from the repo root as `npm run build:shell` (or from frontend/ as
+// `npm run build`). AFTER EDITING ANYTHING UNDER frontend/, run it and commit
+// the output in the same commit — tests/shell-build.test.js stamps and
+// verifies this, exactly as tests/tailwind-build.test.js does for the
+// compiled stylesheet.
+//
+// ── Two passes ─────────────────────────────────────────────────────────
+//
+//   1. CLIENT — `vite build` bundles src/main.tsx into the unhashed
+//      single-chunk /shell/assets/shell.js.
+//   2. SSG — `vite build --ssr` bundles src/prerender.tsx for Node, which is
+//      then imported and called to render the shell tree to static markup.
+//
+// The document is composed here rather than by Vite's HTML pipeline. That is
+// the point: src/head.html is carried over byte-for-byte, so the head's
+// blocking scripts, the `.in-native-webview` inline script, the cascade
+// self-check probe and the native.css → app.css → tailwind.css link order all
+// survive untouched. Nothing rewrites them, so nothing can silently reorder
+// them.
+
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const dirname = path.dirname(fileURLToPath(import.meta.url));
+const FRONTEND = path.join(dirname, '..');
+const ROOT = path.join(FRONTEND, '..');
+
+const { expectedStamp, formatHtmlStamp, formatJsStamp, HTML_OUTPUT, JS_OUTPUT } = require(
+  path.join(ROOT, 'scripts', 'shell-stamp.js'),
+);
+
+function fail(message) {
+  console.error(`[build-shell] ${message}`);
+  process.exit(1);
+}
+
+function resolveViteCli() {
+  let pkgJson;
+  try {
+    pkgJson = require.resolve('vite/package.json', { paths: [FRONTEND] });
+  } catch {
+    fail('vite is not installed. Run `npm install` inside frontend/ first.');
+  }
+  const pkg = JSON.parse(fs.readFileSync(pkgJson, 'utf8'));
+  const binRel = typeof pkg.bin === 'string' ? pkg.bin : pkg.bin && pkg.bin.vite;
+  if (!binRel) fail(`Could not find the vite CLI entry point in ${pkgJson}`);
+  return path.join(path.dirname(pkgJson), binRel);
+}
+
+const vite = resolveViteCli();
+
+function runVite(args) {
+  try {
+    execFileSync(process.execPath, [vite, ...args], { cwd: FRONTEND, stdio: ['ignore', 'inherit', 'inherit'] });
+  } catch (err) {
+    fail(`vite ${args.join(' ')} failed: ${err.message}`);
+  }
+}
+
+// ── Pass 1: the browser bundle ─────────────────────────────────────────
+console.log('[build-shell] pass 1/2 — client bundle');
+runVite(['build']);
+
+const jsPath = path.join(ROOT, JS_OUTPUT);
+if (!fs.existsSync(jsPath)) fail(`the client build did not emit ${JS_OUTPUT}`);
+
+// Nothing in the shell tree imports CSS today (shadcn components are Tailwind
+// classes in TSX and the shell's stylesheet is the existing compiled v3
+// build). An emitted stylesheet therefore means something pulled in CSS of
+// its own and the document would need a FOURTH <link> — which would land
+// after /css/tailwind.css and break the cascade contract the head asserts.
+// Fail loudly rather than ship a silently restyled shell.
+const emittedAssets = fs.readdirSync(path.join(ROOT, 'public', 'shell', 'assets'));
+const strayCss = emittedAssets.filter((f) => f.endsWith('.css'));
+if (strayCss.length) {
+  fail(
+    `the client build emitted a stylesheet (${strayCss.join(', ')}). The shell gets ALL of its `
+    + 'CSS from the existing compiled /css/tailwind.css; something under frontend/ now imports '
+    + 'its own CSS. Remove that import rather than adding a fourth <link> — see the cascade '
+    + 'note in frontend/src/head.html.',
+  );
+}
+
+// ── Pass 2: prerender the shell tree ───────────────────────────────────
+console.log('[build-shell] pass 2/2 — SSG prerender');
+const ssrDir = path.join(FRONTEND, '.ssr');
+fs.rmSync(ssrDir, { recursive: true, force: true });
+runVite(['build', '--config', 'vite.ssr.config.ts', '--logLevel', 'warn']);
+
+const ssrEntry = path.join(ssrDir, 'prerender.js');
+if (!fs.existsSync(ssrEntry)) fail(`the SSR build did not emit ${path.relative(ROOT, ssrEntry)}`);
+
+const { renderShell } = await import(pathToFileURL(ssrEntry).href);
+const markup = renderShell();
+if (!markup || markup.length < 10000) {
+  fail(`renderShell() produced only ${markup ? markup.length : 0} bytes — the shell tree looks empty.`);
+}
+
+// ── Compose the document ───────────────────────────────────────────────
+const head = fs.readFileSync(path.join(FRONTEND, 'src', 'head.html'), 'utf8');
+
+// The <body> element's own attributes live here, not in Shell.tsx: React
+// hydrates body's CHILDREN, so the element itself is the template's. This is
+// the flex column every screen's height depends on
+// (`flex flex-col` + `height:100dvh` with `flex-1` <main> children).
+const BODY_ATTRS = 'class="bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 flex flex-col" style="height:100dvh"';
+
+const { stamp, files } = expectedStamp();
+
+// The entry is the LAST thing in <head> and a module, therefore deferred:
+// it runs after the 47 classic <script> tags at the end of <body> and before
+// DOMContentLoaded. See the header comment in src/main.tsx for why that
+// window is the only correct place for it.
+const entryTag = '  <!-- React shell entry. A deferred module on purpose: it hydrates AFTER the\n'
+  + '       legacy /js/** scripts at the end of <body> have defined their globals and\n'
+  + '       BEFORE DOMContentLoaded runs their init()s. frontend/src/main.tsx explains\n'
+  + '       why that ordering — and the flushSync around hydration — is load-bearing. -->\n'
+  + '  <script type="module" src="/shell/assets/shell.js"></script>\n';
+
+const html = `<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  ${formatHtmlStamp(stamp)}
+  <!-- GENERATED FILE — DO NOT EDIT.
+       Built from frontend/ by \`npm run build:shell\`; the markup lives in
+       frontend/src/Shell.tsx and this <head> in frontend/src/head.html.
+       Hand edits here are overwritten by the next build, and
+       tests/shell-build.test.js fails the suite when this artifact is stale. -->
+${head.replace(/\s*$/, '\n')}${entryTag}</head>
+<body ${BODY_ATTRS}>${markup}</body>
+</html>
+`;
+// NOTE the absence of newlines around ${markup}. main.tsx hydrates
+// document.body, so body's child list must be EXACTLY what <Shell/> renders.
+// A newline after the <body> tag is a text node React does not expect as the
+// first child, which is a hydration mismatch — React error #418, logged as a
+// console.error, which fails the platform's proposal checks on every route.
+// (renderToStaticMarkup emits no inter-element whitespace of its own, so the
+// markup is already a clean element sequence.)
+
+fs.writeFileSync(path.join(ROOT, HTML_OUTPUT), html);
+
+// Stamp the JS too, so a half-applied build (new HTML, old bundle) is caught.
+const js = fs.readFileSync(jsPath, 'utf8').replace(/^﻿/, '');
+fs.writeFileSync(jsPath, `${formatJsStamp(stamp)}\n${js}`);
+
+fs.rmSync(ssrDir, { recursive: true, force: true });
+
+console.log(`[build-shell] wrote ${HTML_OUTPUT} (${html.length} bytes) and ${JS_OUTPUT} (${js.length} bytes)`);
+console.log(`[build-shell] stamped ${stamp.slice(0, 16)}… over ${files.length} input files`);

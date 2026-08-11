@@ -28,7 +28,7 @@ test('a successful web sync advances a shared CLI proposal review without changi
   const calls = [];
   const pool = { query: async (sql, params) => {
     calls.push({ sql, params });
-    return { rowCount: 1, rows: [{ reviewed_head_sha: params[0] }] };
+    return { rowCount: 1, rows: [{ reviewed_head_sha: params[0], votes_moved: 1 }] };
   } };
   const session = {
     id: 7,
@@ -42,14 +42,22 @@ test('a successful web sync advances a shared CLI proposal review without changi
   assert.equal(session.source, 'cli_handoff');
   assert.equal(session.checks_commit_sha, synced.sha);
   assert.equal(session.reviewed_head_sha, synced.sha);
-  assert.match(calls[0].sql, /UPDATE chat_sessions[\s\S]*checks_commit_sha = \$1/);
-  assert.match(calls[0].sql, /reviewed_head_sha = CASE/);
-  assert.match(calls[0].sql, /UPDATE pr_votes SET head_sha = \$1/);
-  assert.match(calls[0].sql,
+
+  // #955: the provenance row is written BEFORE the advance, so a later
+  // reconciliation can still recognise this commit as the platform's own.
+  assert.match(calls[0].sql, /INSERT INTO session_platform_pushes/);
+  const advance = calls.find((c) => /UPDATE chat_sessions/.test(c.sql));
+  assert.match(advance.sql, /checks_commit_sha = CASE WHEN \$5::boolean/);
+  assert.match(advance.sql, /reviewed_head_sha = \$1/);
+  assert.match(advance.sql, /UPDATE pr_votes SET head_sha = \$1/);
+  assert.match(advance.sql,
     /checks_commit_sha IS NOT DISTINCT FROM \$4::varchar/,
     'the sync cannot overwrite a checked head advanced by another reconciler');
-  assert.deepEqual(calls[0].params, [
-    synced.sha, 7, 'b'.repeat(40), 'b'.repeat(40),
+  assert.match(advance.sql,
+    /reviewed_head_sha IS NOT DISTINCT FROM \$3::varchar/,
+    'the sync cannot overwrite a review advanced by another reconciler');
+  assert.deepEqual(advance.params, [
+    synced.sha, 7, 'b'.repeat(40), 'b'.repeat(40), true,
   ]);
 });
 
@@ -91,7 +99,7 @@ test('a sync result cannot overwrite a concurrently advanced checked head', asyn
   assert.equal(session.checks_commit_sha, 'b'.repeat(40));
 });
 
-test('failed syncs and ordinary native sessions do not move the reviewed head', async () => {
+test('a sync that pushed nothing never touches the reviewed head', async () => {
   const pool = { query: async () => { throw new Error('must not query'); } };
   assert.equal(await advanceSharedReviewAfterSync(
     pool,
@@ -100,13 +108,14 @@ test('failed syncs and ordinary native sessions do not move the reviewed head', 
   ), false);
   assert.equal(await advanceSharedReviewAfterSync(
     pool,
-    { id: 8, source: 'native' },
-    { syncResult: 'clean', pushOk: true, sha: 'c'.repeat(40) }
-  ), false);
-  assert.equal(await advanceSharedReviewAfterSync(
-    pool,
     { id: 9, source: 'cli_handoff' },
     { syncResult: 'clean', pushOk: true, sha: 'not-a-commit' }
+  ), false);
+  // #955: an imported PR's head is owned by its external author, never by us.
+  assert.equal(await advanceSharedReviewAfterSync(
+    pool,
+    { id: 10, source: 'imported' },
+    { syncResult: 'clean', pushOk: true, sha: 'c'.repeat(40) }
   ), false);
 });
 

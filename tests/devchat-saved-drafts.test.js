@@ -83,7 +83,16 @@ function makeElement(id) {
 
 // `storage` is shared across harnesses on purpose when a test wants to
 // simulate a page reload (a fresh DevChat over the same localStorage).
-function makeHarness(storage = new Map()) {
+//
+// #940: `net` is the fake server. It records every request the sync layer
+// makes and answers from an in-memory draft list, so the optimistic-write
+// and reconcile paths can be driven without a real backend.
+//   net.server   — the drafts the "server" holds ({id, text, savedAt}[])
+//   net.calls    — [{ method, url, body }] in order
+//   net.fail     — when true, every request rejects (offline)
+function makeHarness(storage = new Map(), net = {}) {
+  net.server = net.server || [];
+  net.calls = net.calls || [];
   const registry = new Map();
   const getEl = (id) => {
     if (!registry.has(id)) registry.set(id, makeElement(id));
@@ -118,8 +127,39 @@ function makeHarness(storage = new Map()) {
     document,
     localStorage,
     AbortController,
+    URLSearchParams,
+    // _wantsDemoDrafts reads location.search for the ?shot deep link.
+    location: { search: '' },
     navigator: { maxTouchPoints: 0 },
-    fetch: async () => ({ ok: true, status: 200, json: async () => ({}) }),
+    fetch: async (url, opts = {}) => {
+      const method = (opts.method || 'GET').toUpperCase();
+      const body = opts.body ? JSON.parse(opts.body) : null;
+      net.calls.push({ method, url: String(url), body });
+      if (net.fail) throw new Error('offline');
+
+      const m = /^\/api\/sessions\/(\d+)\/drafts(?:\/(.+))?$/.exec(String(url));
+      if (m) {
+        const draftId = m[2] ? decodeURIComponent(m[2]) : null;
+        if (method === 'POST') {
+          if (net.server.length >= 20 && !net.server.some((d) => d.id === body.id)) {
+            return {
+              ok: false, status: 409,
+              json: async () => ({ error: "That's 20 saved drafts — send or delete one first", code: 'draft_cap' }),
+            };
+          }
+          if (!net.server.some((d) => d.id === body.id)) {
+            net.server.push({ id: body.id, text: body.text, savedAt: body.savedAt });
+          }
+        } else if (method === 'DELETE') {
+          net.server = net.server.filter((d) => d.id !== draftId);
+        }
+        return {
+          ok: true, status: 200,
+          json: async () => ({ ok: true, drafts: net.server.map((d) => ({ ...d })), max: 20 }),
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    },
     escapeHtml: (s) => String(s == null ? '' : s),
     App: { currentTab: 'dev', currentSubTab: 'sessions' },
     Notifications: {},
@@ -142,7 +182,7 @@ function makeHarness(storage = new Map()) {
   DevChat._applySyncBanner = () => {};
   DevChat.setTitleStatus = () => {};
 
-  return { DevChat, sandbox, document, getEl, storage };
+  return { DevChat, sandbox, document, getEl, storage, net };
 }
 
 const SESSION_ID = 4242;
@@ -283,7 +323,11 @@ test('trash removes only that draft, and an emptied list stays empty', () => {
 
   DevChat._deleteSavedDraft(DevChat._getSavedDrafts(SESSION_ID)[0].id);
   assert.deepEqual(texts(DevChat), []);
-  assert.equal(storage.get(KEY), '[]',
+  // #940: the mirror is a v2 object now, but the invariant is unchanged —
+  // the emptied list is WRITTEN, not removed, so nothing can resurrect it
+  // (key presence is what suppresses the ?shot demo seed).
+  assert.ok(storage.has(KEY));
+  assert.deepEqual(JSON.parse(storage.get(KEY)).drafts, [],
     'the emptied list is written, not removed, so nothing can resurrect it');
 });
 
@@ -425,4 +469,296 @@ test('saving is refused while stopped, not merely un-clickable', () => {
     ['parked during the turn', 'must not become a draft while it could just be sent'],
     'saving resumes as soon as a turn is running');
   assert.equal(input.value, '', 'and the box is cleared for the next thought');
+});
+
+// ── #940: the drafts belong to the ACCOUNT, not the browser ────────────
+//
+// localStorage stays in the loop as a MIRROR — instant paint plus an
+// offline buffer — and every mutation is optimistic-then-pushed. The
+// invariants that make that safe:
+//
+//   9.  A save writes locally AND uploads; the row is marked synced when
+//       the POST lands.
+//   10. Trash / send / edit-take-back delete server-side too, via a
+//       tombstone recorded FIRST so an offline delete still replays.
+//   11. A failed push never loses text: the draft stays listed and
+//       unsynced, and the next reconcile uploads it.
+//   12. _reconcileDrafts is both the cross-device sync and the migration:
+//       it unions server + local, honours tombstones, uploads local-only
+//       rows, and caps the union.
+//   13. A LEGACY BARE-ARRAY mirror (everything written before #940) is
+//       read correctly and uploaded once.
+
+const flush = () => new Promise((r) => setImmediate(r));
+
+// dev-chat.js fetches /api/models at load, so "did the sync layer call the
+// server?" has to look at the drafts requests specifically.
+const draftCalls = (net) => net.calls.filter((c) => /\/drafts(\/|$)/.test(c.url));
+
+// A draft as the fake server would hand it back.
+const srv = (id, text, minute) => ({
+  id, text, savedAt: `2026-01-01T00:0${minute}:00.000Z`,
+});
+
+test('#940: saving uploads the draft and marks it synced', async () => {
+  const { DevChat, document, storage, net } = makeHarness();
+  open(DevChat, { streaming: true });
+  const input = document.getElementById('dc-input');
+  input.value = 'ship it';
+  DevChat._saveComposerDraft();
+  await flush();
+
+  const post = net.calls.find((c) => c.method === 'POST');
+  assert.ok(post, 'a save must POST');
+  assert.equal(post.url, `/api/sessions/${SESSION_ID}/drafts`);
+  assert.equal(post.body.text, 'ship it');
+  assert.match(post.body.id, /^[A-Za-z0-9_-]{1,32}$/);
+  assert.deepEqual(net.server.map((d) => d.text), ['ship it']);
+
+  const mirror = JSON.parse(storage.get(KEY));
+  assert.equal(mirror.v, 2);
+  assert.equal(mirror.drafts[0].synced, true, 'a landed upload marks the row synced');
+});
+
+test('#940: trashing a draft deletes it server-side and clears its tombstone', async () => {
+  const { DevChat, document, storage, net } = makeHarness();
+  open(DevChat, { streaming: true });
+  const input = document.getElementById('dc-input');
+  input.value = 'regrettable';
+  DevChat._saveComposerDraft();
+  await flush();
+
+  const [d] = DevChat._getSavedDrafts(SESSION_ID);
+  DevChat._deleteSavedDraft(d.id);
+  await flush();
+
+  const del = net.calls.find((c) => c.method === 'DELETE');
+  assert.ok(del, 'trash must DELETE');
+  assert.equal(del.url, `/api/sessions/${SESSION_ID}/drafts/${d.id}`);
+  assert.deepEqual(net.server, [], 'the server copy is gone');
+  assert.deepEqual(JSON.parse(storage.get(KEY)).tombstones, [],
+    'a confirmed delete drops its tombstone');
+});
+
+test('#940: sending a draft removes it on every device', async () => {
+  const { DevChat, document, net } = makeHarness();
+  open(DevChat, { streaming: true });
+  const input = document.getElementById('dc-input');
+  input.value = 'also make it sticky';
+  DevChat._saveComposerDraft();
+  await flush();
+
+  const [d] = DevChat._getSavedDrafts(SESSION_ID);
+  const sent = [];
+  DevChat.sendMessage = (t) => sent.push(t);
+  DevChat.isStreaming = false;
+  DevChat._sendSavedDraft(d.id);
+  await flush();
+
+  assert.deepEqual(sent, ['also make it sticky']);
+  assert.deepEqual(net.server, [], 'a sent draft is deleted server-side too');
+});
+
+test('#940: a failed push keeps the draft listed and unsynced (nothing is lost)', async () => {
+  const { DevChat, document, storage, net } = makeHarness(new Map(), { fail: true });
+  open(DevChat, { streaming: true });
+  const input = document.getElementById('dc-input');
+  input.value = 'typed on a train';
+  DevChat._saveComposerDraft();
+  await flush();
+
+  assert.deepEqual(texts(DevChat), ['typed on a train'], 'the text survives the failure');
+  assert.equal(JSON.parse(storage.get(KEY)).drafts[0].synced, false);
+
+  // Back online: reconcile flushes it.
+  net.fail = false;
+  await DevChat._reconcileDrafts(SESSION_ID, []);
+  assert.deepEqual(net.server.map((d) => d.text), ['typed on a train']);
+  assert.equal(JSON.parse(storage.get(KEY)).drafts[0].synced, true);
+});
+
+test('#940: an offline delete replays on the next reconcile', async () => {
+  const storage = new Map();
+  const net = { server: [srv('remote1', 'parked elsewhere', 1)] };
+  const { DevChat } = makeHarness(storage, net);
+  open(DevChat);
+
+  // Adopt the server row, then go offline and trash it.
+  await DevChat._reconcileDrafts(SESSION_ID, net.server.map((d) => ({ ...d })));
+  assert.deepEqual(texts(DevChat), ['parked elsewhere']);
+
+  net.fail = true;
+  DevChat._deleteSavedDraft('remote1');
+  await flush();
+  assert.deepEqual(texts(DevChat), [], 'it is gone locally straight away');
+  assert.deepEqual(JSON.parse(storage.get(KEY)).tombstones.map((t) => t.id), ['remote1']);
+
+  // Reconnect: the reconcile must NOT resurrect it, and must delete it.
+  net.fail = false;
+  await DevChat._reconcileDrafts(SESSION_ID, net.server.map((d) => ({ ...d })));
+  assert.deepEqual(texts(DevChat), [], 'a tombstoned draft is never resurrected');
+  assert.deepEqual(net.server, [], 'and the delete reached the server');
+});
+
+test('#940: reconcile unions the server list with local drafts', async () => {
+  const storage = new Map();
+  const net = { server: [srv('remote1', 'from the laptop', 3)] };
+  const { DevChat, document } = makeHarness(storage, net);
+  open(DevChat, { streaming: true });
+
+  // A draft typed here while the server already had one of its own.
+  net.fail = true;
+  const input = document.getElementById('dc-input');
+  input.value = 'from the phone';
+  DevChat._saveComposerDraft();
+  await flush();
+  net.fail = false;
+
+  await DevChat._reconcileDrafts(SESSION_ID, net.server.map((d) => ({ ...d })));
+
+  assert.deepEqual(texts(DevChat).sort(), ['from the laptop', 'from the phone'],
+    'both devices\' drafts survive the merge');
+  assert.deepEqual(net.server.map((d) => d.text).sort(), ['from the laptop', 'from the phone'],
+    'and the local-only one is uploaded');
+});
+
+test('#940: reconcile orders oldest-first and caps the union at 20', async () => {
+  const storage = new Map();
+  // 15 on the server + 10 local = 25; the OLDEST 20 survive, matching the
+  // existing cap rule (a full list refuses new saves, it never evicts).
+  const server = Array.from({ length: 15 }, (_, i) => ({
+    id: `s${String(i).padStart(2, '0')}`,
+    text: `server ${i}`,
+    savedAt: `2026-01-01T00:${String(i).padStart(2, '0')}:00.000Z`,
+  }));
+  const local = Array.from({ length: 10 }, (_, i) => ({
+    id: `l${String(i).padStart(2, '0')}`,
+    text: `local ${i}`,
+    savedAt: `2026-01-01T01:${String(i).padStart(2, '0')}:00.000Z`,
+    synced: false,
+  }));
+  storage.set(KEY, JSON.stringify({ v: 2, drafts: local, tombstones: [] }));
+
+  const { DevChat } = makeHarness(storage, { server: server.map((d) => ({ ...d })) });
+  open(DevChat);
+  await DevChat._reconcileDrafts(SESSION_ID, server.map((d) => ({ ...d })));
+
+  // Array.from(): the list crosses the vm realm boundary (see `texts`).
+  const merged = Array.from(DevChat._getSavedDrafts(SESSION_ID));
+  assert.equal(merged.length, 20, 'the cap holds across the merge');
+  assert.equal(merged[0].text, 'server 0', 'oldest first');
+  assert.equal(merged[19].text, 'local 4', 'the newest overflow is what gets dropped');
+  // Sorted ascending by savedAt throughout.
+  const stamps = merged.map((d) => Date.parse(d.savedAt));
+  assert.deepEqual(stamps, [...stamps].sort((a, b) => a - b));
+});
+
+test('#940: a LEGACY bare-array mirror is read and uploaded exactly once', async () => {
+  const storage = new Map();
+  // Exactly what pre-#940 browsers wrote: a bare array, no sync state.
+  storage.set(KEY, JSON.stringify([
+    { id: 'old1', text: 'typed before the migration', savedAt: '2026-01-01T00:01:00.000Z' },
+    { id: 'old2', text: 'and another one', savedAt: '2026-01-01T00:02:00.000Z' },
+  ]));
+  const net = { server: [] };
+  const { DevChat } = makeHarness(storage, net);
+  open(DevChat);
+
+  assert.deepEqual(texts(DevChat), ['typed before the migration', 'and another one'],
+    'the legacy shape still renders');
+
+  await DevChat._reconcileDrafts(SESSION_ID, []);
+  assert.deepEqual(net.server.map((d) => d.text),
+    ['typed before the migration', 'and another one'],
+    'the whole legacy list is adopted by the server');
+
+  // Second pass: they are synced now, so nothing is re-posted.
+  const before = draftCalls(net).filter((c) => c.method === 'POST').length;
+  await DevChat._reconcileDrafts(SESSION_ID, net.server.map((d) => ({ ...d })));
+  assert.equal(draftCalls(net).filter((c) => c.method === 'POST').length, before,
+    'an adopted draft is not uploaded again');
+});
+
+test('#940: reconcile never writes into another session\'s mirror', async () => {
+  const storage = new Map();
+  const { DevChat } = makeHarness(storage, { server: [srv('remote1', 'for session A', 1)] });
+  open(DevChat);
+
+  // The user navigates away mid-flight. `null` forces the fetch path, so
+  // there is a real await for the switch to land inside.
+  const pending = DevChat._reconcileDrafts(SESSION_ID, null);
+  DevChat.currentSession = { id: 9999, status: 'active' };
+  await pending;
+
+  assert.equal(storage.get(KEY), undefined,
+    'a session switch mid-reconcile must abandon the write');
+});
+
+test('#940: applyDraftsUpdate only reacts for the session on screen', async () => {
+  const net = { server: [srv('remote1', 'saved on the laptop', 1)] };
+  const { DevChat } = makeHarness(new Map(), net);
+  open(DevChat);
+
+  // A push for some other session is a no-op.
+  DevChat.applyDraftsUpdate(4141);
+  await flush();
+  assert.equal(draftCalls(net).length, 0);
+
+  // A push for THIS session pulls the new list in.
+  DevChat.applyDraftsUpdate(SESSION_ID);
+  await flush();
+  assert.deepEqual(texts(DevChat), ['saved on the laptop']);
+});
+
+test('#940: the drafts header tells the user the list is cross-device', () => {
+  const { DevChat, document } = makeHarness();
+  open(DevChat, { streaming: true });
+  const input = document.getElementById('dc-input');
+  input.value = 'anything';
+  DevChat._saveComposerDraft();
+
+  const box = document.getElementById('dc-drafts');
+  assert.match(box.innerHTML, /Saved drafts \(1\)/);
+  assert.match(box.innerHTML, /on all your devices/);
+});
+
+test('#940: the ?shot demo seed still paints when nothing is stored', () => {
+  // The screenshot deep link must keep working in EVERY environment (the
+  // "before" shot is taken from production), with zero writes.
+  const { DevChat, sandbox } = makeHarness();
+  sandbox.location.search = '?shot=drafts';
+  open(DevChat);
+  const drafts = Array.from(DevChat._getSavedDrafts(SESSION_ID));
+  assert.equal(drafts.length, 2);
+  assert.match(drafts[0].text, /^Staging demo draft:/);
+});
+
+test('#940: a reconcile that finds nothing must NOT create the mirror key', async () => {
+  // REGRESSION: writing an empty mirror on every session open would make the
+  // key present, and key presence is exactly what suppresses the ?shot demo
+  // seed — so simply opening a session would kill the screenshot deep link
+  // (in production too, where the "before" shot is taken).
+  const storage = new Map();
+  const { DevChat, sandbox } = makeHarness(storage, { server: [] });
+  sandbox.location.search = '?shot=drafts';
+  open(DevChat);
+
+  await DevChat._reconcileDrafts(SESSION_ID, []);
+
+  assert.equal(storage.has(KEY), false, 'no drafts anywhere → no key written');
+  assert.equal(Array.from(DevChat._getSavedDrafts(SESSION_ID)).length, 2,
+    'so the ?shot demo seed still paints');
+});
+
+test('#940: an emptied list still stays empty across a reconcile', () => {
+  // The other half of the same rule: once the user has actually emptied the
+  // list, the key IS present and must keep winning over the demo seed.
+  const storage = new Map();
+  storage.set(KEY, JSON.stringify({ v: 2, drafts: [], tombstones: [] }));
+  const { DevChat, sandbox } = makeHarness(storage, { server: [] });
+  sandbox.location.search = '?shot=drafts';
+  open(DevChat);
+
+  assert.deepEqual(texts(DevChat), [],
+    'an explicitly emptied list is never re-seeded by the demo drafts');
 });

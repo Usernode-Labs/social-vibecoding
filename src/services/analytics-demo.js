@@ -258,7 +258,13 @@ function spendByBuilder() {
   return { builders };
 }
 
-// Weekly kudos-giving participation: how many users gave exactly 0..5.
+// Weekly kudos-giving participation: how many users gave 0, 1, 2, 3, 4–5,
+// 6–10 or 11+ kudos that week. #964 rebanded these from the old exact-1..5
+// series when the weekly allowance rose to 20 — the keys here must keep
+// matching GET /api/admin/analytics/kudos exactly, since this payload is
+// substituted wholesale for it in staging (pr_kudos is staging:private, so
+// the real query returns all-zero rows there). The two heavy-giver bands
+// stay deliberately small: most weeks have a long tail, not a fat one.
 function kudos() {
   const weeks = [];
   for (let i = WEEKS - 1; i >= 0; i--) {
@@ -269,8 +275,9 @@ function kudos() {
       g1: pick(s + 0.15, 10, 28),
       g2: pick(s + 0.3, 6, 20),
       g3: pick(s + 0.45, 3, 14),
-      g4: pick(s + 0.6, 2, 9),
-      g5: pick(s + 0.75, 1, 7),
+      g4_5: pick(s + 0.6, 2, 9),
+      g6_10: pick(s + 0.75, 1, 7),
+      g11p: pick(s + 0.9, 0, 4),
     });
   }
   return { weeks };

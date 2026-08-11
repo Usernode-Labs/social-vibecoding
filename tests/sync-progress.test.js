@@ -96,6 +96,10 @@ function loadSyncMain({ execImpl }) {
   stub(ids.worker, {
     ensureWorkerImage: async () => {},
     ensureWorker: async () => {},
+    // #937: runSyncMain retires any pending stop before its own dispatch
+    // — a sync turn is a new turn, and it is not in stopRegistry, so
+    // nothing else would ever clear a flag left by an earlier chat stop.
+    clearPendingStop: () => {},
     execInWorker: async (sessionId, opts) => {
       execCalls.push({ sessionId, opts });
       return execImpl(opts);
@@ -571,13 +575,18 @@ test('GET /status: exposes the in-flight sync state, and null when idle', async 
   }
 });
 
-test('GET /status: exposes the merge lifecycle status for banner restore verification', async () => {
-  // The self-app "Platform updating…" banner restores itself from
-  // sessionStorage on reload and verifies against this field that the
-  // merge behind it is still in flight (an aborted merge has no SHA
-  // flip coming — see PlatformUpdating.verifyMergeStillInFlight).
+test('GET /status: exposes the merge lifecycle status of the session', async () => {
+  // Added for the self-app "Platform updating…" banner, whose restore
+  // path verified against this field that the merge behind a restored
+  // banner was still in flight. That banner was removed in #1015, so no
+  // client reads this today — it stays, like the neighbouring
+  // `resolving` field, as a cheap honest fact for admin/debug tooling,
+  // and the poll must keep serving it.
   poolQueryHandler = async (sql) => {
-    if (/SELECT status FROM chat_sessions/.test(sql)) {
+    // #907 widened this read to fetch last_turn_runner/local_agent_label in
+    // the same round-trip (it is a 3s poll), so match the column list loosely
+    // — what this test is about is the `status` field reaching the payload.
+    if (/SELECT status[\s\S]*?FROM chat_sessions/.test(sql)) {
       return { rows: [{ status: 'promoted' }] };
     }
     return { rows: [] };

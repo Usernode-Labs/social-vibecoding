@@ -5,8 +5,10 @@
 //   different from the one the document booted with, the pull upgrades
 //   to a full location.reload() so the tab picks up new client code.
 //   This matters most on the anonymous landing screen, which has no
-//   WS "platform updating" banner: before this, a deployed landing
-//   change was unreachable without killing and restarting the app.
+//   drawer and therefore no stale-version pill: before this, a deployed
+//   landing change was unreachable without killing and restarting the
+//   app. Since #1015 removed the platform-updating banner's forced
+//   reload, this and that pill are the ONLY paths to new client code.
 //
 // Contracts pinned here:
 //   1. App.platformMovedOn compares against the boot-time
@@ -27,7 +29,9 @@ const path = require('node:path');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const appJs = read('public/js/app.js');
-const authJs = read('public/js/auth-screens.js');
+// The landing screen is React now (#1080 chunk C), so its pull-to-refresh
+// wiring is pinned in the component rather than in public/js/auth-screens.js.
+const landingTsx = read('frontend/src/features/auth/landing.tsx');
 
 // ─── 1. platformMovedOn semantics ───────────────────────────────────
 
@@ -87,6 +91,6 @@ test('home PTR routes through _refreshOrReload', () => {
 });
 
 test('landing PTR routes through _refreshOrReload', () => {
-  assert.match(authJs,
-    /pullToRefresh\(byId\('auth-landing-scroll'\),\s*\n?\s*\(\) => App\._refreshOrReload\(\(\) => AuthScreens\._loadLandingApps\(\)\)\)/);
+  assert.match(landingTsx,
+    /pullToRefresh\(byId\('auth-landing-scroll'\), \(\) =>\s*\n?\s*legacy\(\)\.App\?\._refreshOrReload\?\.\(\(\) => live\.current\.loadLandingApps\(\)\)/);
 });

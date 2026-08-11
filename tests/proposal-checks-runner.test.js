@@ -38,6 +38,27 @@ test('resolveTests drops entries with no url and tolerates garbage', () => {
   assert.equal(out.length, 1);
 });
 
+// TESTS='@stdin' → the suite arrives on the container's stdin, not in the
+// env string. This is the E2BIG escape hatch: a manifest-scale suite as a
+// single `-e TESTS=...` arg exceeds Linux's 128KB per-exec-string cap and
+// the docker spawn dies before the container starts (self-app proposals,
+// Aug 2026). The orchestrator (visuals.js) switches to the marker above
+// 90KB and pipes the JSON via docker run -i.
+test('resolveTests reads the suite from stdin on the @stdin marker', () => {
+  const suite = JSON.stringify([
+    { index: 0, name: 'Home', path: '/', url: 'http://s:3000/?token=x' },
+    { index: 1, name: 'Board', path: '/board', url: 'http://s:3000/board?token=x', expectSelector: '.board' },
+  ]);
+  const out = resolveTests({ TESTS: '@stdin' }, () => suite);
+  assert.equal(out.length, 2);
+  assert.equal(out[1].expectSelector, '.board');
+});
+
+test('resolveTests yields [] when the @stdin read fails or is empty', () => {
+  assert.deepEqual(resolveTests({ TESTS: '@stdin' }, () => { throw new Error('closed'); }), []);
+  assert.deepEqual(resolveTests({ TESTS: '@stdin' }, () => ''), []);
+});
+
 // ── visuals parseTests / classifyTests ─────────────────────────────────
 
 test('parseTests reads one record per frame (latest wins on dup index)', () => {

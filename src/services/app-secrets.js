@@ -116,6 +116,21 @@ async function getRedactedView(pool, appId, manifest) {
 // Write paths
 // ──────────────────────────────────────────────────────────────────────
 
+// Surrounding whitespace on a pasted value is invisible in the panel and
+// survives every hop after this one — it reaches the app's container env
+// intact and only fails inside whatever third party the value was for.
+// So normalize at the write boundary. TRIM ONLY: interior whitespace and
+// newlines are preserved, non-strings pass through untouched so the type
+// guard in setValue keeps producing its own error, and a whitespace-only
+// value collapses to '' and is then refused rather than stored.
+//
+// Same rule as platform-env.normalizeValue — deliberately duplicated
+// rather than shared, like computeLast4 below, so the two DAOs stay
+// segregated (see that module's header).
+function normalizeValue(value) {
+  return typeof value === 'string' ? value.trim() : value;
+}
+
 function computeLast4(value, sensitive) {
   if (sensitive) return null;
   if (typeof value !== 'string' || !value.length) return null;
@@ -130,6 +145,10 @@ function computeLast4(value, sensitive) {
  * never leak via the secrets API.
  */
 async function setValue(pool, appId, key, value, { sensitive = false, userId = null, dataKey }) {
+  // FIRST statement: every caller — the admin route, the declare route,
+  // the vote apply, pending-secrets, the app forker — gets normalization
+  // for free, so no future call site can bypass it.
+  value = normalizeValue(value);
   if (typeof value !== 'string' || !value.length) {
     throw new Error('app-secrets.setValue: non-empty string value required');
   }
@@ -292,6 +311,7 @@ module.exports = {
   getRawValues,
   getRedactedView,
   setValue,
+  normalizeValue,
   deleteValue,
   missingRequired,
   mergeForDeploy,

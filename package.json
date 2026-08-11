@@ -10,10 +10,11 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --test --test-force-exit tests/*.test.js",
+    "test": "node --require ./tests/lib/test-net.js --test --test-force-exit tests/*.test.js",
     "build:css": "node scripts/build-tailwind.js",
     "watch:css": "node scripts/build-tailwind.js --watch",
-    "vendor:assets": "node scripts/vendor-assets.js"
+    "vendor:assets": "node scripts/vendor-assets.js",
+    "build:shell": "node frontend/scripts/build-shell.mjs"
   },
   "devDependencies": {
     "dompurify": "3.4.4",
@@ -31,6 +32,7 @@
     "dotenv": "^17.3.1",
     "express": "^4.21.0",
     "express-rate-limit": "^8.3.2",
+    "firebase-admin": "^13.10.0",
     "jsonwebtoken": "^9.0.2",
     "minio": "^8.0.7",
     "pg": "^8.13.0",

@@ -25,6 +25,14 @@ const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 
 const indexHtml = read('public/index.html');
+// The shell's markup SOURCE. public/index.html is a generated artifact now
+// (the React + shadcn chassis swap), and JSX comments never reach it — so
+// assertions about the explanatory comments around a screen have to read the
+// source they actually live in.
+const shellSource = read('frontend/src/Shell.tsx');
+// #1079 chunk B moved the drawer (#header-menu-panel) out of Shell.tsx into its
+// own island — same markup, same comments, new file.
+const menuSource = read('frontend/src/features/header/header-menu.tsx');
 const nativeChrome = read('public/js/native-chrome.js');
 const profileJs = read('public/js/profile.js');
 
@@ -57,10 +65,9 @@ test('native-chrome no longer gates the profile row on getProfileInfo', () => {
 test('the stale "hidden unless the bridge reports getProfileInfo" comments are gone', () => {
   // Comments that describe behaviour the code no longer has are worse than
   // no comment: the next reader trusts them.
-  const anchorComment = indexHtml.slice(
-    Math.max(0, indexHtml.indexOf('<a id="drawer-row-profile"') - 700),
-    indexHtml.indexOf('<a id="drawer-row-profile"')
-  );
+  const profileAt = menuSource.indexOf('id="drawer-row-profile"');
+  assert.ok(profileAt > 0, 'the drawer row must still live in the menu island');
+  const anchorComment = menuSource.slice(Math.max(0, profileAt - 900), profileAt);
   assert.doesNotMatch(anchorComment, /Hidden unless/i);
   assert.doesNotMatch(
     nativeChrome.slice(0, nativeChrome.indexOf('const NativeChrome')),
@@ -74,9 +81,9 @@ test('the screen-host comments no longer describe an external leaderboard', () =
   // alone since the leaderboard merge: the sibling #challenges-screen
   // <main> this used to start from is gone, folded into the Leaderboard
   // screen's Challenges tab.
-  const hosts = indexHtml.slice(
-    indexHtml.indexOf('<main id="profile-screen"') - 900,
-    indexHtml.indexOf('<main id="profile-screen"') + 400
+  const hosts = shellSource.slice(
+    Math.max(0, shellSource.indexOf('id="profile-screen"') - 1200),
+    shellSource.indexOf('id="profile-screen"') + 400
   );
   assert.doesNotMatch(hosts, /public leaderboard service/);
   assert.doesNotMatch(hosts, /using the bridge's\s*\n?\s*getProfileInfo participant id/);
@@ -131,4 +138,231 @@ test('the signed-out branch is checked before the generic error branch', () => {
   const fn = profileJs.slice(profileJs.indexOf('_render() {'));
   assert.ok(fn.indexOf('d.signedOut') < fn.indexOf('if (d.error)'),
     'otherwise a signed-out visitor still sees the connection-error copy');
+});
+
+// ─── The editable profile (issue #982) ──────────────────────────────────
+//
+// The screen grew an identity card and an edit sheet, and its completed
+// list stopped being the organiser's flag. These pin the parts a later
+// refactor could quietly undo.
+
+test('the identity card renders picture, name and the way in to editing', () => {
+  const fn = profileJs.slice(
+    profileJs.indexOf('_renderIdentityCard() {'),
+    profileJs.indexOf('// ── completed challenges')
+  );
+  assert.ok(fn.length, '_renderIdentityCard must exist');
+  assert.match(fn, /profile-edit-btn/);
+  assert.match(fn, /Profile\.showEditSheet\(\)/);
+  assert.match(fn, /Your builder profile/);
+  assert.match(fn, /#leaderboard\/users\//, 'the builder-profile link goes to the kudos page');
+});
+
+test('the bio is a text node, never innerHTML', () => {
+  // It is deliberately plain text, not markdown — nothing renders it
+  // through marked/DOMPurify, so it must never reach innerHTML.
+  const code = profileJs.replace(/^\s*\/\/.*$/gm, '');
+  assert.doesNotMatch(code, /innerHTML/,
+    'this module builds DOM with _el()/textContent only');
+  assert.match(profileJs, /whitespace-pre-line/, 'newlines in a bio still render');
+});
+
+test('outbound handle links are scheme-guarded and rel-protected', () => {
+  const fn = profileJs.slice(
+    profileJs.indexOf('_renderIdentityCard() {'),
+    profileJs.indexOf('// ── completed challenges')
+  );
+  assert.match(fn, /Profile\._safeHref\(/,
+    'escaping alone would not stop a javascript: href');
+  assert.match(fn, /rel = 'noopener noreferrer'/);
+  assert.match(fn, /encodeURIComponent\(links\.github\)/);
+  assert.match(profileJs, /\^https\?:\\\/\\\//, '_safeHref pins http(s) only');
+});
+
+test('the username is shown read-only, with the reason', () => {
+  const fn = profileJs.slice(profileJs.indexOf('showEditSheet() {'));
+  assert.match(fn, /profile-edit-username/);
+  assert.match(fn, /userInput\.readOnly = true/);
+  assert.match(fn, /userInput\.disabled = true/);
+  assert.match(fn, /can’t be changed/,
+    'a greyed-out field with no explanation reads as a bug');
+  // Nothing may ever PATCH it.
+  const save = profileJs.slice(profileJs.indexOf('async _save('));
+  assert.doesNotMatch(save.slice(0, 2500), /username:/);
+});
+
+test('the edit sheet degrades when the native sheet kit is absent', () => {
+  const fn = profileJs.slice(profileJs.indexOf('showEditSheet() {'));
+  // Same `|| null` shape Settings.showTermsSheet handles — but the editor
+  // must still be reachable, so it falls back to rendering inline.
+  assert.match(fn, /window\.PlatformUI && PlatformUI\.sheet/);
+  assert.match(fn, /if \(!Profile\._sheet\)/);
+  assert.match(fn, /insertBefore\(panel, root\.firstChild\)/);
+});
+
+test('the photo is downscaled client-side before upload', () => {
+  const fn = profileJs.slice(
+    profileJs.indexOf('async _prepareAvatar('),
+    profileJs.indexOf('async _decodeImage(')
+  );
+  assert.ok(fn.length, '_prepareAvatar must exist');
+  // The server ships no image decoder, so this is load-bearing, not polish.
+  assert.match(fn, /toBlob/);
+  assert.match(fn, /AVATAR_MAX_PX/);
+  assert.match(fn, /AVATAR_MAX_BYTES/);
+  assert.match(fn, /while \(blob && blob\.size > Profile\.AVATAR_MAX_BYTES/,
+    'one re-encode is not enough — shrink until it fits');
+  // Centre crop, so a portrait photo is not squashed into the circle.
+  assert.match(fn, /bitmap\.width - side/);
+  assert.match(fn, /bitmap\.height - side/);
+});
+
+test('object URLs for a staged photo are revoked', () => {
+  assert.match(profileJs, /URL\.revokeObjectURL/);
+  const fn = profileJs.slice(profileJs.indexOf('_clearPendingAvatar() {'));
+  assert.match(fn.slice(0, 400), /revokeObjectURL\(Profile\._pendingAvatarUrl\)/);
+});
+
+test('nothing is written until Save, and the avatar goes first', () => {
+  const fn = profileJs.slice(
+    profileJs.indexOf('async _save('),
+    profileJs.indexOf('async _errText(')
+  );
+  const avatarAt = fn.indexOf("'/api/me/avatar'");
+  const patchAt = fn.indexOf("'/api/me/profile'");
+  assert.ok(avatarAt > 0 && patchAt > avatarAt,
+    'the byte upload is the one that can fail — do it before the text write');
+  assert.match(fn, /method: 'PATCH'/);
+  assert.match(fn, /application\/octet-stream/);
+  // And the post-write truth is re-read, not guessed at locally.
+  assert.match(fn, /Profile\._refreshUser\(\)/);
+});
+
+test('field-level server errors keep the sheet open', () => {
+  const fn = profileJs.slice(profileJs.indexOf('async _save('));
+  assert.match(fn, /body\.details/);
+  assert.match(fn, /if \(pinned\) \{ saveBtn\.disabled = false; return; \}/,
+    'losing the user’s other edits to one bad handle would be its own bug');
+});
+
+test('the completed list is the viewer’s own, and every row links out', () => {
+  assert.doesNotMatch(profileJs, /challenges\.filter\(\(c\) => c\.completed\)/,
+    'c.completed is an ORGANISER flag — that filter showed 28 of production’s '
+    + '34 live challenges to every signed-in person as their own completions');
+  assert.match(profileJs, /\/api\/me\/challenges\/completed/);
+  const fn = profileJs.slice(
+    profileJs.indexOf('_renderCompleted(root, payload) {'),
+    profileJs.indexOf('_relativeDate(iso) {')
+  );
+  assert.match(fn, /card\.href = '#leaderboard\/challenges\/'/);
+  assert.match(fn, /See all challenges/);
+  assert.match(fn, /No completed challenges yet/);
+  assert.match(fn, /Browse challenges/, 'the empty state offers a way forward');
+});
+
+test('the stale "organiser flag" comments are gone', () => {
+  // A comment describing behaviour the code no longer has is worse than no
+  // comment: the next reader trusts it.
+  const header = profileJs.slice(0, profileJs.indexOf('const Profile = {'));
+  assert.match(header, /ORGANISER flag/,
+    'the header must explain what the list means now, and what it used to mean');
+  assert.doesNotMatch(header, /completed challenges from the in-process/,
+    'the old header described the /challenges-api grid read that is gone');
+});
+
+test('the drawer row can show the viewer’s picture', () => {
+  const app = read('public/js/app.js');
+  assert.match(indexHtml, /id="drawer-avatar"/);
+  assert.match(indexHtml, /id="drawer-profile-glyph"/);
+  // Ships hidden with NO src, so a signed-out shell requests nothing.
+  const img = indexHtml.slice(indexHtml.indexOf('<img id="drawer-avatar"'));
+  assert.match(img.slice(0, 200), /class="hidden/);
+  assert.doesNotMatch(img.slice(0, 200), /\ssrc=/);
+  assert.match(app, /applyUserAvatar\(\) \{/);
+  assert.match(app, /App\.applyUserAvatar\(\);/, 'called on sign-in');
+});
+
+test('?shot=profile-edit opens the sheet for the screenshot capture', () => {
+  const fn = profileJs.slice(
+    profileJs.indexOf('_maybeOpenShot() {'),
+    profileJs.indexOf('showEditSheet() {')
+  );
+  assert.match(fn, /shot !== 'profile-edit'/);
+  assert.match(fn, /Profile\._shotFired = true/, 'one-shot, so a refresh does not reopen it');
+  // Pure UI state with no writes — an env gate would starve the "before"
+  // side of the capture forever.
+  assert.doesNotMatch(fn, /staging/i);
+  // Declared checks used to be a CAPPED resource — the reader kept only the
+  // first MAX_TESTS entries, so an entry's POSITION decided whether it ever
+  // ran and each new one evicted an older. #1019 removed that cap: every
+  // declared check runs, and the only bound left is MAX_DECLARED_TESTS.
+  //
+  // The surviving invariant is that the reader actually KEEPS these entries
+  // (it still drops malformed ones) and that the manifest hasn't grown past
+  // the ceiling and started shedding its tail again.
+  const appManifest = require('../src/services/app-manifest');
+  const meta = appManifest.readTestsWithMeta(
+    JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'dapp.json'), 'utf8'))
+  );
+  assert.equal(meta.ceilingDropped, 0,
+    `dapp.json declares more than ${appManifest.MAX_DECLARED_TESTS} valid checks — `
+    + 'checks past the ceiling never run');
+  const live = meta.tests;
+  assert.ok(live.some((t) => String(t.path).includes('shot=profile-edit')),
+    'a state link that stops rendering must fail checks, not regress silently');
+  const mine = live.filter((t) => t.name.includes('#982'));
+  assert.equal(mine.length, 2, 'two slots, deliberately — see above');
+});
+
+test('the profile checks assert on the changed screen, not on "/"', () => {
+  const appManifest = require('../src/services/app-manifest');
+  const live = appManifest.read(path.join(__dirname, '..')).tests;
+  const mine = live.filter((t) => t.name.includes('#982'));
+  for (const t of mine) {
+    assert.match(t.path, /#profile$/,
+      'the self-app is hash-routed — a bare pathname boots the home feed');
+    assert.ok(t.expectSelector, `${t.name} must assert on a real element`);
+  }
+  // The screen check proves BOTH halves of the change in one slot: the
+  // corrected completed list (the selector) and the identity card above it
+  // (the text, which only the card renders).
+  const screen = mine.find((t) => t.path === '/#profile');
+  assert.match(screen.expectSelector, /data-completed-challenge/);
+  assert.equal(screen.expectText, 'Edit profile');
+});
+
+test('spending profile slots did not evict a still-needed check', () => {
+  // The home-panels widget suite requires its own zero-state entry to stay
+  // inside the cap. Prepending here is what could push it out, so assert it
+  // from this side too rather than only discovering it in that file.
+  const appManifest = require('../src/services/app-manifest');
+  const live = appManifest.read(path.join(__dirname, '..')).tests;
+  assert.ok(live.some((t) => t.path === '/?demo=1&challenges=none'),
+    'the #947 challenges-widget zero-state check must still run');
+});
+
+test('the fallback circle picks a letter, not whatever character is first', () => {
+  // A display name is free text: "[Staging demo] admin" or "…hello" would
+  // otherwise put a bracket or an ellipsis in the circle.
+  const fn = profileJs.slice(
+    profileJs.indexOf('_initial() {'),
+    profileJs.indexOf('_avatarEl(')
+  );
+  assert.match(fn, /\[\\p\{L\}\\p\{N\}\]/u,
+    'match the first letter-or-digit');
+  assert.match(fn, /u\.displayName, u\.username/, 'display name first, then the handle');
+  assert.match(fn, /return '\?'/, 'and a last resort that is never blank');
+});
+
+test('the profile no longer fetches the season challenge list via the old route', () => {
+  // #981: this screen stops paying for the season-wide grid it used to
+  // filter client-side. /challenges-api/me/* and /challenges-api/seasons
+  // must survive; the retired /challenges-api/challenges read must not.
+  const body = profileJs.slice(profileJs.indexOf('const Profile'));
+  assert.doesNotMatch(body, /\/challenges-api\/challenges/,
+    'the old season-grid fetch must not come back');
+  assert.match(profileJs, /\/challenges-api\/seasons/,
+    'the season lookup stays — it scopes both /me/* reads and names the season');
+  assert.match(profileJs, /\/challenges-api\/me\/ranking/);
+  assert.match(profileJs, /\/challenges-api\/me\/breakdown/);
 });

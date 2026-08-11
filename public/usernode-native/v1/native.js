@@ -23,6 +23,10 @@
  *                                        anchor it under a fixed one — and
  *                                        lingers briefly once onRefresh
  *                                        settles; never throws on bad input)
+ *   unNative.attachGridPlacement(listEl, opts) — free-form placement on a
+ *     fixed grid (drop anywhere, holes allowed — the homescreen model;
+ *     cellFromPoint(x, y, info) gets the dragged tile's live rect/centre in
+ *     `info`, so the target can be resolved from the TILE, not the finger)
  *   unNative.attachReorder(listEl, opts) — drag-to-reorder lists (long-press
  *                                        lift on touch, handle/pointer drag on
  *                                        desktop, overlay drop indicator,
@@ -747,6 +751,31 @@
     apply(state.x);
     raf = requestAnimationFrame(frame);
     return handle;
+  }
+
+  // Fly a lifted drag ghost from its current translate offset (gx, gy) to
+  // (tx, ty) — the release glide shared by the reorder and placement drops.
+  // Returns the spring handle so the caller can stop() it.
+  //
+  // The spring runs on the REMAINING DISTANCE IN PIXELS, counting down to 0,
+  // rather than on a 0→1 progress value. isAtRest's thresholds are absolute
+  // — REST_DELTA 0.4 px, REST_VELOCITY 0.004 px/ms — so a normalized spring
+  // is declared "at rest" as soon as the progress value is within 0.4 of 1,
+  // i.e. at 66% of the travel, and the ghost teleports the last third of the
+  // way. In the pixel domain 0.4 means 0.4 of a pixel and the glide actually
+  // arrives, which is the difference between a drop that lands and a drop
+  // that visibly snaps.
+  function glideGhost(ghost, gx, gy, tx, ty, onRest) {
+    var dx = tx - gx;
+    var dy = ty - gy;
+    var dist = Math.sqrt(dx * dx + dy * dy);
+    return spring(function (remaining) {
+      var p = dist > 0 ? 1 - remaining / dist : 1;
+      ghost.style.transform = 'translate(' +
+        (gx + dx * p) + 'px, ' + (gy + dy * p) + 'px)';
+    }, {
+      from: dist, to: 0, velocity: 0, preset: 'stiff', onRest: onRest,
+    });
   }
 
   /* ────────────────────────────────────────────────────────────────────
@@ -1685,12 +1714,9 @@
       if (activeSpring) activeSpring.stop();
       pendingFinish = finish;
       ghost.classList.add('un-reorder-ghost-drop'); // scale eases back to 1
-      activeSpring = spring(function (p) {
-        ghost.style.transform = 'translate(' +
-          (gx + (tx - gx) * p) + 'px, ' + (gy + (ty - gy) * p) + 'px)';
-      }, {
-        from: 0, to: 1, velocity: 0, preset: 'stiff',
-        onRest: function () { activeSpring = null; finish(); },
+      activeSpring = glideGhost(ghost, gx, gy, tx, ty, function () {
+        activeSpring = null;
+        finish();
       });
     }
 
@@ -1983,12 +2009,488 @@
     };
   }
 
+  // attachGridPlacement(listEl, { itemSelector?, handle?, longPressMs?,
+  // cellFromPoint, canPlace?, onLift?, onHover?, onPlace?, onSettle? }) —
+  // FREE-FORM placement on a fixed grid, the iOS-homescreen model: a lifted
+  // tile can be dropped in ANY cell, including one with nothing around it,
+  // and nothing re-packs behind it.
+  //
+  // This is a sibling of attachReorder's grid mode, not a flag on it, because
+  // the two have incompatible contracts. attachReorder speaks in a DENSE
+  // INDEX SPACE — onReorder(from, to, item) over a list where every position
+  // is occupied — and it enforces that model by moving the real item through
+  // the DOM live while siblings FLIP aside. Free placement has no such index
+  // (a layout with holes isn't an ordering) and must leave every other item
+  // exactly where it is. Overloading `to` with a cell would have made both
+  // callers lie.
+  //
+  // What IS shared, deliberately, is all the physics: the same fixed-position
+  // ghost clone tracking the pointer on both axes, the same
+  // .un-reorder-slot / .un-reorder-ghost treatment, the same long-press-on-
+  // touch / slop-on-desktop arming, pointer capture on the LIST (not the
+  // item), edge auto-scroll, haptics, the settle spring, and the same
+  // gesture-arbiter claim. A tile dragged here feels identical to a row
+  // dragged there.
+  //
+  // DIVISION OF LABOUR: the kit owns the GESTURE, the host owns the GEOMETRY.
+  // The kit never computes a cell — it asks `cellFromPoint(x, y, info)`, which
+  // for a host that renders a real grid overlay is a one-line elementFromPoint
+  // + closest('[data-cell]'). That keeps the kit free of any assumption about
+  // row heights, gaps or `grid-template-columns`, and it means the highlight
+  // the user sees and the cell the drop commits to are resolved by the same
+  // code path. `info` is the dragged tile's own live geometry, so the host can
+  // answer from the TILE (its centroid) rather than from the finger — see
+  // below.
+  //
+  //   cellFromPoint(x, y, info) → any host cell token, or null over deadspace.
+  //                              Compared with `sameCell` below, so it may be
+  //                              an object ({ col, row }) or a string.
+  //                              x/y are the POINTER. `info` describes the
+  //                              dragged TILE — { item, rect: {left, top,
+  //                              width, height}, centerX, centerY, pointerX,
+  //                              pointerY }, the ghost's live viewport
+  //                              geometry — and RESOLVING FROM THE TILE IS
+  //                              THE RECOMMENDED ANSWER. The ghost tracks the
+  //                              finger from wherever it was grabbed, so the
+  //                              pointer sits a grab-offset away from the
+  //                              tile's own box: a host that answers from x/y
+  //                              puts the highlight that same offset away
+  //                              from the tile the user is looking at, which
+  //                              for a multi-cell item can be a whole tile's
+  //                              worth. Answer from `centerX`/`centerY` minus
+  //                              half the item's own footprint instead — the
+  //                              CENTROID rule — and the highlight sits under
+  //                              the tile whatever corner it was picked up by.
+  //                              (The centre is also the one point the ghost's
+  //                              1.04 lift scale leaves untouched.) x/y keep
+  //                              their meaning, so a host that ignores `info`
+  //                              behaves exactly as it did before.
+  //   canPlace(item, cell)     → false vetoes: no highlight, release springs
+  //                              home. Called on every cell CHANGE, not per
+  //                              frame.
+  //   onHover(item, cell, ok)  → paint/clear whatever the host wants to show
+  //                              for this target. A highlight is the minimum;
+  //                              a host whose drop DISPLACES occupants should
+  //                              also preview that here (move the items that
+  //                              would be pushed to where they'd land), since
+  //                              this is the only place it knows the target
+  //                              before the release. Fires on every cell
+  //                              CHANGE, not per frame, so it is cheap enough
+  //                              to re-derive a plan in. cell is
+  //                              null when the pointer leaves the grid, and
+  //                              once more at the END of a committed drop —
+  //                              after the ghost has finished flying, so a
+  //                              displacement preview holds still through
+  //                              the release instead of snapping back under
+  //                              the travelling tile.
+  //   rectForCell(item, cell)  → where a COMMITTED drop lands, in viewport
+  //                              coords ({ left, top } — a DOMRect from the
+  //                              host's own overlay cell is the natural
+  //                              answer). The ghost's release spring settles
+  //                              here, so the tile flies from the finger to
+  //                              the cell it is landing in. Omit it and the
+  //                              ghost settles on the item's own rect, which
+  //                              in this mode is still the ORIGIN cell — the
+  //                              tile flies back to where it was picked up
+  //                              and then jumps to the drop cell. Any host
+  //                              that moves items on drop should implement
+  //                              it. Return null to fall back.
+  //   onPlace(item, cell)      → committed drop. Fires before onSettle, and
+  //                              only for a legal, changed cell.
+  //   onLift(item) / onSettle(placed) → same deferral contract as
+  //                              attachReorder: hold a re-render flag in
+  //                              onLift, flush it in onSettle, which fires on
+  //                              every path including cancel and detach.
+  //
+  // Returns { detach() }; never throws on bad input.
+  function attachGridPlacement(listEl, options) {
+    var noop = { detach: function () {} };
+    if (!listEl || listEl.nodeType !== 1) {
+      console.warn('[unNative] attachGridPlacement: listEl must be an Element — placement disabled.');
+      return noop;
+    }
+    var opts = options || {};
+    if (typeof opts.cellFromPoint !== 'function') {
+      console.warn('[unNative] attachGridPlacement: opts.cellFromPoint must be a function — placement disabled.');
+      return noop;
+    }
+    var itemSel = typeof opts.itemSelector === 'string' ? opts.itemSelector : null;
+    var handleSel = typeof opts.handle === 'string' ? opts.handle : null;
+    var longPressMs = opts.longPressMs != null ? opts.longPressMs : REORDER_LONG_PRESS_MS;
+    var token = { placement: listEl };
+
+    var drag = null;
+    var activeSpring = null;
+    var raf = null;
+    var suppressClick = false;
+    var pendingFinish = null;
+
+    function matched() {
+      var els = itemSel
+        ? Array.prototype.slice.call(listEl.querySelectorAll(itemSel))
+        : Array.prototype.slice.call(listEl.children);
+      return els.filter(function (el) {
+        return el.nodeType === 1 && !el.classList.contains('un-group-header');
+      });
+    }
+
+    // Cells are host-defined tokens, so identity can't be assumed. Objects
+    // compare on col/row (the shape every host actually uses); anything else
+    // compares by value.
+    function sameCell(a, b) {
+      if (a === b) return true;
+      if (!a || !b) return false;
+      if (typeof a === 'object' && typeof b === 'object') {
+        return a.col === b.col && a.row === b.row;
+      }
+      return false;
+    }
+
+    function findScroller() {
+      var node = listEl.parentNode;
+      while (node && node.nodeType === 1 && node !== document.body) {
+        var s = getComputedStyle(node);
+        if (/(auto|scroll)/.test(s.overflowY) && node.scrollHeight > node.clientHeight) return node;
+        node = node.parentNode;
+      }
+      return null;
+    }
+
+    function hover(cell, ok) {
+      if (!opts.onHover) return;
+      try { opts.onHover(drag.item, cell, ok); } catch (err) { /* ignore */ }
+    }
+
+    // The dragged TILE's live geometry, for a host that resolves its target
+    // from the tile rather than from the finger (see cellFromPoint's third
+    // argument in the doc block above). Pure arithmetic: the ghost is
+    // position:fixed, so its viewport rect is the lift rect plus the current
+    // translate — no getBoundingClientRect() on a per-move path.
+    function ghostInfo() {
+      var left = drag.ghostLeft + drag.gx;
+      var top = drag.ghostTop + drag.gy;
+      return {
+        item: drag.item,
+        rect: { left: left, top: top, width: drag.ghostW, height: drag.ghostH },
+        centerX: left + drag.ghostW / 2,
+        centerY: top + drag.ghostH / 2,
+        pointerX: drag.lastX,
+        pointerY: drag.lastY,
+      };
+    }
+
+    function update() {
+      if (!drag || !drag.lifted) return;
+      drag.gx = drag.lastX - drag.liftX;
+      drag.gy = drag.lastY - drag.liftY;
+      drag.ghost.style.transform = 'translate(' + drag.gx + 'px, ' + drag.gy + 'px)';
+      var cell = null;
+      try { cell = opts.cellFromPoint(drag.lastX, drag.lastY, ghostInfo()); } catch (err) { cell = null; }
+      if (sameCell(cell, drag.cell)) return;
+      drag.cell = cell;
+      if (!cell) { drag.ok = false; hover(null, false); return; }
+      var ok = true;
+      if (opts.canPlace) {
+        try { ok = opts.canPlace(drag.item, cell) !== false; } catch (err) { ok = false; }
+      }
+      drag.ok = ok;
+      if (ok) haptic(5); // cell-change tick, only where the drop would take
+      hover(cell, ok);
+    }
+
+    function autoScrollFrame() {
+      if (!drag || !drag.lifted) { raf = null; return; }
+      var viewTop = 0;
+      var viewBottom = window.innerHeight;
+      if (drag.scroller) {
+        var sr = drag.scroller.getBoundingClientRect();
+        viewTop = Math.max(0, sr.top);
+        viewBottom = Math.min(window.innerHeight, sr.bottom);
+      }
+      var v = autoScrollVelocity(drag.lastY, viewTop, viewBottom, REORDER_EDGE, REORDER_MAX_SCROLL);
+      if (v) {
+        if (drag.scroller) drag.scroller.scrollTop += v;
+        else window.scrollBy(0, v);
+        update(); // content slid under a stationary pointer: re-hit-test
+      }
+      raf = requestAnimationFrame(autoScrollFrame);
+    }
+
+    function lift(e) {
+      drag.lifted = true;
+      drag.scroller = findScroller();
+      drag.liftX = drag.lastX;
+      drag.liftY = drag.lastY;
+      drag.gx = 0;
+      drag.gy = 0;
+      drag.cell = null;
+      drag.ok = false;
+      haptic();
+      // Capture on the LIST, matching attachReorder: a host re-render during
+      // the gesture would kill capture held on the item itself.
+      if (e && typeof e.pointerId === 'number') {
+        try { listEl.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+      }
+      var rect = drag.item.getBoundingClientRect();
+      drag.ghostLeft = rect.left;
+      drag.ghostTop = rect.top;
+      // Size is captured here too, so ghostInfo() can report the tile's live
+      // rect on every move without measuring anything mid-gesture.
+      drag.ghostW = rect.width;
+      drag.ghostH = rect.height;
+      var ghost = drag.item.cloneNode(true);
+      ghost.classList.add('un-reorder-ghost');
+      ghost.style.position = 'fixed';
+      ghost.style.left = rect.left + 'px';
+      ghost.style.top = rect.top + 'px';
+      ghost.style.width = rect.width + 'px';
+      ghost.style.height = rect.height + 'px';
+      ghost.style.margin = '0';
+      ghost.style.zIndex = '9985';
+      // pointer-events off so the host's own cellFromPoint hit-test (which
+      // runs elementFromPoint under the finger) never hits the ghost.
+      ghost.style.pointerEvents = 'none';
+      var bg = getComputedStyle(drag.item).backgroundColor;
+      if (!bg || bg === 'transparent' || bg === 'rgba(0, 0, 0, 0)') {
+        try {
+          var surface = getComputedStyle(listEl).getPropertyValue('--un-group-bg');
+          ghost.style.background = surface ? surface.trim() : '';
+        } catch (err) { /* ignore */ }
+      }
+      document.body.appendChild(ghost);
+      drag.ghost = ghost;
+      // The real item holds its cell as the dashed drop slot. It does NOT
+      // move — that is the whole difference from displacement mode.
+      drag.item.classList.add('un-reorder-slot');
+      listEl.classList.add('un-reordering');
+      if (opts.onLift) {
+        try { opts.onLift(drag.item); } catch (err) { /* ignore */ }
+      }
+      update();
+      raf = requestAnimationFrame(autoScrollFrame);
+    }
+
+    function release(cancelled) {
+      if (!drag) return;
+      if (drag.pressTimer) { clearTimeout(drag.pressTimer); drag.pressTimer = null; }
+      if (!drag.lifted) { drag = null; return; }
+      suppressClick = true;
+      setTimeout(function () { suppressClick = false; }, 0);
+
+      var item = drag.item;
+      var ghost = drag.ghost;
+      var cell = cancelled ? null : drag.cell;
+      var placed = !cancelled && !!cell && drag.ok;
+      if (placed) haptic();
+
+      // WHERE THE GHOST SETTLES. On a REFUSED or CANCELLED drop it glides
+      // back to the item's own rect — that is the "springs back" feedback,
+      // and the item is still sitting there wearing the dashed slot.
+      //
+      // On a COMMITTED drop it must glide to the cell the item is LANDING
+      // in, which is why rectForCell exists. The real item does not move
+      // during a placement drag (that is the whole difference from
+      // displacement mode), so its rect is still the ORIGIN cell — settling
+      // there would fly the tile away from the finger, back to where it was
+      // picked up, and only then let the re-render pop it into the drop
+      // cell. One release, two contradictory motions. Asking the host for
+      // the landing rect makes it one continuous motion from finger to cell.
+      var target = null;
+      if (placed && typeof opts.rectForCell === 'function') {
+        try { target = opts.rectForCell(item, cell); } catch (err) { target = null; }
+      }
+      if (!target || typeof target.left !== 'number' || typeof target.top !== 'number') {
+        target = item.getBoundingClientRect();
+      }
+      var gx = drag.gx;
+      var gy = drag.gy;
+      var tx = target.left - drag.ghostLeft;
+      var ty = target.top - drag.ghostTop;
+
+      // The hover state — highlight, and any displacement preview the host
+      // painted — stays up for the FLIGHT of a committed drop, and is torn
+      // down in finish() together with the ghost. Clearing it here would
+      // snap the displaced occupants back to their old cells while the tile
+      // is still travelling, then move them a second time on the re-render.
+      // A refused drop clears immediately: nothing is landing.
+      if (!placed) hover(null, false);
+
+      function finish() {
+        pendingFinish = null;
+        // Same task as the host's re-render below, so the preview transforms
+        // come off and the items paint in their real cells in one frame.
+        if (placed && opts.onHover) {
+          try { opts.onHover(item, null, false); } catch (err) { /* ignore */ }
+        }
+        if (ghost && ghost.parentNode) ghost.parentNode.removeChild(ghost);
+        item.classList.remove('un-reorder-slot');
+        if (placed && opts.onPlace) {
+          try { opts.onPlace(item, cell); } catch (err) { /* ignore */ }
+        }
+        if (opts.onSettle) {
+          try { opts.onSettle(placed); } catch (err) { /* ignore */ }
+        }
+      }
+
+      listEl.classList.remove('un-reordering');
+      if (raf) { cancelAnimationFrame(raf); raf = null; }
+      drag = null;
+      if (prefersReducedMotion || (Math.abs(tx - gx) < 1 && Math.abs(ty - gy) < 1)) {
+        finish();
+        return;
+      }
+      if (activeSpring) activeSpring.stop();
+      pendingFinish = finish;
+      ghost.classList.add('un-reorder-ghost-drop');
+      activeSpring = glideGhost(ghost, gx, gy, tx, ty, function () {
+        activeSpring = null;
+        finish();
+      });
+    }
+
+    function onPointerDown(e) {
+      if (drag || e.button > 0) return;
+      var items = matched();
+      var item = null;
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].contains(e.target)) { item = items[i]; break; }
+      }
+      if (!item) return;
+      var onHandle = !!(handleSel && e.target.nodeType === 1 &&
+        e.target.closest && e.target.closest(handleSel) && item.contains(e.target.closest(handleSel)));
+      var isTouch = e.pointerType === 'touch';
+      if (!isTouch && handleSel && !onHandle) return;
+      drag = {
+        pointerId: e.pointerId,
+        seq: gestureSeq(e),
+        item: item,
+        startX: e.clientX,
+        startY: e.clientY,
+        lastX: e.clientX,
+        lastY: e.clientY,
+        lifted: false,
+        armed: false,
+        pressTimer: null,
+      };
+      if (onHandle) {
+        if (!gestures.claim(drag.seq, token)) { drag = null; return; }
+        lift(e);
+      } else if (isTouch) {
+        drag.pressTimer = setTimeout(function () {
+          if (!drag || drag.lifted) return;
+          drag.pressTimer = null;
+          if (!gestures.claim(drag.seq, token)) { drag = null; return; }
+          lift(e);
+        }, longPressMs);
+      } else {
+        drag.armed = true;
+      }
+    }
+
+    function onPointerMove(e) {
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      drag.lastX = e.clientX;
+      drag.lastY = e.clientY;
+      if (!drag.lifted) {
+        var dx = e.clientX - drag.startX;
+        var dy = e.clientY - drag.startY;
+        if (drag.pressTimer) {
+          if (Math.abs(dx) > REORDER_SLOP || Math.abs(dy) > REORDER_SLOP) {
+            clearTimeout(drag.pressTimer);
+            drag = null;
+          }
+          return;
+        }
+        if (drag.armed) {
+          // 2D from the start — a placement drag is as likely to be
+          // horizontal as vertical, so no axis lock.
+          if (dx * dx + dy * dy > REORDER_SLOP * REORDER_SLOP) {
+            if (!gestures.claim(drag.seq, token)) { drag = null; return; }
+            lift(e);
+          }
+        }
+        return;
+      }
+      update();
+    }
+
+    function onPointerUp(e) {
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      release(false);
+    }
+
+    function onPointerCancel(e) {
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      release(true);
+    }
+
+    function onTouchMove(e) {
+      if (drag && drag.lifted) e.preventDefault();
+    }
+
+    function onClickCapture(e) {
+      if (suppressClick || (drag && drag.lifted)) {
+        e.stopPropagation();
+        e.preventDefault();
+      }
+    }
+
+    listEl.addEventListener('pointerdown', onPointerDown);
+    listEl.addEventListener('pointermove', onPointerMove);
+    listEl.addEventListener('pointerup', onPointerUp);
+    listEl.addEventListener('pointercancel', onPointerCancel);
+    listEl.addEventListener('touchmove', onTouchMove, { passive: false });
+    listEl.addEventListener('click', onClickCapture, true);
+
+    return {
+      detach: function () {
+        listEl.removeEventListener('pointerdown', onPointerDown);
+        listEl.removeEventListener('pointermove', onPointerMove);
+        listEl.removeEventListener('pointerup', onPointerUp);
+        listEl.removeEventListener('pointercancel', onPointerCancel);
+        listEl.removeEventListener('touchmove', onTouchMove);
+        listEl.removeEventListener('click', onClickCapture, true);
+        if (drag) {
+          if (drag.pressTimer) clearTimeout(drag.pressTimer);
+          var wasLifted = drag.lifted;
+          if (wasLifted) {
+            if (drag.ghost && drag.ghost.parentNode) drag.ghost.parentNode.removeChild(drag.ghost);
+            if (drag.item) drag.item.classList.remove('un-reorder-slot');
+            hover(null, false);
+          }
+          drag = null;
+          // A mid-lift teardown never reaches release(); fire onSettle here
+          // so a host deferral flag set in onLift can't get stuck.
+          if (wasLifted && opts.onSettle) {
+            try { opts.onSettle(false); } catch (err) { /* ignore */ }
+          }
+        }
+        if (activeSpring) { activeSpring.stop(); activeSpring = null; }
+        if (pendingFinish) {
+          var f = pendingFinish;
+          pendingFinish = null;
+          f();
+        }
+        if (raf) { cancelAnimationFrame(raf); raf = null; }
+        listEl.classList.remove('un-reordering');
+      },
+    };
+  }
+
   /* ────────────────────────────────────────────────────────────────────
    * Page transitions. type 'none' (the default, and the REQUIRED choice
    * for high-frequency UI like tab switches, menus and panels) runs the
    * mutation with no animation; 'push'/'pop' wrap it in a View
    * Transition. Re-entrant: a navigation during an active transition
    * skips animation, never queues.
+   *
+   * PUT THE WHOLE MUTATION IN `fn`. A View Transition captures the OLD
+   * state at the next rendering opportunity, not at the
+   * startViewTransition() call, so DOM changes a caller makes
+   * synchronously AFTER calling transition() — but before `fn` runs —
+   * land in the ::view-transition-old(root) snapshot: the animation then
+   * slides out a "previous page" that already carries the incoming
+   * screen's chrome (or none of the outgoing screen's content at all).
    *
    * 'zoom-in'/'zoom-out' play the iOS-homescreen expand/collapse out of
    * a tile ({ el, fromEl | fromRect, after?, fallback?, outEl? }). No
@@ -2167,6 +2669,47 @@
     return promise;
   }
 
+  // Has the document painted at least one frame yet?
+  //
+  // A View Transition animates BETWEEN two rendered states, so it needs an
+  // "old" state to snapshot. Start one before the first frame and there is
+  // nothing to capture: the browser aborts it with
+  // `InvalidStateError: Transition was aborted because of invalid state`.
+  //
+  // The shell hits that window on a DEEP-LINK BOOT. Landing directly on
+  // `#profile` / `#leaderboard` / `#settings` means App.init() routes on
+  // DOMContentLoaded and immediately asks for a 'push' — while the very
+  // first paint may still be pending. Whether it lands is a race against
+  // however long the page took to get there, which is why it showed up as
+  // a flaky-looking spray of route failures rather than one reproducible
+  // bug, and why it got measurably worse when the shell started hydrating
+  // React before DOMContentLoaded (more main-thread work inside the same
+  // window, so the paint lands after the transition more often).
+  //
+  // Skipping the animation here is not a behaviour change: an aborted
+  // transition already produced no animation. It just makes the outcome
+  // deterministic instead of timing-dependent — and a boot deep link has
+  // no previous screen to animate away from in the first place.
+  var framePainted = false;
+  function markFramePainted() { framePainted = true; }
+  if (typeof requestAnimationFrame === 'function') {
+    // Two nested rAFs: the callback of the first runs BEFORE that frame is
+    // painted, the second is the earliest point a frame is known to have
+    // reached the screen.
+    requestAnimationFrame(function () { requestAnimationFrame(markFramePainted); });
+  } else {
+    framePainted = true;
+  }
+  function hasRenderedAFrame() {
+    // `visibilityState === 'hidden'` is the other documented abort: a
+    // background tab is not being rendered, so there is no frame to
+    // capture however long the page has been open.
+    if (typeof document.visibilityState === 'string' && document.visibilityState === 'hidden') {
+      return false;
+    }
+    return framePainted;
+  }
+
   function transition(fn, opts) {
     var o = opts || {};
     var type = o.type || 'none';
@@ -2179,7 +2722,7 @@
       ? function () { fn(); o.after(); }
       : fn;
     if (
-      type === 'none' || vtActive || prefersReducedMotion ||
+      type === 'none' || vtActive || prefersReducedMotion || !hasRenderedAFrame() ||
       typeof document.startViewTransition !== 'function'
     ) {
       run();
@@ -2195,6 +2738,25 @@
       document.documentElement.removeAttribute('data-un-vt');
       run();
       return Promise.resolve();
+    }
+    // A ViewTransition hands back THREE promises, and an aborted transition
+    // rejects two of them. `finished` is handled below, but `ready` and
+    // `updateCallbackDone` were observed by nobody — so when the browser
+    // aborted a transition (`InvalidStateError: Transition was aborted
+    // because of invalid state`), that rejection surfaced as an UNHANDLED
+    // PROMISE REJECTION. Playwright reports one as a `pageerror`, and a
+    // page error on any route fails the platform's proposal checks — so a
+    // transition the browser silently declined to animate became a merge
+    // blocker on dozens of routes.
+    //
+    // Attaching no-op handlers is the whole fix: an aborted transition
+    // already ran its mutation callback (the DOM is correct, it just does
+    // not animate), so there is nothing to recover from and nothing to
+    // report. Do NOT "improve" this by logging — console.error fails the
+    // same checks.
+    if (vt.ready && typeof vt.ready.catch === 'function') vt.ready.catch(function () {});
+    if (vt.updateCallbackDone && typeof vt.updateCallbackDone.catch === 'function') {
+      vt.updateCallbackDone.catch(function () {});
     }
     return vt.finished.catch(function () {}).then(function () {
       vtActive = false;
@@ -3592,6 +4154,7 @@
     attachSwipeActions: attachSwipeActions,
     attachPullToRefresh: attachPullToRefresh,
     attachReorder: attachReorder,
+    attachGridPlacement: attachGridPlacement,
     transition: transition,
     presentSheet: presentSheet,
     presentModal: presentModal,

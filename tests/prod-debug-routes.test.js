@@ -107,8 +107,8 @@ function mint(sessionId, { prodDebug = true, secret = WORKER_SECRET } = {}) {
   return jwt.sign(
     {
       session_id: sessionId,
-      scope: 'worker:session',
-      pur: 'worker:session',
+      scope: 'worker:prod-debug',
+      pur: 'worker:prod-debug',
       ...(prodDebug ? { prod_debug: true } : {}),
     },
     secret,
@@ -191,6 +191,22 @@ test('valid worker JWT WITHOUT the prod_debug claim → 403 not_prod_debug', asy
   });
   assert.equal(r.status, 403);
   assert.equal(r.json.code, 'not_prod_debug');
+});
+
+test('general worker:session token cannot authenticate prod-debug', async () => {
+  const general = jwt.sign(
+    { session_id: ELIGIBLE_ID, scope: 'worker:session', pur: 'worker:session', prod_debug: true },
+    WORKER_SECRET,
+    { algorithm: 'HS256', issuer: 'usernode', audience: 'usernode:worker', expiresIn: '10m' }
+  );
+  const r = await call({
+    method: 'POST',
+    path: `/api/internal/sessions/${ELIGIBLE_ID}/prod-debug/sql`,
+    token: general,
+    body: { query: 'SELECT 1' },
+  });
+  assert.equal(r.status, 401);
+  assert.equal(r.json.code, 'bad_token');
 });
 
 test('JWT session id must match the route session id', async () => {

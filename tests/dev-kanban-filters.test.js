@@ -443,7 +443,7 @@ test('persistence helpers survive a storage-less environment', () => {
 // (text/priority/assignee/needs-vote) doesn't apply to sessions, so an
 // active filter must keep every session card while filtering issue cards.
 
-test('active filters keep session cards and drop non-matching issue cards', () => {
+test('a text filter now applies to session cards too (they used to be exempt)', () => {
   const AppView = makeAppView();
   AppView._ghIssues = [
     issue({ number: 5, title: 'beta bug', headless: { status: 'generating' } }),
@@ -467,8 +467,72 @@ test('active filters keep session cards and drop non-matching issue cards', () =
   AppView._archivedSessions = [];
   AppView._kanbanFilters = { q: 'zzz-no-match', priority: null, assignee: null, needsVote: false };
   const html = AppView._renderKanbanInner();
-  assert.match(html, /My pinned session/, 'pinned own session survives the filter');
-  assert.match(html, /Shared by them/, 'shared session survives the filter');
-  assert.match(html, /Only you can see your active sessions/, 'visibility caption renders');
+  // Session cards used to be EXEMPT from the filter bar entirely — type a
+  // search term and they just sat there unexplained. Now they filter on
+  // their displayed label like every other card.
+  assert.doesNotMatch(html, /My pinned session/, 'a non-matching own session is filtered out');
+  assert.doesNotMatch(html, /Shared by them/, 'a non-matching shared session is filtered out');
   assert.doesNotMatch(html, /beta bug/, 'non-matching issue card is filtered out');
+  // Every card gone, so the column reads as filtered rather than empty.
+  assert.match(html, /No matching cards/);
+});
+
+test('a session matches on its LABEL and on the issue numbers it links', () => {
+  const AppView = makeAppView();
+  AppView._ghIssues = [];
+  AppView._envIssueNumbers = new Set();
+  AppView._proposals = [];
+  AppView._govProposals = [];
+  AppView._merged = [];
+  AppView._mergedCtx = { majority: 1, activeUsers: 1 };
+  AppView._mergedTotal = 0;
+  AppView._mergedHasMore = false;
+  AppView._archivedSessions = [];
+  AppView._sharedSessions = [];
+  AppView._mySessions = [
+    { id: 51, session_title: 'Dark mode work', status: 'active', linked_issues: [900002],
+      created_at: '2026-06-01T01:00:00Z', last_activity_at: '2026-06-01T01:00:00Z' },
+  ];
+
+  const byTitle = { q: 'dark', priority: null, category: null, assignee: null, needsVote: false };
+  AppView._kanbanFilters = byTitle;
+  assert.match(AppView._renderKanbanInner(), /Dark mode work/, 'matches its displayed label');
+
+  AppView._kanbanFilters = { ...byTitle, q: '#900002' };
+  assert.match(AppView._renderKanbanInner(), /Dark mode work/, 'matches a linked issue number');
+
+  AppView._kanbanFilters = { ...byTitle, q: '#900999' };
+  assert.doesNotMatch(AppView._renderKanbanInner(), /Dark mode work/, 'an unrelated number does not');
+});
+
+test('priority / category / assignee are a VISIBLE no-op on session cards', () => {
+  const AppView = makeAppView();
+  AppView._ghIssues = [];
+  AppView._envIssueNumbers = new Set();
+  AppView._proposals = [];
+  AppView._govProposals = [];
+  AppView._merged = [];
+  AppView._mergedCtx = { majority: 1, activeUsers: 1 };
+  AppView._mergedTotal = 0;
+  AppView._mergedHasMore = false;
+  AppView._archivedSessions = [];
+  AppView._sharedSessions = [];
+  AppView._mySessions = [
+    { id: 51, session_title: 'Dark mode work', status: 'active',
+      created_at: '2026-06-01T01:00:00Z', last_activity_at: '2026-06-01T01:00:00Z' },
+  ];
+  AppView._kanbanFilters = { q: '', priority: 'high', category: null, assignee: null, needsVote: false };
+  const html = AppView._renderKanbanInner();
+  // A dev session carries no such metadata, so hiding it would be silently
+  // wrong — it stays, and the column SAYS why the filter didn't apply.
+  assert.match(html, /Dark mode work/, 'the session survives an inapplicable filter');
+  assert.match(html, /Dev sessions don't carry priority, category or assignee/);
+  assert.match(html, /not filtered by priority/);
+
+  // The predicate itself is the explicit no-op.
+  assert.equal(
+    AppView._devCardMatches('session', { session_title: 'x' },
+      { priority: 'high', assignee: 'someone', category: 'bug' }),
+    true
+  );
 });
