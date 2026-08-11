@@ -46,6 +46,7 @@ import {
   useAuthScreensPatch,
   zoomFx,
 } from './shared';
+import { waitlistOptions } from './waitlist-shared';
 
 const LANDING_TITLE = 'Usernode Social Vibecoding';
 
@@ -476,7 +477,7 @@ export function LandingScreen() {
     // Warm the survey options (memoised) while the visitor is reading the
     // pitch, so the #waitlist chips and country list are already filled by the
     // time they tap through.
-    (legacy().AuthScreens?._waitlistOptions as undefined | (() => unknown))?.();
+    void waitlistOptions();
     // Screenshot-state deep link `?shot=anon-back` (#1028) — see above.
     let shot: string | null = null;
     try {

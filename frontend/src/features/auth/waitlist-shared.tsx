@@ -97,20 +97,29 @@ export function ChipRow({
   );
 }
 
-/** Multi-select chip row. Clicking a selected chip removes it. */
+/** Add or drop one key. Pass to a `useState` setter, never to a stale array. */
+export function toggleChip(selected: string[], key: string): string[] {
+  return selected.includes(key) ? selected.filter((k) => k !== key) : [...selected, key];
+}
+
+/**
+ * Multi-select chip row. Clicking a selected chip removes it.
+ *
+ * It reports the KEY that was clicked rather than the next array, because
+ * `_chipRow` held its selection in a closure variable it re-read on every click:
+ * two clicks in one tick each saw the previous one. A `value.filter(…)` computed
+ * here would be built from the last render's array, so the second click of a
+ * pair would drop the first. The caller applies {@link toggleChip} inside its
+ * state updater instead.
+ */
 export function MultiChipRow({
   id,
   options,
   className = 'flex flex-wrap gap-1.5',
   value,
-  onChange,
-}: ChipRowProps & { value: string[]; onChange: (next: string[]) => void }) {
-  const toggle = useCallback(
-    (key: string) => {
-      onChange(value.includes(key) ? value.filter((k) => k !== key) : [...value, key]);
-    },
-    [onChange, value],
-  );
+  onToggle,
+}: ChipRowProps & { value: string[]; onToggle: (key: string) => void }) {
+  const click = useCallback((key: string) => () => onToggle(key), [onToggle]);
   return (
     <div id={id} className={className}>
       {Object.entries(options).map(([key, label]) => (
@@ -118,7 +127,7 @@ export function MultiChipRow({
           key={key}
           type="button"
           className={CHIP_BASE + (value.includes(key) ? CHIP_ON : CHIP_OFF)}
-          onClick={() => toggle(key)}
+          onClick={click(key)}
         >
           {label}
         </button>
