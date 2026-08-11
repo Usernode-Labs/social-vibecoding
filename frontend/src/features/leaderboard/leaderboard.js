@@ -31,6 +31,28 @@
 //
 // Hosted in #leaderboard-root; mounted/unmounted by App.navigateToLeaderboard
 // when the #leaderboard hash route is active.
+//
+// The screen around all of this is React's as of #1083 chunk F (see
+// ./index.tsx), and one thing moved with it: the SECTION TAB STRIP. This module
+// used to innerHTML three buttons into #standings-tabs; that host is rendered
+// from the Tabs primitive now, so _renderSectionTabs() publishes the active
+// section instead of writing DOM (see ./section-store.ts). Everything else is
+// unchanged — the three panes are still innerHTML hosts this module and its two
+// guest modules own, and a trigger's click still calls _setSection().
+
+// The section store's accessor, duplicated identically from
+// ./section-store.ts — see that file's header for why this module publishes
+// through `window` rather than importing it.
+const LEADERBOARD_SECTION_STORE_KEY = '__usernodeLeaderboardSection';
+
+function leaderboardSectionStore() {
+  let store = window[LEADERBOARD_SECTION_STORE_KEY];
+  if (!store) {
+    store = { mounted: false, section: 'topochain', listeners: new Set() };
+    window[LEADERBOARD_SECTION_STORE_KEY] = store;
+  }
+  return store;
+}
 
 const Leaderboard = {
   _open: false,
@@ -171,29 +193,27 @@ const Leaderboard = {
     }
   },
 
+  // Publish the active section; <LeaderboardScreen/> renders the strip from
+  // it. The tab LABELS and the active/inactive class tables moved with the
+  // markup — labels into the island's SECTION_TABS list, classes into the Tabs
+  // primitive (frontend/@/components/ui/tabs.tsx) — and the standings tab is
+  // still labelled "Leaderboard" rather than "Topochain" there: it is the
+  // primary ranking on this platform and the screen's own title. The
+  // `data-standings-tab` KEYS stay as they are — every hash alias in app.js and
+  // every dapp.json check speaks in them, and this method's SECTIONS list still
+  // validates against them in _setSection.
   _renderSectionTabs() {
-    const host = document.getElementById('standings-tabs');
-    if (!host) return;
-    // The standings tab is labelled "Leaderboard", not "Topochain": it is
-    // the primary ranking on this platform and the screen's own title. The
-    // `data-standings-tab` KEYS stay as they are — every hash alias in
-    // app.js and every dapp.json check speaks in them.
-    const sections = [
-      { key: 'topochain', label: 'Leaderboard' },
-      { key: 'kudos', label: 'Kudos' },
-      { key: 'challenges', label: 'Challenges' },
-    ];
-    host.innerHTML = sections.map((s) => {
-      const active = s.key === Leaderboard.section;
-      const cls = active
-        ? 'border-violet-500 text-violet-700 dark:text-violet-300'
-        : 'border-transparent text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200';
-      return `<button data-standings-tab="${s.key}" aria-current="${active ? 'page' : 'false'}"
-        class="px-3 py-2 text-sm font-semibold border-b-2 -mb-px ${cls}">${s.label}</button>`;
-    }).join('');
-    host.querySelectorAll('[data-standings-tab]').forEach((btn) => {
-      btn.addEventListener('click', () => Leaderboard._setSection(btn.dataset.standingsTab));
-    });
+    const store = leaderboardSectionStore();
+    if (store.mounted && store.section === Leaderboard.section) return;
+    store.mounted = true;
+    store.section = Leaderboard.section;
+    for (const listener of [...store.listeners]) {
+      try {
+        listener();
+      } catch (err) {
+        console.error('[leaderboard] section listener failed', err);
+      }
+    }
   },
 
   // Re-fetch every cached pane (or just the active one) and re-render.
@@ -890,6 +910,16 @@ const Leaderboard = {
   },
 };
 
+// These two used to be AMBIENT: as a classic script this file's top-level
+// function declarations were window properties, so they joined the shell's
+// last-writer-wins chain of identically-named escape helpers (group-chat.js,
+// app-view.js and home.js each declare their own). Inside the bundle a
+// module's identifiers are its own, which is strictly better — this file now
+// provably calls THESE bodies. Nothing regressed by dropping out of the chain:
+// the four scripts that read escapeHtml/escapeAttr ambiently (app-secrets.js,
+// dev-chat.js, home-panels.js, streaming-markdown.js) were resolving to
+// app-view.js's and home.js's copies, both of which load later and are still
+// classic scripts.
 function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = String(str == null ? '' : str);
@@ -900,4 +930,11 @@ function escapeAttr(str) {
   return escapeHtml(str).replace(/"/g, '&quot;');
 }
 
-window.Leaderboard = Leaderboard;
+// Still published as a global. This module rides in the React bundle as of
+// #1083 chunk F, but app.js's #leaderboard hash branch,
+// App.navigateToLeaderboard / _routeLeaderboard, its pull-to-refresh handler
+// and the three guest modules in this folder
+// all still reach it by name. The guard is for the SSG prerender pass —
+// frontend/scripts/build-shell.mjs evaluates the island's whole module graph
+// in Node, where there is no window.
+if (typeof window !== 'undefined') window.Leaderboard = Leaderboard;

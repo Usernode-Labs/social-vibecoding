@@ -5,7 +5,7 @@
 // it, and the separate #challenges screen (the deleted public/js/challenges.js),
 // into the Leaderboard screen's third tab:
 //   - the event picker + hero it used to render itself moved UP into the
-//     shared bar owned by public/js/topochain-event-context.js, so this pane
+//     shared bar owned by ./topochain-event-context.js, so this pane
 //     and the standings pane always describe the same event;
 //   - the old #challenges screen's one unique contribution — YOUR OWN points
 //     on each challenge — became a decoration on these (richer) cards, see
@@ -14,7 +14,7 @@
 //     standings tab, which the "See where the season stands" link now points at.
 //
 // Hosted in #challenges-root inside #leaderboard-screen (public/index.html);
-// mounted/unmounted by the Leaderboard module (public/js/leaderboard.js) when
+// mounted/unmounted by the Leaderboard module (./leaderboard.js) when
 // its section flips, not by a navigate* pair in app.js. The legacy
 // #topochain/seasons and #challenges hashes both still land here — the router
 // aliases them to #leaderboard/challenges.
@@ -43,8 +43,9 @@
 // organiser flag about the CHALLENGE ("this one is over"), not a per-user
 // completion. The per-user signal is activities_total. This pane is now the
 // HOME for that flag: the profile screen used to list the season's finished
-// challenges and no longer does (see public/js/profile.js's header), so the
-// grid groups them, counts them in a summary line and dims them.
+// challenges and no longer does (see the header of
+// frontend/src/features/profile/profile.js), so the grid groups them, counts
+// them in a summary line and dims them.
 //
 // That is why `completed` is read from the PUBLIC row rather than from the
 // personalization map it used to come from: the chip, the grouping and the
@@ -678,4 +679,10 @@ const TopochainChallenges = {
   },
 };
 
-window.TopochainChallenges = TopochainChallenges;
+// Still published as a global. This module rides in the React bundle as of
+// #1083 chunk F, but ./leaderboard.js's lazy mount, app.js's
+// pull-to-refresh and its #982 deep-link branch (openFromHash)
+// all still reach it by name. The guard is for the SSG prerender pass —
+// frontend/scripts/build-shell.mjs evaluates the island's whole module graph
+// in Node, where there is no window.
+if (typeof window !== 'undefined') window.TopochainChallenges = TopochainChallenges;

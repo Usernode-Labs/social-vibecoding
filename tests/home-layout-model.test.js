@@ -1,4 +1,5 @@
-// public/js/home-layout.js — the pure geometry behind free-form home-screen
+// frontend/src/features/home/home-layout.js — the pure geometry behind
+// free-form home-screen
 // placement. Everything here is a plain function over plain data, so it is
 // tested directly with no DOM at all.
 //
@@ -28,9 +29,21 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
-const { HomeLayout } = require('../public/js/home-layout.js');
+const { LAYOUT_SRC } = require('./helpers/home-modules');
+
+// The module moved into the React bundle with the home screen (#1083 chunk F
+// step 4), and frontend/ is `"type": "module"` — so Node reads the file as ESM
+// and a plain require() of it yields an empty namespace. Evaluate its text
+// instead. Deliberately NOT in a vm context, unlike its sibling home tests:
+// the assertions below are deepEqual on returned arrays, and a vm realm's
+// Array.prototype is not this one's, so every one of them would fail on
+// prototype identity alone. This module imports nothing and touches no DOM
+// (`window` is absent, so its publication line no-ops), so the host realm is
+// a complete environment for it.
+const HomeLayout = new Function(`${LAYOUT_SRC}\n;return HomeLayout;`)();
 
 const INDEX = read('public/index.html');
+const ISLAND = read('frontend/src/features/home/index.tsx');
 const CSS = read('public/css/app.css');
 const SW = read('public/sw.js');
 const SCHEMA = read('src/db/schema.sql');
@@ -69,13 +82,22 @@ test('the column count matches what the CSS actually renders', () => {
   assert.match(CSS, /@media \(min-width: 640px\)/);
 });
 
-test('the module is loaded before its consumers and precached', () => {
-  const layout = INDEX.indexOf('/js/home-layout.js');
-  const panels = INDEX.indexOf('/js/home-panels.js');
-  const home = INDEX.indexOf('/js/home.js"');
+test('the module is evaluated before its consumers, and precached', () => {
+  // This used to read three <script src> positions out of public/index.html.
+  // #1083 chunk F step 4 moved all three modules into the React bundle, so the
+  // order is the island's import list and the precached asset is the bundle
+  // entry. The CONTRACT is unchanged: geometry evaluates first, because
+  // home.js and home-panels.js both read `HomeLayout` as a bare identifier
+  // rather than importing it.
+  const layout = ISLAND.indexOf("'./home-layout.js'");
+  const panels = ISLAND.indexOf("'./home-panels.js'");
+  const home = ISLAND.indexOf("'./home.js'");
   assert.ok(layout > 0 && layout < panels && layout < home,
-    'geometry loads before the two modules that lay out against it');
-  assert.match(SW, /'\/js\/home-layout\.js'/);
+    'geometry is imported before the two modules that lay out against it');
+  assert.match(SW, /'\/shell\/assets\/shell\.js'/);
+  // ...and the retired tag is gone from both halves, not just one.
+  assert.doesNotMatch(INDEX, /\/js\/home-layout\.js/);
+  assert.doesNotMatch(SW, /\/js\/home-layout\.js/);
 });
 
 // ── Footprints ────────────────────────────────────────────────────────
@@ -369,7 +391,7 @@ test('deriveDefault places the create widget with no notion of quota', () => {
   }
   // Matched against code, not comments — the one mention is the note in
   // repair() explaining why quota is deliberately not an input.
-  const code = read('public/js/home-layout.js').replace(/^\s*\/\/.*$/gm, '');
+  const code = LAYOUT_SRC.replace(/^\s*\/\/.*$/gm, '');
   assert.doesNotMatch(code, /canCreateApps|app_quota/,
     'placement geometry must never read a permission');
 });

@@ -11,8 +11,8 @@
 // the same list — and season-scoped it ran to ~32 cards, burying the rank,
 // token and breakdown blocks this screen actually exists for. That list now
 // lives on the Leaderboard screen's Challenges tab, grouped and counted
-// per event (public/js/topochain-challenges.js), which is where the rest of
-// the challenge UI already was.
+// per event (features/leaderboard/topochain-challenges.js), which is where the
+// rest of the challenge UI already was.
 //
 // Identity comes from the platform session: since the topochain merge,
 // leaderboard participants ARE platform users, so the /me/* routes scope
@@ -33,7 +33,11 @@
 // display name is the supported way to change how your name appears.
 //
 // Hosted in #profile-root; mounted/unmounted by App.navigateToProfile /
-// App._exitProfile when the #profile hash route is active.
+// App._exitProfile when the #profile hash route is active. The host and the
+// screen around it are React's as of #1083 chunk F (see ./index.tsx); this
+// module still owns everything inside it, and builds that subtree with
+// createElement + textContent rather than innerHTML, which is why it needs no
+// escaping helper of its own.
 
 const Profile = {
   _open: false,
@@ -958,4 +962,9 @@ const Profile = {
   },
 };
 
-window.Profile = Profile;
+// Still published as a global: app.js's #profile hash branch,
+// App.navigateToProfile / _exitProfile and the header menu's Profile row all
+// reach this through `window.Profile`, and app.js is a classic script.
+// Guarded because the SSG prerender pass evaluates this module in Node (the
+// island imports it).
+if (typeof window !== 'undefined') window.Profile = Profile;

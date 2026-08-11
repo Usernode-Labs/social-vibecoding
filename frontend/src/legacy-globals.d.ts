@@ -86,6 +86,15 @@ declare global {
       refreshDeployDot(): void;
       [key: string]: unknown;
     };
+    /**
+     * features/leaderboard/leaderboard.js — the Leaderboard screen's section
+     * state. The island's tab strip reports a click back through
+     * `_setSection`, which is what the strip's own innerHTML'd listener did.
+     */
+    Leaderboard?: {
+      _setSection?(section: string): void;
+      [key: string]: unknown;
+    };
     /** The inline head-blocking theme module in src/head.html. */
     Theme?: {
       get(): 'light' | 'dark' | 'system';

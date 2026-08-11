@@ -283,7 +283,7 @@ test('the three chrome-writing screen modules accept chrome: false', () => {
   const files = {
     'frontend/src/features/settings/settings.js': 'Settings',
     'frontend/src/features/admin/admin-console.js': 'AdminConsole',
-    'public/js/browse.js': 'Browse',
+    'frontend/src/features/apps/browse.js': 'Browse',
   };
   for (const [file, name] of Object.entries(files)) {
     const src = fs.readFileSync(path.join(root, file), 'utf8');

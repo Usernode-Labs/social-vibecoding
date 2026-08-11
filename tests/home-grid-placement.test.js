@@ -34,10 +34,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { installAppCard } = require('./helpers/app-card');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
-const HOME_SRC = read('public/js/home.js');
-const LAYOUT_SRC = read('public/js/home-layout.js');
+const { HOME_SRC, LAYOUT_SRC } = require('./helpers/home-modules');
 
 // The registry the server serves, as the client sees it.
 const REGISTRY = [
@@ -127,6 +127,9 @@ function makeHome({ width = 1280, canCreateApps = true } = {}) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
+  // home.js delegates iconTileFor / renderAppPillsHtml to window.AppCard
+  // (frontend/src/features/apps/app-card.js) since #1083 chunk F.
+  installAppCard(sandbox);
   vm.runInContext(`${LAYOUT_SRC}\n${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
   const Home = sandbox.__Home;
   const HomeLayout = sandbox.HomeLayout;
