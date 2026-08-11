@@ -31,6 +31,7 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 // used to read public/js/auth-screens.js read the component instead. Same
 // contracts, same behaviour — a different file owns them.
 const LANDING_TSX = 'frontend/src/features/auth/landing.tsx';
+const WAITLIST_TSX = 'frontend/src/features/auth/waitlist.tsx';
 
 // ─── index.html: persistent header ────────────────────────────────
 
@@ -156,13 +157,17 @@ test('#waitlist is a registered route ordered under landing, above #more', () =>
 });
 
 test('the waitlist screen swaps the form for the queued note on a session', () => {
-  const js = read('public/js/auth-screens.js');
-  const fn = js.match(/_waitlistOnShow\(\)\s*\{[\s\S]*?\n    \},/);
-  assert.ok(fn, '_waitlistOnShow exists');
-  // Same predicate _renderLandingHeader uses.
-  assert.match(fn[0], /window\.App && App\.user/);
-  assert.match(fn[0], /waitlist-form/);
-  assert.match(fn[0], /waitlist-queued/);
+  // Stage 1 is React since #1080 chunk C, so both branches are derived from
+  // one piece of state rather than toggled onto two elements.
+  const tsx0 = read(WAITLIST_TSX);
+  const fn = tsx0.match(/const waitlistOnShow = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[/);
+  assert.ok(fn, 'waitlistOnShow exists');
+  // Same predicate the landing header uses — shared.ts's hasSession.
+  assert.match(fn[0], /sessionExists\(\)/);
+  assert.match(read('frontend/src/features/auth/shared.ts'),
+    /export function hasSession\(\)[\s\S]*?legacy\(\)\.App\?\.user/);
+  assert.match(tsx0, /id="waitlist-form"[\s\S]{0,200}hiddenLast\(hasSession \|\| joined/);
+  assert.match(tsx0, /id="waitlist-queued"[\s\S]{0,200}hiddenFirst\(!hasSession/);
   // AppBar mirroring for the Flutter WebView, same as the landing header.
   assert.match(fn[0], /document\.title/);
   // The landing CTA block toggles its LINK now, not a form.
@@ -201,27 +206,33 @@ test('the anonymous screens are reachable to shots via ?shot=anon', () => {
   // Pure UI state: no env gate, and no request of its own.
   assert.doesNotMatch(fn[0], /USERNODE_ENV|fetch\(/);
   // The joined shot paints the success state client-side — it never POSTs.
-  const auth = read('public/js/auth-screens.js');
-  const joined = auth.match(/_showWaitlistJoinedShot\(\) \{[\s\S]*?\n    \},/);
-  assert.ok(joined, '_showWaitlistJoinedShot exists');
-  assert.doesNotMatch(joined[0], /fetch\(/);
-  assert.match(joined[0], /waitlist-more-offer/);
+  const tsx1 = read(WAITLIST_TSX);
+  const shot = tsx1.match(/const shotJoined = shot === 'waitlist-joined';[\s\S]*?\n    \}/);
+  assert.ok(shot, 'the waitlist-joined shot branch exists');
+  assert.doesNotMatch(shot[0], /fetch\(/);
+  // It shows the stage-2 offer with no token, so the link keeps the inert
+  // prerendered href.
+  assert.match(shot[0], /setOffer\(true\)/);
+  assert.doesNotMatch(shot[0], /setMoreToken/);
+  assert.match(tsx1, /id="waitlist-more-offer"[\s\S]{0,200}hiddenFirst\(\s*!offer/);
 });
 
-test('the stage-1 submit handler is wired before the options fetch', () => {
-  const js = read('public/js/auth-screens.js');
-  const fn = js.match(/async _wireStage1Form\(\) \{[\s\S]*?\n    \},/);
-  assert.ok(fn, '_wireStage1Form exists');
-  const wireAt = fn[0].indexOf('_wireStage1Submit(');
-  const awaitAt = fn[0].indexOf('await AuthScreens._waitlistOptions()');
-  assert.ok(wireAt > -1 && awaitAt > -1, 'both the submit wiring and the await are present');
-  // The email field is focused on arrival, so a submit inside the fetch
-  // window must not fall through to a native GET navigation.
-  assert.ok(wireAt < awaitAt, 'submit is wired before the await');
-  const submit = js.match(/_wireStage1Submit\(form, btn, showMsg\) \{[\s\S]*?\n    \},/);
-  assert.ok(submit, '_wireStage1Submit exists');
-  assert.match(submit[0], /preventDefault/);
+test('the stage-1 submit handler cannot be later than the first render', () => {
+  // The imperative version wired the submit listener BEFORE awaiting the
+  // options fetch on purpose: the email field is focused on arrival, so a
+  // submit inside the fetch window would otherwise fall through to a native
+  // GET navigation off the SPA. React removes the window rather than ordering
+  // it — onSubmit is part of the element, and the options arrive in an effect
+  // that cannot run before the render that attached it.
+  const tsx = read(WAITLIST_TSX);
+  assert.match(tsx, /id="waitlist-form"[\s\S]{0,200}onSubmit=\{onSubmit\}/);
+  const submit = tsx.match(/const onSubmit = useCallback\([\s\S]*?\n    \[discovery\],\s*\n  \);/);
+  assert.ok(submit, 'onSubmit exists');
+  assert.match(submit[0], /e\.preventDefault\(\)/);
   assert.match(submit[0], /'\/api\/public\/waitlist'/);
+  // The options really are effect-scoped, not fetched during render.
+  const shared = read('frontend/src/features/auth/waitlist-shared.tsx');
+  assert.match(shared, /export function useWaitlistOptions\(\)[\s\S]*?useEffect\(/);
 });
 
 // ─── index.html + landing.tsx: in-flow app viewer ─────────────────

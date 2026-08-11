@@ -299,56 +299,14 @@
 
 
     // ── Waitlist survey (two-stage, ported from topochain) ───────────
-
-    // Stage 1 lives on its own screen (#waitlist). The landing page only
-    // links here — see the CTA block in index.html.
-    _wireWaitlist() {
-      AuthScreens._wireStage1Form();
-    },
-
-    // Form vs "you're already on the list", plus the screen title. A
-    // waiting-room session already HAS an account in the queue, so the join
-    // form is wrong for them — same predicate _renderLandingHeader uses.
-    _waitlistOnShow() {
-      // `?shot=waitlist-joined` paints the success state instead of the
-      // form (screenshot-state deep link — see App.init / _anonShot).
-      let shot = null;
-      try { shot = new URLSearchParams(location.search).get('shot'); } catch (_) {}
-      if (shot === 'waitlist-joined') AuthScreens._showWaitlistJoinedShot();
-
-      const hasSession = !!(window.App && App.user);
-      const form = byId('waitlist-form');
-      const queued = byId('waitlist-queued');
-      // Never resurrect the form over the success state (a re-show after a
-      // join, e.g. back-then-forward).
-      const joined = byId('waitlist-joined');
-      const isJoined = !!(joined && !joined.classList.contains('hidden'));
-      if (form) form.classList.toggle('hidden', hasSession || isJoined);
-      if (queued) queued.classList.toggle('hidden', !hasSession);
-
-      if (!hasSession && !isJoined) {
-        const email = byId('waitlist-email');
-        if (email) email.focus({ preventScroll: true });
-      }
-      // Mirror into the tab title so the Flutter WebView's AppBar follows
-      // the screen, same as _renderLandingHeader does for the landing page.
-      try { document.title = 'Join the waitlist'; } catch (_) {}
-    },
-
-    // Screenshot-state deep link (`?shot=waitlist-joined`): paints the
-    // post-submit success state with the stage-2 offer so the captures and
-    // the dapp.json check have a URL for it. Pure UI state — it never POSTs,
-    // never writes, and the stage-2 link keeps its inert default href.
-    _showWaitlistJoinedShot() {
-      const form = byId('waitlist-form');
-      const msg = byId('waitlist-msg');
-      const joined = byId('waitlist-joined');
-      const offer = byId('waitlist-more-offer');
-      if (form) form.classList.add('hidden');
-      if (msg) msg.classList.add('hidden');
-      if (joined) joined.classList.remove('hidden');
-      if (offer) offer.classList.remove('hidden');
-    },
+    //
+    // #1080 chunk C: stage 1 is React (frontend/src/features/auth/waitlist.tsx)
+    // — the form, the `?shot=waitlist-joined` success state and the stage-2
+    // offer. Stage 2 below is still this module's, and the two share the
+    // options fetch and the chip/select helpers that follow, so those stay
+    // until the #more screen crosses over too.
+    _wireWaitlist() {},
+    _waitlistOnShow() {},
 
     // The survey option definitions (chips, selects, countries) come
     // from the server so the form and its validation share one source.
@@ -415,113 +373,6 @@
         opt.textContent = label;
         select.appendChild(opt);
       }
-    },
-
-    // Stage 1: the #waitlist screen's four questions. Submits to the join
-    // endpoint; on a first join the response carries the stage-2
-    // capability token, which turns into the "Want in sooner?" offer.
-    _stage1Discovery: null,
-    async _wireStage1Form() {
-      const form = byId('waitlist-form');
-      if (!form) return;
-      const btn = byId('waitlist-submit');
-      const msg = byId('waitlist-msg');
-
-      const showMsg = (text, isError) => {
-        msg.textContent = text;
-        msg.className = 'text-sm mt-3 ' + (isError
-          ? 'text-red-500 dark:text-red-400'
-          : 'text-emerald-600 dark:text-emerald-400');
-      };
-
-      // Registered BEFORE the options await: the visitor lands on this
-      // screen with the email field already focused, so a fast submit
-      // inside the fetch window would otherwise fall through to a native
-      // GET navigation off the SPA.
-      AuthScreens._wireStage1Submit(form, btn, showMsg);
-
-      const opts = await AuthScreens._waitlistOptions();
-      if (opts) {
-        // Country select, grouped by region.
-        const country = byId('waitlist-country');
-        for (const [region, codes] of Object.entries(opts.countries || {})) {
-          const group = document.createElement('optgroup');
-          group.label = region;
-          for (const [code, name] of Object.entries(codes)) {
-            const opt = document.createElement('option');
-            opt.value = code;
-            opt.textContent = name;
-            group.appendChild(opt);
-          }
-          country.appendChild(group);
-        }
-        // Discovery chips + the source-specific detail placeholder.
-        const detail = byId('waitlist-discovery-detail');
-        AuthScreens._stage1Discovery = AuthScreens._chipRow(
-          byId('waitlist-discovery-chips'), opts.discovery_sources || {}, {
-            onChange: (source) => {
-              const labels = opts.discovery_detail_labels || {};
-              detail.placeholder =
-                (labels[source] || 'Which one?') + ' — optional';
-            },
-          });
-      }
-    },
-
-    _wireStage1Submit(form, btn, showMsg) {
-      const msg = byId('waitlist-msg');
-      form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const emailVal = byId('waitlist-email').value.trim();
-        const madeUrl = byId('waitlist-made-url').value.trim();
-        const source = AuthScreens._stage1Discovery
-          ? AuthScreens._stage1Discovery.get() : null;
-        // Client preflight mirroring the server's stage-1 rules, so the
-        // common misses get a message without a round trip.
-        if (!emailVal) return showMsg('Please enter your email.', true);
-        if (!madeUrl) return showMsg('Please link something you have made.', true);
-        if (!source) return showMsg('Please tell us how you found us.', true);
-
-        btn.disabled = true;
-        try {
-          const res = await fetch('/api/public/waitlist', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              email: emailVal,
-              made_url: madeUrl,
-              made_note: byId('waitlist-made-note').value.trim() || undefined,
-              country: byId('waitlist-country').value || undefined,
-              city: byId('waitlist-city').value.trim() || undefined,
-              discovery_source: source,
-              discovery_detail: byId('waitlist-discovery-detail').value.trim() || undefined,
-              referrer_handle: byId('waitlist-referrer').value.trim() || undefined,
-            }),
-          });
-          const data = await res.json().catch(() => null);
-          if (res.ok) {
-            // Joined: swap the form for the success state, and offer
-            // stage 2 right away when this was a first join (the email
-            // carries the same link for anyone who stops here).
-            msg.classList.add('hidden');
-            form.classList.add('hidden');
-            const joined = byId('waitlist-joined');
-            if (joined) joined.classList.remove('hidden');
-            const token = data && data.more_token;
-            if (token) {
-              const link = byId('waitlist-more-link');
-              if (link) link.href = '#more/' + token;
-              const offer = byId('waitlist-more-offer');
-              if (offer) offer.classList.remove('hidden');
-            }
-          } else {
-            showMsg((data && data.error) || 'Something went wrong — try again.', true);
-          }
-        } catch (_) {
-          showMsg('Connection issue — try again.', true);
-        }
-        btn.disabled = false;
-      });
     },
 
     // ── Stage 2: "Want in sooner?" (#more/<token>) ────────────────────

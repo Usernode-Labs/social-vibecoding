@@ -49,6 +49,7 @@ import { LandingScreen } from './features/auth/landing';
 import { LoginScreen } from './features/auth/login';
 import { RegisterScreen } from './features/auth/register';
 import { WaitingScreen } from './features/auth/waiting';
+import { WaitlistScreen } from './features/auth/waitlist';
 import { Dialogs } from './features/dialogs';
 import { OfflineBanner, ViewAsNonAdminBanner } from './features/shell/banners';
 
@@ -2106,216 +2107,15 @@ export function Shell() {
       */}
       <WaitingScreen />
       {/*
-          Stage-1 waitlist survey — its own screen (#waitlist), reached from
-          the landing CTA block's link and the persistent header's "Join
-          waitlist" button. It used to render flat inside the landing CTA
-          block, which pushed the app directory far down the page. Same shape
-          as #auth-more-screen: a corner Back link (data-auth-back → #landing)
-          over a narrow scrolling column. Deliberately NOT a <header> element —
-          header-layout.js measures document.querySelector('header') and must
-          keep resolving to #platform-header.
+          Stage-1 waitlist survey — features/auth/waitlist.tsx (#1080 chunk C).
+          Its own screen (#waitlist), reached from the landing CTA block's link
+          and the persistent header's "Join waitlist" button; it used to render
+          flat inside the landing CTA block, which pushed the app directory far
+          down the page. Deliberately NOT a <header> element — header-layout.js
+          measures document.querySelector('header') and must keep resolving to
+          #platform-header.
       */}
-      <main
-        id="auth-waitlist-screen"
-        className="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll bg-white dark:bg-zinc-950"
-      >
-        <a
-          href="#landing"
-          data-auth-back=""
-          className="fixed left-4 z-10 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400"
-          style={{ top: "calc(env(safe-area-inset-top, 0px) + 1rem)" }}
-        >
-          &larr; Back
-        </a>
-        <div className="max-w-2xl mx-auto px-6 py-16">
-          <h1 className="text-2xl font-bold">
-            Join the waitlist
-          </h1>
-          <p className="mt-3 text-sm text-zinc-500 dark:text-zinc-400">
-            Usernode Social Vibecoding is a place where users describe the app
-        they want in chat, an AI builds it, and the community votes the
-        changes in. Every app in the directory was built here by the people
-        who use it — they run on the Usernode chain, and contributors own a
-        share of what they build.
-          </p>
-          <p className="mt-3 text-sm text-zinc-500 dark:text-zinc-400">
-            Platform access opens in batches. Join the waitlist and we'll email
-        you when your spot opens — the public apps are open to everyone right
-        now.
-            <span className="font-medium text-zinc-700 dark:text-zinc-200">
-              Four questions to join.
-            </span>
-          </p>
-          {/*
-              Stage-1 waitlist survey (two-stage waitlist, ported from the
-              original topochain waitlist): email, something you've made,
-              where you are, how you found us. Option chips and the country
-              list render from GET /api/public/waitlist/options so the form
-              and server validation share one definition.
-          */}
-          <form id="waitlist-form" className="mt-8 space-y-5">
-            <div>
-              <label htmlFor="waitlist-email" className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
-                Your email address
-                <span className="text-red-500">
-                  *
-                </span>
-              </label>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">
-                We only email you when your spot comes up. No newsletter.
-              </p>
-              <input
-                id="waitlist-email"
-                type="email"
-                required={true}
-                maxLength={255}
-                placeholder="you@example.com"
-                autoComplete="email"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-              />
-            </div>
-            <div>
-              <label
-                htmlFor="waitlist-made-url"
-                className="block text-sm font-medium text-zinc-700 dark:text-zinc-200"
-              >
-                Link something you&rsquo;ve made
-                <span className="text-red-500">
-                  *
-                </span>
-              </label>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">
-                A repo, a site, a bot, a mod, a newsletter, a spreadsheet that runs your fantasy league. Built with AI counts — we care that it exists, not how you made it.
-              </p>
-              <input
-                id="waitlist-made-url"
-                type="url"
-                maxLength={2000}
-                placeholder="https://"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-              />
-              <input
-                id="waitlist-made-note"
-                type="text"
-                maxLength={140}
-                placeholder="What is it, in one line? — optional"
-                className="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
-                Where are you?
-                <span className="text-zinc-400 font-normal">
-                  Optional
-                </span>
-              </label>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">
-                We balance each group across regions. It&rsquo;s never used to reject anyone — leave it blank if you&rsquo;d rather not say.
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <select
-                  id="waitlist-country"
-                  className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-                >
-                  <option value="">
-                    Select a country&hellip;
-                  </option>
-                </select>
-                <input
-                  id="waitlist-city"
-                  type="text"
-                  maxLength={120}
-                  placeholder="City"
-                  className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-                />
-              </div>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
-                How did you find us?
-                <span className="text-red-500">
-                  *
-                </span>
-              </label>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">
-                Pick the closest one.
-              </p>
-              <div id="waitlist-discovery-chips" className="flex flex-wrap gap-1.5">
-              </div>
-              <input
-                id="waitlist-discovery-detail"
-                type="text"
-                maxLength={255}
-                placeholder="Which one? — optional"
-                className="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-              />
-              <input
-                id="waitlist-referrer"
-                type="text"
-                maxLength={255}
-                placeholder="Did someone refer you? Their handle — optional"
-                className="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-              />
-            </div>
-            <button
-              type="submit"
-              id="waitlist-submit"
-              className="rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 px-5 py-2 text-sm font-medium text-white transition-colors"
-            >
-              Join the waitlist
-            </button>
-          </form>
-          <p id="waitlist-msg" className="hidden text-sm mt-3">
-          </p>
-          {/*
-              Success state: joined. Stage 2 is offered straight away —
-              people are most willing to keep answering right after they
-              commit; the join email carries the same link for anyone who
-              stops here.
-          */}
-          <div id="waitlist-joined" className="hidden mt-8">
-            <p className="text-sm text-emerald-600 dark:text-emerald-400 font-medium">
-              You're on the waitlist — we'll email you when your spot opens.
-            </p>
-            <div
-              id="waitlist-more-offer"
-              className="hidden mt-4 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 p-4"
-            >
-              <p className="text-xs font-semibold uppercase tracking-widest text-violet-600 dark:text-violet-400">
-                Optional — moves you up the list
-              </p>
-              <h3 className="mt-1 text-base font-semibold">
-                Want in sooner?
-              </h3>
-              <p className="mt-1.5 text-sm text-zinc-500 dark:text-zinc-400">
-                Four more questions, about three minutes — the group you&rsquo;d bring,
-            a tool you&rsquo;ve lost, where else you are. These are the answers we
-            actually read when we pick the next group.
-              </p>
-              <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-                <a
-                  id="waitlist-more-link"
-                  href="#landing"
-                  className="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors"
-                >
-                  Answer them now
-                </a>
-                <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                  Or stop here — you&rsquo;re on the list either way, and the link is in your email.
-                </span>
-              </div>
-            </div>
-          </div>
-          {/*
-              Swapped in for the form when a (waiting-room) session exists —
-              they already have an account in the queue, so asking them to
-              join again is wrong. Mirrors #landing-cta-queued.
-          */}
-          <p id="waitlist-queued" className="hidden mt-8 text-sm text-zinc-500 dark:text-zinc-400">
-            You're already on the waitlist — we'll email you when your spot opens.
-          </p>
-        </div>
-      </main>
+      <WaitlistScreen />
       {/*
           Stage-2 waitlist survey — "Want in sooner?" (#more/<token>, two-
           stage waitlist ported from the original topochain waitlist). All

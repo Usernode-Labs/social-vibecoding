@@ -3368,6 +3368,7 @@ const App = {
     'auth-login-screen',
     'auth-register-screen',
     'auth-waiting-screen',
+    'auth-waitlist-screen',
   ],
 
   // The publish/read half of that seam. The state is a plain object on
