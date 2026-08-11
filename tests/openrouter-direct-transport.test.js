@@ -105,6 +105,9 @@ test('runner script points Codex directly at OpenRouter, never a relay', () => {
   // as the provider env key (direct transport).
   assert.match(script, /printf 'base_url = "%s"\\n' "\$ESCAPED_BASE"/);
   assert.match(script, /env_key = "OPENROUTER_API_KEY"/);
+  assert.match(script, /model_catalog_json/);
+  assert.match(script, /SANDBOX_MODE=danger-full-access/);
+  assert.match(script, /--dangerously-bypass-approvals-and-sandbox/);
   assert.match(script, /OPENROUTER_API_KEY/);
   assert.match(script, /grep -Fq -- "\$OPENROUTER_API_KEY" "\$CONFIG_TMP"/,
     'runner refuses to launch if the generated config ever persists the key');

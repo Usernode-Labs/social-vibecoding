@@ -50,6 +50,32 @@ function pricingSnapshotForModel(model) {
   };
 }
 
+// Runtime metadata for Codex's per-turn custom model catalog. OpenRouter is
+// the source of truth; keep the full executable id while bounding only the
+// human-readable name and normalizing numeric/capability fields. A null
+// capability means the catalog fetch was unavailable, not that the model
+// definitely lacks it.
+function runtimeModelMetadataForModel(model, requestedModelId) {
+  const positiveInteger = (value) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : null;
+  };
+  const efforts = Array.isArray(model?.reasoningEfforts)
+    ? [...new Set(model.reasoningEfforts
+      .map((effort) => String(effort || '').trim())
+      .filter((effort) => ['minimal', 'low', 'medium', 'high', 'xhigh'].includes(effort)))]
+    : null;
+  return {
+    name: String(model?.name || requestedModelId || '').trim().slice(0, 300)
+      || String(requestedModelId || ''),
+    contextWindow: positiveInteger(model?.contextLength),
+    maxOutputTokens: positiveInteger(model?.maxOutputTokens),
+    supportsReasoning: model ? model.supportsReasoning === true : null,
+    reasoningEfforts: efforts,
+    supportsTools: model ? model.supportsTools === true : null,
+  };
+}
+
 // ── Phase 1: resolve runtime context (no DB writes) ───────────────────
 // Called once per logical coding-tool invocation. Checks the feature flag
 // + allowlist, loads credential metadata, decrypts the key, resolves the
@@ -105,13 +131,14 @@ async function resolveCodexRuntimeContext({ pool, session, userId, model, reason
   // 'unavailable' (never a guessed price). A fetch failure is NOT a
   // credential/model failure.
   let pricingSnapshot = null;
+  let catalogModel = null;
   try {
-    const matched = await agentModels.resolveModelPricing({
+    catalogModel = await agentModels.resolveModelPricing({
       pool, userId, credentialRevision: meta.revision,
       apiKey: openrouterApiKey, modelId: resolvedModel, config,
     });
-    pricingSnapshot = pricingSnapshotForModel(matched);
-    if (matched && pricingSnapshot && !pricingSnapshot.available) {
+    pricingSnapshot = pricingSnapshotForModel(catalogModel);
+    if (catalogModel && pricingSnapshot && !pricingSnapshot.available) {
       pricingSnapshot = { available: false, model: resolvedModel };
     }
   } catch (err) {
@@ -119,10 +146,17 @@ async function resolveCodexRuntimeContext({ pool, session, userId, model, reason
     pricingSnapshot = { available: false };
   }
 
+  const requestedReasoningEffort = reasoningEffort || session.agent_reasoning_effort || null;
   return {
     agentBackend: 'codex_openrouter',
     agentModel: resolvedModel,
-    agentReasoningEffort: reasoningEffort || session.agent_reasoning_effort || null,
+    // Do not send a reasoning parameter to a model OpenRouter explicitly says
+    // does not support one. If the catalog was temporarily unavailable, keep
+    // the user's existing preference instead of guessing about capability.
+    agentReasoningEffort: catalogModel?.supportsReasoning === false
+      ? null
+      : requestedReasoningEffort,
+    agentModelMetadata: runtimeModelMetadataForModel(catalogModel, resolvedModel),
     openrouterApiKey,
     openrouterApiBase,
     resumeThreadId: resumeThreadId || session.agent_thread_id || null,
@@ -760,4 +794,5 @@ module.exports = {
   computeProviderUsageDelta,
   estimateRequestedModelCost,
   pricingSnapshotForModel,
+  runtimeModelMetadataForModel,
 };

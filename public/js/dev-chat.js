@@ -536,7 +536,17 @@ const DevChat = {
         return;
       }
       const model = data.models.find((item) => item.id === selectedModel) || null;
-      status.textContent = `${this._openRouterModelCostSummary(model)}. ${this._openRouterModelCompatibilitySummary(model)} This session bills directly to your OpenRouter key.`;
+      const supportsReasoning = model?.supportsReasoning === true;
+      effortSelect.disabled = !supportsReasoning;
+      if (supportsReasoning) {
+        effortSelect.value = selectedEffort;
+      } else {
+        effortSelect.value = '';
+      }
+      const reasoningNote = supportsReasoning
+        ? ''
+        : ' This model does not expose reasoning-effort controls.';
+      status.textContent = `${this._openRouterModelCostSummary(model)}. ${this._openRouterModelCompatibilitySummary(model)}${reasoningNote} This session bills directly to your OpenRouter key.`;
     };
 
     claudeButton.addEventListener('click', () => { selectedBackend = 'claude_code'; render(); });

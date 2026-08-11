@@ -12,6 +12,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync, spawnSync } = require('child_process');
 const { classifyResumeJsonl } = require('../worker/classify-codex-resume');
+const { buildCodexModelCatalog } = require('../worker/build-codex-model-catalog');
 
 const RUNNER = path.join(__dirname, '..', 'worker', 'run-codex-agent.sh');
 const CLAUDE_RUNNER = path.join(__dirname, '..', 'worker', 'run-cc.sh');
@@ -21,16 +22,20 @@ test('worker runtime contract invalidates warm images from before the new runner
   const workerRun = fs.readFileSync(path.join(__dirname, '..', 'worker', 'worker-run.sh'), 'utf8');
   const workerHost = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'worker.js'), 'utf8');
   assert.match(dockerfile, /COPY classify-codex-resume\.js \/usr\/local\/bin\/classify-codex-resume\.js/);
+  assert.match(dockerfile, /COPY build-codex-model-catalog\.js \/usr\/local\/bin\/build-codex-model-catalog\.js/);
+  assert.match(dockerfile, /codex debug models > \/usr\/local\/share\/usernode-codex-bundled-models\.json/);
 
   const match = workerHost.match(/const WORKER_BOOTSTRAP_ENV_VERSION = '(v\d+)'/);
   assert.ok(match, 'warm-worker contract version is declared');
-  assert.ok(Number(match[1].slice(1)) >= 5,
-    'v4 containers carry the unsafe Codex config writer and must be evicted');
+  assert.ok(Number(match[1].slice(1)) >= 6,
+    'v5 containers carry the nested bwrap runner and must be evicted');
   assert.match(workerHost,
     /labels\['usernode\.proxy'\] !== WORKER_BOOTSTRAP_ENV_VERSION/,
     'the warm path compares the persisted container contract label');
   assert.match(workerRun, /rm -f \/home\/node\/\.claude\/codex-home\/config\.toml/,
     'a fixed bootstrap removes the v4-generated config from the persistent volume');
+  assert.match(workerRun, /openrouter-model-catalog\.json/,
+    'a fixed bootstrap removes stale per-model metadata from the persistent volume');
 });
 
 function makeEnv(run) {
@@ -56,6 +61,12 @@ function makeEnv(run) {
     WORKER_JWT: 'jwt', SESSION_ID: '1', PLATFORM_URL: 'http://p',
     OPENROUTER_API_KEY: 'sk-or-v1-test', OPENROUTER_API_BASE: 'https://openrouter.ai/api/v1',
     AGENT_MODEL: 'openai/gpt-5.3-codex',
+    AGENT_MODEL_NAME: 'GPT-5.3 Codex via OpenRouter',
+    AGENT_MODEL_CONTEXT_WINDOW: '400000',
+    AGENT_MODEL_MAX_OUTPUT_TOKENS: '128000',
+    AGENT_MODEL_SUPPORTS_REASONING: '1',
+    AGENT_MODEL_REASONING_EFFORTS: 'low,medium,high',
+    AGENT_MODEL_SUPPORTS_TOOLS: '1',
     WORKSPACE_DIR: ws, CODEX_HOME: path.join(dir, 'codex-home'),
   };
   return { dir, env };
@@ -103,7 +114,7 @@ test('resume classifier accepts only an isolated structural missing-thread error
 test('runner: fresh scout turn reads prompt, extracts thread id, completes', () => {
   const fakeCodex = `#!/bin/sh
 # Prove the prompt was delivered: fail if stdin is empty (review P4).
-echo "invocation" >> "$INVOKE_LOG"
+echo "$*" >> "$INVOKE_LOG"
 INPUT=$(cat)
 if [ -z "$INPUT" ]; then
   echo '{"type":"error","message":"No prompt provided via stdin"}'
@@ -121,10 +132,16 @@ exit 0
   assert.match(r.stdout, /"thread_id":"smoke-123"/, 'streams codex JSONL');
   assert.match(r.stdout, /agent_thread_id=smoke-123/, 'persists extracted thread id in result');
   assert.match(r.stdout, /mode=scout agent_backend=codex_openrouter/, 'terminal scout result');
+  assert.equal(
+    fs.readFileSync(env.INVOKE_LOG, 'utf8').trim(),
+    'exec --dangerously-bypass-approvals-and-sandbox - --json',
+    'the externally-sandboxed worker bypasses Codex bwrap explicitly',
+  );
 });
 
 test('runner: resume that fails NOT thread-missing does NOT retry fresh', () => {
   const fakeCodex = `#!/bin/sh
+echo "$*" >> "$INVOKE_LOG"
 while IFS= read -r _line; do :; done
 echo '{"type":"error","message":"401 Unauthorized"}'
 exit 1
@@ -136,6 +153,10 @@ exit 1
   assert.match(r.stdout, /codex \(resume existing-thread/, 'invokes codex resume');
   assert.match(r.stdout, /NOT retrying fresh/, 'does NOT retry fresh on non-thread-missing failure');
   assert.match(r.stdout, /mode=scout agent_backend=codex_openrouter .* agent_thread_id=/, 'terminal result emitted');
+  assert.equal(
+    fs.readFileSync(env.INVOKE_LOG, 'utf8').trim(),
+    'exec resume --dangerously-bypass-approvals-and-sandbox existing-thread - --json',
+  );
 });
 
 test('runner: resume that IS thread-missing asks the host for a fresh attempt', () => {
@@ -184,6 +205,9 @@ exit 1
 `;
   const { env } = makeEnv(fakeCodex);
   env.MODE = 'build';
+  env.AGENT_MODEL = '~deepseek/deepseek-v4-flash-latest';
+  env.AGENT_MODEL_NAME = 'DeepSeek V4 Flash Latest';
+  env.AGENT_MODEL_CONTEXT_WINDOW = '1048576';
   env.AGENT_REASONING_EFFORT = 'medium';
   env.CONFIG_INJECTION_SENTINEL = 'must-never-enter-codex-config';
   // Let build mode reach the shared config writer without needing a real
@@ -199,13 +223,23 @@ exit 1
   assert.notEqual(r.status, 0);
 
   const config = fs.readFileSync(path.join(env.CODEX_HOME, 'config.toml'), 'utf8');
+  const catalogPath = path.join(env.CODEX_HOME, 'openrouter-model-catalog.json');
   assert.equal(config, [
     'model_provider = "usernode_openrouter"',
-    'model = "openai/gpt-5.3-codex"',
+    'model = "~deepseek/deepseek-v4-flash-latest"',
+    `model_catalog_json = "${catalogPath}"`,
     'model_reasoning_effort = "medium"',
     '',
-    'sandbox_mode = "workspace-write"',
+    'sandbox_mode = "danger-full-access"',
     'approval_policy = "never"',
+    'check_for_update_on_startup = false',
+    '',
+    '[analytics]',
+    'enabled = false',
+    '',
+    '[features]',
+    'apps = false',
+    'plugins = false',
     '',
     '[shell_environment_policy]',
     'exclude = ["OPENROUTER_API_KEY"]',
@@ -225,11 +259,39 @@ exit 1
     'the provider credential is never persisted into the generated config');
   assert.equal(fs.statSync(path.join(env.CODEX_HOME, 'config.toml')).mode & 0o777, 0o600,
     'the generated config remains private to the worker user');
+
+  const catalog = JSON.parse(fs.readFileSync(catalogPath, 'utf8'));
+  assert.equal(catalog.models.length, 1);
+  assert.equal(catalog.models[0].slug, '~deepseek/deepseek-v4-flash-latest');
+  assert.equal(catalog.models[0].display_name, 'DeepSeek V4 Flash Latest');
+  assert.equal(catalog.models[0].context_window, 1_048_576);
+  assert.equal(catalog.models[0].default_reasoning_level, 'medium');
+  assert.ok(catalog.models[0].base_instructions.length > 100);
+  assert.doesNotMatch(JSON.stringify(catalog), /CONFIG_INJECTION_SENTINEL|sk-or-v1-test/);
+  assert.equal(fs.statSync(catalogPath).mode & 0o777, 0o600,
+    'the generated model catalog remains private to the worker user');
+});
+
+test('model catalog omits reasoning levels for a non-reasoning OpenRouter model', () => {
+  const catalog = buildCodexModelCatalog({
+    modelId: 'vendor/plain-tools-model',
+    displayName: 'Plain Tools Model',
+    contextWindow: 64_000,
+    supportsReasoning: false,
+    reasoningEfforts: ['high'],
+    selectedReasoningEffort: 'high',
+    baseInstructions: 'Test coding instructions',
+  });
+  assert.equal(catalog.models[0].default_reasoning_level, null);
+  assert.deepEqual(catalog.models[0].supported_reasoning_levels, []);
+  assert.equal(catalog.models[0].context_window, 64_000);
 });
 
 test('runner: exact OpenRouter key is redacted before streamed JSONL', () => {
   const fakeCodex = `#!/bin/sh
 while IFS= read -r _line; do :; done
+echo 'Reading additional input from stdin...' >&2
+echo '2026-08-10T00:00:00Z  WARN codex_core::responses_retry: internal retry detail' >&2
 echo "{\"type\":\"thread.started\",\"thread_id\":\"redact-123\"}"
 echo "{\"type\":\"item.completed\",\"item\":{\"type\":\"command_execution\",\"aggregated_output\":\"$OPENROUTER_API_KEY\"}}"
 exit 0
@@ -239,6 +301,8 @@ exit 0
   const r = spawnSync('sh', [RUNNER], { env, encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
   assert.doesNotMatch(r.stdout, /sk-or-v1-literal/, 'raw key never reaches stdout/journal stream');
+  assert.doesNotMatch(r.stdout, /Reading additional input|codex_core::responses_retry/,
+    'duplicate Codex implementation logs stay out of the user transcript');
   assert.match(r.stdout, /aggregated_output.*\*\*\*\*/, 'JSONL remains usable with a redaction marker');
   const config = fs.readFileSync(path.join(env.CODEX_HOME, 'config.toml'), 'utf8');
   assert.match(config, /\[shell_environment_policy\][\s\S]*exclude = \["OPENROUTER_API_KEY"\]/,
