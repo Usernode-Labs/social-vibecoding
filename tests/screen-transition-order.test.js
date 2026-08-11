@@ -219,12 +219,12 @@ test('every in-screen router is idempotent for a duplicate dispatch', () => {
       state: 'Settings',
       transition: 'Settings._transition(',
     },
-    'public/js/admin-console.js': {
+    'frontend/src/features/admin/admin-console.js': {
       open: '  route(section, opts) {',
       state: 'AdminConsole',
       transition: 'AdminConsole._transition(',
     },
-    'public/js/browse.js': {
+    'frontend/src/features/apps/browse.js': {
       open: '  route(slug) {',
       state: 'Browse',
       transition: 'PlatformUI.transition(',

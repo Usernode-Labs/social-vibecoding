@@ -148,7 +148,7 @@ test('my own IMPORTED proposal DOES render the Explore-in-dev-chat button (#1045
   assert.match(html, /data-proposal-id="7"/, 'wired to the proposal id');
   assert.doesNotMatch(html, /openProposalSession/,
     'still no Open session — an imported PR has no dev session (#687)');
-  assert.match(html, /withdrawProposal\(7\)/, 'Withdraw is unaffected');
+  assert.ok(menuHas(AppView, html, /^Withdraw$/), 'Withdraw is unaffected — a ⋯ row like any own live PR');
 });
 
 // #321/#827: the topic detail view (_renderTopicHead) shows exactly ONE AI

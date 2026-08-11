@@ -2199,7 +2199,10 @@ const AppView = {
       if (mine && item.source !== 'imported') {
         rows.push(`<button class="gc-vote-btn" title="Open the dev session behind this proposal" onclick="AppView.openProposalSession(${item.id})">Open the dev session behind this</button>`);
       }
-      if (!mine && !AppView.readOnly) rows.push(AppView._exploreChatBtnHtml(item));
+      // _showExplorePill, not `!mine`: the viewer's own IMPORTED proposal has
+      // no session behind the row above (#687), so Explore is its only AI
+      // affordance (#1045). The shared predicate owns that rule.
+      if (AppView._showExplorePill(item) && !AppView.readOnly) rows.push(AppView._exploreChatBtnHtml(item));
       if (!AppView.readOnly && !isMerged && mine && item.status === 'promoted') {
         rows.push(`<button class="gc-vote-btn" title="Withdraw this proposal (closes the PR, removes it from the vote panel)" onclick="AppView.withdrawProposal(${item.id})">Withdraw</button>`);
       }
@@ -7411,13 +7414,16 @@ const AppView = {
     const pill = AppView.statusPillHtml(pr, { majority, locked: ctx.locked, inline: noNav });
 
     // ── Actions: Yes / No / Explore + icon Preview; ⋯ is in the rail ──
-    // Explore is PROMOTED off the ⋯ menu for a live proposal you didn't write
-    // — the one thing a reader does with someone else's proposal short of
-    // voting on it. It stays a ⋯ row on a merged card, where the action band
-    // belongs to kudos instead, and on the detail head, which already spells
-    // it out in full in its own action list below the header.
+    // Explore is PROMOTED off the ⋯ menu for a live proposal the pill rule
+    // covers — someone else's proposal (the one thing a reader does short of
+    // voting on it) and the viewer's own IMPORTED proposal (which has no
+    // "Open session", so this is its only AI affordance, #1045). Whether a
+    // row gets one at all is _showExplorePill's call — the one predicate
+    // every render site shares. It stays a ⋯ row on a merged card, where the
+    // action band belongs to kudos instead, and on the detail head, which
+    // already spells it out in full in its own action list below the header.
     const preview = AppView.cardPreviewHtml(pr, { kind: 'proposal', sessionId: pr.id });
-    const exploreBtn = (!noNav && !mine && !isMerged && !AppView.readOnly)
+    const exploreBtn = (!noNav && AppView._showExplorePill(pr) && !isMerged && !AppView.readOnly)
       ? AppView._exploreChatBtnHtml(pr) : '';
     const primary = (isMerged || AppView.readOnly)
       ? [] : [...AppView._cardVoteButtonsHtml(pr), exploreBtn];
@@ -7592,10 +7598,12 @@ const AppView = {
       });
     }
     // #313/#827: owners reach the Mayor via "Open session" on their own PR,
-    // so Explore is offered only on proposals the viewer does NOT own.
+    // so Explore is offered only where _showExplorePill says so — proposals
+    // the viewer does NOT own, plus their own IMPORTED ones, which have no
+    // session for "Open session" to open (#1045).
     // st.exploreOnFace — a live board card promotes it into its action band,
     // and the row would then be a duplicate of the button beside it.
-    if (!st.mine && !ro && !st.exploreOnFace) {
+    if (AppView._showExplorePill(pr) && !ro && !st.exploreOnFace) {
       items.push({
         label: 'Explore in dev chat',
         icon: 'explore',

@@ -716,11 +716,14 @@ test('?demo=1 reports the app lock OPEN, so the mock states are reviewable', () 
 
 test('a locked app with no ?demo=1 still suppresses the derived states', () => {
   // The other half of the same contract, at the renderer: the override is a
-  // preview affordance, not a change to what a locked board promises.
+  // preview affordance, not a change to what a locked board promises. The
+  // fixture row carries demo:true (that is what the test above relies on),
+  // so strip it — this test is about a REAL row on a locked board.
   const h = makeSandbox();
   const { gov } = stagingMocks();
   h.AppView._proposalsCtx = { majority: 2, locked: true };
-  const html = h.AppView._renderGovCard(gov.find((g) => g.id === 9100005));
+  const { demo, ...realRow } = gov.find((g) => g.id === 9100005);
+  const html = h.AppView._renderGovCard(realRow);
   assert.ok(!/dc-status-spinner-arc/.test(html),
     'a locked app is waiting on an admin Yes, not applying');
 });

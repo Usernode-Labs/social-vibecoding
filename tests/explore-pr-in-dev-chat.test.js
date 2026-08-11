@@ -534,6 +534,19 @@ function cardHarness() {
   return AppView;
 }
 
+// The card-as-pointer revision demoted most card actions into the ⋯ menu,
+// whose descriptors live in AppView._cardMenus keyed by the trigger's
+// data-card-menu — so "does this card offer X" is a registry question, not
+// a markup one, for everything except the face pills.
+function menuLabels(AppView, html) {
+  const m = html.match(/data-card-menu="([^"]+)"/);
+  if (!m) return [];
+  return (AppView._cardMenus[m[1]] || []).map((it) => it.label);
+}
+function menuHas(AppView, html, re) {
+  return menuLabels(AppView, html).some((l) => re.test(l));
+}
+
 const MY_IMPORT = {
   id: 7, pr_number: 9300, pr_url: 'https://github.com/acme/app/pull/9300',
   pr_title: 'Adjust kanban breakpoint to 640px', username: 'me', user_id: ME_ID,
@@ -546,23 +559,27 @@ test('proposal card: my own IMPORTED proposal renders the pill and no Open sessi
   const html = AppView._renderProposalCard(MY_IMPORT);
   assert.match(html, /gc-explore-chat-btn/, 'the pill is the owner\'s only AI affordance here');
   assert.match(html, /data-proposal-id="7"/, 'wired to the proposal id');
-  assert.doesNotMatch(html, /openProposalSession\(/,
+  assert.ok(!menuHas(AppView, html, /Open session/),
     'an imported PR has no dev session to open (#687) — that rule is untouched');
-  assert.match(html, /withdrawProposal\(7\)/, 'Withdraw is untouched too');
+  assert.ok(!menuHas(AppView, html, /Explore in dev chat/),
+    'on the face, so not also a ⋯ row');
+  assert.ok(menuHas(AppView, html, /^Withdraw$/), 'Withdraw is untouched too — now a ⋯ row');
 });
 
 test('proposal card: my own NATIVE proposal is unchanged — Open session, no pill', () => {
   const AppView = cardHarness();
   const html = AppView._renderProposalCard({ ...MY_IMPORT, source: undefined, imported_pr_author: undefined });
-  assert.doesNotMatch(html, /gc-explore-chat-btn/, 'no pill beside Open session');
-  assert.match(html, /openProposalSession\(7\)/);
+  assert.doesNotMatch(html, /gc-explore-chat-btn/, 'no pill on the face');
+  assert.ok(!menuHas(AppView, html, /Explore in dev chat/), 'and no ⋯ row either');
+  assert.ok(menuHas(AppView, html, /Open session/), 'Open session is the ⋯ door to the same chat');
 });
 
 test('merged card: my own IMPORTED completed proposal renders the pill', () => {
   const AppView = cardHarness();
   const html = AppView._renderMergedCard({ ...MY_IMPORT, status: 'merged' }, 1);
-  assert.match(html, /gc-explore-chat-btn/);
-  assert.match(html, /data-proposal-id="7"/);
+  // On a merged card the action band belongs to kudos, so Explore is a ⋯ row.
+  assert.ok(menuHas(AppView, html, /Explore in dev chat/),
+    'Explore offered from ⋯ on my own imported completed proposal');
 });
 
 test('merged card: my own NATIVE completed proposal still renders no pill', () => {
@@ -571,4 +588,5 @@ test('merged card: my own NATIVE completed proposal still renders no pill', () =
     { ...MY_IMPORT, source: undefined, imported_pr_author: undefined, status: 'merged' }, 1
   );
   assert.doesNotMatch(html, /gc-explore-chat-btn/);
+  assert.ok(!menuHas(AppView, html, /Explore in dev chat/), 'no ⋯ row on my own native merged PR');
 });
