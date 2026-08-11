@@ -105,12 +105,13 @@ function boot(opts) {
     },
     addEventListener() {},
     dispatchEvent() {},
-    setTimeout(fn, delay) {
-      const t = setTimeout(fn, delay);
-      if (t && typeof t.unref === 'function') t.unref();
-      return t;
-    },
-    clearTimeout,
+    // Real, REF'D timers. An unref'd timer here starves the grant-recheck
+    // loop (native-chrome's only setTimeout, bounded at 4 iterations): the
+    // test awaits a promise the timer resolves, node sees nothing keeping
+    // the event loop alive, and the whole file dies with "Promise
+    // resolution is still pending but the event loop has already resolved"
+    // — cancelling every later test in the file with it.
+    setTimeout, clearTimeout,
     fetch() { return Promise.reject(new Error('unexpected fetch')); },
   };
   sandbox.window = sandbox;

@@ -432,21 +432,23 @@ test('proposal card (author): Open session + Withdraw move to ⋯', () => {
 });
 
 // #1045 was about the owner of an IMPORTED proposal: there is no in-app
-// session behind it, so "Open session" must not render. That still holds, and
-// Explore's promotion does not reach this card either — promotion is scoped to
-// proposals the viewer does NOT own (#313/#827: an owner reaches the Mayor from
-// their own session), so an owner's card carries neither the pill nor the ⋯ row.
-test('proposal card (author of an imported PR): Withdraw in ⋯, no session, no Explore', () => {
+// session behind it, so "Open session" must not render — and precisely
+// because of that, Explore's promotion DOES reach this card. "An owner
+// reaches the Mayor from their own session" (#313/#827) has no session to
+// point at here, so without the pill the owner of a PR they imported gets
+// no AI affordance at all. _showExplorePill is the shared predicate:
+// not-mine OR mine-but-imported gets the pill, live cards on the face.
+test('proposal card (author of an imported PR): Withdraw in ⋯, no session, Explore on the face', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderProposalCard(baseProposal({ user_id: ME, source: 'imported' }));
   assert.ok(menuHas(AppView, html, /Withdraw/), 'Withdraw in ⋯');
   assert.ok(!menuHas(AppView, html, /Open session/), 'no dev session behind an imported PR');
-  assert.ok(!menuHas(AppView, html, /Explore in dev chat/), 'owners get no Explore row');
-  assert.doesNotMatch(html, /gc-explore-chat-btn/, 'and none promoted onto their own card');
-  // The band is still rendered — reserved on every card, here holding just the
-  // vote pills.
+  assert.match(html, /gc-explore-chat-btn/,
+    'Explore promoted onto the face — the owner\'s only AI affordance (#1045)');
+  assert.ok(!menuHas(AppView, html, /Explore in dev chat/),
+    'one action, one place: on the face means no ⋯ row');
   assert.match(html, /gc-card-actions/, 'shared action row present');
-  assertCardActionContract(AppView, html, { primary: 2, menu: true });
+  assertCardActionContract(AppView, html, { primary: 3, menu: true });
 });
 
 // ── Governance card ──────────────────────────────────────────────────────
