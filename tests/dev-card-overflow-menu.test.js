@@ -159,8 +159,13 @@ test('an applied close-issue card has no ⋯ and no action row at all', () => {
     payload: { issueNumber: 5, issueTitle: 'T', appliedAt: '2026-06-02T00:00:00Z', appliedBy: 'group-vote', required: 2 },
   });
   assert.equal(menuKeyOf(html), null);
-  assert.doesNotMatch(html, /gc-card-actions/);
-  assert.match(html, /dev-status-row/, 'but it does get the full-width pill');
+  // The four-band card RESERVES an action band on every dense card, so this
+  // one now renders an empty .gc-card-actions rather than none: the point is
+  // that a settled vote has nothing to offer, not that the card is shorter
+  // than its neighbours in the same column.
+  assert.match(html, /<div class="gc-card-actions"><\/div>/, 'reserved, and empty');
+  assert.doesNotMatch(html, /gc-card-actions">\s*<button/, 'no actions inside it');
+  assert.match(html, /dev-status-pill-block/, 'and it does get the tally bar');
 });
 
 test('a repaint under the same key OVERWRITES rather than accumulating', () => {
@@ -186,7 +191,10 @@ test('proposal, foreign, plain collaborator', () => {
   const labels = menuLabels(AppView, AppView._renderProposalCard(PR()));
   assert.ok(!labels.some((l) => /Admin merge/.test(l)), 'not an admin');
   assert.ok(!labels.some((l) => /Open session|Withdraw/.test(l)), 'not the author');
-  assert.ok(labels.some((l) => /Explore in dev chat/.test(l)));
+  // Explore moved to the card FACE for exactly this viewer (foreign, live
+  // proposal, can collaborate), so it is deliberately absent from ⋯.
+  assert.ok(!labels.some((l) => /Explore in dev chat/.test(l)), 'promoted onto the face');
+  assert.match(AppView._renderProposalCard(PR()), /gc-explore-chat-btn/, '…where it is');
   assert.ok(labels.some((l) => /kudos/i.test(l)));
   assert.ok(labels.some((l) => /Set priority/.test(l)));
 });
@@ -279,7 +287,9 @@ test('issue: the full demoted set, and Open on GitHub last', () => {
     ISSUE({ htmlUrl: 'https://gh/i/5' })));
   assert.equal(labels[0], 'Generate proposal');
   assert.ok(labels.some((l) => /Pledge kudos/.test(l)));
-  assert.ok(labels.some((l) => /Mark in progress/.test(l)));
+  // The claim toggle is PROMOTED to the action band, so it left the menu.
+  assert.ok(!labels.some((l) => /Mark in progress/.test(l)), 'promoted onto the face');
+  assert.match(AppView._renderIssueRow(ISSUE()), /gc-card-actions[\s\S]*?markIssueInProgress/);
   assert.ok(labels.some((l) => /Propose to close/.test(l)));
   assert.equal(labels[labels.length - 1], 'Open on GitHub');
 });
@@ -324,13 +334,19 @@ test('own session: visibility, chat-sharing, discussion and Archive', () => {
   AppView._sharedById = { 51: { id: 51, chat_count: 2 } };
   const sess = (over) => ({ id: 51, session_title: 'Mine', status: 'active', ...over });
 
-  const priv = menuLabels(AppView, AppView._renderMySessionCard(sess()));
-  assert.equal(priv.join('|'), 'Make visible|Archive',
+  // Visibility is PROMOTED to the action band now (the four-band card reserves
+  // one, and this is the single thing you do to your own session), so it is a
+  // pill on the face and NOT a ⋯ row. Everything else stays demoted.
+  const privHtml = AppView._renderMySessionCard(sess());
+  assert.match(privHtml, /gc-card-actions[\s\S]*?_setSessionShared\(51, true[^>]*>Make visible</);
+  assert.equal(menuLabels(AppView, privHtml).join('|'), 'Archive',
     'a private session has nowhere for a reader to reach its chat from');
 
-  const vis = menuLabels(AppView, AppView._renderMySessionCard(
-    sess({ shared_at: '2026-06-01T00:00:00Z' })));
-  assert.equal(vis.join('|'), 'Hide|Share chat|Open public discussion (2)|Archive');
+  const visHtml = AppView._renderMySessionCard(sess({ shared_at: '2026-06-01T00:00:00Z' }));
+  assert.match(visHtml, /gc-card-actions[\s\S]*?_setSessionShared\(51, false[^>]*>Hide</,
+    'the same pill, flipped');
+  assert.equal(menuLabels(AppView, visHtml).join('|'),
+    'Share chat|Open public discussion (2)|Archive');
 
   const shared = menuItems(AppView, AppView._renderMySessionCard(
     sess({ shared_at: '2026-06-01T00:00:00Z', transcript_shared_at: '2026-06-01T01:00:00Z' })));
@@ -605,7 +621,10 @@ test('the dropdown draws the glyph in a decorative leading column', () => {
 
 test('the ✨ that used to live inside the Explore label is now its icon', () => {
   const AppView = makeAppView();
-  const item = menuItems(AppView, AppView._renderProposalCard(PR()))
+  // Read off a MERGED card: a live proposal promotes Explore onto its face, so
+  // the merged board is where the ⋯ row still lives.
+  const item = menuItems(AppView, AppView._renderMergedCard(
+    PR({ status: 'merged', chat_count: 0 }), 3))
     .find((i) => /Explore in dev chat/.test(i.label));
   assert.equal(item.label, 'Explore in dev chat', 'no glyph baked into the label');
   assert.equal(AppView._menuIconGlyph(item), AppView.MENU_ICONS.explore);
