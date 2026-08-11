@@ -100,10 +100,40 @@ runVite(['build', '--config', 'vite.ssr.config.ts', '--logLevel', 'warn']);
 const ssrEntry = path.join(ssrDir, 'prerender.js');
 if (!fs.existsSync(ssrEntry)) fail(`the SSR build did not emit ${path.relative(ROOT, ssrEntry)}`);
 
-const { renderShell } = await import(pathToFileURL(ssrEntry).href);
+const { renderShell, renderShellWithSeparators } = await import(pathToFileURL(ssrEntry).href);
 const markup = renderShell();
 if (!markup || markup.length < 10000) {
   fail(`renderShell() produced only ${markup ? markup.length : 0} bytes — the shell tree looks empty.`);
+}
+
+// ── Hydration-safety gate: no adjacent text children ───────────────────
+//
+// renderToStaticMarkup drops the `<!-- -->` separators React writes between
+// two adjacent text children; main.tsx then hydrates that document, where the
+// pair has been parsed as ONE text node. React calls that a mismatch (#418) —
+// a console.error on EVERY route, which fails the platform's proposal checks.
+// The idiom that causes it is ordinary and easy to write by accident:
+//
+//     <span>Label</span>{' '}                     ← two adjacent text children
+//     Sentence that follows.
+//
+// The fix is always to make it one child: put the whitespace inside the string
+// ({' Sentence that follows.'}) or interpolate the whole run.
+//
+// renderToString over the same tree emits the separators, so its output is an
+// exact locator rather than a source heuristic. Refuse to write the artifact.
+const probe = renderShellWithSeparators();
+const separators = probe.split('<!-- -->').length - 1;
+if (separators > 0) {
+  const at = probe.indexOf('<!-- -->');
+  const context = probe.slice(Math.max(0, at - 220), at + 120).replace(/\s+/g, ' ');
+  fail(
+    `the shell tree has ${separators} pair(s) of ADJACENT TEXT CHILDREN, which cannot survive `
+    + 'hydration: the prerendered document merges each pair into one text node and React logs a '
+    + `mismatch (error #418) on every route. First one is here:\n\n    …${context}…\n\n`
+    + "Find the component rendering that text and make it a SINGLE child — move the whitespace "
+    + "inside the string ({' word…'}) instead of using a bare {' '} between two text runs.",
+  );
 }
 
 // ── Compose the document ───────────────────────────────────────────────

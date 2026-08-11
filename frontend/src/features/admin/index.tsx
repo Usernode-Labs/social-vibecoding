@@ -181,8 +181,18 @@ export function AdminScreen() {
               className="hidden bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200 rounded-lg px-4 py-3 mb-4 text-sm"
             >
               <span className="font-semibold">View-only — read access only.</span>
-              {' '}
-              You can see every admin surface but can't make changes. Mutating controls are hidden.
+              {/*
+                  ONE text child, not `{' '}` followed by the sentence. The
+                  prerender pass uses renderToStaticMarkup (prerender.tsx), which
+                  deliberately omits the <!-- --> markers React normally writes
+                  between two adjacent text children — so a component with two of
+                  them hydrates against a document where they have merged into
+                  one node, and that is a hydration mismatch: React error #418,
+                  logged as a console.error on EVERY route, which fails the
+                  platform's proposal checks. Keep interpolated whitespace inside
+                  the string.
+              */}
+              {" You can see every admin surface but can't make changes. Mutating controls are hidden."}
             </div>
             <div id="admin-section-content" className="pb-8"></div>
           </div>
