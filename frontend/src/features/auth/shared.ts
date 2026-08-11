@@ -60,13 +60,15 @@ interface LegacyWindow {
   };
   Offline?: { isOffline(): boolean; nudge(): void };
   App?: {
-    user?: { hasPlatformAccess?: boolean } | null;
+    user?: { username?: string; hasPlatformAccess?: boolean } | null;
     _setScreenVisible?(id: string, visible: boolean): void;
     _refreshOrReload?(fn: () => unknown): void;
     enterAuthed?(user: unknown): void;
+    enterAnonymous?(): Promise<void> | void;
     clearSessionSnapshot?(): void;
     restoreFromHash?(): void;
   };
+  Settings?: { logout?(): void };
   AppView?: {
     mountViewerCover?(
       viewer: Element,

@@ -39,6 +39,7 @@ const FRONTEND = (rel) =>
 const AUTH_SHARED = FRONTEND('features/auth/shared.ts');
 const AUTH_SCREENS_TSX = ['features/auth/landing.tsx', 'features/auth/login.tsx']
   .map(FRONTEND).join('\n');
+const AUTH_WAITING_TSX = FRONTEND('features/auth/waiting.tsx');
 const SETTINGS = read('js/settings.js');
 const HOME = read('js/home.js');
 const CSS = read('css/app.css');
@@ -156,8 +157,10 @@ test('every way out of a session clears the snapshot', () => {
   assert.match(SETTINGS, /clearSessionSnapshot/);
   assert.match(AUTH, /clearSessionSnapshot/);
   // Including the waiting-room logout, which does not go through settings.
-  const waitingLogout = AUTH.slice(AUTH.indexOf("byId('waiting-logout')"));
-  assert.match(waitingLogout.slice(0, 500), /clearSessionSnapshot/);
+  // That screen is React now (#1080 chunk C), so its own fallback path is
+  // where the call has to be.
+  const waitingLogout = AUTH_WAITING_TSX.slice(AUTH_WAITING_TSX.indexOf('const onLogout'));
+  assert.match(waitingLogout.slice(0, 800), /clearSessionSnapshot/);
 });
 
 // ── The visible offline state ────────────────────────────────────────

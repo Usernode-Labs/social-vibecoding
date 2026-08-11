@@ -48,6 +48,7 @@ import { Button } from '@/components/ui/button';
 import { LandingScreen } from './features/auth/landing';
 import { LoginScreen } from './features/auth/login';
 import { RegisterScreen } from './features/auth/register';
+import { WaitingScreen } from './features/auth/waiting';
 import { Dialogs } from './features/dialogs';
 import { OfflineBanner, ViewAsNonAdminBanner } from './features/shell/banners';
 
@@ -2098,55 +2099,12 @@ export function Shell() {
       {/* Register screen (activation-code flow) — features/auth/register.tsx */}
       <RegisterScreen />
       {/*
-          Waiting-room screen (platform-access gate, onboarding flow
-          alignment): an authed session without hasPlatformAccess lands
-          here; polls /api/auth/me and boots the full shell in place when
-          access is granted.
+          Waiting-room screen — features/auth/waiting.tsx (#1080 chunk C).
+          The platform-access gate: an authed session without
+          hasPlatformAccess lands here; it polls /api/auth/me and boots the
+          full shell in place when access is granted.
       */}
-      <main
-        id="auth-waiting-screen"
-        className="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll bg-white dark:bg-zinc-950"
-      >
-        <div className="min-h-full flex items-center justify-center">
-          <div className="w-full max-w-sm px-6 py-16 text-center">
-            <h1 className="text-2xl font-bold mb-1">
-              You're in the queue
-            </h1>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-8 italic">
-              Usernode Social Vibecoding
-            </p>
-            <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 p-5 text-left space-y-3">
-              <p className="text-sm">
-                Your account
-                <span id="waiting-who" className="font-semibold">
-                </span>
-                doesn't have
-            platform access yet. We let people in from the waitlist in batches —
-            you'll get in automatically when your turn comes.
-              </p>
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                This page checks for you every so often; you can also just come back later.
-              </p>
-              <p id="waiting-check-state" className="text-xs text-zinc-400 dark:text-zinc-500">
-              </p>
-            </div>
-            <div className="mt-6 space-y-3">
-              <a
-                href="#landing"
-                className="block w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white"
-              >
-                Browse public apps while you wait
-              </a>
-              <button
-                id="waiting-logout"
-                className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-colors"
-              >
-                Log out
-              </button>
-            </div>
-          </div>
-        </div>
-      </main>
+      <WaitingScreen />
       {/*
           Stage-1 waitlist survey — its own screen (#waitlist), reached from
           the landing CTA block's link and the persistent header's "Join

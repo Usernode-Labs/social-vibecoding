@@ -763,84 +763,16 @@
     _registerOnShow() {},
 
     // ── Waiting room (platform-access gate) ──────────────────────────
-
-    _waitingOnShow() {
-      const who = byId('waiting-who');
-      if (who && window.App && App.user) who.textContent = App.user.username || '';
-      AuthScreens._startWaitingPoll();
-    },
-
-    _startWaitingPoll() {
-      if (AuthScreens._waitingTimer) return;
-      const state = byId('waiting-check-state');
-
-      const check = async () => {
-        try {
-          const res = await fetch('/api/auth/me', { credentials: 'same-origin' });
-          if (res.status === 401) {
-            // Session died while waiting — back to the login screen.
-            AuthScreens._stopWaitingPoll();
-            if (window.App) {
-              App.user = null;
-              if (typeof App.enterAnonymous === 'function') {
-                await App.enterAnonymous();
-              }
-            }
-            location.hash = '#login';
-            return;
-          }
-          const data = await res.json();
-          const user = data && data.user;
-          if (!user) return;
-          const who = byId('waiting-who');
-          if (who) who.textContent = user.username || '';
-          if (user.hasPlatformAccess) {
-            // Released! Boot the full shell in place — same reload-free
-            // path as login.
-            AuthScreens._stopWaitingPoll();
-            const target = AuthScreens._pendingHash || '';
-            AuthScreens._pendingHash = '';
-            history.replaceState(null, '', '/' + target);
-            fx(() => {
-              AuthScreens.hideAll();
-              App.enterAuthed(user);
-            }, 'pop');
-            return;
-          }
-          if (state) state.textContent = 'Last checked ' + new Date().toLocaleTimeString();
-        } catch (_) {
-          if (state) state.textContent = 'Connection issue — will retry';
-        }
-      };
-
-      check();
-      AuthScreens._waitingTimer = setInterval(check, 30000);
-    },
-
-    _stopWaitingPoll() {
-      if (AuthScreens._waitingTimer) {
-        clearInterval(AuthScreens._waitingTimer);
-        AuthScreens._waitingTimer = null;
-      }
-    },
-
-    _wireWaiting() {
-      byId('waiting-logout').addEventListener('click', async () => {
-        // Settings.logout commits web logout/cache cleanup before its final
-        // hard-native boundary (or hard-navigates in a regular browser).
-        // Keep polling alive if that preflight or web logout fails.
-        if (window.Settings && typeof Settings.logout === 'function') {
-          Settings.logout();
-          return;
-        }
-        AuthScreens._stopWaitingPoll();
-        try { window.App?.clearSessionSnapshot?.(); } catch (_) {}
-        try {
-          await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
-        } catch (_) {}
-        window.location.href = '/';
-      });
-    },
+    //
+    // #1080 chunk C: React (frontend/src/features/auth/waiting.tsx). The
+    // release poll is the screen's, but its lifecycle is the router's —
+    // show() stops it when navigating away from `waiting` and hideAll()
+    // stops it on the way into the authed shell — so _startWaitingPoll and
+    // _stopWaitingPoll stay part of the patched surface.
+    _wireWaiting() {},
+    _waitingOnShow() {},
+    _startWaitingPoll() {},
+    _stopWaitingPoll() {},
   };
 
   // Corner back links on the login/register screens → landing.
