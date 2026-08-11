@@ -259,7 +259,16 @@
           return true;
         }
         return false;
-      })().catch((error) => {
+      })().then((admitted) => {
+        // Device permissions are not account-level: the iOS notification
+        // prompt (and the Android alarm/battery asks) should reach
+        // signed-out users too, so a settled anonymous session is a
+        // first-run trigger just like the post-login handoff. The run is
+        // shared/latched, so a login racing this cannot stack a second
+        // sheet. In a plain browser the capability probe bails it out.
+        if (admitted) NativeChrome.maybeShowFirstRunPermissions();
+        return admitted;
+      }).catch((error) => {
         console.warn('[native-chrome] anonymous-session admission failed:',
           error && error.message ? error.message : error);
         return false;
