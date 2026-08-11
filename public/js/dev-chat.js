@@ -2288,6 +2288,8 @@ const DevChat = {
       if (DevChat.stagingPanel.open) DevChat._resetStagingPanel();
       DevChat.isStreaming = false;
       DevChat._streamingPhase = null;
+      // #990: never inherit the previous session's trailing dots.
+      DevChat._activity = null;
       DevChat._stopProgressPolling();
       DevChat._closeResumableStream();
       // Abort the previous session's in-flight POST SSE the same way
@@ -2592,6 +2594,11 @@ const DevChat = {
               m._active = true;
               break;
             }
+            // #990: and re-arm the trailing dots for the same reason — a tab
+            // that loads mid-fetch must not render a transcript that looks
+            // finished. _activityHtml() re-checks the live-CC-run gate, so a
+            // reload during a coding run still suppresses them.
+            DevChat._activity = { label: null };
             // #937: rebuild the stopping row and its escalation ladder from
             // the server's `stopRequestedAt`. Before this, a reload during a
             // stuck stop painted a calm "Stopping…" button with no history —
@@ -2838,7 +2845,16 @@ const DevChat = {
             if (data._seq) { DevChat._seenSeqs?.add(data._seq); DevChat._lastSeenSeq = data._seq; }
             switch (data.type) {
               case 'token':
-                if (!gotFirstToken) { DevChat._removeSpinner(); gotFirstToken = true; }
+                gotFirstToken = true;
+                // #990: the reply is arriving — the dots have done their job.
+                // Unconditional (not gated on gotFirstToken like the old
+                // spinner teardown was) because a mid-turn `status` re-arms
+                // them: an explore turn goes token → status → status → token,
+                // and a first-token-only hide would leave the dots pinned
+                // beside the second bubble. _hideActivity self-guards, so the
+                // repeat calls cost nothing.
+                DevChat._hideActivity();
+                if (!assistantPushed) DevChat._deactivateStatusForFreshBubble();
                 assistantMsg.content += data.text;
                 if (!assistantPushed) {
                   assistantMsg.created_at = new Date().toISOString();
@@ -2894,7 +2910,11 @@ const DevChat = {
                 break;
               case 'status':
                 DevChat._flushStreamingFinal();
-                DevChat._removeSpinner();
+                // #990: no teardown here any more. A status event means the
+                // previous step finished and a NEW one started, so this arm
+                // re-arms the indicator below instead of removing it — the
+                // old _removeSpinner() here is what left the whole data-tool
+                // phase with no live cue at all.
                 DevChat._deactivateLastStatus();
                 // A status line always closes the current streaming bubble
                 // (#99): tokens that arrive after it must render BELOW it,
@@ -2907,6 +2927,11 @@ const DevChat = {
                 // restart-recovery breadcrumb repaints the pill bar live
                 // (the server persists them on the same system row).
                 DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
+                // #990: a step line means work is under way with nothing else
+                // painting yet — put the dots where the next message will
+                // land, and keep them there until it does. Set before the
+                // render so the indicator rides the same innerHTML write.
+                DevChat._showActivity();
                 DevChat.renderMessages();
                 DevChat.scrollToBottom();
                 break;
@@ -2914,6 +2939,7 @@ const DevChat = {
                 // Agent-suggested platform report (human gate). Deliberately
                 // NOT a status event: it lands mid-turn and must not seal
                 // bubbles or deactivate the running spinner line.
+                DevChat._hideActivity();
                 DevChat._pushPlatformIssueDraft(data);
                 break;
               case 'staging_ready':
@@ -3003,7 +3029,11 @@ const DevChat = {
                 // reasoning" collapsible both during streaming and after
                 // refresh.
                 if (!data.text) break;
+                // #990: authoritative text for the bubble — same teardown as
+                // the first token, for the path where token events were lost.
+                DevChat._hideActivity();
                 if (!assistantPushed) {
+                  DevChat._deactivateStatusForFreshBubble();
                   assistantMsg.content = data.text;
                   assistantMsg.created_at = new Date().toISOString();
                   DevChat.messages.push(assistantMsg);
@@ -3042,6 +3072,9 @@ const DevChat = {
                 break;
               }
               case 'cc_progress': {
+                // #990: the coding agent's own live log is now the progress
+                // cue; dots underneath it would be redundant.
+                DevChat._hideActivity();
                 DevChat._appendProgressLine(data.text, data);
                 DevChat.scrollToBottom();
                 // Start /status polling as a fallback in case the SSE stream
@@ -3066,6 +3099,7 @@ const DevChat = {
                 });
                 break;
               case 'cc_log':
+                DevChat._hideActivity();
                 DevChat.messages.push(DevChat._copyActivityAgentMetadata({
                   role: 'system',
                   ccLog: data.log,
@@ -3140,6 +3174,10 @@ const DevChat = {
     // applied to the first status row of the NEXT turn.
     DevChat._pendingEstimate = null;
     DevChat._lastEstimateAt = null;
+    // #990: same discipline as the estimate above — the turn is over, so the
+    // trailing dots must not survive into the next one. Cleared BEFORE the
+    // renderMessages() below so that render drops the node.
+    DevChat._activity = null;
     DevChat.isStreaming = false;
     DevChat._abortController = null;
     DevChat._stopProgressPolling();
@@ -3253,12 +3291,14 @@ const DevChat = {
     };
     switch (data.type) {
       case 'token': {
-        DevChat._removeSpinner();
+        // #990: the reply is arriving — same teardown as the POST-SSE path.
+        DevChat._hideActivity();
         let am = lastAssistantMsg();
         // No assistant message yet for this turn → push a fresh one.
         // The user message is already in DevChat.messages so insertion
         // order is correct.
         if (!am || am._finalized) {
+          DevChat._deactivateStatusForFreshBubble();
           am = { role: 'assistant', content: '', created_at: new Date().toISOString() };
           DevChat.messages.push(am);
           DevChat.renderMessages();
@@ -3273,12 +3313,14 @@ const DevChat = {
       }
       case 'mayor_reasoning': {
         if (!data.text) break;
+        DevChat._hideActivity();
         let am = lastAssistantMsg();
         // Once an assistant bubble is sealed (_finalized, via
         // assistant_message_end), a fresh mayor_reasoning belongs to
         // the *next* bubble — otherwise we'd overwrite phase-1's text
         // with phase-2's wrap-up when replaying on reconnect.
         if (!am || am._finalized) {
+          DevChat._deactivateStatusForFreshBubble();
           DevChat.messages.push({ role: 'assistant', content: data.text, created_at: new Date().toISOString() });
           DevChat.renderMessages();
         } else if (am.content !== data.text) {
@@ -3372,7 +3414,7 @@ const DevChat = {
       }
       case 'status': {
         DevChat._flushStreamingFinal();
-        DevChat._removeSpinner();
+        // #990: no teardown here — see the POST-SSE status handler.
         DevChat._deactivateLastStatus();
         // A status line always closes the current streaming bubble (#99):
         // tokens replayed after it must start a fresh bubble below it,
@@ -3381,11 +3423,16 @@ const DevChat = {
         if (sealMsg) sealMsg._finalized = true;
         // #786: carry quickReplies (see the POST-SSE status handler).
         DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8), _active: true });
+        // #990: keep a live cue where the next message will land — see the
+        // POST-SSE status handler. Set before the render so both channels
+        // emit the indicator inside the same innerHTML write.
+        DevChat._showActivity();
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         break;
       }
       case 'platform_issue_draft':
+        DevChat._hideActivity();
         DevChat._pushPlatformIssueDraft(data);
         break;
       case 'billing_switched':
@@ -3464,6 +3511,7 @@ const DevChat = {
         }
         break;
       case 'cc_progress':
+        DevChat._hideActivity();
         DevChat._appendProgressLine(data.text, data);
         DevChat.scrollToBottom();
         break;
@@ -3477,6 +3525,7 @@ const DevChat = {
         });
         break;
       case 'cc_log':
+        DevChat._hideActivity();
         DevChat.messages.push(DevChat._copyActivityAgentMetadata({
           role: 'system',
           ccLog: data.log,
@@ -3879,6 +3928,9 @@ const DevChat = {
     // Freeze whatever was spinning ("Claude Code is running…") so exactly
     // one line in the transcript reads as live.
     DevChat._deactivateLastStatus();
+    // #990: "Stopping the agent…" is its own live row — the trailing dots
+    // underneath it would claim a reply is still on its way.
+    DevChat._activity = null;
 
     // `_active` earns the arc spinner and the live elapsed ticker that
     // every other in-progress status line uses — see renderMessages.
@@ -4024,19 +4076,105 @@ const DevChat = {
     DevChat.scrollToBottom();
   },
 
-  _showSpinner() {
+  // ── Trailing activity indicator (#990) ───────────────────────
+  //
+  // The bouncing-dots "thinking" indicator used to be appended imperatively
+  // once per turn and torn down by the first `status` event, with nothing
+  // ever restoring it — so the whole window between "Fetching github.com…"
+  // and the reply arriving had no live cue at all, and the answer read as
+  // popping in from nowhere. It is now a piece of STATE
+  // (`DevChat._activity`) that renderMessages() emits itself: the old
+  // append could not survive a re-render anyway, because renderMessages
+  // assigns container.innerHTML wholesale.
+  //
+  // `null` = hidden. `{ label }` = visible, with an optional muted caption.
+  _activity: null,
+
+  _escActivity(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  },
+
+  // The indicator's markup, or '' when it must not be shown. Called from
+  // renderMessages (as part of the single innerHTML write) and from
+  // _syncActivityNode (for the imperative show/hide path) so both produce
+  // byte-identical DOM.
+  _activityHtml() {
+    if (!DevChat.isStreaming || !DevChat._activity) return '';
+    // Suppressed while a coding agent's own live log is what's painting
+    // progress: that row already carries a scrolling log and an ETA, so
+    // dots pinned underneath read as noise rather than reassurance. The
+    // pre-log gap ("Spinning up coding agent…") is still covered, because
+    // that status line is not a live CC run yet.
+    for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+      const m = DevChat.messages[i];
+      if (!m || m.role !== 'system') continue;
+      if (!m._active) continue;
+      if (DevChat._isLiveCcRun(m)) return '';
+      break;
+    }
+    const label = DevChat._activity.label
+      ? `<span class="dc-activity-label">${DevChat._escActivity(DevChat._activity.label)}</span>`
+      : '';
+    return '<div id="dc-spinner" class="dc-status-line dc-activity-line">'
+      + '<div class="dc-streaming-dots"><span></span><span></span><span></span></div>'
+      + `${label}</div>`;
+  },
+
+  // #990: a fresh assistant bubble opening means the step the ladder still
+  // shows as live ("Thinking about what came back…") has in fact finished —
+  // freeze it with its real duration so exactly one row reads as live, the
+  // same invariant _enterStoppingState maintains. Guarded on _isLiveCcRun
+  // because _deactivateLastStatus ALSO clears _estimate / _countdownTo, and
+  // a coding agent that is still running needs its progress guess.
+  _deactivateStatusForFreshBubble() {
+    for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+      const m = DevChat.messages[i];
+      if (!m || m.role !== 'system') continue;
+      if (!m._active) continue;
+      if (DevChat._isLiveCcRun(m)) return;
+      break;
+    }
+    DevChat._deactivateLastStatus();
+  },
+
+  _showActivity(label) {
+    DevChat._activity = { label: label == null ? null : String(label) };
+    DevChat._syncActivityNode();
+  },
+
+  _hideActivity() {
+    // Self-guarded: `token` calls this on every token, and the DOM probe in
+    // _syncActivityNode is not worth repeating once the dots are already down.
+    if (DevChat._activity === null) return;
+    DevChat._activity = null;
+    DevChat._syncActivityNode();
+  },
+
+  // Bring the DOM in line with the flag without a full re-render. Idempotent
+  // in both directions, so callers may show/hide freely and may (or may not)
+  // follow up with renderMessages().
+  _syncActivityNode() {
     const container = document.getElementById('dc-messages');
     if (!container) return;
-    const el = document.createElement('div');
-    el.id = 'dc-spinner';
-    el.className = 'px-3 py-2';
-    el.innerHTML = '<div class="dc-streaming-dots"><span></span><span></span><span></span></div>';
-    container.appendChild(el);
+    const existing = document.getElementById('dc-spinner');
+    const html = DevChat._activityHtml();
+    if (!html) { if (existing) existing.remove(); return; }
+    if (existing) return;
+    container.insertAdjacentHTML('beforeend', html);
+  },
+
+  // Retained as the single legacy entry point: every existing call site
+  // (the pre-POST show, and the `token` / `status` / `staging_*` / `stopped`
+  // / `error` teardowns) now drives the one piece of state above, so there
+  // is exactly one source of truth for whether the dots are up.
+  _showSpinner() {
+    DevChat._showActivity();
   },
 
   _removeSpinner() {
-    const el = document.getElementById('dc-spinner');
-    if (el) el.remove();
+    DevChat._hideActivity();
   },
 
   _progressPollTimer: null,
@@ -5302,7 +5440,11 @@ const DevChat = {
       // repaint, and it keeps the card inside the string the rest of this
       // method's tests render through. Returns '' for every session that is
       // already under way.
-    }).join('') + DevChat._devFlowHtml();
+      // #990: the trailing activity indicator is part of the SAME
+      // assignment for the same reason the flow card is — one write, one
+      // repaint — and because an appended-afterwards node is exactly what
+      // used to get wiped by every re-render.
+    }).join('') + DevChat._devFlowHtml() + DevChat._activityHtml();
 
     DevChat._wireDevFlowCard();
     DevChat._bindDevFlowVisibility();

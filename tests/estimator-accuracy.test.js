@@ -232,7 +232,7 @@ test('#891: progress_estimates stays staging:private (so the demo is needed)', (
 // platform analytics. Every assertion below now reads the new module.
 
 test('#898: the Estimator accuracy section renders the card', () => {
-  const js = read('public/js/admin-estimator.js');
+  const js = read('frontend/src/features/admin/admin-estimator.js');
   assert.match(js, /<div id="admin-estimator-card"><\/div>/, 'the card must have a mount point');
   assert.match(js, /Progress estimator accuracy/, 'the card must be titled');
   assert.match(js, /data-info="estimator"/, 'the card must carry a (?) info icon');
@@ -250,7 +250,7 @@ test('#898: the Estimator accuracy section renders the card', () => {
 });
 
 test('#898: the move is complete — no estimator code left in Analytics', () => {
-  const js = read('public/js/admin-analytics.js');
+  const js = read('frontend/src/features/admin/admin-analytics.js');
   for (const gone of ['renderEstimator', 'ESTIMATOR_BAR', 'estimatorVerdict',
     'data-info="estimator"', '<div id="estimator">', 'analytics/estimator']) {
     assert.ok(!js.includes(gone),
@@ -262,15 +262,20 @@ test('#898: the move is complete — no estimator code left in Analytics', () =>
 });
 
 test('#898: the console registers the section, and the shell loads it', () => {
-  const consoleJs = read('public/js/admin-console.js');
+  const consoleJs = read('frontend/src/features/admin/admin-console.js');
   assert.match(consoleJs, /\{ key: 'estimator', label: '[^']+', group: '[^']+' \}/,
     'SECTIONS must carry an estimator entry with a label and a group');
   assert.match(consoleJs, /estimator: 'AdminEstimator'/,
     'SECTION_MODULES must map estimator to the module global');
-  assert.match(read('public/index.html'), /<script src="\/js\/admin-estimator\.js"><\/script>/,
-    'the shell must load the module');
-  assert.match(read('public/sw.js'), /'\/js\/admin-estimator\.js'/,
-    'the service worker must precache the module');
+  // #1082 chunk E moved the module into the React bundle, so "the shell loads
+  // it" is now an island import rather than a <script> tag plus a service-worker
+  // precache entry — /shell/assets/shell.js carries both jobs.
+  assert.match(read('frontend/src/features/admin/index.tsx'), /import '\.\/admin-estimator\.js';/,
+    'the console island must import the module');
+  assert.ok(!read('public/index.html').includes('/js/admin-estimator.js'),
+    'the retired script tag must be gone from the shell');
+  assert.ok(!read('public/sw.js').includes('/js/admin-estimator.js'),
+    'and its precache entry with it');
   // The section owns the .dc-* chart idiom too, so the CSS must scope to it.
   const css = read('public/css/app.css');
   assert.match(css, /#admin-estimator-root \.dc-hover/, '.dc-hover must be scoped to the new root');
@@ -294,7 +299,7 @@ test('#898: dapp.json checks the new section renders', () => {
 });
 
 test('#891: the card states the leave-experimental bar', () => {
-  const js = read('public/js/admin-estimator.js');
+  const js = read('frontend/src/features/admin/admin-estimator.js');
   // The thresholds live in one constant driving both the tiles and the verdict.
   assert.match(js, /const ESTIMATOR_BAR = \{/,
     'the decision thresholds must be a single named constant');
@@ -326,7 +331,7 @@ test('#891: the card states the leave-experimental bar', () => {
 });
 
 test('#892: the card renders the version split, baselines and priors freshness', () => {
-  const js = read('public/js/admin-estimator.js');
+  const js = read('frontend/src/features/admin/admin-estimator.js');
   assert.match(js, /const versionHtml = /, 'the v1-vs-v2 comparison must render');
   assert.match(js, /const baselineHtml = /, 'the baselines-to-beat row must render');
   assert.match(js, /const priorsHtml = /, 'the priors freshness strip must render');
@@ -342,10 +347,13 @@ test('#892: the card renders the version split, baselines and priors freshness',
 });
 
 test('#891: withAdmins carries the page ?demo=1 through to the Analytics endpoints', () => {
-  const js = read('public/js/admin-analytics.js');
+  const js = read('frontend/src/features/admin/admin-analytics.js');
   // Without this the whole section's demo substitution never fires, so every
   // chart is blank in a staging preview.
-  assert.match(js, /const DEMO = new URLSearchParams\(location\.search\)\.get\('demo'\) === '1'/,
+  // The `typeof window` guard is #1082 chunk E: the module lives in the React
+  // bundle now and the SSG prerender pass evaluates this line in Node. The
+  // read itself — and therefore the staging demo substitution — is unchanged.
+  assert.match(js, /const DEMO = typeof window !== 'undefined'\s*\n?\s*&& new URLSearchParams\(location\.search\)\.get\('demo'\) === '1'/,
     'the page-level demo flag must be read from location.search');
   const fnStart = js.indexOf('function withAdmins(url) {');
   assert.ok(fnStart !== -1, 'withAdmins must exist');
@@ -355,10 +363,13 @@ test('#891: withAdmins carries the page ?demo=1 through to the Analytics endpoin
 });
 
 test('#898: the estimator section carries ?demo=1 through to the endpoint', () => {
-  const js = read('public/js/admin-estimator.js');
+  const js = read('frontend/src/features/admin/admin-estimator.js');
   // progress_estimates is staging:private, so without the flag the section
   // is a wall of dashes in every PR preview.
-  assert.match(js, /const DEMO = new URLSearchParams\(location\.search\)\.get\('demo'\) === '1'/,
+  // The `typeof window` guard is #1082 chunk E: the module lives in the React
+  // bundle now and the SSG prerender pass evaluates this line in Node. The
+  // read itself — and therefore the staging demo substitution — is unchanged.
+  assert.match(js, /const DEMO = typeof window !== 'undefined'\s*\n?\s*&& new URLSearchParams\(location\.search\)\.get\('demo'\) === '1'/,
     'the page-level demo flag must be read from location.search');
   assert.match(js, /const withDemo = \(url\) =>/, 'withDemo must exist');
   assert.match(js, /DEMO \? \(url\.includes\('\?'\) \? '&' : '\?'\) \+ 'demo=1' : ''/,
@@ -366,7 +377,7 @@ test('#898: the estimator section carries ?demo=1 through to the endpoint', () =
 });
 
 test('#891: an empty or failed payload does not blow the section up', () => {
-  const js = read('public/js/admin-estimator.js');
+  const js = read('frontend/src/features/admin/admin-estimator.js');
   const fnStart = js.indexOf('function renderEstimator(e) {');
   const fnBody = js.slice(fnStart, fnStart + 600);
   assert.match(fnBody, /if \(!e \|\| !all \|\| !all\.ticks\) \{/,
@@ -381,7 +392,7 @@ test('#891: an empty or failed payload does not blow the section up', () => {
 });
 
 test('#898: the section tears its body-level tooltip down on destroy', () => {
-  const js = read('public/js/admin-estimator.js');
+  const js = read('frontend/src/features/admin/admin-estimator.js');
   // #dc-tip is appended to <body> so it can escape the section's overflow;
   // leaving it behind means stale copy floating over the next section.
   assert.match(js, /render\(\s*\w+\s*\)\s*\{/, 'the module must implement render(host)');
@@ -393,7 +404,7 @@ test('#898: the section tears its body-level tooltip down on destroy', () => {
 });
 
 test('#891: the card formats durations without a 60-second carry bug', () => {
-  const js = read('public/js/admin-estimator.js');
+  const js = read('frontend/src/features/admin/admin-estimator.js');
   const fnStart = js.indexOf('const fmtSecs = (v) => {');
   assert.ok(fnStart !== -1, 'fmtSecs must exist');
   const fnBody = js.slice(fnStart, js.indexOf('\n  };', fnStart));

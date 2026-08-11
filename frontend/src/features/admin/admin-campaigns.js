@@ -1,5 +1,10 @@
 'use strict';
 
+// The shared admin class-string registry. This was a bare global read that
+// depended on <script> order (admin-console.js loaded first); inside the
+// React bundle the dependency is explicit (#1082 chunk E).
+import { AdminUI } from './admin-console.js';
+
 // Maintenance campaigns section of the admin console (#860, #853) — the one
 // block on the retired standalone /admin page that the console never picked
 // up, ported into #admin/campaigns.
@@ -421,4 +426,7 @@ const AdminCampaigns = (() => {
   };
 })();
 
-window.AdminCampaigns = AdminCampaigns;
+// Published on the global because AdminConsole._renderSection dispatches
+// section modules through window[modName]. Guarded: the SSG prerender pass
+// evaluates this module in Node, where there is no window.
+if (typeof window !== 'undefined') window.AdminCampaigns = AdminCampaigns;

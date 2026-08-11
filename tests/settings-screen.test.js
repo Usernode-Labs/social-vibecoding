@@ -463,7 +463,9 @@ test('the credits banner deep-links all three ways to keep building', () => {
 test('the "Settings → Change password" prose is a real link', () => {
   assert.match(html, /href="#settings\/password"/,
     'the account-recovery help text links to the Password section');
-  assert.match(read('public/js/admin-console.js'), /href="#settings\/password"/,
+  // The dialog's markup is React-owned chassis since #1082 chunk E; the copy
+  // and the link inside it are unchanged.
+  assert.match(read('frontend/src/features/admin/index.tsx'), /href="#settings\/password"/,
     'so does the temporary-password dialog');
 });
 

@@ -1,6 +1,6 @@
 // Wiring tests for the bulk container rollover surface — the admin route
 // pair (src/routes/admin.js), the admin-console section
-// (public/js/admin-console.js), the shell's WS routing (public/js/app.js)
+// (frontend/src/features/admin/admin-console.js), the shell's WS routing (public/js/app.js)
 // and the three small supporting additions it leans on (ws.js's
 // admin-filtered broadcast, docker.js's imageExists, staging.js's exported
 // per-slug lock).
@@ -36,7 +36,7 @@ const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
 const adminRoutes = read('src/routes/admin.js');
-const consoleJs = read('public/js/admin-console.js');
+const consoleJs = read('frontend/src/features/admin/admin-console.js');
 const appJs = read('public/js/app.js');
 const wsJs = read('src/services/ws.js');
 const dockerJs = read('src/services/docker.js');

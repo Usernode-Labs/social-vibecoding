@@ -11,7 +11,7 @@
 // active — and so can any other user viewing over their shoulder
 // (no secrets leak, just the indicator).
 //
-// LAYOUT (mirrors public/js/admin-console.js — read that file's header for
+// LAYOUT (mirrors features/admin/admin-console.js — read that file's header for
 // the reasoning, this is the same shell with different data):
 //
 //   desktop (md+)          a grouped sidebar of sections + the active

@@ -165,7 +165,7 @@ test('a view-only admin can read the probe but is told they cannot write', async
 });
 
 test('the probe carries a machine-readable reason so the client needs no env check', async () => {
-  // This indirection is what keeps public/js/admin-console.js free of any
+  // This indirection is what keeps frontend/src/features/admin/admin-console.js free of any
   // USERNODE_ENV literal (pinned by tests/admin-console-page.test.js).
   reset();
   process.env.USERNODE_ENV = 'staging';

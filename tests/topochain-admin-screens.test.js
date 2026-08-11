@@ -13,8 +13,8 @@ const path = require('node:path');
 
 const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
-const consoleJs = fs.readFileSync(path.join(root, 'public/js/admin-console.js'), 'utf8');
-const topoJs = fs.readFileSync(path.join(root, 'public/js/admin-topochain.js'), 'utf8');
+const consoleJs = fs.readFileSync(path.join(root, 'frontend/src/features/admin/admin-console.js'), 'utf8');
+const topoJs = fs.readFileSync(path.join(root, 'frontend/src/features/admin/admin-topochain.js'), 'utf8');
 
 // Built subsections only — the four documented gaps (challenge-kinds,
 // terms-versions, token-allocation, mobile-logs) must NOT appear as a
@@ -91,16 +91,24 @@ test('admin-console.js needed no changes to its single-level hash handling', () 
   assert.match(consoleJs, /_writeHash\(key\) \{/, '_writeHash signature unchanged (no sub-key parameter added)');
 });
 
-// ─── index.html: script registration ──────────────────────────────────────
+// ─── module registration ──────────────────────────────────────────────────
 
-test('admin-topochain.js is registered in index.html, after admin-console.js and before app.js', () => {
-  const topoTag = '<script src="/js/admin-topochain.js"></script>';
-  assert.ok(html.includes(topoTag), 'admin-topochain.js is loaded by the shell');
-  const consoleIdx = html.indexOf('<script src="/js/admin-console.js"></script>');
-  const topoIdx = html.indexOf(topoTag);
-  const appIdx = html.indexOf('<script src="/js/app.js"></script>');
-  assert.ok(topoIdx > consoleIdx, 'admin-topochain.js loads after the module it extends');
-  assert.ok(appIdx > topoIdx, 'admin-topochain.js loads before app.js');
+test('admin-topochain.js is imported by the console island, after admin-console.js', () => {
+  // Until #1082 chunk E this was a <script> tag in the shell, ordered after
+  // admin-console.js's tag and before app.js's. Both modules are in the React
+  // bundle now, so the ordering that matters is the island's import order —
+  // and the console must still come first, because admin-topochain.js reads
+  // AdminUI.card at module-evaluation time.
+  const island = fs.readFileSync(
+    path.join(root, 'frontend/src/features/admin/index.tsx'), 'utf8'
+  );
+  const order = [...island.matchAll(/from '\.\/(admin-[a-z]+)\.js'|import '\.\/(admin-[a-z]+)\.js'/g)]
+    .map((m) => m[1] || m[2]);
+  assert.ok(order.includes('admin-topochain'), 'admin-topochain.js is imported by the island');
+  assert.ok(order.indexOf('admin-topochain') > order.indexOf('admin-console'),
+    'admin-topochain.js is imported after the module it extends');
+  assert.ok(!html.includes('/js/admin-topochain.js'),
+    'the retired script tag is gone from the shell');
 });
 
 // ─── AdminTopochain: surface + sub-nav ─────────────────────────────────────

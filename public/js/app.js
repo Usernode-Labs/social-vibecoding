@@ -1270,12 +1270,17 @@ const App = {
         // (that handler attaches to the last ASSISTANT row, which a
         // recovered turn doesn't have).
         DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, scoutOutput: data.scoutOutput, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
+        // #990: keep a live cue where the next message will land, for the
+        // whole gap between this step line and whatever follows it. Parity
+        // with both dev-chat.js status handlers.
+        if (typeof DevChat._showActivity === 'function') DevChat._showActivity();
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         break;
       }
       case 'platform_issue_draft':
         // Agent-suggested platform report (human gate) — see dev-chat.js.
+        if (typeof DevChat._hideActivity === 'function') DevChat._hideActivity();
         DevChat._pushPlatformIssueDraft(data);
         break;
       case 'billing_switched':
@@ -1345,6 +1350,8 @@ const App = {
         }
         break;
       case 'cc_progress':
+        // #990: the coding agent's own live log takes over as the cue.
+        if (typeof DevChat._hideActivity === 'function') DevChat._hideActivity();
         DevChat._appendProgressLine(data.text, data);
         DevChat.scrollToBottom();
         // Also arm the /status polling fallback when cc_progress arrives via
@@ -1374,7 +1381,12 @@ const App = {
         // live bubble to the server's authoritative text whenever it differs
         // (the server may have shortened it by scrubbing a fake completion
         // marker), patching the content node in place when present.
+        // #990: the reply is here — drop the dots, and freeze the step line
+        // that is still painted as live (guarded so a running coding agent
+        // keeps its progress estimate).
+        if (typeof DevChat._hideActivity === 'function') DevChat._hideActivity();
         if (!am || am._finalized) {
+          if (typeof DevChat._deactivateStatusForFreshBubble === 'function') DevChat._deactivateStatusForFreshBubble();
           DevChat.messages.push({ role: 'assistant', content: data.text, created_at: new Date().toISOString() });
           DevChat.renderMessages();
         } else if (am.content !== data.text) {
@@ -1500,6 +1512,9 @@ const App = {
           agentModel: data.agentModel,
           created_at: new Date().toISOString(),
         });
+        // #990: real content arrived — the trailing dots stand down. Guarded
+        // with typeof because app.js may run before dev-chat.js is defined.
+        if (typeof DevChat._hideActivity === 'function') DevChat._hideActivity();
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         break;
@@ -3002,6 +3017,8 @@ const App = {
     'auth-waiting-screen',
     'auth-waitlist-screen',
     'auth-more-screen',
+    // #1082 chunk E — the Admin & moderation console.
+    'admin-screen',
   ],
 
   // The publish/read half of that seam. The state is a plain object on

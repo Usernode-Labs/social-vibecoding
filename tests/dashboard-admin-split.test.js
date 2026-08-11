@@ -276,7 +276,7 @@ const CARD_IDS = [
 ];
 
 test('admin-analytics.js: a per-card tooltip definition exists for each of the ten cards', () => {
-  const src = read('public/js/admin-analytics.js');
+  const src = read('frontend/src/features/admin/admin-analytics.js');
   const mapStart = src.indexOf('const CARD_INFO');
   assert.ok(mapStart !== -1, 'CARD_INFO map must be defined');
   const mapBody = src.slice(mapStart, src.indexOf('};', mapStart));
@@ -289,7 +289,7 @@ test('admin-analytics.js: a per-card tooltip definition exists for each of the t
 });
 
 test('admin-analytics.js: renderCounters renders + wires a (?) icon per card', () => {
-  const src = read('public/js/admin-analytics.js');
+  const src = read('frontend/src/features/admin/admin-analytics.js');
   assert.match(src, /data-card-info="\$\{c\.id\}"/, 'each card must render a (?) icon');
   // The local holding the icon element is named freely (#860 renamed it to
   // `icon` when the counters container took over the name `el`) — what
@@ -300,7 +300,7 @@ test('admin-analytics.js: renderCounters renders + wires a (?) icon per card', (
 });
 
 test('admin-analytics.js: the amber admin colour + Non-admin/Admin legend are wired', () => {
-  const src = read('public/js/admin-analytics.js');
+  const src = read('frontend/src/features/admin/admin-analytics.js');
   assert.match(src, /const ADMIN_COLOR = '#f59e0b'/, 'amber admin colour constant must exist');
   assert.match(src, /function adminLegend/, 'a reusable Non-admin/Admin legend helper must exist');
   // barChart stacks admin sub-rects; funnel splits a second amber segment;
@@ -310,7 +310,7 @@ test('admin-analytics.js: the amber admin colour + Non-admin/Admin legend are wi
 });
 
 test('admin-analytics.js: renderSpend stacks an amber admin segment on Daily spend', () => {
-  const src = read('public/js/admin-analytics.js');
+  const src = read('frontend/src/features/admin/admin-analytics.js');
   const start = src.indexOf('function renderSpend');
   const end = src.indexOf('function renderSpendByBuilder');
   const body = src.slice(start, end);

@@ -1,9 +1,32 @@
 // Admin & moderation console (#818) — the full-page SPA screen behind the
 // header shield icon. #588 shipped the icon plus a "Coming soon"
 // placeholder; this module is the real console. Hash route
-// #admin[/section], hosted in #admin-screen / #admin-root (index.html) and
+// #admin[/section], hosted in #admin-screen / #admin-root and
 // mounted/unmounted by App.navigateToAdminConsole / App._exitAdminConsole
 // (public/js/app.js), the same shape as the Challenges / Profile screens.
+//
+// ── #1082 chunk E: this file used to be public/js/admin-console.js ──────
+// The screen root and the console CHASSIS are a React island now
+// (./index.tsx): #admin-screen, #admin-root, the md:flex column pair, the
+// desktop nav host, the view-only banner, #admin-section-content and the
+// temporary-password dialog are all rendered by React and ship in
+// public/index.html. This module was MOVED into that bundle rather than
+// rewritten — the change here is the three lines that seam it to React:
+//
+//   * the AdminUI registry is an `export` (plus the same window publication
+//     it always had), so the nine section modules import it instead of
+//     depending on <script> order;
+//   * _renderShell() no longer writes root.innerHTML — the chassis is
+//     React's, and writing over it is the one thing the island rule
+//     forbids. It repaints the nav host and the banner instead, which is
+//     exactly what setSection() already did on every switch;
+//   * window.AdminConsole is published behind a `typeof window` guard,
+//     because the SSG prerender pass evaluates this module in Node.
+//
+// Everything below that is unchanged: #admin-section-content is still an
+// innerHTML host that this file and the section modules own outright, so
+// every render()/destroy() lifecycle, every id and every declared #admin/*
+// dapp test sees the DOM it saw before.
 //
 // It reorganizes the standalone /admin page's sections (public/admin.html:
 // Operations overview, Maintenance campaigns, LLM spend limits, Activation
@@ -61,14 +84,21 @@
 // ── AdminUI: shared class recipes, topochain admin vocabulary (see
 // docs/superpowers/specs/2026-08-10-admin-topochain-skin-design.md) ──────
 // Data-only class-string constants used by this file and every admin-*.js
-// section module (all of which load after this file — see the script order
-// in frontend/src/Shell.tsx). Light mode matches ../topochain's admin
-// verbatim (gray neutrals, indigo accent); dark: variants are the fixed
-// translation documented in the spec. Every value is a COMPLETE class
-// literal: Tailwind's extractor is a regex over public/js/** source, and
+// section module. They used to depend on <script> ORDER for this object to
+// exist — this file loaded first, the section modules read the global. Now
+// that the console lives in the React bundle (#1082 chunk E) the dependency
+// is a real `import { AdminUI } from './admin-console.js'` in each of them,
+// which is also what makes the SSG prerender pass work: admin-topochain.js
+// reads AdminUI.card at module-evaluation time, and in Node there is no
+// `window` to have published it.
+//
+// Light mode matches ../topochain's admin verbatim (gray neutrals, indigo
+// accent); dark: variants are the fixed translation documented in the spec.
+// Every value is a COMPLETE class literal: Tailwind's extractor is a regex
+// over the content globs (which now include frontend/src/**/*.js), and
 // tests/admin-ui-registry.test.js + tests/tailwind-build.test.js enforce
 // the discipline. Never index this registry dynamically.
-window.AdminUI = Object.freeze({
+export const AdminUI = Object.freeze({
   // Surfaces — topochain card: white, rounded-xl, gray-200 hairline, soft shadow.
   card: 'bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 shadow-sm',
   cardHeader: 'flex items-center justify-between gap-2 mb-4',
@@ -118,6 +148,12 @@ window.AdminUI = Object.freeze({
   separator: 'border-t border-gray-200 dark:border-gray-800',
   kbd: 'rounded border border-gray-300 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 font-mono text-xs text-gray-700 dark:text-gray-300',
 });
+
+// Still published on the global: admin-topochain.js's sub-modules and a few
+// section modules read `AdminUI` as a bare identifier inside functions, and
+// the standalone /admin page's remaining scripts have never imported it.
+// Guarded because the prerender pass evaluates this module in Node.
+if (typeof window !== 'undefined') window.AdminUI = AdminUI;
 
 const AdminConsole = {
   _open: false,
@@ -639,48 +675,38 @@ const AdminConsole = {
     return `<nav id="admin-mobile-menu" aria-label="Admin sections" class="-mx-4">${groups}</nav>`;
   },
 
+  // Repaint the chassis's two variable parts. React owns the chassis MARKUP
+  // (./index.tsx), which is why this no longer touches root.innerHTML: the
+  // nav host and the banner are the only things about it that depend on who
+  // is looking, and both were already repainted in place on every section
+  // switch (see setSection). The name is kept because eight call sites and
+  // the mobile transition callbacks read as "repaint the shell".
+  //
+  // #admin-nav-desktop ships EMPTY, exactly as #settings-nav-desktop does:
+  // React hydrates an empty host and never looks inside it again, so the
+  // innerHTML write below is not a write into React-owned DOM.
   _renderShell() {
-    const root = document.getElementById('admin-root');
-    if (!root) return;
+    const sideHost = document.getElementById('admin-nav-desktop');
+    if (sideHost) {
+      sideHost.innerHTML = AdminConsole._navItemsHtml();
+      // Scoped to the sidebar, where the old whole-root wire was scoped to a
+      // subtree this function had just emptied. It has to be: #admin-root is
+      // no longer wiped here, so wiring the whole root would ALSO re-bind the
+      // level-1 menu buttons still sitting in #admin-section-content, one
+      // extra click handler per repaint. The other two [data-admin-section]
+      // producers wire their own output — _renderMobileMenu right after its
+      // innerHTML write, and each section module for its own controls.
+      AdminConsole._wireSectionButtons(sideHost);
+    }
     // In public mode the viewer isn't an admin at all, so the view-only
     // ADMIN banner would be nonsense — suppress it rather than showing an
     // amber "you can't make changes" strip to a regular member.
     const viewOnly = !AdminConsole.canWrite() && !AdminConsole._publicMode();
-    root.innerHTML = `
-      <div class="md:flex md:items-start md:gap-6">
-        <!-- Desktop sidebar menu. Below md there is no nav here at all:
-             phones get the two-level hierarchy instead (the level-1 menu
-             renders INTO #admin-section-content). -->
-        <nav id="admin-nav-desktop" aria-label="Admin sections"
-             class="hidden md:block md:w-64 shrink-0 space-y-1">
-          ${AdminConsole._navItemsHtml()}
-        </nav>
-        <div class="flex-1 min-w-0">
-          <!-- View-only admin banner (issue #311), same copy as /admin. -->
-          <div id="admin-view-only-banner" class="${viewOnly ? '' : 'hidden '}bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200 rounded-lg px-4 py-3 mb-4 text-sm">
-            <span class="font-semibold">View-only — read access only.</span>
-            You can see every admin surface but can't make changes. Mutating controls are hidden.
-          </div>
-          <div id="admin-section-content" class="pb-8"></div>
-        </div>
-      </div>
-      <!-- Temporary password modal (issue #282): the reset response is the
-           only time the plaintext exists — shown once, never persisted. -->
-      <div id="admin-temp-pw-modal" class="hidden ${AdminUI.dialogOverlay}">
-        <div class="${AdminUI.dialogPanel}">
-          <h2 class="${AdminUI.cardTitle} mb-1">Temporary password</h2>
-          <p class="${AdminUI.muted} mb-4">
-            Give this to <span id="admin-temp-pw-username" class="font-medium text-gray-800 dark:text-gray-200"></span> out-of-band (chat, in person). They use it as their password to log in, then set their own from <a href="#settings/password" class="text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 underline">Settings → Change password</a>. It signs them out everywhere and <span class="font-medium">won't be shown again</span>.
-          </p>
-          <div class="flex gap-2">
-            <code id="admin-temp-pw-value" class="flex-1 min-w-0 break-all rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 px-3 py-2 text-sm font-mono text-gray-900 dark:text-gray-100"></code>
-            <button id="admin-temp-pw-copy" class="${AdminUI.btn.primary} shrink-0">Copy</button>
-          </div>
-          <button id="admin-temp-pw-close" class="${AdminUI.btn.outline} mt-4 w-full">Done</button>
-        </div>
-      </div>`;
-
-    AdminConsole._wireSectionButtons(root);
+    const banner = document.getElementById('admin-view-only-banner');
+    // classList, not a rendered className: the banner is a static React node
+    // and its class attribute must be written once at hydration and then
+    // only ever toggled from here (the useHiddenClass contract).
+    if (banner) banner.classList.toggle('hidden', !viewOnly);
   },
 
   // Every [data-admin-section] control routes through here. On mobile a
@@ -704,15 +730,11 @@ const AdminConsole = {
       key = AdminConsole._publicMode() ? (visible[0]?.key || 'status') : 'overview';
     }
     AdminConsole._section = key;
-    // Repaint the sidebar's active state without rebuilding the shell.
-    const root = document.getElementById('admin-root');
-    if (!root || !document.getElementById('admin-section-content')) {
-      AdminConsole._renderShell();
-    } else {
-      const sideHost = document.getElementById('admin-nav-desktop');
-      if (sideHost) sideHost.innerHTML = AdminConsole._navItemsHtml();
-      AdminConsole._wireSectionButtons(root);
-    }
+    // Repaint the sidebar's active state. This used to be the "the shell is
+    // already built" half of a branch whose other half rebuilt #admin-root
+    // from scratch; the chassis is React's now, so it always exists and
+    // _renderShell IS this repaint.
+    AdminConsole._renderShell();
     if (!opts || opts.writeHash !== false) AdminConsole._writeHash(key);
     AdminConsole._renderSection();
   },
@@ -2985,4 +3007,8 @@ const AdminConsole = {
   },
 };
 
-window.AdminConsole = AdminConsole;
+// app.js reaches for window.AdminConsole (route / open / syncChrome / the
+// rollover + stale-preview WS handlers), and _renderSection dispatches the
+// section modules through window[modName], so the global publication stays.
+// Guarded: the prerender pass evaluates this module in Node.
+if (typeof window !== 'undefined') window.AdminConsole = AdminConsole;
