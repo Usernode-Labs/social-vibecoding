@@ -46,6 +46,7 @@ const ADDED_IDS = {
   'settings-mobile-push-preferences': 'Account-level Social mobile-push category controls in Settings → Alerts.',
   'drawer-row-native-app-version': 'Native-only installed Usernode app version in the drawer footer (#1101).',
   'native-app-version-slot': 'Device-local app version/build value rendered through the native bridge (#1101).',
+  'feedback-queue-dot': 'Header dot for feedback saved offline and still waiting to send (#1054).',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

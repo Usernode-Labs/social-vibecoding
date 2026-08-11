@@ -63,6 +63,7 @@ const ADDED_SCRIPTS = [
   '/js/dev-flow-select.js', // #1049 — the dev-flow picker + walkthrough
   '/js/session-options.js', // #1055 — the composer's session/billing menu
   '/js/build-venues.js', // the six build venues, shared by every picker
+  '/js/feedback-queue.js', // #1054 — the offline feedback outbox, before app.js
 ];
 
 // Modules a conversion chunk RETIRED, with the reason. Each one's behaviour
@@ -144,12 +145,13 @@ test('the shell still loads the expected number of legacy scripts', () => {
   // retires dev-console.js (52), notifications.js and work-drawer.js (50),
   // then header-layout.js, node-pill.js, wallet-sheet.js, ai-credit.js and
   // theme.js (46 — theme.js was the head's only one, so the body count drops
-  // by four). #1081 chunk D retires settings.js (45).
+  // by four). #1081 chunk D retires settings.js (45). It goes back UP when a
+  // new module ships: #1054's feedback-queue.js makes 46.
   const bodyScripts = scriptsOf(after.slice(after.indexOf('</head>')))
     .filter((s) => s.src && s.src.startsWith('/js/'));
   assert.equal(
-    bodyScripts.length, 45,
-    `expected the 45 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
+    bodyScripts.length, 46,
+    `expected the 46 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
     + 'Adding or removing one is fine, but it also needs a matching SHELL_ASSETS entry in '
     + 'public/sw.js (tests/pwa-shell-wiring.test.js enforces that) — so update this count '
     + 'deliberately rather than loosening the check.',
@@ -205,6 +207,21 @@ test('nav-link.js loads ahead of every module that consumes it', () => {
     assert.ok(idx === -1 || at < idx,
       `nav-link.js must load before ${consumer}, which reads window.NavLink`);
   }
+});
+
+test('feedback-queue.js loads ahead of app.js, which arms and drains it', () => {
+  // Excluded from the fixture comparison above for the same reason as
+  // nav-link.js, so its position is pinned here. #1054: app.js calls
+  // FeedbackQueue.init() while wiring the Send Feedback dialog and hands it
+  // any submit the network refuses, so window.FeedbackQueue has to exist by
+  // then. The module itself depends on nothing (window.Offline is read lazily,
+  // inside the flush triggers).
+  const srcs = scriptsOf(after).filter((s) => s.src && s.src.startsWith('/js/')).map((s) => s.src);
+  const at = srcs.indexOf('/js/feedback-queue.js');
+  assert.notEqual(at, -1, 'the shell must load /js/feedback-queue.js');
+  const appAt = srcs.indexOf('/js/app.js');
+  assert.ok(appAt === -1 || at < appAt,
+    'feedback-queue.js must load before app.js, which reads window.FeedbackQueue');
 });
 
 test('dev-flow-select.js loads ahead of the modules that consume it', () => {

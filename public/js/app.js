@@ -457,6 +457,11 @@ const App = {
     App._applyMenuNavShot();
     App._applyLaunchShot();
     App._applyFeedbackShot();
+    // #1054: a verified session is the first moment a queued submit can
+    // actually be filed — /api/feedback is session-gated, so flushing any
+    // earlier would only burn 401s. Everything after this is event- and
+    // timer-driven inside public/js/feedback-queue.js.
+    if (window.FeedbackQueue) FeedbackQueue.flush('signin');
 
     // Promote a snapshot-derived shell to a verified session as soon as
     // the connectivity probe reports we're back.
@@ -618,8 +623,18 @@ const App = {
   _applyFeedbackShot() {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
-    if (shot !== 'feedback' && shot !== 'feedback-spent') return;
+    if (shot !== 'feedback' && shot !== 'feedback-spent'
+        && shot !== 'feedback-offline' && shot !== 'feedback-queued') return;
     const spent = shot === 'feedback-spent';
+    // #1054: the two offline variants. `feedback-offline` is the dialog as a
+    // disconnected user meets it (the hint, and Submit reading "Save for
+    // later"); `feedback-queued` adds one already-saved message, so the
+    // waiting count and the header's violet dot are reviewable too. Both pin
+    // connectivity with forceOffline() — the same device ?shot=offline uses
+    // (#1021) — and the seeded entry lives in memory only, so nothing is
+    // written to the device and nothing is ever filed.
+    const offline = shot === 'feedback-offline' || shot === 'feedback-queued';
+    const queued = shot === 'feedback-queued';
     // One tick after restoreFromHash so the screen it navigated to has
     // painted and the dialog opens over a settled shell.
     setTimeout(() => {
@@ -630,6 +645,21 @@ const App = {
           // replacing it mid-screenshot with the real (unspent) budget.
           Kudos.Budget.state = { given_this_week: limit, remaining: 0, limit };
           Kudos.Budget.refresh = () => Promise.resolve();
+        }
+        // Seed BEFORE forcing offline: forceOffline() dispatches
+        // usernode:offline-change, which reads the queue count, and that read
+        // has to see the seeded store rather than the device's real (empty)
+        // one.
+        if (queued) {
+          window.FeedbackQueue?.seedDisplayOnly?.([{
+            payload: {
+              description: 'Dragging a card scrolls the board back to the top.',
+              target: 'platform',
+            },
+          }]);
+        }
+        if (offline) {
+          try { window.Offline?.forceOffline(); } catch (err) { /* ignore */ }
         }
         App.openFeedbackModal();
       } catch (err) { /* ignore */ }
@@ -2068,6 +2098,11 @@ const App = {
     let screenshotId = null;          // server row id, set once uploaded
     let screenshotUploading = false;  // blocks submit while in flight
     let screenshotObjectUrl = null;
+    // #1054: the captured bytes, kept for as long as the attachment is
+    // shown. The upload mints the id, but the id only exists on the server —
+    // so an offline submit has to carry the blob itself into the outbox and
+    // upload it at flush time. Held until the attachment is cleared.
+    let screenshotBlob = null;
 
     const showFeedbackNotice = (text, isError) => {
       feedbackStatus.textContent = text;
@@ -2078,6 +2113,7 @@ const App = {
     const resetScreenshotState = () => {
       screenshotId = null;
       screenshotUploading = false;
+      screenshotBlob = null;
       if (screenshotObjectUrl) { URL.revokeObjectURL(screenshotObjectUrl); screenshotObjectUrl = null; }
       screenshotPreview.classList.add('hidden');
       screenshotPreview.classList.remove('flex');
@@ -2103,6 +2139,7 @@ const App = {
         if (modalHidden) modal.classList.remove('hidden');
         // Thumbnail immediately; upload in the background with Submit
         // blocked (screenshotUploading) until the id lands.
+        screenshotBlob = blob;
         screenshotObjectUrl = URL.createObjectURL(blob);
         screenshotImg.src = screenshotObjectUrl;
         screenshotBtn.classList.add('hidden');
@@ -2125,8 +2162,13 @@ const App = {
             showFeedbackNotice(data.error || 'Screenshot upload failed', true);
           }
         } catch {
-          resetScreenshotState();
-          showFeedbackNotice('Screenshot upload failed — network error', true);
+          // #1054: this used to throw the capture away — at the worst
+          // possible moment, since a flaky network is usually WHY someone is
+          // filing. Keep the blob and the thumbnail instead: the outbox
+          // carries the bytes and uploads them at flush time, and a submit
+          // that goes through online retries the upload first.
+          screenshotState.textContent = "Saved with your feedback — it'll upload when you're back online";
+          showFeedbackNotice("Couldn't upload the screenshot yet — it'll be sent along with your feedback.", false);
         } finally {
           screenshotUploading = false;
         }
@@ -2148,6 +2190,196 @@ const App = {
       // already finished) is GC'd by the 24h sweeper.
       resetScreenshotState();
     });
+
+    // ── #1054: the offline outbox seam ─────────────────────────────
+    //
+    // Feedback is the one thing a user types BECAUSE something is wrong, and
+    // "something is wrong" very often means the network. The dialog used to
+    // answer that with a red "Network error" and keep the text hostage in a
+    // textarea that the next tap on the backdrop emptied. Now a submit that
+    // can't reach the server is saved to public/js/feedback-queue.js and sent
+    // when the connection is back.
+    //
+    // Two entry points into the same save: the pre-emptive one (we already
+    // know we're offline, so don't even try — the button says "Save for
+    // later") and the reactive one (the POST threw). They must feel
+    // identical, so both go through saveForLater() below.
+    const isOfflineNow = () => {
+      try { return !!(window.Offline && window.Offline.isOffline && window.Offline.isOffline()); } catch (err) { return false; }
+    };
+
+    // A refused save is always explained — an invisible outbox that silently
+    // drops things is worse than the bug this replaces.
+    const queueRefusal = (code) => {
+      if (code === 'duplicate') return "You've already saved this message — it'll send once you're back online.";
+      if (code === 'full') return `Only ${window.FeedbackQueue?.MAX_ENTRIES || 10} messages can wait offline at once. The earlier ones send first.`;
+      if (code === 'too-large') return "There isn't room to keep another screenshot offline — remove it and save the text.";
+      return "Couldn't save this message on this device.";
+    };
+
+    // The queue status line. One element (#feedback-status) says all three
+    // things, in order of how much the user needs it: the offline hint, the
+    // count already waiting, or nothing at all.
+    let queueLineText = '';
+    let queuePendingCount = 0;
+
+    const queueStatusLine = () => {
+      const offline = isOfflineNow();
+      const n = queuePendingCount;
+      // Written out per plural rather than assembled from fragments: these
+      // exact sentences are what the dapp.json checks match on, and
+      // tests/feedback-offline-ui.test.js verifies they exist verbatim here.
+      if (offline && n > 0) {
+        return n === 1
+          ? "You're offline — 1 message saved on this device is waiting to send. This one will be saved too."
+          : `You're offline — ${n} messages saved on this device are waiting to send. This one will be saved too.`;
+      }
+      if (offline) {
+        return "You're offline — your message will be saved on this device and sent automatically "
+          + "when you're back online.";
+      }
+      if (n > 0) {
+        return n === 1
+          ? '1 message saved on this device — sending now.'
+          : `${n} messages saved on this device — sending now.`;
+      }
+      return '';
+    };
+
+    // Repaint the hint and the button label. Never overwrites a submit
+    // outcome ("Thanks! Filed against…", an error, the saved confirmation):
+    // that is the newer and more specific thing to say, so the line is only
+    // rewritten while it is hidden or still showing our own text.
+    const paintQueueState = () => {
+      if (!feedbackBtn.disabled) feedbackBtn.textContent = isOfflineNow() ? 'Save for later' : 'Submit';
+      const owned = feedbackStatus.classList.contains('hidden')
+        || (queueLineText && feedbackStatus.textContent === queueLineText);
+      if (!owned) return;
+      const line = queueStatusLine();
+      if (!line) {
+        feedbackStatus.classList.add('hidden');
+        queueLineText = '';
+        return;
+      }
+      feedbackStatus.textContent = line;
+      feedbackStatus.className = 'text-sm mt-2 text-zinc-400';
+      feedbackStatus.classList.remove('hidden');
+      queueLineText = line;
+    };
+
+    // The header's speech-bubble carries a small violet dot while anything is
+    // waiting — the only ambient sign that unsent feedback exists.
+    const paintQueueDot = (n) => {
+      const dot = document.getElementById('feedback-queue-dot');
+      if (dot) dot.classList.toggle('hidden', !(n > 0));
+    };
+
+    // Every count() is async (opening IndexedDB can take a moment) and three
+    // things ask for one — the dialog opening, a connectivity change, and the
+    // store's own change notifications. They can resolve OUT OF ORDER, and a
+    // stale answer paints a count the store no longer has: that is exactly how
+    // ?shot=feedback-queued lost its dot, because the offline-change fired
+    // before the seed and its slower read landed after it. Only the newest
+    // read is allowed to paint.
+    let queueReadSeq = 0;
+    const readQueueCount = () => {
+      if (!window.FeedbackQueue) return Promise.resolve(null);
+      const seq = ++queueReadSeq;
+      return Promise.resolve(window.FeedbackQueue.count()).then((n) => {
+        if (seq !== queueReadSeq) return null;
+        queuePendingCount = n;
+        paintQueueDot(n);
+        return n;
+      }).catch(() => null);
+    };
+
+    // Paint from the cached count now, then again from the store a tick later
+    // (same guarded-late-paint shape as the bounty row's budget refresh).
+    const refreshQueueState = () => {
+      paintQueueState();
+      readQueueCount().then((n) => {
+        if (n === null) return;
+        const modal = document.getElementById('feedback-modal');
+        if (!modal.classList.contains('hidden')) paintQueueState();
+      });
+    };
+
+    // Save `body` (the exact /api/feedback payload) for later, with the
+    // screenshot bytes if one is attached. Mirrors the successful-submit
+    // cleanup: the draft is consumed, the dialog locks, and it closes after
+    // the same 1500 ms grace window — because from the user's side the job IS
+    // done. Only the wording differs.
+    const saveForLater = async (body) => {
+      if (!window.FeedbackQueue) {
+        showFeedbackNotice('Network error', true);
+        return false;
+      }
+      try {
+        await window.FeedbackQueue.enqueue({
+          payload: body,
+          // Already-uploaded screenshots travel as an id; a capture whose
+          // upload failed travels as bytes and is uploaded at flush time.
+          screenshot: screenshotId ? null : screenshotBlob,
+        });
+      } catch (err) {
+        showFeedbackNotice(queueRefusal(err && err.code), true);
+        return false;
+      }
+      feedbackStatus.textContent = "Saved on this device — we'll send it as soon as you're back online.";
+      feedbackStatus.className = 'text-sm mt-2 text-emerald-400';
+      feedbackStatus.classList.remove('hidden');
+      queueLineText = '';
+      feedbackText.value = '';
+      feedbackTitle.value = '';
+      resetTitleGenState();
+      resetScreenshotState();
+      feedbackText.disabled = true;
+      feedbackTitle.disabled = true;
+      feedbackBtn.disabled = true;
+      feedbackBtn.textContent = 'Saved';
+      // This count is the freshest thing anyone knows — invalidate any read
+      // that was already in flight so it cannot paint the pre-save figure.
+      queueReadSeq += 1;
+      queuePendingCount += 1;
+      paintQueueDot(queuePendingCount);
+      // A probe now means a connection that quietly came back sends this
+      // within seconds instead of at the next 60 s tick.
+      try { window.Offline?.nudge?.(); } catch (err) { /* ignore */ }
+      setTimeout(() => document.getElementById('feedback-cancel').click(), 1500);
+      return true;
+    };
+
+    // Keep the dialog honest while it is open: the connectivity probe runs
+    // every 15 s, so the state it described on open can be stale by the time
+    // the user finishes typing.
+    window.addEventListener('usernode:offline-change', () => {
+      const modal = document.getElementById('feedback-modal');
+      if (modal && !modal.classList.contains('hidden')) refreshQueueState();
+      else readQueueCount();
+    });
+
+    // Arm the outbox: the dot follows the store, and a successful flush says
+    // so out loud (the user filed this minutes or hours ago — silence would
+    // read as "it never sent"). Same Dev-panel refresh as a live submit, so a
+    // flushed issue appears in Open Issues without a reload.
+    if (window.FeedbackQueue) {
+      window.FeedbackQueue.init({
+        onChange: () => { readQueueCount(); },
+        onFlushed: (res) => {
+          const n = res.sent;
+          PlatformUI.toast(n === 1
+            ? 'Your saved feedback has been sent.'
+            : `Your ${n} saved feedback messages have been sent.`);
+          const filedApp = res.filed.find((f) => f.target === 'app' && f.appSlug);
+          const filedPlatform = res.filed.some((f) => f.target !== 'app');
+          if (typeof AppView !== 'undefined' && App.currentTab === 'dev'
+              && ((filedApp && App.currentApp === filedApp.appSlug)
+                || (filedPlatform && AppView?.appData?.self_hosted))) {
+            AppView.refreshDevData('issue');
+          }
+        },
+      });
+    }
 
     const submitFeedback = async () => {
       const text = feedbackText.value.trim();
@@ -2196,6 +2428,25 @@ const App = {
         const wantBounty = bountyCheckbox.checked && !bountyCheckbox.disabled
           && !bountyRow.classList.contains('hidden');
         if (wantBounty) body.bounty = true;
+        // #1054: a capture whose upload failed earlier still has its bytes
+        // (screenshotBlob). Retry the upload now so a submit that goes
+        // through keeps the attachment the thumbnail is still promising. A
+        // second failure is not fatal — the offline branch below carries the
+        // bytes, and an online submit files without the picture as before.
+        if (!screenshotId && screenshotBlob && !isOfflineNow()) {
+          try {
+            const shotRes = await fetch('/api/feedback/screenshot', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/octet-stream' },
+              body: screenshotBlob,
+            });
+            const shotData = await shotRes.json().catch(() => ({}));
+            if (shotRes.ok && shotData.id) {
+              screenshotId = shotData.id;
+              screenshotState.textContent = '';
+            }
+          } catch (err) { /* still offline — handled below */ }
+        }
         // #683: attach the uploaded screenshot — the server appends the
         // embed line and links the row to the filed issue.
         if (screenshotId) body.screenshotId = screenshotId;
@@ -2217,11 +2468,34 @@ const App = {
             showFeedbackNotice("Couldn't collect app state — filing without it…", false);
           }
         }
-        const res = await fetch('/api/feedback', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
+        // #1054: we already know the network is down (the /health probe said
+        // so, and the button says "Save for later") — so don't spend a doomed
+        // round trip and a red error message finding out. Straight to the
+        // outbox.
+        if (isOfflineNow()) {
+          if (await saveForLater(body)) return;
+          feedbackBtn.disabled = false;
+          feedbackBtn.textContent = isOfflineNow() ? 'Save for later' : 'Submit';
+          return;
+        }
+        // #1054: the POST is caught on its own — narrowly — so a *transport*
+        // failure can go to the outbox while a bad response body still falls
+        // through to the generic error below. Enqueueing on anything wider
+        // would risk filing twice: a 201 whose JSON failed to parse did
+        // create the issue.
+        let res;
+        try {
+          res = await fetch('/api/feedback', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+        } catch (err) {
+          if (await saveForLater(body)) return;
+          feedbackBtn.disabled = false;
+          feedbackBtn.textContent = isOfflineNow() ? 'Save for later' : 'Submit';
+          return;
+        }
         const data = await res.json();
         if (res.ok) {
           // #964: report both outcomes on one line. A declined bounty
@@ -2284,11 +2558,15 @@ const App = {
         feedbackStatus.className = 'text-sm mt-2 text-red-400';
         feedbackStatus.classList.remove('hidden');
       } catch {
+        // Reached only when the request itself completed and something about
+        // the RESPONSE was unusable (non-JSON error body from a proxy, say).
+        // A transport failure was already handled above, by saving.
         feedbackStatus.textContent = 'Network error';
         feedbackStatus.className = 'text-sm mt-2 text-red-400';
         feedbackStatus.classList.remove('hidden');
       }
-      feedbackBtn.disabled = false; feedbackBtn.textContent = 'Submit';
+      feedbackBtn.disabled = false;
+      feedbackBtn.textContent = isOfflineNow() ? 'Save for later' : 'Submit';
     };
 
     // Open the Send Feedback modal. Shared by the header feedback button
@@ -2366,6 +2644,35 @@ const App = {
           : 'No app open';
         setAppTargetEnabled(false);
         setFeedbackTarget('platform');
+      }
+
+      // #1054: the outbox state — the offline hint, the "Save for later"
+      // button label, and anything already waiting to send. Painted last so
+      // none of the resets above overwrite the line, then refreshed from the
+      // store a tick later.
+      queueLineText = '';
+      refreshQueueState();
+      // A submit the server refused outright (a 400 no amount of retrying can
+      // satisfy) is handed back here rather than disappearing: the user's own
+      // words, their title and their target, with the reason above them.
+      if (window.FeedbackQueue) {
+        Promise.resolve(window.FeedbackQueue.takeFailed()).then((failed) => {
+          const modal = document.getElementById('feedback-modal');
+          if (!failed || modal.classList.contains('hidden')) return;
+          // Live text always wins — a returned draft must never overwrite
+          // what someone is typing right now.
+          if (feedbackText.disabled || feedbackText.value.trim()) return;
+          const p = failed.payload || {};
+          feedbackText.value = p.description || '';
+          if (p.title) { feedbackTitle.value = p.title; titleDirty = true; }
+          if (p.target === 'app' && !feedbackTargetApp.disabled) setFeedbackTarget('app');
+          feedbackStatus.textContent = `This message couldn't be sent: ${failed.lastError || 'the server rejected it'}.`
+            + ' Your text is back — edit it and try again.';
+          feedbackStatus.className = 'text-sm mt-2 text-red-400';
+          feedbackStatus.classList.remove('hidden');
+          queueLineText = '';
+          feedbackText.focus();
+        }).catch(() => { /* nothing to hand back */ });
       }
 
       feedbackText.focus();
