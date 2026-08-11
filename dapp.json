@@ -435,6 +435,18 @@
       "expectSelector": "#feedback-bounty-row:not(.hidden) #feedback-bounty-checkbox:disabled"
     },
     {
+      "name": "Offline, Send Feedback promises to save the message instead of failing (#1054)",
+      "path": "/?shot=feedback-offline",
+      "expectSelector": "body.is-offline #feedback-status:not(.hidden)",
+      "expectText": "saved on this device and sent automatically"
+    },
+    {
+      "name": "A message already saved offline is counted, and the header carries a dot (#1054)",
+      "path": "/?shot=feedback-queued",
+      "expectSelector": "body.is-offline #feedback-queue-dot:not(.hidden)",
+      "expectText": "message saved on this device"
+    },
+    {
       "name": "Challenges widget: metered rows plus the title bar's leaderboard link (#911, #980)",
       "path": "/?demo=1",
       "expectSelector": "#home-body.home-column article.home-panel:has(.home-panel-bar .home-panel-lb-browse[aria-label=\"Open leaderboard\"]) .home-panel-rows--metered .home-panel-row .home-panel-bar-track[role=progressbar] .home-panel-bar-fill",

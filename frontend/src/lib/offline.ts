@@ -81,6 +81,12 @@ function syncRecheck(): void {
 }
 
 function set(next: boolean): void {
+  // A pinned state outranks a probe that was ALREADY in flight when
+  // forceOffline() ran — probe() checks `forced` on entry, so its late
+  // resolution would otherwise un-pin the state mid-capture. That race is why
+  // ?shot=feedback-queued intermittently photographed an online shell (#1054):
+  // the global-events socket opening calls Offline.nudge() a few ms earlier.
+  if (forced && !next) return;
   if (next === offline) {
     syncRecheck();
     return;

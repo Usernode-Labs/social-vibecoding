@@ -126,6 +126,10 @@ const SHELL_ASSETS = [
   '/js/dev-chat.js',
   '/js/dev-flow-select.js',
   '/js/dev-host.js',
+  // #1054: the offline feedback outbox. It has to be precached like any other
+  // shell module — the whole point is that it works on the load where the
+  // network does not.
+  '/js/feedback-queue.js',
   '/js/group-chat.js',
   '/js/home.js',
   '/js/home-layout.js',
