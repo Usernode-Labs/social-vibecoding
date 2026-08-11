@@ -73,13 +73,14 @@ CREATE INDEX IF NOT EXISTS idx_app_report_snapshots_app
 New `src/routes/report-snapshots.js`, mounted in `server.js` after
 `authMiddleware` alongside `report-ai.js`. All app resolution through
 `appAccess.getAppForUser(pool, slug, req.user, 'view', APP_COLS)`; deny = 404.
-Admin gate: username in `apps.admin_usernames` (via `src/services/app-admins.js`)
-or `req.user.isAdmin`; failure = 403.
+Admin gate: `appAdmins.canManageApp(pool, app, req.user)` — platform admins,
+the app creator, and declared app admins — the same gate every other
+management action in the codebase uses; failure = 403.
 
 | Route | Access | Behaviour |
 | --- | --- | --- |
 | `GET /api/apps/:slug/report-snapshots` | view | List `{ id, lockedAt, lockedBy (username), shared (bool), sharePath (when shared) }` ordered by `locked_at DESC`. Never returns `html`; the token appears only as `sharePath` on already-shared rows. |
-| `POST /api/apps/:slug/report-snapshots` | app admin | Body `{ html, ai }`. Validates `html` is a string ≤ 2 MB and `ai` (when present) matches the sanitized summary shape (re-run `sanitizeReportSummary`). Inserts snapshot, `locked_at = NOW()`, `locked_by = user`. Rate-limited. |
+| `POST /api/apps/:slug/report-snapshots` | app admin | Body `{ html }` only — `ai_json` is never taken from the client. It is read from the server's own `app_report_ai` draft cache at lock time (stronger than validating a client-posted `ai` shape), since that cache is exactly what the next generation's `previousReport` input consumes. Validates `html` is a string ≤ 2 MB. Inserts snapshot, `locked_at = NOW()`, `locked_by = user`. Rate-limited. |
 | `GET /api/apps/:slug/report-snapshots/:id/html` | view | Serves the stored HTML (`text/html`) with the sandbox CSP below — in-app "Open" target. |
 | `POST /api/apps/:slug/report-snapshots/:id/share` | app admin | Mints `crypto.randomBytes(16).toString('hex')` token if absent, sets `shared_at = NOW()`, returns `{ sharePath: "/reports/<token>" }`. Idempotent. |
 | `POST /api/apps/:slug/report-snapshots/:id/unshare` | app admin | Sets `share_token = NULL, shared_at = NULL`. |
@@ -94,6 +95,18 @@ as `src/routes/visuals.js`):
   The sandbox CSP gives the document an opaque origin and blocks script
   execution, so hostile markup posted by a malicious admin cannot run code or
   reach the platform origin.
+
+  During implementation review the serving CSP (used by both this route and
+  the in-app `/html` route above) was amended to
+  `sandbox allow-popups allow-popups-to-escape-sandbox; default-src 'none';
+  style-src 'unsafe-inline'`. The two added tokens are the minimum needed to
+  keep the report's `target="_blank"` links to GitHub/the app working:
+  `allow-popups` lets those links open a tab at all, and
+  `allow-popups-to-escape-sandbox` lets the opened tab run as a normal,
+  unsandboxed page rather than inheriting the opaque origin. `allow-scripts`
+  and `allow-same-origin` are deliberately still absent, so script execution
+  stays blocked and the document itself stays unable to read platform
+  cookies/storage.
 
 Rate limiter: `reportSnapshotLimiter` (per-user, e.g. 10/min) added to
 `src/middleware/rate-limits.js` **before** the `waitlistJoinLimiter,
