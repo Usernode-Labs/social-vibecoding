@@ -477,7 +477,33 @@
     {
       "name": "Dev board: the rows under a card's title span its full width (no icon indent)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body .gc-vote-item > .flex-1:first-child > .dev-card-head ~ .dev-card-badges, #dev-body .gc-vote-item > .flex-1:first-child > .dev-card-head ~ .dev-status-row, #dev-body .gc-vote-item > .flex-1:first-child > .dev-card-head ~ .gc-card-actions"
+      "expectSelector": "#dev-body .gc-vote-item > .flex-1:first-child > .dev-card-head ~ .dev-card-badges, #dev-body .gc-vote-item > .flex-1:first-child > .dev-card-head ~ .gc-card-actions"
+    },
+    {
+      "name": "Dev board: every card renders all four bands, in order, whatever it has to say",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-body .gc-vote-item > .flex-1:first-child > .dev-card-head + .dev-card-meta + .dev-card-badges.dev-card-status + .gc-card-actions"
+    },
+    {
+      "name": "Dev board: a card title clamps to two lines instead of pushing the bands below it out of step",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban .gc-vote-item .dev-card-title.dev-card-title-clamp[title]"
+    },
+    {
+      "name": "Dev board: the status pill shares one band with the chips and the Closes-#N pills",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-body .gc-vote-item .dev-card-status > .dev-status-pill-block ~ .dev-badge"
+    },
+    {
+      "name": "Dev board: an issue card offers its in-progress toggle as a pill, not only in ⋯",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-body [data-issue-row] .gc-card-actions .gc-vote-btn[onclick*=\"markIssueInProgress\"]",
+      "expectText": "Mark in progress"
+    },
+    {
+      "name": "Dev board: your own session card offers its visibility toggle as a pill",
+      "path": "/?demo=1&view=kanban&col=inprogress#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban-col-inprogress [data-session-chip] .gc-card-actions .gc-vote-btn[onclick*=\"_setSessionShared\"]"
     },
     {
       "name": "Dev board (mobile): the In-progress column shows section dividers, not grey captions",

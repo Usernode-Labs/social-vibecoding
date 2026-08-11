@@ -600,6 +600,25 @@ function stagingMockProposals(viewer) {
       pr_title_fallback: true,
       staging_url: 'https://mock-preview.invalid',
     },
+    // Band overload: the worst case for the four-band card, in one row. A
+    // title long enough to need a THIRD line (so the two-line clamp is
+    // visibly doing something), a long meta line, all four metadata chips,
+    // two linked issues AND the widest action set a card can carry (Yes / No
+    // / Explore / Preview) — so a preview shows whether any band clips a
+    // pill through the middle rather than dropping the surplus row whole.
+    // Every other mock exercises one band; this one loads all four at once.
+    {
+      ...mk(9000053, 900153,
+        '[Mock] Band-overload test: a deliberately enormous proposal title that runs '
+        + 'well past two lines in a kanban column so the clamp, the reserved band '
+        + 'heights and the pill clipping can all be judged on one card',
+        2, 2, 1, 7, { required: 4, windowEndsAt: hoursAhead(28) }),
+      linked_issues: [900004, 900005],
+      staging_url: 'https://mock-preview.invalid',
+      priority: { top: 'high', count: 4, myValue: null },
+      assignee: { top: 'maya-builder', count: 2, myValue: null },
+      category: { top: 'staging demo onboarding', count: 3, myValue: null },
+    },
   ];
   // Spread the community-voted priority/assignee across a few rows (the mk
   // factory otherwise stamps every proposal high / staging-tester) so the

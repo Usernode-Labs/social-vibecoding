@@ -2312,16 +2312,23 @@ const AppView = {
   //
   //   • at most ACTION_PRIMARY_MAX text pills (the actions you'd actually
   //     take from a list),
-  //   • one icon-only Preview affordance (kept as an icon precisely so a
-  //     read-only viewer — who gets no vote buttons — still has a visible
-  //     "go look at this" affordance),
+  //   • one icon-only Preview affordance on the detail head (kept as an icon
+  //     precisely so a read-only viewer — who gets no vote buttons — still has
+  //     a visible "go look at this" affordance; on a dense card it moved to
+  //     the rail),
   //   • one ⋯ trigger holding everything else.
   //
   // `spec` is an object, not an array:
   //   primary — ordered array of button-HTML strings (falsy dropped, sliced
   //             to the cap; anything past it is a bug, not a silent trim, so
   //             the overflow is where extra actions belong)
-  //   preview — the icon affordance HTML ('' when there's nothing to preview)
+  //   preview — the icon affordance HTML ('' when there's nothing to preview),
+  //             emitted LAST, after every primary. DENSE cards no longer pass
+  //             it here at all: the eye is pinned to the bottom of the card's
+  //             rail (see _cardRailHtml), under the ⋯ it shares a column with.
+  //             It stays a band affordance on the UNCAPPED detail-head variant
+  //             (noNav), which has no chevron to sit under and whose action
+  //             list is a wrapping left-to-right row.
   //   menu    — DESCRIPTORS (see _cardMenuTriggerHtml), not HTML, so the same
   //             list renders as an anchored dropdown on pointer devices and as
   //             a PlatformUI action sheet on touch
@@ -2331,7 +2338,12 @@ const AppView = {
   // An array is still accepted (legacy shape) and treated as `{ primary }`
   // with no cap, so the transcript/roster call sites and any external caller
   // keep working. Returns '' when there is nothing at all to show.
-  ACTION_PRIMARY_MAX: 2,
+  // Three, not two: the four-band card reserves an action row on EVERY
+  // card, so a card type with one lone action would show a mostly-empty
+  // band. One action per thin card type was promoted out of ⋯ to fill it
+  // (issue: in-progress; own session: visibility; proposal: Explore;
+  // merged: kudos), which needs the third slot next to Yes/No.
+  ACTION_PRIMARY_MAX: 3,
   _cardActionsHtml(spec) {
     if (Array.isArray(spec) || spec == null) {
       const legacy = (spec || []).filter(Boolean).join('');
@@ -2360,19 +2372,38 @@ const AppView = {
   //             sit beside the icon, so it gets the card's own width — which
   //             is also what stops it ellipsising after three words in a
   //             kanban column, where the indent cost it a fifth of the row.
-  //   badges  — the metadata chips (priority, assignee, category) plus the
-  //             💬 count, on their own FULL-WIDTH wrapping row. They used to
-  //             share the title's line, which cost them the icon's 36px of
-  //             indent and made them wrap after two chips in a kanban
-  //             column; four chips now fit on one line there.
-  //   pill    — the composite status pill, FULL WIDTH on its own row. A
-  //             proportional tally reads far better as a bar than as a
-  //             thumbnail-sized capsule wedged between chips, and giving it
-  //             the whole width is what makes the fill legible at a glance.
-  //   actions — the ≤2 text pills plus the icon Preview.
+  //   status  — ONE band carrying the composite status pill, the 💬 count,
+  //             the linked-issue pills and the metadata chips (priority,
+  //             assignee, category). Full width, one line, clipped.
+  //   actions — the ≤3 text pills plus the icon Preview.
+  //
+  // ── Dense mode: every band is RESERVED ───────────────────────────────
+  //
+  // On the board (list, kanban, pm) all four bands are emitted whether or
+  // not they have content, and each is height-capped in app.css: the title
+  // clamps to two lines and reserves both, the meta line reserves one, and
+  // the status and action bands reserve one row each. That is the whole
+  // point of the contract — a card's bands land at the same y offsets as
+  // its neighbour's regardless of how much any one card has to say, so a
+  // column of them scans as a grid instead of as ragged blocks. Cards used
+  // to be 3–6 bands tall depending on what happened to be set, and the eye
+  // had to re-find the status line on every row.
+  //
+  // The bands CLIP rather than shrink: `overflow: hidden` on a band whose
+  // height is exactly one row, with the pills allowed to wrap, means a
+  // second row of pills is cut off whole. Nothing is ever half-visible and
+  // nothing has to be measured in JS to decide what fits.
+  //
+  // `dense: false` is the detail head (`noNav`), which is a page header
+  // rather than a row in a list: there is nothing to align it against, it
+  // has the full page width, and hiding a chip behind a clip on the one
+  // screen that is supposed to show everything would be wrong. It keeps the
+  // old collapse-when-empty behaviour, the uncapped chip list, the
+  // `inlinePill` capsule and an unclamped title.
   //
   // opts: { icon, titleHtml, titleAttrs, metaHtml, badges, chatCount,
-  //         uncapped, pill, inlinePill, actions, extraHtml }
+  //         uncapped, pill, inlinePill, linkedHtml, actions, extraHtml,
+  //         dense }
   //
   // `icon` — the type chip. It is passed IN here (rather than emitted as the
   // card's own first flex child, which is where it used to live) so that it
@@ -2404,28 +2435,53 @@ const AppView = {
   // row as a capsule instead — same full-width row as everywhere else, it
   // just shares it with the chips — which is also why it is exempt from the
   // badge cap.
+  //
+  // In dense mode the pill leads the SAME band as the chips for the same
+  // reason, just as a flexible bar rather than a capsule: two separate rows
+  // for "state" and "metadata" is one band more than the layout can reserve,
+  // and the pill has never needed the entire width — only more of it than a
+  // chip. `linkedHtml` (the Closes-#N pills) joins that band too, ahead of
+  // the chips and OUTSIDE the chip cap: it used to ride at the end of the
+  // meta line, where it was the first thing that line's ellipsis ate.
   _cardContentHtml(opts) {
     const o = opts || {};
-    const chips = o.inlinePill
-      ? [o.inlinePill, ...(o.badges || [])]
-      : (o.badges || []);
+    const dense = o.dense !== false;
+    const chips = dense
+      ? (o.badges || [])
+      : [
+        ...(o.inlinePill ? [o.inlinePill] : []),
+        ...(o.linkedHtml ? [o.linkedHtml] : []),
+        ...(o.badges || []),
+      ];
     const badges = AppView._cardBadgesHtml(chips, o.chatCount, {
       uncapped: o.uncapped || !!o.inlinePill,
+      dense,
+      pill: dense ? o.pill : '',
+      lead: dense ? o.linkedHtml : '',
     });
-    const badgeRow = badges ? `<div class="dev-card-badges">${badges}</div>` : '';
-    const pillRow = o.pill ? `<div class="dev-status-row">${o.pill}</div>` : '';
-    const metaRow = o.metaHtml ? `<div class="dev-card-meta">${o.metaHtml}</div>` : '';
+    const titleCls = dense ? 'dev-card-title dev-card-title-clamp' : 'dev-card-title';
+    // Dense: reserved bands, emitted whether or not they carry anything, so
+    // every card in a column has its rows at the same height. Non-dense (the
+    // detail head): collapse when empty, exactly as before.
+    const metaRow = dense
+      ? `<div class="dev-card-meta">${o.metaHtml || ''}</div>`
+      : (o.metaHtml ? `<div class="dev-card-meta">${o.metaHtml}</div>` : '');
+    const statusRow = dense
+      ? `<div class="dev-card-badges dev-card-status">${badges}</div>`
+      : (badges ? `<div class="dev-card-badges">${badges}</div>` : '');
+    const actionRow = dense
+      ? (o.actions || '<div class="gc-card-actions"></div>')
+      : (o.actions || '');
     return `<div class="flex-1 min-w-0">
           <div class="dev-card-head">
             ${o.icon || ''}
             <div class="dev-card-head-main">
-              <div class="dev-card-title"${o.titleAttrs || ''}>${o.titleHtml || ''}</div>
+              <div class="${titleCls}"${o.titleAttrs || ''}>${o.titleHtml || ''}</div>
             </div>
           </div>
           ${metaRow}
-          ${badgeRow}
-          ${pillRow}
-          ${o.actions || ''}
+          ${statusRow}
+          ${actionRow}
           ${o.extraHtml || ''}
         </div>`;
   },
@@ -2720,23 +2776,39 @@ const AppView = {
   },
 
   // The card's right-edge rail: the ⋯ trigger pinned to the TOP-RIGHT
-  // corner with the tap-through chevron centred below it.
+  // corner, the icon Preview to the BOTTOM-RIGHT one, and the tap-through
+  // chevron centred in what is left between them.
   //
-  // Both are right-edge controls, so they share ONE column rather than each
-  // taking its own. That matters more than it sounds: a kanban column gives
+  // All three are right-edge controls, so they share ONE column rather than
+  // each taking its own. That matters more than it sounds: a kanban column gives
   // a card about 175px of text width, and giving the ⋯ its own flex slot
   // beside the head cost 30px of it — enough to push a single assignee chip
   // onto its own line. Sharing the rail costs 8px instead.
   //
   // `chevron` is false on the topic head's static variants (you are already
   // on the page it would navigate to).
+  //
+  // `preview` is the icon Preview affordance (see cardPreviewHtml), and the
+  // rail is where it lives on a dense card: the two ends of this column are
+  // both meaningful — ⋯ at the top is "more about this card", the eye at the
+  // bottom is "go look at the thing itself" — and both then sit in one
+  // vertical line down a whole column of cards, found by position rather than
+  // by reading past two or three variable-width vote pills in the action
+  // band. It is emitted LAST so `.dev-card-rail > svg`'s auto margins (which
+  // match the chevron and nothing else — the trigger and the preview are a
+  // <button>/<span>) centre the chevron in the gap BETWEEN them. With no
+  // preview the rail is byte-for-byte what it was before, so a card with
+  // nothing to preview keeps today's appearance and reserves no empty slot.
   _cardRailHtml(menuKey, menu, opts) {
     const o = opts || {};
     const trigger = AppView._cardMenuTriggerHtml(menuKey, menu);
     const chevron = o.chevron === false ? '' : AppView.DEV_CARD_CHEVRON;
-    if (!trigger && !chevron) return '';
-    if (!trigger) return chevron;
-    return `<div class="dev-card-rail">${trigger}${chevron}</div>`;
+    const preview = o.preview || '';
+    if (!trigger && !chevron && !preview) return '';
+    // A lone chevron needs no column to be centred in — it is already the
+    // card's only right-edge child. Anything stacked on top of it does.
+    if (!trigger && !preview) return chevron;
+    return `<div class="dev-card-rail">${trigger}${chevron}${preview}</div>`;
   },
 
   // A lightweight section divider for a column that groups its cards
@@ -6484,21 +6556,15 @@ const AppView = {
     // chat — its working surface, and its canonical destination; the public
     // discussion of a shared session is one ⋯ row rather than a competing
     // affordance on the card face.
-    const menu = [
-      shared
-        ? {
-          label: 'Hide',
-          icon: 'hide',
-          title: "Make this session private again (removes it from everyone's In progress area, and stops anyone reading the chat)",
-          act: () => AppView._setSessionShared(s.id, false, null),
-        }
-        : {
-          label: 'Make visible',
-          icon: 'visible',
-          title: "Show this session in everyone's In progress area — others can comment and open its live preview, but can't read your chat unless you also share it",
-          act: () => AppView._setSessionShared(s.id, true, null),
-        },
-    ];
+    //
+    // Visibility is PROMOTED to the face and is no longer a ⋯ row: it is the
+    // one thing you do to your own session card, the subtitle right above it
+    // states the current state, and the card now reserves an action band that
+    // otherwise held nothing but the icon Preview.
+    const visibilityBtn = AppView.readOnly ? '' : (shared
+      ? `<button class="gc-vote-btn" title="Make this session private again (removes it from everyone&#39;s In progress area, and stops anyone reading the chat)" onclick="AppView._setSessionShared(${s.id}, false, null)">Hide</button>`
+      : `<button class="gc-vote-btn" title="Show this session in everyone&#39;s In progress area — others can comment and open its live preview, but can&#39;t read your chat unless you also share it" onclick="AppView._setSessionShared(${s.id}, true, null)">Make visible</button>`);
+    const menu = [];
     // The SECOND opt-in, offered only once the session is visible (there is
     // nowhere for a reader to reach an invisible session's chat from).
     if (shared) {
@@ -6535,7 +6601,8 @@ const AppView = {
         })();
       },
     });
-    const actions = AppView._cardActionsHtml({ preview });
+    // `preview` goes to the rail, not in here — see _cardRailHtml below.
+    const actions = AppView._cardActionsHtml({ primary: [visibilityBtn] });
 
     // A private session gets the muted/draft shell — that IS the signal
     // nobody else can see it, replacing the caption that used to sit above
@@ -6547,12 +6614,15 @@ const AppView = {
       ${AppView._cardContentHtml({
         icon: AppView._devCardIcon('session'),
         titleHtml: label,
+        // The clamp can hide the end of a long title, so the truncating
+        // element itself carries the full text (`label` is already escaped).
+        titleAttrs: ` title="${label}"`,
         metaHtml: subtitle,
         badges: [statusTag, AppView._sessionVenueChipHtml(s), AppView.issueChipsHtml(s.linked_issues)],
         chatCount: null,
         actions,
       })}
-      ${AppView._cardRailHtml(`session:${s.id}`, menu)}
+      ${AppView._cardRailHtml(`session:${s.id}`, menu, { preview })}
     </div>`;
   },
 
@@ -6571,18 +6641,26 @@ const AppView = {
     const statusTag = AppView._sessionStatusTagHtml(s);
     const preview = AppView.cardPreviewHtml(s, { kind: 'shared-session', sessionId: s.id });
     const nav = noNav ? '' : ` data-shared-session-row="${s.id}" role="button" tabindex="0"`;
-    const chevron = noNav ? '' : AppView.DEV_CARD_CHEVRON;
-    const actions = noNav ? '' : AppView._cardActionsHtml({ preview });
+    // This card has no ⋯ menu of its own, so the rail is the chevron alone
+    // until there is a preview to pin under it — at which point it becomes a
+    // real column (chevron centred above the eye).
+    const rail = AppView._cardRailHtml('', null, {
+      chevron: !noNav, preview: noNav ? '' : preview,
+    });
     return `<div${nav} class="${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" title="${label}">
       ${AppView._cardContentHtml({
         icon: AppView._devCardIcon('session'),
         titleHtml: label,
+        titleAttrs: ` title="${label}"`,
         metaHtml: `${owner} is working on this`,
         badges: [statusTag, AppView.issueChipsHtml(s.linked_issues)],
         chatCount: s.chat_count,
-        actions,
+        // No pills of its own: reading the chat IS the whole-card tap, so the
+        // dense band renders reserved-and-empty (see _cardContentHtml).
+        actions: '',
+        dense: !noNav,
       })}
-      ${chevron}
+      ${rail}
     </div>`;
   },
 
@@ -7272,6 +7350,11 @@ const AppView = {
     // external GitHub links — those issues are closed, so the in-app
     // topic (resolved from the open-issues cache) would dead-end and
     // GitHub is their permanent record.
+    //
+    // These are pills, and they go in the PILL band (`linkedHtml`), not on
+    // the end of the meta line where they used to sit: that line is one
+    // ellipsising row, so on a kanban card the linkage — the thing that says
+    // what this change is FOR — was the first thing to disappear.
     const closesPills = isMerged
       ? AppView.closesPillHtml(pr)
       : AppView.issueChipsHtml(pr.linked_issues, { label: 'Closes' });
@@ -7284,23 +7367,35 @@ const AppView = {
     const imported = pr.source === 'imported';
     const chatN = parseInt(pr.chat_count) || 0;
 
-    // ── Badges: the composite pill + at most three metadata chips ──
+    // ── Badges: at most four metadata chips ──
     // The pill absorbs the tally, the pulsing "Vote" badge, the merge-state
     // badge, the checks badge, the console-errors badge, the advisory chip
     // and the explicit-approval chip. Unset metadata chips don't render.
     const badges = AppView._attrChipsHtml('proposal', pr.id, pr, {
       readonly: isMerged, omitUnset: !noNav, asArray: true,
     });
-    // The pill is its own FULL-WIDTH row now, not one of the four badges.
-    // The detail head keeps the inline capsule — it already has a wide
-    // header and a second full-width bar there would just be a rule.
+    // The pill LEADS the status band as a flexible bar. The detail head keeps
+    // the inline capsule — it already has a wide header, and a bar that wide
+    // there would just read as a rule.
     const pill = AppView.statusPillHtml(pr, { majority, locked: ctx.locked, inline: noNav });
 
-    // ── Actions: Yes / No + icon Preview; ⋯ is pinned in the head ──
+    // ── Actions: Yes / No / Explore + icon Preview; ⋯ is in the rail ──
+    // Explore is PROMOTED off the ⋯ menu for a live proposal you didn't write
+    // — the one thing a reader does with someone else's proposal short of
+    // voting on it. It stays a ⋯ row on a merged card, where the action band
+    // belongs to kudos instead, and on the detail head, which already spells
+    // it out in full in its own action list below the header.
     const preview = AppView.cardPreviewHtml(pr, { kind: 'proposal', sessionId: pr.id });
-    const primary = (isMerged || AppView.readOnly) ? [] : AppView._cardVoteButtonsHtml(pr);
-    const menu = AppView._proposalMenuItems(pr, { mine, imported, isMerged, isMerging, noNav });
-    const actions = AppView._cardActionsHtml({ primary, preview });
+    const exploreBtn = (!noNav && !mine && !isMerged && !AppView.readOnly)
+      ? AppView._exploreChatBtnHtml(pr) : '';
+    const primary = (isMerged || AppView.readOnly)
+      ? [] : [...AppView._cardVoteButtonsHtml(pr), exploreBtn];
+    const menu = AppView._proposalMenuItems(pr, {
+      mine, imported, isMerged, isMerging, noNav, exploreOnFace: !!exploreBtn,
+    });
+    // The eye is a rail affordance on the dense card and a band affordance on
+    // the uncapped detail head, which has no chevron for it to sit under.
+    const actions = AppView._cardActionsHtml({ primary, preview: noNav ? preview : '' });
 
     // #195/#211: the before/after capture tiles no longer live on the card —
     // they are a detail-view concern (see _renderTopicHead's actions block),
@@ -7314,15 +7409,20 @@ const AppView = {
         ${AppView._cardContentHtml({
           icon: AppView._devCardIcon(isMerged ? 'done' : (mine ? 'proposalMine' : 'proposal'), mine && !isMerged ? { title: 'This is your PR — open its session.' } : undefined),
           titleHtml,
-          metaHtml: metaParts.join(' · ') + (closesPills ? ` ${closesPills}` : ''),
+          titleAttrs: ` title="${escapeAttr(pr.pr_title || `Change by ${pr.username || ''}`)}"`,
+          metaHtml: metaParts.join(' · '),
+          linkedHtml: closesPills,
           badges,
           chatCount: chatN,
           uncapped: noNav,
           pill: noNav ? '' : pill,
           inlinePill: noNav ? pill : '',
           actions,
+          dense: !noNav,
         })}
-        ${AppView._cardRailHtml(`proposal:${pr.id}`, menu, { chevron: !noNav })}
+        ${AppView._cardRailHtml(`proposal:${pr.id}`, menu, {
+          chevron: !noNav, preview: noNav ? '' : preview,
+        })}
       </div>`;
   },
 
@@ -7434,7 +7534,10 @@ const AppView = {
     // click routing (retract a direct kudos, otherwise give) and the same
     // self-kudos / bounty-credit disables the button carries, so the row
     // never offers a POST the server would refuse.
-    if (window.Kudos && !ro) {
+    // st.kudosOnFace — the merged card promotes the kudos button back onto
+    // its action band (it has no votes to cast, so the band was empty), and
+    // two ways to give the same kudos on one card is one too many.
+    if (window.Kudos && !ro && !st.kudosOnFace) {
       const entry = Kudos._ensureCache ? Kudos._ensureCache(pr.id) : {};
       const isSelf = !!(App.user && pr.user_id && pr.user_id === App.user.id);
       const mineKudos = !!entry.my_kudos;
@@ -7459,7 +7562,9 @@ const AppView = {
     }
     // #313/#827: owners reach the Mayor via "Open session" on their own PR,
     // so Explore is offered only on proposals the viewer does NOT own.
-    if (!st.mine && !ro) {
+    // st.exploreOnFace — a live board card promotes it into its action band,
+    // and the row would then be a duplicate of the button beside it.
+    if (!st.mine && !ro && !st.exploreOnFace) {
       items.push({
         label: 'Explore in dev chat',
         icon: 'explore',
@@ -8656,6 +8761,7 @@ const AppView = {
         ${AppView._cardContentHtml({
           icon: AppView._devCardIcon('gov'),
           titleHtml: escapeHtml(titleText),
+          titleAttrs: ` title="${escapeAttr(titleText)}"`,
           metaHtml: metaParts.join(' · '),
           badges: [applyBadge],
           chatCount: govChatN,
@@ -8663,6 +8769,7 @@ const AppView = {
           pill: noNav ? '' : statusPill,
           inlinePill: noNav ? statusPill : '',
           actions,
+          dense: !noNav,
         })}
         ${AppView._cardRailHtml(`gov:${issue.id}`, menu, { chevron: !noNav })}
       </div>`;
@@ -9880,8 +9987,16 @@ const AppView = {
       ...AppView._attrChipsHtml('issue', n, issue, { omitUnset: !noNav, asArray: true }),
     ];
 
-    // ── Actions: ONE state-driven primary + icon Preview + ⋯ ──
+    // ── Actions: the state-driven primary + In progress + icon Preview + ⋯ ──
     const primaryBtn = AppView.readOnly ? '' : AppView._issuePrimaryActionHtml(issue);
+    // Promoted off the ⋯ menu: claiming an issue is what a reader does with
+    // it before writing any code, and the chip it toggles is right above in
+    // the status band — so the toggle belongs beside it, not two taps away.
+    // Board only: the detail view already spells this action out in full in
+    // its own action list, so promoting it into the head as well would show
+    // the same toggle twice on one screen.
+    const progressBtn = (noNav || AppView.readOnly)
+      ? '' : AppView._issueProgressActionHtml(issue);
     // A ready auto-solve run with a live preview gets the same icon
     // affordance every other previewable thing on the board gets.
     const hasRunPreview = !!(h && h.status === 'ready' && h.stagingUrl
@@ -9890,8 +10005,12 @@ const AppView = {
       ? AppView.cardPreviewHtml({ staging_url: h.stagingUrl },
         { kind: 'issue-run', sessionId: h.sessionId })
       : '';
-    const menu = AppView._issueMenuItems(issue, { noNav });
-    const actions = AppView._cardActionsHtml({ primary: [primaryBtn], preview });
+    const menu = AppView._issueMenuItems(issue, { noNav, progressOnFace: !!progressBtn });
+    // Dense: the eye is pinned to the bottom of the rail. Detail head: it stays
+    // in the (uncapped, chevron-less) action list.
+    const actions = AppView._cardActionsHtml({
+      primary: [primaryBtn, progressBtn], preview: noNav ? preview : '',
+    });
 
     // Topic-view-only admin escape hatch: the live claimer list with a
     // per-claim clear control, so a stuck claim can be removed without
@@ -9933,8 +10052,11 @@ const AppView = {
           uncapped: noNav,
           actions,
           extraHtml: adminClaimList,
+          dense: !noNav,
         })}
-        ${AppView._cardRailHtml(`issue:${n}`, menu, { chevron: !noNav })}
+        ${AppView._cardRailHtml(`issue:${n}`, menu, {
+          chevron: !noNav, preview: noNav ? '' : preview,
+        })}
       </div>`;
   },
 
@@ -9995,6 +10117,21 @@ const AppView = {
       : `<button class="gc-vote-btn" title="Start a dev chat to solve this issue" onclick="AppView.createPrForIssue(${n})">Create proposal</button>`;
   },
 
+  // The issue card's SECOND action: the in-progress claim toggle, promoted
+  // out of the ⋯ menu. Reads `mine` off the claim list exactly as the menu
+  // row it replaces did, so the button never offers a POST the server would
+  // refuse. The long "expires after ~7 days" explanation stays in the
+  // tooltip — it is the reason the mark is safe to leave on, not something
+  // the label has room for.
+  _issueProgressActionHtml(issue) {
+    const n = issue.number;
+    const claims = (issue.in_progress && Array.isArray(issue.in_progress.claims))
+      ? issue.in_progress.claims : [];
+    return claims.some((c) => c.mine)
+      ? `<button class="gc-vote-btn" title="Remove your in-progress mark from this issue" onclick="AppView.clearIssueClaim(${n})">Clear in progress</button>`
+      : `<button class="gc-vote-btn" title="Mark this issue as in progress — you&#39;re working on it. Expires on its own after ~7 days without activity; discussion in the issue&#39;s thread keeps it alive." onclick="AppView.markIssueInProgress(${n})">Mark in progress</button>`;
+  },
+
   // Everything an issue card demoted off its face, as ⋯ descriptors.
   _issueMenuItems(issue, state) {
     const st = state || {};
@@ -10040,22 +10177,28 @@ const AppView = {
       // Manual "In progress" claim, keyed strictly off the VIEWER's own
       // claim: they can always add theirs alongside others' (claims are
       // per-user, never exclusive) and can only clear their own from here.
+      //
+      // st.progressOnFace — the board card promotes this to a button
+      // (_issueProgressActionHtml), so the row would duplicate it. It is
+      // still a row wherever the face doesn't carry it (read-only boards).
       const ipClaims = (issue.in_progress && Array.isArray(issue.in_progress.claims))
         ? issue.in_progress.claims : [];
       const myClaim = ipClaims.some((c) => c.mine);
-      items.push(myClaim
-        ? {
-          label: 'Clear in progress',
-          icon: 'clear',
-          title: 'Remove your in-progress mark from this issue',
-          act: () => AppView.clearIssueClaim(n),
-        }
-        : {
-          label: 'Mark in progress',
-          icon: 'progress',
-          title: 'Mark this issue as in progress — you’re working on it. Expires on its own after ~7 days without activity; discussion in the issue’s thread keeps it alive.',
-          act: () => AppView.markIssueInProgress(n),
-        });
+      if (!st.progressOnFace) {
+        items.push(myClaim
+          ? {
+            label: 'Clear in progress',
+            icon: 'clear',
+            title: 'Remove your in-progress mark from this issue',
+            act: () => AppView.clearIssueClaim(n),
+          }
+          : {
+            label: 'Mark in progress',
+            icon: 'progress',
+            title: 'Mark this issue as in progress — you’re working on it. Expires on its own after ~7 days without activity; discussion in the issue’s thread keeps it alive.',
+            act: () => AppView.markIssueInProgress(n),
+          });
+      }
       // While a close proposal is already open for this issue the row is
       // disabled rather than hidden, so it still explains itself. The
       // server also 409s a duplicate.
@@ -10346,10 +10489,22 @@ const AppView = {
     });
     const pill = AppView.statusPillHtml(pr, { majority: maj });
 
-    // No text actions on a settled card: Undo / Kudos / Explore all live in
-    // ⋯, and the read-only "You voted X" box is gone from the card face —
+    // ONE text action on a settled card: kudos. Undo and Explore stay in ⋯
+    // (both are follow-up work rather than a response to the change), and
+    // the read-only "You voted X" box is still gone from the card face —
     // the pill's tooltip and the detail view's vote roster carry that.
-    const menu = AppView._proposalMenuItems(pr, { mine, imported: pr.source === 'imported', isMerged: true });
+    //
+    // Kudos is the exception because thanking the author is the whole of what
+    // a settled card asks of a reader, and it is the only action here that
+    // shows STATE (the count) — which a ⋯ row can't while it's closed. The
+    // board's existing Kudos.attach() call hydrates it; the button is left
+    // out entirely when kudos.js isn't loaded.
+    const kudosBtn = (window.Kudos && !AppView.readOnly)
+      ? Kudos.renderButton(pr, { compact: true }) : '';
+    const menu = AppView._proposalMenuItems(pr, {
+      mine, imported: pr.source === 'imported', isMerged: true, kudosOnFace: !!kudosBtn,
+    });
+    const actions = AppView._cardActionsHtml({ primary: [kudosBtn] });
 
     return `
         <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-ref-pr="${pr.pr_number || pr.id}" data-proposal-row="${pr.id}" title="Open this proposal's discussion">
@@ -10357,10 +10512,12 @@ const AppView = {
             icon: AppView._devCardIcon('done'),
             titleHtml: mergedLabel,
             titleAttrs: ` title="${escapeHtml(mergedQuoteTitle)}"`,
-            metaHtml: metaParts.join(' · ') + (closes ? ` ${closes}` : ''),
+            metaHtml: metaParts.join(' · '),
+            linkedHtml: closes,
             badges,
             chatCount: parseInt(pr.chat_count) || 0,
             pill,
+            actions,
           })}
           ${AppView._cardRailHtml(`merged:${pr.id}`, menu)}
         </div>`;
@@ -10407,7 +10564,10 @@ const AppView = {
       votes_required: p.required != null ? p.required : null,
       status: 'merged',
     }, { majority: parseInt(p.required) || 1, kind: 'gov' });
-    // No actions at all on a settled close-issue row, so no ⋯ either.
+    // No actions at all on a settled close-issue row, so no ⋯ either. Its
+    // action band is still RESERVED (empty) by the dense contract — this row
+    // sits in the same Done column as merged PR cards, and an inch-shorter
+    // card there is exactly the raggedness the four bands exist to remove.
     return `
         <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-gov-row="${row.id}"${issueN ? ` data-ref-issue="${issueN}"` : ''} title="Open this proposal's discussion">
           ${AppView._cardContentHtml({
@@ -11303,10 +11463,13 @@ const AppView = {
   //   3 assignee   — only when set
   //   4 category   — only when set
   //
-  // The composite status pill USED to lead this row and count against the
-  // cap. It is now its own full-width row below the head (see
-  // _cardContentHtml), so the cap governs the metadata chips only — which
-  // is also why four is still the right number: that is exactly the set.
+  // The composite status pill leads this row (`opts.pill`) and the linked
+  // issue pills follow it (`opts.lead`) — both only on the board, where the
+  // merged status band holds all three — but NEITHER counts against the cap:
+  // the cap governs the metadata chips only — which is also why four is
+  // still the right number, that is exactly the set. State and linkage are
+  // not "one more chip"; they are the two things the row exists to show, so
+  // a card with four chips set must not be able to push them out.
   //
   // Everything that used to compete for this row — Auto-title pending,
   // Imported PR, Built with <agent>, Platform maintenance, Explicit
@@ -11315,12 +11478,20 @@ const AppView = {
   // into the pill (lock glyph / tooltip) and spelled out in the detail view.
   BADGE_MAX: 4,
   _cardBadgesHtml(badges, chatCount, opts) {
+    const o = opts || {};
     const all = (badges || []).filter(Boolean);
-    // opts.uncapped — the topic detail head, which has the full page width
+    // o.uncapped — the topic detail head, which has the full page width
     // and is where every chip must be reachable. The BOARD always caps.
-    const kept = (opts && opts.uncapped) ? all : all.slice(0, AppView.BADGE_MAX);
+    const kept = o.uncapped ? all : all.slice(0, AppView.BADGE_MAX);
     const chat = (chatCount === null || chatCount === undefined)
       ? '' : AppView._devChatBadge(chatCount);
+    // Dense (board) order: state bar, then linkage, then the metadata chips,
+    // then the 💬 count. The pill and the linked-issue pills are PREPENDED —
+    // they are what the merged band exists to show, and the band clips at its
+    // end, so they must never be what gets cut. Everything after them keeps
+    // the historical `chips + chat` order, which is also what the detail head
+    // renders (it never clips, and its pill/linkage arrive inside `badges`).
+    if (o.dense) return (o.pill || '') + (o.lead || '') + kept.join('') + chat;
     return kept.join('') + chat;
   },
 
