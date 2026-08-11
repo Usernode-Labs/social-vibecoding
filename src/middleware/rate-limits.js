@@ -406,4 +406,15 @@ const reportAiLimiter = makeLimiter({
   message: 'Please wait a minute before regenerating the report.',
 });
 
-module.exports = { dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, waitlistJoinLimiter, mailTestLimiter };
+// Locking a report writes a multi-hundred-KB row per click; share and
+// unshare are cheap but share the same per-user budget so a stuck client
+// can't hammer any of the three verbs. Per-user keyed like report-ai.
+const reportSnapshotLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 10,
+  name: 'report-snapshot',
+  keyByUser: true,
+  message: 'Please wait a minute before locking or sharing more reports.',
+});
+
+module.exports = { dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, reportSnapshotLimiter, waitlistJoinLimiter, mailTestLimiter };
