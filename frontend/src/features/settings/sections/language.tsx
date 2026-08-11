@@ -1,0 +1,91 @@
+import { SectionHeading, StatusLine } from '@/components/ui/field';
+import { Select } from '@/components/ui/select';
+
+/**
+ * Platform-level user language preference (issue #757). A single per-user
+ * BCP-47 locale apps read as their default language — via the iframe JWT
+ * `locale` claim and the bridge's usernode.getUserLocale(). "" (Auto) = unset
+ * (NULL in the DB). Saves on change; settings.js wires the handler to
+ * POST /api/me/locale and pushes a live `usernode:locale-changed` notification
+ * into any open app iframe.
+ *
+ * #settings-locale is a dapp.json anchor and settings.js reads/writes its
+ * `.value`, so it stays a native `<select>` — see @/components/ui/select.
+ */
+export function LanguageSection() {
+  return (
+    <div data-settings-section="language" className="hidden">
+      <div id="settings-language-section">
+        <SectionHeading title="Language">
+          Apps on Usernode use this as their default language. Apps may offer their own override.
+        </SectionHeading>
+        <Select id="settings-locale" variant="plain">
+          <option value="">
+            Auto — use device language
+          </option>
+          <option value="en">
+            English
+          </option>
+          <option value="es">
+            Español
+          </option>
+          <option value="fr">
+            Français
+          </option>
+          <option value="de">
+            Deutsch
+          </option>
+          <option value="id">
+            Bahasa Indonesia
+          </option>
+          <option value="pt-BR">
+            Português (Brasil)
+          </option>
+          <option value="it">
+            Italiano
+          </option>
+          <option value="nl">
+            Nederlands
+          </option>
+          <option value="pl">
+            Polski
+          </option>
+          <option value="tr">
+            Türkçe
+          </option>
+          <option value="ru">
+            Русский
+          </option>
+          <option value="uk">
+            Українська
+          </option>
+          <option value="ar">
+            العربية
+          </option>
+          <option value="hi">
+            हिन्दी
+          </option>
+          <option value="vi">
+            Tiếng Việt
+          </option>
+          <option value="th">
+            ไทย
+          </option>
+          <option value="ja">
+            日本語
+          </option>
+          <option value="ko">
+            한국어
+          </option>
+          <option value="zh-CN">
+            中文（简体）
+          </option>
+          <option value="zh-TW">
+            中文（繁體）
+          </option>
+        </Select>
+        <StatusLine id="settings-locale-status" size="xs" />
+      </div>
+    </div>
+  );
+}
