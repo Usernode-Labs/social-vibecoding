@@ -1836,8 +1836,8 @@
     {
       "name": "A pinned OpenRouter session says so, and shows its model (#1086)",
       "path": "/#app/usernode-2d5619/dev/sessions/990409",
-      "expectSelector": "#dc-venue-slot [data-venue-line=\"usernode-openrouter\"], #dc-venue-detail #dc-model-select",
-      "expectText": "Usernode · OpenRouter"
+      "expectSelector": "#dc-tab-chat:has(#dc-venue-slot [data-venue-line=\"usernode-openrouter\"]) #dc-venue-detail #dc-openrouter-model-change",
+      "expectText": "openai/gpt-5.3-codex"
     },
     {
       "name": "A venue you did not get is explained rather than silently swapped (#1086)",

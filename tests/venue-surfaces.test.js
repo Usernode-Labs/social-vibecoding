@@ -110,16 +110,28 @@ test('the change control is disabled mid-turn, in both places that paint it', ()
     'and both set .disabled from the streaming flag');
 });
 
-test('the model row renders only for the venues that have a model', () => {
-  // Four of the six have nothing to pick here — the chat model is a
-  // Usernode-side setting, and showing it under "Building in your
-  // computer" is half the confusion this line replaces.
-  assert.match(DEV_CHAT_SRC, /venueId === 'usernode-claude' \|\| venueId === 'usernode-openrouter'/);
-  assert.match(DEV_CHAT_SRC, /\$\{venueHasModel \? `/,
-    'the detail block is conditional on it');
-  // …which means #dc-model-select is now sometimes absent, and the wiring
-  // has to survive that. An unguarded getElementById(...).addEventListener
-  // would throw on every local / web / imported session.
+test('each in-chat provider gets its own model control, and other venues get none', () => {
+  // Claude and OpenRouter do not share a selector: the former picks the
+  // platform chat model, while an OpenRouter session pins one catalog model
+  // to chat and coding. Local / web / imported venues render neither.
+  assert.match(DEV_CHAT_SRC, /const claudeVenue = venueId === 'usernode-claude'/);
+  assert.match(DEV_CHAT_SRC, /const openRouterVenue = venueId === 'usernode-openrouter'/);
+  assert.match(DEV_CHAT_SRC, /\$\{claudeVenue \? `/,
+    'the Claude detail block is provider-specific');
+  assert.match(DEV_CHAT_SRC, /openRouterVenue \? `/,
+    'the OpenRouter detail block is provider-specific');
+  assert.match(DEV_CHAT_SRC, /id="dc-openrouter-model"/,
+    'the pinned OpenRouter model is visible');
+  assert.match(DEV_CHAT_SRC, /id="dc-openrouter-model-change"/,
+    'the OpenRouter catalog can be reopened directly');
+  assert.match(
+    DEV_CHAT_SRC,
+    /_switchCurrentCodingAgent\(null, \{ fixedBackend: 'codex_openrouter' \}\)/,
+    'changing the model keeps the chooser locked to OpenRouter',
+  );
+
+  // #dc-model-select is absent outside Claude, so its wiring must survive
+  // that. An unguarded addEventListener would throw on every other venue.
   assert.ok(
     /const modelSelect = document\.getElementById\('dc-model-select'\);[\s\S]{0,200}?if \(modelSelect\)/.test(DEV_CHAT_SRC)
       || /getElementById\('dc-model-select'\)\?\./.test(DEV_CHAT_SRC),
@@ -246,6 +258,7 @@ test('every class these surfaces render has a rule', () => {
   for (const cls of [
     'dc-venue-slot', 'dc-venue-line', 'dc-venue-name',
     'dc-venue-change', 'dc-venue-note', 'dc-venue-detail', 'dc-venue-chip',
+    'dc-openrouter-model', 'dc-openrouter-model-change',
   ]) {
     assert.ok(new RegExp('\\.' + cls + '[\\s,:{]').test(APP_CSS),
       `.${cls} has no rule in app.css`);
