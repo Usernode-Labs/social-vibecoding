@@ -575,6 +575,9 @@
     _FIRST_RUN_KEY: 'sv:onboarding_permissions_done',
     _firstRunPromise: null,
     _firstRunSheetPresented: false,
+    // Delay between post-grant permission-status re-reads (the native
+    // caches settle asynchronously after the OS dialog).
+    _FIRST_RUN_RECHECK_MS: 800,
 
     _markFirstRunDone() {
       try { localStorage.setItem(NativeChrome._FIRST_RUN_KEY, '1'); } catch (_) {}
@@ -741,16 +744,45 @@
             b.disabled = true;
             try {
               const next = await window.usernode.requestPermissions();
-              if (!isAndroid) {
-                pushStatus = await NativeChrome._iosPushPermissionStatus();
+              const nextPerms = next && next.permissions
+                ? next.permissions
+                : p;
+              let granted = !!(next && next.granted === true);
+              if (isAndroid) {
+                granted = granted || !!nextPerms.exactAlarmGranted;
+              } else {
+                // The native permission caches can lag right after the
+                // OS dialog — and some builds resolve requestPermissions
+                // before the user answers it. Poll briefly for a
+                // determined status instead of trusting one stale read;
+                // a determined answer wins over the grant flag.
+                let status = await NativeChrome._iosPushPermissionStatus();
+                for (let i = 0;
+                  !granted && status === 'undetermined' && i < 4;
+                  i++) {
+                  await new Promise((resolve) => setTimeout(
+                    resolve, NativeChrome._FIRST_RUN_RECHECK_MS));
+                  status = await NativeChrome._iosPushPermissionStatus();
+                }
+                if (status === 'granted') granted = true;
+                else if (status === 'denied') granted = false;
+                pushStatus = granted ? 'granted' : (status || pushStatus);
                 // A fresh grant should start push registration right
                 // away rather than waiting for the next app resume.
-                if (pushStatus === 'granted' && window.SocialPush &&
+                if (granted && window.SocialPush &&
                     typeof SocialPush.getState === 'function') {
                   SocialPush.getState();
                 }
               }
-              if (next && next.permissions) render(next.permissions);
+              const batteryOk = !isAndroid ||
+                nextPerms.batteryOptDisabled === true;
+              if (granted && batteryOk) {
+                // Nothing left to ask — close (which records first-run
+                // done) instead of re-rendering a sheet with no job.
+                if (sheet && sheet.dismiss) sheet.dismiss();
+                return;
+              }
+              render(nextPerms);
             } catch (e) {
               console.warn('[native-chrome] requestPermissions failed:', e);
             } finally { b.disabled = false; }
