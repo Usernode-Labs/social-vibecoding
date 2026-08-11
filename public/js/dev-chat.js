@@ -1703,7 +1703,7 @@ const DevChat = {
       PlatformUI.toast(`Proposal opened from PR #${data.prNumber || ''}`.trim());
       flow.dismissed = true;
       if (data.sessionId) {
-        await DevChat.openSession(data.sessionId);
+        await DevChat.openSession(data.sessionId, { userOpened: true });
         DevChat.renderChatView();
         return;
       }
@@ -1777,7 +1777,7 @@ const DevChat = {
       // the check state reflect the commit that just landed.
       const sessionId = data.proposalId || target.id;
       if (sessionId) {
-        await DevChat.openSession(sessionId);
+        await DevChat.openSession(sessionId, { userOpened: true });
         DevChat.renderChatView();
       }
       return;
@@ -1980,7 +1980,7 @@ const DevChat = {
         // handle the full app+tab+session restore — that path also
         // closes the previous app cleanly via App.openApp.
         if (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug === slug) {
-          DevChat.openSession(id).then(() => {
+          DevChat.openSession(id, { userOpened: true }).then(() => {
             DevChat.renderChatView();
             if (typeof App !== 'undefined' && App.updateHash) App.updateHash();
           });
@@ -2244,11 +2244,20 @@ const DevChat = {
     DevChat._heartbeatTimer = setInterval(beat, 60000);
   },
 
-  async openSession(sessionId) {
+  // `userOpened` says a PERSON asked for this session (a click on a row /
+  // active chip, a hash restore, the reopen at the end of a dev flow) as
+  // opposed to the several machine refetches that also route through here to
+  // re-read the session record: the fallback-done reconcile, the progress
+  // poll's !busy branch, the sync-terminal refresh. Only the former is the
+  // "user saw it" signal that disarms notify_on_done and dismisses the
+  // session's unread completion server-side, so only the former forwards
+  // ?opened=1 — otherwise the turn's own reconcile fetch clears the
+  // completion it just produced and the cog's green badge never shows.
+  async openSession(sessionId, { userOpened = false } = {}) {
     // #161: opening a DIFFERENT session while the current one is
     // mid-turn counts as leaving it — arm its completion notification.
     // (Returning to the SAME session needs no client call: the server's
-    // GET /api/sessions/:id below disarms it.)
+    // GET /api/sessions/:id below disarms it when the user opened it.)
     if (DevChat.isStreaming && DevChat.currentSession
         && Number(DevChat.currentSession.id) !== Number(sessionId)) {
       DevChat._setNotifyOnDone(DevChat.currentSession.id, true);
@@ -2294,7 +2303,11 @@ const DevChat = {
       DevChat._setStreamingUI(false);
     }
     try {
-      const res = await fetch(`/api/sessions/${sessionId}`);
+      // …and never on a screenshot deep link, for the same reason the
+      // auto-resume below skips one: `?shot=` names a state to RENDER, and
+      // silently resolving the session's notification is a mutation.
+      const asUser = userOpened && !DevChat._isShotDeepLink();
+      const res = await fetch(`/api/sessions/${sessionId}${asUser ? '?opened=1' : ''}`);
       if (!res.ok) return;
       const { session, messages, drafts } = await res.json();
 
@@ -6128,7 +6141,7 @@ const DevChat = {
 
     container.querySelectorAll('.dc-session-item').forEach((el) => {
       el.addEventListener('click', async () => {
-        await DevChat.openSession(parseInt(el.dataset.id));
+        await DevChat.openSession(parseInt(el.dataset.id), { userOpened: true });
         DevChat.renderChatView();
         App.updateHash();
       });
@@ -6456,7 +6469,7 @@ const DevChat = {
       if (btn) { btn.disabled = false; btn.textContent = 'Start a new change'; }
       return;
     }
-    await DevChat.openSession(session.id);
+    await DevChat.openSession(session.id, { userOpened: true });
     DevChat.renderChatView();
     if (typeof App !== 'undefined' && App.updateHash) App.updateHash();
     if (typeof DevChat.loadActiveSessions === 'function') DevChat.loadActiveSessions();

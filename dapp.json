@@ -1288,6 +1288,11 @@
       "expectSelector": "#work-drawer-btn #notifications-badge-ai"
     },
     {
+      "name": "Cog badge is VISIBLE when a finished dev session is unread",
+      "path": "/?demo=1",
+      "expectSelector": "#work-drawer-btn #notifications-badge-ai:not(.hidden)[data-session-done]:not([data-session-done=\"0\"])"
+    },
+    {
       "name": "Admin/moderation row renders in the drawer for admins (#588)",
       "path": "/",
       "expectSelector": "#drawer-row-admin:not(.hidden)"
