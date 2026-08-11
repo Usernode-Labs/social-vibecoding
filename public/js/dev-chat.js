@@ -229,6 +229,546 @@ const DevChat = {
     DevChat._renderModelNote();
   },
 
+  // ── Session-pinned coding-agent choice ────────────────────────────
+  // The deployment flag only controls whether Codex is available; it does
+  // not choose a provider for the user. Every ordinary new session asks the
+  // user which backend to pin, preselecting (but never silently applying)
+  // their saved default. The same dialog switches an idle existing session
+  // through reset-agent-context, which intentionally starts fresh agent
+  // context while preserving the branch and conversation.
+  _agentBackend(session) {
+    return session?.agent_backend === 'codex_openrouter'
+      ? 'codex_openrouter'
+      : 'claude_code';
+  },
+
+  _isOpenRouterSession(session = DevChat.currentSession) {
+    return DevChat._agentBackend(session) === 'codex_openrouter';
+  },
+
+  // Venue-first names. "Claude Code" used to mean BOTH the platform backend
+  // and the web hand-off, in menus that sat inches apart; the venue names
+  // say where the work happens and collide with nothing.
+  _agentName(backend) {
+    return backend === 'codex_openrouter' ? 'Usernode · OpenRouter' : 'Usernode · Claude';
+  },
+
+  // Runtime rows use camelCase metadata, session rows use snake_case, and
+  // legacy rows have neither. Resolve all three in one place so progress,
+  // logs, active-session tooltips, and reloads cannot disagree about which
+  // provider actually ran the turn.
+  _activityAgentBackend(source) {
+    const backend = source?.agentBackend
+      || source?.metadata?.agentBackend
+      || source?.agent_backend;
+    if (backend === 'codex_openrouter') return 'codex_openrouter';
+    if (/^(?:Codex|OpenRouter)\b/i.test(String(source?.content || ''))) return 'codex_openrouter';
+    return 'claude_code';
+  },
+
+  _activityAgentName(source) {
+    return DevChat._activityAgentBackend(source) === 'codex_openrouter'
+      ? 'OpenRouter'
+      : 'Claude Code';
+  },
+
+  _copyActivityAgentMetadata(target, source) {
+    if (!target || !source) return target;
+    const backend = source.agentBackend
+      || source.metadata?.agentBackend
+      || source.agent_backend;
+    const model = source.agentModel
+      ?? source.metadata?.agentModel
+      ?? source.agent_model;
+    // Only copy an explicit identity. Older coding events deliberately have
+    // neither field and continue to render as Claude through the legacy
+    // fallback; sync-with-main also reuses cc_progress but is not a Codex
+    // model run, so it must not inherit the current session's backend.
+    if (backend === 'claude_code' || backend === 'codex_openrouter') {
+      target.agentBackend = backend;
+    }
+    if (model != null) target.agentModel = model;
+    return target;
+  },
+
+  // The venue THIS session is building in, in the shared vocabulary.
+  //
+  // Everything the derivation needs already lives on the session row or in
+  // the status poll; build-venues.js owns the precedence (imported first,
+  // then a live lease, then the hand-off, then the backend) so this module
+  // and the session cards can't disagree about the same session.
+  _currentVenueId() {
+    if (!window.BuildVenues) return 'usernode-claude';
+    const s = DevChat.currentSession || {};
+    return BuildVenues.currentVenue({
+      source: s.source,
+      localAgent: DevChat._localAgent || null,
+      externalAgent: s.external_agent,
+      agentBackend: DevChat._agentBackend(s),
+    });
+  },
+
+  _agentBillingNote(session) {
+    if (DevChat._agentBackend(session) === 'codex_openrouter') {
+      const model = String(session?.agent_model || '').trim();
+      return `Building on Usernode · OpenRouter${model ? ` (${model})` : ''} — coding turns bill your OpenRouter key.`;
+    }
+    return 'Building on Usernode · Claude — coding turns use your daily Usernode credits.';
+  },
+
+  _busyComposerPlaceholder() {
+    const name = DevChat._agentBackend(DevChat.currentSession) === 'codex_openrouter'
+      ? 'OpenRouter'
+      : 'Claude';
+    return `${name} is working — type your next note and tap 💾 to save it for later.`;
+  },
+
+  _formatOpenRouterPrice(value) {
+    if (value == null || value === '') return null;
+    const price = Number(value);
+    if (!Number.isFinite(price) || price < 0) return null;
+    if (price === 0) return '$0';
+    const decimals = price < 0.01 ? 4 : price < 10 ? 2 : price < 100 ? 1 : 0;
+    const fixed = price.toFixed(decimals);
+    const compact = fixed.includes('.') ? fixed.replace(/0+$/, '').replace(/\.$/, '') : fixed;
+    return `$${compact}`;
+  },
+
+  _openRouterModelCostSummary(model) {
+    const tier = {
+      free: 'Free',
+      low: 'Low cost',
+      medium: 'Medium cost',
+      high: 'High cost',
+      unknown: 'Price unavailable',
+    }[model?.costTier] || 'Price unavailable';
+    const input = this._formatOpenRouterPrice(model?.inputPricePerMillion);
+    const output = this._formatOpenRouterPrice(model?.outputPricePerMillion);
+    if (!input && !output) return tier;
+    return `${tier} · ${input || '?'} /M input · ${output || '?'} /M output`;
+  },
+
+  _openRouterModelOptionLabel(model) {
+    const compatibility = model?.compatibility === 'verified'
+      ? ' · verified'
+      : (model?.compatibility === 'blocked' ? ' · limited' : ' · unverified');
+    return `${model?.name || model?.id || 'Unknown model'} — ${this._openRouterModelCostSummary(model)}${compatibility}`;
+  },
+
+  _openRouterModelCompatibilitySummary(model) {
+    if (!model) return '';
+    if (model.compatibility === 'verified') return 'Verified for repository coding.';
+    if (model.meetsCodexMinimums) {
+      return 'OpenRouter advertises coding-tool support and enough context, but this model is not yet verified for repository coding.';
+    }
+    return model.compatibilityNote
+      || 'OpenRouter exposes this model, but it may lack repository tools or enough context; the turn may fail.';
+  },
+
+  async _loadCodingAgentChoiceData() {
+    const data = {
+      defaultBackend: 'claude_code',
+      backends: {},
+      codexAvailable: false,
+      credentialConfigured: false,
+      models: [],
+      recommendedModelId: null,
+      loadError: null,
+      catalogError: null,
+    };
+
+    try {
+      const prefsRes = await fetch('/api/me/coding-agent', { credentials: 'same-origin' });
+      if (!prefsRes.ok) throw new Error('Could not load your coding-agent settings.');
+      const prefs = await prefsRes.json();
+      data.defaultBackend = prefs.defaultBackend === 'codex_openrouter'
+        ? 'codex_openrouter'
+        : 'claude_code';
+      data.backends = prefs.backends || {};
+      data.codexAvailable = !!prefs.codexAvailable;
+    } catch (err) {
+      data.loadError = err.message || 'Could not load coding-agent settings.';
+      return data;
+    }
+
+    try {
+      const credentialRes = await fetch('/api/me/credentials/openrouter', {
+        credentials: 'same-origin',
+      });
+      if (!credentialRes.ok) throw new Error('Could not check your OpenRouter key.');
+      const credential = await credentialRes.json();
+      data.credentialConfigured = credential.configured === true && credential.status === 'valid';
+    } catch (err) {
+      data.catalogError = err.message || 'Could not check your OpenRouter key.';
+      return data;
+    }
+
+    if (!data.codexAvailable || !data.credentialConfigured) return data;
+
+    try {
+      const modelsRes = await fetch('/api/me/coding-agent/models?backend=codex_openrouter', {
+        credentials: 'same-origin',
+      });
+      const catalog = await modelsRes.json().catch(() => ({}));
+      if (!modelsRes.ok) throw new Error(catalog.error || 'Could not load OpenRouter models.');
+      data.models = Array.isArray(catalog.models) ? catalog.models : [];
+      data.recommendedModelId = catalog.recommendedModelId || null;
+      if (!data.models.length) data.catalogError = 'No OpenRouter models are available under this key.';
+    } catch (err) {
+      data.catalogError = err.message || 'Could not load OpenRouter models.';
+    }
+    return data;
+  },
+
+  async _chooseCodingAgent({ mode = 'create', current = null } = {}) {
+    const data = await DevChat._loadCodingAgentChoiceData();
+    if (typeof document === 'undefined' || !document.body) return null;
+
+    document.getElementById('dc-agent-choice-modal')?.remove();
+
+    const savedCodex = data.backends?.codex_openrouter || {};
+    let selectedBackend = current?.backend || data.defaultBackend || 'claude_code';
+    if (!['claude_code', 'codex_openrouter'].includes(selectedBackend)) {
+      selectedBackend = 'claude_code';
+    }
+    const availableIds = new Set(data.models.map((m) => m.id));
+    const recommendedModel = availableIds.has(data.recommendedModelId)
+      ? data.recommendedModelId
+      : (data.models.find((m) => m.compatibility === 'verified')?.id || data.models[0]?.id || '');
+    let selectedModel = current?.model || savedCodex.model || recommendedModel;
+    if (!availableIds.has(selectedModel)) selectedModel = recommendedModel;
+    let selectedEffort = current?.reasoningEffort || savedCodex.reasoningEffort || '';
+
+    const overlay = document.createElement('div');
+    overlay.id = 'dc-agent-choice-modal';
+    overlay.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4';
+    overlay.innerHTML = `
+      <div class="w-full max-w-lg rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-5 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="dc-agent-choice-title">
+        <div class="flex items-start gap-3">
+          <div class="min-w-0 flex-1">
+            <h2 id="dc-agent-choice-title" class="text-lg font-bold text-zinc-900 dark:text-zinc-100">${mode === 'switch' ? 'Where should this session build?' : 'Where should this build?'}</h2>
+            <p class="mt-1 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">${mode === 'switch' ? 'Switching keeps this branch and conversation, but starts a fresh coding-agent context on the next turn.' : 'Both agents stay available. Your saved default is preselected; this choice is pinned to the new session.'}</p>
+          </div>
+          <button type="button" id="dc-agent-choice-close" class="shrink-0 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200" aria-label="Close">✕</button>
+        </div>
+        <div class="mt-4 grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Session AI">
+          <button type="button" id="dc-agent-choice-claude" role="radio" class="rounded-lg border p-3 text-left transition-colors">
+            <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Usernode · Claude</span>
+            <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">In this chat, on your daily Usernode credits.</span>
+            ${data.defaultBackend === 'claude_code' ? '<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-300">Saved default</span>' : ''}
+          </button>
+          <button type="button" id="dc-agent-choice-codex" role="radio" class="rounded-lg border p-3 text-left transition-colors">
+            <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Usernode · OpenRouter</span>
+            <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">In this chat, on your own model and OpenRouter key.</span>
+            ${data.defaultBackend === 'codex_openrouter' ? '<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-300">Saved default</span>' : ''}
+          </button>
+        </div>
+        <div id="dc-agent-choice-codex-options" class="mt-4 hidden rounded-lg border border-zinc-200 dark:border-zinc-800 p-3">
+          <label for="dc-agent-choice-model" class="block text-xs font-medium text-zinc-700 dark:text-zinc-300">OpenRouter model</label>
+          <select id="dc-agent-choice-model" class="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500"></select>
+          <p class="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">All models exposed by your OpenRouter key, sorted by average input/output token price. Rates are per 1M tokens; actual spend depends on usage.</p>
+          <label for="dc-agent-choice-effort" class="mt-3 block text-xs font-medium text-zinc-700 dark:text-zinc-300">Reasoning effort</label>
+          <select id="dc-agent-choice-effort" class="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
+            <option value="">Default</option>
+            <option value="minimal">Minimal</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+            <option value="xhigh">Extra high</option>
+          </select>
+        </div>
+        <p id="dc-agent-choice-status" class="mt-3 min-h-[1.25rem] text-xs leading-relaxed text-zinc-500 dark:text-zinc-400"></p>
+        <div class="mt-4 flex flex-wrap justify-end gap-2">
+          <button type="button" id="dc-agent-choice-settings" class="hidden rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">Open OpenRouter settings</button>
+          <button type="button" id="dc-agent-choice-cancel" class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">Cancel</button>
+          <button type="button" id="dc-agent-choice-apply" class="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"></button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const claudeButton = overlay.querySelector('#dc-agent-choice-claude');
+    const codexButton = overlay.querySelector('#dc-agent-choice-codex');
+    const codexOptions = overlay.querySelector('#dc-agent-choice-codex-options');
+    const modelSelect = overlay.querySelector('#dc-agent-choice-model');
+    const effortSelect = overlay.querySelector('#dc-agent-choice-effort');
+    const status = overlay.querySelector('#dc-agent-choice-status');
+    const settingsButton = overlay.querySelector('#dc-agent-choice-settings');
+    const applyButton = overlay.querySelector('#dc-agent-choice-apply');
+
+    for (const model of data.models) {
+      const option = document.createElement('option');
+      option.value = model.id;
+      option.textContent = this._openRouterModelOptionLabel(model);
+      modelSelect.appendChild(option);
+    }
+    modelSelect.value = selectedModel;
+    effortSelect.value = selectedEffort;
+
+    const cardClass = (selected) => `rounded-lg border p-3 text-left transition-colors ${selected
+      ? 'border-violet-500 bg-violet-500/5 ring-1 ring-violet-500'
+      : 'border-zinc-300 dark:border-zinc-700 hover:border-violet-400'}`;
+
+    const render = () => {
+      const codex = selectedBackend === 'codex_openrouter';
+      claudeButton.className = cardClass(!codex);
+      codexButton.className = cardClass(codex);
+      claudeButton.setAttribute('aria-checked', String(!codex));
+      codexButton.setAttribute('aria-checked', String(codex));
+      codexOptions.classList.toggle('hidden', !codex);
+      settingsButton.classList.toggle('hidden', !codex);
+
+      applyButton.disabled = false;
+      const venueName = codex ? 'Usernode · OpenRouter' : 'Usernode · Claude';
+      applyButton.textContent = mode === 'switch'
+        ? `Switch to ${venueName}`
+        : `Build on ${venueName}`;
+
+      if (!codex) {
+        status.textContent = data.loadError
+          ? `${data.loadError} Usernode · Claude is still available.`
+          : 'Usernode · Claude builds in this chat on your daily Usernode credits.';
+        return;
+      }
+      if (data.loadError) {
+        status.textContent = data.loadError;
+        applyButton.disabled = true;
+        return;
+      }
+      if (!data.codexAvailable) {
+        status.textContent = 'Usernode · OpenRouter is not enabled for this account or deployment.';
+        applyButton.disabled = true;
+        return;
+      }
+      if (!data.credentialConfigured) {
+        status.textContent = data.catalogError || 'Add your OpenRouter API key before choosing OpenRouter.';
+        applyButton.textContent = 'Set up OpenRouter';
+        return;
+      }
+      if (!data.models.length) {
+        status.textContent = data.catalogError || 'No OpenRouter models are available under this key.';
+        applyButton.disabled = true;
+        return;
+      }
+      const model = data.models.find((item) => item.id === selectedModel) || null;
+      const supportsReasoning = model?.supportsReasoning === true;
+      effortSelect.disabled = !supportsReasoning;
+      if (supportsReasoning) {
+        effortSelect.value = selectedEffort;
+      } else {
+        effortSelect.value = '';
+      }
+      const reasoningNote = supportsReasoning
+        ? ''
+        : ' This model does not expose reasoning-effort controls.';
+      status.textContent = `${this._openRouterModelCostSummary(model)}. ${this._openRouterModelCompatibilitySummary(model)}${reasoningNote} This session bills directly to your OpenRouter key.`;
+    };
+
+    claudeButton.addEventListener('click', () => { selectedBackend = 'claude_code'; render(); });
+    codexButton.addEventListener('click', () => { selectedBackend = 'codex_openrouter'; render(); });
+    modelSelect.addEventListener('change', () => { selectedModel = modelSelect.value; render(); });
+    effortSelect.addEventListener('change', () => { selectedEffort = effortSelect.value; });
+
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        document.removeEventListener('keydown', onKeydown);
+        overlay.remove();
+        resolve(value);
+      };
+      const openSettings = () => {
+        finish(null);
+        window.location.hash = '#settings/openrouter';
+      };
+      const onKeydown = (event) => {
+        if (event.key === 'Escape') finish(null);
+      };
+      document.addEventListener('keydown', onKeydown);
+      overlay.querySelector('#dc-agent-choice-close').addEventListener('click', () => finish(null));
+      overlay.querySelector('#dc-agent-choice-cancel').addEventListener('click', () => finish(null));
+      overlay.addEventListener('click', (event) => { if (event.target === overlay) finish(null); });
+      settingsButton.addEventListener('click', openSettings);
+      applyButton.addEventListener('click', () => {
+        if (applyButton.disabled) return;
+        if (selectedBackend === 'codex_openrouter' && !data.credentialConfigured) {
+          openSettings();
+          return;
+        }
+        finish({
+          backend: selectedBackend,
+          model: selectedBackend === 'codex_openrouter' ? modelSelect.value : null,
+          reasoningEffort: selectedBackend === 'codex_openrouter'
+            ? (effortSelect.value || null)
+            : null,
+        });
+      });
+      render();
+      (selectedBackend === 'codex_openrouter' ? codexButton : claudeButton).focus();
+    });
+  },
+
+  // `explicit` is a {backend, model, reasoningEffort} the caller already
+  // has — the venue sheet picked it, so re-asking through the old modal
+  // would be asking the same question twice. Omitted, this still opens the
+  // detail chooser, which is what the OpenRouter row needs (a backend is
+  // not a complete answer there: it wants a model and an effort too).
+  async _switchCurrentCodingAgent(explicit) {
+    const session = DevChat.currentSession;
+    if (!session || DevChat.isStreaming) return;
+    const current = {
+      backend: DevChat._agentBackend(session),
+      model: session.agent_model || null,
+      reasoningEffort: session.agent_reasoning_effort || null,
+    };
+    const choice = explicit || await DevChat._chooseCodingAgent({ mode: 'switch', current });
+    if (!choice || !DevChat.currentSession || DevChat.currentSession.id !== session.id) return;
+
+    const same = choice.backend === current.backend
+      && (choice.model || null) === (current.model || null)
+      && (choice.reasoningEffort || null) === (current.reasoningEffort || null);
+    if (same) {
+      PlatformUI.toast(`${DevChat._agentName(choice.backend)} is already selected for this session.`);
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/sessions/${session.id}/reset-agent-context`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(choice),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        PlatformUI.toast(data.error || 'Could not switch coding agents.');
+        return;
+      }
+      Object.assign(DevChat.currentSession, data.session || {});
+      const cached = DevChat.sessions.find((s) => Number(s.id) === Number(session.id));
+      if (cached) Object.assign(cached, data.session || {});
+      if (data.message) DevChat.messages.push(data.message);
+      DevChat.renderChatView();
+      PlatformUI.toast(`This session now uses ${DevChat._agentName(choice.backend)}.`);
+    } catch {
+      PlatformUI.toast('Network error while switching coding agents.');
+    }
+  },
+
+  // ── #907: where the next coding turn runs ────────────────────────────
+  //
+  // The platform, not this page, decides: if a machine holds a lease on the
+  // session, runClaudeCodeTool hands the turn to it. So these controls are a
+  // readout plus one action, never a preference. `_runner` is where the LAST
+  // turn ran; `_localAgent` is the machine attached right now (null when
+  // none is). Both come from GET /api/sessions/:id/status.
+  _runner: null,
+  _localAgent: null,
+  _runnerLabel: null,
+
+  // #907: the page's ?demo=1 rides along on the /status read so a staging
+  // preview can show the Run-on selector and the "Running on your machine"
+  // chip. Server-side the injection is gated on IS_STAGING && ?demo=1 — same
+  // pass-through as home.js/settings.js. Wrapped because a status read must
+  // never be skipped over a query-string parse; `busy` restoration rides on
+  // the same request and losing it would leave a live turn showing Send.
+  _demoQS() {
+    try {
+      const demo = new URLSearchParams(location.search).get('demo');
+      // `demo=session` (#1071) is the second staging demo shape for the
+      // dev-flow walkthrough: the same five steps continuing a session
+      // nobody has voted on rather than a promoted proposal. Forwarding the
+      // discriminator is all the client has to do — every route that reads
+      // it still tests for '1', so the other demo branches stay off.
+      return demo === '1' || demo === 'session' ? `?demo=${demo}` : '';
+    } catch { return ''; }
+  },
+
+  // Fold a status payload into the runner state and repaint if it changed.
+  // Called from every place that reads /status — opening a session, the
+  // during-turn poll, and the idle poll — so all three agree.
+  _applyRunnerState(data) {
+    if (!data) return;
+    const nextRunner = data.runner || null;
+    const next = data.localAgent || null;
+    // runnerLabel outlives the lease: it is the name of the machine the last
+    // turn ran on, which is what the past-tense chip needs after that machine
+    // has detached and `localAgent` has gone null.
+    const nextLabel = data.runnerLabel || null;
+    const sameAgent = (next?.leaseId || null) === (DevChat._localAgent?.leaseId || null)
+      && (next?.label || null) === (DevChat._localAgent?.label || null);
+    if (sameAgent && nextRunner === DevChat._runner && nextLabel === DevChat._runnerLabel) return;
+    DevChat._runner = nextRunner;
+    DevChat._runnerLabel = nextLabel;
+    DevChat._localAgent = next;
+    DevChat._renderRunnerControls();
+  },
+
+  // Paint the "Run on" selector and, when a turn is going to (or did) run
+  // elsewhere, the chip that says so. Deliberately silent — renders nothing
+  // at all — for the overwhelmingly common case of a session with no machine
+  // attached that has never run one, so the composer row is unchanged for
+  // everyone not using this.
+  _renderRunnerControls() {
+    const host = document.getElementById('dc-runner');
+    if (!host) return;
+    if (DevChat._isOpenRouterSession()) {
+      host.innerHTML = '';
+      return;
+    }
+    const agent = DevChat._localAgent;
+    if (!agent && DevChat._runner !== 'local') {
+      host.innerHTML = '';
+      return;
+    }
+    const label = agent?.label || DevChat._runnerLabel || 'your machine';
+    if (!agent) {
+      // A previous turn ran locally but that machine has since detached, so
+      // the next one comes back here. Say so rather than leaving the chip up
+      // and implying work is still going somewhere it isn't.
+      host.innerHTML = `<span class="dc-runner-chip dc-runner-chip-past" title="The last turn ran on ${escapeHtml(label)}. That machine has detached, so the next turn runs on Usernode.">Last turn: ${escapeHtml(label)}</span>`;
+      return;
+    }
+    host.innerHTML = `
+      <label class="text-xs text-zinc-500" for="dc-runner-select">Run on:</label>
+      <select id="dc-runner-select" class="rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-violet-500">
+        <option value="local" selected>${escapeHtml(label)}</option>
+        <option value="platform">Usernode</option>
+      </select>
+      <span class="dc-runner-chip" title="Spec and coding turns in this session run on ${escapeHtml(label)}, using its own Claude subscription. A spec turn is read-only; after a coding turn Usernode still opens the PR, builds the preview and runs the checks.">Running on your machine</span>
+    `;
+    const select = document.getElementById('dc-runner-select');
+    if (select) {
+      select.addEventListener('change', (event) => {
+        if (event.target.value !== 'platform') return;
+        event.target.value = 'local';
+        DevChat._handBackToUsernode();
+      });
+    }
+  },
+
+  // Release the lease from the browser. This is the escape hatch for the
+  // machine that was closed without detaching: it must not need that machine
+  // to cooperate, which is why it goes through the account route rather than
+  // asking the agent to stand down.
+  async _handBackToUsernode() {
+    const agent = DevChat._localAgent;
+    if (!agent || agent.demo) return;
+    const label = agent.label || 'your machine';
+    if (!confirm(`Hand coding turns back to Usernode?\n\n${label} stops receiving turns for this session. Anything it already committed stays on the branch.`)) return;
+    try {
+      const res = await fetch(`/api/me/local-agents/${encodeURIComponent(agent.leaseId)}`, {
+        method: 'DELETE',
+        credentials: 'same-origin',
+      });
+      if (res.status !== 204 && res.status !== 404) throw new Error('detach failed');
+      DevChat._localAgent = null;
+      DevChat._renderRunnerControls();
+    } catch {
+      alert('Could not hand the session back. Try again in a moment.');
+    }
+  },
+
   // Guard against a persisted model id that's no longer in MODELS
   // (e.g. we removed an old model). Without this the dropdown would
   // fall back to the first option visually while `selectedModel` held
@@ -357,6 +897,13 @@ const DevChat = {
   },
 
   async refreshBudget() {
+    // OpenRouter sessions never use the platform's Anthropic allowance.
+    // Keep its meter, exhausted banner, and demo refusal card out of this
+    // session instead of showing billing state that cannot affect a turn.
+    if (DevChat._isOpenRouterSession()) {
+      DevChat.renderBudget();
+      return;
+    }
     try {
       // ?demo=1 passthrough so a staging reviewer can see the exhausted
       // state (red meter + three-route banner) without burning a real
@@ -386,6 +933,7 @@ const DevChat = {
         error: 'Daily limit reached ($20.00). Resets at midnight UTC.',
         hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
         globalOut: DevChat._globalBudgetOut(),
+        externalFlowsAvailable: DevChat._externalFlowsAvailable(),
       },
       created_at: new Date().toISOString(),
     });
@@ -410,6 +958,10 @@ const DevChat = {
     DevChat._applyCreditsBanner();
     const el = document.getElementById('dc-budget');
     if (!el) return;
+    if (DevChat._isOpenRouterSession()) {
+      el.innerHTML = '';
+      return;
+    }
     // BYOK (#30/#119/#212): billing is limit-first — the daily platform
     // allowance is consumed before any spend hits the user's own key —
     // so key-holders see the limit progress first (same red/yellow
@@ -459,6 +1011,7 @@ const DevChat = {
   // blocked. Key-holders never match (billing continues on their key),
   // and a missing budget fetch stays quiet rather than guessing.
   _creditsExhausted() {
+    if (DevChat._isOpenRouterSession()) return false;
     const b = DevChat.budget;
     if (!b) return false;
     if (window.Settings?.state?.hasApiKey) return false;
@@ -483,10 +1036,13 @@ const DevChat = {
         <svg class="w-4 h-4 text-red-500 dark:text-red-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
         </svg>
-        <span class="text-red-800 dark:text-red-200 flex-1 min-w-[14rem]"><span class="font-semibold">${lead}</span> Resets at midnight UTC &mdash; or keep working right now with your own API key, a coding tool on your computer, or your Claude.ai / ChatGPT subscription.</span>
+        <span class="text-red-800 dark:text-red-200 flex-1 min-w-[14rem]"><span class="font-semibold">${lead}</span> Resets at midnight UTC &mdash; or keep working right now ${DevChat._externalFlowsAvailable()
+          ? 'on your own Claude or ChatGPT plan, with your own API key, or with a coding tool on your computer.'
+          : 'with your own API key, a coding tool on your computer, or your Claude.ai / ChatGPT subscription.'}</span>
         ${window.CreditOptions ? CreditOptions.bannerActionsHtml({
           hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
           globalOut: !userOut,
+          externalFlowsAvailable: DevChat._externalFlowsAvailable(),
         }) : ''}
       </div>`;
   },
@@ -514,22 +1070,730 @@ const DevChat = {
     }
   },
 
+  // #1049: whether the out-of-credits routes may lead with the Claude Code /
+  // Codex hand-offs. Deployment-level, reported by /api/auth/me — the client
+  // renders what the server says is possible and never sniffs for it.
+  _externalFlowsAvailable() {
+    return !!(typeof App !== 'undefined' && App.user && App.user.externalFlowsAvailable);
+  },
+
   _wireCreditsBanner() {
-    // All three routes (own key / local coding tool / Claude.ai-ChatGPT
-    // connector) are rendered and wired by CreditOptions, which does the
-    // hash navigation — real navigations, so the browser / device back
-    // gesture returns the user to this chat.
+    // Every route is rendered and wired by CreditOptions, which does the hash
+    // navigation — real navigations, so the browser / device back gesture
+    // returns the user to this chat. The two #1049 entries are handled in
+    // place instead: they start the walkthrough right here.
     const banner = document.getElementById('dc-credits-banner');
-    if (banner && window.CreditOptions) CreditOptions.wire(banner);
+    if (banner && window.CreditOptions) {
+      CreditOptions.wire(banner, { onFlow: (flow) => DevChat._devFlowFromCredits(flow) });
+    }
+  },
+
+  // Best-effort: a failed save must not block the venue the user just chose.
+  // Settings → Claude & ChatGPT connectors is the other door to this value.
+  async _saveDevFlowPreference(flow) {
+    try {
+      const res = await fetch('/api/me/dev-flow', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ flow }),
+      });
+      if (res.ok && typeof App !== 'undefined' && App.user) App.user.devFlowPreference = flow;
+    } catch { /* ignore */ }
+  },
+
+  // "Use Claude Code" / "Use Codex" from an out-of-credits card or banner.
+  // Same walkthrough the picker opens, in the session the user was refused
+  // in — the work they were describing is right there in the transcript.
+  //
+  // `targetId` (#1071) is the session whose branch the agent should push back
+  // onto, and only the options menu passes one — a credits card is always a
+  // fresh piece of work, so it keeps calling this with one argument and the
+  // target stays null.
+  _devFlowFromCredits(agent, targetId) {
+    if (!window.DevFlowSelect) {
+      window.location.hash = '#settings/connectors';
+      return;
+    }
+    const flow = DevChat._devFlow;
+    flow.mode = 'wizard';
+    flow.agent = agent;
+    flow.targetId = targetId == null ? null : targetId;
+    flow.dismissed = false;
+    flow.error = null;
+    flow.notice = null;
+    DevChat.renderMessages();
+    DevChat._devFlowEnsureStatus(true);
   },
 
   // Same wiring for every credits CARD currently in the transcript.
   // Called after each renderMessages; CreditOptions.wire is idempotent
   // per node, so re-running it never stacks handlers.
+  // Scoped to the transcript on purpose: app-view's Generate-proposal modal
+  // renders the SAME card and wires its own handlers (its "Use Claude Code"
+  // starts a fresh session), and a document-wide selector would attach this
+  // one to that card as well — one click, two different actions (#1049).
   _wireCreditsCards() {
     if (!window.CreditOptions) return;
-    document.querySelectorAll('[data-credits-card]').forEach((el) => {
-      CreditOptions.wire(el);
+    const container = document.getElementById('dc-messages');
+    if (!container) return;
+    container.querySelectorAll('[data-credits-card]').forEach((el) => {
+      CreditOptions.wire(el, { onFlow: (flow) => DevChat._devFlowFromCredits(flow) });
+    });
+  },
+
+  // ── Session and billing options — the "⋯" beside the meter (#1055) ─
+  //
+  // All copy, gating and markup live in public/js/session-options.js; this
+  // is the state assembly and the plumbing back into the session. The
+  // button is static markup in renderChatView (see #dc-budget-options), so
+  // it exists in every state of the meter — including the empty one, which
+  // is the state someone with no key and no spend yet is looking at.
+
+  _optionsMenu: null,
+  _optionsCard: null,
+  _shotOptionsDone: false,
+
+  // Everything the menu needs, read from the places that already own each
+  // fact: Settings mirrors /api/auth/me's BYOK state, App.user carries the
+  // two deployment capabilities, and _localAgent is the #907 lease as of
+  // the last status poll.
+  _sessionOptionsState() {
+    const user = (typeof App !== 'undefined' && App.user) || {};
+    const settings = (window.Settings && window.Settings.state) || {};
+    const session = DevChat.currentSession || {};
+    return {
+      hasApiKey: !!settings.hasApiKey,
+      keyLast4: settings.keyLast4 || null,
+      // The whole /api/cli/* family is 404'd in a staging clone, so
+      // cliAuthEnabled is false there and the local-CLI row would be missing
+      // from the very menu a reviewer opened to look at it. ?demo=1 paints
+      // it — the row opens a pure copy card that fetches nothing, so there
+      // is no request to 404 behind it. Production is unaffected: the flag
+      // is only honoured where the page already carries it.
+      cliAuthEnabled: user.cliAuthEnabled !== false || !!DevChat._demoQS(),
+      externalFlowsAvailable: DevChat._externalFlowsAvailable(),
+      localAgent: DevChat._localAgent || null,
+      sessionId: session.id || null,
+      // #1071. The two facts that decide whether the web hand-off can
+      // continue THIS session's code or has to start something separate.
+      // Read straight off the session row the chat is already rendering, so
+      // the menu can never disagree with the header above it.
+      sessionStatus: session.status || null,
+      hasBranch: !!session.branch_name,
+      repoUrl: (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.repo_url) || null,
+    };
+  },
+
+  _closeSessionOptions() {
+    const menu = DevChat._optionsMenu;
+    DevChat._optionsMenu = null;
+    if (menu && typeof menu.dismiss === 'function') menu.dismiss();
+    const card = DevChat._optionsCard;
+    DevChat._optionsCard = null;
+    if (card && typeof card.dismiss === 'function') card.dismiss();
+  },
+
+  // anchorEl: the "⋯" button, so the desktop popover toggles closed on a
+  // re-click. Touch gets the kit's action sheet from the same call.
+  openSessionOptions(anchorEl) {
+    if (!window.SessionOptions) return;
+    DevChat._closeSessionOptions();
+    const menu = SessionOptions.open({
+      anchorEl: anchorEl || document.getElementById('dc-budget-options') || undefined,
+      state: DevChat._sessionOptionsState(),
+      onNavigate: (hash) => { window.location.hash = hash; },
+      onInstructions: (state) => {
+        DevChat._optionsCard = SessionOptions.openInstructions({
+          state,
+          onClose: () => { DevChat._optionsCard = null; },
+        });
+      },
+      onHandBack: () => DevChat._handBackToUsernode(),
+      onVenue: () => DevChat.openVenueSheet(anchorEl),
+    });
+    DevChat._optionsMenu = menu;
+    if (menu && typeof menu.then === 'function') {
+      menu.then(() => { if (DevChat._optionsMenu === menu) DevChat._optionsMenu = null; });
+    }
+  },
+
+  // ── The one venue question (#1086) ─────────────────────────────────
+  //
+  // Every surface that used to ask its own version of "which agent?" opens
+  // THIS: the venue line above the composer, the "…" menu's one row, and
+  // the out-of-credits card. Six rows, two groups, gated by omission — the
+  // list and the copy are build-venues.js's; the four things a pick can
+  // actually DO are this module's, because each one already existed and
+  // already worked. Nothing here is new mechanism.
+  //
+  //   backend → reset-agent-context, keeping branch + transcript (#906)
+  //   lease   → the CLI instructions card (#907)
+  //   flow    → the web-agent walkthrough, in place (#1049/#1071)
+  //   import  → the PR-import picker (#687)
+  _venueSheetState() {
+    const base = DevChat._sessionOptionsState();
+    const user = (typeof App !== 'undefined' && App.user) || {};
+    return {
+      mode: 'switch',
+      current: DevChat._currentVenueId(),
+      // Same three deployment capabilities the "…" menu reads, plus the two
+      // this list needs on top: whether the OpenRouter backend is offerable
+      // to this user at all, and whether they may push branches to this app
+      // (importing writes to them).
+      cliAuthEnabled: base.cliAuthEnabled,
+      externalFlowsAvailable: base.externalFlowsAvailable,
+      openrouterAvailable: !!user.openrouterAvailable,
+      canCollaborate: !(typeof AppView !== 'undefined' && AppView.readOnly),
+      sessionId: base.sessionId,
+      sessionStatus: base.sessionStatus,
+      hasBranch: base.hasBranch,
+      localAgent: base.localAgent,
+      repoUrl: base.repoUrl,
+    };
+  },
+
+  openVenueSheet(anchorEl) {
+    if (!window.BuildVenues) return;
+    DevChat._closeSessionOptions();
+    const state = DevChat._venueSheetState();
+    BuildVenues.open({
+      anchorEl: anchorEl || document.querySelector('#dc-venue-slot [data-venue-change]') || undefined,
+      state,
+      onPick: (pick, row) => {
+        if (!pick || row.current) return;
+        if (pick.kind === 'backend') {
+          // Claude needs no further detail, so it switches outright. The
+          // OpenRouter row still opens the model/effort chooser: a backend
+          // alone is not a complete answer for it.
+          DevChat._switchCurrentCodingAgent(
+            pick.backend === 'claude_code'
+              ? { backend: 'claude_code', model: null, reasoningEffort: null }
+              : null
+          );
+          return;
+        }
+        if (pick.kind === 'lease') {
+          if (!window.SessionOptions) return;
+          DevChat._optionsCard = SessionOptions.openInstructions({
+            state: DevChat._sessionOptionsState(),
+            onClose: () => { DevChat._optionsCard = null; },
+          });
+          return;
+        }
+        if (pick.kind === 'flow') {
+          // Answering the venue question ALSO answers it for next time —
+          // that is what "asked once" means. The picker card used to make
+          // this a second decision ("remember this choice"); the sheet is
+          // the deliberate act, so the save rides along with it.
+          DevChat._saveDevFlowPreference(pick.flow);
+          DevChat._devFlowFromCredits(pick.flow, row.targetId);
+          return;
+        }
+        if (pick.kind === 'import') {
+          // The one venue with no chat: the work happens in the user's own
+          // tools and arrives as a pull request. Opening the picker is the
+          // whole action — there is nothing to switch this session to.
+          if (typeof AppView !== 'undefined' && AppView.openImportPrModal) {
+            AppView.openImportPrModal();
+          } else if (pick.hash) {
+            window.location.hash = pick.hash;
+          }
+        }
+      },
+      onUnavailable: (row) => PlatformUI.toast(row.reason),
+    });
+  },
+
+  // Screenshot-state deep link `?shot=venue-fallback` (#1086).
+  //
+  // The fallback note is the one venue state a fixture row cannot express.
+  // Every other state is a property of the session — its backend, its
+  // lease, its external agent — and seeding those columns paints the line.
+  // But "you asked for OpenRouter and got Claude" is a property of the
+  // MOMENT the session was created: the reason arrives once, on the 201,
+  // and is deliberately not stored (the session's columns already say
+  // where it ended up, and re-explaining a settled fact on every later
+  // paint is exactly what the `= null` below prevents). So the only way to
+  // review the copy is to name the reason in the URL.
+  //
+  // Ungated by environment for the same reason ?shot=menu is: it paints a
+  // sentence about the session already on screen, reads nothing and writes
+  // nothing. A reason build-venues.js does not know about still renders
+  // silence, so a guessed value cannot invent copy.
+  _shotVenueFallbackReason() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch { return null; }
+    if (shot !== 'venue-fallback') return null;
+    let reason = null;
+    try { reason = new URLSearchParams(location.search).get('reason'); } catch { /* ignore */ }
+    return reason || 'flag_off';
+  },
+
+  // Screenshot-state deep link `?shot=venue-sheet` (#1086): the sheet the
+  // change control opens, with all six venues on it. Once per page load and
+  // only when the control is actually on screen, exactly like the options
+  // menu below — a re-render must not pop it open under the user.
+  _maybeOpenShotVenueSheet() {
+    if (DevChat._shotVenueSheetDone) return;
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch { return; }
+    if (shot !== 'venue-sheet') return;
+    const btn = document.querySelector('#dc-venue-slot [data-venue-change]');
+    if (!btn || btn.offsetParent === null) return;
+    DevChat._shotVenueSheetDone = true;
+    requestAnimationFrame(() => DevChat.openVenueSheet(btn));
+  },
+
+  // Screenshot-state deep links (#1055):
+  //   ?shot=session-options               → the menu itself, open
+  //   ?shot=session-options-instructions  → the CLI instructions card
+  // Once per page load, and only when the composer is actually on screen —
+  // a re-render must not pop the menu back open under the user. `restore` is
+  // the one exception, passed by renderChatView when the menu it just
+  // dismissed was open a moment ago: reopening what was already open is not
+  // popping anything open, and it is what keeps a shot deep link showing its
+  // state across a re-render. Both are still gated on a `?shot=` URL, so a
+  // real session never reaches either path.
+  _maybeOpenShotOptions(restore) {
+    if (DevChat._shotOptionsDone && !restore) return;
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch { /* ignore */ }
+    if (shot !== 'session-options' && shot !== 'session-options-instructions') return;
+    const btn = document.getElementById('dc-budget-options');
+    if (!btn || btn.offsetParent === null) return;
+    DevChat._shotOptionsDone = true;
+    // Deferred a frame: the composer was written synchronously just above
+    // and the kit's flip/clamp placement needs the button's settled rect.
+    requestAnimationFrame(() => {
+      if (shot === 'session-options-instructions') {
+        if (!window.SessionOptions) return;
+        DevChat._optionsCard = SessionOptions.openInstructions({
+          state: DevChat._sessionOptionsState(),
+          onClose: () => { DevChat._optionsCard = null; },
+        });
+        return;
+      }
+      DevChat.openSessionOptions(btn);
+      requestAnimationFrame(() => DevChat._assertOptionsMenuOpaque());
+    });
+  },
+
+  // Same regression lock as home.js's card menu (#847): a translucent
+  // surface is invisible to a selector/text check — every row is present
+  // and correct, you just read the composer through them. Stamp the
+  // verdict for the dapp.json check and console.error on a violation so
+  // the baseline no-console-errors check trips on the same route.
+  _assertOptionsMenuOpaque() {
+    const pop = document.querySelector('.un-popover');
+    if (!pop) return; // touch idiom: an action sheet over the kit's backdrop
+    const bg = getComputedStyle(pop).backgroundColor || '';
+    const m = bg.match(/^rgba?\(([^)]+)\)$/);
+    const parts = m ? m[1].split(',').map((s) => parseFloat(s.trim())) : [];
+    const alpha = parts.length >= 4 ? parts[3] : (parts.length === 3 ? 1 : 0);
+    const opaque = alpha >= 0.99;
+    pop.dataset.surface = opaque ? 'opaque' : 'translucent';
+    if (!opaque) {
+      console.error(
+        `[dev-chat] session options menu surface is translucent (${bg}) — the`
+        + ' composer reads through it. --un-popover-bg must resolve to an opaque color.'
+      );
+    }
+  },
+
+  // ── Development-flow picker + walkthrough (#1049) ──────────────────
+  //
+  // A fresh session used to open with nothing but a text box, and the ONLY
+  // way to discover that Usernode can hand the work to your own Claude Code
+  // or Codex was to install the MCP connector. So the choice is offered
+  // here instead: a card at the top of an empty session naming all three
+  // routes, and — if you pick an external one — a five-step walkthrough
+  // that watches your progress (GitHub linked → fork → work order → pushed
+  // branch → submitted).
+  //
+  // All markup lives in public/js/dev-flow-select.js; this is the state and
+  // the fetching. State is per-session and deliberately thin: every step is
+  // re-derived from GET /api/apps/:slug/dev-flow/status, so closing the tab
+  // mid-flow and coming back resumes at the same step.
+  _devFlow: {
+    sessionId: null,
+    status: null,
+    loading: false,
+    // 'wizard' once a flow is picked, null while the picker is showing.
+    mode: null,
+    agent: null,
+    // #1071. The session whose branch the agent pushes back onto, when the
+    // hand-off was started from a session that can be continued. null means
+    // "this is new work" and the task is prepared app-scoped, exactly as
+    // #1049 shipped it.
+    targetId: null,
+    busy: false,
+    error: null,
+    notice: null,
+    // "Build on Usernode instead" / "Build here" — hide the card for the
+    // rest of this session without writing a preference.
+    dismissed: false,
+  },
+
+  // Deep link: ?flow=claude-code|codex opens straight into that
+  // walkthrough instead of the picker. The in-app doors (the picker itself,
+  // the "+" menu, the out-of-credits card) hand the agent over in memory —
+  // this is for a link somebody shares, and for the staging fixtures.
+  _devFlowFromQuery() {
+    try {
+      const q = new URLSearchParams(location.search).get('flow');
+      return (q === 'claude-code' || q === 'codex') ? q : null;
+    } catch { return null; }
+  },
+
+  _resetDevFlow(sessionId) {
+    const deepLink = DevChat._devFlowFromQuery();
+    DevChat._devFlow = {
+      sessionId: sessionId == null ? null : Number(sessionId),
+      status: null,
+      loading: false,
+      mode: deepLink ? 'wizard' : null,
+      agent: deepLink,
+      targetId: null,
+      busy: false,
+      error: null,
+      notice: null,
+      dismissed: false,
+    };
+  },
+
+  // Which card (if any) belongs at the top of THIS session's transcript.
+  //
+  // The PICKER used to live here: a card at the top of every untouched
+  // session asking "build here, or hand this to Claude Code / Codex?"
+  // before a word had been typed. It was one of three prompts asking the
+  // venue question at creation time, and it is gone — the venue line above
+  // the composer states the answer instead, and the sheet behind it asks
+  // the question whenever the user actually wants to change it. What
+  // survives is the WALKTHROUGH: once a hand-off is chosen, the five steps
+  // run in place, in this transcript, and that is a card.
+  //
+  // So the only gate left is "is this session still untouched" — a
+  // walkthrough belongs to work that hasn't started here yet.
+  _devFlowTarget() {
+    const session = DevChat.currentSession;
+    if (!session || !window.DevFlowSelect) return null;
+    const flow = DevChat._devFlow;
+    if (flow.dismissed) return null;
+    if (flow.mode === 'wizard' && flow.agent) return { mode: 'wizard', agent: flow.agent };
+    // A saved 'claude-code' / 'codex' default is still honoured, in the one
+    // place it can be: an untouched session, before anything has been built
+    // here. That is the same door the picker used to sit in front of — the
+    // difference is that it no longer asks, because the user already
+    // answered. 'platform' and null both mean "build here", which is what
+    // the venue line already says.
+    if (session.pr_number) return null;
+    if (session.status !== 'active') return null;
+    if (DevChat.messages.some((m) => m.role === 'user')) return null;
+    const user = (typeof App !== 'undefined' && App.user) ? App.user : null;
+    if (!user || !user.externalFlowsAvailable) return null;
+    const pref = window.BuildVenues
+      ? BuildVenues.preselect(BuildVenues.currentVenue({ externalAgent: user.devFlowPreference }))
+      : null;
+    return pref && pref.flow ? { mode: 'wizard', agent: pref.flow } : null;
+  },
+
+  // Only the walkthrough renders in the transcript now — see _devFlowTarget
+  // for what left and why.
+  _devFlowHtml() {
+    const target = DevChat._devFlowTarget();
+    if (!target) return '';
+    const flow = DevChat._devFlow;
+    // The walkthrough paints its "checking where you are" state while the
+    // first read is in flight — but it has to be KICKED here, not only by
+    // the venue sheet: a saved 'claude-code' / 'codex' preference and a
+    // ?flow= deep link both arrive in wizard mode without ever passing
+    // through _devFlowFromCredits, and would otherwise check forever.
+    if (!flow.status) DevChat._devFlowEnsureStatus();
+    return DevFlowSelect.wizardHtml({
+      agent: target.agent,
+      status: flow.status,
+      busy: flow.busy,
+      error: flow.error,
+      notice: flow.notice,
+    });
+  },
+
+  _wireDevFlowCard() {
+    if (!window.DevFlowSelect) return;
+    const container = document.getElementById('dc-messages');
+    if (!container) return;
+    container.querySelectorAll('[data-flow-card]').forEach((el) => {
+      DevFlowSelect.wire(el, {
+        onAction: (action) => DevChat._devFlowAction(action),
+      });
+    });
+  },
+
+  // One status read per session, kicked off lazily by the render. Re-entrant
+  // calls collapse onto the in-flight one; `force` is the "Check again"
+  // button and the tab-focus re-check.
+  async _devFlowEnsureStatus(force) {
+    const session = DevChat.currentSession;
+    const slug = App.currentApp;
+    if (!session || !slug || !window.DevFlowSelect) return;
+    const started = DevChat._devFlow;
+    if (started.loading) return;
+    if (started.status && !force) return;
+    started.loading = true;
+    let status = null;
+    try {
+      const res = await fetch(
+        `/api/apps/${encodeURIComponent(slug)}/dev-flow/status${DevChat._demoQS()}`,
+        { credentials: 'same-origin' }
+      );
+      // A failed read is not an error the user needs — the card simply
+      // doesn't render (or the walkthrough keeps its last known steps).
+      status = res.ok ? await res.json() : { available: false, reason: 'unavailable' };
+    } catch {
+      status = { available: false, reason: 'unavailable' };
+    } finally {
+      // _resetDevFlow REPLACES the state object (opening a session does it),
+      // so the answer has to land on whatever object is live now rather than
+      // on the one this call started from — writing to a discarded object
+      // leaves the walkthrough saying "checking where you are" forever.
+      const live = DevChat._devFlow;
+      started.loading = false;
+      live.loading = false;
+      if (Number(live.sessionId) === Number(session.id)) live.status = status;
+      // Only repaint if we're still looking at the session we asked about.
+      if (DevChat.currentSession && Number(DevChat.currentSession.id) === Number(session.id)) {
+        DevChat.renderMessages();
+      }
+    }
+  },
+
+  async _devFlowAction(action) {
+    const flow = DevChat._devFlow;
+    flow.error = null;
+    flow.notice = null;
+    if (action === 'cancel') {
+      flow.dismissed = true;
+      DevChat.renderMessages();
+      return;
+    }
+    if (action === 'link-github') {
+      window.location.hash = '#settings/connectors';
+      return;
+    }
+    if (action === 'refresh' || action === 'open-fork' || action === 'open-agent') {
+      // The two "open …" actions already opened their tab in DevFlowSelect;
+      // re-reading the status is what makes coming back feel watched.
+      await DevChat._devFlowEnsureStatus(true);
+      return;
+    }
+    if (action === 'copy') {
+      const task = flow.status && flow.status.task;
+      const text = task ? task.workOrder : '';
+      if (!text) {
+        flow.error = 'No work order to copy yet.';
+        DevChat.renderMessages();
+        return;
+      }
+      let copied = false;
+      try {
+        await navigator.clipboard.writeText(text);
+        copied = true;
+      } catch { copied = false; }
+      if (copied) flow.notice = 'Work order copied — paste it into your agent.';
+      else flow.error = 'Could not reach the clipboard. Open the work order below and copy it by hand.';
+      DevChat.renderMessages();
+      return;
+    }
+    if (action === 'prepare') return DevChat._devFlowPrepare();
+    if (action === 'submit') return DevChat._devFlowSubmit();
+    // #1071. A separate action, not a flag on 'submit': the two hit different
+    // routes with different bodies and different failure modes, and a single
+    // action that silently changed meaning depending on state is exactly the
+    // kind of thing that opens the wrong pull request.
+    if (action === 'submit-update') return DevChat._devFlowSubmitUpdate();
+    return undefined;
+  },
+
+  // Step 3. The brief is whatever the user typed in the message box — the
+  // same text they would have sent to the platform agent, so the choice of
+  // flow costs them no re-typing.
+  async _devFlowPrepare() {
+    const flow = DevChat._devFlow;
+    const slug = App.currentApp;
+    const input = document.getElementById('dc-input');
+    const brief = input ? String(input.value || '').trim() : '';
+    if (!brief) {
+      flow.error = 'Describe the change in the message box below first — the work order needs something to hand your agent.';
+      DevChat.renderMessages();
+      if (input) input.focus();
+      return;
+    }
+    flow.busy = true;
+    DevChat.renderMessages();
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/external-tasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(
+          flow.targetId
+            ? { agent: flow.agent, brief, proposalId: Number(flow.targetId) }
+            : { agent: flow.agent, brief }
+        ),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        flow.error = data.error || 'Could not prepare the work order.';
+        return;
+      }
+      // Clear the box: the brief now lives on the work order, and leaving
+      // it behind invites sending the same text to the platform agent too.
+      if (input) {
+        input.value = '';
+        input.style.height = 'auto';
+      }
+      flow.notice = data.reused
+        ? 'You already had a work order for this app — reusing it.'
+        : 'Work order ready.';
+    } catch (err) {
+      flow.error = `Network error: ${err.message}`;
+    } finally {
+      flow.busy = false;
+      await DevChat._devFlowEnsureStatus(true);
+      DevChat.renderMessages();
+    }
+  },
+
+  // Step 5. Usernode opens the cross-fork pull request with its own
+  // credentials and imports it as an ordinary proposal, then we jump to it.
+  async _devFlowSubmit() {
+    const flow = DevChat._devFlow;
+    const slug = App.currentApp;
+    const task = flow.status && flow.status.task;
+    if (!task) {
+      flow.error = 'No work order to submit yet.';
+      DevChat.renderMessages();
+      return;
+    }
+    flow.busy = true;
+    DevChat.renderMessages();
+    try {
+      const res = await fetch(
+        `/api/apps/${encodeURIComponent(slug)}/external-tasks/${encodeURIComponent(task.id)}/submit`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({}),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        flow.error = data.error || 'Could not submit the branch.';
+        return;
+      }
+      PlatformUI.toast(`Proposal opened from PR #${data.prNumber || ''}`.trim());
+      flow.dismissed = true;
+      if (data.sessionId) {
+        await DevChat.openSession(data.sessionId);
+        DevChat.renderChatView();
+        return;
+      }
+      await DevChat._devFlowEnsureStatus(true);
+    } catch (err) {
+      flow.error = `Network error: ${err.message}`;
+    } finally {
+      flow.busy = false;
+      DevChat.renderMessages();
+    }
+  },
+
+  // Step 5, the continue variant (#1071). The branch already exists — this
+  // moves the session's (or proposal's) head onto what the web agent pushed,
+  // through the same update-from-fork gate the MCP connector uses.
+  //
+  // No expectedHeadSha: the server-side gate compares against the head it
+  // tracks itself, and pinning the task's base commit here would turn an
+  // idempotent re-press into a false "somebody else advanced it".
+  async _devFlowSubmitUpdate() {
+    const flow = DevChat._devFlow;
+    const slug = App.currentApp;
+    const task = flow.status && flow.status.task;
+    const target = task && task.targetProposal;
+    if (!task || !target || !target.id) {
+      flow.error = 'No proposal to update yet.';
+      DevChat.renderMessages();
+      return;
+    }
+    flow.busy = true;
+    DevChat.renderMessages();
+    try {
+      const res = await fetch(
+        `/api/apps/${encodeURIComponent(slug)}/external-tasks/${encodeURIComponent(task.id)}/submit-update`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ proposalId: Number(target.id), branch: task.branch || undefined }),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // base_mismatch and branch_moved carry the commit to act on, and the
+        // server's own sentence is the one that names it. Surfaced verbatim
+        // rather than flattened into "could not submit", which would leave
+        // the user with nothing to do next.
+        flow.error = data.message || data.error || 'Could not submit the update.';
+        return;
+      }
+      if (data.unchanged) {
+        // Nothing landed, so the card stays: the branch is still the thing
+        // the user is waiting on, and dismissing the walkthrough here would
+        // take away the only place to press again.
+        flow.notice = 'Nothing new to submit — this session is already on that commit.';
+        DevChat.renderMessages();
+        return;
+      }
+      if (data.resumeRequired) {
+        // The paused tail: the commit landed, the preview and checks did not
+        // start. Saying so is the whole point — silence here looks broken.
+        PlatformUI.toast('Update landed. Reopen this session to rebuild its preview and re-run its checks.');
+      } else if (data.votesCleared) {
+        PlatformUI.toast(`Update submitted — ${data.votesCleared} vote${data.votesCleared === 1 ? '' : 's'} cleared`);
+      } else {
+        PlatformUI.toast('Update submitted');
+      }
+      flow.dismissed = true;
+      // Re-open the target — the same session in the continue case, the
+      // proposal in the promoted one — so the header, the branch line and
+      // the check state reflect the commit that just landed.
+      const sessionId = data.proposalId || target.id;
+      if (sessionId) {
+        await DevChat.openSession(sessionId);
+        DevChat.renderChatView();
+      }
+      return;
+    } catch (err) {
+      flow.error = `Network error: ${err.message}`;
+    } finally {
+      flow.busy = false;
+      DevChat.renderMessages();
+    }
+  },
+
+  // Re-check when the tab regains focus. The whole external flow happens in
+  // ANOTHER tab (GitHub, claude.ai/code, chatgpt.com/codex), so coming back
+  // here is the single most reliable moment to notice that the fork now
+  // exists or the branch has been pushed. Bound once per document.
+  _bindDevFlowVisibility() {
+    if (DevChat._devFlowVisibilityBound) return;
+    DevChat._devFlowVisibilityBound = true;
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) return;
+      if (DevChat._devFlow.mode !== 'wizard') return;
+      if (DevChat._devFlow.busy) return;
+      DevChat._devFlowEnsureStatus(true);
     });
   },
 
@@ -550,6 +1814,8 @@ const DevChat = {
   // shows the previous snapshot until the next poll lands).
 
   async loadActiveSessions() {
+    // #1038: stamped BEFORE the request goes out — see SessionState.seed.
+    const issuedAt = Date.now();
     try {
       const res = await fetch('/api/me/active-sessions');
       if (!res.ok) return;
@@ -563,6 +1829,11 @@ const DevChat = {
         // renders "(N/3)" instead of "(N/undefined)".
         caps: data.caps || { activeSessions: 3, promotedSessions: 5 },
       };
+      // This payload carries per-row busy flags; fold them into the live
+      // store rather than letting them stop here.
+      if (typeof window !== 'undefined' && window.SessionState) {
+        SessionState.seed(DevChat.activeSessions.sessions, issuedAt);
+      }
       DevChat.renderActiveSessions();
     } catch {}
   },
@@ -649,6 +1920,11 @@ const DevChat = {
       // for active/promoted (paused sessions can't be busy).
       let statusClass;
       let dotTitle;
+      // Preserve the legacy Claude tooltip byte-for-byte; only OpenRouter rows
+      // need a different provider name.
+      const runningAgent = DevChat._activityAgentBackend(s) === 'codex_openrouter'
+        ? 'OpenRouter'
+        : 'Claude';
       if (s.status === 'paused') { statusClass = 'dc-active-dot-paused'; dotTitle = 'Paused'; }
       else if (s.status === 'promoted') {
         statusClass = 'dc-active-dot-promoted';
@@ -656,9 +1932,9 @@ const DevChat = {
         // vote, NOT merged). Use the canonical lifecycle label instead.
         const pLife = (window.MergeStatus && MergeStatus.lifecycle) ? MergeStatus.lifecycle(s) : null;
         const pLabel = (pLife && pLife.label) || 'Proposed';
-        dotTitle = s.busy ? `Claude is running · ${pLabel}` : pLabel;
+        dotTitle = s.busy ? `${runningAgent} is running · ${pLabel}` : pLabel;
       }
-      else { statusClass = 'dc-active-dot-active'; dotTitle = s.busy ? 'Claude is running' : 'Active'; }
+      else { statusClass = 'dc-active-dot-active'; dotTitle = s.busy ? `${runningAgent} is running` : 'Active'; }
       const busyClass = s.busy ? ' dc-active-dot-busy' : '';
       const isPaused = s.status === 'paused';
       // Primary action toggles between Pause and Resume. Archive is
@@ -796,22 +2072,50 @@ const DevChat = {
   // row's start-work button (created_from_issue_number) so the row can
   // swap "Create proposal" → "Create new proposal". Omitted on the generic
   // "+ New chat" path, which sends no body and stores NULL.
-  async createSession(appSlug, issueNumber) {
+  // The venue question is NOT asked here.
+  //
+  // Creating a session used to open a blocking modal — "Where should this
+  // build?" — before a single word had been typed, and two more prompts
+  // stood behind it on other entry points. Asking then is asking at the
+  // worst possible moment: the user has an intention, not yet a preference,
+  // and the only honest answer to "which agent" before you know what the
+  // work is, is "whichever one you already told me". So the saved default
+  // is applied silently by the server (resolveDefaultAgentPreference) and
+  // the answer is STATED afterwards, on first paint, by the venue line
+  // above the composer — with "Change how this is built" beside it. One
+  // question, asked once, changeable any time.
+  //
+  // `agentChoice` survives for the callers that DID make an explicit pick
+  // (the venue sheet itself, and the out-of-credits card). No key is sent
+  // without one, which is what lets the server resolve the default.
+  async createSession(appSlug, issueNumber, agentChoice = null) {
     try {
       const hasIssue = Number.isInteger(issueNumber) && issueNumber > 0;
+      const choice = agentChoice || {};
       const res = await fetch(`/api/apps/${appSlug}/sessions`, {
         method: 'POST',
-        ...(hasIssue
-          ? {
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ issueNumber }),
-            }
-          : {}),
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...(hasIssue ? { issueNumber } : {}),
+          // Omitted, not nulled: POST /sessions reads "no backend key" as
+          // "resolve my default", and a literal null would be a value.
+          ...(choice.backend ? {
+            backend: choice.backend,
+            model: choice.model || null,
+            reasoningEffort: choice.reasoningEffort || null,
+          } : {}),
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
         PlatformUI.toast(data.error || 'Failed to create session');
         return null;
+      }
+      // The one thing the venue line cannot work out on its own: WHY this
+      // session isn't in the venue the user's default named.
+      if (data.agentFallbackReason && window.BuildVenues) {
+        DevChat._venueFallbackReason = data.agentFallbackReason;
       }
       DevChat.sessions.unshift(data.session);
       return data.session;
@@ -995,7 +2299,13 @@ const DevChat = {
       // server's 'resumed' WS event. If resume is refused (e.g. the
       // global cap is hit), leave it paused and tell the user. Owner only —
       // see _ownsSession; a non-owner reading the session leaves it paused.
-      if (session.status === 'paused' && DevChat._ownsSession(session)) {
+      // …and never on a screenshot deep link (#1071): `?shot=` names a state
+      // to RENDER, and a shot of a paused session that silently un-pauses it
+      // is a shot of something else. It also made the capture's outcome depend
+      // on the platform's session cap — the refusal toasts a 429, which reads
+      // as a console error on the route and fails the check for a reason that
+      // has nothing to do with what it asserts.
+      if (session.status === 'paused' && DevChat._ownsSession(session) && !DevChat._isShotDeepLink()) {
         try {
           const rr = await fetch(`/api/sessions/${sessionId}/resume`, { method: 'POST' });
           if (rr.ok) {
@@ -1084,6 +2394,8 @@ const DevChat = {
           if (m.metadata.ccOutput) m.ccOutput = m.metadata.ccOutput;
           if (m.metadata.ccSummary) m.ccSummary = m.metadata.ccSummary;
           if (m.metadata.progressLog) m.progressLog = m.metadata.progressLog;
+          if (m.metadata.agentBackend) m.agentBackend = m.metadata.agentBackend;
+          if (m.metadata.agentModel) m.agentModel = m.metadata.agentModel;
           // #50: terminal statuses persist how long the run took so the
           // "(took 4m 12s)" suffix survives a reload.
           if (m.metadata.durationMs != null) m.durationMs = m.metadata.durationMs;
@@ -1181,11 +2493,34 @@ const DevChat = {
         DevChat._stopSyncPolling();
       }
 
+      // #907: runner state is per-session too. Clear it before the status
+      // read below re-establishes it, so a session with no machine attached
+      // can never inherit the previous session's chip.
+      DevChat._runner = null;
+      DevChat._runnerLabel = null;
+      DevChat._localAgent = null;
+
+      // #1049: the flow picker / walkthrough is per-session state too — a
+      // wizard opened on session A must not paint over session B, and the
+      // status payload it renders from belongs to the app+session it was
+      // read for. Re-opening the SAME session keeps it, so a status poll
+      // that arrives during a refresh isn't thrown away.
+      if (switchingSession
+          || DevChat._devFlow.sessionId == null
+          || Number(DevChat._devFlow.sessionId) !== Number(sessionId)) {
+        DevChat._resetDevFlow(sessionId);
+      }
+
       // Check if Claude Code is running for this session
       try {
-        const statusRes = await fetch(`/api/sessions/${sessionId}/status`);
+        const statusRes = await fetch(`/api/sessions/${sessionId}/status${DevChat._demoQS()}`);
         if (statusRes.ok) {
-          const { busy, progress, phase, sync, stopping, stopRequestedAt } = await statusRes.json();
+          const statusPayload = await statusRes.json();
+          const { busy, progress, phase, sync, stopping, stopRequestedAt } = statusPayload;
+          // #907: restore the Run-on selector / chip from the server, so a
+          // reload of a session with a machine attached does not silently
+          // claim the next turn runs on Usernode.
+          DevChat._applyRunnerState(statusPayload);
           // #252: reload recovery for the sync banner. A MODE=sync turn
           // also flips `busy` (it holds the worker), so check it first
           // and don't arm the chat-turn streaming UI for a sync.
@@ -1257,7 +2592,7 @@ const DevChat = {
             // created, etc.) instead of only what the 3s polling can
             // reconstruct from the DB. Polling stays on as a safety net.
             DevChat._openResumableStream(sessionId);
-            DevChat._startProgressPolling(sessionId, progress);
+            DevChat._startProgressPolling(sessionId, progress, statusPayload);
           }
         }
       } catch {}
@@ -1283,6 +2618,7 @@ const DevChat = {
       DevAlerts.requestNotifyPermission();
     }
     const model = DevChat.selectedModel;
+    const openRouterSession = DevChat._isOpenRouterSession();
     DevChat.isStreaming = true;
     // #889: defensive — a fresh turn must never paint the previous turn's
     // "Stopping…" button. Every teardown path already clears this, but the
@@ -1333,7 +2669,8 @@ const DevChat = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message, model,
+          message,
+          ...(!openRouterSession ? { model } : {}),
           ...(sentAttachments.length ? { attachmentIds: sentAttachments.map((a) => a.id) } : {}),
         }),
         signal: DevChat._abortController.signal,
@@ -1364,6 +2701,25 @@ const DevChat = {
         // Only the server's billing path sets code: 'budget_exceeded';
         // chatLimiter throttles keep the old wording.
         if (data.code === 'budget_exceeded') {
+          // This response belongs to the Anthropic-backed path. An
+          // OpenRouter session must never turn it into a Claude/Codex
+          // recovery card; surface a plain provider error defensively if
+          // an older server returns the stale billing gate.
+          if (openRouterSession) {
+            DevChat.messages.push({
+              role: 'assistant',
+              content: `**OpenRouter turn could not start.** ${data.error || 'Please try again.'}`,
+              created_at: new Date().toISOString(),
+            });
+            DevChat._finishStreaming();
+            DevChat._restoreComposer(message, { dropOptimisticUser: true });
+            if (sentAttachments.length) {
+              DevChat.pendingAttachments = sentAttachments;
+              DevChat._renderAttachStrip();
+            }
+            DevChat.renderMessages();
+            return;
+          }
           // The refusal renders as a CARD (public/js/credit-options.js) with
           // all three ways to keep building — own API key, a coding tool on
           // your machine, or a connected Claude.ai / ChatGPT subscription —
@@ -1378,6 +2734,7 @@ const DevChat = {
               error: data.error || 'They reset at midnight UTC.',
               hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
               globalOut: DevChat._globalBudgetOut(),
+              externalFlowsAvailable: DevChat._externalFlowsAvailable(),
             },
             created_at: new Date().toISOString(),
           });
@@ -1529,7 +2886,7 @@ const DevChat = {
                 // #786: quickReplies ride the status event so a
                 // restart-recovery breadcrumb repaints the pill bar live
                 // (the server persists them on the same system row).
-                DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
+                DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
                 DevChat.renderMessages();
                 DevChat.scrollToBottom();
                 break;
@@ -1665,7 +3022,7 @@ const DevChat = {
                 break;
               }
               case 'cc_progress': {
-                DevChat._appendProgressLine(data.text);
+                DevChat._appendProgressLine(data.text, data);
                 DevChat.scrollToBottom();
                 // Start /status polling as a fallback in case the SSE stream
                 // or the global WS drops before we receive the 'done' event.
@@ -1689,7 +3046,12 @@ const DevChat = {
                 });
                 break;
               case 'cc_log':
-                DevChat.messages.push({ role: 'system', ccLog: data.log, content: 'Claude Code log', created_at: new Date().toISOString() });
+                DevChat.messages.push(DevChat._copyActivityAgentMetadata({
+                  role: 'system',
+                  ccLog: data.log,
+                  content: `${DevChat._activityAgentName(data)} log`,
+                  created_at: new Date().toISOString(),
+                }, data));
                 DevChat.renderMessages();
                 DevChat.scrollToBottom();
                 break;
@@ -1998,7 +3360,7 @@ const DevChat = {
         const sealMsg = lastAssistantMsg();
         if (sealMsg) sealMsg._finalized = true;
         // #786: carry quickReplies (see the POST-SSE status handler).
-        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8), _active: true });
+        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8), _active: true });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         break;
@@ -2082,7 +3444,7 @@ const DevChat = {
         }
         break;
       case 'cc_progress':
-        DevChat._appendProgressLine(data.text);
+        DevChat._appendProgressLine(data.text, data);
         DevChat.scrollToBottom();
         break;
       case 'cc_estimate':
@@ -2095,7 +3457,12 @@ const DevChat = {
         });
         break;
       case 'cc_log':
-        DevChat.messages.push({ role: 'system', ccLog: data.log, content: 'Claude Code log', created_at: new Date().toISOString() });
+        DevChat.messages.push(DevChat._copyActivityAgentMetadata({
+          role: 'system',
+          ccLog: data.log,
+          content: `${DevChat._activityAgentName(data)} log`,
+          created_at: new Date().toISOString(),
+        }, data));
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         break;
@@ -2323,9 +3690,14 @@ const DevChat = {
     if (input) {
       input.disabled = false;
       input.placeholder = streaming
-        ? DevChat.COMPOSER_PLACEHOLDER_BUSY
+        ? DevChat._busyComposerPlaceholder()
         : DevChat.COMPOSER_PLACEHOLDER;
     }
+    // #1086: the venue control replaced the coding-agent button here, and
+    // inherits its guard — a turn in flight holds the worker, so the venue
+    // cannot move until it lands.
+    const venueChange = document.querySelector('#dc-venue-slot [data-venue-change]');
+    if (venueChange) venueChange.disabled = !!streaming;
     DevChat._syncSaveDraftBtn();
     // Re-render the saved-drafts list so each row's Send button picks up
     // the new busy state (disabled while thinking, live once idle).
@@ -2647,24 +4019,27 @@ const DevChat = {
 
   _progressPollTimer: null,
 
-  _startProgressPolling(sessionId, initialProgress) {
+  _startProgressPolling(sessionId, initialProgress, initialMetadata = null) {
     DevChat._stopProgressPolling();
 
     // Show initial progress if any. Use replace (not append per-line) because
     // the persisted message loaded by openSession already contains these
     // lines — appending would double them up.
     if (initialProgress?.length) {
-      DevChat._replaceProgressLog(initialProgress);
+      DevChat._replaceProgressLog(initialProgress, initialMetadata);
     }
 
     DevChat._progressPollTimer = setInterval(async () => {
       try {
         const res = await fetch(`/api/sessions/${sessionId}/status`);
         if (!res.ok) return;
-        const { busy, progress, estimate, stopping } = await res.json();
+        const payload = await res.json();
+        const { busy, progress, estimate, stopping } = payload;
+        // #907: a machine can attach or detach mid-turn; keep the chip honest.
+        DevChat._applyRunnerState(payload);
 
         if (progress?.length) {
-          DevChat._replaceProgressLog(progress);
+          DevChat._replaceProgressLog(progress, payload);
         }
 
         // #889: missed-event safety net. If the `stopping` broadcast never
@@ -2738,7 +4113,7 @@ const DevChat = {
     return null;
   },
 
-  _appendProgressLine(text) {
+  _appendProgressLine(text, metadata = null) {
     let msg = DevChat._currentProgressMsg();
     const isNew = !msg;
     if (!msg) {
@@ -2752,12 +4127,13 @@ const DevChat = {
       };
       DevChat.messages.push(msg);
     }
+    DevChat._copyActivityAgentMetadata(msg, metadata);
     msg.progressLog.push(text);
     if (isNew) DevChat.renderMessages();
     else DevChat._patchProgressDom(msg);
   },
 
-  _replaceProgressLog(lines) {
+  _replaceProgressLog(lines, metadata = null) {
     let msg = DevChat._currentProgressMsg();
     const isNew = !msg;
     if (!msg) {
@@ -2771,6 +4147,7 @@ const DevChat = {
       };
       DevChat.messages.push(msg);
     }
+    DevChat._copyActivityAgentMetadata(msg, metadata);
     msg.progressLog = lines.slice();
     if (isNew) DevChat.renderMessages();
     else DevChat._patchProgressDom(msg);
@@ -2802,7 +4179,7 @@ const DevChat = {
     // and the line-count summary so old timeline entries still work.
     const summary = target.querySelector('.dc-cc-log-toggle');
     const pre = target.querySelector('.dc-cc-log-content');
-    if (summary) summary.textContent = `Claude Code output (${msg.progressLog.length} lines)`;
+    if (summary) summary.textContent = `${DevChat._activityAgentName(msg)} output (${msg.progressLog.length} lines)`;
     if (pre) {
       pre.textContent = text;
       pre.scrollTop = pre.scrollHeight;
@@ -2900,7 +4277,7 @@ const DevChat = {
   _isLiveCcRun(m) {
     if (!m || m.role !== 'system' || !m._active) return false;
     if (m.progressLog) return true;
-    return /^(Claude Code is (running|making changes)|Scout reading the codebase|Syncing with main)/i
+    return /^(Claude Code is (running|making changes)|(?:Codex|OpenRouter) is running|Scout reading the codebase|Syncing with main)/i
       .test(String(m.content || ''));
   },
 
@@ -3116,7 +4493,11 @@ const DevChat = {
 
     const checkState = String(session.check_state || '').toLowerCase();
     const terminalCheck = ['passing', 'skipped', 'failing', 'error'].includes(checkState);
-    const submittedCliHead = session.source === 'cli_handoff'
+    // #907: a turn run on the user's own machine reaches the same place — a
+    // head the platform accepted, a terminal verdict, and possibly no preview
+    // if staging failed. It is a native session, so `source` stays
+    // 'anthropic'; `last_turn_runner` is what distinguishes it.
+    const submittedCliHead = (session.source === 'cli_handoff' || session.last_turn_runner === 'local')
       && !!(session.handoff_head_sha || session.checks_commit_sha);
     if (!session.staging_url && !(submittedCliHead && terminalCheck)) return messages;
 
@@ -3409,7 +4790,7 @@ const DevChat = {
     // Each is paired with a 'Claude Code progress' system row whose
     // live log we want to attach.
     const ACTIVE_CC_STATUS_RE
-      = /^(Claude Code is (running|making changes)|Scout reading the codebase|Syncing with main)/i;
+      = /^(Claude Code is (running|making changes)|(?:Codex|OpenRouter) is running|Scout reading the codebase|Syncing with main)/i;
     // Helper: is this a viable status candidate for pairing? Stop on
     // any non-system row (status/progress pairs always live inside a
     // single dispatch turn) and skip rows that already carry their
@@ -3575,7 +4956,7 @@ const DevChat = {
         }
         if (msg.ccLog) {
           const pid = DevChat._detailsId(msg, 'cclog');
-          return `<details class="dc-cc-log" data-persist-id="${pid}"><summary class="dc-cc-log-toggle">Claude Code log</summary><pre class="dc-cc-log-content">${msg.ccLog.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre></details>`;
+          return `<details class="dc-cc-log" data-persist-id="${pid}"><summary class="dc-cc-log-toggle">${DevChat._activityAgentName(msg)} log</summary><pre class="dc-cc-log-content">${msg.ccLog.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre></details>`;
         }
         if (msg.progressLog?.length) {
           // Already merged into a parent "Claude Code is running"
@@ -3592,7 +4973,7 @@ const DevChat = {
           const ts = msg.created_at ? new Date(msg.created_at).getTime() : '';
           const id = msg.id || msg._slug || '';
           const icon = '<span class="dc-status-icon dc-status-check" aria-hidden="true">&#10003;</span>';
-          return `<details class="dc-cc-attached" data-persist-id="${outerPid}" ${DevChat._ccOpenAttrs(msg)}><summary class="dc-status-line dc-cc-attached-summary">${icon} Claude Code output<span class="dc-cc-attached-chevron" aria-hidden="true"></span><span style="font-size:9px;opacity:0.4;margin-left:auto">${id} ${ts}</span></summary><pre class="dc-cc-attached-log" data-persist-id="${innerPid}">${logText}</pre></details>`;
+          return `<details class="dc-cc-attached" data-persist-id="${outerPid}" ${DevChat._ccOpenAttrs(msg)}><summary class="dc-status-line dc-cc-attached-summary">${icon} ${DevChat._activityAgentName(msg)} output<span class="dc-cc-attached-chevron" aria-hidden="true"></span><span style="font-size:9px;opacity:0.4;margin-left:auto">${id} ${ts}</span></summary><pre class="dc-cc-attached-log" data-persist-id="${innerPid}">${logText}</pre></details>`;
         }
         // #361: the "Changes ready" card renders whenever the turn produced
         // a reviewable commit — i.e. either a preview built (msg.stagingUrl)
@@ -3891,7 +5272,18 @@ const DevChat = {
           ${isUser ? '' : reasoningDetail}
           ${qaChips}
         </div>`;
-    }).join('');
+      // #1049: the flow picker / walkthrough sits at the END of the
+      // transcript, so on an empty session it is the only thing in the pane
+      // and on a resumed walkthrough it stays next to the composer the user
+      // is typing their brief into. Part of the SAME assignment rather than
+      // an insertAdjacentHTML afterwards — one write to innerHTML is one
+      // repaint, and it keeps the card inside the string the rest of this
+      // method's tests render through. Returns '' for every session that is
+      // already under way.
+    }).join('') + DevChat._devFlowHtml();
+
+    DevChat._wireDevFlowCard();
+    DevChat._bindDevFlowVisibility();
 
     // Delegated hash navigation for any out-of-credits card just rendered
     // (idempotent per node, so repeated renders never stack handlers).
@@ -4053,7 +5445,7 @@ const DevChat = {
   // stay identical.
   FALLBACK_QUICK_REPLIES: {
     code_done: ['Propose it to the group', 'Make a tweak', 'What did it change?'],
-    spec_done: ['Build it', 'Revise the spec', 'What will this change?'],
+    spec_done: ['Build the spec', 'Revise the spec', 'What will this change?'],
     chat_generic: ['Make a change', 'What issues are open right now?', "What's the current state?"],
   },
 
@@ -4683,6 +6075,16 @@ const DevChat = {
         s.status === 'promoted' ? 'text-violet-400' :
         s.status === 'paused' ? 'text-zinc-400' :
         'text-zinc-500';
+      // #1038: this list is the one session surface that never had a
+      // working indicator — GET /api/apps/:slug/sessions returns `warm`
+      // (a container exists) but no `busy`. The live store supplies it
+      // client-side, so the row matches the board and the cog drawer
+      // without widening that payload.
+      const busy = (typeof window !== 'undefined' && window.SessionState)
+        ? SessionState.isBusy(s.id, false) : false;
+      const busyTag = busy
+        ? '<span class="inline-flex items-center gap-1 text-xs text-emerald-500 shrink-0"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>'
+        : '';
       // Promoted sessions can't be demoted to 'paused' (their PR must
       // stay votable), but a warm worker can still be freed — same
       // endpoint, server keeps status 'promoted' (keptPromoted). Once
@@ -4704,6 +6106,7 @@ const DevChat = {
         <div class="dc-session-item px-3 py-2 cursor-pointer hover:bg-zinc-800/50 flex items-center gap-2" data-id="${s.id}">
           <span class="text-xs ${statusColor} font-mono">${s.status}</span>
           <span class="text-sm text-zinc-300 flex-1 truncate" title="${escapeHtml(s.branch_name || '')}">${escapeHtml(s.session_title || s.pr_title || s.branch_name || 'Session')}</span>
+          ${busyTag}
           ${s.pr_url ? `<a href="${s.pr_url}" target="_blank" class="text-xs text-violet-400 hover:text-violet-300" onclick="event.stopPropagation()">PR#${s.pr_number}</a>` : ''}
           ${isPausable ? `<button class="dc-pause-btn text-xs text-zinc-400 hover:text-emerald-400" data-id="${s.id}" data-action="pause" onclick="event.stopPropagation()">Pause</button>` : ''}
           ${isFreeable ? `<button class="dc-pause-btn text-xs text-zinc-400 hover:text-emerald-400" data-id="${s.id}" data-action="pause" data-freeing="1" title="Frees the AI worker. The PR stays up for voting." onclick="event.stopPropagation()">Free worker</button>` : ''}
@@ -5258,7 +6661,6 @@ const DevChat = {
         return `<option value="${id}" ${id === DevChat.selectedModel ? 'selected' : ''}>${escapeHtml(text)}</option>`;
       })
       .join('');
-
     const viewerOpen = !!DevChat.specViewer.open;
     // Saved viewer width from a previous drag. Applied as inline style
     // on the side panel; CSS clamps to a min/max so a stale value
@@ -5275,6 +6677,21 @@ const DevChat = {
     const stagingStyle = stagingOpen && stagingSavedWidth
       ? ` style="width:${stagingSavedWidth}px"`
       : '';
+    const agentBillingNote = DevChat._agentBillingNote(DevChat.currentSession);
+    const venueId = DevChat._currentVenueId();
+    const venueLineHtml = window.BuildVenues
+      ? BuildVenues.lineHtml({
+        current: venueId,
+        // Reported once, on the paint after creation: the server resolved a
+        // venue other than the one the user's default named, and this is
+        // the only place that says why. Cleared below so a later repaint of
+        // the same session doesn't keep re-explaining a settled fact.
+        fallbackReason: DevChat._venueFallbackReason || DevChat._shotVenueFallbackReason(),
+      })
+      : '';
+    DevChat._venueFallbackReason = null;
+    // Only the two Usernode-run venues have a chat model to pick.
+    const venueHasModel = venueId === 'usernode-claude' || venueId === 'usernode-openrouter';
 
     content.innerHTML = `
       <div class="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
@@ -5299,25 +6716,60 @@ const DevChat = {
                reserved on #app-view. (No backticks in this comment: it
                lives inside a template literal, and one would close it.) -->
           <div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2 platform-safe-bar">
-            <div class="flex items-center gap-2 mb-2">
-              <label class="text-xs text-zinc-500">Model:</label>
-              <select id="dc-model-select" class="rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-violet-500">
-                ${modelOptions}
-              </select>
+            <!-- The venue statement (#1086). One line, always painted,
+                 naming where this session builds and offering the only
+                 control that changes it. It replaces the "Coding agent:"
+                 button that used to sit here beside a "Chat model:"
+                 dropdown — two controls, adjacent, answering two different
+                 questions in the same visual weight, one of which was the
+                 venue and one of which was not. Filled from the session
+                 row, so it is right on first paint. -->
+            <div id="dc-venue-slot" class="dc-venue-slot">${venueLineHtml}</div>
+            <div class="flex flex-wrap items-center gap-2 mb-2">
               <input type="file" id="dc-file-input" class="hidden" multiple>
               <button type="button" id="dc-attach-btn" title="Attach files — images (≤4 MB), text/code files (≤200 KB), zip archives (≤20 MB), or any other file (≤10 MB); up to 4 per message" aria-label="Attach files"
                 class="dc-attach-btn rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-900 text-zinc-500 hover:text-violet-400 hover:border-violet-500 px-1.5 py-1 shrink-0 transition-colors">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
               </button>
+              <!-- #907: where the next coding turn runs. Painted empty and
+                   filled by _renderRunnerControls() from the session status
+                   poll, so a reload lands on the truth rather than on a
+                   guess the page made before it asked. -->
+              <span id="dc-runner" class="dc-runner"></span>
               <span class="flex-1"></span>
               <span id="dc-budget" class="text-xs font-mono"></span>
+              <!-- #1055: session and billing options. STATIC markup rather
+                   than something renderBudget() appends, because
+                   renderBudget() returns early when there is nothing to
+                   paint — and "no key, no spend yet" is exactly the state
+                   this menu exists for. -->
+              <button type="button" id="dc-budget-options" title="Session and billing options" aria-label="Session and billing options" aria-haspopup="menu"
+                class="dc-budget-options">&#8943;</button>
             </div>
-            <!-- #800: one-line plain-language description of the SELECTED
-                 model — what kind of work it suits. Filled by
+            <!-- The venue's own settings, one level down from the statement
+                 above. Present only for the two venues that HAVE a model to
+                 pick — Usernode · Claude and Usernode · OpenRouter — because
+                 for a session running on a laptop or handed to a web agent
+                 there is nothing here to choose: the chat model is a
+                 Usernode-side setting and saying otherwise was half the
+                 confusion this line replaces. Both the select and its note
+                 keep their ids, their storage key and their sanitizer.
+                 #800: the note is a one-line plain-language description of
+                 the SELECTED model — what kind of work it suits. Filled by
                  _renderModelNote(); hidden when the payload carries no
                  guidance copy. Clamped to two lines in CSS: Fable's
                  sentence wraps on a phone and must not crowd the box. -->
-            <span id="dc-model-note" class="dc-model-note hidden"></span>
+            ${venueHasModel ? `
+            <div id="dc-venue-detail" class="dc-venue-detail">
+              <div class="flex flex-wrap items-center gap-2">
+                <label class="text-xs text-zinc-500" for="dc-model-select">Chat model:</label>
+                <select id="dc-model-select" class="rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-violet-500">
+                  ${modelOptions}
+                </select>
+              </div>
+              <div id="dc-agent-note" class="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">${escapeHtml(agentBillingNote)}</div>
+              <span id="dc-model-note" class="dc-model-note hidden"></span>
+            </div>` : ''}
             <div id="dc-drafts" class="dc-drafts"></div>
             <div id="dc-quick-replies" class="dc-quick-replies"></div>
             <div id="dc-attachments" class="dc-attach-strip"></div>
@@ -5397,15 +6849,49 @@ const DevChat = {
 
     // #800: caption describing the selected model, kept in sync below.
     DevChat._renderModelNote();
+    // #907: repaint from whatever the last status poll told us. The poll
+    // itself runs a beat later; painting here means a re-render of an already
+    // open session doesn't drop the chip for a second.
+    DevChat._renderRunnerControls();
 
-    document.getElementById('dc-model-select').addEventListener('change', (e) => {
-      DevChat.selectedModel = e.target.value;
-      // Persist across refreshes + new sessions (fixes #31). Wrapped
-      // in try/catch so private-mode browsers or quota errors don't
-      // break the selector.
-      try { localStorage.setItem(MODEL_STORAGE_KEY, e.target.value); } catch {}
-      DevChat._renderModelNote();
-    });
+    // #1055: the "⋯" beside the meter. Any menu left open by a previous
+    // render is anchored to a button that no longer exists, so it is
+    // dismissed here rather than left floating over the new composer.
+    // Whether it WAS open is remembered, because on a `?shot=` deep link the
+    // open menu is the thing being rendered: without this, a second render
+    // (any status poll) closed it for good and the capture came back showing
+    // a plain composer (#1071).
+    const optionsWereOpen = !!(DevChat._optionsMenu || DevChat._optionsCard);
+    DevChat._closeSessionOptions();
+    const optionsBtn = document.getElementById('dc-budget-options');
+    if (optionsBtn) {
+      optionsBtn.addEventListener('click', () => DevChat.openSessionOptions(optionsBtn));
+    }
+    DevChat._maybeOpenShotOptions(optionsWereOpen);
+
+    const venueChange = document.querySelector('#dc-venue-slot [data-venue-change]');
+    if (venueChange) {
+      // Mid-turn the venue is not changeable: a running turn holds the
+      // worker, and moving it under itself is the failure the old
+      // `agentSelect.disabled` guarded against. Same rule, new control.
+      venueChange.disabled = DevChat.isStreaming;
+      venueChange.addEventListener('click', () => DevChat.openVenueSheet(venueChange));
+    }
+    DevChat._maybeOpenShotVenueSheet();
+
+    // Null when this session's venue has no chat model to pick — see the
+    // dc-venue-detail block in renderChatView.
+    const modelSelect = document.getElementById('dc-model-select');
+    if (modelSelect) {
+      modelSelect.addEventListener('change', (e) => {
+        DevChat.selectedModel = e.target.value;
+        // Persist across refreshes + new sessions (fixes #31). Wrapped
+        // in try/catch so private-mode browsers or quota errors don't
+        // break the selector.
+        try { localStorage.setItem(MODEL_STORAGE_KEY, e.target.value); } catch {}
+        DevChat._renderModelNote();
+      });
+    }
 
     const prHeaderLink = document.getElementById('dc-pr-header-link');
     if (prHeaderLink) {
@@ -5855,6 +7341,12 @@ const DevChat = {
       const shot = new URLSearchParams(location.search).get('shot');
       return shot === 'drafts' || shot === 'busy-drafts';
     } catch { return false; }
+  },
+
+  // Any `?shot=` deep link, whichever one. Read by openSession to keep a
+  // capture read-only — see the auto-resume above.
+  _isShotDeepLink() {
+    try { return !!new URLSearchParams(location.search).get('shot'); } catch { return false; }
   },
 
   // Screenshot-state deep link (`?shot=busy-drafts`, #801/#810): paints the
@@ -7095,6 +8587,18 @@ const DevChat = {
     }
   },
 };
+
+// #1038: repaint the per-app session list when live working state moves.
+// Guarded on the list actually being mounted AND on no session being open
+// (renderSessionList targets #dc-session-list, which only exists on the
+// list view), so this costs nothing everywhere else.
+if (typeof window !== 'undefined' && window.SessionState) {
+  SessionState.subscribe(() => {
+    if (DevChat.currentSession) return;
+    if (!document.getElementById('dc-session-list')) return;
+    DevChat.renderSessionList();
+  });
+}
 
 DevChat._sanitizeStoredModel();
 // Fire-and-forget: refreshes MODELS from the server's allowlist. If

@@ -4,9 +4,12 @@
 // the commit+push has landed. applyPrMetadata now throws typed errors
 // ('github_unavailable'), and an escaped throw there would abort the whole
 // turn — killing the staging build for a PR that isn't needed yet. The
-// call must therefore be wrapped in try/catch that (a) never rethrows,
-// (b) tells the user via sendStatus, and (c) informs the Mayor via
-// summaryParts so it doesn't "fix" a GitHub outage with no-op commits.
+// call must therefore be wrapped in try/catch that (a) swallows ordinary
+// GitHub failures, (b) tells the user via sendStatus, and (c) informs the
+// Mayor via summaryParts so it doesn't "fix" a GitHub outage with no-op
+// commits. Durable receipt failures are the one exception: swallowing one
+// would clear the active turn before its exact-once metadata effect can be
+// reconciled, so those must escape into the recovery path.
 //
 // The wrap-up lives deep inside the chat route's closure (not separately
 // invocable), so this is a source-contract test in the style of the
@@ -45,10 +48,15 @@ test('turn-end applyPrMetadata is wrapped in try/catch', () => {
   assert.ok(tryIdx < callIdx && callIdx < catchIdx, 'the call sits inside the try block');
 });
 
-test('the catch never rethrows — the turn (and staging build) continues', () => {
+test('the catch rethrows only durable receipt failures', () => {
   const region = turnEndRegion();
   const catchBody = region.slice(region.indexOf('} catch (prErr)'));
-  assert.ok(!/throw\s/.test(catchBody), 'no throw inside the turn-end catch');
+  const receiptGuard = 'if (prErr?.retainActiveTurn) throw prErr;';
+  assert.ok(catchBody.includes(receiptGuard), 'durable receipt failures enter recovery');
+  assert.ok(
+    !/throw\s/.test(catchBody.replace(receiptGuard, '')),
+    'ordinary PR failures still cannot abort staging',
+  );
 });
 
 test('github_unavailable surfaces to the user (sendStatus) and the Mayor (summaryParts)', () => {

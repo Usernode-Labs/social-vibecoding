@@ -327,6 +327,19 @@
       "description": "Comma-separated hosts whose https redirect URIs a chat product may register against the /mcp connector (subdomains match too). This is what keeps dynamic client registration from being an open redirect registry: only widen it to a host you would hand a consent screen to. An explicit value REPLACES the default rather than extending it. Loopback is accepted only in local-development mode."
     },
     {
+      "key": "CODEX_OPENROUTER_ENABLED",
+      "group": "AI & coding agents",
+      "required": false,
+      "default": "true",
+      "description": "Emergency availability switch for the Codex via OpenRouter BYOK backend. This does not select a provider globally: when true, Claude Code and Codex are both available and each user chooses which one a session uses. Set false only to hide/refuse Codex while leaving Claude unchanged."
+    },
+    {
+      "key": "CODEX_OPENROUTER_BETA_USER_IDS",
+      "group": "AI & coding agents",
+      "required": false,
+      "description": "Optional comma-separated user-id allowlist for Codex via OpenRouter. Leave unset or empty to make the option available to every user; setting ids restricts only Codex and never disables Claude Code."
+    },
+    {
       "key": "GITHUB_LINK_CLIENT_ID",
       "group": "Chat connectors",
       "required": false,
@@ -356,6 +369,18 @@
     }
   ],
   "tests": [
+    {
+      "name": "Guest back arrow returns to the app directory (#1028)",
+      "path": "/?shot=anon-back#landing",
+      "expectSelector": "#auth-landing-screen:not(.hidden) #app-viewer.hidden[data-anon-back=\"done\"]",
+      "expectText": "Apps built here",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Dev board: session cards carry the live working spinner (#1038)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-body [data-session-chip=\"990102\"] .dc-status-spinner-arc, #dev-body [data-shared-session-row=\"990001\"] .dc-status-spinner-arc"
+    },
     {
       "name": "Platform variables panel renders on the platform app (#826 folded into app secrets)",
       "path": "/?shot=secrets#app/usernode-2d5619/dev",
@@ -393,6 +418,11 @@
       "path": "/?shot=work-drawer&demo=1",
       "expectSelector": "#work-drawer-panel:not(.hidden) #work-drawer-list",
       "expectText": "[Mock] Session titled but not yet proposed"
+    },
+    {
+      "name": "Work drawer: a busy session row spins from live state (#1038)",
+      "path": "/?shot=work-drawer&demo=1",
+      "expectSelector": "#work-drawer-panel:not(.hidden) #work-drawer-list a[href$=\"/sessions/990102\"] .dc-status-spinner-arc"
     },
     {
       "name": "Send Feedback offers a kudos bounty, unchecked by default (#964)",
@@ -620,6 +650,18 @@
       "expectSelector": "[data-plus=\"import-pr\"]"
     },
     {
+      "name": "The Dev '+' menu separates starting work from managing the app (#1086)",
+      "path": "/?demo=1&shot=plus-menu#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-plus-menu [data-plus-group=\"build\"] ~ [data-plus-group=\"settings\"]",
+      "expectText": "Build a change"
+    },
+    {
+      "name": "Starting a change no longer asks where before it asks what (#1086)",
+      "path": "/?demo=1&shot=plus-menu#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-plus-menu button[data-plus=\"proposal\"]",
+      "expectText": "you pick where it is built, and can change that any time"
+    },
+    {
       "name": "Custom category chip renders on a Dev card (#780)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectText": "Staging demo perf"
@@ -662,7 +704,7 @@
       "name": "Pills from a forced retry render identically (#1001)",
       "path": "/#app/usernode-2d5619/dev/sessions/900806",
       "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
-      "expectText": "Build the avatar upload flow"
+      "expectText": "Build the spec"
     },
     {
       "name": "A wrap-up's pills supersede the dispatch preamble's (#1001)",
@@ -1027,6 +1069,17 @@
       "name": "PM view toggle button renders in the dev view switcher",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-view-pm"
+    },
+    {
+      "name": "Reporting button renders in the dev view switcher (#1100)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-view-report[data-view=\"report\"]"
+    },
+    {
+      "name": "Reporting view renders the progress report sections (#1100)",
+      "path": "/?demo=1&view=report#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-report .ur-rpt-section[data-section=\"done\"]",
+      "expectText": "Progress report"
     },
     {
       "name": "Kanban cards show the assignee initial-avatar",
@@ -1607,6 +1660,47 @@
       "expectSelector": "#admin-topo-se-season-filter"
     },
     {
+      "name": "Admin Season events deep-links one event's challenges screen",
+      "path": "/#admin/seasons/season-events/900504",
+      "expectSelector": "#admin-topo-se-detail-hero ~ #admin-topo-ch-table",
+      "expectText": "Unfilled Sprint"
+    },
+    {
+      "name": "Admin Add-challenge deep link lands on the challenges screen",
+      "path": "/#admin/seasons/season-events/900504/new-challenge/900501",
+      "expectSelector": "#admin-topo-ch-table",
+      "expectText": "Unfilled Sprint"
+    },
+    {
+      "name": "Admin API tester offers an endpoint select instead of one placeholder path",
+      "path": "/#admin/seasons/api-tester",
+      "expectSelector": "select#admin-topo-api-endpoint"
+    },
+    {
+      "name": "Admin API tester select lists the real mounted /api/v4 routes",
+      "path": "/#admin/seasons/api-tester",
+      "expectSelector": "#admin-topo-api-endpoint optgroup option[value=\"GET /admin/seasons\"]",
+      "expectText": "mounted in this build"
+    },
+    {
+      "name": "Admin SQL console lists platform tables, not just the topochain ones",
+      "path": "/#admin/seasons/sql-console",
+      "expectSelector": "#admin-topo-sql-schema button[data-table]",
+      "expectText": "chat_sessions"
+    },
+    {
+      "name": "Admin SQL console schema browser has a filter and a table count for the full schema",
+      "path": "/#admin/seasons/sql-console",
+      "expectSelector": "#admin-topo-sql-schema-filter",
+      "expectText": "Every table in the app database"
+    },
+    {
+      "name": "Admin SQL console reports how many tables the schema browser holds",
+      "path": "/#admin/seasons/sql-console",
+      "expectSelector": "#admin-topo-sql-schema-count",
+      "expectText": "tables"
+    },
+    {
       "name": "Native kit: pull-to-refresh builds its clipped puck layer (the puck hangs below the header, never over it)",
       "path": "/usernode-native/v1/demo.html?un-platform=ios",
       "expectSelector": ".un-ptr-layer > .un-ptr-puck"
@@ -1689,10 +1783,10 @@
       "expectText": "resets Monday 00:00 UTC"
     },
     {
-      "name": "Out of daily credits: the chat offers all three ways to keep building (#967)",
+      "name": "Out of daily credits: the chat offers all four ways to keep building (#967, #1049)",
       "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
       "expectSelector": "[data-credits-card] [data-credits-hash=\"#settings/connectors\"]",
-      "expectText": "Three ways to keep building right now"
+      "expectText": "Four ways to keep building right now"
     },
     {
       "name": "Settings has a Claude & ChatGPT connectors section with the connector URL (#967)",
@@ -1726,6 +1820,139 @@
       "name": "Inside an app's detail page the header arrow links back to the list (#1036)",
       "path": "/#apps/usernode-2d5619",
       "expectSelector": "a#back-btn[href=\"#apps\"]"
+    },
+    {
+      "name": "Every session states the venue it is building in, unasked (#1086)",
+      "path": "/#app/usernode-2d5619/dev/sessions/990403",
+      "expectSelector": "#dc-venue-slot [data-venue-line=\"usernode-claude\"] .dc-venue-name",
+      "expectText": "Building in"
+    },
+    {
+      "name": "The venue line carries the only control that changes it (#1086)",
+      "path": "/#app/usernode-2d5619/dev/sessions/990403",
+      "expectSelector": "#dc-venue-slot .dc-venue-line button.dc-venue-change[data-venue-change]",
+      "expectText": "Change how this is built"
+    },
+    {
+      "name": "A pinned OpenRouter session says so, and shows its model (#1086)",
+      "path": "/#app/usernode-2d5619/dev/sessions/990409",
+      "expectSelector": "#dc-venue-slot [data-venue-line=\"usernode-openrouter\"], #dc-venue-detail #dc-model-select",
+      "expectText": "Usernode · OpenRouter"
+    },
+    {
+      "name": "A venue you did not get is explained rather than silently swapped (#1086)",
+      "path": "/?shot=venue-fallback&reason=flag_off#app/usernode-2d5619/dev/sessions/990410",
+      "expectSelector": "#dc-venue-slot .dc-venue-note",
+      "expectText": "this deployment has it turned off"
+    },
+    {
+      "name": "The change control opens one sheet with both venue groups (#1086)",
+      "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990403",
+      "expectSelector": ".un-popover .un-popover-item, .un-popover [role=\"menuitem\"]",
+      "expectText": "Where should the rest of this be built?"
+    },
+    {
+      "name": "The sheet names the in-chat group and ticks the current venue (#1086)",
+      "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990403",
+      "expectText": "— In this chat —"
+    },
+    {
+      "name": "The sheet's other group is the three places that are not this chat (#1086)",
+      "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990403",
+      "expectText": "— Somewhere else —"
+    },
+    {
+      "name": "Your own tools are offered as a venue, with no chat promised (#1086)",
+      "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990403",
+      "expectText": "Your computer · your own tools"
+    },
+    {
+      "name": "Choosing Claude Code opens a five-step walkthrough with one step live (#1049)",
+      "path": "/?demo=1&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
+      "expectSelector": "[data-flow-wizard] [data-flow-step-state=\"current\"]",
+      "expectText": "Check again"
+    },
+    {
+      "name": "Settings can answer the build-flow question for good (#1049)",
+      "path": "/#settings/connectors",
+      "expectSelector": "#settings-dev-flow option[value=\"claude-code\"]",
+      "expectText": "Preferred build flow"
+    },
+    {
+      "name": "A connector-imported proposal names the coding agent that built it (#967)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals",
+      "expectText": "Built with Claude Code"
+    },
+    {
+      "name": "The composer's ⋯ opens session and billing options (#1055)",
+      "path": "/?demo=1&shot=session-options#app/usernode-2d5619/dev/sessions/990405",
+      "expectSelector": ".un-popover .dc-options-header .dc-options-title",
+      "expectText": "Session and billing options"
+    },
+    {
+      "name": "Session options paint an opaque surface (#1055)",
+      "path": "/?demo=1&shot=session-options#app/usernode-2d5619/dev/sessions/990405",
+      "expectSelector": ".un-popover[data-surface=\"opaque\"]"
+    },
+    {
+      "name": "Session options ask about venue exactly once, in one row (#1086)",
+      "path": "/?demo=1&shot=session-options#app/usernode-2d5619/dev/sessions/990405",
+      "expectSelector": ".un-popover .un-popover-item, .un-popover [role=\"menuitem\"]",
+      "expectText": "Change how this is built"
+    },
+    {
+      "name": "The venue sheet hands this session's own code to the web agent (#1071)",
+      "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990405",
+      "expectText": "Continue this session with Claude Code on the web"
+    },
+    {
+      "name": "A paused session is still continuable on the web (#1071)",
+      "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990407",
+      "expectText": "Continue this session with Claude Code on the web"
+    },
+    {
+      "name": "A promoted proposal is continued rather than restarted (#1071)",
+      "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990406",
+      "expectText": "Continue this proposal with Claude Code on the web"
+    },
+    {
+      "name": "An archived session starts new work instead of resurrecting itself (#1071)",
+      "path": "/?demo=1&shot=venue-sheet#app/usernode-2d5619/dev/sessions/990408",
+      "expectText": "Start new work with Claude Code on the web"
+    },
+    {
+      "name": "Session options name the key already on file (#1055)",
+      "path": "/?demo=1&shot=session-options#app/usernode-2d5619/dev/sessions/990405",
+      "expectText": "Change your API key"
+    },
+    {
+      "name": "With no key on file the menu leads with setting one (#1055)",
+      "path": "/?shot=session-options#app/usernode-2d5619/dev/sessions/990405",
+      "expectText": "Set your Anthropic API key"
+    },
+    {
+      "name": "Session options open as an action sheet on touch (#1055)",
+      "path": "/?demo=1&shot=session-options&un-platform=ios#app/usernode-2d5619/dev/sessions/990405",
+      "expectSelector": ".un-action-sheet .un-action-card .un-action-btn",
+      "expectText": "Change how this is built"
+    },
+    {
+      "name": "The venue sheet keeps its group headings on touch, where grouping matters most (#1086)",
+      "path": "/?demo=1&shot=venue-sheet&un-platform=ios#app/usernode-2d5619/dev/sessions/990405",
+      "expectSelector": ".un-action-sheet .un-action-card .un-action-btn",
+      "expectText": "— Somewhere else —"
+    },
+    {
+      "name": "The local-CLI card spells the commands for THIS session (#1055)",
+      "path": "/?demo=1&shot=session-options-instructions#app/usernode-2d5619/dev/sessions/990405",
+      "expectSelector": "#dc-options-commands",
+      "expectText": "agent run --session 990405"
+    },
+    {
+      "name": "Continuing a proposal ends in submitting an update, not a new proposal (#1071)",
+      "path": "/?demo=1&flow=claude-code#app/usernode-2d5619/dev/sessions/990406",
+      "expectSelector": "[data-flow-wizard] [data-flow-step=\"submit\"] .dc-flow-step-title",
+      "expectText": "Submit the update"
     }
   ],
   "governance": {

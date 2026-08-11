@@ -19,7 +19,10 @@ const vm = require('node:vm');
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', 'js', f), 'utf8');
 const MERGE_STATUS_SRC = read('merge-status.js');
 const APP_VIEW_SRC = read('app-view.js');
-const WORK_DRAWER_SRC = read('work-drawer.js');
+// #1079 chunk B moved this module into the React bundle (it is the same
+// file — see the note at the top of it); only the path changed here.
+const WORK_DRAWER_SRC = fs.readFileSync(
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'work-drawer', 'work-drawer.js'), 'utf8');
 
 // `opts.el` backs document.getElementById (the roster paints into it);
 // `opts.fetchData` backs fetch().json() (the roster endpoint's payload).

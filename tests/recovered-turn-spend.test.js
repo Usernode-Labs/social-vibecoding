@@ -39,7 +39,14 @@ function stubModule(id, exports) {
 
 // Load ../src/routes/sessions fresh against a mock pool + stubbed
 // services. Captures every limits.recordSpend call into `spendCalls`.
-function loadSessions(mockPool, { recoveredResult, userKeyEnc, billing, turnByokCents } = {}) {
+function loadSessions(mockPool, {
+  recoveredResult,
+  userKeyEnc,
+  billing,
+  turnByokCents,
+  finishTurnImpl,
+  workerCalls = {},
+} = {}) {
   const paths = {
     pool: require.resolve('../src/db/pool'),
     ws: require.resolve('../src/services/ws'),
@@ -72,12 +79,15 @@ function loadSessions(mockPool, { recoveredResult, userKeyEnc, billing, turnByok
     })],
     [paths.llm, stubModule(paths.llm, {
       isEnabled: () => true,
-      streamChat: async () => ({
-        text: 'Wrap-up after restart.',
-        toolUses: [],
-        usage: { input_tokens: 10, output_tokens: 5 },
-        rawContent: [],
-      }),
+      streamChat: async () => {
+        workerCalls.mayorCalls = (workerCalls.mayorCalls || 0) + 1;
+        return {
+          text: 'Wrap-up after restart.',
+          toolUses: [],
+          usage: { input_tokens: 10, output_tokens: 5 },
+          rawContent: [],
+        };
+      },
       estimateCostCents: () => 0,
     })],
     [paths.limits, stubModule(paths.limits, {
@@ -107,11 +117,31 @@ function loadSessions(mockPool, { recoveredResult, userKeyEnc, billing, turnByok
       EVENT_TYPES: { DEV_SESSION_STARTED: 'dev_session_started' },
     })],
     // Keep the real worker exports (sessions.js touches several at call
-    // time) — only the journal resume + active-turn clear are faked.
+    // time) — only journal resume + successful durable cleanup are faked.
     [paths.worker, stubModule(paths.worker, {
       ...require('../src/services/worker'),
-      resumeTurnFromJournal: async () => recoveredResult,
+      resumeTurnFromJournal: async (...args) => {
+        workerCalls.resumes = (workerCalls.resumes || 0) + 1;
+        workerCalls.resumeArgs = args;
+        return recoveredResult;
+      },
       clearActiveTurn: async () => {},
+      finishTurn: async (...args) => {
+        workerCalls.finishes = (workerCalls.finishes || 0) + 1;
+        const cleared = finishTurnImpl ? await finishTurnImpl(...args) : true;
+        if (!cleared && mockPool.state.sessionRow?.active_turn) {
+          // Model the production failure boundary: finishTurn committed the
+          // cleanup_pending transition but its identity-safe NULL update did
+          // not land. The retry must derive cleanup-only work from this row.
+          mockPool.state.sessionRow.active_turn = {
+            ...mockPool.state.sessionRow.active_turn,
+            phase: 'cleanup_pending',
+          };
+        } else if (cleared && mockPool.state.sessionRow) {
+          mockPool.state.sessionRow.active_turn = null;
+        }
+        return cleared;
+      },
       // #664: proxy-observed BYOK spillover for the resumed turn.
       getTurnByokCents: () => turnByokCents || 0,
     })],
@@ -139,12 +169,40 @@ function loadSessions(mockPool, { recoveredResult, userKeyEnc, billing, turnByok
 // ── In-memory mock pool ─────────────────────────────────────────────────
 // Answers the SQL shapes the cc_running resume path issues.
 function makeMockPool(sessionRow) {
-  const state = { terminal: null, userKeyEnc: null };
+  const state = {
+    terminal: null,
+    userKeyEnc: null,
+    sessionRow,
+    effects: new Map(),
+  };
   const calls = [];
 
   async function query(sql, params = []) {
     const s = String(sql);
     calls.push({ sql: s, params });
+
+    if (/^(BEGIN|COMMIT|ROLLBACK)$/i.test(s.trim())) {
+      return { rows: [], rowCount: 0 };
+    }
+    if (/INSERT INTO turn_effects/i.test(s)) {
+      const key = `${params[0]}:${params[1]}`;
+      if (state.effects.has(key)) return { rows: [], rowCount: 0 };
+      const effect = { state: 'pending', result: null };
+      state.effects.set(key, effect);
+      return { rows: [{ state: effect.state }], rowCount: 1 };
+    }
+    if (/UPDATE turn_effects/i.test(s)) {
+      const key = `${params[0]}:${params[1]}`;
+      const effect = state.effects.get(key);
+      if (!effect || effect.state !== 'pending') return { rows: [], rowCount: 0 };
+      effect.state = 'completed';
+      effect.result = params[2] == null ? null : JSON.parse(params[2]);
+      return { rows: [{ result: effect.result }], rowCount: 1 };
+    }
+    if (/SELECT state(?:, result)? FROM turn_effects/i.test(s)) {
+      const effect = state.effects.get(`${params[0]}:${params[1]}`);
+      return { rows: effect ? [{ ...effect }] : [], rowCount: effect ? 1 : 0 };
+    }
 
     // Boot sweep for in-flight headless runs.
     if (/FROM chat_sessions cs/i.test(s) && /headless_status = 'generating'/i.test(s)) {
@@ -156,12 +214,32 @@ function makeMockPool(sessionRow) {
       return { rows: state.userKeyEnc ? [{ anthropic_key_enc: state.userKeyEnc }] : [] };
     }
     // Terminal states — both let tests wait for the run to finish.
+    if (/SET headless_status = \$4/i.test(s)) {
+      sessionRow.active_turn = {
+        ...sessionRow.active_turn,
+        ...JSON.parse(params[2]),
+      };
+      sessionRow.headless_status = params[3];
+      sessionRow.headless_outcome = params[4] || sessionRow.headless_outcome;
+      sessionRow.headless_step = null;
+      sessionRow.headless_turn_id = null;
+      state.terminal = { status: params[3], outcome: params[4] || null };
+      return { rows: [{ active_turn: sessionRow.active_turn }], rowCount: 1 };
+    }
     if (/UPDATE chat_sessions SET headless_status = 'ready'/i.test(s)) {
       state.terminal = { status: 'ready', outcome: params[0] };
       return { rows: [], rowCount: 1 };
     }
     if (/UPDATE chat_sessions SET headless_status = 'failed'/i.test(s)) {
       state.terminal = { status: 'failed' };
+      return { rows: [], rowCount: 1 };
+    }
+    if (/UPDATE chat_sessions SET headless_step/i.test(s)) {
+      sessionRow.headless_step = params[0];
+      const outcomeAssignment = s.match(/headless_outcome = \$(\d+)/i);
+      const turnAssignment = s.match(/headless_turn_id = \$(\d+)/i);
+      if (outcomeAssignment) sessionRow.headless_outcome = params[Number(outcomeAssignment[1]) - 1];
+      if (turnAssignment) sessionRow.headless_turn_id = params[Number(turnAssignment[1]) - 1];
       return { rows: [], rowCount: 1 };
     }
     // Model reuse, transcript reads, spec load, inserts, progress
@@ -183,6 +261,7 @@ function makeSessionRow(activeTurn) {
     headless_status: 'generating',
     headless_step: 'cc_running',
     headless_outcome: null,
+    headless_turn_id: null,
     headless_issue_number: 5,
     active_turn: activeTurn,
     cc_session_id: null,
@@ -215,12 +294,37 @@ async function waitFor(predicate, timeoutMs = 5000) {
 
 // Run the resume path to completion and return the recovered-cost debit
 // calls (the wrap-up Mayor debit is 0¢ in these tests; filter it out).
-async function runResume(activeTurn, { recoveredResult = RECOVERED, userKeyEnc = null, billing = null, turnByokCents = 0 } = {}) {
-  const pool = makeMockPool(makeSessionRow(activeTurn));
-  const loaded = loadSessions(pool, { recoveredResult, userKeyEnc, billing, turnByokCents });
+async function runResume(activeTurn, {
+  recoveredResult = RECOVERED,
+  userKeyEnc = null,
+  billing = null,
+  turnByokCents = 0,
+  finishTurnImpl = null,
+  workerCalls = {},
+  waitForCleanupRetry = false,
+  sessionOverrides = null,
+} = {}) {
+  const sessionRow = makeSessionRow(activeTurn);
+  if (sessionOverrides) Object.assign(sessionRow, sessionOverrides);
+  const pool = makeMockPool(sessionRow);
+  const loaded = loadSessions(pool, {
+    recoveredResult,
+    userKeyEnc,
+    billing,
+    turnByokCents,
+    finishTurnImpl,
+    workerCalls,
+  });
   try {
     await loaded.subject.resumeHeadlessRuns({ jwtSecret: 'test' });
     assert.ok(await waitFor(() => pool.state.terminal), 'run reached a terminal state');
+    if (waitForCleanupRetry) {
+      const recoveryRetry = require('../src/services/recovery-retry');
+      assert.ok(await waitFor(
+        () => workerCalls.finishes >= 2 && !recoveryRetry.isScheduled('headless:42'),
+        3000,
+      ), 'cleanup-only retry completed');
+    }
     return loaded.spendCalls.filter((c) => c.costCents > 0);
   } finally {
     loaded.restore();
@@ -283,10 +387,67 @@ test('#664: a mid-turn payer switch splits the recovered cost across both bucket
   assert.deepEqual(debits[1], { userId: 7, costCents: 23, byok: true });
 });
 
+test('recovered journal resume restores the durable turn id used by BYOK mirroring', async () => {
+  const workerCalls = {};
+  const turnId = '33333333-3333-4333-8333-333333333333';
+  await runResume(
+    {
+      turnId,
+      mode: 'scout',
+      journal: '/home/node/.claude/turn-1.log',
+      byok: false,
+    },
+    { workerCalls },
+  );
+
+  assert.equal(workerCalls.resumeArgs[1].turnId, turnId);
+  assert.equal(workerCalls.resumeArgs[1].byokCentsSoFar, 0);
+});
+
 test('zero recovered cost issues no debit', async () => {
   const debits = await runResume(
     { mode: 'scout', journal: '/home/node/.claude/turn-1.log', byok: true },
     { recoveredResult: { ...RECOVERED, costUsd: 0 } }
   );
   assert.equal(debits.length, 0);
+});
+
+test('a failed durable cleanup retries only cleanup, never recovered spend', async () => {
+  const workerCalls = {};
+  const debits = await runResume(
+    { mode: 'scout', journal: '/home/node/.claude/turn-1.log', byok: false },
+    {
+      workerCalls,
+      finishTurnImpl: async () => workerCalls.finishes >= 2,
+      waitForCleanupRetry: true,
+    },
+  );
+
+  assert.equal(workerCalls.resumes, 1, 'the journal and settlement are not replayed');
+  assert.equal(workerCalls.finishes, 2, 'only the durable cleanup is retried');
+  assert.deepEqual(debits, [{ userId: 7, costCents: 123, byok: false }]);
+});
+
+test('cleanup_pending hands a generating wrapping row back to its receipt-backed wrap-up', async () => {
+  const workerCalls = {};
+  await runResume(
+    {
+      turnId: '22222222-2222-4222-8222-222222222222',
+      mode: 'build',
+      phase: 'cleanup_pending',
+      journal: '/home/node/.claude/turn-1.log',
+    },
+    {
+      workerCalls,
+      sessionOverrides: {
+        headless_step: 'wrapping',
+        headless_outcome: 'code',
+        headless_turn_id: '11111111-1111-4111-8111-111111111111',
+      },
+    },
+  );
+
+  assert.equal(workerCalls.finishes, 1, 'the obsolete coding owner is cleared once');
+  assert.equal(workerCalls.resumes || 0, 0, 'a completed coding journal is never replayed');
+  assert.equal(workerCalls.mayorCalls, 1, 'the persisted wrap-up continues after cleanup');
 });

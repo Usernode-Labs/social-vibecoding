@@ -25,6 +25,12 @@
     _drainPromise: null,
     _drainRerunRequested: false,
 
+    _sessionAdmitted() {
+      return !window.NativeChrome ||
+        typeof NativeChrome.isSessionAdmitted !== 'function' ||
+        NativeChrome.isSessionAdmitted();
+    },
+
     async isSupported() {
       if (SocialPush._supportPromise) return SocialPush._supportPromise;
       SocialPush._supportPromise = (async () => {
@@ -82,6 +88,10 @@
     getState(options) {
       const refresh = !options || options.refresh !== false;
       const generation = SocialPush._admissionGeneration;
+      if (!SocialPush._sessionAdmitted()) {
+        SocialPush._clearState();
+        return Promise.resolve(null);
+      }
       if (!refresh && SocialPush._state) return SocialPush._state;
       if (SocialPush._stateReadPromise &&
           SocialPush._stateReadGeneration === generation) {
@@ -134,6 +144,9 @@
       if (!await SocialPush.isSupported()) {
         throw new Error('Activity notifications are not supported by this app build');
       }
+      if (!SocialPush._sessionAdmitted()) {
+        throw new Error('Secure app sign-in is still finishing. Try again shortly');
+      }
       const generation = SocialPush._admissionGeneration;
       const value = await window.usernode.setSocialPushEnabled(enabled === true);
       if (generation !== SocialPush._admissionGeneration) {
@@ -153,6 +166,7 @@
 
     async _drainOnce() {
       if (!window.App || !App.user || !window.Notifications ||
+          !SocialPush._sessionAdmitted() ||
           !await SocialPush.isSupported()) return false;
       const claim = await window.usernode.claimPendingSocialNotification();
       if (claim == null) return true;

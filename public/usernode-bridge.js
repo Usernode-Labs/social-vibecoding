@@ -110,6 +110,7 @@
     setSocialPushEnabled: true,
     claimPendingSocialNotification: true,
     ackPendingSocialNotification: true,
+    manageStaking: true,
   };
   var _SESSION_WALLET_METHODS = {
     getNodeAddress: true,
@@ -4128,6 +4129,19 @@
     return callNativeChromeRead(
       "getWalletState", {}, _WALLET_STATE_TIMEOUT_MS, null
     );
+  };
+
+  // manageStaking() -> { delegate, delegated_since }. Opens the native
+  // delegation screen and resolves after it closes. The native app owns the
+  // fixed target, confirmation, persistence, backend sync and node changes;
+  // this top-frame wrapper deliberately accepts and sends no staking input.
+  window.usernode.manageStaking = function () {
+    if (!window.usernode.isNative) {
+      return Promise.reject(new Error(
+        "manageStaking is only available inside the Usernode mobile app."
+      ));
+    }
+    return callNative("manageStaking", {});
   };
 
   // getTransactionRecords() → { items: [...] } (newest first, capped at

@@ -1,0 +1,205 @@
+'use strict';
+// Vertical integration test for the Codex/OpenRouter path (plan.md review
+// #4): feeds an AUTHENTIC pinned-Codex JSONL stream through worker.js
+// parseLine and an AUTHENTIC OpenRouter SSE response through the usage
+// parser + settlement, and asserts the full chain (thread extraction,
+// progress, agent message, usage/cost) works.
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+const worker = require('../src/services/worker');
+const agentModels = require('../src/services/agent-models');
+const { sanitizeModel } = agentModels;
+const openrouterClient = require('../src/services/openrouter-client');
+
+// Authentic pinned-Codex 0.146.0 JSONL (captured from a real run).
+const AUTHENTIC_CODEX_JSONL = [
+  { type: 'thread.started', thread_id: '019fd774-7674-7252-806d-2aac62a95cc5' },
+  { type: 'turn.started' },
+  { type: 'item.completed', item: { id: 'item_0', type: 'error', message: 'mock' } },
+  { type: 'item.completed', item: { id: 'item_1', type: 'agent_message', text: 'I updated the test file to pass.' } },
+  { type: 'turn.completed', usage: { input_tokens: 314, cached_input_tokens: 100, cache_write_input_tokens: 20, output_tokens: 128, reasoning_output_tokens: 40 } },
+];
+
+test('vertical: Codex turn.failed marks turn as error (prevents clean completion)', () => {
+  const state = worker.newWatchState();
+  state.agentBackend = 'codex_openrouter';
+  const progress = [];
+  for (const ev of [
+    { type: 'thread.started', thread_id: '019fd774-7674-7252-806d-2aac62a95cc5' },
+    { type: 'turn.started' },
+    { type: 'turn.failed', error: { message: 'provider unreachable' } },
+  ]) {
+    worker.parseLine(JSON.stringify(ev), (t) => progress.push(t), state);
+  }
+  assert.equal(state.ccIsError, true);
+  assert.equal(state.agentError, 'provider unreachable');
+});
+
+test('vertical: missing usage does not fabricate a cost', () => {
+  const state = worker.newWatchState();
+  state.agentBackend = 'codex_openrouter';
+  for (const ev of [
+    { type: 'thread.started', thread_id: '019fd774-7674-7252-806d-2aac62a95cc5' },
+    { type: 'turn.completed', usage: { input_tokens: 5 } },
+  ]) {
+    worker.parseLine(JSON.stringify(ev), () => {}, state);
+  }
+  assert.equal(state.inputTokens, 5);
+  // Missing usage never fabricates a cost; the codex-only cache-write field
+  // stays null rather than being coerced to a false zero (plan 5.6).
+  assert.equal(state.cacheWriteInputTokens, null);
+});
+
+test('vertical: authentic Codex JSONL → thread id + progress + final message', () => {
+  const state = worker.newWatchState();
+  state.agentBackend = 'codex_openrouter';
+  const progress = [];
+  for (const ev of AUTHENTIC_CODEX_JSONL) {
+    worker.parseLine(JSON.stringify(ev), (t) => progress.push(t), state);
+  }
+  assert.equal(state.agentThreadId, '019fd774-7674-7252-806d-2aac62a95cc5', 'thread id extracted for resume');
+  assert.ok(progress.includes('[agent]'), 'turn start renders a phase marker');
+  assert.ok(progress.some((t) => t.includes('I updated the test file')), 'agent message surfaces');
+});
+
+test('streaming UTF-8 decoding preserves a character split across chunks', () => {
+  const bytes = Buffer.from('data: {"delta":"€"}\r\n\r\n');
+  const split = bytes.indexOf(Buffer.from('€')) + 1;
+  const decoder = new TextDecoder();
+  const text = decoder.decode(bytes.subarray(0, split), { stream: true })
+    + decoder.decode(bytes.subarray(split), { stream: true })
+    + decoder.decode();
+  assert.equal(text, 'data: {"delta":"€"}\r\n\r\n');
+});
+
+test('sanitizeModel converts per-token prices and uses reasoning metadata', () => {
+  const compatibility = { status: 'verified', note: null };
+  const arrayModel = sanitizeModel({
+    id: 'array', pricing: { prompt: '0', completion: '0.000002' },
+    supported_parameters: ['tools', 'reasoning'], context_length: 32000,
+  }, compatibility);
+  assert.equal(arrayModel.inputPricePerMillion, 0);
+  assert.equal(arrayModel.outputPricePerMillion, 2);
+  assert.equal(arrayModel.averagePricePerMillion, 1);
+  assert.equal(arrayModel.costTier, 'low');
+  assert.equal(arrayModel.supportsTools, true);
+  assert.equal(arrayModel.meetsCodexMinimums, true);
+  assert.equal(arrayModel.supportsReasoning, true);
+  assert.equal(arrayModel.reasoningEfforts, null);
+
+  const metadataModel = sanitizeModel({
+    id: 'metadata', supported_parameters: { tools: true, reasoning: { efforts: ['low', 'high'] } },
+    context_length: 32000,
+  }, compatibility);
+  assert.equal(metadataModel.supportsReasoning, true);
+  assert.deepEqual(metadataModel.reasoningEfforts, ['low', 'high']);
+  assert.equal(metadataModel.averagePricePerMillion, null);
+  assert.equal(metadataModel.costTier, 'unknown');
+});
+
+test('catalog exposes every key-visible model and sorts known prices low to high', async (t) => {
+  const originalFetch = openrouterClient.fetchUserModels;
+  openrouterClient.fetchUserModels = async () => [
+    {
+      id: 'vendor/high-limited', name: 'High Limited',
+      pricing: { prompt: '0.00002', completion: '0.00004' },
+      supported_parameters: [], context_length: 8_000,
+    },
+    {
+      id: 'vendor/unknown', name: 'Unknown Price', pricing: {},
+      supported_parameters: ['tools'], context_length: 64_000,
+    },
+    {
+      id: 'vendor/medium-verified', name: 'Medium Verified',
+      pricing: { prompt: '0.000002', completion: '0.000006' },
+      supported_parameters: ['tools', 'reasoning'], context_length: 64_000,
+    },
+    {
+      id: 'vendor/free', name: 'Free',
+      pricing: { prompt: '0', completion: '0' },
+      supported_parameters: ['tools'], context_length: 64_000,
+    },
+    {
+      id: 'vendor/low', name: 'Low',
+      pricing: { prompt: '0.0000001', completion: '0.0000003' },
+      supported_parameters: ['tools'], context_length: 64_000,
+    },
+  ];
+  agentModels.invalidateAll();
+  t.after(() => {
+    openrouterClient.fetchUserModels = originalFetch;
+    agentModels.invalidateAll();
+  });
+
+  const catalog = await agentModels.listOpenRouterModels({
+    pool: {
+      query: async () => ({ rows: [
+        { model_id: 'vendor/medium-verified', status: 'verified', note: 'Known good' },
+        { model_id: 'vendor/high-limited', status: 'blocked', note: 'No coding tools' },
+      ] }),
+    },
+    userId: 'complete-catalog-test-user',
+    credentialRevision: 3,
+    apiKey: 'sk-or-v1-test',
+    config: {
+      openrouterApiBase: 'https://openrouter.ai/api/v1',
+      openrouterOrigin: 'https://usernode.dev',
+      // Regression: the old implementation hid all non-verified models
+      // when this flag was false. It is intentionally ignored now.
+      openrouterExperimentalModels: false,
+    },
+  });
+
+  assert.deepEqual(catalog.models.map((model) => model.id), [
+    'vendor/free',
+    'vendor/low',
+    'vendor/medium-verified',
+    'vendor/high-limited',
+    'vendor/unknown',
+  ]);
+  assert.deepEqual(catalog.models.map((model) => model.costTier), [
+    'free', 'low', 'medium', 'high', 'unknown',
+  ]);
+  assert.equal(catalog.recommendedModelId, 'vendor/medium-verified');
+  assert.equal(catalog.models.find((model) => model.id === 'vendor/high-limited').compatibility, 'blocked');
+});
+
+test('resolveModelPricing preserves the sanitized per-million catalog prices', async (t) => {
+  const originalFetch = openrouterClient.fetchUserModels;
+  openrouterClient.fetchUserModels = async () => [{
+    id: 'openai/test-codex',
+    name: 'Test Codex',
+    pricing: { prompt: '0.00000125', completion: '0.00001' },
+    supported_parameters: ['tools', 'reasoning'],
+    context_length: 64_000,
+    top_provider: { max_completion_tokens: 8_192 },
+  }];
+  agentModels.invalidateAll();
+  t.after(() => {
+    openrouterClient.fetchUserModels = originalFetch;
+    agentModels.invalidateAll();
+  });
+
+  const model = await agentModels.resolveModelPricing({
+    pool: {
+      query: async () => ({
+        rows: [{ model_id: 'openai/test-codex', status: 'verified', note: null }],
+      }),
+    },
+    userId: 'pricing-test-user',
+    credentialRevision: 1,
+    apiKey: 'sk-or-v1-test',
+    modelId: 'openai/test-codex',
+    config: {
+      openrouterApiBase: 'https://openrouter.ai/api/v1',
+      openrouterOrigin: 'https://usernode.dev',
+      openrouterExperimentalModels: false,
+    },
+  });
+  assert.equal(model.inputPricePerMillion, 1.25);
+  assert.equal(model.outputPricePerMillion, 10);
+  assert.equal(model.contextLength, 64_000);
+  assert.equal(model.compatibility, 'verified');
+});

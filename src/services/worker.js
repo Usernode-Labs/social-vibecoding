@@ -7,6 +7,8 @@ const docker = require('./docker');
 const github = require('./github');
 const models = require('./models');
 const inLoopBrowser = require('./in-loop-browser');
+const registry = require('../agents/registry');
+const turnLifecycle = require('./turn-lifecycle');
 
 const WORKER_IMAGE = 'usernode-worker:latest';
 // Per-session worker container resource limits. Read from env (mirrored
@@ -31,6 +33,19 @@ const PLATFORM_INTERNAL_URL = process.env.PLATFORM_INTERNAL_URL || 'http://usern
 // services/platform-jwt.js; kept here as the name the comments below use.
 const WORKER_JWT_TTL = platformJwt.WORKER_TTL;
 
+// Version of the warm-container runtime contract. Bump whenever either the
+// bootstrap environment OR an installed runner changes incompatibly with the
+// host (e.g. token requirements, journal markers, retry behavior). ensureWorker
+// compares this label on warm-path hits and evicts + re-bootstraps containers
+// running an older contract. v4 introduces capability-scoped runner envs and
+// the host-managed Codex resume classifier, so a v3 image cannot serve it.
+// v5 replaces the unsafe Codex config writer and removes any v4-generated
+// config from the persistent session volume before the next turn.
+// v6 disables Codex's incompatible nested Linux sandbox and adds per-model
+// OpenRouter metadata; every v5 warm container must be replaced to pick up
+// both runner changes.
+const WORKER_BOOTSTRAP_ENV_VERSION = 'v6';
+
 // Mint the auth token the worker container uses to call back into the
 // platform's internal API. Scoped to a single session id; the
 // internal-auth middleware rejects anything whose purpose isn't
@@ -46,37 +61,102 @@ function mintWorkerJwt(sessionId) {
   return platformJwt.signWorkerToken({ sessionId });
 }
 
-// #616: same shape as mintWorkerJwt plus the `prod_debug` claim that the
-// internal prod-debug routes require. Minted ONLY for turns whose
+// Narrow, purpose-bound capabilities. worker:push is used by Codex build's
+// usernode-push; worker:issues-read by usernode-issues / attachments on both
+// backends; worker:anthropic-proxy authenticates Claude itself without also
+// granting the shell every worker:session mutation.
+function mintWorkerPushJwt(sessionId) {
+  return platformJwt.signWorkerPushToken({ sessionId });
+}
+function mintIssuesReadJwt(sessionId) {
+  return platformJwt.signIssuesReadToken({ sessionId });
+}
+function mintAnthropicProxyJwt(sessionId) {
+  return platformJwt.signAnthropicProxyToken({ sessionId });
+}
+
+// #616: purpose-bound read-only diagnostic token carrying the `prod_debug`
+// claim that the internal prod-debug routes require. Minted ONLY for turns whose
 // session passed debug-access.isEligible (admin-owned session on the
-// self-edit app) — the ordinary per-turn WORKER_JWT/ISSUES_JWT never
-// carry the claim, so a stolen ordinary token can't reach those routes.
+// self-edit app). It is deliberately not worker:session: a scout may inspect
+// this env value through Bash without gaining push or draft authority.
 function mintProdDebugJwt(sessionId) {
-  return platformJwt.signWorkerToken({ sessionId, prodDebug: true });
+  return platformJwt.signProdDebugToken({ sessionId });
+}
+
+// One backend decision, used everywhere in a turn's dispatch so the
+// runner, tokens, env, and active-turn record can never disagree (review
+// Commit 1 / plan 3.1). Rejects unknown backends instead of silently
+// falling through to Claude.
+function resolveTurnBackend(agentBackend) {
+  const backend = registry.resolveBackend(agentBackend || 'claude_code');
+  return {
+    backend,
+    isCodex: backend === 'codex_openrouter',
+    isClaude: backend === 'claude_code',
+  };
+}
+
+function requireNonEmptySecret(value, name) {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`buildTurnSecretEnv: ${name} required`);
+  }
+  return value;
 }
 
 // Pure builder for a turn's secret env (exported for unit tests).
-// Scout mode omits WORKER_JWT so usernode-push can't authenticate (see
-// the long comment in execInWorker); PROD_DEBUG_JWT rides along on
-// build + scout turns only — never sync (bookkeeping, no free-form CC).
-function buildTurnSecretEnv({ mode, workerJwt, anthropicApiKey, prodDebugJwt }) {
+// Scout mode omits every general worker:session alias, not merely the
+// WORKER_JWT name: unrestricted Bash can inspect and reuse any env value.
+// PROD_DEBUG_JWT rides along on build + scout turns only — never sync
+// (bookkeeping, no free-form agent).
+function buildTurnSecretEnv({
+  mode, agentBackend, workerSessionJwt, workerPushJwt, issuesReadJwt,
+  anthropicProxyJwt, anthropicApiKey, prodDebugJwt, openrouterApiKey,
+}) {
+  const { backend, isCodex, isClaude } = resolveTurnBackend(agentBackend);
+  if (!isClaude && !isCodex) {
+    throw new Error(`buildTurnSecretEnv: unsupported backend ${agentBackend}`);
+  }
+  if (mode !== 'scout' && mode !== 'build' && mode !== 'sync') {
+    throw new Error(`buildTurnSecretEnv: unsupported mode ${mode}`);
+  }
+  if (isCodex && mode === 'sync') {
+    throw new Error('buildTurnSecretEnv: Codex sync mode is not supported');
+  }
+
+  if (isCodex) {
+    // Codex receives ONLY its own credential plus narrow capability tokens
+    // (review Commit 1 / plan 3.3). It must never receive a general
+    // worker:session token, an Anthropic key/base, or a relay token.
+    const env = {
+      OPENROUTER_API_KEY: requireNonEmptySecret(openrouterApiKey, 'openrouterApiKey'),
+      ISSUES_JWT: requireNonEmptySecret(issuesReadJwt, 'issuesReadJwt'),
+    };
+    if (mode === 'build') {
+      env.WORKER_JWT = requireNonEmptySecret(workerPushJwt, 'workerPushJwt');
+    }
+    return env;
+  }
+
+  // Claude uses a narrow proxy credential when no BYOK key is provided and a
+  // narrow issues-read credential in every mode. Only build/sync receive the
+  // general callback token. In particular, scout has no worker:session token
+  // hidden under ANTHROPIC_API_KEY, ISSUES_JWT, or PROD_DEBUG_JWT.
   const useProxy = !anthropicApiKey;
-  const env = mode === 'scout'
-    ? {
-        ANTHROPIC_API_KEY: useProxy ? workerJwt : anthropicApiKey,
-        ISSUES_JWT: workerJwt,
-      }
-    : {
-        ANTHROPIC_API_KEY: useProxy ? workerJwt : anthropicApiKey,
-        WORKER_JWT: workerJwt,
-        ISSUES_JWT: workerJwt,
-      };
+  const env = {
+    ANTHROPIC_API_KEY: useProxy
+      ? requireNonEmptySecret(anthropicProxyJwt, 'anthropicProxyJwt')
+      : requireNonEmptySecret(anthropicApiKey, 'anthropicApiKey'),
+    ISSUES_JWT: requireNonEmptySecret(issuesReadJwt, 'issuesReadJwt'),
+  };
+  if (mode !== 'scout') {
+    env.WORKER_JWT = requireNonEmptySecret(workerSessionJwt, 'workerSessionJwt');
+  }
   if (prodDebugJwt && mode !== 'sync') {
     env.PROD_DEBUG_JWT = prodDebugJwt;
   }
   return env;
 }
-
 // ──────────────────────────────────────────────────────────────────────
 // Stream-json / marker parsing
 // ──────────────────────────────────────────────────────────────────────
@@ -246,6 +326,7 @@ function parseLine(line, onProgress, state) {
       else if (k === 'agent_model') state.agentModel = v || null;
       else if (k === 'agent_thread_id') state.agentThreadId = v || null;
       else if (k === 'agent_exit') state.agentExit = parseInt(v, 10);
+      else if (k === 'agent_retry_fresh') state.agentRetryFresh = v === '1';
       // #361: comma-delimited conflicted file paths (MODE=sync). Empty
       // string → no conflicts. Threaded out as result.conflictFiles so
       // sync-main.js can persist the merge-conflict snapshot.
@@ -280,7 +361,47 @@ function parseLine(line, onProgress, state) {
   }
   try {
     const event = JSON.parse(line);
-    applyStreamEvent(event, onProgress, state);
+    // Backend-aware event routing (plan.md review F3): Codex turns emit
+    // JSONL with a different event schema than Claude's stream-json. The
+    // Codex adapter (src/agents/codex-openrouter.js) normalizes them to
+    // the same progress vocabulary. Claude turns keep the legacy parser.
+    if (state.agentBackend === 'codex_openrouter') {
+      const codex = require('../agents/codex-openrouter');
+      // The normalizer returns an ARRAY of normalized events (a single
+      // file_change can emit several changed paths), and it now uses the
+      // pinned Codex 0.146.0 JSONL fields exactly. Parsing and state
+      // mutation are kept separate so each normalization branch is
+      // independently testable.
+      const events = codex.normalizeCodexLine(line, state);
+      for (const ev of events) {
+        if (ev.threadId) state.agentThreadId = ev.threadId;
+        // Store the final agent message as the turn result (review P4):
+        // scout persists this as the spec, and `[done]` (turn.completed)
+        // must never overwrite it.
+        if (ev.kind === 'agent_message' && ev.fullText != null) {
+          state.lastResultText = ev.fullText;
+        } else if (ev.kind === 'usage') {
+          // Retain token counts so the Codex turn can be attributed directly
+          // to agent_turns (review #3) instead of the Anthropic ledger.
+          // Nullish-safe: a missing usage field stays null (absent usage is
+          // NOT a genuine zero-token event).
+          const u = ev.usage || {};
+          if (u.inputTokens != null) state.inputTokens = u.inputTokens;
+          if (u.cachedInputTokens != null) state.cachedInputTokens = u.cachedInputTokens;
+          if (u.cacheWriteInputTokens != null) state.cacheWriteInputTokens = u.cacheWriteInputTokens;
+          if (u.outputTokens != null) state.outputTokens = u.outputTokens;
+          if (u.reasoningOutputTokens != null) state.reasoningOutputTokens = u.reasoningOutputTokens;
+        }
+        if (ev.kind === 'error' && ev.errorMessage != null) {
+          state.ccIsError = true;
+          state.agentError = ev.errorMessage;
+        }
+        // Progress line: use the short display form (or any event text).
+        if (ev.text) onProgress(ev.text);
+      }
+    } else {
+      applyStreamEvent(event, onProgress, state);
+    }
   } catch {
     // Plain log line (git output, shell echo, etc.).
     if (line.length < 500) onProgress(line);
@@ -289,11 +410,23 @@ function parseLine(line, onProgress, state) {
 
 function newWatchState() {
   return {
+    // Stable logical turn identity used by cleanup/spend idempotency. This is
+    // host-owned and never parsed from untrusted runner output.
+    turnId: null,
     lastResultText: '',
     costUsd: 0,
+    // Retained Codex usage (review #3) for direct attribution to agent_turns.
+    inputTokens: null,
+    cachedInputTokens: null,
+    outputTokens: null,
+    reasoningOutputTokens: null,
     sessionId: null,
     initSessionId: null,
     ccIsError: false,
+    agentError: null,
+    usageSeen: false,
+    // plan.md 5.6: missing usage stays null, never a false zero.
+    cacheWriteInputTokens: null,
     ccExit: null,
     // Backend-neutral terminal-result fields (plan.md §4-PR1). PR5's
     // codex_openrouter runner emits these; claude_code leaves them null
@@ -303,6 +436,9 @@ function newWatchState() {
     agentModel: null,
     agentThreadId: null,
     agentExit: null,
+    // Runner-to-host control signal: a stale/missing resume thread needs
+    // one fresh physical dispatch, accounted as a separate attempt.
+    agentRetryFresh: false,
     ahead: 0,
     // #8: how many commits the branch is behind origin/main, parsed from
     // run-cc.sh's __USERNODE_RESULT__ line. Persisted to
@@ -385,7 +521,7 @@ function workerContainerName(sessionId) {
 // warm registry), so the timestamp suffix only disambiguates the
 // current turn from stale leftovers (which the wrapper rm's first).
 function turnJournalPath(turnId) {
-  return `/home/node/.claude/turn-${turnId}.log`;
+  return turnLifecycle.journalPathForAttempt(turnId);
 }
 
 // Per-turn prompt file inside the CC volume. The dispatch prompt used to
@@ -455,27 +591,51 @@ function _getPoolSafe() {
 
 async function _persistActiveTurn(sessionId, turn) {
   const pool = _getPoolSafe();
-  if (!pool) return;
+  if (!pool) return false;
   try {
-    await pool.query(
-      'UPDATE chat_sessions SET active_turn = $1 WHERE id = $2',
-      [JSON.stringify(turn), sessionId]
-    );
+    const current = await turnLifecycle.loadActiveTurn(pool, sessionId);
+    if (current) {
+      // Codex registers the ledger row and dispatch intent atomically before
+      // entering execInWorker. Accept only that exact physical attempt; this
+      // function is not allowed to replace an earlier attempt merely because
+      // it shares a logical turn id.
+      const isRegisteredAttempt = !!(
+        turn.backend === 'codex_openrouter'
+        && current.backend === 'codex_openrouter'
+        && turn.turnUuid
+        && String(current.turnUuid || '') === String(turn.turnUuid)
+        && String(turnLifecycle.turnIdentity(current) || '') === String(turn.turnId || '')
+        && current.phase === turnLifecycle.PHASE_DISPATCH_PENDING
+        && String(current.journal || '') === String(turn.journal || '')
+      );
+      if (isRegisteredAttempt) return true;
+      const err = new Error('turn-lifecycle: session already owns a different turn');
+      err.code = 'session_busy';
+      throw err;
+    }
+    await turnLifecycle.persistNewTurn(pool, sessionId, turn);
+    return true;
   } catch (err) {
     log.warn('worker', 'Failed to persist active_turn', { sessionId, err: err.message });
+    return false;
   }
 }
 
-async function clearActiveTurn(sessionId) {
+async function clearActiveTurn(sessionId, { turnId = null, journal = null } = {}) {
   const pool = _getPoolSafe();
-  if (!pool) return;
+  if (!pool) return false;
   try {
-    await pool.query(
-      'UPDATE chat_sessions SET active_turn = NULL WHERE id = $1',
-      [sessionId]
-    );
+    if (!turnId && !journal) {
+      const err = new Error('clearActiveTurn: durable turn identity required');
+      err.code = 'turn_identity_required';
+      throw err;
+    }
+    await turnLifecycle.markCleanupPending(pool, { sessionId, turnId, journal });
+    await turnLifecycle.clearCleanupPending(pool, { sessionId, turnId, journal });
+    return true;
   } catch (err) {
     log.warn('worker', 'Failed to clear active_turn', { sessionId, err: err.message });
+    return false;
   }
 }
 
@@ -500,60 +660,94 @@ async function clearActiveTurn(sessionId) {
 //
 // So callers that own a tail pass `holdTurnRecord: true` to
 // execInWorker. Instead of clearing the record when the journal is
-// consumed, it stamps `phase: 'tail'` and KEEPS the journal file — which
+// consumed, it stamps `phase: 'tail_pending'` and KEEPS the journal file — which
 // is exactly what resumeDetachedTurn needs to replay the turn and run
-// finalizeRecoveredTurn on the next boot. The caller then calls
-// finishTurn() in its own `finally`, once the tail is genuinely over.
+// finalizeRecoveredTurn on the next boot. The owner calls finishTurn() only
+// at its explicit completion boundary; a thrown tail deliberately keeps it.
 //
 // `tail` on the record is the milestone map: which tail steps already
 // landed, so a resumed tail redoes none of them (see noteTailMilestone).
-const TURN_PHASE_TAIL = 'tail';
+const TURN_PHASE_TAIL = turnLifecycle.PHASE_TAIL_PENDING;
 
-async function markTurnTail(sessionId, milestones = {}) {
+async function markTurnTail(sessionId, milestones = {}, { turnId = null, journal = null } = {}) {
   const pool = _getPoolSafe();
-  if (!pool) return;
+  if (!pool) throw new Error('markTurnTail: database pool unavailable');
+  const meta = _registryGet(sessionId);
+  let identity = turnId || meta?.finishedTurnId || null;
+  let recoveryJournal = journal || meta?.finishedJournal || null;
   try {
-    await pool.query(
-      `UPDATE chat_sessions
-          SET active_turn = jsonb_set(
-                jsonb_set(
-                  jsonb_set(active_turn, '{phase}', $2::jsonb, true),
-                  '{tailStartedAt}', $3::jsonb, true),
-                '{tail}', COALESCE(active_turn->'tail', '{}'::jsonb) || $4::jsonb, true)
-        WHERE id = $1 AND active_turn IS NOT NULL`,
-      [
-        sessionId,
-        JSON.stringify(TURN_PHASE_TAIL),
-        JSON.stringify(new Date().toISOString()),
-        JSON.stringify(milestones || {}),
-      ]
-    );
+    if (!identity && !recoveryJournal) {
+      const err = new Error('markTurnTail: durable turn identity required');
+      err.code = 'turn_identity_required';
+      throw err;
+    }
+    await turnLifecycle.markTailPending(pool, {
+      sessionId,
+      turnId: identity,
+      journal: recoveryJournal,
+      patch: { tail: milestones || {} },
+    });
+    return true;
   } catch (err) {
     log.warn('worker', 'Failed to mark active_turn tail', { sessionId, err: err.message });
+    throw err;
   }
 }
 
 // Record ONE tail milestone on the held record (merge, never replace).
-// Best-effort by design: a failed stamp costs a repeated step on the
-// (rare) resume path, never a failed turn. No-op when the record is
-// already gone — a stamp arriving after finishTurn must not resurrect it
-// (the `active_turn IS NOT NULL` guard).
-async function noteTailMilestone(sessionId, milestones) {
-  if (!milestones || typeof milestones !== 'object') return;
+// No-op when the record is already gone — a stamp arriving after finishTurn
+// must not resurrect it. Every live/recovered caller supplies either its
+// explicit identity or the identity remembered by execInWorker; there is no
+// session-only mutation fallback.
+async function noteTailMilestone(sessionId, milestones, { turnId = null, journal = null } = {}) {
+  if (!milestones || typeof milestones !== 'object') return false;
   const pool = _getPoolSafe();
-  if (!pool) return;
+  if (!pool) throw new Error('noteTailMilestone: database pool unavailable');
+  const meta = _registryGet(sessionId);
+  const identity = turnId || meta?.finishedTurnId || null;
+  const recoveryJournal = journal || meta?.finishedJournal || null;
   try {
-    await pool.query(
-      `UPDATE chat_sessions
-          SET active_turn = jsonb_set(
-                active_turn, '{tail}',
-                COALESCE(active_turn->'tail', '{}'::jsonb) || $2::jsonb, true)
-        WHERE id = $1 AND active_turn IS NOT NULL`,
-      [sessionId, JSON.stringify(milestones)]
-    );
+    if (!identity && !recoveryJournal) {
+      const err = new Error('noteTailMilestone: durable turn identity required');
+      err.code = 'turn_identity_required';
+      throw err;
+    }
+    const result = await turnLifecycle.mergeTailMilestones(pool, {
+      sessionId,
+      turnId: identity,
+      journal: identity ? null : recoveryJournal,
+      milestones,
+    });
+    return result.updated;
   } catch (err) {
     log.warn('worker', 'Failed to note tail milestone', { sessionId, err: err.message });
+    throw err;
   }
+}
+
+// Mark a completed missing-thread attempt as prepared for the one allowed
+// live retry. Preparation remains a tail_pending state: only the atomic
+// startCodexAttempt transaction may advance the durable record back to
+// dispatch_pending with attempt two's ledger identity.
+async function markTurnRetryPending(sessionId, {
+  turnUuid, logicalTurnId, attemptNumber = 1,
+} = {}) {
+  const pool = _getPoolSafe();
+  if (!pool) throw new Error('markTurnRetryPending: database pool unavailable');
+  await turnLifecycle.transitionTurn(pool, {
+    sessionId,
+    turnId: logicalTurnId,
+    turnUuid,
+    from: [turnLifecycle.PHASE_TAIL_PENDING, 'tail', 'retry_pending'],
+    to: turnLifecycle.PHASE_TAIL_PENDING,
+    patch: {
+      retryFresh: true,
+      logicalTurnId,
+      attemptNumber,
+      retryPreparedAt: new Date().toISOString(),
+    },
+  });
+  return true;
 }
 
 // End of the whole turn (exec + tail): drop the durable record and the
@@ -570,20 +764,80 @@ function isTailPhase(activeTurn) {
   if (typeof rec === 'string') {
     try { rec = JSON.parse(rec); } catch { return false; }
   }
-  return !!rec && rec.phase === TURN_PHASE_TAIL;
+  return !!rec && (rec.phase === TURN_PHASE_TAIL || rec.phase === 'tail');
 }
 
-async function finishTurn(sessionId, { journal = null } = {}) {
-  const journalPath = journal || _registryGet(sessionId)?.finishedJournal || null;
-  if (journalPath) {
+async function finishTurn(sessionId, { journal = null, turnId = null } = {}) {
+  const meta = _registryGet(sessionId);
+  const rememberedJournal = meta?.finishedJournal || null;
+  const rememberedTurnId = meta?.finishedTurnId || null;
+  const journalPaths = new Set([journal, rememberedJournal].filter(Boolean));
+  const pool = _getPoolSafe();
+  if (!pool) return false;
+  let ownsCleanup = false;
+  let cleanupTurnId = null;
+  let cleanupJournal = null;
+  try {
+    const current = await turnLifecycle.loadActiveTurn(pool, sessionId);
+    if (current) {
+      // Never infer ownership from the record currently occupying the
+      // session. A stale caller may be looking at a replacement turn; only
+      // the identity it carried (or execInWorker remembered for it) can clear.
+      if (turnId) cleanupTurnId = turnId;
+      else if (journal) cleanupJournal = journal;
+      else if (rememberedTurnId) cleanupTurnId = rememberedTurnId;
+      else if (rememberedJournal) cleanupJournal = rememberedJournal;
+      if (!cleanupTurnId && !cleanupJournal) {
+        const err = new Error('finishTurn: durable turn identity required');
+        err.code = 'turn_identity_required';
+        throw err;
+      }
+      const cleanup = await turnLifecycle.markCleanupPending(pool, {
+        sessionId,
+        turnId: cleanupTurnId,
+        journal: cleanupJournal,
+      });
+      ownsCleanup = !cleanup.alreadyCleared;
+      if (ownsCleanup && current.journal) journalPaths.add(current.journal);
+    }
+  } catch (err) {
+    log.warn('worker', 'Turn cleanup deferred because active_turn could not be cleared', {
+      sessionId, journalCount: journalPaths.size, err: err.message,
+    });
+    return false;
+  }
+
+  // Keep cleanup_pending durable while removing the shared prompt. If the
+  // row were cleared first, a replacement dispatch could write its prompt
+  // in the gap and this stale cleanup would delete the new turn's input.
+  // An idempotent call after the row is already gone may remove only UUID-
+  // unique journals; it never owns the shared prompt path.
+  const filesToRemove = [...journalPaths];
+  if (ownsCleanup) filesToRemove.push(TURN_PROMPT_PATH);
+  if (filesToRemove.length) {
     const containerName = _registryGet(sessionId)?.containerName
       || workerContainerName(sessionId);
-    docker.execFileAsync('docker', [
-      'exec', containerName, 'rm', '-f', journalPath,
+    await docker.execFileAsync('docker', [
+      'exec', containerName, 'rm', '-f', ...filesToRemove,
     ], { timeout: 5000 }).catch(() => {});
   }
-  _registryUpsert(sessionId, { finishedJournal: null });
-  await clearActiveTurn(sessionId);
+
+  if (ownsCleanup) {
+    try {
+      await turnLifecycle.clearCleanupPending(pool, {
+        sessionId,
+        turnId: cleanupTurnId,
+        journal: cleanupJournal,
+      });
+    } catch (err) {
+      log.warn('worker', 'Turn cleanup deferred because active_turn could not be cleared', {
+        sessionId, journalCount: journalPaths.size, err: err.message,
+      });
+      return false;
+    }
+  }
+  _registryUpsert(sessionId, { finishedJournal: null, finishedTurnId: null });
+  return true;
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -619,7 +873,8 @@ function _registryGet(sessionId) {
 }
 
 function _registryUpsert(sessionId, patch) {
-  const prev = _warmRegistry.get(sessionId) || {
+  const existing = _warmRegistry.get(sessionId);
+  const prev = existing || {
     containerName: workerContainerName(sessionId),
     lastUsedMs: Date.now(),
     inFlight: false,
@@ -628,6 +883,15 @@ function _registryUpsert(sessionId, patch) {
   };
   const next = { ...prev, ...patch };
   _warmRegistry.set(sessionId, next);
+  // #1038: the inner docker-exec window is one of the two signals
+  // isSessionBusy() ORs together, so a change here can flip a session's
+  // working state for every client. Only the actual transition notifies —
+  // lastUsedMs bumps and bootstrap bookkeeping are invisible to clients.
+  if (!!prev.inFlight !== !!next.inFlight) {
+    try {
+      require('./active-workers').notifySessionState(sessionId);
+    } catch { /* notifier is best-effort */ }
+  }
   return next;
 }
 
@@ -688,7 +952,7 @@ function adoptWarmWorker(sessionId, containerName = null) {
 // callers should use `ensureWorker` which handles the "already warm"
 // case and concurrency.
 async function _bootstrapWarmContainer(sessionId, {
-  repoOwner, repoName, branchName, anthropicApiKey, onProgress,
+  repoOwner, repoName, branchName, onProgress,
 }) {
   const containerName = workerContainerName(sessionId);
 
@@ -722,44 +986,15 @@ async function _bootstrapWarmContainer(sessionId, {
   // into git at all.
   const cloneUrl = await github.getCloneUrl(repoOwner, repoName);
 
-  // Mint the JWT the worker uses to call back into the platform's
-  // internal API. The only operation it authorizes is pushing the
-  // session's canonical branch (and creating its PR) — see
-  // src/routes/internal.js and execPushFromWorker below.
-  const workerJwt = mintWorkerJwt(sessionId);
-
-  // CC volume persists across container churn so `claude --resume <id>`
-  // can replay prior conversation state on every re-warm.
+  // Commit 1 (plan 3.4): the warm container's bootstrap environment MUST
+  // contain no provider keys and no worker capability tokens. The long-
+  // lived container is now created with ONLY operational configuration;
+  // every credential/capability is injected on the individual per-turn
+  // `docker exec` instead. worker-run.sh in warm mode only clones,
+  // checks out, initializes files, and sleeps.
   const ccVolume = ccVolumeName(sessionId);
   await docker.ensureVolume(ccVolume);
 
-  // BYOK safety (#30): we split container env into two groups.
-  //
-  // `secretEnv` are secrets that must NEVER appear in the docker CLI
-  // argv — doing so would expose them in `ps` on the host (briefly)
-  // and, far worse, in `err.cmd`/`err.message` on every `execFile`
-  // failure, which `log.warn` then writes to the log file. Instead we
-  // reference them with bare `-e KEY` (no `=value`) so Docker reads
-  // the values from its own process env, and we set that env on the
-  // child only. Values end up in /proc/<docker-pid>/environ
-  // (root/same-user readable, not argv-visible).
-  //
-  // `safeEnv` holds the non-secret args that stay inline.
-  //
-  // Anthropic-proxy (key-exfil mitigation): for platform-key sessions
-  // (anthropicApiKey unset) we deliberately leave ANTHROPIC_API_KEY
-  // empty at bootstrap. The real key NEVER enters this container —
-  // execInWorker overrides ANTHROPIC_API_KEY per-turn with a
-  // session-scoped JWT, and ANTHROPIC_BASE_URL points at the platform
-  // proxy. For BYOK sessions the user's own key is set in env both at
-  // bootstrap and per-turn (their key is theirs to exfiltrate; only
-  // their session can read it).
-  const secretEnv = {
-    ANTHROPIC_API_KEY: anthropicApiKey || '',
-    // No PAT — public clones don't need it, and removing it is the
-    // whole point of the platform-side push proxy.
-    WORKER_JWT: workerJwt,
-  };
   const safeEnv = {
     GIT_AUTHOR_NAME: 'usernode-bot',
     GIT_AUTHOR_EMAIL: 'usernode-bot@users.noreply.github.com',
@@ -776,7 +1011,6 @@ async function _bootstrapWarmContainer(sessionId, {
     SESSION_ID: String(sessionId),
     PLATFORM_URL: PLATFORM_INTERNAL_URL,
   };
-  const secretEnvArgs = Object.keys(secretEnv).flatMap((k) => ['-e', k]);
   const safeEnvArgs = Object.entries(safeEnv).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
 
   const network = process.env.DOCKER_NETWORK || 'shared-web';
@@ -792,26 +1026,18 @@ async function _bootstrapWarmContainer(sessionId, {
     '--memory', WORKER_MEMORY,
     '--cpus', WORKER_CPUS,
     '--security-opt', 'no-new-privileges:true',
-    // Anthropic-proxy migration marker. ensureWorker checks this label
-    // on warm-path hits and evicts + rebootstraps any container missing
-    // it, so pre-proxy containers (which had the real ANTHROPIC_API_KEY
-    // baked into their bootstrap env) get cycled out on the next ensure.
-    // Bump the version when the bootstrap-env shape changes again.
-    // v2: worker tokens moved off the shared JWT_SECRET onto
-    // WORKER_JWT_SECRET, so any container still holding a v1-era token
-    // would 401 on its next internal call. Evicting them re-mints.
-    '--label', 'usernode.proxy=v2',
+    // Warm-runtime migration marker. No secrets are injected at bootstrap,
+    // and ensureWorker evicts any container whose label differs from the
+    // current host/runner contract (including old images with obsolete token
+    // requirements or retry behavior).
+    '--label', `usernode.proxy=${WORKER_BOOTSTRAP_ENV_VERSION}`,
     '-v', `${ccVolume}:/home/node/.claude`,
-    ...secretEnvArgs,
     ...safeEnvArgs,
     WORKER_IMAGE,
   ];
 
   await docker.execFileAsync('docker', args, {
     timeout: 30000,
-    // Merge secrets into the child's env so `docker run -e KEY` can
-    // pick them up without them ever appearing in argv.
-    env: { ...process.env, ...secretEnv },
   });
   log.info('worker', 'Warm worker spawned', { containerName, ccVolume });
 
@@ -894,7 +1120,6 @@ async function _awaitWarmReady(containerName, { onProgress, timeoutMs = WARM_REA
 // the registry entry is cleared so the next caller retries from scratch.
 async function ensureWorker(sessionId, {
   repoOwner, repoName, branchName,
-  anthropicApiKey,
   onProgress,
 } = {}) {
   const containerName = workerContainerName(sessionId);
@@ -910,15 +1135,13 @@ async function ensureWorker(sessionId, {
   // an external `docker rm` would otherwise leave stale state.
   const status = await docker.getContainerStatus(containerName);
   if (status === 'running') {
-    // Bootstrap-env migration gate: v1-era warm containers had the real
-    // ANTHROPIC_API_KEY baked into their bootstrap env (still readable
-    // from /proc/1/environ between turns), and hold a worker token
-    // signed with the retired shared secret that the internal API no
-    // longer accepts. Detect them via a stale usernode.proxy label and
-    // force a re-bootstrap. Cheap — single `docker inspect` on the
-    // warm-path hot path.
+    // Runtime-contract migration gate: earlier warm containers may have
+    // stale bootstrap credentials, token requirements, or runner semantics
+    // that the current host no longer supports. Detect them via the persisted
+    // usernode.proxy label and force a re-bootstrap. Cheap — one Docker
+    // inspect on the warm-path hot path.
     const labels = await docker.getContainerLabels(containerName);
-    if (labels['usernode.proxy'] !== 'v2') {
+    if (labels['usernode.proxy'] !== WORKER_BOOTSTRAP_ENV_VERSION) {
       log.info('worker', 'Evicting stale-label warm container', { containerName });
       await evictWorker(sessionId).catch((err) => {
         log.warn('worker', 'Eviction failed; falling through to bootstrap', {
@@ -939,7 +1162,7 @@ async function ensureWorker(sessionId, {
   const bootstrap = (async () => {
     try {
       await _bootstrapWarmContainer(sessionId, {
-        repoOwner, repoName, branchName, anthropicApiKey, onProgress,
+        repoOwner, repoName, branchName, onProgress,
       });
       _registryUpsert(sessionId, {
         bootstrap: null,
@@ -971,11 +1194,36 @@ async function ensureWorker(sessionId, {
 async function execInWorker(sessionId, {
   mode = 'build',
   prompt,
+  // Restart recovery can reuse the prompt file deliberately retained by a
+  // runner that emitted agent_retry_fresh=1. Live calls keep writing the
+  // supplied prompt exactly as before.
+  reusePromptFile = false,
   model,
   commitMsg,
   resumeSessionId,
   branchName,
   anthropicApiKey,
+  // Backend selection (plan.md): when 'codex_openrouter', the turn is
+  // dispatched to the Codex runner with the user's per-exec OpenRouter key
+  // (direct transport) instead of the Claude runner + Anthropic proxy.
+  // Defaults to claude_code (unchanged behavior).
+  agentBackend = 'claude_code',
+  // Codex/OpenRouter-specific turn context (direct transport, review P0):
+  // the user's OpenRouter key is passed in ONLY for this specific docker
+  // exec (injected as OPENROUTER_API_KEY into the per-turn environment),
+  // plus the session-pinned model and reasoning effort.
+  agentModel = null,
+  agentReasoningEffort = null,
+  agentModelMetadata = null,
+  openrouterApiKey = null,
+  openrouterApiBase = null,
+  turnUuid = null,
+  logicalTurnId = null,
+  attemptNumber = null,
+  // Optional preselected journal path. Codex attempt registration can supply
+  // a deterministic path once attempt creation moves into the same DB
+  // transaction; ordinary callers leave it null.
+  journalPath = null,
   onProgress,
   // #616: when true (admin-owned session on the self-edit app — the
   // caller checks via debug-access.isEligible), the turn env gains
@@ -984,12 +1232,17 @@ async function execInWorker(sessionId, {
   prodDebug = false,
   // When true the caller owns a post-agent TAIL (PR → staging → cards →
   // wrap-up) and takes over the turn record's lifetime: this function
-  // stamps `phase: 'tail'` instead of clearing it, and leaves the journal
+  // stamps `phase: 'tail_pending'` instead of clearing it, and leaves the journal
   // on disk so a restart mid-tail can replay the turn. The caller MUST
-  // call finishTurn(sessionId) in its own `finally`. See the
+  // call finishTurn(sessionId, { turnId }) at its explicit completion
+  // boundary. Interactive callers may defer that boundary through the Mayor
+  // wrap-up; headless callers finish in their own tool-side finally. See the
   // "Post-agent TAIL" note above. Default false — the sync path and any
   // future tail-less caller keep the original clear-on-exit behaviour.
   holdTurnRecord = false,
+  // Kept as a compatibility option for older call sites. Persistence is now
+  // required for every dispatch, not only recovered retries.
+  requireActiveTurnPersistence = false,
   // Legacy callback: the attached transport used to hand the host-side
   // `docker exec` child to the route handler for SIGTERM-based stops.
   // The detached transport has no such child — stops go through
@@ -1003,10 +1256,16 @@ async function execInWorker(sessionId, {
   if (meta.inFlight) {
     throw new Error(`execInWorker: a turn is already in flight for session ${sessionId}`);
   }
-  if (!prompt) {
+  if (!prompt && !reusePromptFile) {
     throw new Error('execInWorker: prompt required');
   }
   const containerName = meta.containerName;
+  const durableTurnId = logicalTurnId || turnUuid || turnLifecycle.newTurnId();
+  // Only caller-supplied identities can already own a durable row at this
+  // point. A legacy Claude dispatch gets its active_turn below, after the
+  // stop gate, so its freshly generated fallback id must not be returned as
+  // though it had been registered when the gate prevents that write.
+  const preRegisteredTurnId = logicalTurnId || turnUuid || null;
 
   // #937: honour a stop that was requested while this turn was still
   // spinning up. Historically the dispatch upsert below cleared
@@ -1028,6 +1287,12 @@ async function execInWorker(sessionId, {
       sessionId, containerName, mode,
     });
     const stopped = newWatchState();
+    // Codex registers its ledger row + durable active_turn atomically before
+    // entering this function. Preserve that already-owned logical identity
+    // even though no paid dispatch occurred, so the caller can terminalize
+    // the attempt and release the dispatch_pending record immediately.
+    stopped.turnId = preRegisteredTurnId;
+    stopped.agentBackend = agentBackend;
     stopped.execExitSeen = true;
     stopped.exitCode = 143;
     return stopped;
@@ -1038,14 +1303,45 @@ async function execInWorker(sessionId, {
   // container has been alive. This avoids edge cases where a session
   // outlives its bootstrap-time token (24h is the cap today; could be
   // shorter later) and the next push fails with 401 from the proxy.
-  const workerJwt = mintWorkerJwt(sessionId);
+  // One backend decision for this whole dispatch (review Commit 1 /
+  // plan 3.1): all runner/token/env/active-turn choices derive from it.
+  const { backend: resolvedBackend, isCodex, isClaude } = resolveTurnBackend(agentBackend);
+  const useAnthropicProxy = isClaude && !anthropicApiKey;
+
+  // Backend-specific capability minting (plan 3.2). Crucially,
+  // mintWorkerJwt() (general worker:session) NEVER runs for a Codex turn —
+  // the property is structural, not "hide the already-minted token".
+  let workerSessionJwt = null;
+  let workerPushJwt = null;
+  let issuesReadJwt = null;
+  let anthropicProxyJwt = null;
+  let prodDebugJwt = null;
+  issuesReadJwt = mintIssuesReadJwt(sessionId);
+  if (isCodex) {
+    if (mode === 'build') {
+      workerPushJwt = mintWorkerPushJwt(sessionId);
+    }
+  } else {
+    // A scout must never mint a general token at all. Hiding WORKER_JWT while
+    // placing the same capability in ISSUES_JWT/ANTHROPIC_API_KEY is not an
+    // isolation boundary when the agent has Bash.
+    if (mode !== 'scout') workerSessionJwt = mintWorkerJwt(sessionId);
+    if (useAnthropicProxy) anthropicProxyJwt = mintAnthropicProxyJwt(sessionId);
+    if (prodDebug && mode !== 'sync') {
+      prodDebugJwt = mintProdDebugJwt(sessionId);
+    }
+  }
+
+  const persistedModel = isCodex ? (agentModel || '') : models.resolve(model);
 
   // The prompt travels as a file, never as exec argv/env — a single
   // argv/env string is capped at 128 KiB on Linux, and build prompts
   // (conventions block + spec doc) legitimately exceed it. See
   // TURN_PROMPT_PATH. Written before active_turn is persisted so a
   // failure here surfaces as a plain turn error with nothing to reap.
-  await writeTurnPrompt(sessionId, prompt);
+  if (!reusePromptFile) {
+    await writeTurnPrompt(sessionId, prompt);
+  }
 
   // Anthropic-proxy: when the caller provides a BYOK key (anthropicApiKey
   // truthy), the worker hits api.anthropic.com directly with that key
@@ -1053,72 +1349,80 @@ async function execInWorker(sessionId, {
   // SDK's traffic through the platform's in-process proxy at
   // /api/internal/anthropic. The `claude` CLI honors ANTHROPIC_BASE_URL
   // for endpoint retargeting and ANTHROPIC_API_KEY as the x-api-key
-  // header, so we put the session-scoped WORKER_JWT in
+  // header, so we put a purpose-bound worker:anthropic-proxy token in
   // ANTHROPIC_API_KEY: the proxy verifies it, swaps in the real
   // platform key, and forwards. The real key never enters the worker
   // container, so a malicious prompt like "echo $ANTHROPIC_API_KEY"
   // exfiltrates only a short-lived JWT that's useless against
   // api.anthropic.com directly.
-  const useProxy = !anthropicApiKey;
-  // Scout mode: omit WORKER_JWT so usernode-push has no way to
-  // authenticate against the platform's push proxy, regardless of how
-  // CC may try to invoke it. ANTHROPIC_API_KEY still gets the JWT when
-  // we're routing through the Anthropic proxy — the proxy authenticates
-  // request-scoped JWTs for the Anthropic round-trip itself, so dropping
-  // it would break LLM access entirely. Build mode keeps both: the
-  // commit/push block in run-cc.sh runs, and usernode-push needs the
-  // JWT to push the session branch.
-  // ISSUES_JWT is a read-only, session-scoped token for the usernode-issues
-  // CLI (GET /api/internal/sessions/:id/issues). It's the SAME minted JWT as
-  // WORKER_JWT but handed over under a distinct env var so scout — which
-  // never gets WORKER_JWT, and so cannot push — can still read public
-  // issues. Both modes get it; usernode-push remains gated on WORKER_JWT.
-  // PROD_DEBUG_JWT (#616): a second, claim-carrying JWT for the
-  // usernode-debug CLI, present only when the dispatch site verified
-  // eligibility (admin-owned session on the self-edit app). The routes
-  // re-check eligibility in the DB on every call, so the env var alone
-  // grants nothing once admin is revoked.
   const secretEnv = buildTurnSecretEnv({
     mode,
-    workerJwt,
+    agentBackend: resolvedBackend,
+    workerSessionJwt,
+    workerPushJwt,
+    issuesReadJwt,
+    anthropicProxyJwt,
     anthropicApiKey,
-    prodDebugJwt: prodDebug && mode !== 'sync' ? mintProdDebugJwt(sessionId) : null,
+    prodDebugJwt,
+    openrouterApiKey,
   });
   const safeEnv = {
     PROMPT_FILE: TURN_PROMPT_PATH,
     MODE: mode,
-    MODEL: models.resolve(model),
-    COMMIT_MSG: commitMsg || 'Changes via Usernode',
-    CLAUDE_RESUME_SESSION_ID: resumeSessionId || '',
-    // run-cc.sh defensively re-asserts BRANCH (in case the wrapper's
-    // checkpoint moves) and gates the pre-exec git reset on it.
     BRANCH: branchName || '',
-    // Refresh in case the warm container's env was perturbed; cheap.
+    COMMIT_MSG: commitMsg || 'Changes via Usernode',
     SESSION_ID: String(sessionId),
     PLATFORM_URL: PLATFORM_INTERNAL_URL,
-    // Retarget the Anthropic SDK through our proxy when not BYOK.
-    // Setting it to '' would still be honored by the SDK as the base
-    // URL; only set the key when we mean it.
-    ...(useProxy
-      ? { ANTHROPIC_BASE_URL: `${PLATFORM_INTERNAL_URL}/api/internal/anthropic` }
-      : {}),
+    ...(isClaude ? {
+      MODEL: models.resolve(model),
+      CLAUDE_RESUME_SESSION_ID: resumeSessionId || '',
+      // Retarget the Anthropic SDK through the proxy only for Claude when
+      // not BYOK. Never set for Codex.
+      ...(useAnthropicProxy
+        ? { ANTHROPIC_BASE_URL: `${PLATFORM_INTERNAL_URL}/api/internal/anthropic` }
+        : {}),
+    } : {}),
     // Optional in-loop browser: build-only INLOOP_* env (port,
     // USERNODE_ENV=staging, throwaway DB pointer) the agent uses to boot
     // the edited app locally for a headless visual check. Empty for
-    // scout/sync. This is purely local app/browser config — distinct from
-    // ANTHROPIC_BASE_URL, which only retargets the Anthropic SDK and is
-    // never used by the local launch. See services/in-loop-browser.js.
-    ...inLoopBrowser.browserEnvForMode(mode),
-  };
-  // Journal transport: the turn runs DETACHED from this process. The
+    // scout/sync.
+   ...inLoopBrowser.browserEnvForMode(mode),
+ };
+  if (isCodex) {
+    safeEnv.AGENT_BACKEND = 'codex_openrouter';
+    safeEnv.AGENT_MODEL = agentModel || '';
+    safeEnv.AGENT_REASONING_EFFORT = agentReasoningEffort || '';
+    safeEnv.AGENT_MODEL_NAME = agentModelMetadata?.name || agentModel || '';
+    safeEnv.AGENT_MODEL_CONTEXT_WINDOW = agentModelMetadata?.contextWindow != null
+      ? String(agentModelMetadata.contextWindow)
+      : '';
+    safeEnv.AGENT_MODEL_MAX_OUTPUT_TOKENS = agentModelMetadata?.maxOutputTokens != null
+      ? String(agentModelMetadata.maxOutputTokens)
+      : '';
+    safeEnv.AGENT_MODEL_SUPPORTS_REASONING = agentModelMetadata?.supportsReasoning == null
+      ? ''
+      : (agentModelMetadata.supportsReasoning ? '1' : '0');
+    safeEnv.AGENT_MODEL_REASONING_EFFORTS = Array.isArray(agentModelMetadata?.reasoningEfforts)
+      ? agentModelMetadata.reasoningEfforts.join(',')
+      : '';
+    safeEnv.AGENT_MODEL_SUPPORTS_TOOLS = agentModelMetadata?.supportsTools == null
+      ? ''
+      : (agentModelMetadata.supportsTools ? '1' : '0');
+    safeEnv.AGENT_THREAD_ID = resumeSessionId || '';
+    safeEnv.TURN_UUID = turnUuid || '';
+    // The operator-configured OpenRouter endpoint (plan 4): always forward
+    // the (already-validated) base so generation and catalog agree.
+    safeEnv.OPENROUTER_API_BASE = openrouterApiBase || '';
+  }
+  const runner = isCodex ? '/usr/local/bin/run-codex-agent.sh' : '/usr/local/bin/run-cc.sh';
+ // Journal transport: the turn runs DETACHED from this process. The
   // wrapper below redirects run-cc.sh's combined output to a journal
   // file in the CC volume and appends __USERNODE_EXIT__ <code> when it
   // finishes. We then tail the journal from line 0. If the platform
   // restarts mid-turn, the exec keeps running, the journal keeps
   // filling, and the boot adoption path resumes via the same consumer
   // (resumeTurnFromJournal) using the chat_sessions.active_turn record.
-  const turnId = Date.now();
-  const journal = turnJournalPath(turnId);
+  const journal = journalPath || turnJournalPath(durableTurnId);
   safeEnv.TURN_JOURNAL = journal;
 
   const secretEnvArgs = Object.keys(secretEnv).flatMap((k) => ['-e', k]);
@@ -1131,14 +1435,20 @@ async function execInWorker(sessionId, {
     containerName,
     'sh', '-c',
     // rm stale journals first so the tailer's existence-wait can't latch
-    // onto a leftover file from a previous turn. The prompt file is
-    // removed AFTER the run (it was freshly written just above; run-cc.sh
-    // reads it mid-turn) so a stale prompt can never be re-read by a
-    // manual/errant exec.
+    // onto a leftover file from a previous turn. After the run, decide
+    // whether attempt two needs the prompt BEFORE publishing the exit marker:
+    // the marker releases the host to start attempt two, so no shared prompt
+    // mutation may happen after it becomes observable.
     'rm -f /home/node/.claude/turn-*.log 2>/dev/null; '
-      + '/usr/local/bin/run-cc.sh > "$TURN_JOURNAL" 2>&1; '
-      + 'echo "__USERNODE_EXIT__ $?" >> "$TURN_JOURNAL"; '
-      + 'rm -f "$PROMPT_FILE" 2>/dev/null',
+      + runner + ' > "$TURN_JOURNAL" 2>&1; '
+      + 'TURN_EXIT=$?; '
+      // A missing-thread result is a durable hand-off to attempt two. Keep
+      // the prompt in the private worker volume until the host (or restart
+      // recovery) has launched that attempt. Every other terminal path
+      // removes it immediately as before.
+      + 'if ! grep -qE "^__USERNODE_RESULT__ .*agent_retry_fresh=1([[:space:]]|$)" "$TURN_JOURNAL"; then '
+      + 'rm -f "$PROMPT_FILE" 2>/dev/null; fi; '
+      + 'echo "__USERNODE_EXIT__ $TURN_EXIT" >> "$TURN_JOURNAL"; exit "$TURN_EXIT"',
   ];
 
   // #361: record the in-flight turn's mode in the warm registry so the
@@ -1149,19 +1459,38 @@ async function execInWorker(sessionId, {
   // turn's own journal (#889) instead of leaving the consumer to discover
   // the kill via its 10s liveness watchdog.
   _registryUpsert(sessionId, {
-    inFlight: true, activeTurnMode: mode, journal,
+    inFlight: true, activeTurnMode: mode, journal, activeTurnId: durableTurnId,
     turnByokCents: 0, turnByokSwitched: false,
   });
-  await _persistActiveTurn(sessionId, {
+  const activeTurnPersisted = await _persistActiveTurn(sessionId, {
+    turnId: durableTurnId,
+    phase: turnLifecycle.PHASE_DISPATCH_PENDING,
     mode,
     journal,
-    model: models.resolve(model),
+    backend: resolvedBackend,
+    turnUuid: turnUuid || undefined,
+    // plan 7.4: persist the attempt identity so interactive/headless
+    // recovery can terminalize the correct agent_turns row idempotently.
+    logicalTurnId: logicalTurnId || undefined,
+    attemptNumber: attemptNumber || undefined,
+    model: persistedModel,
     startedAt: new Date().toISOString(),
     // #174: billing context for restart-resume — the resume paths debit
     // the recovered costUsd into the bucket the turn actually billed,
     // even if the user adds/removes their key while the turn is detached.
     byok: !!anthropicApiKey,
   });
+  if (!activeTurnPersisted) {
+    _registryUpsert(sessionId, {
+      inFlight: false, lastUsedMs: Date.now(), activeTurnMode: null,
+      journal: null, activeTurnId: null,
+    });
+    const err = new Error('execInWorker: durable active turn could not be persisted');
+    err.code = requireActiveTurnPersistence
+      ? 'durable_retry_persist_failed'
+      : 'durable_turn_persist_failed';
+    throw err;
+  }
 
   // Visible to the `finally` below, which stamps the tail's seed
   // milestones (sha / pushOk) from whatever the exec established.
@@ -1174,6 +1503,17 @@ async function execInWorker(sessionId, {
       timeout: 30000,
       env: { ...process.env, ...secretEnv },
     });
+    // The durable dispatch record was committed before docker exec. Advancing
+    // the phase is required for normal operation, but after the process has
+    // started a transient DB error cannot safely be turned into a second
+    // dispatch. Leave dispatch_pending in place; boot recovery treats both
+    // dispatch_pending and executing as journal-resumable and never blindly
+    // reissues the provider request.
+    await turnLifecycle.markExecuting(_getPoolSafe(), {
+      sessionId, turnId: durableTurnId,
+    }).catch((err) => log.warn('worker', 'Failed to mark turn executing; durable dispatch remains recoverable', {
+      sessionId, turnId: durableTurnId, err: err.message,
+    }));
     // onChild is legacy: there is no host-side child that owns the turn
     // anymore. Stop semantics live in stopTurn() (in-container pkill).
     if (typeof onChild === 'function') {
@@ -1195,6 +1535,13 @@ async function execInWorker(sessionId, {
     }
 
     const state = newWatchState();
+    state.turnId = durableTurnId;
+    // Seed the backend BEFORE consuming the journal (review P4): parseLine
+    // routes JSON events to the Codex adapter only when
+    // state.agentBackend === 'codex_openrouter'. The runner emits
+    // agent_backend in __USERNODE_RESULT__ (too late for the events), so
+    // we seed it from the dispatch param up front.
+    state.agentBackend = agentBackend;
     execState = state;
     const progress = typeof onProgress === 'function' ? onProgress : () => {};
     await _consumeJournal(containerName, journal, progress, state, { sessionId });
@@ -1219,10 +1566,10 @@ async function execInWorker(sessionId, {
     // next turn's boundary is what resets it.
     _registryUpsert(sessionId, {
       inFlight: false, lastUsedMs: Date.now(), activeTurnMode: null,
-      journal: null,
+      journal: null, activeTurnId: null,
       // Remembered for finishTurn so the caller's `finally` doesn't have
       // to thread the journal path back through its own scope.
-      ...(holdTurnRecord ? { finishedJournal: journal } : {}),
+      ...(holdTurnRecord ? { finishedJournal: journal, finishedTurnId: durableTurnId } : {}),
     });
     if (holdTurnRecord) {
       // Hand the record to the tail rather than dropping it. Seed the
@@ -1231,9 +1578,9 @@ async function execInWorker(sessionId, {
       // re-derive it from a dead worker.
       await markTurnTail(sessionId, execState
         ? { sha: execState.sha || null, pushOk: execState.pushOk === true }
-        : {});
+        : {}, { turnId: durableTurnId, journal });
     } else {
-      await clearActiveTurn(sessionId);
+      await finishTurn(sessionId, { turnId: durableTurnId, journal });
     }
   }
 }
@@ -1267,14 +1614,13 @@ function noteTurnByokSpend(sessionId, cents) {
   const meta = _warmRegistry.get(sid);
   _registryUpsert(sid, { turnByokCents: ((meta && meta.turnByokCents) || 0) + cents });
   const pool = _getPoolSafe();
-  if (pool) {
-    pool.query(
-      `UPDATE chat_sessions
-         SET active_turn = jsonb_set(active_turn, '{byokCents}',
-           to_jsonb(COALESCE((active_turn->>'byokCents')::numeric, 0) + $1::numeric))
-       WHERE id = $2 AND active_turn IS NOT NULL`,
-      [cents, sid]
-    ).catch((err) => {
+  const activeTurnId = meta?.activeTurnId || null;
+  if (pool && activeTurnId) {
+    turnLifecycle.incrementByokCents(pool, {
+      sessionId: sid,
+      turnId: activeTurnId,
+      cents,
+    }).catch((err) => {
       log.warn('worker', 'Failed to persist turn byok spend', { sessionId: sid, err: err.message });
     });
   }
@@ -1651,7 +1997,13 @@ async function syncUserAgentFiles(sessionId, files) {
 // post-turn processing and clearing chat_sessions.active_turn; this
 // just replays/follows the journal and returns the watch state, exactly
 // as if execInWorker had stayed attached the whole time.
-async function resumeTurnFromJournal(sessionId, { journal, onProgress, byokCentsSoFar = 0 } = {}) {
+async function resumeTurnFromJournal(sessionId, {
+  journal,
+  turnId = null,
+  onProgress,
+  byokCentsSoFar = 0,
+  agentBackend = 'claude_code',
+} = {}) {
   if (!journal) throw new Error('resumeTurnFromJournal: journal path required');
   const meta = _registryGet(sessionId);
   const containerName = meta?.containerName || workerContainerName(sessionId);
@@ -1662,17 +2014,24 @@ async function resumeTurnFromJournal(sessionId, { journal, onProgress, byokCents
   const seedCents = Number(byokCentsSoFar) > 0 ? Number(byokCentsSoFar) : 0;
   _registryUpsert(sessionId, {
     inFlight: true, adopted: true,
+    // Recovered proxy calls must keep mirroring BYOK spillover onto the
+    // exact durable owner. Without this identity a second restart discards
+    // every cent observed after the first recovery.
+    activeTurnId: turnId || null,
     turnByokCents: seedCents, turnByokSwitched: seedCents > 0,
   });
   try {
     const state = newWatchState();
+    state.turnId = turnId || null;
+    // Seed the backend so parseLine routes Codex JSONL correctly on
+    // recovery too (review P4). The caller passes the persisted
+    // session.agent_backend.
+    state.agentBackend = agentBackend;
     const progress = typeof onProgress === 'function' ? onProgress : () => {};
     await _consumeJournal(containerName, journal, progress, state, { sessionId });
-    if (state.execExitSeen && !state.fatalError) {
-      docker.execFileAsync('docker', [
-        'exec', containerName, 'rm', '-f', journal,
-      ], { timeout: 5000 }).catch(() => {});
-    }
+    // The recovery caller owns required persistence (thread id + ledger)
+    // and calls finishTurn only after it succeeds. Deleting here used to
+    // destroy the sole replay source before those writes had landed.
     return state;
   } finally {
     _registryUpsert(sessionId, { inFlight: false, lastUsedMs: Date.now() });
@@ -1794,7 +2153,11 @@ async function listOrphanWorkers() {
 // the worker image (node:22-bookworm-slim) does NOT ship procps, so
 // pgrep/pkill exit 127 in there. The old `pgrep ... && busy || idle`
 // one-liner silently reported "idle" for every container, busy or not.
-const TURN_PROC_RE = '(^|[ /])(claude|run-cc\\.sh)( |$)';
+// Match a turn process for EITHER backend (review F4): the Claude runner
+// (run-cc.sh + claude) or the Codex runner (run-codex-agent.sh + codex).
+// Without the codex terms, long Codex turns look idle (watchdog abandons)
+// and Stop appends a fake marker without killing the process.
+const TURN_PROC_RE = '(^|[ /])(claude|run-cc\\.sh|codex|run-codex-agent\\.sh)( |$)';
 const TURN_PROC_PROBE_SCRIPT =
   'busy=0; for d in /proc/[0-9]*; do '
   + '[ "$d" = "/proc/$$" ] && continue; '
@@ -2042,6 +2405,7 @@ module.exports = {
   TURN_PHASE_TAIL,
   markTurnTail,
   noteTailMilestone,
+  markTurnRetryPending,
   finishTurn,
   isTailPhase,
   evictWorker,
@@ -2074,6 +2438,7 @@ module.exports = {
   // platform-side git push proxy (called from src/routes/internal.js)
   execPushFromWorker,
   mintWorkerJwt,
+  mintAnthropicProxyJwt,
   // #616: prod-debug JWT + pure turn-env builder (exported for tests)
   mintProdDebugJwt,
   buildTurnSecretEnv,

@@ -32,7 +32,12 @@ const sessionBus = require('./session-bus');
 const ws = require('./ws');
 
 const TITLE_MAX = 160;
-const BODY_MAX = 4000;
+// The tool description tells the model to include "the relevant part of
+// the spec in full" for spec-derived issues — a real spec chunk did not
+// fit in the old 4000 (session 3184 looped on body_too_long). GitHub
+// accepts 65536; the draft card collapses anything past 300 chars behind
+// "Show full report", so a bigger body costs nothing in the timeline.
+const BODY_MAX = 10000;
 
 // Per-session draft caps, counted over a rolling window. The express
 // limiter on the internal route counts REQUESTS; this counts drafts that
@@ -120,8 +125,22 @@ async function createDraft(pool, config, opts = {}) {
   const body = typeof opts.body === 'string' ? opts.body.trim() : '';
 
   if (!title) return { ok: false, code: 'bad_title' };
-  if (title.length > TITLE_MAX) return { ok: false, code: 'title_too_long' };
-  if (body.length > BODY_MAX) return { ok: false, code: 'body_too_long' };
+  // Too-long rejections carry the limit and the observed length: the
+  // Mayor retries these, and a bare code made it trim blind — session
+  // 3184 looped through "cut some more?" rejections it could not
+  // calibrate. Logged for the same reason: the loop was invisible in ops.
+  if (title.length > TITLE_MAX) {
+    log.warn('issue-draft', 'Draft rejected: title too long', {
+      sessionId, length: title.length, limit: TITLE_MAX,
+    });
+    return { ok: false, code: 'title_too_long', limit: TITLE_MAX, length: title.length };
+  }
+  if (body.length > BODY_MAX) {
+    log.warn('issue-draft', 'Draft rejected: body too long', {
+      sessionId, length: body.length, limit: BODY_MAX,
+    });
+    return { ok: false, code: 'body_too_long', limit: BODY_MAX, length: body.length };
+  }
 
   let session;
   try {

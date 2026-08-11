@@ -37,6 +37,10 @@ test('the allowlist permits exactly the routes the tools need', () => {
     ['GET', '/api/apps'],
     ['GET', '/api/apps/recipe-box'],
     ['GET', '/api/apps/recipe-box/github-issues'],
+    // A request's GitHub comments — the half of its discussion that does not
+    // live in the platform's own thread. prepare_work reads it so the work
+    // order carries the requirements raised in the replies.
+    ['GET', '/api/apps/recipe-box/github-issues/12/comments'],
     ['GET', '/api/apps/recipe-box/promoted'],
     ['GET', '/api/apps/recipe-box/messages'],
     ['POST', '/api/apps/recipe-box/messages'],
@@ -50,6 +54,12 @@ test('the allowlist permits exactly the routes the tools need', () => {
     // a connector token may knock on the door at all.
     ['GET', '/api/apps/recipe-box/pr-import/preview'],
     ['POST', '/api/apps/recipe-box/pr-import'],
+    // #1054 — advancing a proposal that is already up for a vote, from a
+    // branch in its author's own fork. On the list because the agent that
+    // wrote the code lives behind the connector, and a failing check gates
+    // merge; the route refuses anything that is not the caller's own open
+    // proposal.
+    ['POST', '/api/apps/recipe-box/proposals/412/update-from-fork'],
     ['POST', '/api/apps/recipe-box/issues/12/headless-session'],
     ['POST', '/api/sessions/412/clone-headless'],
     ['POST', '/api/sessions/412/promote'],
@@ -96,6 +106,11 @@ test('fail-closed: anything not listed is refused', () => {
     ['POST', '/api/sessions/412'],
     ['GET', '/api/apps/recipe-box/pr-import'],
     ['POST', '/api/apps/recipe-box/pr-import/preview'],
+    // Reading an issue's comments does not imply writing one, and the
+    // allowlisted pattern is exactly one level deep.
+    ['POST', '/api/apps/recipe-box/github-issues/12/comments'],
+    ['GET', '/api/apps/recipe-box/github-issues/12/comments/3'],
+    ['GET', '/api/apps/recipe-box/github-issues//comments'],
     // Path-shape games.
     ['GET', '/api/apps/recipe-box/github-issues/12'],
     ['GET', '/api/apps'.concat('/')],
@@ -103,6 +118,13 @@ test('fail-closed: anything not listed is refused', () => {
     ['GET', '/api/sessions/412/status/extra'],
     ['POST', '/api/apps/recipe-box/issues/12/headless-session/extra'],
     ['POST', '/api/apps/recipe-box/issues//headless-session'],
+    // The update route is one exact shape. Nothing else under /proposals/ is
+    // reachable, and the update itself is a POST only.
+    ['GET', '/api/apps/recipe-box/proposals/412/update-from-fork'],
+    ['POST', '/api/apps/recipe-box/proposals/412'],
+    ['POST', '/api/apps/recipe-box/proposals'],
+    ['POST', '/api/apps/recipe-box/proposals//update-from-fork'],
+    ['POST', '/api/apps/recipe-box/proposals/412/update-from-fork/extra'],
   ];
   for (const [method, target] of refused) {
     assert.equal(
@@ -248,6 +270,43 @@ test('the promoted-session cap the import route lacks is applied by the connecto
   );
   // A limiter that cannot run refuses rather than waving the write through.
   assert.match(LIMITS_SRC, /if \(count === null\) return UNAVAILABLE;/);
+});
+
+// ── #1054: updating a proposal already up for a vote ───────────────────
+
+test('the update route is on the list only because it refuses anything but the caller’s own proposal', () => {
+  // Same reasoning as promote above: the allowlist decides whether a
+  // connector token may knock, and what makes THIS door safe is the pair of
+  // gates behind it. The route loads the proposal by (id, app_id) and the
+  // service refuses it unless the row's user_id is the caller's — twice, the
+  // second time under the lock against a freshly re-read row.
+  const HANDOFF_SRC = fs.readFileSync(
+    path.join(__dirname, '../src/routes/proposal-handoff.js'), 'utf8'
+  );
+  const handler = HANDOFF_SRC.slice(
+    HANDOFF_SRC.indexOf("router.post('/api/apps/:slug/proposals/:id/update-from-fork'")
+  ).slice(0, 3000);
+  assert.match(handler, /getAppForUser\(pool, req\.params\.slug, req\.user, 'collab'/,
+    'the app is access-checked at the same bar the browser\'s proposal paths use');
+  assert.match(handler, /WHERE cs\.id = \$1 AND cs\.app_id = \$2/,
+    'the handler loads the proposal on the named app, not any proposal by id');
+  const UPDATE_SRC = fs.readFileSync(
+    path.join(__dirname, '../src/services/proposal-update.js'), 'utf8'
+  );
+  assert.match(UPDATE_SRC, /Number\(session\.user_id\) !== Number\(user\.id\)/,
+    'and the service refuses a proposal that is not the caller\'s');
+  assert.equal((UPDATE_SRC.match(/ownershipGate\(/g) || []).length, 3,
+    'defined once, applied twice — before the queue and again under the lock');
+  // Nothing on this path votes, merges or withdraws. Checked against the CODE
+  // with its prose stripped: the predicate that decides what a push may land
+  // on names the archived status in a comment to say a push must NOT reopen
+  // one (#1071), and reading that as a write would be exactly backwards.
+  const code = UPDATE_SRC
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .filter((line) => !/^\s*\/\//.test(line))
+    .join('\n');
+  assert.doesNotMatch(code, /admin-merge|INSERT INTO pr_votes|archive/);
 });
 
 test('the connector cannot reach GitHub except through the app’s own repo plumbing', () => {

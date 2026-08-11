@@ -266,6 +266,18 @@ function homeLayoutRoutes() {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
+        // Serialize concurrent replaces of the same (user, cols) set. Two
+        // racing PUTs — e.g. several freshly-opened tabs each persisting
+        // the same layout repair on load — otherwise interleave under READ
+        // COMMITTED: the second DELETE cannot see the first's uncommitted
+        // inserts, so its own inserts die on idx_user_home_layout_* and a
+        // last-write-wins write 500s instead of simply taking turns
+        // (session 3193's checks run). Same keyed-lock convention as
+        // mobile-push-registration.js.
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtextextended('home-layout:' || $1 || ':' || $2, 0))",
+          [req.user.id, cols]
+        );
         await client.query(
           'DELETE FROM user_home_layout WHERE user_id = $1 AND cols = $2',
           [req.user.id, cols]

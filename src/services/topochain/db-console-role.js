@@ -27,13 +27,22 @@
 // `registration_code` values AT ALL to whatever role runs the query —
 // regardless of how cleverly the query asks for them. This module
 // creates and maintains that role: `topochain_console_ro`, granted
-// SELECT on exactly `db-allowlist.js`'s QUERYABLE_TABLES, with a
-// COLUMN-LEVEL grant on `onchain_accounts` that explicitly excludes
-// `secret_key`/`registration_code` (Postgres column-level GRANT SELECT
+// SELECT on exactly the tables `db-console-scope.js` resolves (every base
+// table in `public` minus the credential-bearing ones), with a
+// COLUMN-LEVEL grant on each table that has denied columns —
+// `onchain_accounts` excluding `secret_key`/`registration_code`, `users`
+// excluding `password`, and so on (Postgres column-level GRANT SELECT
 // means every OTHER access path — direct reference, `SELECT *`,
 // `row_to_json`, a cast, a future function nobody's thought of yet — is
 // refused at the executor with "permission denied for table
-// onchain_accounts", full stop). `sql-console.js`'s `runConsoleQuery`
+// onchain_accounts", full stop).
+//
+// The scope widening (topochain tables -> the whole schema) changed WHICH
+// tables get a grant and nothing about this mechanism: the deny lists it
+// grants around are `services/debug-access.js`'s, reused rather than
+// restated, and every table on them still ends this function with no
+// grant at all. See `db-console-scope.js`'s header.
+// `sql-console.js`'s `runConsoleQuery`
 // executes every console query with `SET LOCAL ROLE
 // topochain_console_ro` inside the same transaction, so the pooled
 // connection is never permanently repointed (`SET LOCAL` reverts at
@@ -64,10 +73,9 @@
 
 const log = require('../logger');
 const { getPool } = require('../../db/pool');
-const { QUERYABLE_TABLES, EXCLUDED_EXPORT_COLUMNS } = require('./db-allowlist');
+const { loadConsoleScope, DENIED_CONSOLE_COLUMNS, SAFE_IDENT } = require('./db-console-scope');
 
 const ROLE = 'topochain_console_ro';
-const SAFE_IDENT = /^[a-z_][a-z0-9_]*$/;
 
 let _available = false;
 let _unavailableReason = 'topochain console role not initialized';
@@ -76,35 +84,29 @@ function quoteIdent(name) {
   return `"${name}"`;
 }
 
-// Pure-ish (only reads, never writes): turns a live column inventory for
-// QUERYABLE_TABLES into the GRANT statements the role needs. Queries
-// information_schema itself for the column list (rather than hardcoding
-// it) so a column added to an allow-listed table by a future migration
-// becomes selectable automatically on the NEXT boot's grant refresh,
-// while `EXCLUDED_EXPORT_COLUMNS` is still consulted for the deny side —
-// same "fail toward re-granting the good ones, never silently widen the
-// denied ones" shape as debug-access.js's `buildGrantStatements`.
+// Pure-ish (only reads, never writes): turns the live console scope into
+// the GRANT statements the role needs. The scope comes from
+// `db-console-scope.js`, which asks information_schema for the actual
+// tables and columns (rather than hardcoding either) so a table or column
+// added by a future migration becomes selectable automatically on the
+// NEXT boot's grant refresh, while the deny lists are still consulted for
+// the deny side — same "fail toward re-granting the good ones, never
+// silently widen the denied ones" shape as debug-access.js's
+// `buildGrantStatements`.
+//
+// A table with denied columns gets a COLUMN-LEVEL grant listing only the
+// allowed ones; everything else gets a plain table grant. Denied TABLES
+// never appear in the scope at all, so they get no grant of either kind.
 // Exported for unit tests (with a mock pool).
 async function buildGrantStatements(pool) {
-  const { rows } = await pool.query(
-    `SELECT table_name AS table, array_agg(column_name::text ORDER BY ordinal_position) AS columns
-       FROM information_schema.columns
-      WHERE table_schema = 'public' AND table_name = ANY($1)
-      GROUP BY table_name`,
-    [QUERYABLE_TABLES]
-  );
-  const columnsByTable = new Map(rows.map((r) => [r.table, r.columns]));
+  const scope = await loadConsoleScope(pool);
 
   const stmts = [];
-  for (const table of QUERYABLE_TABLES) {
-    if (!SAFE_IDENT.test(table)) continue;
-    const columns = columnsByTable.get(table) || [];
-    const denied = EXCLUDED_EXPORT_COLUMNS[table];
+  for (const { table, columns } of scope) {
+    const denied = DENIED_CONSOLE_COLUMNS[table];
     if (denied && denied.length) {
-      const allowed = columns.filter((c) => SAFE_IDENT.test(c) && !denied.includes(c));
-      if (!allowed.length) continue;
       stmts.push(
-        `GRANT SELECT (${allowed.map(quoteIdent).join(', ')}) ON public.${quoteIdent(table)} TO ${ROLE}`
+        `GRANT SELECT (${columns.map(quoteIdent).join(', ')}) ON public.${quoteIdent(table)} TO ${ROLE}`
       );
     } else {
       stmts.push(`GRANT SELECT ON public.${quoteIdent(table)} TO ${ROLE}`);
@@ -147,7 +149,11 @@ async function ensureConsoleRole(config) {
 
     // Reset then re-grant (same rationale as debug-access.js: deny-list
     // or allow-list changes take effect on the next boot without
-    // needing a manual REVOKE anywhere).
+    // needing a manual REVOKE anywhere). `buildGrantStatements` resolves
+    // the scope through `db-console-scope.js`, which also primes the
+    // table-name cache `sql-console.js`'s synchronous validator reads —
+    // so a console query typed before anyone opens the schema browser
+    // still gets a specific "no such table" instead of a bare 400.
     await pool.query(`REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM ${ROLE}`);
     const grants = await buildGrantStatements(pool);
     for (const stmt of grants) {

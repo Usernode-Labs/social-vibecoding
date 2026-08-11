@@ -168,7 +168,7 @@ test('the header back/home control is a real anchor', () => {
   assert.match(inner, /id="back-icon-home"/, 'the house icon');
   assert.match(inner, /id="back-icon-arrow"/, 'the chevron');
   assert.match(html, /<div class="w-5 h-7 shrink-0 flex items-center">/,
-    'the fixed 20x28 wrapper header-layout.js measures must not change');
+    'the fixed 20x28 wrapper the header-layout hook measures must not change');
 });
 
 test('the header click handler guards before it preventDefaults', () => {
@@ -375,12 +375,15 @@ for (const r of ROWS) {
 // ── The drawer's delegated handler ─────────────────────────────────────
 
 test('a modified click in the drawer neither arms the flag nor closes it', () => {
-  const at = appJs.indexOf("const drawerPanel = document.getElementById('header-menu-panel');");
+  // #1079 chunk B moved App.HeaderMenu into the React bundle beside the
+  // markup it drives; the delegated handler went with it.
+  const headerMenuJs = read('frontend/src/features/header/header-menu-controller.js');
+  const at = headerMenuJs.indexOf("const drawerPanel = document.getElementById('header-menu-panel');");
   assert.ok(at !== -1, 'the delegated drawer handler went missing');
-  const body = appJs.slice(at, at + 1100);
+  const body = headerMenuJs.slice(at, at + 1400);
   const guard = body.indexOf('NavLink.isNativeClick(e)');
-  const arm = body.indexOf('_navArmedAt = App.HeaderMenu._now()');
-  const close = body.indexOf('App.HeaderMenu.close()');
+  const arm = body.indexOf('_navArmedAt = HeaderMenu._now()');
+  const close = body.indexOf('HeaderMenu.close()');
   assert.ok(guard !== -1, 'the guard went missing');
   assert.ok(arm !== -1 && close !== -1, 'the existing arm/close behaviour must survive');
   assert.ok(guard < arm,

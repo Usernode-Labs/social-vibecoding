@@ -25,8 +25,21 @@ const PUBLIC = path.join(__dirname, '..', 'public');
 const read = (rel) => fs.readFileSync(path.join(PUBLIC, rel), 'utf8');
 
 const APP = read('js/app.js');
-const OFFLINE = read('js/offline.js');
+// The connectivity engine is React-side since #1078 retired /js/offline.js;
+// its behaviour is unchanged and this file still asserts against it.
+const OFFLINE = fs.readFileSync(
+  path.join(__dirname, '..', 'frontend', 'src', 'lib', 'offline.ts'), 'utf8',
+);
 const AUTH = read('js/auth-screens.js');
+// The anonymous screens are crossing over to React one chunk at a time
+// (#1080 chunk C), so their submit guards live in whichever half owns the
+// screen. Everything below asserts against the union.
+const FRONTEND = (rel) =>
+  fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', rel), 'utf8');
+const AUTH_SHARED = FRONTEND('features/auth/shared.ts');
+const AUTH_SCREENS_TSX = ['features/auth/landing.tsx', 'features/auth/login.tsx']
+  .map(FRONTEND).join('\n');
+const AUTH_WAITING_TSX = FRONTEND('features/auth/waiting.tsx');
 const SETTINGS = read('js/settings.js');
 const HOME = read('js/home.js');
 const CSS = read('css/app.css');
@@ -144,8 +157,10 @@ test('every way out of a session clears the snapshot', () => {
   assert.match(SETTINGS, /clearSessionSnapshot/);
   assert.match(AUTH, /clearSessionSnapshot/);
   // Including the waiting-room logout, which does not go through settings.
-  const waitingLogout = AUTH.slice(AUTH.indexOf("byId('waiting-logout')"));
-  assert.match(waitingLogout.slice(0, 500), /clearSessionSnapshot/);
+  // That screen is React now (#1080 chunk C), so its own fallback path is
+  // where the call has to be.
+  const waitingLogout = AUTH_WAITING_TSX.slice(AUTH_WAITING_TSX.indexOf('const onLogout'));
+  assert.match(waitingLogout.slice(0, 800), /clearSessionSnapshot/);
 });
 
 // ── The visible offline state ────────────────────────────────────────
@@ -212,20 +227,34 @@ test('the landing screen explains the offline state too', () => {
 
 test('"Try again" is wired once, globally, and re-probes', () => {
   assert.match(OFFLINE, /\[data-offline-retry\]/);
-  const handler = OFFLINE.slice(OFFLINE.indexOf('[data-offline-retry]'));
-  assert.match(handler.slice(0, 300), /Offline\.probe\(\)/);
+  // lastIndexOf, not indexOf — the module header explains the delegation
+  // before the code does it.
+  const handler = OFFLINE.slice(OFFLINE.lastIndexOf("closest('[data-offline-retry]')"));
+  assert.match(handler.slice(0, 300), /void probe\(\)/);
+  // Delegated from the document, so a screen that was hidden when its own
+  // module ran still gets a working button.
+  assert.match(OFFLINE, /document\.addEventListener\('click'/);
 });
 
 test('every credential exchange refuses to submit while offline', () => {
-  assert.match(AUTH, /function blockedOffline\(/);
-  // The guard consults the /health probe, not navigator.onLine, which
-  // false-positives behind exactly the captive portals that break logins.
-  const guard = AUTH.slice(AUTH.indexOf('function blockedOffline('));
-  assert.match(guard.slice(0, 900), /Offline\.isOffline\(\)/);
-  assert.ok(!/navigator\.onLine/.test(guard.slice(0, 900)));
+  // Both halves define the same guard — legacy for the screens it still
+  // owns, shared.ts for the converted ones.
+  for (const [label, src] of [['auth-screens.js', AUTH], ['shared.ts', AUTH_SHARED]]) {
+    assert.match(src, /function blockedOffline\(/, `${label} has no guard`);
+    // The guard consults the /health probe, not navigator.onLine, which
+    // false-positives behind exactly the captive portals that break logins.
+    const guard = src.slice(src.indexOf('function blockedOffline('));
+    assert.match(guard.slice(0, 900), /Offline\?\?\.isOffline\(\)|Offline\.isOffline\(\)|isOffline\(\)/,
+      `${label}'s guard does not consult the probe`);
+    assert.ok(!/navigator\.onLine/.test(guard.slice(0, 900)),
+      `${label}'s guard reads navigator.onLine`);
+  }
   // One guard per submit path: password, otp request/verify/set-password,
-  // wallet, register.
-  const uses = [...AUTH.matchAll(/if \(blockedOffline\(/g)];
+  // wallet, register — counted across both halves.
+  const uses = [
+    ...AUTH.matchAll(/if \(blockedOffline\(/g),
+    ...AUTH_SCREENS_TSX.matchAll(/if \(blockedOffline\(/g),
+  ];
   assert.ok(uses.length >= 6, `only ${uses.length} submit paths are guarded`);
 });
 
@@ -249,8 +278,8 @@ test('the offline shots pin connectivity instead of reading it', () => {
   assert.match(body, /Offline\?\.forceOffline\(\)/);
   assert.match(APP, /_applyOfflineShot\(\) === 'offline-signin'/);
   // forceOffline pins the state so a later probe cannot flip it back.
-  assert.match(OFFLINE, /forceOffline\(\)\s*\{/);
-  assert.match(OFFLINE, /if \(Offline\._forced\) return/);
+  assert.match(OFFLINE, /export function forceOffline\(\)/);
+  assert.match(OFFLINE, /if \(forced\) return/);
 });
 
 test('both offline shots are registered as dapp.json checks', () => {

@@ -22,6 +22,11 @@ const PUBLIC_PATHS = [
   // Self-service wallet password reset is pre-login by definition — the
   // wallet signature is the only credential (issue #282).
   '/api/auth/wallet-reset-verify',
+  // Email password reset is pre-login by definition — the emailed magic
+  // link is the only credential. Request mints it, confirm redeems it;
+  // both are anti-enumeration (see src/routes/auth.js).
+  '/api/auth/password-reset/request',
+  '/api/auth/password-reset/confirm',
   '/api/auth/wallet-register',
   '/api/auth/wallet-link-login',
   // Read-only kudos leaderboard (Top PRs / Top users). Public so the

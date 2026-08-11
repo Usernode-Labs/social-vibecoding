@@ -206,7 +206,24 @@ test('app.js screenIdOf treats ?path= as the same screen and re-dispatches on a 
 
 test('app.js setChromeless toggles the header and the pill', () => {
   const src = read('public/js/app.js');
-  assert.ok(src.includes("document.getElementById('platform-header')"));
+  const pill = read('frontend/src/features/header/chromeless-pill.tsx');
+  const header = read('frontend/src/features/header/platform-header.tsx');
+  // #1079 chunk B: #platform-header is a React island and the pill is a
+  // component beside it, so setChromeless PUBLISHES both flags through the
+  // shell's visibility store instead of writing the DOM — a classList toggle
+  // from outside React is exactly what that store exists to replace. The two
+  // subscribers produce the same DOM the imperative version did.
+  assert.ok(src.includes("App.Visibility.publish('platform-header', !enable)"),
+    'the header hide must go through the visibility store');
+  assert.ok(src.includes("App.Visibility.publish('chromeless-pill', enable)"),
+    'and so must the pill');
+  assert.ok(header.includes("useVisibility('platform-header', true)"),
+    'the header island subscribes, defaulting to the visible markup it ships');
+  assert.ok(header.includes('useHiddenClass(headerRef, !visible)'),
+    'and applies it imperatively — PlatformUI.attachScreenFx writes to this '
+    + 'element, so a rendered className would clobber the kit');
+  assert.ok(pill.includes("useVisibility('chromeless-pill', false)"),
+    'the pill subscribes, defaulting to absent — the shipped markup has none');
   // The App/Dev switch needs no line of its own: it lives inside
   // #platform-header now (it used to be the separate #app-tabs bar), so
   // hiding the header hides it too.
@@ -224,11 +241,16 @@ test('app.js setChromeless toggles the header and the pill', () => {
   // insets forwarded into the app have to be recomputed.
   assert.ok(src.includes('AppView.scheduleSafeAreaBroadcast()'),
     'toggling chromeless must re-broadcast the frame safe-area insets');
-  assert.ok(src.includes('_mountChromelessPill'));
-  assert.ok(src.includes('_unmountChromelessPill'));
+  // The pill renders nothing at all until the flag flips — that is what keeps
+  // the prerendered markup and the first hydrating render identical.
+  assert.ok(pill.includes('if (!chromeless) return null;'));
+  assert.ok(pill.includes("id=\"chromeless-pill\""));
+  assert.ok(pill.includes("aria-label=\"Open this app on Usernode\""));
   // The pill's exit target is the regular App-tab view, which clears the
-  // mode via restoreFromHash.
-  assert.ok(src.includes('location.hash = `#app/${App.currentApp}/app`;'));
+  // mode via restoreFromHash. The slug is read at CLICK time, so the pill
+  // survives app-to-app hash navigation without a remount.
+  assert.ok(pill.includes('const slug = window.App?.currentApp;'));
+  assert.ok(pill.includes('location.hash = `#app/${slug}/app`;'));
 });
 
 test('index.html carries the ids setChromeless toggles', () => {

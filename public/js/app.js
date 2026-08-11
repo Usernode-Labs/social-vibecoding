@@ -147,7 +147,7 @@ const App = {
     App.bindEvents();
 
     // Screenshot-state deep links for the ANONYMOUS shell (`?shot=anon`,
-    // `?shot=waitlist-joined`). Captures and proposal checks carry a
+    // `?shot=waitlist-joined`, `?shot=anon-back`). Captures and proposal checks carry a
     // capture token, so a session always exists for them and
     // restoreFromHash would strip #landing / #waitlist to the home feed —
     // the signed-out screens would be unreachable to every shot. These
@@ -299,7 +299,14 @@ const App = {
   _anonShot() {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
-    if (shot !== 'anon' && shot !== 'waitlist-joined') return false;
+    // `anon-back` (#1028) scripts the guest back path on the landing
+    // directory. It matters that it routes through here and not the
+    // ordinary boot: this path skips /api/auth/me, so the capture or
+    // proposal check's own session can't promote the page into the
+    // signed-in shell and stop exercising the guest viewer at all.
+    if (shot !== 'anon' && shot !== 'waitlist-joined' && shot !== 'anon-back') {
+      return false;
+    }
     if (shot === 'waitlist-joined' &&
         (!location.hash || location.hash === '#')) {
       try { history.replaceState(null, '', location.search + '#waitlist'); } catch (err) { /* ignore */ }
@@ -434,6 +441,11 @@ const App = {
     // the viewer's own daily allowance. Refreshes again on every drawer
     // open (App.HeaderMenu.open), throttled inside the module.
     if (!App._sessionFromSnapshot && window.AiCredit?.Budget?.init) AiCredit.Budget.init();
+    // #1038: seed the live session-state store and arm its adaptive
+    // reconcile tick. Same snapshot-boot guard as the meters above — the
+    // endpoint is session-gated, so firing it on an offline snapshot boot is
+    // a guaranteed 401.
+    if (!App._sessionFromSnapshot && window.SessionState) SessionState.start();
     // Session-gated boot fetches (notifications bell, work drawer)
     // defer to this event instead of firing a guaranteed 401 on an
     // anonymous document load.
@@ -828,8 +840,7 @@ const App = {
     }
 
     // Home-screen card pill (only if the home screen is visible).
-    const homeVisible = document.getElementById('home-screen')
-      && !document.getElementById('home-screen').classList.contains('hidden');
+    const homeVisible = App._isScreenVisible('home-screen');
     if (homeVisible && typeof Home !== 'undefined') {
       if (data.deploying) {
         // We don't have the row's `version` data on hand here, but
@@ -892,6 +903,12 @@ const App = {
             break;
           case 'session_update':
             App.handleSessionUpdate(data);
+            break;
+          case 'session_state':
+            // #1038: live working state for one session. The store repaints
+            // every surface that shows it (cog, board cards, session list)
+            // with no refetch at all.
+            App.handleSessionState(data);
             break;
           case 'vote_update':
             App.handleVoteUpdate(data);
@@ -959,8 +976,7 @@ const App = {
             // Home screen: re-pull the apps list so the home-screen
             // pill picks up the new SHA. Cheap; only fires on a real
             // version change.
-            if (typeof Home !== 'undefined' && document.getElementById('home-screen')
-                && !document.getElementById('home-screen').classList.contains('hidden')) {
+            if (typeof Home !== 'undefined' && App._isScreenVisible('home-screen')) {
               Home.load();
             }
             // #405: the merge that triggered this rebuild also flips the
@@ -1019,11 +1035,17 @@ const App = {
     // so `window.Home` / `window.AppView` would silently be undefined.
     // `Notifications` is explicitly assigned to `window` in
     // notifications.js, so that one is fine.
-    if (typeof Home !== 'undefined' && document.getElementById('home-screen') && !document.getElementById('home-screen').classList.contains('hidden')) {
+    if (typeof Home !== 'undefined' && App._isScreenVisible('home-screen')) {
       Home.load();
     }
     if (window.Notifications) Notifications.refresh?.();
     if (window.WorkDrawer) WorkDrawer.refresh?.();
+    // #1038: `session_state` is fire-and-forget like every other broadcast,
+    // so anything that transitioned during the disconnect window was lost.
+    // The reconcile endpoint is the authority — it also clears overrides for
+    // sessions that finished while we were away, and detects a platform
+    // restart (new bootId) that invalidated all of them.
+    if (window.SessionState) SessionState.sync?.();
     // Admin console's container-rollover section: its live table is driven
     // by `admin_rollover_status`, so a dropped socket means missed
     // transitions. The loader no-ops unless that section is mounted.
@@ -1091,6 +1113,32 @@ const App = {
         AppView.renderAppTab();
       }
     }
+  },
+
+  // #1038: a pushed session working-state change. The spinner half needs no
+  // fetch — SessionState.applyEvent repaints every subscribed surface. The
+  // only thing that still warrants a refetch is a LIFECYCLE change
+  // (active → paused / promoted / archived), because that changes which rows
+  // exist on the board and in the drawer, not just how they're decorated.
+  // Debounced so a burst of transitions costs one reload.
+  _sessionStatusSeen: Object.create(null),
+  _sessionRowsTimer: null,
+  handleSessionState(data) {
+    if (!window.SessionState || data == null || data.sessionId == null) return;
+    const key = String(data.sessionId);
+    const prevStatus = App._sessionStatusSeen[key];
+    const nextStatus = data.status || null;
+    App._sessionStatusSeen[key] = nextStatus;
+    SessionState.applyEvent(data);
+    if (prevStatus === undefined || prevStatus === nextStatus) return;
+    if (App._sessionRowsTimer) return;
+    App._sessionRowsTimer = setTimeout(() => {
+      App._sessionRowsTimer = null;
+      App.refreshHomeProposals();
+      if (typeof AppView !== 'undefined' && AppView.refreshDevData) {
+        AppView.refreshDevData('session');
+      }
+    }, 500);
   },
 
   handleSessionUpdate(data) {
@@ -1189,7 +1237,7 @@ const App = {
         // paths broadcast pills on the status event, not 'quick_replies'
         // (that handler attaches to the last ASSISTANT row, which a
         // recovered turn doesn't have).
-        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, scoutOutput: data.scoutOutput, quickReplies: data.quickReplies, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
+        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, scoutOutput: data.scoutOutput, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         break;
@@ -1265,7 +1313,7 @@ const App = {
         }
         break;
       case 'cc_progress':
-        DevChat._appendProgressLine(data.text);
+        DevChat._appendProgressLine(data.text, data);
         DevChat.scrollToBottom();
         // Also arm the /status polling fallback when cc_progress arrives via
         // WS (e.g. the SSE POST itself died before getting here). Without
@@ -1412,7 +1460,14 @@ const App = {
         });
         break;
       case 'cc_log':
-        DevChat.messages.push({ role: 'system', ccLog: data.log, content: 'Claude Code log', created_at: new Date().toISOString() });
+        DevChat.messages.push({
+          role: 'system',
+          ccLog: data.log,
+          content: data.agentBackend === 'codex_openrouter' ? 'Codex log' : 'Claude Code log',
+          agentBackend: data.agentBackend,
+          agentModel: data.agentModel,
+          created_at: new Date().toISOString(),
+        });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         break;
@@ -1585,407 +1640,37 @@ const App = {
     }
   },
 
-  // Drawer status/version rows (header slim-down): the kudos + AI-credit
-  // meters render into #drawer-status-pane, and the platform/app build
-  // lines + fork lineage label into #drawer-footer — none of them in the
-  // header any more. Their RENDERERS are untouched — every slot kept its
-  // id through both moves — so all this owns is the two app-scoped rows'
-  // visibility plus the hamburger's amber deploy dot.
+  // Drawer status/version rows + the hamburger drawer itself (#1079 chunk
+  // B): both objects moved into the React bundle, beside the markup they
+  // drive, as frontend/src/features/header/header-menu-controller.js. What
+  // stays here is a forwarder apiece, because the call sites are spread over
+  // app.js, app-view.js, native-chrome.js, node-pill.js and wallet-sheet.js
+  // and none of them had any reason to change.
+  //
+  // Explicit method-by-method forwarding rather than a getter for App.X:
+  // app.js is a classic script and the bundle is a module, so there is a
+  // window in which window.DrawerStatus does not exist yet, and the two
+  // unguarded refreshDeployDot() / setAppOpen() callers below would throw on
+  // a bare getter. Forwarding no-ops instead, which is what those calls did
+  // when the drawer was not on screen anyway.
   DrawerStatus: {
-    // The "App" build row follows the same lifecycle as
-    // #drawer-row-github / #drawer-row-share: visible only while an app
-    // is open. Called from openApp and from every navigate* that leaves
-    // an app behind.
-    //
-    // The header's App/Dev switch rides the SAME lifecycle, which is why
-    // it's owned here rather than in a seventh place: this one call
-    // already covers openApp, navigateHome, AppView.close() and all six
-    // other-screen navigations (leaderboard, challenges, profile, admin,
-    // settings, topochain). It used to be free — the old #app-tabs bar
-    // was a child of #app-view and disappeared whenever that did — but a
-    // header-resident control has to be hidden explicitly.
-    setAppOpen(open) {
-      const row = document.getElementById('drawer-row-app-version');
-      if (row) row.classList.toggle('hidden', !open);
-      // Fork lineage is app-scoped too — closing an app can never leave
-      // the previous app's "Forked from" line behind.
-      if (!open) App.DrawerStatus.setForkVisible(false);
-      // Self-hosted apps (the platform's own row) have no App mode at
-      // all — appData.url maps to a slug-derived subdomain that doesn't
-      // resolve, so switchTab coerces them to the Dev forum. A switch
-      // with one reachable option is noise, so hide the whole control
-      // rather than shipping a dead segment. setAppOpen(true) runs after
-      // the /api/apps/:slug fetch resolves, so self_hosted is known by
-      // the time this reads it.
-      const modeSwitch = document.getElementById('app-mode-switch');
-      if (modeSwitch) {
-        const show = !!open && !window.AppView?.appData?.self_hosted;
-        modeSwitch.classList.toggle('hidden', !show);
-        // The control materially changes the header's right-group width,
-        // which is one of the two inputs to the title's centered-vs-flow
-        // decision. The group's ResizeObserver would catch this on its
-        // own a frame later; the explicit hook exists so the title
-        // doesn't visibly jump.
-        window.HeaderLayout?.refresh?.();
-      }
-      App.DrawerStatus.refreshDeployDot();
-    },
-
-    // Driven by AppView.renderForkBadge(): shown only when it actually
-    // wrote a badge (i.e. the open app is a fork). `flex`, not the row
-    // default, because the row ships `hidden` and Tailwind's `hidden`
-    // would otherwise fight an inline display.
-    setForkVisible(visible) {
-      const row = document.getElementById('drawer-row-app-fork');
-      if (!row) return;
-      row.classList.toggle('hidden', !visible);
-      row.classList.toggle('flex', !!visible);
-    },
-
-    // Mirror "a deploy is in flight" onto the hamburger. Read straight
-    // off the rendered version lines rather than threading state: their
-    // markup is already the single source of truth for the deploying
-    // state (renderAppVersionPillHTML / renderPlatformVersionPill both
-    // stamp .drawer-ver--deploying on the footer's text form), and both
-    // may change independently. Scoped to #drawer-footer — where the two
-    // version lines live since the footer split — so a deploying home-tile
-    // pill elsewhere in the document can never light this dot.
-    refreshDeployDot() {
-      const dot = document.getElementById('header-menu-deploy-dot');
-      if (!dot) return;
-      const deploying = !!document.querySelector(
-        '#drawer-footer .drawer-ver--deploying');
-      dot.classList.toggle('hidden', !deploying);
-    },
+    setAppOpen(open) { window.DrawerStatus?.setAppOpen(open); },
+    setForkVisible(visible) { window.DrawerStatus?.setForkVisible(visible); },
+    refreshDeployDot() { window.DrawerStatus?.refreshDeployDot(); },
   },
 
-  // Slide-out navigation drawer — available at every viewport width
-  // (#122). Top to bottom: the kudos/AI-credit status pane, the theme
-  // selector directly below it, the native Node/Wallet rows, the four
-  // main nav rows (Profile, Leaderboard, Settings, Admin & moderation),
-  // and a bottom-anchored footer carrying the platform/app build lines
-  // plus GitHub + Share. (Members & visibility moved to the Dev "+"
-  // menu — #645.)
   HeaderMenu: {
-    _panel: null,
-
-    // ── Presentation state (#977) ───────────────────────────────────
-    // The drawer's exit is the ONE motion a sidebar-originated
-    // navigation is allowed to show, so App._entryTransition has to be
-    // able to ask "is this drawer on screen (or still animating out)?"
-    // and "did a link inside it just start this navigation?".
-    //
-    // _closingAt exists only for the LEGACY (desktop / kit-missing)
-    // path: close() strips [data-open] synchronously while the 200ms
-    // CSS slide still has to run, so the attribute alone reports the
-    // drawer as gone while it is visibly still there. The kit path
-    // needs no timestamp — _panel is cleared in the onDismiss teardown,
-    // i.e. only once the exit spring has come to rest.
-    _closingAt: 0,
-    _navArmedAt: 0,
-    // Callers waiting for the drawer to be fully gone (close()'s
-    // completion promise — see close()).
-    _dismissWaiters: [],
-    LEGACY_CLOSE_MS: 200,
-    // The legacy slide plus a frame of margin.
-    CLOSING_WINDOW_MS: 260,
-    // Generous, because it is CONSUMED on first read: only a link that
-    // produced no navigation at all can leave it to expire.
-    NAV_ARM_TTL_MS: 600,
-    // Backstop for the completion promise, so a teardown that never
-    // fires (a kit that vanished, a superseded handle) can't strand a
-    // caller that chained its own presentation behind it.
-    DISMISS_SAFETY_MS: 500,
-
-    _now() {
-      return (typeof performance !== 'undefined' && performance.now)
-        ? performance.now()
-        : Date.now();
-    },
-
-    // True while the drawer surface is on screen OR still animating out.
-    isPresenting() {
-      if (App.HeaderMenu._panel) return true;
-      const panel = document.getElementById('header-menu-panel');
-      if (panel && panel.hasAttribute('data-open')) return true;
-      return App.HeaderMenu._closingAt > 0
-        && (App.HeaderMenu._now() - App.HeaderMenu._closingAt)
-          < App.HeaderMenu.CLOSING_WINDOW_MS;
-    },
-
-    // One-shot: a link inside the drawer armed this immediately before
-    // close(), and the navigation it triggered is the next thing to ask.
-    // Consumed on read so it can never apply to a second navigation.
-    consumeNavPending() {
-      const at = App.HeaderMenu._navArmedAt;
-      if (!at) return false;
-      App.HeaderMenu._navArmedAt = 0;
-      return (App.HeaderMenu._now() - at) < App.HeaderMenu.NAV_ARM_TTL_MS;
-    },
-
-    _resolveDismissWaiters() {
-      const waiters = App.HeaderMenu._dismissWaiters;
-      if (!waiters.length) return;
-      App.HeaderMenu._dismissWaiters = [];
-      for (const resolve of waiters) {
-        try { resolve(); } catch (err) { /* ignore */ }
-      }
-    },
-
-    open() {
-      const panel = document.getElementById('header-menu-panel');
-      const overlay = document.getElementById('header-menu-overlay');
-      const btn = document.getElementById('header-menu-btn');
-      if (!panel) return;
-      // A fresh presentation ends any "still sliding out" window the
-      // legacy path was counting down (#977).
-      App.HeaderMenu._closingAt = 0;
-      // #555: the AI-credit row only ever renders in this drawer, so
-      // opening it is exactly when its number matters. The refresh is
-      // throttled inside AiCredit, so this is cheap on every open —
-      // and it must run BEFORE the touch branch below, which returns.
-      if (window.AiCredit?.refreshAll) AiCredit.refreshAll();
-      // Touch platforms: present the drawer as a kit side panel — a
-      // right-edge slide-in with 1:1 drag-to-dismiss, matching what
-      // desktop's CSS slide-over already does positionally (it used to
-      // come up from the bottom as a sheet capped at 70vh, which cut the
-      // bottom-anchored footer off). The panel element itself is adopted
-      // via contentEl — its row listeners ride along — and is restored to
-      // <body> (off-screen, as usual) when the panel dismisses. Desktop
-      // keeps the right-side slide-over below.
-      if (PlatformUI.isTouch()) {
-        App.HeaderMenu._renderThemeButtons();
-        panel.classList.add('platform-panel-adopted');
-        // Assigned right below; captured here so onDismiss can tell its own
-        // teardown apart from a newer one's (see the guard).
-        let handle = null;
-        const kitPanel = PlatformUI.panel({
-          contentEl: panel,
-          side: 'right',
-          onDismiss: () => {
-            // The drawer this handle owned has left the screen, so anyone
-            // who chained a presentation behind close() may go — resolved
-            // BEFORE the ownership guard below, or a superseded teardown
-            // would strand them until the safety cap (#977).
-            App.HeaderMenu._resolveDismissWaiters();
-            // Teardown is deferred behind the exit spring, so a tap on the
-            // hamburger during that window can re-adopt the drawer into a
-            // NEW kit panel before this fires. Restoring it to <body> then
-            // would yank the node straight back out of the panel the user
-            // just opened, leaving an empty drawer. Only the CURRENT
-            // handle's teardown owns the node.
-            if (handle && App.HeaderMenu._panel !== handle) return;
-            panel.classList.remove('platform-panel-adopted');
-            document.body.appendChild(panel);
-            App.HeaderMenu._panel = null;
-            // The hamburger's state is not the kit's business, so it is
-            // reset here on EVERY exit path (backdrop, Escape, ✕, row
-            // navigation) — they all route through the kit dismiss.
-            btn.setAttribute('aria-expanded', 'false');
-            btn.setAttribute('aria-label', 'Open menu');
-          },
-        });
-        handle = kitPanel;
-        if (kitPanel) {
-          App.HeaderMenu._panel = kitPanel;
-          // The touch path used to return before the aria writes below,
-          // leaving the button reading "Open menu" / collapsed while the
-          // drawer was open.
-          btn.setAttribute('aria-expanded', 'true');
-          btn.setAttribute('aria-label', 'Close menu');
-          return;
-        }
-        panel.classList.remove('platform-panel-adopted');
-      }
-      overlay.classList.remove('hidden');
-      // Force a reflow so the transition fires (element was display:none).
-      overlay.getBoundingClientRect();
-      overlay.setAttribute('data-open', '');
-      panel.setAttribute('data-open', '');
-      btn.setAttribute('aria-expanded', 'true');
-      btn.setAttribute('aria-label', 'Close menu');
-      // Reflect the current theme mode every time the drawer opens (covers
-      // cross-tab changes and explicit values that happen to match the OS).
-      App.HeaderMenu._renderThemeButtons();
-      const closeBtn = document.getElementById('header-menu-close');
-      if (closeBtn) closeBtn.focus();
-    },
-    // Order of the three segments in the DOM — also the caret's stop
-    // index, so the two can never disagree.
-    THEME_MODES: ['light', 'dark', 'system'],
-
-    // Sync the Light/Dark/System segmented control from Theme.get(): the
-    // raised active segment, its aria-checked state, and the position of
-    // the caret underneath it. Safe to call before Theme/DOM exist
-    // (guards both).
-    //
-    // The caret is moved by writing --theme-caret-index (0|1|2) on the
-    // track and letting CSS translate a thirds-width element by
-    // index * 100%. Deliberately NOT an offsetLeft measurement: this runs
-    // once from open() BEFORE PlatformUI.panel resizes the panel from
-    // w-60 to the kit drawer's --un-panel-width, so a pixel read here
-    // would be stale the moment the panel presents. Percentages are
-    // correct at both widths with no re-measure, and the transition in
-    // CSS is what makes the caret slide between segments.
-    _renderThemeButtons() {
-      if (!window.Theme) return;
-      const current = Theme.get();
-      document.querySelectorAll('#drawer-theme-track [data-theme-mode]').forEach((b) => {
-        const active = b.dataset.themeMode === current;
-        b.classList.toggle('theme-seg-active', active);
-        b.setAttribute('aria-checked', active ? 'true' : 'false');
-      });
-      const track = document.getElementById('drawer-theme-track');
-      if (track) {
-        const idx = Math.max(0, App.HeaderMenu.THEME_MODES.indexOf(current));
-        track.style.setProperty('--theme-caret-index', String(idx));
-      }
-    },
-    // Returns a promise that resolves once the drawer is actually GONE —
-    // the kit teardown on the touch path, the CSS slide's end on the
-    // legacy one, immediately when nothing was open (#977). Callers that
-    // present a surface of their own (the Node / Wallet sheets, the Share
-    // dialog) chain it so only one surface moves at a time; every other
-    // caller can keep ignoring the return value.
+    open() { window.HeaderMenu?.open(); },
+    // close() is awaited by callers that present a surface of their own (the
+    // Node / Wallet sheets, the Share dialog), so the forwarder has to keep
+    // returning a thenable even when the controller is not up yet.
     close() {
-      if (App.HeaderMenu._panel) {
-        const done = App.HeaderMenu._afterDismiss();
-        App.HeaderMenu._closingAt = App.HeaderMenu._now();
-        App.HeaderMenu._panel.dismiss();
-        return done;
-      }
-      const panel = document.getElementById('header-menu-panel');
-      const overlay = document.getElementById('header-menu-overlay');
-      const btn = document.getElementById('header-menu-btn');
-      if (!panel) return Promise.resolve();
-      const wasOpen = panel.hasAttribute('data-open');
-      if (wasOpen) App.HeaderMenu._closingAt = App.HeaderMenu._now();
-      panel.removeAttribute('data-open');
-      overlay.removeAttribute('data-open');
-      btn.setAttribute('aria-expanded', 'false');
-      btn.setAttribute('aria-label', 'Open menu');
-      if (!wasOpen) return Promise.resolve();
-      const done = App.HeaderMenu._afterDismiss();
-      // Hide overlay after the slide-out transition finishes.
-      setTimeout(() => {
-        overlay.classList.add('hidden');
-        App.HeaderMenu._resolveDismissWaiters();
-      }, App.HeaderMenu.LEGACY_CLOSE_MS);
-      return done;
+      return window.HeaderMenu
+        ? window.HeaderMenu.close()
+        : Promise.resolve();
     },
-
-    // The completion promise itself: settled by whichever exit path runs,
-    // with a hard safety cap so a teardown that never fires can't hang a
-    // chained presentation forever.
-    _afterDismiss() {
-      return new Promise((resolve) => {
-        App.HeaderMenu._dismissWaiters.push(resolve);
-        setTimeout(resolve, App.HeaderMenu.DISMISS_SAFETY_MS);
-      });
-    },
-    init() {
-      const btn = document.getElementById('header-menu-btn');
-      if (!btn) return;
-      btn.addEventListener('click', () => App.HeaderMenu.open());
-      document.getElementById('header-menu-close')
-        .addEventListener('click', () => App.HeaderMenu.close());
-      document.getElementById('header-menu-overlay')
-        .addEventListener('click', () => App.HeaderMenu.close());
-      document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') {
-          // Adopted into a kit panel: the kit's own modal-stack handler
-          // owns Escape (it dismisses the topmost surface, which may be a
-          // modal opened above the drawer). Don't double-handle it.
-          if (App.HeaderMenu._panel) return;
-          const panel = document.getElementById('header-menu-panel');
-          if (panel && panel.hasAttribute('data-open')) App.HeaderMenu.close();
-        }
-      });
-      // Every LINK inside the drawer, in one rule (#977). Two jobs:
-      //
-      //   1. Arm the single-motion rule. A same-document hash link is
-      //      about to navigate the shell, and the drawer's own exit is
-      //      the only motion that navigation may show — so stamp
-      //      _navArmedAt and let App._entryTransition downgrade the
-      //      screen animation to 'none'. External links (the GitHub row,
-      //      whose href is an absolute repo URL) animate nothing in this
-      //      document, so they only close.
-      //   2. Close the drawer for links that never had a handler of
-      //      their own: the Kudos meter in the status pane
-      //      (#leaderboard/prs, rendered by kudos.js) and the footer's
-      //      "Forked from" line (#app/<slug>, rendered by app-view.js)
-      //      used to navigate with the drawer left wide open.
-      //
-      // Registered on the panel element itself, so it rides along when
-      // the panel is adopted into the kit drawer — same reason the
-      // per-row listeners below survive adoption. Those per-row
-      // handlers are now redundant with this one, and harmlessly so:
-      // both close paths are idempotent (the kit's dismiss() returns
-      // early once closed).
-      const drawerPanel = document.getElementById('header-menu-panel');
-      if (drawerPanel) {
-        drawerPanel.addEventListener('click', (e) => {
-          const link = e.target.closest ? e.target.closest('a[href]') : null;
-          if (!link || !drawerPanel.contains(link)) return;
-          // #1036: a cmd/ctrl/shift/middle click opens the destination
-          // in ANOTHER tab — nothing navigates in this document, so
-          // there is no screen animation to suppress (arming the flag
-          // would leak onto the NEXT real navigation until its TTL) and
-          // no reason to tear the drawer down under the user.
-          if (window.NavLink && NavLink.isNativeClick(e)) return;
-          // getAttribute, not .href: the property resolves to an absolute
-          // URL, which would make every in-page hash link look external.
-          const href = link.getAttribute('href') || '';
-          if (href.startsWith('#')) {
-            App.HeaderMenu._navArmedAt = App.HeaderMenu._now();
-          }
-          App.HeaderMenu.close();
-        });
-      }
-      // Drawer row actions — each closes the menu after triggering its action.
-      document.getElementById('drawer-row-github')
-        .addEventListener('click', () => App.HeaderMenu.close());
-      // Leaderboard (the merged Kudos + Topochain + Challenges screen) —
-      // same real-anchor idiom as Profile below: navigation rides the
-      // anchor's hash, the click handler here just closes the drawer. The
-      // separate Challenges / Topochain-seasons rows that used to sit
-      // beside it are gone; they're tabs of this one screen now.
-      document.getElementById('drawer-row-leaderboard')
-        ?.addEventListener('click', () => App.HeaderMenu.close());
-      // Share — a dialog of its own, so it waits for the drawer to be
-      // gone rather than fading in across the drawer's exit (#977).
-      document.getElementById('drawer-row-share')
-        .addEventListener('click', () => {
-          Promise.resolve(App.HeaderMenu.close()).then(() => {
-            if (window.AppView) AppView.openShareModal();
-          });
-        });
-      // Settings — the #settings screen (settings-modal-to-screen
-      // conversion). Same real-anchor idiom as Challenges / Profile above:
-      // navigation rides the anchor's hash, this handler just closes the
-      // drawer.
-      document.getElementById('drawer-row-settings')
-        ?.addEventListener('click', () => App.HeaderMenu.close());
-      // Admin & moderation — visibility is App.renderAdminButton()'s job
-      // (isAdmin gate); navigation rides the anchor's #admin hash, which
-      // navigateToAdminConsole re-gates. Same idiom as Settings above.
-      document.getElementById('drawer-row-admin')
-        ?.addEventListener('click', () => App.HeaderMenu.close());
-      // Theme segmented control — a live control, NOT a navigation row: it
-      // sets the mode and re-highlights WITHOUT closing the drawer, so the
-      // user can see the recolor and switch again.
-      if (window.Theme) {
-        document.querySelectorAll('#drawer-theme-track [data-theme-mode]').forEach((b) => {
-          b.addEventListener('click', () => {
-            Theme.set(b.dataset.themeMode);
-            App.HeaderMenu._renderThemeButtons();
-          });
-        });
-        // Storage/OS-driven changes (other tab, OS sunset switch) re-highlight too.
-        Theme.onChange(() => App.HeaderMenu._renderThemeButtons());
-        App.HeaderMenu._renderThemeButtons();
-      }
-    },
+    isPresenting() { return !!window.HeaderMenu?.isPresenting(); },
+    consumeNavPending() { return !!window.HeaderMenu?.consumeNavPending(); },
   },
 
   // Pull-to-refresh on the static full-screen scrollers (element mode —
@@ -2025,15 +1710,19 @@ const App = {
         return Leaderboard._load();
       });
     }
-    const notifList = document.getElementById('notifications-list');
-    if (notifList) PlatformUI.pullToRefresh(notifList, () => Notifications.refresh());
+    // #notifications-list's pull-to-refresh moved with the panel (#1079
+    // chunk B) — it is attached from the island's layout effect in
+    // frontend/src/features/notifications/index.tsx, so the whole panel has
+    // exactly one owner.
   },
 
   bindEvents() {
     // Note: the "Create new app" entry point lives in the home feed
     // now (see Home.wireCreateButtons) — no static header button to
     // bind here anymore.
-    App.HeaderMenu.init();
+    // The drawer's own wiring is HeaderMenu.init(), called from the React
+    // island's layout effect now (#1079 chunk B) — it has to run after
+    // hydration has adopted #header-menu-panel, which is earlier than this.
     App._wirePullToRefresh();
     document.getElementById('create-cancel').addEventListener('click', App.hideCreateModal);
     document.getElementById('create-modal').addEventListener('click', (e) => {
@@ -2959,18 +2648,22 @@ const App = {
         // App.user.isAdmin lives inside navigateToAdminConsole.
         App.setChromeless(false);
         let _adminSection = parts[1] || null;
-        // Permanent alias for the renamed Topochain section. The sub-tab
-        // (a third segment, owned by AdminTopochain) has to survive the
-        // rewrite, otherwise a deep bookmark like #admin/topochain/users
-        // would silently land on the section's default tab. Same idiom as
-        // the #topochain branch below: rewrite the address BEFORE
-        // navigating so the module's own _syncHash sees the canonical
-        // prefix, and the bookmark self-heals.
+        // Permanent alias for the renamed Topochain section. Everything
+        // after the section segment is owned by AdminTopochain and has to
+        // survive the rewrite VERBATIM — not just the sub-tab, but the
+        // Season-events tail below it
+        // (season-events/<eventId>/new-challenge/<templateId>) — otherwise
+        // a deep bookmark silently lands on the section's default tab or,
+        // worse, on the right tab with the wrong event. Same idiom as the
+        // #topochain branch below: rewrite the address BEFORE navigating so
+        // the module's own _syncHash sees the canonical prefix, and the
+        // bookmark self-heals.
         if (_adminSection === 'topochain') {
           _adminSection = 'seasons';
+          const tail = parts.slice(2).join('/');
           try {
             history.replaceState(null, '',
-              parts[2] ? `#admin/seasons/${parts[2]}` : '#admin/seasons');
+              tail ? `#admin/seasons/${tail}` : '#admin/seasons');
           } catch (err) { /* non-fatal: navigation below still works */ }
         }
         App.navigateToAdminConsole(_adminSection);
@@ -3169,62 +2862,28 @@ const App = {
   // Hiding the header changes #app-view's rect, so re-broadcast the
   // per-frame insets: the app's top inset is 0 while the header covers
   // it and becomes the real status-bar inset once it doesn't.
+  // Both DOM effects are React's now (#1079 chunk B): #platform-header is an
+  // island, and the floating pill is a component beside it
+  // (frontend/src/features/header/chromeless-pill.tsx). So this publishes two
+  // flags through the shell's visibility store — the ONE way a converted
+  // region's visibility may be driven from outside React — and the two
+  // subscribers produce exactly the DOM the classList toggle and the
+  // createElement/appendChild pair used to produce by hand.
+  //
+  // App.chromeless itself stays here: the router (restoreFromHash, the
+  // navigate* methods, the iframe surface logic) reads it on every hash
+  // change, and it is a routing fact, not a rendering one. Publishing before
+  // the deferred bundle has evaluated is fine — the store is a plain object
+  // on window, and the islands read it on mount.
   setChromeless(on) {
     const enable = !!on;
     if (App.chromeless === enable) return;
     App.chromeless = enable;
-    const header = document.getElementById('platform-header');
-    if (header) header.classList.toggle('hidden', enable);
-    if (enable) App._mountChromelessPill();
-    else App._unmountChromelessPill();
+    App.Visibility.publish('platform-header', !enable);
+    App.Visibility.publish('chromeless-pill', enable);
     if (typeof AppView !== 'undefined' && AppView.scheduleSafeAreaBroadcast) {
       AppView.scheduleSafeAreaBroadcast();
     }
-  },
-
-  // Floating pill, visually matching the bridge's share-view pill
-  // (public/usernode-bridge.js __USERNODE_PLATFORM_LINK__) so users see
-  // one consistent affordance. Unlike the bridge pill it is NOT
-  // dismissible — in chromeless mode it's the only way into the full
-  // platform view. The slug is read at click time so the pill survives
-  // app-to-app hash navigation without a remount.
-  _mountChromelessPill() {
-    if (document.getElementById('chromeless-pill')) return;
-    const link = document.createElement('a');
-    link.id = 'chromeless-pill';
-    link.href = '#';
-    link.setAttribute('aria-label', 'Open this app on Usernode');
-    link.style.cssText = 'position:fixed;'
-      + 'right:calc(12px + env(safe-area-inset-right,0px));'
-      + 'bottom:calc(12px + env(safe-area-inset-bottom,0px));'
-      + 'z-index:40;display:flex;align-items:center;gap:4px;'
-      + 'background:rgba(15,20,32,0.82);color:#e7edf7;border-radius:999px;'
-      + 'padding:6px 12px;font:12px/1.2 -apple-system,system-ui,sans-serif;'
-      + 'text-decoration:none;box-shadow:0 2px 10px rgba(0,0,0,0.3);opacity:0.85';
-    link.addEventListener('mouseenter', () => { link.style.opacity = '1'; });
-    link.addEventListener('mouseleave', () => { link.style.opacity = '0.85'; });
-    const label = document.createElement('span');
-    label.textContent = 'Open in Usernode';
-    const glyph = document.createElement('span');
-    glyph.textContent = '\u2197'; // ↗ (escaped like the bridge pill's)
-    glyph.style.cssText = 'font-size:11px;opacity:0.75';
-    glyph.setAttribute('aria-hidden', 'true');
-    link.appendChild(label);
-    link.appendChild(glyph);
-    link.addEventListener('click', (ev) => {
-      ev.preventDefault();
-      if (App.currentApp) {
-        // hashchange → restoreFromHash clears the mode; the already-
-        // loaded iframe stays mounted (same app, same tab).
-        location.hash = `#app/${App.currentApp}/app`;
-      }
-    });
-    document.body.appendChild(link);
-  },
-
-  _unmountChromelessPill() {
-    const link = document.getElementById('chromeless-pill');
-    if (link && link.parentNode) link.parentNode.removeChild(link);
   },
 
   // The single decision point for "what animation does entering this
@@ -3289,12 +2948,73 @@ const App = {
     const keep = keepAlso || [];
     for (const id of App.SCREEN_IDS) {
       if (id === revealId || keep.includes(id)) continue;
-      const el = document.getElementById(id);
-      if (el) el.classList.add('hidden');
+      App._setScreenVisible(id, false);
     }
-    const target = document.getElementById(revealId);
-    if (target) target.classList.remove('hidden');
+    App._setScreenVisible(revealId, true);
     App.setBackIcon('home');
+  },
+
+  // ── The React seam (#1078) ─────────────────────────────────────────
+  // Screen roots whose markup React owns. For these, visibility is
+  // PUBLISHED as data and the component renders its own `hidden` class;
+  // toggling the class from here would be a write into React-owned DOM
+  // that the next render reconciles away. Everything not listed keeps
+  // the classList path, so converted and unconverted screens coexist for
+  // the whole migration. A conversion chunk adds its id here in the same
+  // commit that converts the screen.
+  REACT_SCREEN_IDS: [
+    // #1080 chunk C — the anonymous shell's screens, converted in order.
+    'auth-landing-screen',
+    'auth-login-screen',
+    'auth-register-screen',
+    'auth-waiting-screen',
+    'auth-waitlist-screen',
+    'auth-more-screen',
+  ],
+
+  // The publish/read half of that seam. The state is a plain object on
+  // `window` because load order demands it: these classic scripts run
+  // before the deferred React module, so app.js routes — and publishes —
+  // first. The identical factory lives in
+  // frontend/src/lib/visibility-store.ts; keep the two in sync.
+  Visibility: {
+    _store() {
+      let store = window.__usernodeVisibility;
+      if (!store) {
+        store = { visible: Object.create(null), listeners: new Set() };
+        window.__usernodeVisibility = store;
+      }
+      return store;
+    },
+    publish(id, visible) {
+      const store = App.Visibility._store();
+      if (store.visible[id] === visible) return;
+      store.visible[id] = visible;
+      // Copy first: a listener unsubscribing mid-notification would
+      // otherwise mutate the set being iterated.
+      for (const listener of [...store.listeners]) {
+        try { listener(); } catch (e) { console.error('[visibility] listener failed', e); }
+      }
+    },
+    // `undefined` when nothing has published it yet — deliberately not
+    // `false`, so a converted region can fall back to whatever its
+    // markup shipped with rather than flashing hidden on first render.
+    read(id) { return App.Visibility._store().visible[id]; },
+  },
+
+  // Show/hide one screen root through whichever half owns it.
+  _setScreenVisible(id, visible) {
+    if (App.REACT_SCREEN_IDS.includes(id)) { App.Visibility.publish(id, visible); return; }
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('hidden', !visible);
+  },
+
+  // Is a screen root on screen? Reads the store for converted roots and
+  // the DOM for the rest, so callers don't have to know which is which.
+  _isScreenVisible(id) {
+    if (App.REACT_SCREEN_IDS.includes(id)) return App.Visibility.read(id) === true;
+    const el = document.getElementById(id);
+    return !!el && !el.classList.contains('hidden');
   },
 
   // The chrome every platform screen (leaderboard / profile / browse /
@@ -4004,8 +3724,7 @@ const App = {
   _departingScreen() {
     for (const id of App.SCREEN_IDS) {
       if (id === 'app-view') continue;
-      const el = document.getElementById(id);
-      if (el && !el.classList.contains('hidden')) return el;
+      if (App._isScreenVisible(id)) return document.getElementById(id);
     }
     return document.getElementById('home-screen');
   },
@@ -4096,7 +3815,7 @@ const App = {
     // single-motion gate — 'none' still runs fn + after as one mutation.
     const appViewEl = document.getElementById('app-view');
     PlatformUI.transition(() => {
-      document.getElementById('app-view').classList.remove('hidden');
+      App._setScreenVisible('app-view', true);
       document.getElementById('back-btn').classList.remove('hidden');
       // Best-effort: returns false (and changes nothing) for anything whose
       // App tab wouldn't be a plain production iframe — self-hosted apps,
@@ -4457,4 +4176,29 @@ const App = {
 };
 
 window.App = App;
+
+// #1038: stale-tab recovery for live session state. A tab that was
+// backgrounded (or a laptop that slept, or a phone that locked) can have
+// missed every `session_state` push while its socket was frozen, and comes
+// back showing a spinner for a turn that finished an hour ago. Reconcile on
+// the way back in — throttled by SessionState.FOREGROUND_STALE_MS so
+// alt-tabbing doesn't spam the endpoint.
+//
+// Deliberately global rather than per-screen: the cog is in the header on
+// every route, so no single view owns this. Both events matter —
+// visibilitychange fires on browser-tab switches, focus on window-to-window
+// switches where the tab stays "visible" throughout.
+App._foregroundResync = () => {
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+  if (window.SessionState) SessionState.syncIfStale?.();
+};
+// Guarded: app.js is loaded into bare vm sandboxes by several unit tests,
+// which stub `document` / `window` with only the members they need.
+if (typeof document !== 'undefined' && document.addEventListener) {
+  document.addEventListener('visibilitychange', App._foregroundResync);
+}
+if (typeof window !== 'undefined' && window.addEventListener) {
+  window.addEventListener('focus', App._foregroundResync);
+}
+
 document.addEventListener('DOMContentLoaded', () => App.init());

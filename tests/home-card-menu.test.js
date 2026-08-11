@@ -135,6 +135,35 @@ const baseApp = (over) => ({
   ...over,
 });
 
+test('card-menu shot retries after the initial empty home paint', () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  const frames = [];
+  const opened = [];
+  sandbox.location.search = '?demo=1&shot=card-menu';
+  sandbox.URLSearchParams = URLSearchParams;
+  sandbox.requestAnimationFrame = (fn) => { frames.push(fn); };
+  Home.openCardMenu = (slug) => { opened.push(slug); };
+
+  const empty = { offsetParent: {}, querySelector: () => null };
+  Home._maybeOpenShotMenu(empty);
+  assert.equal(Home._shotMenuPending, true);
+  frames.shift()();
+  assert.equal(Home._shotMenuPending, false);
+  assert.equal(Home._shotMenuDone, false,
+    'an empty pre-fetch paint must not consume the one-shot');
+
+  const button = { dataset: { slug: 'demo-app' } };
+  const populated = {
+    offsetParent: {},
+    querySelector: (selector) => (selector === '.card-menu-btn' ? button : null),
+  };
+  Home._apps = [baseApp()];
+  Home._maybeOpenShotMenu(populated);
+  frames.shift()();
+  assert.equal(Home._shotMenuDone, true);
+  assert.deepEqual(opened, ['demo-app']);
+});
+
 // ── Compact card markup ───────────────────────────────────────────
 
 test('card: one hamburger trigger, none of the old corner buttons', () => {

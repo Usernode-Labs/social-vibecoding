@@ -17,7 +17,7 @@
 #   __USERNODE_ERROR__  <msg>
 #
 # Required env (passed via -e on `docker exec`):
-#   PROMPT_FILE, BRANCH, WORKER_JWT, SESSION_ID, PLATFORM_URL
+#   PROMPT_FILE, BRANCH, SESSION_ID, PLATFORM_URL
 #
 #   PROMPT_FILE points at the dispatch prompt the host materialized into
 #   the CC volume before this exec (see worker.js writeTurnPrompt). The
@@ -28,6 +28,7 @@
 #   same reason.
 # Optional env:
 #   MODE                       build (default) | scout | sync
+#   WORKER_JWT                 required for build/sync; absent for scout
 #   MODEL                      default: claude-sonnet-5
 #   COMMIT_MSG                 default: "Changes via Usernode"
 #   CLAUDE_RESUME_SESSION_ID   if set, passes `--resume <id>` to claude
@@ -62,17 +63,28 @@ die() {
 : "${PROMPT_FILE:?PROMPT_FILE required}"
 [ -s "$PROMPT_FILE" ] || die "prompt file missing or empty: $PROMPT_FILE"
 : "${BRANCH:?BRANCH required}"
-: "${WORKER_JWT:?WORKER_JWT required}"
 : "${SESSION_ID:?SESSION_ID required}"
 : "${PLATFORM_URL:?PLATFORM_URL required}"
 : "${MODE:=build}"
+: "${WORKER_JWT:=}"
 : "${MODEL:=claude-sonnet-5}"
 : "${COMMIT_MSG:=Changes via Usernode}"
 : "${PAT:=}"
 : "${CLAUDE_RESUME_SESSION_ID:=}"
 : "${BROWSER_MCP_CONFIG:=/home/node/.usernode-mcp.json}"
 
-cd /home/node/workspace || die "no /home/node/workspace"
+# Scout is deliberately read-only and receives no general worker token.
+# Build/sync still require the token for their platform push callbacks.
+if [ "$MODE" != "scout" ] && [ -z "$WORKER_JWT" ]; then
+  die "WORKER_JWT required for $MODE mode"
+fi
+if [ "$MODE" = "scout" ]; then
+  WORKER_JWT=""
+fi
+export WORKER_JWT
+
+WORKSPACE_DIR="${WORKSPACE_DIR:-/home/node/workspace}"
+cd "$WORKSPACE_DIR" || die "no workspace: $WORKSPACE_DIR"
 
 # Re-assert the credential helper. The warm wrapper sets it up at
 # bootstrap; this is defensive in case the .git/config was perturbed.
@@ -215,9 +227,10 @@ fi
 #   - this script's MODE=scout branch (below) skips the commit/push
 #     block entirely
 #   - usernode-push refuses if MODE=scout (worker/usernode-push)
-#   - WORKER_JWT is omitted from scout's docker exec env
-#     (worker.execInWorker), so even direct `usernode-push` from CC's
-#     Bash has no JWT to authenticate with against the platform proxy
+#   - every scout callback credential is purpose-bound: ISSUES_JWT can only
+#     read issues/attachments, ANTHROPIC_API_KEY can only reach the model
+#     proxy, and PROD_DEBUG_JWT can only reach read-only diagnostics;
+#     no worker:session token is minted under any alias
 # Net effect: scout has full read-only Bash + WebFetch (so it can run
 # `git submodule update --init`, `gh api`, etc.) but cannot escape the
 # worker container even if CC misbehaves.

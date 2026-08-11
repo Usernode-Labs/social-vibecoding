@@ -64,12 +64,12 @@ function loadSessions(mockPool, overrides = {}) {
   const workerStub = {
     ensureWorkerImage: async () => {},
     ensureWorker: async () => 'stub-worker',
-    execInWorker: async () => ({ lastResultText: '' }),
+    execInWorker: async () => ({ lastResultText: '', turnId: 'turn-default' }),
     resumeTurnFromJournal: async () => ({}),
     clearActiveTurn: async () => {},
     // Tail lifecycle (the dispatch tools hold the durable turn record
     // across their post-agent tail and release it in a finally).
-    finishTurn: async () => {},
+    finishTurn: async () => true,
     markTurnTail: async () => {},
     noteTailMilestone: async () => {},
     stopTurn: async () => {},
@@ -138,13 +138,38 @@ function makeMockPool() {
     messages: [],      // chat_session_messages inserts: { role, content }
     terminal: null,    // { status, outcome } once the run finishes
     specMd: '',
+    specVersion: 0,
     nextId: 1000,
+    effects: new Map(),
   };
   const calls = [];
 
   async function query(sql, params = []) {
     const s = String(sql);
     calls.push({ sql: s, params });
+
+    if (/^(BEGIN|COMMIT|ROLLBACK)$/i.test(s.trim())) {
+      return { rows: [], rowCount: 0 };
+    }
+    if (/INSERT INTO turn_effects/i.test(s)) {
+      const key = `${params[0]}:${params[1]}`;
+      if (state.effects.has(key)) return { rows: [], rowCount: 0 };
+      const effect = { state: 'pending', result: null };
+      state.effects.set(key, effect);
+      return { rows: [{ state: effect.state }], rowCount: 1 };
+    }
+    if (/UPDATE turn_effects/i.test(s)) {
+      const key = `${params[0]}:${params[1]}`;
+      const effect = state.effects.get(key);
+      if (!effect || effect.state !== 'pending') return { rows: [], rowCount: 0 };
+      effect.state = 'completed';
+      effect.result = params[2] == null ? null : JSON.parse(params[2]);
+      return { rows: [{ result: effect.result }], rowCount: 1 };
+    }
+    if (/SELECT state(?:, result)? FROM turn_effects/i.test(s)) {
+      const effect = state.effects.get(`${params[0]}:${params[1]}`);
+      return { rows: effect ? [{ ...effect }] : [], rowCount: effect ? 1 : 0 };
+    }
 
     if (/SELECT id, headless_status FROM chat_sessions/i.test(s)
         && /headless_issue_number/i.test(s)) {
@@ -171,6 +196,10 @@ function makeMockPool() {
         content: params[1],
       });
       return { rows: [{ id: state.nextId++ }] };
+    }
+    if (/INSERT INTO chat_session_specs/i.test(s)) {
+      state.specVersion += 1;
+      return { rows: [{ version: state.specVersion }], rowCount: 1 };
     }
     if (/UPDATE chat_sessions SET spec_md/i.test(s)) {
       state.specMd = params[0];
@@ -252,11 +281,13 @@ function sequencedLlm(responses) {
 const MARKERLESS_FAILURE = {
   lastResultText: '', exitCode: -1, resultSeen: false, ahead: 0, behind: 0,
   sha: null, pushOk: false, rawStderr: '', markerlessCause: 'probe_unobservable',
+  turnId: 'turn-failed',
 };
 const BUILD_SUCCESS = {
   lastResultText: 'Done — built the thing.', exitCode: 0, resultSeen: true,
   ahead: 1, behind: 0, sha: 'abc1234def5678', pushOk: true, rawStderr: '',
   sessionId: 'cc-1', markerlessCause: null,
+  turnId: 'turn-success',
 };
 
 // ── 1. Headless build retry: first attempt markerless, second succeeds ──
@@ -270,7 +301,10 @@ test('headless build: markerless first attempt re-dispatches once and succeeds',
     worker: {
       execInWorker: async (sessionId, opts) => {
         execCalls.push(opts.mode);
-        return execCalls.length === 1 ? { ...MARKERLESS_FAILURE } : { ...BUILD_SUCCESS };
+        const turnId = `turn-${execCalls.length}`;
+        return execCalls.length === 1
+          ? { ...MARKERLESS_FAILURE, turnId }
+          : { ...BUILD_SUCCESS, turnId };
       },
       stopTurn: async (sessionId) => { stopCalls.push(sessionId); },
       isWorkerExecuting: async () => false,
@@ -311,7 +345,11 @@ test('headless build: second identical failure surfaces the cause-specific messa
     worker: {
       execInWorker: async (sessionId, opts) => {
         execCalls.push(opts.mode);
-        return { ...MARKERLESS_FAILURE, markerlessCause: 'oom_killed' };
+        return {
+          ...MARKERLESS_FAILURE,
+          markerlessCause: 'oom_killed',
+          turnId: `turn-${execCalls.length}`,
+        };
       },
       stopTurn: async () => {},
       isWorkerExecuting: async () => false,
@@ -352,9 +390,13 @@ test('headless scout: markerless first attempt re-dispatches once and stores the
     worker: {
       execInWorker: async (sessionId, opts) => {
         execCalls.push(opts.mode);
+        const turnId = `turn-${execCalls.length}`;
         return execCalls.length === 1
-          ? { ...MARKERLESS_FAILURE }
-          : { lastResultText: SPEC, exitCode: 0, resultSeen: true, sessionId: 'cc-1' };
+          ? { ...MARKERLESS_FAILURE, turnId }
+          : {
+            lastResultText: SPEC, exitCode: 0, resultSeen: true,
+            sessionId: 'cc-1', turnId,
+          };
       },
       stopTurn: async () => {},
       isWorkerExecuting: async () => false,
@@ -424,6 +466,7 @@ const BUILD_NOOP = {
   lastResultText: 'I reviewed the relevant files; nothing needed changing.',
   exitCode: 0, resultSeen: true, ahead: 0, behind: 0,
   sha: null, pushOk: false, rawStderr: '', sessionId: 'cc-1', markerlessCause: null,
+  turnId: 'turn-noop',
 };
 
 test('headless build success persists the "Claude Code finished" completion row', async () => {
@@ -443,6 +486,14 @@ test('headless build success persists the "Claude Code finished" completion row'
 
     assert.ok(pool.state.messages.some((m) => m.content === 'Claude Code finished'));
     assert.ok(!pool.state.messages.some((m) => m.content === 'Claude Code made no changes'));
+    const wrapEffects = [...pool.state.effects.keys()]
+      .filter((key) => /:headless_wrapup_(?:llm|message)$/.test(key));
+    assert.equal(wrapEffects.length, 2, 'provider result and assistant row are receipt-backed');
+    assert.equal(
+      new Set(wrapEffects.map((key) => key.split(':')[0])).size,
+      1,
+      'one stable headless identity owns the whole post-agent Mayor phase',
+    );
   } finally {
     await srv.close();
     loaded.restore();

@@ -2,7 +2,9 @@
  *
  * Lives OUTSIDE public/ on purpose: it must never be served (it is
  * meaningless to a browser — `@tailwind` is a build-time directive).
- * `npm run build:css` compiles it to public/css/tailwind.css.
+ * Docker runs `npm run build:css` and copies public/css/tailwind.css from its
+ * builder stage into the runtime image. Local builds write the same ignored
+ * path for browser development.
  *
  * `base` is the preflight layer. The Play CDN injected it too, so dropping
  * it here would silently change every heading, list and form reset in the

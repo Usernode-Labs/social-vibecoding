@@ -348,24 +348,30 @@ test('dev-chat.js actually calls the helpers (not dead code)', () => {
 test("sessions.js persists durationMs on the completion status", () => {
   // #358: the completion status text is now outcome-derived (a `statusText`
   // variable that is 'Claude Code finished' only on success), but the
-  // terminal ccOutput row must still carry durationMs.
-  const finishedCall = sessionsSrc.match(
-    /sendStatus\(statusText,\s*\{[^}]*\}/
+  // terminal ccOutput row must still carry durationMs. Durable turns write
+  // that row inside runDbEffect, while legacy turns retain sendStatus.
+  const completionMeta = sessionsSrc.match(
+    /const completionMeta = \{([\s\S]{0,420}?)\};/
   );
-  assert.ok(finishedCall, 'missing sendStatus(statusText, {...}) completion row');
+  assert.ok(completionMeta, 'missing shared completion metadata');
   assert.ok(
-    /durationMs/.test(finishedCall[0]),
+    /durationMs/.test(completionMeta[1]),
     'completion status metadata must include durationMs'
   );
   assert.ok(
-    /ccOutcome/.test(finishedCall[0]),
+    /ccOutcome/.test(completionMeta[1]),
     'completion status metadata must include ccOutcome'
   );
-  // The literal 'Claude Code finished' header is still produced for the
-  // success outcome.
+  assert.match(sessionsSrc,
+    /effectKey: 'completion_row'[\s\S]{0,500}?JSON\.stringify\(completionMeta\)/,
+    'durable completion rows persist the shared metadata in the exact-once effect');
+  assert.match(sessionsSrc, /sendStatus\(statusText, completionMeta\)/,
+    'legacy completion rows use the same metadata');
+  // The provider-specific success header comes from the shared runtime
+  // identity (Claude remains byte-for-byte "Claude Code finished").
   assert.ok(
-    /statusText\s*=\s*ccOutcome === 'success'\s*\?\s*'Claude Code finished'/.test(sessionsSrc),
-    "success outcome must still surface 'Claude Code finished'"
+    /statusText\s*=\s*ccOutcome === 'success'\s*\?\s*`\$\{executionAgentName\} finished`/.test(sessionsSrc),
+    'success outcome must use the actual coding-agent name'
   );
 });
 

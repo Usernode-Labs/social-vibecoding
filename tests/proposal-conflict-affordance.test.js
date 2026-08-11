@@ -25,7 +25,8 @@ const APP_VIEW_SRC = fs.readFileSync(
   'utf8'
 );
 const WORK_DRAWER_SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'work-drawer.js'),
+  // #1079 chunk B: same module, now inside the React bundle.
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'work-drawer', 'work-drawer.js'),
   'utf8'
 );
 // #405: the proposal card / cog-drawer section now derive their merge-state

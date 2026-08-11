@@ -18,6 +18,7 @@ const DENIED_PREFIXES = Object.freeze([
 ]);
 const DENIED_SEGMENTS = Object.freeze([
   'api-key',
+  'credentials',
   'llm-grant',
   'llm-grants',
   'password',
@@ -25,6 +26,12 @@ const DENIED_SEGMENTS = Object.freeze([
   'secrets',
   'wallet-change-password',
   'wallet-link',
+]);
+// Coding-agent model/preference routes are also credential-adjacent:
+// a CLI bearer token must not set the default backend or list models
+// under another user's key.
+const DENIED_PREFIXES_EXTRA = Object.freeze([
+  '/api/me/coding-agent',
 ]);
 const SECRET_DECLARATION_BRANCH_PREFIX = 'secret-declare/';
 
@@ -56,6 +63,7 @@ function canonicalApiTarget(value) {
   const lowerPathname = url.pathname.toLowerCase();
   const segments = lowerPathname.split('/');
   if (DENIED_PREFIXES.some((prefix) => hasPrefix(lowerPathname, prefix))
+      || DENIED_PREFIXES_EXTRA.some((prefix) => hasPrefix(lowerPathname, prefix))
       || segments.some((segment) => DENIED_SEGMENTS.includes(segment))) {
     return null;
   }
@@ -88,6 +96,11 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'GET', pattern: '/api/apps' },
   { method: 'GET', pattern: '/api/apps/:slug' },
   { method: 'GET', pattern: '/api/apps/:slug/github-issues' },
+  // A request's GitHub comments — the other half of its discussion, read by
+  // prepare_work so a work order carries the requirements that landed in the
+  // replies rather than only the opening line. Read-only, and the route
+  // itself is already clipped and access-checked.
+  { method: 'GET', pattern: '/api/apps/:slug/github-issues/:number/comments' },
   { method: 'GET', pattern: '/api/apps/:slug/promoted' },
   { method: 'GET', pattern: '/api/apps/:slug/messages' },
   { method: 'POST', pattern: '/api/apps/:slug/messages' },
@@ -101,6 +114,13 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   // unattended build and promotes its clone.
   { method: 'GET', pattern: '/api/apps/:slug/pr-import/preview' },
   { method: 'POST', pattern: '/api/apps/:slug/pr-import' },
+  // Advancing a proposal that is already up for a vote (#1054), from a branch
+  // in the author's own fork. Allowlisted because the connector is where the
+  // agent that wrote the code lives — a failing check gates merge, and until
+  // this route existed the cheapest possible fixer of its own failing test had
+  // no way to land the fix. The route itself refuses everything that is not
+  // the caller's own open proposal.
+  { method: 'POST', pattern: '/api/apps/:slug/proposals/:id/update-from-fork' },
   { method: 'POST', pattern: '/api/apps/:slug/issues/:number/headless-session' },
   { method: 'POST', pattern: '/api/sessions/:id/clone-headless' },
   { method: 'POST', pattern: '/api/sessions/:id/promote' },

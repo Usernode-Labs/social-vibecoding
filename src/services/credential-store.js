@@ -229,7 +229,7 @@ async function readMetadata({ pool, userId, provider, purpose }) {
 // the legacy column. Legacy fallback happens ONLY when the generic row is
 // genuinely absent (e.g. a brand-new install where the backfill hasn't
 // run yet during the migration window).
-async function readSecret({ pool, userId, provider, purpose, dataKey }) {
+async function readSecret({ pool, userId, provider, purpose, dataKey, expectedRevision }) {
   assertProviderPurpose(provider, purpose);
   if (!userId) return null;
 
@@ -241,7 +241,7 @@ async function readSecret({ pool, userId, provider, purpose, dataKey }) {
   // serializes readers, but co-locating the status check and the secret in
   // one statement removes the two-query gap the finding describes.
   const { rows } = await pool.query(
-    `SELECT status, secret_last4, secret_enc
+    `SELECT status, secret_last4, secret_enc, revision
      FROM credentials.user_ai_credentials
      WHERE user_id = $1 AND provider = $2 AND purpose = $3`,
     [userId, provider, purpose]
@@ -250,6 +250,12 @@ async function readSecret({ pool, userId, provider, purpose, dataKey }) {
 
   // Generic row exists and is valid → decrypt from the SAME row.
   if (row && row.status === VALID_STATUS && row.secret_enc) {
+    // Atomic revision check (review P2): the revision and secret are read
+    // in the SAME statement, so a token minted for for revision N can
+    // never receive revision N+1's key via a read/replace race.
+    if (expectedRevision != null && row.revision !== expectedRevision) {
+      return null;
+    }
     const dec = secrets.decrypt(row.secret_enc, dataKey);
     if (dec) return dec;
     // Decrypt/read failure on a VALID row is a real error, not a fallback:

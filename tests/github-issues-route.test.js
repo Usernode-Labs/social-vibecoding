@@ -772,6 +772,8 @@ test('staging ?demo=1 seeds in_progress mock states on 900004/900006/900007/9000
     assert.strictEqual(p8.mine, false);
     assert.strictEqual(p8.claims.length, 1);
     assert.strictEqual(p8.claims[0].username, 'maya-builder');
+    assert.strictEqual(byNumber.get(900008).created_by_username, 'tester',
+      'the dedicated mock is authored by the actual capture viewer, not its synthetic GitHub login');
 
     // The kanban-demo anchors and live issues stay untouched.
     for (const n of [900001, 900002, 900009, 1, 2, 3, 4, 5]) {

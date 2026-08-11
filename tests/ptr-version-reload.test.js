@@ -29,7 +29,9 @@ const path = require('node:path');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const appJs = read('public/js/app.js');
-const authJs = read('public/js/auth-screens.js');
+// The landing screen is React now (#1080 chunk C), so its pull-to-refresh
+// wiring is pinned in the component rather than in public/js/auth-screens.js.
+const landingTsx = read('frontend/src/features/auth/landing.tsx');
 
 // ─── 1. platformMovedOn semantics ───────────────────────────────────
 
@@ -89,6 +91,6 @@ test('home PTR routes through _refreshOrReload', () => {
 });
 
 test('landing PTR routes through _refreshOrReload', () => {
-  assert.match(authJs,
-    /pullToRefresh\(byId\('auth-landing-scroll'\),\s*\n?\s*\(\) => App\._refreshOrReload\(\(\) => AuthScreens\._loadLandingApps\(\)\)\)/);
+  assert.match(landingTsx,
+    /pullToRefresh\(byId\('auth-landing-scroll'\), \(\) =>\s*\n?\s*legacy\(\)\.App\?\._refreshOrReload\?\.\(\(\) => live\.current\.loadLandingApps\(\)\)/);
 });

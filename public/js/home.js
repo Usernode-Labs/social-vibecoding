@@ -63,7 +63,7 @@ const Home = {
     try {
       // The viewer's own proposals / active sessions used to ride along
       // here as two strips at the top of the grid; both moved into the
-      // header cog's drawer (public/js/work-drawer.js), which owns those
+      // header cog's drawer (frontend/src/features/work-drawer/work-drawer.js), which owns those
       // fetches now.
       // ?demo=1 rides on /api/apps: staging injects the icon-demo
       // tiles there (routes/apps.js demoIconApps). No-op in production.
@@ -781,16 +781,19 @@ const Home = {
   // what makes `/?shot=card-menu#apps` land on the browse grid even
   // though home rendered first during boot.
   _shotMenuDone: false,
+  _shotMenuPending: false,
 
   _maybeOpenShotMenu(listEl) {
-    if (Home._shotMenuDone) return;
+    if (Home._shotMenuDone || Home._shotMenuPending) return;
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'card-menu') return;
     if (!listEl || listEl.offsetParent === null) return; // not the visible grid
+    Home._shotMenuPending = true;
     // Deferred a frame: the grid was written synchronously just above,
     // and the kit's flip/clamp placement needs the button's settled rect.
     requestAnimationFrame(() => {
+      Home._shotMenuPending = false;
       if (Home._shotMenuDone) return; // a render that raced us already won
       // Prefer the grid's own "…" trigger: a real anchor element is what
       // lets the desktop popover toggle closed on a re-click.
@@ -814,6 +817,10 @@ const Home = {
         }
       }
       if (!slug) return;
+      // The first home paint can legitimately be empty while GET /api/apps
+      // is still in flight. Consume the one-shot only after a real target
+      // exists, so the data-bearing repaint gets another chance.
+      Home._shotMenuDone = true;
       Home.openCardMenu(slug, anchor);
       // openCardMenu is a no-op when the app isn't in Home._apps yet or
       // carries no actions for this viewer; Home._menu is how it reports
@@ -1175,8 +1182,8 @@ const Home = {
 
   // The "Your proposals" / "Your active sessions" strips that used to
   // render here (#194) moved into the header cog's drawer — see
-  // public/js/work-drawer.js, which owns their fetches, rendering and
-  // busy-state polling now.
+  // frontend/src/features/work-drawer/work-drawer.js, which owns their
+  // fetches, rendering and busy-state polling now.
 
   // Pill builder for an app's status/activity flags, rendered ONLY in
   // the hamburger menu's build-info header now — the card face

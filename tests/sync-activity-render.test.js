@@ -63,6 +63,7 @@ function pairProgressRows(messages) {
 test('ACTIVE_CC_STATUS_RE matches the sync opening status (and keeps build/scout)', () => {
   assert.match('Syncing with main…', ACTIVE_CC_STATUS_RE);
   assert.match('Claude Code is running...', ACTIVE_CC_STATUS_RE);
+  assert.match('Codex is running...', ACTIVE_CC_STATUS_RE);
   assert.match('Scout reading the codebase', ACTIVE_CC_STATUS_RE);
   // The terminal outcome line must NOT be treated as an active CC status,
   // or the progress log would attach to the wrong (later) row.

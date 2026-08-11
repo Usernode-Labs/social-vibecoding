@@ -21,6 +21,8 @@ function delivery(overrides = {}) {
     notification_user_id: 7,
     kind: 'session_done',
     read_at: null,
+    push_category: 'developer_sessions',
+    push_enabled: true,
     registration_id: 3,
     delivery_environment: 'production',
     delivery_installation_id: '123e4567-e89b-12d3-a456-426614174000',
@@ -88,6 +90,8 @@ test('eligible delivery sends one generic bound message and marks it sent', asyn
 test('pre-send revalidation cancels ineligible recipient and deployment state', async () => {
   for (const [change, reason] of [
     [{ read_at: new Date() }, 'notification_read'],
+    [{ kind: 'future_kind', push_category: null, push_enabled: false }, 'kind_not_allowed'],
+    [{ push_enabled: false }, 'preference_disabled'],
     [{ delivery_environment: 'staging' }, 'environment_mismatch'],
     [{ deployment_send_enabled: false }, 'sender_disabled'],
     [{ deployment_send_enabled: null }, 'sender_disabled'],
@@ -125,6 +129,9 @@ test('delivery reload includes the current deployment state and activation times
   assert.equal(await worker.loadDelivery(JOB), null);
   assert.match(seen.sql, /d\.created_at AS delivery_created_at/);
   assert.match(seen.sql, /LEFT JOIN mobile_push_deployment_state state/);
+  assert.match(seen.sql, /LEFT JOIN mobile_push_kind_categories policy/);
+  assert.match(seen.sql, /LEFT JOIN mobile_push_preferences preference/);
+  assert.match(seen.sql, /COALESCE\(preference\.enabled, policy\.default_enabled, FALSE\) AS push_enabled/);
   assert.match(seen.sql, /state\.send_enabled AS deployment_send_enabled/);
   assert.match(seen.sql, /state\.send_not_before AS deployment_send_not_before/);
   assert.match(seen.sql, /state\.firebase_project_id AS deployment_firebase_project_id/);

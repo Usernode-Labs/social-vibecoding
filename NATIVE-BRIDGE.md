@@ -190,13 +190,32 @@ for an initial value; no polling needed.
   "balance": "1284",        // base units, string (BigInt-safe)
   "tokenAmount": 1284.0,    // display units, number
   "tokenSymbol": "UT",
-  "lastUpdatedMs": 1714672193412
+  "lastUpdatedMs": 1714672193412,
+  "staking": {
+    "delegate": null,
+    "delegated_since": null
+  }
 }
 ```
 
 Fields other than `address` are `null` while the native wallet provider
 hasn't produced a value yet (fresh app start, node still syncing). The app
 answers within ~10s worst-case; the bridge wrapper adds its own timeout.
+
+`staking` is `null` while wallet setup or backend reconciliation is not yet
+available. Within a staking snapshot, `delegate` alone is authoritative:
+`null` means phone block production is active, while a non-null address means
+delegation is active. `delegated_since` is optional display metadata and must
+never be used to infer whether delegation is enabled.
+
+#### `manageStaking()` → `{ delegate, delegated_since }`
+
+Bridge v4 capability: `manageStaking`. This privileged top-frame method takes
+no arguments, opens the native delegation screen, and resolves with the latest
+staking snapshot after that screen closes, including when the user makes no
+change. Native owns the fixed delegation target, confirmation, backend
+synchronization, persistence and node reconfiguration. Social Vibecoding must
+not submit a target address or requested delegation state itself.
 
 #### `getTransactionRecords()` → `{ items: [...] }`
 

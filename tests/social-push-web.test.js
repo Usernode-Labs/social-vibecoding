@@ -9,7 +9,8 @@ const source = fs.readFileSync(
   'utf8'
 );
 const notificationsSource = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'notifications.js'),
+  // #1079 chunk B: same module, now inside the React bundle.
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'notifications', 'notifications.js'),
   'utf8'
 );
 const settingsSource = fs.readFileSync(
@@ -30,6 +31,7 @@ function loadCoordinator({
   openImpl,
   ackImpl,
   getStateImpl,
+  isSessionAdmittedImpl,
   caps = capabilities,
 } = {}) {
   const windowListeners = new Map();
@@ -52,6 +54,9 @@ function loadCoordinator({
     App: { user: { id: 7 } },
     NativeChrome: {
       async getInfo() { return { version: 4, capabilities: caps }; },
+      isSessionAdmitted() {
+        return isSessionAdmittedImpl ? isSessionAdmittedImpl() : true;
+      },
     },
     Notifications: {
       async openById(id) {
@@ -244,6 +249,7 @@ test('state and pending work retry only after native session admission', async (
   let admitted = false;
   const loaded = loadCoordinator({
     claims: [{ notificationId: 44 }],
+    isSessionAdmittedImpl: () => admitted,
     getStateImpl() {
       if (!admitted) throw new Error('session handoff is in progress');
       return {
@@ -256,7 +262,8 @@ test('state and pending work retry only after native session admission', async (
   });
 
   await loaded.sandbox.SocialPush.init();
-  assert.equal(loaded.calls.some(([name]) => name === 'remote'), false);
+  assert.deepEqual(loaded.calls, [['remote', false]],
+    'a closed session clears stale delivery state without calling native');
 
   admitted = true;
   loaded.fire('usernode:native-session-admission', { admitted: true });
@@ -280,6 +287,27 @@ test('closing native session admission clears prior delivery state', async () =>
   assert.deepEqual(loaded.calls, [['remote', false]]);
   assert.equal(loaded.sandbox.SocialPush._state, null);
 });
+
+test('closed admission never exposes cached state or calls the setter',
+  async () => {
+    let admitted = true;
+    const loaded = loadCoordinator({
+      isSessionAdmittedImpl: () => admitted,
+    });
+    await loaded.sandbox.SocialPush.init();
+    assert.ok(loaded.sandbox.SocialPush._state);
+    loaded.calls.length = 0;
+
+    admitted = false;
+    assert.equal(await loaded.sandbox.SocialPush.getState(), null);
+    await assert.rejects(
+      loaded.sandbox.SocialPush.setEnabled(true),
+      /secure app sign-in is still finishing/i
+    );
+
+    assert.equal(loaded.sandbox.SocialPush._state, null);
+    assert.equal(loaded.calls.some(([name]) => name === 'enable'), false);
+  });
 
 test('a state read resolving after admission closes cannot restore old state', async () => {
   let releaseState;

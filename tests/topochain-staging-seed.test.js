@@ -113,6 +113,13 @@ test('seedStagingTopochain is defined with the (pool, config) signature', () => 
   assert.match(src, /async function seedStagingTopochain\(pool, config\)/);
 });
 
+test('the Android inactive rule is applied before the fallible fixture block', () => {
+  const updateAt = body.indexOf("WHERE os = 'android'");
+  const usersAt = body.indexOf('// ─── Users');
+  assert.ok(updateAt > -1 && usersAt > -1 && updateAt < usersAt,
+    'a later fixture collision must not suppress the deterministic admin warning');
+});
+
 test('seedStagingTopochain is a strict no-op outside staging (gate is the first statement)', () => {
   const afterSignature = body.slice(body.indexOf(') {') + 3);
   const firstStatement = afterSignature.split('\n').find((l) => l.trim().length > 0);
@@ -522,6 +529,8 @@ test('1 app_version_config per OS (ios, android)', () => {
   assert.match(block, /'android'/);
   const ids = block.match(/^\s*\(9005\d\d,/gm) || [];
   assert.equal(ids.length, 2);
+  assert.match(body, /UPDATE app_version_configs[\s\S]*?SET is_active = FALSE[\s\S]*?WHERE os = 'android'/,
+    'the cloned staging DB always carries one deterministic inactive-rule warning');
 });
 
 test('the Android rule is DEACTIVATED, not merely offered as an inactive insert', () => {

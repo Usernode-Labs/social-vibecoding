@@ -12,8 +12,8 @@ const appSource = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app.js'),
   'utf8'
 );
-const authScreensSource = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'auth-screens.js'),
+const waitingTsx = fs.readFileSync(
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'auth', 'waiting.tsx'),
   'utf8'
 );
 
@@ -133,6 +133,7 @@ function loadNativeChrome({
     usernode,
     localStorage: { getItem() { return '1'; }, setItem() {} },
     document: {
+      visibilityState: 'visible',
       getElementById() { return null; },
       createElement() { return {}; },
       addEventListener(type, listener) { documentListeners[type] = listener; },
@@ -220,56 +221,29 @@ test('anonymous auth screens wait for native wallet admission', async () => {
   ]);
 });
 
-test('waiting-session expiry admits anonymous native state before login',
-  async () => {
-    const order = [];
-    let intervalActive = false;
-    const location = {};
-    Object.defineProperty(location, 'hash', {
-      get() { return '#waiting'; },
-      set(value) {
-        order.push(`navigate:${value}`);
-      },
-    });
-    const sandbox = {
-      console: { log() {}, warn() {}, error() {} },
-      App: {
-        user: { id: 7 },
-        async enterAnonymous() {
-          assert.equal(this.user, null);
-          order.push('anonymous-admission');
-        },
-      },
-      document: {
-        addEventListener() {},
-        getElementById() { return { textContent: '' }; },
-      },
-      location,
-      async fetch() {
-        order.push('waiting-session-check');
-        return { status: 401 };
-      },
-      setInterval() {
-        intervalActive = true;
-        return 1;
-      },
-      clearInterval() { intervalActive = false; },
-    };
-    sandbox.window = sandbox;
-    sandbox.globalThis = sandbox;
-    vm.createContext(sandbox);
-    vm.runInContext(authScreensSource, sandbox);
-
-    sandbox.AuthScreens._startWaitingPoll();
-    await settle();
-
-    assert.deepEqual(order, [
-      'waiting-session-check',
-      'anonymous-admission',
-      'navigate:#login',
-    ]);
-    assert.equal(intervalActive, false);
-  });
+// The waiting room is a React screen since #1080 chunk C, so its release
+// poll can no longer be driven from a vm sandbox — the suite has no JSX
+// transform. The ordering that matters here is a three-step sequence in one
+// short function, which source pins can hold: clear the stale user BEFORE
+// admitting anonymous native state, await that admission, and only then
+// navigate to #login. Get it wrong and the native side re-enters anonymous
+// mode while still holding a dead session.
+test('waiting-session expiry admits anonymous native state before login', () => {
+  const body = waitingTsx.slice(
+    waitingTsx.indexOf('if (res.status === 401)'),
+    waitingTsx.indexOf('const data = await res.json()')
+  );
+  assert.ok(body, 'the waiting screen no longer handles a 401 from /api/auth/me');
+  // The poll dies with the session rather than hammering a dead one.
+  assert.match(body, /stopWaitingPoll\(\)/);
+  const nulled = body.indexOf('w.App.user = null');
+  const admitted = body.indexOf('w.App.enterAnonymous()');
+  const navigated = body.indexOf("location.hash = '#login'");
+  assert.ok(nulled > -1, 'the stale user is not cleared');
+  assert.ok(admitted > nulled, 'anonymous admission runs before the user is cleared');
+  assert.match(body, /await w\.App\.enterAnonymous\(\)/);
+  assert.ok(navigated > admitted, 'the login navigation runs before admission');
+});
 
 test('anonymous entry opens local admission only after native acknowledgement',
   async () => {
@@ -384,6 +358,71 @@ test('every handoff exchanges the web session and starts the bound identity', as
     'the already-started participant/epoch remains coalesced');
 });
 
+test('reconciling login admits Social push without opening the wallet',
+  async () => {
+    const loaded = loadNativeChrome({
+      completeLoginImpl: async () => ({
+        phase: 'reconciling', participantId: 7, epoch: 3,
+      }),
+    });
+    loaded.sandbox.App.user = { id: 7 };
+
+    const result = await loaded.NativeChrome.runLoginHandoff();
+
+    assert.equal(result.phase, 'reconciling');
+    assert.equal(loaded.NativeChrome.isSessionAdmitted(), true,
+      'the authenticated notification session is admitted');
+    assert.equal(loaded.NativeChrome._sessionWalletRelayAdmitted, false,
+      'wallet relay remains closed until account reconciliation settles');
+    assert.equal(loaded.calls.startNode.length, 0);
+
+    loaded.dispatchWindow('online');
+    await settle();
+    assert.equal(loaded.calls.fetch.length, 1,
+      'wallet reconciliation does not repeat the authenticated handoff');
+  });
+
+test('a matching ready event opens the wallet after push admission', async () => {
+  const loaded = loadNativeChrome({
+    completeLoginImpl: async () => ({
+      phase: 'reconciling', participantId: 7, epoch: 3,
+    }),
+  });
+  loaded.sandbox.App.user = { id: 7 };
+  await loaded.NativeChrome.runLoginHandoff();
+
+  loaded.dispatchWindow('usernode:auth-status', {
+    phase: 'ready', address: 'ut1-7', participantId: 7, epoch: 3,
+  });
+  await settle();
+
+  assert.deepEqual(plain(loaded.calls.startNode), [{
+    address: 'ut1-7', participantId: 7, epoch: 3,
+  }]);
+  assert.equal(loaded.NativeChrome.isSessionAdmitted(), true);
+  assert.equal(loaded.NativeChrome._sessionWalletRelayAdmitted, true);
+});
+
+test('a ready event for another native epoch cannot open the wallet',
+  async () => {
+    const loaded = loadNativeChrome({
+      completeLoginImpl: async () => ({
+        phase: 'reconciling', participantId: 7, epoch: 3,
+      }),
+    });
+    loaded.sandbox.App.user = { id: 7 };
+    await loaded.NativeChrome.runLoginHandoff();
+
+    loaded.dispatchWindow('usernode:auth-status', {
+      phase: 'ready', address: 'ut1-stale', participantId: 7, epoch: 4,
+    });
+    await settle();
+
+    assert.equal(loaded.calls.startNode.length, 0);
+    assert.equal(loaded.NativeChrome.isSessionAdmitted(), false);
+    assert.equal(loaded.NativeChrome._sessionWalletRelayAdmitted, false);
+  });
+
 test('a mismatched from-session participant is never handed to native', async () => {
   const loaded = loadNativeChrome({
     fetchImpl: async () => response({
@@ -412,6 +451,54 @@ test('native handoff-latch failure stops before the session exchange',
     assert.equal(loaded.calls.beginSessionHandoff, 1);
     assert.equal(loaded.calls.fetch.length, 0);
     assert.equal(loaded.calls.walletRelayAdmission.at(-1), false);
+  });
+
+test('online recovery retries a closed authenticated handoff', async () => {
+  let attempts = 0;
+  const loaded = loadNativeChrome({
+    fetchImpl: async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        return response({ success: false, error: 'temporarily unavailable' }, {
+          ok: false,
+          status: 503,
+        });
+      }
+      return response({ success: true, token: 'token-7', user: { id: 7 } });
+    },
+  });
+  loaded.sandbox.App.user = { id: 7 };
+
+  await loaded.NativeChrome.runLoginHandoff();
+  assert.equal(loaded.NativeChrome.isSessionAdmitted(), false);
+
+  loaded.dispatchWindow('online');
+  await loaded.NativeChrome._handoffPromise;
+
+  assert.equal(loaded.calls.fetch.length, 2);
+  assert.equal(loaded.NativeChrome.isSessionAdmitted(), true);
+});
+
+test('foreground recovery ignores hidden and already-admitted pages',
+  async () => {
+    const loaded = loadNativeChrome();
+    loaded.sandbox.App.user = { id: 8 };
+    loaded.sandbox.document.visibilityState = 'hidden';
+
+    loaded.dispatchDocument('visibilitychange');
+    await settle();
+    assert.equal(loaded.calls.fetch.length, 0);
+
+    loaded.sandbox.document.visibilityState = 'visible';
+    loaded.dispatchDocument('visibilitychange');
+    await loaded.NativeChrome._handoffPromise;
+    assert.equal(loaded.calls.fetch.length, 1);
+    assert.equal(loaded.NativeChrome.isSessionAdmitted(), true);
+
+    loaded.dispatchDocument('visibilitychange');
+    await settle();
+    assert.equal(loaded.calls.fetch.length, 1,
+      'an admitted page does not exchange its session again');
   });
 
 test('an overlapping A to B login reruns once for the latest web session', async () => {
@@ -616,6 +703,9 @@ test('auth-status events and concurrent starts stay participant/epoch bound', as
   });
   loaded.sandbox.App.user = { id: 6 };
   loaded.NativeChrome._handoffGeneration = 1;
+  loaded.NativeChrome._setAuthenticatedSessionAdmission(true, {
+    participantId: 6, epoch: 3,
+  });
   loaded.NativeChrome._setSessionWalletRelayAdmission(true);
 
   loaded.dispatchWindow('usernode:auth-status', {

@@ -9,6 +9,7 @@ let currentLevel = LEVELS[process.env.LOG_LEVEL] ?? LEVELS.INFO;
 // a key shouldn't be a security incident. Order matters: more
 // specific patterns first so generic ones don't pre-scrub them.
 const SENSITIVE_PATTERNS = [
+  /sk-or-v1-[A-Za-z0-9_-]+/g,            // OpenRouter API keys
   /sk-ant-[A-Za-z0-9_-]+/g,              // Anthropic API keys (user + admin)
   /ghp_[A-Za-z0-9]{20,}/g,                // GitHub personal access tokens
   /ghs_[A-Za-z0-9]{20,}/g,                // GitHub app installation tokens

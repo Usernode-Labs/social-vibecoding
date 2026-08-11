@@ -47,6 +47,7 @@ function loadWorker({ onExec = null, journalLines = null } = {}) {
   const ids = {
     docker: require.resolve('../src/services/docker'),
     logger: require.resolve('../src/services/logger'),
+    pool: require.resolve('../src/db/pool'),
     subject: require.resolve('../src/services/worker'),
   };
   if (journalLines) ids.childProcess = require.resolve('child_process');
@@ -54,6 +55,7 @@ function loadWorker({ onExec = null, journalLines = null } = {}) {
   for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
 
   const calls = [];
+  const dbCalls = [];
   const realDocker = require('../src/services/docker');
   stub(ids.docker, {
     ...realDocker,
@@ -67,6 +69,42 @@ function loadWorker({ onExec = null, journalLines = null } = {}) {
   });
   const noop = () => {};
   stub(ids.logger, { info: noop, warn: noop, error: noop, debug: noop });
+
+  // Full dispatches now require the durable lifecycle write to succeed
+  // before docker is invoked. Model that contract in memory so these stop
+  // race tests continue to exercise the real lifecycle code without a DB.
+  const activeTurns = new Map();
+  stub(ids.pool, {
+    getPool: () => ({
+      query: async (sql, params = []) => {
+        dbCalls.push({ sql: String(sql), params });
+        const text = String(sql);
+        const sessionId = Number(params[0]);
+        if (/SELECT active_turn FROM chat_sessions/i.test(text)) {
+          return { rows: [{ active_turn: activeTurns.get(sessionId) || null }], rowCount: 1 };
+        }
+        if (/SET active_turn = \$2::jsonb/i.test(text)) {
+          if (activeTurns.has(sessionId)) return { rows: [], rowCount: 0 };
+          const turn = JSON.parse(params[1]);
+          activeTurns.set(sessionId, turn);
+          return { rows: [{ active_turn: turn }], rowCount: 1 };
+        }
+        if (/SET active_turn = active_turn \|\| \$3::jsonb/i.test(text)) {
+          const current = activeTurns.get(sessionId);
+          if (!current) return { rows: [], rowCount: 0 };
+          const next = { ...current, ...JSON.parse(params[2]) };
+          activeTurns.set(sessionId, next);
+          return { rows: [{ active_turn: next }], rowCount: 1 };
+        }
+        if (/SET active_turn = NULL/i.test(text)) {
+          if (!activeTurns.has(sessionId)) return { rows: [], rowCount: 0 };
+          activeTurns.delete(sessionId);
+          return { rows: [{ id: sessionId }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      },
+    }),
+  });
 
   if (journalLines) {
     const realCp = require('child_process');
@@ -101,7 +139,7 @@ function loadWorker({ onExec = null, journalLines = null } = {}) {
     }
     delete require.cache[require.resolve('../src/services/worker')];
   };
-  return { worker, calls, restore };
+  return { worker, calls, dbCalls, restore };
 }
 
 // A warm worker execInWorker will accept a dispatch for.
@@ -293,7 +331,11 @@ test('a pending stop makes execInWorker skip the dispatch entirely', async () =>
     await worker.stopTurn(8100);
     const afterStop = calls.length;
 
-    const state = await worker.execInWorker(8100, DISPATCH_ARGS);
+    const state = await worker.execInWorker(8100, {
+      ...DISPATCH_ARGS,
+      agentBackend: 'codex_openrouter',
+      logicalTurnId: 'registered-stop-turn-8100',
+    });
 
     // THE assertion: no agent was started. Before this fix the exec ran
     // and the user paid for the whole run they had just cancelled.
@@ -311,6 +353,48 @@ test('a pending stop makes execInWorker skip the dispatch entirely', async () =>
     assert.equal(state.markerlessCause, null, 'a stop is not a markerless death');
     assert.equal(state.sha, null);
     assert.equal(state.ahead, 0);
+    assert.equal(state.turnId, 'registered-stop-turn-8100',
+      'the atomically registered owner survives the pre-dispatch stop');
+    assert.equal(state.agentBackend, 'codex_openrouter');
+  } finally { restore(); }
+});
+
+test('a skipped legacy dispatch does not invent a durable turn owner', async () => {
+  const { worker, calls, restore } = loadWorker();
+  try {
+    warmSession(worker, 8103);
+    await worker.stopTurn(8103);
+    const afterStop = calls.length;
+
+    const state = await worker.execInWorker(8103, DISPATCH_ARGS);
+
+    assert.equal(calls.length, afterStop, 'the pending stop still prevents every dispatch-side write');
+    assert.equal(state.turnId, null,
+      'a generated fallback id is not exposed when no active_turn was registered');
+    assert.equal(state.agentBackend, 'claude_code');
+  } finally { restore(); }
+});
+
+test('a recovered turn mirrors new BYOK spend onto its exact durable owner', async () => {
+  const { worker, dbCalls, restore } = loadWorker({
+    journalLines: ['__USERNODE_PHASE__thinking', '__USERNODE_EXIT__ 0'],
+  });
+  try {
+    warmSession(worker, 8102);
+    const turnId = '22222222-2222-4222-8222-222222222222';
+    await worker.resumeTurnFromJournal(8102, {
+      journal: '/home/node/.claude/turn-recovered.log',
+      turnId,
+      onProgress: () => worker.noteTurnByokSpend(8102, 7),
+    });
+    // noteTurnByokSpend deliberately mirrors asynchronously.
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const mirror = dbCalls.find((call) => call.sql.includes("'{byokCents}'"));
+    assert.ok(mirror, 'proxy-observed spend reaches the durable lifecycle update');
+    assert.equal(mirror.params[0], 7);
+    assert.equal(mirror.params[1], 8102);
+    assert.equal(mirror.params[2], turnId, 'never mutates whichever turn happens to be current');
   } finally { restore(); }
 });
 
@@ -366,7 +450,8 @@ test('a stop landing DURING the dispatch re-issues the kill', async () => {
     assert.ok(script.indexOf('kill -KILL') < script.indexOf('__USERNODE_EXIT__ 143'));
     // Targeted at THIS turn's journal, not a discovery fallback — that is
     // the whole point of re-arming after dispatch rather than before.
-    assert.match(script, /J='\/home\/node\/\.claude\/turn-\d+\.log'/);
+    assert.match(script, /J='\/home\/node\/\.claude\/turn-[A-Za-z0-9-]+\.log'/,
+      'the kill targets this UUID-safe logical turn journal');
   } finally { restore(); }
 });
 
@@ -379,7 +464,55 @@ test('with no stop pending, a dispatch proceeds and issues no kill', async () =>
 
     await worker.execInWorker(8300, DISPATCH_ARGS);
 
-    assert.ok(calls.some(isDispatch), 'the ordinary path still dispatches');
+    const dispatch = calls.find(isDispatch);
+    assert.ok(dispatch, 'the ordinary path still dispatches');
+    assert.ok(dispatch.args.includes('COMMIT_MSG=wip'),
+      'the requested commit message reaches the runner as non-secret configuration');
     assert.ok(!calls.some(isStopScript), 'and nothing kills a healthy turn');
+  } finally { restore(); }
+});
+
+test('Codex dispatch forwards OpenRouter model metadata without exposing its key in argv', async () => {
+  const { worker, calls, restore } = loadWorker({
+    journalLines: ['__USERNODE_EXIT__ 0'],
+  });
+  try {
+    warmSession(worker, 8301);
+    await worker.execInWorker(8301, {
+      mode: 'scout',
+      prompt: 'inspect the repository',
+      branchName: 'dev/openrouter-test',
+      agentBackend: 'codex_openrouter',
+      agentModel: '~deepseek/deepseek-v4-flash-latest',
+      agentReasoningEffort: 'medium',
+      agentModelMetadata: {
+        name: 'DeepSeek V4 Flash Latest',
+        contextWindow: 1_048_576,
+        maxOutputTokens: 131_072,
+        supportsReasoning: true,
+        reasoningEfforts: ['low', 'medium', 'high'],
+        supportsTools: true,
+      },
+      openrouterApiKey: 'sk-or-must-not-appear-in-argv',
+      openrouterApiBase: 'https://openrouter.ai/api/v1',
+    });
+
+    const dispatch = calls.find(isDispatch);
+    assert.ok(dispatch, 'Codex turn was dispatched');
+    for (const expected of [
+      'AGENT_MODEL=~deepseek/deepseek-v4-flash-latest',
+      'AGENT_MODEL_NAME=DeepSeek V4 Flash Latest',
+      'AGENT_MODEL_CONTEXT_WINDOW=1048576',
+      'AGENT_MODEL_MAX_OUTPUT_TOKENS=131072',
+      'AGENT_MODEL_SUPPORTS_REASONING=1',
+      'AGENT_MODEL_REASONING_EFFORTS=low,medium,high',
+      'AGENT_MODEL_SUPPORTS_TOOLS=1',
+    ]) {
+      assert.ok(dispatch.args.includes(expected), `${expected} reaches the runner`);
+    }
+    assert.ok(dispatch.args.includes('OPENROUTER_API_KEY'),
+      'Docker copies the secret from the host environment by name');
+    assert.ok(!dispatch.args.some((arg) => String(arg).includes('sk-or-must-not-appear-in-argv')),
+      'the OpenRouter key value never enters docker argv');
   } finally { restore(); }
 });

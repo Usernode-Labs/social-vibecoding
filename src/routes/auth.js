@@ -21,8 +21,25 @@ const {
 // capability this route advertises can never disagree with what that
 // surface actually serves.
 const { isCliSurfaceEnabled } = require('./cli-auth');
+// The external-agent hand-off needs the identity-only GitHub link, so
+// whether that link is configurable at all decides whether /api/auth/me
+// advertises the Claude Code / Codex flows (#1049).
+const githubLink = require('../services/github-link');
+// Deliberately NOT destructured: tests (and the never-throws mail contract)
+// swap sendPasswordResetMail on the module object.
+const mail = require('../services/mail');
 
 const SESSION_DAYS = 7;
+
+// Email password-reset magic link. The 30-minute figure is repeated in the
+// password_reset mail template copy (src/services/mail/templates.js).
+const RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
+
+// Preferred development flow (#1049). The SAME allowlist as the CHECK on
+// users.dev_flow_preference and as DevFlowSelect.FLOWS in
+// public/js/dev-flow-select.js; tests/dev-flow-preference.test.js pins all
+// three together so a new flow can't land in one place only.
+const DEV_FLOWS = ['platform', 'claude-code', 'codex'];
 
 // Staging mock data (#555): llm_usage is staging:private, so in a
 // prod-cloned staging DB every viewer's AI-credit row would render a
@@ -224,10 +241,16 @@ function authRoutes(config) {
     // the client contract a single boolean — the home screen reads only
     // `canCreateApps` and needs no change as the quota feature lands.
     let canCreateApps = !!req.user.isAdmin;
+    // Preferred development flow (#1049). Read here rather than in the
+    // per-request session hydration for the same reason as the profile
+    // block above: this endpoint already pays for one users lookup, and
+    // only this endpoint renders the value.
+    let devFlowPreference = null;
     try {
       const { rows } = await pool.query(
         `SELECT u.anthropic_key_enc, u.anthropic_key_last4, u.usernode_pubkey,
-                u.display_name, u.bio, u.github, u.x, av.id AS avatar_id
+                u.display_name, u.bio, u.github, u.x, u.dev_flow_preference,
+                av.id AS avatar_id
            FROM users u
            LEFT JOIN user_avatars av ON av.user_id = u.id
           WHERE u.id = $1`,
@@ -238,8 +261,23 @@ function authRoutes(config) {
         keyLast4 = rows[0].anthropic_key_last4 || null;
       }
       usernodePubkey = rows[0]?.usernode_pubkey || null;
+      devFlowPreference = DEV_FLOWS.includes(rows[0]?.dev_flow_preference)
+        ? rows[0].dev_flow_preference
+        : null;
       profile = shapeProfile(rows[0]);
     } catch {}
+    // #1055 staging fixture: report a saved BYOK key so the composer's
+    // session-options menu renders its "Change your API key (…7f2c)" branch
+    // (and the meter its "your key" one). STRICTLY request-time — nothing is
+    // written, users.anthropic_key_enc is untouched, and dropping `demo=1`
+    // gives the honest unset state back on the very next request. A no-op in
+    // production: same IS_STAGING && ?demo=1 gate as /api/me/ai-budget below.
+    let demoKey = false;
+    if (IS_STAGING && req.query.demo === '1') {
+      demoKey = true;
+      hasApiKey = true;
+      keyLast4 = '7f2c';
+    }
     if (!canCreateApps) {
       try {
         const { rows: countRows } = await pool.query(
@@ -282,6 +320,10 @@ function authRoutes(config) {
         hasPlatformAccess: !!req.user.hasPlatformAccess || !!req.user.isAdmin,
         hasApiKey,
         keyLast4,
+        // Marks the two fields above as the staging fixture rather than
+        // real state, the same way every other ?demo=1 payload labels
+        // itself (services/local-agent-demo.js, GET /api/budget).
+        ...(demoKey ? { demoKey: true } : {}),
         usernodePubkey,
         walletLinkEnabled: !!config.usernodeAppPubkey,
         // Profile customization (#982). `username` stays the permanent
@@ -302,6 +344,23 @@ function authRoutes(config) {
         // client renders what the server reports, it never sniffs the
         // environment itself.
         cliAuthEnabled: isCliSurfaceEnabled(config),
+        // Preferred development flow (#1049): 'platform' | 'claude-code' |
+        // 'codex', or null for "ask me every time" (the default — the
+        // dev-chat picker renders). Written by POST /api/me/dev-flow.
+        devFlowPreference,
+        // Whether the Claude Code / Codex hand-off is offerable AT ALL in
+        // this deployment. The external-agent flow needs the identity-only
+        // GitHub link to attribute the user's fork, so with no GitHub OAuth
+        // credentials configured there is nothing to guide anyone through.
+        // Same shape as walletLinkEnabled / cliAuthEnabled above: the client
+        // renders what the server reports and never sniffs the environment.
+        // A staging clone has no GitHub OAuth app, so this would be false
+        // there and the whole #1049 surface would be unreviewable. Saying
+        // "offerable" in staging unlocks nothing: the two writes answer 503
+        // (routes/dev-flow.js), and the status route still reports
+        // available:false unless the request carries the ?demo=1 fixture
+        // flag — so the card only appears where a reviewer asks for it.
+        externalFlowsAvailable: IS_STAGING || githubLink.isEnabled(config),
       },
     });
   });
@@ -464,6 +523,36 @@ function authRoutes(config) {
       res.json({ ok: true, enabled });
     } catch (err) {
       log.error('settings', 'Failed to toggle AI progress estimate', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Preferred development flow (issue #1049). Written by the "remember my
+  // option" checkbox on the dev-chat flow picker and by Settings →
+  // Connections. Body { flow: 'platform' | 'claude-code' | 'codex' | null }
+  // — null (or "") clears it back to "ask me every time", which is what
+  // unticking the checkbox sends.
+  router.post('/api/me/dev-flow', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const { flow } = req.body || {};
+
+    let normalized = null;
+    if (flow !== null && flow !== undefined && flow !== '') {
+      if (typeof flow !== 'string' || !DEV_FLOWS.includes(flow)) {
+        return res.status(400).json({ error: `flow must be one of ${DEV_FLOWS.join(', ')} or null` });
+      }
+      normalized = flow;
+    }
+
+    try {
+      await pool.query(
+        'UPDATE users SET dev_flow_preference = $1 WHERE id = $2',
+        [normalized, req.user.id]
+      );
+      log.info('settings', 'Dev flow preference saved', { userId: req.user.id, flow: normalized });
+      res.json({ ok: true, flow: normalized });
+    } catch (err) {
+      log.error('settings', 'Failed to save dev flow preference', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -819,6 +908,118 @@ function authRoutes(config) {
     }
   });
 
+  // Email password reset, step 1: mail a magic link to the address on file.
+  // Pre-login (PUBLIC_PATHS). Key invariants:
+  //   - Always answers `{ ok: true }` for a well-formed email, whether or
+  //     not an account matched — the same anti-enumeration contract as the
+  //     mobile OTP flow (see src/services/mail/index.js).
+  //   - Only non-admin accounts with a CONFIRMED email are eligible. Admins
+  //     keep the admin-issued temporary-password path: control of an inbox
+  //     must never be enough to take over an admin console login (the same
+  //     stance as the OTP set-password guard in
+  //     src/routes/topochain/mobile-auth.js).
+  //   - The DB stores only the sha256 of the token; the plaintext exists in
+  //     the emailed link alone and is never logged.
+  //   - A new request overwrites any previous outstanding token (single
+  //     outstanding reset per account), and the mail door's per-recipient
+  //     throttle bounds how often that can be made to happen.
+  router.post('/api/auth/password-reset/request', authLimiter, async (req, res) => {
+    const email = String((req.body || {}).email || '').trim().toLowerCase();
+    if (!email || !email.includes('@')) {
+      return res.status(400).json({ error: 'Email required' });
+    }
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, email FROM users
+          WHERE email = $1 AND email_confirmed = TRUE AND is_admin = FALSE`,
+        [email]
+      );
+      if (rows.length > 0) {
+        const user = rows[0];
+        const token = crypto.randomBytes(32).toString('hex');
+        const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+        const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MS);
+        await pool.query(
+          `UPDATE users SET password_reset_token_hash = $1,
+                            password_reset_expires_at = $2
+            WHERE id = $3`,
+          [tokenHash, expiresAt, user.id]
+        );
+        // Never throws (mail-door contract); a transport failure is logged
+        // there and must not turn this into an account oracle.
+        await mail.sendPasswordResetMail(config, user.email, token);
+        log.info('auth', 'Password reset link issued', { userId: user.id });
+      }
+      res.json({ ok: true });
+    } catch (err) {
+      log.error('auth', 'password-reset request failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Email password reset, step 2: redeem the link. Pre-login (PUBLIC_PATHS).
+  //   - Lookup is by sha256 of the presented token with expiry enforced in
+  //     SQL; every failure is the same generic 401 so this endpoint is not
+  //     a token or account oracle.
+  //   - The password write clears the token columns in the same UPDATE,
+  //     guarded on the hash still being set — single use even under
+  //     concurrent redeems (accountRecovery holds the per-user lock).
+  //   - accountRecovery also wipes every session and CLI authorization: a
+  //     leaked session must not outlive a reset. No fresh session is minted
+  //     — the link may have been opened anywhere; the user signs in with
+  //     the password they just chose.
+  router.post('/api/auth/password-reset/confirm', authLimiter, async (req, res) => {
+    const { token, newPassword } = req.body || {};
+    const refuse = () => res.status(401).json({ error: 'Invalid or expired reset link' });
+    if (typeof token !== 'string' || !/^[0-9a-f]{64}$/.test(token)) return refuse();
+
+    const policy = validatePassword(newPassword);
+    if (!policy.ok) return res.status(400).json({ error: policy.error });
+
+    try {
+      const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+      const { rows } = await pool.query(
+        `SELECT id, username FROM users
+          WHERE password_reset_token_hash = $1
+            AND password_reset_expires_at > NOW()`,
+        [tokenHash]
+      );
+      if (rows.length === 0) return refuse();
+
+      const user = rows[0];
+      const hash = await bcrypt.hash(newPassword, 12);
+      const recovery = await withTransaction(pool, (client) => accountRecovery(client, {
+        userId: user.id,
+        actorUserId: user.id,
+        updatePassword: async (tx) => {
+          // password_set: an OTP-created account that resets by email now
+          // owns a real password (see the password_set block in schema.sql).
+          const result = await tx.query(
+            `UPDATE users SET password = $1,
+                              password_set = TRUE,
+                              password_reset_token_hash = NULL,
+                              password_reset_expires_at = NULL
+              WHERE id = $2 AND password_reset_token_hash = $3
+              RETURNING id, username, is_admin, admin_readonly`,
+            [hash, user.id, tokenHash]
+          );
+          // Same lightweight-facade shim as wallet-reset-verify above.
+          if (result.rowCount == null && result.rows.length === 0) {
+            return { rows: [user] };
+          }
+          return result;
+        },
+      }));
+      if (!recovery.found) return refuse();
+
+      log.info('auth', 'Email password reset successful', { userId: user.id });
+      res.json({ ok: true });
+    } catch (err) {
+      log.error('auth', 'password-reset confirm failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Authenticated wallet-signed change-password (issue #282). The way back
   // for a logged-in user (e.g. signed in via an admin temporary password,
   // or a still-valid session) who has a linked wallet but has FORGOTTEN the
@@ -1021,4 +1222,4 @@ function authRoutes(config) {
   return router;
 }
 
-module.exports = { authRoutes };
+module.exports = { authRoutes, DEV_FLOWS };

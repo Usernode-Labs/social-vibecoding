@@ -1,4 +1,5 @@
 node_modules/
+/public/css/tailwind.css
 .env
 *.log
 data/
@@ -24,3 +25,6 @@ hackathon-data/
 .claude/social-vibecoding-mcp.local.json.lock
 .claude/social-vibecoding-mcp.local.json.lock.*
 .claude/.social-vibecoding-mcp.local.json.tmp-*
+
+# Local Claude Code worktree checkouts (never repo content).
+.claude/worktrees/

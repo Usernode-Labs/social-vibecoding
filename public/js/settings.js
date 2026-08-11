@@ -39,7 +39,12 @@
   'use strict';
 
   const Settings = {
-    state: { hasApiKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, locale: null },
+    // `devFlowPreference` is the "remember my option" answer from the
+    // dev-chat flow picker (#1049): null = ask every time (the default),
+    // otherwise 'platform' | 'claude-code' | 'codex'. `externalFlowsAvailable`
+    // says whether this deployment can offer the Claude Code / Codex
+    // hand-off at all — the server decides, we only render what it reports.
+    state: { hasApiKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, locale: null, devFlowPreference: null, externalFlowsAvailable: false },
     _walletPollTimer: null,
     _alertsTestTimer: null,
     _walletExpiresAt: null,
@@ -48,9 +53,16 @@
     _cliTokenCursor: null,
     _cliTokensLoading: false,
     _cliTokenLoadId: 0,
+    // #907: machines currently attached to one of this account's sessions.
+    _localAgents: [],
     _connectors: [],
     _connectorLoadId: 0,
     _githubLink: null,
+    _openRouterModels: [],
+    _mobilePushPreferences: null,
+    _mobilePushLoading: false,
+    _mobilePushSaving: false,
+    _mobilePushLoadToken: 0,
 
     // ── Screen state ─────────────────────────────────────────────────────
     _open: false,
@@ -102,6 +114,7 @@
       // deep-link #settings/connectors as one of its three routes; see
       // public/js/credit-options.js.
       { key: 'connectors', label: 'Claude & ChatGPT connectors', group: 'AI & agents' },
+      { key: 'openrouter', label: 'OpenRouter', group: 'AI & agents' },
       { key: 'app-ai', label: 'App AI permissions', group: 'AI & agents' },
       { key: 'agent-files', label: 'Agent instructions & skills', group: 'AI & agents' },
 
@@ -109,7 +122,7 @@
       { key: 'wallet', label: 'Usernode Wallet', group: 'Account', gate: 'wallet-section' },
 
       { key: 'language', label: 'Language', group: 'Preferences' },
-      { key: 'alerts', label: 'Dev-chat sound & alerts', group: 'Preferences' },
+      { key: 'alerts', label: 'Notifications & alerts', group: 'Preferences' },
       { key: 'home-panels', label: 'Home screen widgets', group: 'Preferences' },
 
       { key: 'cli', label: 'CLI & coding-agent access', group: 'Developer' },
@@ -134,6 +147,26 @@
       // (see the "MOVE, DON'T REWRITE" note on #settings-screen).
       document.getElementById('settings-save').addEventListener('click', () => this.save());
       document.getElementById('settings-remove').addEventListener('click', () => this.remove());
+
+      // The static shell is still under the markup-parity migration guard,
+      // so provider copy is normalized at runtime while this hidden section
+      // mounts. Users should only see the provider they configured; the
+      // worker implementation behind OpenRouter is not a product choice.
+      this._normalizeOpenRouterCopy();
+
+      // OpenRouter & Codex (BYOK). Section bindings — all guarded on
+      // existence so the section degrades cleanly if the feature flag is
+      // off server-side (the section markup stays, the controls no-op).
+      const orSave = document.getElementById('settings-openrouter-save');
+      const orRemove = document.getElementById('settings-openrouter-remove');
+      const orSetDefault = document.getElementById('settings-openrouter-set-default');
+      const orModel = document.getElementById('settings-openrouter-model');
+      const claudeSetDefault = document.getElementById('settings-claude-set-default');
+      if (orSave) orSave.addEventListener('click', () => this._saveOpenRouterKey());
+      if (orRemove) orRemove.addEventListener('click', () => this._removeOpenRouterKey());
+      if (orSetDefault) orSetDefault.addEventListener('click', () => this._saveOpenRouterDefault());
+      if (orModel) orModel.addEventListener('change', () => this._syncOpenRouterModelDetails());
+      if (claudeSetDefault) claudeSetDefault.addEventListener('click', () => this._saveClaudeDefault());
 
       const linkBtn = document.getElementById('wallet-link-btn');
       if (linkBtn) linkBtn.addEventListener('click', () => this._startWalletLink());
@@ -262,6 +295,21 @@
         });
       }
 
+      // Account-level remote-push categories. These are deliberately
+      // separate from the native bridge's per-device Activity notifications
+      // switch: every signed-in browser can edit them, while a phone still
+      // has to be registered and enabled before any category can deliver.
+      document.querySelectorAll(
+        '#settings-mobile-push-preferences [data-mobile-push-category]'
+      ).forEach((row) => {
+        const input = row.querySelector('input[type="checkbox"]');
+        const category = row.dataset.mobilePushCategory;
+        if (!input || !category) return;
+        input.addEventListener('change', () => {
+          this._saveMobilePushPreference(category, input.checked);
+        });
+      });
+
       // "View as non-admin" admin tool. Mirror state to localStorage
       // and reload — the simplest way to flush every admin-gated
       // render path (home buttons, app-secrets editor, etc.) without
@@ -278,15 +326,10 @@
           window.location.reload();
         });
       }
-      // The persistent header banner has its own "Switch back" link
-      // for admins who notice they're in preview mode mid-session.
-      const bannerOff = document.getElementById('view-as-non-admin-disable');
-      if (bannerOff) {
-        bannerOff.addEventListener('click', () => {
-          localStorage.removeItem('viewAsNonAdmin');
-          window.location.reload();
-        });
-      }
+      // The persistent header banner has its own "Switch back" link for
+      // admins who notice they're in preview mode mid-session. That banner
+      // is a React island now (#1078) and owns its own click handler —
+      // binding it from here too would run the reload path twice.
 
       // No backdrop / Escape dismissal any more: Settings is a screen, not
       // a modal. Leaving it is a real hash navigation (the header back
@@ -295,9 +338,15 @@
       this.refresh();
     },
 
+    // #1055: the page's ?demo=1 rides along on the /api/auth/me read, so a
+    // staging reviewer sees the key-on-file branch of the composer meter and
+    // the session-options menu without pasting a real key into a preview.
+    // Honoured only in staging (routes/auth.js), so it is safe to send
+    // always — same pass-through as _cliTokensDemo below.
     async refresh() {
       try {
-        const r = await fetch('/api/auth/me', { credentials: 'same-origin' });
+        const meDemoQ = this._cliTokensDemo() ? '?demo=1' : '';
+        const r = await fetch(`/api/auth/me${meDemoQ}`, { credentials: 'same-origin' });
         if (!r.ok) return;
         const j = await r.json();
         this.state.hasApiKey = !!j.user?.hasApiKey;
@@ -306,6 +355,8 @@
         this.state.walletLinkEnabled = !!j.user?.walletLinkEnabled;
         this.state.aiProgressEstimate = !!j.user?.aiProgressEstimate;
         this.state.locale = j.user?.locale || null;
+        this.state.devFlowPreference = j.user?.devFlowPreference || null;
+        this.state.externalFlowsAvailable = !!j.user?.externalFlowsAvailable;
         // Same payload the CLI-credentials gate needs, so prime its memo
         // rather than let it issue a second /api/auth/me. (It still
         // fetches on its own when it runs first — the two orders both
@@ -316,6 +367,10 @@
         // the menu at all, and it lands here — possibly AFTER a cold-boot
         // deep link has already painted. Re-resolve the menu.
         this._renderWalletSection();
+        // The preference lands here too, and Connections may already be
+        // painted (a cold-boot deep link to #settings/connectors renders
+        // before this resolves). Same reasoning as the wallet row above.
+        this._renderDevFlowSection();
         this._renderNavIfOpen();
       } catch {}
     },
@@ -339,15 +394,18 @@
     _renderAllSections() {
       this._renderBody();
       this._refreshSpend();
+      this._refreshOpenRouter();
       this._renderLlmGrants();
       this._loadCliTokens(true);
       this._loadConnectors();
       this._loadGithubLink();
       this._renderAgentFilesSection();
       this._renderWalletSection();
+      this._renderDevFlowSection();
       this._renderChangePasswordSection();
       this._renderDevConsoleSection();
       this._renderLanguageSection();
+      this._loadMobilePushPreferences();
       this._renderHomePanelsSection();
       this._renderExperimentalSection();
       this._renderAdminSection();
@@ -764,6 +822,115 @@
       if (toggle) toggle.checked = !!this.state.aiProgressEstimate;
       const status = document.getElementById('ai-progress-estimate-status');
       if (status) { status.classList.add('hidden'); status.textContent = ''; }
+      this._renderLocalAgentsSection();
+    },
+
+    // #907: the machines currently attached to one of this account's dev
+    // sessions. GET /api/me/local-agents is deliberately NOT part of the CLI
+    // token surface — a lease is routing state, not a credential — so unlike
+    // the token list above it answers on staging too.
+    //
+    // The block hides itself outright when nothing is attached. An empty
+    // "Local coding agent — none" panel would be noise on every account that
+    // has never used the CLI, which is nearly all of them.
+    async _renderLocalAgentsSection() {
+      const section = document.getElementById('settings-local-agents-section');
+      const list = document.getElementById('settings-local-agents-list');
+      const status = document.getElementById('settings-local-agents-status');
+      if (!section || !list) return;
+      if (status) { status.classList.add('hidden'); status.textContent = ''; }
+
+      let agents = [];
+      try {
+        const query = this._cliTokensDemo() ? '?demo=1' : '';
+        const r = await fetch(`/api/me/local-agents${query}`, { credentials: 'same-origin' });
+        if (r.ok) {
+          const j = await r.json();
+          if (Array.isArray(j.agents)) agents = j.agents;
+        }
+      } catch {}
+
+      this._localAgents = agents;
+      section.classList.toggle('hidden', agents.length === 0);
+      list.textContent = '';
+      for (const agent of agents) {
+        list.appendChild(this._localAgentCard(agent));
+      }
+      if (status && agents.some((a) => a.demo)) {
+        status.textContent = 'Demo data — changes are not saved.';
+        status.classList.remove('hidden', 'text-red-500', 'text-emerald-500');
+      }
+    },
+
+    // Built with DOM calls rather than innerHTML: the label is free text the
+    // user typed on their own machine and arrives here verbatim.
+    _localAgentCard(agent) {
+      const card = document.createElement('div');
+      card.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2';
+
+      const top = document.createElement('div');
+      top.className = 'flex items-start justify-between gap-3';
+      const text = document.createElement('div');
+      text.className = 'min-w-0';
+
+      const title = document.createElement('div');
+      title.className = 'text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate';
+      title.textContent = agent.label || 'Unnamed machine';
+
+      const where = document.createElement('div');
+      where.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1 truncate';
+      const app = agent.appName || agent.appSlug || 'an app';
+      where.textContent = agent.sessionTitle
+        ? `${app} · ${agent.sessionTitle}` : String(app);
+
+      const detail = document.createElement('div');
+      detail.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-0.5';
+      const seen = Number.isFinite(Date.parse(agent.lastSeenAt))
+        ? new Date(agent.lastSeenAt).toLocaleTimeString() : 'unknown';
+      detail.textContent = `${agent.runtime || 'claude-code'} · last seen ${seen}`;
+
+      text.append(title, where, detail);
+      top.appendChild(text);
+
+      // Demo rows (staging ?demo=1) are fabricated per request and own no
+      // lease, so there is nothing for a button to release.
+      if (!agent.demo && agent.leaseId) {
+        const detach = document.createElement('button');
+        detach.type = 'button';
+        detach.className = 'shrink-0 rounded border border-zinc-400 dark:border-zinc-600 px-2 py-1 text-xs font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors';
+        detach.textContent = 'Detach';
+        detach.addEventListener('click', () => this._detachLocalAgent(agent, detach));
+        top.appendChild(detach);
+      }
+      card.appendChild(top);
+      return card;
+    },
+
+    // Releasing from here must not need the machine to cooperate: the common
+    // case is a laptop that was closed or lost its network, and the whole
+    // point is to get the session's turns back without waiting out the lease.
+    async _detachLocalAgent(agent, button) {
+      const label = agent.label || 'this machine';
+      if (!window.confirm(`Detach ${label}?\n\nIts session's coding turns go back to running on Usernode. Anything it already committed stays on the branch.`)) return;
+      const status = document.getElementById('settings-local-agents-status');
+      button.disabled = true;
+      try {
+        const r = await fetch(`/api/me/local-agents/${encodeURIComponent(agent.leaseId)}`, {
+          method: 'DELETE',
+          credentials: 'same-origin',
+        });
+        // 404 means it already went away (it detached itself, or the sweeper
+        // expired it) — the user's intent is satisfied either way.
+        if (r.status !== 204 && r.status !== 404) throw new Error('Could not detach that machine.');
+        await this._renderLocalAgentsSection();
+      } catch (err) {
+        button.disabled = false;
+        if (status) {
+          status.textContent = err.message || 'Could not detach that machine.';
+          status.classList.remove('hidden', 'text-emerald-500');
+          status.classList.add('text-red-500');
+        }
+      }
     },
 
     // #911: one checkbox per home-screen panel, built from
@@ -859,6 +1026,64 @@
       }
       select.value = value;
       const status = document.getElementById('settings-locale-status');
+      if (status) { status.classList.add('hidden'); status.textContent = ''; }
+    },
+
+    // "Preferred build flow" (#1049) — the escape hatch for the dev-chat
+    // picker's "remember my option" checkbox. Once a user ticks that box the
+    // picker stops rendering, so there has to be somewhere to change their
+    // mind; Connections is where the GitHub link and the connectors already
+    // live, which is exactly the machinery the external flows depend on.
+    //
+    // The markup is BUILT HERE rather than in frontend/src/Shell.tsx: the
+    // shell's body is id-pinned against tests/baselines/shell-markup.json
+    // by tests/shell-id-inventory.test.js (no undeclared elements, no attribute
+    // changes), so a new settings control has to be injected at runtime.
+    // Idempotent — _renderAllSections and refresh() both call it.
+    _renderDevFlowSection() {
+      const host = document.querySelector('[data-settings-section="connectors"]');
+      if (!host) return;
+      let block = document.getElementById('dev-flow-pref-section');
+      if (!block) {
+        block = document.createElement('div');
+        block.id = 'dev-flow-pref-section';
+        block.className = 'mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800';
+        block.innerHTML = `
+          <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Preferred build flow</h3>
+          <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3 leading-relaxed">
+            When you start a proposal, Usernode can ask how you want to build it — here on the
+            platform with the Usernode agent, or by handing the work order to your own Claude Code
+            or Codex web session. Pick one here to skip the question; choose
+            <strong class="font-semibold text-zinc-600 dark:text-zinc-400">Ask me every time</strong>
+            to get the picker back.
+          </p>
+          <select id="settings-dev-flow"
+            class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
+            <option value="">Ask me every time</option>
+            <option value="platform">Build on Usernode</option>
+            <option value="claude-code">Claude Code (claude.ai/code)</option>
+            <option value="codex">Codex (chatgpt.com/codex)</option>
+          </select>
+          <div id="settings-dev-flow-status" class="text-xs mt-2 hidden"></div>
+        `;
+        // Above the GitHub link block when it exists, so the preference reads
+        // as the question and the link below it as one of the answers.
+        const anchor = document.getElementById('github-link-section');
+        if (anchor) host.insertBefore(block, anchor);
+        else host.appendChild(block);
+      }
+      const select = block.querySelector('#settings-dev-flow');
+      if (select && !select.__devFlowWired) {
+        select.__devFlowWired = true;
+        select.addEventListener('change', (e) => this._saveDevFlow(e.target.value));
+      }
+      // A deployment without the external flows can still express "always
+      // build on Usernode" vs "ask me" — just not the two hand-offs.
+      block.querySelectorAll('option[value="claude-code"], option[value="codex"]').forEach((opt) => {
+        opt.disabled = !this.state.externalFlowsAvailable;
+      });
+      if (select) select.value = this.state.devFlowPreference || '';
+      const status = block.querySelector('#settings-dev-flow-status');
       if (status) { status.classList.add('hidden'); status.textContent = ''; }
     },
 
@@ -1172,7 +1397,11 @@
       // Hiding the section is the same outcome the 404 branch produces,
       // so staging and production differ only in whether the request is
       // made at all.
-      if (!(await this._cliAuthAvailable())) {
+      // Staging disables the real CLI surface, but ?demo=1 is a read-only
+      // fixture endpoint specifically meant to make this section reviewable.
+      // Let that mock path through while still suppressing every real token
+      // request when auth/me advertises cliAuthEnabled=false.
+      if (!this._cliTokensDemo() && !(await this._cliAuthAvailable())) {
         section.classList.add('hidden');
         return;
       }
@@ -1357,6 +1586,41 @@
       }
     },
 
+    // Same shape as _saveLocale: POST on change, revert the select and paint
+    // the status line on failure, mirror onto App.user so anything reading
+    // the cached user (the dev-chat picker) sees the new value immediately.
+    async _saveDevFlow(value) {
+      const select = document.getElementById('settings-dev-flow');
+      const status = document.getElementById('settings-dev-flow-status');
+      const fail = (msg) => {
+        if (select) select.value = this.state.devFlowPreference || '';
+        if (status) {
+          status.textContent = msg;
+          status.classList.remove('hidden', 'text-emerald-500', 'text-zinc-500');
+          status.classList.add('text-red-500');
+        }
+      };
+      try {
+        const r = await fetch('/api/me/dev-flow', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ flow: value || null }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) return fail(j.error || 'Failed to save.');
+        this.state.devFlowPreference = j.flow || null;
+        if (typeof App !== 'undefined' && App.user) App.user.devFlowPreference = this.state.devFlowPreference;
+        if (status) {
+          status.textContent = '✓ Saved';
+          status.classList.remove('hidden', 'text-red-500', 'text-zinc-500');
+          status.classList.add('text-emerald-500');
+        }
+      } catch (err) {
+        fail(`Network error: ${err.message}`);
+      }
+    },
+
     async _saveAiProgressEstimate(enabled) {
       const toggle = document.getElementById('ai-progress-estimate');
       const status = document.getElementById('ai-progress-estimate-status');
@@ -1435,6 +1699,7 @@
       this._stopWalletPolling();
       this._clearAlertsTestCountdown();
       this._clearUsernodeAuthStatusRetry();
+      this._mobilePushLoadToken += 1;
     },
 
     // Clear the "Send a test alert" countdown interval (#138). Idempotent —
@@ -1443,6 +1708,107 @@
       if (this._alertsTestTimer) {
         clearInterval(this._alertsTestTimer);
         this._alertsTestTimer = null;
+      }
+    },
+
+    _mobilePushRows() {
+      return [...document.querySelectorAll(
+        '#settings-mobile-push-preferences [data-mobile-push-category]'
+      )];
+    },
+
+    _setMobilePushPreferences(preferences) {
+      if (!Array.isArray(preferences)) throw new Error('Invalid preferences response.');
+      const next = {};
+      for (const preference of preferences) {
+        if (!preference || typeof preference.key !== 'string'
+            || typeof preference.enabled !== 'boolean') {
+          throw new Error('Invalid preferences response.');
+        }
+        next[preference.key] = preference.enabled;
+      }
+      for (const row of this._mobilePushRows()) {
+        if (typeof next[row.dataset.mobilePushCategory] !== 'boolean') {
+          throw new Error('Incomplete preferences response.');
+        }
+      }
+      this._mobilePushPreferences = next;
+    },
+
+    _renderMobilePushPreferences(message, error) {
+      const disabled = this._mobilePushLoading
+        || this._mobilePushSaving
+        || !this._mobilePushPreferences;
+      for (const row of this._mobilePushRows()) {
+        const input = row.querySelector('input[type="checkbox"]');
+        if (!input) continue;
+        const saved = this._mobilePushPreferences?.[row.dataset.mobilePushCategory];
+        if (typeof saved === 'boolean') input.checked = saved;
+        input.disabled = disabled;
+      }
+      const status = document.querySelector(
+        '#settings-mobile-push-preferences [data-mobile-push-status]'
+      );
+      if (!status) return;
+      status.textContent = message || (disabled ? 'Loading mobile push preferences…' : 'Saved to your account.');
+      status.className = 'text-xs mt-3 ' + (error
+        ? 'text-red-600 dark:text-red-400'
+        : 'text-zinc-500 dark:text-zinc-400');
+    },
+
+    async _loadMobilePushPreferences() {
+      const token = ++this._mobilePushLoadToken;
+      this._mobilePushLoading = true;
+      this._renderMobilePushPreferences('Loading mobile push preferences…');
+      try {
+        const response = await fetch('/api/me/mobile-push-preferences', {
+          credentials: 'same-origin',
+          cache: 'no-store',
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+        if (token !== this._mobilePushLoadToken) return;
+        this._setMobilePushPreferences(body.preferences);
+        this._mobilePushLoading = false;
+        this._renderMobilePushPreferences('Saved to your account.');
+      } catch (err) {
+        if (token !== this._mobilePushLoadToken) return;
+        this._mobilePushLoading = false;
+        this._mobilePushPreferences = null;
+        this._renderMobilePushPreferences(
+          `Could not load mobile push preferences: ${err.message}`, true
+        );
+      }
+    },
+
+    async _saveMobilePushPreference(category, enabled) {
+      if (!this._mobilePushPreferences || this._mobilePushSaving
+          || typeof this._mobilePushPreferences[category] !== 'boolean') {
+        this._renderMobilePushPreferences();
+        return;
+      }
+      const previous = this._mobilePushPreferences[category];
+      this._mobilePushPreferences[category] = !!enabled;
+      this._mobilePushSaving = true;
+      this._renderMobilePushPreferences('Saving…');
+      try {
+        const response = await fetch('/api/me/mobile-push-preferences', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          cache: 'no-store',
+          body: JSON.stringify({ preferences: { [category]: !!enabled } }),
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+        this._setMobilePushPreferences(body.preferences);
+        this._mobilePushSaving = false;
+        this._renderMobilePushPreferences('Saved to your account.');
+      } catch (err) {
+        this._mobilePushPreferences[category] = previous;
+        this._mobilePushSaving = false;
+        this._renderMobilePushPreferences(`Could not save: ${err.message}`, true);
+        if (window.PlatformUI) PlatformUI.toast('Could not save mobile push preferences');
       }
     },
 
@@ -1548,6 +1914,249 @@
         saveBtn.disabled = false;
         removeBtn.disabled = false;
       }
+    },
+
+    // ── OpenRouter (BYOK) ──────────────────────────────────────
+    _normalizeOpenRouterCopy() {
+      const section = document.querySelector('[data-settings-section="openrouter"]');
+      if (!section) return;
+      const heading = section.querySelector('h3');
+      const intro = section.querySelector('p');
+      const modelLabel = section.querySelector('label[for="settings-openrouter-model"]');
+      if (heading) heading.textContent = 'OpenRouter';
+      if (intro) {
+        intro.textContent = 'Use any compatible model exposed by your OpenRouter key for all chat and coding in an OpenRouter session. These sessions do not use your platform Claude allowance. Your key is encrypted at rest, injected only for each turn, and removed completely when you delete it here.';
+      }
+      if (modelLabel) modelLabel.textContent = 'OpenRouter model';
+      const betaGate = document.getElementById('settings-openrouter-beta-gated');
+      if (betaGate) betaGate.textContent = 'OpenRouter is being rolled out gradually and is not available for your account yet.';
+    },
+
+    _formatOpenRouterPrice(value) {
+      if (value == null || value === '') return null;
+      const price = Number(value);
+      if (!Number.isFinite(price) || price < 0) return null;
+      if (price === 0) return '$0';
+      const decimals = price < 0.01 ? 4 : price < 10 ? 2 : price < 100 ? 1 : 0;
+      const fixed = price.toFixed(decimals);
+      const compact = fixed.includes('.') ? fixed.replace(/0+$/, '').replace(/\.$/, '') : fixed;
+      return `$${compact}`;
+    },
+
+    _openRouterModelCostSummary(model) {
+      const tier = {
+        free: 'Free',
+        low: 'Low cost',
+        medium: 'Medium cost',
+        high: 'High cost',
+        unknown: 'Price unavailable',
+      }[model?.costTier] || 'Price unavailable';
+      const input = this._formatOpenRouterPrice(model?.inputPricePerMillion);
+      const output = this._formatOpenRouterPrice(model?.outputPricePerMillion);
+      if (!input && !output) return tier;
+      return `${tier} · ${input || '?'} /M input · ${output || '?'} /M output`;
+    },
+
+    _openRouterModelOptionLabel(model) {
+      const compatibility = model?.compatibility === 'verified'
+        ? ' · verified'
+        : (model?.compatibility === 'blocked' ? ' · limited' : ' · unverified');
+      return `${model?.name || model?.id || 'Unknown model'} — ${this._openRouterModelCostSummary(model)}${compatibility}`;
+    },
+
+    _syncOpenRouterModelDetails() {
+      const select = document.getElementById('settings-openrouter-model');
+      const effort = document.getElementById('settings-openrouter-reasoning');
+      const model = this._openRouterModels.find((item) => item.id === select?.value) || null;
+      if (!model) {
+        if (select) select.title = 'Models are sorted by average input/output price. Actual spend depends on token usage.';
+        if (effort) effort.disabled = true;
+        return;
+      }
+      let compatibility = 'Not yet verified for repository coding.';
+      if (model.compatibility === 'verified') compatibility = 'Verified for repository coding.';
+      else if (!model.meetsCodexMinimums) {
+        compatibility = model.compatibilityNote
+          || 'This model may lack repository tools or enough context, so an OpenRouter turn may fail.';
+      }
+      if (select) select.title = `${this._openRouterModelCostSummary(model)}. ${compatibility} Actual spend depends on token usage.`;
+      if (effort) {
+        effort.disabled = model.supportsReasoning !== true;
+        if (effort.disabled) effort.value = '';
+        effort.title = effort.disabled
+          ? 'This model does not expose reasoning-effort controls.'
+          : 'Optional OpenRouter reasoning effort for this model.';
+      }
+    },
+
+    _setOrStatus(text, kind) {
+      const el = document.getElementById('settings-openrouter-status');
+      if (!el) return;
+      el.textContent = text;
+      el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
+      const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
+      el.classList.add(cls);
+    },
+
+    async _refreshOpenRouter() {
+      const betaGate = document.getElementById('settings-openrouter-beta-gated');
+      const display = document.getElementById('settings-openrouter-key-display');
+      const last4 = document.getElementById('settings-openrouter-key-last4');
+      const info = document.getElementById('settings-openrouter-key-info');
+      const removeBtn = document.getElementById('settings-openrouter-remove');
+      const input = document.getElementById('settings-openrouter-key');
+      const saveBtn = document.getElementById('settings-openrouter-save');
+      const modelsWrap = document.getElementById('settings-openrouter-models-wrap');
+      try {
+        const r = await fetch('/api/me/coding-agent', { credentials: 'same-origin' });
+        const prefs = r.ok ? await r.json() : {};
+        const isBeta = !!prefs.codexAvailable;
+        if (betaGate) betaGate.classList.toggle('hidden', isBeta);
+        if (!isBeta) { if (modelsWrap) modelsWrap.classList.add('hidden'); return; }
+      } catch {}
+      try {
+        const r = await fetch('/api/me/credentials/openrouter', { credentials: 'same-origin' });
+        const j = r.ok ? await r.json() : {};
+        if (j.configured) {
+          if (display) display.classList.remove('hidden');
+          if (last4) last4.textContent = j.last4 || '••••';
+          if (removeBtn) removeBtn.classList.remove('hidden');
+          if (input) { input.placeholder = 'Paste a new key to replace'; input.value = ''; }
+          if (saveBtn) saveBtn.textContent = 'Replace';
+          if (info && j.keyInfo) {
+            info.classList.remove('hidden');
+            const lim = j.keyInfo.limit != null ? `$${j.keyInfo.limit}` : '';
+            const rem = j.keyInfo.limitRemaining != null ? `$${j.keyInfo.limitRemaining}` : '';
+            info.textContent = lim ? `Key limit: ${lim} · Remaining: ${rem}` : (j.keyInfo.label || '');
+          }
+          await this._loadOpenRouterModels();
+        } else {
+          if (display) display.classList.add('hidden');
+          if (removeBtn) removeBtn.classList.add('hidden');
+          if (input) input.placeholder = 'sk-or-...';
+          if (saveBtn) saveBtn.textContent = 'Test & save';
+          if (info) info.classList.add('hidden');
+          if (modelsWrap) modelsWrap.classList.add('hidden');
+        }
+      } catch {}
+    },
+
+    async _loadOpenRouterModels() {
+      const sel = document.getElementById('settings-openrouter-model');
+      const wrap = document.getElementById('settings-openrouter-models-wrap');
+      if (!sel) return;
+      try {
+        const r = await fetch('/api/me/coding-agent/models?backend=codex_openrouter', { credentials: 'same-origin' });
+        if (!r.ok) { if (wrap) wrap.classList.add('hidden'); return; }
+        const cat = await r.json();
+        const models = Array.isArray(cat.models) ? cat.models : [];
+        this._openRouterModels = models;
+        if (!models.length) { if (wrap) wrap.classList.add('hidden'); return; }
+        // Build options with DOM methods, NOT innerHTML (review P2):
+        // OpenRouter model IDs/names are untrusted catalog data and
+        // could inject markup into the authenticated Settings page.
+        sel.innerHTML = '';
+        for (const m of models) {
+          const opt = document.createElement('option');
+          opt.value = m.id;
+          opt.textContent = this._openRouterModelOptionLabel(m);
+          sel.appendChild(opt);
+        }
+        const recommended = models.some((model) => model.id === cat.recommendedModelId)
+          ? cat.recommendedModelId
+          : (models.find((model) => model.compatibility === 'verified')?.id || models[0].id);
+        sel.value = recommended;
+        // Restore the previously-saved model/effort if any.
+        const prefs = await (await fetch('/api/me/coding-agent', { credentials: 'same-origin' })).json();
+        const saved = prefs.backends?.codex_openrouter;
+        if (saved?.model && models.some((model) => model.id === saved.model)) sel.value = saved.model;
+        const eff = document.getElementById('settings-openrouter-reasoning');
+        if (eff) eff.value = saved?.reasoningEffort || '';
+        this._syncOpenRouterModelDetails();
+        if (wrap) wrap.classList.remove('hidden');
+      } catch {
+        this._openRouterModels = [];
+      }
+    },
+
+    async _saveOpenRouterKey() {
+      const input = document.getElementById('settings-openrouter-key');
+      const saveBtn = document.getElementById('settings-openrouter-save');
+      const key = input?.value?.trim();
+      if (!key) { this._setOrStatus('Paste an OpenRouter API key first.', 'error'); return; }
+      if (saveBtn) saveBtn.disabled = true;
+      this._setOrStatus('Verifying with OpenRouter…', 'info');
+      try {
+        const r = await fetch('/api/me/credentials/openrouter', {
+          method: 'PUT', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ apiKey: key }),
+        });
+        const j = await r.json();
+        if (!r.ok) { this._setOrStatus(j.error || 'Failed to save key.', 'error'); return; }
+        this._setOrStatus('Saved and encrypted. OpenRouter sessions bill to this key.', 'ok');
+        input.value = '';
+        await this._refreshOpenRouter();
+      } catch (err) {
+        this._setOrStatus(`Network error: ${err.message}`, 'error');
+      } finally {
+        if (saveBtn) saveBtn.disabled = false;
+      }
+    },
+
+    async _removeOpenRouterKey() {
+      const removeBtn = document.getElementById('settings-openrouter-remove');
+      if (removeBtn) removeBtn.disabled = true;
+      try {
+        const r = await fetch('/api/me/credentials/openrouter', { method: 'DELETE', credentials: 'same-origin' });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { this._setOrStatus(j.error || 'Failed to remove key.', 'error'); return; }
+        const note = j.defaultReset ? ' Key removed; your default agent was reset to Claude Code.' : '';
+        this._setOrStatus('Key removed.' + note, 'ok');
+        this._openRouterModels = [];
+        await this._refreshOpenRouter();
+      } catch {
+        this._setOrStatus('Failed to remove key.', 'error');
+      } finally {
+        if (removeBtn) removeBtn.disabled = false;
+      }
+    },
+
+    async _saveOpenRouterDefault() {
+      const model = document.getElementById('settings-openrouter-model')?.value;
+      const reasoningEffort = document.getElementById('settings-openrouter-reasoning')?.value || null;
+      // Preserve the user's existing cost cap across this save (review P3):
+      // include it explicitly so an omission can't drop the safety limit,
+      // and the server also COALESCEs when omitted.
+      let maxTurnCostUsd = null;
+      try {
+        const prefs = await (await fetch('/api/me/coding-agent', { credentials: 'same-origin' })).json();
+        maxTurnCostUsd = prefs.backends?.codex_openrouter?.maxTurnCostUsd ?? null;
+      } catch {}
+      try {
+        const r = await fetch('/api/me/coding-agent', {
+          method: 'PATCH', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ defaultBackend: 'codex_openrouter', model, reasoningEffort, maxTurnCostUsd }),
+        });
+        if (!r.ok) { const j = await r.json().catch(() => ({})); this._setOrStatus(j.error || 'Failed to save.', 'error'); return; }
+        this._setOrStatus('OpenRouter saved as your default session AI.', 'ok');
+      } catch { this._setOrStatus('Network error.', 'error'); }
+    },
+
+    async _saveClaudeDefault() {
+      // Reciprocal default control (review #8): set Claude Code (the
+      // legacy backend) as the user's default coding agent. Sends no model
+      // so it doesn't pin a Claude model either.
+      try {
+        const r = await fetch('/api/me/coding-agent', {
+          method: 'PATCH', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ defaultBackend: 'claude_code' }),
+        });
+        if (!r.ok) { const j = await r.json().catch(() => ({})); this._setOrStatus(j.error || 'Failed to save.', 'error'); return; }
+        this._setOrStatus('Claude Code is now your default coding agent.', 'ok');
+      } catch { this._setOrStatus('Network error.', 'error'); }
     },
 
     // ── Change password (issue #282) ─────────────────────────────
@@ -2485,7 +3094,7 @@
       return box;
     },
 
-    _unToggle(parent, label, checked, onChange) {
+    _unToggle(parent, label, checked, onChange, opts = {}) {
       const wrap = this._unEl('label',
         'flex items-center gap-2 cursor-pointer select-none mt-2');
       const input = this._unEl('input', 'un-switch');
@@ -2498,7 +3107,11 @@
         } catch (err) {
           console.warn('[settings] usernode toggle failed:', err);
           input.checked = !e.target.checked;
-          if (window.PlatformUI) PlatformUI.toast('Could not save the setting');
+          if (window.PlatformUI) {
+            const detail = opts.includeErrorDetail && err && err.message
+              ? `: ${err.message}` : '';
+            PlatformUI.toast(`Could not save the setting${detail}`);
+          }
         } finally {
           input.disabled = false;
         }
@@ -2701,13 +3314,18 @@
         this._renderUsernodeError(section, readError, loading);
       } else {
         // Device permissions — mirrors the native QuickSettingsPanel.
+        // iOS maps requestPermissions() to the notification prompt and has
+        // no block production since v4 — describe each platform's real ask.
         const permBox = this._unSection(section, 'Usernode app — device permissions',
-          'Block production needs the app to wake your device at exact slot times.');
-        this._unStatusRow(permBox, isAndroid ? 'Exact alarms' : 'Alarm permissions',
+          isAndroid
+            ? 'Block production needs the app to wake your device at exact slot times.'
+            : 'Notifications let Usernode alert you about node and account activity.');
+        this._unStatusRow(permBox, isAndroid ? 'Exact alarms' : 'Notifications',
           !!perms.exactAlarmGranted, 'Granted', 'Not granted');
         if (!perms.exactAlarmGranted) {
-          this._unButton(permBox, 'Request permissions', () =>
-            this._unApply(window.usernode.requestPermissions()));
+          this._unButton(permBox,
+            isAndroid ? 'Request permissions' : 'Allow notifications', () =>
+              this._unApply(window.usernode.requestPermissions()));
         }
         if (isAndroid) {
           this._unStatusRow(permBox, 'Battery optimization',
@@ -2880,13 +3498,26 @@
       const render = (state) => {
         holder.textContent = '';
         if (!state) {
+          const admissionPending = window.NativeChrome &&
+            typeof NativeChrome.isSessionAdmitted === 'function' &&
+            !NativeChrome.isSessionAdmitted();
           holder.appendChild(this._unEl('p',
             'text-xs text-zinc-500 dark:text-zinc-400',
-            'Notification settings are temporarily unavailable.'));
+            admissionPending
+              ? 'Finishing secure app sign-in before enabling notifications…'
+              : 'Notification settings are temporarily unavailable.'));
+          if (admissionPending &&
+              typeof NativeChrome.recoverSessionAdmission === 'function') {
+            this._unButton(holder, 'Try again', async () => {
+              await NativeChrome.recoverSessionAdmission();
+              render(await SocialPush.getState());
+            });
+          }
           return;
         }
         this._unToggle(holder, 'Activity notifications', state.enabled,
-          async (enabled) => render(await SocialPush.setEnabled(enabled)));
+          async (enabled) => render(await SocialPush.setEnabled(enabled)),
+          { includeErrorDetail: true });
         let status = 'Off on this device.';
         if (state.deliveryActive) {
           status = 'On — this device is registered for activity notifications.';

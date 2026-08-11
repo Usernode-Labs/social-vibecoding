@@ -35,6 +35,24 @@ const AppView = {
   _ghIssuesMeta: { truncatedList: false, note: null, repoUrl: null, myRemaining: null },
   _bountyInFlight: new Set(),
 
+  // #1100: Reporting-view caches. Deliberately SEPARATE from `_merged` /
+  // `_mergedHasMore` / `_mergedCursor`: the report pages the whole merged
+  // history, and writing that into `_merged` would silently extend the
+  // kanban Done column and retire its "Load more" footer as a side effect
+  // of visiting the report. null means "not paged yet" — _repaintReportView
+  // paints a placeholder and kicks _ensureReportData(). Invalidated on every
+  // successful _loadDevData and on app switch, so Refresh re-pages.
+  _reportMerged: null,
+  _reportLoading: false,
+  // True when the 500-row cap stopped the pager short of the full history.
+  _reportTruncated: false,
+  // The server's own `total` from page 1 — authoritative for "showing N of M"
+  // (see the staging first-page-only demo injection note in _ensureReportData).
+  _reportTotal: 0,
+  // True when paging FAILED and the report fell back to the board's first
+  // page, so the document can say it is showing partial history.
+  _reportPartial: false,
+
   // #396: per-issue-number cache of the GitHub comment thread fetched
   // lazily when an issue topic opens, so _renderTopicHead's live-refreshes
   // (WS-driven) reuse it instead of refetching. Each entry is
@@ -162,6 +180,14 @@ const AppView = {
   // Read/written only through the two helpers below so the
   // localStorage access stays guarded in one place.
   VIEW_MODE_KEY: 'devViewMode',
+  // The single whitelist of dev view modes, in switcher order. Every place
+  // that resolves a mode — the ?view= override, the stored preference, the
+  // setter and the toggle's click handler — validates against THIS array
+  // instead of repeating an inline `(v === 'kanban' || v === 'pm')` chain,
+  // so adding a mode (#1100 added 'report') is one edit rather than four.
+  // 'list' is the terminal fallback for anything not in here.
+  VIEW_MODES: ['list', 'kanban', 'pm', 'report'],
+  _isViewMode(v) { return AppView.VIEW_MODES.indexOf(v) !== -1; },
   // The single source of truth in JS for where the board goes
   // side-by-side. Must stay in step with the two kanban media queries in
   // app.css (`max-width: 639px` for the tab strip, `min-width: 640px`
@@ -187,7 +213,7 @@ const AppView = {
     let v = null;
     try {
       const raw = new URLSearchParams(window.location.search).get('view');
-      if (raw === 'list' || raw === 'kanban' || raw === 'pm') v = raw;
+      if (AppView._isViewMode(raw)) v = raw;
     } catch { v = null; }
     AppView._viewModeUrlOverride = v;
     return v;
@@ -197,7 +223,7 @@ const AppView = {
       const override = AppView._readViewModeOverride();
       if (override) return override;
       const stored = window.localStorage.getItem(AppView.VIEW_MODE_KEY);
-      if (stored === 'kanban' || stored === 'list' || stored === 'pm') return stored;
+      if (AppView._isViewMode(stored)) return stored;
       if (AppView._viewModeAutoDefault === null) {
         AppView._viewModeAutoDefault =
           (typeof window.matchMedia === 'function'
@@ -208,7 +234,7 @@ const AppView = {
     } catch { return 'list'; }
   },
   _setViewMode(mode) {
-    const next = (mode === 'kanban' || mode === 'pm') ? mode : 'list';
+    const next = AppView._isViewMode(mode) ? mode : 'list';
     // An explicit choice retires the URL override (#814) — otherwise
     // ?view= would keep winning over every later toggle click.
     AppView._viewModeUrlOverride = null;
@@ -318,9 +344,6 @@ const AppView = {
   _activeKanbanTab() {
     return AppView.KANBAN_TABS.includes(AppView._kanbanTab) ? AppView._kanbanTab : 'issues';
   },
-  // Refresh timer for the session cards' busy indicators (see
-  // _syncSessionPolling); self-clears when #dev-body leaves the DOM.
-  _stripTimer: null,
   // Session caches for the In progress area — see _refreshSessionCaches.
   _mySessions: [],
   _sharedSessions: [],
@@ -381,6 +404,10 @@ const AppView = {
       Object.keys(AppView._govApplyTimers).forEach(AppView._clearGovApplyTimers);
       AppView._govApplying = Object.create(null);
       AppView._govDueSince = Object.create(null);
+      // #1100: the report's paged merged history is per-app — never carry
+      // one app's completed work into another app's report.
+      AppView._resetReportCaches();
+      AppView._reportTotal = 0;
     }
     AppView.appData = appData;
 
@@ -1126,8 +1153,11 @@ const AppView = {
     // full-bleed geometry the launch it depicts would have.
     AppView._setSurface('app');
     document.getElementById('app-launch-cover-spinner')?.classList.remove('hidden');
-    document.getElementById('home-screen')?.classList.add('hidden');
-    document.getElementById('app-view')?.classList.remove('hidden');
+    // Through the visibility seam (#1078): either root may be React-owned
+    // by now, and a classList write into React-owned DOM gets reconciled
+    // away on the next render.
+    App._setScreenVisible('home-screen', false);
+    App._setScreenVisible('app-view', true);
     document.getElementById('back-btn')?.classList.remove('hidden');
   },
 
@@ -1529,28 +1559,30 @@ const AppView = {
               title="${AppView.readOnly ? 'Fork this app' : 'Propose a change, file an issue, or manage this app'}">+</button>
             <div id="dev-plus-menu" class="hidden absolute right-0 top-9 z-30 w-64 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden">
               ${AppView.readOnly ? '' : `
+              ${AppView._plusMenuHeading('Build a change', 'build', false)}
               <button data-plus="proposal" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Propose a change</span>
-                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Start an AI dev session — promoting its PR creates the proposal</span>
+                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Start a dev session — you pick where it is built, and can change that any time</span>
               </button>
               ${AppView.appData?.can_collaborate ? `
               <button data-plus="import-pr" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Import Feature from a PR</span>
-                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Turn an existing GitHub pull request into a proposal people can vote on</span>
+                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Your computer &middot; your own tools — you have already built it, so there is no chat for this one</span>
               </button>` : ''}
               <button data-plus="issue" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">New issue</span>
                 <span class="block text-xs text-zinc-500 dark:text-zinc-400">Report a problem or idea without building it yourself</span>
               </button>
+              ${AppView._plusMenuHeading('Settings &amp; rules', 'settings', true)}
               ${AppView._plusMenuShowsMembers() ? `
-              <button data-plus="members" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
+              <button data-plus="members" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
                 ${AppView.appData?.self_hosted ? `
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Proposal approvals</span>
                 <span class="block text-xs text-zinc-500 dark:text-zinc-400">Who approves proposals and how many approvals are needed</span>` : `
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Members &amp; visibility</span>
                 <span class="block text-xs text-zinc-500 dark:text-zinc-400">Who can build and see this app</span>`}
               </button>` : ''}
-              <button data-plus="rename" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
+              <button data-plus="rename" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors ${AppView._plusMenuShowsMembers() ? 'border-t border-zinc-200 dark:border-zinc-800' : ''}">
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">App display name</span>
                 <span class="block text-xs text-zinc-500 dark:text-zinc-400">Renames are proposals — applied once voted in</span>
               </button>
@@ -1683,7 +1715,6 @@ const AppView = {
       }
     });
 
-    AppView._syncSessionPolling();
     await AppView._loadDevFeed();
 
     // Restore the saved scroll position now that the feed has painted.
@@ -1958,23 +1989,17 @@ const AppView = {
     }
 
     // #827: the only AI affordance on a proposal is the card pill —
-    // "✨ Explore in dev chat" (_exploreChatBtnHtml, rendered when !mine).
+    // "✨ Explore in dev chat" (_exploreChatBtnHtml, gated by
+    // _showExplorePill).
     // It replaced the old private read-only "Ask AI" advisor panel: instead
     // of a bespoke side-chat, the pill opens the user's real dev chat with a
     // message about this PR pre-filled (never sent) in the composer.
     //
-    // Who gets it:
-    // - Another user's PR proposal: yes — the pill rides in the card action
-    //   row, and #321's "no duplicate standalone in the head" rule still
-    //   holds (there is no standalone button any more at all).
-    // - The viewer's OWN PR proposal: no (#313/#348) — owners reach the
-    //   Mayor through "Open session" on their own PR.
-    // - Governance proposals: no (#827). A dev chat can only reason about
-    //   repo code and cannot act on a rename / secret change / close-issue
-    //   vote, so a "let's explore this" seed there would mislead. Their
-    //   shared discussion thread is where that conversation belongs.
-    const mine = !!(App.user && item.user_id === App.user.id);
-    const cardHasExplorePill = (t.kind === 'proposal' && !mine);
+    // Who gets it: see _showExplorePill — the one predicate every render
+    // site shares. Here it additionally decides whether to bind the pill's
+    // click and run the availability pass below (the head has no delegated
+    // handler), so it must agree with what _renderProposalCard painted.
+    const cardHasExplorePill = (t.kind === 'proposal' && AppView._showExplorePill(item));
 
     head.innerHTML = cardHtml + bodyHtml;
     AppView._wireDetailActions(head, t.kind, item);
@@ -2026,7 +2051,45 @@ const AppView = {
     // same way _renderFeedInner does for the feed. An issue opened while its
     // headless run is 'generating' begins polling so the card advances to its
     // outcome label without a manual refresh.
-    AppView._syncHeadlessPolling();
+  },
+
+  // #1045: the ONE rule for whether a proposal row offers the "Explore in
+  // dev chat" pill. Every render site (the feed/board card, the Completed
+  // card, the topic head) calls this instead of re-deriving `!mine`, so the
+  // three can't drift — the topic head in particular uses it to decide
+  // whether to BIND the pill's click, and a head that disagrees with the
+  // card it just painted leaves an inert button.
+  //
+  // Who gets it:
+  // - Another user's PR proposal: yes (#313/#827) — the pill rides in the
+  //   card action row, and #321's "no duplicate standalone in the head"
+  //   rule still holds (there is no standalone button any more at all).
+  // - The viewer's OWN native PR proposal: no (#313/#348) — "Open session"
+  //   on their own PR is the better door to the same dev chat, so a pill
+  //   beside it is redundant clutter.
+  // - The viewer's OWN IMPORTED proposal: YES (#1045). An imported PR has
+  //   no platform-owned dev chat at all — src/routes/sessions.js refuses a
+  //   chat turn on a `source='imported'` row, so _renderProposalCard hides
+  //   "Open session" for it too (#687). Without this the owner of a PR they
+  //   imported (or had their own Claude Code / Codex build and submit
+  //   through the connector) gets NO AI affordance on their own proposal.
+  //   The pill opens a SEPARATE ordinary dev chat that reads the PR — it
+  //   never takes over the imported branch.
+  // - Governance proposals and applied close-issue rows: no (#827). A dev
+  //   chat can only reason about repo code and cannot act on a rename /
+  //   secret change / close-issue vote, so a "let's explore this" seed
+  //   there would mislead. Both carry `kind` (and close-issue rows a
+  //   `row_type`); PR-proposal rows from /promoted and mergedRowSelect
+  //   carry neither.
+  //
+  // Read-only viewers are NOT filtered here: that gate lives in
+  // _exploreChatBtnHtml (#621), so it stays in exactly one place.
+  _showExplorePill(pr) {
+    if (!pr) return false;
+    if (pr.kind || pr.row_type === 'close_issue') return false;
+    const mine = !!(App.user && pr.user_id === App.user.id);
+    const imported = pr.source === 'imported';
+    return !mine || imported;
   },
 
   // ── The detail view's actions & state block ─────────────────────────
@@ -2155,9 +2218,8 @@ const AppView = {
   // #313/#827: a compact "Explore in dev chat" action for the proposal CARD
   // action row (the Dev feed, the kanban board, the Completed list). Cards
   // render many at once, so this uses a class + data-proposal-id hook (ids
-  // must stay unique). Only rendered on proposals the viewer does NOT own —
-  // owners reach the Mayor through "Open session" on their own PR, so a card
-  // button would be redundant clutter. Click is dispatched by the delegated
+  // must stay unique). Whether a given row gets one at all is
+  // _showExplorePill's call. Click is dispatched by the delegated
   // feed/merged handler (and wired directly in the topic head).
   _exploreChatBtnHtml(pr) {
     // #621: the dev chat spends the viewer's LLM budget and its API is
@@ -2602,7 +2664,10 @@ const AppView = {
   // cheap extra veto (a titled chat is definitely used), alongside
   // pr_number (pushed work) and busy (a first turn mid-run).
   _isUnusedChat(s) {
-    if (!s || s.pr_number || s.session_title || s.busy) return false;
+    if (!s || s.pr_number || s.session_title) return false;
+    // #1038: live busy, so a first turn that started since the last fetch
+    // still vetoes the "unused chat" treatment.
+    if (AppView._sessionBusy(s)) return false;
     const created = Date.parse(s.created_at || '');
     const active = Date.parse(s.last_activity_at || s.created_at || '');
     return Number.isFinite(created) && Number.isFinite(active) && created === active;
@@ -2652,7 +2717,7 @@ const AppView = {
         const created = await DevChat.createSession(slug);
         if (created) {
           sessionId = created.id;
-        } else if (mine.length) {
+        } else if (created === null && mine.length) {
           // Cap / capacity / repo error — createSession already explained
           // why. Land in the newest existing chat rather than dead-ending.
           sessionId = mine[0].id;
@@ -2841,18 +2906,22 @@ const AppView = {
     const boardSvg = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z"/></svg>';
     // People icon (two-person silhouette) for the PM assignment overview.
     const peopleSvg = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-1a4 4 0 00-3-3.87M9 20H4v-1a4 4 0 013-3.87m6 4.87v-1a4 4 0 00-3-3.87M12 7a3 3 0 11-6 0 3 3 0 016 0zm7 3a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"/></svg>';
+    // #1100: document-with-lines icon for the Reporting view — a generated,
+    // read-only progress report rather than another way to work the board.
+    const reportSvg = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 4h8l4 4v12H8zM8 4H6a2 2 0 00-2 2v12M11 12h6M11 16h6M11 8h2"/></svg>';
     return `
       <div class="inline-flex items-center rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-hidden mr-1" role="group" aria-label="Dev view mode">
         <button id="dev-view-list" data-view="list" class="${AppView._viewToggleBtnCls(mode === 'list')}" aria-pressed="${mode === 'list'}" title="List view" aria-label="List view">${listSvg}</button>
         <button id="dev-view-kanban" data-view="kanban" class="${AppView._viewToggleBtnCls(mode === 'kanban')}" aria-pressed="${mode === 'kanban'}" title="Kanban view" aria-label="Kanban view">${boardSvg}</button>
         <button id="dev-view-pm" data-view="pm" class="${AppView._viewToggleBtnCls(mode === 'pm')}" aria-pressed="${mode === 'pm'}" title="PM view — tasks by assignee" aria-label="PM view">${peopleSvg}</button>
+        <button id="dev-view-report" data-view="report" class="${AppView._viewToggleBtnCls(mode === 'report')}" aria-pressed="${mode === 'report'}" title="Reporting — progress report" aria-label="Reporting — progress report">${reportSvg}</button>
       </div>`;
   },
   _wireViewToggle(content) {
     content.querySelectorAll('.dev-view-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
         const v = btn.dataset.view;
-        const mode = (v === 'kanban' || v === 'pm') ? v : 'list';
+        const mode = AppView._isViewMode(v) ? v : 'list';
         if (mode === AppView._getViewMode()) return;
         AppView._setViewMode(mode);
         AppView._updateViewToggleUI();
@@ -2889,6 +2958,21 @@ const AppView = {
       || (a.collab_visibility === 'private' && a.can_collaborate)
       || (a.approver_policy === 'invited' && a.can_collaborate));
   },
+  // A non-interactive group label inside the "+" menu.
+  //
+  // The menu grew to eight entries with no shape: "Propose a change" sat
+  // one keystroke from "App secrets", and two of the eight were different
+  // spellings of the same act. It is two groups now — what you do to the
+  // CODE, then what you do to the APP's settings — and this is the row
+  // that says so. Deliberately a <div>, not a <button>: _wirePlusMenu
+  // collects `button[data-plus]` for the touch action sheet, so anything
+  // that is not an action must not be a button or it would arrive in that
+  // sheet as a tappable row that does nothing.
+  _plusMenuHeading(label, key, divider) {
+    return `<div data-plus-group="${key}" class="px-3 pt-2.5 pb-1 text-[10px] uppercase font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 select-none${
+      divider ? ' border-t border-zinc-200 dark:border-zinc-800 mt-1' : ''}">${label}</div>`;
+  },
+
   _wirePlusMenu(content) {
     const btn = document.getElementById('dev-plus-btn');
     const menu = document.getElementById('dev-plus-menu');
@@ -2905,12 +2989,26 @@ const AppView = {
       // handler, so both idioms share one wiring path.
       if (PlatformUI.isTouch()) {
         AppView.refreshDevChatSecretsState();
-        const rows = Array.from(menu.querySelectorAll('button[data-plus]'));
+        // In DOM order, so the two group headings arrive between the rows
+        // they head rather than being dropped on the touch path — the
+        // sheet has no heading primitive, so a heading is a row whose
+        // handler does nothing. Gated by omission everywhere else in this
+        // codebase; `disabled: true` is not used because the kit drops
+        // disabled rows entirely.
+        const nodes = Array.from(menu.querySelectorAll('button[data-plus], [data-plus-group]'));
         PlatformUI.actionSheet({
-          actions: rows.map((row) => ({
-            label: (row.querySelector('span')?.textContent || row.textContent).replace(/\s+/g, ' ').trim(),
-            handler: () => row.click(),
-          })),
+          actions: nodes.map((node) => {
+            if (!node.hasAttribute('data-plus')) {
+              return {
+                label: `— ${node.textContent.replace(/\s+/g, ' ').trim()} —`,
+                handler: () => {},
+              };
+            }
+            return {
+              label: (node.querySelector('span')?.textContent || node.textContent).replace(/\s+/g, ' ').trim(),
+              handler: () => node.click(),
+            };
+          }),
         });
         return;
       }
@@ -2935,6 +3033,14 @@ const AppView = {
         AppView.createProposal();
       });
     }
+    // "Propose with Claude Code or Codex" USED to be a second row here
+    // (#1049), opening the same session straight onto the flow picker. It
+    // is gone: two rows in one menu that both mean "propose a change" made
+    // the venue a fork in the road before the work existed, and it could
+    // only name two of the six venues. One row starts the session; the
+    // venue line above the composer says where it will be built and opens
+    // the full list on demand.
+    //
     // import-pr renders only when can_collaborate, so (like members/fork)
     // its handler needs an existence check.
     const importPrBtn = menu.querySelector('[data-plus="import-pr"]');
@@ -3333,6 +3439,8 @@ const AppView = {
     let mine = [];
     let sharedAll = [];
     let archived = [];
+    // #1038: stamped BEFORE the requests go out — see SessionState.seed.
+    const issuedAt = Date.now();
     try {
       const [activeRes, sharedRes, allRes] = await Promise.all([
         // ?demo=1 forwarded so the staging mock own-session row (pinned
@@ -3360,6 +3468,12 @@ const AppView = {
           .sort((a, b) => actTs(b) - actTs(a));
       }
     } catch { /* keep whatever loaded */ }
+    // Fold both payloads' busy flags into the live store; a pushed event
+    // newer than `issuedAt` still wins, so a slow response can't resurrect
+    // a finished turn's spinner.
+    if (typeof window !== 'undefined' && window.SessionState) {
+      SessionState.seed([...mine, ...sharedAll], issuedAt);
+    }
     const sig = JSON.stringify([mine, sharedAll, archived]);
     const changed = sig !== AppView._sessionsSig;
     AppView._sessionsSig = sig;
@@ -3521,6 +3635,10 @@ const AppView = {
       AppView._mergedTotal = (typeof mergedData.total === 'number')
         ? mergedData.total
         : merged.length;
+      // #1100: a fresh dev-data load invalidates the report's own paged
+      // history, so the next Reporting paint (or Refresh) re-pages it.
+      AppView._resetReportCaches();
+      AppView._reportTotal = AppView._mergedTotal;
       // #607: keep the checks-in-progress polling fallback in sync with
       // what this load actually saw.
       AppView._syncChecksPoll(promoted);
@@ -3591,6 +3709,18 @@ const AppView = {
         AppView._renderKanbanFilterBar();
       }
       AppView._repaintPmView();
+      return;
+    }
+    if (AppView._getViewMode() === 'report') {
+      // #1100: Reporting. A single stable node, mounted once and refilled by
+      // _repaintReportView on every repaint. Deliberately NO filter bar —
+      // a progress report is the whole picture by definition, and a filtered
+      // one would be a misleading document. _kanbanFilters is left untouched
+      // so switching back to kanban/PM restores the user's filters intact.
+      if (!document.getElementById('dev-report')) {
+        body.innerHTML = '<div id="dev-report"></div>';
+      }
+      AppView._repaintReportView();
       return;
     }
     // List mode: rebuild the two-container shell, then fill it exactly as
@@ -3716,7 +3846,6 @@ const AppView = {
 
     // Keep the generating-state poller in sync with what we just
     // rendered (idempotent set/clear of one timer).
-    AppView._syncHeadlessPolling();
 
     // Paging footer: more local items, or a GitHub link when the repo
     // has more open issues than the fetch ceiling.
@@ -4279,7 +4408,6 @@ const AppView = {
     // The headless-state poller is keyed off the cached issue data, same
     // as the list feed — filtering a generating row off-screen doesn't
     // stop it.
-    AppView._syncHeadlessPolling();
     if (window.Kudos) Kudos.attach(board);
     AppView._applyExploreChatAvailability(board);
     AppView._updateKanbanFilterBarUI();
@@ -5066,12 +5194,758 @@ const AppView = {
         AppView._repaintBoardSurface();
       });
     }
-    AppView._syncHeadlessPolling();
     if (window.Kudos) Kudos.attach(el);
     AppView._applyExploreChatAvailability(el);
     AppView._updateKanbanFilterBarUI();
     AppView._initPmDrag(el);
     AppView._reanchorCardMenu();
+  },
+
+  // ══ Reporting view (#1100) ═══════════════════════════════════════════
+  //
+  // A fourth view mode that replaces the board with a generated, READ-ONLY
+  // progress report — Done / In progress / Backlog — plus a Download HTML
+  // export. Three deliberate properties:
+  //
+  //   * It reuses NONE of the card renderers. `#dev-body` has a delegated
+  //     click handler (renderDevView) that opens topics and fires card
+  //     actions off `data-issue-row` / `data-proposal-row` / `data-gov-row`
+  //     / `data-session-chip`. Emitting any of those here would turn every
+  //     report line into a live control, so the report's own markup uses
+  //     `ur-rpt-*` classes exclusively and its only interactive elements
+  //     are the two toolbar buttons and external GitHub links.
+  //   * The classification is DELEGATED to _bucketDevItems, so the report
+  //     can never disagree with the board about what is done / in review /
+  //     in progress / backlog — and the three sections are mutually
+  //     exclusive by construction.
+  //   * _buildReportModel and _renderReportHtml are pure (data in, plain
+  //     object / string out; no DOM, no AppView state reads), so they are
+  //     unit-tested in a vm sandbox (tests/dev-report.test.js) and port
+  //     unchanged when the dev board moves into the React bundle (#1084).
+
+  // Month labels for the Done section's group headings. An explicit table
+  // rather than toLocaleDateString(month:'long') so the heading is stable
+  // across runtimes with a trimmed ICU and assertable in tests.
+  REPORT_MONTHS: ['January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'],
+
+  // Backlog priority groups, in report order. The first three mirror
+  // ATTR_PRIORITY_VALUES (highest first); the fourth catches issues the
+  // group has not voted a priority on.
+  REPORT_PRIORITY_GROUPS: [
+    { key: 'high', label: 'High' },
+    { key: 'medium', label: 'Medium' },
+    { key: 'low', label: 'Low' },
+    { key: 'none', label: 'No priority set' },
+  ],
+
+  // Hard cap on the merged-history pager: 10 sequential pages of 50 rows.
+  // Keeps one Reporting click from becoming a 40-request storm on a
+  // long-lived app; the overflow is DISCLOSED in the document rather than
+  // silently dropped.
+  REPORT_MERGED_PAGE: 50,
+  REPORT_MERGED_MAX_PAGES: 10,
+  REPORT_MERGED_MAX_ROWS: 500,
+
+  // Drop the report's paged history so the next paint (or an explicit
+  // Refresh) re-pages it. Called on every successful _loadDevData and on
+  // app switch — never mid-paint.
+  _resetReportCaches() {
+    AppView._reportMerged = null;
+    AppView._reportTruncated = false;
+    AppView._reportPartial = false;
+  },
+
+  // Page the full merged history into `_reportMerged` — the one fetch the
+  // report adds. `_merged` holds only the board's first page (20 rows) and
+  // `_mergedTotal` the true count, so the history has to be paged; it lands
+  // in a SEPARATE cache because writing it into `_merged` would silently
+  // extend the kanban Done column and retire its "Load more" footer as a
+  // side effect of visiting the report.
+  //
+  // Uses the same keyset cursor shape as loadMoreMerged (before /
+  // before_id / before_type) and forwards _demoQS() on every page. On
+  // failure it falls back to the board's first page and sets
+  // `_reportPartial`, so the document says it is showing partial history
+  // instead of quietly under-reporting.
+  async _ensureReportData() {
+    if (AppView._reportLoading) return;
+    if (AppView._reportMerged) return;
+    if (!AppView.appData) return;
+    const slug = AppView.appData.slug;
+    AppView._reportLoading = true;
+    const rowKey = (r) => `${r.row_type || 'pr'}:${r.id}`;
+    const rows = [];
+    const have = new Set();
+    let truncated = false;
+    let partial = false;
+    // Authoritative "of N": the FIRST page's own `total`. In staging the
+    // ?demo=1 injection is first-page-only (votes.js, gated on isFirstPage)
+    // and bumps `total` by the injected count, so recomputing a total from
+    // the rows we hold would contradict the server. Page 2+ of a demo
+    // report returns real rows only and the page-1 cursor may sit on a
+    // synthetic row — the (row_type, id) dedupe below covers the overlap.
+    let total = 0;
+    try {
+      let cursor = null;
+      for (let page = 0; page < AppView.REPORT_MERGED_MAX_PAGES; page++) {
+        const qs = AppView._demoQS();
+        const sep = qs ? '&' : '?';
+        let url = `/api/apps/${slug}/merged${qs}${sep}limit=${AppView.REPORT_MERGED_PAGE}`;
+        if (cursor) {
+          url += `&before=${encodeURIComponent(cursor.created_at)}`
+            + `&before_id=${encodeURIComponent(cursor.id)}`
+            + `&before_type=${encodeURIComponent(cursor.row_type || 'pr')}`;
+        }
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`merged page ${page} failed`);
+        const data = await res.json();
+        const batch = Array.isArray(data.merged) ? data.merged : [];
+        if (page === 0 && typeof data.total === 'number') total = data.total;
+        for (const r of batch) {
+          const k = rowKey(r);
+          if (have.has(k)) continue;
+          have.add(k);
+          rows.push(r);
+        }
+        if (rows.length >= AppView.REPORT_MERGED_MAX_ROWS) {
+          rows.length = AppView.REPORT_MERGED_MAX_ROWS;
+          truncated = !!data.hasMore || rows.length < total;
+          break;
+        }
+        if (!data.hasMore || !batch.length) break;
+        const last = batch[batch.length - 1];
+        cursor = { created_at: last.created_at, id: last.id, row_type: last.row_type || 'pr' };
+        // Ran out of pages before running out of history.
+        if (page === AppView.REPORT_MERGED_MAX_PAGES - 1) truncated = true;
+      }
+    } catch {
+      // Fall back to the board's first page and say so in the document.
+      rows.length = 0;
+      have.clear();
+      for (const r of (AppView._merged || [])) {
+        const k = rowKey(r);
+        if (have.has(k)) continue;
+        have.add(k);
+        rows.push(r);
+      }
+      partial = true;
+      total = AppView._mergedTotal || rows.length;
+    } finally {
+      AppView._reportLoading = false;
+    }
+    AppView._reportMerged = rows;
+    AppView._reportTruncated = truncated;
+    AppView._reportPartial = partial;
+    AppView._reportTotal = total || rows.length;
+    // Only repaint if the user is still looking at the report.
+    if (AppView._getViewMode() === 'report') AppView._repaintReportView();
+  },
+
+  // Fill `#dev-report` for the current caches. Paints a placeholder and
+  // kicks the pager while `_reportMerged` is null; every later
+  // (WS-driven) _repaintDevBody re-renders from cache with no re-paging.
+  _repaintReportView() {
+    const el = document.getElementById('dev-report');
+    if (!el) return;
+    if (!AppView._reportMerged) {
+      el.innerHTML = `<style id="dev-report-style">${AppView.REPORT_CSS}</style>`
+        + `<div class="${AppView._reportRootCls()}"><p class="ur-rpt-empty">Building report…</p></div>`;
+      AppView._ensureReportData();
+      return;
+    }
+    const model = AppView._buildReportModel(AppView._reportInputs());
+    el.innerHTML = `<style id="dev-report-style">${AppView.REPORT_CSS}</style>`
+      + AppView._renderReportToolbar()
+      + `<div class="${AppView._reportRootCls()}">${AppView._renderReportHtml(model, { standalone: false })}</div>`;
+    // Wired after each paint alongside the body, the same way
+    // _repaintPmView wires #dev-pm-more-unassigned.
+    const dl = el.querySelector('#dev-report-download');
+    if (dl && dl.addEventListener) dl.addEventListener('click', () => AppView.downloadReport());
+    const rf = el.querySelector('#dev-report-refresh');
+    if (rf && rf.addEventListener) rf.addEventListener('click', () => AppView.refreshReport());
+  },
+
+  // `.ur-rpt--dark` follows the shell's `dark` class (darkMode: 'class').
+  // The EXPORT never sets it — a downloaded file is always light so it
+  // prints and reads well on paper and in other apps.
+  _reportRootCls() {
+    let dark = false;
+    try {
+      dark = !!(document.documentElement
+        && document.documentElement.classList
+        && document.documentElement.classList.contains('dark'));
+    } catch { dark = false; }
+    return dark ? 'ur-rpt ur-rpt--dark' : 'ur-rpt';
+  },
+
+  _renderReportToolbar() {
+    const busy = AppView._reportLoading;
+    return `
+      <div class="flex items-center gap-2 mb-3">
+        <button id="dev-report-download" class="gc-vote-btn" title="Save this report as a self-contained HTML file">Download HTML</button>
+        <button id="dev-report-refresh" class="gc-vote-btn"${busy ? ' disabled' : ''} title="Re-pull the data and regenerate the report">${busy ? 'Refreshing…' : 'Refresh'}</button>
+      </div>`;
+  },
+
+  // Everything _buildReportModel needs, read from the caches the board
+  // already holds. Kept separate from the pure builder so the builder
+  // never reads AppView state.
+  _reportInputs() {
+    const app = AppView.appData || {};
+    const meta = AppView._ghIssuesMeta || {};
+    const ctx = AppView._proposalsCtx || {};
+    return {
+      issues: AppView._visibleGhIssues(),
+      proposals: AppView._proposals || [],
+      gov: AppView._govProposals || [],
+      merged: AppView._reportMerged || AppView._merged || [],
+      mySessions: AppView._mySessions || [],
+      sharedSessions: AppView._sharedSessions || [],
+      app: {
+        name: app.name || 'This app',
+        slug: app.slug || '',
+        url: app.url || '',
+        repoUrl: app.repo_url || meta.repoUrl || '',
+      },
+      mergedTotal: AppView._reportTotal || 0,
+      mergedTruncated: !!AppView._reportTruncated,
+      mergedPartial: !!AppView._reportPartial,
+      issuesTruncated: !!meta.truncatedList,
+      majority: ctx.majority || 1,
+    };
+  },
+
+  // ── The report model: pure, DOM-free, unit-tested ───────────────────
+  //
+  // data in → plain object out, the same shape of helper as
+  // _bucketDevItems and _groupByAssignee. `opts.now` lets tests pin the
+  // clock for the month grouping and the 30-day counter.
+  _buildReportModel(data, opts) {
+    const d = data || {};
+    const o = opts || {};
+    const now = Number.isFinite(o.now) ? o.now : Date.now();
+    const num = (v) => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : 0; };
+    const ts = (v) => { const t = Date.parse(v || ''); return Number.isFinite(t) ? t : 0; };
+
+    const buckets = AppView._bucketDevItems({
+      issues: d.issues,
+      proposals: d.proposals,
+      gov: d.gov,
+      merged: d.merged,
+      mySessions: d.mySessions,
+      sharedSessions: d.sharedSessions,
+    });
+
+    // ── Done ─────────────────────────────────────────────────────────
+    // Dated by `created_at` and LABELLED "Started": GET /merged orders by
+    // chat_sessions.created_at and exposes no merge timestamp, so grouping
+    // by a fabricated merge date would over-claim. Applied close-issue
+    // rows do carry payload.appliedAt and use it, labelled "Closed".
+    const doneEntries = buckets.done.map((m) => {
+      const closeIssue = (m.row_type || 'pr') === 'close_issue';
+      const payload = m.payload || {};
+      if (closeIssue) {
+        const at = payload.appliedAt || m.created_at;
+        return {
+          kind: 'close-issue',
+          title: payload.issueTitle || m.title || `Issue #${payload.issueNumber || m.id}`,
+          issueNumber: payload.issueNumber != null ? payload.issueNumber : null,
+          author: m.created_by_username || '',
+          yes: num(m.yes_count), no: num(m.no_count),
+          votesRequired: num(m.votes_required),
+          at, atMs: ts(at), dateLabel: 'Closed',
+        };
+      }
+      return {
+        kind: 'proposal',
+        title: m.pr_title || `Change by ${m.username || 'someone'}`,
+        prNumber: m.pr_number != null ? m.pr_number : null,
+        author: m.username || '',
+        yes: num(m.yes_count), no: num(m.no_count),
+        votesRequired: num(m.votes_required),
+        at: m.created_at, atMs: ts(m.created_at), dateLabel: 'Started',
+      };
+    });
+    // Month buckets over that same field, newest month first.
+    const monthOrder = [];
+    const monthMap = new Map();
+    for (const e of doneEntries) {
+      const dt = e.atMs ? new Date(e.atMs) : null;
+      const key = dt ? `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}` : 'unknown';
+      const label = dt
+        ? `${AppView.REPORT_MONTHS[dt.getMonth()]} ${dt.getFullYear()}`
+        : 'Undated';
+      if (!monthMap.has(key)) {
+        const g = { key, label, entries: [] };
+        monthMap.set(key, g);
+        monthOrder.push(g);
+      }
+      monthMap.get(key).entries.push(e);
+    }
+    const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+    const completedLast30 = doneEntries
+      .filter((e) => e.atMs && (now - e.atMs) <= THIRTY_DAYS).length;
+    const doneTotal = Math.max(num(d.mergedTotal), doneEntries.length);
+
+    // ── In progress ──────────────────────────────────────────────────
+    const review = [];
+    const gov = [];
+    for (const entry of buckets.inReview) {
+      const it = entry.item || {};
+      if (entry.kind === 'gov') {
+        gov.push({
+          kind: 'gov',
+          govKind: it.kind || '',
+          govKindLabel: AppView._reportGovKindLabel(it.kind),
+          title: (it.kind === 'rename' && it.payload && it.payload.newName)
+            ? it.payload.newName
+            : (it.title || AppView._reportGovKindLabel(it.kind)),
+          issueNumber: it.github_issue_number != null ? it.github_issue_number : null,
+          author: it.created_by_username || '',
+          yes: num(it.yes_count), no: num(it.no_count),
+          votesRequired: num(it.votes_required),
+          mergeWindowEndsAt: it.merge_window_ends_at || null,
+          chatCount: num(it.chat_count),
+        });
+        continue;
+      }
+      review.push({
+        kind: 'proposal',
+        title: it.pr_title || `Change by ${it.username || 'someone'}`,
+        prNumber: it.pr_number != null ? it.pr_number : null,
+        author: it.username || '',
+        status: it.status || '',
+        yes: num(it.yes_count), no: num(it.no_count),
+        votesRequired: num(it.votes_required) || num(d.majority),
+        checkState: it.check_state || null,
+        checkLabel: AppView._reportCheckLabel(it.check_state),
+        mergeWindowEndsAt: it.merge_window_ends_at || null,
+        chatCount: num(it.chat_count),
+      });
+    }
+
+    const sessions = [];
+    const workIssues = [];
+    for (const entry of buckets.inProgress) {
+      const it = entry.item || {};
+      if (entry.kind === 'issue') {
+        const ip = it.in_progress || null;
+        const people = [];
+        const push = (u) => { if (u && !people.includes(u)) people.push(u); };
+        if (ip && Array.isArray(ip.users)) ip.users.forEach(push);
+        if (ip && Array.isArray(ip.claims)) ip.claims.forEach((c) => push(c && c.username));
+        const h = it.headless;
+        workIssues.push({
+          kind: 'work-issue',
+          number: it.number != null ? it.number : null,
+          title: it.title || `Issue #${it.number}`,
+          htmlUrl: it.htmlUrl || '',
+          people,
+          headless: !!(h && (h.status === 'generating' || h.status === 'ready')),
+          claimed: !!(ip && Array.isArray(ip.claims) && ip.claims.length),
+          at: it.updatedAt || null, atMs: ts(it.updatedAt),
+          chatCount: num(it.chatCount),
+        });
+        continue;
+      }
+      // my-session | shared-session
+      sessions.push({
+        kind: entry.kind,
+        mine: entry.kind === 'my-session',
+        title: it.session_title || it.pr_title || it.branch_name || `Session #${it.id}`,
+        owner: it.username || '',
+        busy: !!it.busy,
+        at: it.last_activity_at || it.created_at || null,
+        atMs: ts(it.last_activity_at || it.created_at),
+        chatCount: num(it.chat_count),
+      });
+    }
+
+    // ── Backlog ──────────────────────────────────────────────────────
+    // buckets.issues is already (a) free of issues linked to an open
+    // proposal and (b) free of in-progress issues, so Backlog cannot
+    // overlap Awaiting review or Issues-under-work.
+    const backlogGroups = AppView.REPORT_PRIORITY_GROUPS.map((g) => ({
+      key: g.key, label: g.label, issues: [],
+    }));
+    const groupFor = (key) => backlogGroups.find((g) => g.key === key) || backlogGroups[backlogGroups.length - 1];
+    for (const i of buckets.issues) {
+      const top = (i.priority && i.priority.top) || null;
+      const g = groupFor(AppView.ATTR_PRIORITY_VALUES.indexOf(top) !== -1 ? top : 'none');
+      g.issues.push({
+        kind: 'issue',
+        number: i.number != null ? i.number : null,
+        title: i.title || `Issue #${i.number}`,
+        htmlUrl: i.htmlUrl || '',
+        priority: top,
+        priorityLabel: top ? ((AppView._priorityMeta(top) || {}).label || top) : null,
+        assignee: (i.assignee && i.assignee.top) || null,
+        category: (i.category && i.category.top) || null,
+        at: i.updatedAt || null, atMs: ts(i.updatedAt),
+        chatCount: num(i.chatCount),
+      });
+    }
+    const backlogTotal = backlogGroups.reduce((n, g) => n + g.issues.length, 0);
+
+    const shownDone = doneEntries.length;
+    return {
+      app: {
+        name: (d.app && d.app.name) || 'This app',
+        slug: (d.app && d.app.slug) || '',
+        url: (d.app && d.app.url) || '',
+        repoUrl: (d.app && d.app.repoUrl) || '',
+      },
+      generatedAtMs: now,
+      generatedAt: new Date(now).toISOString(),
+      summary: {
+        completed: doneTotal,
+        awaitingReview: review.length + gov.length,
+        beingWorkedOn: sessions.length + workIssues.length,
+        backlog: backlogTotal,
+        completedLast30,
+      },
+      done: {
+        groups: monthOrder,
+        shown: shownDone,
+        total: doneTotal,
+        truncated: !!d.mergedTruncated || doneTotal > shownDone,
+        partial: !!d.mergedPartial,
+        empty: shownDone === 0,
+      },
+      inProgress: {
+        review, gov, sessions, issues: workIssues,
+        empty: !(review.length || gov.length || sessions.length || workIssues.length),
+      },
+      backlog: {
+        groups: backlogGroups.filter((g) => g.issues.length),
+        total: backlogTotal,
+        truncatedList: !!d.issuesTruncated,
+        empty: backlogTotal === 0,
+      },
+    };
+  },
+
+  _reportGovKindLabel(kind) {
+    switch (kind) {
+      case 'rename': return 'App rename';
+      case 'secret_change': return 'Secret change';
+      case 'close_issue': return 'Close an issue';
+      case 'maintenance_campaign': return 'Maintenance campaign';
+      default: return 'Governance proposal';
+    }
+  },
+
+  _reportCheckLabel(state) {
+    switch (state) {
+      case 'passing': return 'Checks passing';
+      case 'failing': return 'Checks failing';
+      case 'error': return 'Checks could not run';
+      case 'pending': return 'Checks running';
+      default: return null;
+    }
+  },
+
+  // ── Report CSS ───────────────────────────────────────────────────────
+  // Plain CSS, every rule scoped under `.ur-rpt`, deliberately using NO
+  // Tailwind utilities. Injected once into #dev-report for the on-screen
+  // view AND inlined into the export, so the downloaded file is the exact
+  // layout that was previewed and cannot be broken by a Tailwind
+  // content-scan miss.
+  REPORT_CSS: [
+    '.ur-rpt{--rpt-fg:#18181b;--rpt-muted:#52525b;--rpt-faint:#71717a;--rpt-line:#e4e4e7;--rpt-bg:#ffffff;--rpt-card:#fafafa;--rpt-accent:#7c3aed;',
+    'color:var(--rpt-fg);background:var(--rpt-bg);font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;',
+    'font-size:14px;line-height:1.55;max-width:56rem;margin:0 auto;padding:1.5rem 1.25rem 3rem;-webkit-text-size-adjust:100%;}',
+    '.ur-rpt--dark{--rpt-fg:#f4f4f5;--rpt-muted:#a1a1aa;--rpt-faint:#8b8b93;--rpt-line:#3f3f46;--rpt-bg:transparent;--rpt-card:rgba(255,255,255,0.03);--rpt-accent:#a78bfa;}',
+    '.ur-rpt *{box-sizing:border-box;}',
+    '.ur-rpt a{color:var(--rpt-accent);text-decoration:none;}',
+    '.ur-rpt a:hover{text-decoration:underline;}',
+    '.ur-rpt-head{border-bottom:2px solid var(--rpt-line);padding-bottom:1rem;margin-bottom:1.25rem;}',
+    '.ur-rpt-app{font-size:1.5rem;font-weight:700;margin:0;letter-spacing:-0.01em;}',
+    '.ur-rpt-kicker{font-size:0.8125rem;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:var(--rpt-accent);margin:0 0 0.25rem;}',
+    '.ur-rpt-gen{font-size:0.8125rem;color:var(--rpt-muted);margin:0.5rem 0 0;}',
+    '.ur-rpt-note{font-size:0.75rem;color:var(--rpt-faint);margin:0.25rem 0 0;}',
+    '.ur-rpt-summary{display:flex;flex-wrap:wrap;gap:0.75rem;margin:0 0 1.5rem;padding:0;list-style:none;}',
+    '.ur-rpt-stat{flex:1 1 8rem;border:1px solid var(--rpt-line);border-radius:0.5rem;background:var(--rpt-card);padding:0.625rem 0.75rem;}',
+    '.ur-rpt-stat-n{display:block;font-size:1.375rem;font-weight:700;line-height:1.15;}',
+    '.ur-rpt-stat-l{display:block;font-size:0.6875rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--rpt-muted);margin-top:0.125rem;}',
+    '.ur-rpt-recent{font-size:0.8125rem;color:var(--rpt-muted);margin:-0.75rem 0 1.5rem;}',
+    '.ur-rpt-section{margin:0 0 1.75rem;}',
+    '.ur-rpt-h2{font-size:1.0625rem;font-weight:700;margin:0 0 0.125rem;padding-bottom:0.375rem;border-bottom:1px solid var(--rpt-line);}',
+    '.ur-rpt-sub{font-size:0.75rem;color:var(--rpt-faint);margin:0.375rem 0 0.75rem;}',
+    '.ur-rpt-h3{font-size:0.8125rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--rpt-muted);margin:1.125rem 0 0.5rem;}',
+    '.ur-rpt-list{list-style:none;margin:0;padding:0;}',
+    '.ur-rpt-row{border-bottom:1px solid var(--rpt-line);padding:0.5rem 0;}',
+    '.ur-rpt-row:last-child{border-bottom:0;}',
+    '.ur-rpt-title{font-weight:600;}',
+    '.ur-rpt-meta{font-size:0.75rem;color:var(--rpt-muted);margin-top:0.125rem;}',
+    '.ur-rpt-meta span+span::before{content:" \\00b7 ";color:var(--rpt-line);}',
+    '.ur-rpt-num{font-variant-numeric:tabular-nums;color:var(--rpt-muted);font-weight:400;}',
+    '.ur-rpt-tag{display:inline-block;font-size:0.6875rem;font-weight:600;border:1px solid var(--rpt-line);border-radius:0.25rem;padding:0 0.3125rem;margin-left:0.25rem;color:var(--rpt-muted);}',
+    '.ur-rpt-empty{font-size:0.8125rem;color:var(--rpt-faint);font-style:italic;margin:0.5rem 0;}',
+    '.ur-rpt-foot{border-top:2px solid var(--rpt-line);margin-top:2rem;padding-top:0.875rem;font-size:0.75rem;color:var(--rpt-faint);}',
+    '.ur-rpt-foot p{margin:0.25rem 0;}',
+  ].join(''),
+
+  REPORT_PRINT_CSS: [
+    '@media print{',
+    'body{background:#fff;}',
+    '.ur-rpt{max-width:none;padding:0;font-size:11pt;}',
+    '.ur-rpt-section{break-inside:auto;}',
+    '.ur-rpt-row{break-inside:avoid;}',
+    '.ur-rpt-h2,.ur-rpt-h3{break-after:avoid;}',
+    '.ur-rpt a{color:inherit;text-decoration:none;}',
+    '}',
+  ].join(''),
+
+  // ── Report rendering: pure, DOM-free, unit-tested ────────────────────
+  //
+  // model in → HTML string out. With `standalone: true` the same markup is
+  // wrapped in a full document (doctype, charset, title, inline CSS, print
+  // rules) so the download is self-contained and needs no network.
+  //
+  // HARD RULE: no `data-issue-row` / `data-proposal-row` / `data-gov-row` /
+  // `data-session-chip` attributes and no reuse of _renderIssueRow /
+  // _renderProposalCard — see the section header above.
+  _renderReportHtml(model, opts) {
+    const m = model || {};
+    const o = opts || {};
+    const standalone = !!o.standalone;
+    const app = m.app || {};
+    const sum = m.summary || {};
+    const eh = (s) => escapeHtml(s == null ? '' : String(s));
+    const ea = (s) => escapeAttr(s == null ? '' : String(s));
+    const genMs = Number.isFinite(m.generatedAtMs) ? m.generatedAtMs : Date.parse(m.generatedAt || '');
+    const gen = Number.isFinite(genMs) ? new Date(genMs) : null;
+    // The viewer's local timezone, via the browser's own formatter.
+    const genLabel = gen ? `${gen.toLocaleDateString()} ${gen.toLocaleTimeString()}` : '';
+    const dateOnly = (ms) => {
+      if (!ms) return 'undated';
+      try { return new Date(ms).toLocaleDateString(); } catch { return 'undated'; }
+    };
+    // Only external GitHub links navigate; everything else is inert text.
+    const link = (href, text) => (href
+      ? `<a href="${ea(href)}" target="_blank" rel="noopener">${eh(text)}</a>`
+      : eh(text));
+    const metaLine = (parts) => {
+      const kept = parts.filter((p) => p !== '' && p != null);
+      if (!kept.length) return '';
+      return `<div class="ur-rpt-meta">${kept.map((p) => `<span>${p}</span>`).join('')}</div>`;
+    };
+    const rows = (items) => `<ul class="ur-rpt-list">${items.join('')}</ul>`;
+    const voteText = (e) => {
+      const req = e.votesRequired || 0;
+      const yes = e.yes || 0;
+      const base = req ? `${yes} of ${req} yes` : `${yes} yes`;
+      return e.no ? `${base}, ${e.no} no` : base;
+    };
+    const countdown = (iso) => {
+      const ends = iso ? Date.parse(iso) : NaN;
+      if (!Number.isFinite(ends) || !Number.isFinite(genMs)) return '';
+      const left = ends - genMs;
+      if (left <= 0) return 'merge window closed';
+      const h = Math.floor(left / 3600000);
+      if (h >= 24) return `merges in ${Math.floor(h / 24)}d`;
+      if (h >= 1) return `merges in ${h}h`;
+      return `merges in ${Math.max(1, Math.round(left / 60000))}m`;
+    };
+
+    // ── Title block ───────────────────────────────────────────────────
+    let html = '';
+    html += `<header class="ur-rpt-head">`
+      + `<p class="ur-rpt-kicker">Progress report</p>`
+      + `<h1 class="ur-rpt-app">${eh(app.name)}</h1>`
+      + `<p class="ur-rpt-gen">Generated ${eh(genLabel)}</p>`
+      + `<p class="ur-rpt-note">Open issues come from the app&rsquo;s GitHub repository; proposals and dev sessions come from Usernode.</p>`
+      + `</header>`;
+
+    // ── Summary strip ─────────────────────────────────────────────────
+    const stat = (n, label) => `<li class="ur-rpt-stat"><span class="ur-rpt-stat-n">${eh(n)}</span><span class="ur-rpt-stat-l">${eh(label)}</span></li>`;
+    html += `<ul class="ur-rpt-summary">`
+      + stat(sum.completed || 0, 'Completed')
+      + stat(sum.awaitingReview || 0, 'Awaiting review')
+      + stat(sum.beingWorkedOn || 0, 'Being worked on')
+      + stat(sum.backlog || 0, 'Backlog')
+      + `</ul>`;
+    html += `<p class="ur-rpt-recent">${eh(sum.completedLast30 || 0)} completed in the last 30 days.</p>`;
+
+    // ── Done ──────────────────────────────────────────────────────────
+    const done = m.done || {};
+    let doneBody = '';
+    if (done.empty) {
+      doneBody = `<p class="ur-rpt-empty">Nothing has been completed yet.</p>`;
+    } else {
+      for (const g of (done.groups || [])) {
+        doneBody += `<h3 class="ur-rpt-h3">${eh(g.label)}</h3>`;
+        doneBody += rows((g.entries || []).map((e) => {
+          const head = e.kind === 'close-issue'
+            ? `Issue ${link(app.repoUrl && e.issueNumber ? `${app.repoUrl}/issues/${e.issueNumber}` : '', `#${e.issueNumber}`)} closed by vote`
+            : eh(e.title);
+          const pr = (e.kind !== 'close-issue' && e.prNumber != null)
+            ? `<span class="ur-rpt-num">${link(app.repoUrl ? `${app.repoUrl}/pull/${e.prNumber}` : '', `PR #${e.prNumber}`)}</span>`
+            : '';
+          return `<li class="ur-rpt-row">`
+            + `<div class="ur-rpt-title">${e.kind === 'close-issue' ? head : eh(e.title)}</div>`
+            + metaLine([
+              pr,
+              e.author ? eh(e.author) : '',
+              voteText(e),
+              `${eh(e.dateLabel)} ${eh(dateOnly(e.atMs))}`,
+            ])
+            + `</li>`;
+        }));
+      }
+      const notes = [];
+      if (done.truncated && done.total > done.shown) {
+        notes.push(`Showing the ${done.shown} most recent of ${done.total} completed items.`);
+      }
+      if (done.partial) {
+        notes.push('The full history could not be loaded, so this section shows only the most recent page.');
+      }
+      notes.push('Completed items are dated by when the work was started — the platform does not record a merge time.');
+      doneBody += `<p class="ur-rpt-sub">${notes.map(eh).join(' ')}</p>`;
+    }
+    html += `<section class="ur-rpt-section" data-section="done">`
+      + `<h2 class="ur-rpt-h2">Done &mdash; completed work</h2>${doneBody}</section>`;
+
+    // ── In progress ───────────────────────────────────────────────────
+    const ip = m.inProgress || {};
+    let ipBody = '';
+    if (ip.empty) {
+      ipBody = `<p class="ur-rpt-empty">No work is in progress.</p>`;
+    } else {
+      if ((ip.review || []).length) {
+        ipBody += `<h3 class="ur-rpt-h3">Awaiting review or vote</h3>`;
+        ipBody += rows(ip.review.map((e) => `<li class="ur-rpt-row">`
+          + `<div class="ur-rpt-title">${eh(e.title)}</div>`
+          + metaLine([
+            e.prNumber != null
+              ? `<span class="ur-rpt-num">${link(app.repoUrl ? `${app.repoUrl}/pull/${e.prNumber}` : '', `PR #${e.prNumber}`)}</span>`
+              : '',
+            e.author ? eh(e.author) : '',
+            voteText(e),
+            e.checkLabel ? eh(e.checkLabel) : '',
+            e.status === 'merging' ? 'merging' : countdown(e.mergeWindowEndsAt),
+          ])
+          + `</li>`));
+      }
+      if ((ip.gov || []).length) {
+        ipBody += `<h3 class="ur-rpt-h3">Governance proposals</h3>`;
+        ipBody += rows(ip.gov.map((e) => `<li class="ur-rpt-row">`
+          + `<div class="ur-rpt-title">${eh(e.title)}<span class="ur-rpt-tag">${eh(e.govKindLabel)}</span></div>`
+          + metaLine([
+            e.issueNumber != null
+              ? `<span class="ur-rpt-num">${link(app.repoUrl ? `${app.repoUrl}/issues/${e.issueNumber}` : '', `#${e.issueNumber}`)}</span>`
+              : '',
+            e.author ? eh(e.author) : '',
+            voteText(e),
+            countdown(e.mergeWindowEndsAt),
+          ])
+          + `</li>`));
+      }
+      if ((ip.sessions || []).length) {
+        ipBody += `<h3 class="ur-rpt-h3">Being worked on right now</h3>`;
+        ipBody += rows(ip.sessions.map((e) => `<li class="ur-rpt-row">`
+          + `<div class="ur-rpt-title">${eh(e.title)}${e.busy ? `<span class="ur-rpt-tag">agent running</span>` : ''}</div>`
+          + metaLine([
+            e.owner ? eh(e.owner) : '',
+            e.mine ? 'your session' : 'shared session',
+            e.atMs ? `last active ${eh(dateOnly(e.atMs))}` : '',
+          ])
+          + `</li>`));
+      }
+      if ((ip.issues || []).length) {
+        ipBody += `<h3 class="ur-rpt-h3">Issues with work underway</h3>`;
+        ipBody += rows(ip.issues.map((e) => `<li class="ur-rpt-row">`
+          + `<div class="ur-rpt-title">${eh(e.title)}</div>`
+          + metaLine([
+            e.number != null ? `<span class="ur-rpt-num">${link(e.htmlUrl, `#${e.number}`)}</span>` : '',
+            e.people && e.people.length ? eh(e.people.join(', ')) : '',
+            e.headless ? 'auto-solve run in progress' : '',
+            e.claimed && !(e.people || []).length ? 'claimed' : '',
+          ])
+          + `</li>`));
+      }
+    }
+    html += `<section class="ur-rpt-section" data-section="inprogress">`
+      + `<h2 class="ur-rpt-h2">In progress</h2>${ipBody}</section>`;
+
+    // ── Backlog ───────────────────────────────────────────────────────
+    const bl = m.backlog || {};
+    let blBody = '';
+    if (bl.empty) {
+      blBody = `<p class="ur-rpt-empty">The backlog is empty.</p>`;
+    } else {
+      for (const g of (bl.groups || [])) {
+        blBody += `<h3 class="ur-rpt-h3">${eh(g.label)}</h3>`;
+        blBody += rows(g.issues.map((e) => `<li class="ur-rpt-row">`
+          + `<div class="ur-rpt-title">${eh(e.title)}</div>`
+          + metaLine([
+            e.number != null ? `<span class="ur-rpt-num">${link(e.htmlUrl, `#${e.number}`)}</span>` : '',
+            e.assignee ? eh(e.assignee) : '',
+            e.category ? eh(e.category) : '',
+            e.atMs ? `active ${eh(dateOnly(e.atMs))}` : '',
+            e.chatCount ? `${eh(e.chatCount)} in discussion` : '',
+          ])
+          + `</li>`));
+      }
+      if (bl.truncatedList) {
+        const all = app.repoUrl ? `${app.repoUrl}/issues` : '';
+        blBody += `<p class="ur-rpt-sub">GitHub returned more open issues than the platform fetches, so this backlog is partial. `
+          + `${all ? `See the ${link(all, 'full issue list')}.` : ''}</p>`;
+      }
+    }
+    html += `<section class="ur-rpt-section" data-section="backlog">`
+      + `<h2 class="ur-rpt-h2">Backlog</h2>${blBody}</section>`;
+
+    // ── Footer ────────────────────────────────────────────────────────
+    html += `<footer class="ur-rpt-foot">`
+      + (app.url ? `<p>${eh(app.url)}</p>` : (app.slug ? `<p>${eh(app.slug)}</p>` : ''))
+      + `<p>${eh(sum.completed || 0)} completed &middot; ${eh(sum.awaitingReview || 0)} awaiting review &middot; `
+      + `${eh(sum.beingWorkedOn || 0)} being worked on &middot; ${eh(sum.backlog || 0)} in the backlog.</p>`
+      + `<p>This report reflects what the person who generated it can see, including their own private dev sessions.</p>`
+      + `</footer>`;
+
+    if (!standalone) return html;
+    const title = `${app.name || 'App'} — progress report`;
+    return `<!doctype html>\n<html lang="en"><head><meta charset="utf-8">`
+      + `<meta name="viewport" content="width=device-width, initial-scale=1">`
+      + `<title>${eh(title)}</title>`
+      + `<style>html,body{margin:0;padding:0;background:#fff;}${AppView.REPORT_CSS}${AppView.REPORT_PRINT_CSS}</style>`
+      + `</head><body><div class="ur-rpt">${html}</div></body></html>\n`;
+  },
+
+  // Save the report as a single self-contained file. Blob + temporary
+  // <a download> + revokeObjectURL, the pattern the admin CSV export
+  // already established (public/js/admin-console.js).
+  downloadReport() {
+    if (!AppView._reportMerged) { AppView._ensureReportData(); return; }
+    const model = AppView._buildReportModel(AppView._reportInputs());
+    const doc = AppView._renderReportHtml(model, { standalone: true });
+    const slug = (model.app && model.app.slug) || 'app';
+    const d = new Date(model.generatedAtMs);
+    const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const name = `usernode-${slug}-progress-${stamp}.html`;
+    try {
+      const blob = new Blob([doc], { type: 'text/html;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Could not save the report');
+    }
+  },
+
+  // Re-pull the merged history and regenerate in place.
+  refreshReport() {
+    if (AppView._reportLoading) return;
+    AppView._resetReportCaches();
+    AppView._repaintReportView();
   },
 
   // ── Session cards in the In progress area ──────────────────────────
@@ -5089,8 +5963,42 @@ const AppView = {
     return escapeHtml(s.session_title || s.pr_title || s.branch_name || `Session #${s.id}`);
   },
 
+  // #1038: busy is read live from window.SessionState, falling back to the
+  // `busy` flag on the fetched row for a session it has never heard about.
+  // A pushed transition repaints these tags with no refetch.
+  _sessionBusy(s) {
+    if (!s) return false;
+    if (typeof window !== 'undefined' && window.SessionState) {
+      return SessionState.isBusy(s.id, s.busy);
+    }
+    return !!s.busy;
+  },
+
+  // Where this session's turns actually run.
+  //
+  // The venue was decided once, at creation, from a preference the user set
+  // somewhere else — and then never mentioned again, so a board full of
+  // cards looked identical whether the work was billed to Usernode credits,
+  // an OpenRouter key or a laptop. Naming it on the card is the cheapest
+  // place to make that visible; the sheet behind it is the same one every
+  // other surface opens (public/js/build-venues.js).
+  //
+  // Suppressed on an imported row: that card already carries the amber
+  // "Imported PR" badge, and one provenance badge is the right number. Also
+  // returns '' when build-venues.js has not loaded, so the card degrades to
+  // exactly what it rendered before rather than to a broken chip.
+  _sessionVenueChipHtml(s) {
+    const BV = (typeof window !== 'undefined' && window.BuildVenues) || null;
+    if (!BV || !s || s.source === 'imported') return '';
+    return BV.chipHtml(BV.currentVenue({
+      source: s.source,
+      agentBackend: s.agent_backend,
+      externalAgent: s.external_agent,
+    }));
+  },
+
   _sessionStatusTagHtml(s) {
-    return s.busy
+    return AppView._sessionBusy(s)
       ? '<span class="dev-badge bg-emerald-500/10 text-emerald-500"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>'
       : (s.status === 'paused' ? '<span class="dev-badge bg-zinc-500/10 text-zinc-500">paused</span>' : '');
   },
@@ -5187,7 +6095,7 @@ const AppView = {
       ${AppView._devCardIcon('session')}
       ${AppView._cardContentHtml({
         headlineHtml: AppView._cardHeadlineHtml(label, subtitle),
-        badges: [statusTag, AppView.issueChipsHtml(s.linked_issues)],
+        badges: [statusTag, AppView._sessionVenueChipHtml(s), AppView.issueChipsHtml(s.linked_issues)],
         chatCount: null,
         actions,
       })}
@@ -5533,17 +6441,43 @@ const AppView = {
   // (topic/chat/settings sub-views — renderDevView re-arms on return).
   // Dirty-checks via _refreshSessionCaches so an idle tick never
   // repaints the board (keeping filter-input focus and scroll intact).
-  _syncSessionPolling() {
-    if (AppView._stripTimer) return;
-    AppView._stripTimer = setInterval(async () => {
-      if (!document.getElementById('dev-body') || !AppView.appData) {
-        clearInterval(AppView._stripTimer);
-        AppView._stripTimer = null;
-        return;
-      }
-      const changed = await AppView._refreshSessionCaches(AppView.appData.slug);
-      if (changed && document.getElementById('dev-body')) AppView._repaintDevBody();
-    }, 15000);
+  // #1038: subscribe the Dev board's card surfaces to live session state.
+  // Replaces the old 15s `_stripTimer`, which re-pulled three full payloads
+  // just to notice a "working…" tag had flipped. Registered once at module
+  // load (below), not per mount, so it survives every repaint; the repaint
+  // itself no-ops when no card surface is mounted.
+  _onSessionStateChanged() {
+    // Never rebuild the board out from under an in-progress drag — same
+    // guard _repaintDevBody / _repaintKanbanBoard apply to WS-driven
+    // repaints. The next settled event repaints.
+    if (AppView._dragState) return;
+    if (!AppView.appData) return;
+    if (typeof App !== 'undefined' && App.currentTab !== 'dev') return;
+    // _repaintCards, not _repaintDevBody: an auto-run can be watched from
+    // the OPENED TOPIC view (#gc-thread-head), where #dev-body isn't
+    // mounted at all. The 8s poller this replaced called that case out
+    // explicitly, and keying on #dev-body alone would silently strand it.
+    // Both halves no-op when their own surface is absent.
+    AppView._repaintCards();
+  },
+
+  // #1038: an auto-run's card state lives on the cached issue row, not on a
+  // session id, so the raw event has to patch it before the repaint reads
+  // it. Field-scoped merge (same as the retired 8s poller): bounty state can
+  // carry optimistic local edits a broadcast must not clobber.
+  _onSessionStateEvent(payload) {
+    if (!payload || !payload.headless) return;
+    const n = payload.headless.issueNumber;
+    if (n == null) return;
+    if (!AppView.appData || !payload.appSlug || payload.appSlug !== AppView.appData.slug) return;
+    const issue = (AppView._ghIssues || []).find((i) => i && i.number === n);
+    if (!issue) return;
+    issue.headless = {
+      ...(issue.headless || {}),
+      sessionId: payload.sessionId,
+      status: payload.headless.status,
+      outcome: payload.headless.outcome,
+    };
   },
 
   // The issue's body (GitHub markdown), rendered in the topic
@@ -6977,7 +7911,7 @@ const AppView = {
   _derivedGovApplying(issue) {
     if (!issue || issue.status !== 'open') return null;
     const ctx = AppView._proposalsCtx || {};
-    if (ctx.locked || issue.contested) {
+    if ((ctx.locked && !issue.demo) || issue.contested) {
       delete AppView._govDueSince[issue.id];
       return null;
     }
@@ -7486,13 +8420,31 @@ const AppView = {
     }
   },
 
-  async createProposal() {
+  // `opts.flow` skips the venue question entirely and opens the walkthrough
+  // for that agent, which is what the out-of-credits card's "Use Claude
+  // Code" / "Use Codex" buttons do — the user has already been told they
+  // cannot build here, so landing them in a chat that will refuse them is
+  // the one case where a venue is decided for them.
+  //
+  // `opts.pickFlow` is gone with the picker. It existed for the second "+"
+  // row that asked the venue question at creation time; creation asks
+  // nothing now.
+  async createProposal(opts) {
     if (!AppView.appData || typeof DevChat === 'undefined') return;
     const session = await DevChat.createSession(AppView.appData.slug);
     if (!session) return; // createSession already alerts (cap reached / error)
     AppView._proposalHint = true;
+    const flowAgent = (opts && opts.flow) || null;
     if (typeof App !== 'undefined' && App.switchTab) {
       await App.switchTab('dev', session.id, 'sessions');
+    }
+    // AFTER the switch: opening the session resets the per-session flow
+    // state, so the request has to land on the other side of it.
+    if (flowAgent && DevChat._devFlow) {
+      DevChat._devFlow.mode = 'wizard';
+      DevChat._devFlow.agent = flowAgent;
+      DevChat._devFlowEnsureStatus(true);
+      DevChat.renderMessages();
     }
   },
 
@@ -8371,7 +9323,6 @@ const AppView = {
     const meta = AppView._ghIssuesMeta || {};
     const n = issue.number;
     const href = issue.htmlUrl || '#';
-
     // ── Meta line ──
     // #N, the creator, and the facts that used to be badges: the ★ bounty
     // count and the auto-title marker. Both cost a badge slot each and
@@ -9169,8 +10120,6 @@ const AppView = {
 
   // ---- Headless auto sessions (#155) --------------------------------------
 
-  _headlessPollTimer: null,
-
   // "Generate proposal" — confirmation popup (token warning + model selector)
   // before spinning up a headless AI session on this issue. The session is
   // billed to the clicking user but isn't attached to their dev chat.
@@ -9178,30 +10127,75 @@ const AppView = {
     const slug = AppView.appData && AppView.appData.slug;
     if (!slug) return;
 
-    // Model list comes from the same GET /api/models the dev-chat dropdown
-    // uses, so the popup can never offer a model the server would reject.
+    // Follow the user's saved session provider. Claude auto-runs keep their
+    // existing chat-model choice; OpenRouter auto-runs choose from the same
+    // key-visible catalog as an ordinary OpenRouter session and never show
+    // Claude models or Claude-credit copy.
     let models = [];
     let defaultModel = '';
+    let provider = 'claude';
+    let reasoningEffort = null;
     try {
-      const res = await fetch('/api/models');
-      const data = await res.json();
-      models = Array.isArray(data.models) ? data.models : [];
-      defaultModel = data.default || (models[0] && models[0].id) || '';
+      const prefsRes = await fetch('/api/me/coding-agent', { credentials: 'same-origin' });
+      const prefs = prefsRes.ok ? await prefsRes.json() : {};
+      if (prefs.defaultBackend === 'codex_openrouter') {
+        provider = 'openrouter';
+        const catalogRes = await fetch('/api/me/coding-agent/models?backend=codex_openrouter', {
+          credentials: 'same-origin',
+        });
+        if (!catalogRes.ok) throw new Error('Could not load OpenRouter models.');
+        const catalog = await catalogRes.json();
+        models = Array.isArray(catalog.models) ? catalog.models : [];
+        const saved = prefs.backends && prefs.backends.codex_openrouter;
+        reasoningEffort = (saved && saved.reasoningEffort) || null;
+        defaultModel = (saved && models.some((m) => m.id === saved.model) && saved.model)
+          || catalog.recommendedModelId
+          || (models[0] && models[0].id)
+          || '';
+      } else {
+        const res = await fetch('/api/models');
+        const data = await res.json();
+        models = Array.isArray(data.models) ? data.models : [];
+        defaultModel = data.default || (models[0] && models[0].id) || '';
+      }
     } catch {
       PlatformUI.toast("Couldn't load the model list — try again.");
       return;
     }
-    const stored = localStorage.getItem('usernode:dc:model');
+    if (!models.length || !defaultModel) {
+      PlatformUI.toast(provider === 'openrouter'
+        ? 'No OpenRouter models are available under your key.'
+        : "Couldn't load the model list — try again.");
+      return;
+    }
+    const stored = provider === 'claude' ? localStorage.getItem('usernode:dc:model') : null;
     const preselect = models.some((m) => m.id === stored) ? stored : defaultModel;
 
-    const choice = await AppView._showAutoSessionModal(issueNumber, models, preselect);
+    // The venue this run will build in. It was always decided by the saved
+    // coding-agent default and never mentioned, so a user with an OpenRouter
+    // default confirmed a popup that talked only about "your tokens/credits"
+    // — the wrong pot, silently. Best-effort: an unreachable preferences
+    // endpoint just means the modal renders exactly as it did before.
+    let venueId = 'usernode-claude';
+    try {
+      const prefsRes = await fetch('/api/me/coding-agent', { credentials: 'same-origin' });
+      if (prefsRes.ok) {
+        const prefs = await prefsRes.json();
+        venueId = (window.BuildVenues || { currentVenue: () => 'usernode-claude' })
+          .currentVenue({ agentBackend: prefs.defaultBackend });
+      }
+    } catch { /* keep the default; the server decides either way */ }
+
+    const choice = await AppView._showAutoSessionModal(issueNumber, models, preselect, { provider, venueId });
     if (!choice) return;
 
     try {
       const resp = await fetch(`/api/apps/${slug}/issues/${issueNumber}/headless-session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: choice }),
+        body: JSON.stringify(provider === 'openrouter'
+          ? { backend: 'codex_openrouter', model: choice, reasoningEffort }
+          : { model: choice }),
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
@@ -9211,18 +10205,29 @@ const AppView = {
         // the dev chat shows instead of a one-line toast the user can only
         // read and dismiss. Every other failure keeps the toast.
         if (data.code === 'budget_exceeded') {
+          if (provider === 'openrouter') {
+            PlatformUI.toast(data.error || 'The OpenRouter run could not start.');
+            return;
+          }
           AppView._showCreditOptionsModal(data.error);
           return;
         }
         PlatformUI.toast(data.error || `Couldn't start generating the proposal (HTTP ${resp.status}).`);
         return;
       }
+      // The server is deliberately lenient about an unusable default — a run
+      // that starts beats a 4xx — but until now the fallback was a log line
+      // and nothing else, so someone whose default was Usernode · OpenRouter
+      // got a Usernode · Claude run with no explanation and a bill on the
+      // pot they weren't expecting.
+      AppView._reportVenueFallback(data.agentFallbackReason);
       const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
       if (issue) issue.headless = { sessionId: data.session.id, status: 'generating' };
       AppView._repaintCards();
-      // Start the completion poller right away so a run begun from the opened
-      // topic view advances to its outcome label without a manual refresh.
-      AppView._syncHeadlessPolling();
+      // #1038: no poller to arm. The server broadcasts this run's state
+      // changes (services/session-state.js) and _onSessionStateEvent patches
+      // the cached issue row, so the card advances to its outcome label on
+      // its own — on every open board, not just this one.
     } catch (err) {
       PlatformUI.toast(`Couldn't start generating the proposal: ${err.message}`);
     }
@@ -9251,6 +10256,10 @@ const AppView = {
       // the chat does; the shared-budget wording is reachable through the
       // budget meter, which this modal doesn't read.
       globalOut: false,
+      // #1049: whether to lead with the Claude Code / Codex hand-offs. From
+      // /api/auth/me, so the card offers only what this deployment supports.
+      externalFlowsAvailable: !!(typeof App !== 'undefined' && App.user
+        && App.user.externalFlowsAvailable),
     };
     root.innerHTML = `
       <div class="min-h-full flex items-center justify-center p-4">
@@ -9273,13 +10282,34 @@ const AppView = {
     });
     document.addEventListener('keydown', onKey);
     document.body.appendChild(root);
-    CreditOptions.wire(root);
+    // #1049: "Use Claude Code" / "Use Codex" start the guided walkthrough in
+    // a new session rather than dropping the user in Settings to work out
+    // what to do next. Every other route is still a hash navigation, which
+    // unmounts this screen on its own.
+    CreditOptions.wire(root, {
+      onFlow: (flow) => {
+        close();
+        AppView.createProposal({ flow });
+      },
+    });
+  },
+
+  // "Your default wasn't available, so this is building somewhere else."
+  //
+  // One sentence, from the shared list, on whichever creation route the
+  // server stamped a reason onto. Silent when there is nothing to report —
+  // a session that got the venue it asked for should say nothing at all.
+  _reportVenueFallback(reason) {
+    if (!reason || !window.BuildVenues) return;
+    const note = BuildVenues.fallbackNote(reason);
+    if (note) PlatformUI.toast(note);
   },
 
   // Singleton confirm popup for Generate proposal. Same scrim/card styling as
   // ConfirmModal (confirm-modal.js) plus a model <select>; resolves to the
-  // chosen model id, or null on cancel/backdrop/Esc.
-  _showAutoSessionModal(issueNumber, models, preselect) {
+  // chosen model id, or null on cancel/backdrop/Esc. `modalOptions.venueId`
+  // names where the run will build (see confirmAutoSession).
+  _showAutoSessionModal(issueNumber, models, preselect, modalOptions = {}) {
     let root = document.getElementById('auto-session-modal');
     if (root) root.remove();
     root = document.createElement('div');
@@ -9289,32 +10319,40 @@ const AppView = {
     // recommended change size), built by the shared DevChat helpers so
     // the two pickers can't drift. Falls back to the bare label when
     // dev-chat.js isn't loaded on this page (e.g. the gallery shell).
-    const optionText = (m) => (
-      (typeof DevChat !== 'undefined' && DevChat.modelOptionText)
+    const openRouter = modalOptions.provider === 'openrouter';
+    const optionText = (m) => {
+      if (openRouter && typeof DevChat !== 'undefined' && DevChat._openRouterModelOptionLabel) {
+        return DevChat._openRouterModelOptionLabel(m);
+      }
+      return (typeof DevChat !== 'undefined' && DevChat.modelOptionText)
         ? DevChat.modelOptionText(m)
-        : (m.label || m.id)
-    );
+        : (m.label || m.name || m.id);
+    };
     const options = models.map((m) =>
       `<option value="${escapeAttr(m.id)}"${m.id === preselect ? ' selected' : ''}>${escapeHtml(optionText(m) || m.id)}</option>`
     ).join('');
+    const venue = window.BuildVenues ? BuildVenues.venue(modalOptions.venueId || 'usernode-claude') : null;
+    const venueHtml = venue
+      ? `Building in <b>${escapeHtml(venue.label)}</b> — your saved default. ${escapeHtml(venue.blurb)}`
+      : '';
     root.innerHTML = `
       <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
         <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl relative">
           <h2 class="text-lg font-bold mb-2 text-zinc-900 dark:text-zinc-100">Generate proposal for issue #${issueNumber}?</h2>
           <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
-            This spins up a <b>headless AI session</b> that immediately starts working on the
-            issue on its own — investigating the repo and drafting a spec, pushing a code
-            change, or coming back with a question. When the drafted spec looks
-            straightforward, the session <b>may also implement it</b> in the same run
-            (committing and pushing to its own branch — never a PR or deploy). It is not
-            connected to your dev chat, but it <b>will automatically use your
-            tokens/credits</b> the moment you confirm.
+            ${openRouter
+              ? 'This sends the issue directly to your selected <b>OpenRouter model</b>. It can inspect the repository, answer with a question, or commit and push a change to its own branch (never a PR or deploy). The run bills your OpenRouter key and does not use platform Claude credits.'
+              : 'This spins up a <b>headless AI session</b> that immediately starts working on the issue on its own — investigating the repo and drafting a spec, pushing a code change, or coming back with a question. When the drafted spec looks straightforward, the session <b>may also implement it</b> in the same run (committing and pushing to its own branch — never a PR or deploy). It is not connected to your dev chat, but it <b>will automatically use your tokens/credits</b> the moment you confirm.'}
           </p>
-          <p class="text-xs text-amber-500 mb-4">
+          <p class="text-xs text-amber-500 mb-2">
             Experimental — not recommended for normal users at the moment. Costs are billed
             to you even if the result isn't useful.
           </p>
-          <label class="block text-xs font-medium text-zinc-500 mb-1" for="auto-session-model">Model</label>
+          <!-- WHERE it builds, named before you confirm — the pot the costs
+               above land in depends on it. Empty when build-venues.js
+               hasn't loaded, which leaves the popup as it was. -->
+          <p class="text-xs text-zinc-500 dark:text-zinc-400 mb-4">${venueHtml}</p>
+          <label class="block text-xs font-medium text-zinc-500 mb-1" for="auto-session-model">${openRouter ? 'OpenRouter model' : 'Chat model'}</label>
           <select id="auto-session-model"
             class="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100">
             ${options}
@@ -9337,11 +10375,17 @@ const AppView = {
     const paintNote = () => {
       if (!noteEl) return;
       const chosen = models.find((m) => m.id === (modelSel && modelSel.value));
-      const text = (typeof DevChat !== 'undefined' && DevChat.modelNoteText)
-        ? DevChat.modelNoteText(chosen)
-        : '';
+      const text = openRouter
+        ? ((typeof DevChat !== 'undefined' && DevChat._openRouterModelCostSummary)
+          ? `${DevChat._openRouterModelCostSummary(chosen)}. ${DevChat._openRouterModelCompatibilitySummary(chosen)}`
+          : '')
+        : ((typeof DevChat !== 'undefined' && DevChat.modelNoteText)
+          ? DevChat.modelNoteText(chosen)
+          : '');
       noteEl.textContent = text;
-      noteEl.title = text && DevChat.MODEL_GUIDANCE_TOOLTIP ? DevChat.MODEL_GUIDANCE_TOOLTIP : '';
+      noteEl.title = !openRouter && text && typeof DevChat !== 'undefined' && DevChat.MODEL_GUIDANCE_TOOLTIP
+        ? DevChat.MODEL_GUIDANCE_TOOLTIP
+        : '';
     };
     paintNote();
     if (modelSel) modelSel.addEventListener('change', paintNote);
@@ -9392,6 +10436,12 @@ const AppView = {
           issue.headless.mySessionId = data.session.id;
         }
       }
+      // The clone is a NEW session with its own venue, resolved from the
+      // cloner's default rather than inherited from the auto session — so
+      // the one place to say where their copy will build is here, before
+      // they land in it. (The venue line above the composer says it again
+      // on every paint; this covers the fallback the line can't explain.)
+      AppView._reportVenueFallback(data.agentFallbackReason);
       DevChat.sessions.unshift(data.session);
       if (typeof App !== 'undefined' && App.switchTab) {
         await App.switchTab('dev', data.session.id, 'sessions');
@@ -9425,62 +10475,15 @@ const AppView = {
     }
   },
 
-  // While any rendered issue shows a generating auto session, poll the
-  // issues endpoint so the button flips to its outcome-specific "Review
-  // … & start session" label (or back to Generate proposal on failure) without
-  // a manual refresh.
-  _syncHeadlessPolling() {
-    const generating = (AppView._ghIssues || []).some(
-      (i) => i.headless && i.headless.status === 'generating'
-    );
-    if (!generating) {
-      if (AppView._headlessPollTimer) {
-        clearInterval(AppView._headlessPollTimer);
-        AppView._headlessPollTimer = null;
-      }
-      return;
-    }
-    if (AppView._headlessPollTimer) return;
-    AppView._headlessPollTimer = setInterval(async () => {
-      const slug = AppView.appData && AppView.appData.slug;
-      // Stop only when the user has actually left the Dev area — i.e. none
-      // of the card surfaces are mounted. Keying on #dev-feed alone would
-      // kill polling for a run watched from the opened topic view
-      // (#gc-thread-head, where the feed isn't present) or from the kanban
-      // board (#dev-kanban, where issue rows live in the columns instead).
-      const mounted = document.getElementById('dev-feed')
-        || document.getElementById('dev-kanban')
-        || document.getElementById('gc-thread-head');
-      if (!slug || !mounted) {
-        clearInterval(AppView._headlessPollTimer);
-        AppView._headlessPollTimer = null;
-        return;
-      }
-      try {
-        const res = await fetch(`/api/apps/${slug}/github-issues`);
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!Array.isArray(data.issues)) return;
-        // Merge just the headless field — bounty state may have optimistic
-        // local updates we don't want a poll to clobber.
-        const byNumber = new Map(data.issues.map((i) => [i.number, i.headless || null]));
-        let changed = false;
-        for (const issue of AppView._ghIssues || []) {
-          if (!byNumber.has(issue.number)) continue;
-          const next = byNumber.get(issue.number);
-          // Only repaint when a headless run ACTUALLY moved. This used to
-          // repaint unconditionally every 8s, which meant the whole board's
-          // innerHTML was replaced on a timer even on a repo where nothing
-          // headless is running — churning hover state, and (before the ⋯
-          // menu learned to survive a repaint) tearing an open menu off the
-          // screen seconds after it opened.
-          if (JSON.stringify(issue.headless || null) !== JSON.stringify(next)) changed = true;
-          issue.headless = next;
-        }
-        if (changed) AppView._repaintCards();
-      } catch {}
-    }, 8000);
-  },
+  // #1038: the 8s `_syncHeadlessPolling` timer that used to live here is
+  // gone. It re-pulled the whole GitHub-issues payload every 8 seconds just
+  // to notice a generating auto-run had finished — while the server had
+  // been broadcasting exactly that transition all along (the
+  // `headless_update` session_event) with no client listening. The board
+  // now flips the card from the pushed `session_state` event:
+  // _onSessionStateEvent patches the cached issue row's `headless` field
+  // (same field-scoped merge the poller did, so optimistic bounty edits
+  // survive) and the coalesced repaint follows.
 
   // Core PR voting controls (Preview / Yes / No / Admin-merge) as an HTML
   // string. Shared by the vote panel rows and the inline buttons on
@@ -11429,6 +12432,16 @@ const AppView = {
 
     // #194: one-shot hint set by the "+" menu's "Propose a change" —
     // proposals are PRs, so the path runs through a session.
+    // #1049: suppressed when the development-flow picker / walkthrough is
+    // about to render in the same empty pane — that card asks the same
+    // question with more precision, and two stacked explanations of what a
+    // proposal is read as noise.
+    if (AppView._proposalHint
+        && typeof DevChat !== 'undefined'
+        && typeof DevChat._devFlowTarget === 'function'
+        && DevChat._devFlowTarget()) {
+      AppView._proposalHint = false;
+    }
     if (AppView._proposalHint) {
       AppView._proposalHint = false;
       const view = document.getElementById('dc-view');
@@ -13729,6 +14742,16 @@ const AppView = {
     });
   },
 
+  // Drop one frame's memo entry. A frame whose ELEMENT was replaced (the
+  // anonymous landing viewer swaps in a fresh iframe on teardown so the old
+  // document can't push history — see AuthScreens._swapViewerFrame) has a
+  // brand-new contentWindow that never received the insets, and a src-less
+  // iframe still HAS a contentWindow, so broadcastSafeArea's own
+  // "no contentWindow" reset never fires for it.
+  forgetSafeAreaFrame(id) {
+    delete AppView._safeAreaSent[id];
+  },
+
   // rAF-coalesced entry point — everything that can move a frame's rect
   // calls this rather than broadcastSafeArea directly, so a burst of
   // resize/orientation events collapses into one recompute per frame.
@@ -14212,4 +15235,15 @@ function relTime(iso) {
 // see the module.exports block above) doesn't crash on a missing `window`.
 if (typeof window !== 'undefined') {
   window.AppView = AppView;
+  // #1038: wire the Dev board's card surfaces to live session state. Both
+  // subscriptions are registered ONCE here rather than per mount, so no
+  // repaint or navigation can leave the board stranded on a stale spinner;
+  // the handlers themselves no-op when no card surface is mounted.
+  //
+  // Order matters: the raw event handler patches the cached issue row's
+  // auto-run state, and the coalesced subscriber repaints from that cache.
+  if (window.SessionState) {
+    SessionState.onEvent(AppView._onSessionStateEvent);
+    SessionState.subscribe(AppView._onSessionStateChanged);
+  }
 }
