@@ -3677,7 +3677,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 
 /* ── Header cog ("your work" drawer button) ─────────────── */
 /* Spins while the viewer has work in flight (an AI turn running, or a
-   proposal merging / resolving / running checks — see work-drawer.js
+   proposal merging / resolving / running checks — see frontend/src/features/work-drawer/work-drawer.js
    isWorking). A gear glyph is rotationally symmetric enough that a fast
    spin reads as flicker, so it turns SLOWLY and shifts to the accent
    color — the color carries the state even where the rotation is
@@ -4826,7 +4826,8 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
    - FLOOR: the lead back-button wrapper (`div.w-5.h-7.shrink-0` — the
      one child present in every state of both headers) carries `h-7` =
      28px, which survives the title being display:none. It stays `w-5`:
-     header-layout.js measures it as the title's left side group.
+     frontend/src/features/header/use-header-layout.ts measures it as the
+     title's left side group.
    - CEILING: no direct child of either header may exceed 28px, and the
      children that could grow past it state their height OUTRIGHT rather
      than adding up to it — #app-mode-switch is `h-7` with
@@ -4850,7 +4851,8 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
    from the right when the right group eats its width). When there's
    enough horizontal room for it to be perfectly viewport-centered
    without overlapping the back-btn area or the right group,
-   public/js/header-layout.js toggles `.is-centered` and the title flips
+   frontend/src/features/header/use-header-layout.ts toggles `.is-centered`
+   (it was public/js/header-layout.js) and the title flips
    to absolute positioning at exactly 50% of the header. The user-facing
    contract is: "centered if room, left-aligned otherwise". No
    in-between state where the title is truncated *while* centered. */
@@ -5976,7 +5978,8 @@ body.is-offline #offline-banner {
   background-color: #fef3c7;
   color: #92400e;
 }
-/* darkMode: 'class' — the flag lives on <html> (see theme.js). */
+/* darkMode: 'class' — the flag lives on <html>, put there before first paint
+   by the inline window.Theme module in frontend/src/head.html. */
 .dark body.is-offline #offline-banner {
   background-color: #451a03;
   color: #fcd34d;
@@ -6005,4 +6008,111 @@ body.is-offline [data-offline-disabled] {
   opacity: 0.45;
   pointer-events: none;
   cursor: not-allowed;
+}
+
+/* ── The venue line above the composer ────────────────────────────────
+   One quiet sentence stating where this session is built, and one button
+   to change it. It replaces three separate prompts that each asked that
+   question before any work existed (the flow picker card, the agent
+   chooser modal at creation, and the composer's own agent dropdown), so
+   it is deliberately not a control that draws the eye: it reads as a
+   caption, and only the verb is clickable.
+
+   It sits ABOVE the composer's status row rather than in it. Inside the
+   row it would have been one more chip among the meter, the runner and
+   the budget menu — which is the arrangement that made it invisible. */
+.dc-venue-slot:empty {
+  display: none;
+}
+
+.dc-venue-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem;
+  padding: 0.25rem 0.1rem 0.35rem;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+.dc-venue-name {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* A link, not a button: the row is a sentence, and a second filled
+   control beside the composer's send button competes with it. */
+.dc-venue-change {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #8b5cf6;
+  font-size: 12px;
+  font-family: inherit;
+  line-height: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.dc-venue-change:hover {
+  color: #a78bfa;
+}
+
+.dc-venue-change:focus-visible {
+  outline: none;
+  border-radius: 3px;
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.35);
+}
+
+/* Mid-turn the venue cannot change — the running turn is already in one.
+   Same treatment the composer's other controls get while streaming. */
+.dc-venue-change:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  text-decoration: none;
+}
+
+/* "Your OpenRouter key is not set, so this turn ran on Usernode · Claude"
+   — the one place a venue the user did not choose is confessed. Full
+   width so it wraps under the sentence rather than beside it. */
+.dc-venue-note {
+  flex-basis: 100%;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* Model + effort + their notes. Rendered only for the two venues that
+   HAVE a model to pick; the other four have nothing to say here, and an
+   empty disclosure was one of the things making the footer feel like a
+   settings panel. */
+.dc-venue-detail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 0.1rem 0.25rem;
+}
+
+/* The session-card chip on the dev feed (#1087 card actions row). Names
+   the venue a session is being built in, so the answer is visible from
+   the list and not only from inside the chat. Imported proposals carry
+   no chip — they have no session to build in. */
+.dc-venue-chip {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  max-width: 12rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 0.375rem;
+  background: var(--bg-code);
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

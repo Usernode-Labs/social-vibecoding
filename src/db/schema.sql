@@ -3859,7 +3859,7 @@ CREATE INDEX IF NOT EXISTS idx_mobile_auth_tokens_user ON mobile_auth_tokens (us
 -- Mobile push notifications — sender identity, registrations, deliveries (#844)
 --
 -- This header also bounds the topochain block above for
--- tests/topochain-schema.test.js: the four mobile_push_* tables below are
+-- tests/topochain-schema.test.js: the six mobile_push_* tables below are
 -- NOT part of the SPEC §3.4 topochain migration and must not count toward
 -- its 22-table pin.
 
@@ -3922,6 +3922,59 @@ CREATE TABLE IF NOT EXISTS mobile_push_registrations (
 CREATE INDEX IF NOT EXISTS idx_mobile_push_registrations_user
   ON mobile_push_registrations (user_id, environment);
 
+-- Closed notification-kind policy. The notification INSERT trigger and the
+-- sender both read this table, so a future inbox kind is push-disabled until
+-- it is deliberately assigned to one reviewed category here. Keep this seed
+-- in lockstep with services/mobile-push-preferences.js.
+CREATE TABLE IF NOT EXISTS mobile_push_kind_categories (
+  kind            VARCHAR(32) PRIMARY KEY,
+  category        VARCHAR(32) NOT NULL CHECK (category IN (
+                    'direct_interactions', 'invitations', 'shared_work',
+                    'developer_sessions', 'proposal_alerts', 'lightweight_activity'
+                  )),
+  default_enabled BOOLEAN NOT NULL
+);
+INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
+  ('mention', 'direct_interactions', TRUE),
+  ('reply', 'direct_interactions', TRUE),
+  ('collab_invite', 'invitations', TRUE),
+  ('collab_invite_accepted', 'invitations', TRUE),
+  ('approver_invite', 'invitations', TRUE),
+  ('approver_invite_accepted', 'invitations', TRUE),
+  ('spec_shared', 'shared_work', TRUE),
+  ('session_done', 'developer_sessions', TRUE),
+  ('auto_solve_done', 'developer_sessions', TRUE),
+  ('stale_pr', 'proposal_alerts', TRUE),
+  ('check_failed', 'proposal_alerts', TRUE),
+  ('pr_proposed', 'proposal_alerts', TRUE),
+  ('reaction', 'lightweight_activity', FALSE),
+  ('kudos', 'lightweight_activity', FALSE)
+ON CONFLICT (kind) DO UPDATE
+  SET category = EXCLUDED.category,
+      default_enabled = EXCLUDED.default_enabled;
+DELETE FROM mobile_push_kind_categories
+ WHERE kind NOT IN (
+   'mention', 'reply', 'collab_invite', 'collab_invite_accepted',
+   'approver_invite', 'approver_invite_accepted', 'spec_shared',
+   'session_done', 'auto_solve_done', 'stale_pr', 'check_failed',
+   'pr_proposed', 'reaction', 'kudos'
+ );
+
+-- Sparse account overrides. The closed policy above supplies defaults, so
+-- existing accounts need no backfill and a preference change never touches
+-- per-device Firebase registrations.
+CREATE TABLE IF NOT EXISTS mobile_push_preferences (
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  category   VARCHAR(32) NOT NULL CHECK (category IN (
+               'direct_interactions', 'invitations', 'shared_work',
+               'developer_sessions', 'proposal_alerts', 'lightweight_activity'
+             )),
+  enabled    BOOLEAN NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, category)
+);
+
 -- Durable notification outbox. No provider token is copied here. `attempts`
 -- tracks retry backoff within the single Social sender.
 CREATE TABLE IF NOT EXISTS mobile_push_deliveries (
@@ -3952,15 +4005,22 @@ COMMENT ON TABLE mobile_push_registrations IS 'staging:private';
 COMMENT ON TABLE mobile_push_deliveries IS 'staging:private';
 
 -- Capture the push outbox in the same transaction as the canonical
--- notification. The allowlist is intentionally explicit: adding a new
--- notification kind does not automatically make it a lock-screen event.
+-- notification. The kind/category registry is intentionally closed: adding a
+-- new inbox kind does not automatically make it a lock-screen event.
 CREATE OR REPLACE FUNCTION enqueue_mobile_push_deliveries()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
 BEGIN
   IF NEW.read_at IS NOT NULL
-     OR NEW.kind NOT IN ('session_done', 'auto_solve_done') THEN
+     OR NOT COALESCE((
+       SELECT COALESCE(preference.enabled, policy.default_enabled)
+         FROM mobile_push_kind_categories policy
+         LEFT JOIN mobile_push_preferences preference
+           ON preference.user_id = NEW.user_id
+          AND preference.category = policy.category
+        WHERE policy.kind = NEW.kind
+     ), FALSE) THEN
     RETURN NEW;
   END IF;
 

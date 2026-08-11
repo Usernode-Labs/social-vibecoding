@@ -1,8 +1,8 @@
 'use strict';
 
 const crypto = require('crypto');
+const { ALLOWED_KINDS } = require('./mobile-push-preferences');
 
-const ALLOWED_KINDS = new Set(['session_done', 'auto_solve_done']);
 const MAX_TTL_MS = 24 * 60 * 60 * 1000;
 const RECIPIENT_CONTEXT = 'usernode-social-push-recipient-v1';
 const PUSH_ENV_RE = /^[a-z][a-z0-9_-]{0,31}$/;

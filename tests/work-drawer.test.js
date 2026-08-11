@@ -28,8 +28,11 @@ const vm = require('node:vm');
 
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', 'js', f), 'utf8');
 const MERGE_STATUS_SRC = read('merge-status.js');
-const WORK_DRAWER_SRC = read('work-drawer.js');
-const NOTIFICATIONS_SRC = read('notifications.js');
+// #1079 chunk B moved this module into the React bundle (it is the same
+// file — see the note at the top of it); only the path changed here.
+const FEATURES = path.join(__dirname, '..', 'frontend', 'src', 'features');
+const WORK_DRAWER_SRC = fs.readFileSync(path.join(FEATURES, 'work-drawer', 'work-drawer.js'), 'utf8');
+const NOTIFICATIONS_SRC = fs.readFileSync(path.join(FEATURES, 'notifications', 'notifications.js'), 'utf8');
 // #1038: the live working-state store the cog now reads through.
 const SESSION_STATE_SRC = read('session-state.js');
 
@@ -78,12 +81,26 @@ function makeSandbox() {
 
 // The full page stack, in real load order: notifications.js →
 // merge-status.js → session-state.js → work-drawer.js.
+//
+// Each source is evaluated in its OWN scope over the shared sandbox globals,
+// because that is what the page does: notifications.js and work-drawer.js are
+// bundle modules now, and every top-level `const`/`function` in them is
+// module-private. Concatenating the four sources into one script — which is
+// what this helper used to do — silently handed them back the one global
+// scope classic <script>s shared, so a file reading another's top-level
+// binding by bare identifier passed here and rendered nothing in the browser
+// (#1079: WorkDrawer.renderPendingSection lost its rows exactly this way).
+// Cross-file communication goes through the explicit window.X publications;
+// this harness now holds them to that.
+function loadIsolated(sandbox, src) {
+  vm.runInContext(`(function () {\n${src}\n})();`, sandbox);
+}
+
 function loadAll() {
   const sandbox = makeSandbox();
-  vm.runInContext(
-    `${NOTIFICATIONS_SRC}\n${MERGE_STATUS_SRC}\n${SESSION_STATE_SRC}\n${WORK_DRAWER_SRC}`,
-    sandbox
-  );
+  for (const src of [NOTIFICATIONS_SRC, MERGE_STATUS_SRC, SESSION_STATE_SRC, WORK_DRAWER_SRC]) {
+    loadIsolated(sandbox, src);
+  }
   return sandbox;
 }
 

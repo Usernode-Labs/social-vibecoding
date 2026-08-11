@@ -5,7 +5,8 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const walletSheetSource = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'wallet-sheet.js'),
+  // #1079 chunk B: same module, now inside the React bundle.
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'header', 'wallet-sheet.js'),
   'utf8'
 );
 

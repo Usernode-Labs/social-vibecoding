@@ -39,7 +39,12 @@ const WORKER_JWT_TTL = platformJwt.WORKER_TTL;
 // compares this label on warm-path hits and evicts + re-bootstraps containers
 // running an older contract. v4 introduces capability-scoped runner envs and
 // the host-managed Codex resume classifier, so a v3 image cannot serve it.
-const WORKER_BOOTSTRAP_ENV_VERSION = 'v4';
+// v5 replaces the unsafe Codex config writer and removes any v4-generated
+// config from the persistent session volume before the next turn.
+// v6 disables Codex's incompatible nested Linux sandbox and adds per-model
+// OpenRouter metadata; every v5 warm container must be replaced to pick up
+// both runner changes.
+const WORKER_BOOTSTRAP_ENV_VERSION = 'v6';
 
 // Mint the auth token the worker container uses to call back into the
 // platform's internal API. Scoped to a single session id; the
@@ -1209,6 +1214,7 @@ async function execInWorker(sessionId, {
   // plus the session-pinned model and reasoning effort.
   agentModel = null,
   agentReasoningEffort = null,
+  agentModelMetadata = null,
   openrouterApiKey = null,
   openrouterApiBase = null,
   turnUuid = null,
@@ -1386,6 +1392,22 @@ async function execInWorker(sessionId, {
     safeEnv.AGENT_BACKEND = 'codex_openrouter';
     safeEnv.AGENT_MODEL = agentModel || '';
     safeEnv.AGENT_REASONING_EFFORT = agentReasoningEffort || '';
+    safeEnv.AGENT_MODEL_NAME = agentModelMetadata?.name || agentModel || '';
+    safeEnv.AGENT_MODEL_CONTEXT_WINDOW = agentModelMetadata?.contextWindow != null
+      ? String(agentModelMetadata.contextWindow)
+      : '';
+    safeEnv.AGENT_MODEL_MAX_OUTPUT_TOKENS = agentModelMetadata?.maxOutputTokens != null
+      ? String(agentModelMetadata.maxOutputTokens)
+      : '';
+    safeEnv.AGENT_MODEL_SUPPORTS_REASONING = agentModelMetadata?.supportsReasoning == null
+      ? ''
+      : (agentModelMetadata.supportsReasoning ? '1' : '0');
+    safeEnv.AGENT_MODEL_REASONING_EFFORTS = Array.isArray(agentModelMetadata?.reasoningEfforts)
+      ? agentModelMetadata.reasoningEfforts.join(',')
+      : '';
+    safeEnv.AGENT_MODEL_SUPPORTS_TOOLS = agentModelMetadata?.supportsTools == null
+      ? ''
+      : (agentModelMetadata.supportsTools ? '1' : '0');
     safeEnv.AGENT_THREAD_ID = resumeSessionId || '';
     safeEnv.TURN_UUID = turnUuid || '';
     // The operator-configured OpenRouter endpoint (plan 4): always forward

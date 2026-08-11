@@ -42,7 +42,9 @@ const after = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
 const RETIRED_IDS = Object.create(null);
 
 // Ids a conversion chunk deliberately added, each with the reason.
-const ADDED_IDS = Object.create(null);
+const ADDED_IDS = {
+  'settings-mobile-push-preferences': 'Account-level Social mobile-push category controls in Settings → Alerts.',
+};
 
 test('the shell still carries every id in the frozen baseline', () => {
   // The baseline was taken from main's hand-written markup at the point the
@@ -131,7 +133,8 @@ test('the known duplicates are the ones the baseline recorded', () => {
 });
 
 test('the ids the dev-console and staging overlay bind are present', () => {
-  // dev-console.js binds these five on DOMContentLoaded. The staging twin in
+  // The dev-console island binds these on mount (#1079 chunk B moved the
+  // module into frontend/src/features/dev-console). The staging twin in
   // particular lives deep inside #staging-overlay and is easy to lose in a
   // conversion, and its absence only shows up while previewing staging —
   // late, and far from the change that caused it.
@@ -139,6 +142,6 @@ test('the ids the dev-console and staging overlay bind are present', () => {
     'dev-console-btn', 'staging-dev-console-btn', 'dev-console-close',
     'dev-console-clear', 'dev-console-filter', 'dev-console-log',
   ]) {
-    assert.ok(after.includes(`id="${id}"`), `public/js/dev-console.js binds #${id}, which is missing`);
+    assert.ok(after.includes(`id="${id}"`), `the dev-console island binds #${id}, which is missing`);
   }
 });
