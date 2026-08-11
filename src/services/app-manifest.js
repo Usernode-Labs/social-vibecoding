@@ -64,7 +64,17 @@ const MANIFEST_FILENAME = 'dapp.json';
 // dropped and logged, and services/visuals.js turns "this proposal pushed
 // the list past the ceiling" into a blocking check row so the silent-drop
 // bug cannot come back.
-const MAX_DECLARED_TESTS = 300;
+//
+// Raised 300 → 400 (PR #1125). This repo's own manifest crossed 300 and the
+// tail — including the two `?shot=feedback-*` checks added for #1054 — was
+// being dropped, which turns the over-ceiling guard into a blocker on every
+// subsequent proposal rather than a warning about a pathological manifest.
+// 400 checks still finish inside the capture budget: at the ~3.9s marginal
+// cost per check over a pool of 8 that is ~195s of ideal work against a
+// 420s TESTS_DEADLINE_MS, the 2x margin tests/checks-budget.test.js pins.
+// Raising it further means raising that deadline (and the container run
+// timeout above it) in the same change.
+const MAX_DECLARED_TESTS = 400;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first
