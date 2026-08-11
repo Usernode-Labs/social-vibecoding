@@ -28,6 +28,10 @@ test('push schema keeps deployment and user device state private with bounded ex
   assert.match(schema, /session_expires_at TIMESTAMPTZ NOT NULL/);
   assert.doesNotMatch(schema, /mobile_auth_token_id/);
   assert.match(schema, /registration_id[\s\S]*ON DELETE SET NULL/);
+  assert.match(schema, /platform\s+VARCHAR\(16\) CHECK \(platform IN \('android', 'ios'\)\)/,
+    'delivery rows snapshot their platform before invalid registrations are deleted');
+  assert.match(schema, /SET platform = registration\.platform[\s\S]*delivery\.platform IS NULL/,
+    'existing live registrations backfill the diagnostic platform snapshot');
   assert.match(
     schema,
     /idx_mobile_push_deliveries_registration[\s\S]*ON mobile_push_deliveries \(registration_id\)/
@@ -70,7 +74,9 @@ test('notification trigger checks the current account category before enqueueing
   assert.match(body, /NEW\.created_at[\s\S]*>= s\.send_not_before/);
   assert.match(body, /r\.user_id = NEW\.user_id/);
   assert.match(body, /r\.session_expires_at > NOW\(\)/);
-  assert.match(body, /notification_id, registration_id, environment, installation_id/);
+  assert.match(body, /SELECT r\.id, r\.environment, r\.installation_id, r\.platform/);
+  assert.match(body,
+    /notification_id, registration_id, environment, installation_id, platform, expires_at/);
   assert.match(schema, /AFTER INSERT ON notifications/);
   const stateLock = body.indexOf('FROM mobile_push_deployment_state');
   const registrationLock = body.indexOf('FOR KEY SHARE OF r');
