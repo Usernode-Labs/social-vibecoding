@@ -219,7 +219,7 @@ for (const name of EXITS) {
 
 test('the three chrome-writing screen modules accept chrome: false', () => {
   const files = {
-    'public/js/settings.js': 'Settings',
+    'frontend/src/features/settings/settings.js': 'Settings',
     'public/js/admin-console.js': 'AdminConsole',
     'public/js/browse.js': 'Browse',
   };

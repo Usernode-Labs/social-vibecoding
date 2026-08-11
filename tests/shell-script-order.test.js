@@ -102,6 +102,20 @@ const RETIRED_SCRIPTS = {
   '/js/wallet-sheet.js': 'drawer wallet row moved into the header island (chunk B)',
   '/js/ai-credit.js': 'drawer AI-credit row moved into the header island (chunk B)',
   '/js/theme.js': 'theme module inlined into the head (chunk B)',
+  // #1081 chunk D — #settings-screen became an island
+  // (frontend/src/features/settings/), and the module moved verbatim into the
+  // same directory: same 3700 lines, same Settings object, same
+  // `window.Settings` publication at module scope for app.js, app-view.js,
+  // dev-chat.js and credit-options.js. Only its DOMContentLoaded bootstrap
+  // changed — init() now runs from the island's layout effect.
+  //
+  // It is the ONLY module chunk D retires. The issue also named
+  // dev-flow-select.js, credit-options.js, cli-authorize.js and
+  // connect-authorize.js as candidates; the first two are consumed by
+  // dev-chat.js and app-view.js and cannot go, and the last two are not shell
+  // scripts at all (they are IIFEs for the server-rendered /cli/authorize and
+  // connector-consent pages, in neither Shell.tsx nor SHELL_ASSETS).
+  '/js/settings.js': 'settings screen converted to a React island (chunk D)',
 };
 
 test('every legacy script is loaded, in exactly the baseline order', () => {
@@ -130,12 +144,12 @@ test('the shell still loads the expected number of legacy scripts', () => {
   // retires dev-console.js (52), notifications.js and work-drawer.js (50),
   // then header-layout.js, node-pill.js, wallet-sheet.js, ai-credit.js and
   // theme.js (46 — theme.js was the head's only one, so the body count drops
-  // by four).
+  // by four). #1081 chunk D retires settings.js (45).
   const bodyScripts = scriptsOf(after.slice(after.indexOf('</head>')))
     .filter((s) => s.src && s.src.startsWith('/js/'));
   assert.equal(
-    bodyScripts.length, 46,
-    `expected the 46 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
+    bodyScripts.length, 45,
+    `expected the 45 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
     + 'Adding or removing one is fine, but it also needs a matching SHELL_ASSETS entry in '
     + 'public/sw.js (tests/pwa-shell-wiring.test.js enforces that) — so update this count '
     + 'deliberately rather than loosening the check.',

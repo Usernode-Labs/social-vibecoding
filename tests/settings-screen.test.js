@@ -36,7 +36,7 @@ const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
 const html = read('public/index.html');
 const appJs = read('public/js/app.js');
-const settingsJs = read('public/js/settings.js');
+const settingsJs = read('frontend/src/features/settings/settings.js');
 const devChatJs = read('public/js/dev-chat.js');
 const platformUiJs = read('public/js/platform-ui.js');
 const cliAuthJs = read('src/routes/cli-auth.js');

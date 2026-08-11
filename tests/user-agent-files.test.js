@@ -250,7 +250,7 @@ test('Settings UI: section markup + renderer are wired', () => {
   assert.match(html, /id="agent-files-section"/);
   assert.match(html, /id="agent-files-instructions-list"/);
   assert.match(html, /id="agent-files-skills-list"/);
-  const js = read('public/js/settings.js');
+  const js = read('frontend/src/features/settings/settings.js');
   assert.match(js, /_renderAgentFilesSection\(\)/);
   assert.match(js, /\/api\/me\/agent-files/);
 });

@@ -30,7 +30,7 @@ const browseJs = read('public/js/browse.js');
 const devChatJs = read('public/js/dev-chat.js');
 const homeJs = read('public/js/home.js');
 const leaderboardJs = read('public/js/leaderboard.js');
-const settingsJs = read('public/js/settings.js');
+const settingsJs = read('frontend/src/features/settings/settings.js');
 const adminConsoleJs = read('public/js/admin-console.js');
 const dapp = JSON.parse(read('dapp.json'));
 

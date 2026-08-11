@@ -150,7 +150,6 @@ const SHELL_ASSETS = [
   '/js/screenshot-select.js',
   '/js/session-options.js',
   '/js/session-transcript.js',
-  '/js/settings.js',
   '/js/spec-sections.js',
   '/js/streaming-markdown.js',
   '/js/session-state.js',

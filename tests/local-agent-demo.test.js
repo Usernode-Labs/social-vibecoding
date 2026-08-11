@@ -107,7 +107,7 @@ test('the module writes nothing — it has no pool, no query, no INSERT', () => 
 
 test('the clients suppress destructive controls on a demo row', () => {
   const settings = fs.readFileSync(
-    path.join(__dirname, '..', 'public', 'js', 'settings.js'), 'utf8'
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'settings', 'settings.js'), 'utf8'
   );
   assert.match(settings, /!agent\.demo/, 'Settings hides Detach on a demo row');
   const devChat = fs.readFileSync(
