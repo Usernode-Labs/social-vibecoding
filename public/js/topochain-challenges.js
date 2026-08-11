@@ -43,8 +43,9 @@
 // organiser flag about the CHALLENGE ("this one is over"), not a per-user
 // completion. The per-user signal is activities_total. This pane is now the
 // HOME for that flag: the profile screen used to list the season's finished
-// challenges and no longer does (see public/js/profile.js's header), so the
-// grid groups them, counts them in a summary line and dims them.
+// challenges and no longer does (see the header of
+// frontend/src/features/profile/profile.js), so the grid groups them, counts
+// them in a summary line and dims them.
 //
 // That is why `completed` is read from the PUBLIC row rather than from the
 // personalization map it used to come from: the chip, the grouping and the

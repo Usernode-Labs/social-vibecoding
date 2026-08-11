@@ -2989,6 +2989,7 @@ const App = {
     'admin-screen',
     // #1083 chunk F — the four app/community screens, converted in order.
     'browse-screen',
+    'profile-screen',
   ],
 
   // The publish/read half of that seam. The state is a plain object on

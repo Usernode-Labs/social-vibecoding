@@ -157,6 +157,20 @@ const RETIRED_SCRIPTS = {
   // global, and only run once a viewer opens #apps, long after every classic
   // script has evaluated.
   '/js/browse.js': 'browse-all-apps screen converted to a React island (chunk F)',
+  // Same chunk, step 2: #profile-screen became an island
+  // (frontend/src/features/profile/index.tsx) and the renderer moved to
+  // frontend/src/features/profile/profile.js. It keeps `window.Profile` — the
+  // #profile hash branch, App.navigateToProfile / _exitProfile and the header
+  // menu's Profile row all reach it that way, and app.js is still classic —
+  // behind a `typeof window` guard for the prerender pass.
+  //
+  // It had no load-order dependency to carry: nothing else read a Profile
+  // global at evaluation time, and it had no DOMContentLoaded bootstrap. The
+  // one ordering claim in the comment it replaced ("loaded before app.js,
+  // whose restoreFromHash calls Profile.open()") still holds for a stronger
+  // reason — the bundle entry is a module script, so it evaluates after every
+  // classic script here.
+  '/js/profile.js': 'profile screen converted to a React island (chunk F)',
 };
 
 // public/js/topochain-events.js is deliberately NOT in that map. It is the
@@ -181,7 +195,7 @@ test('every legacy script is loaded, in exactly the baseline order', () => {
 });
 
 test('the shell still loads the expected number of legacy scripts', () => {
-  // 34 /js/** tags, ALL at the end of <body> — the head has none left. The
+  // 33 /js/** tags, ALL at the end of <body> — the head has none left. The
   // count moves whenever main adds a module — it was 48 at the chassis swap
   // (plus theme.js in the head), main's mail console and credit-options
   // screens brought it to 50, #1036's nav-link.js made 51, #1049's
@@ -194,12 +208,13 @@ test('the shell still loads the expected number of legacy scripts', () => {
   // by four). #1081 chunk D retires settings.js (45), and #1082 chunk E
   // retires the admin console's ten modules in one go (35) — see the cluster
   // note in RETIRED_SCRIPTS for why they could not go one at a time. #1083
-  // chunk F retires browse.js (34).
+  // chunk F retires its ten modules one screen at a time: browse.js (34),
+  // profile.js (33).
   const bodyScripts = scriptsOf(after.slice(after.indexOf('</head>')))
     .filter((s) => s.src && s.src.startsWith('/js/'));
   assert.equal(
-    bodyScripts.length, 34,
-    `expected the 34 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
+    bodyScripts.length, 33,
+    `expected the 33 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
     + 'Adding or removing one is fine, but it also needs a matching SHELL_ASSETS entry in '
     + 'public/sw.js (tests/pwa-shell-wiring.test.js enforces that) — so update this count '
     + 'deliberately rather than loosening the check.',

@@ -47,6 +47,7 @@
 import { Button } from '@/components/ui/button';
 import { AdminScreen } from './features/admin';
 import { BrowseScreen } from './features/apps/browse-screen';
+import { ProfileScreen } from './features/profile';
 import { LandingScreen } from './features/auth/landing';
 import { LoginScreen } from './features/auth/login';
 import { RegisterScreen } from './features/auth/register';
@@ -318,20 +319,17 @@ export function Shell() {
       */}
       {/*
           Profile screen (profile-and-settings-to-web migration): the mobile
-          app's native Profile screen rendered by public/js/profile.js from
-          the in-process /challenges-api/me/* routes, scoped to the signed-in
-          platform session server-side (the bridge's getProfileInfo
-          participant id is no longer consulted). Hash route #profile;
-          mounted by App.navigateToProfile.
+          app's native Profile screen rendered from the in-process
+          /challenges-api/me/* routes, scoped to the signed-in platform
+          session server-side (the bridge's getProfileInfo participant id is
+          no longer consulted). Hash route #profile; mounted by
+          App.navigateToProfile.
+
+          A React island as of #1083 chunk F: the renderer moved with it, to
+          frontend/src/features/profile/profile.js, and the island imports it.
+          #profile-root is still that module's to fill.
       */}
-      <main
-        id="profile-screen"
-        className="hidden flex-1 overflow-y-auto platform-safe-scroll"
-        style={{ position: "relative" }}
-      >
-        <div id="profile-root" className="max-w-3xl mx-auto p-4">
-        </div>
-      </main>
+      <ProfileScreen />
       {/*
           Admin & moderation console screen (#818, extended by #860): the
           full-page console behind the header shield icon (#588 shipped the
@@ -796,11 +794,16 @@ export function Shell() {
       */}
       <script src="/js/topochain-events.js" />
       {/*
-          Profile screen (#profile hash route — profile-and-settings-to-web
-          migration). Loaded before app.js, whose restoreFromHash calls
-          App.navigateToProfile → Profile.open().
+          The profile screen's renderer (#profile hash route —
+          profile-and-settings-to-web migration) used to be a classic script
+          here. #1083 chunk F moved it into the bundle as
+          frontend/src/features/profile/profile.js, imported by the
+          #profile-screen island. It still publishes `window.Profile`, so
+          app.js's restoreFromHash → App.navigateToProfile → Profile.open()
+          is unchanged: the bundle entry is a module script in the head, so it
+          evaluates after every classic script here and long before any hash
+          route is restored.
       */}
-      <script src="/js/profile.js" />
       {/*
           Topochain-domain panes of the Leaderboard screen (Task 14, public
           screens; merged into one screen by the leaderboard merge). The
