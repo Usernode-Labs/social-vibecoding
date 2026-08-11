@@ -3790,11 +3790,13 @@ const AdminTopochain = {
   })}
           ${AdminTopochain._panel({
     title: 'Schema',
-    subtitle: 'Every table in the app database. Click one to draft a SELECT.',
-    // The list covers the whole schema now (~90 tables, not the original
-    // 20 topochain ones), so a filter box is the difference between a
-    // browsable panel and a scroll. Filtering is client-side over the
-    // already-fetched schema — no request per keystroke.
+    subtitle: 'Every table in the app database, including the auth and push tables. Credential columns are hidden. Click one to draft a SELECT.',
+    // The list covers the whole schema now (~108 tables — every base
+    // table in `public`, not the original 20 topochain ones and no longer
+    // minus the 20 credential-bearing ones #1130 was filed about), so a
+    // filter box is the difference between a browsable panel and a
+    // scroll. Filtering is client-side over the already-fetched schema —
+    // no request per keystroke.
     body: `
               <input id="admin-topo-sql-schema-filter" type="search" placeholder="Filter tables&hellip;"
                 aria-label="Filter tables" autocomplete="off" class="${FIELD_CLS} mb-2">

@@ -1,5 +1,5 @@
-// The admin SQL console's TABLE SCOPE — every table in the platform
-// database, not just the topochain ones.
+// The admin SQL console's TABLE SCOPE — EVERY base table in `public`,
+// minus the credential-bearing COLUMNS inside them.
 //
 // WHY THIS FILE EXISTS: the console (`#admin/seasons/sql-console`) shipped
 // scoped to `db-allowlist.js`'s 20 topochain tables, because that is what
@@ -9,31 +9,64 @@
 // `apps`, `events` or `chat_sessions` from it just goes and reads them
 // some other way (the unredacted `pg_dump` behind `#admin/db-export`, or
 // the prod-debug SQL proxy) with strictly LESS redaction than this
-// console applies. So the scope is now "the whole `public` schema, minus
-// the credential-bearing tables and columns", which is a real widening of
-// what is BROWSABLE and no widening at all of what is READABLE.
+// console applies. So the scope was widened to the whole `public` schema.
 //
-// THE DENY LISTS ARE NOT NEW ONES. They are `services/debug-access.js`'s
-// `DENIED_TABLES` / `DENIED_COLUMNS` — the same lists that scope the
-// production read-only debug role, kept in sync with `schema.sql`'s
-// `staging:private` credential tags by a test in
-// `tests/prod-debug-access.test.js`. Reusing them (rather than writing a
-// second, slightly-different list here) is the whole point: a
-// credential-bearing table or column added to the schema has exactly ONE
-// place to be declared, and both read surfaces pick it up. On top of
-// them, `db-allowlist.js`'s `EXCLUDED_EXPORT_COLUMNS` is merged in so the
-// topochain export's own column redactions can never be narrower here
-// than they are there (today the two agree on
-// `onchain_accounts.secret_key`/`.registration_code`; the merge means a
-// future addition on either side lands on both).
+// #1130 FIXED THE HALF-WIDENING THAT LEFT BEHIND. That first widening
+// borrowed BOTH of `services/debug-access.js`'s deny lists — its
+// per-column one AND its per-TABLE one — so 20 tables stayed invisible
+// and unqueryable, and an admin debugging push notifications got
+//
+//     Query references table(s) that are not available in this console:
+//     mobile_push_deliveries, mobile_push_registrations.
+//
+// on a delivery-queue table that holds no credential at all. That
+// table-level list is the right shape for the OTHER capability (see
+// below); it is the wrong shape here. So the console now denies
+// CREDENTIAL COLUMNS instead of whole tables: `mobile_push_deliveries`
+// is fully readable, `mobile_push_registrations` is readable with
+// `registration_enc`/`registration_hash` masked out, `sessions` is
+// readable with `token` masked out, and so on for all 12 entries in
+// `CONSOLE_CREDENTIAL_COLUMNS` below. What is BROWSABLE widens to all
+// ~108 base tables; what is READABLE does not widen by one value.
+//
+// WHY THE TWO CAPABILITIES DELIBERATELY DIVERGE — and why this is not
+// drift to be tidied up later:
+//   * `usernode_debug_ro` (debug-access.js) is reached by an AUTOMATED
+//     coding agent from a separate process, over a separate pool, with a
+//     separate password, on production. A whole-table denial is the right
+//     blast radius there: the agent has no business at all inside an
+//     auth-token table, and the coarse list is cheap to audit.
+//   * `topochain_console_ro` (this module) is reached by a signed-in
+//     human platform admin who is already able to read the SAME rows
+//     with LESS redaction two clicks away. Denying a whole table here
+//     buys no confidentiality — it only pushes the admin onto a less
+//     redacted path — while costing them the ability to debug.
+// `DENIED_COLUMNS` is still SHARED (imported below, never restated), so
+// a credential column added for one capability lands on both. Only the
+// table list is console-specific. `tests/topochain-db-tools.test.js`
+// asserts the divergence on purpose, so nobody "fixes" it by re-copying
+// the table list.
+//
+// ON TOP of the shared column list, two more sources are merged in:
+// `db-allowlist.js`'s `EXCLUDED_EXPORT_COLUMNS` (so the topochain
+// export's own column redactions can never be narrower here than there)
+// and `CONSOLE_CREDENTIAL_COLUMNS` — the per-column replacement for the
+// 20 formerly-denied tables. Union semantics throughout: whichever list
+// names a column, it is denied.
+//
+// OUT OF SCOPE, STRUCTURALLY: `credentials.user_ai_credentials`. The
+// inventory query below is `table_schema = 'public'`, and that table
+// lives in the separate `credentials` schema, which the console role is
+// never granted USAGE on. It therefore needs no deny entry of any kind —
+// it cannot appear in the scope, be granted, or be selected from.
 //
 // WHAT ENFORCES IT, IN ORDER OF WHO ACTUALLY DECIDES:
 //   1. `db-console-role.js` — grants `topochain_console_ro` SELECT on
 //      exactly the tables this module resolves, with COLUMN-LEVEL grants
 //      wherever a table has denied columns. This is the security
-//      boundary: Postgres itself refuses a denied table/column through
-//      ANY access path (`SELECT *`, `row_to_json`, a cast, a comma join,
-//      a function nobody has thought of yet).
+//      boundary: Postgres itself refuses a denied column through ANY
+//      access path (`SELECT *`, `row_to_json`, a cast, a comma join, a
+//      function nobody has thought of yet).
 //   2. `sql-console.js`'s `validateStatement` — a fast, specific 400
 //      instead of a bare "permission denied" round trip. A UX layer, and
 //      documented as one in that file's header.
@@ -49,21 +82,85 @@
 // widening the export was never asked for.
 'use strict';
 
-const { DENIED_TABLES, DENIED_COLUMNS } = require('../debug-access');
+const { DENIED_COLUMNS } = require('../debug-access');
 const { EXCLUDED_EXPORT_COLUMNS } = require('./db-allowlist');
 
 // Tables the console never lists, never grants, and rejects by name.
-// A straight copy of the prod-debug deny list (see the header) — copied
-// into a new Set rather than aliased so a mutation here could never
-// reach back into the other capability's list.
-const DENIED_CONSOLE_TABLES = new Set(DENIED_TABLES);
+//
+// DELIBERATELY EMPTY (#1130). It is kept — rather than deleted along
+// with `isDeniedTable` — as the escape hatch for a future table that is
+// genuinely un-maskable at column granularity: one where the ROW'S
+// EXISTENCE, not any single column's value, is the secret. Nothing in
+// the schema is like that today. Everything that used to be here is now
+// a `CONSOLE_CREDENTIAL_COLUMNS` entry instead, because masking the
+// credential column and leaving the row's shape readable is what makes
+// the console usable for debugging without making it a secret reader.
+//
+// If you are about to add a table here, first check that the thing you
+// want to hide is not just one column. If it is, add it below instead.
+const DENIED_CONSOLE_TABLES = new Set([]);
 
-// Columns denied per table: the prod-debug list merged with the
-// topochain export's own column exclusions. Union semantics — whichever
-// list names a column, it is denied.
+// The per-column replacement for the old table-level denials — one entry
+// per formerly-denied `public` table that actually stores a secret, each
+// naming ONLY the columns whose VALUES are credentials. Everything else
+// on those tables (ids, FKs, timestamps, status/attempt counters,
+// environments, platforms) is readable, which is the entire point:
+// `SELECT status, attempts, last_error_code FROM mobile_push_deliveries`
+// is the query #1130 was filed about.
+//
+// A table that appeared on the old list but stores NO credential gets no
+// entry at all and is fully readable: `mobile_push_deliveries`,
+// `mobile_push_deployment_state`, `mobile_push_installation_mutations`,
+// `cli_auth_audit_events`, `cli_auth_rate_limits`, `mcp_clients`,
+// `mcp_auth_audit_events`, `user_agent_files`.
+//
+// Column names are checked against `src/db/schema.sql` by a test in
+// `tests/topochain-db-tools.test.js`, which also sweeps every
+// `CREATE TABLE` / `ALTER TABLE … ADD COLUMN` for credential-shaped
+// names and fails on one that is neither denied nor explicitly reviewed.
+const CONSOLE_CREDENTIAL_COLUMNS = {
+  // Live login cookie values — a readable `token` is a session takeover.
+  sessions: ['token'],
+  // Redeemable invite codes.
+  activation_codes: ['code'],
+  // Encrypted app secrets + the last-4 hint that narrows a guess.
+  app_secrets: ['value_enc', 'value_last4'],
+  platform_env_values: ['value_enc', 'value_last4'],
+  // Same pair, pre-application. `declaration` (what the agent asked for,
+  // and why) stays readable — that is the useful half for debugging.
+  pending_secret_declarations: ['value_enc', 'value_last4'],
+  // Login OTP / bearer-token hashes. Hashed, but offline-guessable for a
+  // 6-digit code, and a token hash is a bearer credential in the
+  // lookup-by-hash schemes these tables use.
+  mobile_otp_codes: ['code_hash'],
+  mobile_auth_tokens: ['token_hash'],
+  // The encrypted FCM destination and its lookup hash. Every other
+  // column (platform, permission_status, session_expires_at, last_seen_at)
+  // is exactly what push debugging needs.
+  mobile_push_registrations: ['registration_enc', 'registration_hash'],
+  // Device-flow: the polled device code's hash, the user-visible pairing
+  // code (live and typeable while pending), and the requester's IP —
+  // masked for the same reason `users.waitlist_ip` is.
+  cli_device_authorizations: ['device_code_hash', 'user_code', 'request_ip'],
+  cli_access_tokens: ['token_hash', 'token_hint'],
+  // PKCE: the code's hash is the credential. `code_challenge` is the
+  // public half of the exchange and stays readable.
+  mcp_authorization_codes: ['code_hash'],
+  mcp_tokens: ['token_hash', 'token_hint'],
+  // Public report share links. `share_token` is the SOLE access control on
+  // the unauthenticated /reports/:token route (schema.sql says so outright),
+  // so it is a plaintext bearer credential even though the rest of the row
+  // is ordinary report metadata. `shared_at` — whether a snapshot is
+  // shared, and since when — stays readable, which is the debuggable half.
+  app_report_snapshots: ['share_token'],
+};
+
+// Columns denied per table: the prod-debug list, the topochain export's
+// own column exclusions, and the console's per-column credential map,
+// merged. Union semantics — whichever list names a column, it is denied.
 const DENIED_CONSOLE_COLUMNS = (() => {
   const merged = {};
-  for (const source of [DENIED_COLUMNS, EXCLUDED_EXPORT_COLUMNS]) {
+  for (const source of [DENIED_COLUMNS, EXCLUDED_EXPORT_COLUMNS, CONSOLE_CREDENTIAL_COLUMNS]) {
     for (const [table, columns] of Object.entries(source || {})) {
       merged[table] = [...new Set([...(merged[table] || []), ...columns])];
     }
@@ -109,6 +206,9 @@ const TABLE_INVENTORY_SQL = `
 let _tables = [];
 let _tableSet = new Set();
 
+// Kept for the escape hatch above (and so the fallback path in
+// `sql-console.js` has something to ask). Answers `false` for everything
+// while `DENIED_CONSOLE_TABLES` is empty.
 function isDeniedTable(name) {
   return DENIED_CONSOLE_TABLES.has(String(name).toLowerCase());
 }
@@ -121,7 +221,10 @@ function isDeniedColumn(table, column) {
 // Denied column names for a set/array of referenced table names — what
 // `sql-console.js` uses to reject `SELECT u.password FROM ... users u`
 // without blanket-denying the word "password" (or, worse, generic names
-// like `data` and `ip`) for every other table in the database.
+// like `data`, `ip`, `token` and `code`) for every other table in the
+// database. That table-awareness is load-bearing now that the denied
+// names include `token`, `code` and `user_code`: those appear as
+// perfectly readable columns on other tables.
 function deniedColumnsForTables(tables) {
   const names = new Set();
   for (const table of tables) {
@@ -133,9 +236,8 @@ function deniedColumnsForTables(tables) {
 }
 
 // Loads (and caches) the live scope: `[{ table, columns }]`, alphabetical
-// by table, denied tables dropped and denied columns filtered out of the
-// ones that remain. A table whose EVERY column is denied is dropped too —
-// there would be nothing to select from it.
+// by table, denied columns filtered out. A table whose EVERY column is
+// denied is dropped — there would be nothing to select from it.
 async function loadConsoleScope(pool) {
   const { rows } = await pool.query(TABLE_INVENTORY_SQL);
   const scope = [];
@@ -148,8 +250,9 @@ async function loadConsoleScope(pool) {
     if (!columns.length) continue;
     scope.push({ table, columns });
   }
-  // Alphabetical, so the schema browser's ~90-entry list is scannable and
-  // stable across calls regardless of what order Postgres answered in.
+  // Alphabetical, so the schema browser's ~108-entry list is scannable
+  // and stable across calls regardless of what order Postgres answered
+  // in.
   scope.sort((a, b) => a.table.localeCompare(b.table));
   _tables = scope.map((e) => e.table);
   _tableSet = new Set(_tables);
@@ -178,6 +281,7 @@ function _resetForTests() {
 module.exports = {
   DENIED_CONSOLE_TABLES,
   DENIED_CONSOLE_COLUMNS,
+  CONSOLE_CREDENTIAL_COLUMNS,
   TABLE_INVENTORY_SQL,
   SAFE_IDENT,
   isDeniedTable,
