@@ -32,6 +32,7 @@ class FakeEl {
   constructor() {
     this.textContent = '';
     this.disabled = false;
+    this.dataset = {};
     this._cls = new Set(['hidden']);
     const self = this;
     this.classList = {
