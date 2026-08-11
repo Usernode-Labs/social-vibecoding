@@ -27,6 +27,11 @@ const path = require('node:path');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
+// The landing screen crossed over to React in #1080 chunk C, so the pins that
+// used to read public/js/auth-screens.js read the component instead. Same
+// contracts, same behaviour — a different file owns them.
+const LANDING_TSX = 'frontend/src/features/auth/landing.tsx';
+
 // ─── index.html: persistent header ────────────────────────────────
 
 test('landing CTAs: Sign in + Join waitlist only — no Create account', () => {
@@ -61,18 +66,18 @@ test('the landing header is a persistent, non-scrolling sibling of the scroller'
 });
 
 test('the header keeps Sign in / Join waitlist while an app is open', () => {
-  const js = read('public/js/auth-screens.js');
-  const fn = js.match(/_renderLandingHeader\(\)\s*\{[\s\S]*?\n    \},/);
-  assert.ok(fn, '_renderLandingHeader exists');
+  const tsx = read(LANDING_TSX);
   // Only Back and the title react to an app being open — the CTA row is
   // toggled by session state (signed-in → queue status), never by the viewer.
-  assert.match(fn[0], /_openAppSlug/);
-  assert.match(fn[0], /landing-back-btn/);
-  assert.match(fn[0], /landing-header-title/);
-  assert.match(fn[0], /landing-header-ctas/);
-  assert.doesNotMatch(fn[0], /landing-header-ctas[\s\S]{0,120}_openAppSlug/);
+  const back = tsx.slice(tsx.indexOf('id="landing-back-btn"'));
+  assert.match(back.slice(0, 400), /hiddenLast\(\s*\n?\s*!openApp/,
+    'the back button is what the open app toggles');
+  assert.match(tsx, /const headerTitle = openApp \?/);
+  assert.match(tsx, /id="landing-header-ctas" className=\{hiddenLast\(session,/,
+    'the CTA row is toggled by session state, not by the viewer');
+  assert.match(tsx, /id="landing-back-to-waiting" className=\{session \?/);
   // AppBar mirroring for the Flutter WebView.
-  assert.match(fn[0], /document\.title/);
+  assert.match(tsx, /document\.title = headerTitle/);
 });
 
 // ─── the landing CTA area vs the #waitlist screen ─────────────────
@@ -99,12 +104,15 @@ test('the header CTA is an anchor to #waitlist, not a scroll-to-form', () => {
   const cta = html.match(/<a[^>]*id="landing-waitlist-cta"[^>]*>/);
   assert.ok(cta, 'landing-waitlist-cta is an anchor');
   assert.match(cta[0], /href="#waitlist"/);
-  const js = read('public/js/auth-screens.js');
-  // Both header CTAs leave the landing screen, so both tear the viewer down
-  // first — nothing scrolls or focuses on the landing page any more.
-  assert.match(js, /'landing-waitlist-cta', 'landing-signin-cta'/);
-  assert.match(js, /_resetLandingViewer\(\);/);
-  assert.doesNotMatch(js, /scrollIntoView/);
+  const tsx = read(LANDING_TSX);
+  // Every CTA that leaves the landing screen tears the viewer down first —
+  // nothing scrolls or focuses on the landing page any more.
+  for (const id of ['landing-signin-cta', 'landing-waitlist-cta', 'landing-waitlist-link']) {
+    const tag = tsx.slice(tsx.indexOf(`id="${id}"`));
+    assert.match(tag.slice(0, 600), /onClick=\{onLeaveCta\}/, `${id} leaves via onLeaveCta`);
+  }
+  assert.match(tsx, /const onLeaveCta[\s\S]{0,200}resetViewer\(\)/);
+  assert.doesNotMatch(tsx, /scrollIntoView/);
 });
 
 test('the stage-1 survey lives on its own #waitlist screen', () => {
@@ -158,9 +166,9 @@ test('the waitlist screen swaps the form for the queued note on a session', () =
   // AppBar mirroring for the Flutter WebView, same as the landing header.
   assert.match(fn[0], /document\.title/);
   // The landing CTA block toggles its LINK now, not a form.
-  const header = js.match(/_renderLandingHeader\(\)\s*\{[\s\S]*?\n    \},/);
-  assert.match(header[0], /landing-waitlist-link/);
-  assert.doesNotMatch(header[0], /waitlist-form/);
+  const tsx = read(LANDING_TSX);
+  assert.match(tsx, /id="landing-waitlist-link"/);
+  assert.doesNotMatch(tsx, /waitlist-form/);
 });
 
 test('a gated (waiting-room) session can still reach #waitlist', () => {
@@ -216,7 +224,7 @@ test('the stage-1 submit handler is wired before the options fetch', () => {
   assert.match(submit[0], /'\/api\/public\/waitlist'/);
 });
 
-// ─── index.html + auth-screens.js: in-flow app viewer ─────────────
+// ─── index.html + landing.tsx: in-flow app viewer ─────────────────
 
 test('#app-viewer is an in-flow flex sibling, not a stacked overlay', () => {
   const html = read('public/index.html');
@@ -233,54 +241,57 @@ test('#app-viewer is an in-flow flex sibling, not a stacked overlay', () => {
 });
 
 test('landing app open/close use the kit zoom with the flex-sibling outEl', () => {
-  const js = read('public/js/auth-screens.js');
-  assert.match(js, /type: 'zoom-in'/);
-  assert.match(js, /type: 'zoom-out'/);
+  const tsx = read(LANDING_TSX);
+  assert.match(tsx, /type: 'zoom-in'/);
+  assert.match(tsx, /type: 'zoom-out'/);
   // fromEl is the tapped tile, scoped to the landing grid.
-  assert.match(js, /_landingTileFor/);
-  assert.match(js, /#landing-apps \.app-card\[data-slug=/);
+  assert.match(tsx, /landingTileFor/);
+  assert.match(tsx, /#landing-apps \.app-card\[data-slug=/);
   // #764: two visible flex:1 siblings split the height 50/50, so the kit's
   // synchronous pre-paint measurement needs the outgoing element handed to
   // it explicitly.
-  assert.match(js, /outEl: scroller/);
+  assert.match(tsx, /outEl: scroller/);
   // Leaving a LIVE iframe must not take a View-Transition snapshot (iOS
   // Safari flash) — mirrors App.navigateHome.
-  assert.match(js, /fallback: 'none'/);
+  assert.match(tsx, /fallback: 'none'/);
   // The no-kit path has to run BOTH halves of the split mutation.
-  assert.match(js, /function zoomFx/);
-  assert.match(js, /opts\.after === 'function'/);
+  const shared = read('frontend/src/features/auth/shared.ts');
+  assert.match(shared, /export function zoomFx/);
+  assert.match(shared, /opts\.after === 'function'/);
 });
 
 test('leaving the landing screen tears the viewer down instead of stranding it', () => {
-  const js = read('public/js/auth-screens.js');
-  assert.match(js, /_resetLandingViewer/);
+  const tsx = read(LANDING_TSX);
+  // The router still calls the teardown on every route change off landing.
+  assert.match(read('public/js/auth-screens.js'), /_resetLandingViewer\(\)/);
+  assert.match(tsx, /_resetLandingViewer: \(\) => live\.current\.resetViewer\(\)/);
   // #1028: the live iframe is dropped by replacing the ELEMENT, not by
   // pointing it at about:blank — that assignment is a real navigation and
   // pushed an entry onto the history stack shared with the app.
-  assert.match(js, /_swapViewerFrame/);
-  assert.match(js, /replaceChild\(fresh, old\)/);
-  assert.doesNotMatch(js, /src = 'about:blank'/);
+  assert.match(tsx, /swapViewerFrame/);
+  assert.match(tsx, /replaceChild\(fresh, old\)/);
+  assert.doesNotMatch(tsx, /src = 'about:blank'/);
   // The replacement carries no src, so the next open is the initial
   // about:blank navigation browsers elide.
-  assert.doesNotMatch(js, /fresh\.src\s*=/);
+  assert.doesNotMatch(tsx, /fresh\.src\s*=/);
   // OS/browser back closes the viewer via a history marker, so the hash
   // router is never disturbed.
-  assert.match(js, /svAnonAppViewer/);
-  assert.match(js, /addEventListener\('popstate'/);
+  assert.match(tsx, /svAnonAppViewer/);
+  assert.match(tsx, /addEventListener\('popstate'/);
 });
 
 test('the guest back arrow closes the viewer directly (#1028)', () => {
-  const js = read('public/js/auth-screens.js');
+  const tsx = read(LANDING_TSX);
   // The button performs the navigation; it never delegates to the browser
   // (the old `if (history.state...) history.back()` is what broke).
-  assert.match(js,
-    /byId\('landing-back-btn'\)\.addEventListener\('click', \(\) => closeViewer\(\)\)/);
+  const back = tsx.slice(tsx.indexOf('id="landing-back-btn"'));
+  assert.match(back.slice(0, 500), /onClick=\{\(\) => live\.current\.closeLandingApp\(\)\}/);
   // The marker entry is unwound AFTER the close, behind a re-entrancy flag.
-  assert.match(js, /_unwindingViewerEntry/);
+  assert.match(tsx, /unwindingViewerEntry/);
   // The popstate listener ignores a pop that lands ON the marker entry.
-  assert.match(js, /if \(history\.state && history\.state\.svAnonAppViewer\) return;/);
+  assert.match(tsx, /if \(history\.state && history\.state\.svAnonAppViewer\) return;/);
   // The frame is re-resolved per use — a captured const goes stale on swap.
-  assert.match(js, /const viewerFrame = \(\) => byId\('app-viewer-frame'\)/);
+  assert.match(tsx, /byId<HTMLIFrameElement>\('app-viewer-frame'\)/);
 });
 
 test('?shot=anon-back scripts two guest open/back cycles', () => {
@@ -288,12 +299,12 @@ test('?shot=anon-back scripts two guest open/back cycles', () => {
   // Must skip /api/auth/me, or the check runner's own session promotes the
   // page into the signed-in shell and the guest viewer is never exercised.
   assert.match(app, /shot !== 'anon-back'/);
-  const js = read('public/js/auth-screens.js');
-  assert.match(js, /_runAnonBackShot/);
+  const tsx = read(LANDING_TSX);
+  assert.match(tsx, /runAnonBackShot/);
   // Two cycles: the bug only appears from the second open onward.
-  assert.match(js, /cycle < 2/);
+  assert.match(tsx, /cycle < 2/);
   // The completion stamp the dapp.json test asserts on.
-  assert.match(js, /setAttribute\('data-anon-back', 'done'\)/);
+  assert.match(tsx, /setAttribute\('data-anon-back', 'done'\)/);
   const manifest = JSON.parse(read('dapp.json'));
   const t = manifest.tests.find((x) => /anon-back/.test(x.path || ''));
   assert.ok(t, 'dapp.json declares the guest-back test');
@@ -324,13 +335,13 @@ test('public apps list is sorted by usage (active users first)', () => {
 });
 
 test('landing scroller has kit pull-to-refresh with overscroll containment', () => {
-  const js = read('public/js/auth-screens.js');
+  const tsx = read(LANDING_TSX);
   // PTR must attach to the INNER scroller, never the fixed overlay: the
   // kit's rubber-band translateY on the overlay itself slides the whole
   // opaque screen down and exposes the authed shell's header behind it.
-  assert.match(js, /PlatformUI\.pullToRefresh\(byId\('auth-landing-scroll'\)/);
-  assert.doesNotMatch(js, /pullToRefresh\(byId\('auth-landing-screen'\)/);
-  assert.match(js, /_loadLandingApps\(\)\)/);
+  assert.match(tsx, /pullToRefresh\(byId\('auth-landing-scroll'\)/);
+  assert.doesNotMatch(tsx, /pullToRefresh\(byId\('auth-landing-screen'\)/);
+  assert.match(tsx, /loadLandingApps\(\)\)/);
   // Containment keeps the browser's native pull-refresh from competing
   // with the kit gesture — same treatment as #home-screen.
   const css = read('public/css/app.css');
@@ -366,21 +377,21 @@ test('landing directory uses the homescreen launcher-grid shape', () => {
   assert.match(grid[1], /md:grid-cols-3/);
 });
 
-// ─── auth-screens.js: tile renderer ───────────────────────────────
+// ─── landing.tsx: tile renderer ────────────────────────────────────
 
 test('landing tiles mirror home cards and gate on requires_login', () => {
-  const js = read('public/js/auth-screens.js');
-  assert.match(js, /_buildLandingAppTile/);
+  const tsx = read(LANDING_TSX);
+  assert.match(tsx, /function LandingTile/);
   // Gated presentation: dimmed + lock + caption.
-  assert.match(js, /opacity-50 grayscale/);
-  assert.match(js, /Account required/);
+  assert.match(tsx, /opacity-50 grayscale/);
+  assert.match(tsx, /Account required/);
   // Gated tap: remember the app deep link, then the signup flow.
-  assert.match(js, /rememberDeepLink\('#app\/' \+ \(app\.slug \|\| ''\)\)/);
-  assert.match(js, /location\.hash = '#signup'/);
+  assert.match(tsx, /rememberDeepLink[\s\S]{0,160}'#app\/' \+ \(app\.slug \|\| ''\)/);
+  assert.match(tsx, /location\.hash = '#signup'/);
   // Icon priority mirrors home.js iconTileFor: image > emoji > letter.
-  assert.match(js, /data-icon', 'image'/);
-  assert.match(js, /data-icon', 'emoji'/);
-  assert.match(js, /data-icon', 'letter'/);
+  assert.match(tsx, /data-icon="image"/);
+  assert.match(tsx, /data-icon="emoji"/);
+  assert.match(tsx, /data-icon="letter"/);
 });
 
 // ─── probe wiring ─────────────────────────────────────────────────

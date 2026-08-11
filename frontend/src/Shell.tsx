@@ -45,8 +45,9 @@
 //    never by refreshing the baseline.
 
 import { Button } from '@/components/ui/button';
-import { OfflineBanner, ViewAsNonAdminBanner } from './features/shell/banners';
+import { LandingScreen } from './features/auth/landing';
 import { Dialogs } from './features/dialogs';
+import { OfflineBanner, ViewAsNonAdminBanner } from './features/shell/banners';
 
 export function Shell() {
   return (
@@ -2077,210 +2078,15 @@ export function Shell() {
           coordinate header/tab visibility with the authed shell.
       */}
       {/*
-          Landing screen.
-          
+          Landing screen — features/auth/landing.tsx (#1080 chunk C).
+
           Column layout: a PERSISTENT header (Back + title + Sign in / Join
           waitlist) over a content region that holds either the directory
           scroller or the in-page app viewer. The header stays put while an
           app is open, so a visitor who likes what they just used can sign
           up without backing out first.
       */}
-      <main id="auth-landing-screen" className="hidden fixed inset-0 z-40 bg-white dark:bg-zinc-950 flex flex-col">
-        {/*
-            Mirrors #platform-header's shape (height, padding, hairline,
-            safe-area) so both shells read identically — same HEADER HEIGHT
-            INVARIANT: `py-3` + 1px hairline around a 28px content row, i.e.
-            53px + safe-area, with `h-7` on the back-button wrapper as the
-            floor and nothing inside allowed to exceed 28px. The CTAs below
-            used to break that twice over — `sm:py-2 sm:text-sm` made them
-            36px at `sm` and up (a 61px bar), and the bordered one was still
-            30px at `py-1.5` — so they now declare `h-7` outright. The
-            20px back-button wrapper is fixed-WIDTH on purpose too: toggling
-            the button's `hidden` must not shift the title.
-        */}
-        <header
-          id="landing-header"
-          className="un-safe-top-extend relative flex items-center gap-3 px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0"
-        >
-          <div className="w-5 h-7 shrink-0 flex items-center">
-            <button
-              id="landing-back-btn"
-              type="button"
-              className="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-100 hidden"
-              aria-label="Back to apps"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
-              </svg>
-            </button>
-          </div>
-          <h1
-            id="landing-header-title"
-            className="flex-1 min-w-0 text-lg font-bold pointer-events-none truncate text-left"
-          >
-            Usernode Social Vibecoding
-          </h1>
-          <div className="ml-auto shrink-0 flex items-center">
-            {/*
-                Two entry points only (issue: landing simplification). Account
-                creation is deferred: it happens at the end of the waitlist
-                journey, or when a gated app below routes to #signup.
-            */}
-            {/*
-                `h-7 inline-flex items-center` — pinned to the header's 28px
-                content row, exactly like #app-mode-switch, rather than sized by
-                padding. Padding-sizing is what broke this bar twice over: the
-                `sm:py-2 sm:text-sm` bump these used to carry made them 36px (a
-                61px bar on desktop), and even at `py-1.5` the BORDERED "Join
-                waitlist" was 30px against its borderless siblings' 28px,
-                because the 1px border top and bottom is part of the box. An
-                explicit height is immune to both. `sm:px-5` still gives them
-                desktop presence horizontally, which costs no height.
-            */}
-            <div id="landing-header-ctas" className="flex items-center gap-2">
-              <a
-                href="#login"
-                id="landing-signin-cta"
-                className="h-7 inline-flex items-center rounded-lg bg-violet-600 hover:bg-violet-500 px-3 text-xs sm:px-5 font-medium transition-colors text-white"
-              >
-                Sign in
-              </a>
-              <a
-                href="#waitlist"
-                id="landing-waitlist-cta"
-                data-offline-disabled=""
-                className="h-7 inline-flex items-center rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 text-xs sm:px-5 font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-colors"
-              >
-                Join waitlist
-              </a>
-            </div>
-            {/* Shown instead of the CTAs when a (waiting-room) session exists. */}
-            <div id="landing-back-to-waiting" className="hidden">
-              <a
-                href="#waiting"
-                className="h-7 inline-flex items-center rounded-lg bg-violet-600 hover:bg-violet-500 px-3 text-xs sm:px-5 font-medium transition-colors text-white"
-              >
-                Your queue status
-              </a>
-            </div>
-          </div>
-        </header>
-        {/*
-            Inner scroller: the kit pull-to-refresh rubber-band translates the
-            element it is attached to. Attaching to the overlay itself would
-            slide the WHOLE screen down (header included) and expose the
-            authed shell behind it (z-lower in the same document) — so the
-            overlay stays put as an opaque backstop and this wrapper takes
-            the gesture. flex-1/min-h-0, not h-full: it's a flex child under
-            the header now, and h-full would overflow by the header's height.
-        */}
-        <div id="auth-landing-scroll" className="flex-1 min-h-0 overflow-y-auto platform-safe-scroll">
-          <div className="max-w-3xl mx-auto px-6 py-12">
-            <div className="text-center mb-10">
-              <h1 className="text-3xl font-bold mb-2">
-                Usernode Social Vibecoding
-              </h1>
-              <p className="text-sm text-zinc-500 dark:text-zinc-400 italic">
-                A place where users own and build apps together
-              </p>
-            </div>
-            {/*
-                Offline explanation (#1021). The landing page's app grid is
-                fetched, so offline it renders empty or stale with no reason
-                given — and both header CTAs lead to screens that cannot
-                complete. Say so once, here.
-            */}
-            <div className="offline-only mb-10 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3">
-              <h2 className="text-sm font-semibold text-amber-600 dark:text-amber-400">
-                You're offline
-              </h2>
-              <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-                Anything below is the last version this device loaded, and signing in or joining the
-          waitlist both need a connection.
-              </p>
-              <button
-                type="button"
-                data-offline-retry=""
-                className="mt-3 rounded-lg border border-amber-500/50 px-3 py-1.5 text-sm font-medium text-amber-700 dark:text-amber-300 hover:bg-amber-500/10 transition-colors"
-              >
-                Try again
-              </button>
-            </div>
-            {/*
-                The CTA block sits where the Sign in / Join waitlist buttons used
-                to be: a compact pitch plus ONE link into the dedicated waitlist
-                screen (#waitlist). The survey itself lives on that screen — a
-                four-question form flat on the homepage buried the app directory
-                under it. Both this link and the header's "Join waitlist" button
-                are plain anchors to the same route.
-            */}
-            <section
-              id="landing-waitlist"
-              className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 p-5 mb-10"
-            >
-              <h2 className="text-lg font-semibold mb-1">
-                Build apps together, own them together
-              </h2>
-              <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
-                Usernode Social Vibecoding is a place where users describe the app
-          they want in chat, an AI builds it, and the community votes the
-          changes in. Every app below was built here by the people who use
-          it — they run on the Usernode chain, and contributors own a share
-          of what they build.
-              </p>
-              <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
-                Platform access opens in batches — the apps below are open to
-          everyone right now.
-              </p>
-              <a
-                id="landing-waitlist-link"
-                href="#waitlist"
-                data-offline-disabled=""
-                className="inline-block rounded-lg bg-violet-600 hover:bg-violet-500 px-5 py-2 text-sm font-medium text-white transition-colors"
-              >
-                Join the waitlist
-              </a>
-              {/*
-                  Swapped in for the link when a (waiting-room) session exists —
-                  they're already on the list, so pointing them at the join form
-                  again is noise.
-              */}
-              <p id="landing-cta-queued" className="hidden text-sm text-zinc-500 dark:text-zinc-400">
-                You're already on the waitlist — we'll email you when your spot opens.
-              </p>
-            </section>
-            <section>
-              <h2 className="text-lg font-semibold mb-1">
-                Apps built here
-              </h2>
-              <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
-                Community-built apps on the Usernode chain. Many are open to
-          everyone — the grayed-out ones need an account.
-              </p>
-              {/* Same launcher-grid shape as the authed homescreen (#app-list). */}
-              <div id="landing-apps" className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
-                <p className="text-sm text-zinc-500">
-                  Loading&hellip;
-                </p>
-              </div>
-            </section>
-          </div>
-        </div>
-        {/*
-            In-page app viewer: public apps open in an iframe here instead of
-            a target=_blank (which strands mobile webview users on the app
-            subdomain with no way back). It is an IN-FLOW sibling of the
-            scroller — not a fixed overlay — so the header above stays put and
-            owns Back + the app name. Opening zooms it out of the tapped tile
-            (kit 'zoom-in', mirroring App.navigateToApp); the background must
-            stay opaque because the kit pins this LIVE element as a fixed
-            overlay for the duration of the zoom.
-        */}
-        <div id="app-viewer" className="hidden flex-1 min-h-0 flex flex-col bg-white dark:bg-zinc-950">
-          <iframe id="app-viewer-frame" className="flex-1 w-full border-0" title="App">
-          </iframe>
-        </div>
-      </main>
+      <LandingScreen />
       {/*
           Login screen (also hosts the #signup email-code sub-view and the
           forgot-password recovery sub-view)

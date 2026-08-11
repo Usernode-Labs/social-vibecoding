@@ -3362,7 +3362,10 @@ const App = {
   // the classList path, so converted and unconverted screens coexist for
   // the whole migration. A conversion chunk adds its id here in the same
   // commit that converts the screen.
-  REACT_SCREEN_IDS: [],
+  REACT_SCREEN_IDS: [
+    // #1080 chunk C — the anonymous shell's screens, converted in order.
+    'auth-landing-screen',
+  ],
 
   // The publish/read half of that seam. The state is a plain object on
   // `window` because load order demands it: these classic scripts run
