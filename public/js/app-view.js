@@ -5646,6 +5646,100 @@ const AppView = {
     }
   },
 
+  // ── Work-by-owner stats: pure, DOM-free ─────────────────────────────
+  // Deterministic counts per contributor, aggregated from the report
+  // model. The LLM writes per-owner PROSE only (report-ai); every number
+  // shown next to it comes from here, so the counts can never hallucinate.
+  _buildOwnerStats(model) {
+    const m = model || {};
+    const map = new Map();
+    const get = (u) => {
+      if (!map.has(u)) map.set(u, { username: u, completed: 0, inReview: 0, inProgress: 0, backlog: 0 });
+      return map.get(u);
+    };
+    for (const g of ((m.done || {}).groups || [])) {
+      for (const e of (g.entries || [])) if (e.author) get(e.author).completed++;
+    }
+    const ip = m.inProgress || {};
+    for (const e of (ip.review || [])) if (e.author) get(e.author).inReview++;
+    for (const e of (ip.gov || [])) if (e.author) get(e.author).inReview++;
+    for (const e of (ip.sessions || [])) if (e.owner) get(e.owner).inProgress++;
+    for (const e of (ip.issues || [])) for (const p of (e.people || [])) get(p).inProgress++;
+    for (const g of ((m.backlog || {}).groups || [])) {
+      for (const e of (g.issues || [])) if (e.assignee) get(e.assignee).backlog++;
+    }
+    const total = (s) => s.completed + s.inReview + s.inProgress + s.backlog;
+    return Array.from(map.values()).sort((a, b) => total(b) - total(a) || (a.username < b.username ? -1 : 1));
+  },
+
+  // ── AI layer renderer: pure, DOM-free ───────────────────────────────
+  // ai (server report-ai summary or null) + ownerStats in → HTML out.
+  // Every LLM-authored string passes through escapeHtml and renders as
+  // plain text — no markdown, no links, no attributes. Same hard rule as
+  // the rest of the report: no live-card data-* hooks.
+  _renderReportAiHtml(ai, ownerStats) {
+    const eh = (s) => escapeHtml(s == null ? '' : String(s));
+    if (!ai) {
+      return `<p class="ur-rpt-empty">No AI summary yet &mdash; use &ldquo;Generate AI summary&rdquo; above to add a plain-language overview, risks and per-person highlights.</p>`;
+    }
+    let html = '';
+
+    // Narrative — the report's main body.
+    const paras = String(ai.narrative || '').split(/\n{2,}|\n/).map((p) => p.trim()).filter(Boolean);
+    html += `<section class="ur-rpt-section" data-section="ai-summary">`
+      + `<h2 class="ur-rpt-h2">Summary</h2>`
+      + paras.map((p) => `<p class="ur-rpt-ai-p">${eh(p)}</p>`).join('')
+      + `</section>`;
+
+    // Critical risks.
+    const risks = Array.isArray(ai.risks) ? ai.risks : [];
+    let riskBody = '';
+    if (!risks.length) {
+      riskBody = `<p class="ur-rpt-empty">No critical risks flagged.</p>`;
+    } else {
+      riskBody = `<ul class="ur-rpt-list">${risks.map((r) => {
+        const sev = ['high', 'medium', 'low'].indexOf(r && r.severity) !== -1 ? r.severity : 'medium';
+        return `<li class="ur-rpt-row">`
+          + `<div class="ur-rpt-title"><span class="ur-rpt-risk-sev ur-rpt-risk-sev--${sev}">${eh(sev)}</span>${eh(r && r.title)}</div>`
+          + `<div class="ur-rpt-meta"><span>${eh(r && r.detail)}</span></div>`
+          + `</li>`;
+      }).join('')}</ul>`;
+    }
+    html += `<section class="ur-rpt-section" data-section="ai-risks">`
+      + `<h2 class="ur-rpt-h2">Critical risks</h2>${riskBody}</section>`;
+
+    // Work by owner: deterministic counts + LLM blurb (only for owners
+    // the stats know; a blurb for anyone else was already dropped
+    // server-side by sanitizeReportSummary's known-usernames guard).
+    const blurbs = new Map((Array.isArray(ai.owners) ? ai.owners : [])
+      .map((o) => [o && o.username, o && o.blurb]));
+    const stats = Array.isArray(ownerStats) ? ownerStats : [];
+    let ownerBody = '';
+    if (!stats.length) {
+      ownerBody = `<p class="ur-rpt-empty">No attributable work yet.</p>`;
+    } else {
+      ownerBody = `<ul class="ur-rpt-list">${stats.map((s) => {
+        const parts = [];
+        if (s.completed) parts.push(`${s.completed} completed`);
+        if (s.inReview) parts.push(`${s.inReview} awaiting review`);
+        if (s.inProgress) parts.push(`${s.inProgress} in progress`);
+        if (s.backlog) parts.push(`${s.backlog} assigned in backlog`);
+        const blurb = blurbs.get(s.username);
+        return `<li class="ur-rpt-row">`
+          + `<div class="ur-rpt-title">${eh(s.username)}<span class="ur-rpt-tag ur-rpt-owner-counts">${eh(parts.join(' · ') || 'no items')}</span></div>`
+          + (blurb ? `<div class="ur-rpt-meta"><span>${eh(blurb)}</span></div>` : '')
+          + `</li>`;
+      }).join('')}</ul>`;
+    }
+    html += `<section class="ur-rpt-section" data-section="ai-owners">`
+      + `<h2 class="ur-rpt-h2">Work by owner</h2>${ownerBody}</section>`;
+
+    const genMs = Date.parse(ai.generatedAt || '');
+    const when = Number.isFinite(genMs) ? new Date(genMs).toLocaleDateString() : '';
+    html += `<p class="ur-rpt-ai-note">AI-written summary${ai.model ? ` (${eh(ai.model)})` : ''}${when ? `, generated ${eh(when)}` : ''}. Verify against the lists below.</p>`;
+    return html;
+  },
+
   // ── Report CSS ───────────────────────────────────────────────────────
   // Plain CSS, every rule scoped under `.ur-rpt`, deliberately using NO
   // Tailwind utilities. Injected once into #dev-report for the on-screen
@@ -5683,6 +5777,15 @@ const AppView = {
     '.ur-rpt-num{font-variant-numeric:tabular-nums;color:var(--rpt-muted);font-weight:400;}',
     '.ur-rpt-tag{display:inline-block;font-size:0.6875rem;font-weight:600;border:1px solid var(--rpt-line);border-radius:0.25rem;padding:0 0.3125rem;margin-left:0.25rem;color:var(--rpt-muted);}',
     '.ur-rpt-empty{font-size:0.8125rem;color:var(--rpt-faint);font-style:italic;margin:0.5rem 0;}',
+    '.ur-rpt-ai-p{margin:0.75rem 0 0;max-width:44rem;}',
+    '.ur-rpt-ai-note{font-size:0.75rem;color:var(--rpt-faint);font-style:italic;margin:-0.75rem 0 1.75rem;}',
+    '.ur-rpt-risk-sev{display:inline-block;font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;border-radius:0.25rem;padding:0 0.375rem;margin-right:0.5rem;vertical-align:1px;}',
+    '.ur-rpt-risk-sev--high{color:#b91c1c;border:1px solid #f87171;}',
+    '.ur-rpt-risk-sev--medium{color:#b45309;border:1px solid #fbbf24;}',
+    '.ur-rpt-risk-sev--low{color:#4d7c0f;border:1px solid #a3e635;}',
+    '.ur-rpt--dark .ur-rpt-risk-sev--high{color:#fca5a5;border-color:#7f1d1d;}',
+    '.ur-rpt--dark .ur-rpt-risk-sev--medium{color:#fcd34d;border-color:#78350f;}',
+    '.ur-rpt--dark .ur-rpt-risk-sev--low{color:#bef264;border-color:#365314;}',
     '.ur-rpt-foot{border-top:2px solid var(--rpt-line);margin-top:2rem;padding-top:0.875rem;font-size:0.75rem;color:var(--rpt-faint);}',
     '.ur-rpt-foot p{margin:0.25rem 0;}',
   ].join(''),
@@ -5768,6 +5871,15 @@ const AppView = {
       + stat(sum.backlog || 0, 'Backlog')
       + `</ul>`;
     html += `<p class="ur-rpt-recent">${eh(sum.completedLast30 || 0)} completed in the last 30 days.</p>`;
+
+    // ── AI layer (report-ai): narrative → risks → by-owner ────────────
+    // Injected only when the caller passes a summary (or an explicit null
+    // for the invite line); legacy callers that omit `ai` entirely get
+    // the deterministic document unchanged, which is also what the
+    // standalone export does when no summary exists yet.
+    if (o.ai !== undefined) {
+      html += AppView._renderReportAiHtml(o.ai, AppView._buildOwnerStats(m));
+    }
 
     // ── Done ──────────────────────────────────────────────────────────
     const done = m.done || {};
