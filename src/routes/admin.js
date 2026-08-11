@@ -15,6 +15,7 @@ const appRollover = require('../services/app-rollover');
 const stagingReap = require('../services/staging-reap');
 const stagingEnv = require('../services/staging-env');
 const mail = require('../services/mail');
+const mobilePushDiagnostics = require('../services/mobile-push-diagnostics');
 const {
   accountRecovery,
   withTransaction,
@@ -86,6 +87,32 @@ function adminRoutes(config) {
     } catch (err) {
       log.error('admin', 'Overview failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Mobile push diagnostics ────────────────────────────────
+  //
+  // Read-only operational visibility over the private push tables. The
+  // response deliberately excludes encrypted registrations, token hashes,
+  // service-account material and APNs credentials. View-only admins may use
+  // it: diagnosing a device is observation, not a provider mutation.
+  router.get('/api/admin/mobile-push/diagnostics', async (req, res) => {
+    try {
+      const data = await mobilePushDiagnostics.gather(pool, req.query.user);
+      res.json({
+        runtime: {
+          enabled: config.mobilePushEnabled === true,
+          environment: config.mobilePushEnvironment || null,
+          firebaseProjectId: config.firebaseProjectId || null,
+        },
+        ...data,
+      });
+    } catch (err) {
+      if (err instanceof mobilePushDiagnostics.MobilePushDiagnosticsInputError) {
+        return res.status(400).json({ error: err.message });
+      }
+      log.error('admin', 'Mobile push diagnostics failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
     }
   });
 
