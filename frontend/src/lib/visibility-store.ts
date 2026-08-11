@@ -41,7 +41,9 @@
  * mismatch, which console.errors and fails proposal checks.
  */
 
-import { useSyncExternalStore } from 'react';
+import { useSyncExternalStore, type RefObject } from 'react';
+
+import { useIsomorphicLayoutEffect } from './legacy-dom';
 
 export const VISIBILITY_STORE_KEY = '__usernodeVisibility';
 
@@ -109,4 +111,48 @@ export function useVisibility(id: string, initial: boolean): boolean {
   // Server (prerender) and client agree by construction: the prerender pass
   // has no publisher at all, so both sides start from `initial`.
   return useSyncExternalStore(subscribe, snapshot, snapshot);
+}
+
+/**
+ * Apply a published visibility as the `hidden` class on `ref`, SYNCHRONOUSLY
+ * with the publish.
+ *
+ * `useVisibility` + a render is the right seam for a region whose visibility
+ * only has to be correct by the next paint. The anonymous shell's screen roots
+ * have a stricter requirement: `AuthScreens.show()` swaps them inside the
+ * native kit's view transition (`PlatformUI.transition(fn)`), and the kit
+ * captures the "after" state from whatever `fn` did to the DOM before it
+ * returned. A React re-render scheduled by a store notification lands in a
+ * later task, so the transition would capture an unchanged document and animate
+ * nothing — the screens would still swap, just without the push/pop.
+ *
+ * `publishVisibility` notifies its listeners synchronously, so a listener that
+ * writes the class itself is inside that window. That is what this hook
+ * registers. The `className` prop on the element must stay constant (with
+ * `hidden` exactly where the hand-written markup had it) so React writes the
+ * attribute once at hydration and never again — the same contract
+ * `useHiddenClass` documents in legacy-dom.ts.
+ *
+ * `shippedVisible` is the visibility the prerendered markup carries, used until
+ * something publishes (there is no default in the store — see the note above).
+ */
+export function useVisibilityHiddenClass(
+  ref: RefObject<HTMLElement | null>,
+  id: string,
+  shippedVisible: boolean,
+): void {
+  useIsomorphicLayoutEffect(() => {
+    const store = getVisibilityStore();
+    const apply = () => {
+      const el = ref.current;
+      if (!el) return;
+      const value = store.visible[id];
+      el.classList.toggle('hidden', !(value === undefined ? shippedVisible : value));
+    };
+    store.listeners.add(apply);
+    apply();
+    return () => {
+      store.listeners.delete(apply);
+    };
+  }, [ref, id, shippedVisible]);
 }

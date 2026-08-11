@@ -34,6 +34,15 @@
  * state object and return data or markup, so tests/session-options.test.js
  * can pin the gating and the copy without a DOM.
  *
+ * WHAT MOVED. This menu used to enumerate the "somewhere else" routes
+ * itself — one CLI row plus one row per web agent — which made it the
+ * fourth surface asking the same question with its own wording. The list
+ * lives in public/js/build-venues.js now, and the menu carries ONE row that
+ * opens it. The three-way "what does a hand-off do from HERE" derivation
+ * (webTargetKind / webVerb / webNote, #1071) moved there with it; this
+ * module re-exports the first for the callers and tests that already read
+ * it from here.
+ *
  * Gating is by OMISSION, never `disabled: true`: the kit's touch idiom is
  * an action sheet, which drops disabled rows entirely, so a disabled entry
  * is invisible on a phone and inert-but-present on a desktop — two
@@ -42,6 +51,15 @@
  */
 (function () {
   'use strict';
+
+  // See public/js/credit-options.js for why this is resolved lazily.
+  function venues() {
+    if (typeof window !== 'undefined' && window.BuildVenues) return window.BuildVenues;
+    if (typeof require === 'function') {
+      try { return require('./build-venues.js'); } catch (err) { /* browser */ }
+    }
+    return null;
+  }
 
   var SETTINGS_HASHES = {
     apiKey: '#settings/api-key',
@@ -61,84 +79,14 @@
     return (typeof window !== 'undefined' && window.PlatformUI) || null;
   }
 
-  // ── What a web hand-off does from HERE (#1071) ─────────────────────
-  //
-  // Three states, and only one pair of rows shows at a time. The module
-  // derives this itself rather than taking a pre-computed flag, so the one
-  // place that decides is the one place the tests drive — and so the copy
-  // and the target id cannot disagree.
-  //
-  //   'session'  — an `active` or `paused` session WITH a branch of its own.
-  //                The agent starts from that branch's head and its commits
-  //                land back on it. Paused is included because pausing is
-  //                bookkeeping, not a decision about the work: the platform
-  //                auto-pauses idle sessions on the user's behalf, so
-  //                refusing here would be arbitrary.
-  //   'proposal' — `promoted`: the session IS the proposal the group is
-  //                voting on, and the agent's commits move it — clearing the
-  //                votes it has already collected.
-  //   'new'      — anywhere else: archived (an explicit put-away, which a
-  //                push must not silently reopen), merging/merged (frozen by
-  //                definition), or a session with no branch at all.
-  //
-  // `archived` deliberately falls through to "start new work" rather than
-  // being hidden: starting new work IS available there, it is just not a
-  // continuation.
+  // #1071's three-way derivation now lives in build-venues.js, next to the
+  // venues it describes. Re-exported so existing callers keep working.
   function webTargetKind(state) {
-    var s = state || {};
-    var status = s.sessionStatus ? String(s.sessionStatus) : '';
-    if (status === 'promoted') return 'proposal';
-    if ((status === 'active' || status === 'paused') && s.hasBranch) return 'session';
+    var BV = venues();
+    if (BV) return BV.webTargetKind(state);
+    // No venue list loaded (a surface that somehow ran before the shell
+    // finished): the safe answer is the one that starts nothing.
     return 'new';
-  }
-
-  // The two web products, in menu order. Each row's tooltip is its own
-  // product sentence plus the shared consequence sentence for the state the
-  // session is in — the label is single-line by construction (the kit sets
-  // it with textContent), so every nuance has to live in the tooltip.
-  var WEB_AGENTS = [
-    {
-      id: 'claude-code',
-      agent: 'claude-code',
-      noun: 'Claude Code on the web',
-      lead: 'Claude Code on the web does the work on your own Claude plan.',
-    },
-    {
-      id: 'codex',
-      agent: 'codex',
-      noun: 'Codex',
-      lead: 'Codex does the work on the ChatGPT plan you already pay for.',
-    },
-  ];
-
-  // The verb, and the consequence sentence behind it. Keyed on the three-way
-  // state above plus — for a session — whether it is paused, which changes
-  // ONLY the tooltip: the labels are byte-identical for `active` and
-  // `paused` on purpose, so one selector assertion covers both fixtures and
-  // the two cases cannot drift apart in the menu.
-  function webVerb(kind) {
-    if (kind === 'session') return 'Continue this session with ';
-    if (kind === 'proposal') return 'Continue this proposal with ';
-    return 'Start new work with ';
-  }
-
-  function webNote(kind, paused) {
-    if (kind === 'session') {
-      return paused
-        ? 'It starts from this session\'s latest commit and pushes its work back onto this session\'s own branch — '
-          + 'the code lands on this session\'s branch, and its preview and checks catch up when you reopen the '
-          + 'session. The agent\'s own conversation happens there, not in this transcript.'
-        : 'It starts from this session\'s latest commit and pushes its work back onto this session\'s own branch — '
-          + 'the code lands here, and its preview and checks rebuild. The agent\'s own conversation happens there, '
-          + 'not in this transcript.';
-    }
-    if (kind === 'proposal') {
-      return 'It starts from this proposal\'s latest commit and pushes back onto the same proposal — submitting '
-        + 'clears the votes it has already collected and re-runs its checks. The agent\'s own conversation happens '
-        + 'there, not in this transcript.';
-    }
-    return 'Usernode prepares a task for the web agent; what it builds comes back as its own proposal, not as more '
-      + 'turns in this session.';
   }
 
   // The menu rows, in order. `state`:
@@ -156,8 +104,7 @@
   //                     back gesture returns to the chat)
   //   'instructions'  → open the CLI card (openInstructions below)
   //   'hand-back'     → release the lease, turns come back to Usernode
-  //   'flow'          → start the #1049 walkthrough for `agent`, against
-  //                     `targetId` when there is something to continue
+  //   'venue'         → open the build-venues sheet in `switch` mode
   function items(state) {
     var s = state || {};
     var out = [];
@@ -192,39 +139,26 @@
         label: 'Stop running on ' + machine,
         title: machine + ' stops receiving turns for this session and Usernode takes them again. Anything it already committed stays on the branch.',
       });
-    } else if (s.cliAuthEnabled !== false) {
-      out.push({
-        id: 'local-cli',
-        kind: 'instructions',
-        label: 'Run this session on your computer',
-        title: 'Keep this session exactly where it is — same transcript, same branch, same proposal — but run its turns through Claude Code on your own machine and your own Claude plan.',
-      });
     }
 
-    // #1049 + #1071. What the walkthrough DOES depends on where this session
-    // is, so the labels change with it — in a session still being built, or
-    // a proposal the group is voting on, "start new work" is almost never
-    // what someone means, so the continue pair REPLACES it rather than
-    // sitting beside it. `targetId` is the session the agent's commits land
-    // on, or null when the hand-off genuinely starts something separate.
-    if (s.externalFlowsAvailable) {
-      var kind = webTargetKind(s);
-      var paused = String(s.sessionStatus || '') === 'paused';
-      var verb = webVerb(kind);
-      var note = webNote(kind, paused);
-      var targetId = kind === 'new' ? null : (s.sessionId == null ? null : s.sessionId);
-      WEB_AGENTS.forEach(function (web) {
-        out.push({
-          id: web.id,
-          kind: 'flow',
-          agent: web.agent,
-          targetKind: kind,
-          targetId: targetId,
-          label: verb + web.noun,
-          title: web.lead + ' ' + note,
-        });
-      });
-    }
+    // ONE row for the whole "somewhere else" question. It used to be three
+    // — a CLI row and one per web agent — which is how this menu became a
+    // place the venue question got asked in its own words, inches from
+    // where the composer footer asked it in different ones. The row is
+    // unconditional: every deployment has at least Usernode · Claude, so
+    // there is always something to change from, and the sheet does its own
+    // gating by omission.
+    var BV = venues();
+    var currentId = BV ? BV.currentVenue(s) : null;
+    out.push({
+      id: 'venue',
+      kind: 'venue',
+      label: 'Change how this is built',
+      title: currentId && BV
+        ? 'This session is building in ' + BV.venue(currentId).label
+          + '. Pick a different venue — on Usernode, on your computer, or handed to Claude Code or Codex on the web.'
+        : 'Pick where this session is built — on Usernode, on your computer, or handed to Claude Code or Codex on the web.',
+    });
 
     return out;
   }
@@ -404,8 +338,8 @@
         if (typeof o.onHandBack === 'function') o.onHandBack();
         return;
       }
-      if (item.kind === 'flow') {
-        if (typeof o.onFlow === 'function') o.onFlow(item.agent, item.targetId);
+      if (item.kind === 'venue') {
+        if (typeof o.onVenue === 'function') o.onVenue(state);
       }
     }
 

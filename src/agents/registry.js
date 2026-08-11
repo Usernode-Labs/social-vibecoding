@@ -16,7 +16,13 @@ const DEFAULT_BACKEND = 'claude_code';
 
 // Backend descriptor shape:
 //   id          stable backend id (persisted in chat_sessions.agent_backend)
-//   label       human name shown in the UI
+//   label       human name shown in the UI. VENUE-first (#1087 follow-up):
+//               every selector in the product now names WHERE the work
+//               happens, and two of the six venues are these backends. The
+//               old labels ("Claude Code", "Codex (OpenRouter BYOK)") named
+//               the tool, which collided head-on with the web hand-off's
+//               "Claude Code" and with the `claude-code` external-agent id.
+//               The ids are UNCHANGED — only the copy moves.
 //   provider    upstream provider (anthropic | openrouter)
 //   runner      worker entrypoint that runs this agent (PR5 adds codex)
 //   claudeLike  true when the runner emits Claude stream-json + cc_*
@@ -24,14 +30,14 @@ const DEFAULT_BACKEND = 'claude_code';
 const BACKENDS = {
   claude_code: {
     id: 'claude_code',
-    label: 'Claude Code',
+    label: 'Usernode · Claude',
     provider: 'anthropic',
     runner: '/usr/local/bin/run-cc.sh',
     claudeLike: true,
   },
   codex_openrouter: {
     id: 'codex_openrouter',
-    label: 'Codex (OpenRouter BYOK)',
+    label: 'Usernode · OpenRouter',
     provider: 'openrouter',
     runner: '/usr/local/bin/run-codex-agent.sh',
     claudeLike: false,

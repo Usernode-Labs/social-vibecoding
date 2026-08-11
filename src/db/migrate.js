@@ -48,7 +48,7 @@ async function migrate(config) {
   await seedStagingActiveSessions(pool, config);
   await seedStagingStartScreenSession(pool, config);
   await seedStagingSavedDrafts(pool, config);
-  await seedStagingDevFlowPicker(pool, config);
+  await seedStagingVenueLine(pool, config);
   await seedStagingDevFlowWizard(pool, config);
   await seedStagingSessionOptions(pool, config);
   await seedStagingSharedSession(pool, config);
@@ -2241,19 +2241,28 @@ async function seedStagingSavedDrafts(pool, config) {
   });
 }
 
-// #1049: the two states of the alternate-development-flow picker.
+// #1049 / #1086: the venue line above the composer, and the walkthrough
+// behind one of its answers.
 //
-// Both are message-less `active` sessions with no PR, because that is the
-// ONLY state in which the picker renders (DevChat._devFlowTarget) — a
-// session with a typed message or a proposal is past the choice. They exist
-// for the same reason the drafts fixture does: external_agent_tasks is
-// staging:private and a staging clone has no GitHub OAuth app, so a
-// reviewer opening a fresh session sees the picker's unavailable branch and
-// can review nothing.
+// 990403 used to seed the PICKER — the card that asked "how do you want to
+// build this change?" at the top of every untouched session. The picker is
+// gone; the venue is stated on the composer instead, always, and changed
+// from a sheet. So the fixture keeps its id and its shape and now shows
+// the statement rather than the question. Its two siblings exist because
+// the interesting part of that statement is the venues a reviewer cannot
+// reach by hand on a staging clone.
 //
 //   990403 — /#app/<self-slug>/dev/sessions/990403
-//            the picker itself: platform vs Claude Code vs Codex, plus
-//            "remember my choice".
+//            the line in its ordinary state: Usernode · Claude, the
+//            default nobody chose, now said out loud.
+//   990409 — /#app/<self-slug>/dev/sessions/990409
+//            Usernode · OpenRouter — a pinned backend with a model, which
+//            is also the one venue that renders the model row underneath.
+//   990410 — /#app/<self-slug>/dev/sessions/990410
+//            the same session AFTER a silent fallback: the saved default
+//            was OpenRouter, the deployment could not honour it, and the
+//            note under the line says so. Seeded through the session's
+//            own columns, so it needs no failing credential.
 //   990404 — /#app/<self-slug>/dev/sessions/990404?demo=1
 //            the five-step walkthrough, resumed from a real open
 //            external_agent_tasks row. `?demo=1` is what unlocks
@@ -2261,11 +2270,20 @@ async function seedStagingSavedDrafts(pool, config) {
 //            #555 convention), so the steps render against a linked
 //            account, a ready fork and a branch not yet pushed.
 //
+// All are message-less `active` sessions with no PR: that is the state the
+// composer's line is read in, and the one state the walkthrough still
+// renders in. They exist for the same reason the drafts fixture does —
+// external_agent_tasks is staging:private and a staging clone has no
+// GitHub OAuth app, so a reviewer opening a fresh session can review
+// nothing.
+//
 // Ids stay in the 99xxxx fake range beside their neighbours (990401,
-// 990402). Idempotent on both the session ids and the task's request_key;
+// 990402). Idempotent on the session ids and on the task's request_key;
 // a strict no-op outside staging.
-const STAGING_DEV_FLOW_PICKER_SESSION_ID = 990403;
+const STAGING_VENUE_LINE_SESSION_ID = 990403;
 const STAGING_DEV_FLOW_WIZARD_SESSION_ID = 990404;
+const STAGING_VENUE_OPENROUTER_SESSION_ID = 990409;
+const STAGING_VENUE_FALLBACK_SESSION_ID = 990410;
 const STAGING_DEV_FLOW_BRANCH = 'usernode/staging-fixture-1049';
 const STAGING_DEV_FLOW_BASE_SHA = '0123456789abcdef0123456789abcdef01234567';
 
@@ -2286,35 +2304,76 @@ async function devFlowFixtureContext(pool, config, label) {
   return owner ? { appId, owner } : null;
 }
 
-async function seedStagingDevFlowPicker(pool, config) {
+async function seedStagingVenueLine(pool, config) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
-  const ctx = await devFlowFixtureContext(pool, config, 'Staging dev-flow picker fixture');
+  const ctx = await devFlowFixtureContext(pool, config, 'Staging venue-line fixture');
   if (!ctx) return;
 
-  const { rowCount } = await pool.query(
-    `INSERT INTO chat_sessions
-       (id, app_id, user_id, branch_name, pr_title, session_title, status, created_at, last_activity_at)
-     VALUES ($1, $2, $3, 'staging-fixture/dev-flow-picker', NULL,
-             '[staging fixture] Pick a development flow', 'active',
-             NOW() - INTERVAL '3 minutes', NOW() - INTERVAL '3 minutes')
-     ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id`,
-    [STAGING_DEV_FLOW_PICKER_SESSION_ID, ctx.appId, ctx.owner.id]
-  );
+  // The venue is read off the session's own columns (build-venues.js's
+  // currentVenue precedence), so each row IS its fixture: leave the backend
+  // defaulted for Usernode · Claude, pin it for Usernode · OpenRouter. The
+  // third row is the OpenRouter DEFAULT that could not be honoured, which
+  // is why it is seeded as a claude_code session — landing somewhere the
+  // default did not name is the whole point of it. The note that explains
+  // that is a creation-moment fact rather than a column, so it is reached
+  // with ?shot=venue-fallback (see DevChat._shotVenueFallbackReason).
+  const rows = [
+    {
+      id: STAGING_VENUE_LINE_SESSION_ID,
+      branch: 'staging-fixture/venue-usernode-claude',
+      title: '[staging fixture] Venue line — Usernode · Claude',
+      backend: 'claude_code',
+      model: null,
+    },
+    {
+      id: STAGING_VENUE_OPENROUTER_SESSION_ID,
+      branch: 'staging-fixture/venue-usernode-openrouter',
+      title: '[staging fixture] Venue line — Usernode · OpenRouter',
+      backend: 'codex_openrouter',
+      model: 'openai/gpt-5.3-codex',
+    },
+    {
+      id: STAGING_VENUE_FALLBACK_SESSION_ID,
+      branch: 'staging-fixture/venue-fallback',
+      title: '[staging fixture] Venue line — fell back to Claude',
+      backend: 'claude_code',
+      model: null,
+    },
+  ];
 
-  // The picker only renders while the preference is unset — that null IS
-  // "ask me every time". A staging clone that had somehow saved one would
-  // hide the fixture, so clear it for the tester.
+  let inserted = 0;
+  for (const row of rows) {
+    const { rowCount } = await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_title, session_title,
+          agent_backend, agent_model, status, created_at, last_activity_at)
+       VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, 'active',
+               NOW() - INTERVAL '3 minutes', NOW() - INTERVAL '3 minutes')
+       ON CONFLICT (id) DO UPDATE SET
+         user_id = EXCLUDED.user_id,
+         agent_backend = EXCLUDED.agent_backend,
+         agent_model = EXCLUDED.agent_model`,
+      [row.id, ctx.appId, ctx.owner.id, row.branch, row.title, row.backend, row.model]
+    );
+    inserted += rowCount;
+  }
+
+  // The venue sheet offers the two web hand-offs against a saved
+  // preference, and the walkthrough fixture next door needs that null to
+  // still mean "not yet answered". Clearing it keeps both readable: the
+  // line above says Usernode · Claude because nothing else was chosen,
+  // which is the exact silence #1086 is about.
   await pool.query(
     'UPDATE users SET dev_flow_preference = NULL WHERE id = $1',
     [ctx.owner.id]
   );
 
-  log.info('db', 'Staging dev-flow picker fixture seeded', {
+  log.info('db', 'Staging venue-line fixture seeded', {
     appId: ctx.appId,
     owner: ctx.owner.username,
-    sessionId: STAGING_DEV_FLOW_PICKER_SESSION_ID,
-    inserted: rowCount,
+    sessionIds: rows.map((r) => r.id),
+    inserted,
   });
 }
 

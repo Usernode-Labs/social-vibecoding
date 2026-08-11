@@ -512,8 +512,18 @@ test('starters lead with the issue when the session was started from one', () =>
 test('the session list serializes created_from_issue_number', () => {
   // Without it the client cannot name the issue; the column already existed
   // (#287) and simply was not sent.
-  assert.match(SESSIONS_SRC, /created_from_issue_number,\n\s+\(spec_md IS NOT NULL/,
+  // Matched against the one SELECT that feeds the list, not against the
+  // file: `created_from_issue_number` appears in several statements, and a
+  // bare file-wide match would go on passing after the list stopped
+  // selecting it. The trailing columns beside it are free to change (the
+  // venue pair joined them) — that this list carries the issue number is
+  // the invariant.
+  const list = SESSIONS_SRC.slice(SESSIONS_SRC.indexOf('SELECT id, branch_name, pr_number'));
+  const select = list.slice(0, list.indexOf('FROM chat_sessions'));
+  assert.match(select, /created_from_issue_number/,
     'the dev-chat session list SELECT carries the issue number');
+  assert.match(select, /\(spec_md IS NOT NULL AND spec_md <> ''\) AS has_spec/,
+    'and still reports whether a spec exists');
 });
 
 // ── 4. Staging fixtures ──────────────────────────────────────────────

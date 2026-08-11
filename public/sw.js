@@ -144,6 +144,7 @@ const SHELL_ASSETS = [
   '/js/merge-status.js',
   '/js/native-chrome.js',
   '/js/social-push.js',
+  '/js/build-venues.js',
   '/js/credit-options.js',
   '/js/profile.js',
   '/js/screenshot-select.js',

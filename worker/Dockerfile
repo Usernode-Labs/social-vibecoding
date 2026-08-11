@@ -76,11 +76,19 @@ RUN npm install -g @openai/codex@${CODEX_VERSION}
 # Preserve the pinned CLI's own full coding-agent instructions as the base for
 # custom OpenRouter model entries. The per-turn builder copies only that text
 # into its one-model catalog; it does not inherit OpenAI-only tool modes or
-# capabilities from the bundled models.
-RUN CODEX_HOME=/tmp/usernode-codex-bootstrap \
-      codex debug models > /usr/local/share/usernode-codex-bundled-models.json \
+# capabilities from the bundled models. Codex requires an explicitly selected
+# CODEX_HOME to exist before startup; otherwise `codex debug models` exits 1.
+# (This layer sits after the day-bumped claude-code layer, so it re-runs on
+# every cache-bust rollover — the 2026-08-11 rollover broke every worker
+# image build until the dir was pre-created; see #1096/#1097.)
+# Keep it outside /tmp because Codex deliberately refuses to create its PATH
+# helper aliases beneath temporary directories.
+RUN install -d -m 700 /var/lib/usernode-codex-bootstrap \
+  && CODEX_HOME=/var/lib/usernode-codex-bootstrap \
+       codex debug models --bundled > /usr/local/share/usernode-codex-bundled-models.json \
+  && node -e "const c=require('/usr/local/share/usernode-codex-bundled-models.json');if(!Array.isArray(c.models)||!c.models.some(m=>typeof m.base_instructions==='string'&&m.base_instructions.trim()))throw new Error('Codex model catalog has no base instructions')" \
   && chmod 444 /usr/local/share/usernode-codex-bundled-models.json \
-  && rm -rf /tmp/usernode-codex-bootstrap
+  && rm -rf /var/lib/usernode-codex-bootstrap
 
 # ── Optional in-loop browser (build-mode turns only) ───────────────────
 # The Playwright MCP server + a matching Chromium give the build-mode

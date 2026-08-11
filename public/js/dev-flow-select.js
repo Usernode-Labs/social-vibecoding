@@ -1,5 +1,4 @@
-/* The "how do you want to build this?" picker and its guided walkthrough
- * (#1049).
+/* The guided walkthrough for the two web hand-off venues (#1049).
  *
  * Usernode has always had two ways to build a proposal: here on the
  * platform with the Usernode agent and your daily AI credits, or by handing
@@ -7,9 +6,17 @@
  * (claude.ai/code) or Codex (chatgpt.com/codex) — which pushes a branch to
  * your own fork that Usernode turns into an ordinary proposal. The second
  * route existed only behind the MCP connector, so essentially nobody found
- * it. This module is the door: a card in the dev chat that names all three,
- * and a five-step walkthrough that watches your progress through the
- * external one.
+ * it.
+ *
+ * This module used to be BOTH doors: a picker card at the top of every
+ * untouched session asking "how do you want to build this change?", plus
+ * the walkthrough behind it. The picker is gone. It was one of three
+ * prompts asking the venue question before a word had been typed, and it
+ * could only offer three of the six venues that exist. The question is
+ * asked once now, by public/js/build-venues.js, from the venue line above
+ * the composer. What is left here is the part that has no other home: once
+ * a hand-off is chosen, five steps run in place in the transcript and
+ * watch the user's progress through them.
  *
  * Pure render + wire, no fetching. The caller (public/js/dev-chat.js) owns
  * the state, calls GET /api/apps/:slug/dev-flow/status, and re-renders; the
@@ -38,28 +45,17 @@
   // Same allowlist as DEV_FLOWS in src/routes/auth.js and the CHECK on
   // users.dev_flow_preference. tests/dev-flow-preference.test.js pins the
   // three together so a fourth flow cannot land in one place only.
+  //
+  // Id and venue label only. The blurbs and CTAs that used to live here
+  // belonged to the PICKER card, and the picker is gone — public/js/
+  // build-venues.js is the one place a venue is described to the user now,
+  // and it covers three more venues than this list ever could. What stays
+  // here is the allowlist, because these three ids are a persisted column's
+  // domain and this module is one of the three copies that must agree.
   var FLOWS = [
-    {
-      id: 'platform',
-      title: 'Build it here on Usernode',
-      blurb: 'The Usernode agent writes the code in this chat, using your daily AI credits. Nothing to set up.',
-      cta: 'Build here',
-      external: false,
-    },
-    {
-      id: 'claude-code',
-      title: 'Build it with Claude Code',
-      blurb: 'Usernode prepares a work order; Claude Code on the web writes it on your own Claude plan and pushes to your fork. Costs you no Usernode credits.',
-      cta: 'Use Claude Code',
-      external: true,
-    },
-    {
-      id: 'codex',
-      title: 'Build it with Codex',
-      blurb: 'The same hand-off, for Codex on the web and your own ChatGPT plan. Usernode opens the pull request and imports it as a proposal.',
-      cta: 'Use Codex',
-      external: true,
-    },
+    { id: 'platform', title: 'Usernode · Claude' },
+    { id: 'claude-code', title: 'Claude Code on the web' },
+    { id: 'codex', title: 'Codex on the web' },
   ];
 
   function escapeHtml(value) {
@@ -91,53 +87,6 @@
       return 'Handing work to Claude Code or Codex is unavailable on this deployment right now.';
     }
     return '';
-  }
-
-  // Which flows to show. The external pair is dropped entirely when the
-  // deployment or the app cannot support them — offering a button that can
-  // only fail is worse than not offering it.
-  function flowsFor(state) {
-    var s = state || {};
-    var external = s.available !== false && s.externalFlowsAvailable !== false;
-    return FLOWS.filter(function (flow) { return external || !flow.external; });
-  }
-
-  // The picker card. Rendered into the dev chat when a session has no
-  // messages yet and the user has expressed no saved preference.
-  //
-  // `state`:
-  //   available              – false when the server says the external
-  //                            flows cannot work here (reason explains)
-  //   reason                 – the server's reason code
-  //   externalFlowsAvailable – deployment-level switch from /api/auth/me
-  //   preference             – the saved choice, pre-ticking "remember"
-  function pickerHtml(state) {
-    var s = state || {};
-    var flows = flowsFor(s);
-    var note = flows.length === FLOWS.length ? '' : unavailableNote(s.reason);
-    var rows = flows.map(function (flow) {
-      return ''
-        + '<div class="dc-flow-option" data-flow-option="' + escapeHtml(flow.id) + '">'
-        + '<div class="dc-flow-option-text">'
-        + '<div class="dc-flow-option-title">' + escapeHtml(flow.title) + '</div>'
-        + '<div class="dc-flow-option-blurb">' + escapeHtml(flow.blurb) + '</div>'
-        + '</div>'
-        + '<button type="button" class="dc-pr-btn dc-flow-go" data-flow-pick="'
-        + escapeHtml(flow.id) + '">' + escapeHtml(flow.cta) + '</button>'
-        + '</div>';
-    }).join('');
-    return ''
-      + '<div class="dc-flow-card" data-flow-card="1">'
-      + '<div class="dc-flow-card-lead">How do you want to build this change?</div>'
-      + (note ? '<div class="dc-flow-card-detail">' + escapeHtml(note) + '</div>' : '')
-      + '<div class="dc-flow-options">' + rows + '</div>'
-      + '<label class="dc-flow-remember">'
-      + '<input type="checkbox" data-flow-remember="1"'
-      + (s.preference ? ' checked' : '') + '>'
-      + '<span>Remember my choice — don\'t ask again</span>'
-      + '</label>'
-      + '<div class="dc-flow-remember-hint">You can change this any time in Settings &rarr; Claude &amp; ChatGPT connectors.</div>'
-      + '</div>';
   }
 
   // ── The walkthrough ──────────────────────────────────────────────────
@@ -402,7 +351,6 @@
   // renders never stack handlers (the same guard CreditOptions uses).
   //
   // `handlers`:
-  //   onPick(flowId, remember)  – a picker button
   //   onAction(action, button)  – a walkthrough button; 'open-fork' and
   //                               'open-agent' are handled here (they are
   //                               just links) and still reported, so the
@@ -414,17 +362,9 @@
     var h = handlers || {};
     root.addEventListener('click', function (event) {
       var target = event.target && event.target.closest
-        ? event.target.closest('[data-flow-pick],[data-flow-action]')
+        ? event.target.closest('[data-flow-action]')
         : null;
       if (!target || !root.contains(target)) return;
-
-      var pick = target.getAttribute('data-flow-pick');
-      if (pick) {
-        event.preventDefault();
-        var box = root.querySelector('[data-flow-remember]');
-        if (typeof h.onPick === 'function') h.onPick(pick, !!(box && box.checked));
-        return;
-      }
 
       var action = target.getAttribute('data-flow-action');
       if (!action) return;
@@ -442,9 +382,7 @@
     AGENT_URLS: AGENT_URLS,
     agentLabel: agentLabel,
     agentUrl: agentUrl,
-    flowsFor: flowsFor,
     unavailableNote: unavailableNote,
-    pickerHtml: pickerHtml,
     steps: steps,
     wizardHtml: wizardHtml,
     wire: wire,
