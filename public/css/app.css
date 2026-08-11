@@ -3226,6 +3226,28 @@ span.gc-vote-btn-icon { cursor: default; }
   max-height: 22px;
   overflow: hidden;
 }
+/* ── …except when it holds nothing at all (#1139) ───────────
+   The reserve above buys inter-card alignment with 27px (22px of row + the
+   5px margin) of blank band on every card that has no state, no linkage, no
+   metadata chip and no messages. On most apps that is EVERY issue card — the
+   metadata chips need someone to have voted, and only a third of apps have
+   any issue-thread messages at all — so the alignment it bought was between
+   uniformly empty rows, and the blank band was the only thing anyone saw.
+
+   The node is RETAINED and hidden rather than omitted from the markup: the
+   action band's own one-row cap is written as `.dev-card-status +
+   .gc-card-actions` (above), and `display: none` leaves sibling adjacency
+   intact where removing the element would silently uncap the action row on
+   exactly these cards. Several dapp.json checks walk the same four-band
+   chain for the same reason.
+
+   _cardContentHtml stamps the flag from its render inputs, not from the
+   emitted HTML — the 💬 badge is present-but-`hidden` at count 0, so neither
+   a string test nor `:empty` would ever fire here. bumpThreadBadge clears the
+   flag when it reveals that badge in place. */
+.dev-card-badges.dev-card-status[data-empty="1"] {
+  display: none;
+}
 /* The two merge-lifecycle text badges predate .dev-badge and size themselves
    from their own line-height, so inside a clipped band they were the one
    child that could shrink, wrap its label to a second line and get cut

@@ -485,6 +485,16 @@
       "expectSelector": "#dev-body .gc-vote-item > .flex-1:first-child > .dev-card-head + .dev-card-meta + .dev-card-badges.dev-card-status + .gc-card-actions"
     },
     {
+      "name": "Dev board: an issue card with no pills drops its status band instead of reserving an empty row (#1139)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-body [data-issue-row=\"900013\"] .dev-card-meta + .dev-card-badges.dev-card-status[data-empty=\"1\"] + .gc-card-actions"
+    },
+    {
+      "name": "Dev board: a card that has pills keeps its status band (#1139)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-body [data-issue-row=\"900001\"] .dev-card-badges.dev-card-status:not([data-empty]) .dev-badge"
+    },
+    {
       "name": "Dev board: a card title clamps to two lines instead of pushing the bands below it out of step",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban .gc-vote-item .dev-card-title.dev-card-title-clamp[title]"

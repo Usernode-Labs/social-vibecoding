@@ -10,16 +10,30 @@
 //
 // The point is alignment BETWEEN cards, not within one: a kanban column used
 // to stack a card with a subtitle, three chips and a full-width tally row
-// beside a card with a bare title, and nothing lined up. So bands 2–4 are
+// beside a card with a bare title, and nothing lined up. So bands 2 and 4 are
 // RESERVED — they render, and hold their row open, even when the card has
 // nothing to put in them — and bands 3–4 are CLIPPED rather than allowed to
 // wrap, so a busy card loses its surplus pills whole instead of growing.
 //
-// Two things this file guards that are easy to break later:
-//   • the reserve is unconditional on the board and absent on the detail head
-//     (`dense: false`), which is the one caller with no neighbour to align to;
+// Band 3 is the one exception, added by #1139: it is reserved whenever it has
+// VISIBLE content, and stamped `data-empty="1"` (and hidden by CSS) when it
+// has none. The reserve bought alignment between rows that, on most apps, are
+// uniformly blank — an issue card can only fill the band if somebody voted an
+// attribute, claimed it, commented or opened a close vote — so what it
+// actually bought was 27px of empty band on every issue card. The element is
+// still EMITTED when empty, because the action band's own cap is written as
+// `.dev-card-status + .gc-card-actions` and removing the node would silently
+// uncap it.
+//
+// Three things this file guards that are easy to break later:
+//   • bands 2 and 4 reserve unconditionally on the board and collapse on the
+//     detail head (`dense: false`), the one caller with no neighbour to align
+//     to; band 3 additionally collapses when it is visually empty;
 //   • the clip heights are FIXED (min === max), because a max-only height
-//     would let an empty band collapse and take the alignment with it.
+//     would let a band with content collapse and take the alignment with it;
+//   • band 3's empty flag comes from the render INPUTS, not the emitted HTML —
+//     the 💬 badge ships at count 0 wearing Tailwind's `hidden`, so the band's
+//     markup is never an empty string on an issue card.
 //
 // Companion files: dev-card-badge-cap.test.js owns which chips make it into
 // band 3, card-action-layout.test.js owns which buttons make it into band 4,
@@ -120,10 +134,16 @@ function everyCard(AppView) {
 }
 
 // The band each card renders, in document order, by class.
+//
+// `( [^"]*)?` tolerates a band growing an extra class without this helper
+// having to change — but NOT a longer first class, so `dev-card-head-main` is
+// still correctly not a band. (#1139's empty flag rides as a data attribute,
+// outside the class string, so it does not need the allowance; a later band
+// that does grow a class will.)
 function bandOrder(html) {
   const body = html.slice(html.indexOf('<div class="flex-1 min-w-0">'));
   const out = [];
-  const re = /class="(dev-card-head|dev-card-meta|dev-card-badges dev-card-status|gc-card-actions)"/g;
+  const re = /class="(dev-card-head|dev-card-meta|dev-card-badges dev-card-status|gc-card-actions)( [^"]*)?"/g;
   let m;
   while ((m = re.exec(body))) out.push(m[1]);
   return out;
@@ -141,7 +161,7 @@ test('every board card renders all four bands, in order', () => {
   }
 });
 
-test('the reserve is unconditional: a bare card still emits empty bands', () => {
+test('bands 2 and 4 reserve unconditionally: a bare card still emits them empty', () => {
   const AppView = makeAppView();
   // The settled close-issue row is the extreme case: no actions of any kind
   // (by design — a decided vote has nothing to offer) and no chips.
@@ -149,13 +169,105 @@ test('the reserve is unconditional: a bare card still emits empty bands', () => 
   assert.match(html, /<div class="gc-card-actions"><\/div>/,
     'the action band renders EMPTY rather than not at all');
   assert.match(html, /class="dev-card-badges dev-card-status"/,
-    'and so does the status band');
+    'and the status band renders too — this card has a settled tally pill');
+  assert.doesNotMatch(html, /data-empty/,
+    'so it is NOT flagged empty');
   // A session card has no subtitle-less form, so use the raw composer for the
   // truly empty meta case.
   const bare = AppView._cardContentHtml({ titleHtml: 'x' });
   assert.match(bare, /<div class="dev-card-meta"><\/div>/, 'empty meta band too');
-  assert.match(bare, /<div class="dev-card-badges dev-card-status"><\/div>/);
   assert.match(bare, /<div class="gc-card-actions"><\/div>/);
+});
+
+// ── Band 3 only: reserved when it has content, flagged when it doesn't ────
+
+test('#1139: an empty status band is still EMITTED, but flagged data-empty', () => {
+  const AppView = makeAppView();
+  const bare = AppView._cardContentHtml({ titleHtml: 'x' });
+  // Emitted — the action band's cap is `.dev-card-status + .gc-card-actions`,
+  // so dropping the node would uncap the action row on exactly these cards,
+  // and several dapp.json checks walk the same four-band chain.
+  assert.match(bare,
+    /<div class="dev-card-badges dev-card-status" data-empty="1"><\/div>/);
+  // The class attribute is byte-identical either way: the flag is a data
+  // attribute precisely so every existing selector keeps matching.
+  assert.match(bandOrder(bare).join(','),
+    /dev-card-badges dev-card-status/);
+});
+
+test('#1139: a bare issue card — nothing voted, claimed or said — is flagged', () => {
+  const AppView = makeAppView();
+  // The common case, and the one the issue was filed about: no attribute
+  // votes, no claim, no close vote, an empty thread.
+  const html = AppView._renderIssueRow(ISSUE({ chatCount: 0 }));
+  const open = html.indexOf('class="dev-card-badges dev-card-status"');
+  assert.ok(open > 0, 'the band is still in the DOM');
+  assert.match(html.slice(open, open + 120), /data-empty="1"/);
+  // And it really is visually blank: the only child is the hidden 💬 badge,
+  // which is WHY emptiness cannot be decided from the markup.
+  const band = html.slice(open, html.indexOf('<div class="gc-card-actions"', open));
+  assert.match(band, /dev-chat-badge[^"]*hidden/,
+    'the 0-count badge ships hidden — a string/`:empty` test would never fire');
+  assert.doesNotMatch(band, /dev-status-pill-block|Closes #/);
+});
+
+test('#1139: a 0 chat count is not content, a real one is', () => {
+  const AppView = makeAppView();
+  const zero = AppView._cardContentHtml({ titleHtml: 'x', chatCount: 0 });
+  assert.match(zero, /data-empty="1"/, '💬 0 is invisible, so the band is empty');
+  const one = AppView._cardContentHtml({ titleHtml: 'x', chatCount: 1 });
+  assert.doesNotMatch(one, /data-empty/, 'one message fills the band');
+  assert.match(one, /dev-chat-badge/);
+  // null/undefined mean "this card type has no thread badge at all".
+  assert.match(AppView._cardContentHtml({ titleHtml: 'x', chatCount: null }),
+    /data-empty="1"/);
+});
+
+test('#1139: any single visible pill keeps the band reserved', () => {
+  const AppView = makeAppView();
+  const cases = {
+    'a state bar': { pill: '<div class="dev-status-pill-block">2/3</div>' },
+    'a Closes-#N pill': { linkedHtml: '<span class="dev-badge">Closes #4</span>' },
+    'one metadata chip': { badges: ['<span class="dev-badge">High</span>'] },
+    'an In progress chip': { badges: ['', '<span class="dev-badge">In progress</span>'] },
+  };
+  for (const [what, opts] of Object.entries(cases)) {
+    const html = AppView._cardContentHtml({ titleHtml: 'x', ...opts });
+    assert.doesNotMatch(html, /data-empty/, `${what} is content`);
+  }
+  // All-empty strings in `badges` are not content — every chip helper returns
+  // '' when it has nothing to say, which is what makes this check enough.
+  assert.match(AppView._cardContentHtml({ titleHtml: 'x', badges: ['', '', ''] }),
+    /data-empty="1"/);
+});
+
+test('#1139: the non-dense head omits a row holding only a hidden badge', () => {
+  const AppView = makeAppView();
+  // Reachable from a shared session's own discussion page, which passes
+  // `chatCount: s.chat_count` with `noNav: true`. `badges` was non-empty (the
+  // hidden 0-count 💬), so the old truthiness test rendered a 5px strip.
+  const loose = AppView._cardContentHtml({
+    titleHtml: 'x', dense: false, chatCount: 0,
+  });
+  assert.doesNotMatch(loose, /dev-card-badges/, 'no row at all');
+  assert.doesNotMatch(loose, /data-empty/, 'and no flag needed — it collapses');
+  // With a real count it still renders, uncapped and unflagged as before.
+  const withChat = AppView._cardContentHtml({
+    titleHtml: 'x', dense: false, chatCount: 3,
+  });
+  assert.match(withChat, /<div class="dev-card-badges">/);
+  assert.doesNotMatch(withChat, /dev-card-status/);
+});
+
+test('#1139: bumpThreadBadge clears the flag when it reveals the badge', () => {
+  // The one path that makes a pill visible without a repaint — so it is the
+  // one path that has to un-hide the band itself.
+  const bump = SRC.slice(SRC.indexOf('bumpThreadBadge(type, ref) {'));
+  const body = bump.slice(0, bump.indexOf('\n  },'));
+  assert.match(body, /classList\.remove\('hidden'/, 'it un-hides the badge');
+  assert.match(body, /closest\('\.dev-card-status'\)/,
+    'and walks up to the band it lives in');
+  assert.match(body, /removeAttribute\('data-empty'\)/);
 });
 
 test('bands are SIBLINGS of the head, so only the head is indented', () => {
@@ -317,6 +429,24 @@ test('the status band is a FIXED-height, clipping row', () => {
   assert.match(rule('.dev-card-badges'), /flex-wrap: wrap/);
   assert.equal(min, parseFloat(rule('.dev-status-pill-block').match(/height:\s*(\d+)px/)[1]),
     'one row = the tallest child, the state bar');
+});
+
+test('#1139: a flagged-empty status band is hidden, not merely collapsed', () => {
+  const r = rule('.dev-card-badges.dev-card-status[data-empty="1"]');
+  assert.match(r, /display: none/,
+    'display:none takes the 5px margin-top with it — a height of 0 would not');
+  // Higher specificity than .dev-card-badges, so source order in app.css
+  // cannot resurrect the margin.
+  assert.ok(CSS.indexOf('\n.dev-card-badges {')
+    < CSS.indexOf('\n.dev-card-badges.dev-card-status[data-empty="1"] {'),
+    'and it comes after the base rule anyway');
+  // THE regression this whole design exists to prevent: the action band's cap
+  // is an adjacent-sibling rule, so the flagged band must stay in the DOM.
+  // display:none preserves sibling adjacency; removing the node would not.
+  const cap = rule('.dev-card-status + .gc-card-actions');
+  assert.match(cap, /max-height: 24px/, 'the action-band cap still exists…');
+  assert.match(SRC, /dev-card-badges dev-card-status"\$\{[^}]*data-empty/,
+    '…and the composer still emits the band either way, flag or no flag');
 });
 
 test('the action band is capped only where it follows a dense status band', () => {

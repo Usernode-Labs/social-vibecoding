@@ -2443,6 +2443,23 @@ const AppView = {
   // chip. `linkedHtml` (the Closes-#N pills) joins that band too, ahead of
   // the chips and OUTSIDE the chip cap: it used to ride at the end of the
   // meta line, where it was the first thing that line's ellipsis ate.
+  //
+  // #1139 narrows the reserve by exactly one case: a status band with NO
+  // VISIBLE pill in it is still emitted (the node has to stay — app.css caps
+  // the action band through `.dev-card-status + .gc-card-actions`, and three
+  // dapp.json checks walk that chain) but is stamped `data-empty="1"` and
+  // hidden by CSS. Bands 1, 2 and 4 stay unconditionally reserved, so a
+  // column can differ by at most this one row. The common case is an issue
+  // card nobody has voted on, claimed or commented on — on most apps, that
+  // is every issue card, and 22px + 5px of blank band on each was the most
+  // visible thing on the board.
+  //
+  // Emptiness is computed from the INPUTS, never from `badges`: the 💬 badge
+  // is emitted at count 0 carrying Tailwind's `hidden` (so live bumps have a
+  // target — see _devChatBadge), which makes the band's HTML string non-empty
+  // on every issue card. A string test, or `:empty` in CSS, would therefore
+  // never fire. Everything else in the band returns '' when it has nothing to
+  // say, so a truthy check on the chips is enough for them.
   _cardContentHtml(opts) {
     const o = opts || {};
     const dense = o.dense !== false;
@@ -2459,6 +2476,15 @@ const AppView = {
       pill: dense ? o.pill : '',
       lead: dense ? o.linkedHtml : '',
     });
+    // #1139: does the band have anything a reader can actually see? `chips`
+    // already folds in `inlinePill` / `linkedHtml` for the non-dense head;
+    // the dense branch passes those two through separate opts, so they are
+    // checked here. A 0 chat count is NOT content (the badge is hidden).
+    const statusHasContent = chips.some(Boolean)
+      || (dense && !!o.pill)
+      || (dense && !!o.linkedHtml)
+      || (o.chatCount !== null && o.chatCount !== undefined
+          && (parseInt(o.chatCount) || 0) > 0);
     const titleCls = dense ? 'dev-card-title dev-card-title-clamp' : 'dev-card-title';
     // Dense: reserved bands, emitted whether or not they carry anything, so
     // every card in a column has its rows at the same height. Non-dense (the
@@ -2466,9 +2492,14 @@ const AppView = {
     const metaRow = dense
       ? `<div class="dev-card-meta">${o.metaHtml || ''}</div>`
       : (o.metaHtml ? `<div class="dev-card-meta">${o.metaHtml}</div>` : '');
+    // The class attribute is deliberately left byte-identical in both cases —
+    // the flag rides as a data attribute so existing selectors (unit tests,
+    // dapp.json, bumpThreadBadge) keep matching, and
+    // `.dev-card-badges.dev-card-status[data-empty="1"]` outranks
+    // `.dev-card-badges` regardless of where it lands in app.css.
     const statusRow = dense
-      ? `<div class="dev-card-badges dev-card-status">${badges}</div>`
-      : (badges ? `<div class="dev-card-badges">${badges}</div>` : '');
+      ? `<div class="dev-card-badges dev-card-status"${statusHasContent ? '' : ' data-empty="1"'}>${badges}</div>`
+      : (statusHasContent ? `<div class="dev-card-badges">${badges}</div>` : '');
     const actionRow = dense
       ? (o.actions || '<div class="gc-card-actions"></div>')
       : (o.actions || '');
@@ -9738,6 +9769,13 @@ const AppView = {
       el.innerHTML = `&#128172; ${n}`;
       el.classList.remove('hidden', 'bg-zinc-500/10', 'text-zinc-500');
       el.classList.add('bg-violet-500/10', 'text-violet-400');
+      // #1139: this is the one path that makes a pill visible WITHOUT a
+      // repaint, so it owns clearing the band's empty flag — otherwise the
+      // freshly-revealed 💬 badge would sit inside a display:none row until
+      // the board next re-rendered. Every other pill change goes through
+      // _repaintCards, which recomputes the flag from the render inputs.
+      const band = el.closest('.dev-card-status');
+      if (band) band.removeAttribute('data-empty');
     }
   },
 
