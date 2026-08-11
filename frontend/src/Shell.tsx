@@ -47,6 +47,7 @@
 import { Button } from '@/components/ui/button';
 import { LandingScreen } from './features/auth/landing';
 import { LoginScreen } from './features/auth/login';
+import { RegisterScreen } from './features/auth/register';
 import { Dialogs } from './features/dialogs';
 import { OfflineBanner, ViewAsNonAdminBanner } from './features/shell/banners';
 
@@ -2094,97 +2095,8 @@ export function Shell() {
           sub-view, and the #reset-password/<token> redeem view.
       */}
       <LoginScreen />
-      {/* Register screen (activation-code flow) */}
-      <main
-        id="auth-register-screen"
-        className="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll bg-white dark:bg-zinc-950"
-      >
-        <a
-          href="#"
-          data-auth-back=""
-          className="fixed left-4 z-10 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400"
-          style={{ top: "calc(env(safe-area-inset-top, 0px) + 1rem)" }}
-        >
-          &larr; Back
-        </a>
-        <div className="min-h-full flex items-center justify-center">
-          <div className="w-full max-w-sm px-6 py-16">
-            <h1 className="text-2xl font-bold text-center mb-1">
-              Usernode Social Vibecoding
-            </h1>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 text-center mb-2 italic">
-              A place where users own and build apps together
-            </p>
-            <p className="text-sm text-zinc-500 dark:text-zinc-400 text-center mb-8">
-              Create your account
-            </p>
-            <form id="register-form" className="space-y-4">
-              <div>
-                <label htmlFor="reg-code" className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-                  Activation Code
-                </label>
-                <input
-                  id="reg-code"
-                  name="code"
-                  type="text"
-                  required={true}
-                  autoComplete="off"
-                  className="w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent font-mono"
-                  placeholder="enter activation code"
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="reg-username"
-                  className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
-                >
-                  Username
-                </label>
-                <input
-                  id="reg-username"
-                  name="username"
-                  type="text"
-                  required={true}
-                  autoComplete="username"
-                  className="w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-                  placeholder="choose a username"
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="reg-password"
-                  className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
-                >
-                  Password
-                </label>
-                <input
-                  id="reg-password"
-                  name="password"
-                  type="password"
-                  required={true}
-                  autoComplete="new-password"
-                  className="w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-                  placeholder="choose a password"
-                />
-              </div>
-              <div id="reg-error" className="text-red-400 text-sm hidden">
-              </div>
-              <button
-                type="submit"
-                className="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white"
-              >
-                Register
-              </button>
-            </form>
-            <p className="text-center text-sm text-zinc-500 dark:text-zinc-400 mt-6">
-              Already have an account?
-              <a href="#login" className="text-violet-400 hover:text-violet-300">
-                Log in
-              </a>
-            </p>
-          </div>
-        </div>
-      </main>
+      {/* Register screen (activation-code flow) — features/auth/register.tsx */}
+      <RegisterScreen />
       {/*
           Waiting-room screen (platform-access gate, onboarding flow
           alignment): an authed session without hasPlatformAccess lands

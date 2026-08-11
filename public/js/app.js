@@ -3366,6 +3366,7 @@ const App = {
     // #1080 chunk C — the anonymous shell's screens, converted in order.
     'auth-landing-screen',
     'auth-login-screen',
+    'auth-register-screen',
   ],
 
   // The publish/read half of that seam. The state is a plain object on

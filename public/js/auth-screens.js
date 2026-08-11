@@ -756,44 +756,11 @@
     _walletDetect() {},
 
     // ── Register (activation-code flow) ──────────────────────────────
-
-    _registerOnShow(seg) {
-      // #register/<code> deep link (old /register.html?code=<code>).
-      const codeEl = byId('reg-code');
-      if (seg && codeEl && !codeEl.value) {
-        codeEl.value = decodeURIComponent(seg);
-        const userEl = byId('reg-username');
-        if (userEl) userEl.focus();
-      }
-    },
-
-    _wireRegister() {
-      const form = byId('register-form');
-      const errorEl = byId('reg-error');
-      form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        errorEl.classList.add('hidden');
-        if (blockedOffline(errorEl)) return;
-        const code = byId('reg-code').value.trim();
-        const username = byId('reg-username').value.trim();
-        const password = byId('reg-password').value;
-        try {
-          const res = await fetch('/api/auth/register', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ code, username, password }),
-          });
-          const data = await res.json();
-          if (!res.ok) {
-            showError(errorEl, data.error || 'Registration failed');
-            return;
-          }
-          AuthScreens.finishLogin();
-        } catch {
-          showError(errorEl, 'Network error');
-        }
-      });
-    },
+    //
+    // #1080 chunk C: React (frontend/src/features/auth/register.tsx). It
+    // patches the entry points below at hydration, before DOMContentLoaded.
+    _wireRegister() {},
+    _registerOnShow() {},
 
     // ── Waiting room (platform-access gate) ──────────────────────────
 
@@ -886,22 +853,13 @@
     });
   });
 
-  // Coming back online re-enables the controls via CSS (body.is-offline
-  // drops off), so the "you're offline" error left on screen would be the
-  // only thing still saying otherwise. Clear it.
-  // (Guarded: the anonymous-shell tests eval this file in a bare sandbox
-  // whose `window` is not an event target.)
-  if (typeof window.addEventListener === 'function') {
-    window.addEventListener('usernode:offline-change', (e) => {
-      if (!e.detail || e.detail.offline !== false) return;
-      // The login screen's three slots moved into React with it (#1080
-      // chunk C); the register screen still owns its own.
-      ['reg-error'].forEach((id) => {
-        const el = byId(id);
-        if (el && /offline/i.test(el.textContent || '')) hideError(el);
-      });
-    });
-  }
+  // Coming back online used to be handled here: a `usernode:offline-change`
+  // listener cleared the stale "you're offline" message from every
+  // credential screen's error slot, since the CSS re-enables the controls
+  // and nothing else would say the message no longer applied. Every one of
+  // those slots — login, otp, wallet, register — now belongs to a React
+  // screen that owns its own listener (#1080 chunk C), so there is nothing
+  // left out here to clear.
 
   window.AuthScreens = AuthScreens;
 })();
