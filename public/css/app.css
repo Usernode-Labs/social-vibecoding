@@ -2863,18 +2863,28 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
    <span>, so they get the pill's geometry with no pointer affordance. */
 span.gc-vote-btn-icon { cursor: default; }
 
-/* ── The card head: headline + badges, with ⋯ pinned top-right ──────
+/* ── The card head: type icon + headline + badges, ⋯ pinned top-right ──
    The ⋯ trigger lives in the card's TOP-RIGHT corner rather than in the
    action row: the corner is where "more about this card" belongs, and it
    keeps the action row to the one or two things you'd actually do. Its own
    flex column means it can never collide with the 💬 badge (inside the
    wrapping badge row to its left) or the drag grip (a gutter outside the
    card entirely), and the chevron stays outside this box as the card's own
-   last child. */
+   last child.
+
+   The type icon leads THIS row, flex-start so it sits on the title rather
+   than halfway down the card (which is where being a sibling of the whole
+   content column used to put it on any card with a status pill or actions
+   under the title). Everything below the head — .dev-status-row,
+   .gc-card-actions, the issue card's claim list — is a sibling of the head,
+   not of the icon, so it starts at the card's padding edge and gets the
+   card's full width. The gap is 12px — the same gap-3 the icon had as a
+   card-level sibling — so the title column does not move sideways at all;
+   only the rows beneath it do. */
 .dev-card-head {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
+  gap: 12px;
 }
 .dev-card-head-main {
   flex: 1 1 auto;

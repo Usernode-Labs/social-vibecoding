@@ -101,6 +101,15 @@ const AppView = {
   // Recently-merged rows — so the whole page reads as one uniform list
   // (same row structure, padding, border, radius). Tappable cards add
   // DEV_CARD_HOVER_CLS on top.
+  //
+  // The direct children are the content column and the right rail — the type
+  // icon is NOT one of them on any card that has rows below its title: it is
+  // handed to _cardContentHtml, which puts it on the head row so it aligns
+  // with the title (see the note there). `items-center` therefore only
+  // governs the rail / trailing affordance, which stays vertically centred.
+  // The two-line label cards with nothing under the title (General chat, an
+  // archived session) do still pass the icon as a sibling: there the icon and
+  // the whole content column are the same height, so centred IS title-aligned.
   DEV_CARD_CLS: 'w-full flex items-center gap-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 px-3.5 py-3 text-left transition-colors',
   // Trailing chevron marking a card as tappable (same affordance as the
   // General chat card).
@@ -2287,8 +2296,17 @@ const AppView = {
   //             the whole width is what makes the fill legible at a glance.
   //   actions — the ≤2 text pills plus the icon Preview.
   //
-  // opts: { headlineHtml, badges, chatCount, uncapped, pill, inlinePill,
+  // opts: { icon, headlineHtml, badges, chatCount, uncapped, pill, inlinePill,
   //         actions, extraHtml }
+  //
+  // `icon` — the type chip. It is passed IN here (rather than emitted as the
+  // card's own first flex child, which is where it used to live) so that it
+  // sits on the HEAD row, top-aligned with the title. As a sibling of the
+  // whole content column it was centred against the card's full height —
+  // i.e. floating halfway down next to the status pill on a busy card — and
+  // it pushed every row below the title into an indented column. Now the
+  // pill row, the action row and `extraHtml` all start at the card's own
+  // padding edge and use its full width.
   //
   // The ⋯ trigger is NOT here — it lives in the card's right rail
   // (_cardRailHtml) so it shares a column with the chevron instead of
@@ -2309,6 +2327,7 @@ const AppView = {
     const pillRow = o.pill ? `<div class="dev-status-row">${o.pill}</div>` : '';
     return `<div class="flex-1 min-w-0">
           <div class="dev-card-head">
+            ${o.icon || ''}
             <div class="dev-card-head-main">
               <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
                 ${o.headlineHtml || ''}
@@ -6268,8 +6287,8 @@ const AppView = {
     return `<div data-session-chip="${s.id}" role="button" tabindex="0"
       class="${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}${mutedCls}"
       title="${s.busy ? 'AI is working — ' : ''}${label}">
-      ${AppView._devCardIcon('session')}
       ${AppView._cardContentHtml({
+        icon: AppView._devCardIcon('session'),
         headlineHtml: AppView._cardHeadlineHtml(label, subtitle),
         badges: [statusTag, AppView._sessionVenueChipHtml(s), AppView.issueChipsHtml(s.linked_issues)],
         chatCount: null,
@@ -6297,8 +6316,8 @@ const AppView = {
     const chevron = noNav ? '' : AppView.DEV_CARD_CHEVRON;
     const actions = noNav ? '' : AppView._cardActionsHtml({ preview });
     return `<div${nav} class="${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" title="${label}">
-      ${AppView._devCardIcon('session')}
       ${AppView._cardContentHtml({
+        icon: AppView._devCardIcon('session'),
         headlineHtml: AppView._cardHeadlineHtml(label, `${owner} is working on this`),
         badges: [statusTag, AppView.issueChipsHtml(s.linked_issues)],
         chatCount: s.chat_count,
@@ -7034,8 +7053,8 @@ const AppView = {
 
     return `
       <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''} data-ref-pr="${pr.pr_number || pr.id}"${noNav ? '' : ` data-proposal-row="${pr.id}" title="Open this proposal's discussion"`}>
-        ${AppView._devCardIcon(isMerged ? 'done' : (mine ? 'proposalMine' : 'proposal'), mine && !isMerged ? { title: 'This is your PR — open its session.' } : undefined)}
         ${AppView._cardContentHtml({
+          icon: AppView._devCardIcon(isMerged ? 'done' : (mine ? 'proposalMine' : 'proposal'), mine && !isMerged ? { title: 'This is your PR — open its session.' } : undefined),
           headlineHtml: AppView._cardHeadlineHtml(
             titleHtml, metaParts.join(' · ') + (closesPills ? ` ${closesPills}` : '')),
           badges,
@@ -8376,8 +8395,8 @@ const AppView = {
 
     return `
       <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}${busy ? ' opacity-70' : ''}" data-gov-row="${issue.id}"${refIssueN ? ` data-ref-issue="${refIssueN}"` : ''}${noNav ? '' : ' title="Open this proposal\'s discussion"'}>
-        ${AppView._devCardIcon('gov')}
         ${AppView._cardContentHtml({
+          icon: AppView._devCardIcon('gov'),
           headlineHtml: AppView._cardHeadlineHtml(escapeHtml(titleText), metaParts.join(' · ')),
           badges: [applyBadge],
           chatCount: govChatN,
@@ -9596,8 +9615,8 @@ const AppView = {
 
     return `
       <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" data-ref-issue="${n}"${noNav ? '' : ` data-issue-row="${n}" title="Open this issue's discussion"`}>
-        ${icon}
         ${AppView._cardContentHtml({
+          icon,
           headlineHtml: AppView._cardHeadlineHtml(
             `${escapeHtml(issue.title)}${editTitleBtn}`, metaParts.join(' · '),
             `${canEditTitle ? ` data-issue-title="${n}"` : ''} title="${escapeHtml(rowTitle)}"`),
@@ -10026,8 +10045,8 @@ const AppView = {
 
     return `
         <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-ref-pr="${pr.pr_number || pr.id}" data-proposal-row="${pr.id}" title="Open this proposal's discussion">
-          ${AppView._devCardIcon('done')}
           ${AppView._cardContentHtml({
+            icon: AppView._devCardIcon('done'),
             headlineHtml: AppView._cardHeadlineHtml(
               mergedLabel, metaParts.join(' · ') + (closes ? ` ${closes}` : ''),
               ` title="${escapeHtml(mergedQuoteTitle)}"`),
@@ -10083,8 +10102,8 @@ const AppView = {
     // No actions at all on a settled close-issue row, so no ⋯ either.
     return `
         <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-gov-row="${row.id}"${issueN ? ` data-ref-issue="${issueN}"` : ''} title="Open this proposal's discussion">
-          ${AppView._devCardIcon('done')}
           ${AppView._cardContentHtml({
+            icon: AppView._devCardIcon('done'),
             headlineHtml: AppView._cardHeadlineHtml(
               `${escapeHtml(titleText)}${who}`,
               `Issue close · ${issueRef}${how}${date ? ` · ${date}` : ''}`,
