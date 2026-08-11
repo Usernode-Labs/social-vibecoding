@@ -170,15 +170,27 @@ test('openInProgressTarget dispatches to the existing navigation handlers', () =
 
 // ── 3. the issue row: chip + claim button + admin list ──────────────────
 
-// The claim toggle is a ⋯ descriptor now, not an inline pill — the card's
-// action budget is one state-driven primary. The CHIP stays on the card
-// face: it's an at-a-glance state, and one of the four badge slots.
+// The claim toggle spent one release as a ⋯ descriptor and is back on the card
+// FACE, as a pill in the reserved action band: the four-band card gives every
+// row an action band, and claiming is what a reader does with an issue before
+// any code exists. The CHIP is unaffected — it stays one of the four badge
+// slots, an at-a-glance state rather than an action.
+//
+// So the label is read off the action band, and the ⋯ must NOT also carry it.
 function claimLabels(AppView, html) {
+  const row = html.match(/<div class="gc-card-actions">([\s\S]*?)<\/div>/);
+  const labels = row
+    ? (row[1].match(/>(?:Mark|Clear) in progress</g) || []).map((s) => s.slice(1, -1))
+    : [];
   const m = html.match(/data-card-menu="([^"]+)"/);
-  if (!m) return [];
-  return (AppView._cardMenus[m[1]] || [])
-    .map((it) => it.label)
-    .filter((l) => /in progress/i.test(l));
+  const inMenu = m
+    ? (AppView._cardMenus[m[1]] || []).map((it) => it.label)
+      .filter((l) => /in progress/i.test(l))
+    : [];
+  // join(), not deepEqual: _cardMenus is built inside the vm realm, so a
+  // cross-realm array fails deepStrictEqual on its prototype alone.
+  assert.equal(inMenu.join('|'), '', 'the promoted toggle is not duplicated in ⋯');
+  return labels;
 }
 
 test('issue row renders the chip and offers "Mark in progress" when the viewer holds no claim', () => {
