@@ -2177,7 +2177,7 @@ function appRoutes(config) {
   });
 
   // GET /api/apps/:slug/contributors — the ranked Contributors section on
-  // the app-details page (#919: #apps/<slug>, public/js/browse.js).
+  // the app-details page (#919: #apps/<slug>, frontend/src/features/apps/browse.js).
   //
   // VIEW-level, matching GET /api/apps/:slug/merged (routes/votes.js): this
   // is read-only history, so a non-collaborator who can see the app gets

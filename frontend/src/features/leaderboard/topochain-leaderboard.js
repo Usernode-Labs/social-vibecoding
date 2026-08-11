@@ -2,13 +2,13 @@
 // its own (#topochain-leaderboard-screen) until the header slim-down made
 // it the SECOND TAB of the Leaderboard screen: it renders into
 // #topochain-leaderboard-root inside #leaderboard-screen, and open() /
-// close() are called by the Leaderboard module (public/js/leaderboard.js)
+// close() are called by the Leaderboard module (./leaderboard.js)
 // when its section flips, not by a navigate* pair in app.js. The legacy
 // #topochain/leaderboard hash still lands here — the router aliases it to
 // #leaderboard/topochain.
 //
 // The event picker and the event hero this module used to own moved UP into
-// the screen-level bar owned by public/js/topochain-event-context.js when the
+// the screen-level bar owned by ./topochain-event-context.js when the
 // challenges tab joined the screen — one selection, shared with that tab, so
 // the standings and the challenge list can never describe different weeks.
 // This module subscribes to it and keeps only what is genuinely
@@ -592,4 +592,10 @@ const TopochainLeaderboard = {
   },
 };
 
-window.TopochainLeaderboard = TopochainLeaderboard;
+// Still published as a global. This module rides in the React bundle as of
+// #1083 chunk F, but ./leaderboard.js's lazy mount and
+// app.js's pull-to-refresh
+// all still reach it by name. The guard is for the SSG prerender pass —
+// frontend/scripts/build-shell.mjs evaluates the island's whole module graph
+// in Node, where there is no window.
+if (typeof window !== 'undefined') window.TopochainLeaderboard = TopochainLeaderboard;

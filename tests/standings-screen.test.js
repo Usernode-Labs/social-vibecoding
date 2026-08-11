@@ -34,10 +34,11 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
 const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
-const lbJs = fs.readFileSync(path.join(root, 'public/js/leaderboard.js'), 'utf8');
-const topoJs = fs.readFileSync(path.join(root, 'public/js/topochain-leaderboard.js'), 'utf8');
-const chJs = fs.readFileSync(path.join(root, 'public/js/topochain-challenges.js'), 'utf8');
-const ctxJs = fs.readFileSync(path.join(root, 'public/js/topochain-event-context.js'), 'utf8');
+const lbJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/leaderboard.js'), 'utf8');
+const island = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/index.tsx'), 'utf8');
+const topoJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/topochain-leaderboard.js'), 'utf8');
+const chJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/topochain-challenges.js'), 'utf8');
+const ctxJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/topochain-event-context.js'), 'utf8');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'dapp.json'), 'utf8'));
 
 // ─── Shell ───────────────────────────────────────────────────────────────
@@ -89,10 +90,15 @@ test('Leaderboard.section defaults to the standings', () => {
     "the screen opens on the primary standings tab, not on Kudos");
 });
 
+// The strip's markup moved to the island in #1083 chunk F — the module
+// publishes the active section and React renders the buttons — so the labels
+// and keys are asserted where they now live. `_renderSectionTabs` is still the
+// entry point and is checked to have become a publish rather than a write, so
+// the two halves can't drift back into both rendering.
 test('the tab strip leads with the standings, labelled simply "Leaderboard"', () => {
-  const fn = lbJs.slice(lbJs.indexOf('  _renderSectionTabs() {'), lbJs.indexOf('  // Re-fetch every cached pane'));
-  assert.ok(fn.length > 0, '_renderSectionTabs located');
-  const labels = [...fn.matchAll(/\{ key: '([a-z]+)', label: '([^']+)' \}/g)]
+  const list = island.slice(island.indexOf('const SECTION_TABS = ['), island.indexOf('];', island.indexOf('const SECTION_TABS = [')));
+  assert.ok(list.length > 0, 'SECTION_TABS located in the island');
+  const labels = [...list.matchAll(/\{ key: '([a-z]+)', label: '([^']+)' \}/g)]
     .map((m) => [m[1], m[2]]);
   assert.deepEqual(labels, [
     ['topochain', 'Leaderboard'],
@@ -100,8 +106,26 @@ test('the tab strip leads with the standings, labelled simply "Leaderboard"', ()
     ['challenges', 'Challenges'],
   ], 'standings first and called Leaderboard; the kudos board is the Kudos tab');
   // The KEYS are the platform's vocabulary for these tabs (hash aliases in
-  // app.js, dapp.json checks) and must survive the relabelling.
-  assert.match(fn, /data-standings-tab="\$\{s\.key\}"/, 'tab keys are unchanged');
+  // app.js, dapp.json checks) and must survive both the relabelling and the
+  // move: they are the attribute dapp.json selects on.
+  assert.match(island, /data-standings-tab=\{s\.key\}/, 'tab keys are unchanged');
+  // Clicking a trigger goes back into the module, exactly as the innerHTML'd
+  // button's own listener did.
+  assert.match(island, /window\.Leaderboard\?\._setSection\?\.\(key\)/,
+    'a trigger reports back through _setSection, which owns the hash and the panes');
+});
+
+test('_renderSectionTabs publishes instead of writing #standings-tabs', () => {
+  const fn = lbJs.slice(lbJs.indexOf('  _renderSectionTabs() {'), lbJs.indexOf('  // Re-fetch every cached pane'));
+  assert.ok(fn.length > 0, '_renderSectionTabs located');
+  // The host is React's now, and the migration's rule is that no public/js
+  // module may write into a React-owned subtree.
+  assert.doesNotMatch(fn, /innerHTML/, 'the strip is rendered by the island, not written here');
+  assert.doesNotMatch(fn, /getElementById\('standings-tabs'\)/,
+    'the module must not reach into the React-owned host at all');
+  assert.match(fn, /store\.section = Leaderboard\.section;/, 'it publishes the active section');
+  assert.match(fn, /for \(const listener of \[\.\.\.store\.listeners\]\)/,
+    'and notifies the island, which re-renders the strip');
 });
 
 test('_setSection validates its input and syncs the hash', () => {

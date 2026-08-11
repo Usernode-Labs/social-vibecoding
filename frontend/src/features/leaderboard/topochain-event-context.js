@@ -1,6 +1,6 @@
 // Shared event selection for the Leaderboard screen's two Topochain-domain
-// panes (public/js/topochain-leaderboard.js and
-// public/js/topochain-challenges.js).
+// panes (./topochain-leaderboard.js and
+// ./topochain-challenges.js).
 //
 // Why this module exists: before the leaderboard merge, the standings screen
 // and the seasons screen each fetched GET /api/v4/season-events?include_past=1
@@ -340,4 +340,10 @@ const TopochainEventContext = {
   },
 };
 
-window.TopochainEventContext = TopochainEventContext;
+// Still published as a global. This module rides in the React bundle as of
+// #1083 chunk F, but ./leaderboard.js's lazy mount and both
+// Topochain-domain panes
+// all still reach it by name. The guard is for the SSG prerender pass —
+// frontend/scripts/build-shell.mjs evaluates the island's whole module graph
+// in Node, where there is no window.
+if (typeof window !== 'undefined') window.TopochainEventContext = TopochainEventContext;

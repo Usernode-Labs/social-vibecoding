@@ -45,7 +45,7 @@ const { PANEL_KEYS, panelRegistryPublic, widgetSize } = require('./home-panels')
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
 // The canvas. Kept in step with HomeLayout.MAX_COLS / MAX_ROWS in
-// public/js/home-layout.js and with the CHECK constraints on
+// frontend/src/features/home/home-layout.js and with the CHECK constraints on
 // user_home_layout — tests/home-layout-api.test.js pins all three.
 const MAX_COLS = 5;
 const MAX_ROWS = 8;

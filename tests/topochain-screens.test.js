@@ -27,30 +27,46 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
 const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
-const leaderboardJs = fs.readFileSync(path.join(root, 'public/js/topochain-leaderboard.js'), 'utf8');
-const challengesJs = fs.readFileSync(path.join(root, 'public/js/topochain-challenges.js'), 'utf8');
-const contextJs = fs.readFileSync(path.join(root, 'public/js/topochain-event-context.js'), 'utf8');
+const leaderboardJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/topochain-leaderboard.js'), 'utf8');
+const challengesJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/topochain-challenges.js'), 'utf8');
+const contextJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/topochain-event-context.js'), 'utf8');
+const island = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/index.tsx'), 'utf8');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'dapp.json'), 'utf8'));
 
 // ─── index.html: script registration + screen hosts ─────────────────────
 
-test('all three module scripts are registered in index.html, before app.js', () => {
-  const lbTag = '<script src="/js/topochain-leaderboard.js"></script>';
-  const chTag = '<script src="/js/topochain-challenges.js"></script>';
-  const ctxTag = '<script src="/js/topochain-event-context.js"></script>';
-  const evTag = '<script src="/js/topochain-events.js"></script>';
-  for (const [tag, name] of [[lbTag, 'standings'], [chTag, 'challenges'],
-    [ctxTag, 'event-context'], [evTag, 'events helper']]) {
-    assert.ok(html.includes(tag), `the ${name} module is loaded by the shell`);
+// #1083 chunk F moved all three modules into the React bundle with the screen
+// that hosts them, so "registered in index.html before app.js" became "imported
+// by the island, and deferred past app.js by the entry's type=module". Both
+// halves are asserted: the tags must be GONE (two copies of a module racing to
+// publish the same global is the failure this catches) and the island must
+// actually import each one.
+test('all three modules arrive with the leaderboard island, and the shared rule still loads first', () => {
+  for (const src of ['/js/topochain-leaderboard.js', '/js/topochain-challenges.js',
+    '/js/topochain-event-context.js']) {
+    assert.ok(!html.includes(`<script src="${src}">`),
+      `${src} is in the bundle now — a classic tag would load it twice`);
   }
-  const appTagIdx = html.indexOf('<script src="/js/app.js"></script>');
-  assert.ok(appTagIdx > html.indexOf(lbTag), 'standings script loads before app.js');
-  assert.ok(appTagIdx > html.indexOf(chTag), 'challenges script loads before app.js');
-  assert.ok(appTagIdx > html.indexOf(ctxTag), 'event-context script loads before app.js');
-  // The context module feature-detects TopochainEvents at call time, but
-  // keeping the shared rule first matches how every other pair is ordered.
-  assert.ok(html.indexOf(evTag) < html.indexOf(ctxTag),
-    'the shared pickDefault rule loads before the module that consumes it');
+  for (const spec of ['./topochain-leaderboard.js', './topochain-challenges.js',
+    './topochain-event-context.js']) {
+    assert.ok(island.includes(`import '${spec}';`),
+      `the island must import ${spec}, or nothing publishes its global`);
+  }
+  // The shared pickDefault rule is still a classic script: it has no DOM of its
+  // own, so chunk F had no region to move it with.
+  const evTag = '<script src="/js/topochain-events.js"></script>';
+  assert.ok(html.includes(evTag), 'the events helper is loaded by the shell');
+  // ...and the bundle is deferred past it, which is what "loads first" means
+  // now. The entry sits in <head>, so `type="module"` is the whole guarantee.
+  const entry = html.match(/<script([^>]*)src="\/shell\/assets\/shell\.js"([^>]*)>/);
+  assert.ok(entry, 'the shell loads the React bundle');
+  assert.match(entry[0], /type="module"/,
+    'the entry must stay type=module: that is what defers the three modules past '
+    + 'the classic topochain-events.js they read window.TopochainEvents from');
+  // app.js is still classic and still reaches all three by name, from a hash
+  // route restored after DOMContentLoaded — i.e. after the deferred bundle.
+  assert.ok(html.includes('<script src="/js/app.js"></script>'),
+    'app.js is still a classic script');
   // The retired per-screen module is gone from the shell entirely. Match
   // the <script> tag, not the bare path — the tombstone comment explaining
   // where the file went names it, which is not a registration.

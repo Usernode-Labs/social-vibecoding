@@ -16,6 +16,12 @@
 //      a screen silently stopped switching.
 //   2. `_showOnlyScreen` must keep its pre-seam behaviour for every id that
 //      has NOT been converted, including the `keepAlso` escape hatch.
+//   3. An UNPUBLISHED converted root must read as whatever its markup shipped
+//      with, on both sides of the seam: `App._isScreenVisible` falls back to
+//      the DOM, and the island's `useVisibilityHiddenClass(..., shippedVisible)`
+//      applies the same default. #home-screen (#1083 chunk F) is the first root
+//      where those differ from a flat `false`, and the first that stays
+//      unpublished in a steady state.
 //
 // Run with: node --test tests/visibility-store.test.js
 
@@ -75,7 +81,10 @@ function legacyHalf({ reactOwned = [], elements = {} } = {}) {
       if (el) el.toggle('hidden', !visible);
     },
     _isScreenVisible(id) {
-      if (App.REACT_SCREEN_IDS.includes(id)) return App.Visibility.read(id) === true;
+      if (App.REACT_SCREEN_IDS.includes(id)) {
+        const published = App.Visibility.read(id);
+        if (published !== undefined) return published === true;
+      }
       const el = classLists[id];
       return !!el && !el.contains('hidden');
     },
@@ -134,8 +143,14 @@ test('an unpublished id reads as undefined, not false', () => {
   // visibility its prerendered markup shipped with when nothing has published
   // yet. Defaulting to `false` would hide it on the hydrating render and
   // produce a mismatch, which console.errors and fails proposal checks.
-  const { App } = legacyHalf({ reactOwned: ['settings-screen'] });
+  const { App } = legacyHalf({
+    reactOwned: ['settings-screen'],
+    elements: { 'settings-screen': true },
+  });
   assert.equal(App.Visibility.read('settings-screen'), undefined);
+  // And the read-side helper answers with the markup, which for this root
+  // means hidden. Same answer as before the fallback existed — see the
+  // shipped-visible case below for where the two diverge.
   assert.equal(App._isScreenVisible('settings-screen'), false);
 });
 
@@ -179,13 +194,46 @@ test('_showOnlyScreen is unchanged for unconverted screens, keepAlso included', 
 test('_departingScreen-style reads see converted and unconverted roots alike', () => {
   const { App } = legacyHalf({
     reactOwned: ['settings-screen'],
-    elements: { 'home-screen': false, 'settings-screen': false },
+    elements: { 'home-screen': false, 'settings-screen': true },
   });
   assert.equal(App._isScreenVisible('home-screen'), true);
   assert.equal(App._isScreenVisible('settings-screen'), false,
-    'a converted root is invisible until something publishes it');
+    'a converted root that ships hidden stays hidden until something publishes it');
   App.Visibility.publish('settings-screen', true);
   assert.equal(App._isScreenVisible('settings-screen'), true);
+  App.Visibility.publish('settings-screen', false);
+  assert.equal(App._isScreenVisible('settings-screen'), false,
+    'once published, the store wins over the markup in both directions');
+});
+
+test('an unpublished converted root that SHIPS VISIBLE reads as visible', () => {
+  // #home-screen, the case #1083 chunk F introduced. Every converted root
+  // before it shipped hidden, so "nobody published" and "the DOM says hidden"
+  // gave the same answer and the fallback was invisible. Home ships visible
+  // AND reaches a steady state where nothing has published: the no-hash
+  // branch of restoreFromHash is already-on-home, so it calls Home.load()
+  // without a screen swap. Answering `false` there would switch off every
+  // `_isScreenVisible('home-screen')` guard — the WS app-event grid
+  // refreshes, build-log.js, notifications.js — on a plain "/" boot.
+  const { App } = legacyHalf({
+    reactOwned: ['home-screen'],
+    elements: { 'home-screen': false },
+  });
+  assert.equal(App.Visibility.read('home-screen'), undefined,
+    'the precondition: a "/" boot never publishes home');
+  assert.equal(App._isScreenVisible('home-screen'), true);
+
+  // The island renders its `hidden` class from the same store with the same
+  // shipped-visible default, so the two halves cannot disagree here.
+  assert.match(storeTs, /useVisibilityHiddenClass/,
+    'the React half must expose the hook that applies that same default');
+  assert.match(
+    fs.readFileSync(
+      path.join(ROOT, 'frontend', 'src', 'features', 'home', 'index.tsx'), 'utf8',
+    ),
+    /useVisibilityHiddenClass\(\s*screenRef,\s*'home-screen',\s*true\s*\)/,
+    'the home island must pass shippedVisible=true, matching the DOM fallback',
+  );
 });
 
 test('app.js routes its screen swaps through the seam, not raw classList', () => {
