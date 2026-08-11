@@ -23,7 +23,15 @@ test('worker runtime contract invalidates warm images from before the new runner
   const workerHost = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'worker.js'), 'utf8');
   assert.match(dockerfile, /COPY classify-codex-resume\.js \/usr\/local\/bin\/classify-codex-resume\.js/);
   assert.match(dockerfile, /COPY build-codex-model-catalog\.js \/usr\/local\/bin\/build-codex-model-catalog\.js/);
-  assert.match(dockerfile, /codex debug models > \/usr\/local\/share\/usernode-codex-bundled-models\.json/);
+  assert.match(dockerfile,
+    /codex debug models --bundled > \/usr\/local\/share\/usernode-codex-bundled-models\.json/,
+    'the image extracts only the pinned CLI catalog and never performs a build-time refresh');
+  assert.match(dockerfile,
+    /RUN install -d -m 700 \/var\/lib\/usernode-codex-bootstrap \\\n\s*&& CODEX_HOME=\/var\/lib\/usernode-codex-bootstrap \\\n\s*codex debug models --bundled/,
+    'Codex receives an existing private home before the deterministic catalog export');
+  assert.match(dockerfile,
+    /Array\.isArray\(c\.models\).*base_instructions.*Codex model catalog has no base instructions/,
+    'the image build validates the bundled catalog before accepting it');
 
   const match = workerHost.match(/const WORKER_BOOTSTRAP_ENV_VERSION = '(v\d+)'/);
   assert.ok(match, 'warm-worker contract version is declared');
