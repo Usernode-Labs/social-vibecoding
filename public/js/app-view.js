@@ -1833,8 +1833,14 @@ const AppView = {
     // _loadDevData reset _merged) won't be in any cached list. Rather than
     // bounce to the forum, fetch just that one proposal on demand and keep
     // it in a dedicated cache that survives WS-driven _loadDevData resets.
-    if (ok && ref.kind === 'proposal' && !AppView._findTopicItem()) {
-      await AppView._fetchProposalById(ref.id);
+    // (#1115) The same applies to an APPLIED close-issue proposal: those
+    // rows live in the very same keyset-paginated Completed stream, and
+    // _govProposals only ever holds OPEN governance rows — so every settled
+    // close proposal outside the freshly-reset first page was a dead click.
+    if (ok && (ref.kind === 'proposal' || ref.kind === 'gov')
+        && !AppView._findTopicItem()) {
+      if (ref.kind === 'gov') await AppView._fetchGovProposalById(ref.id);
+      else await AppView._fetchProposalById(ref.id);
       // Re-check staleness: the user may have navigated away mid-fetch.
       t = AppView._devTopic;
       if (!document.getElementById('dev-topic-thread') || !t
@@ -1844,6 +1850,16 @@ const AppView = {
       // Missing ref (closed issue, archived session, bad link, or a
       // proposal that genuinely doesn't exist / is inaccessible) — fall
       // back to the card list.
+      //
+      // (#1115) Say so for a GOVERNANCE topic: a click on a real, visible
+      // card that lands back on the board with no explanation reads as "the
+      // click did nothing". The other kinds stay silent on purpose — a
+      // closed GitHub issue legitimately fails to resolve here (_ghIssues
+      // holds open issues only, see revealInDrawer), so toasting that would
+      // be a behaviour change beyond this fix.
+      if (ref.kind === 'gov' && window.PlatformUI && PlatformUI.toast) {
+        PlatformUI.toast('Couldn’t open that proposal’s discussion.');
+      }
       App.switchTab('dev');
       return;
     }
@@ -1883,9 +1899,14 @@ const AppView = {
     // Open governance proposals first; APPLIED close-issue proposals live
     // on in the Completed stream (row_type='close_issue' rows in _merged)
     // with a still-postable discussion thread, so resolve them too.
+    // _topicGov is the fetch-on-demand fallback (#1115) for a settled close
+    // proposal opened from beyond the cached Completed page — checked last,
+    // and keyed by id so a stale one from a previous topic never resolves.
     return (AppView._govProposals || []).find((i) => i.id === t.id)
       || (AppView._merged || []).find(
         (r) => r.row_type === 'close_issue' && r.id === t.id)
+      || (AppView._topicGov && AppView._topicGov.id === t.id
+          ? AppView._topicGov : null)
       || null;
   },
 
@@ -1924,6 +1945,39 @@ const AppView = {
           GroupChat.refreshVoteControls();
         }
       }
+      return row;
+    } catch {
+      return null;
+    }
+  },
+
+  // (#1115) The governance twin of _topicProposal: a single-item cache for a
+  // GOVERNANCE proposal opened from beyond the cached Completed page. Applied
+  // close-issue rows are only ever resolvable from _merged (which
+  // _loadDevData resets to page 1 on every call) or _govProposals (open rows
+  // only), so without this every settled close card outside the newest page
+  // bounced straight back to the board. Separate cache for the same reason
+  // _topicProposal is: an injected _merged row vanishes on the next reset.
+  _topicGov: null,
+
+  // Fetch one governance proposal by id when it isn't in any cached list,
+  // caching it in _topicGov. Best-effort: a miss (404 / no access / network
+  // error) leaves the cache untouched, so the caller falls back to the board.
+  //
+  // Deliberately does NOT seed AppView.voteState — that map is keyed by
+  // chat_sessions id / pr_number, and governance ids come from the `issues`
+  // sequence and collide numerically with it (the same reason _loadDevData
+  // and loadMoreMerged both exclude close rows from it).
+  async _fetchGovProposalById(id) {
+    if (!AppView.appData || !id) return null;
+    const slug = AppView.appData.slug;
+    try {
+      const res = await fetch(`/api/apps/${slug}/governance/${id}${AppView._demoQS()}`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      const row = data.proposal || null;
+      if (!row) return null;
+      AppView._topicGov = row;
       return row;
     } catch {
       return null;
@@ -2933,6 +2987,7 @@ const AppView = {
     // Drop any on-demand proposal cached for a previous topic so its row
     // can never be mistaken for the one being opened now.
     AppView._topicProposal = null;
+    AppView._topicGov = null;
     // #665: an inline title edit never carries across topics — a stale
     // flag here would freeze the next issue's header repaints.
     AppView._editingIssueTitle = null;
@@ -9605,10 +9660,13 @@ const AppView = {
       sel = `[data-proposal-row="${ref}"] .dev-chat-badge`;
     } else if (type === 'governance') {
       // Open proposals live in _govProposals; applied close-issue rows
-      // live on in the Completed stream (_merged, row_type='close_issue').
+      // live on in the Completed stream (_merged, row_type='close_issue') —
+      // or, for one opened from beyond that page, in _topicGov (#1115).
       const g = (AppView._govProposals || []).find((i) => i.id === ref)
         || (AppView._merged || []).find(
-          (r) => r.row_type === 'close_issue' && r.id === ref);
+          (r) => r.row_type === 'close_issue' && r.id === ref)
+        || (AppView._topicGov && AppView._topicGov.id === ref
+            ? AppView._topicGov : null);
       if (g) g.chat_count = (parseInt(g.chat_count) || 0) + 1;
       sel = `[data-gov-row="${ref}"] .dev-chat-badge`;
     }

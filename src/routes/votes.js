@@ -811,6 +811,13 @@ function stagingMockCompletedCloseIssues() {
   return [
     mk(9100060, 'group-vote', 1, 2, 3),
     mk(9100061, 'admin:staging-admin', 4, 5, 0),
+    // (#1115) A DELIBERATELY OLD applied close proposal. The mocks are only
+    // injected on the demo stream's FIRST page and the merged mocks span
+    // 1–26 days, so a 32-day-old row can never appear in any /merged page —
+    // making it reachable ONLY through GET /api/apps/:slug/governance/:id.
+    // That is exactly the regression this mock exists to test: before the
+    // by-id recovery path, deep-linking it bounced back to the board.
+    mk(9100062, 'group-vote', 30, 32, 4),
   ];
 }
 
@@ -5041,4 +5048,10 @@ module.exports = {
   // Connector-submitted testing metadata on an import, unit-tested directly.
   parseImportTesting,
   recordVote,
+  // (#1115) The applied-close demo rows live here because they belong to the
+  // Completed stream, but GET /api/apps/:slug/governance/:id in issues.js has
+  // to resolve them too for a ?demo=1 deep link. Exported for that handler's
+  // lazy require (issues.js requires this from inside the function, matching
+  // the direction this module already uses for './issues').
+  stagingMockCompletedCloseIssues,
 };

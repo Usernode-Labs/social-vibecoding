@@ -1049,6 +1049,17 @@
       "expectSelector": "#gc-thread-head [data-gov-row='9100005'] .gc-merging-badge .dc-status-spinner-arc"
     },
     {
+      "name": "An applied close proposal opens its discussion, not the board (#1115)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100060",
+      "expectSelector": "#gc-thread-head [data-gov-row='9100060']"
+    },
+    {
+      "name": "An applied close proposal reachable only by id still opens (#1115)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100062",
+      "expectSelector": "#gc-thread-head [data-gov-row='9100062']",
+      "expectText": "closed by vote"
+    },
+    {
       "name": "App-admins section ships in the Members modal (#788)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#members-appadmins-section #members-appadmins-list"
