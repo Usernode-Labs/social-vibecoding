@@ -403,21 +403,41 @@ const AdminConsole = {
   // navigateToAdminConsole). Resolves the target level from the requested
   // section, picks the transition direction by comparing it to the level
   // we're on, and repaints. On desktop this is just setSection.
+  //
+  // IDEMPOTENT (#1102), for the same reason Settings.route is — this is a
+  // copy of the same two-level router, over an already-VISIBLE screen root.
+  // One history traversal fires popstate AND hashchange, so restoreFromHash
+  // runs twice in one tick and this is called twice with the same section;
+  // the second call resolves the same level, asks for 'none', and the kit
+  // runs 'none' SYNCHRONOUSLY — landing the level swap before the first
+  // call's pending View Transition captured the outgoing page, so the
+  // animation played two copies of the incoming page. Resolve the target
+  // first and bail out when it is already on screen.
   route(section, opts) {
+    // Applied before the comparison: _visibleSections() reads it, so the
+    // public-mode flag decides what "the same target" even means.
     if (opts && typeof opts.public === 'boolean') AdminConsole._public = !!opts.public;
     const visible = AdminConsole._visibleSections();
     const valid = !!section && visible.some((s) => s.key === section);
-    if (!AdminConsole._isMobile()) {
+    const mobile = AdminConsole._isMobile();
+    // The level and section this call WOULD end on. Level 1 keeps whatever
+    // section sits behind the menu, so there the level is the whole target.
+    const targetLevel = (!mobile || valid) ? 2 : 1;
+    const targetSection = valid
+      ? section
+      : (mobile
+        ? AdminConsole._section
+        : (AdminConsole._publicMode() ? (visible[0]?.key || 'status') : 'overview'));
+    if (targetLevel === AdminConsole._level && targetSection === AdminConsole._section) {
+      return;
+    }
+    if (!mobile) {
       // Desktop: bare #admin is Overview, as it has always been.
-      AdminConsole.setSection(
-        valid ? section : (AdminConsole._publicMode() ? (visible[0]?.key || 'status') : 'overview'),
-        { writeHash: false },
-      );
+      AdminConsole.setSection(targetSection, { writeHash: false });
       AdminConsole._level = 2;
       AdminConsole._syncChrome();
       return;
     }
-    const targetLevel = valid ? 2 : 1;
     // 1→2 push, 2→1 pop, same level (section→section deep link) instant:
     // the kit's fidelity rule is no animation on same-level repaints.
     const type = targetLevel === AdminConsole._level
