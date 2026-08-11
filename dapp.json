@@ -435,6 +435,18 @@
       "expectSelector": "#feedback-bounty-row:not(.hidden) #feedback-bounty-checkbox:disabled"
     },
     {
+      "name": "Offline, Send Feedback promises to save the message instead of failing (#1054)",
+      "path": "/?shot=feedback-offline",
+      "expectSelector": "body.is-offline #feedback-status:not(.hidden)",
+      "expectText": "saved on this device and sent automatically"
+    },
+    {
+      "name": "A message already saved offline is counted, and the header carries a dot (#1054)",
+      "path": "/?shot=feedback-queued",
+      "expectSelector": "body.is-offline #feedback-queue-dot:not(.hidden)",
+      "expectText": "message saved on this device"
+    },
+    {
       "name": "Challenges widget: metered rows plus the title bar's leaderboard link (#911, #980)",
       "path": "/?demo=1",
       "expectSelector": "#home-body.home-column article.home-panel:has(.home-panel-bar .home-panel-lb-browse[aria-label=\"Open leaderboard\"]) .home-panel-rows--metered .home-panel-row .home-panel-bar-track[role=progressbar] .home-panel-bar-fill",
@@ -1037,6 +1049,17 @@
       "expectSelector": "#gc-thread-head [data-gov-row='9100005'] .gc-merging-badge .dc-status-spinner-arc"
     },
     {
+      "name": "An applied close proposal opens its discussion, not the board (#1115)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100060",
+      "expectSelector": "#gc-thread-head [data-gov-row='9100060']"
+    },
+    {
+      "name": "An applied close proposal reachable only by id still opens (#1115)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100062",
+      "expectSelector": "#gc-thread-head [data-gov-row='9100062']",
+      "expectText": "closed by vote"
+    },
+    {
       "name": "App-admins section ships in the Members modal (#788)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#members-appadmins-section #members-appadmins-list"
@@ -1453,6 +1476,11 @@
       "name": "Settings offers Log out outside the section list",
       "path": "/#settings",
       "expectSelector": "#settings-footer #settings-logout"
+    },
+    {
+      "name": "A settings history traversal routes once, so nothing pre-empts the transition snapshot (#1102)",
+      "path": "/?shot=settings-back#settings",
+      "expectSelector": "#settings-screen:not(.hidden)[data-settings-route=\"skipped\"] #settings-section-content [data-settings-section=\"api-key\"]:not(.hidden)"
     },
     {
       "name": "Settings deep-links the Password section",

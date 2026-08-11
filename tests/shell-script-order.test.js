@@ -63,6 +63,7 @@ const ADDED_SCRIPTS = [
   '/js/dev-flow-select.js', // #1049 — the dev-flow picker + walkthrough
   '/js/session-options.js', // #1055 — the composer's session/billing menu
   '/js/build-venues.js', // the six build venues, shared by every picker
+  '/js/feedback-queue.js', // #1054 — the offline feedback outbox, before app.js
 ];
 
 // Modules a conversion chunk RETIRED, with the reason. Each one's behaviour
@@ -275,15 +276,16 @@ test('the shell still loads the expected number of legacy scripts', () => {
   // theme.js (46 — theme.js was the head's only one, so the body count drops
   // by four). #1081 chunk D retires settings.js (45), and #1082 chunk E
   // retires the admin console's ten modules in one go (35) — see the cluster
-  // note in RETIRED_SCRIPTS for why they could not go one at a time. #1083
-  // chunk F retires its ten modules one screen at a time: browse.js (34),
-  // profile.js (33), the leaderboard screen's five together (28), and finally
-  // the home screen's three (25).
+  // note in RETIRED_SCRIPTS for why they could not go one at a time. It goes
+  // back UP when a new module ships: #1054's feedback-queue.js makes 36.
+  // #1083 chunk F retires its ten modules one screen at a time: browse.js
+  // (35), profile.js (34), the leaderboard screen's five together (29), and
+  // finally the home screen's three (26).
   const bodyScripts = scriptsOf(after.slice(after.indexOf('</head>')))
     .filter((s) => s.src && s.src.startsWith('/js/'));
   assert.equal(
-    bodyScripts.length, 25,
-    `expected the 25 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
+    bodyScripts.length, 26,
+    `expected the 26 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
     + 'Adding or removing one is fine, but it also needs a matching SHELL_ASSETS entry in '
     + 'public/sw.js (tests/pwa-shell-wiring.test.js enforces that) — so update this count '
     + 'deliberately rather than loosening the check.',
@@ -353,6 +355,21 @@ test('nav-link.js loads ahead of every module that consumes it', () => {
   assert.equal(entry.type, 'module',
     `${ENTRY_SRC} must stay type="module": that is what defers it past the classic `
     + 'scripts its own modules read globals from (window.NavLink, window.Home, window.PlatformUI).');
+});
+
+test('feedback-queue.js loads ahead of app.js, which arms and drains it', () => {
+  // Excluded from the fixture comparison above for the same reason as
+  // nav-link.js, so its position is pinned here. #1054: app.js calls
+  // FeedbackQueue.init() while wiring the Send Feedback dialog and hands it
+  // any submit the network refuses, so window.FeedbackQueue has to exist by
+  // then. The module itself depends on nothing (window.Offline is read lazily,
+  // inside the flush triggers).
+  const srcs = scriptsOf(after).filter((s) => s.src && s.src.startsWith('/js/')).map((s) => s.src);
+  const at = srcs.indexOf('/js/feedback-queue.js');
+  assert.notEqual(at, -1, 'the shell must load /js/feedback-queue.js');
+  const appAt = srcs.indexOf('/js/app.js');
+  assert.ok(appAt === -1 || at < appAt,
+    'feedback-queue.js must load before app.js, which reads window.FeedbackQueue');
 });
 
 test('dev-flow-select.js loads ahead of the modules that consume it', () => {

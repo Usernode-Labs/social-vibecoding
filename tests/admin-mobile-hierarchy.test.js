@@ -116,10 +116,40 @@ test('route() picks the transition direction from the level change', () => {
     '1→2 pushes, 2→1 pops');
   assert.match(body, /targetLevel === AdminConsole\._level\s*\n?\s*\? 'none'/,
     'a same-level repaint is instant — the kit forbids animating those');
-  assert.match(body, /if \(!AdminConsole\._isMobile\(\)\)/,
+  assert.match(body, /const mobile = AdminConsole\._isMobile\(\);[\s\S]*if \(!mobile\) \{/,
     'desktop degenerates to the historical setSection path');
   assert.match(body, /_visibleSections\(\)/,
     'route re-validates the requested key against what this viewer may see');
+});
+
+test('route() is idempotent, so a duplicate dispatch never repaints twice', () => {
+  // #1102, and the reason it is fixed here as well as in settings.js: both
+  // screens are two-level consoles reached through the same hash router, and
+  // a history traversal fires popstate AND hashchange. The second call
+  // resolves the same target, so it asks the kit for type 'none' — which
+  // runs SYNCHRONOUSLY — and repaints the level before the first call's View
+  // Transition has captured the outgoing page, animating the new level
+  // against a copy of itself.
+  const fn = consoleJs.slice(consoleJs.indexOf('  route(section, opts) {'));
+  const body = fn.slice(0, 2000);
+
+  assert.match(
+    body, /if \(targetLevel === AdminConsole\._level && targetSection === AdminConsole\._section\) \{/,
+    'route() compares the resolved (level, section) target against current state',
+  );
+  const guardAt = body.search(/if \(targetLevel === AdminConsole\._level &&/);
+  for (const mutation of ['AdminConsole.setSection(', 'AdminConsole._transition(']) {
+    const at = body.indexOf(mutation);
+    assert.ok(at > -1, `route() still performs ${mutation}`);
+    assert.ok(guardAt < at, `the early-out must precede ${mutation}`);
+  }
+  // The public-mode flag is the exception that has to be applied BEFORE the
+  // comparison: _visibleSections() reads it, so it decides what "the same
+  // target" even means.
+  const publicAt = body.indexOf('AdminConsole._public = ');
+  assert.ok(publicAt > -1 && publicAt < guardAt,
+    'opts.public is applied before the comparison — it changes which sections are visible, '
+    + 'and therefore which section a bare #admin resolves to');
 });
 
 test('the header back button defers to the console, then goes home', () => {

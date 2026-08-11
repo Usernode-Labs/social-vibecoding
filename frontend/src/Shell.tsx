@@ -753,6 +753,13 @@ export function Shell() {
           window.AuthScreens exists when App.init routes the boot.
       */}
       <script src="/js/auth-screens.js" />
+      {/*
+          Offline feedback outbox (#1054): the durable queue behind the Send
+          Feedback dialog. Loaded before app.js, which calls
+          FeedbackQueue.init() while wiring the dialog and hands it a submit
+          the network refused.
+      */}
+      <script src="/js/feedback-queue.js" />
       <script src="/js/app.js" />
     </>
   );

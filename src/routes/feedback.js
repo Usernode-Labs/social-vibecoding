@@ -62,6 +62,40 @@ function buildPageStateEmbed(pageState, truncated) {
   return `\n\n<details>\n<summary>${summary}</summary>\n\n\`\`\`\`json\n${pageState}\n\`\`\`\`\n</details>`;
 }
 
+// #1054: an offline-queued submit says when it was written. The client's
+// outbox (public/js/feedback-queue.js) may hold a message for minutes or
+// days, so "opened 3 minutes ago" on the GitHub issue would be a lie about
+// when the bug was seen — and a maintainer reading a report about a screen
+// that has since changed needs to know that.
+//
+// Client-asserted and therefore never trusted as data: it only ever adds one
+// cosmetic body line, and anything implausible is SILENTLY dropped rather
+// than failing the request. Losing the line costs a nicety; rejecting the
+// request would lose the feedback the queue exists to protect.
+//
+// Pure (exported for tests). Returns the ISO-8601 UTC string to print, or
+// null to print nothing:
+//   * not a short string / unparseable    → null (garbage)
+//   * in the future                       → null (clock skew ahead)
+//   * less than a minute old              → null (a live submit; the issue's
+//                                           own timestamp already says this)
+//   * older than 90 days                  → null (a clock stuck in 1970, or a
+//                                           queue nobody can still act on)
+const MAX_QUEUED_AT_CHARS = 40;
+const MIN_QUEUED_AT_AGE_MS = 60 * 1000;
+const MAX_QUEUED_AT_AGE_MS = 90 * 24 * 60 * 60 * 1000;
+
+function normalizeQueuedAt(raw, nowMs) {
+  if (typeof raw !== 'string' || !raw || raw.length > MAX_QUEUED_AT_CHARS) return null;
+  const t = Date.parse(raw);
+  if (!Number.isFinite(t)) return null;
+  const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+  const age = now - t;
+  if (age < MIN_QUEUED_AT_AGE_MS) return null;
+  if (age > MAX_QUEUED_AT_AGE_MS) return null;
+  return new Date(t).toISOString();
+}
+
 // Derive `owner/repo` from a github.com URL. We do this at module
 // load (well, at route-factory load) so a malformed
 // USERNODE_PLATFORM_REPO fails the platform fast at startup rather
@@ -278,6 +312,10 @@ function feedbackRoutes(config) {
       pageStateTruncated = req.body.pageStateTruncated === true;
     }
 
+    // #1054: when an offline-queued message was actually written. Never a
+    // 400 — see normalizeQueuedAt: an unusable value just prints nothing.
+    const queuedAt = normalizeQueuedAt(req.body.queuedAt, Date.now());
+
     // #964: optional kudos bounty on the issue about to be filed. Validated
     // up front (like title / screenshotId / pageState) so a malformed flag
     // fails fast rather than after an issue exists. Strict boolean: a
@@ -408,6 +446,9 @@ function feedbackRoutes(config) {
       const screenshotSuffix = screenshotId
         ? buildScreenshotEmbed(screenshotId, require('../services/caddy').USERNODE_DOMAIN)
         : '';
+      // #1054: one header line for an offline-queued message, empty for a
+      // live submit (whose filing time IS its writing time).
+      const queuedLine = queuedAt ? `**Saved offline:** ${queuedAt}\n` : '';
       // Stamp the row with the filed issue so the orphan GC skips it.
       // Best-effort: the issue is already on GitHub by the time this
       // runs, so a failure only risks the image 404ing after the 24h
@@ -436,7 +477,10 @@ function feedbackRoutes(config) {
         const pageStateSuffix = pageState
           ? buildPageStateEmbed(pageState, pageStateTruncated)
           : '';
-        const body = `**Source:** ${source}\n**App:** ${appContext.name} (${appContext.slug})\n\n${description.trim()}${screenshotSuffix}${pageStateSuffix}`;
+        // #1054: the "written while offline" line sits with the other header
+        // lines, above the description — it is context for reading the report,
+        // not part of it.
+        const body = `**Source:** ${source}\n**App:** ${appContext.name} (${appContext.slug})\n${queuedLine}\n${description.trim()}${screenshotSuffix}${pageStateSuffix}`;
         let issue;
         try {
           issue = await github.createIssue(issueOwner, issueRepo, { title, body });
@@ -481,7 +525,7 @@ function feedbackRoutes(config) {
         // free-form text that could carry live @mentions (#723).
         body: JSON.stringify({
           title: github.safeMention(title),
-          body: github.safeMention(`**Source:** ${source}\n\n${description.trim()}${screenshotSuffix}`),
+          body: github.safeMention(`**Source:** ${source}\n${queuedLine}\n${description.trim()}${screenshotSuffix}`),
           labels: ['usernode'],
         }),
       });
@@ -544,4 +588,6 @@ module.exports = {
   // #685: pure helpers exported for tests/feedback-page-state.test.js.
   buildPageStateEmbed,
   MAX_PAGE_STATE_CHARS,
+  normalizeQueuedAt,
+  MAX_QUEUED_AT_CHARS,
 };

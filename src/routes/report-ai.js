@@ -17,6 +17,7 @@ function publicShape(summary) {
   if (!summary) return null;
   return {
     narrative: summary.narrative,
+    highlights: summary.highlights,
     risks: summary.risks,
     owners: summary.owners,
     model: summary.model,

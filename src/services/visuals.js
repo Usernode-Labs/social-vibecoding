@@ -614,7 +614,8 @@ function classifyTests(frames, expectedCount, options) {
   };
 }
 
-// A 300-row snapshot with console errors attached can get large, and
+// A full-ceiling snapshot (400 rows since PR #1125) with console errors
+// attached can get large, and
 // `test_results` rides along in every proposal payload the API serves. Cap
 // the SERIALISED size and shed PASSING rows from the tail first: a passing
 // row carries no diagnostic weight (the summary line already counts them),

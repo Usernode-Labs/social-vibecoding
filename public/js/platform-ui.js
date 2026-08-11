@@ -279,7 +279,18 @@
         retitling the header, mounting the incoming screen) is baked into
         the "previous page" snapshot the animation slides out. That is
         what made the Settings animation show the incoming page behind
-        itself (#979). */
+        itself (#979).
+
+        AND A DUPLICATE DISPATCH THAT RE-APPLIES THE SAME NAVIGATION MUST BE
+        SKIPPED BY THE CALLER, NOT ABSORBED BY THE KIT (#1102). One history
+        traversal fires popstate AND hashchange, so an in-screen router can
+        be called twice in one tick; the second call resolves the same
+        target, asks for 'none', and the kit runs 'none' SYNCHRONOUSLY —
+        inside the first call's still-uncaptured snapshot window. Only the
+        caller knows "already showing this", so the caller early-outs (see
+        Settings.route / AdminConsole.route / Browse.route). The kit only
+        guarantees it will not ANIMATE a corrupted snapshot: it skips the
+        pending transition instead, so the worst case is no animation. */
     transition(fn, opts) {
       const un = kit();
       if (!un || typeof un.transition !== 'function') {

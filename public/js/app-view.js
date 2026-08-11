@@ -1833,8 +1833,14 @@ const AppView = {
     // _loadDevData reset _merged) won't be in any cached list. Rather than
     // bounce to the forum, fetch just that one proposal on demand and keep
     // it in a dedicated cache that survives WS-driven _loadDevData resets.
-    if (ok && ref.kind === 'proposal' && !AppView._findTopicItem()) {
-      await AppView._fetchProposalById(ref.id);
+    // (#1115) The same applies to an APPLIED close-issue proposal: those
+    // rows live in the very same keyset-paginated Completed stream, and
+    // _govProposals only ever holds OPEN governance rows — so every settled
+    // close proposal outside the freshly-reset first page was a dead click.
+    if (ok && (ref.kind === 'proposal' || ref.kind === 'gov')
+        && !AppView._findTopicItem()) {
+      if (ref.kind === 'gov') await AppView._fetchGovProposalById(ref.id);
+      else await AppView._fetchProposalById(ref.id);
       // Re-check staleness: the user may have navigated away mid-fetch.
       t = AppView._devTopic;
       if (!document.getElementById('dev-topic-thread') || !t
@@ -1844,6 +1850,16 @@ const AppView = {
       // Missing ref (closed issue, archived session, bad link, or a
       // proposal that genuinely doesn't exist / is inaccessible) — fall
       // back to the card list.
+      //
+      // (#1115) Say so for a GOVERNANCE topic: a click on a real, visible
+      // card that lands back on the board with no explanation reads as "the
+      // click did nothing". The other kinds stay silent on purpose — a
+      // closed GitHub issue legitimately fails to resolve here (_ghIssues
+      // holds open issues only, see revealInDrawer), so toasting that would
+      // be a behaviour change beyond this fix.
+      if (ref.kind === 'gov' && window.PlatformUI && PlatformUI.toast) {
+        PlatformUI.toast('Couldn’t open that proposal’s discussion.');
+      }
       App.switchTab('dev');
       return;
     }
@@ -1883,9 +1899,14 @@ const AppView = {
     // Open governance proposals first; APPLIED close-issue proposals live
     // on in the Completed stream (row_type='close_issue' rows in _merged)
     // with a still-postable discussion thread, so resolve them too.
+    // _topicGov is the fetch-on-demand fallback (#1115) for a settled close
+    // proposal opened from beyond the cached Completed page — checked last,
+    // and keyed by id so a stale one from a previous topic never resolves.
     return (AppView._govProposals || []).find((i) => i.id === t.id)
       || (AppView._merged || []).find(
         (r) => r.row_type === 'close_issue' && r.id === t.id)
+      || (AppView._topicGov && AppView._topicGov.id === t.id
+          ? AppView._topicGov : null)
       || null;
   },
 
@@ -1924,6 +1945,39 @@ const AppView = {
           GroupChat.refreshVoteControls();
         }
       }
+      return row;
+    } catch {
+      return null;
+    }
+  },
+
+  // (#1115) The governance twin of _topicProposal: a single-item cache for a
+  // GOVERNANCE proposal opened from beyond the cached Completed page. Applied
+  // close-issue rows are only ever resolvable from _merged (which
+  // _loadDevData resets to page 1 on every call) or _govProposals (open rows
+  // only), so without this every settled close card outside the newest page
+  // bounced straight back to the board. Separate cache for the same reason
+  // _topicProposal is: an injected _merged row vanishes on the next reset.
+  _topicGov: null,
+
+  // Fetch one governance proposal by id when it isn't in any cached list,
+  // caching it in _topicGov. Best-effort: a miss (404 / no access / network
+  // error) leaves the cache untouched, so the caller falls back to the board.
+  //
+  // Deliberately does NOT seed AppView.voteState — that map is keyed by
+  // chat_sessions id / pr_number, and governance ids come from the `issues`
+  // sequence and collide numerically with it (the same reason _loadDevData
+  // and loadMoreMerged both exclude close rows from it).
+  async _fetchGovProposalById(id) {
+    if (!AppView.appData || !id) return null;
+    const slug = AppView.appData.slug;
+    try {
+      const res = await fetch(`/api/apps/${slug}/governance/${id}${AppView._demoQS()}`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      const row = data.proposal || null;
+      if (!row) return null;
+      AppView._topicGov = row;
       return row;
     } catch {
       return null;
@@ -2933,6 +2987,7 @@ const AppView = {
     // Drop any on-demand proposal cached for a previous topic so its row
     // can never be mistaken for the one being opened now.
     AppView._topicProposal = null;
+    AppView._topicGov = null;
     // #665: an inline title edit never carries across topics — a stale
     // flag here would freeze the next issue's header repaints.
     AppView._editingIssueTitle = null;
@@ -5344,6 +5399,9 @@ const AppView = {
     // cycle; null = fetched, none generated yet; object = cached summary.
     AppView._reportAi = undefined;
     AppView._reportAiGenerating = false;
+    // Locked snapshots (report-lock-share): undefined = never fetched.
+    AppView._reportSnapshots = undefined;
+    AppView._reportLocking = false;
   },
 
   // Page the full merged history into `_reportMerged` — the one fetch the
@@ -5447,7 +5505,11 @@ const AppView = {
     const model = AppView._buildReportModel(AppView._reportInputs());
     el.innerHTML = `<style id="dev-report-style">${AppView.REPORT_CSS}</style>`
       + AppView._renderReportToolbar()
-      + `<div class="${AppView._reportRootCls()}">${AppView._renderReportHtml(model, { standalone: false, ai: AppView._reportAi === undefined ? null : AppView._reportAi })}</div>`;
+      + `<div class="${AppView._reportRootCls()}">`
+      + AppView._renderReportSnapshotsHtml(
+        AppView._reportSnapshots, !!(AppView.appData && AppView.appData.can_manage)
+      )
+      + `${AppView._renderReportHtml(model, { standalone: false, ai: AppView._reportAi === undefined ? null : AppView._reportAi })}</div>`;
     // Wired after each paint alongside the body, the same way
     // _repaintPmView wires #dev-pm-more-unassigned.
     const dl = el.querySelector('#dev-report-download');
@@ -5456,7 +5518,19 @@ const AppView = {
     if (rf && rf.addEventListener) rf.addEventListener('click', () => AppView.refreshReport());
     const ab = el.querySelector('#dev-report-ai');
     if (ab && ab.addEventListener) ab.addEventListener('click', () => AppView.generateReportAi());
+    const lk = el.querySelector('#dev-report-lock');
+    if (lk && lk.addEventListener) lk.addEventListener('click', () => AppView.lockReport());
+    const wire = (sel, fn) => {
+      const nodes = el.querySelectorAll(sel);
+      if (nodes && nodes.forEach) {
+        nodes.forEach((b) => b.addEventListener('click', () => fn(b)));
+      }
+    };
+    wire('[data-snap-share]', (b) => AppView.shareReportSnapshot(b.getAttribute('data-snap-share')));
+    wire('[data-snap-unshare]', (b) => AppView.unshareReportSnapshot(b.getAttribute('data-snap-unshare')));
+    wire('[data-snap-copy]', (b) => AppView.copyReportShareLink(b.getAttribute('data-snap-copy')));
     AppView._ensureReportAi();
+    AppView._ensureReportSnapshots();
   },
 
   // `.ur-rpt--dark` follows the shell's `dark` class (darkMode: 'class').
@@ -5478,11 +5552,14 @@ const AppView = {
     const ai = AppView._reportAi;
     const aiLabel = gen ? 'Generating…' : (ai ? 'Regenerate AI summary' : 'Generate AI summary');
     const stale = !!(ai && ai.stale && !gen);
+    const canManage = !!(AppView.appData && AppView.appData.can_manage);
+    const locking = AppView._reportLocking;
     return `
       <div class="flex items-center gap-2 mb-3 flex-wrap">
         <button id="dev-report-download" class="gc-vote-btn" title="Save this report as a self-contained HTML file">Download HTML</button>
         <button id="dev-report-refresh" class="gc-vote-btn"${busy ? ' disabled' : ''} title="Re-pull the data and regenerate the report">${busy ? 'Refreshing…' : 'Refresh'}</button>
         <button id="dev-report-ai" class="gc-vote-btn"${gen ? ' disabled' : ''} title="Ask the AI for a plain-language summary, risks and per-person highlights (uses your budget or API key)">${aiLabel}</button>
+        ${canManage ? `<button id="dev-report-lock" class="gc-vote-btn"${locking || busy ? ' disabled' : ''} title="Freeze this report as a permanent dated snapshot in Previous reports">${locking ? 'Locking…' : 'Lock report'}</button>` : ''}
         ${stale ? '<span class="text-xs opacity-60">Data has changed since the AI summary was generated.</span>' : ''}
       </div>`;
   },
@@ -5783,6 +5860,18 @@ const AppView = {
     }
     let html = '';
 
+    // Progress highlights — the skimmable layer, placed first. Rendered
+    // only when the summary carries bullets (older cached summaries
+    // predate the field).
+    const bullets = (Array.isArray(ai.highlights) ? ai.highlights : [])
+      .map((b) => (b == null ? '' : String(b).trim())).filter(Boolean);
+    if (bullets.length) {
+      html += `<section class="ur-rpt-section" data-section="ai-highlights">`
+        + `<h2 class="ur-rpt-h2">Progress highlights</h2>`
+        + `<ul class="ur-rpt-bullets">${bullets.map((b) => `<li>${eh(b)}</li>`).join('')}</ul>`
+        + `</section>`;
+    }
+
     // Narrative — the report's main body.
     const paras = String(ai.narrative || '').split(/\n{2,}|\n/).map((p) => p.trim()).filter(Boolean);
     html += `<section class="ur-rpt-section" data-section="ai-summary">`
@@ -5839,6 +5928,42 @@ const AppView = {
     return html;
   },
 
+  // ── Previous reports (locked snapshots): pure, DOM-free ─────────────
+  // snaps (server list rows) + canManage in → HTML out. Same read-only
+  // document rules as the report: no live-card data-* hooks, no inline
+  // handlers — the share/unshare/copy buttons carry data-snap-* markers
+  // that _repaintReportView wires after each paint. Rendered ONLY into
+  // the on-screen view (never the standalone export/lock document).
+  _renderReportSnapshotsHtml(snaps, canManage) {
+    const eh = (s) => escapeHtml(s == null ? '' : String(s));
+    const ea = (s) => escapeAttr(s == null ? '' : String(s));
+    const list = Array.isArray(snaps) ? snaps : [];
+    if (!list.length) return '';
+    const rows = list.map((s) => {
+      const ms = Date.parse(s.lockedAt || '');
+      const when = Number.isFinite(ms)
+        ? `${new Date(ms).toLocaleDateString()} ${new Date(ms).toLocaleTimeString()}`
+        : 'undated';
+      let actions = `<span><a href="${ea(s.htmlPath)}" target="_blank" rel="noopener">Open</a></span>`;
+      if (canManage) {
+        actions += s.shared
+          ? `<span><button type="button" class="ur-rpt-linklike" data-snap-copy="${ea(s.sharePath)}">Copy link</button></span>`
+            + `<span><button type="button" class="ur-rpt-linklike" data-snap-unshare="${ea(s.id)}">Unshare</button></span>`
+          : `<span><button type="button" class="ur-rpt-linklike" data-snap-share="${ea(s.id)}">Share</button></span>`;
+      }
+      return `<li class="ur-rpt-row">`
+        + `<div class="ur-rpt-title">${eh(when)}`
+        + (s.lockedBy ? `<span class="ur-rpt-tag">locked by ${eh(s.lockedBy)}</span>` : '')
+        + (s.shared ? `<span class="ur-rpt-tag">Shared</span>` : '')
+        + `</div>`
+        + `<div class="ur-rpt-meta">${actions}</div>`
+        + `</li>`;
+    }).join('');
+    return `<section class="ur-rpt-section" data-section="snapshots">`
+      + `<h2 class="ur-rpt-h2">Previous reports</h2>`
+      + `<ul class="ur-rpt-list">${rows}</ul></section>`;
+  },
+
   // ── Report CSS ───────────────────────────────────────────────────────
   // Plain CSS, every rule scoped under `.ur-rpt`, deliberately using NO
   // Tailwind utilities. Injected once into #dev-report for the on-screen
@@ -5878,6 +6003,10 @@ const AppView = {
     '.ur-rpt-empty{font-size:0.8125rem;color:var(--rpt-faint);font-style:italic;margin:0.5rem 0;}',
     '.ur-rpt-ai-p{margin:0.75rem 0 0;max-width:44rem;}',
     '.ur-rpt-ai-note{font-size:0.75rem;color:var(--rpt-faint);font-style:italic;margin:-0.75rem 0 1.75rem;}',
+    '.ur-rpt-bullets{list-style:disc;margin:0.75rem 0 0;padding-left:1.25rem;}',
+    '.ur-rpt-bullets li{margin:0.25rem 0;}',
+    '.ur-rpt-linklike{background:none;border:0;padding:0;color:var(--rpt-accent);cursor:pointer;font:inherit;font-size:inherit;}',
+    '.ur-rpt-linklike:hover{text-decoration:underline;}',
     '.ur-rpt-risk-sev{display:inline-block;font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;border-radius:0.25rem;padding:0 0.375rem;margin-right:0.5rem;vertical-align:1px;}',
     '.ur-rpt-risk-sev--high{color:#b91c1c;border:1px solid #f87171;}',
     '.ur-rpt-risk-sev--medium{color:#b45309;border:1px solid #fbbf24;}',
@@ -6207,6 +6336,113 @@ const AppView = {
     } finally {
       AppView._reportAiGenerating = false;
       if (AppView._getViewMode() === 'report') AppView._repaintReportView();
+    }
+  },
+
+  // Fetch the locked-snapshot list once per report visit; errors degrade
+  // to an empty list (the section simply doesn't render).
+  async _ensureReportSnapshots() {
+    if (AppView._reportSnapshotsFetching || AppView._reportSnapshots !== undefined) return;
+    if (!AppView.appData) return;
+    AppView._reportSnapshotsFetching = true;
+    try {
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/report-snapshots`);
+      const data = res.ok ? await res.json() : null;
+      AppView._reportSnapshots = data && Array.isArray(data.snapshots) ? data.snapshots : [];
+    } catch {
+      AppView._reportSnapshots = [];
+    } finally {
+      AppView._reportSnapshotsFetching = false;
+    }
+    if (AppView._getViewMode() === 'report') AppView._repaintReportView();
+  },
+
+  // Freeze the current report (same document the download builds) as a
+  // permanent dated snapshot. Admin-gated server-side; the button only
+  // renders for managers.
+  async lockReport() {
+    if (AppView._reportLocking || !AppView.appData) return;
+    if (!AppView._reportMerged) { AppView._ensureReportData(); return; }
+    AppView._reportLocking = true;
+    AppView._repaintReportView();
+    try {
+      const model = AppView._buildReportModel(AppView._reportInputs());
+      const doc = AppView._renderReportHtml(
+        model,
+        AppView._reportAi
+          ? { standalone: true, ai: AppView._reportAi }
+          : { standalone: true }
+      );
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/report-snapshots`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ html: doc }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.snapshot) {
+        AppView._reportSnapshots = undefined; // refetch the list on repaint
+        if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Report locked');
+      } else if (window.PlatformUI && PlatformUI.toast) {
+        PlatformUI.toast(data.error || 'Could not lock the report');
+      }
+    } catch {
+      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Could not lock the report');
+    } finally {
+      AppView._reportLocking = false;
+      if (AppView._getViewMode() === 'report') AppView._repaintReportView();
+    }
+  },
+
+  async shareReportSnapshot(id) {
+    if (!AppView.appData) return;
+    try {
+      const res = await fetch(
+        `/api/apps/${AppView.appData.slug}/report-snapshots/${encodeURIComponent(id)}/share`,
+        { method: 'POST' }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.sharePath) {
+        AppView._reportSnapshots = undefined;
+        AppView.copyReportShareLink(data.sharePath, 'Share link copied');
+      } else if (window.PlatformUI && PlatformUI.toast) {
+        PlatformUI.toast(data.error || 'Could not share the report');
+      }
+    } catch {
+      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Could not share the report');
+    }
+    if (AppView._getViewMode() === 'report') AppView._repaintReportView();
+  },
+
+  async unshareReportSnapshot(id) {
+    if (!AppView.appData) return;
+    try {
+      const res = await fetch(
+        `/api/apps/${AppView.appData.slug}/report-snapshots/${encodeURIComponent(id)}/unshare`,
+        { method: 'POST' }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        AppView._reportSnapshots = undefined;
+        if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Share link revoked');
+      } else if (window.PlatformUI && PlatformUI.toast) {
+        PlatformUI.toast(data.error || 'Could not unshare the report');
+      }
+    } catch {
+      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Could not unshare the report');
+    }
+    if (AppView._getViewMode() === 'report') AppView._repaintReportView();
+  },
+
+  // Absolute URL built at click time (location.origin), so the pure list
+  // renderer stays origin-free. Clipboard failure falls back to toasting
+  // the URL itself so the admin can copy it by hand.
+  async copyReportShareLink(path, msg) {
+    const url = `${location.origin}${path}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast(msg || 'Link copied');
+    } catch {
+      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast(url);
     }
   },
 
@@ -9424,10 +9660,13 @@ const AppView = {
       sel = `[data-proposal-row="${ref}"] .dev-chat-badge`;
     } else if (type === 'governance') {
       // Open proposals live in _govProposals; applied close-issue rows
-      // live on in the Completed stream (_merged, row_type='close_issue').
+      // live on in the Completed stream (_merged, row_type='close_issue') —
+      // or, for one opened from beyond that page, in _topicGov (#1115).
       const g = (AppView._govProposals || []).find((i) => i.id === ref)
         || (AppView._merged || []).find(
-          (r) => r.row_type === 'close_issue' && r.id === ref);
+          (r) => r.row_type === 'close_issue' && r.id === ref)
+        || (AppView._topicGov && AppView._topicGov.id === ref
+            ? AppView._topicGov : null);
       if (g) g.chat_count = (parseInt(g.chat_count) || 0) + 1;
       sel = `[data-gov-row="${ref}"] .dev-chat-badge`;
     }

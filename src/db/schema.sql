@@ -5015,3 +5015,30 @@ CREATE TABLE IF NOT EXISTS app_report_ai (
   generated_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
   generated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Bullet-point progress highlights for the AI report summary
+-- (report-lock-share). Additive to the existing app_report_ai row; old
+-- rows default to an empty list and render without the section.
+ALTER TABLE app_report_ai ADD COLUMN IF NOT EXISTS highlights_json JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+-- Locked report snapshots (report-lock-share). Locking freezes the
+-- client's self-contained standalone report document as an immutable
+-- dated row; the draft cache above keeps being overwritten. html is
+-- untrusted user content and is only ever served under a sandbox CSP.
+-- ai_json is the SERVER's own draft summary at lock time — it feeds the
+-- next generation's "previousReport" input, so it must never come from
+-- the client. share_token (32-hex, crypto-random) is the sole access
+-- control on the public /reports/:token route; NULL means not shared,
+-- and unsharing nulls it again so revoked links 404.
+CREATE TABLE IF NOT EXISTS app_report_snapshots (
+  id           SERIAL PRIMARY KEY,
+  app_id       INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  html         TEXT NOT NULL,
+  ai_json      JSONB,
+  locked_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  locked_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  share_token  VARCHAR(64) UNIQUE,
+  shared_at    TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_app_report_snapshots_app
+  ON app_report_snapshots (app_id, locked_at DESC);
