@@ -135,7 +135,7 @@ test('one account preference applies across every independently eligible registr
   )?.[0];
   assert.match(trigger, /preference\.user_id = NEW\.user_id/);
   assert.match(trigger, /r\.user_id = NEW\.user_id/);
-  assert.match(trigger, /SELECT r\.id, r\.environment, r\.installation_id/);
+  assert.match(trigger, /SELECT r\.id, r\.environment, r\.installation_id, r\.platform/);
   assert.match(trigger, /permission_status IN \('authorized', 'provisional'\)/,
     'the independent device master/permission switch remains required');
   assert.doesNotMatch(trigger, /LIMIT 1/,
