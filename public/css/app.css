@@ -5430,7 +5430,8 @@ a.drawer-meter:hover .drawer-meter-strong {
 }
 
 /* ── Drawer footer (bottom-anchored) ──────────────────────
-   Platform build, app build, fork lineage, then the two app link rows.
+   Platform build, native app build, dApp build, fork lineage, then the two
+   app link rows.
    Version values are TEXT, not pills: the old "usernode · 1a2b3c4"
    pill overflowed the 15rem panel, and the project name was redundant
    next to a row already labelled "Platform version". A label + a mono
@@ -5440,8 +5441,8 @@ a.drawer-meter:hover .drawer-meter-strong {
   padding-top: 3px;
   padding-bottom: 3px;
 }
-/* The label names what the value IS ("Platform version" / "App
-   version") in sentence case, not an uppercase-tracked micro-caption:
+/* The label names what the value IS ("Platform version" / "App version" /
+   "dApp version") in sentence case, not an uppercase-tracked micro-caption:
    at 10px + 0.06em the old "PLATFORM" read as decoration and left the
    value looking like a stray word rather than a version. */
 .drawer-ver-label {

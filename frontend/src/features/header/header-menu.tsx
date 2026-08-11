@@ -4,11 +4,12 @@
  * surface: the overlay is the panel's backdrop on the desktop / kit-missing
  * path, and nothing ever renders one without the other.
  *
- * Three legacy modules wrote into this subtree; all three moved into the bundle
- * with it and still initialise from the island's layout effect:
+ * The modules that own live content in this subtree are bundled with it and
+ * initialise from the island's layout effect:
  *
  *   ./node-pill.js               #drawer-row-node    (native node status)
  *   ./wallet-sheet.js            #drawer-row-wallet  (native wallet balance)
+ *   ./native-app-version.js      #native-app-version-slot (installed build)
  *   ./ai-credit.js               #drawer-row-ai-budget / #ai-budget-slot
  *   ./header-menu-controller.js  the drawer's own open/close (was
  *                                App.HeaderMenu / App.DrawerStatus in app.js)
@@ -39,6 +40,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { useIsomorphicLayoutEffect, useWindowEvent } from '../../lib/legacy-dom';
 import './ai-credit.js';
+import './native-app-version.js';
 import './node-pill.js';
 import './wallet-sheet.js';
 import './header-menu-controller.js';
@@ -159,6 +161,7 @@ export function HeaderMenu() {
   useIsomorphicLayoutEffect(() => {
     window.NodePill?.init();
     window.WalletSheet?.init();
+    window.NativeAppVersion?.init();
     // The drawer's own open/close wiring — app.js's bindEvents() used to call
     // this; it lives beside the markup it drives now (#1079 chunk B).
     window.HeaderMenu?.init();
@@ -559,7 +562,7 @@ export function HeaderMenu() {
               and degrades to "just at the end of the scroll" when they don't
               (touch sheet, short viewport). No JS, no measurement.
               
-              The two build lines render as PLAIN TEXT rather than pills — the
+              The build lines render as PLAIN TEXT rather than pills — the
               old "usernode · 1a2b3c4" pill overflowed the 15rem panel, and a
               version you can't act on doesn't need pill chrome. The slots keep
               their ids, so App.renderPlatformVersionPill /
@@ -591,13 +594,31 @@ export function HeaderMenu() {
               </span>
             </div>
             {/*
-                App build — revealed by App.DrawerStatus.setAppOpen() whenever an
-                app is open, on the same lifecycle as #drawer-row-github /
-                #drawer-row-share.
+                Installed Usernode app build (#1101) — populated from the
+                native bridge's getSettingsState().buildInfo and revealed only
+                in the native top frame. It is independent of both the deployed
+                platform SHA above and the currently-open dApp SHA below.
+            */}
+            <div id="drawer-row-native-app-version" className="hidden drawer-ver-row flex items-center gap-2 px-4">
+              <span className="drawer-ver-label">
+                App version
+              </span>
+              <span
+                id="native-app-version-slot"
+                className="drawer-ver drawer-ver-value ml-auto min-w-0 justify-end"
+              >
+              </span>
+            </div>
+            {/*
+                dApp build — revealed by App.DrawerStatus.setAppOpen() whenever
+                a non-self-hosted app is open, on the same lifecycle as
+                #drawer-row-github / #drawer-row-share. The self-hosted
+                platform would duplicate "Platform version", so it stays
+                hidden there.
             */}
             <div id="drawer-row-app-version" className="hidden drawer-ver-row flex items-center gap-2 px-4">
               <span className="drawer-ver-label">
-                App version
+                dApp version
               </span>
               <span id="app-version-pill-slot" className="drawer-ver-value ml-auto inline-flex min-w-0 justify-end">
               </span>

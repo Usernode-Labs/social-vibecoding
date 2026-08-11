@@ -1313,7 +1313,7 @@
       "expectSelector": "#drawer-main-rows > #drawer-row-theme:first-child + #drawer-status-pane"
     },
     {
-      "name": "Footer version rows are labelled \"Platform version\" / \"App version\"",
+      "name": "Drawer footer identifies the deployed platform version",
       "path": "/?shot=menu",
       "expectText": "Platform version"
     },
