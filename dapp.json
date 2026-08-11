@@ -1040,6 +1040,17 @@
       "expectSelector": "#dev-view-pm"
     },
     {
+      "name": "Reporting button renders in the dev view switcher (#1100)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-view-report[data-view=\"report\"]"
+    },
+    {
+      "name": "Reporting view renders the progress report sections (#1100)",
+      "path": "/?demo=1&view=report#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-report .ur-rpt-section[data-section=\"done\"]",
+      "expectText": "Progress report"
+    },
+    {
       "name": "Kanban cards show the assignee initial-avatar",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": ".attr-avatar"
