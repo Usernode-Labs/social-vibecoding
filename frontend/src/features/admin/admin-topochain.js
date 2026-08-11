@@ -9,9 +9,9 @@
 // level of its own (#admin/seasons/<sub>) that AdminConsole never learns
 // the keys of. It reads location.hash directly for the deep-linked sub-key
 // on first render and writes it back itself via replaceState, guarded on
-// '#admin/seasons' — the same pattern public/js/leaderboard.js uses for
-// its own tab state (_setSub/_syncHash) — so admin-console.js's existing
-// single-level setSection/_writeHash needed no changes at all.
+// '#admin/seasons' — the same pattern features/leaderboard/leaderboard.js
+// uses for its own tab state (_setSub/_syncHash) — so admin-console.js's
+// existing single-level setSection/_writeHash needed no changes at all.
 //
 // Season events extends that address with the two screens nested under it:
 // #admin/seasons/season-events/<eventId> is "managing this event's

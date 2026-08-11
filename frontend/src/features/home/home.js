@@ -1,3 +1,21 @@
+// The home screen's launcher grid: loads the viewer's apps, lays them out on
+// the (column, row) canvas HomeLayout models, renders the tiles and the widget
+// slots, and owns the drag-to-rearrange gesture.
+//
+// Moved verbatim from public/js/home.js into the bundle by #1083 chunk F step 4
+// (see features/home/index.tsx). Two things changed and nothing else:
+//
+//   * the app-card delegation is an import now instead of a `window.AppCard`
+//     read (see renderAppPillsHtml / iconTileFor below), and
+//   * escapeHtml and formatRelativeTime at the bottom of the file are
+//     module-local rather than ambient globals. That has a consequence outside
+//     this file, spelled out in the note above them.
+//
+// The `HomeLayout` and `window.HomePanels` reads throughout stay as they are:
+// both are published by sibling modules the island imports BEFORE this one, and
+// every read happens at call time, long after the bundle has evaluated.
+import { AppCard } from '../apps/app-card.js';
+
 const Home = {
   // Can this viewer create apps right now? Derived per request by
   // /api/auth/me as `isAdmin || live app count < app_quota`, so it flips
@@ -34,10 +52,10 @@ const Home = {
       return;
     }
     Home._probeShortcutSupport();
-    // Home-screen widgets (#911, public/js/home-panels.js) and the viewer's
-    // stored grid layout (public/js/home-layout.js). Both are TTL-guarded /
-    // de-duped inside, so the dozen WS/event paths that call load() don't
-    // turn into a dozen fetches.
+    // Home-screen widgets (#911, ./home-panels.js) and the viewer's stored
+    // grid layout (./home-layout.js). Both are TTL-guarded / de-duped
+    // inside, so the dozen WS/event paths that call load() don't turn into a
+    // dozen fetches.
     //
     // Deliberately NOT awaited — the grid must not wait on a second request
     // to paint. But the fetches race, and losing that race used to cost the
@@ -1185,99 +1203,25 @@ const Home = {
   // frontend/src/features/work-drawer/work-drawer.js, which owns their
   // fetches, rendering and busy-state polling now.
 
-  // Pill builder for an app's status/activity flags, rendered ONLY in
-  // the hamburger menu's build-info header now — the card face
-  // carries no chips. Order: missing secrets (most urgent), PRs
-  // awaiting votes, dev sessions in flight, open issues, privacy chip
-  // last. All display-only spans. Returns joined HTML, '' when
-  // there's nothing to flag.
+  // Pill builder for an app's status/activity flags, and the icon-tile
+  // inner markup + kind. Both are shared with the browse screen's rows and
+  // detail hero and with the app view's header tile, so all four surfaces
+  // draw an app the same way.
   //
-  // Development-activity counts (#57) come straight from /api/apps
-  // (DB-derived, no GitHub calls); zero-count chips are dropped. The
-  // missing-secrets chip deliberately omits the key NAMES — those
-  // live in the app view's Secrets panel.
+  // The implementations live in frontend/src/features/apps/app-card.js as of
+  // #1083 chunk F, which is where browse.js went when it became a bundle
+  // module and could no longer reach them through `window.Home`. These two
+  // stay as delegating methods because their callers name them:
+  // public/js/app-view.js's header tile (iconTileFor), renderAppCard /
+  // renderMenuHeaderHtml / updateAppCardIcon below, and the card tests. As of
+  // step 4 of the chunk this module rides in the bundle too, so the delegation
+  // is a plain import rather than a `window.AppCard` read.
   renderAppPillsHtml(app) {
-    const openPrs = parseInt(app.open_prs || 0);
-    const activeSessions = parseInt(app.active_sessions || 0);
-    const openIssues = parseInt(app.open_issues || 0);
-    const hasMissing = Array.isArray(app.missingSecrets) && app.missingSecrets.length;
-    const chipDefs = [];
-    if (hasMissing) {
-      const n = app.missingSecrets.length;
-      chipDefs.push({
-        cls: 'bg-red-500/10 text-red-500',
-        label: 'Missing secrets',
-        tip: `${n} required secret${n === 1 ? '' : 's'} unset — set values in the app's Secrets panel`,
-      });
-    }
-    if (openPrs > 0) {
-      chipDefs.push({
-        cls: 'bg-amber-500/10 text-amber-500',
-        label: `${openPrs} to vote`,
-        tip: `${openPrs} change${openPrs === 1 ? '' : 's'} awaiting community votes`,
-      });
-    }
-    if (activeSessions > 0) {
-      chipDefs.push({
-        cls: 'bg-sky-500/10 text-sky-500',
-        label: `${activeSessions} in dev`,
-        tip: `${activeSessions} build session${activeSessions === 1 ? '' : 's'} in progress`,
-      });
-    }
-    if (openIssues > 0) {
-      chipDefs.push({
-        cls: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400',
-        label: `${openIssues} issue${openIssues === 1 ? '' : 's'}`,
-        tip: `${openIssues} open issue${openIssues === 1 ? '' : 's'}`,
-      });
-    }
-    const chipBaseCls = 'activity-chip inline-flex items-center px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium';
-    const chipsHtml = chipDefs.map((c) =>
-      `<span class="${chipBaseCls} ${c.cls}" title="${c.tip}">${c.label}</span>`
-    ).join('');
-
-    // Visibility chip for non-default settings. View-private dominates
-    // (it implies collab-private); collab-private alone reads as
-    // "invite-only build" since anyone can still see/use the app.
-    // Inline currentColor SVGs (Heroicons v1 outline) instead of emoji
-    // so the glyphs tint violet with the chip in both themes.
-    const visChipCls = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium bg-violet-500/10 text-violet-500 dark:text-violet-400';
-    const visChipIcon = (d) => `<svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="${d}"/></svg>`;
-    const lockIcon = visChipIcon('M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z');
-    const mailIcon = visChipIcon('M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z');
-    const visChipHtml = app.view_visibility === 'private'
-      ? `<span class="${visChipCls}" title="Only collaborators can see and use this app">${lockIcon} Private</span>`
-      : (app.collab_visibility === 'private'
-        ? `<span class="${visChipCls}" title="Anyone can use this app; only invited collaborators can build it">${mailIcon} Invite-only build</span>`
-        : '');
-
-    return `${chipsHtml}${visChipHtml}`;
+    return AppCard.renderAppPillsHtml(app);
   },
 
-  // Icon-tile inner markup + kind, shared by renderAppCard and the
-  // targeted icon_changed refresh (updateAppCardIcon below). Priority:
-  // custom image (dapp.json icon.image, served via /app-icons/:id or a
-  // staging demo data-URI) > emoji (dapp.json icon.emoji) > the
-  // first-letter fallback every app always had. The kind lands on the
-  // tile as data-icon so tests and the rename handler (app.js) can tell
-  // a custom icon from the letter placeholder.
   iconTileFor(app) {
-    if (app.icon_url) {
-      return {
-        kind: 'image',
-        // w-full/h-full (not w-14/h-14): the tile now draws a 1px
-        // hairline border, so the image fills the border box's *content*
-        // area and stays flush inside the ring instead of being cropped.
-        html: `<img src="${escapeHtml(app.icon_url)}" alt="" loading="lazy" draggable="false" class="w-full h-full rounded-xl object-cover">`,
-      };
-    }
-    if (app.icon_emoji) {
-      return {
-        kind: 'emoji',
-        html: `<span class="text-3xl leading-none" aria-hidden="true">${escapeHtml(app.icon_emoji)}</span>`,
-      };
-    }
-    return { kind: 'letter', html: escapeHtml((app.name || '?').charAt(0).toUpperCase()) };
+    return AppCard.iconTileFor(app);
   },
 
   // `opts.mode` picks the corner controls:
@@ -3398,8 +3342,42 @@ const Home = {
 // reloaded the grid. None of it threw — the guards are exactly what made it
 // silent. Publishing Home the way App and HomePanels publish themselves is
 // what makes those guards mean what they read as.
-window.Home = Home;
+//
+// Still published as a global now that this rides in the React bundle (#1083
+// chunk F step 4): app.js's navigateHome / _exitHome / resyncCurrentView and its
+// whole WS app-event fan-out, app-view.js, build-log.js, the settings screen's
+// widget rows, notifications.js, the work drawer and the app-card helpers all
+// reach it by name. The `const Home` note above is now redundant for the reason
+// it describes — a module's top-level const was never on `window` either — but
+// it records why the publication exists. The guard is for the SSG prerender pass:
+// frontend/scripts/build-shell.mjs evaluates the island's whole module graph in
+// Node, where there is no window.
+if (typeof window !== 'undefined') window.Home = Home;
 
+// escapeHtml and formatRelativeTime used to be AMBIENT here: as a classic
+// script's top-level function declarations they were `window.escapeHtml` /
+// `window.formatRelativeTime`, and home.js was the LAST tag to declare either,
+// so it won a last-writer-wins chain. Inside a module they are module-local,
+// which is the right scope and matches what browse.js, app-card.js, kudos.js and
+// leaderboard.js already did when they moved.
+//
+// formatRelativeTime has no ambient consumer left: browse.js carries its own
+// copy and build-log.js's comment says it deliberately kept one local so load
+// order wouldn't matter. Nothing else ever read it.
+//
+// escapeHtml has two, and they change which copy they resolve to. dev-chat.js
+// and app-secrets.js call `escapeHtml` (and, in app-secrets, `escapeAttr`, which
+// is app-view.js's and calls the ambient escapeHtml) without declaring one, so
+// they were reaching THIS function; with home.js out of the classic chain the
+// last declaration standing is app-view.js's. The two differ: this one is a
+// textContent→innerHTML pass, which escapes `& < >` but NOT quotes (hence the
+// `.replace(/"/g, '&quot;')` its own callers above add), while app-view.js's
+// replaces all five of `& < > " '`. In element content the rendered text is
+// identical — `&quot;` and `&#39;` render as `"` and `'`. In an ATTRIBUTE
+// app-view.js's is simply correct where this one could be broken out of, so the
+// two dev-screen surfaces get a strictly safer escaper and the same visible
+// output. Worth knowing about rather than papering over, which is why it is
+// written down here.
 function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;

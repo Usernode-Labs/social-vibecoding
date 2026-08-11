@@ -2,7 +2,7 @@
 
 // Browse-all-apps screen (#apps) — the directory half of the home-screen
 // split, laid out as an app store. The home feed is "Your apps" only (see
-// public/js/home.js render()), so every OTHER app this viewer may see
+// frontend/src/features/home/home.js render()), so every OTHER app this viewer may see
 // lives here.
 //
 // TWO LEVELS inside the one #browse-screen <main>, the same shape the
@@ -23,13 +23,18 @@
 // involved-user build log, non-self-hosted fork) stays in exactly one
 // place and a new menu item shows up here for free.
 //
-// Still deliberately thin on the shared pieces: the icon tile, the
-// added-state predicate, the status pills, the search matcher and the
-// add/remove write are all Home's (iconTileFor, isYours, renderAppPillsHtml,
-// matchesQuery, toggleAdded), so this screen and the home grid cannot drift.
+// Still deliberately thin on the shared pieces, so this screen and the home
+// grid cannot drift — but the pieces now come from two places rather than
+// one (#1083 chunk F). The pure MARKUP builders are an explicit import from
+// ./app-card.js, shared with the home grid and the app view. The rest is
+// still Home's, reached through the global, because each one reads Home's
+// loaded-app list or the viewer's permissions: isYours, matchesQuery,
+// toggleAdded, menuItemsFor.
 //
 // Mounted by App.navigateToBrowse; PTR is wired once by
 // App._wirePullToRefresh and covers both levels.
+
+import { iconTileFor, renderAppPillsHtml } from './app-card.js';
 
 const Browse = {
   _open: false,
@@ -348,8 +353,8 @@ const Browse = {
   // The same markup is the desktop box — see .browse-row in app.css.
   renderAppRow(app) {
     const isAdded = Home.isYours(app);
-    const icon = Home.iconTileFor(app);
-    const pills = Home.renderAppPillsHtml(app);
+    const icon = iconTileFor(app);
+    const pills = renderAppPillsHtml(app);
     const isDemo = !!app.demo;
     // Staging ?demo=1 rows are inert: their slugs have no DB row, so the
     // detail page would 404 and the favorite POST would too.
@@ -568,10 +573,10 @@ const Browse = {
   },
 
   // One contributor row. Deliberately mirrors the Top-users leaderboard's
-  // row (public/js/leaderboard.js _renderUserRows) — rank, initial-avatar
-  // circle, @username, a muted meta line, a count pill on the right — so
-  // the platform's two ranked people-lists read as one system. A <button>
-  // so it is keyboard-focusable like those rows are. Pure.
+  // row (features/leaderboard/leaderboard.js, _renderUserRows) — rank,
+  // initial-avatar circle, @username, a muted meta line, a count pill on the
+  // right — so the platform's two ranked people-lists read as one system. A
+  // <button> so it is keyboard-focusable like those rows are. Pure.
   contributorRowHtml(c, rank) {
     const who = (c && c.username) || 'unknown';
     const initial = (who[0] || '?').toUpperCase();
@@ -660,8 +665,8 @@ const Browse = {
     }
 
     const isAdded = Home.isYours(app);
-    const icon = Home.iconTileFor(app);
-    const pills = Home.renderAppPillsHtml(app);
+    const icon = iconTileFor(app);
+    const pills = renderAppPillsHtml(app);
     const canOpen = app.status === 'running' || app.status === 'awaiting_secrets';
     // Same build-info block the "…" menu header assembles, so the version
     // chip looks identical everywhere and shows a live deploying state.
@@ -843,12 +848,46 @@ const Browse = {
   },
 };
 
-// Attribute-safe escape. Home's ambient escapeHtml (public/js/home.js) goes
-// through textContent, which covers & < > but NOT the double quote that
-// would break out of an attribute — the same `.replace` the detail page's
-// action rows already do inline, named so the contributor rows can reuse it.
+// escapeHtml and formatRelativeTime used to be AMBIENT here: as classic
+// scripts, home.js's top-level function declarations were window properties
+// and this file just called them. Inside the bundle a module's identifiers
+// are its own, so both are now module-local — same bodies, copied rather
+// than imported for the reason app-card.js gives for its own copy. (home.js
+// is still a classic script until step 4, so its copies stay too; three
+// lines of formatter is not worth a cross-module dependency that would then
+// have to survive that move.)
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// Compact "Nx ago" formatter for the row and detail meta lines. Returns null
+// for unparseable input so callers can drop the segment rather than render
+// "NaN ago".
+function formatRelativeTime(input) {
+  if (!input) return null;
+  const t = new Date(input);
+  if (Number.isNaN(t.getTime())) return null;
+  const seconds = Math.floor((Date.now() - t.getTime()) / 1000);
+  if (seconds < 60) return 'just now';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  if (seconds < 86400 * 30) return `${Math.floor(seconds / 86400)}d ago`;
+  if (seconds < 86400 * 365) return `${Math.floor(seconds / (86400 * 30))}mo ago`;
+  return `${Math.floor(seconds / (86400 * 365))}y ago`;
+}
+
+// Attribute-safe escape. escapeHtml above goes through textContent, which
+// covers & < > but NOT the double quote that would break out of an
+// attribute — the same `.replace` the detail page's action rows already do
+// inline, named so the contributor rows can reuse it.
 function browseEscapeAttr(str) {
   return escapeHtml(str).replace(/"/g, '&quot;');
 }
 
-window.Browse = Browse;
+// Still published as a global: App.navigateToBrowse, app.js's hash router and
+// nav-link.js all reach this through `window.Browse`, and they are classic
+// scripts. Guarded because the SSG prerender pass evaluates this module in
+// Node (the island imports it).
+if (typeof window !== 'undefined') window.Browse = Browse;

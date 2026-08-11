@@ -92,8 +92,8 @@ test('the admin screen ships hidden in the shell like its siblings', () => {
     'the section host ships EMPTY: sections render into it from the module');
 });
 
-test('the console island imports all ten admin modules, console first', () => {
-  // The load-order cluster the retired <script> tags used to express. The nine
+test('the console island imports all eleven admin modules, console first', () => {
+  // The load-order cluster the retired <script> tags used to express. The ten
   // section modules read the AdminUI registry admin-console.js exports, and
   // admin-topochain.js reads it while its module body evaluates — so if the
   // console import ever stops coming first, the prerender pass throws.
@@ -104,8 +104,9 @@ test('the console island imports all ten admin modules, console first', () => {
   assert.equal(order[0], 'admin-console', 'admin-console.js is imported first');
   assert.deepEqual(order.slice(1).sort(), [
     'admin-analytics', 'admin-campaigns', 'admin-estimator', 'admin-gallery',
-    'admin-mail', 'admin-merges', 'admin-node', 'admin-status', 'admin-topochain',
-  ], 'all nine section modules are imported by the island');
+    'admin-mail', 'admin-merges', 'admin-node', 'admin-push', 'admin-status',
+    'admin-topochain',
+  ], 'all ten section modules are imported by the island');
 });
 
 test('every full-screen exit path also exits the admin screen', () => {
@@ -144,7 +145,7 @@ test('the console is not gated on the environment', () => {
 
 test('the menu carries every section, grouped, with no external tools left', () => {
   const KEYS = [
-    'overview', 'status', 'node', 'merges', 'rollover', 'staging-reap',
+    'overview', 'status', 'node', 'push', 'merges', 'rollover', 'staging-reap',
     'users', 'codes', 'limits',
     'analytics', 'estimator', 'gallery', 'features',
     'campaigns', 'db-export', 'mail', 'seasons',
@@ -211,6 +212,7 @@ test('every folded-in section has a module, an island import and no stale wiring
     merges: 'admin-merges',
     gallery: 'admin-gallery',
     campaigns: 'admin-campaigns',
+    push: 'admin-push',
     topochain: 'admin-topochain',
     // Platform outbound mail: configuration, a test send, and the ledger.
     mail: 'admin-mail',

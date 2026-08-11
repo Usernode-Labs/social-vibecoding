@@ -1263,8 +1263,8 @@ html, body {
 
    640px IS the breakpoint: it is Tailwind's `sm` on #app-list's
    `grid-cols-4 sm:grid-cols-5`, and HomeLayout.BREAKPOINT_PX in
-   public/js/home-layout.js. All three must agree or the JS lays out against
-   a column count the CSS isn't rendering. */
+   frontend/src/features/home/home-layout.js. All three must agree or the JS
+   lays out against a column count the CSS isn't rendering. */
 @media (max-width: 639.98px) {
   :root {
     /* 116px — p-2 (16) + icon 56 + gap-1.5 (6) + title 26 + caption 12 */

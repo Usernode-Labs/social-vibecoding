@@ -414,14 +414,14 @@ test('the done rule is REUSED from home-panels, not re-derived', () => {
 });
 
 test('the profile screen no longer filters on the organiser flag', () => {
-  const client = read('public/js/profile.js');
+  const client = read('frontend/src/features/profile/profile.js');
   assert.doesNotMatch(client, /challenges\.filter\(\(c\) => c\.completed\)/,
     'that filter is the bug: c.completed is an organiser flag, not a per-user signal');
   assert.match(client, /\/api\/me\/challenges\/completed/);
 });
 
 test('completed rows render as real anchors to the challenge', () => {
-  const client = read('public/js/profile.js');
+  const client = read('frontend/src/features/profile/profile.js');
   assert.match(client, /#leaderboard\/challenges\//);
   assert.match(client, /data-completed-challenge/);
   // Built as an <a>, so middle-click / long-press / back all work.

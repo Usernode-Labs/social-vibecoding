@@ -12,7 +12,7 @@
 //
 // PLACEMENT is not this module's business any more. Each widget occupies a
 // real (column, row) cell chosen by the viewer, stored per breakpoint and
-// written for the whole grid at once — see public/js/home-layout.js and
+// written for the whole grid at once — see frontend/src/features/home/home-layout.js and
 // PUT /api/home-layout. This module owns the registry view (which widgets
 // exist, which are hidden, which may be hidden) and the CONTENT of each
 // block; home.js plants a slot per widget and this paints into it.
@@ -71,9 +71,12 @@
 // FETCH DISCIPLINE. Home.load() is called from a dozen WS/event paths, so
 // this module must NOT fetch per Home.load(): ensureLoaded() is
 // TTL-guarded and de-duped on an in-flight promise, while render() is
-// pure paint from the cache. The section markup is static in index.html
-// and lives OUTSIDE #app-list, so Home.render()'s wholesale innerHTML
-// rewrite of the grid never destroys it.
+// pure paint from the cache. The #home-panels host is static markup the
+// home island renders once (frontend/src/features/home/index.tsx) and lives
+// OUTSIDE #app-list, so Home.render()'s wholesale innerHTML rewrite of the
+// grid never destroys it — and React never reconciles over what this module
+// paints into it, because the island renders that host empty and leaves it
+// alone for good.
 'use strict';
 
 const HomePanels = {
@@ -161,9 +164,12 @@ const HomePanels = {
 
   // Escapes every character that is dangerous in EITHER a text node OR a
   // double-quoted attribute value. Organiser-authored strings (challenge
-  // goals, metric labels) land in both here, and the global escapeHtml()
-  // in home.js only covers & < > — an unescaped `"` would let a goal
-  // break out of title="…" and inject attributes.
+  // goals, metric labels) land in both here, and home.js's escapeHtml()
+  // only covers & < > — an unescaped `"` would let a goal break out of
+  // title="…" and inject attributes. (That one used to be a global this
+  // module could have called; since #1083 chunk F step 4 both files are
+  // bundle modules and it is module-local to home.js. This one was always
+  // separate, and still is.)
   esc(s) {
     return String(s == null ? '' : s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -1388,4 +1394,11 @@ const HomePanels = {
   },
 };
 
-window.HomePanels = HomePanels;
+// Still published as a global. This module rides in the React bundle as of
+// #1083 chunk F step 4, but home.js's grid renderer, the Settings screen's
+// "Home screen widgets" rows and the server-side PANEL_REGISTRY's client
+// counterpart all reach it by name, and its own nine `window.Home` /
+// `window.HomeLayout` reads are the mirror of that arrangement. The guard is for
+// the SSG prerender pass — frontend/scripts/build-shell.mjs evaluates the
+// island's whole module graph in Node, where there is no window.
+if (typeof window !== 'undefined') window.HomePanels = HomePanels;

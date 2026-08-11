@@ -602,6 +602,23 @@ const HomeLayout = {
   },
 };
 
-// Browser global (classic script, like its neighbours) + CommonJS for tests.
+// Browser global, guarded because the SSG prerender pass evaluates the home
+// island's whole module graph in Node, where there is no `window` (#1083 chunk
+// F step 4 moved this file into the React bundle).
+//
+// It stays for its two readers, home.js and home-panels.js, which reach
+// `HomeLayout` as a bare identifier rather than importing it — 40 call sites
+// between them. Being in the same bundle does NOT make those resolve
+// lexically: each file is a module with its own scope, and the bundler
+// minifies this object's local name away (it is `_e` in the shipped
+// shell.js). `window.HomeLayout` is the binding all 40 reads actually find,
+// exactly as it was when all three were classic scripts. No classic script
+// outside this trio reads it.
+//
+// The `module.exports` twin that used to sit here is gone: frontend/ is
+// `"type": "module"`, so Node reads this file as ESM and the guard could never
+// fire. tests/home-layout-model.test.js evaluates the source with
+// `new Function` instead — host realm, not a vm context, because its
+// assertions are deepEqual over arrays and a vm's own Array.prototype makes
+// those fail on reference identity alone.
 if (typeof window !== 'undefined') window.HomeLayout = HomeLayout;
-if (typeof module !== 'undefined' && module.exports) module.exports = { HomeLayout };

@@ -6,23 +6,19 @@
 // reload/re-render), and onReorder persists the strip's DOM order via
 // the bridge's reorderHomeScreenShortcuts.
 //
-// home.js is a plain browser script (`const Home = {…}`); we load it
-// into a vm context with stubbed globals and call _wireWidgetStrip
-// directly with fake DOM nodes — same harness as
-// home-drag-add.test.js.
+// home.js declares `const Home = {…}` at top level; we load it into a vm
+// context with stubbed globals and call _wireWidgetStrip directly with fake
+// DOM nodes — same harness as home-drag-add.test.js. Its source comes from
+// ./helpers/home-modules, which resolves the module's post-#1083 location and
+// strips the one `import` line a vm context cannot parse.
 //
 // Run with: node --test tests/widget-grid-reorder.test.js
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
 const vm = require('node:vm');
 
-const HOME_SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'home.js'),
-  'utf8'
-);
+const { HOME_SRC } = require('./helpers/home-modules');
 
 // Returns { Home, attachCalls, reorderCalls, toasts }. attachCalls
 // records every unNative.attachReorder invocation ({ listEl, opts });

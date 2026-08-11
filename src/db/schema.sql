@@ -17,7 +17,8 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS anthropic_key_last4  VARCHAR(8);
 -- Default FALSE; existing admins are backfilled to TRUE on boot.
 -- Enforced server-side on POST /api/apps in src/routes/apps.js;
 -- the home-screen "Create new app" affordance is hidden client-side
--- for users who fail the check (see Home.canCreate in public/js/home.js).
+-- for users who fail the check (see Home.canCreate in
+-- frontend/src/features/home/home.js).
 ALTER TABLE users ADD COLUMN IF NOT EXISTS can_create_apps BOOLEAN NOT NULL DEFAULT FALSE;
 UPDATE users SET can_create_apps = TRUE WHERE is_admin = TRUE AND can_create_apps = FALSE;
 
@@ -88,8 +89,9 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_progress_estimate BOOLEAN NOT NULL
 -- everyone with no backfill. Written only through
 -- POST /api/home-panels/:key/visibility, which validates the key against
 -- the registry, so the array can never accumulate unknown values. Called
--- "panels" and not "widgets" deliberately: public/js/home.js already uses
--- "widget" for the iOS home-screen widget's pinned app grid.
+-- "panels" and not "widgets" deliberately: the client half,
+-- frontend/src/features/home/home.js, already uses "widget" for the iOS
+-- home-screen widget's pinned app grid.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panels_hidden TEXT[] NOT NULL DEFAULT '{}';
 
 -- RETIRED — superseded by the `user_home_layout` table (free-form home-grid
@@ -2166,7 +2168,7 @@ ALTER TABLE app_favorites ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAU
 CREATE TABLE IF NOT EXISTS user_home_layout (
   user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   -- 4 (phone) or 5 (>= 640px). Kept in step with HomeLayout.columnsForWidth
-  -- in public/js/home-layout.js and the grid classes on #app-list.
+  -- in frontend/src/features/home/home-layout.js and the grid classes on #app-list.
   cols        SMALLINT NOT NULL,
   item_type   TEXT NOT NULL,
   app_id      INTEGER REFERENCES apps(id) ON DELETE CASCADE,
@@ -3983,6 +3985,9 @@ CREATE TABLE IF NOT EXISTS mobile_push_deliveries (
   registration_id   BIGINT REFERENCES mobile_push_registrations(id) ON DELETE SET NULL,
   environment       VARCHAR(32) NOT NULL CHECK (BTRIM(environment) <> ''),
   installation_id   UUID NOT NULL,
+  -- Snapshot the destination platform so a provider-invalidated registration
+  -- can be deleted without turning its durable diagnostic row into "unknown".
+  platform          VARCHAR(16) CHECK (platform IN ('android', 'ios')),
   status            VARCHAR(16) NOT NULL DEFAULT 'pending'
                       CHECK (status IN ('pending', 'sending', 'sent', 'dead', 'cancelled')),
   attempts          INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
@@ -3994,6 +3999,27 @@ CREATE TABLE IF NOT EXISTS mobile_push_deliveries (
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (notification_id, environment, installation_id)
 );
+ALTER TABLE mobile_push_deliveries
+  ADD COLUMN IF NOT EXISTS platform VARCHAR(16);
+UPDATE mobile_push_deliveries delivery
+   SET platform = registration.platform
+  FROM mobile_push_registrations registration
+ WHERE delivery.registration_id = registration.id
+   AND delivery.platform IS NULL;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'mobile_push_deliveries_platform_check'
+       AND conrelid = 'mobile_push_deliveries'::regclass
+  ) THEN
+    ALTER TABLE mobile_push_deliveries
+      ADD CONSTRAINT mobile_push_deliveries_platform_check
+      CHECK (platform IN ('android', 'ios')) NOT VALID;
+  END IF;
+END $$;
+ALTER TABLE mobile_push_deliveries
+  VALIDATE CONSTRAINT mobile_push_deliveries_platform_check;
 CREATE INDEX IF NOT EXISTS idx_mobile_push_deliveries_claim
   ON mobile_push_deliveries (environment, available_at, id) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_mobile_push_deliveries_registration
@@ -4033,7 +4059,7 @@ BEGIN
    FOR KEY SHARE;
 
   WITH eligible AS MATERIALIZED (
-    SELECT r.id, r.environment, r.installation_id
+    SELECT r.id, r.environment, r.installation_id, r.platform
       FROM mobile_push_registrations r
       JOIN mobile_push_deployment_state s ON s.environment = r.environment
      WHERE r.user_id = NEW.user_id
@@ -4046,9 +4072,9 @@ BEGIN
      FOR KEY SHARE OF r
   )
   INSERT INTO mobile_push_deliveries (
-    notification_id, registration_id, environment, installation_id, expires_at
+    notification_id, registration_id, environment, installation_id, platform, expires_at
   )
-  SELECT NEW.id, id, environment, installation_id,
+  SELECT NEW.id, id, environment, installation_id, platform,
          COALESCE(NEW.created_at, NOW()) + INTERVAL '24 hours'
     FROM eligible
   ON CONFLICT (notification_id, environment, installation_id) DO NOTHING;

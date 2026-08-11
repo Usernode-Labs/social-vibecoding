@@ -14,7 +14,7 @@
 // rewritten — the change here is the three lines that seam it to React:
 //
 //   * the AdminUI registry is an `export` (plus the same window publication
-//     it always had), so the nine section modules import it instead of
+//     it always had), so the ten section modules import it instead of
 //     depending on <script> order;
 //   * _renderShell() no longer writes root.innerHTML — the chassis is
 //     React's, and writing over it is the one thing the island rule
@@ -32,9 +32,8 @@
 // Operations overview, Maintenance campaigns, LLM spend limits, Activation
 // codes, Users) plus the /admin-features viewer into one page with a
 // navigation menu — a fixed sidebar on md+ viewports. Every data endpoint
-// is an EXISTING route, enforced server-side by adminMiddleware (reads)
-// and requireAdminWrite (mutations) — this module adds no new capabilities
-// and no new endpoints.
+// is enforced server-side by adminMiddleware (reads) and requireAdminWrite
+// (mutations); the client-side visibility gates are only presentation.
 //
 // MOBILE HIERARCHY: below md the sidebar has no room, and the horizontally
 // scrolling tab strip that used to stand in for it (the Dev board's
@@ -203,6 +202,7 @@ const AdminConsole = {
     // see the PUBLIC MODE note above.
     { key: 'status', label: 'Health & status', group: 'Operations', public: true },
     { key: 'node', label: 'Node & chain', group: 'Operations', public: true },
+    { key: 'push', label: 'Push delivery', group: 'Operations' },
     { key: 'merges', label: 'Merge debug', group: 'Operations' },
     { key: 'rollover', label: 'Container rollover', group: 'Operations' },
     { key: 'staging-reap', label: 'Stale previews', group: 'Operations' },
@@ -263,6 +263,7 @@ const AdminConsole = {
     'overview': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z"/></svg>',
     'status': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>',
     'node': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"/></svg>',
+    'push': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.08 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0"/></svg>',
     'merges': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M17.25 6.75L22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3l-4.5 16.5"/></svg>',
     'rollover': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12a7.5 7.5 0 0015 0m-15 0a7.5 7.5 0 1115 0m-15 0H3m16.5 0H21m-1.5 0H12m-8.457 3.077l1.41-.513m14.095-5.13l1.41-.513M5.106 17.785l1.15-.964m11.49-9.642l1.149-.964M7.501 19.795l.75-1.3m7.5-12.99l.75-1.3m-6.063 16.658l.26-1.477m2.605-14.772l.26-1.477m0 17.726l-.26-1.477M10.698 4.614l-.26-1.477M16.5 19.794l-.75-1.299M7.5 4.205L12 12m6.894 5.785l-1.149-.964M6.256 7.794l-1.15-.964"/></svg>',
     'staging-reap': '<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"/></svg>',
@@ -776,6 +777,7 @@ const AdminConsole = {
     campaigns: 'AdminCampaigns',
     seasons: 'AdminTopochain',
     mail: 'AdminMail',
+    push: 'AdminPush',
   },
 
   // Stop the outgoing section's background work before its DOM is replaced.
@@ -861,7 +863,7 @@ const AdminConsole = {
   // ── Featured apps ─────────────────────────────────────────────────────
   //
   // The admin-curated row under "Featured apps" on every user's home
-  // screen (public/js/home.js renderFindMore). One global ordered list:
+  // screen (frontend/src/features/home/home.js renderFindMore). One global ordered list:
   // GET /api/admin/featured-apps returns it plus everything still
   // available to add, and PUT rewrites it wholesale from an ordered slug
   // array — so the ↑/↓/Remove controls only ever reorder a local array

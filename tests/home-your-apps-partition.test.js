@@ -1,5 +1,5 @@
 // Homepage restructure: the "Your apps" partition and the client-side
-// search matcher in public/js/home.js.
+// search matcher in frontend/src/features/home/home.js.
 //
 // "Your apps" = is_collaborator (app_collaborators membership — creator
 // or accepted invite) OR is_favorited (manual add via the "…" menu).
@@ -9,22 +9,19 @@
 // case-insensitive substring test on name and slug; an empty /
 // whitespace query matches everything.
 //
-// home.js is a plain browser script (`const Home = {…}`); we load it
-// into a vm context with stubbed globals and call the pure helpers
-// directly — same harness as proposal-conflict-affordance.test.js.
+// home.js declares `const Home = {…}` at top level; we load it into a vm
+// context with stubbed globals and call the pure helpers directly — same
+// harness as proposal-conflict-affordance.test.js. Its source comes from
+// ./helpers/home-modules, which resolves the module's post-#1083 location and
+// strips the one `import` line a vm context cannot parse.
 //
 // Run with: node --test tests/home-your-apps-partition.test.js
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
 const vm = require('node:vm');
 
-const HOME_SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'home.js'),
-  'utf8'
-);
+const { HOME_SRC } = require('./helpers/home-modules');
 
 function makeHome() {
   const sandbox = {
@@ -194,7 +191,7 @@ test('filterApps: returns only the matches, in input order', () => {
 //
 // Source pins for the home-screen split: the grid renders the `yours`
 // half of the partition and nothing else — the "All Apps" section and
-// its cards moved to the #apps browse screen (public/js/browse.js).
+// its cards moved to the #apps browse screen (features/apps/browse.js).
 // partitionApps still returns `rest` (browse and the featured row both
 // need the full list), so only the RENDERER changed.
 

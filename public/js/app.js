@@ -3326,6 +3326,13 @@ const App = {
     'auth-more-screen',
     // #1082 chunk E — the Admin & moderation console.
     'admin-screen',
+    // #1083 chunk F — the four app/community screens, converted in order.
+    'browse-screen',
+    'profile-screen',
+    'leaderboard-screen',
+    // ...and home last. This is the first converted root that ships
+    // VISIBLE, which is why _isScreenVisible below grew a DOM fallback.
+    'home-screen',
   ],
 
   // The publish/read half of that seam. The state is a plain object on
@@ -3367,8 +3374,25 @@ const App = {
 
   // Is a screen root on screen? Reads the store for converted roots and
   // the DOM for the rest, so callers don't have to know which is which.
+  //
+  // An UNPUBLISHED converted root falls back to the DOM rather than
+  // answering `false`. That is the read-side half of what `undefined`
+  // means in the store (see Visibility.read): "still showing whatever the
+  // markup shipped with". It only started to matter with #home-screen —
+  // every earlier converted root ships hidden, so store-says-nothing and
+  // DOM-says-hidden agree — and home reaches the steady state where
+  // nothing has published: the no-hash branch of restoreFromHash is
+  // already-on-home, so it calls Home.load() without a screen swap.
+  // Without the fallback every `_isScreenVisible('home-screen')` guard
+  // (the WS app-event refreshes here, build-log.js, notifications.js)
+  // would read false on a plain "/" boot and the grid would stop
+  // live-updating. The island renders `hidden` from the same store with
+  // the same shipped-visible default, so the two never disagree.
   _isScreenVisible(id) {
-    if (App.REACT_SCREEN_IDS.includes(id)) return App.Visibility.read(id) === true;
+    if (App.REACT_SCREEN_IDS.includes(id)) {
+      const published = App.Visibility.read(id);
+      if (published !== undefined) return published === true;
+    }
     const el = document.getElementById(id);
     return !!el && !el.classList.contains('hidden');
   },

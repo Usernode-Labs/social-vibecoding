@@ -19,7 +19,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
-const HOME_SRC = read('public/js/home.js');
+const { HOME_SRC } = require('./helpers/home-modules');
 const INDEX = read('public/index.html');
 
 // A #home-screen / #home-search-bar pair with settable scrollTop and a
