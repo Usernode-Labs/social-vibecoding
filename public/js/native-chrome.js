@@ -116,10 +116,12 @@
     _nodeStartKey: null,
     _nodeStartInFlight: null,
     _logoutRunning: false,
+    _authenticatedSessionAdmitted: true,
+    _authenticatedSessionKey: null,
     _sessionWalletRelayAdmitted: true,
 
     isSessionAdmitted() {
-      return NativeChrome._sessionWalletRelayAdmitted === true;
+      return NativeChrome._authenticatedSessionAdmitted === true;
     },
 
     _participantId(value) {
@@ -148,9 +150,52 @@
       return { address: value.address, participantId, epoch };
     },
 
+    _boundAuthenticatedStatus(value, expectedParticipantId) {
+      if (!value ||
+          (value.phase !== 'reconciling' && value.phase !== 'ready')) {
+        return null;
+      }
+      const participantId = NativeChrome._participantId(value.participantId);
+      const epoch = Number(value.epoch);
+      if (participantId !== expectedParticipantId ||
+          !Number.isSafeInteger(epoch) || epoch < 0) return null;
+      return { phase: value.phase, participantId, epoch };
+    },
+
+    _authenticatedStatusKey(status) {
+      return status
+        ? `${status.participantId}:${status.epoch}`
+        : null;
+    },
+
+    _authenticatedStatusMatches(status) {
+      return NativeChrome._authenticatedSessionAdmitted === true &&
+        NativeChrome._authenticatedSessionKey ===
+          NativeChrome._authenticatedStatusKey(status);
+    },
+
+    _setAuthenticatedSessionAdmission(admitted, status) {
+      const next = admitted === true;
+      const nextKey = next
+        ? NativeChrome._authenticatedStatusKey(status)
+        : null;
+      const changed = NativeChrome._authenticatedSessionAdmitted !== next ||
+        NativeChrome._authenticatedSessionKey !== nextKey;
+      NativeChrome._authenticatedSessionAdmitted = next;
+      NativeChrome._authenticatedSessionKey = nextKey;
+      // Social push is bound to the authenticated participant, not to wallet
+      // readiness. Notify it as soon as native accepts the bearer; wallet
+      // consumers remain behind the separate relay admission below.
+      if (changed && typeof window.dispatchEvent === 'function' &&
+          typeof window.CustomEvent === 'function') {
+        window.dispatchEvent(new CustomEvent(
+          'usernode:native-session-admission', { detail: { admitted: next } }
+        ));
+      }
+    },
+
     _setSessionWalletRelayAdmission(admitted) {
       const next = admitted === true;
-      const changed = NativeChrome._sessionWalletRelayAdmitted !== next;
       NativeChrome._sessionWalletRelayAdmitted = next;
       const bridge = window.usernode;
       if (bridge &&
@@ -162,20 +207,10 @@
           typeof walletSheet._setSessionWalletAdmission === 'function') {
         walletSheet._setSessionWalletAdmission(next);
       }
-      // Consumers of privileged native methods must track the same admission
-      // edge. Closing immediately invalidates any state cached for the prior
-      // web session; reopening lets them safely retry work rejected while the
-      // handoff was in progress. This avoids coupling to private promise /
-      // generation state.
-      if (changed && typeof window.dispatchEvent === 'function' &&
-          typeof window.CustomEvent === 'function') {
-        window.dispatchEvent(new CustomEvent(
-          'usernode:native-session-admission', { detail: { admitted: next } }
-        ));
-      }
     },
 
     enterAnonymous() {
+      NativeChrome._setAuthenticatedSessionAdmission(false);
       NativeChrome._setSessionWalletRelayAdmission(false);
       if (NativeChrome._logoutRunning) return Promise.resolve(false);
       const generation = ++NativeChrome._handoffGeneration;
@@ -187,6 +222,7 @@
         const bridge = window.usernode;
         if (!bridge || bridge.isNative !== true) {
           if (!isCurrentAnonymous()) return false;
+          NativeChrome._setAuthenticatedSessionAdmission(true);
           NativeChrome._setSessionWalletRelayAdmission(true);
           return true;
         }
@@ -207,6 +243,7 @@
             return false;
           }
           if (!isCurrentAnonymous()) return false;
+          NativeChrome._setAuthenticatedSessionAdmission(true);
           NativeChrome._setSessionWalletRelayAdmission(true);
           return true;
         }
@@ -217,6 +254,7 @@
         const confirmedPreV4 = Number.isInteger(info.version) &&
           info.version > 0 && info.version < 4;
         if (confirmedPreV4 && isCurrentAnonymous()) {
+          NativeChrome._setAuthenticatedSessionAdmission(true);
           NativeChrome._setSessionWalletRelayAdmission(true);
           return true;
         }
@@ -243,6 +281,7 @@
       // Close synchronously with the `sv:session` listener invocation. No
       // wallet read/sign/send may reach the previous native identity while
       // the new web participant is being exchanged and verified.
+      NativeChrome._setAuthenticatedSessionAdmission(false);
       NativeChrome._setSessionWalletRelayAdmission(false);
       if (NativeChrome._logoutRunning) return Promise.resolve(null);
       if (NativeChrome._handoffPromise) {
@@ -283,7 +322,7 @@
     // pass when an authoritative handoff is already in flight.
     recoverSessionAdmission() {
       if (NativeChrome._logoutRunning ||
-          NativeChrome._sessionWalletRelayAdmitted) {
+          NativeChrome._authenticatedSessionAdmitted) {
         return Promise.resolve(null);
       }
       if (NativeChrome._handoffPromise) return NativeChrome._handoffPromise;
@@ -306,6 +345,7 @@
           info.version > 0 && info.version < 4;
         if (confirmedPreV4 && !NativeChrome._logoutRunning &&
             !NativeChrome._handoffRerunRequested) {
+          NativeChrome._setAuthenticatedSessionAdmission(true);
           NativeChrome._setSessionWalletRelayAdmission(true);
         }
         return null;
@@ -357,24 +397,35 @@
 
         const sessionBound = await NativeChrome.has('sessionBoundAuthStatus');
         if (sessionBound) {
-          const status = NativeChrome._boundReadyStatus(
+          const authenticatedStatus = NativeChrome._boundAuthenticatedStatus(
             result, webParticipantId
           );
-          if (!status) {
+          if (!authenticatedStatus) {
             console.warn('[native-chrome] native login result did not match '
               + 'the current participant/epoch');
             return null;
           }
-          await NativeChrome._ensureNodeStarted(status, generation);
-          if (!NativeChrome._handoffRerunRequested &&
-              NativeChrome._isCurrentWebParticipant(
-            webParticipantId, generation
-          )) {
-            NativeChrome._setSessionWalletRelayAdmission(true);
+          NativeChrome._setAuthenticatedSessionAdmission(
+            true, authenticatedStatus
+          );
+          const readyStatus = NativeChrome._boundReadyStatus(
+            result, webParticipantId
+          );
+          if (readyStatus) {
+            await NativeChrome._ensureNodeStarted(readyStatus, generation);
+            if (!NativeChrome._handoffRerunRequested &&
+                NativeChrome._isCurrentWebParticipant(
+              webParticipantId, generation
+            ) && NativeChrome._authenticatedStatusMatches(
+              authenticatedStatus
+            )) {
+              NativeChrome._setSessionWalletRelayAdmission(true);
+            }
           }
         } else if (result && result.address) {
           // Compatibility for bridge v4 builds. New builds advertise
           // sessionBoundAuthStatus and take the participant/epoch path above.
+          NativeChrome._setAuthenticatedSessionAdmission(true);
           await NativeChrome._ensureLegacyNodeStarted(
             result.address, webParticipantId, generation
           );
@@ -461,6 +512,7 @@
     // logout await. This preflight does not tear down the WebView.
     prepareWebLogout() {
       NativeChrome._logoutRunning = true;
+      NativeChrome._setAuthenticatedSessionAdmission(false);
       NativeChrome._setSessionWalletRelayAdmission(false);
       NativeChrome._handoffGeneration++;
       NativeChrome._handoffRerunRequested = false;
@@ -642,7 +694,7 @@
         const d = e && e.detail;
         if (!d || NativeChrome._logoutRunning) return;
         const participantId = NativeChrome._webParticipantId();
-        if (!NativeChrome._sessionWalletRelayAdmitted) {
+        if (!NativeChrome._authenticatedSessionAdmitted) {
           // onPageFinished may be the first signal after the privileged bridge
           // becomes available. Recover the explicit anonymous admission when
           // there is no web participant; otherwise retry the authoritative
@@ -651,6 +703,10 @@
             NativeChrome.enterAnonymous();
             return;
           }
+          // Identity transitions emitted by the completeLogin currently in
+          // flight are progress, not a request to exchange the same web
+          // session again.
+          if (NativeChrome._handoffPromise) return;
           // Preserve the normal post-handoff first-run permissions step on
           // the authenticated recovery path.
           NativeChrome.runLoginHandoff().then((result) =>
@@ -661,12 +717,35 @@
           return;
         }
         if (participantId == null) return;
+        const authenticatedStatus = NativeChrome._boundAuthenticatedStatus(
+          d, participantId
+        );
+        if (!authenticatedStatus ||
+            !NativeChrome._authenticatedStatusMatches(authenticatedStatus)) {
+          NativeChrome._setAuthenticatedSessionAdmission(false);
+          NativeChrome._setSessionWalletRelayAdmission(false);
+          return;
+        }
+        if (d.phase === 'reconciling') {
+          NativeChrome._setSessionWalletRelayAdmission(false);
+          return;
+        }
         if (d.phase !== 'ready' || !d.address) return;
         const generation = NativeChrome._handoffGeneration;
         NativeChrome.has('sessionBoundAuthStatus').then((sessionBound) => {
           if (sessionBound) {
             const status = NativeChrome._boundReadyStatus(d, participantId);
-            if (status) NativeChrome._ensureNodeStarted(status, generation);
+            if (status) {
+              NativeChrome._ensureNodeStarted(status, generation).then(() => {
+                if (NativeChrome._isCurrentWebParticipant(
+                  participantId, generation
+                ) && NativeChrome._authenticatedStatusMatches(
+                  authenticatedStatus
+                )) {
+                  NativeChrome._setSessionWalletRelayAdmission(true);
+                }
+              });
+            }
           } else {
             NativeChrome._ensureLegacyNodeStarted(
               d.address, participantId, generation
@@ -689,6 +768,7 @@
       // The bridge loads before wallet-sheet.js and before App resolves its
       // web session. Start closed so native A cannot be cached/rendered while
       // the shell is still deciding whether this document is anonymous or B.
+      NativeChrome._setAuthenticatedSessionAdmission(false);
       NativeChrome._setSessionWalletRelayAdmission(false);
       NativeChrome._initDrawerRows();
       NativeChrome._initAuthStatusEvents();

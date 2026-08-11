@@ -21,7 +21,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'notifications.js'),
+  // #1079 chunk B: same module, now inside the React bundle.
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'notifications', 'notifications.js'),
   'utf8'
 );
 const MIGRATE_SRC = fs.readFileSync(

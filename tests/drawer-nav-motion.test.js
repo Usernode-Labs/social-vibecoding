@@ -23,8 +23,13 @@ const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
 const appJs = read('public/js/app.js');
-const nodePillJs = read('public/js/node-pill.js');
-const walletSheetJs = read('public/js/wallet-sheet.js');
+// #1079 chunk B moved both modules into the React bundle; same files.
+const nodePillJs = read('frontend/src/features/header/node-pill.js');
+const walletSheetJs = read('frontend/src/features/header/wallet-sheet.js');
+// …and moved App.HeaderMenu itself, beside the markup it drives. app.js keeps
+// a forwarder, so its own call sites below are unchanged; the drawer's
+// behaviour is asserted against the module that owns it now.
+const headerMenuJs = read('frontend/src/features/header/header-menu-controller.js');
 const dapp = JSON.parse(read('dapp.json'));
 
 // The App._entryTransition body.
@@ -34,20 +39,20 @@ function entryTransition() {
   return appJs.slice(at, appJs.indexOf('\n  },', at));
 }
 
-// The HeaderMenu object, up to the pull-to-refresh block after it.
+// The HeaderMenu object, up to the window publication after it.
 function headerMenu() {
-  const at = appJs.indexOf('  HeaderMenu: {');
-  assert.ok(at !== -1, 'App.HeaderMenu went missing');
-  const end = appJs.indexOf('_wirePullToRefresh()', at);
-  assert.ok(end !== -1, 'could not find the end of App.HeaderMenu');
-  return appJs.slice(at, end);
+  const at = headerMenuJs.indexOf('const HeaderMenu = {');
+  assert.ok(at !== -1, 'the HeaderMenu controller went missing');
+  const end = headerMenuJs.indexOf("typeof window !== 'undefined'", at);
+  assert.ok(end !== -1, 'could not find the end of HeaderMenu');
+  return headerMenuJs.slice(at, end);
 }
 
 function headerMenuFn(signature) {
   const menu = headerMenu();
   const at = menu.indexOf(signature);
-  assert.ok(at !== -1, `App.HeaderMenu.${signature} went missing`);
-  return menu.slice(at, menu.indexOf('\n    },', at));
+  assert.ok(at !== -1, `HeaderMenu.${signature} went missing`);
+  return menu.slice(at, menu.indexOf('\n  },', at));
 }
 
 // ── The transition gate ────────────────────────────────────────────────
@@ -136,7 +141,7 @@ test('the zoom sites keep their split mutation intact under the gate', () => {
 
 test('isPresenting() covers the legacy closing window, not just [data-open]', () => {
   const fn = headerMenuFn('isPresenting() {');
-  assert.match(fn, /App\.HeaderMenu\._panel/,
+  assert.match(fn, /HeaderMenu\._panel/,
     'the kit handle is the touch path\'s authority — it survives until the '
     + 'exit spring rests');
   assert.match(fn, /hasAttribute\('data-open'\)/, 'the legacy slide-over while open');
@@ -148,7 +153,7 @@ test('isPresenting() covers the legacy closing window, not just [data-open]', ()
 
 test('consumeNavPending() is one-shot and expires', () => {
   const fn = headerMenuFn('consumeNavPending() {');
-  assert.match(fn, /App\.HeaderMenu\._navArmedAt = 0/,
+  assert.match(fn, /HeaderMenu\._navArmedAt = 0/,
     'clearing on read is what keeps it from applying to a second navigation');
   assert.match(fn, /NAV_ARM_TTL_MS/,
     'a link that produced no hashchange must not leave the flag armed forever');
@@ -162,7 +167,7 @@ test('a delegated handler owns every link inside the drawer', () => {
     + 'never had a close handler of their own');
   assert.match(init, /getAttribute\('href'\)/,
     '.href resolves to an absolute URL, which would make every hash link look external');
-  assert.match(init, /href\.startsWith\('#'\)[\s\S]{0,200}?_navArmedAt = App\.HeaderMenu\._now\(\)/,
+  assert.match(init, /href\.startsWith\('#'\)[\s\S]{0,200}?_navArmedAt = HeaderMenu\._now\(\)/,
     'only a same-document hash link animates a screen in this document, so only '
     + 'it arms the suppression');
   // The listener must be on the panel element itself so it rides along
@@ -172,9 +177,9 @@ test('a delegated handler owns every link inside the drawer', () => {
 
 test('close() still dismisses through the kit handle first', () => {
   const close = headerMenuFn('close() {');
-  assert.match(close.slice(0, 400), /App\.HeaderMenu\._panel[\s\S]{0,200}?\.dismiss\(\)/,
+  assert.match(close.slice(0, 400), /HeaderMenu\._panel[\s\S]{0,200}?\.dismiss\(\)/,
     'close() must dismiss through the kit so onDismiss (and the node restore) runs');
-  assert.match(close, /_closingAt = App\.HeaderMenu\._now\(\)/,
+  assert.match(close, /_closingAt = HeaderMenu\._now\(\)/,
     'the closing window has to start when close() runs, not when it finishes');
   assert.match(close, /return Promise\.resolve\(\)/,
     'a close with nothing open must still resolve, or a chained sheet never presents');
@@ -184,13 +189,13 @@ test('the close-completion promise settles on every exit path', () => {
   const menu = headerMenu();
   const after = headerMenuFn('_afterDismiss() {');
   assert.match(after, /_dismissWaiters\.push\(resolve\)/);
-  assert.match(after, /setTimeout\(resolve, App\.HeaderMenu\.DISMISS_SAFETY_MS\)/,
+  assert.match(after, /setTimeout\(resolve, HeaderMenu\.DISMISS_SAFETY_MS\)/,
     'a teardown that never fires must not hang the caller forever');
   // Kit path: resolved in onDismiss BEFORE the newer-open ownership guard,
   // or a superseded teardown strands the caller until the safety cap.
   const onDismiss = menu.slice(menu.indexOf('onDismiss: () => {'));
   const resolveAt = onDismiss.indexOf('_resolveDismissWaiters()');
-  const guardAt = onDismiss.indexOf('App.HeaderMenu._panel !== handle) return');
+  const guardAt = onDismiss.indexOf('HeaderMenu._panel !== handle) return');
   assert.ok(resolveAt !== -1, 'the kit teardown must resolve the waiters');
   assert.ok(guardAt !== -1, 'the newer-open ownership guard went missing');
   assert.ok(resolveAt < guardAt,
@@ -229,7 +234,7 @@ test('the Share dialog opens after the drawer is gone', () => {
   const init = headerMenuFn('init() {');
   const share = init.slice(init.indexOf("getElementById('drawer-row-share')"));
   assert.match(share.slice(0, 400),
-    /Promise\.resolve\(App\.HeaderMenu\.close\(\)\)\.then\(\(\) => \{[\s\S]{0,160}?openShareModal\(\)/,
+    /Promise\.resolve\(HeaderMenu\.close\(\)\)\.then\(\(\) => \{[\s\S]{0,160}?openShareModal\(\)/,
     'the share modal must not fade in across the drawer\'s exit');
 });
 

@@ -5,7 +5,8 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const source = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'node-pill.js'),
+  // #1079 chunk B: same module, now inside the React bundle.
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'header', 'node-pill.js'),
   'utf8'
 );
 
@@ -62,6 +63,10 @@ function loadNodePill({ hasNodeStatus, snapshot = null }) {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(source, sandbox);
+  // The module used to end with `NodePill.init()`. It is initialised from the
+  // island's layout effect now (so the `hidden` it lifts off #drawer-row-node
+  // lands after hydration), which makes the call this harness's job.
+  sandbox.window.NodePill.init();
   return {
     row,
     dot,

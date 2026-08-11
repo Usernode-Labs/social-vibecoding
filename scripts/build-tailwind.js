@@ -1,30 +1,39 @@
 #!/usr/bin/env node
 // Compiles the platform shell's Tailwind stylesheet.
 //
-//   npm run build:css     one-shot, minified, stamped  → public/css/tailwind.css
-//   npm run watch:css     rebuild-on-change for local iteration (NOT stamped)
+//   npm run build:css     one-shot, minified → public/css/tailwind.css
+//   npm run watch:css     rebuild-on-change for local iteration
 //
-// Why a committed artifact instead of a deploy-time build: the runtime image
-// installs with `npm ci --production` (no devDependencies, so no tailwindcss),
-// the deploy workflow only rsyncs + `docker compose up --build`, and worker
-// checkouts never run an install step. Committing the compiled CSS keeps all
-// three paths working with zero infrastructure change — at the cost of having
-// to rebuild whenever the scanned markup changes, which the stamp written
-// here (and checked by tests/tailwind-build.test.js) makes impossible to
-// forget silently.
+// Dockerfile runs this in a disposable builder stage for every production and
+// staging image, then copies only the output into the production-only runtime
+// stage. The output is gitignored; this command also remains available for
+// local development and focused tests.
 //
-// Run this after ANY change to public/index.html, public/js/**, the native
-// kit demo page, tailwind.config.js or styles/tailwind-input.css.
+// Tests pass --output <temporary-path> so they can validate a fresh compile
+// without creating or depending on an artifact in the source tree.
 
 const fs = require('fs');
 const path = require('path');
 const { execFileSync, spawn } = require('child_process');
 
-const {
-  ROOT, CONFIG_FILE, INPUT_FILE, OUTPUT_FILE, expectedStamp, formatStamp,
-} = require('./tailwind-stamp');
+const ROOT = path.join(__dirname, '..');
+const CONFIG_FILE = 'tailwind.config.js';
+const INPUT_FILE = 'styles/tailwind-input.css';
+const DEFAULT_OUTPUT_FILE = 'public/css/tailwind.css';
 
 const watch = process.argv.includes('--watch');
+
+function optionValue(name) {
+  const index = process.argv.indexOf(name);
+  if (index === -1) return null;
+  const value = process.argv[index + 1];
+  if (!value || value.startsWith('--')) fail(`${name} requires a path`);
+  return value;
+}
+
+const outputArg = optionValue('--output');
+const outputPath = path.resolve(ROOT, outputArg || DEFAULT_OUTPUT_FILE);
+const outputLabel = path.relative(ROOT, outputPath) || outputPath;
 
 // Resolve the tailwindcss CLI out of node_modules rather than trusting PATH
 // or npx (which would happily go to the network on a cache miss).
@@ -51,17 +60,13 @@ const args = [
   cli,
   '--config', path.join(ROOT, CONFIG_FILE),
   '--input', path.join(ROOT, INPUT_FILE),
-  '--output', path.join(ROOT, OUTPUT_FILE),
+  '--output', outputPath,
 ];
 
-fs.mkdirSync(path.dirname(path.join(ROOT, OUTPUT_FILE)), { recursive: true });
+fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 
 if (watch) {
-  // Watch mode leaves the output UNSTAMPED on purpose: the stamp is a
-  // point-in-time claim about the whole tree, and rewriting it on every
-  // keystroke would just produce noise. Finish an iteration session with
-  // `npm run build:css` — the freshness test will remind you otherwise.
-  console.log('[build-tailwind] watching (output is not stamped — run `npm run build:css` before committing)');
+  console.log(`[build-tailwind] watching → ${outputLabel}`);
   const child = spawn(process.execPath, [...args, '--watch'], { cwd: ROOT, stdio: 'inherit' });
   child.on('exit', (code) => process.exit(code == null ? 1 : code));
 } else {
@@ -73,15 +78,6 @@ if (watch) {
     fail(`tailwindcss failed: ${err.message}`);
   }
 
-  const outPath = path.join(ROOT, OUTPUT_FILE);
-  const css = fs.readFileSync(outPath, 'utf8').replace(/^﻿/, '').trimStart();
-  // Stamp AFTER compiling: --minify strips comments, so the stamp has to be
-  // prepended to the finished file. Computed from the working tree, which is
-  // exactly what the freshness test recomputes.
-  const { stamp, files } = expectedStamp();
-  fs.writeFileSync(outPath, `${formatStamp(stamp)}\n${css}\n`);
-
-  const bytes = fs.statSync(outPath).size;
-  console.log(`[build-tailwind] wrote ${OUTPUT_FILE} — ${(bytes / 1024).toFixed(1)} KB from ${files.length} scanned files`);
-  console.log(`[build-tailwind] stamp ${stamp.slice(0, 16)}…`);
+  const bytes = fs.statSync(outputPath).size;
+  console.log(`[build-tailwind] wrote ${outputLabel} — ${(bytes / 1024).toFixed(1)} KB`);
 }

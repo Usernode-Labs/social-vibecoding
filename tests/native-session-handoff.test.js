@@ -385,6 +385,71 @@ test('every handoff exchanges the web session and starts the bound identity', as
     'the already-started participant/epoch remains coalesced');
 });
 
+test('reconciling login admits Social push without opening the wallet',
+  async () => {
+    const loaded = loadNativeChrome({
+      completeLoginImpl: async () => ({
+        phase: 'reconciling', participantId: 7, epoch: 3,
+      }),
+    });
+    loaded.sandbox.App.user = { id: 7 };
+
+    const result = await loaded.NativeChrome.runLoginHandoff();
+
+    assert.equal(result.phase, 'reconciling');
+    assert.equal(loaded.NativeChrome.isSessionAdmitted(), true,
+      'the authenticated notification session is admitted');
+    assert.equal(loaded.NativeChrome._sessionWalletRelayAdmitted, false,
+      'wallet relay remains closed until account reconciliation settles');
+    assert.equal(loaded.calls.startNode.length, 0);
+
+    loaded.dispatchWindow('online');
+    await settle();
+    assert.equal(loaded.calls.fetch.length, 1,
+      'wallet reconciliation does not repeat the authenticated handoff');
+  });
+
+test('a matching ready event opens the wallet after push admission', async () => {
+  const loaded = loadNativeChrome({
+    completeLoginImpl: async () => ({
+      phase: 'reconciling', participantId: 7, epoch: 3,
+    }),
+  });
+  loaded.sandbox.App.user = { id: 7 };
+  await loaded.NativeChrome.runLoginHandoff();
+
+  loaded.dispatchWindow('usernode:auth-status', {
+    phase: 'ready', address: 'ut1-7', participantId: 7, epoch: 3,
+  });
+  await settle();
+
+  assert.deepEqual(plain(loaded.calls.startNode), [{
+    address: 'ut1-7', participantId: 7, epoch: 3,
+  }]);
+  assert.equal(loaded.NativeChrome.isSessionAdmitted(), true);
+  assert.equal(loaded.NativeChrome._sessionWalletRelayAdmitted, true);
+});
+
+test('a ready event for another native epoch cannot open the wallet',
+  async () => {
+    const loaded = loadNativeChrome({
+      completeLoginImpl: async () => ({
+        phase: 'reconciling', participantId: 7, epoch: 3,
+      }),
+    });
+    loaded.sandbox.App.user = { id: 7 };
+    await loaded.NativeChrome.runLoginHandoff();
+
+    loaded.dispatchWindow('usernode:auth-status', {
+      phase: 'ready', address: 'ut1-stale', participantId: 7, epoch: 4,
+    });
+    await settle();
+
+    assert.equal(loaded.calls.startNode.length, 0);
+    assert.equal(loaded.NativeChrome.isSessionAdmitted(), false);
+    assert.equal(loaded.NativeChrome._sessionWalletRelayAdmitted, false);
+  });
+
 test('a mismatched from-session participant is never handed to native', async () => {
   const loaded = loadNativeChrome({
     fetchImpl: async () => response({
@@ -665,6 +730,9 @@ test('auth-status events and concurrent starts stay participant/epoch bound', as
   });
   loaded.sandbox.App.user = { id: 6 };
   loaded.NativeChrome._handoffGeneration = 1;
+  loaded.NativeChrome._setAuthenticatedSessionAdmission(true, {
+    participantId: 6, epoch: 3,
+  });
   loaded.NativeChrome._setSessionWalletRelayAdmission(true);
 
   loaded.dispatchWindow('usernode:auth-status', {

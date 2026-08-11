@@ -242,6 +242,10 @@ const DevChat = {
       : 'claude_code';
   },
 
+  _isOpenRouterSession(session = DevChat.currentSession) {
+    return DevChat._agentBackend(session) === 'codex_openrouter';
+  },
+
   // Venue-first names. "Claude Code" used to mean BOTH the platform backend
   // and the web hand-off, in menus that sat inches apart; the venue names
   // say where the work happens and collide with nothing.
@@ -258,13 +262,13 @@ const DevChat = {
       || source?.metadata?.agentBackend
       || source?.agent_backend;
     if (backend === 'codex_openrouter') return 'codex_openrouter';
-    if (/^Codex\b/i.test(String(source?.content || ''))) return 'codex_openrouter';
+    if (/^(?:Codex|OpenRouter)\b/i.test(String(source?.content || ''))) return 'codex_openrouter';
     return 'claude_code';
   },
 
   _activityAgentName(source) {
     return DevChat._activityAgentBackend(source) === 'codex_openrouter'
-      ? 'Codex'
+      ? 'OpenRouter'
       : 'Claude Code';
   },
 
@@ -314,7 +318,7 @@ const DevChat = {
 
   _busyComposerPlaceholder() {
     const name = DevChat._agentBackend(DevChat.currentSession) === 'codex_openrouter'
-      ? 'Codex'
+      ? 'OpenRouter'
       : 'Claude';
     return `${name} is working — type your next note and tap 💾 to save it for later.`;
   },
@@ -353,12 +357,12 @@ const DevChat = {
 
   _openRouterModelCompatibilitySummary(model) {
     if (!model) return '';
-    if (model.compatibility === 'verified') return 'Verified with Codex.';
+    if (model.compatibility === 'verified') return 'Verified for repository coding.';
     if (model.meetsCodexMinimums) {
-      return 'OpenRouter advertises coding-tool support and enough context, but this model is not yet verified with Codex.';
+      return 'OpenRouter advertises coding-tool support and enough context, but this model is not yet verified for repository coding.';
     }
     return model.compatibilityNote
-      || 'OpenRouter exposes this model, but it may lack coding tools or enough context; the turn may fail.';
+      || 'OpenRouter exposes this model, but it may lack repository tools or enough context; the turn may fail.';
   },
 
   async _loadCodingAgentChoiceData() {
@@ -447,7 +451,7 @@ const DevChat = {
           </div>
           <button type="button" id="dc-agent-choice-close" class="shrink-0 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200" aria-label="Close">✕</button>
         </div>
-        <div class="mt-4 grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Coding agent">
+        <div class="mt-4 grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Session AI">
           <button type="button" id="dc-agent-choice-claude" role="radio" class="rounded-lg border p-3 text-left transition-colors">
             <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Usernode · Claude</span>
             <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">In this chat, on your daily Usernode credits.</span>
@@ -536,7 +540,7 @@ const DevChat = {
         return;
       }
       if (!data.credentialConfigured) {
-        status.textContent = data.catalogError || 'Add your OpenRouter API key before choosing Codex.';
+        status.textContent = data.catalogError || 'Add your OpenRouter API key before choosing OpenRouter.';
         applyButton.textContent = 'Set up OpenRouter';
         return;
       }
@@ -546,7 +550,17 @@ const DevChat = {
         return;
       }
       const model = data.models.find((item) => item.id === selectedModel) || null;
-      status.textContent = `${this._openRouterModelCostSummary(model)}. ${this._openRouterModelCompatibilitySummary(model)} Codex coding turns bill directly to your OpenRouter key.`;
+      const supportsReasoning = model?.supportsReasoning === true;
+      effortSelect.disabled = !supportsReasoning;
+      if (supportsReasoning) {
+        effortSelect.value = selectedEffort;
+      } else {
+        effortSelect.value = '';
+      }
+      const reasoningNote = supportsReasoning
+        ? ''
+        : ' This model does not expose reasoning-effort controls.';
+      status.textContent = `${this._openRouterModelCostSummary(model)}. ${this._openRouterModelCompatibilitySummary(model)}${reasoningNote} This session bills directly to your OpenRouter key.`;
     };
 
     claudeButton.addEventListener('click', () => { selectedBackend = 'claude_code'; render(); });
@@ -698,6 +712,10 @@ const DevChat = {
   _renderRunnerControls() {
     const host = document.getElementById('dc-runner');
     if (!host) return;
+    if (DevChat._isOpenRouterSession()) {
+      host.innerHTML = '';
+      return;
+    }
     const agent = DevChat._localAgent;
     if (!agent && DevChat._runner !== 'local') {
       host.innerHTML = '';
@@ -879,6 +897,13 @@ const DevChat = {
   },
 
   async refreshBudget() {
+    // OpenRouter sessions never use the platform's Anthropic allowance.
+    // Keep its meter, exhausted banner, and demo refusal card out of this
+    // session instead of showing billing state that cannot affect a turn.
+    if (DevChat._isOpenRouterSession()) {
+      DevChat.renderBudget();
+      return;
+    }
     try {
       // ?demo=1 passthrough so a staging reviewer can see the exhausted
       // state (red meter + three-route banner) without burning a real
@@ -933,6 +958,10 @@ const DevChat = {
     DevChat._applyCreditsBanner();
     const el = document.getElementById('dc-budget');
     if (!el) return;
+    if (DevChat._isOpenRouterSession()) {
+      el.innerHTML = '';
+      return;
+    }
     // BYOK (#30/#119/#212): billing is limit-first — the daily platform
     // allowance is consumed before any spend hits the user's own key —
     // so key-holders see the limit progress first (same red/yellow
@@ -982,6 +1011,7 @@ const DevChat = {
   // blocked. Key-holders never match (billing continues on their key),
   // and a missing budget fetch stays quiet rather than guessing.
   _creditsExhausted() {
+    if (DevChat._isOpenRouterSession()) return false;
     const b = DevChat.budget;
     if (!b) return false;
     if (window.Settings?.state?.hasApiKey) return false;
@@ -1890,10 +1920,10 @@ const DevChat = {
       // for active/promoted (paused sessions can't be busy).
       let statusClass;
       let dotTitle;
-      // Preserve the legacy Claude tooltip byte-for-byte; only Codex rows
+      // Preserve the legacy Claude tooltip byte-for-byte; only OpenRouter rows
       // need a different provider name.
       const runningAgent = DevChat._activityAgentBackend(s) === 'codex_openrouter'
-        ? 'Codex'
+        ? 'OpenRouter'
         : 'Claude';
       if (s.status === 'paused') { statusClass = 'dc-active-dot-paused'; dotTitle = 'Paused'; }
       else if (s.status === 'promoted') {
@@ -2570,6 +2600,7 @@ const DevChat = {
       DevAlerts.requestNotifyPermission();
     }
     const model = DevChat.selectedModel;
+    const openRouterSession = DevChat._isOpenRouterSession();
     DevChat.isStreaming = true;
     // #889: defensive — a fresh turn must never paint the previous turn's
     // "Stopping…" button. Every teardown path already clears this, but the
@@ -2620,7 +2651,8 @@ const DevChat = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message, model,
+          message,
+          ...(!openRouterSession ? { model } : {}),
           ...(sentAttachments.length ? { attachmentIds: sentAttachments.map((a) => a.id) } : {}),
         }),
         signal: DevChat._abortController.signal,
@@ -2651,6 +2683,25 @@ const DevChat = {
         // Only the server's billing path sets code: 'budget_exceeded';
         // chatLimiter throttles keep the old wording.
         if (data.code === 'budget_exceeded') {
+          // This response belongs to the Anthropic-backed path. An
+          // OpenRouter session must never turn it into a Claude/Codex
+          // recovery card; surface a plain provider error defensively if
+          // an older server returns the stale billing gate.
+          if (openRouterSession) {
+            DevChat.messages.push({
+              role: 'assistant',
+              content: `**OpenRouter turn could not start.** ${data.error || 'Please try again.'}`,
+              created_at: new Date().toISOString(),
+            });
+            DevChat._finishStreaming();
+            DevChat._restoreComposer(message, { dropOptimisticUser: true });
+            if (sentAttachments.length) {
+              DevChat.pendingAttachments = sentAttachments;
+              DevChat._renderAttachStrip();
+            }
+            DevChat.renderMessages();
+            return;
+          }
           // The refusal renders as a CARD (public/js/credit-options.js) with
           // all three ways to keep building — own API key, a coding tool on
           // your machine, or a connected Claude.ai / ChatGPT subscription —
@@ -4208,7 +4259,7 @@ const DevChat = {
   _isLiveCcRun(m) {
     if (!m || m.role !== 'system' || !m._active) return false;
     if (m.progressLog) return true;
-    return /^(Claude Code is (running|making changes)|Codex is running|Scout reading the codebase|Syncing with main)/i
+    return /^(Claude Code is (running|making changes)|(?:Codex|OpenRouter) is running|Scout reading the codebase|Syncing with main)/i
       .test(String(m.content || ''));
   },
 
@@ -4721,7 +4772,7 @@ const DevChat = {
     // Each is paired with a 'Claude Code progress' system row whose
     // live log we want to attach.
     const ACTIVE_CC_STATUS_RE
-      = /^(Claude Code is (running|making changes)|Codex is running|Scout reading the codebase|Syncing with main)/i;
+      = /^(Claude Code is (running|making changes)|(?:Codex|OpenRouter) is running|Scout reading the codebase|Syncing with main)/i;
     // Helper: is this a viable status candidate for pairing? Stop on
     // any non-system row (status/progress pairs always live inside a
     // single dispatch turn) and skip rows that already carry their
@@ -6592,7 +6643,6 @@ const DevChat = {
         return `<option value="${id}" ${id === DevChat.selectedModel ? 'selected' : ''}>${escapeHtml(text)}</option>`;
       })
       .join('');
-
     const viewerOpen = !!DevChat.specViewer.open;
     // Saved viewer width from a previous drag. Applied as inline style
     // on the side panel; CSS clamps to a min/max so a stale value

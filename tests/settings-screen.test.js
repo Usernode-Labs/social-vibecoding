@@ -312,8 +312,11 @@ test('the drawer row is a real anchor to #settings', () => {
   assert.match(html, /<a id="drawer-row-settings" href="#settings"/,
     'navigation rides the anchor hash, like Challenges / Profile');
   assert.match(html, /id="drawer-byok-dot"/, 'the BYOK indicator dot survives');
-  const init = appJs.slice(appJs.indexOf("getElementById('drawer-row-settings')"));
-  assert.match(init.slice(0, 250), /App\.HeaderMenu\.close\(\)/,
+  // #1079 chunk B: the drawer's row handlers moved into the React bundle with
+  // its markup (frontend/src/features/header/header-menu-controller.js).
+  const headerMenuJs = read('frontend/src/features/header/header-menu-controller.js');
+  const init = headerMenuJs.slice(headerMenuJs.indexOf("getElementById('drawer-row-settings')"));
+  assert.match(init.slice(0, 250), /HeaderMenu\.close\(\)/,
     'the click handler just closes the drawer');
   assert.doesNotMatch(init.slice(0, 250), /Settings\.open\(/,
     'it does NOT call Settings.open — the hash does the navigating');

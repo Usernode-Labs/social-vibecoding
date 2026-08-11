@@ -814,15 +814,15 @@ async function resolveExplicitAgentPreference(client, userId, config, {
   }
 
   if (!config || !config.codexOpenrouterEnabled) {
-    throw new AgentSelectionError(403, 'Codex/OpenRouter is not available on this deployment.');
+    throw new AgentSelectionError(403, 'OpenRouter is not available on this deployment.');
   }
   if (config.openrouterBetaUserIds?.length
       && !config.openrouterBetaUserIds.includes(String(userId))) {
-    throw new AgentSelectionError(403, 'Codex/OpenRouter is not available for your account yet.');
+    throw new AgentSelectionError(403, 'OpenRouter is not available for your account yet.');
   }
 
   if (typeof model !== 'string' || !model.trim()) {
-    throw new AgentSelectionError(400, 'Choose an OpenRouter model for Codex.');
+    throw new AgentSelectionError(400, 'Choose an OpenRouter model.');
   }
   const modelId = model.trim();
 
@@ -855,7 +855,10 @@ async function resolveExplicitAgentPreference(client, userId, config, {
     });
     throw new AgentSelectionError(400, 'Could not validate that OpenRouter model right now; try again.');
   }
-  if (!Array.isArray(catalog?.models) || !catalog.models.some((m) => m.id === modelId)) {
+  const selectedCatalogModel = Array.isArray(catalog?.models)
+    ? catalog.models.find((candidate) => candidate.id === modelId)
+    : null;
+  if (!selectedCatalogModel) {
     throw new AgentSelectionError(400, 'That model is not available under your OpenRouter key.');
   }
 
@@ -863,7 +866,7 @@ async function resolveExplicitAgentPreference(client, userId, config, {
     backend: 'codex_openrouter',
     provider: 'openrouter',
     model: modelId,
-    reasoningEffort: effort,
+    reasoningEffort: selectedCatalogModel.supportsReasoning === false ? null : effort,
   };
 }
 
@@ -1569,7 +1572,27 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       if (!github.isEnabled() || !repoOwner || !repoName) {
         return res.status(400).json({ error: 'No GitHub repo configured for this app' });
       }
-      if (!llm.isEnabled()) return res.status(503).json({ error: 'LLM not configured' });
+
+      // Resolve the actual saved backend before any provider-specific gate.
+      // An OpenRouter default does not require an Anthropic configuration or
+      // allowance just to start an unattended run.
+      let pref;
+      try {
+        const explicitAgent = req.body
+          && Object.prototype.hasOwnProperty.call(req.body, 'backend');
+        pref = explicitAgent
+          ? await resolveExplicitAgentPreference(pool, req.user.id, config, req.body)
+          : await resolveDefaultAgentPreference(pool, req.user.id, config);
+      } catch (err) {
+        if (err instanceof AgentSelectionError) {
+          return res.status(err.statusCode).json({ error: err.message });
+        }
+        throw err;
+      }
+      const isOpenRouterSession = pref.backend === 'codex_openrouter';
+      if (!isOpenRouterSession && !llm.isEnabled()) {
+        return res.status(503).json({ error: 'LLM not configured' });
+      }
 
       // One auto session per issue at a time: 'generating' means a run is
       // in flight; 'ready' means the start-from button should be used
@@ -1597,12 +1620,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // exhausted — exactly like a chat turn. No headroom + no key → 429.
       // The code lets the client tell budget exhaustion apart from a
       // rate-limit 429 (#463).
-      // At SESSION-CREATION time the backend is not yet established (it is
-      // copied from preferences by the insert below), so this creation gate
-      // stays Anthropic-budget based; the Codex coding dispatch itself is
-      // gated Codex-aware in runScoutTool/runClaudeCodeTool.
-      const billing = await limits.resolveBillingPath(pool, config.dataEncryptionKey, req.user.id);
-      if (billing.error) return res.status(429).json({ error: billing.error, code: 'budget_exceeded' });
+      // OpenRouter runs bill only the user's OpenRouter key. Claude runs keep
+      // the existing limit-first platform/BYOK preflight.
+      let billing = { apiKey: null };
+      if (!isOpenRouterSession) {
+        billing = await limits.resolveBillingPath(pool, config.dataEncryptionKey, req.user.id);
+        if (billing.error) return res.status(429).json({ error: billing.error, code: 'budget_exceeded' });
+      }
       const userApiKey = billing.apiKey;
 
       // Headless sessions don't count against the clicking user's session
@@ -1651,7 +1675,6 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // CLONED session carries `Closes #N` (the clone copies the linkage).
       // plan 9 (Commit 7): carry the final default backend/model in the
       // insert — no insert-then-patch for headless sessions either.
-      const pref = await resolveDefaultAgentPreference(pool, req.user.id, config);
       const { rows } = await pool.query(
         `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless, headless_status, headless_issue_number, linked_issues, session_title,
             agent_backend, agent_provider, agent_model, agent_reasoning_effort)
@@ -2462,12 +2485,16 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         updatedRow = upd.rows[0];
 
         const agentLabel = isCodex
-          ? `Codex via OpenRouter (${safeAgentModelLabel(pref.model)})`
+          ? `OpenRouter (${safeAgentModelLabel(pref.model)})`
           : 'Claude Code';
         const changedBackend = registry.resolveBackend(sess.agent_backend) !== pref.backend;
-        const messageText = changedBackend
-          ? `Coding agent switched to ${agentLabel}. A fresh agent context will start on the next turn; the branch and conversation were kept.`
-          : `${agentLabel} context was reset. A fresh agent context will start on the next turn; the branch and conversation were kept.`;
+        const messageText = isCodex
+          ? (changedBackend
+            ? `Session AI switched to ${agentLabel}. Fresh model context will start on the next turn; the branch and conversation were kept.`
+            : `${agentLabel} context was reset. Fresh model context will start on the next turn; the branch and conversation were kept.`)
+          : (changedBackend
+            ? `Coding agent switched to ${agentLabel}. A fresh agent context will start on the next turn; the branch and conversation were kept.`
+            : `${agentLabel} context was reset. A fresh agent context will start on the next turn; the branch and conversation were kept.`);
         const msg = await client.query(
           `INSERT INTO chat_session_messages (session_id, role, content, metadata)
            VALUES ($1, 'system', $2, $3) RETURNING *`,
@@ -3340,6 +3367,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         return res.status(404).json({ error: 'Active session not found' });
       }
       const session = sessionRows[0];
+      const isOpenRouterSession = registry.resolveBackend(session.agent_backend) === 'codex_openrouter';
 
       // Resolve who pays for this turn once up front (#212): the shared
       // daily allowance is consumed first, and the caller's BYOK key
@@ -3350,14 +3378,15 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // below routes the cost to the right bucket. Allowance gone and
       // no key on file → the same 429 as always, tagged with a code so
       // the client can tell it apart from a chatLimiter throttle (#463).
-      // Coherent billing contract (review #4): the Mayor + wrap-up phases
-      // are Anthropic-backed for BOTH backends, so the Anthropic budget is
-      // always preflighted up front (matching the headless path). Only the
-      // Codex coding dispatch itself bills to the user's OpenRouter account
-      // (see isCodexSession → turnApiKey=null below); the coding phase is
-      // never debited from the Anthropic ledger.
-      const billing = await limits.resolveBillingPath(pool, config.dataEncryptionKey, req.user.id);
-      if (billing.error) return res.status(429).json({ error: billing.error, code: 'budget_exceeded' });
+      // OpenRouter sessions are a single-provider path: their selected model
+      // handles the whole turn directly, so an exhausted Anthropic allowance
+      // must neither block nor bill them. Claude sessions retain the existing
+      // limit-first platform/BYOK contract.
+      let billing = { apiKey: null };
+      if (!isOpenRouterSession) {
+        billing = await limits.resolveBillingPath(pool, config.dataEncryptionKey, req.user.id);
+        if (billing.error) return res.status(429).json({ error: billing.error, code: 'budget_exceeded' });
+      }
       // Mutable since #664: an expensive CC phase can exhaust the
       // allowance mid-turn, so billing is re-resolved after the tool
       // completes and the wrap-up phase bills the fresh payer.
@@ -3609,7 +3638,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // it, and any failure just keeps the branch-name fallback. The
       // billing path resolved above means the Haiku call is debited to
       // the requesting user (BYOK-aware), like every other turn cost.
-      const titledThisTurn = !session.session_title && !session.pr_number;
+      // OpenRouter sessions deliberately make no Anthropic side calls, so
+      // their eventual deterministic PR title owns the session name.
+      const titledThisTurn = !isOpenRouterSession && !session.session_title && !session.pr_number;
       if (titledThisTurn) {
         sessionTitles.maybeTitleFirstMessage({
           pool, session, message: messageText,
@@ -3623,7 +3654,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // never fires again; and the first-message hook already covers
       // the turn it ran on. Fire-and-forget like the hook above.
       const refreshTitleAtTurnEnd = () => {
-        if (titledThisTurn || session.pr_number) return;
+        if (isOpenRouterSession || titledThisTurn || session.pr_number) return;
         sessionTitles.refreshFromHistory({
           pool, session, userId: req.user.id, apiKey: userApiKey, send,
         });
@@ -3651,6 +3682,156 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           send('done', {});
           res.end();
           if (stopRegistry.get(session.id) === stopHandle) stopRegistry.delete(session.id);
+          setTimeout(() => sessionBus.clearSession(session.id), 30000);
+          return;
+        }
+
+        // OpenRouter is a complete, single-provider session path. The
+        // selected OpenRouter model receives the user's message directly
+        // and can either answer it or edit the repository; no Anthropic
+        // Mayor, wrap-up, title, or quick-reply generation runs around it.
+        if (isOpenRouterSession) {
+          const agentIdentity = codingAgentRuntimeIdentity(session, null, config);
+          const directSpec = await loadSessionSpec(pool, session.id);
+          turnHasSpec = !!String(directSpec || '').trim();
+
+          if (isSessionBusy(session.id)) {
+            const live = workerProgress.get(session.id);
+            const busyIdentity = live?.backend
+              ? {
+                  agentName: live.backend === 'codex_openrouter' ? 'OpenRouter' : 'Claude Code',
+                  metadata: {
+                    agentBackend: live.backend,
+                    agentModel: live.model || null,
+                  },
+                }
+              : agentIdentity;
+            await sendStatus(
+              `${busyIdentity.agentName} is already running for this session. Please wait for it to finish.`,
+              { ...busyIdentity.metadata, quickReplies: turnPills('worker_busy') },
+            );
+            send('done', {});
+            res.end();
+            return;
+          }
+
+          releaseDispatchOperation = beginSessionOperation(session.id);
+          send('assistant_message_end', {});
+
+          let attachmentsBlock = '';
+          if (turnAttachments.length) {
+            try {
+              attachmentsBlock = attachmentsSvc.buildDispatchBlock(
+                await attachmentsSvc.loadByIds(pool, turnAttachments.map((a) => a.id)),
+              );
+            } catch (err) {
+              log.warn('sessions', 'Failed to build OpenRouter attachment block', {
+                sessionId: session.id, err: err.message,
+              });
+            }
+          }
+          const discussionBlock = await buildSessionDiscussionBlock(pool, session);
+
+          setPhase('cc');
+          const toolResult = await runClaudeCodeTool({
+            pool, config, req, res, session, selectedModel,
+            userMessage: messageText,
+            toolPromptArg: messageText,
+            attachmentsBlock,
+            discussionBlock,
+            repoOwner, repoName,
+            send, sendStatus,
+            stopHandle,
+            userApiKey: null,
+            directSessionTurn: true,
+            deferTurnCleanup: true,
+          });
+
+          // Configuration errors reuse the stop flag to prevent downstream
+          // work, but are provider failures rather than a human stop. Real
+          // stop requests keep the existing stopped event/cleanup contract.
+          if (stopHandle.stopped && stopHandle.stoppedBy !== 'agent_error') {
+            if (toolResult.turnId) {
+              const cleared = await worker.finishTurn(session.id, { turnId: toolResult.turnId });
+              if (!cleared) {
+                await scheduleRetainedInteractiveTurn({
+                  pool, sessionId: session.id, scheduleInteractiveRecovery,
+                  assumeRetained: true,
+                });
+              }
+            }
+            send('stopped', { phase: 'cc', by: stopHandle.stoppedBy });
+            send('done', {});
+            res.end();
+            setTimeout(() => sessionBus.clearSession(session.id), 30000);
+            return;
+          }
+
+          const directOutcome = toolResult.isError
+            ? 'failed'
+            : (toolResult.commitSha ? 'build_done' : 'chat');
+          const directText = toolResult.toolResultText
+            || (toolResult.isError
+              ? '_The OpenRouter turn did not complete successfully — see the status messages above._'
+              : '_Done._');
+          const directPills = turnPills(directOutcome);
+          const directKind = fallbackKindForTurn({
+            outcome: directOutcome,
+            hasPr: session.pr_number != null,
+            hasSpec: turnHasSpec,
+          });
+          const directMeta = JSON.stringify({
+            ...(directPills ? { quickReplies: directPills } : {}),
+            quickRepliesSource: 'static',
+            ...(directKind ? { quickRepliesKind: directKind } : {}),
+            openRouterDirect: true,
+          });
+          const directModel = agentIdentity.model
+            ? `openrouter/${agentIdentity.model}`
+            : null;
+          const insertDirectReply = (client) => client.query(
+            `INSERT INTO chat_session_messages (session_id, role, content, model, metadata)
+             VALUES ($1, 'assistant', $2, $3, $4)`,
+            [session.id, directText, directModel, directMeta],
+          );
+          let replyApplied = true;
+          if (toolResult.turnId) {
+            const receipt = await turnEffects.runDbEffect({
+              pool,
+              turnId: toolResult.turnId,
+              effectKey: TURN_WRAPUP_EFFECT_KEYS.message,
+              sessionId: session.id,
+              run: async (client) => {
+                await insertDirectReply(client);
+                return { persisted: true };
+              },
+            });
+            replyApplied = receipt.applied;
+          } else {
+            await insertDirectReply(pool);
+          }
+          if (replyApplied) {
+            send('mayor_reasoning', { text: directText });
+            if (directPills) send('quick_replies', { replies: directPills });
+          }
+
+          if (toolResult.turnId) {
+            await worker.noteTailMilestone(
+              session.id,
+              { wrapUpPosted: true },
+              { turnId: toolResult.turnId },
+            );
+            const cleared = await worker.finishTurn(session.id, { turnId: toolResult.turnId });
+            if (!cleared) {
+              await scheduleRetainedInteractiveTurn({
+                pool, sessionId: session.id, scheduleInteractiveRecovery,
+                assumeRetained: true,
+              });
+            }
+          }
+
+          send('done', {});
+          res.end();
           setTimeout(() => sessionBus.clearSession(session.id), 30000);
           return;
         }
@@ -4302,7 +4483,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           const live = workerProgress.get(session.id);
           const busyAgent = live?.backend
             ? {
-                agentName: live.backend === 'codex_openrouter' ? 'Codex' : 'Claude Code',
+                agentName: live.backend === 'codex_openrouter' ? 'OpenRouter' : 'Claude Code',
                 metadata: {
                   agentBackend: live.backend,
                   agentModel: live.model || null,
@@ -6459,6 +6640,31 @@ async function runHeadlessSession({
   // pure-text turn, or the decision turn when the scout's spec still
   // carries a blocking Questions section. Empty means nothing to post.
   let questionTextToPost = '';
+  const finalizeReady = async () => {
+    await pool.query(
+      `UPDATE chat_sessions SET headless_status = 'ready', headless_outcome = $1,
+              headless_step = NULL, headless_turn_id = NULL, last_activity_at = NOW()
+       WHERE id = $2`,
+      [outcome, session.id]
+    );
+    send('headless_update', { status: 'ready', outcome, issueNumber, appSlug: session.app_slug });
+    sessionState.touch(session.id);
+    if (questionTextToPost) {
+      const posted = await postHeadlessQuestionComment({
+        repoOwner, repoName, issueNumber, questionText: questionTextToPost,
+      });
+      const threadPosted = await postHeadlessQuestionThreadMessage({
+        pool, appId: session.app_id, issueNumber, questionText: questionTextToPost,
+      });
+      if (posted || threadPosted) {
+        await sendStatus(`Posted clarifying questions to issue #${issueNumber}`);
+      }
+    }
+    await notifyAutoSolveDone(pool, {
+      userId: user.id, appId: session.app_id, sessionId: session.id, detail: outcome,
+    });
+    log.info('sessions', 'Headless session ready', { sessionId: session.id, issueNumber, outcome });
+  };
   try {
     // Seed turn: same shape as the issue panel's "Create PR" seeding, minus
     // the open-a-PR instruction (headless mode never opens one), plus the
@@ -6476,6 +6682,58 @@ async function runHeadlessSession({
         [session.id, seed]
       );
     }
+
+    if (registry.resolveBackend(session.agent_backend) === 'codex_openrouter') {
+      await setHeadlessStep(pool, session.id, 'cc_running');
+      const identity = codingAgentRuntimeIdentity(session, null, config);
+      await sendStatus(
+        `Auto session: sending issue #${issueNumber} to OpenRouter (${identity.modelLabel})...`,
+        identity.metadata,
+      );
+      const toolResult = await runClaudeCodeTool({
+        pool, config, req: fakeReq, res: fakeRes, session, selectedModel,
+        userMessage: seed,
+        toolPromptArg: seed,
+        repoOwner, repoName,
+        send, sendStatus,
+        stopHandle: null,
+        userApiKey: null,
+        headless: true,
+        directSessionTurn: true,
+        beforeTurnCleanup: async ({ isError, commitSha }) => {
+          outcome = isError || !commitSha ? 'question' : 'code';
+          headlessTurnId = await checkpointHeadlessWrapUp(pool, session.id, outcome);
+        },
+      });
+      outcome = toolResult.isError || !toolResult.commitSha ? 'question' : 'code';
+      if (!headlessTurnId) {
+        headlessTurnId = await checkpointHeadlessWrapUp(pool, session.id, outcome);
+      }
+      const directText = toolResult.toolResultText
+        || (toolResult.isError
+          ? '_The OpenRouter run did not complete successfully — review the status above._'
+          : '_Change committed and pushed — start a session from this auto session to review it._');
+      if (!toolResult.isError && !toolResult.commitSha && directText.trim()) {
+        questionTextToPost = directText;
+      }
+      const messageApplied = await persistHeadlessMayorRow({
+        pool,
+        sessionId: session.id,
+        headlessTurnId,
+        text: directText,
+        model: identity.model ? `openrouter/${identity.model}` : null,
+        usage: null,
+        costCents: 0,
+        metadata: {
+          ...headlessWrapUpMeta(toolResult.isError ? 'failed' : outcome),
+          openRouterDirect: true,
+        },
+      });
+      if (messageApplied) send('mayor_reasoning', { text: directText });
+      await finalizeReady();
+      return;
+    }
+
     await setHeadlessStep(pool, session.id, 'planning');
     // #896: one label either way. This row is copied verbatim into any dev
     // chat cloned from this auto session, where "after a platform restart"
@@ -7036,45 +7294,7 @@ async function runHeadlessSession({
       }
     }
 
-    await pool.query(
-      `UPDATE chat_sessions SET headless_status = 'ready', headless_outcome = $1,
-              headless_step = NULL, headless_turn_id = NULL, last_activity_at = NOW()
-       WHERE id = $2`,
-      [outcome, session.id]
-    );
-    send('headless_update', { status: 'ready', outcome, issueNumber, appSlug: session.app_slug });
-    // #1038: the auto-run's card state lives in the row we just wrote, not
-    // in any in-memory registry, so the notifier has to be told explicitly.
-    sessionState.touch(session.id);
-    // #150/#178: post the reporter-facing questions on the GitHub issue so
-    // the reporter sees them without entering the platform — written by a
-    // pure-text phase-1 turn, or by the decision turn when the scout's spec
-    // still carried a blocking Questions section. Deliberately AFTER the
-    // terminal status write: the boot resume only re-drives 'generating'
-    // rows, so double-posting on restart is impossible; a crash between the
-    // UPDATE and the post degrades to no comment (today's behavior).
-    if (questionTextToPost) {
-      const posted = await postHeadlessQuestionComment({
-        repoOwner, repoName, issueNumber, questionText: questionTextToPost,
-      });
-      // #945: and into the issue's platform-side Discussion thread, which
-      // is where readers on the platform see it — and where their answers
-      // are now read back from on the next run. Same
-      // after-the-terminal-write placement as the GitHub post, so the
-      // 'generating'-only boot resume can't double-post either.
-      const threadPosted = await postHeadlessQuestionThreadMessage({
-        pool, appId: session.app_id, issueNumber, questionText: questionTextToPost,
-      });
-      if (posted || threadPosted) {
-        await sendStatus(`Posted clarifying questions to issue #${issueNumber}`);
-      }
-    }
-    // #161: always notify the user who started the run (no arming —
-    // kicking off an auto-solve opts you into its completion ping).
-    await notifyAutoSolveDone(pool, {
-      userId: user.id, appId: session.app_id, sessionId: session.id, detail: outcome,
-    });
-    log.info('sessions', 'Headless session ready', { sessionId: session.id, issueNumber, outcome });
+    await finalizeReady();
   } catch (err) {
     activeWorkers.delete(session.id);
     workerProgress.clear(session.id);
@@ -7218,7 +7438,12 @@ async function runRecoveredWrapUp({
   // The static closing line used when the model call can't be made or
   // fails — mirrors the live wrap-up's empty-text guards, so a degraded
   // recovery still ends on a normal-looking assistant bubble.
-  const fallbackText = staticWrapUpText(outcome);
+  const isOpenRouterSession = registry.resolveBackend(session?.agent_backend) === 'codex_openrouter';
+  const fallbackText = isOpenRouterSession
+    ? (outcome === 'failed' || outcome === 'push_failed'
+      ? '_The OpenRouter turn did not complete successfully._'
+      : '_OpenRouter finished the turn without a response._')
+    : staticWrapUpText(outcome);
 
   // Persist the wrap-up as an ordinary assistant row: same columns the
   // live phase-2 writes, plus metadata.recovered for the audit trail.
@@ -7268,6 +7493,19 @@ async function runRecoveredWrapUp({
       if (quickReplies) emit('quick_replies', { replies: quickReplies });
     }
   };
+
+  // A recovered OpenRouter turn keeps the same single-provider contract as
+  // a live one. Its coding-agent summary is already durable, so close the
+  // turn from that result without resolving Anthropic billing or calling a
+  // second model behind the user's back.
+  if (isOpenRouterSession) {
+    const text = String(dispatchSummary || '').trim() || fallbackText;
+    await persistWrapUp(text, fallbackPills, {
+      model: session?.agent_model ? `openrouter/${session.agent_model}` : null,
+      kind: fallbackPillKind,
+    });
+    return { ok: true, text, quickReplies: fallbackPills, provider: 'openrouter' };
+  }
 
   if (!llm.isEnabled()) {
     log.warn('sessions', 'Recovered wrap-up skipped: LLM not configured', { sessionId });
@@ -7639,7 +7877,7 @@ async function resumeRecoveredCodexFreshRetry({ pool, session, activeTurn, resul
     || activeTurn.phase === 'retry_dispatch_pending';
   if (result?.agentRetryFresh !== true && !legacyRetryPhase) return null;
 
-  const message = 'The saved Codex thread became unavailable during a platform restart. '
+  const message = 'The saved OpenRouter model context became unavailable during a platform restart. '
     + 'For safety, no automatic retry was dispatched; retry this turn to start fresh.';
   const patch = {
     retryFresh: false,
@@ -7776,7 +8014,10 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
   // proceeds platform-billed like it always has — the Anthropic proxy
   // enforces the cap per-call, so the run fails with the same message
   // it would have shown live rather than dying silently here.
-  const resumeBilling = await limits.resolveBillingPath(pool, config.dataEncryptionKey, session.user_id);
+  const isOpenRouterSession = registry.resolveBackend(session.agent_backend) === 'codex_openrouter';
+  const resumeBilling = isOpenRouterSession
+    ? { apiKey: null }
+    : await limits.resolveBillingPath(pool, config.dataEncryptionKey, session.user_id);
   const userApiKey = resumeBilling.error ? null : resumeBilling.apiKey;
   // The model picked at start isn't a session column, but every persisted
   // assistant turn carries it — reuse the latest, else the default.
@@ -8082,33 +8323,10 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
     outcome = 'question';
   }
 
-  // step === 'wrapping' (directly, or fallen through from cc_running):
-  // re-issue just the phase-2 Mayor wrap-up from the persisted
-  // transcript. The original tool_use blocks died with the old process,
-  // so the dispatch outcome is delivered as a plain user message — the
-  // Anthropic API merges/accepts consecutive same-role messages.
-  const { rows: msgRows } = await pool.query(
-    `SELECT role, content FROM chat_session_messages
-     WHERE session_id = $1 AND role IN ('user', 'assistant')
-     ORDER BY id ASC`,
-    [session.id]
-  );
-  const convo = msgRows
-    .filter((r) => (r.content || '').trim())
-    .map((r) => ({ role: r.role, content: r.content }));
-  convo.push({
-    role: 'user',
-    content: `[SYSTEM NOTE — not the human] The platform restarted while this auto session was running; it has been resumed. The dispatched work finished with outcome '${outcome}'.${dispatchSummary ? `\n\nDispatch result:\n${dispatchSummary}` : ''}\n\nWrite the final wrap-up message for the human reviewer who will pick this session up later: state what was done and what they should do next. Do not call any tools.`,
-  });
-
-  const headlessAddendum = buildHeadlessAddendum(issueNumber);
-  const currentSpec = await loadSessionSpec(pool, session.id);
-  const wrapPrompt = getMayorSystemPrompt(session.app_name, false, currentSpec, !!session.app_self_hosted, null) + headlessAddendum;
-  // No tools passed → plain text turn; the API can't call anything, so
-  // tool_choice is unnecessary (and invalid without a tools array).
+  // step === 'wrapping' (directly, or fallen through from cc_running).
+  // OpenRouter recovery closes from the selected model's durable summary;
+  // Claude recovery retains the historical Mayor wrap-up.
   if (!headlessTurnId) {
-    // Rolling-deploy compatibility: wrapping rows created before
-    // headless_turn_id existed get an identity before any new provider call.
     headlessTurnId = await checkpointHeadlessWrapUp(pool, session.id, outcome);
   }
   const fallbackMayorText = outcome === 'spec'
@@ -8118,60 +8336,81 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
       : outcome === 'code'
         ? '_Change committed and pushed — start a session from this auto session to open the PR._'
         : "_The auto session's dispatch didn't finish successfully — see the status above._";
-  const recoveredEffect = await runHeadlessMayorEffect({
-    pool,
-    sessionId: session.id,
-    headlessTurnId,
-    fallbackText: fallbackMayorText,
-    invoke: () => llm.streamChat({
+  let mayorText2;
+  let servedModelR;
+  let recoveredUsage = null;
+  if (isOpenRouterSession) {
+    mayorText2 = String(dispatchSummary || '').trim() || fallbackMayorText;
+    servedModelR = session.agent_model ? `openrouter/${session.agent_model}` : null;
+  } else {
+    const { rows: msgRows } = await pool.query(
+      `SELECT role, content FROM chat_session_messages
+       WHERE session_id = $1 AND role IN ('user', 'assistant')
+       ORDER BY id ASC`,
+      [session.id]
+    );
+    const convo = msgRows
+      .filter((r) => (r.content || '').trim())
+      .map((r) => ({ role: r.role, content: r.content }));
+    convo.push({
+      role: 'user',
+      content: `[SYSTEM NOTE — not the human] The platform restarted while this auto session was running; it has been resumed. The dispatched work finished with outcome '${outcome}'.${dispatchSummary ? `\n\nDispatch result:\n${dispatchSummary}` : ''}\n\nWrite the final wrap-up message for the human reviewer who will pick this session up later: state what was done and what they should do next. Do not call any tools.`,
+    });
+    const headlessAddendum = buildHeadlessAddendum(issueNumber);
+    const currentSpec = await loadSessionSpec(pool, session.id);
+    const wrapPrompt = getMayorSystemPrompt(session.app_name, false, currentSpec, !!session.app_self_hosted, null) + headlessAddendum;
+    const recoveredEffect = await runHeadlessMayorEffect({
+      pool,
+      sessionId: session.id,
+      headlessTurnId,
+      fallbackText: fallbackMayorText,
+      invoke: () => llm.streamChat({
         messages: convo,
         systemPrompt: wrapPrompt,
         model: selectedModel,
         apiKey: userApiKey,
       }),
-  });
-  const mayor2 = recoveredEffect.response;
-  // Fable 5 fallback: admin record only on this rare resume path (there's
-  // no sendStatus plumbing here); attribution below uses the served model.
-  if (mayor2.fallbackServed && recoveredEffect.disposition === 'executed') {
-    await modelFallback.record(pool, {
-      kind: events.EVENT_TYPES.MODEL_FALLBACK,
-      userId: user.id, appId: session.app_id, sessionId: session.id,
-      requested: selectedModel, served: mayor2.servedModel || llm.FALLBACK_TARGET_MODEL,
-      category: (mayor2.stopDetails && mayor2.stopDetails.category) || null,
-      source: 'headless-resume',
     });
+    const mayor2 = recoveredEffect.response;
+    if (mayor2.fallbackServed && recoveredEffect.disposition === 'executed') {
+      await modelFallback.record(pool, {
+        kind: events.EVENT_TYPES.MODEL_FALLBACK,
+        userId: user.id, appId: session.app_id, sessionId: session.id,
+        requested: selectedModel, served: mayor2.servedModel || llm.FALLBACK_TARGET_MODEL,
+        category: (mayor2.stopDetails && mayor2.stopDetails.category) || null,
+        source: 'headless-resume',
+      });
+    }
+    mayorText2 = (mayor2.text || '').trim() || fallbackMayorText;
+    servedModelR = mayor2.servedModel || selectedModel;
+    recoveredUsage = mayor2.usage || null;
   }
-
-  let mayorText2 = (mayor2.text || '').trim();
-  if (!mayorText2) {
-    mayorText2 = fallbackMayorText;
-  }
-  const servedModelR = mayor2.servedModel || selectedModel;
-  const costCents2 = mayor2.usage ? llm.estimateCostCents(mayor2.usage, servedModelR) : 0;
+  const costCents2 = recoveredUsage ? llm.estimateCostCents(recoveredUsage, servedModelR) : 0;
   await persistHeadlessMayorRow({
     pool,
     sessionId: session.id,
     headlessTurnId,
     text: mayorText2,
     model: servedModelR,
-    usage: mayor2.usage,
+    usage: recoveredUsage,
     costCents: costCents2,
     // #1001: this row was the single biggest no-pills hole in production —
     // it wrote no metadata column at all, so every restart-resumed auto
     // session fell through to the client's generic default.
     metadata: headlessWrapUpMeta(outcome),
   });
-  await settleHeadlessMayorUsage({
-    pool,
-    userId: user.id,
-    sessionId: session.id,
-    headlessTurnId,
-    usage: mayor2.usage,
-    servedModel: mayor2.servedModel,
-    selectedModel,
-    userApiKey,
-  });
+  if (recoveredUsage) {
+    await settleHeadlessMayorUsage({
+      pool,
+      userId: user.id,
+      sessionId: session.id,
+      headlessTurnId,
+      usage: recoveredUsage,
+      servedModel: servedModelR,
+      selectedModel,
+      userApiKey,
+    });
+  }
 
   if (recoveredJournal && recoveredTurnForCleanup) {
     recoveredTurnForCleanup = await turnLifecycle.markHeadlessTerminal(pool, {
@@ -9261,7 +9500,7 @@ function prettyModelLabel(modelId) {
 function safeAgentModelLabel(modelId, fallback = 'model not configured') {
   const raw = String(modelId || '').trim();
   if (!raw) return fallback;
-  const safe = raw.slice(0, 200).replace(/[^A-Za-z0-9._:/+@-]/g, '?');
+  const safe = raw.slice(0, 200).replace(/[^A-Za-z0-9._:/+@~-]/g, '?');
   return safe || fallback;
 }
 
@@ -9286,7 +9525,7 @@ function codingAgentRuntimeIdentity(session, selectedModel, config = {}) {
     modelLabel: isCodex
       ? safeAgentModelLabel(model)
       : safeAgentModelLabel(prettyModelLabel(selectedModel), 'Sonnet'),
-    agentName: isCodex ? 'Codex' : 'Claude Code',
+    agentName: isCodex ? 'OpenRouter' : 'Claude Code',
     metadata: {
       agentBackend: backend,
       agentModel: model || null,
@@ -9511,7 +9750,7 @@ async function runScoutTool({
   // issue-triage run must not wait 90 seconds on a laptop nobody is watching.
   // A lookup failure means "no local agent", never a failed turn.
   let lease = null;
-  if (!headless) {
+  if (!headless && !isCodexSession) {
     try {
       lease = await localAgent.activeLease(pool, session.id);
     } catch (err) {
@@ -9898,18 +10137,18 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         // stop branch tears the turn down cleanly and skips the Mayor wrap-up.
         const code = routed.error;
         const msg = code === 'backend_disabled' || code === 'backend_not_available'
-          ? 'Codex/OpenRouter is not available for your account right now.'
+          ? 'OpenRouter is not available for your account right now.'
           : code === 'model_required'
-            ? 'Pick a Codex model in Settings for this session.'
+            ? 'Pick an OpenRouter model in Settings for this session.'
             : code === 'invalid_base_url'
               ? 'The OpenRouter endpoint is misconfigured.'
               : code === 'ledger_start_failed'
-                ? 'Could not start the Codex turn. Please retry.'
+                ? 'Could not start the OpenRouter turn. Please retry.'
                 : code === 'agent_context_changed'
                   ? 'The agent configuration changed while starting this turn. Please retry.'
                   : code === 'session_busy'
                     ? 'The session became busy. Stop the current turn before retrying.'
-                    : 'Add your OpenRouter API key in Settings to use Codex.';
+                    : 'Add your OpenRouter API key in Settings to use OpenRouter.';
         await sendStatus(msg, executionAgentMeta);
         if (stopHandle) {
           stopHandle.stopped = true;
@@ -10266,7 +10505,7 @@ async function runCodexAttemptLoop({
     if (attemptNumber >= 2) break;
     if (typeof sendStatus === 'function') {
       const status = retryFresh
-        ? 'The saved Codex thread is unavailable — retrying fresh once…'
+        ? 'The saved OpenRouter model context is unavailable — retrying fresh once…'
         : 'The coding step failed unexpectedly — retrying once…';
       try { await sendStatus(status); } catch {}
     }
@@ -10573,6 +10812,11 @@ async function runClaudeCodeTool({
   // variant (staging, no PR); everything else (worker exec, push
   // accounting, cost debit) is identical.
   headless = false,
+  // OpenRouter sessions have no separate chat model or Mayor. Their selected
+  // model receives the user's turn directly and may answer without changing
+  // files; a clean no-change result is therefore a successful chat reply,
+  // not a failed coding dispatch.
+  directSessionTurn = false,
   deferTurnCleanup = false,
   beforeTurnCleanup = null,
 }) {
@@ -10678,7 +10922,7 @@ async function runClaudeCodeTool({
   //
   // A lookup failure means "no local agent", never a failed turn.
   let lease = null;
-  if (!headless) {
+  if (!headless && !isCodexSession) {
     try {
       lease = await localAgent.activeLease(pool, session.id);
     } catch (err) {
@@ -10695,7 +10939,9 @@ async function runClaudeCodeTool({
   await sendStatus(
     runLocally
       ? `Handing this turn to ${lease.label} — your machine, your Claude subscription${discussionBlock ? ' · with issue & proposal discussion' : ''}...`
-      : `Spinning up coding agent (${modelLabel}${prodDebug ? ' · prod debug' : ''}${discussionBlock ? ' · with issue & proposal discussion' : ''})...`,
+      : (isCodexSession
+        ? `Starting OpenRouter (${modelLabel}${discussionBlock ? ' · with issue & proposal discussion' : ''})...`
+        : `Spinning up coding agent (${modelLabel}${prodDebug ? ' · prod debug' : ''}${discussionBlock ? ' · with issue & proposal discussion' : ''})...`),
     runLocally
       ? {
           ...executionAgentMeta,
@@ -10726,6 +10972,9 @@ async function runClaudeCodeTool({
   // from scratch. The platform-conventions block still overrides if
   // anything in the spec contradicts a platform-wide rule.
   const currentSpec = await loadSessionSpec(pool, session.id);
+  const specTaskReference = directSessionTurn
+    ? 'The DIRECT USER TURN above'
+    : 'The "CODING TASK (from the Mayor)" line above';
   const specBlock = currentSpec.trim()
     ? `
 
@@ -10737,9 +10986,9 @@ ${currentSpec}
 
 The SPEC DOC above is the user's planning record for this session,
 refined collaboratively with the Mayor. Treat it as the authoritative
-description of WHAT to build and HOW IT SHOULD BEHAVE. The "CODING
-TASK (from the Mayor)" line above tells you which slice to implement
-in this dispatch — it is NOT a substitute for the spec, and you should
+description of WHAT to build and HOW IT SHOULD BEHAVE. ${specTaskReference}
+tells you which request to handle in this turn — it is NOT a substitute
+for the spec, and you should
 not re-derive intent from it when the spec covers the same ground.
 Platform conventions still override the spec on any platform-wide
 rule (auth, public/private tables, etc.).`
@@ -10777,10 +11026,27 @@ or the repo's own \`CLAUDE.md\` on app-specific matters.`
   const platformIssueHelperNote = isCodexSession
     ? 'The `usernode-report-platform-issue` helper is NOT available on this backend; do not call it.'
     : `A build-turn helper \`usernode-report-platform-issue\` is also available (run it via Bash): \`usernode-report-platform-issue "<short title>"\` with the issue detail on stdin. Use it for anything that needs a change OUTSIDE this app's repo — both platform-level breakage (the shared bridge, wallet / native mobile WebView, the staging/preview pipeline, the checks gate) AND missing platform capabilities the app needs (feature requests: a bridge API that doesn't exist, data the platform doesn't expose, a limit blocking a legitimate feature) — see "Platform-level problems & missing capabilities: escalate, don't file workarounds" in the conventions above. It does NOT file anything directly: it posts a draft report card into the dev chat that the user must tap to confirm (or dismiss) before an issue is filed on the platform repo. It de-dupes against open reports and earlier drafts. The one hard rule: never use it for something you can fix in this app itself.`;
-  const claudePrompt = `USER REQUEST: "${userMessage}"
-
-CODING TASK (from the Mayor):
-${toolPromptArg}${attachmentsBlock}${discussionBlock}
+  const taskBlock = directSessionTurn
+    ? `DIRECT USER TURN:\n${userMessage}${attachmentsBlock}${discussionBlock}`
+    : `USER REQUEST: "${userMessage}"\n\nCODING TASK (from the Mayor):\n${toolPromptArg}${attachmentsBlock}${discussionBlock}`;
+  const turnInstructions = directSessionTurn
+    ? (headless
+      ? `- Work on the issue autonomously. If it is actionable, implement it fully and commit the change.
+- If essential information is missing, make no speculative edits; explain the blocker or ask the smallest necessary question in your final response.
+- Do not claim that files changed unless you actually changed and committed them.`
+      : `- You are the session's selected OpenRouter model and are replying directly to the user; there is no separate chat model.
+- If the user asks for information, analysis, status, or an explanation, answer directly and do not change files.
+- If the user asks for a change, implement it fully and commit it. Do not stop after merely describing what should change.
+- If essential clarification is required, ask one concise question and make no speculative edits.
+- Never claim that files changed unless you actually changed and committed them.`)
+    : `- IMPLEMENT the requested changes fully. Do not just explore — write code.
+- Spend minimal time reading files. Focus on writing and editing.
+- Create or modify all necessary files to complete the request.
+- If building something new, implement the full feature — don't stop partway.
+- After all changes are made, stage everything with "git add -A" and commit
+  with a clear message describing what was built.
+- Do NOT ask questions or request clarification. Just build it.`;
+  const claudePrompt = `${taskBlock}
 
 ==== PLATFORM CONVENTIONS (authoritative) ====
 
@@ -10808,13 +11074,7 @@ ${prodDebug && !isCodexSession ? `
 ${debugAccess.promptBlock()}
 ` : ''}
 INSTRUCTIONS:
-- IMPLEMENT the requested changes fully. Do not just explore — write code.
-- Spend minimal time reading files. Focus on writing and editing.
-- Create or modify all necessary files to complete the request.
-- If building something new, implement the full feature — don't stop partway.
-- After all changes are made, stage everything with "git add -A" and commit
-  with a clear message describing what was built.
-- Do NOT ask questions or request clarification. Just build it.
+${turnInstructions}
 ${IN_LOOP_BROWSER_GUIDANCE}
 - End your FINAL message with a testing block (optional, but strongly
   encouraged whenever the change is user-visible) so reviewers can try the
@@ -11464,18 +11724,18 @@ path: /another/changed/view
         // SSE is already open; terminate through the SSE protocol (review #5).
         const code = routed.error;
         const msg = code === 'backend_disabled' || code === 'backend_not_available'
-          ? 'Codex/OpenRouter is not available for your account right now.'
+          ? 'OpenRouter is not available for your account right now.'
           : code === 'model_required'
-            ? 'Pick a Codex model in Settings for this session.'
+            ? 'Pick an OpenRouter model in Settings for this session.'
             : code === 'invalid_base_url'
               ? 'The OpenRouter endpoint is misconfigured.'
               : code === 'ledger_start_failed'
-                ? 'Could not start the Codex turn. Please retry.'
+                ? 'Could not start the OpenRouter turn. Please retry.'
                 : code === 'agent_context_changed'
                   ? 'The agent configuration changed while starting this turn. Please retry.'
                   : code === 'session_busy'
                     ? 'The session became busy. Stop the current turn before retrying.'
-                    : 'Add your OpenRouter API key in Settings to use Codex.';
+                    : 'Add your OpenRouter API key in Settings to use OpenRouter.';
         await sendStatus(msg, executionAgentMeta);
         if (stopHandle) {
           stopHandle.stopped = true;
@@ -11657,9 +11917,12 @@ path: /another/changed/view
       await sendStatus(msg, executionAgentMeta);
       summaryParts.push(msg);
     } else if (!hasChanges) {
-      isError = true;
+      const directReply = directSessionTurn && result.exitCode === 0 && !!ccText.trim();
+      if (!directReply) isError = true;
       let msg;
-      if (result.exitCode === 0) {
+      if (directReply) {
+        msg = null;
+      } else if (result.exitCode === 0) {
         msg = `No changes were made by ${executionAgentName}.`;
       } else if (result.exitCode === -1 || result.exitCode == null) {
         // Markerless turn — say WHY in plain terms instead of a bare
@@ -11668,8 +11931,10 @@ path: /another/changed/view
       } else {
         msg = `${executionAgentName} exited with code ${result.exitCode} — no changes were made.`;
       }
-      await sendStatus(msg, executionAgentMeta);
-      summaryParts.push(msg);
+      if (msg) {
+        await sendStatus(msg, executionAgentMeta);
+        summaryParts.push(msg);
+      }
     } else if (!result.pushOk && !(await healPush())) {
       // Terminal push failure (heal included): the branch on GitHub is
       // stale or absent, so PR creation would 422 and staging would
@@ -12145,7 +12410,7 @@ path: /another/changed/view
       let statusText = ccOutcome === 'success'
         ? `${executionAgentName} finished`
         : ccOutcome === 'no_changes'
-          ? `${executionAgentName} made no changes`
+          ? (directSessionTurn ? `${executionAgentName} replied` : `${executionAgentName} made no changes`)
           : `${executionAgentName} did not complete`;
       // #907: name the machine and say plainly that the platform did not pay
       // for the coding phase. The scout path's counterpart reads "Drafted on
@@ -12163,24 +12428,27 @@ path: /another/changed/view
           ? { runner: 'local', localAgentLabel: lease.label, localMode: 'build' }
           : {}),
       };
-      if (result.turnId) {
-        const receipt = await turnEffects.runDbEffect({
-          pool,
-          turnId: result.turnId,
-          effectKey: 'completion_row',
-          sessionId: session.id,
-          run: async (client) => {
-            await client.query(
-              `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-               VALUES ($1, 'system', $2, $3)`,
-              [session.id, statusText, JSON.stringify(completionMeta)],
-            );
-            return { persisted: true };
-          },
-        });
-        if (receipt.applied) send('status', { text: statusText, ...completionMeta });
-      } else {
-        await sendStatus(statusText, completionMeta);
+      const directChatReply = directSessionTurn && !hasChanges && !isError;
+      if (!directChatReply) {
+        if (result.turnId) {
+          const receipt = await turnEffects.runDbEffect({
+            pool,
+            turnId: result.turnId,
+            effectKey: 'completion_row',
+            sessionId: session.id,
+            run: async (client) => {
+              await client.query(
+                `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+                 VALUES ($1, 'system', $2, $3)`,
+                [session.id, statusText, JSON.stringify(completionMeta)],
+              );
+              return { persisted: true };
+            },
+          });
+          if (receipt.applied) send('status', { text: statusText, ...completionMeta });
+        } else {
+          await sendStatus(statusText, completionMeta);
+        }
       }
       // Tail milestone: the agent's own summary card is on the transcript.
       // A resumed tail must not post a second one (finalizeRecoveredTurn's
@@ -12192,7 +12460,7 @@ path: /another/changed/view
       );
       // Prepend CC's own description so the Mayor leads with what was
       // actually built, with our outcome bullets as supplementary context.
-      summaryParts.unshift(`What the agent did:\n${ccText}`);
+      summaryParts.unshift(directChatReply ? ccText : `What the agent did:\n${ccText}`);
     }
     durableTailComplete = true;
   } finally {
@@ -12200,7 +12468,7 @@ path: /another/changed/view
     workerProgress.clear(session.id);
     if (durableTailComplete && durableTurnId && typeof beforeTurnCleanup === 'function') {
       try {
-        await beforeTurnCleanup({ turnId: durableTurnId, isError });
+        await beforeTurnCleanup({ turnId: durableTurnId, isError, commitSha: commitHash || null });
       } catch (err) {
         err.retainActiveTurn = true;
         throw err;

@@ -206,14 +206,20 @@ async function hasByokKeyOnFile(pool, userId) {
   }
 }
 
-// #664: one-time (per turn) user-facing notice that the payer switched to
-// their own key mid-turn. Persists a system chat row (visible on reload)
-// and fans the event out live over the global WS + the session bus (the
-// resumable GET /events SSE) — the proxy has no handle on the turn's POST
-// SSE, but the dev-chat client listens on both side channels. Entirely
-// best-effort: a failed notice must never fail the API call.
+// #664: user-facing notice that the payer switched to their own key mid-turn.
+// Persists a system chat row (visible on reload) and fans the event out live
+// over the global WS + the session bus (the resumable GET /events SSE) — the
+// proxy has no handle on the turn's POST SSE, but the dev-chat client listens
+// on both side channels. Entirely best-effort: a failed notice must never fail
+// the API call.
+//
+// #1088: the caller decides WHETHER to emit. This used to be gated only by the
+// per-turn registry flag, so it re-announced on every chat once credits were
+// out; it now runs at most once per user per UTC day
+// (limits.claimByokSwitchNotice). The copy is day-scoped to match — it is no
+// longer describing just "this turn".
 async function emitSwitchNotice(pool, sessionId, userId) {
-  const text = 'Your free daily AI credits ran out — this turn is continuing on your Anthropic API key.';
+  const text = 'Your free daily AI credits ran out — work is now continuing on your Anthropic API key. Credits reset at midnight UTC.';
   try {
     await pool.query(
       `INSERT INTO chat_session_messages (session_id, role, content, metadata)
@@ -244,7 +250,6 @@ async function emitSwitchNotice(pool, sessionId, userId) {
   } catch (err) {
     log.warn('anthropic-proxy', 'Failed to publish billing switch to bus', { sessionId, err: err.message });
   }
-  log.info('anthropic-proxy', 'Turn switched to BYOK key mid-turn', { sessionId, userId });
 }
 
 // #800: accumulate this call's cost onto the session's coding-agent
@@ -380,8 +385,20 @@ function anthropicProxyRoutes(config) {
       if (userOver || globalOver) {
         const byokKey = await limits.loadUserApiKey(pool, userId, config.dataEncryptionKey);
         if (byokKey) {
+          // Two gates, deliberately different in scope (#1088):
+          //   markTurnByokSwitched — per turn, cheap and in-process. Keeps the
+          //     operator log line at one per turn, exactly as before.
+          //   claimByokSwitchNotice — per user per UTC day, in the DB. Decides
+          //     whether the *user* is told. The per-turn flag alone re-announced
+          //     the switch on every chat for the rest of the day.
+          // The turn gate runs first so the day claim is only ever paid for
+          // once per turn, and the whole block stays non-fatal.
           if (workerMod && workerMod.markTurnByokSwitched(sessionId)) {
-            await emitSwitchNotice(pool, sessionId, userId);
+            const noticed = await limits.claimByokSwitchNotice(pool, userId);
+            log.info('anthropic-proxy', 'Turn switched to BYOK key mid-turn', {
+              sessionId, userId, notified: noticed,
+            });
+            if (noticed) await emitSwitchNotice(pool, sessionId, userId);
           }
           // The user's own key pays this call: no budget kill (it draws
           // nothing from the allowance) and the observed cost lands in

@@ -280,6 +280,53 @@ test('applyPrMetadata falls back to the single current turn when there is no his
   }
 });
 
+test('OpenRouter PR metadata is deterministic and makes no hidden Anthropic call', async () => {
+  let generateCalls = 0;
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => { generateCalls += 1; },
+    githubCalls,
+  });
+  try {
+    const pool = mockPool([
+      { role: 'user', content: 'Make OpenRouter sessions use the selected model everywhere', metadata: {} },
+    ]);
+    const session = {
+      id: 11,
+      branch_name: 'feat/openrouter-flow',
+      pr_number: null,
+      agent_backend: 'codex_openrouter',
+    };
+
+    const result = await subject.applyPrMetadata({
+      pool,
+      session,
+      repoOwner: 'acme',
+      repoName: 'app',
+      userMessage: 'Make OpenRouter sessions use the selected model everywhere',
+      ccSummary: 'Removed Claude billing and model selection from the OpenRouter flow.',
+      username: 'evan',
+      userId: 9,
+      effectTurnId: '00000000-0000-4000-8000-000000000011',
+      effectSessionId: 11,
+    });
+
+    assert.equal(generateCalls, 0, 'OpenRouter metadata cannot spend Anthropic credits');
+    assert.equal(githubCalls[0].type, 'create');
+    assert.equal(
+      githubCalls[0].opts.title,
+      'Make OpenRouter sessions use the selected model everywhere',
+    );
+    assert.match(
+      githubCalls[0].opts.body,
+      /^Removed Claude billing and model selection from the OpenRouter flow\./,
+    );
+    assert.equal(result.prTitle, githubCalls[0].opts.title);
+  } finally {
+    restore();
+  }
+});
+
 // ---- #75: closing keywords ----
 
 test('no linked issues -> body has no Closes line and is unchanged', async () => {

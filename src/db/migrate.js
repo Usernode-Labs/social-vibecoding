@@ -5281,6 +5281,9 @@ async function seedStagingCapReached(pool, config) {
 
   // 2. Guarantee today's spend exceeds the 1¢ cap (raise-only, so the
   //    dashboard's own llm_usage fixtures aren't reduced on re-runs).
+  //    byok_notice_at is deliberately left unstamped (#1088): a tester
+  //    with their own key on this preview should still see the
+  //    once-per-day switchover notice the first time it fires.
   await pool.query(
     `INSERT INTO llm_usage (user_id, date, total_cost_cents)
      VALUES ($1, CURRENT_DATE, 50)

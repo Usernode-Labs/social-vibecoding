@@ -51,12 +51,23 @@ function makePool({
   globalSpent = 0,
   systemSpent = 0,
   keyEnc = null,
+  // #1088: has this user already been told TODAY? Stands in for a
+  // non-NULL llm_usage.byok_notice_at on today's row — the claim upsert
+  // then updates no row and returns rowCount 0.
+  noticeClaimedToday = false,
+  claimThrows = false,
 } = {}) {
   const calls = [];
   const notices = [];
+  const claims = [];
+  let claimed = noticeClaimedToday;
   return {
     calls,
     notices,
+    claims,
+    // Roll the mock DB to the next UTC day: today's row (and its
+    // byok_notice_at stamp) is gone, so the next claim wins again.
+    rollToNextDay() { claimed = false; },
     async query(sql, params = []) {
       calls.push({ sql, params });
       if (/SELECT user_id FROM chat_sessions/.test(sql)) {
@@ -86,6 +97,15 @@ function makePool({
       }
       if (/SELECT anthropic_key_enc FROM users/.test(sql)) {
         return { rows: keyEnc ? [{ anthropic_key_enc: keyEnc }] : [] };
+      }
+      // #1088: the once-per-user-per-UTC-day notice claim. The real
+      // statement is a conditional upsert returning at most one id.
+      if (/INSERT INTO llm_usage \(user_id, date, byok_notice_at\)/.test(sql)) {
+        claims.push({ userId: params[0], sql });
+        if (claimThrows) throw new Error('claim boom');
+        if (claimed) return { rows: [], rowCount: 0 };
+        claimed = true;
+        return { rows: [{ id: 1 }], rowCount: 1 };
       }
       if (/INSERT INTO chat_session_messages/.test(sql)) {
         notices.push({ sessionId: params[0], text: params[1], metadata: params[2] });
@@ -219,7 +239,13 @@ test('user cap exhausted + key on file → forwards on the USER key, notice once
     assert.equal(p.state.forwards[0].shouldKill, null, 'BYOK calls carry no budget kill');
     // The switched call's observed cost lands in the per-turn tally.
     assert.deepEqual(p.state.byokSpend, [{ sessionId: SESSION_ID, cents: 5 }]);
-    // One-time notice: persisted system row + WS broadcast + bus publish.
+    // One-time notice: persisted system row + WS broadcast + bus publish,
+    // gated behind the day claim (#1088).
+    assert.equal(pool.claims.length, 1, 'the day claim is attempted once per turn');
+    assert.equal(pool.claims[0].userId, USER_ID, 'the claim is scoped to the user');
+    assert.match(pool.claims[0].sql, /CURRENT_DATE/, 'and to the current UTC day');
+    assert.match(pool.claims[0].sql, /byok_notice_at IS NULL/,
+      'the upsert only stamps a row that has not been stamped today');
     assert.equal(pool.notices.length, 1);
     assert.match(pool.notices[0].text, /continuing on your Anthropic API key/);
     assert.equal(pool.notices[0].sessionId, SESSION_ID);
@@ -235,6 +261,83 @@ test('user cap exhausted + key on file → forwards on the USER key, notice once
     assert.equal(p.state.forwards[1].apiKey, USER_KEY);
     assert.equal(pool.notices.length, 1, 'notice fires exactly once per turn');
     assert.equal(p.state.broadcasts.length, 1);
+    assert.equal(pool.claims.length, 1,
+      'the per-turn flag still short-circuits before the DB claim');
+  } finally {
+    p.restore();
+  }
+});
+
+// #1088: the regression this issue reported. The per-turn registry flag
+// resets on every dispatch, so before the day claim the notice re-fired
+// on every chat for the rest of the day.
+test('LATER turn, same UTC day → still switches keys, but does NOT re-notify', async () => {
+  const pool = makePool({ userSpent: 2500, keyEnc: GOOD_KEY_ENC });
+  const p = loadProxy(pool);
+  try {
+    await p.call();
+    assert.equal(pool.notices.length, 1, 'first turn of the day tells the user');
+
+    // A new turn: the worker registry's per-turn flag is reset at dispatch.
+    p.state.alreadySwitched = false;
+    const r2 = await p.call();
+
+    assert.equal(r2.status, 200);
+    assert.equal(p.state.forwards[1].apiKey, USER_KEY,
+      'billing is untouched — the user key still pays');
+    assert.deepEqual(p.state.byokSpend.length, 2, 'and the spend is still tallied');
+    assert.equal(pool.claims.length, 2, 'the new turn does attempt the claim');
+    assert.equal(pool.notices.length, 1, 'but no second chat row');
+    assert.equal(p.state.broadcasts.length, 1, 'no second WS broadcast');
+    assert.equal(p.state.busEvents.length, 1, 'no second bus event');
+  } finally {
+    p.restore();
+  }
+});
+
+test('next UTC day → the user is told again (the marker expires with the credits)', async () => {
+  const pool = makePool({ userSpent: 2500, keyEnc: GOOD_KEY_ENC });
+  const p = loadProxy(pool);
+  try {
+    await p.call();
+    assert.equal(pool.notices.length, 1);
+
+    pool.rollToNextDay();
+    p.state.alreadySwitched = false;
+    await p.call();
+
+    assert.equal(pool.notices.length, 2,
+      'llm_usage.date rolls over, so the claim is winnable again');
+    assert.equal(p.state.broadcasts.length, 2);
+  } finally {
+    p.restore();
+  }
+});
+
+test('a claim that already belongs to another caller suppresses the notice from the first call', async () => {
+  const pool = makePool({ userSpent: 2500, keyEnc: GOOD_KEY_ENC, noticeClaimedToday: true });
+  const p = loadProxy(pool);
+  try {
+    const r = await p.call();
+    assert.equal(r.status, 200);
+    assert.equal(p.state.forwards[0].apiKey, USER_KEY);
+    assert.equal(pool.claims.length, 1);
+    assert.equal(pool.notices.length, 0, 'byok_notice_at was already stamped today');
+    assert.equal(p.state.broadcasts.length, 0);
+  } finally {
+    p.restore();
+  }
+});
+
+test('a failing claim suppresses the notice but never fails the call', async () => {
+  const pool = makePool({ userSpent: 2500, keyEnc: GOOD_KEY_ENC, claimThrows: true });
+  const p = loadProxy(pool);
+  try {
+    const r = await p.call();
+    assert.equal(r.status, 200, 'billing bookkeeping never breaks the proxied call');
+    assert.equal(p.state.forwards[0].apiKey, USER_KEY);
+    assert.deepEqual(p.state.byokSpend, [{ sessionId: SESSION_ID, cents: 5 }]);
+    assert.equal(pool.notices.length, 0, 'a failed claim fails quiet — over-notifying is the bug');
   } finally {
     p.restore();
   }

@@ -212,6 +212,6 @@ test('live progress keeps the exact runtime provider identity', () => {
   const progress = h.DevChat.messages.at(-1);
   assert.equal(progress.agentBackend, 'codex_openrouter');
   assert.equal(progress.agentModel, 'openai/gpt-5.3-codex');
-  assert.equal(h.DevChat._activityAgentName(progress), 'Codex');
+  assert.equal(h.DevChat._activityAgentName(progress), 'OpenRouter');
   assert.equal(h.DevChat._activityAgentName({}), 'Claude Code');
 });

@@ -101,6 +101,27 @@ function emitError(state, msg) {
   };
 }
 
+// Codex 0.146 emits some retry/fallback diagnostics in the same JSONL shapes
+// it uses for fatal errors. They are not terminal: a turn.started or a retry
+// follows. Keep them visible as provider-neutral warnings without poisoning
+// the turn state or rendering the alarming [agent_failed] marker.
+function nonFatalDiagnostic(msg) {
+  const text = String(msg || '');
+  if (/^Model metadata for `[^`]+` not found\. Defaulting to fallback metadata;/.test(text)) {
+    return 'OpenRouter model metadata was unavailable; continuing with conservative defaults.';
+  }
+  if (/^Reconnecting\.\.\.\s+\d+\/\d+(?:\s|\(|$)/.test(text)) {
+    return 'OpenRouter connection interrupted; retrying…';
+  }
+  return null;
+}
+
+function emitDiagnosticOrError(state, msg) {
+  const warning = nonFatalDiagnostic(msg);
+  if (warning) return { kind: 'warning', text: `⚠ ${warning}` };
+  return emitError(state, msg);
+}
+
 // Parse one JSONL line into an array of normalized progress events
 // (empty array when the line should be dropped: unknown/malformed). `state`
 // accumulates the thread id, tool-use labels, error state and usage flags
@@ -157,7 +178,7 @@ function normalizeCodexLine(line, state) {
       return [];
     }
     if (t === 'error') {
-      return [emitError(state, item.message || 'Codex error')];
+      return [emitDiagnosticOrError(state, item.message || 'OpenRouter error')];
     }
     if (t === 'file_change') {
       const changes = Array.isArray(item.changes) && item.changes.length
@@ -210,8 +231,8 @@ function normalizeCodexLine(line, state) {
     return [emitError(state, msg)];
   }
   if (ev.type === 'error') {
-    const msg = ev.message != null ? ev.message : (ev.error && ev.error.message) || 'Codex error';
-    return [emitError(state, msg)];
+    const msg = ev.message != null ? ev.message : (ev.error && ev.error.message) || 'OpenRouter error';
+    return [emitDiagnosticOrError(state, msg)];
   }
   // Unknown event — ignore safely.
   return [];
@@ -244,6 +265,7 @@ module.exports = {
   buildCodexConfig,
   classifyResumeError,
   normalizeCodexLine,
+  nonFatalDiagnostic,
   summarizeResult,
   newCodexState,
 };

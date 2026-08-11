@@ -357,8 +357,8 @@ test('build and scout keep one owner through their complete tail', () => {
     'only the live build and scout dispatches hold their tail record');
 
   const deferredCallers = SESSIONS_SRC.match(/deferTurnCleanup: true/g) || [];
-  assert.equal(deferredCallers.length, 2,
-    'both interactive callers retain ownership through Mayor phase 2');
+  assert.equal(deferredCallers.length, 3,
+    'Mayor-dispatched build/scout and the direct OpenRouter path retain ownership through their wrap-up');
 
   const localCleanupGates = SESSIONS_SRC.match(
     /if \(durableTailComplete && durableTurnId && \(!deferTurnCleanup \|\| headless\)\)/g

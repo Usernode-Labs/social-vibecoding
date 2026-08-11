@@ -209,6 +209,7 @@ function render(overrides) {
   const h = makeHarness();
   h.DevChat.MODELS = (overrides && overrides.models) || guidanceMap();
   h.DevChat.selectedModel = (overrides && overrides.selected) || 'claude-opus-5';
+  if (overrides && overrides.session) h.DevChat.currentSession = overrides.session;
   h.DevChat.renderChatView();
   return { ...h, html: h.getEl('dc-view').innerHTML };
 }
@@ -247,6 +248,28 @@ test('each option reads "<label> — <what it is for>"', () => {
       `missing option "${expected}"; got: ${html.match(/<option[^>]*>[^<]*<\/option>/g)}`
     );
   }
+});
+
+test('OpenRouter sessions still get the chat-model picker, with a note that coding turns bill OpenRouter', () => {
+  const { html } = render({
+    session: {
+      id: 7,
+      branch_name: 'dev/openrouter',
+      session_title: 'OpenRouter change',
+      agent_backend: 'codex_openrouter',
+      agent_model: 'anthropic/claude-sonnet-4.5',
+    },
+  });
+
+  // The chat model (Sonnet/Opus/Fable) is a Usernode-side setting, orthogonal
+  // to which venue runs the coding turns — so OpenRouter sessions keep the
+  // same picker as any other Usernode-run session.
+  assert.match(html, /Chat model:/);
+  assert.match(html, /id="dc-model-select"/);
+  assert.match(html, /Sonnet 5 — simple, small changes/);
+  assert.match(html, /Opus 5 — general coding work/);
+  assert.match(html, /Fable 5 — design, taste, and difficult coding/);
+  assert.match(html, /Usernode · OpenRouter \(anthropic\/claude-sonnet-4\.5\) — coding turns bill your OpenRouter key\./);
 });
 
 test('no option implies a size ladder between Opus and Fable', () => {
