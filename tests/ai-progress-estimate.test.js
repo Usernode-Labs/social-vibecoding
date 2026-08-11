@@ -148,7 +148,7 @@ test('estimateRunProgress uses Haiku', () => {
 });
 
 test('dev-chat handles cc_estimate in both event switches', () => {
-  const devChat = read('public/js/dev-chat.js');
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
   const matches = devChat.match(/case 'cc_estimate':/g) || [];
   assert.ok(
     matches.length >= 2,
@@ -202,7 +202,7 @@ test('sessions route persists each estimate and backfills the actual outcome', (
 });
 
 test('dev-chat renders a live count-down for the remaining-time guess (#359)', () => {
-  const devChat = read('public/js/dev-chat.js');
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
   // The numeric guess is now an absolute target end-timestamp the shared 1s
   // ticker counts down from, rendered as a data-countdown-to child span.
   assert.match(devChat, /_countdownTo\s*=\s*DevChat\._countdownTarget/,
@@ -227,7 +227,7 @@ test('dev-chat renders a live count-down for the remaining-time guess (#359)', (
 });
 
 test('dev-chat clears the count-down anchor when a step finishes (#359)', () => {
-  const devChat = read('public/js/dev-chat.js');
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
   const fnStart = devChat.indexOf('_deactivateLastStatus() {');
   assert.ok(fnStart !== -1, '_deactivateLastStatus must exist');
   const fnBody = devChat.slice(fnStart, fnStart + 1400);
@@ -310,7 +310,7 @@ test('mobile (#286): the 640px block no longer hides .dc-cc-estimate', () => {
 });
 
 test('mobile (#286): dev-chat hydrates _estimate from persisted metadata', () => {
-  const devChat = read('public/js/dev-chat.js');
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
   assert.match(devChat, /m\.metadata\.estimate/,
     'load mapping must read metadata.estimate');
   assert.match(devChat, /m\._estimate\s*=/,
@@ -530,7 +530,7 @@ test('#323: estimateRunProgress tolerates code fences and smart quotes', () => {
 });
 
 test('#323: _applyEstimate stashes a pending estimate instead of dropping it', () => {
-  const devChat = read('public/js/dev-chat.js');
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
   // No active line yet → stash, don't silently return.
   assert.match(devChat, /_pendingEstimate\s*=\s*\{\s*text:\s*clean/,
     '_applyEstimate must stash the estimate when no active line exists');
@@ -645,7 +645,7 @@ test('#891: the estimator emit and /status carry estimatedAt', () => {
 });
 
 test('#891: _applyEstimate clears instead of swallowing an empty estimate', () => {
-  const devChat = read('public/js/dev-chat.js');
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
   assert.match(devChat, /_clearEstimate\(\)\s*\{/, 'a _clearEstimate helper must exist');
   const fnStart = devChat.indexOf('_applyEstimate(text, remainingSeconds, opts) {');
   assert.ok(fnStart !== -1, '_applyEstimate must take an opts argument');
@@ -664,7 +664,7 @@ test('#891: _applyEstimate clears instead of swallowing an empty estimate', () =
 });
 
 test('#891: the count-down anchors on estimatedAt and ignores re-deliveries', () => {
-  const devChat = read('public/js/dev-chat.js');
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
   // Absolute anchor rather than "now + remaining".
   assert.match(devChat, /_countdownTarget\(remainingSeconds, estimatedAt\)/,
     '_countdownTarget must accept the server timestamp');
@@ -679,7 +679,7 @@ test('#891: the count-down anchors on estimatedAt and ignores re-deliveries', ()
 });
 
 test('#891: the /status poll forwards a null estimate so it can clear', () => {
-  const devChat = read('public/js/dev-chat.js');
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
   assert.match(devChat, /estimate \? estimate\.text : null/,
     'the poll must forward a null estimate rather than skipping it');
   assert.match(devChat, /estimatedAt: estimate \? estimate\.estimatedAt : null/,
@@ -696,7 +696,7 @@ test('#891: the /status poll forwards a null estimate so it can clear', () => {
 });
 
 test('#891: a stale guess cannot survive the turn or reach the next one', () => {
-  const devChat = read('public/js/dev-chat.js');
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
   // _deactivateLastStatus drops the remaining-seconds + the pending stash.
   const deactStart = devChat.indexOf('_deactivateLastStatus() {');
   const deactBody = devChat.slice(deactStart, deactStart + 1800);
@@ -1076,7 +1076,7 @@ test('#892: no overrun flag anywhere in the estimate path', () => {
   for (const rel of [
     'src/services/estimate-guard.js',
     'src/routes/sessions.js',
-    'public/js/dev-chat.js',
+    'frontend/src/features/dev-chat/dev-chat.js',
     'public/js/cc-progress-summary.js',
     'src/services/worker-progress.js',
     'src/services/analytics-demo.js',
@@ -1089,7 +1089,7 @@ test('#892: the countdown copy never says "due now" or "taking longer"', () => {
   // Matched as RENDERED copy (a quoted string), not as prose — the comments
   // describing what was retired legitimately name it.
   const asCopy = (phrase) => new RegExp(`['"\`][^'"\`\\n]*${phrase}[^'"\`\\n]*['"\`]`, 'i');
-  for (const rel of ['public/js/cc-progress-summary.js', 'public/js/dev-chat.js']) {
+  for (const rel of ['public/js/cc-progress-summary.js', 'frontend/src/features/dev-chat/dev-chat.js']) {
     const src = read(rel);
     assert.doesNotMatch(src, asCopy('due now'),
       `${rel} must not render the retired "due now" freeze`);

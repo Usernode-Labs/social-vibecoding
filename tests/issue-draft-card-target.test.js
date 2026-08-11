@@ -21,7 +21,7 @@ const vm = require('node:vm');
 const issueDraft = require('../src/services/issue-draft');
 
 const SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'dev-chat.js'),
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
   'utf8'
 );
 

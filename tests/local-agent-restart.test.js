@@ -166,7 +166,7 @@ test('heartbeat and TTL leave room for a restart to finish', () => {
 // ── What the user sees afterwards ──────────────────────────────────────────
 
 test('the dev chat rebuilds the chip from /status, not from anything it remembered', () => {
-  const devChat = fs.readFileSync(path.join(root, 'public/js/dev-chat.js'), 'utf8');
+  const devChat = fs.readFileSync(path.join(root, 'frontend/src/features/dev-chat/dev-chat.js'), 'utf8');
   assert.match(devChat, /_applyRunnerState/);
   // A reload (or a restart-induced reconnect) re-reads the session status and
   // repaints; the chip has no client-side source of truth.

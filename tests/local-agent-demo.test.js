@@ -111,7 +111,7 @@ test('the clients suppress destructive controls on a demo row', () => {
   );
   assert.match(settings, /!agent\.demo/, 'Settings hides Detach on a demo row');
   const devChat = fs.readFileSync(
-    path.join(__dirname, '..', 'public', 'js', 'dev-chat.js'), 'utf8'
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'), 'utf8'
   );
   assert.match(devChat, /agent\.demo/, 'dev chat refuses to release a demo lease');
 });

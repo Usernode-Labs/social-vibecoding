@@ -238,6 +238,25 @@ const RETIRED_SCRIPTS = {
   '/js/home.js': 'home launcher grid converted to a React island (chunk F)',
   '/js/home-layout.js': 'home grid geometry moved into the home island (chunk F)',
   '/js/home-panels.js': 'home widget renderers moved into the home island (chunk F)',
+  // #1084 chunk G, second commit — the dev session chat's module moved into
+  // frontend/src/features/dev-chat/dev-chat.js. This one is a MOVE ONLY: the
+  // 8,800 lines are unchanged apart from the header and the two `typeof window`
+  // guards around its bootstrap, and it still publishes `window.DevChat` at
+  // module scope for the dozen legacy callers that read the bare global
+  // (app.js, app-view.js, group-chat.js, dev-flow-select.js, session-options.js,
+  // credit-options.js, settings.js, dev-alerts.js, …). renderChatView() still
+  // writes #dc-view.innerHTML, so the chat screen is NOT React-owned yet —
+  // that conversion has to take the frame and the composer's streaming state
+  // together, and it is not in this commit.
+  //
+  // It goes ALONE, unlike chunk E's ten-module cluster, because it is the only
+  // consumer end of its load-order chain: the eight pure helpers that had to
+  // load before it (session-state, merge-status, build-log,
+  // session-transcript, spec-sections, cc-progress-summary, dev-alerts,
+  // streaming-markdown) all have consumers outside these two screens and keep
+  // their tags. Their relative order still holds for a stronger reason — the
+  // bundle entry is a deferred module, so it evaluates after every classic tag.
+  '/js/dev-chat.js': 'dev session chat module moved into the React bundle (chunk G)',
 };
 
 // public/js/topochain-events.js is deliberately NOT in that map, and now stays
@@ -280,12 +299,14 @@ test('the shell still loads the expected number of legacy scripts', () => {
   // back UP when a new module ships: #1054's feedback-queue.js makes 36.
   // #1083 chunk F retires its ten modules one screen at a time: browse.js
   // (35), profile.js (34), the leaderboard screen's five together (29), and
-  // finally the home screen's three (26).
+  // finally the home screen's three (26). #1084 chunk G retires dev-chat.js
+  // (25) — the eight pure chat helpers keep their tags, because group-chat.js,
+  // app-view.js and the session drawer still read them as globals.
   const bodyScripts = scriptsOf(after.slice(after.indexOf('</head>')))
     .filter((s) => s.src && s.src.startsWith('/js/'));
   assert.equal(
-    bodyScripts.length, 26,
-    `expected the 26 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
+    bodyScripts.length, 25,
+    `expected the 25 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
     + 'Adding or removing one is fine, but it also needs a matching SHELL_ASSETS entry in '
     + 'public/sw.js (tests/pwa-shell-wiring.test.js enforces that) — so update this count '
     + 'deliberately rather than loosening the check.',
@@ -332,10 +353,10 @@ test('nav-link.js loads ahead of every module that consumes it', () => {
   // document predates it), so its position is pinned here instead. #1036:
   // app.js, app-view.js, dev-chat.js, home.js and leaderboard.js all
   // reference window.NavLink, and it has no dependencies of its own.
-  // browse.js and leaderboard.js are consumers too and are kept in the list
-  // below even though #1083 chunk F retired their tags — the `idx === -1` arm
-  // covers them, and the entries document that a re-added tag would still have
-  // to come after.
+  // browse.js, leaderboard.js and dev-chat.js are consumers too and are kept
+  // in the list below even though #1083 chunk F and #1084 chunk G retired their
+  // tags — the `idx === -1` arm covers them, and the entries document that a
+  // re-added tag would still have to come after.
   const srcs = scriptsOf(after).filter((s) => s.src && s.src.startsWith('/js/')).map((s) => s.src);
   const at = srcs.indexOf('/js/nav-link.js');
   assert.notEqual(at, -1, 'the shell must load /js/nav-link.js');
@@ -377,7 +398,9 @@ test('dev-flow-select.js loads ahead of the modules that consume it', () => {
   // nav-link.js, so its position is pinned here. #1049: dev-chat.js owns the
   // state and calls DevFlowSelect.pickerHtml / wizardHtml / wire, and
   // app-view.js pokes DevChat._devFlow from the "+" menu — the module itself
-  // has no dependencies at all.
+  // has no dependencies at all. dev-chat.js keeps its entry below even though
+  // #1084 chunk G retired its tag: the `idx === -1` arm covers it, and the
+  // deferred bundle runs after every classic script anyway.
   const srcs = scriptsOf(after).filter((s) => s.src && s.src.startsWith('/js/')).map((s) => s.src);
   const at = srcs.indexOf('/js/dev-flow-select.js');
   assert.notEqual(at, -1, 'the shell must load /js/dev-flow-select.js');
@@ -393,6 +416,8 @@ test('session-options.js loads ahead of the modules that consume it', () => {
   // two modules before it, so its position is pinned here. #1055: dev-chat.js
   // owns the state and calls SessionOptions.open / openInstructions; the
   // module itself depends only on PlatformUI, which loads earlier still.
+  // dev-chat.js keeps its entry below despite #1084 chunk G retiring its tag,
+  // for the same reason as in the dev-flow-select.js check above.
   const srcs = scriptsOf(after).filter((s) => s.src && s.src.startsWith('/js/')).map((s) => s.src);
   const at = srcs.indexOf('/js/session-options.js');
   assert.notEqual(at, -1, 'the shell must load /js/session-options.js');
@@ -414,7 +439,8 @@ test('build-venues.js loads ahead of the modules that consume it', () => {
   // surface that asks "where should this be built?" reads window.BuildVenues,
   // which is four modules — if any one of them loads first it silently falls
   // back to whatever local copy it still has, which is exactly the drift
-  // this module exists to end.
+  // this module exists to end. dev-chat.js keeps its entry below despite
+  // #1084 chunk G retiring its tag (the `idx === -1` arm covers it).
   const srcs = scriptsOf(after).filter((s) => s.src && s.src.startsWith('/js/')).map((s) => s.src);
   const at = srcs.indexOf('/js/build-venues.js');
   assert.notEqual(at, -1, 'the shell must load /js/build-venues.js');

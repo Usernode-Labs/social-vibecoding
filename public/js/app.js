@@ -4319,6 +4319,10 @@ const App = {
       fallback: fallbackType,
       after: () => {
         av.classList.add('hidden');
+        // #1084 chunk G: the Dev surfaces are React-rendered into an interim
+        // root on #app-content, so clear that root before blanking the node —
+        // otherwise its store subscription and effects outlive the screen.
+        AppView._teardownDevRoots();
         const content = document.getElementById('app-content');
         if (content) content.innerHTML = '';
       },

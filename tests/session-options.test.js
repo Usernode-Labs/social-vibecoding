@@ -34,7 +34,7 @@ const SETTINGS_SRC = fs.readFileSync(
   path.join(__dirname, '../frontend/src/features/settings/settings.js'), 'utf8'
 );
 const DEV_CHAT_SRC = fs.readFileSync(
-  path.join(__dirname, '../public/js/dev-chat.js'), 'utf8'
+  path.join(__dirname, '../frontend/src/features/dev-chat/dev-chat.js'), 'utf8'
 );
 const INDEX_SRC = fs.readFileSync(
   path.join(__dirname, '../public/index.html'), 'utf8'

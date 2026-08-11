@@ -125,7 +125,9 @@ const SHELL_ASSETS = [
   '/js/topochain-events.js',
   '/js/confirm-modal.js',
   '/js/dev-alerts.js',
-  '/js/dev-chat.js',
+  // '/js/dev-chat.js' — #1084 chunk G moved it into the React bundle
+  // (frontend/src/features/dev-chat/dev-chat.js), which /shell/assets/shell.js
+  // already precaches. Precaching it here as well would 404 the install.
   '/js/dev-flow-select.js',
   '/js/dev-host.js',
   // #1054: the offline feedback outbox. It has to be precached like any other

@@ -659,7 +659,7 @@ test('staging never reaches GitHub, and only shows fixtures when asked', () => {
 });
 
 test('the client polls this route and nothing else', () => {
-  const devChat = read('public/js/dev-chat.js');
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
   assert.match(devChat, /dev-flow\/status/, 'the walkthrough reads its state from the status route');
   assert.match(devChat, /external-tasks/, 'and prepares/submits through the same pair');
   // The renderer stays pure — see tests/dev-flow-select.test.js.

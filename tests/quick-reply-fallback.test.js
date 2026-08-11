@@ -44,7 +44,7 @@ const SESSIONS_SRC = fs.readFileSync(
   'utf8'
 );
 const DEVCHAT_SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'dev-chat.js'),
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
   'utf8'
 );
 
