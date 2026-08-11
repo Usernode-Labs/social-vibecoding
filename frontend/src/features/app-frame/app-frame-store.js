@@ -30,13 +30,27 @@
 import { createStore } from '../../lib/plain-store.js';
 
 /**
+ * `cover: null` needs declaring, or `tsc --noEmit` infers the field as `null`
+ * and the island cannot read a cover off it. See COVER_DEFAULTS below for what
+ * each cover field is.
+ *
+ * @typedef {{
+ *   iconKind: string, iconHtml: string, name: string, note: string,
+ *   spinner: boolean, out: boolean,
+ * }} LaunchCoverState
+ * @typedef {{
+ *   slug: string, active: boolean, faded: boolean, cover: LaunchCoverState | null,
+ * }} AppFrameState
+ */
+
+/**
  * The initial values MUST be the empty/hidden state the hand-written shell
  * prerendered: `#app-frame-host` ships `hidden` and EMPTY (there was no
  * `#app-iframe` in index.html at all), so `slug` is '' and no frame renders.
  * A first render that disagrees with the prerendered document is a hydration
  * mismatch, which `console.error`s and fails proposal checks.
  */
-export const appFrameStore = createStore({
+export const appFrameStore = createStore(/** @type {AppFrameState} */ ({
   /** Slug of the app whose frame is mounted; '' means no frame at all. */
   slug: '',
   /** Is `#app-frame-host` the visible half of #app-view? (Parked ⇒ false.) */
@@ -45,7 +59,7 @@ export const appFrameStore = createStore({
   faded: true,
   /** The launch cover, or null once revealed. See COVER_DEFAULTS. */
   cover: null,
-});
+}));
 
 /**
  * The launch cover's fields, in the order `_launchCoverHtml` emits them.
@@ -72,5 +86,7 @@ export const COVER_DEFAULTS = {
  * A registered ref rather than `document.getElementById`: the bridge must never
  * be able to act on an element React does not currently own, and
  * tests/app-frame-identity.test.js reads exactly what the island published.
+ *
+ * @type {{ iframe: HTMLIFrameElement | null }}
  */
 export const appFrameRefs = { iframe: null };

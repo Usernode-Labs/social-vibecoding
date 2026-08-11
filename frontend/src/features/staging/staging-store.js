@@ -26,13 +26,28 @@
 import { createStore } from '../../lib/plain-store.js';
 
 /**
+ * `null` and `0` initial values need declaring, or `tsc --noEmit` infers the
+ * literal's own type (`null`, `never`) and every island that reads the field
+ * fails to compile.
+ *
+ * @typedef {{ top: number, left: number, width: number, height: number }} DockRect
+ * @typedef {{
+ *   open: boolean, mode: string, dockRect: DockRect | null, urlLabel: string,
+ *   loaderVisible: boolean, loaderTitle: string, loaderSub: string,
+ *   testBtnHidden: boolean, testBtnTitle: string, testPanelHidden: boolean,
+ *   testHtml: string, fsBtnHidden: boolean, fsBtnText: string, fsBtnTitle: string,
+ * }} StagingState
+ * @typedef {{ open: boolean, openedAt: number, label: string, bodyHtml: string }} VisualCompareState
+ */
+
+/**
  * The initial values MUST equal the markup the hand-written shell shipped —
  * the overlay is hidden, the loader is hidden, its title reads
  * "Opening preview…" (#816: neutral, promising no wait) and its sub-line is
  * empty. A first render that disagrees with the prerendered document is a
  * hydration mismatch, which `console.error`s and fails proposal checks.
  */
-export const stagingStore = createStore({
+export const stagingStore = createStore(/** @type {StagingState} */ ({
   open: false,
   /** 'fullscreen' | 'docked' (#771). */
   mode: 'fullscreen',
@@ -50,7 +65,7 @@ export const stagingStore = createStore({
   fsBtnHidden: true,
   fsBtnText: 'Full screen',
   fsBtnTitle: '',
-});
+}));
 
 /**
  * The live `#staging-iframe` element, registered by the island on mount.
@@ -60,9 +75,15 @@ export const stagingStore = createStore({
  * test in tests/staging-iframe-identity.test.js reads exactly what the island
  * published.
  */
+/** @type {{ iframe: HTMLIFrameElement | null }} */
 export const stagingRefs = { iframe: null };
 
-/** Click handlers, re-pointed by app-view.js where it used to assign `.onclick`. */
+/**
+ * Click handlers, re-pointed by app-view.js where it used to assign `.onclick`.
+ *
+ * @type {Record<'onBack' | 'onDockClose' | 'onFullscreen' | 'onTest' | 'onTestingClose',
+ *   ((ev?: Event) => void) | null>}
+ */
 export const stagingHandlers = {
   onBack: null,
   onDockClose: null,
@@ -71,7 +92,7 @@ export const stagingHandlers = {
   onTestingClose: null,
 };
 
-export const visualCompareStore = createStore({
+export const visualCompareStore = createStore(/** @type {VisualCompareState} */ ({
   open: false,
   /**
    * `Date.now()` at open, rendered as `data-opened-at` so
@@ -83,9 +104,13 @@ export const visualCompareStore = createStore({
   label: '',
   /** Built by AppView.openVisualComparison from server-side capture ids. */
   bodyHtml: '',
-});
+}));
 
-/** Same holder pattern as the staging overlay's. */
+/**
+ * Same holder pattern as the staging overlay's.
+ *
+ * @type {Record<'onBack' | 'onBackdrop', ((ev?: Event) => void) | null>}
+ */
 export const visualCompareHandlers = {
   onBack: null,
   /** Called only for a click on the overlay root itself, never a child. */
