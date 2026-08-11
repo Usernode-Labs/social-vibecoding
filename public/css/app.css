@@ -3974,6 +3974,14 @@ span.gc-vote-btn-icon { cursor: default; }
 .dc-streaming-dots span:nth-child(2) { animation-delay: 0.16s; }
 .dc-streaming-dots span:nth-child(3) { animation-delay: 0.32s; }
 
+/* #990: the trailing activity indicator is the dots on a .dc-status-line row,
+   so it sits flush under the step ladder it belongs to instead of indented
+   like the retired standalone spinner. Only the doubled vertical padding
+   (2px from the row + 4px from the dots) needs trimming. */
+.dc-activity-line { padding: 0 0 4px; }
+.dc-activity-line .dc-streaming-dots { padding: 2px 0; }
+.dc-activity-label { font-size: 11px; color: var(--text-muted); }
+
 @keyframes dc-dot-bounce {
   0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
   40% { transform: translateY(-6px); opacity: 1; }
