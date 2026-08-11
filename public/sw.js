@@ -132,8 +132,9 @@ const SHELL_ASSETS = [
   '/js/home.js',
   '/js/home-layout.js',
   '/js/home-panels.js',
-  '/js/kudos.js',
-  '/js/leaderboard.js',
+  // The Kudos widget and the Leaderboard screen's own renderer were listed
+  // here. #1083 chunk F moved both into the React bundle with the screen, so
+  // /shell/assets/shell.js above is what precaches them now.
   '/js/merge-status.js',
   '/js/native-chrome.js',
   '/js/social-push.js',
@@ -148,9 +149,9 @@ const SHELL_ASSETS = [
   '/js/spec-sections.js',
   '/js/streaming-markdown.js',
   '/js/session-state.js',
-  '/js/topochain-event-context.js',
-  '/js/topochain-leaderboard.js',
-  '/js/topochain-challenges.js',
+  // The Leaderboard screen's three Topochain-domain panes were listed here
+  // too, and moved in the same chunk. Only the shared event RULES they read
+  // (topochain-events.js, above) are still a classic script.
   '/manifest.webmanifest',
   '/icons/icon-192.png',
   '/icons/icon-512.png',

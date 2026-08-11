@@ -573,10 +573,10 @@ const Browse = {
   },
 
   // One contributor row. Deliberately mirrors the Top-users leaderboard's
-  // row (public/js/leaderboard.js _renderUserRows) — rank, initial-avatar
-  // circle, @username, a muted meta line, a count pill on the right — so
-  // the platform's two ranked people-lists read as one system. A <button>
-  // so it is keyboard-focusable like those rows are. Pure.
+  // row (features/leaderboard/leaderboard.js, _renderUserRows) — rank,
+  // initial-avatar circle, @username, a muted meta line, a count pill on the
+  // right — so the platform's two ranked people-lists read as one system. A
+  // <button> so it is keyboard-focusable like those rows are. Pure.
   contributorRowHtml(c, rank) {
     const who = (c && c.username) || 'unknown';
     const initial = (who[0] || '?').toUpperCase();

@@ -171,13 +171,52 @@ const RETIRED_SCRIPTS = {
   // reason — the bundle entry is a module script, so it evaluates after every
   // classic script here.
   '/js/profile.js': 'profile screen converted to a React island (chunk F)',
+  // Same chunk, step 3: #leaderboard-screen became an island
+  // (frontend/src/features/leaderboard/index.tsx) and ALL FIVE of its modules
+  // moved into that directory. Each keeps its `window.X` publication behind a
+  // `typeof window` guard — app.js's #leaderboard branch and its aliases,
+  // App.navigateToLeaderboard / _routeLeaderboard, its pull-to-refresh handler
+  // and app-view.js's twelve Kudos call sites all still reach them by name.
+  //
+  // They moved TOGETHER because they are one screen with one lifecycle: the
+  // Leaderboard module lazily mounts the three guests when their tab is first
+  // shown and tears them down in its own close(), and the two Topochain-domain
+  // panes read the shared event selection from TopochainEventContext. Inside
+  // the bundle that is a set of imports in the island rather than an order
+  // implied by five tags.
+  //
+  // The one piece of DOM that changed hands is the SECTION TAB STRIP.
+  // _renderSectionTabs() used to innerHTML three buttons into #standings-tabs;
+  // it publishes through features/leaderboard/section-store.ts now and the
+  // island renders the strip from the new Tabs primitive
+  // (frontend/@/components/ui/tabs.tsx), emitting the same buttons with the
+  // same data-standings-tab keys. Pane visibility deliberately did NOT move —
+  // _applySection still toggles `hidden` on the three pane roots and the event
+  // bar, which is safe because React renders their className as a constant
+  // prop (see frontend/src/lib/legacy-dom.ts).
+  //
+  // kudos.js's ordering claim ("before app-view.js, whose panel renderer calls
+  // Kudos.renderButton") survives the move: all twelve of those call sites read
+  // `window.Kudos` at call time behind a guard, and the bundle entry is a
+  // module script in the head, so it evaluates after every classic script here
+  // and before DOMContentLoaded.
+  '/js/kudos.js': 'Kudos widget moved into the leaderboard island (chunk F)',
+  '/js/leaderboard.js': 'leaderboard screen converted to a React island (chunk F)',
+  '/js/topochain-event-context.js':
+    "the screen's shared event bar moved into the leaderboard island (chunk F)",
+  '/js/topochain-leaderboard.js':
+    'the standings pane moved into the leaderboard island (chunk F)',
+  '/js/topochain-challenges.js':
+    'the challenges pane moved into the leaderboard island (chunk F)',
 };
 
-// public/js/topochain-events.js is deliberately NOT in that map. It is the
-// public Leaderboard screen's event feed as well as the console's, so chunk E
-// could not move it. Chunk F owns it, and it keeps loading as a classic script
-// until the leaderboard step: topochain-event-context.js reads
-// window.TopochainEvents, and until BOTH move it has to stay a global.
+// public/js/topochain-events.js is deliberately NOT in that map, and now stays
+// out of it for good. It is the shared "which event should this screen open
+// on?" RULE — pure data with no DOM of its own — so chunk E could not move it
+// with the console and chunk F has no region to move it with either: its one
+// consumer (features/leaderboard/topochain-event-context.js) is in the bundle,
+// reads window.TopochainEvents at call time behind a guard, and is deferred
+// past this classic script. Moving it would be a rewrite, not a move.
 
 test('every legacy script is loaded, in exactly the baseline order', () => {
   const expected = baseline.scripts.filter((s) => !(s in RETIRED_SCRIPTS));
@@ -209,12 +248,12 @@ test('the shell still loads the expected number of legacy scripts', () => {
   // retires the admin console's ten modules in one go (35) — see the cluster
   // note in RETIRED_SCRIPTS for why they could not go one at a time. #1083
   // chunk F retires its ten modules one screen at a time: browse.js (34),
-  // profile.js (33).
+  // profile.js (33), then the leaderboard screen's five together (28).
   const bodyScripts = scriptsOf(after.slice(after.indexOf('</head>')))
     .filter((s) => s.src && s.src.startsWith('/js/'));
   assert.equal(
-    bodyScripts.length, 33,
-    `expected the 33 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
+    bodyScripts.length, 28,
+    `expected the 28 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
     + 'Adding or removing one is fine, but it also needs a matching SHELL_ASSETS entry in '
     + 'public/sw.js (tests/pwa-shell-wiring.test.js enforces that) — so update this count '
     + 'deliberately rather than loosening the check.',
@@ -261,9 +300,10 @@ test('nav-link.js loads ahead of every module that consumes it', () => {
   // document predates it), so its position is pinned here instead. #1036:
   // app.js, app-view.js, dev-chat.js, home.js and leaderboard.js all
   // reference window.NavLink, and it has no dependencies of its own.
-  // browse.js is a consumer too and is kept in the list below even though
-  // #1083 chunk F retired its tag — the `idx === -1` arm covers it, and the
-  // entry documents that a re-added tag would still have to come after.
+  // browse.js and leaderboard.js are consumers too and are kept in the list
+  // below even though #1083 chunk F retired their tags — the `idx === -1` arm
+  // covers them, and the entries document that a re-added tag would still have
+  // to come after.
   const srcs = scriptsOf(after).filter((s) => s.src && s.src.startsWith('/js/')).map((s) => s.src);
   const at = srcs.indexOf('/js/nav-link.js');
   assert.notEqual(at, -1, 'the shell must load /js/nav-link.js');

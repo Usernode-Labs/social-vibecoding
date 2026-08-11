@@ -23,7 +23,7 @@ const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
 const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
 const appViewJs = fs.readFileSync(path.join(root, 'public/js/app-view.js'), 'utf8');
-const kudosJs = fs.readFileSync(path.join(root, 'public/js/kudos.js'), 'utf8');
+const kudosJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/kudos.js'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'public/css/app.css'), 'utf8');
 
 const header = html.slice(0, html.indexOf('</header>'));

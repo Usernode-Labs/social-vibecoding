@@ -28,7 +28,7 @@ const vm = require('node:vm');
 
 const root = path.join(__dirname, '..');
 const CHALLENGES_SRC = fs.readFileSync(
-  path.join(root, 'public/js/topochain-challenges.js'), 'utf8'
+  path.join(root, 'frontend/src/features/leaderboard/topochain-challenges.js'), 'utf8'
 );
 const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
 const profileJs = fs.readFileSync(path.join(root, 'frontend/src/features/profile/profile.js'), 'utf8');

@@ -11,8 +11,8 @@
 // the same list — and season-scoped it ran to ~32 cards, burying the rank,
 // token and breakdown blocks this screen actually exists for. That list now
 // lives on the Leaderboard screen's Challenges tab, grouped and counted
-// per event (public/js/topochain-challenges.js), which is where the rest of
-// the challenge UI already was.
+// per event (features/leaderboard/topochain-challenges.js), which is where the
+// rest of the challenge UI already was.
 //
 // Identity comes from the platform session: since the topochain merge,
 // leaderboard participants ARE platform users, so the /me/* routes scope

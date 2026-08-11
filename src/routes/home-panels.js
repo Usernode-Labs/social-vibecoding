@@ -209,7 +209,8 @@ function buildChallengeRow(r) {
 // and inside its effective schedule window (or carrying no window at
 // all). `completed` is an organiser flag about the CHALLENGE ("this one
 // is over"), never a per-user signal — see the schema comment and
-// public/js/topochain-challenges.js.
+// frontend/src/features/leaderboard/topochain-challenges.js (which was
+// public/js/topochain-challenges.js until #1083 chunk F).
 const OPEN_CHALLENGE_WHERE = `
         se.internal = FALSE
     AND c.enabled = TRUE

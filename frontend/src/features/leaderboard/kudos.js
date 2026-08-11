@@ -455,6 +455,16 @@ const Kudos = {
   },
 };
 
+// These two used to be AMBIENT: as a classic script this file's top-level
+// function declarations were window properties, so they joined the shell's
+// last-writer-wins chain of identically-named escape helpers (group-chat.js,
+// app-view.js and home.js each declare their own). Inside the bundle a
+// module's identifiers are its own, which is strictly better — this file now
+// provably calls THESE bodies. Nothing regressed by dropping out of the chain:
+// the four scripts that read escapeHtml/escapeAttr ambiently (app-secrets.js,
+// dev-chat.js, home-panels.js, streaming-markdown.js) were resolving to
+// app-view.js's and home.js's copies, both of which load later and are still
+// classic scripts.
 function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = String(str == null ? '' : str);
@@ -476,4 +486,11 @@ function relativeTime(ts) {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
-window.Kudos = Kudos;
+// Still published as a global. This module rides in the React bundle as of
+// #1083 chunk F, but app.js (Budget.init on authed boot, applyLiveUpdate on
+// kudos_update WS events), app-view.js (Kudos.attach / renderButton on every
+// PR surface) and ./leaderboard.js
+// all still reach it by name. The guard is for the SSG prerender pass —
+// frontend/scripts/build-shell.mjs evaluates the island's whole module graph
+// in Node, where there is no window.
+if (typeof window !== 'undefined') window.Kudos = Kudos;

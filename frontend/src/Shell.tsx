@@ -55,6 +55,7 @@ import { WaitingScreen } from './features/auth/waiting';
 import { WaitlistScreen } from './features/auth/waitlist';
 import { MoreScreen } from './features/auth/more';
 import { DevConsolePanel } from './features/dev-console';
+import { LeaderboardScreen } from './features/leaderboard';
 import { HeaderMenu } from './features/header/header-menu';
 import { PlatformHeader } from './features/header/platform-header';
 import { NotificationsPanel } from './features/notifications';
@@ -271,49 +272,32 @@ export function Shell() {
           alias onto the standings tab and self-heal to the bare
           #leaderboard; #challenges and #topochain/seasons alias onto the
           challenges tab. Mounted by App.navigateToLeaderboard.
-          
+
+          A React island as of #1083 chunk F, and the chunk's biggest step:
+          all five of its modules moved into frontend/src/features/leaderboard/
+          with the markup, and the SECTION TAB STRIP became the island's one
+          piece of state, rendered from the Tabs primitive. See that folder's
+          index.tsx — including why the three panes stay legacy innerHTML
+          hosts whose visibility the module still toggles.
+
           Three panes, one visible at a time, each owned by its own module:
-          #topochain-leaderboard-root by public/js/topochain-leaderboard.js
-          (the DEFAULT pane, so it and the event bar are the two that ship
-          visible), #leaderboard-root by public/js/leaderboard.js (the Kudos
-          pane — that module also renders the tab strip and owns
-          Leaderboard.section), and #challenges-root by
-          public/js/topochain-challenges.js. The two Topochain-domain panes
-          share one event selection, rendered into #leaderboard-event-bar by
-          public/js/topochain-event-context.js and hidden while the Kudos tab
-          is active.
-          
-          The wrapper is max-w-5xl for the Topochain table's sake; the Kudos
-          pane keeps its narrower max-w-3xl reading column.
+          #topochain-leaderboard-root by topochain-leaderboard.js (the DEFAULT
+          pane, so it and the event bar are the two that ship visible),
+          #leaderboard-root by leaderboard.js (the Kudos pane — that module
+          also owns Leaderboard.section and publishes it to the strip), and
+          #challenges-root by topochain-challenges.js. The two
+          Topochain-domain panes share one event selection, rendered into
+          #leaderboard-event-bar by topochain-event-context.js and hidden
+          while the Kudos tab is active.
       */}
-      <main
-        id="leaderboard-screen"
-        className="hidden flex-1 overflow-y-auto platform-safe-scroll"
-        style={{ position: "relative" }}
-      >
-        <div className="max-w-5xl mx-auto p-4 w-full">
-          <h2 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mb-3">
-            Leaderboard
-          </h2>
-          <div id="standings-tabs" className="flex gap-2 border-b border-zinc-200 dark:border-zinc-800 mb-4">
-          </div>
-          <div id="leaderboard-event-bar" className="w-full mb-4">
-          </div>
-          <div id="leaderboard-root" className="hidden max-w-3xl">
-          </div>
-          <div id="topochain-leaderboard-root" className="w-full">
-          </div>
-          <div id="challenges-root" className="hidden w-full">
-          </div>
-        </div>
-      </main>
+      <LeaderboardScreen />
       {/*
           The Challenges screen used to be its own <main> here
           (#challenges-screen, app-as-SV-chrome migration), rendered by the
           now-deleted public/js/challenges.js. It is the third tab of the
           Leaderboard screen above: #challenges-root lives inside
-          #leaderboard-screen and public/js/topochain-challenges.js renders
-          the merged (public grid + your own contributions) view into it.
+          #leaderboard-screen and topochain-challenges.js renders the merged
+          (public grid + your own contributions) view into it.
           The legacy #challenges hash still works — the router replaceStates
           it to #leaderboard/challenges.
       */}
@@ -774,23 +758,31 @@ export function Shell() {
       <script src="/js/merge-status.js" />
       <script src="/js/dev-chat.js" />
       {/*
-          Kudos widget (button + budget badge) and leaderboard screen.
-          Loaded BEFORE app-view.js so the panel renderer can use
-          Kudos.renderButton directly.
-      */}
-      <script src="/js/kudos.js" />
-      {/*
-          /js/ai-credit.js used to load here, alongside kudos.js above: same
+          /js/kudos.js and /js/ai-credit.js used to load here — same
           status-pane slot pattern, same poll-then-render shape. #1079 chunk B
-          moved it into the React bundle with the drawer rows it renders into
-          (features/header/ai-credit.js). App.init still calls
-          AiCredit.Budget.init() on the same authed-boot tick.
+          moved ai-credit into the React bundle with the drawer rows it renders
+          into (features/header/ai-credit.js), and #1083 chunk F moved kudos
+          with the Leaderboard screen (features/leaderboard/kudos.js). App.init
+          still calls AiCredit.Budget.init() and Kudos.Budget.init() on the
+          same authed-boot tick.
+
+          kudos.js used to be here specifically so it loaded BEFORE
+          app-view.js, whose panel renderer calls Kudos.renderButton. That
+          still holds: every one of app-view.js's twelve call sites reads
+          `window.Kudos` at CALL time behind a truthiness guard, and the bundle
+          entry is a module script in the head, so it evaluates after every
+          classic script below and before DOMContentLoaded — i.e. before
+          App.init and before any PR surface renders.
       */}
-      <script src="/js/leaderboard.js" />
       {/*
           Shared "which event should this screen open on?" rule, consumed by
-          the event-context module and both Topochain-domain panes. Must load
-          before /js/topochain-event-context.js.
+          the event-context module. Pure data + rules with no DOM of its own,
+          so chunk F left it here: it has no region to move WITH, and moving a
+          module that no island renders would be a rewrite rather than the
+          move the migration asks for. Its ordering constraint ("before
+          topochain-event-context.js") is satisfied more strongly than before —
+          that consumer is in the deferred bundle now, and it reads
+          window.TopochainEvents at call time behind a guard either way.
       */}
       <script src="/js/topochain-events.js" />
       {/*
@@ -805,18 +797,26 @@ export function Shell() {
           route is restored.
       */}
       {/*
-          Topochain-domain panes of the Leaderboard screen (Task 14, public
-          screens; merged into one screen by the leaderboard merge). The
-          Leaderboard module mounts these lazily when their tab is first
-          shown — #leaderboard -> TopochainLeaderboard.open() (the default
-          tab, so this one mounts on the screen's first open),
-          #leaderboard/challenges -> TopochainChallenges.open() — and both
-          read the event selection from TopochainEventContext, which owns
-          the shared picker + hero. Loaded before app.js.
+          The Topochain-domain panes of the Leaderboard screen (Task 14, public
+          screens; merged into one screen by the leaderboard merge) used to
+          load here as three classic scripts: topochain-event-context.js,
+          topochain-leaderboard.js and topochain-challenges.js. #1083 chunk F
+          moved all three into the React bundle with the screen that hosts
+          them, so they arrive with /shell/assets/shell.js.
+
+          They moved TOGETHER with leaderboard.js because they are one screen:
+          the Leaderboard module mounts them lazily when their tab is first
+          shown — #leaderboard -> TopochainLeaderboard.open() (the default tab,
+          so that one mounts on the screen's first open),
+          #leaderboard/challenges -> TopochainChallenges.open() — and both read
+          the event selection from TopochainEventContext, which owns the shared
+          picker + hero. Inside the bundle that is an ordinary import in
+          features/leaderboard/index.tsx rather than an order implied by these
+          tags. "Loaded before app.js", which this comment used to claim, is
+          still true of what it was protecting: app.js reaches all three
+          through `window.` at call time, from a hash route restored after
+          DOMContentLoaded.
       */}
-      <script src="/js/topochain-event-context.js" />
-      <script src="/js/topochain-leaderboard.js" />
-      <script src="/js/topochain-challenges.js" />
       {/*
           The admin console's ten modules used to load here as classic
           scripts, between topochain-challenges.js and build-log.js:
@@ -834,9 +834,11 @@ export function Shell() {
           `import`, so the dependency is declared in code rather than implied
           by the order of these tags.
 
-          NOT moved: topochain-event-context.js / topochain-leaderboard.js /
-          topochain-challenges.js above, and public/js/topochain-events.js —
-          those serve the public Leaderboard screen, not the console.
+          The three topochain-* modules above were NOT part of that move —
+          they serve the public Leaderboard screen, not the console, and went
+          into the bundle one chunk later with it (#1083 chunk F).
+          public/js/topochain-events.js, which both halves read, is still a
+          classic script.
       */}
       {/*
           Build-failure log panel (#416). Loaded before app-view.js/home.js
