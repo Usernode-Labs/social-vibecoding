@@ -80,8 +80,24 @@ test('the list is bounded by MAX_DECLARED_TESTS, not by the old parse cap', () =
   assert.equal(out.length, appManifest.MAX_DECLARED_TESTS);
   // And the ceiling is well clear of a real manifest — this repo's own is
   // the largest in the fleet and the whole bug was it being truncated.
-  assert.ok(appManifest.MAX_DECLARED_TESTS >= 300,
+  assert.ok(appManifest.MAX_DECLARED_TESTS >= 400,
     'a ceiling near a real manifest size silently drops checks again');
+});
+
+// The assertion above is about the constant; this one is about the actual
+// manifest, which is what a ceiling can only ever be wrong RELATIVE TO. It
+// crossed 300 and the tail was being dropped silently, so the ceiling is
+// stated as headroom over the real count rather than as a bare number.
+test("this repo's own manifest fits under the ceiling, with room to grow", () => {
+  const meta = appManifest.readTestsWithMeta(require('../dapp.json'));
+  assert.equal(meta.ceilingDropped, 0,
+    'declared checks are being dropped again — raise MAX_DECLARED_TESTS (and the '
+    + 'capture budget in tests/checks-budget.test.js) rather than deleting checks');
+  assert.equal(meta.tests.length, meta.rawCount,
+    'every declared check survives validation, so the count here is the real one');
+  assert.ok(meta.tests.length + 20 <= appManifest.MAX_DECLARED_TESTS,
+    `only ${appManifest.MAX_DECLARED_TESTS - meta.tests.length} slots left — the next `
+    + 'few proposals would hit the ceiling mid-review');
 });
 
 test('readTestsWithMeta separates ceiling drops from invalid drops', () => {
