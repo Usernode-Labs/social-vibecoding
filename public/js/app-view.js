@@ -13685,8 +13685,18 @@ const AppView = {
       || AppView._stagingDom;
   },
 
+  // The state below mirrors the React store's, and for the same reason the
+  // store exists: these are QUERIES the call sites make (`isOpen`,
+  // `isTestPanelHidden`) and reading them back off `classList` would make this
+  // adapter's answers depend on the DOM implementation it is talking to. It is
+  // sound because in a DOM-only context this adapter is the SOLE writer of
+  // those classes — the same single-owner rule the React island lives under —
+  // and the initial values are the ones the shipped markup carries.
   _stagingDom: {
     _handlers: {},
+    _open: false,
+    _mode: 'fullscreen',
+    _testPanelHidden: true,
     _el(id) {
       return (typeof document !== 'undefined' && document.getElementById)
         ? document.getElementById(id) : null;
@@ -13701,19 +13711,22 @@ const AppView = {
       const el = this._el(id);
       if (el) el.textContent = text;
     },
-    open() { this._setHidden('staging-overlay', false); },
+    open() {
+      this._open = true;
+      this._setHidden('staging-overlay', false);
+    },
     close() {
+      this._open = false;
+      this._testPanelHidden = true;
       this._setHidden('staging-overlay', true);
       this._setHidden('staging-loader', true);
       this._setHidden('staging-test-btn', true);
       this._setHidden('staging-testing-panel', true);
       this._setHidden('staging-fullscreen-btn', true);
     },
-    isOpen() {
-      const el = this._el('staging-overlay');
-      return !!el && !!el.classList && !el.classList.contains('hidden');
-    },
+    isOpen() { return this._open; },
     setMode(mode) {
+      this._mode = mode === 'docked' ? 'docked' : 'fullscreen';
       const el = this._el('staging-overlay');
       if (!el || !el.classList) return;
       if (mode === 'docked') {
@@ -13724,11 +13737,7 @@ const AppView = {
       // Back to the CSS `inset: 0` fullscreen geometry.
       if (el.style) { el.style.top = ''; el.style.left = ''; el.style.width = ''; el.style.height = ''; }
     },
-    mode() {
-      const el = this._el('staging-overlay');
-      return el && el.classList && el.classList.contains('staging-overlay-docked')
-        ? 'docked' : 'fullscreen';
-    },
+    mode() { return this._mode; },
     setDockRect(rect) {
       const el = this._el('staging-overlay');
       if (!el || !el.style || !rect) return;
@@ -13752,11 +13761,11 @@ const AppView = {
       const el = this._el('staging-testing-content');
       if (el) el.innerHTML = html || '';
     },
-    setTestPanelHidden(hidden) { this._setHidden('staging-testing-panel', !!hidden); },
-    isTestPanelHidden() {
-      const el = this._el('staging-testing-panel');
-      return !el || !el.classList || el.classList.contains('hidden');
+    setTestPanelHidden(hidden) {
+      this._testPanelHidden = !!hidden;
+      this._setHidden('staging-testing-panel', !!hidden);
     },
+    isTestPanelHidden() { return this._testPanelHidden; },
     setFullscreenBtn({ hidden, text, title } = {}) {
       this._setHidden('staging-fullscreen-btn', !!hidden);
       const el = this._el('staging-fullscreen-btn');
