@@ -35,6 +35,24 @@ const AppView = {
   _ghIssuesMeta: { truncatedList: false, note: null, repoUrl: null, myRemaining: null },
   _bountyInFlight: new Set(),
 
+  // #1100: Reporting-view caches. Deliberately SEPARATE from `_merged` /
+  // `_mergedHasMore` / `_mergedCursor`: the report pages the whole merged
+  // history, and writing that into `_merged` would silently extend the
+  // kanban Done column and retire its "Load more" footer as a side effect
+  // of visiting the report. null means "not paged yet" — _repaintReportView
+  // paints a placeholder and kicks _ensureReportData(). Invalidated on every
+  // successful _loadDevData and on app switch, so Refresh re-pages.
+  _reportMerged: null,
+  _reportLoading: false,
+  // True when the 500-row cap stopped the pager short of the full history.
+  _reportTruncated: false,
+  // The server's own `total` from page 1 — authoritative for "showing N of M"
+  // (see the staging first-page-only demo injection note in _ensureReportData).
+  _reportTotal: 0,
+  // True when paging FAILED and the report fell back to the board's first
+  // page, so the document can say it is showing partial history.
+  _reportPartial: false,
+
   // #396: per-issue-number cache of the GitHub comment thread fetched
   // lazily when an issue topic opens, so _renderTopicHead's live-refreshes
   // (WS-driven) reuse it instead of refetching. Each entry is
@@ -160,6 +178,14 @@ const AppView = {
   // Read/written only through the two helpers below so the
   // localStorage access stays guarded in one place.
   VIEW_MODE_KEY: 'devViewMode',
+  // The single whitelist of dev view modes, in switcher order. Every place
+  // that resolves a mode — the ?view= override, the stored preference, the
+  // setter and the toggle's click handler — validates against THIS array
+  // instead of repeating an inline `(v === 'kanban' || v === 'pm')` chain,
+  // so adding a mode (#1100 added 'report') is one edit rather than four.
+  // 'list' is the terminal fallback for anything not in here.
+  VIEW_MODES: ['list', 'kanban', 'pm', 'report'],
+  _isViewMode(v) { return AppView.VIEW_MODES.indexOf(v) !== -1; },
   // The single source of truth in JS for where the board goes
   // side-by-side. Must stay in step with the two kanban media queries in
   // app.css (`max-width: 639px` for the tab strip, `min-width: 640px`
@@ -185,7 +211,7 @@ const AppView = {
     let v = null;
     try {
       const raw = new URLSearchParams(window.location.search).get('view');
-      if (raw === 'list' || raw === 'kanban' || raw === 'pm') v = raw;
+      if (AppView._isViewMode(raw)) v = raw;
     } catch { v = null; }
     AppView._viewModeUrlOverride = v;
     return v;
@@ -195,7 +221,7 @@ const AppView = {
       const override = AppView._readViewModeOverride();
       if (override) return override;
       const stored = window.localStorage.getItem(AppView.VIEW_MODE_KEY);
-      if (stored === 'kanban' || stored === 'list' || stored === 'pm') return stored;
+      if (AppView._isViewMode(stored)) return stored;
       if (AppView._viewModeAutoDefault === null) {
         AppView._viewModeAutoDefault =
           (typeof window.matchMedia === 'function'
@@ -206,7 +232,7 @@ const AppView = {
     } catch { return 'list'; }
   },
   _setViewMode(mode) {
-    const next = (mode === 'kanban' || mode === 'pm') ? mode : 'list';
+    const next = AppView._isViewMode(mode) ? mode : 'list';
     // An explicit choice retires the URL override (#814) — otherwise
     // ?view= would keep winning over every later toggle click.
     AppView._viewModeUrlOverride = null;
@@ -376,6 +402,10 @@ const AppView = {
       Object.keys(AppView._govApplyTimers).forEach(AppView._clearGovApplyTimers);
       AppView._govApplying = Object.create(null);
       AppView._govDueSince = Object.create(null);
+      // #1100: the report's paged merged history is per-app — never carry
+      // one app's completed work into another app's report.
+      AppView._resetReportCaches();
+      AppView._reportTotal = 0;
     }
     AppView.appData = appData;
 
@@ -2332,18 +2362,22 @@ const AppView = {
     const boardSvg = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z"/></svg>';
     // People icon (two-person silhouette) for the PM assignment overview.
     const peopleSvg = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-1a4 4 0 00-3-3.87M9 20H4v-1a4 4 0 013-3.87m6 4.87v-1a4 4 0 00-3-3.87M12 7a3 3 0 11-6 0 3 3 0 016 0zm7 3a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"/></svg>';
+    // #1100: document-with-lines icon for the Reporting view — a generated,
+    // read-only progress report rather than another way to work the board.
+    const reportSvg = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 4h8l4 4v12H8zM8 4H6a2 2 0 00-2 2v12M11 12h6M11 16h6M11 8h2"/></svg>';
     return `
       <div class="inline-flex items-center rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-hidden mr-1" role="group" aria-label="Dev view mode">
         <button id="dev-view-list" data-view="list" class="${AppView._viewToggleBtnCls(mode === 'list')}" aria-pressed="${mode === 'list'}" title="List view" aria-label="List view">${listSvg}</button>
         <button id="dev-view-kanban" data-view="kanban" class="${AppView._viewToggleBtnCls(mode === 'kanban')}" aria-pressed="${mode === 'kanban'}" title="Kanban view" aria-label="Kanban view">${boardSvg}</button>
         <button id="dev-view-pm" data-view="pm" class="${AppView._viewToggleBtnCls(mode === 'pm')}" aria-pressed="${mode === 'pm'}" title="PM view — tasks by assignee" aria-label="PM view">${peopleSvg}</button>
+        <button id="dev-view-report" data-view="report" class="${AppView._viewToggleBtnCls(mode === 'report')}" aria-pressed="${mode === 'report'}" title="Reporting — progress report" aria-label="Reporting — progress report">${reportSvg}</button>
       </div>`;
   },
   _wireViewToggle(content) {
     content.querySelectorAll('.dev-view-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
         const v = btn.dataset.view;
-        const mode = (v === 'kanban' || v === 'pm') ? v : 'list';
+        const mode = AppView._isViewMode(v) ? v : 'list';
         if (mode === AppView._getViewMode()) return;
         AppView._setViewMode(mode);
         AppView._updateViewToggleUI();
@@ -3057,6 +3091,10 @@ const AppView = {
       AppView._mergedTotal = (typeof mergedData.total === 'number')
         ? mergedData.total
         : merged.length;
+      // #1100: a fresh dev-data load invalidates the report's own paged
+      // history, so the next Reporting paint (or Refresh) re-pages it.
+      AppView._resetReportCaches();
+      AppView._reportTotal = AppView._mergedTotal;
       // #607: keep the checks-in-progress polling fallback in sync with
       // what this load actually saw.
       AppView._syncChecksPoll(promoted);
@@ -3122,6 +3160,18 @@ const AppView = {
         AppView._renderKanbanFilterBar();
       }
       AppView._repaintPmView();
+      return;
+    }
+    if (AppView._getViewMode() === 'report') {
+      // #1100: Reporting. A single stable node, mounted once and refilled by
+      // _repaintReportView on every repaint. Deliberately NO filter bar —
+      // a progress report is the whole picture by definition, and a filtered
+      // one would be a misleading document. _kanbanFilters is left untouched
+      // so switching back to kanban/PM restores the user's filters intact.
+      if (!document.getElementById('dev-report')) {
+        body.innerHTML = '<div id="dev-report"></div>';
+      }
+      AppView._repaintReportView();
       return;
     }
     // List mode: rebuild the two-container shell, then fill it exactly as
@@ -4568,6 +4618,753 @@ const AppView = {
     AppView._applyExploreChatAvailability(el);
     AppView._updateKanbanFilterBarUI();
     AppView._initPmDrag(el);
+  },
+
+  // ══ Reporting view (#1100) ═══════════════════════════════════════════
+  //
+  // A fourth view mode that replaces the board with a generated, READ-ONLY
+  // progress report — Done / In progress / Backlog — plus a Download HTML
+  // export. Three deliberate properties:
+  //
+  //   * It reuses NONE of the card renderers. `#dev-body` has a delegated
+  //     click handler (renderDevView) that opens topics and fires card
+  //     actions off `data-issue-row` / `data-proposal-row` / `data-gov-row`
+  //     / `data-session-chip`. Emitting any of those here would turn every
+  //     report line into a live control, so the report's own markup uses
+  //     `ur-rpt-*` classes exclusively and its only interactive elements
+  //     are the two toolbar buttons and external GitHub links.
+  //   * The classification is DELEGATED to _bucketDevItems, so the report
+  //     can never disagree with the board about what is done / in review /
+  //     in progress / backlog — and the three sections are mutually
+  //     exclusive by construction.
+  //   * _buildReportModel and _renderReportHtml are pure (data in, plain
+  //     object / string out; no DOM, no AppView state reads), so they are
+  //     unit-tested in a vm sandbox (tests/dev-report.test.js) and port
+  //     unchanged when the dev board moves into the React bundle (#1084).
+
+  // Month labels for the Done section's group headings. An explicit table
+  // rather than toLocaleDateString(month:'long') so the heading is stable
+  // across runtimes with a trimmed ICU and assertable in tests.
+  REPORT_MONTHS: ['January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'],
+
+  // Backlog priority groups, in report order. The first three mirror
+  // ATTR_PRIORITY_VALUES (highest first); the fourth catches issues the
+  // group has not voted a priority on.
+  REPORT_PRIORITY_GROUPS: [
+    { key: 'high', label: 'High' },
+    { key: 'medium', label: 'Medium' },
+    { key: 'low', label: 'Low' },
+    { key: 'none', label: 'No priority set' },
+  ],
+
+  // Hard cap on the merged-history pager: 10 sequential pages of 50 rows.
+  // Keeps one Reporting click from becoming a 40-request storm on a
+  // long-lived app; the overflow is DISCLOSED in the document rather than
+  // silently dropped.
+  REPORT_MERGED_PAGE: 50,
+  REPORT_MERGED_MAX_PAGES: 10,
+  REPORT_MERGED_MAX_ROWS: 500,
+
+  // Drop the report's paged history so the next paint (or an explicit
+  // Refresh) re-pages it. Called on every successful _loadDevData and on
+  // app switch — never mid-paint.
+  _resetReportCaches() {
+    AppView._reportMerged = null;
+    AppView._reportTruncated = false;
+    AppView._reportPartial = false;
+  },
+
+  // Page the full merged history into `_reportMerged` — the one fetch the
+  // report adds. `_merged` holds only the board's first page (20 rows) and
+  // `_mergedTotal` the true count, so the history has to be paged; it lands
+  // in a SEPARATE cache because writing it into `_merged` would silently
+  // extend the kanban Done column and retire its "Load more" footer as a
+  // side effect of visiting the report.
+  //
+  // Uses the same keyset cursor shape as loadMoreMerged (before /
+  // before_id / before_type) and forwards _demoQS() on every page. On
+  // failure it falls back to the board's first page and sets
+  // `_reportPartial`, so the document says it is showing partial history
+  // instead of quietly under-reporting.
+  async _ensureReportData() {
+    if (AppView._reportLoading) return;
+    if (AppView._reportMerged) return;
+    if (!AppView.appData) return;
+    const slug = AppView.appData.slug;
+    AppView._reportLoading = true;
+    const rowKey = (r) => `${r.row_type || 'pr'}:${r.id}`;
+    const rows = [];
+    const have = new Set();
+    let truncated = false;
+    let partial = false;
+    // Authoritative "of N": the FIRST page's own `total`. In staging the
+    // ?demo=1 injection is first-page-only (votes.js, gated on isFirstPage)
+    // and bumps `total` by the injected count, so recomputing a total from
+    // the rows we hold would contradict the server. Page 2+ of a demo
+    // report returns real rows only and the page-1 cursor may sit on a
+    // synthetic row — the (row_type, id) dedupe below covers the overlap.
+    let total = 0;
+    try {
+      let cursor = null;
+      for (let page = 0; page < AppView.REPORT_MERGED_MAX_PAGES; page++) {
+        const qs = AppView._demoQS();
+        const sep = qs ? '&' : '?';
+        let url = `/api/apps/${slug}/merged${qs}${sep}limit=${AppView.REPORT_MERGED_PAGE}`;
+        if (cursor) {
+          url += `&before=${encodeURIComponent(cursor.created_at)}`
+            + `&before_id=${encodeURIComponent(cursor.id)}`
+            + `&before_type=${encodeURIComponent(cursor.row_type || 'pr')}`;
+        }
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`merged page ${page} failed`);
+        const data = await res.json();
+        const batch = Array.isArray(data.merged) ? data.merged : [];
+        if (page === 0 && typeof data.total === 'number') total = data.total;
+        for (const r of batch) {
+          const k = rowKey(r);
+          if (have.has(k)) continue;
+          have.add(k);
+          rows.push(r);
+        }
+        if (rows.length >= AppView.REPORT_MERGED_MAX_ROWS) {
+          rows.length = AppView.REPORT_MERGED_MAX_ROWS;
+          truncated = !!data.hasMore || rows.length < total;
+          break;
+        }
+        if (!data.hasMore || !batch.length) break;
+        const last = batch[batch.length - 1];
+        cursor = { created_at: last.created_at, id: last.id, row_type: last.row_type || 'pr' };
+        // Ran out of pages before running out of history.
+        if (page === AppView.REPORT_MERGED_MAX_PAGES - 1) truncated = true;
+      }
+    } catch {
+      // Fall back to the board's first page and say so in the document.
+      rows.length = 0;
+      have.clear();
+      for (const r of (AppView._merged || [])) {
+        const k = rowKey(r);
+        if (have.has(k)) continue;
+        have.add(k);
+        rows.push(r);
+      }
+      partial = true;
+      total = AppView._mergedTotal || rows.length;
+    } finally {
+      AppView._reportLoading = false;
+    }
+    AppView._reportMerged = rows;
+    AppView._reportTruncated = truncated;
+    AppView._reportPartial = partial;
+    AppView._reportTotal = total || rows.length;
+    // Only repaint if the user is still looking at the report.
+    if (AppView._getViewMode() === 'report') AppView._repaintReportView();
+  },
+
+  // Fill `#dev-report` for the current caches. Paints a placeholder and
+  // kicks the pager while `_reportMerged` is null; every later
+  // (WS-driven) _repaintDevBody re-renders from cache with no re-paging.
+  _repaintReportView() {
+    const el = document.getElementById('dev-report');
+    if (!el) return;
+    if (!AppView._reportMerged) {
+      el.innerHTML = `<style id="dev-report-style">${AppView.REPORT_CSS}</style>`
+        + `<div class="${AppView._reportRootCls()}"><p class="ur-rpt-empty">Building report…</p></div>`;
+      AppView._ensureReportData();
+      return;
+    }
+    const model = AppView._buildReportModel(AppView._reportInputs());
+    el.innerHTML = `<style id="dev-report-style">${AppView.REPORT_CSS}</style>`
+      + AppView._renderReportToolbar()
+      + `<div class="${AppView._reportRootCls()}">${AppView._renderReportHtml(model, { standalone: false })}</div>`;
+    // Wired after each paint alongside the body, the same way
+    // _repaintPmView wires #dev-pm-more-unassigned.
+    const dl = el.querySelector('#dev-report-download');
+    if (dl && dl.addEventListener) dl.addEventListener('click', () => AppView.downloadReport());
+    const rf = el.querySelector('#dev-report-refresh');
+    if (rf && rf.addEventListener) rf.addEventListener('click', () => AppView.refreshReport());
+  },
+
+  // `.ur-rpt--dark` follows the shell's `dark` class (darkMode: 'class').
+  // The EXPORT never sets it — a downloaded file is always light so it
+  // prints and reads well on paper and in other apps.
+  _reportRootCls() {
+    let dark = false;
+    try {
+      dark = !!(document.documentElement
+        && document.documentElement.classList
+        && document.documentElement.classList.contains('dark'));
+    } catch { dark = false; }
+    return dark ? 'ur-rpt ur-rpt--dark' : 'ur-rpt';
+  },
+
+  _renderReportToolbar() {
+    const busy = AppView._reportLoading;
+    return `
+      <div class="flex items-center gap-2 mb-3">
+        <button id="dev-report-download" class="gc-vote-btn" title="Save this report as a self-contained HTML file">Download HTML</button>
+        <button id="dev-report-refresh" class="gc-vote-btn"${busy ? ' disabled' : ''} title="Re-pull the data and regenerate the report">${busy ? 'Refreshing…' : 'Refresh'}</button>
+      </div>`;
+  },
+
+  // Everything _buildReportModel needs, read from the caches the board
+  // already holds. Kept separate from the pure builder so the builder
+  // never reads AppView state.
+  _reportInputs() {
+    const app = AppView.appData || {};
+    const meta = AppView._ghIssuesMeta || {};
+    const ctx = AppView._proposalsCtx || {};
+    return {
+      issues: AppView._visibleGhIssues(),
+      proposals: AppView._proposals || [],
+      gov: AppView._govProposals || [],
+      merged: AppView._reportMerged || AppView._merged || [],
+      mySessions: AppView._mySessions || [],
+      sharedSessions: AppView._sharedSessions || [],
+      app: {
+        name: app.name || 'This app',
+        slug: app.slug || '',
+        url: app.url || '',
+        repoUrl: app.repo_url || meta.repoUrl || '',
+      },
+      mergedTotal: AppView._reportTotal || 0,
+      mergedTruncated: !!AppView._reportTruncated,
+      mergedPartial: !!AppView._reportPartial,
+      issuesTruncated: !!meta.truncatedList,
+      majority: ctx.majority || 1,
+    };
+  },
+
+  // ── The report model: pure, DOM-free, unit-tested ───────────────────
+  //
+  // data in → plain object out, the same shape of helper as
+  // _bucketDevItems and _groupByAssignee. `opts.now` lets tests pin the
+  // clock for the month grouping and the 30-day counter.
+  _buildReportModel(data, opts) {
+    const d = data || {};
+    const o = opts || {};
+    const now = Number.isFinite(o.now) ? o.now : Date.now();
+    const num = (v) => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : 0; };
+    const ts = (v) => { const t = Date.parse(v || ''); return Number.isFinite(t) ? t : 0; };
+
+    const buckets = AppView._bucketDevItems({
+      issues: d.issues,
+      proposals: d.proposals,
+      gov: d.gov,
+      merged: d.merged,
+      mySessions: d.mySessions,
+      sharedSessions: d.sharedSessions,
+    });
+
+    // ── Done ─────────────────────────────────────────────────────────
+    // Dated by `created_at` and LABELLED "Started": GET /merged orders by
+    // chat_sessions.created_at and exposes no merge timestamp, so grouping
+    // by a fabricated merge date would over-claim. Applied close-issue
+    // rows do carry payload.appliedAt and use it, labelled "Closed".
+    const doneEntries = buckets.done.map((m) => {
+      const closeIssue = (m.row_type || 'pr') === 'close_issue';
+      const payload = m.payload || {};
+      if (closeIssue) {
+        const at = payload.appliedAt || m.created_at;
+        return {
+          kind: 'close-issue',
+          title: payload.issueTitle || m.title || `Issue #${payload.issueNumber || m.id}`,
+          issueNumber: payload.issueNumber != null ? payload.issueNumber : null,
+          author: m.created_by_username || '',
+          yes: num(m.yes_count), no: num(m.no_count),
+          votesRequired: num(m.votes_required),
+          at, atMs: ts(at), dateLabel: 'Closed',
+        };
+      }
+      return {
+        kind: 'proposal',
+        title: m.pr_title || `Change by ${m.username || 'someone'}`,
+        prNumber: m.pr_number != null ? m.pr_number : null,
+        author: m.username || '',
+        yes: num(m.yes_count), no: num(m.no_count),
+        votesRequired: num(m.votes_required),
+        at: m.created_at, atMs: ts(m.created_at), dateLabel: 'Started',
+      };
+    });
+    // Month buckets over that same field, newest month first.
+    const monthOrder = [];
+    const monthMap = new Map();
+    for (const e of doneEntries) {
+      const dt = e.atMs ? new Date(e.atMs) : null;
+      const key = dt ? `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}` : 'unknown';
+      const label = dt
+        ? `${AppView.REPORT_MONTHS[dt.getMonth()]} ${dt.getFullYear()}`
+        : 'Undated';
+      if (!monthMap.has(key)) {
+        const g = { key, label, entries: [] };
+        monthMap.set(key, g);
+        monthOrder.push(g);
+      }
+      monthMap.get(key).entries.push(e);
+    }
+    const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+    const completedLast30 = doneEntries
+      .filter((e) => e.atMs && (now - e.atMs) <= THIRTY_DAYS).length;
+    const doneTotal = Math.max(num(d.mergedTotal), doneEntries.length);
+
+    // ── In progress ──────────────────────────────────────────────────
+    const review = [];
+    const gov = [];
+    for (const entry of buckets.inReview) {
+      const it = entry.item || {};
+      if (entry.kind === 'gov') {
+        gov.push({
+          kind: 'gov',
+          govKind: it.kind || '',
+          govKindLabel: AppView._reportGovKindLabel(it.kind),
+          title: (it.kind === 'rename' && it.payload && it.payload.newName)
+            ? it.payload.newName
+            : (it.title || AppView._reportGovKindLabel(it.kind)),
+          issueNumber: it.github_issue_number != null ? it.github_issue_number : null,
+          author: it.created_by_username || '',
+          yes: num(it.yes_count), no: num(it.no_count),
+          votesRequired: num(it.votes_required),
+          mergeWindowEndsAt: it.merge_window_ends_at || null,
+          chatCount: num(it.chat_count),
+        });
+        continue;
+      }
+      review.push({
+        kind: 'proposal',
+        title: it.pr_title || `Change by ${it.username || 'someone'}`,
+        prNumber: it.pr_number != null ? it.pr_number : null,
+        author: it.username || '',
+        status: it.status || '',
+        yes: num(it.yes_count), no: num(it.no_count),
+        votesRequired: num(it.votes_required) || num(d.majority),
+        checkState: it.check_state || null,
+        checkLabel: AppView._reportCheckLabel(it.check_state),
+        mergeWindowEndsAt: it.merge_window_ends_at || null,
+        chatCount: num(it.chat_count),
+      });
+    }
+
+    const sessions = [];
+    const workIssues = [];
+    for (const entry of buckets.inProgress) {
+      const it = entry.item || {};
+      if (entry.kind === 'issue') {
+        const ip = it.in_progress || null;
+        const people = [];
+        const push = (u) => { if (u && !people.includes(u)) people.push(u); };
+        if (ip && Array.isArray(ip.users)) ip.users.forEach(push);
+        if (ip && Array.isArray(ip.claims)) ip.claims.forEach((c) => push(c && c.username));
+        const h = it.headless;
+        workIssues.push({
+          kind: 'work-issue',
+          number: it.number != null ? it.number : null,
+          title: it.title || `Issue #${it.number}`,
+          htmlUrl: it.htmlUrl || '',
+          people,
+          headless: !!(h && (h.status === 'generating' || h.status === 'ready')),
+          claimed: !!(ip && Array.isArray(ip.claims) && ip.claims.length),
+          at: it.updatedAt || null, atMs: ts(it.updatedAt),
+          chatCount: num(it.chatCount),
+        });
+        continue;
+      }
+      // my-session | shared-session
+      sessions.push({
+        kind: entry.kind,
+        mine: entry.kind === 'my-session',
+        title: it.session_title || it.pr_title || it.branch_name || `Session #${it.id}`,
+        owner: it.username || '',
+        busy: !!it.busy,
+        at: it.last_activity_at || it.created_at || null,
+        atMs: ts(it.last_activity_at || it.created_at),
+        chatCount: num(it.chat_count),
+      });
+    }
+
+    // ── Backlog ──────────────────────────────────────────────────────
+    // buckets.issues is already (a) free of issues linked to an open
+    // proposal and (b) free of in-progress issues, so Backlog cannot
+    // overlap Awaiting review or Issues-under-work.
+    const backlogGroups = AppView.REPORT_PRIORITY_GROUPS.map((g) => ({
+      key: g.key, label: g.label, issues: [],
+    }));
+    const groupFor = (key) => backlogGroups.find((g) => g.key === key) || backlogGroups[backlogGroups.length - 1];
+    for (const i of buckets.issues) {
+      const top = (i.priority && i.priority.top) || null;
+      const g = groupFor(AppView.ATTR_PRIORITY_VALUES.indexOf(top) !== -1 ? top : 'none');
+      g.issues.push({
+        kind: 'issue',
+        number: i.number != null ? i.number : null,
+        title: i.title || `Issue #${i.number}`,
+        htmlUrl: i.htmlUrl || '',
+        priority: top,
+        priorityLabel: top ? ((AppView._priorityMeta(top) || {}).label || top) : null,
+        assignee: (i.assignee && i.assignee.top) || null,
+        category: (i.category && i.category.top) || null,
+        at: i.updatedAt || null, atMs: ts(i.updatedAt),
+        chatCount: num(i.chatCount),
+      });
+    }
+    const backlogTotal = backlogGroups.reduce((n, g) => n + g.issues.length, 0);
+
+    const shownDone = doneEntries.length;
+    return {
+      app: {
+        name: (d.app && d.app.name) || 'This app',
+        slug: (d.app && d.app.slug) || '',
+        url: (d.app && d.app.url) || '',
+        repoUrl: (d.app && d.app.repoUrl) || '',
+      },
+      generatedAtMs: now,
+      generatedAt: new Date(now).toISOString(),
+      summary: {
+        completed: doneTotal,
+        awaitingReview: review.length + gov.length,
+        beingWorkedOn: sessions.length + workIssues.length,
+        backlog: backlogTotal,
+        completedLast30,
+      },
+      done: {
+        groups: monthOrder,
+        shown: shownDone,
+        total: doneTotal,
+        truncated: !!d.mergedTruncated || doneTotal > shownDone,
+        partial: !!d.mergedPartial,
+        empty: shownDone === 0,
+      },
+      inProgress: {
+        review, gov, sessions, issues: workIssues,
+        empty: !(review.length || gov.length || sessions.length || workIssues.length),
+      },
+      backlog: {
+        groups: backlogGroups.filter((g) => g.issues.length),
+        total: backlogTotal,
+        truncatedList: !!d.issuesTruncated,
+        empty: backlogTotal === 0,
+      },
+    };
+  },
+
+  _reportGovKindLabel(kind) {
+    switch (kind) {
+      case 'rename': return 'App rename';
+      case 'secret_change': return 'Secret change';
+      case 'close_issue': return 'Close an issue';
+      case 'maintenance_campaign': return 'Maintenance campaign';
+      default: return 'Governance proposal';
+    }
+  },
+
+  _reportCheckLabel(state) {
+    switch (state) {
+      case 'passing': return 'Checks passing';
+      case 'failing': return 'Checks failing';
+      case 'error': return 'Checks could not run';
+      case 'pending': return 'Checks running';
+      default: return null;
+    }
+  },
+
+  // ── Report CSS ───────────────────────────────────────────────────────
+  // Plain CSS, every rule scoped under `.ur-rpt`, deliberately using NO
+  // Tailwind utilities. Injected once into #dev-report for the on-screen
+  // view AND inlined into the export, so the downloaded file is the exact
+  // layout that was previewed and cannot be broken by a Tailwind
+  // content-scan miss.
+  REPORT_CSS: [
+    '.ur-rpt{--rpt-fg:#18181b;--rpt-muted:#52525b;--rpt-faint:#71717a;--rpt-line:#e4e4e7;--rpt-bg:#ffffff;--rpt-card:#fafafa;--rpt-accent:#7c3aed;',
+    'color:var(--rpt-fg);background:var(--rpt-bg);font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;',
+    'font-size:14px;line-height:1.55;max-width:56rem;margin:0 auto;padding:1.5rem 1.25rem 3rem;-webkit-text-size-adjust:100%;}',
+    '.ur-rpt--dark{--rpt-fg:#f4f4f5;--rpt-muted:#a1a1aa;--rpt-faint:#8b8b93;--rpt-line:#3f3f46;--rpt-bg:transparent;--rpt-card:rgba(255,255,255,0.03);--rpt-accent:#a78bfa;}',
+    '.ur-rpt *{box-sizing:border-box;}',
+    '.ur-rpt a{color:var(--rpt-accent);text-decoration:none;}',
+    '.ur-rpt a:hover{text-decoration:underline;}',
+    '.ur-rpt-head{border-bottom:2px solid var(--rpt-line);padding-bottom:1rem;margin-bottom:1.25rem;}',
+    '.ur-rpt-app{font-size:1.5rem;font-weight:700;margin:0;letter-spacing:-0.01em;}',
+    '.ur-rpt-kicker{font-size:0.8125rem;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:var(--rpt-accent);margin:0 0 0.25rem;}',
+    '.ur-rpt-gen{font-size:0.8125rem;color:var(--rpt-muted);margin:0.5rem 0 0;}',
+    '.ur-rpt-note{font-size:0.75rem;color:var(--rpt-faint);margin:0.25rem 0 0;}',
+    '.ur-rpt-summary{display:flex;flex-wrap:wrap;gap:0.75rem;margin:0 0 1.5rem;padding:0;list-style:none;}',
+    '.ur-rpt-stat{flex:1 1 8rem;border:1px solid var(--rpt-line);border-radius:0.5rem;background:var(--rpt-card);padding:0.625rem 0.75rem;}',
+    '.ur-rpt-stat-n{display:block;font-size:1.375rem;font-weight:700;line-height:1.15;}',
+    '.ur-rpt-stat-l{display:block;font-size:0.6875rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--rpt-muted);margin-top:0.125rem;}',
+    '.ur-rpt-recent{font-size:0.8125rem;color:var(--rpt-muted);margin:-0.75rem 0 1.5rem;}',
+    '.ur-rpt-section{margin:0 0 1.75rem;}',
+    '.ur-rpt-h2{font-size:1.0625rem;font-weight:700;margin:0 0 0.125rem;padding-bottom:0.375rem;border-bottom:1px solid var(--rpt-line);}',
+    '.ur-rpt-sub{font-size:0.75rem;color:var(--rpt-faint);margin:0.375rem 0 0.75rem;}',
+    '.ur-rpt-h3{font-size:0.8125rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--rpt-muted);margin:1.125rem 0 0.5rem;}',
+    '.ur-rpt-list{list-style:none;margin:0;padding:0;}',
+    '.ur-rpt-row{border-bottom:1px solid var(--rpt-line);padding:0.5rem 0;}',
+    '.ur-rpt-row:last-child{border-bottom:0;}',
+    '.ur-rpt-title{font-weight:600;}',
+    '.ur-rpt-meta{font-size:0.75rem;color:var(--rpt-muted);margin-top:0.125rem;}',
+    '.ur-rpt-meta span+span::before{content:" \\00b7 ";color:var(--rpt-line);}',
+    '.ur-rpt-num{font-variant-numeric:tabular-nums;color:var(--rpt-muted);font-weight:400;}',
+    '.ur-rpt-tag{display:inline-block;font-size:0.6875rem;font-weight:600;border:1px solid var(--rpt-line);border-radius:0.25rem;padding:0 0.3125rem;margin-left:0.25rem;color:var(--rpt-muted);}',
+    '.ur-rpt-empty{font-size:0.8125rem;color:var(--rpt-faint);font-style:italic;margin:0.5rem 0;}',
+    '.ur-rpt-foot{border-top:2px solid var(--rpt-line);margin-top:2rem;padding-top:0.875rem;font-size:0.75rem;color:var(--rpt-faint);}',
+    '.ur-rpt-foot p{margin:0.25rem 0;}',
+  ].join(''),
+
+  REPORT_PRINT_CSS: [
+    '@media print{',
+    'body{background:#fff;}',
+    '.ur-rpt{max-width:none;padding:0;font-size:11pt;}',
+    '.ur-rpt-section{break-inside:auto;}',
+    '.ur-rpt-row{break-inside:avoid;}',
+    '.ur-rpt-h2,.ur-rpt-h3{break-after:avoid;}',
+    '.ur-rpt a{color:inherit;text-decoration:none;}',
+    '}',
+  ].join(''),
+
+  // ── Report rendering: pure, DOM-free, unit-tested ────────────────────
+  //
+  // model in → HTML string out. With `standalone: true` the same markup is
+  // wrapped in a full document (doctype, charset, title, inline CSS, print
+  // rules) so the download is self-contained and needs no network.
+  //
+  // HARD RULE: no `data-issue-row` / `data-proposal-row` / `data-gov-row` /
+  // `data-session-chip` attributes and no reuse of _renderIssueRow /
+  // _renderProposalCard — see the section header above.
+  _renderReportHtml(model, opts) {
+    const m = model || {};
+    const o = opts || {};
+    const standalone = !!o.standalone;
+    const app = m.app || {};
+    const sum = m.summary || {};
+    const eh = (s) => escapeHtml(s == null ? '' : String(s));
+    const ea = (s) => escapeAttr(s == null ? '' : String(s));
+    const genMs = Number.isFinite(m.generatedAtMs) ? m.generatedAtMs : Date.parse(m.generatedAt || '');
+    const gen = Number.isFinite(genMs) ? new Date(genMs) : null;
+    // The viewer's local timezone, via the browser's own formatter.
+    const genLabel = gen ? `${gen.toLocaleDateString()} ${gen.toLocaleTimeString()}` : '';
+    const dateOnly = (ms) => {
+      if (!ms) return 'undated';
+      try { return new Date(ms).toLocaleDateString(); } catch { return 'undated'; }
+    };
+    // Only external GitHub links navigate; everything else is inert text.
+    const link = (href, text) => (href
+      ? `<a href="${ea(href)}" target="_blank" rel="noopener">${eh(text)}</a>`
+      : eh(text));
+    const metaLine = (parts) => {
+      const kept = parts.filter((p) => p !== '' && p != null);
+      if (!kept.length) return '';
+      return `<div class="ur-rpt-meta">${kept.map((p) => `<span>${p}</span>`).join('')}</div>`;
+    };
+    const rows = (items) => `<ul class="ur-rpt-list">${items.join('')}</ul>`;
+    const voteText = (e) => {
+      const req = e.votesRequired || 0;
+      const yes = e.yes || 0;
+      const base = req ? `${yes} of ${req} yes` : `${yes} yes`;
+      return e.no ? `${base}, ${e.no} no` : base;
+    };
+    const countdown = (iso) => {
+      const ends = iso ? Date.parse(iso) : NaN;
+      if (!Number.isFinite(ends) || !Number.isFinite(genMs)) return '';
+      const left = ends - genMs;
+      if (left <= 0) return 'merge window closed';
+      const h = Math.floor(left / 3600000);
+      if (h >= 24) return `merges in ${Math.floor(h / 24)}d`;
+      if (h >= 1) return `merges in ${h}h`;
+      return `merges in ${Math.max(1, Math.round(left / 60000))}m`;
+    };
+
+    // ── Title block ───────────────────────────────────────────────────
+    let html = '';
+    html += `<header class="ur-rpt-head">`
+      + `<p class="ur-rpt-kicker">Progress report</p>`
+      + `<h1 class="ur-rpt-app">${eh(app.name)}</h1>`
+      + `<p class="ur-rpt-gen">Generated ${eh(genLabel)}</p>`
+      + `<p class="ur-rpt-note">Open issues come from the app&rsquo;s GitHub repository; proposals and dev sessions come from Usernode.</p>`
+      + `</header>`;
+
+    // ── Summary strip ─────────────────────────────────────────────────
+    const stat = (n, label) => `<li class="ur-rpt-stat"><span class="ur-rpt-stat-n">${eh(n)}</span><span class="ur-rpt-stat-l">${eh(label)}</span></li>`;
+    html += `<ul class="ur-rpt-summary">`
+      + stat(sum.completed || 0, 'Completed')
+      + stat(sum.awaitingReview || 0, 'Awaiting review')
+      + stat(sum.beingWorkedOn || 0, 'Being worked on')
+      + stat(sum.backlog || 0, 'Backlog')
+      + `</ul>`;
+    html += `<p class="ur-rpt-recent">${eh(sum.completedLast30 || 0)} completed in the last 30 days.</p>`;
+
+    // ── Done ──────────────────────────────────────────────────────────
+    const done = m.done || {};
+    let doneBody = '';
+    if (done.empty) {
+      doneBody = `<p class="ur-rpt-empty">Nothing has been completed yet.</p>`;
+    } else {
+      for (const g of (done.groups || [])) {
+        doneBody += `<h3 class="ur-rpt-h3">${eh(g.label)}</h3>`;
+        doneBody += rows((g.entries || []).map((e) => {
+          const head = e.kind === 'close-issue'
+            ? `Issue ${link(app.repoUrl && e.issueNumber ? `${app.repoUrl}/issues/${e.issueNumber}` : '', `#${e.issueNumber}`)} closed by vote`
+            : eh(e.title);
+          const pr = (e.kind !== 'close-issue' && e.prNumber != null)
+            ? `<span class="ur-rpt-num">${link(app.repoUrl ? `${app.repoUrl}/pull/${e.prNumber}` : '', `PR #${e.prNumber}`)}</span>`
+            : '';
+          return `<li class="ur-rpt-row">`
+            + `<div class="ur-rpt-title">${e.kind === 'close-issue' ? head : eh(e.title)}</div>`
+            + metaLine([
+              pr,
+              e.author ? eh(e.author) : '',
+              voteText(e),
+              `${eh(e.dateLabel)} ${eh(dateOnly(e.atMs))}`,
+            ])
+            + `</li>`;
+        }));
+      }
+      const notes = [];
+      if (done.truncated && done.total > done.shown) {
+        notes.push(`Showing the ${done.shown} most recent of ${done.total} completed items.`);
+      }
+      if (done.partial) {
+        notes.push('The full history could not be loaded, so this section shows only the most recent page.');
+      }
+      notes.push('Completed items are dated by when the work was started — the platform does not record a merge time.');
+      doneBody += `<p class="ur-rpt-sub">${notes.map(eh).join(' ')}</p>`;
+    }
+    html += `<section class="ur-rpt-section" data-section="done">`
+      + `<h2 class="ur-rpt-h2">Done &mdash; completed work</h2>${doneBody}</section>`;
+
+    // ── In progress ───────────────────────────────────────────────────
+    const ip = m.inProgress || {};
+    let ipBody = '';
+    if (ip.empty) {
+      ipBody = `<p class="ur-rpt-empty">No work is in progress.</p>`;
+    } else {
+      if ((ip.review || []).length) {
+        ipBody += `<h3 class="ur-rpt-h3">Awaiting review or vote</h3>`;
+        ipBody += rows(ip.review.map((e) => `<li class="ur-rpt-row">`
+          + `<div class="ur-rpt-title">${eh(e.title)}</div>`
+          + metaLine([
+            e.prNumber != null
+              ? `<span class="ur-rpt-num">${link(app.repoUrl ? `${app.repoUrl}/pull/${e.prNumber}` : '', `PR #${e.prNumber}`)}</span>`
+              : '',
+            e.author ? eh(e.author) : '',
+            voteText(e),
+            e.checkLabel ? eh(e.checkLabel) : '',
+            e.status === 'merging' ? 'merging' : countdown(e.mergeWindowEndsAt),
+          ])
+          + `</li>`));
+      }
+      if ((ip.gov || []).length) {
+        ipBody += `<h3 class="ur-rpt-h3">Governance proposals</h3>`;
+        ipBody += rows(ip.gov.map((e) => `<li class="ur-rpt-row">`
+          + `<div class="ur-rpt-title">${eh(e.title)}<span class="ur-rpt-tag">${eh(e.govKindLabel)}</span></div>`
+          + metaLine([
+            e.issueNumber != null
+              ? `<span class="ur-rpt-num">${link(app.repoUrl ? `${app.repoUrl}/issues/${e.issueNumber}` : '', `#${e.issueNumber}`)}</span>`
+              : '',
+            e.author ? eh(e.author) : '',
+            voteText(e),
+            countdown(e.mergeWindowEndsAt),
+          ])
+          + `</li>`));
+      }
+      if ((ip.sessions || []).length) {
+        ipBody += `<h3 class="ur-rpt-h3">Being worked on right now</h3>`;
+        ipBody += rows(ip.sessions.map((e) => `<li class="ur-rpt-row">`
+          + `<div class="ur-rpt-title">${eh(e.title)}${e.busy ? `<span class="ur-rpt-tag">agent running</span>` : ''}</div>`
+          + metaLine([
+            e.owner ? eh(e.owner) : '',
+            e.mine ? 'your session' : 'shared session',
+            e.atMs ? `last active ${eh(dateOnly(e.atMs))}` : '',
+          ])
+          + `</li>`));
+      }
+      if ((ip.issues || []).length) {
+        ipBody += `<h3 class="ur-rpt-h3">Issues with work underway</h3>`;
+        ipBody += rows(ip.issues.map((e) => `<li class="ur-rpt-row">`
+          + `<div class="ur-rpt-title">${eh(e.title)}</div>`
+          + metaLine([
+            e.number != null ? `<span class="ur-rpt-num">${link(e.htmlUrl, `#${e.number}`)}</span>` : '',
+            e.people && e.people.length ? eh(e.people.join(', ')) : '',
+            e.headless ? 'auto-solve run in progress' : '',
+            e.claimed && !(e.people || []).length ? 'claimed' : '',
+          ])
+          + `</li>`));
+      }
+    }
+    html += `<section class="ur-rpt-section" data-section="inprogress">`
+      + `<h2 class="ur-rpt-h2">In progress</h2>${ipBody}</section>`;
+
+    // ── Backlog ───────────────────────────────────────────────────────
+    const bl = m.backlog || {};
+    let blBody = '';
+    if (bl.empty) {
+      blBody = `<p class="ur-rpt-empty">The backlog is empty.</p>`;
+    } else {
+      for (const g of (bl.groups || [])) {
+        blBody += `<h3 class="ur-rpt-h3">${eh(g.label)}</h3>`;
+        blBody += rows(g.issues.map((e) => `<li class="ur-rpt-row">`
+          + `<div class="ur-rpt-title">${eh(e.title)}</div>`
+          + metaLine([
+            e.number != null ? `<span class="ur-rpt-num">${link(e.htmlUrl, `#${e.number}`)}</span>` : '',
+            e.assignee ? eh(e.assignee) : '',
+            e.category ? eh(e.category) : '',
+            e.atMs ? `active ${eh(dateOnly(e.atMs))}` : '',
+            e.chatCount ? `${eh(e.chatCount)} in discussion` : '',
+          ])
+          + `</li>`));
+      }
+      if (bl.truncatedList) {
+        const all = app.repoUrl ? `${app.repoUrl}/issues` : '';
+        blBody += `<p class="ur-rpt-sub">GitHub returned more open issues than the platform fetches, so this backlog is partial. `
+          + `${all ? `See the ${link(all, 'full issue list')}.` : ''}</p>`;
+      }
+    }
+    html += `<section class="ur-rpt-section" data-section="backlog">`
+      + `<h2 class="ur-rpt-h2">Backlog</h2>${blBody}</section>`;
+
+    // ── Footer ────────────────────────────────────────────────────────
+    html += `<footer class="ur-rpt-foot">`
+      + (app.url ? `<p>${eh(app.url)}</p>` : (app.slug ? `<p>${eh(app.slug)}</p>` : ''))
+      + `<p>${eh(sum.completed || 0)} completed &middot; ${eh(sum.awaitingReview || 0)} awaiting review &middot; `
+      + `${eh(sum.beingWorkedOn || 0)} being worked on &middot; ${eh(sum.backlog || 0)} in the backlog.</p>`
+      + `<p>This report reflects what the person who generated it can see, including their own private dev sessions.</p>`
+      + `</footer>`;
+
+    if (!standalone) return html;
+    const title = `${app.name || 'App'} — progress report`;
+    return `<!doctype html>\n<html lang="en"><head><meta charset="utf-8">`
+      + `<meta name="viewport" content="width=device-width, initial-scale=1">`
+      + `<title>${eh(title)}</title>`
+      + `<style>html,body{margin:0;padding:0;background:#fff;}${AppView.REPORT_CSS}${AppView.REPORT_PRINT_CSS}</style>`
+      + `</head><body><div class="ur-rpt">${html}</div></body></html>\n`;
+  },
+
+  // Save the report as a single self-contained file. Blob + temporary
+  // <a download> + revokeObjectURL, the pattern the admin CSV export
+  // already established (public/js/admin-console.js).
+  downloadReport() {
+    if (!AppView._reportMerged) { AppView._ensureReportData(); return; }
+    const model = AppView._buildReportModel(AppView._reportInputs());
+    const doc = AppView._renderReportHtml(model, { standalone: true });
+    const slug = (model.app && model.app.slug) || 'app';
+    const d = new Date(model.generatedAtMs);
+    const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const name = `usernode-${slug}-progress-${stamp}.html`;
+    try {
+      const blob = new Blob([doc], { type: 'text/html;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Could not save the report');
+    }
+  },
+
+  // Re-pull the merged history and regenerate in place.
+  refreshReport() {
+    if (AppView._reportLoading) return;
+    AppView._resetReportCaches();
+    AppView._repaintReportView();
   },
 
   // ── Session cards in the In progress area ──────────────────────────
