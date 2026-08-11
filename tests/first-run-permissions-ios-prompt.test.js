@@ -82,8 +82,16 @@ function boot(opts) {
     PlatformUI: {
       sheet(sheetOpts) {
         if (opts.kitSheetUnavailable) return null;
+        const handle = {
+          dismissed: false,
+          dismiss() {
+            handle.dismissed = true;
+            if (sheetOpts.onDismiss) sheetOpts.onDismiss();
+          },
+        };
+        sheetOpts.handle = handle;
         sheets.push(sheetOpts);
-        return { dismiss() { if (sheetOpts.onDismiss) sheetOpts.onDismiss(); } };
+        return handle;
       },
     },
     localStorage: {
@@ -110,6 +118,15 @@ function boot(opts) {
   vm.createContext(sandbox);
   vm.runInContext(nativeChromeSource, sandbox);
   return { sandbox, sheets, stored };
+}
+
+function findButton(node, text) {
+  if (node.tag === 'button' && node.textContent === text) return node;
+  for (const child of node.children || []) {
+    const found = findButton(child, text);
+    if (found) return found;
+  }
+  return null;
 }
 
 const MARKER = 'sv:onboarding_permissions_done';
@@ -217,6 +234,72 @@ test('Android: the marker still suppresses the sheet with no bridge ' +
   assert.equal(sheets.length, 0);
   assert.equal(settingsReads, 0,
     'a marked Android device keeps the instant-return fast path');
+});
+
+const IOS_PERMS = {
+  platform: 'ios', exactAlarmGranted: false, batteryOptDisabled: null,
+};
+
+test('iOS: granting from the sheet closes it, even when the native status ' +
+     'read still lags behind the OS dialog', async () => {
+  const { sandbox, sheets, stored } = boot({
+    permissions: IOS_PERMS,
+    socialPushState: IOS_UNPROMPTED, // stays stale after the grant
+  });
+  sandbox.usernode.requestPermissions = async () => ({
+    granted: true,
+    permissions: { ...IOS_PERMS, exactAlarmGranted: true },
+  });
+  await sandbox.NativeChrome.maybeShowFirstRunPermissions();
+  const allow = findButton(sheets[0].contentEl, 'Allow notifications');
+  assert.ok(allow, 'the sheet renders the Allow notifications button');
+  await allow.listeners.click();
+  assert.equal(sheets[0].handle.dismissed, true,
+    'a successful grant closes the sheet');
+  assert.equal(stored[MARKER], '1',
+    'closing on grant records first-run done');
+});
+
+test('iOS: a requestPermissions that resolves before the user answers ' +
+     'still closes once the status settles to granted', async () => {
+  const { sandbox, sheets } = boot({ permissions: IOS_PERMS });
+  let reads = 0;
+  sandbox.usernode.getSocialPushState = async () => {
+    reads += 1;
+    return {
+      ...IOS_UNPROMPTED,
+      permissionStatus: reads >= 3 ? 'authorized' : 'notDetermined',
+    };
+  };
+  sandbox.usernode.requestPermissions = async () => ({
+    granted: false, permissions: IOS_PERMS,
+  });
+  sandbox.NativeChrome._FIRST_RUN_RECHECK_MS = 1;
+  await sandbox.NativeChrome.maybeShowFirstRunPermissions();
+  const allow = findButton(sheets[0].contentEl, 'Allow notifications');
+  await allow.listeners.click();
+  assert.equal(sheets[0].handle.dismissed, true,
+    'the settled granted status closes the sheet');
+});
+
+test('iOS: a denial keeps the sheet open, un-granted, and unmarked', async () => {
+  const { sandbox, sheets, stored } = boot({
+    permissions: IOS_PERMS,
+    socialPushState: IOS_UNPROMPTED,
+  });
+  await sandbox.NativeChrome.maybeShowFirstRunPermissions();
+  sandbox.usernode.getSocialPushState = async () => ({
+    ...IOS_UNPROMPTED, permissionStatus: 'denied',
+  });
+  sandbox.usernode.requestPermissions = async () => ({
+    granted: false, permissions: IOS_PERMS,
+  });
+  const allow = findButton(sheets[0].contentEl, 'Allow notifications');
+  await allow.listeners.click();
+  assert.equal(sheets[0].handle.dismissed, false);
+  assert.ok(findButton(sheets[0].contentEl, 'Skip for now'),
+    'the dismiss affordance is still there');
+  assert.notEqual(stored[MARKER], '1');
 });
 
 test('anonymous: a signed-out iOS device still gets the sheet once the ' +

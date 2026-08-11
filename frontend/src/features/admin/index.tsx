@@ -14,7 +14,7 @@
  * into #admin-root with innerHTML on every open, every section switch and every
  * viewport crossing: the md:flex column pair, the desktop nav host, the
  * view-only banner, #admin-section-content, and the temporary-password dialog.
- * The eighteen sections' contents are still the modules' — that boundary is not
+ * The nineteen sections' contents are still the modules' — that boundary is not
  * a staging post, it is the shape the screen has to keep:
  *
  *  - #admin-nav-desktop is an innerHTML host, filled by
@@ -41,10 +41,10 @@
  *    (assignment, not addEventListener) at show time, so the nodes may live
  *    here permanently — a repeated show rebinds rather than accumulating.
  *
- * ── The eight heavy sections, through this seam ─────────────────────────
+ * ── The nine heavy sections, through this seam ──────────────────────────
  *
  * Health & status, Node & chain, Analytics, Estimator accuracy, Merge debug,
- * Screenshot gallery, Maintenance campaigns and Email delivery are the sections
+ * Screenshot gallery, Maintenance campaigns, Push delivery and Email delivery are the sections
  * with their own module (AdminConsole.SECTION_MODULES), and the reason
  * #admin-section-content is a torn-down host rather than a permanently-mounted
  * pane set. Three properties of theirs the chassis has to keep working, all
@@ -86,10 +86,11 @@
  * captures the "after" state from whatever fn did before it returned, so a
  * re-render scheduled in a later task would animate nothing.
  *
- * ── The ten modules ────────────────────────────────────────────────────
+ * ── The eleven modules ─────────────────────────────────────────────────
  *
- * ./admin-console.js and the nine section modules are the retired
- * public/js/admin-*.js files, MOVED into this bundle rather than rewritten.
+ * ./admin-console.js and nine of the ten section modules are the retired
+ * public/js/admin-*.js files, MOVED into this bundle rather than rewritten;
+ * admin-push.js is the first new module built directly on the same seam.
  * They are imported here, admin-console.js first, because AdminUI — the frozen
  * class-string registry it exports — was a load-order dependency: three of them
  * read it while the module body evaluates. The imports below are what replaces
@@ -129,6 +130,7 @@ import './admin-estimator.js';
 import './admin-merges.js';
 import './admin-gallery.js';
 import './admin-campaigns.js';
+import './admin-push.js';
 import './admin-mail.js';
 import './admin-topochain.js';
 

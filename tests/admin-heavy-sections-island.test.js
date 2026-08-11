@@ -1,4 +1,4 @@
-// The admin console's EIGHT heavy sections, seen through the React seam
+// The admin console's NINE heavy sections, seen through the React seam
 // (#1082 chunk E, step 2).
 //
 // Chunk E's step 1 moved all ten admin modules into the shell bundle in one
@@ -8,9 +8,9 @@
 // admin-console.js on its own would have left nine modules reading an undefined
 // global. That move is mechanical; what it can silently break is not.
 //
-// This file pins the eight heavy sections — Health & status, Node & chain,
+// This file pins the nine heavy sections — Health & status, Node & chain,
 // Analytics, Estimator accuracy, Merge debug, Screenshot gallery, Maintenance
-// campaigns, Email delivery — against the four ways the move could have cost
+// campaigns, Push delivery, Email delivery — against the four ways the move could have cost
 // something with every grep still passing:
 //
 //  1. AN ANCHOR STOPS BEING PRODUCED. dapp.json's declared #admin/* checks
@@ -56,7 +56,7 @@ const islandTsx = read('frontend/src/features/admin/index.tsx');
 const consoleJs = readMod('admin-console');
 const manifest = JSON.parse(read('dapp.json'));
 
-// The eight, with the SECTION_MODULES key and window global each one answers
+// The nine, with the SECTION_MODULES key and window global each one answers
 // to. Seasons/topochain is step 3's subject and admin-console.js is step 1's.
 const HEAVY = [
   { key: 'status', file: 'admin-status', global: 'AdminStatus' },
@@ -66,6 +66,7 @@ const HEAVY = [
   { key: 'merges', file: 'admin-merges', global: 'AdminMerges' },
   { key: 'gallery', file: 'admin-gallery', global: 'AdminGallery' },
   { key: 'campaigns', file: 'admin-campaigns', global: 'AdminCampaigns' },
+  { key: 'push', file: 'admin-push', global: 'AdminPush' },
   { key: 'mail', file: 'admin-mail', global: 'AdminMail' },
 ];
 
@@ -105,7 +106,7 @@ test('each heavy section imports the class registry instead of finding it', () =
 test('every heavy section still honours the render(host) / destroy() contract', () => {
   for (const { file } of HEAVY) {
     const src = SRC.get(file);
-    // The parameter name varies across the eight (host / hostEl / sectionHost);
+    // The parameter name varies across the nine (host / hostEl / sectionHost);
     // what the console's dispatcher relies on is that there is exactly one, and
     // that the section takes its root from it rather than from the document.
     assert.match(src, /\n\s*render\(\w+\) \{/, `${file}.js must expose render(<host>)`);
@@ -170,7 +171,7 @@ test('the anchors the chunk brief names by hand are all still rendered', () => {
     assert.ok(SRC.get(file).includes(`id="${id}"`), `${file}.js must still render #${id}`);
   }
   // #admin-credit-balance belongs to a console-rendered section (limits), so
-  // it lives in the chassis module rather than one of the eight.
+  // it lives in the chassis module rather than one of the nine.
   assert.ok(consoleJs.includes('id="admin-credit-balance"'),
     'admin-console.js must still render #admin-credit-balance');
 });
@@ -243,7 +244,7 @@ test('no heavy section reaches into the React-owned chassis', () => {
 
 test('sections render into the host they are given, not by id lookup', () => {
   // render(host) receives #admin-section-content; re-finding it by id would
-  // couple the eight to a chassis id that is now React's to choose.
+  // couple the nine to a chassis id that is now React's to choose.
   for (const { file } of HEAVY) {
     assert.ok(!SRC.get(file).includes("getElementById('admin-section-content')"),
       `${file}.js must use its host argument rather than looking the host up`);
@@ -254,9 +255,9 @@ test('sections render into the host they are given, not by id lookup', () => {
 
 test('every client-side demo=1 passthrough survived the move, and is prerender-safe', () => {
   // The whole inventory, grepped rather than trusted: exactly six read sites
-  // across the console. Four of the eight heavy sections read the page-level
+  // across the console. Four of the nine heavy sections read the page-level
   // flag for themselves; the other two sites are the chassis module's rollover
-  // and staging-reap reads. Health & status, Node & chain, Campaigns and Mail
+  // and staging-reap reads. Health & status, Node & chain, Campaigns, Push and Mail
   // have no demo path at all and must not grow one here.
   const OWN_FLAG = ['admin-analytics', 'admin-estimator', 'admin-gallery', 'admin-merges'];
   for (const file of OWN_FLAG) {
@@ -270,7 +271,7 @@ test('every client-side demo=1 passthrough survived the move, and is prerender-s
     // And the flag has to actually reach a URL, or it is decoration.
     assert.match(src, /if \(DEMO\)|DEMO \?/, `${file}.js must use DEMO to build its request`);
   }
-  for (const file of ['admin-status', 'admin-node', 'admin-campaigns', 'admin-mail']) {
+  for (const file of ['admin-status', 'admin-node', 'admin-campaigns', 'admin-push', 'admin-mail']) {
     assert.ok(!/\bdemo\b/.test(SRC.get(file)),
       `${file}.js had no demo passthrough before the move and must not have grown one`);
   }
