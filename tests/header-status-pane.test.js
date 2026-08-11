@@ -1,10 +1,10 @@
-// Header slim-down: the fork label, the platform + app build pills, the
-// kudos badge, the trophy and the admin shield all left the header for
-// the slide-out drawer.
+// Header slim-down: the fork label, the platform + dApp build pills, the kudos
+// badge, the trophy and the admin shield all left the header for the slide-out
+// drawer. #1101 later added the native app version directly to that drawer.
 //
-// The load-bearing property is that the four SLOTS kept their ids while
-// changing parent — five renderers across app.js / app-view.js /
-// kudos.js resolve them with getElementById, and one of them
+// The load-bearing property for the moved slots is that they kept their ids
+// while changing parent — renderers across app.js / app-view.js / kudos.js
+// resolve them with getElementById, and one of them
 // (renderAppVersionPillHTML) is shared with the home-screen cards. A
 // well-meaning rename or a "tidy up the header" edit that re-adds a slot
 // would break the pane silently, so all of it is pinned here.
@@ -27,8 +27,9 @@ const kudosJs = fs.readFileSync(path.join(root, 'public/js/kudos.js'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'public/css/app.css'), 'utf8');
 
 const header = html.slice(0, html.indexOf('</header>'));
-const MOVED_SLOTS = [
+const DRAWER_SLOTS = [
   'platform-version-pill-slot',
+  'native-app-version-slot',
   'app-version-pill-slot',
   'app-fork-badge-slot',
   'kudos-budget-slot',
@@ -41,7 +42,7 @@ const MOVED_SLOTS = [
 // while the version pills + fork badge moved to the anchored
 // #drawer-footer at the bottom of the panel. Same load-bearing property
 // as before: every slot keeps its id, exactly once, in its region.
-test('each moved slot exists exactly once, inside the drawer status pane', () => {
+test('each drawer status slot exists exactly once in its assigned region', () => {
   const paneStart = html.indexOf('id="drawer-status-pane"');
   assert.ok(paneStart > -1, '#drawer-status-pane is missing from the shell');
   // The pane runs until the first drawer navigation row after it.
@@ -52,9 +53,10 @@ test('each moved slot exists exactly once, inside the drawer status pane', () =>
 
   const PANE_SLOTS = ['kudos-budget-slot'];
   const FOOTER_SLOTS = [
-    'platform-version-pill-slot', 'app-version-pill-slot', 'app-fork-badge-slot',
+    'platform-version-pill-slot', 'native-app-version-slot',
+    'app-version-pill-slot', 'app-fork-badge-slot',
   ];
-  for (const id of MOVED_SLOTS) {
+  for (const id of DRAWER_SLOTS) {
     const hits = html.match(new RegExp(`id="${id}"`, 'g')) || [];
     assert.equal(hits.length, 1, `exactly one #${id} in the shell`);
     const at = html.indexOf(`id="${id}"`);
@@ -68,8 +70,8 @@ test('each moved slot exists exactly once, inside the drawer status pane', () =>
   }
 });
 
-test('none of the moved slots are left in the header', () => {
-  for (const id of MOVED_SLOTS) {
+test('none of the drawer status slots are duplicated in the header', () => {
+  for (const id of DRAWER_SLOTS) {
     assert.ok(!header.includes(`id="${id}"`), `#${id} has left the header`);
   }
   assert.ok(!header.includes('id="leaderboard-btn"'),
@@ -155,12 +157,17 @@ test('the deploy dot is derived from the rendered pills, not a duplicate flag', 
 
 // ─── App-scoped row lifecycle ────────────────────────────────────────────
 
-test('the app build + fork rows ship hidden and follow the app lifecycle', () => {
+test('the native app, dApp build, and fork rows ship hidden', () => {
+  const nativeRow = html.match(/<div id="drawer-row-native-app-version"[^>]*>/);
   const appRow = html.match(/<div id="drawer-row-app-version"[^>]*>/);
   const forkRow = html.match(/<div id="drawer-row-app-fork"[^>]*>/);
+  assert.ok(nativeRow, '#drawer-row-native-app-version exists');
   assert.ok(appRow, '#drawer-row-app-version exists');
   assert.ok(forkRow, '#drawer-row-app-fork exists');
-  assert.match(appRow[0], /class="hidden /, 'the app build row ships hidden (no app open at boot)');
+  assert.match(nativeRow[0], /class="hidden /,
+    'the installed app version ships hidden until the native bridge answers');
+  assert.match(appRow[0], /class="hidden /,
+    'the dApp build row ships hidden (no app open at boot)');
   assert.match(forkRow[0], /class="hidden /, 'the fork row ships hidden');
 
   // Hidden from every navigate* that leaves an app behind — one call per
@@ -172,6 +179,24 @@ test('the app build + fork rows ship hidden and follow the app lifecycle', () =>
   assert.match(appJs, /DrawerStatus\.setAppOpen\(true\)/, 'and is revealed when an app opens');
   assert.match(appViewJs, /DrawerStatus\.setAppOpen\(false\)/,
     'AppView.close() hides it too, so a closed app leaves no stale build line');
+});
+
+test('the dApp build is labelled distinctly and hidden for the self-hosted platform', () => {
+  const rowAt = html.indexOf('id="drawer-row-app-version"');
+  const row = html.slice(rowAt, html.indexOf('</div>', rowAt));
+  assert.match(row, /dApp version/,
+    'the deployed app SHA cannot be confused with the installed native app build');
+
+  const headerMenuJs = fs.readFileSync(
+    path.join(root, 'frontend/src/features/header/header-menu-controller.js'), 'utf8');
+  const fn = headerMenuJs.slice(headerMenuJs.indexOf('  setAppOpen(open) {'));
+  const body = fn.slice(0, fn.indexOf('  setForkVisible('));
+  assert.match(body,
+    /const showDappVersion = !!open && !window\.AppView\?\.appData\?\.self_hosted/,
+    'a self-hosted platform view suppresses its duplicate dApp SHA');
+  assert.match(body,
+    /row\.classList\.toggle\('hidden', !showDappVersion\)/,
+    'the row follows that derived visibility');
 });
 
 test('the fork row visibility is driven by renderForkBadge', () => {
@@ -191,7 +216,8 @@ test('status-pane rows are plain divs — the pills carry their own anchors', ()
   // renderPlatformVersionPill's stale state renders a <button
   // onclick="location.reload()">, and the live state an <a>. Nesting
   // those inside a clickable row would be invalid markup.
-  for (const id of ['drawer-row-platform-version', 'drawer-row-app-version',
+  for (const id of ['drawer-row-platform-version',
+    'drawer-row-native-app-version', 'drawer-row-app-version',
     'drawer-row-app-fork', 'drawer-row-kudos',
     'drawer-row-ai-budget']) {
     const row = html.match(new RegExp(`<(\\w+) id="${id}"`));
