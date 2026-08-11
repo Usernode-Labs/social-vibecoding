@@ -12,8 +12,8 @@ const appSource = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app.js'),
   'utf8'
 );
-const authScreensSource = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'auth-screens.js'),
+const waitingTsx = fs.readFileSync(
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'auth', 'waiting.tsx'),
   'utf8'
 );
 
@@ -221,56 +221,29 @@ test('anonymous auth screens wait for native wallet admission', async () => {
   ]);
 });
 
-test('waiting-session expiry admits anonymous native state before login',
-  async () => {
-    const order = [];
-    let intervalActive = false;
-    const location = {};
-    Object.defineProperty(location, 'hash', {
-      get() { return '#waiting'; },
-      set(value) {
-        order.push(`navigate:${value}`);
-      },
-    });
-    const sandbox = {
-      console: { log() {}, warn() {}, error() {} },
-      App: {
-        user: { id: 7 },
-        async enterAnonymous() {
-          assert.equal(this.user, null);
-          order.push('anonymous-admission');
-        },
-      },
-      document: {
-        addEventListener() {},
-        getElementById() { return { textContent: '' }; },
-      },
-      location,
-      async fetch() {
-        order.push('waiting-session-check');
-        return { status: 401 };
-      },
-      setInterval() {
-        intervalActive = true;
-        return 1;
-      },
-      clearInterval() { intervalActive = false; },
-    };
-    sandbox.window = sandbox;
-    sandbox.globalThis = sandbox;
-    vm.createContext(sandbox);
-    vm.runInContext(authScreensSource, sandbox);
-
-    sandbox.AuthScreens._startWaitingPoll();
-    await settle();
-
-    assert.deepEqual(order, [
-      'waiting-session-check',
-      'anonymous-admission',
-      'navigate:#login',
-    ]);
-    assert.equal(intervalActive, false);
-  });
+// The waiting room is a React screen since #1080 chunk C, so its release
+// poll can no longer be driven from a vm sandbox — the suite has no JSX
+// transform. The ordering that matters here is a three-step sequence in one
+// short function, which source pins can hold: clear the stale user BEFORE
+// admitting anonymous native state, await that admission, and only then
+// navigate to #login. Get it wrong and the native side re-enters anonymous
+// mode while still holding a dead session.
+test('waiting-session expiry admits anonymous native state before login', () => {
+  const body = waitingTsx.slice(
+    waitingTsx.indexOf('if (res.status === 401)'),
+    waitingTsx.indexOf('const data = await res.json()')
+  );
+  assert.ok(body, 'the waiting screen no longer handles a 401 from /api/auth/me');
+  // The poll dies with the session rather than hammering a dead one.
+  assert.match(body, /stopWaitingPoll\(\)/);
+  const nulled = body.indexOf('w.App.user = null');
+  const admitted = body.indexOf('w.App.enterAnonymous()');
+  const navigated = body.indexOf("location.hash = '#login'");
+  assert.ok(nulled > -1, 'the stale user is not cleared');
+  assert.ok(admitted > nulled, 'anonymous admission runs before the user is cleared');
+  assert.match(body, /await w\.App\.enterAnonymous\(\)/);
+  assert.ok(navigated > admitted, 'the login navigation runs before admission');
+});
 
 test('anonymous entry opens local admission only after native acknowledgement',
   async () => {
