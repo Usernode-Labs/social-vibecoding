@@ -251,3 +251,68 @@ test('POST generate maps llm_unavailable to 503', async () => {
     assert.equal(res.status, 503);
   } finally { server.close(); llm._setClientForTests(prev); }
 });
+
+test('buildReportInput feeds the newest locked snapshot as previousReport', async () => {
+  dispatch([[/FROM app_report_snapshots/i, [{
+    ai_json: { narrative: 'last time', highlights: ['did x', ''], risks: [], owners: [] },
+    locked_at: '2026-08-05T10:00:00Z',
+  }]]]);
+  const { input } = await reportAi.buildReportInput(pool, APP);
+  assert.ok(input.previousReport, 'previousReport must be present');
+  assert.equal(input.previousReport.lockedAt, '2026-08-05');
+  assert.equal(input.previousReport.narrative, 'last time');
+  assert.deepEqual(input.previousReport.highlights, ['did x']);
+  const snapSql = queries.map((q) => q.sql).find((s) => /app_report_snapshots/.test(s));
+  assert.match(snapSql, /ai_json IS NOT NULL/);
+});
+
+test('buildReportInput sets previousReport null with no snapshots, and it changes the fingerprint', async () => {
+  dispatch([]);
+  const { input: bare } = await reportAi.buildReportInput(pool, APP);
+  assert.equal(bare.previousReport, null);
+  dispatch([[/FROM app_report_snapshots/i, [{
+    ai_json: { narrative: 'last time', highlights: [], risks: [], owners: [] },
+    locked_at: '2026-08-05T10:00:00Z',
+  }]]]);
+  const { input: withPrev } = await reportAi.buildReportInput(pool, APP);
+  assert.notEqual(reportAi.fingerprint(bare), reportAi.fingerprint(withPrev));
+});
+
+test('generateForApp persists and returns highlights', async () => {
+  dispatch([
+    [/INSERT INTO app_report_ai/i, [{ ...INSERTED_ROW, highlights_json: ['h1'] }]],
+    [/FROM app_report_ai/i, []],
+  ]);
+  const prev = llm._setClientForTests({
+    messages: {
+      create: async () => ({
+        content: [{ type: 'text', text: JSON.stringify({ narrative: 'Fresh.', highlights: ['h1'], risks: [], owners: [] }) }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }),
+    },
+  });
+  try {
+    queries.length = 0;
+    const out = await reportAi.generateForApp({ pool, config: { dataEncryptionKey: 'k' }, app: APP, userId: 42 });
+    assert.deepEqual(out.summary.highlights, ['h1']);
+    const ins = queries.find((q) => /INSERT INTO app_report_ai/i.test(q.sql));
+    assert.match(ins.sql, /highlights_json/);
+  } finally { llm._setClientForTests(prev); }
+});
+
+test('GET report-ai serves highlights', async () => {
+  dispatch([
+    [/FROM apps WHERE slug/i, [appRow]],
+    [/FROM app_report_ai/i, [{
+      input_hash: 'h', narrative: 'n', highlights_json: ['point one'],
+      risks_json: [], owners_json: [], model: 'claude-haiku-4-5',
+      generated_by: 1, generated_at: '2026-08-01T00:00:00Z',
+    }]],
+  ]);
+  const server = await startServer();
+  try {
+    const res = await fetch(`http://127.0.0.1:${server.address().port}/api/apps/demo/report-ai`);
+    const body = await res.json();
+    assert.deepEqual(body.summary.highlights, ['point one']);
+  } finally { server.close(); }
+});

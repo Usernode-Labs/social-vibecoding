@@ -5344,6 +5344,9 @@ const AppView = {
     // cycle; null = fetched, none generated yet; object = cached summary.
     AppView._reportAi = undefined;
     AppView._reportAiGenerating = false;
+    // Locked snapshots (report-lock-share): undefined = never fetched.
+    AppView._reportSnapshots = undefined;
+    AppView._reportLocking = false;
   },
 
   // Page the full merged history into `_reportMerged` — the one fetch the
@@ -5447,7 +5450,11 @@ const AppView = {
     const model = AppView._buildReportModel(AppView._reportInputs());
     el.innerHTML = `<style id="dev-report-style">${AppView.REPORT_CSS}</style>`
       + AppView._renderReportToolbar()
-      + `<div class="${AppView._reportRootCls()}">${AppView._renderReportHtml(model, { standalone: false, ai: AppView._reportAi === undefined ? null : AppView._reportAi })}</div>`;
+      + `<div class="${AppView._reportRootCls()}">`
+      + AppView._renderReportSnapshotsHtml(
+        AppView._reportSnapshots, !!(AppView.appData && AppView.appData.can_manage)
+      )
+      + `${AppView._renderReportHtml(model, { standalone: false, ai: AppView._reportAi === undefined ? null : AppView._reportAi })}</div>`;
     // Wired after each paint alongside the body, the same way
     // _repaintPmView wires #dev-pm-more-unassigned.
     const dl = el.querySelector('#dev-report-download');
@@ -5456,7 +5463,19 @@ const AppView = {
     if (rf && rf.addEventListener) rf.addEventListener('click', () => AppView.refreshReport());
     const ab = el.querySelector('#dev-report-ai');
     if (ab && ab.addEventListener) ab.addEventListener('click', () => AppView.generateReportAi());
+    const lk = el.querySelector('#dev-report-lock');
+    if (lk && lk.addEventListener) lk.addEventListener('click', () => AppView.lockReport());
+    const wire = (sel, fn) => {
+      const nodes = el.querySelectorAll(sel);
+      if (nodes && nodes.forEach) {
+        nodes.forEach((b) => b.addEventListener('click', () => fn(b)));
+      }
+    };
+    wire('[data-snap-share]', (b) => AppView.shareReportSnapshot(b.getAttribute('data-snap-share')));
+    wire('[data-snap-unshare]', (b) => AppView.unshareReportSnapshot(b.getAttribute('data-snap-unshare')));
+    wire('[data-snap-copy]', (b) => AppView.copyReportShareLink(b.getAttribute('data-snap-copy')));
     AppView._ensureReportAi();
+    AppView._ensureReportSnapshots();
   },
 
   // `.ur-rpt--dark` follows the shell's `dark` class (darkMode: 'class').
@@ -5478,11 +5497,14 @@ const AppView = {
     const ai = AppView._reportAi;
     const aiLabel = gen ? 'Generating…' : (ai ? 'Regenerate AI summary' : 'Generate AI summary');
     const stale = !!(ai && ai.stale && !gen);
+    const canManage = !!(AppView.appData && AppView.appData.can_manage);
+    const locking = AppView._reportLocking;
     return `
       <div class="flex items-center gap-2 mb-3 flex-wrap">
         <button id="dev-report-download" class="gc-vote-btn" title="Save this report as a self-contained HTML file">Download HTML</button>
         <button id="dev-report-refresh" class="gc-vote-btn"${busy ? ' disabled' : ''} title="Re-pull the data and regenerate the report">${busy ? 'Refreshing…' : 'Refresh'}</button>
         <button id="dev-report-ai" class="gc-vote-btn"${gen ? ' disabled' : ''} title="Ask the AI for a plain-language summary, risks and per-person highlights (uses your budget or API key)">${aiLabel}</button>
+        ${canManage ? `<button id="dev-report-lock" class="gc-vote-btn"${locking || busy ? ' disabled' : ''} title="Freeze this report as a permanent dated snapshot in Previous reports">${locking ? 'Locking…' : 'Lock report'}</button>` : ''}
         ${stale ? '<span class="text-xs opacity-60">Data has changed since the AI summary was generated.</span>' : ''}
       </div>`;
   },
@@ -5783,6 +5805,18 @@ const AppView = {
     }
     let html = '';
 
+    // Progress highlights — the skimmable layer, placed first. Rendered
+    // only when the summary carries bullets (older cached summaries
+    // predate the field).
+    const bullets = (Array.isArray(ai.highlights) ? ai.highlights : [])
+      .map((b) => (b == null ? '' : String(b).trim())).filter(Boolean);
+    if (bullets.length) {
+      html += `<section class="ur-rpt-section" data-section="ai-highlights">`
+        + `<h2 class="ur-rpt-h2">Progress highlights</h2>`
+        + `<ul class="ur-rpt-bullets">${bullets.map((b) => `<li>${eh(b)}</li>`).join('')}</ul>`
+        + `</section>`;
+    }
+
     // Narrative — the report's main body.
     const paras = String(ai.narrative || '').split(/\n{2,}|\n/).map((p) => p.trim()).filter(Boolean);
     html += `<section class="ur-rpt-section" data-section="ai-summary">`
@@ -5839,6 +5873,42 @@ const AppView = {
     return html;
   },
 
+  // ── Previous reports (locked snapshots): pure, DOM-free ─────────────
+  // snaps (server list rows) + canManage in → HTML out. Same read-only
+  // document rules as the report: no live-card data-* hooks, no inline
+  // handlers — the share/unshare/copy buttons carry data-snap-* markers
+  // that _repaintReportView wires after each paint. Rendered ONLY into
+  // the on-screen view (never the standalone export/lock document).
+  _renderReportSnapshotsHtml(snaps, canManage) {
+    const eh = (s) => escapeHtml(s == null ? '' : String(s));
+    const ea = (s) => escapeAttr(s == null ? '' : String(s));
+    const list = Array.isArray(snaps) ? snaps : [];
+    if (!list.length) return '';
+    const rows = list.map((s) => {
+      const ms = Date.parse(s.lockedAt || '');
+      const when = Number.isFinite(ms)
+        ? `${new Date(ms).toLocaleDateString()} ${new Date(ms).toLocaleTimeString()}`
+        : 'undated';
+      let actions = `<span><a href="${ea(s.htmlPath)}" target="_blank" rel="noopener">Open</a></span>`;
+      if (canManage) {
+        actions += s.shared
+          ? `<span><button type="button" class="ur-rpt-linklike" data-snap-copy="${ea(s.sharePath)}">Copy link</button></span>`
+            + `<span><button type="button" class="ur-rpt-linklike" data-snap-unshare="${ea(s.id)}">Unshare</button></span>`
+          : `<span><button type="button" class="ur-rpt-linklike" data-snap-share="${ea(s.id)}">Share</button></span>`;
+      }
+      return `<li class="ur-rpt-row">`
+        + `<div class="ur-rpt-title">${eh(when)}`
+        + (s.lockedBy ? `<span class="ur-rpt-tag">locked by ${eh(s.lockedBy)}</span>` : '')
+        + (s.shared ? `<span class="ur-rpt-tag">Shared</span>` : '')
+        + `</div>`
+        + `<div class="ur-rpt-meta">${actions}</div>`
+        + `</li>`;
+    }).join('');
+    return `<section class="ur-rpt-section" data-section="snapshots">`
+      + `<h2 class="ur-rpt-h2">Previous reports</h2>`
+      + `<ul class="ur-rpt-list">${rows}</ul></section>`;
+  },
+
   // ── Report CSS ───────────────────────────────────────────────────────
   // Plain CSS, every rule scoped under `.ur-rpt`, deliberately using NO
   // Tailwind utilities. Injected once into #dev-report for the on-screen
@@ -5878,6 +5948,10 @@ const AppView = {
     '.ur-rpt-empty{font-size:0.8125rem;color:var(--rpt-faint);font-style:italic;margin:0.5rem 0;}',
     '.ur-rpt-ai-p{margin:0.75rem 0 0;max-width:44rem;}',
     '.ur-rpt-ai-note{font-size:0.75rem;color:var(--rpt-faint);font-style:italic;margin:-0.75rem 0 1.75rem;}',
+    '.ur-rpt-bullets{list-style:disc;margin:0.75rem 0 0;padding-left:1.25rem;}',
+    '.ur-rpt-bullets li{margin:0.25rem 0;}',
+    '.ur-rpt-linklike{background:none;border:0;padding:0;color:var(--rpt-accent);cursor:pointer;font:inherit;font-size:inherit;}',
+    '.ur-rpt-linklike:hover{text-decoration:underline;}',
     '.ur-rpt-risk-sev{display:inline-block;font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;border-radius:0.25rem;padding:0 0.375rem;margin-right:0.5rem;vertical-align:1px;}',
     '.ur-rpt-risk-sev--high{color:#b91c1c;border:1px solid #f87171;}',
     '.ur-rpt-risk-sev--medium{color:#b45309;border:1px solid #fbbf24;}',
@@ -6207,6 +6281,113 @@ const AppView = {
     } finally {
       AppView._reportAiGenerating = false;
       if (AppView._getViewMode() === 'report') AppView._repaintReportView();
+    }
+  },
+
+  // Fetch the locked-snapshot list once per report visit; errors degrade
+  // to an empty list (the section simply doesn't render).
+  async _ensureReportSnapshots() {
+    if (AppView._reportSnapshotsFetching || AppView._reportSnapshots !== undefined) return;
+    if (!AppView.appData) return;
+    AppView._reportSnapshotsFetching = true;
+    try {
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/report-snapshots`);
+      const data = res.ok ? await res.json() : null;
+      AppView._reportSnapshots = data && Array.isArray(data.snapshots) ? data.snapshots : [];
+    } catch {
+      AppView._reportSnapshots = [];
+    } finally {
+      AppView._reportSnapshotsFetching = false;
+    }
+    if (AppView._getViewMode() === 'report') AppView._repaintReportView();
+  },
+
+  // Freeze the current report (same document the download builds) as a
+  // permanent dated snapshot. Admin-gated server-side; the button only
+  // renders for managers.
+  async lockReport() {
+    if (AppView._reportLocking || !AppView.appData) return;
+    if (!AppView._reportMerged) { AppView._ensureReportData(); return; }
+    AppView._reportLocking = true;
+    AppView._repaintReportView();
+    try {
+      const model = AppView._buildReportModel(AppView._reportInputs());
+      const doc = AppView._renderReportHtml(
+        model,
+        AppView._reportAi
+          ? { standalone: true, ai: AppView._reportAi }
+          : { standalone: true }
+      );
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/report-snapshots`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ html: doc }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.snapshot) {
+        AppView._reportSnapshots = undefined; // refetch the list on repaint
+        if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Report locked');
+      } else if (window.PlatformUI && PlatformUI.toast) {
+        PlatformUI.toast(data.error || 'Could not lock the report');
+      }
+    } catch {
+      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Could not lock the report');
+    } finally {
+      AppView._reportLocking = false;
+      if (AppView._getViewMode() === 'report') AppView._repaintReportView();
+    }
+  },
+
+  async shareReportSnapshot(id) {
+    if (!AppView.appData) return;
+    try {
+      const res = await fetch(
+        `/api/apps/${AppView.appData.slug}/report-snapshots/${encodeURIComponent(id)}/share`,
+        { method: 'POST' }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.sharePath) {
+        AppView._reportSnapshots = undefined;
+        AppView.copyReportShareLink(data.sharePath, 'Share link copied');
+      } else if (window.PlatformUI && PlatformUI.toast) {
+        PlatformUI.toast(data.error || 'Could not share the report');
+      }
+    } catch {
+      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Could not share the report');
+    }
+    if (AppView._getViewMode() === 'report') AppView._repaintReportView();
+  },
+
+  async unshareReportSnapshot(id) {
+    if (!AppView.appData) return;
+    try {
+      const res = await fetch(
+        `/api/apps/${AppView.appData.slug}/report-snapshots/${encodeURIComponent(id)}/unshare`,
+        { method: 'POST' }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        AppView._reportSnapshots = undefined;
+        if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Share link revoked');
+      } else if (window.PlatformUI && PlatformUI.toast) {
+        PlatformUI.toast(data.error || 'Could not unshare the report');
+      }
+    } catch {
+      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Could not unshare the report');
+    }
+    if (AppView._getViewMode() === 'report') AppView._repaintReportView();
+  },
+
+  // Absolute URL built at click time (location.origin), so the pure list
+  // renderer stays origin-free. Clipboard failure falls back to toasting
+  // the URL itself so the admin can copy it by hand.
+  async copyReportShareLink(path, msg) {
+    const url = `${location.origin}${path}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast(msg || 'Link copied');
+    } catch {
+      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast(url);
     }
   },
 

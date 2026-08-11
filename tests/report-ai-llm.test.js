@@ -112,3 +112,30 @@ test('sanitizeReportSummary drops title-less risks and clips fields', () => {
   assert.ok(out.owners[0].username.length <= 60);
   assert.ok(out.owners[0].blurb.length <= 300);
 });
+
+test('sanitizeReportSummary caps and cleans highlights', () => {
+  const out = llm.sanitizeReportSummary({
+    narrative: 'n',
+    highlights: [
+      'h'.repeat(300), '', 42, 'shipped the payments flow',
+      'a', 'b', 'c', 'd', 'e', 'f', 'g',
+    ],
+    risks: [], owners: [],
+  }, []);
+  assert.ok(Array.isArray(out.highlights));
+  assert.ok(out.highlights.length <= 8);
+  assert.equal(out.highlights[0].length, 200);
+  assert.ok(out.highlights.includes('shipped the payments flow'));
+  assert.ok(!out.highlights.includes(''));
+  assert.ok(!out.highlights.includes(42));
+});
+
+test('sanitizeReportSummary tolerates absent highlights', () => {
+  const out = llm.sanitizeReportSummary({ narrative: 'n', risks: [], owners: [] }, []);
+  assert.deepEqual(out.highlights, []);
+});
+
+test('REPORT_SUMMARY_SCHEMA requires highlights', () => {
+  assert.ok(llm.REPORT_SUMMARY_SCHEMA.required.includes('highlights'));
+  assert.equal(llm.REPORT_SUMMARY_SCHEMA.properties.highlights.type, 'array');
+});

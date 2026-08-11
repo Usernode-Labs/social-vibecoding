@@ -166,8 +166,36 @@ async function buildReportInput(pool, app) {
     at: day(r.created_at),
   }));
 
+  // The last locked report (app_report_snapshots): feeding it into the
+  // input lets the model write "since the last report" highlights, and
+  // makes the fingerprint change the moment a snapshot lands — so a
+  // just-locked report immediately makes the draft regenerable. Bounded
+  // clips: this is prompt context, not display data.
+  let previousReport = null;
+  try {
+    const { rows: snapRows } = await pool.query(
+      `SELECT ai_json, locked_at FROM app_report_snapshots
+        WHERE app_id = $1 AND ai_json IS NOT NULL
+        ORDER BY locked_at DESC, id DESC
+        LIMIT 1`,
+      [appId]
+    );
+    const snap = snapRows[0];
+    if (snap && snap.ai_json) {
+      previousReport = {
+        lockedAt: day(snap.locked_at),
+        narrative: clip(snap.ai_json.narrative, 1500),
+        highlights: (Array.isArray(snap.ai_json.highlights) ? snap.ai_json.highlights : [])
+          .slice(0, 8).map((h) => clip(h, 200)).filter(Boolean),
+      };
+    }
+  } catch (err) {
+    log.warn('report-ai', 'previous-report lookup failed', { app: app.slug, message: err.message });
+  }
+
   const input = {
     appName: clip(app.name || app.slug, 120),
+    previousReport,
     issues, review, gov, sessions, merged,
     counts: {
       openIssues: issues.length,
@@ -210,6 +238,7 @@ function shapeRow(r) {
   return {
     inputHash: r.input_hash,
     narrative: r.narrative,
+    highlights: Array.isArray(r.highlights_json) ? r.highlights_json : [],
     risks: Array.isArray(r.risks_json) ? r.risks_json : [],
     owners: Array.isArray(r.owners_json) ? r.owners_json : [],
     model: r.model || null,
@@ -220,7 +249,7 @@ function shapeRow(r) {
 
 async function getCached(pool, appId) {
   const { rows } = await pool.query(
-    'SELECT input_hash, narrative, risks_json, owners_json, model, generated_by, generated_at FROM app_report_ai WHERE app_id = $1',
+    'SELECT input_hash, narrative, highlights_json, risks_json, owners_json, model, generated_by, generated_at FROM app_report_ai WHERE app_id = $1',
     [appId]
   );
   return shapeRow(rows[0]);
@@ -267,15 +296,16 @@ async function generateForApp({ pool, config, app, userId }) {
     }
 
     const { rows } = await pool.query(
-      `INSERT INTO app_report_ai (app_id, input_hash, narrative, risks_json, owners_json, model, generated_by, generated_at)
-       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, NOW())
+      `INSERT INTO app_report_ai (app_id, input_hash, narrative, highlights_json, risks_json, owners_json, model, generated_by, generated_at)
+       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7, $8, NOW())
        ON CONFLICT (app_id) DO UPDATE SET
          input_hash = EXCLUDED.input_hash, narrative = EXCLUDED.narrative,
+         highlights_json = EXCLUDED.highlights_json,
          risks_json = EXCLUDED.risks_json, owners_json = EXCLUDED.owners_json,
          model = EXCLUDED.model, generated_by = EXCLUDED.generated_by, generated_at = NOW()
-       RETURNING input_hash, narrative, risks_json, owners_json, model, generated_by, generated_at`,
-      [app.id, hash, result.narrative, JSON.stringify(result.risks),
-        JSON.stringify(result.owners), result.model, userId]
+       RETURNING input_hash, narrative, highlights_json, risks_json, owners_json, model, generated_by, generated_at`,
+      [app.id, hash, result.narrative, JSON.stringify(result.highlights || []),
+        JSON.stringify(result.risks), JSON.stringify(result.owners), result.model, userId]
     );
 
     // Debit the Haiku call to the clicking user — into the BYOK bucket
