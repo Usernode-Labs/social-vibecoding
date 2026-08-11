@@ -186,13 +186,43 @@ test('the ⋯ lives in the card\'s top-right RAIL, not in the action row', () =>
 test('_cardContentHtml: no ⋯ when there is nothing to demote', () => {
   const AppView = makeAppView(ME);
   const html = AppView._cardContentHtml({
-    headlineHtml: AppView._cardHeadlineHtml('T', 'M'), badges: [], chatCount: 0, menu: [],
+    titleHtml: 'T', metaHtml: 'M', badges: [], chatCount: 0, menu: [],
   });
   assert.equal(menuKeyOf(html), null);
   const conditioned = AppView._cardContentHtml({
-    headlineHtml: '', badges: [], chatCount: null, menu: [null, false, undefined], menuKey: 'k',
+    titleHtml: '', metaHtml: '', badges: [], chatCount: null, menu: [null, false, undefined], menuKey: 'k',
   });
   assert.equal(menuKeyOf(conditioned), null);
+});
+
+// Only the title is indented beside the type icon. Everything else — the
+// meta line included — is a sibling of the head, so it starts at the card's
+// own padding edge and gets its full width.
+test('_cardContentHtml: the head holds the icon and the title, and nothing else', () => {
+  const AppView = makeAppView(ME);
+  const html = AppView._cardContentHtml({
+    icon: AppView._devCardIcon('issue'),
+    titleHtml: 'The title',
+    metaHtml: 'PR#1 · someone · 2h ago',
+    badges: ['<span class="attr-chip ">chip</span>'],
+    chatCount: 3,
+    pill: '<span class="dev-status-pill"></span>',
+    actions: '<div class="gc-card-actions">a</div>',
+    extraHtml: '<div class="claim-list"></div>',
+  });
+  const head = html.slice(html.indexOf('dev-card-head"'), html.indexOf('dev-card-meta'));
+  assert.match(head, /rounded-lg/, 'the icon leads the head');
+  assert.match(head, /dev-card-title/, 'the title sits beside it');
+  for (const cls of ['dev-card-meta', 'dev-card-badges', 'dev-status-row',
+    'gc-card-actions', 'claim-list']) {
+    assert.ok(!head.includes(cls), `${cls} is NOT inside the head`);
+  }
+  // …and in this order under it, meta first: it is the title's subtitle.
+  const order = ['dev-card-head"', 'dev-card-meta', 'dev-card-badges',
+    'dev-status-row', 'gc-card-actions', 'claim-list'];
+  const at = order.map((c) => html.indexOf(c));
+  assert.ok(at.every((i) => i >= 0), 'every band renders');
+  assert.deepEqual(at.slice().sort((a, b) => a - b), at, `bands out of order: ${order}`);
 });
 
 test('_cardActionsHtml: empty / all-falsy input renders nothing', () => {
@@ -406,7 +436,7 @@ test('merged card: revert status reads on the META LINE, not as an action', () =
   const html = AppView._renderMergedCard(baseMerged({
     revert_session_id: 9, revert_status: 'merged', revert_pr_number: 900,
   }), 1);
-  assert.match(html, /dev-card-headline-meta[\s\S]*?Undone by PR#900/,
+  assert.match(html, /dev-card-meta[\s\S]*?Undone by PR#900/,
     'the revert relationship is a FACT about the change, so it lives in the meta line');
   assert.ok(!menuHas(AppView, html, /^Undo$/), 'no Undo once a revert exists');
 });

@@ -31,7 +31,8 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
 const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
-const consoleJs = fs.readFileSync(path.join(root, 'public/js/admin-console.js'), 'utf8');
+const consoleJs = fs.readFileSync(path.join(root, 'frontend/src/features/admin/admin-console.js'), 'utf8');
+const islandTsx = fs.readFileSync(path.join(root, 'frontend/src/features/admin/index.tsx'), 'utf8');
 
 test('one breakpoint constant, read through matchMedia, in step with the md: classes', () => {
   assert.match(consoleJs, /DESKTOP_MEDIA: '\(min-width: 768px\)'/,
@@ -42,10 +43,12 @@ test('one breakpoint constant, read through matchMedia, in step with the md: cla
   assert.match(isMobile.slice(0, 300), /catch \{ return false; \}/,
     'no matchMedia degrades to the desktop layout, not a phone layout');
   // If the shell stopped using md: the constant would silently disagree
-  // with where the sidebar actually appears.
-  assert.match(consoleJs, /hidden md:block md:w-64/,
+  // with where the sidebar actually appears. Those two class strings are on
+  // the React-owned chassis since #1082 chunk E — same classes, and the
+  // disagreement they guard against is exactly as easy to introduce there.
+  assert.match(islandTsx, /hidden md:block md:w-64/,
     'the sidebar still switches at md — the constant must match it');
-  assert.match(consoleJs, /md:flex md:items-start md:gap-6/,
+  assert.match(islandTsx, /md:flex md:items-start md:gap-6/,
     'the shell row still switches at md');
 });
 

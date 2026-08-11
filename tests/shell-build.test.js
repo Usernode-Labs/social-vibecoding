@@ -86,6 +86,80 @@ test('the shell bundle is the real React build, not a stub', () => {
   );
 });
 
+// ── Adjacent text children ─────────────────────────────────────────────
+//
+// The prerender uses renderToStaticMarkup, which omits the `<!-- -->` markers
+// React writes between two adjacent text children — and main.tsx hydrates that
+// document, where the pair has already been parsed as ONE text node. React
+// calls that a mismatch: error #418, a console.error on EVERY route, which
+// fails the platform's proposal checks. #1082 chunk E shipped one for exactly
+// one build before the browser caught it (`<span>…</span>{' '}` followed by a
+// sentence, in the admin view-only banner), which is why there are guards now.
+//
+// The authoritative one is in the build: it renders the same tree a second time
+// with renderToString and refuses to write the artifact if any separator comes
+// out. That needs the frontend workspace installed, so the two tests below add
+// a net that does not: one keeps the gate itself from being removed, the other
+// looks for the idiom in the sources directly.
+const buildScript = fs.readFileSync(path.join(ROOT, 'frontend', 'scripts', 'build-shell.mjs'), 'utf8');
+const prerenderSrc = fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'prerender.tsx'), 'utf8');
+
+test('the build still gates on adjacent text children', () => {
+  assert.match(
+    prerenderSrc, /renderToString/,
+    'frontend/src/prerender.tsx must keep exporting a renderToString probe alongside the '
+    + 'renderToStaticMarkup render — it is what makes an unhydratable text pair visible.',
+  );
+  assert.match(
+    prerenderSrc, /export function renderShellWithSeparators/,
+    'the probe export build-shell.mjs imports is gone or renamed',
+  );
+  assert.match(
+    buildScript, /renderShellWithSeparators\(\)/,
+    'frontend/scripts/build-shell.mjs must call the separator probe',
+  );
+  assert.match(
+    buildScript, /<!-- -->/,
+    'frontend/scripts/build-shell.mjs must still look for `<!-- -->` in the probe output and fail '
+    + 'the build on it. Without this gate a hydration mismatch reaches every route silently.',
+  );
+});
+
+test('no shell source renders a bare whitespace expression between text runs', () => {
+  // Redundant with the build gate on purpose: this one runs in the root
+  // workspace, where frontend/node_modules need not exist.
+  const roots = [path.join(ROOT, 'frontend', 'src'), path.join(ROOT, 'frontend', '@')];
+  const files = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.(tsx|jsx)$/.test(entry.name)) files.push(full);
+    }
+  };
+  roots.filter((d) => fs.existsSync(d)).forEach(walk);
+  assert.ok(files.length > 20, `only found ${files.length} TSX sources — the walk is wrong`);
+
+  const offenders = [];
+  for (const file of files) {
+    // Strip comments first: the fix for the original mismatch is documented at
+    // the site it happened, and that prose quotes the idiom it forbids.
+    const code = fs.readFileSync(file, 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^[ \t]*\/\/.*$/gm, '');
+    code.split('\n').forEach((line, i) => {
+      if (/\{\s*(['"]) \1\s*\}/.test(line)) offenders.push(`${path.relative(ROOT, file)}:${i + 1}`);
+    });
+  }
+  assert.deepEqual(
+    offenders, [],
+    `these lines render a whitespace-only JSX expression, which makes the text around it two `
+    + `adjacent children and cannot survive hydration (React #418):\n  ${offenders.join('\n  ')}\n`
+    + "Put the space inside the neighbouring string instead — {' word…'} — or interpolate the "
+    + 'whole run as one child.',
+  );
+});
+
 test('the shell bundle is the only asset the build emits, and it emits no CSS', () => {
   // A stylesheet emitted here would need a FOURTH <link> in the head, which
   // would land after /css/tailwind.css and invert the cascade contract the

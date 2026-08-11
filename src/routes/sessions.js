@@ -2065,12 +2065,33 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         } catch { /* pill falls back to the raw tallies */ }
       }
 
+      // A GET on this route is NOT by itself evidence that the user opened
+      // the session. The dev chat refetches it programmatically all the
+      // time, and most of those fetches happen at the exact moment a turn
+      // ends: the fallback-done reconcile (#465), the progress poll's
+      // !busy branch, the sync-terminal refresh, the vote/version pill
+      // refresh. Since #138 creates a session_done notification on EVERY
+      // turn completion, the completion was being marked read by the
+      // reconcile fetch ~200ms after it was written — so the cog's green
+      // badge painted and vanished within one frame, i.e. never appeared.
+      //
+      // The two attention-scoped side effects below therefore need the
+      // caller to SAY that a person opened the session: `?opened=1`, set
+      // only by DevChat.openSession's user-initiated call sites (session
+      // row / active-chip click, hash restore, post-flow reopen). Machine
+      // refetches omit it and are now side-effect free apart from the
+      // activity bump.
+      const userOpened = req.query.opened === '1';
+
       // Viewing a session counts as activity so the auto-pause sweeper
       // doesn't pause a session the user is actively reading. Fire-and-
       // forget — the view shouldn't block on this write, and a missed
-      // bump just means the next chat turn / open re-marks it. Opening
-      // also disarms notify_on_done (#161): the owner is looking at the
-      // session again, so a left-mid-turn completion needs no notification.
+      // bump just means the next chat turn / open re-marks it. This one
+      // stays on every fetch: a session being polled by its owner's open
+      // tab is in use, and gating it on ?opened=1 would let a long turn
+      // look idle to the sweeper. A user open ALSO disarms notify_on_done
+      // (#161): the owner is looking at the session again, so a
+      // left-mid-turn completion needs no notification.
       //
       // OWNER ONLY. Both of those are statements about the owner's
       // attention, and neither is true when the admin read above is what
@@ -2079,23 +2100,25 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // owner's "tell me when it's done" notification.
       if (rows[0].user_id === req.user.id) {
         pool.query(
-          `UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1`,
+          `UPDATE chat_sessions SET last_activity_at = NOW()${userOpened ? ', notify_on_done = FALSE' : ''} WHERE id = $1`,
           [req.params.id]
         ).catch((err) => log.warn('sessions', 'activity bump on view failed', { err: err.message }));
       }
 
-      // #161 auto-dismiss: opening the session is the canonical "user saw
-      // it" signal — resolve any unread session_done rows for it, even
-      // when the user navigated here on their own rather than via the
-      // notification. Fire-and-forget; cross-tab badge sync on change.
-      notifications.markReadForAction(pool, req.user.id, 'session_opened', rows[0].id)
-        .then((cleared) => {
-          if (cleared > 0) {
-            const { pushNotificationToUser } = require('../services/ws');
-            pushNotificationToUser(req.user.id, { type: 'notifications_changed' });
-          }
-        })
-        .catch((err) => log.warn('sessions', 'session_opened dismiss failed', { err: err.message }));
+      // #161 auto-dismiss: a user opening the session is the canonical
+      // "user saw it" signal — resolve any unread session_done rows for
+      // it, even when the user navigated here on their own rather than via
+      // the notification. Fire-and-forget; cross-tab badge sync on change.
+      if (userOpened) {
+        notifications.markReadForAction(pool, req.user.id, 'session_opened', rows[0].id)
+          .then((cleared) => {
+            if (cleared > 0) {
+              const { pushNotificationToUser } = require('../services/ws');
+              pushNotificationToUser(req.user.id, { type: 'notifications_changed' });
+            }
+          })
+          .catch((err) => log.warn('sessions', 'session_opened dismiss failed', { err: err.message }));
+      }
 
       const { rows: messages } = await pool.query(
         `SELECT id, role, content, model, token_count, cost_cents, metadata, created_at
@@ -4197,6 +4220,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 return out;
               })
             );
+            // #990: close the fetch step and name the one that is actually
+            // running now. Must land AFTER the batch resolves (so the
+            // client's _deactivateLastStatus freezes a truthful duration on
+            // the fetch row) and BEFORE the re-invocation below, which is
+            // the silent window this row covers.
+            await sendStatus(DATA_TOOL_THINKING_STATUS);
             mayorConvo = [
               ...mayorConvo,
               // Verbatim assistant content (incl. the tool_use blocks) so the
@@ -9524,6 +9553,15 @@ function dataToolStatusLine(calls) {
   return "Reading the repo's GitHub issues...";
 }
 
+// #990: the step line emitted once a data-tool batch has RESOLVED, while
+// the model is re-invoked with the fetched material in context. Without it
+// the ladder's last live row still says "Fetching github.com..." for the
+// whole (observed: ~12s) compose window — the reporter read that stale,
+// still-spinning row as "it wasn't thinking", then the reply popped in.
+// Emitting a fresh row is what makes the client freeze the fetch row with
+// its real "(took Xs)" and start a new ticker, on reload as well as live.
+const DATA_TOOL_THINKING_STATUS = 'Thinking about what came back...';
+
 // Build the Mayor's message history from chat_session_messages rows.
 // Folds each CC output (persisted as a system row with metadata.ccOutput)
 // into the preceding assistant turn with a [CODING AGENT COMPLETED] tag
@@ -12899,4 +12937,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError };
+module.exports = { runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError };

@@ -98,6 +98,11 @@
 // full CRUD like every other resource screen.)
 'use strict';
 
+// The shared admin class-string registry. This was a bare global read that
+// depended on <script> order (admin-console.js loaded first); inside the
+// React bundle the dependency is explicit (#1082 chunk E).
+import { AdminUI } from './admin-console.js';
+
 // ── Control styling tokens ───────────────────────────────────────────
 //
 // Every button, field and panel in this file is built from the strings
@@ -4160,4 +4165,7 @@ const AdminTopochain = {
   },
 };
 
-window.AdminTopochain = AdminTopochain;
+// Published on the global because AdminConsole._renderSection dispatches
+// section modules through window[modName]. Guarded: the SSG prerender pass
+// evaluates this module in Node, where there is no window.
+if (typeof window !== 'undefined') window.AdminTopochain = AdminTopochain;

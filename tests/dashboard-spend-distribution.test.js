@@ -12,7 +12,7 @@
 //      predicate, and the $0-derivation on src/routes/dashboard.js, the
 //      staging seed contract on src/db/migrate.js, the dapp.json proposal
 //      check, and the client renderer/INFO wiring on
-//      public/js/admin-analytics.js (was public/js/dashboard.js +
+//      frontend/src/features/admin/admin-analytics.js (was public/js/dashboard.js +
 //      public/dashboard.html before #860 folded the page into the
 //      #admin/analytics console section).
 //
@@ -162,7 +162,7 @@ test('dapp.json: a proposal check targets #admin/analytics with #spend-distribut
 });
 
 test('client: admin-analytics.js renders the chart, registers its INFO, and loads the endpoint', () => {
-  const js = read('public/js/admin-analytics.js');
+  const js = read('frontend/src/features/admin/admin-analytics.js');
   assert.match(js, /function renderSpendDistribution\(\)/, 'renderer must exist');
   assert.match(js, /'spend-distribution':/, 'INFO entry must exist');
   assert.match(js, /analytics\/spend-distribution/, 'loadAll must fetch the endpoint');
@@ -175,7 +175,7 @@ test('client: admin-analytics.js renders the chart, registers its INFO, and load
 });
 
 test('markup: admin-analytics.js mounts the #spend-distribution container', () => {
-  const html = read('public/js/admin-analytics.js');
+  const html = read('frontend/src/features/admin/admin-analytics.js');
   assert.match(html, /id="spend-distribution"/, 'mount point must exist');
   assert.match(html, /data-info="spend-distribution"/, 'info icon must be wired');
 });
@@ -183,7 +183,7 @@ test('markup: admin-analytics.js mounts the #spend-distribution container', () =
 // ── 5. "Hide $0 / Show $0" toggle ────────────────────────────────────────
 
 test('html: the chart header carries a Hide/Show $0 toggle', () => {
-  const html = read('public/js/admin-analytics.js');
+  const html = read('frontend/src/features/admin/admin-analytics.js');
   assert.match(html, /data-zero-toggle="spend-distribution"/, 'toggle group must exist');
   assert.match(html, /data-zero="hide"[^>]*>Hide \$0/, 'a "Hide $0" button must exist');
   assert.match(html, /data-zero="show"[^>]*>Show \$0/, 'a "Show $0" button must exist');
@@ -196,12 +196,15 @@ test('html: the chart header carries a Hide/Show $0 toggle', () => {
 });
 
 test('client: the renderer filters the $0 bucket unless the toggle is on', () => {
-  const js = read('public/js/admin-analytics.js');
+  const js = read('frontend/src/features/admin/admin-analytics.js');
   // State var + persistence key, defaulting OFF (Hide $0).
   assert.match(js, /SPEND_DIST_ZERO_KEY\s*=\s*'dashSpendDistIncludeZero'/, 'localStorage key must be defined');
+  // The `typeof window` guard is #1082 chunk E: the module is in the React
+  // bundle now, and the SSG prerender pass evaluates this line in Node. It
+  // yields the same default the absent key always did.
   assert.match(
     js,
-    /let spendDistIncludeZero\s*=\s*localStorage\.getItem\(SPEND_DIST_ZERO_KEY\)\s*===\s*'true'/,
+    /let spendDistIncludeZero\s*=\s*typeof window !== 'undefined'\s*\n?\s*&&\s*localStorage\.getItem\(SPEND_DIST_ZERO_KEY\)\s*===\s*'true'/,
     'state must default to false (Hide $0) and read from localStorage',
   );
   // The b0 segment is dropped when the toggle is off, keeping all paid buckets.
@@ -213,7 +216,7 @@ test('client: the renderer filters the $0 bucket unless the toggle is on', () =>
 });
 
 test('client: the toggle persists and re-renders without refetching', () => {
-  const js = read('public/js/admin-analytics.js');
+  const js = read('frontend/src/features/admin/admin-analytics.js');
   assert.match(js, /function wireZeroToggle\(\)/, 'the toggle wiring fn must exist');
   assert.match(js, /wireZeroToggle\(\)/, 'the toggle must be wired in init()');
   // On click it persists the choice and re-renders from the cached payload.

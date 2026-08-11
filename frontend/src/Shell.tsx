@@ -45,6 +45,7 @@
 //    never by refreshing the baseline.
 
 import { Button } from '@/components/ui/button';
+import { AdminScreen } from './features/admin';
 import { LandingScreen } from './features/auth/landing';
 import { LoginScreen } from './features/auth/login';
 import { RegisterScreen } from './features/auth/register';
@@ -390,34 +391,21 @@ export function Shell() {
       {/*
           Admin & moderation console screen (#818, extended by #860): the
           full-page console behind the header shield icon (#588 shipped the
-          icon), rendered by public/js/admin-console.js plus one module per
-          heavy section (admin-status / admin-node / admin-analytics /
-          admin-merges / admin-gallery / admin-campaigns / admin-topochain).
-          Hash route #admin[/section]; mounted by App.navigateToAdminConsole,
-          which gates on App.user.isAdmin (both full and view-only admins) —
-          every /api/admin/* endpoint the page calls is independently enforced
-          server-side. The two `public` sections (#admin/status, #admin/node)
-          also mount for a signed-in non-admin; see the PUBLIC MODE note in
-          admin-console.js. Ships hidden like its sibling screens.
-          
-          FULL WIDTH (no max-w / mx-auto, unlike every other screen): this is a
-          dense operator console, not a reading surface. The folded-in Health &
-          status and Analytics sections were always the widest thing in the app
-          — a 6-across tile grid, wide SVG charts, and user/limit/code tables
-          that were horizontally scrolling inside a capped column — so the
-          constraint cost information rather than protecting legibility. The
-          gutter stays modest (p-4, a little roomier from lg up) and everything
-          inside is percentage/grid-based, so mobile is byte-for-byte
-          unchanged.
+          icon). Hash route #admin[/section]; mounted by
+          App.navigateToAdminConsole, which gates on App.user.isAdmin (both
+          full and view-only admins) — every /api/admin/* endpoint the page
+          calls is independently enforced server-side. The two `public`
+          sections (#admin/status, #admin/node) also mount for a signed-in
+          non-admin; see the PUBLIC MODE note in features/admin/admin-console.js.
+
+          An island since #1082 chunk E: the chassis markup, the full-width
+          column, the view-only banner and the temporary-password dialog are
+          React's; the nineteen sections' contents still belong to the ten
+          modules the island imports (the retired public/js/admin-*.js). Ships
+          hidden like its sibling screens, but through the visibility store —
+          #admin-screen is in App.REACT_SCREEN_IDS.
       */}
-      <main
-        id="admin-screen"
-        className="hidden flex-1 overflow-y-auto platform-safe-scroll"
-        style={{ position: "relative" }}
-      >
-        <div id="admin-root" className="w-full p-4 lg:px-6">
-        </div>
-      </main>
+      <AdminScreen />
       <SettingsScreen />
       {/*
           The Topochain leaderboard used to be its own <main> screen here
@@ -869,12 +857,6 @@ export function Shell() {
       */}
       <script src="/js/profile.js" />
       {/*
-          Admin & moderation console (#admin hash route, #818). Loaded before
-          app.js, whose restoreFromHash calls App.navigateToAdminConsole →
-          AdminConsole.open().
-      */}
-      <script src="/js/admin-console.js" />
-      {/*
           Topochain-domain panes of the Leaderboard screen (Task 14, public
           screens; merged into one screen by the leaderboard merge). The
           Leaderboard module mounts these lazily when their tab is first
@@ -888,38 +870,26 @@ export function Shell() {
       <script src="/js/topochain-leaderboard.js" />
       <script src="/js/topochain-challenges.js" />
       {/*
-          Seasons, Events & Challenges admin console screens (Task 15): the
-          'seasons' entry in AdminConsole.SECTION_MODULES delegates to
-          AdminTopochain.render(), which owns its own sub-nav under
-          #admin/seasons/<sub> (the old #admin/topochain/<sub> address still
-          resolves and is rewritten to the canonical one). The file name and
-          the AdminTopochain global are historical — renaming them would
-          churn the service-worker precache list for no user-visible gain.
-          Loaded after admin-console.js (which it extends) and before app.js.
+          The admin console's ten modules used to load here as classic
+          scripts, between topochain-challenges.js and build-log.js:
+          admin-console.js, admin-topochain.js, and the eight folded-in
+          section modules from #860 (status / node / analytics / estimator /
+          merges / gallery / campaigns / mail). #1082 chunk E moved all ten
+          into the React bundle, imported by the #admin-screen island
+          (frontend/src/features/admin/index.tsx), so they now arrive with
+          /shell/assets/shell.js instead.
+
+          They moved TOGETHER because they were one load-order cluster: the
+          nine section modules read the AdminUI class-string registry that
+          admin-console.js defines, and admin-topochain.js reads it while its
+          own module body evaluates. Inside the bundle that is an ordinary
+          `import`, so the dependency is declared in code rather than implied
+          by the order of these tags.
+
+          NOT moved: topochain-event-context.js / topochain-leaderboard.js /
+          topochain-challenges.js above, and public/js/topochain-events.js —
+          those serve the public Leaderboard screen, not the console.
       */}
-      <script src="/js/admin-topochain.js" />
-      {/*
-          Folded-in admin console sections (#860): the seven standalone pages
-          (/status, /node-status, /dashboard, /debug, /gallery, /admin,
-          /admin-features) are now sections here, one module each. Same
-          contract as admin-topochain.js — AdminConsole.SECTION_MODULES maps a
-          section key to the global these define, and calls render(host) /
-          destroy(host) on it. Load order is unconstrained: the console
-          resolves each module by name at section-render time (AdminGallery
-          likewise looks up AppView, loaded below, only when it renders).
-      */}
-      <script src="/js/admin-status.js" />
-      <script src="/js/admin-node.js" />
-      <script src="/js/admin-analytics.js" />
-      {/*
-          Estimator accuracy (#898): the platform-analytics card split out of
-          the Analytics section into its own #admin/estimator section.
-      */}
-      <script src="/js/admin-estimator.js" />
-      <script src="/js/admin-merges.js" />
-      <script src="/js/admin-gallery.js" />
-      <script src="/js/admin-campaigns.js" />
-      <script src="/js/admin-mail.js" />
       {/*
           Build-failure log panel (#416). Loaded before app-view.js/home.js
           so both surfaces can reference window.BuildLog.

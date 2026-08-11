@@ -99,6 +99,13 @@ function makeMockPool(initial = {}) {
       row.notify_on_done = false;
       return { rows: [{ user_id: row.user_id, app_id: row.app_id }], rowCount: 1 };
     }
+    // Activity bump on the session view. Carries the notify_on_done disarm
+    // only when the fetch said a person opened the session (?opened=1).
+    if (/UPDATE chat_sessions SET last_activity_at = NOW\(\)/i.test(s)) {
+      const row = state.sessions.get(Number(params[0]));
+      if (row && /notify_on_done = FALSE/i.test(s)) row.notify_on_done = false;
+      return { rows: [], rowCount: row ? 1 : 0 };
+    }
     // Unconditional disarm (stop handler / recovered turns / view).
     if (/SET notify_on_done = FALSE WHERE id = \$1/i.test(s)) {
       const row = state.sessions.get(Number(params[0]));
@@ -152,6 +159,18 @@ function makeMockPool(initial = {}) {
           pr_title: 'Add a feature', pr_number: 7, headless_issue_number: 42,
           branch_name: 'dev/alice-123', source_username: null,
         }],
+      };
+    }
+    // GET /api/sessions/:id — the session record (owner OR admin).
+    if (/FROM chat_sessions cs\s+JOIN apps a ON cs\.app_id = a\.id/i.test(s)) {
+      const row = state.sessions.get(Number(params[0]));
+      if (!row || (row.user_id !== params[1] && !params[2])) return { rows: [], rowCount: 0 };
+      return {
+        rows: [{
+          status: 'active', ...row,
+          app_slug: 'my-app', app_name: 'My App', yes_count: 0, no_count: 0,
+        }],
+        rowCount: 1,
       };
     }
     // markReadForAction.
@@ -250,6 +269,109 @@ test('POST /notify-on-done 404s for a session the caller does not own', async ()
     });
     assert.equal(res.status, 404);
     assert.equal(pool.state.sessions.get(10).notify_on_done, false);
+  } finally {
+    await srv.close();
+    loaded.restore();
+  }
+});
+
+// ── 1b. GET /api/sessions/:id and the "user saw it" gate ────────────────
+//
+// Every turn completion writes a session_done row (#138), and the cog's
+// green badge is exactly "an unread one of these exists". The dev chat
+// refetches this route programmatically the moment a turn ends (the
+// fallback-done reconcile, the progress poll's !busy branch, the
+// sync-terminal refresh), so when the route dismissed unconditionally the
+// completion was read within ~200ms of being written and the badge never
+// appeared. The dismiss — and the notify_on_done disarm — now require the
+// caller to say a person opened the session with ?opened=1.
+
+async function getSession(srv, id, qs = '') {
+  const res = await fetch(`${srv.baseUrl}/api/sessions/${id}${qs}`);
+  assert.equal(res.status, 200);
+  // The dismiss is fire-and-forget — let its microtask/query settle.
+  await new Promise((r) => setTimeout(r, 20));
+  return res;
+}
+
+function unreadDone(pool, sessionId) {
+  return pool.state.notifications.filter(
+    (n) => n.session_id === sessionId && n.kind === 'session_done' && !n.read_at
+  ).length;
+}
+
+test('GET /api/sessions/:id leaves the completion unread for a machine refetch', async () => {
+  const pool = makeMockPool({
+    sessions: [[10, { id: 10, user_id: 1, app_id: 5, notify_on_done: true }]],
+    notifications: [
+      { id: 1, user_id: 1, app_id: 5, session_id: 10, kind: 'session_done', read_at: null },
+    ],
+  });
+  const loaded = loadSessions(pool);
+  const srv = await startTestServer(loaded);
+  try {
+    await getSession(srv, 10);
+
+    // The badge's input survives: still unread, no notifications UPDATE at all.
+    assert.equal(unreadDone(pool, 10), 1);
+    assert.equal(pool.issued(/UPDATE notifications/i), false);
+    assert.equal(loaded.pushes.length, 0);
+    // The activity bump still runs (an owner's poll means the session is in
+    // use) but must not carry the notify_on_done disarm.
+    const bump = pool.calls.filter((c) => /UPDATE chat_sessions SET last_activity_at/i.test(c.sql));
+    assert.equal(bump.length, 1);
+    assert.doesNotMatch(bump[0].sql, /notify_on_done/);
+    assert.equal(pool.state.sessions.get(10).notify_on_done, true);
+  } finally {
+    await srv.close();
+    loaded.restore();
+  }
+});
+
+test('GET /api/sessions/:id?opened=1 dismisses the completion and disarms notify_on_done', async () => {
+  const pool = makeMockPool({
+    sessions: [[10, { id: 10, user_id: 1, app_id: 5, notify_on_done: true }]],
+    notifications: [
+      { id: 1, user_id: 1, app_id: 5, session_id: 10, kind: 'session_done', read_at: null },
+      // A different session's completion is out of scope and stays unread.
+      { id: 2, user_id: 1, app_id: 5, session_id: 11, kind: 'session_done', read_at: null },
+    ],
+  });
+  const loaded = loadSessions(pool);
+  const srv = await startTestServer(loaded);
+  try {
+    await getSession(srv, 10, '?opened=1');
+
+    assert.equal(unreadDone(pool, 10), 0);
+    assert.equal(unreadDone(pool, 11), 1);
+    assert.equal(pool.state.sessions.get(10).notify_on_done, false);
+    // Other tabs repaint their badge off the change.
+    assert.deepEqual(loaded.pushes, [{ userId: 1, payload: { type: 'notifications_changed' } }]);
+  } finally {
+    await srv.close();
+    loaded.restore();
+  }
+});
+
+test('GET /api/sessions/:id?opened=1 as a non-owner admin dismisses nothing', async () => {
+  const pool = makeMockPool({
+    sessions: [[10, { id: 10, user_id: 999, app_id: 5, notify_on_done: true }]],
+    notifications: [
+      { id: 1, user_id: 999, app_id: 5, session_id: 10, kind: 'session_done', read_at: null },
+    ],
+  });
+  const loaded = loadSessions(pool);
+  const srv = await startTestServer(loaded, { id: 1, username: 'cap', isAdmin: true });
+  try {
+    await getSession(srv, 10, '?opened=1');
+
+    // An admin (or the capture suite) reading someone's session must not
+    // resolve the owner's notification, keep the session awake, or cancel
+    // their "tell me when it's done".
+    assert.equal(unreadDone(pool, 10), 1);
+    assert.equal(pool.state.sessions.get(10).notify_on_done, true);
+    assert.equal(pool.issued(/UPDATE chat_sessions SET last_activity_at/i), false);
+    assert.equal(loaded.pushes.length, 0);
   } finally {
     await srv.close();
     loaded.restore();

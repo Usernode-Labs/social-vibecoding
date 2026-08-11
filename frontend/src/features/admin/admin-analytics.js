@@ -1,5 +1,10 @@
 'use strict';
 
+// The shared admin class-string registry. This was a bare global read that
+// depended on <script> order (admin-console.js loaded first); inside the
+// React bundle the dependency is explicit (#1082 chunk E).
+import { AdminUI } from './admin-console.js';
+
 // Analytics section of the admin console (#860) — the retired standalone
 // /dashboard page, ported into #admin/analytics.
 //
@@ -27,7 +32,7 @@
 //     under #admin-analytics-root.
 //
 // #898 moved the "Progress estimator accuracy" card OUT of this section into
-// its own #admin/estimator section (public/js/admin-estimator.js): everything
+// its own #admin/estimator section (admin-estimator.js): everything
 // left here is USER analytics, governed by the "Include admin users"
 // checkbox, whereas the estimator card is platform analytics that
 // deliberately ignores that flag.
@@ -75,15 +80,22 @@ const AdminAnalytics = (() => {
   // alongside the spend series so the "today / cap" readout can show it.
   let systemCapCents = 2500;
 
+  // Both preferences below are read at module-EVALUATION time, which the SSG
+  // prerender pass performs in Node (#1082 chunk E) — hence the `typeof window`
+  // guard on each. The browser answer is unchanged: an absent key already
+  // meant `false`, which is also the default the guard yields.
+
   // Include-admins checkbox (#1). Default OFF (exclude admins); persisted
   // so an operator's preference survives reloads.
   const ADMIN_KEY = 'dashIncludeAdmins';
-  let includeAdmins = localStorage.getItem(ADMIN_KEY) === 'true';
+  let includeAdmins = typeof window !== 'undefined'
+    && localStorage.getItem(ADMIN_KEY) === 'true';
 
   // Whether the muted $0 (no-spend) bucket is drawn. Default OFF: the $0 block
   // dwarfs the paid buckets, so hiding it makes the paid distribution readable.
   const SPEND_DIST_ZERO_KEY = 'dashSpendDistIncludeZero';
-  let spendDistIncludeZero = localStorage.getItem(SPEND_DIST_ZERO_KEY) === 'true';
+  let spendDistIncludeZero = typeof window !== 'undefined'
+    && localStorage.getItem(SPEND_DIST_ZERO_KEY) === 'true';
 
   const dollars = (c) => `$${(Number(c || 0) / 100).toFixed(2)}`;
   const SPEND_PLATFORM = '#6366f1';
@@ -1172,7 +1184,10 @@ const AdminAnalytics = (() => {
   // demo payloads behind `IS_STAGING && ?demo=1`, but that never fired
   // because the flag was dropped here. Same pass-through the admin console
   // does for its status/node reads. A strict no-op in production.
-  const DEMO = new URLSearchParams(location.search).get('demo') === '1';
+  // Guarded for the SSG prerender pass, which evaluates this module in Node
+  // (#1082 chunk E). In the browser this is the same boolean as before.
+  const DEMO = typeof window !== 'undefined'
+    && new URLSearchParams(location.search).get('demo') === '1';
   function withAdmins(url) {
     const sep = url.includes('?') ? '&' : '?';
     return `${url}${sep}includeAdmins=${includeAdmins}${DEMO ? '&demo=1' : ''}`;
@@ -1548,4 +1563,7 @@ const AdminAnalytics = (() => {
   };
 })();
 
-window.AdminAnalytics = AdminAnalytics;
+// Published on the global because AdminConsole._renderSection dispatches
+// section modules through window[modName]. Guarded: the SSG prerender pass
+// evaluates this module in Node, where there is no window.
+if (typeof window !== 'undefined') window.AdminAnalytics = AdminAnalytics;

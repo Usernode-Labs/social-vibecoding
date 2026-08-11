@@ -101,6 +101,15 @@ const AppView = {
   // Recently-merged rows — so the whole page reads as one uniform list
   // (same row structure, padding, border, radius). Tappable cards add
   // DEV_CARD_HOVER_CLS on top.
+  //
+  // The direct children are the content column and the right rail — the type
+  // icon is NOT one of them on any card that has rows below its title: it is
+  // handed to _cardContentHtml, which puts it on the head row so it aligns
+  // with the title (see the note there). `items-center` therefore only
+  // governs the rail / trailing affordance, which stays vertically centred.
+  // The two-line label cards with nothing under the title (General chat, an
+  // archived session) do still pass the icon as a sibling: there the icon and
+  // the whole content column are the same height, so centred IS title-aligned.
   DEV_CARD_CLS: 'w-full flex items-center gap-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 px-3.5 py-3 text-left transition-colors',
   // Trailing chevron marking a card as tappable (same affordance as the
   // General chat card).
@@ -114,8 +123,8 @@ const AppView = {
   // indented actions row) because their five inline pills would otherwise
   // crush the flex-1 title. With the action budget capped at "icon Preview
   // + ⋯" that pressure is gone, so they now use the standard single-row
-  // DEV_CARD_CLS shell like every other card; .dev-card-headline's
-  // progressive-wrap rule is what actually protects the title.
+  // DEV_CARD_CLS shell like every other card; the title having the head row
+  // to itself is what actually protects it.
   DEV_CARD_MUTED_CLS: 'dev-card-muted',
 
   // Per-type tinted icon chips — the Dev list's identity system, a mini
@@ -514,23 +523,46 @@ const AppView = {
       // sharing" depends on the row, hence the optional id.
       // Parsed against a fixed grammar rather than used as a selector: this
       // stays a named UI state, not a query-string-injected querySelector.
+      //
+      // `&row=priority|category|assignee` goes ONE interaction further and
+      // clicks that metadata row, so the attribute picker it opens is itself
+      // URL-reachable. Two layers deep is exactly why "Change assignee…" was
+      // able to be dead on desktop for as long as it was: the row inventory
+      // was covered by a check, but nothing asserted that a row actually
+      // OPENS anything, and the popover it opens exists nowhere a plain URL
+      // could reach. The click goes through the real menu button, so this
+      // link exercises the same event path a mouse does. Pure UI state (one
+      // GET for the tally, no writes), not env-gated.
       if (shot === 'card-menu') {
-        const asked = /^(session|proposal|issue|gov|merged)(:\d+)?$/.exec(
-          new URLSearchParams(location.search).get('card') || ''
-        );
+        const q = new URLSearchParams(location.search);
+        const asked = /^(session|proposal|issue|gov|merged)(:\d+)?$/.exec(q.get('card') || '');
         const kind = asked ? asked[1] : null;
         const want = kind
           ? (asked[2] ? `[data-card-menu="${asked[0]}"]` : `[data-card-menu^="${kind}:"]`)
           : '[data-card-menu]';
+        // Fixed grammar, same as `card=` — a named UI state, never a
+        // query-string-injected selector.
+        const wantRow = /^(priority|category|assignee)$/.test(q.get('row') || '') ? q.get('row') : null;
         let tries = 0;
         const tick = setInterval(() => {
           // Retries only until the board has cards to tap — an open menu now
           // SURVIVES the repaints those fetches trigger (_reanchorCardMenu),
-          // so once it is up this is done. Stop on route change too, and cap
-          // the window so a link left open in a real tab can't keep polling.
-          if (AppView._openCardMenu || !String(location.hash || '').includes(`app/${slug}`)
+          // so once it is up this is done. With `row=`, the target is one
+          // step later: the menu is a means, and the picker it opens is the
+          // state being asked for. Stop on route change too, and cap the
+          // window so a link left open in a real tab can't keep polling.
+          const arrived = wantRow ? !!document.getElementById('attr-popover') : !!AppView._openCardMenu;
+          if (arrived || !String(location.hash || '').includes(`app/${slug}`)
               || (tries += 1) > 40) {
             clearInterval(tick);
+            return;
+          }
+          if (wantRow && AppView._openCardMenu) {
+            // Clicking the row closes the menu and opens the popover, so a
+            // retry re-opens the menu from scratch — no half state to unwind.
+            document.querySelector(
+              `.dev-card-menu [data-menu-idx][data-menu-row="${wantRow}"]:not([disabled])`
+            )?.click();
             return;
           }
           // Unnamed: scoped to the ACTIVE column, because below 640px the
@@ -2273,31 +2305,62 @@ const AppView = {
   // Every card type assembles the same four bands inside the shell, so they
   // are built here once rather than copy-pasted into six renderers:
   //
-  //   head    — the headline (title + meta) and the badge row, with the ⋯
-  //             trigger pinned TOP-RIGHT beside them. It sits in the head
-  //             rather than the action row because a card is a pointer: the
-  //             corner is where "more about this card" belongs, and it keeps
-  //             the action row to the one or two things you'd actually do.
-  //             Its own flex column means it can never collide with the 💬
-  //             badge (which lives inside the wrapping badge row) or with the
-  //             drag grip (a gutter outside the card entirely).
+  //   head    — the type icon and the TITLE. Nothing else: the head is the
+  //             only band that is indented (it is the one the icon leads),
+  //             so anything that doesn't have to sit beside the icon is a
+  //             band of its own below it. The icon is centred against the
+  //             title rather than pinned to its first line, so a chip
+  //             taller than one line of text reads as belonging to the
+  //             whole title instead of hanging off its top.
+  //   meta    — the "PR#123 · author · 2h ago" line, FULL WIDTH under the
+  //             head. It is the title's subtitle, not something that has to
+  //             sit beside the icon, so it gets the card's own width — which
+  //             is also what stops it ellipsising after three words in a
+  //             kanban column, where the indent cost it a fifth of the row.
+  //   badges  — the metadata chips (priority, assignee, category) plus the
+  //             💬 count, on their own FULL-WIDTH wrapping row. They used to
+  //             share the title's line, which cost them the icon's 36px of
+  //             indent and made them wrap after two chips in a kanban
+  //             column; four chips now fit on one line there.
   //   pill    — the composite status pill, FULL WIDTH on its own row. A
   //             proportional tally reads far better as a bar than as a
   //             thumbnail-sized capsule wedged between chips, and giving it
   //             the whole width is what makes the fill legible at a glance.
   //   actions — the ≤2 text pills plus the icon Preview.
   //
-  // opts: { headlineHtml, badges, chatCount, uncapped, pill, inlinePill,
-  //         actions, extraHtml }
+  // opts: { icon, titleHtml, titleAttrs, metaHtml, badges, chatCount,
+  //         uncapped, pill, inlinePill, actions, extraHtml }
+  //
+  // `icon` — the type chip. It is passed IN here (rather than emitted as the
+  // card's own first flex child, which is where it used to live) so that it
+  // sits on the HEAD row, beside the title. As a sibling of the whole
+  // content column it was centred against the card's full height — i.e.
+  // floating halfway down next to the status pill on a busy card — and it
+  // pushed EVERY row into an indented column.
+  //
+  // Only the title is indented now. The meta line, the badge row, the pill
+  // row, the action row and `extraHtml` are siblings of the head, not of the
+  // icon, so they all start at the card's own padding edge and use its full
+  // width. That is the whole layout rule, and it is why `icon` is an opt
+  // rather than something a caller concatenates: a card cannot get the
+  // indent wrong by accident, because there is only one place that draws it.
+  //
+  // The title and the meta line arrive as separate opts for the same reason.
+  // They used to be one `headlineHtml` cell built by a helper, which is
+  // exactly what made them move together — a caller cannot put the subtitle
+  // back inside the indent because it no longer passes a subtree that could
+  // hold it.
   //
   // The ⋯ trigger is NOT here — it lives in the card's right rail
   // (_cardRailHtml) so it shares a column with the chevron instead of
   // eating a third of the badge row's width.
   //
   // `inlinePill` is the detail head's variant: that page already has the
-  // full page width, so a second full-width bar under the header would read
-  // as a rule rather than a status. There the pill leads the badge row as a
-  // capsule instead, which is also why it is exempt from the badge cap.
+  // full page width, so a bar of its own under the header would read as a
+  // rule rather than a status. There the pill rides at the FRONT of the badge
+  // row as a capsule instead — same full-width row as everywhere else, it
+  // just shares it with the chips — which is also why it is exempt from the
+  // badge cap.
   _cardContentHtml(opts) {
     const o = opts || {};
     const chips = o.inlinePill
@@ -2306,29 +2369,22 @@ const AppView = {
     const badges = AppView._cardBadgesHtml(chips, o.chatCount, {
       uncapped: o.uncapped || !!o.inlinePill,
     });
+    const badgeRow = badges ? `<div class="dev-card-badges">${badges}</div>` : '';
     const pillRow = o.pill ? `<div class="dev-status-row">${o.pill}</div>` : '';
+    const metaRow = o.metaHtml ? `<div class="dev-card-meta">${o.metaHtml}</div>` : '';
     return `<div class="flex-1 min-w-0">
           <div class="dev-card-head">
+            ${o.icon || ''}
             <div class="dev-card-head-main">
-              <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-                ${o.headlineHtml || ''}
-                ${badges}
-              </div>
+              <div class="dev-card-title"${o.titleAttrs || ''}>${o.titleHtml || ''}</div>
             </div>
           </div>
+          ${metaRow}
+          ${badgeRow}
           ${pillRow}
           ${o.actions || ''}
           ${o.extraHtml || ''}
         </div>`;
-  },
-
-  // The headline cell — title over meta. Shared so the wrap rule
-  // (.dev-card-headline) is applied identically everywhere.
-  _cardHeadlineHtml(titleHtml, metaHtml, titleAttrs) {
-    return `<div class="dev-card-headline">
-                  <div class="dev-card-title"${titleAttrs || ''}>${titleHtml}</div>
-                  <div class="dev-card-headline-meta">${metaHtml || ''}</div>
-                </div>`;
   },
 
   // ── Card overflow (⋯) menu ───────────────────────────────────────────
@@ -2354,6 +2410,28 @@ const AppView = {
   // The presented menu's dismissal hooks, or null. Body-mounted like
   // .attr-popover so a kanban column's overflow-x:auto can't clip it.
   _openCardMenu: null,
+
+  // The click event a ⋯ menu row is currently acting on, or null.
+  //
+  // A row's `act()` runs INSIDE the click dispatch that chose it, and three
+  // of the rows ("Change assignee…" / "Change priority…" / "Change
+  // category…") open the body-mounted #attr-popover synchronously. So that
+  // very click carried on bubbling up to the document-level "a click outside
+  // the popover dismisses it" handler in _attrInit — whose target was the
+  // menu row, i.e. outside #attr-popover (and by then removed from the DOM
+  // with the menu) — and closed the popover again inside the same dispatch.
+  // Net effect on desktop: the row did nothing at all, with no console error
+  // and nothing on screen. Touch was unaffected, because the native action
+  // sheet invokes its handler after its own dismissal, not mid-click.
+  //
+  // So the row handler stamps its event here and the popover dismissers skip
+  // that one event. Deferring `act()` to a timeout would fix it too, but it
+  // would take every row out of the user-gesture context — "Open in GitHub"
+  // does `window.open`, which a popup blocker then eats — and stopping
+  // propagation would silently swallow the click from every other
+  // document-level listener. Events are unique objects, so a stale stamp can
+  // never match a later click and there is nothing to clean up.
+  _menuActEvent: null,
 
   // ── One icon vocabulary for every ⋯ menu ──────────────────────────────
   //
@@ -2513,6 +2591,9 @@ const AppView = {
       const it = live[parseInt(btn.dataset.menuIdx, 10)];
       AppView._closeCardMenu();
       if (it && it.act) {
+        // Mark the dispatch so a popover this row opens isn't dismissed by
+        // the same click as it finishes bubbling (see _menuActEvent).
+        AppView._menuActEvent = ev;
         try { it.act(); } catch { /* handler owns its errors */ }
       }
     });
@@ -2534,7 +2615,12 @@ const AppView = {
       // The glyph is aria-hidden and the label keeps its own element, so the
       // button's accessible name stays exactly the label text.
       const icon = `<span class="dev-card-menu-icon" aria-hidden="true">${escapeHtml(AppView._menuIconGlyph(it))}</span>`;
-      return `<button type="button" role="menuitem" class="${cls}" data-menu-idx="${i}"${t}${dis}>`
+      // The descriptor's icon key doubles as a stable hook for the row's
+      // MEANING — what `?shot=card-menu&row=assignee` aims at and what a
+      // dapp.json test asserts on, neither of which should have to match the
+      // row's wording (which changes with the card's state).
+      const row = it.icon ? ` data-menu-row="${escapeAttr(it.icon)}"` : '';
+      return `<button type="button" role="menuitem" class="${cls}" data-menu-idx="${i}"${row}${t}${dis}>`
         + `${icon}<span class="dev-card-menu-label">${escapeHtml(it.label)}</span></button>`;
     }).join('');
   },
@@ -6042,7 +6128,7 @@ const AppView = {
 
   // Save the report as a single self-contained file. Blob + temporary
   // <a download> + revokeObjectURL, the pattern the admin CSV export
-  // already established (public/js/admin-console.js).
+  // already established (frontend/src/features/admin/admin-console.js).
   downloadReport() {
     if (!AppView._reportMerged) { AppView._ensureReportData(); return; }
     const model = AppView._buildReportModel(AppView._reportInputs());
@@ -6268,9 +6354,10 @@ const AppView = {
     return `<div data-session-chip="${s.id}" role="button" tabindex="0"
       class="${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}${mutedCls}"
       title="${s.busy ? 'AI is working — ' : ''}${label}">
-      ${AppView._devCardIcon('session')}
       ${AppView._cardContentHtml({
-        headlineHtml: AppView._cardHeadlineHtml(label, subtitle),
+        icon: AppView._devCardIcon('session'),
+        titleHtml: label,
+        metaHtml: subtitle,
         badges: [statusTag, AppView._sessionVenueChipHtml(s), AppView.issueChipsHtml(s.linked_issues)],
         chatCount: null,
         actions,
@@ -6297,9 +6384,10 @@ const AppView = {
     const chevron = noNav ? '' : AppView.DEV_CARD_CHEVRON;
     const actions = noNav ? '' : AppView._cardActionsHtml({ preview });
     return `<div${nav} class="${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" title="${label}">
-      ${AppView._devCardIcon('session')}
       ${AppView._cardContentHtml({
-        headlineHtml: AppView._cardHeadlineHtml(label, `${owner} is working on this`),
+        icon: AppView._devCardIcon('session'),
+        titleHtml: label,
+        metaHtml: `${owner} is working on this`,
         badges: [statusTag, AppView.issueChipsHtml(s.linked_issues)],
         chatCount: s.chat_count,
         actions,
@@ -6952,15 +7040,14 @@ const AppView = {
   // The title-heal sweeper (src/services/title-heal.js) still removes it
   // automatically once the API is back.
 
-  // One PR-proposal card: line 1 is identity + info (icon chip, title,
-  // PR meta, tally pill, badges), line 2 is the action pills (vote /
-  // preview / kudos / Discussion / Open session). With { noNav: true }
-  // (the topic sub-view's header card) the tap-to-open affordance and
-  // Discussion button are dropped — you're already in the discussion.
-  // On narrow screens line 1 wraps progressively instead of truncating
-  // the title: the 💬 badge drops to the next line first, then the
-  // tally pill, and only then does the title itself wrap (see
-  // .dev-card-headline in app.css).
+  // One PR-proposal card, built from the shared bands (_cardContentHtml):
+  // the icon chip and the title lead, then the PR meta line, the badges,
+  // the tally pill and the action pills (vote / preview / kudos /
+  // Discussion / Open session) each on their own full-width row. With
+  // { noNav: true } (the topic sub-view's header card) the tap-to-open
+  // affordance and Discussion button are dropped — you're already in the
+  // discussion — and the tally rides at the front of the badge row instead
+  // of taking a row of its own.
   _renderProposalCard(pr, opts) {
     const noNav = !!(opts && opts.noNav);
     const ctx = AppView._proposalsCtx || {};
@@ -7034,10 +7121,10 @@ const AppView = {
 
     return `
       <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''} data-ref-pr="${pr.pr_number || pr.id}"${noNav ? '' : ` data-proposal-row="${pr.id}" title="Open this proposal's discussion"`}>
-        ${AppView._devCardIcon(isMerged ? 'done' : (mine ? 'proposalMine' : 'proposal'), mine && !isMerged ? { title: 'This is your PR — open its session.' } : undefined)}
         ${AppView._cardContentHtml({
-          headlineHtml: AppView._cardHeadlineHtml(
-            titleHtml, metaParts.join(' · ') + (closesPills ? ` ${closesPills}` : '')),
+          icon: AppView._devCardIcon(isMerged ? 'done' : (mine ? 'proposalMine' : 'proposal'), mine && !isMerged ? { title: 'This is your PR — open its session.' } : undefined),
+          titleHtml,
+          metaHtml: metaParts.join(' · ') + (closesPills ? ` ${closesPills}` : ''),
           badges,
           chatCount: chatN,
           uncapped: noNav,
@@ -8376,9 +8463,10 @@ const AppView = {
 
     return `
       <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}${busy ? ' opacity-70' : ''}" data-gov-row="${issue.id}"${refIssueN ? ` data-ref-issue="${refIssueN}"` : ''}${noNav ? '' : ' title="Open this proposal\'s discussion"'}>
-        ${AppView._devCardIcon('gov')}
         ${AppView._cardContentHtml({
-          headlineHtml: AppView._cardHeadlineHtml(escapeHtml(titleText), metaParts.join(' · ')),
+          icon: AppView._devCardIcon('gov'),
+          titleHtml: escapeHtml(titleText),
+          metaHtml: metaParts.join(' · '),
           badges: [applyBadge],
           chatCount: govChatN,
           uncapped: noNav,
@@ -8920,21 +9008,33 @@ const AppView = {
   // with no chip rendered (the unset case, which is exactly why this exists)
   // it anchors to the card itself so it still lands beside the right row.
   _openAttrMenuPopover(field, targetType, targetRef) {
+    const anchor = AppView._attrAnchorFor(field, targetType, targetRef);
+    if (anchor) AppView._openAttrPopover(anchor);
+  },
+
+  // The node the popover for (field, targetType, targetRef) hangs off: that
+  // target's chip when one is rendered, else — the unset case, which is
+  // exactly why the ⋯ row exists — the card itself, wrapped in a shim
+  // carrying the same dataset _openAttrPopover reads off a real chip. null
+  // when neither is on screen.
+  //
+  // Shared with _reanchorAttrPopover so a vote cast from the ⋯ row doesn't
+  // close the picker: the repaint after that first vote may still render no
+  // chip (an assignee below the adoption threshold is a tally, not a value),
+  // and re-anchoring to the card keeps the popover open for the next vote.
+  _attrAnchorFor(field, targetType, targetRef) {
     const chip = document.querySelector(
       `[data-attr-chip][data-attr-field="${field}"][data-attr-target-type="${targetType}"][data-attr-target-ref="${targetRef}"]`
     );
-    if (chip) { AppView._openAttrPopover(chip); return; }
-    // No chip on screen (the unset case — exactly why this path exists), so
-    // anchor to the card and hand _openAttrPopover a shim carrying the same
-    // dataset it reads off a real chip.
+    if (chip) return chip;
     const card = document.querySelector(
       targetType === 'issue' ? `[data-ref-issue="${targetRef}"]` : `[data-proposal-row="${targetRef}"]`
     );
-    if (!card) return;
-    AppView._openAttrPopover({
+    if (!card) return null;
+    return {
       dataset: { attrField: field, attrTargetType: targetType, attrTargetRef: String(targetRef) },
       getBoundingClientRect: () => card.getBoundingClientRect(),
-    });
+    };
   },
 
   // Install the one-time document-level handlers that open / close the
@@ -8961,6 +9061,10 @@ const AppView = {
         AppView._openVotingHelpPopover(help, AppView._findTopicItem());
         return;
       }
+      // The click that RAN a ⋯ menu row is the click that opened whatever
+      // popover that row opened — it must not also dismiss it (see
+      // _menuActEvent).
+      if (e === AppView._menuActEvent) return;
       // A click anywhere outside an open popover closes it.
       if (!e.target.closest('#attr-popover')) AppView._closeAttrPopover();
       if (!e.target.closest('#voting-help-popover')) AppView._closeVotingHelpPopover();
@@ -8972,15 +9076,19 @@ const AppView = {
       AppView._closeVotingHelpPopover();
     });
     document.addEventListener('scroll', (e) => {
-      AppView._closeAttrPopover();
-      // Ignore the popover's OWN internal overflow scrolling (it has a
-      // capped max-height and scrolls its rules list) — only an
-      // outside-page scroll should dismiss it. The scroll event's target
-      // is the scrolled element (or `document` for the page itself).
+      // Ignore each popover's OWN internal overflow scrolling (both have a
+      // capped max-height and scroll their list) — only an outside-page
+      // scroll should dismiss them. The scroll event's target is the
+      // scrolled element (or `document` for the page itself).
+      //
+      // The attribute popover used to close on any scroll at all, including
+      // its own: an assignee list longer than its 320px max-height was
+      // unusable, because reaching the name you wanted dismissed the picker.
       const t = e.target;
-      const insidePopover = t && t.nodeType === 1 && typeof t.closest === 'function'
-        && t.closest('#voting-help-popover');
-      if (!insidePopover) AppView._closeVotingHelpPopover();
+      const inside = (sel) => !!(t && t.nodeType === 1 && typeof t.closest === 'function'
+        && t.closest(sel));
+      if (!inside('#attr-popover')) AppView._closeAttrPopover();
+      if (!inside('#voting-help-popover')) AppView._closeVotingHelpPopover();
     }, true);
     // Escape dismisses either popover (a11y — the help popover is a dialog).
     document.addEventListener('keydown', (e) => {
@@ -9035,6 +9143,10 @@ const AppView = {
       if (AppView._attrPopover && AppView._attrPopover.field === field
           && AppView._attrPopover.targetRef === targetRef) {
         AppView._renderAttrPopoverBody(data);
+        // The placeholder was one line tall and the real body is many, so a
+        // popover opened low in the viewport only overflows the bottom now.
+        // Re-run the (height-aware) placement against the same anchor.
+        AppView._positionAttrPopover(pop, chip);
       }
     } catch {
       const live = document.getElementById('attr-popover');
@@ -9048,9 +9160,34 @@ const AppView = {
   _positionAttrPopover(pop, chip) {
     const r = chip.getBoundingClientRect();
     pop.style.position = 'fixed';
-    pop.style.top = `${Math.round(r.bottom + 4)}px`;
     const left = Math.min(Math.round(r.left), window.innerWidth - 240);
     pop.style.left = `${Math.max(8, left)}px`;
+    // Below the anchor by preference, flipped above when it would hang off
+    // the bottom, and clamped into the viewport either way — the same rule
+    // the ⋯ menu has always used (_positionCardMenu).
+    //
+    // The clamp is the load-bearing part. This popover can be anchored to a
+    // node inside an internally-scrolling kanban column, or (when the
+    // attribute is unset, so no chip is rendered) to the card itself, so its
+    // rect can legitimately sit thousands of pixels below the fold. With just
+    // `top: r.bottom + 4` the picker then opened *off screen*, which reads as
+    // "nothing happened" — and focusing the input inside an off-screen fixed
+    // element scrolls the page, which the scroll dismisser above then takes
+    // as a reason to close it again.
+    //
+    // Height is measured, so this runs again once the real body has replaced
+    // the "Loading…" placeholder; the fallback and the `vh` guard only matter
+    // in the stubbed DOM the node tests run in, where neither offsetHeight
+    // nor innerHeight exists and the pre-flip placement is what's asserted.
+    let top = Math.round(r.bottom + 4);
+    const ph = pop.offsetHeight || 160;
+    const vh = Number(window.innerHeight) || 0;
+    if (vh) {
+      const above = Math.round(r.top - ph - 4);
+      if (top + ph > vh - 8 && above >= 8) top = above;
+      top = Math.max(8, Math.min(top, vh - ph - 8));
+    }
+    pop.style.top = `${top}px`;
   },
 
   // Render the popover contents from a { field, options, myValue } payload
@@ -9260,19 +9397,16 @@ const AppView = {
     AppView._reanchorAttrPopover();
   },
 
-  // Snap the open popover back under its chip's current position after a
-  // repaint; close it when the chip is no longer rendered anywhere.
+  // Snap the open popover back under its anchor's current position after a
+  // repaint; close it when neither the chip nor its card is rendered any
+  // more (e.g. the card dropped off a filtered kanban board).
   _reanchorAttrPopover() {
     const ctx = AppView._attrPopover;
     if (!ctx) return;
     const pop = document.getElementById('attr-popover');
     if (!pop) return;
-    const chip = document.querySelector(
-      `[data-attr-chip][data-attr-field="${ctx.field}"]`
-      + `[data-attr-target-type="${ctx.targetType}"]`
-      + `[data-attr-target-ref="${ctx.targetRef}"]`
-    );
-    if (chip) AppView._positionAttrPopover(pop, chip);
+    const anchor = AppView._attrAnchorFor(ctx.field, ctx.targetType, ctx.targetRef);
+    if (anchor) AppView._positionAttrPopover(pop, anchor);
     else AppView._closeAttrPopover();
   },
 
@@ -9596,11 +9730,11 @@ const AppView = {
 
     return `
       <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" data-ref-issue="${n}"${noNav ? '' : ` data-issue-row="${n}" title="Open this issue's discussion"`}>
-        ${icon}
         ${AppView._cardContentHtml({
-          headlineHtml: AppView._cardHeadlineHtml(
-            `${escapeHtml(issue.title)}${editTitleBtn}`, metaParts.join(' · '),
-            `${canEditTitle ? ` data-issue-title="${n}"` : ''} title="${escapeHtml(rowTitle)}"`),
+          icon,
+          titleHtml: `${escapeHtml(issue.title)}${editTitleBtn}`,
+          titleAttrs: `${canEditTitle ? ` data-issue-title="${n}"` : ''} title="${escapeHtml(rowTitle)}"`,
+          metaHtml: metaParts.join(' · '),
           badges,
           chatCount: issue.chatCount,
           uncapped: noNav,
@@ -10026,11 +10160,11 @@ const AppView = {
 
     return `
         <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-ref-pr="${pr.pr_number || pr.id}" data-proposal-row="${pr.id}" title="Open this proposal's discussion">
-          ${AppView._devCardIcon('done')}
           ${AppView._cardContentHtml({
-            headlineHtml: AppView._cardHeadlineHtml(
-              mergedLabel, metaParts.join(' · ') + (closes ? ` ${closes}` : ''),
-              ` title="${escapeHtml(mergedQuoteTitle)}"`),
+            icon: AppView._devCardIcon('done'),
+            titleHtml: mergedLabel,
+            titleAttrs: ` title="${escapeHtml(mergedQuoteTitle)}"`,
+            metaHtml: metaParts.join(' · ') + (closes ? ` ${closes}` : ''),
             badges,
             chatCount: parseInt(pr.chat_count) || 0,
             pill,
@@ -10083,12 +10217,11 @@ const AppView = {
     // No actions at all on a settled close-issue row, so no ⋯ either.
     return `
         <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-gov-row="${row.id}"${issueN ? ` data-ref-issue="${issueN}"` : ''} title="Open this proposal's discussion">
-          ${AppView._devCardIcon('done')}
           ${AppView._cardContentHtml({
-            headlineHtml: AppView._cardHeadlineHtml(
-              `${escapeHtml(titleText)}${who}`,
-              `Issue close · ${issueRef}${how}${date ? ` · ${date}` : ''}`,
-              ` title="${escapeHtml(titleText)}"`),
+            icon: AppView._devCardIcon('done'),
+            titleHtml: `${escapeHtml(titleText)}${who}`,
+            titleAttrs: ` title="${escapeHtml(titleText)}"`,
+            metaHtml: `Issue close · ${issueRef}${how}${date ? ` · ${date}` : ''}`,
             badges: [],
             chatCount: parseInt(row.chat_count) || 0,
             pill: tallyPill,
@@ -12580,7 +12713,12 @@ const AppView = {
     }
 
     await DevChat.loadSessions(AppView.appData.slug);
-    await DevChat.openSession(restoreSessionId);
+    // Landing on #app/<slug>/dev/sessions/<id> IS the user opening the
+    // session — from the drawer's completion row, the session list, a
+    // bookmark or Back. Carries the "user saw it" signal (?opened=1) that
+    // dismisses the session's unread completion; the machine refetches in
+    // dev-chat.js deliberately do not.
+    await DevChat.openSession(restoreSessionId, { userOpened: true });
 
     // Archived / inaccessible session: fall back to the forum rather
     // than stranding an empty view.

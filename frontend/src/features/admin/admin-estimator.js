@@ -1,5 +1,10 @@
 'use strict';
 
+// The shared admin class-string registry. This was a bare global read that
+// depended on <script> order (admin-console.js loaded first); inside the
+// React bundle the dependency is explicit (#1082 chunk E).
+import { AdminUI } from './admin-console.js';
+
 // Estimator accuracy section of the admin console (#898) — the
 // "Progress estimator accuracy" card lifted out of #admin/analytics into
 // its own top-level section at #admin/estimator.
@@ -14,7 +19,7 @@
 // Structural notes:
 //
 //   - `render(host)` / `destroy()`, the SECTION_MODULES contract every
-//     folded-in console section follows (see public/js/admin-console.js);
+//     folded-in console section follows (see admin-console.js);
 //   - element ids are prefixed `admin-estimator-` (the card used a bare
 //     `#estimator` mount, too generic to share a document with the other
 //     sections);
@@ -541,7 +546,10 @@ const AdminEstimator = (() => {
   // `staging:private`, so a prod-cloned staging DB has it schema-only).
   // A strict no-op in production. NOTE: no includeAdmins — the endpoint
   // deliberately ignores it (see the header).
-  const DEMO = new URLSearchParams(location.search).get('demo') === '1';
+  // Guarded for the SSG prerender pass, which evaluates this module in Node
+  // (#1082 chunk E). In the browser this is the same boolean as before.
+  const DEMO = typeof window !== 'undefined'
+    && new URLSearchParams(location.search).get('demo') === '1';
   const withDemo = (url) => `${url}${DEMO ? (url.includes('?') ? '&' : '?') + 'demo=1' : ''}`;
 
   function showGate(msg) {
@@ -625,4 +633,7 @@ const AdminEstimator = (() => {
   };
 })();
 
-window.AdminEstimator = AdminEstimator;
+// Published on the global because AdminConsole._renderSection dispatches
+// section modules through window[modName]. Guarded: the SSG prerender pass
+// evaluates this module in Node, where there is no window.
+if (typeof window !== 'undefined') window.AdminEstimator = AdminEstimator;
