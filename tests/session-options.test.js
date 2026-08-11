@@ -12,10 +12,12 @@
 //      on a phone and inert-but-present on desktop. Two different products.
 //   2. the API-key row FLIPS rather than disappears: a user with a key on
 //      file must be told which key, not told to add one they already added.
-//   3. the two "somewhere else" routes stay DISTINCT in the copy. The local
-//      CLI lease (#907) continues THIS session; the web walkthrough (#1049)
-//      starts separate work that returns as its own proposal. Copy that
-//      blurred them would be wrong, not just vague.
+//   3. the venue question is asked ONCE, through one row. This menu used to
+//      enumerate the routes itself — a CLI row plus one per web agent — so
+//      it asked "where is this built?" in its own words inches from where
+//      the composer footer asked it in different ones. There is now a single
+//      "Change how this is built" row that opens the shared venue list in
+//      public/js/build-venues.js, and that list does the gating.
 //   4. the instructions card interpolates this session and escapes what it
 //      interpolates — the repo URL is app data.
 //
@@ -46,29 +48,51 @@ const ids = (state) => SessionOptions.items(state).map((i) => i.id);
 
 // ── Gating ──────────────────────────────────────────────────────────
 
-test('a plain deployment offers the key and the local CLI, in that order', () => {
-  assert.deepEqual(ids({}), ['api-key', 'local-cli']);
+test('a plain deployment offers the key and the venue row, in that order', () => {
+  assert.deepEqual(ids({}), ['api-key', 'venue']);
 });
 
-test('the web hand-offs appear only where the deployment can offer them', () => {
-  assert.deepEqual(
-    ids({ externalFlowsAvailable: true }),
-    ['api-key', 'local-cli', 'claude-code', 'codex']
-  );
-  // externalFlowsAvailable comes from GET /api/auth/me: a deployment with no
-  // GitHub-link support cannot attribute the user's fork, so there is
-  // nothing to walk anyone through.
-  assert.deepEqual(ids({ externalFlowsAvailable: false }), ['api-key', 'local-cli']);
+test('the venue row is ONE row, whatever the deployment can offer', () => {
+  // This menu used to enumerate the "somewhere else" routes itself — a CLI
+  // row plus one per web agent — so it grew and shrank with the deployment
+  // and asked the venue question in its own words, inches from where the
+  // composer footer asked it in different ones. It now carries one row that
+  // opens public/js/build-venues.js, and THAT list does the gating (see
+  // tests/build-venues.test.js). So none of these states changes the shape
+  // of this menu.
+  for (const state of [
+    { externalFlowsAvailable: true },
+    { externalFlowsAvailable: false },
+    { cliAuthEnabled: false },
+    { cliAuthEnabled: undefined },
+    { cliAuthEnabled: true },
+    { externalFlowsAvailable: true, cliAuthEnabled: false },
+  ]) {
+    assert.deepEqual(
+      ids(state), ['api-key', 'venue'],
+      `the menu shape must not move with ${JSON.stringify(state)}`
+    );
+  }
 });
 
-test('the local-CLI row is dropped where /api/cli/* does not exist', () => {
-  // A staging clone 404s the whole CLI family, and cliAuthEnabled reports
-  // that. `undefined` is NOT that state — an older payload that omits the
-  // field must keep the row (the !== false shape the rest of the platform
-  // uses for this flag).
-  assert.deepEqual(ids({ cliAuthEnabled: false }), ['api-key']);
-  assert.deepEqual(ids({ cliAuthEnabled: undefined }), ['api-key', 'local-cli']);
-  assert.deepEqual(ids({ cliAuthEnabled: true }), ['api-key', 'local-cli']);
+test('the venue row names where this session is building now', () => {
+  // The row is a door, not a statement — but its tooltip has to say what
+  // you would be changing FROM, or "change how this is built" is a question
+  // about something the user cannot see.
+  const venueRow = SessionOptions.items({ agentBackend: 'codex_openrouter' })
+    .find((i) => i.id === 'venue');
+  assert.equal(venueRow.kind, 'venue');
+  assert.match(venueRow.title, /Usernode · OpenRouter/);
+
+  const claude = SessionOptions.items({}).find((i) => i.id === 'venue');
+  assert.match(claude.title, /Usernode · Claude/);
+
+  // An imported proposal has an agent_backend column like any other row,
+  // but no turn ever ran through it. Reading the backend here would name a
+  // venue that is structurally unreachable.
+  const imported = SessionOptions.items({ source: 'imported', agentBackend: 'claude_code' })
+    .find((i) => i.id === 'venue');
+  assert.match(imported.title, /your own tools/);
 });
 
 test('nothing is ever gated by disabling a row', () => {
@@ -133,51 +157,40 @@ test('the key destination is a section Settings actually declares', () => {
 });
 
 // ── Continue this session vs start new work ─────────────────────────
+//
+// This section used to live here, driving SessionOptions.items() directly.
+// The rows moved into public/js/build-venues.js when the three "somewhere
+// else" entries became one door, and the assertions moved with them:
+// tests/build-venues.test.js drives the same three-way derivation (#1071)
+// against the venue list. What stays here is the seam — this menu must not
+// grow a second copy of that copy.
 
-test('the local CLI continues THIS session; the web hand-offs start new work', () => {
-  const items = SessionOptions.items({ externalFlowsAvailable: true });
-  const byId = Object.fromEntries(items.map((i) => [i.id, i]));
-
-  assert.equal(byId['local-cli'].kind, 'instructions');
-  assert.match(byId['local-cli'].title, /this session/i);
-  assert.doesNotMatch(byId['local-cli'].label, /new work/i);
-
-  for (const id of ['claude-code', 'codex']) {
-    assert.equal(byId[id].kind, 'flow');
-    assert.match(byId[id].label, /^Start new work/,
-      `${id} must not read as moving this session`);
-    assert.match(byId[id].title, /own proposal|its own proposal/i);
-  }
-  assert.deepEqual(
-    items.filter((i) => i.kind === 'flow').map((i) => i.agent),
-    ['claude-code', 'codex']
+test('the venue copy is not re-implemented in this module', () => {
+  const SRC = fs.readFileSync(
+    path.join(__dirname, '../public/js/session-options.js'), 'utf8'
   );
+  for (const label of [
+    'Claude Code on the web', 'Codex on the web',
+    'Your computer · Usernode session', 'Your computer · your own tools',
+  ]) {
+    assert.ok(
+      !SRC.includes(`'${label}'`) && !SRC.includes(`"${label}"`),
+      `session-options.js must read ${label} from build-venues.js, not own a copy`
+    );
+  }
 });
 
-// ── The three-way web hand-off (#1071) ──────────────────────────────
-
-const webRows = (state) => SessionOptions.items(Object.assign(
-  { externalFlowsAvailable: true }, state
-)).filter((i) => i.kind === 'flow');
-
-test('the hand-off state is derived from the session, in every direction', () => {
-  // The predicate is the one place that decides, so it is driven directly:
-  // a wrong answer here is a row that says "continue" and then starts
-  // something separate, or the reverse.
+test('webTargetKind is re-exported, and still answers for every session state', () => {
+  // Callers and fixtures already read this from SessionOptions. The
+  // implementation moved to build-venues.js; the answer must not move.
   const cases = [
     [{ sessionStatus: 'active', hasBranch: true }, 'session'],
     [{ sessionStatus: 'paused', hasBranch: true }, 'session'],
     [{ sessionStatus: 'promoted', hasBranch: true }, 'proposal'],
-    // A promoted proposal is the proposal, branch or not — its head is
-    // whatever the platform recorded, and the server refuses it if that is
-    // unreadable rather than the menu guessing.
     [{ sessionStatus: 'promoted', hasBranch: false }, 'proposal'],
-    // An explicit put-away. Pushing onto it would resurrect work somebody
-    // deliberately closed, so this starts new work instead.
     [{ sessionStatus: 'archived', hasBranch: true }, 'new'],
     [{ sessionStatus: 'merging', hasBranch: true }, 'new'],
     [{ sessionStatus: 'merged', hasBranch: true }, 'new'],
-    // No branch yet: there is no commit to start from and nowhere to land.
     [{ sessionStatus: 'active', hasBranch: false }, 'new'],
     [{ sessionStatus: 'paused', hasBranch: false }, 'new'],
     [{}, 'new'],
@@ -190,90 +203,12 @@ test('the hand-off state is derived from the session, in every direction', () =>
   }
 });
 
-test('each state gets its own verb, and only the continue states carry a target', () => {
-  const active = webRows({ sessionId: 990405, sessionStatus: 'active', hasBranch: true });
-  const promoted = webRows({ sessionId: 990406, sessionStatus: 'promoted', hasBranch: true });
-  const archived = webRows({ sessionId: 990408, sessionStatus: 'archived', hasBranch: true });
-
-  assert.deepEqual(active.map((i) => i.label), [
-    'Continue this session with Claude Code on the web',
-    'Continue this session with Codex',
-  ]);
-  assert.deepEqual(promoted.map((i) => i.label), [
-    'Continue this proposal with Claude Code on the web',
-    'Continue this proposal with Codex',
-  ]);
-  assert.deepEqual(archived.map((i) => i.label), [
-    'Start new work with Claude Code on the web',
-    'Start new work with Codex',
-  ]);
-
-  // targetId is what makes the difference real: the prepare call continues
-  // that session, and `null` is what opens separate work.
-  assert.deepEqual(active.map((i) => i.targetId), [990405, 990405]);
-  assert.deepEqual(promoted.map((i) => i.targetId), [990406, 990406]);
-  assert.deepEqual(archived.map((i) => i.targetId), [null, null]);
-  assert.deepEqual(active.map((i) => i.targetKind), ['session', 'session']);
-  assert.deepEqual(promoted.map((i) => i.targetKind), ['proposal', 'proposal']);
-  assert.deepEqual(archived.map((i) => i.targetKind), ['new', 'new']);
-
-  // A continuable session the page has no id for cannot be continued, and
-  // saying so with a null target is better than sending `undefined`.
-  assert.deepEqual(
-    webRows({ sessionStatus: 'active', hasBranch: true }).map((i) => i.targetId),
-    [null, null]
-  );
-});
-
-test('active and paused read identically and differ only in the tooltip', () => {
-  const active = webRows({ sessionId: 990405, sessionStatus: 'active', hasBranch: true });
-  const paused = webRows({ sessionId: 990407, sessionStatus: 'paused', hasBranch: true });
-
-  // Byte-identical labels on purpose: one selector assertion covers both
-  // staging fixtures, and the two cases cannot drift apart in the menu.
-  assert.deepEqual(active.map((i) => i.label), paused.map((i) => i.label));
-
-  // The tooltip is where the difference belongs, because it IS different:
-  // a paused session's preview and checks do not rebuild until it reopens.
-  for (const row of paused) {
-    assert.match(row.title, /reopen/i);
-    assert.match(row.title, /stays paused|catch up when you reopen/i);
-  }
-  for (const row of active) {
-    assert.doesNotMatch(row.title, /reopen/i);
-    assert.match(row.title, /rebuild/i);
-  }
-  assert.notDeepEqual(active.map((i) => i.title), paused.map((i) => i.title));
-});
-
-test('the continue tooltips say where the agent talks and what a push costs', () => {
-  for (const state of [
-    { sessionId: 1, sessionStatus: 'active', hasBranch: true },
-    { sessionId: 1, sessionStatus: 'paused', hasBranch: true },
-    { sessionId: 1, sessionStatus: 'promoted', hasBranch: true },
-  ]) {
-    for (const row of webRows(state)) {
-      // The one thing a continuation gets wrong if left implied: the agent's
-      // conversation is not this transcript.
-      assert.match(row.title, /not in this transcript/i);
-    }
-  }
-  // Votes are cleared by updating a promoted proposal and by nothing else —
-  // a session nobody has voted on has none to clear.
-  for (const row of webRows({ sessionId: 1, sessionStatus: 'promoted', hasBranch: true })) {
-    assert.match(row.title, /clears the votes/i);
-  }
-  for (const row of webRows({ sessionId: 1, sessionStatus: 'active', hasBranch: true })) {
-    assert.doesNotMatch(row.title, /vote/i);
-  }
-});
-
 test('a session already leased to a machine offers the way back instead', () => {
   const items = SessionOptions.items({
     cliAuthEnabled: true,
     localAgent: { label: 'Work laptop', leaseId: 'lease-1' },
   });
-  assert.deepEqual(items.map((i) => i.id), ['api-key', 'hand-back']);
+  assert.deepEqual(items.map((i) => i.id), ['api-key', 'hand-back', 'venue']);
   const handBack = items[1];
   assert.equal(handBack.kind, 'hand-back');
   assert.ok(handBack.destructive, 'releasing the lease is the destructive row');
@@ -291,7 +226,7 @@ test('the hand-back row is offered even where the CLI surface is gone', () => {
     cliAuthEnabled: false,
     localAgent: { label: 'Laptop', leaseId: 'lease-1' },
   });
-  assert.deepEqual(items.map((i) => i.id), ['api-key', 'hand-back']);
+  assert.deepEqual(items.map((i) => i.id), ['api-key', 'hand-back', 'venue']);
 });
 
 // ── The popover header ──────────────────────────────────────────────
@@ -391,11 +326,15 @@ test('the composer paints the button statically and wires it', () => {
   // Both halves of the state come from the places that already own them.
   assert.match(DEV_CHAT_SRC, /_sessionOptionsState\(\)/);
   assert.match(DEV_CHAT_SRC, /onHandBack: \(\) => DevChat\._handBackToUsernode\(\)/);
-  // The target id travels with the agent (#1071): without it the prepare
-  // call would open new work for a row that said "continue this session".
+  // The venue question is asked once, so this menu no longer enumerates the
+  // hand-off routes — it opens the shared sheet instead.
+  assert.match(DEV_CHAT_SRC, /onVenue: \(\) => DevChat\.openVenueSheet\(anchorEl\)/);
+  // …and the target id still travels with the agent (#1071): without it the
+  // prepare call would open new work for a row that said "continue this
+  // session". That now happens where the sheet dispatches a `flow` pick.
   assert.match(
     DEV_CHAT_SRC,
-    /onFlow: \(agent, targetId\) => DevChat\._devFlowFromCredits\(agent, targetId\)/
+    /DevChat\._devFlowFromCredits\(pick\.flow, row\.targetId\)/
   );
 });
 

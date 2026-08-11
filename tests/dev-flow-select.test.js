@@ -68,7 +68,7 @@ function stateOf(list) {
   }, {});
 }
 
-test('the picker names all three flows, in the order that reads as a default', () => {
+test('FLOWS is the allowlist plus the venue name, and nothing else', () => {
   assert.deepEqual(
     DevFlowSelect.FLOWS.map((f) => f.id),
     ['platform', 'claude-code', 'codex'],
@@ -76,15 +76,18 @@ test('the picker names all three flows, in the order that reads as a default', (
   );
   for (const flow of DevFlowSelect.FLOWS) {
     assert.ok(flow.title.length > 0, `${flow.id} has a title`);
-    assert.ok(flow.blurb.length > 0, `${flow.id} has a blurb`);
-    assert.ok(flow.cta.length > 0, `${flow.id} has a CTA`);
+    // The blurbs and CTAs belonged to the picker card, and the picker is
+    // gone: public/js/build-venues.js is the one place a venue is described
+    // to the user, and it covers three venues this list cannot name. A
+    // second description here is exactly the drift that made "Claude Code"
+    // mean two products.
+    assert.equal(flow.blurb, undefined, `${flow.id} must not re-describe its venue`);
+    assert.equal(flow.cta, undefined, `${flow.id} must not carry its own CTA`);
   }
-  const html = DevFlowSelect.pickerHtml({});
-  for (const flow of DevFlowSelect.FLOWS) {
-    assert.ok(html.includes(`data-flow-pick="${flow.id}"`), `${flow.id} is pickable`);
-  }
-  assert.match(html, /data-flow-card="1"/, 'the card is addressable for wiring');
-  assert.match(html, /data-flow-remember="1"/, 'the "remember my choice" box is present');
+  assert.equal(typeof DevFlowSelect.pickerHtml, 'undefined',
+    'the picker card is retired — the venue line above the composer replaced it');
+  assert.equal(typeof DevFlowSelect.flowsFor, 'undefined',
+    'and the gating that fed it went with it');
 });
 
 test('the flow ids match the server allowlist exactly', () => {
@@ -109,28 +112,31 @@ test('the flow ids match the server allowlist exactly', () => {
     'the CHECK constraint must accept exactly the flows the route accepts');
 });
 
-test('a "remember my choice" tick is what persists the preference', () => {
-  // Unticked is the default: a one-off choice must not silently become the
-  // permanent one.
-  assert.doesNotMatch(DevFlowSelect.pickerHtml({}), /data-flow-remember="1" checked/);
-  assert.match(
-    DevFlowSelect.pickerHtml({ preference: 'codex' }),
-    /data-flow-remember="1" checked/,
-    'someone who already saved a preference sees it pre-ticked'
+test('picking a venue persists it, with no second question about it', () => {
+  // The picker asked twice: once for the flow, once for "remember my
+  // choice — don't ask again", unticked by default. So the common path
+  // answered the same question in every new session. Opening the venue
+  // sheet is already the deliberate act, so the save rides along with it.
+  const devChat = fs.readFileSync(
+    path.join(__dirname, '../public/js/dev-chat.js'), 'utf8'
   );
+  assert.match(devChat, /_saveDevFlowPreference\(pick\.flow\)/,
+    'a flow picked in the sheet becomes the saved default');
+  assert.match(devChat, /'\/api\/me\/dev-flow'/, 'through the route that owns the column');
+  assert.ok(!devChat.includes('data-flow-remember'),
+    'and there is no "remember my choice" tick left to forget');
 });
 
 test('the external pair is withheld, not offered-then-failed', () => {
-  assert.equal(DevFlowSelect.flowsFor({}).length, 3, 'all three by default');
-  for (const state of [{ available: false }, { externalFlowsAvailable: false }]) {
-    const flows = DevFlowSelect.flowsFor(state);
-    assert.deepEqual(flows.map((f) => f.id), ['platform'],
-      `${JSON.stringify(state)} leaves only the platform flow`);
-  }
-  // And the card explains itself rather than just showing one lonely button.
-  const html = DevFlowSelect.pickerHtml({ available: false, reason: 'no_repository' });
+  // The gating moved to build-venues.js with the list itself; what stays
+  // here is the copy that explains a withheld hand-off, which the
+  // walkthrough still renders when the server says the flow cannot run.
+  const html = DevFlowSelect.wizardHtml({
+    agent: 'codex',
+    status: { available: false, reason: 'no_repository' },
+  });
   assert.match(html, /no GitHub repository yet/);
-  assert.ok(!html.includes('data-flow-pick="codex"'));
+  assert.ok(!html.includes('data-flow-pick='), 'nothing here is pickable any more');
 });
 
 test('every reason code the status route can send becomes real copy', () => {
@@ -480,18 +486,15 @@ test('wire() attaches one handler per node', () => {
     're-rendering the card must not stack duplicate handlers');
 });
 
-test('a pick reports the flow and the remember state together', () => {
-  const picks = [];
-  const box = { checked: false };
-  const root = fakeRoot(box);
-  DevFlowSelect.wire(root, { onPick: (id, remember) => picks.push([id, remember]) });
-
-  clickOn(root, { 'data-flow-pick': 'platform' });
-  box.checked = true;
+test('a pick button is no longer something this module answers', () => {
+  // The picker's rows are gone; wire() handles walkthrough actions only.
+  // Left over markup (a stale render, a hand-written fixture) must not
+  // quietly re-enter through the click handler.
+  const seen = [];
+  const root = fakeRoot();
+  DevFlowSelect.wire(root, { onAction: (action) => seen.push(action) });
   clickOn(root, { 'data-flow-pick': 'codex' });
-
-  assert.deepEqual(picks, [['platform', false], ['codex', true]],
-    'the checkbox is read at click time, so ticking it after reading the card counts');
+  assert.deepEqual(seen, [], 'a data-flow-pick click reaches nothing');
 });
 
 test('an action with an href opens it and still reports the action', () => {
@@ -536,7 +539,6 @@ test('the dev chat is the module\'s only consumer, and owns the fetching', () =>
   );
   assert.ok(!/\bfetch\s*\(/.test(MODULE_SRC),
     'dev-flow-select.js must not fetch — the caller owns that');
-  assert.match(DEV_CHAT_SRC, /DevFlowSelect\.pickerHtml\(/);
   assert.match(DEV_CHAT_SRC, /DevFlowSelect\.wizardHtml\(/);
   assert.match(DEV_CHAT_SRC, /DevFlowSelect\.wire\(/);
   assert.match(DEV_CHAT_SRC, /dev-flow\/status/,

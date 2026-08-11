@@ -78,6 +78,9 @@ RUN npm install -g @openai/codex@${CODEX_VERSION}
 # into its one-model catalog; it does not inherit OpenAI-only tool modes or
 # capabilities from the bundled models. Codex requires an explicitly selected
 # CODEX_HOME to exist before startup; otherwise `codex debug models` exits 1.
+# (This layer sits after the day-bumped claude-code layer, so it re-runs on
+# every cache-bust rollover — the 2026-08-11 rollover broke every worker
+# image build until the dir was pre-created; see #1096/#1097.)
 # Keep it outside /tmp because Codex deliberately refuses to create its PATH
 # helper aliases beneath temporary directories.
 RUN install -d -m 700 /var/lib/usernode-codex-bootstrap \
