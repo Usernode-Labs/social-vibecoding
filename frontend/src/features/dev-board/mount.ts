@@ -1,5 +1,6 @@
 /**
- * The legacy → React seam for the Dev board's interim roots (#1084 chunk G).
+ * The legacy → React seam for the Dev board's runtime-injected regions
+ * (#1084 chunk G; folded into the main React tree by #1085 chunk H).
  *
  * `public/js/app-view.js` is a classic script that runs before this bundle, so
  * it cannot import anything from here. It calls by name instead:
@@ -26,11 +27,11 @@
 import { createElement } from 'react';
 
 import {
-  mountInterimRoot,
-  unmountAllInterimRoots,
-  unmountInterimRoot,
-  interimRootCount,
-} from '../../lib/interim-root';
+  mountLegacyPortal,
+  unmountAllLegacyPortals,
+  unmountLegacyPortal,
+  legacyPortalCount,
+} from '../../lib/legacy-portals';
 import { DevBoardFrame, type DevBoardFrameProps } from './board-frame';
 import { DevChatSubView } from './chat-frame';
 import { DevSessionShell } from './session-frame';
@@ -53,7 +54,7 @@ export interface DevBoardBridge {
   publishViewMode(mode: string): void;
   unmount(host: Element | null): void;
   unmountAll(): void;
-  /** Live interim-root count — the leak assertion in tests reads this. */
+  /** Live portal count — the leak assertion in tests reads this. */
   rootCount(): number;
 }
 
@@ -63,7 +64,7 @@ export const devBoardBridge: DevBoardBridge = {
     // kanban immediately rather than list-then-kanban.
     publishViewMode(options.viewMode);
     const { viewMode: _viewMode, onSelectViewMode, ...rest } = options;
-    mountInterimRoot(
+    mountLegacyPortal(
       host,
       createElement(DevBoardFrame, {
         ...rest,
@@ -73,7 +74,7 @@ export const devBoardBridge: DevBoardBridge = {
   },
 
   mountChatSubView(host, options) {
-    mountInterimRoot(
+    mountLegacyPortal(
       host,
       createElement(DevChatSubView, {
         backHref: options.backHref,
@@ -87,13 +88,13 @@ export const devBoardBridge: DevBoardBridge = {
   },
 
   mountSessionShell(host) {
-    mountInterimRoot(host, createElement(DevSessionShell));
+    mountLegacyPortal(host, createElement(DevSessionShell));
   },
 
   publishViewMode,
-  unmount: unmountInterimRoot,
-  unmountAll: unmountAllInterimRoots,
-  rootCount: interimRootCount,
+  unmount: unmountLegacyPortal,
+  unmountAll: unmountAllLegacyPortals,
+  rootCount: legacyPortalCount,
 };
 
 if (typeof window !== 'undefined') {

@@ -99,17 +99,20 @@ test('every #app-content mount point declares its surface', () => {
     `expected 3 platform-surface call sites, found ${platformCalls.length}`);
 });
 
-test('the adopt early-exit still asserts the app surface', () => {
-  // renderAppTab returns early without touching the DOM when it can adopt
-  // beginLaunch's frame. It must still set the flag, or an adopted launch
-  // could keep whatever surface was last on screen.
-  const adopt = APP_VIEW.slice(
-    APP_VIEW.indexOf("&& document.getElementById('app-iframe')) {"),
-    APP_VIEW.indexOf('AppView._teardownLaunch();',
-      APP_VIEW.indexOf("&& document.getElementById('app-iframe')) {"))
+test('the keep/adopt early-exit still asserts the app surface', () => {
+  // renderAppTab returns early without touching the DOM when the frame it
+  // would build is the frame already mounted — beginLaunch's one-shot offer, or
+  // (since #1085 chunk H) any render that lands back on the same app at the
+  // same url, e.g. coming back from the Dev tab. It must still set the flag, or
+  // a kept frame could carry over the surface of the screen it just left.
+  const anchor = 'if (adopts || frame.keeps(';
+  const keep = APP_VIEW.slice(
+    APP_VIEW.indexOf(anchor),
+    APP_VIEW.indexOf('AppView._teardownLaunch();', APP_VIEW.indexOf(anchor))
   );
-  assert.match(adopt, /_setSurface\('app'\)/,
-    'the adopt path must assert the surface before returning');
+  assert.ok(keep.length > 0, 'the early-exit anchor still exists');
+  assert.match(keep, /_setSurface\('app'\)/,
+    'the keep path must assert the surface before returning');
 });
 
 test('setChromeless no longer hand-manages the inset, but re-broadcasts', () => {

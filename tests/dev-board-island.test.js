@@ -1,18 +1,23 @@
-// #1084 chunk G — the Dev board's React conversion, and the INTERIM ROOT
-// mechanism it introduces (chunk A's mechanism 4, #1078).
+// #1084 chunk G — the Dev board's React conversion — and #1085 chunk H, which
+// folded it into the MAIN React tree.
 //
 // Chunks A–F converted regions that are present in the prerendered document, so
 // `hydrateRoot(document.body, …)` adopts them and tests/shell-id-inventory.js
 // can see their ids. The Dev surfaces are different: #app-content ships EMPTY
-// and AppView.renderDevView() injects a surface at runtime, so each one gets its
-// own createRoot, created by the still-legacy module. That mechanism has three
-// invariants, and getting any of them wrong is a console.error or a leak rather
-// than a visible bug — which is exactly why they are asserted here rather than
-// left to review:
+// and AppView.renderDevView() injects a surface at runtime, so chunk G mounted
+// each one with its own createRoot, created by the still-legacy module. Chunk H
+// replaced that with a PORTAL out of the one root main.tsx already owns
+// (frontend/src/lib/legacy-portals.tsx) — which is what interim-root.ts's own
+// header said chunk H would do. The mechanism keeps the same three invariants,
+// and getting any of them wrong is a console.error or a leak rather than a
+// visible bug, which is exactly why they are asserted here rather than left to
+// review:
 //
-//   1. one root per host, ever (a second createRoot on a live container is a
-//      console.error, and a console error on any route fails proposal checks);
-//   2. the root is torn down before anything replaces #app-content by hand;
+//   1. one portal per host, ever (two React owners of one container is a torn
+//      tree; under chunk G the same mistake was a second createRoot on a live
+//      container, i.e. a console.error, and a console error on any route fails
+//      proposal checks);
+//   2. the portal is torn down before anything replaces #app-content by hand;
 //   3. the mount is synchronous, because every caller reads the DOM on its
 //      next line.
 //
@@ -35,7 +40,7 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
-const INTERIM = read('frontend/src/lib/interim-root.ts');
+const PORTALS = read('frontend/src/lib/legacy-portals.tsx');
 const MOUNT = read('frontend/src/features/dev-board/mount.ts');
 const FRAME = read('frontend/src/features/dev-board/board-frame.tsx');
 const CHAT_FRAME = read('frontend/src/features/dev-board/chat-frame.tsx');
@@ -46,55 +51,76 @@ const APP_VIEW = read('public/js/app-view.js');
 const APP = read('public/js/app.js');
 const SHELL = read('frontend/src/Shell.tsx');
 
-// ── mechanism 4: the helper's three invariants ───────────────────────────
+// ── the mechanism's three invariants ─────────────────────────────────────
 
-test('one root per host: the registry is keyed by the host node', () => {
-  assert.match(INTERIM, /new WeakMap<Element, Root>\(\)/,
-    'roots are held in a WeakMap keyed by the host element');
-  // A second mount against a live host must REUSE the root, not create one.
+test('one portal per host: the registry is keyed by the host node', () => {
+  assert.match(PORTALS, /const entries = new Map<Element, PortalEntry>\(\)/,
+    'portals are held in a map keyed by the host element');
+  // A second mount against a live host REPLACES that host's entry — never adds
+  // a second one — so no container is ever rendered into twice.
   assert.match(
-    INTERIM,
-    /let root = roots\.get\(host\);\s*\n\s*if \(!root\) \{\s*\n\s*root = createRoot\(host\)/,
-    'createRoot only runs when the host has no root yet'
+    PORTALS,
+    /const existing = entries\.get\(host\);\s*\n\s*entries\.set\(host, \{ host, node, seq: existing \? existing\.seq : \+\+seqCounter \}\);/,
+    'mounting an already-mounted host updates its single entry'
   );
-  // Exactly one createRoot CALL, so there is no second path around the map.
-  // (The name also appears in the header comment, hence matching the call.)
-  assert.equal(INTERIM.split('createRoot(host)').length - 1, 1,
-    'exactly one createRoot call site');
-  // WeakMap, not Map: a discarded host must not be pinned by the registry.
-  assert.ok(!/new Map<Element/.test(INTERIM), 'hosts are not strongly held by the registry');
+  // …and keeps its key, so React reconciles rather than remounting; a host that
+  // comes back AFTER an unmount gets a new seq and therefore a fresh subtree.
+  assert.match(PORTALS, /`legacy-portal-\$\{entry\.seq\}`/, 'seq is the portal key');
 });
 
-test('tear-down deletes the registry entry before unmounting', () => {
-  // Order matters: unmount() can run effects that re-enter, and a stale entry
-  // would then be handed a root that is already unmounting.
-  const fn = INTERIM.slice(INTERIM.indexOf('export function unmountInterimRoot'));
-  const del = fn.indexOf('roots.delete(host)');
-  const un = fn.indexOf('root.unmount()');
-  assert.ok(del !== -1 && un !== -1 && del < un, 'the entry is deleted before unmount()');
-  assert.match(INTERIM, /export function unmountAllInterimRoots/,
+test('#1085 chunk H: there is exactly ONE React root in the bundle', () => {
+  // The whole reason the interim roots went away. `createRoot` on a container
+  // that already has a root is a console.error, and a console error on any
+  // route fails proposal checks — unreachable if nothing but main.tsx ever
+  // creates a root, and main.tsx hydrates the one it is given.
+  // Comment-stripped: both files explain in prose WHY createRoot is gone, which
+  // is the point of those comments. What must be absent is the code.
+  const portalCode = PORTALS.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(!portalCode.includes('createRoot'), 'the portal helper creates no root');
+  assert.ok(!MOUNT.includes('createRoot'), 'mount.ts creates no root of its own');
+  assert.match(PORTALS, /createPortal\(entry\.node, entry\.host,/,
+    'the subtree is portalled into the host instead');
+  assert.equal(MAIN.split('hydrateRoot(').length - 1, 1, 'main.tsx has the only root');
+  // The retired helper is gone, not merely unused.
+  assert.ok(!fs.existsSync(path.join(root, 'frontend/src/lib/interim-root.ts')),
+    'lib/interim-root.ts is deleted');
+  assert.ok(!MOUNT.includes('InterimRoot'), 'no caller still reaches for the old helper');
+});
+
+test('tear-down drops the registry entry, then republishes', () => {
+  // Order matters: the entry must be gone from the snapshot React renders from
+  // before that render runs, or the portal survives the flush.
+  const fn = PORTALS.slice(PORTALS.indexOf('export function unmountLegacyPortal'));
+  const del = fn.indexOf('entries.delete(host)');
+  const commit = fn.indexOf('commit()');
+  assert.ok(del !== -1 && commit !== -1 && del < commit, 'the entry is deleted before the commit');
+  assert.match(PORTALS, /export function unmountAllLegacyPortals/,
     'a sweep exists for the surface-swap case');
-  // The sweep iterates a COPY — unmountInterimRoot mutates the set it walks.
-  assert.match(INTERIM, /for \(const host of \[\.\.\.hosts\]\) unmountInterimRoot\(host\)/,
-    'the sweep iterates a copy of the host set');
+  assert.match(PORTALS, /entries\.clear\(\);\s*\n\s*commit\(\);/,
+    'the sweep clears every entry in one commit');
+  // A no-op unmount must not schedule a render.
+  assert.match(PORTALS, /if \(!entries\.delete\(host\)\) return;/, 'unknown hosts are a no-op');
+  assert.match(PORTALS, /if \(!entries\.size\) return;/, 'an empty sweep is a no-op');
 });
 
 test('the mount is synchronous, because the legacy caller reads the DOM next', () => {
-  assert.match(INTERIM, /flushSync\(\(\) => \{\s*\n\s*\(root as Root\)\.render\(element\);/,
-    'render runs inside flushSync');
-  // Every mount goes through the helper — no component renders itself.
-  for (const [name, src] of [['mount.ts', MOUNT]]) {
-    assert.ok(!src.includes('createRoot'), `${name} does not create roots of its own`);
-  }
+  assert.match(PORTALS, /function commit\(\): void \{\s*\n\s*flushSync\(publish\);/,
+    'every publish runs inside flushSync');
+  assert.match(PORTALS, /const live = useSyncExternalStore\(/,
+    'the anchor component subscribes to the registry');
+  // The anchor is in the main tree, and renders nothing itself.
+  assert.match(SHELL, /<LegacyPortals \/>/, 'the anchor is rendered by <Shell/>');
+  assert.match(SHELL, /import \{ LegacyPortals \} from '\.\/lib\/legacy-portals';/,
+    'imported by the shell, so it is part of the prerendered tree');
 });
 
-test('no interim root outlives its surface', () => {
+test('no portal outlives its surface', () => {
   // Every hand-written replacement of #app-content retires the root first.
   const teardowns = APP_VIEW.split('AppView._teardownDevRoots();').length - 1;
   assert.ok(teardowns >= 4,
-    `every #app-content writer retires the root (found ${teardowns} call sites)`);
+    `every #app-content writer retires the portal (found ${teardowns} call sites)`);
   assert.match(APP_VIEW, /_teardownDevRoots\(\) \{\s*\n\s*AppView\._reactDevBoard\(\)\?\.unmountAll\(\);/,
-    'the teardown helper sweeps every live root');
+    'the teardown helper sweeps every live portal');
   // Including closing the app screen entirely, which blanks #app-content.
   const close = APP.indexOf('AppView._teardownDevRoots();');
   assert.ok(close !== -1, 'closeApp retires the root before blanking #app-content');
@@ -109,8 +135,12 @@ test('no interim root outlives its surface', () => {
     /if \(subTab === 'topic' && ref && ref\.kind && ref\.id\) AppView\._teardownDevRoots\(\);/,
     'the still-templated topic branch retires the root'
   );
-  // …and a leak assertion is reachable from the bridge.
-  assert.match(MOUNT, /rootCount\(\): number/, 'the bridge exposes a live-root count');
+  // …and a leak assertion is reachable from the bridge. The name kept its
+  // chunk-G spelling because app-view.js calls it; it counts live portals now.
+  assert.match(MOUNT, /rootCount\(\): number/, 'the bridge exposes a live-portal count');
+  assert.match(MOUNT, /rootCount: legacyPortalCount,/, 'wired to the portal registry');
+  assert.match(PORTALS, /export function legacyPortalCount\(\): number \{\s*\n\s*return entries\.size;/,
+    'the count is the registry size — zero means nothing leaked');
 });
 
 // ── the seam: published at module scope, not from an effect ──────────────
@@ -252,6 +282,12 @@ test('no Dev-board id leaked into the prerendered shell', () => {
   ]) {
     assert.ok(!SHELL.includes(`"${id}"`), `${id} is not in the prerendered shell`);
   }
-  // #app-content is still the empty host the whole mechanism depends on.
-  assert.match(SHELL, /id="app-content"/, '#app-content is still rendered by the shell');
+  // #app-content is still the empty host the whole mechanism depends on. Since
+  // #1085 chunk H it is rendered by the #app-view island rather than inline in
+  // Shell.tsx — same markup, same emptiness, one level of indirection.
+  const APP_VIEW_ISLAND = read('frontend/src/features/app-frame/app-view-island.tsx');
+  assert.match(SHELL, /<AppViewIsland \/>/, '#app-view is rendered by the shell');
+  assert.match(APP_VIEW_ISLAND, /id="app-content"/, '#app-content is still rendered');
+  assert.match(APP_VIEW_ISLAND, /id="app-content"[\s\S]{0,220}?\{\/\* Tab content renders here \*\/\}/,
+    '#app-content is still EMPTY — the interim roots and every innerHTML render fill it');
 });
