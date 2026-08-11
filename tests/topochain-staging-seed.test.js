@@ -31,6 +31,9 @@ const path = require('node:path');
 const { seedStagingTopochain } = require('../src/db/migrate');
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'src/db/migrate.js'), 'utf8');
+const DAPP_TESTS = JSON.parse(
+  fs.readFileSync(path.join(__dirname, '..', 'dapp.json'), 'utf8')
+).tests || [];
 
 // ─── 1. Behavioural: mock pool records every query(sql, params) call ────
 
@@ -519,6 +522,27 @@ test('1 app_version_config per OS (ios, android)', () => {
   assert.match(block, /'android'/);
   const ids = block.match(/^\s*\(9005\d\d,/gm) || [];
   assert.equal(ids.length, 2);
+});
+
+test('the Android rule is DEACTIVATED, not merely offered as an inactive insert', () => {
+  // The insert above skips an OS the clone already configured, and
+  // production keeps BOTH ios and android active — so on a prod-cloned
+  // staging DB neither fixture row lands and the admin screen's "No
+  // active version rule for Android" warning cannot render (dapp.json
+  // asserts exactly that text on /#admin/seasons/app-version). The
+  // declared state has to be forced, whatever the clone brought.
+  const start = body.indexOf('INSERT INTO app_version_configs');
+  const after = body.slice(start);
+  const upd = after.slice(after.indexOf('UPDATE app_version_configs'));
+  const stmt = upd.slice(0, upd.indexOf('`'));
+  assert.match(stmt, /SET is_active = FALSE/);
+  assert.match(stmt, /WHERE os = 'android'/);
+  // iOS is left exactly as the clone had it — one OS gated, one OS open is
+  // the contrast the warning exists to draw.
+  assert.ok(!/'ios'/.test(stmt), 'the iOS rule must not be touched');
+  const check = DAPP_TESTS.find((t) => t.path === '/#admin/seasons/app-version'
+    && /No active version rule/i.test(t.expectText || ''));
+  assert.ok(check, 'the declared check this fixture exists for is still there');
 });
 
 test('1 account_delegation_period', () => {

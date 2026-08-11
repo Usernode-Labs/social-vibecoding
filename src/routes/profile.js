@@ -173,7 +173,33 @@ function shapeProfile(row) {
 // returns null and every profile would show an empty list of completions
 // people genuinely earned. This mirrors what the profile screen itself has
 // always done client-side: the active season, else the newest one.
+//
+// AN ACTIVE SEASON WITH NO CHALLENGES IS NOT AN ANSWER (#982). "Newest
+// active" alone empties every profile the moment an organiser opens the
+// NEXT season, because a season is created before its challenges are:
+// production has both Season 1 (58 challenges, ended, still is_active) and
+// Pre Season 2 (is_active, zero challenges), so the plain resolver picks
+// the empty one and the completions people earned in Season 1 vanish from
+// their profile until Season 2's challenges land. So prefer the newest
+// active season that has at least one in-scope challenge — the same scope
+// the list itself uses (ALL_CHALLENGE_WHERE: a public event, challenge
+// organiser-enabled) — and only then fall back to newest-active and
+// newest-of-all. Each step is strictly more forgiving than the last, so a
+// deployment whose seasons all carry challenges resolves exactly as before.
 async function fetchProfileSeason(pool) {
+  const { rows: stocked } = await pool.query(
+    `SELECT s.id, s.name FROM seasons s
+      WHERE s.internal = FALSE AND s.is_active = TRUE
+        AND EXISTS (
+              SELECT 1 FROM season_events se
+                JOIN challenges c ON c.season_event_id = se.id
+               WHERE se.season_id = s.id
+                 AND se.internal = FALSE AND c.enabled = TRUE
+            )
+      ORDER BY s.starts_at DESC, s.id DESC LIMIT 1`
+  );
+  if (stocked[0]) return stocked[0];
+
   const { rows } = await pool.query(
     `SELECT id, name FROM seasons
       WHERE internal = FALSE AND is_active = TRUE

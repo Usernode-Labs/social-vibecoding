@@ -9453,6 +9453,21 @@ async function seedStagingTopochain(pool, config) {
        ON CONFLICT (id) DO NOTHING`
     );
 
+    // …and because the insert above SKIPS a configured OS, the clone also
+    // took the inactive-Android state with it: production configures both
+    // OSes and keeps both active, so on a prod-cloned staging DB neither
+    // row above is inserted and the "No active version rule for Android"
+    // warning — the whole point of the second fixture row — can never
+    // render. The fixture's declared state has to be asserted, not merely
+    // offered: switch Android off whatever the clone brought. iOS is left
+    // exactly as it arrived, so the screen still shows one OS gated and one
+    // OS open, which is the contrast the warning exists to draw.
+    await pool.query(
+      `UPDATE app_version_configs
+          SET is_active = FALSE, updated_at = NOW()
+        WHERE os = 'android' AND is_active = TRUE`
+    );
+
     // ─── Waitlist signups (3) ──────────────────────────────────────────
     // The admin console's Waitlist screen reads `waitlist_signups`
     // directly, and in a staging clone that table is emptied along with

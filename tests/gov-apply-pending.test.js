@@ -675,6 +675,47 @@ test('?demo=1 target issue rows pair with their close proposals', () => {
   assert.match(voting, /Close proposed/);
 });
 
+// The `locked: false` every ?demo=1 test above hard-codes is not a given:
+// _proposalsCtx.locked comes straight off GET /api/apps/:slug/promoted, and a
+// staging preview DB is a CLONE OF PRODUCTION — it brings the real
+// usernode-2d5619 app row, which is locked. With locked = true the derived
+// states are (correctly) suppressed and all three #1010 staging checks fail on
+// markup that is perfectly fine. So the fixture-preview mode has to report the
+// lock open, and only that mode.
+test('?demo=1 reports the app lock OPEN, so the mock states are reviewable', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'routes', 'votes.js'), 'utf8'
+  );
+  const from = src.indexOf("router.get('/api/apps/:slug/promoted'");
+  assert.ok(from > 0, 'found the promoted route');
+  const route = src.slice(from, src.indexOf("router.get('/api/apps/:slug/merged'", from));
+
+  assert.match(route, /const demoMode = IS_STAGING && req\.query\.demo === '1'/,
+    'the override must be gated on staging AND the explicit demo flag — '
+    + 'production may never be told a locked app is open');
+  assert.match(route, /locked: !!appRows\[0\]\.locked && !demoMode/);
+  // Exactly one place lies, and it is this one.
+  assert.equal((src.match(/&& !demoMode/g) || []).length, 1);
+
+  // And the client really does take ctx.locked from this payload, or the
+  // override would be aimed at the wrong field.
+  const view = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8'
+  );
+  assert.match(view, /const locked = !!promotedData\.locked;/);
+});
+
+test('a locked app with no ?demo=1 still suppresses the derived states', () => {
+  // The other half of the same contract, at the renderer: the override is a
+  // preview affordance, not a change to what a locked board promises.
+  const h = makeSandbox();
+  const { gov } = stagingMocks();
+  h.AppView._proposalsCtx = { majority: 2, locked: true };
+  const html = h.AppView._renderGovCard(gov.find((g) => g.id === 9100005));
+  assert.ok(!/dc-status-spinner-arc/.test(html),
+    'a locked app is waiting on an admin Yes, not applying');
+});
+
 test('an app switch clears local pending state so it cannot leak across apps', () => {
   const h = makeSandbox();
   h.AppView._proposalsCtx = { majority: 2, locked: false };

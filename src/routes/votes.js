@@ -2742,7 +2742,8 @@ function voteRoutes(config) {
       // proposals for layout verification. The id check keeps the
       // append idempotent should a mock id ever materialize in the
       // result. See stagingMockProposals above.
-      if (IS_STAGING && req.query.demo === '1') {
+      const demoMode = IS_STAGING && req.query.demo === '1';
+      if (demoMode) {
         const have = new Set(rows.map((r) => r.id));
         rows.push(...stagingMockProposals(req.user?.username).filter((m) => !have.has(m.id)));
       }
@@ -2815,7 +2816,21 @@ function voteRoutes(config) {
         // needs an admin yes)" hint on the Open PRs / Rename proposals
         // sections without a second round-trip. See loadVotePanel in
         // public/js/app-view.js.
-        locked: !!appRows[0].locked,
+        //
+        // FORCED OPEN IN DEMO MODE, staging only. A locked app legitimately
+        // suppresses every DERIVED vote state on the client — a
+        // threshold-met proposal there is waiting on an admin's Yes, not
+        // being applied, so _derivedGovApplying / _govMergeDue in
+        // app-view.js return nothing rather than promise a merge that isn't
+        // happening. The mock rows exist precisely to show those states,
+        // and they carry precomputed gate fields for the same reason (see
+        // stagingMockProposals / stagingMockGovernance): a prod-cloned
+        // staging DB brings the real app row with it, and the platform's own
+        // app row is locked, so ?demo=1 rendered every mock as a plain
+        // waiting card and the states were unreviewable. Only this
+        // fixture-preview mode lies; the ordinary staging board still
+        // reports the clone's real lock state, hint and notice included.
+        locked: !!appRows[0].locked && !demoMode,
         // #646: the app's configured approval settings, for the vote
         // panel context (_proposalsCtx in public/js/app-view.js).
         approverPolicy: gov.approverPolicy,

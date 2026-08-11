@@ -78,6 +78,12 @@ function makeMockPool(state) {
       const sql = collapse(rawSql);
       calls.push({ sql, params });
 
+      // Three season queries, most-specific first — matched in the same
+      // order the resolver asks them, and the EXISTS discriminator is what
+      // separates "active AND stocked" from plain "active".
+      if (sql.includes('FROM seasons') && sql.includes('FROM season_events')) {
+        return { rows: state.stockedSeason ? [state.stockedSeason] : [] };
+      }
       if (sql.includes('FROM seasons') && sql.includes('is_active = TRUE')) {
         return { rows: state.activeSeason ? [state.activeSeason] : [] };
       }
@@ -194,15 +200,48 @@ test('season resolver picks an is_active season whose window has CLOSED', async 
   const { pool, calls } = makeMockPool({ activeSeason: SEASON });
   const season = await fetchProfileSeason(pool);
   assert.deepEqual(season, SEASON);
+  for (const { sql } of calls.filter((c) => c.sql.includes('FROM seasons'))) {
+    const q = collapse(sql);
+    assert.ok(!/starts_at <= NOW\(\)/.test(q) && !/ends_at >= NOW\(\)/.test(q),
+      'the window must NOT be part of the predicate — a closed season still '
+      + 'has completions worth showing');
+    assert.match(q, /internal = FALSE/, 'internal seasons stay private');
+  }
+});
+
+test('season resolver prefers an active season that HAS challenges', async () => {
+  // The #982 sequel, and the reason the resolver got a step: production
+  // runs Season 1 (58 challenges, ended, still is_active) alongside "Pre
+  // Season 2" (is_active, starts later, zero challenges). Ordering by
+  // starts_at DESC picks the empty one, and every profile's completions
+  // vanish the moment an organiser opens the NEXT season. The stocked
+  // season wins even though the plain active query would answer.
+  const STOCKED = { id: 1, name: 'Season 1' };
+  const { pool, calls } = makeMockPool({
+    stockedSeason: STOCKED,
+    activeSeason: { id: 2, name: 'Pre Season 2' },
+  });
+  assert.deepEqual(await fetchProfileSeason(pool), STOCKED);
+  assert.equal(calls.length, 1, 'the stocked answer short-circuits the rest');
+  // "In scope" has to mean the same thing the row list means, or the
+  // resolver can pick a season whose only challenges the list then hides.
   const q = collapse(calls[0].sql);
-  assert.ok(!/starts_at <= NOW\(\)/.test(q) && !/ends_at >= NOW\(\)/.test(q),
-    'the window must NOT be part of the predicate — a closed season still '
-    + 'has completions worth showing');
-  assert.match(q, /internal = FALSE/, 'internal seasons stay private');
+  assert.match(q, /se\.internal = FALSE/);
+  assert.match(q, /c\.enabled = TRUE/);
+});
+
+test('season resolver still answers when NO active season has challenges', async () => {
+  // Strictly more forgiving at each step: an entirely challenge-less
+  // deployment must not regress to "no season", or a brand-new install
+  // shows an empty profile with no season name on it either.
+  const { pool } = makeMockPool({ stockedSeason: null, activeSeason: SEASON });
+  assert.deepEqual(await fetchProfileSeason(pool), SEASON);
 });
 
 test('season resolver falls back to the newest season when none is active', async () => {
-  const { pool } = makeMockPool({ activeSeason: null, anySeason: { id: 2, name: 'Season 2' } });
+  const { pool } = makeMockPool({
+    stockedSeason: null, activeSeason: null, anySeason: { id: 2, name: 'Season 2' },
+  });
   assert.deepEqual(await fetchProfileSeason(pool), { id: 2, name: 'Season 2' });
 });
 
