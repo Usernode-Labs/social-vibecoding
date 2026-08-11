@@ -31,6 +31,14 @@ const OFFLINE = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'lib', 'offline.ts'), 'utf8',
 );
 const AUTH = read('js/auth-screens.js');
+// The anonymous screens are crossing over to React one chunk at a time
+// (#1080 chunk C), so their submit guards live in whichever half owns the
+// screen. Everything below asserts against the union.
+const FRONTEND = (rel) =>
+  fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', rel), 'utf8');
+const AUTH_SHARED = FRONTEND('features/auth/shared.ts');
+const AUTH_SCREENS_TSX = ['features/auth/landing.tsx', 'features/auth/login.tsx']
+  .map(FRONTEND).join('\n');
 const SETTINGS = read('js/settings.js');
 const HOME = read('js/home.js');
 const CSS = read('css/app.css');
@@ -226,15 +234,24 @@ test('"Try again" is wired once, globally, and re-probes', () => {
 });
 
 test('every credential exchange refuses to submit while offline', () => {
-  assert.match(AUTH, /function blockedOffline\(/);
-  // The guard consults the /health probe, not navigator.onLine, which
-  // false-positives behind exactly the captive portals that break logins.
-  const guard = AUTH.slice(AUTH.indexOf('function blockedOffline('));
-  assert.match(guard.slice(0, 900), /Offline\.isOffline\(\)/);
-  assert.ok(!/navigator\.onLine/.test(guard.slice(0, 900)));
+  // Both halves define the same guard — legacy for the screens it still
+  // owns, shared.ts for the converted ones.
+  for (const [label, src] of [['auth-screens.js', AUTH], ['shared.ts', AUTH_SHARED]]) {
+    assert.match(src, /function blockedOffline\(/, `${label} has no guard`);
+    // The guard consults the /health probe, not navigator.onLine, which
+    // false-positives behind exactly the captive portals that break logins.
+    const guard = src.slice(src.indexOf('function blockedOffline('));
+    assert.match(guard.slice(0, 900), /Offline\?\?\.isOffline\(\)|Offline\.isOffline\(\)|isOffline\(\)/,
+      `${label}'s guard does not consult the probe`);
+    assert.ok(!/navigator\.onLine/.test(guard.slice(0, 900)),
+      `${label}'s guard reads navigator.onLine`);
+  }
   // One guard per submit path: password, otp request/verify/set-password,
-  // wallet, register.
-  const uses = [...AUTH.matchAll(/if \(blockedOffline\(/g)];
+  // wallet, register — counted across both halves.
+  const uses = [
+    ...AUTH.matchAll(/if \(blockedOffline\(/g),
+    ...AUTH_SCREENS_TSX.matchAll(/if \(blockedOffline\(/g),
+  ];
   assert.ok(uses.length >= 6, `only ${uses.length} submit paths are guarded`);
 });
 

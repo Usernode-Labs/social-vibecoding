@@ -78,6 +78,11 @@ interface LegacyWindow {
     scheduleSafeAreaBroadcast?(): void;
   };
   AuthScreens?: Record<string, unknown>;
+  // The native bridge (usernode-native). Absent in a regular browser, which is
+  // the NORMAL state for the wallet fast path — see LoginScreen's walletDetect.
+  usernode?: { isNative?: boolean };
+  getNodeAddress?(): Promise<string | null>;
+  signMessage?(message: string): Promise<{ publicKey: string; signature: string }>;
 }
 
 /** `window`, with the legacy globals these screens talk to declared. */
@@ -146,6 +151,23 @@ export function blockedOffline(setError?: (msg: string) => void): boolean {
 /** Does a (possibly waiting-room) session exist right now? */
 export function hasSession(): boolean {
   return !!legacy().App?.user;
+}
+
+/** Are we inside the Usernode native app (bridge present)? */
+export function isNative(): boolean {
+  const w = legacy();
+  return !!(w.usernode && w.usernode.isNative);
+}
+
+/**
+ * Reload-free login completion, called after ANY successful credential
+ * exchange. Still the legacy router's method — it re-fetches /api/auth/me and
+ * hands over to `App.enterAuthed` — so it is reached by name, like every other
+ * hook on that object, until the router itself crosses over.
+ */
+export function finishLogin(): void {
+  const fn = legacy().AuthScreens?.finishLogin as undefined | (() => unknown);
+  if (fn) void fn();
 }
 
 /**
