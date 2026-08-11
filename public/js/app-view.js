@@ -602,20 +602,16 @@ const AppView = {
   // Screenshot-state deep link only (see the `?shot=` block above) — never
   // reached by a real Preview click, which goes through ensureStaging.
   showPreviewLoaderShot(shot) {
-    const overlay = document.getElementById('staging-overlay');
-    if (!overlay) return;
+    const staging = AppView._staging();
     // Take a load id so the Back button's teardown (and any later real
     // preview) supersedes this exactly as it would a genuine open.
     AppView._stagingLoadId += 1;
     AppView._stagingDockable = false;
     AppView._setStagingMode('fullscreen');
-    const iframe = document.getElementById('staging-iframe');
-    if (iframe) iframe.src = '';
-    const label = document.getElementById('staging-url-label');
-    if (label) label.textContent = 'https://staging-demo-preview.example';
-    overlay.classList.remove('hidden');
-    const back = document.getElementById('staging-back');
-    if (back) back.onclick = () => AppView.closeStagingOverlay();
+    staging.clearSrc();
+    staging.setUrlLabel('https://staging-demo-preview.example');
+    staging.open();
+    staging.setHandlers({ onBack: () => AppView.closeStagingOverlay() });
     if (shot === 'preview-rebuilding') {
       // The ONE state that still promises 20–60 seconds: a real rebuild.
       AppView._setStagingLoader(true, {
@@ -11734,10 +11730,12 @@ const AppView = {
   // click away. A side with no artifacts renders a "no version" note
   // (e.g. a brand-new screen with no production "before").
   openVisualComparison(triggerEl) {
-    const overlay = document.getElementById('visual-compare-overlay');
-    const body = document.getElementById('visual-compare-body');
-    const labelEl = document.getElementById('visual-compare-label');
-    if (!overlay || !body || !triggerEl) return;
+    // #1085 chunk H: the overlay is a React island
+    // (frontend/src/features/staging/visual-compare-overlay.tsx) — this
+    // function still BUILDS the comparison, it just publishes it as state
+    // instead of writing innerHTML and class names into React-owned DOM.
+    const compare = AppView._visualCompare();
+    if (!triggerEl) return;
     const d = triggerEl.dataset || {};
     const idOk = (id) => typeof id === 'string' && /^[a-f0-9]{32}$/.test(id);
     const pick = (...ids) => ids.find((id) => idOk(id)) || null;
@@ -11756,10 +11754,8 @@ const AppView = {
     ));
     const path = d.path || '/';
     const mobile = d.viewport === 'mobile';
-    if (labelEl) {
-      const base = (path && path !== '/') ? path : (mobile ? '/' : '');
-      labelEl.textContent = base ? `${base}${mobile ? ' (mobile)' : ''}` : '';
-    }
+    const base = (path && path !== '/') ? path : (mobile ? '/' : '');
+    const label = base ? `${base}${mobile ? ' (mobile)' : ''}` : '';
 
     const colStyle = 'flex:1 1 320px;min-width:0;display:flex;flex-direction:column;gap:6px';
     const mediaStyle = 'display:block;width:100%;max-height:78vh;object-fit:contain;object-position:top;background:rgba(0,0,0,0.35);border:1px solid rgba(127,127,127,0.25);border-radius:8px';
@@ -11782,22 +11778,26 @@ const AppView = {
     const pathLabel = ((path && path !== '/') || mobile)
       ? `<div class="text-xs text-zinc-400" style="margin-bottom:10px">Before / after — <code>${esc(path)}</code>${mobile ? ' (mobile)' : ''}</div>`
       : '';
-    body.innerHTML = `${pathLabel}<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">${column('Before', before)}${column('After', after)}</div>`;
+    const bodyHtml = `${pathLabel}<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">${column('Before', before)}${column('After', after)}</div>`;
 
     // Reveal now + stamp openedAt so modalDismissGuarded can swallow the
-    // opening tap's ghost click (same as the share/members modals).
-    AppView.revealModal(overlay);
+    // opening tap's ghost click (same as the share/members modals). The
+    // stamp is rendered as `data-opened-at`, which is where
+    // modalDismissGuarded already looks — see revealModal.
+    compare.open({ label, bodyHtml, openedAt: Date.now() });
 
     // Close affordances: Back button, backdrop click (the overlay root
-    // itself, not its children), and Escape. The Escape handler is added
-    // on open / removed on close so it never lingers. modalDismissGuarded
-    // swallows the opening tap's ghost click (matches the share modal).
-    const back = document.getElementById('visual-compare-back');
-    if (back) back.onclick = () => AppView.closeVisualComparison();
-    overlay.onclick = (e) => {
-      if (window.AppView && AppView.modalDismissGuarded && AppView.modalDismissGuarded(overlay)) return;
-      if (e.target === overlay) AppView.closeVisualComparison();
-    };
+    // itself, not its children — the island applies that test), and Escape.
+    // The Escape handler is added on open / removed on close so it never
+    // lingers. modalDismissGuarded swallows the opening tap's ghost click
+    // (matches the share modal).
+    compare.setHandlers({
+      onBack: () => AppView.closeVisualComparison(),
+      onBackdrop: () => {
+        if (AppView._visualCompareDismissGuarded()) return;
+        AppView.closeVisualComparison();
+      },
+    });
     AppView._visualCompareKeyHandler = (e) => {
       if (e.key === 'Escape') AppView.closeVisualComparison();
     };
@@ -11808,13 +11808,7 @@ const AppView = {
   // display:none) so any looping <video> actually stops, mirroring
   // toggleVisuals, and remove the Escape handler installed on open.
   closeVisualComparison() {
-    const overlay = document.getElementById('visual-compare-overlay');
-    const body = document.getElementById('visual-compare-body');
-    if (body) body.innerHTML = '';
-    if (overlay) {
-      overlay.classList.add('hidden');
-      overlay.onclick = null;
-    }
+    AppView._visualCompare().close();
     if (AppView._visualCompareKeyHandler) {
       document.removeEventListener('keydown', AppView._visualCompareKeyHandler);
       AppView._visualCompareKeyHandler = null;
@@ -13121,8 +13115,7 @@ const AppView = {
   //                (the caller must have mounted #dc-staging-panel first —
   //                see DevChat.previewStaging / openStagingPanel).
   async ensureStaging(sessionId, fallbackUrl, testing, opts) {
-    const overlay = document.getElementById('staging-overlay');
-    if (!overlay) return;
+    const staging = AppView._staging();
     const jump = !!(opts && opts.jump);
     const dock = !!(opts && opts.dock);
 
@@ -13136,7 +13129,7 @@ const AppView = {
 
     // Open the overlay + "spinning back up" loader right away, and take a
     // fresh load id so backing out (closeStagingOverlay) cancels this wait.
-    overlay.classList.remove('hidden');
+    staging.open();
     // #771: apply the requested mode before anything paints, so the loader
     // shows inside the side panel on a docked open (and a stale docked
     // class can't leak into a fullscreen open from the vote panel).
@@ -13149,7 +13142,7 @@ const AppView = {
     }
     if (window.DevConsole) DevConsole.setButtonVisible(true);
     const loadId = ++AppView._stagingLoadId;
-    document.getElementById('staging-iframe').src = '';
+    staging.clearSrc();
     AppView._pendingStagingPreview = null;
     // #816: a NEUTRAL opening state. This used to assert "the preview was
     // paused… this usually takes 20–60 seconds" before the server had even
@@ -13158,7 +13151,7 @@ const AppView = {
     // fronted by a screen promising a minute's wait. The rebuild copy now
     // lives in the `rebuilding` branch below, where it is actually true.
     AppView._setStagingLoader(true, { title: 'Opening preview…', sub: '' });
-    document.getElementById('staging-back').onclick = () => AppView.closeStagingOverlay();
+    staging.setHandlers({ onBack: () => AppView.closeStagingOverlay() });
 
     let data;
     try {
@@ -13274,10 +13267,7 @@ const AppView = {
   // `opts.checksRunning` adds one line explaining a legitimately slower
   // first load while the post-build checks pass runs.
   swapToStaging(stagingUrl, testing, opts) {
-    const overlay = document.getElementById('staging-overlay');
-    const iframe = document.getElementById('staging-iframe');
-    const label = document.getElementById('staging-url-label');
-    if (!overlay || !iframe) return;
+    const staging = AppView._staging();
 
     if (opts && typeof opts.dock === 'boolean') {
       if (opts.dock && document.getElementById('dc-staging-panel')) {
@@ -13321,19 +13311,17 @@ const AppView = {
     // retargets the pending load instead of being clobbered by it.
     const pending = { src: buildSrc(jump ? safePath : null) };
 
-    if (label) label.textContent = resolved;
-    overlay.classList.remove('hidden');
+    staging.setUrlLabel(resolved);
+    staging.open();
     // #771: the toggle's visibility depends on the overlay being open.
     AppView._updateStagingModeUi();
     if (window.DevConsole) DevConsole.setButtonVisible(true);
 
     AppView._renderTestingControls(buildSrc, pending, jump);
 
-    document.getElementById('staging-back').onclick = () => {
-      AppView.closeStagingOverlay();
-    };
+    staging.setHandlers({ onBack: () => AppView.closeStagingOverlay() });
 
-    iframe.src = '';
+    staging.clearSrc();
     const loadId = ++AppView._stagingLoadId;
     const checksRunning = !!(opts && opts.checksRunning);
 
@@ -13350,8 +13338,8 @@ const AppView = {
           ? 'Automated checks are running against this preview, so the first load may be a little slower.'
           : '',
       });
-      AppView._watchStagingIframeLoad(iframe, loadId);
-      iframe.src = pending.src;
+      AppView._watchStagingIframeLoad(staging.frame(), loadId);
+      staging.setSrc(pending.src);
       return;
     }
 
@@ -13368,8 +13356,8 @@ const AppView = {
       if (!ready) return;
       // Keep the spinner up across the render, same as the fast path.
       AppView._setStagingLoader(true, { title: 'Loading the preview…', sub: '' });
-      AppView._watchStagingIframeLoad(iframe, loadId);
-      iframe.src = pending.src;
+      AppView._watchStagingIframeLoad(staging.frame(), loadId);
+      staging.setSrc(pending.src);
     });
   },
 
@@ -13470,22 +13458,15 @@ const AppView = {
   // own the DevChat slot state (see expandStagingFullscreen /
   // dockStagingPanel / closeStagingOverlay).
   _setStagingMode(mode) {
-    const overlay = document.getElementById('staging-overlay');
     AppView._stagingMode = mode === 'docked' ? 'docked' : 'fullscreen';
-    if (overlay) {
-      if (AppView._stagingMode === 'docked') {
-        overlay.classList.add('staging-overlay-docked');
-        AppView._ensureStagingDockListeners();
-        AppView.rebindStagingDock();
-      } else {
-        overlay.classList.remove('staging-overlay-docked');
-        // Back to the CSS `inset: 0` fullscreen geometry.
-        overlay.style.top = '';
-        overlay.style.left = '';
-        overlay.style.width = '';
-        overlay.style.height = '';
-        if (AppView._stagingDockObserver) AppView._stagingDockObserver.disconnect();
-      }
+    // Mode is state on the SAME overlay — the docked class and the pinned rect
+    // change, the element (and therefore the iframe's document) never does.
+    AppView._staging().setMode(AppView._stagingMode);
+    if (AppView._stagingMode === 'docked') {
+      AppView._ensureStagingDockListeners();
+      AppView.rebindStagingDock();
+    } else if (AppView._stagingDockObserver) {
+      AppView._stagingDockObserver.disconnect();
     }
     AppView._updateStagingModeUi();
   },
@@ -13537,15 +13518,10 @@ const AppView = {
   // Pin the overlay over the slot's current bounding rect.
   _syncStagingDockGeometry() {
     if (AppView._stagingMode !== 'docked') return;
-    const overlay = document.getElementById('staging-overlay');
-    if (!overlay) return;
     const slot = document.getElementById('dc-staging-panel');
     if (!slot) { AppView.closeStagingOverlay(); return; }
     const r = slot.getBoundingClientRect();
-    overlay.style.top = `${Math.round(r.top)}px`;
-    overlay.style.left = `${Math.round(r.left)}px`;
-    overlay.style.width = `${Math.round(r.width)}px`;
-    overlay.style.height = `${Math.round(r.height)}px`;
+    AppView._staging().setDockRect({ top: r.top, left: r.left, width: r.width, height: r.height });
   },
 
   // "Full screen" (docked header button, and the narrow-viewport
@@ -13580,22 +13556,23 @@ const AppView = {
   // screen toggle and the docked ×-close. Idempotent; safe with the
   // overlay hidden.
   _updateStagingModeUi() {
-    const overlay = document.getElementById('staging-overlay');
-    const btn = document.getElementById('staging-fullscreen-btn');
-    const dockClose = document.getElementById('staging-dock-close');
-    if (dockClose) dockClose.onclick = () => AppView.closeStagingOverlay();
-    if (!btn) return;
-    btn.onclick = () => AppView.toggleStagingFullscreen();
+    const staging = AppView._staging();
+    staging.setHandlers({
+      onDockClose: () => AppView.closeStagingOverlay(),
+      onFullscreen: () => AppView.toggleStagingFullscreen(),
+    });
     const docked = AppView._stagingMode === 'docked';
-    const overlayOpen = !!overlay && !overlay.classList.contains('hidden');
+    const overlayOpen = staging.isOpen();
     const canRedock = AppView._stagingDockable
       && typeof DevChat !== 'undefined' && !!DevChat.currentSession
       && AppView._stagingDockViewport();
-    btn.classList.toggle('hidden', !overlayOpen || (!docked && !canRedock));
-    btn.textContent = docked ? 'Full screen' : 'Exit full screen';
-    btn.title = docked
-      ? 'Expand the preview to fill the screen'
-      : 'Dock the preview back beside the chat';
+    staging.setFullscreenBtn({
+      hidden: !overlayOpen || (!docked && !canRedock),
+      text: docked ? 'Full screen' : 'Exit full screen',
+      title: docked
+        ? 'Expand the preview to fill the screen'
+        : 'Dock the preview back beside the chat',
+    });
     // #970: docking / un-docking moves the preview frame's rect, so the
     // insets that apply to it change (a docked panel is nowhere near the
     // home indicator; a fullscreen one sits right on it).
@@ -13616,18 +13593,13 @@ const AppView = {
   // only when the preview was entered via an explicit "Test this change"
   // button — the one path where the panel auto-opens (#237).
   _renderTestingControls(buildSrc, pending, jump) {
-    const btn = document.getElementById('staging-test-btn');
-    const panel = document.getElementById('staging-testing-panel');
-    const content = document.getElementById('staging-testing-content');
-    const closeBtn = document.getElementById('staging-testing-close');
-    const iframe = document.getElementById('staging-iframe');
-    if (!btn || !panel || !content) return;
+    const staging = AppView._staging();
 
-    panel.classList.add('hidden');
+    staging.setTestPanelHidden(true);
     const t = AppView._stagingTesting;
     if (!t) {
-      btn.classList.add('hidden');
-      content.innerHTML = '';
+      staging.setTestBtn({ hidden: true, title: '' });
+      staging.setTestHtml('');
       return;
     }
 
@@ -13638,39 +13610,44 @@ const AppView = {
     // `const`, which never becomes a `window` property (#237; same pitfall
     // documented in group-chat.js).
     if (t.md) {
-      content.innerHTML = (typeof DevChat !== 'undefined' && typeof DevChat.renderMarkdown === 'function')
+      staging.setTestHtml((typeof DevChat !== 'undefined' && typeof DevChat.renderMarkdown === 'function')
         ? DevChat.renderMarkdown(t.md)
-        : `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(t.md)}</pre>`;
+        : `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(t.md)}</pre>`);
     } else {
-      content.innerHTML = '<span class="text-zinc-500">Use the button above to jump to the changed feature.</span>';
+      staging.setTestHtml('<span class="text-zinc-500">Use the button above to jump to the changed feature.</span>');
     }
 
-    btn.classList.remove('hidden');
-    btn.title = t.path ? 'Open the preview at the changed feature' : 'Show the testing instructions';
-    btn.onclick = () => {
-      // Toggle: a second click (panel already open) just closes it.
-      if (t.md && !panel.classList.contains('hidden')) {
-        panel.classList.add('hidden');
-        return;
-      }
-      if (t.path) {
-        // Retarget the (possibly still pending) load at the deep link —
-        // only if it isn't already pointing there, so re-opening the
-        // panel doesn't reload the iframe.
-        const target = buildSrc(t.path);
-        if (pending.src !== target) {
-          pending.src = target;
-          if (iframe && iframe.src) iframe.src = target;
+    staging.setTestBtn({
+      hidden: false,
+      title: t.path ? 'Open the preview at the changed feature' : 'Show the testing instructions',
+    });
+    staging.setHandlers({
+      onTest: () => {
+        // Toggle: a second click (panel already open) just closes it.
+        if (t.md && !staging.isTestPanelHidden()) {
+          staging.setTestPanelHidden(true);
+          return;
         }
-      }
-      if (t.md) panel.classList.remove('hidden');
-    };
-    if (closeBtn) closeBtn.onclick = () => panel.classList.add('hidden');
+        if (t.path) {
+          // Retarget the (possibly still pending) load at the deep link —
+          // only if it isn't already pointing there, so re-opening the
+          // panel doesn't reload the iframe.
+          const target = buildSrc(t.path);
+          if (pending.src !== target) {
+            pending.src = target;
+            const frame = staging.frame();
+            if (frame && frame.src) staging.setSrc(target);
+          }
+        }
+        if (t.md) staging.setTestPanelHidden(false);
+      },
+      onTestingClose: () => staging.setTestPanelHidden(true),
+    });
 
     // #237: the panel no longer auto-opens on every preview. It auto-shows
     // only when the user entered through an explicit "Test this change"
     // button (jump) — plain Preview keeps it hidden until asked for.
-    if (jump && t.md) panel.classList.remove('hidden');
+    if (jump && t.md) staging.setTestPanelHidden(false);
   },
 
   // Incremented on every swap/close so an in-flight readiness poll for a
@@ -13678,22 +13655,225 @@ const AppView = {
   // iframe.
   _stagingLoadId: 0,
 
+  // ── The staging overlay's state seam (#1085 chunk H) ────────────────
+  //
+  // #staging-overlay is a React island now
+  // (frontend/src/features/staging/staging-overlay.tsx). Its whole subtree —
+  // #staging-iframe included — is React-owned, so this module may no longer
+  // write classes, text, HTML or `.onclick` into it: the next render would
+  // reconcile those away, and the two owners would fight. It publishes STATE
+  // through the bridge below instead, and the bridge's members are exactly the
+  // writes the call sites used to make by hand.
+  //
+  // The one thing that stays imperative is the iframe's `src` (setSrc /
+  // clearSrc, through a ref the island registers). That is deliberate and it is
+  // the whole point: `src` as state would let a re-render re-apply it, and
+  // re-applying `src` RELOADS the preview — destroying whatever the user was
+  // doing inside the previewed app. #771's docked ↔ fullscreen toggle makes the
+  // same promise ("the same overlay, so the iframe keeps its state either way")
+  // and now keeps it through React.
+  //
+  // `_stagingDom` implements the same API against the raw document, for
+  // contexts where the React bundle is not present at all: the node-side render
+  // tests load this file as a classic script into a stubbed document, and a
+  // browser that somehow failed to load the bundle keeps a working preview
+  // rather than a dead overlay. EXACTLY ONE adapter is live in any context —
+  // `window.UsernodeReact.staging` exists only when the island does — so these
+  // nodes never have two writers.
+  _staging() {
+    return (typeof window !== 'undefined' && window.UsernodeReact && window.UsernodeReact.staging)
+      || AppView._stagingDom;
+  },
+
+  _stagingDom: {
+    _handlers: {},
+    _el(id) {
+      return (typeof document !== 'undefined' && document.getElementById)
+        ? document.getElementById(id) : null;
+    },
+    _setHidden(id, hidden) {
+      const el = this._el(id);
+      if (!el || !el.classList) return;
+      if (hidden) el.classList.add('hidden');
+      else el.classList.remove('hidden');
+    },
+    _setText(id, text) {
+      const el = this._el(id);
+      if (el) el.textContent = text;
+    },
+    open() { this._setHidden('staging-overlay', false); },
+    close() {
+      this._setHidden('staging-overlay', true);
+      this._setHidden('staging-loader', true);
+      this._setHidden('staging-test-btn', true);
+      this._setHidden('staging-testing-panel', true);
+      this._setHidden('staging-fullscreen-btn', true);
+    },
+    isOpen() {
+      const el = this._el('staging-overlay');
+      return !!el && !!el.classList && !el.classList.contains('hidden');
+    },
+    setMode(mode) {
+      const el = this._el('staging-overlay');
+      if (!el || !el.classList) return;
+      if (mode === 'docked') {
+        el.classList.add('staging-overlay-docked');
+        return;
+      }
+      el.classList.remove('staging-overlay-docked');
+      // Back to the CSS `inset: 0` fullscreen geometry.
+      if (el.style) { el.style.top = ''; el.style.left = ''; el.style.width = ''; el.style.height = ''; }
+    },
+    mode() {
+      const el = this._el('staging-overlay');
+      return el && el.classList && el.classList.contains('staging-overlay-docked')
+        ? 'docked' : 'fullscreen';
+    },
+    setDockRect(rect) {
+      const el = this._el('staging-overlay');
+      if (!el || !el.style || !rect) return;
+      el.style.top = `${Math.round(rect.top)}px`;
+      el.style.left = `${Math.round(rect.left)}px`;
+      el.style.width = `${Math.round(rect.width)}px`;
+      el.style.height = `${Math.round(rect.height)}px`;
+    },
+    setUrlLabel(text) { this._setText('staging-url-label', text || ''); },
+    setLoader(visible, { title, sub } = {}) {
+      this._setHidden('staging-loader', !visible);
+      if (title !== undefined) this._setText('staging-loader-title', title);
+      if (sub !== undefined) this._setText('staging-loader-sub', sub);
+    },
+    setTestBtn({ hidden, title } = {}) {
+      this._setHidden('staging-test-btn', !!hidden);
+      const el = this._el('staging-test-btn');
+      if (el && title !== undefined) el.title = title || '';
+    },
+    setTestHtml(html) {
+      const el = this._el('staging-testing-content');
+      if (el) el.innerHTML = html || '';
+    },
+    setTestPanelHidden(hidden) { this._setHidden('staging-testing-panel', !!hidden); },
+    isTestPanelHidden() {
+      const el = this._el('staging-testing-panel');
+      return !el || !el.classList || el.classList.contains('hidden');
+    },
+    setFullscreenBtn({ hidden, text, title } = {}) {
+      this._setHidden('staging-fullscreen-btn', !!hidden);
+      const el = this._el('staging-fullscreen-btn');
+      if (!el) return;
+      if (text !== undefined) el.textContent = text;
+      if (title !== undefined) el.title = title || '';
+    },
+    frame() { return this._el('staging-iframe'); },
+    setSrc(src) {
+      const el = this.frame();
+      if (!el || !src) return false;
+      el.src = src;
+      return true;
+    },
+    clearSrc() {
+      const el = this.frame();
+      if (el) el.src = '';
+    },
+    setHandlers(patch) {
+      Object.assign(this._handlers, patch || {});
+      const bind = (id, key) => {
+        const el = this._el(id);
+        if (!el) return;
+        el.onclick = (ev) => {
+          const fn = this._handlers[key];
+          if (typeof fn === 'function') fn(ev);
+        };
+      };
+      bind('staging-back', 'onBack');
+      bind('staging-dock-close', 'onDockClose');
+      bind('staging-fullscreen-btn', 'onFullscreen');
+      bind('staging-test-btn', 'onTest');
+      bind('staging-testing-close', 'onTestingClose');
+    },
+    stats() { return { navigations: 0 }; },
+  },
+
+  // #1085 chunk H: the same seam for #visual-compare-overlay
+  // (frontend/src/features/staging/visual-compare-overlay.tsx). Smaller than
+  // the staging one because the overlay has no iframe and no modes: a label, a
+  // body, and the open timestamp the ghost-click guard reads.
+  //
+  // openVisualComparison still BUILDS the comparison markup as a string — that
+  // generator is out of chunk H's scope — so `bodyHtml` crosses the seam as
+  // HTML. Everything variable in it is either a 32-hex artifact id validated at
+  // the call site or escaped there.
+  _visualCompare() {
+    return (typeof window !== 'undefined' && window.UsernodeReact && window.UsernodeReact.visualCompare)
+      || AppView._visualCompareDom;
+  },
+
+  _visualCompareDom: {
+    _handlers: {},
+    _el(id) {
+      return (typeof document !== 'undefined' && document.getElementById)
+        ? document.getElementById(id) : null;
+    },
+    open({ label, bodyHtml, openedAt } = {}) {
+      const body = this._el('visual-compare-body');
+      if (body) body.innerHTML = bodyHtml || '';
+      const labelEl = this._el('visual-compare-label');
+      if (labelEl) labelEl.textContent = label || '';
+      const overlay = this._el('visual-compare-overlay');
+      if (!overlay) return;
+      // Same stamp revealModal makes, so modalDismissGuarded keeps working.
+      if (overlay.dataset) overlay.dataset.openedAt = String(openedAt || 0);
+      if (overlay.classList) overlay.classList.remove('hidden');
+    },
+    close() {
+      const overlay = this._el('visual-compare-overlay');
+      if (overlay && overlay.classList) overlay.classList.add('hidden');
+      // Clearing the body is what actually stops a looping <video> (#353).
+      const body = this._el('visual-compare-body');
+      if (body) body.innerHTML = '';
+      const labelEl = this._el('visual-compare-label');
+      if (labelEl) labelEl.textContent = '';
+    },
+    openedAt() {
+      const overlay = this._el('visual-compare-overlay');
+      const at = overlay && overlay.dataset ? Number(overlay.dataset.openedAt || 0) : 0;
+      return Number.isFinite(at) ? at : 0;
+    },
+    setHandlers(patch) {
+      Object.assign(this._handlers, patch || {});
+      const back = this._el('visual-compare-back');
+      if (back) {
+        back.onclick = (ev) => {
+          const fn = this._handlers.onBack;
+          if (typeof fn === 'function') fn(ev);
+        };
+      }
+      const overlay = this._el('visual-compare-overlay');
+      if (overlay) {
+        overlay.onclick = (ev) => {
+          // Backdrop only — the overlay root itself, never a child.
+          if (ev && ev.target !== overlay) return;
+          const fn = this._handlers.onBackdrop;
+          if (typeof fn === 'function') fn(ev);
+        };
+      }
+    },
+  },
+
+  // The compare overlay's half of modalDismissGuarded: it lives behind the
+  // bridge because the open time is React state now, not a DOM attribute this
+  // module may read back.
+  _visualCompareDismissGuarded() {
+    const at = AppView._visualCompare().openedAt();
+    return at > 0 && (Date.now() - at) < AppView.MODAL_GESTURE_GUARD_MS;
+  },
+
   // #816: an EXPLICIT empty string clears the line; only `undefined` leaves
   // it alone. The old truthiness check made '' a no-op, which would leave a
   // previous state's sub-line (the rebuild estimate, the checks note)
   // stranded under a title that no longer matches it.
   _setStagingLoader(visible, { title, sub } = {}) {
-    const loader = document.getElementById('staging-loader');
-    if (!loader) return;
-    loader.classList.toggle('hidden', !visible);
-    if (title !== undefined) {
-      const t = document.getElementById('staging-loader-title');
-      if (t) t.textContent = title;
-    }
-    if (sub !== undefined) {
-      const s = document.getElementById('staging-loader-sub');
-      if (s) s.textContent = sub;
-    }
+    AppView._staging().setLoader(visible, { title, sub });
   },
 
   // #816: retry schedule for the fallback readiness poll below.
@@ -13773,8 +13953,8 @@ const AppView = {
   },
 
   closeStagingOverlay() {
-    const overlay = document.getElementById('staging-overlay');
-    const iframe = document.getElementById('staging-iframe');
+    const staging = AppView._staging();
+    const iframe = staging.frame();
     // #771: leave docked mode first (strips the docked class + pinned
     // geometry, disconnects the slot observer) and collapse the dev-chat
     // placeholder slot. The open check on stagingPanel makes this safe to
@@ -13787,8 +13967,7 @@ const AppView = {
       DevChat.stagingPanel.open = false;
       DevChat.renderChatView();
     }
-    const fsBtn = document.getElementById('staging-fullscreen-btn');
-    if (fsBtn) fsBtn.classList.add('hidden');
+    staging.setFullscreenBtn({ hidden: true });
     // Invalidate any in-flight readiness poll and hide the loader.
     AppView._stagingLoadId += 1;
     // #439: drop any pending on-demand rebuild marker + its give-up timer so
@@ -13800,14 +13979,13 @@ const AppView = {
     if (AppView._stagingIframeTimer) { clearTimeout(AppView._stagingIframeTimer); AppView._stagingIframeTimer = null; }
     if (iframe) { iframe.onload = null; iframe.onerror = null; }
     AppView._setStagingLoader(false);
-    if (overlay) overlay.classList.add('hidden');
-    if (iframe) iframe.src = '';
+    // The overlay hides and the preview is dropped — but the ELEMENT stays,
+    // so the next Preview click re-points the same iframe instead of paying
+    // for a fresh one.
+    staging.close();
+    staging.clearSrc();
     // #127: reset the testing affordances so the next preview starts clean.
     AppView._stagingTesting = null;
-    const testBtn = document.getElementById('staging-test-btn');
-    if (testBtn) testBtn.classList.add('hidden');
-    const testPanel = document.getElementById('staging-testing-panel');
-    if (testPanel) testPanel.classList.add('hidden');
     // Restore dev-console button visibility based on whatever tab the
     // user lands back on.
     if (window.DevConsole) {

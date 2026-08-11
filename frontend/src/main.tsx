@@ -66,9 +66,15 @@ import { registerServiceWorker } from './lib/service-worker';
 // side effect, and imported HERE (rather than reached from a Shell island)
 // because the Dev surfaces are runtime-injected into an empty #app-content and
 // so have no island to hang off — see that file's header and
-// ./lib/interim-root.ts. app-view.js can reach the API from the moment
+// ./lib/legacy-portals.tsx. app-view.js can reach the API from the moment
 // DOMContentLoaded fires, which is the earliest App.switchTab() can run.
 import './features/dev-board/mount';
+// #1085 chunk H: publishes window.UsernodeReact.staging and .visualCompare at
+// module scope, for the same reason — app-view.js is a classic script that
+// cannot import from this bundle, and it opens the staging overlay from a user
+// gesture that reads the resulting DOM on its next statement. Imported here so
+// the bridge exists before hydration rather than at first render of the island.
+import './features/staging/mount';
 // #1084 chunk G: the retired public/js/dev-chat.js, moved into the bundle
 // verbatim. Imported HERE rather than from a Shell island for the same reason
 // as the dev board above — #dc-view is written into an empty #app-content at
