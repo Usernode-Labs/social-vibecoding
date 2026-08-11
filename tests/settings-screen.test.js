@@ -615,8 +615,14 @@ test('the ?shot=settings-back driver runs a real traversal from init()', () => {
     'and backs out through a history traversal — the dispatch pair a hash write alone cannot produce');
   assert.doesNotMatch(body, /USERNODE_ENV/,
     'pure UI state, so the driver is ungated like ?shot=menu');
-  const init = appJs.slice(appJs.indexOf('  init() {'));
-  assert.match(init.slice(0, 4000), /App\._applySettingsBackShot\(\);/,
+  // Wired in the same run of shot drivers, after restoreFromHash() has put
+  // the screen up — the traversal only means anything once #settings is open.
+  const drivers = appJs.slice(
+    appJs.indexOf('App.restoreFromHash();\n    App._applyMenuShot();'),
+    appJs.indexOf('App._applyFeedbackShot();'),
+  );
+  assert.ok(drivers.length, 'app.js still runs its shot drivers together after restoreFromHash()');
+  assert.match(drivers, /App\._applySettingsBackShot\(\);/,
     'init() wires the driver alongside the other shot drivers');
 });
 
