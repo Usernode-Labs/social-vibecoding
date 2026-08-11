@@ -37,15 +37,21 @@ const INDEX_SRC = fs.readFileSync(
   path.join(__dirname, '../public/index.html'), 'utf8'
 );
 
-test('offers exactly three routes, in the documented order', () => {
+test('offers exactly four routes, in the documented order', () => {
   // Without the #1049 hand-offs (a deployment with no GitHub-link support)
-  // this is the original list, unchanged.
+  // this is the original list with ONE change: the single "use a coding
+  // tool on your computer" row is now the two venues it always covered —
+  // `local` continues this session on your machine, `own-tools-pr` is you
+  // working alone and importing a pull request, with no Usernode chat.
   const options = CreditOptions.options({});
-  assert.equal(options.length, 3);
-  assert.deepEqual(options.map((o) => o.id), ['api-key', 'local-tool', 'connector']);
+  assert.equal(options.length, 4);
+  assert.deepEqual(
+    options.map((o) => o.id),
+    ['api-key', 'local', 'own-tools-pr', 'connector']
+  );
   assert.deepEqual(
     options.map((o) => o.hash),
-    ['#settings/api-key', '#settings/cli', '#settings/connectors']
+    ['#settings/api-key', '#settings/cli', '#settings/cli', '#settings/connectors']
   );
   // Every entry must be renderable: a blank title or CTA would ship an
   // unlabelled button.
@@ -64,13 +70,14 @@ test('with the external flows available, the hand-offs lead', () => {
   const options = CreditOptions.options({ externalFlowsAvailable: true });
   assert.deepEqual(
     options.map((o) => o.id),
-    ['claude-code', 'codex', 'api-key', 'local-tool'],
-    'Claude Code and Codex first, then BYOK, then the local tool'
+    ['web-claude-code', 'web-codex', 'api-key', 'local', 'own-tools-pr'],
+    'the two web venues first, then BYOK, then the two on-your-computer venues'
   );
   assert.deepEqual(
     options.filter((o) => o.flow).map((o) => o.flow),
     ['claude-code', 'codex'],
-    'only the two hand-offs carry a flow'
+    'only the two hand-offs carry a flow — and it is still the PERSISTED '
+    + 'dev_flow_preference value, not the venue id'
   );
   // Every entry keeps a hash: a surface that wires no flow handler still has
   // somewhere to send the user (see the wire() test below).
@@ -86,11 +93,44 @@ test('with the external flows available, the hand-offs lead', () => {
 });
 
 test('the intro sentence counts the routes actually offered', () => {
-  assert.match(CreditOptions.cardHtml({}), /Three ways to keep building/);
+  assert.match(CreditOptions.cardHtml({}), /Four ways to keep building/);
   assert.match(
     CreditOptions.cardHtml({ externalFlowsAvailable: true }),
-    /Four ways to keep building/
+    /Five ways to keep building/
   );
+  // Gating is by OMISSION, so a deployment with no CLI and a read-only
+  // viewer produces a shorter list — and the sentence has to be able to
+  // spell whatever number that is, in words. A digit here means the
+  // numeral table fell off the end of a count it can now reach.
+  for (const state of [
+    {},
+    { externalFlowsAvailable: true },
+    { externalFlowsAvailable: true, cliAuthEnabled: false, canCollaborate: false },
+    { cliAuthEnabled: false, canCollaborate: false },
+  ]) {
+    assert.doesNotMatch(
+      CreditOptions.introFor(CreditOptions.options(state)), /^\d/,
+      `the intro fell back to a digit for ${JSON.stringify(state)}`
+    );
+  }
+});
+
+test('a venue this viewer cannot use is absent, never disabled', () => {
+  // The kit's touch idiom is an action sheet, which DROPS disabled rows —
+  // so a disabled entry is invisible on a phone and inert-but-present on
+  // desktop. Two different products. See public/js/build-venues.js.
+  const gated = CreditOptions.options({
+    externalFlowsAvailable: true, cliAuthEnabled: false, canCollaborate: false,
+  });
+  const ids = gated.map((o) => o.id);
+  assert.ok(!ids.includes('local'), 'no CLI on this deployment → no local venue');
+  assert.ok(
+    !ids.includes('own-tools-pr'),
+    'a viewer who cannot push branches cannot import a PR either'
+  );
+  for (const option of gated) {
+    assert.ok(!('disabled' in option), `${option.id} must not ship a disabled flag`);
+  }
 });
 
 test('every destination is a section Settings actually declares', () => {
@@ -128,9 +168,9 @@ test('a user who already has a key is told to check it, not to add one', () => {
 test('the lead distinguishes your allowance from the shared platform budget', () => {
   assert.match(CreditOptions.lead({}), /you're out of today's free ai credits/i);
   assert.match(CreditOptions.lead({ globalOut: true }), /shared daily ai budget/i);
-  // Both states still offer all three routes: every one of them bypasses
-  // the platform budget.
-  assert.equal(CreditOptions.options({ globalOut: true }).length, 3);
+  // Both states still offer every route: all of them bypass the platform
+  // budget.
+  assert.equal(CreditOptions.options({ globalOut: true }).length, 4);
 });
 
 test('the platform error text is escaped, never injected', () => {

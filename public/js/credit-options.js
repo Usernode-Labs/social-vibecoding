@@ -23,7 +23,20 @@
 (function () {
   'use strict';
 
-  var SETTINGS_HASHES = {
+  // The six build venues, loaded as a classic script ahead of this one in
+  // the browser and required directly under node. Resolved lazily rather
+  // than captured at definition time so load order inside a test harness
+  // (which may seed window.BuildVenues after evaluating this file) cannot
+  // freeze a null.
+  function venues() {
+    if (typeof window !== 'undefined' && window.BuildVenues) return window.BuildVenues;
+    if (typeof require === 'function') {
+      try { return require('./build-venues.js'); } catch (err) { /* browser */ }
+    }
+    return null;
+  }
+
+  var SETTINGS_HASHES = (venues() && venues().SETTINGS_HASHES) || {
     apiKey: '#settings/api-key',
     localTool: '#settings/cli',
     connector: '#settings/connectors',
@@ -70,52 +83,71 @@
       cta: hasApiKey ? 'Check API key' : 'Add API key',
       hash: SETTINGS_HASHES.apiKey,
     };
-    var localTool = {
-      id: 'local-tool',
-      title: 'Use a coding tool on your computer',
-      blurb: 'Claude Code, Codex, Cursor or the Usernode CLI, running on your machine and your plan. Usernode hands it the task and turns the result into a proposal.',
-      cta: 'Set up a coding tool',
-      hash: SETTINGS_HASHES.localTool,
+    // Every route out of here except the API key IS a build venue, so the
+    // list comes from public/js/build-venues.js in `blocked` mode rather
+    // than being retyped here. That is what stopped "use a coding tool on
+    // your computer" from covering two different products: the CLI lease
+    // keeps THIS session (Usernode drives, your machine executes, same
+    // transcript and proposal), while your own tools mean you working
+    // alone and bringing the result back as a pull request with no
+    // Usernode chat at all. They are two rows now because they are two
+    // answers.
+    //
+    // `usernode-claude` comes back marked unavailable in this mode — it is
+    // the venue that just refused the turn. It is not a way to keep
+    // building, so it is not in this list and not in the count; the card's
+    // own lead sentence is where the refusal is stated.
+    var BV = venues();
+    var venueRows = BV
+      ? BV.venuesFor({
+        mode: 'blocked',
+        openrouterAvailable: s.openrouterAvailable,
+        cliAuthEnabled: s.cliAuthEnabled !== false,
+        externalFlowsAvailable: s.externalFlowsAvailable,
+        canCollaborate: s.canCollaborate !== false,
+        blockedReason: s.error || null,
+      }).filter(function (row) { return !row.unavailable; })
+      : [];
+    var asOption = function (row) {
+      return {
+        id: row.id,
+        title: row.label,
+        blurb: row.blurb + ' ' + row.consequence,
+        cta: row.cta,
+        flow: row.mechanism.flow || null,
+        hash: row.mechanism.hash || SETTINGS_HASHES.localTool,
+      };
     };
+    // Running out of credits is the moment someone is most willing to try
+    // another route (#1049), so the two that need no new account and no
+    // card — the Claude or ChatGPT plan they already pay for, reachable in
+    // one guided walkthrough without leaving the chat — lead. Everything
+    // else keeps the original order behind the API key. When the
+    // deployment cannot offer the web hand-offs at all this is exactly the
+    // pre-#1049 shape, with the local pair split in two.
+    var handoffs = venueRows.filter(function (r) { return r.mechanism.kind === 'flow'; });
+    var rest = venueRows.filter(function (r) { return r.mechanism.kind !== 'flow'; });
+
+    var out = handoffs.map(asOption);
+    out.push(apiKey);
+    rest.forEach(function (row) { out.push(asOption(row)); });
     if (!s.externalFlowsAvailable) {
-      return [
-        apiKey,
-        localTool,
-        {
-          id: 'connector',
-          title: 'Use your Claude.ai or ChatGPT subscription',
-          blurb: 'Connect Usernode to Claude or ChatGPT and let Claude Code on the web or Codex do the work on the plan you already pay for.',
-          cta: 'Connect Claude or ChatGPT',
-          hash: SETTINGS_HASHES.connector,
-        },
-      ];
+      out.push({
+        id: 'connector',
+        title: 'Use your Claude.ai or ChatGPT subscription',
+        blurb: 'Connect Usernode to Claude or ChatGPT and let Claude Code on the web or Codex do the work on the plan you already pay for.',
+        cta: 'Connect Claude or ChatGPT',
+        hash: SETTINGS_HASHES.connector,
+      });
     }
-    return [
-      {
-        id: 'claude-code',
-        title: 'Carry on in Claude Code',
-        blurb: 'Usernode writes the work order; Claude Code on the web builds it on your own Claude plan and pushes to your fork. Usernode opens the pull request and imports it as a proposal. No credits, no API key.',
-        cta: 'Use Claude Code',
-        flow: 'claude-code',
-        hash: SETTINGS_HASHES.connector,
-      },
-      {
-        id: 'codex',
-        title: 'Carry on in Codex',
-        blurb: 'The same hand-off for Codex on the web and the ChatGPT plan you already pay for. Usernode guides you through linking GitHub, forking and submitting.',
-        cta: 'Use Codex',
-        flow: 'codex',
-        hash: SETTINGS_HASHES.connector,
-      },
-      apiKey,
-      localTool,
-    ];
+    return out;
   }
 
   // "Three ways to keep building right now:" — the count moves with the
-  // deployment (#1049), so it is spelled from the list rather than frozen
-  // into the string.
-  var NUMERALS = ['no', 'one', 'two', 'three', 'four', 'five'];
+  // deployment (#1049) and now with the venue gating too, so it is spelled
+  // from the list rather than frozen into the string. The ceiling is the
+  // six venues plus the API key and the connector row.
+  var NUMERALS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
 
   function introFor(list) {
     var n = list.length;

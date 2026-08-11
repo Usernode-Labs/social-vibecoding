@@ -246,8 +246,11 @@ const DevChat = {
     return DevChat._agentBackend(session) === 'codex_openrouter';
   },
 
+  // Venue-first names. "Claude Code" used to mean BOTH the platform backend
+  // and the web hand-off, in menus that sat inches apart; the venue names
+  // say where the work happens and collide with nothing.
   _agentName(backend) {
-    return backend === 'codex_openrouter' ? 'OpenRouter' : 'Claude Code';
+    return backend === 'codex_openrouter' ? 'Usernode · OpenRouter' : 'Usernode · Claude';
   },
 
   // Runtime rows use camelCase metadata, session rows use snake_case, and
@@ -288,19 +291,29 @@ const DevChat = {
     return target;
   },
 
-  _agentButtonText(session) {
-    const backend = DevChat._agentBackend(session);
-    if (backend !== 'codex_openrouter') return 'Claude Code';
-    const model = String(session?.agent_model || '').trim();
-    return model ? `OpenRouter · ${model}` : 'OpenRouter';
+  // The venue THIS session is building in, in the shared vocabulary.
+  //
+  // Everything the derivation needs already lives on the session row or in
+  // the status poll; build-venues.js owns the precedence (imported first,
+  // then a live lease, then the hand-off, then the backend) so this module
+  // and the session cards can't disagree about the same session.
+  _currentVenueId() {
+    if (!window.BuildVenues) return 'usernode-claude';
+    const s = DevChat.currentSession || {};
+    return BuildVenues.currentVenue({
+      source: s.source,
+      localAgent: DevChat._localAgent || null,
+      externalAgent: s.external_agent,
+      agentBackend: DevChat._agentBackend(s),
+    });
   },
 
   _agentBillingNote(session) {
     if (DevChat._agentBackend(session) === 'codex_openrouter') {
       const model = String(session?.agent_model || '').trim();
-      return `All chat and coding in this session uses ${model || 'your selected model'} through OpenRouter and bills your OpenRouter key.`;
+      return `Building on Usernode · OpenRouter${model ? ` (${model})` : ''} — coding turns bill your OpenRouter key.`;
     }
-    return 'Chat and coding use Usernode’s Claude path and its normal credit rules.';
+    return 'Building on Usernode · Claude — coding turns use your daily Usernode credits.';
   },
 
   _busyComposerPlaceholder() {
@@ -433,20 +446,20 @@ const DevChat = {
       <div class="w-full max-w-lg rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-5 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="dc-agent-choice-title">
         <div class="flex items-start gap-3">
           <div class="min-w-0 flex-1">
-            <h2 id="dc-agent-choice-title" class="text-lg font-bold text-zinc-900 dark:text-zinc-100">${mode === 'switch' ? 'Choose how this session runs' : 'Choose how to run this session'}</h2>
-            <p class="mt-1 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">${mode === 'switch' ? 'Switching keeps this branch and conversation, but starts fresh model context on the next turn.' : 'Your saved default is preselected; this choice is pinned to the new session.'}</p>
+            <h2 id="dc-agent-choice-title" class="text-lg font-bold text-zinc-900 dark:text-zinc-100">${mode === 'switch' ? 'Where should this session build?' : 'Where should this build?'}</h2>
+            <p class="mt-1 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">${mode === 'switch' ? 'Switching keeps this branch and conversation, but starts a fresh coding-agent context on the next turn.' : 'Both agents stay available. Your saved default is preselected; this choice is pinned to the new session.'}</p>
           </div>
           <button type="button" id="dc-agent-choice-close" class="shrink-0 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200" aria-label="Close">✕</button>
         </div>
         <div class="mt-4 grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Session AI">
           <button type="button" id="dc-agent-choice-claude" role="radio" class="rounded-lg border p-3 text-left transition-colors">
-            <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Claude Code</span>
-            <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">Usernode’s existing coding-agent path.</span>
+            <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Usernode · Claude</span>
+            <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">In this chat, on your daily Usernode credits.</span>
             ${data.defaultBackend === 'claude_code' ? '<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-300">Saved default</span>' : ''}
           </button>
           <button type="button" id="dc-agent-choice-codex" role="radio" class="rounded-lg border p-3 text-left transition-colors">
-            <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">OpenRouter</span>
-            <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">All chat and coding uses your selected model and your OpenRouter key.</span>
+            <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Usernode · OpenRouter</span>
+            <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">In this chat, on your own model and OpenRouter key.</span>
             ${data.defaultBackend === 'codex_openrouter' ? '<span class="mt-2 inline-block rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-300">Saved default</span>' : ''}
           </button>
         </div>
@@ -505,14 +518,15 @@ const DevChat = {
       settingsButton.classList.toggle('hidden', !codex);
 
       applyButton.disabled = false;
+      const venueName = codex ? 'Usernode · OpenRouter' : 'Usernode · Claude';
       applyButton.textContent = mode === 'switch'
-        ? `Switch to ${codex ? 'OpenRouter' : 'Claude Code'}`
-        : `Create with ${codex ? 'OpenRouter' : 'Claude Code'}`;
+        ? `Switch to ${venueName}`
+        : `Build on ${venueName}`;
 
       if (!codex) {
         status.textContent = data.loadError
-          ? `${data.loadError} Claude Code is still available.`
-          : 'Claude Code uses Usernode’s existing platform coding-agent path.';
+          ? `${data.loadError} Usernode · Claude is still available.`
+          : 'Usernode · Claude builds in this chat on your daily Usernode credits.';
         return;
       }
       if (data.loadError) {
@@ -521,7 +535,7 @@ const DevChat = {
         return;
       }
       if (!data.codexAvailable) {
-        status.textContent = 'OpenRouter is not enabled for this account or deployment.';
+        status.textContent = 'Usernode · OpenRouter is not enabled for this account or deployment.';
         applyButton.disabled = true;
         return;
       }
@@ -594,7 +608,12 @@ const DevChat = {
     });
   },
 
-  async _switchCurrentCodingAgent() {
+  // `explicit` is a {backend, model, reasoningEffort} the caller already
+  // has — the venue sheet picked it, so re-asking through the old modal
+  // would be asking the same question twice. Omitted, this still opens the
+  // detail chooser, which is what the OpenRouter row needs (a backend is
+  // not a complete answer there: it wants a model and an effort too).
+  async _switchCurrentCodingAgent(explicit) {
     const session = DevChat.currentSession;
     if (!session || DevChat.isStreaming) return;
     const current = {
@@ -602,7 +621,7 @@ const DevChat = {
       model: session.agent_model || null,
       reasoningEffort: session.agent_reasoning_effort || null,
     };
-    const choice = await DevChat._chooseCodingAgent({ mode: 'switch', current });
+    const choice = explicit || await DevChat._chooseCodingAgent({ mode: 'switch', current });
     if (!choice || !DevChat.currentSession || DevChat.currentSession.id !== session.id) return;
 
     const same = choice.backend === current.backend
@@ -1069,6 +1088,20 @@ const DevChat = {
     }
   },
 
+  // Best-effort: a failed save must not block the venue the user just chose.
+  // Settings → Claude & ChatGPT connectors is the other door to this value.
+  async _saveDevFlowPreference(flow) {
+    try {
+      const res = await fetch('/api/me/dev-flow', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ flow }),
+      });
+      if (res.ok && typeof App !== 'undefined' && App.user) App.user.devFlowPreference = flow;
+    } catch { /* ignore */ }
+  },
+
   // "Use Claude Code" / "Use Codex" from an out-of-credits card or banner.
   // Same walkthrough the picker opens, in the session the user was refused
   // in — the work they were describing is right there in the transcript.
@@ -1177,12 +1210,139 @@ const DevChat = {
         });
       },
       onHandBack: () => DevChat._handBackToUsernode(),
-      onFlow: (agent, targetId) => DevChat._devFlowFromCredits(agent, targetId),
+      onVenue: () => DevChat.openVenueSheet(anchorEl),
     });
     DevChat._optionsMenu = menu;
     if (menu && typeof menu.then === 'function') {
       menu.then(() => { if (DevChat._optionsMenu === menu) DevChat._optionsMenu = null; });
     }
+  },
+
+  // ── The one venue question (#1086) ─────────────────────────────────
+  //
+  // Every surface that used to ask its own version of "which agent?" opens
+  // THIS: the venue line above the composer, the "…" menu's one row, and
+  // the out-of-credits card. Six rows, two groups, gated by omission — the
+  // list and the copy are build-venues.js's; the four things a pick can
+  // actually DO are this module's, because each one already existed and
+  // already worked. Nothing here is new mechanism.
+  //
+  //   backend → reset-agent-context, keeping branch + transcript (#906)
+  //   lease   → the CLI instructions card (#907)
+  //   flow    → the web-agent walkthrough, in place (#1049/#1071)
+  //   import  → the PR-import picker (#687)
+  _venueSheetState() {
+    const base = DevChat._sessionOptionsState();
+    const user = (typeof App !== 'undefined' && App.user) || {};
+    return {
+      mode: 'switch',
+      current: DevChat._currentVenueId(),
+      // Same three deployment capabilities the "…" menu reads, plus the two
+      // this list needs on top: whether the OpenRouter backend is offerable
+      // to this user at all, and whether they may push branches to this app
+      // (importing writes to them).
+      cliAuthEnabled: base.cliAuthEnabled,
+      externalFlowsAvailable: base.externalFlowsAvailable,
+      openrouterAvailable: !!user.openrouterAvailable,
+      canCollaborate: !(typeof AppView !== 'undefined' && AppView.readOnly),
+      sessionId: base.sessionId,
+      sessionStatus: base.sessionStatus,
+      hasBranch: base.hasBranch,
+      localAgent: base.localAgent,
+      repoUrl: base.repoUrl,
+    };
+  },
+
+  openVenueSheet(anchorEl) {
+    if (!window.BuildVenues) return;
+    DevChat._closeSessionOptions();
+    const state = DevChat._venueSheetState();
+    BuildVenues.open({
+      anchorEl: anchorEl || document.querySelector('#dc-venue-slot [data-venue-change]') || undefined,
+      state,
+      onPick: (pick, row) => {
+        if (!pick || row.current) return;
+        if (pick.kind === 'backend') {
+          // Claude needs no further detail, so it switches outright. The
+          // OpenRouter row still opens the model/effort chooser: a backend
+          // alone is not a complete answer for it.
+          DevChat._switchCurrentCodingAgent(
+            pick.backend === 'claude_code'
+              ? { backend: 'claude_code', model: null, reasoningEffort: null }
+              : null
+          );
+          return;
+        }
+        if (pick.kind === 'lease') {
+          if (!window.SessionOptions) return;
+          DevChat._optionsCard = SessionOptions.openInstructions({
+            state: DevChat._sessionOptionsState(),
+            onClose: () => { DevChat._optionsCard = null; },
+          });
+          return;
+        }
+        if (pick.kind === 'flow') {
+          // Answering the venue question ALSO answers it for next time —
+          // that is what "asked once" means. The picker card used to make
+          // this a second decision ("remember this choice"); the sheet is
+          // the deliberate act, so the save rides along with it.
+          DevChat._saveDevFlowPreference(pick.flow);
+          DevChat._devFlowFromCredits(pick.flow, row.targetId);
+          return;
+        }
+        if (pick.kind === 'import') {
+          // The one venue with no chat: the work happens in the user's own
+          // tools and arrives as a pull request. Opening the picker is the
+          // whole action — there is nothing to switch this session to.
+          if (typeof AppView !== 'undefined' && AppView.openImportPrModal) {
+            AppView.openImportPrModal();
+          } else if (pick.hash) {
+            window.location.hash = pick.hash;
+          }
+        }
+      },
+      onUnavailable: (row) => PlatformUI.toast(row.reason),
+    });
+  },
+
+  // Screenshot-state deep link `?shot=venue-fallback` (#1086).
+  //
+  // The fallback note is the one venue state a fixture row cannot express.
+  // Every other state is a property of the session — its backend, its
+  // lease, its external agent — and seeding those columns paints the line.
+  // But "you asked for OpenRouter and got Claude" is a property of the
+  // MOMENT the session was created: the reason arrives once, on the 201,
+  // and is deliberately not stored (the session's columns already say
+  // where it ended up, and re-explaining a settled fact on every later
+  // paint is exactly what the `= null` below prevents). So the only way to
+  // review the copy is to name the reason in the URL.
+  //
+  // Ungated by environment for the same reason ?shot=menu is: it paints a
+  // sentence about the session already on screen, reads nothing and writes
+  // nothing. A reason build-venues.js does not know about still renders
+  // silence, so a guessed value cannot invent copy.
+  _shotVenueFallbackReason() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch { return null; }
+    if (shot !== 'venue-fallback') return null;
+    let reason = null;
+    try { reason = new URLSearchParams(location.search).get('reason'); } catch { /* ignore */ }
+    return reason || 'flag_off';
+  },
+
+  // Screenshot-state deep link `?shot=venue-sheet` (#1086): the sheet the
+  // change control opens, with all six venues on it. Once per page load and
+  // only when the control is actually on screen, exactly like the options
+  // menu below — a re-render must not pop it open under the user.
+  _maybeOpenShotVenueSheet() {
+    if (DevChat._shotVenueSheetDone) return;
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch { return; }
+    if (shot !== 'venue-sheet') return;
+    const btn = document.querySelector('#dc-venue-slot [data-venue-change]');
+    if (!btn || btn.offsetParent === null) return;
+    DevChat._shotVenueSheetDone = true;
+    requestAnimationFrame(() => DevChat.openVenueSheet(btn));
   },
 
   // Screenshot-state deep links (#1055):
@@ -1273,10 +1433,6 @@ const DevChat = {
     // "Build on Usernode instead" / "Build here" — hide the card for the
     // rest of this session without writing a preference.
     dismissed: false,
-    // Set by the "+" menu's "Propose with Claude Code or Codex": show the
-    // picker even when a preference is saved, because the user just asked
-    // for the choice by hand.
-    forcePicker: false,
   },
 
   // Deep link: ?flow=claude-code|codex opens straight into that
@@ -1303,66 +1459,63 @@ const DevChat = {
       error: null,
       notice: null,
       dismissed: false,
-      forcePicker: false,
     };
   },
 
   // Which card (if any) belongs at the top of THIS session's transcript.
-  // Returns null for every session that is already under way — the picker
-  // is a question about work that hasn't started, not a permanent fixture.
+  //
+  // The PICKER used to live here: a card at the top of every untouched
+  // session asking "build here, or hand this to Claude Code / Codex?"
+  // before a word had been typed. It was one of three prompts asking the
+  // venue question at creation time, and it is gone — the venue line above
+  // the composer states the answer instead, and the sheet behind it asks
+  // the question whenever the user actually wants to change it. What
+  // survives is the WALKTHROUGH: once a hand-off is chosen, the five steps
+  // run in place, in this transcript, and that is a card.
+  //
+  // So the only gate left is "is this session still untouched" — a
+  // walkthrough belongs to work that hasn't started here yet.
   _devFlowTarget() {
     const session = DevChat.currentSession;
     if (!session || !window.DevFlowSelect) return null;
     const flow = DevChat._devFlow;
     if (flow.dismissed) return null;
-    if (flow.mode === 'wizard') return { mode: 'wizard', agent: flow.agent };
-    // Only an untouched session: no PR, no user message yet, still open.
+    if (flow.mode === 'wizard' && flow.agent) return { mode: 'wizard', agent: flow.agent };
+    // A saved 'claude-code' / 'codex' default is still honoured, in the one
+    // place it can be: an untouched session, before anything has been built
+    // here. That is the same door the picker used to sit in front of — the
+    // difference is that it no longer asks, because the user already
+    // answered. 'platform' and null both mean "build here", which is what
+    // the venue line already says.
     if (session.pr_number) return null;
     if (session.status !== 'active') return null;
     if (DevChat.messages.some((m) => m.role === 'user')) return null;
     const user = (typeof App !== 'undefined' && App.user) ? App.user : null;
-    // The deployment has to support the hand-off at all — a picker whose
-    // only entry is "build here" is a question with one answer.
     if (!user || !user.externalFlowsAvailable) return null;
-    const pref = flow.forcePicker ? null : (user.devFlowPreference || null);
-    if (pref === 'platform') return null;
-    if (pref === 'claude-code' || pref === 'codex') return { mode: 'wizard', agent: pref };
-    return { mode: 'picker', agent: null };
+    const pref = window.BuildVenues
+      ? BuildVenues.preselect(BuildVenues.currentVenue({ externalAgent: user.devFlowPreference }))
+      : null;
+    return pref && pref.flow ? { mode: 'wizard', agent: pref.flow } : null;
   },
 
+  // Only the walkthrough renders in the transcript now — see _devFlowTarget
+  // for what left and why.
   _devFlowHtml() {
     const target = DevChat._devFlowTarget();
     if (!target) return '';
     const flow = DevChat._devFlow;
-    if (target.mode === 'wizard') {
-      // The walkthrough paints its "checking where you are" state while the
-      // first read is in flight — but it has to be KICKED here, not only by
-      // the picker: a saved 'claude-code' / 'codex' preference and a
-      // ?flow= deep link both arrive in wizard mode without ever passing
-      // through _devFlowPick, and would otherwise check forever.
-      if (!flow.status) DevChat._devFlowEnsureStatus();
-      return DevFlowSelect.wizardHtml({
-        agent: target.agent,
-        status: flow.status,
-        busy: flow.busy,
-        error: flow.error,
-        notice: flow.notice,
-      });
-    }
-    // The picker waits for the status read: an app with no repository can't
-    // use the external flows, and offering them before we know is a card
-    // that changes under the user's cursor.
-    if (!flow.status) {
-      DevChat._devFlowEnsureStatus();
-      return '';
-    }
-    if (flow.status.available === false) return '';
-    const user = (typeof App !== 'undefined' && App.user) ? App.user : null;
-    return DevFlowSelect.pickerHtml({
-      available: true,
-      reason: flow.status.reason,
-      externalFlowsAvailable: true,
-      preference: user ? user.devFlowPreference : null,
+    // The walkthrough paints its "checking where you are" state while the
+    // first read is in flight — but it has to be KICKED here, not only by
+    // the venue sheet: a saved 'claude-code' / 'codex' preference and a
+    // ?flow= deep link both arrive in wizard mode without ever passing
+    // through _devFlowFromCredits, and would otherwise check forever.
+    if (!flow.status) DevChat._devFlowEnsureStatus();
+    return DevFlowSelect.wizardHtml({
+      agent: target.agent,
+      status: flow.status,
+      busy: flow.busy,
+      error: flow.error,
+      notice: flow.notice,
     });
   },
 
@@ -1372,7 +1525,6 @@ const DevChat = {
     if (!container) return;
     container.querySelectorAll('[data-flow-card]').forEach((el) => {
       DevFlowSelect.wire(el, {
-        onPick: (id, remember) => DevChat._devFlowPick(id, remember),
         onAction: (action) => DevChat._devFlowAction(action),
       });
     });
@@ -1414,36 +1566,6 @@ const DevChat = {
         DevChat.renderMessages();
       }
     }
-  },
-
-  async _devFlowPick(id, remember) {
-    const flow = DevChat._devFlow;
-    flow.error = null;
-    flow.notice = null;
-    if (remember) {
-      // Best-effort: a failed save must not block the flow the user just
-      // chose. Settings → Claude & ChatGPT connectors is the other door.
-      try {
-        const res = await fetch('/api/me/dev-flow', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ flow: id }),
-        });
-        if (res.ok && typeof App !== 'undefined' && App.user) App.user.devFlowPreference = id;
-      } catch {}
-    }
-    if (id === 'platform') {
-      flow.dismissed = true;
-      DevChat.renderMessages();
-      const input = document.getElementById('dc-input');
-      if (input) input.focus();
-      return;
-    }
-    flow.mode = 'wizard';
-    flow.agent = id;
-    DevChat.renderMessages();
-    DevChat._devFlowEnsureStatus(true);
   },
 
   async _devFlowAction(action) {
@@ -1950,30 +2072,50 @@ const DevChat = {
   // row's start-work button (created_from_issue_number) so the row can
   // swap "Create proposal" → "Create new proposal". Omitted on the generic
   // "+ New chat" path, which sends no body and stores NULL.
+  // The venue question is NOT asked here.
+  //
+  // Creating a session used to open a blocking modal — "Where should this
+  // build?" — before a single word had been typed, and two more prompts
+  // stood behind it on other entry points. Asking then is asking at the
+  // worst possible moment: the user has an intention, not yet a preference,
+  // and the only honest answer to "which agent" before you know what the
+  // work is, is "whichever one you already told me". So the saved default
+  // is applied silently by the server (resolveDefaultAgentPreference) and
+  // the answer is STATED afterwards, on first paint, by the venue line
+  // above the composer — with "Change how this is built" beside it. One
+  // question, asked once, changeable any time.
+  //
+  // `agentChoice` survives for the callers that DID make an explicit pick
+  // (the venue sheet itself, and the out-of-credits card). No key is sent
+  // without one, which is what lets the server resolve the default.
   async createSession(appSlug, issueNumber, agentChoice = null) {
     try {
-      const choice = agentChoice || await DevChat._chooseCodingAgent({ mode: 'create' });
-      // `undefined` means the user deliberately cancelled the chooser;
-      // `null` remains the existing create-failed signal. A caller that can
-      // fall back to an older session must distinguish those outcomes so
-      // Cancel never redirects work somewhere the user did not choose.
-      if (!choice) return undefined;
       const hasIssue = Number.isInteger(issueNumber) && issueNumber > 0;
+      const choice = agentChoice || {};
       const res = await fetch(`/api/apps/${appSlug}/sessions`, {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...(hasIssue ? { issueNumber } : {}),
-          backend: choice.backend,
-          model: choice.model || null,
-          reasoningEffort: choice.reasoningEffort || null,
+          // Omitted, not nulled: POST /sessions reads "no backend key" as
+          // "resolve my default", and a literal null would be a value.
+          ...(choice.backend ? {
+            backend: choice.backend,
+            model: choice.model || null,
+            reasoningEffort: choice.reasoningEffort || null,
+          } : {}),
         }),
       });
       const data = await res.json();
       if (!res.ok) {
         PlatformUI.toast(data.error || 'Failed to create session');
         return null;
+      }
+      // The one thing the venue line cannot work out on its own: WHY this
+      // session isn't in the venue the user's default named.
+      if (data.agentFallbackReason && window.BuildVenues) {
+        DevChat._venueFallbackReason = data.agentFallbackReason;
       }
       DevChat.sessions.unshift(data.session);
       return data.session;
@@ -3533,8 +3675,11 @@ const DevChat = {
         ? DevChat._busyComposerPlaceholder()
         : DevChat.COMPOSER_PLACEHOLDER;
     }
-    const agentSelect = document.getElementById('dc-agent-select');
-    if (agentSelect) agentSelect.disabled = !!streaming;
+    // #1086: the venue control replaced the coding-agent button here, and
+    // inherits its guard — a turn in flight holds the worker, so the venue
+    // cannot move until it lands.
+    const venueChange = document.querySelector('#dc-venue-slot [data-venue-change]');
+    if (venueChange) venueChange.disabled = !!streaming;
     DevChat._syncSaveDraftBtn();
     // Re-render the saved-drafts list so each row's Send button picks up
     // the new busy state (disabled while thinking, live once idle).
@@ -6492,19 +6637,12 @@ const DevChat = {
 
     if (meta) meta.classList.add('hidden');
 
-    const openRouterSession = DevChat._isOpenRouterSession();
-    const modelOptions = openRouterSession ? '' : Object.entries(DevChat.MODELS)
+    const modelOptions = Object.entries(DevChat.MODELS)
       .map(([id, meta]) => {
         const text = DevChat.modelOptionText(meta);
         return `<option value="${id}" ${id === DevChat.selectedModel ? 'selected' : ''}>${escapeHtml(text)}</option>`;
       })
       .join('');
-    const chatModelControls = openRouterSession ? '' : `
-              <label class="text-xs text-zinc-500" for="dc-model-select">Chat model:</label>
-              <select id="dc-model-select" class="rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-violet-500">
-                ${modelOptions}
-              </select>`;
-
     const viewerOpen = !!DevChat.specViewer.open;
     // Saved viewer width from a previous drag. Applied as inline style
     // on the side panel; CSS clamps to a min/max so a stale value
@@ -6521,8 +6659,21 @@ const DevChat = {
     const stagingStyle = stagingOpen && stagingSavedWidth
       ? ` style="width:${stagingSavedWidth}px"`
       : '';
-    const agentButtonText = DevChat._agentButtonText(DevChat.currentSession);
     const agentBillingNote = DevChat._agentBillingNote(DevChat.currentSession);
+    const venueId = DevChat._currentVenueId();
+    const venueLineHtml = window.BuildVenues
+      ? BuildVenues.lineHtml({
+        current: venueId,
+        // Reported once, on the paint after creation: the server resolved a
+        // venue other than the one the user's default named, and this is
+        // the only place that says why. Cleared below so a later repaint of
+        // the same session doesn't keep re-explaining a settled fact.
+        fallbackReason: DevChat._venueFallbackReason || DevChat._shotVenueFallbackReason(),
+      })
+      : '';
+    DevChat._venueFallbackReason = null;
+    // Only the two Usernode-run venues have a chat model to pick.
+    const venueHasModel = venueId === 'usernode-claude' || venueId === 'usernode-openrouter';
 
     content.innerHTML = `
       <div class="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
@@ -6547,10 +6698,16 @@ const DevChat = {
                reserved on #app-view. (No backticks in this comment: it
                lives inside a template literal, and one would close it.) -->
           <div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2 platform-safe-bar">
+            <!-- The venue statement (#1086). One line, always painted,
+                 naming where this session builds and offering the only
+                 control that changes it. It replaces the "Coding agent:"
+                 button that used to sit here beside a "Chat model:"
+                 dropdown — two controls, adjacent, answering two different
+                 questions in the same visual weight, one of which was the
+                 venue and one of which was not. Filled from the session
+                 row, so it is right on first paint. -->
+            <div id="dc-venue-slot" class="dc-venue-slot">${venueLineHtml}</div>
             <div class="flex flex-wrap items-center gap-2 mb-2">
-              <label class="text-xs text-zinc-500" for="dc-agent-select">Session AI:</label>
-              <button type="button" id="dc-agent-select" class="max-w-full truncate rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-900 px-2 py-1 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:border-violet-500 hover:text-violet-500 disabled:cursor-not-allowed disabled:opacity-50" title="Choose Claude Code or OpenRouter for this session. Switching starts fresh model context but keeps the branch and conversation.">${escapeHtml(agentButtonText)}</button>
-              ${chatModelControls}
               <input type="file" id="dc-file-input" class="hidden" multiple>
               <button type="button" id="dc-attach-btn" title="Attach files — images (≤4 MB), text/code files (≤200 KB), zip archives (≤20 MB), or any other file (≤10 MB); up to 4 per message" aria-label="Attach files"
                 class="dc-attach-btn rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-900 text-zinc-500 hover:text-violet-400 hover:border-violet-500 px-1.5 py-1 shrink-0 transition-colors">
@@ -6571,13 +6728,30 @@ const DevChat = {
               <button type="button" id="dc-budget-options" title="Session and billing options" aria-label="Session and billing options" aria-haspopup="menu"
                 class="dc-budget-options">&#8943;</button>
             </div>
-            <div id="dc-agent-note" class="mb-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">${escapeHtml(agentBillingNote)}</div>
-            <!-- #800: one-line plain-language description of the SELECTED
-                 model — what kind of work it suits. Filled by
+            <!-- The venue's own settings, one level down from the statement
+                 above. Present only for the two venues that HAVE a model to
+                 pick — Usernode · Claude and Usernode · OpenRouter — because
+                 for a session running on a laptop or handed to a web agent
+                 there is nothing here to choose: the chat model is a
+                 Usernode-side setting and saying otherwise was half the
+                 confusion this line replaces. Both the select and its note
+                 keep their ids, their storage key and their sanitizer.
+                 #800: the note is a one-line plain-language description of
+                 the SELECTED model — what kind of work it suits. Filled by
                  _renderModelNote(); hidden when the payload carries no
                  guidance copy. Clamped to two lines in CSS: Fable's
                  sentence wraps on a phone and must not crowd the box. -->
-            ${openRouterSession ? '' : '<span id="dc-model-note" class="dc-model-note hidden"></span>'}
+            ${venueHasModel ? `
+            <div id="dc-venue-detail" class="dc-venue-detail">
+              <div class="flex flex-wrap items-center gap-2">
+                <label class="text-xs text-zinc-500" for="dc-model-select">Chat model:</label>
+                <select id="dc-model-select" class="rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-violet-500">
+                  ${modelOptions}
+                </select>
+              </div>
+              <div id="dc-agent-note" class="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">${escapeHtml(agentBillingNote)}</div>
+              <span id="dc-model-note" class="dc-model-note hidden"></span>
+            </div>` : ''}
             <div id="dc-drafts" class="dc-drafts"></div>
             <div id="dc-quick-replies" class="dc-quick-replies"></div>
             <div id="dc-attachments" class="dc-attach-strip"></div>
@@ -6656,7 +6830,7 @@ const DevChat = {
     else if (DevChat._wantsBusyShot()) DevChat._setStreamingUI(true, 'claude');
 
     // #800: caption describing the selected model, kept in sync below.
-    if (!openRouterSession) DevChat._renderModelNote();
+    DevChat._renderModelNote();
     // #907: repaint from whatever the last status poll told us. The poll
     // itself runs a beat later; painting here means a re-render of an already
     // open session doesn't drop the chip for a second.
@@ -6677,15 +6851,21 @@ const DevChat = {
     }
     DevChat._maybeOpenShotOptions(optionsWereOpen);
 
-    const agentSelect = document.getElementById('dc-agent-select');
-    if (agentSelect) {
-      agentSelect.disabled = DevChat.isStreaming;
-      agentSelect.addEventListener('click', () => DevChat._switchCurrentCodingAgent());
+    const venueChange = document.querySelector('#dc-venue-slot [data-venue-change]');
+    if (venueChange) {
+      // Mid-turn the venue is not changeable: a running turn holds the
+      // worker, and moving it under itself is the failure the old
+      // `agentSelect.disabled` guarded against. Same rule, new control.
+      venueChange.disabled = DevChat.isStreaming;
+      venueChange.addEventListener('click', () => DevChat.openVenueSheet(venueChange));
     }
+    DevChat._maybeOpenShotVenueSheet();
 
-    const chatModelSelect = document.getElementById('dc-model-select');
-    if (!openRouterSession && chatModelSelect) {
-      chatModelSelect.addEventListener('change', (e) => {
+    // Null when this session's venue has no chat model to pick — see the
+    // dc-venue-detail block in renderChatView.
+    const modelSelect = document.getElementById('dc-model-select');
+    if (modelSelect) {
+      modelSelect.addEventListener('change', (e) => {
         DevChat.selectedModel = e.target.value;
         // Persist across refreshes + new sessions (fixes #31). Wrapped
         // in try/catch so private-mode browsers or quota errors don't
