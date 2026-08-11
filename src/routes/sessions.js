@@ -4220,6 +4220,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 return out;
               })
             );
+            // #990: close the fetch step and name the one that is actually
+            // running now. Must land AFTER the batch resolves (so the
+            // client's _deactivateLastStatus freezes a truthful duration on
+            // the fetch row) and BEFORE the re-invocation below, which is
+            // the silent window this row covers.
+            await sendStatus(DATA_TOOL_THINKING_STATUS);
             mayorConvo = [
               ...mayorConvo,
               // Verbatim assistant content (incl. the tool_use blocks) so the
@@ -9547,6 +9553,15 @@ function dataToolStatusLine(calls) {
   return "Reading the repo's GitHub issues...";
 }
 
+// #990: the step line emitted once a data-tool batch has RESOLVED, while
+// the model is re-invoked with the fetched material in context. Without it
+// the ladder's last live row still says "Fetching github.com..." for the
+// whole (observed: ~12s) compose window — the reporter read that stale,
+// still-spinning row as "it wasn't thinking", then the reply popped in.
+// Emitting a fresh row is what makes the client freeze the fetch row with
+// its real "(took Xs)" and start a new ticker, on reload as well as live.
+const DATA_TOOL_THINKING_STATUS = 'Thinking about what came back...';
+
 // Build the Mayor's message history from chat_session_messages rows.
 // Folds each CC output (persisted as a system row with metadata.ccOutput)
 // into the preceding assistant turn with a [CODING AGENT COMPLETED] tag
@@ -12922,4 +12937,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError };
+module.exports = { runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError };
