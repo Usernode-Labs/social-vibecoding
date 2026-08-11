@@ -29,6 +29,7 @@ const prMetadata = require('./pr-metadata');
 const sessionBus = require('./session-bus');
 const appManifest = require('./app-manifest');
 const checkHistory = require('./check-history');
+const unitSuite = require('./unit-suite');
 const { CAPTURE_MAX_PATHS, normalizeStoredPath, VIEWPORT_MOBILE } = require('./testing-notes');
 const { getPool } = require('../db/pool');
 
@@ -494,6 +495,11 @@ function classifyTests(frames, expectedCount, options) {
   const parsed = (Array.isArray(frames) ? frames : []).slice(0, TEST_MAX_RESULTS);
 
   // ── Legacy shape ───────────────────────────────────────────────────────
+  // extraRows (the unit-suite row today) still ride along: the synthesized
+  // baseline suite has no graduation history, but the extra rows carry
+  // their own advisory flag and must not vanish just because the app
+  // declares no dapp.json checks. Error verdicts stay decided by the
+  // container's own frames, exactly as before.
   if (!dispatched) {
     const results = parsed.map((f) => ({
       name: String(f.name || '').slice(0, CONSOLE_MAX_MSG_LEN),
@@ -503,10 +509,16 @@ function classifyTests(frames, expectedCount, options) {
       failureReason: String(f.failureReason || '').slice(0, CONSOLE_MAX_MSG_LEN),
     }));
     const expected = Number.isInteger(expectedCount) ? expectedCount : results.length;
-    if (!results.length) return { state: 'error', results: [] };
-    if (expected > 0 && results.length < expected) return { state: 'error', results };
-    const anyFail = results.some((r) => r.status !== 'pass');
-    return { state: anyFail ? 'failing' : 'passing', results };
+    if (!results.length) return { state: 'error', results: extraRows.slice() };
+    if (expected > 0 && results.length < expected) {
+      return { state: 'error', results: results.concat(extraRows) };
+    }
+    const all = results.concat(extraRows);
+    // Legacy container rows carry no advisory flag (always blocking);
+    // extra rows block only when non-advisory — an ungraduated unit-suite
+    // failure shows on the card without closing the gate (#1019 stance).
+    const anyFail = all.some((r) => r.status !== 'pass' && !r.advisory);
+    return { state: anyFail ? 'failing' : 'passing', results: all };
   }
 
   // ── Earned-gating shape ────────────────────────────────────────────────
@@ -1506,6 +1518,23 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       }
     }
 
+    // Repo unit suite (aggregate `npm test` check). Launched BEFORE the
+    // capture container and awaited after it, so the suite runs in its own
+    // one-shot container CONCURRENTLY with the browser checks and adds
+    // ~zero wall clock unless it outlasts the whole capture run. The
+    // .catch collapses every failure mode to null (no row) — the checks
+    // run must never die because the unit-suite runner did.
+    const unitSuitePromise = unitSuite.maybeRunUnitSuite({
+      pool, appId: app.id, sessionId: session.id,
+      repoOwner, repoName, ref: gitRef,
+      prNumber: Number(session.pr_number) || null,
+    }).catch((err) => {
+      log.warn('visuals', 'Unit-suite check failed to run (non-fatal)', {
+        sessionId: session.id, err: err.message,
+      });
+      return null;
+    });
+
     log.info('visuals', 'Starting capture', {
       sessionId: session.id, slug: app.slug, before: media && prodRunning,
       paths: capturePaths, pathDefaulted, targets: targets.length,
@@ -1641,12 +1670,17 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         sessionId: session.id, err: err.message,
       });
     }
+    // The unit-suite container started before the capture run; by now it
+    // has usually been finished for minutes. Its own timeoutMs bounds this
+    // await, and the .catch at launch made rejection impossible.
+    const unitOutcome = await unitSuitePromise;
+    if (unitOutcome) extraRows.push(unitOutcome.row);
     const checksResult = classifyTests(parseTests(stdout), tests.length, dispatched
       ? { dispatched, sentinel: parseTestsDone(stdout), extraRows }
-      : undefined);
+      : { extraRows });
     const blockingCount = Number.isInteger(checksResult.blockingCount)
       ? checksResult.blockingCount
-      : checksResult.results.filter((r) => r.status !== 'pass').length;
+      : checksResult.results.filter((r) => r.status !== 'pass' && !r.advisory).length;
     const advisoryCount = Number.isInteger(checksResult.advisoryCount) ? checksResult.advisoryCount : 0;
     const failingCount = blockingCount;
     traceStatus = checksResult.state;
@@ -1671,16 +1705,22 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         // result was discarded as stale must not graduate anything either.
         // Rows the container never produced are absent here, so a check that
         // did not run neither graduates nor records a failure.
-        if (dispatched) {
-          const byIndex = new Map(dispatched.map((d) => [d.index, d]));
+        if (dispatched || unitOutcome) {
           const historyRows = [];
-          for (const r of checksResult.results) {
-            const d = byIndex.get(r.index);
-            if (!d) continue;
-            historyRows.push({
-              checkKey: d.checkKey, name: d.name, path: d.path, passed: r.status === 'pass',
-            });
+          if (dispatched) {
+            const byIndex = new Map(dispatched.map((d) => [d.index, d]));
+            for (const r of checksResult.results) {
+              const d = byIndex.get(r.index);
+              if (!d) continue;
+              historyRows.push({
+                checkKey: d.checkKey, name: d.name, path: d.path, passed: r.status === 'pass',
+              });
+            }
           }
+          // The unit-suite row graduates through the same history: its
+          // first observed pass flips it from advisory to merge-blocking,
+          // and (recordRun's COALESCE) no later failure demotes it.
+          if (unitOutcome) historyRows.push(unitOutcome.history);
           await checkHistory.recordRun(pool, app.id, historyRows);
         }
         log.info('visuals', 'Checks stored', {
