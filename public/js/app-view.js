@@ -5254,6 +5254,10 @@ const AppView = {
     AppView._reportMerged = null;
     AppView._reportTruncated = false;
     AppView._reportPartial = false;
+    // AI layer (report-ai): undefined = never fetched for this app/data
+    // cycle; null = fetched, none generated yet; object = cached summary.
+    AppView._reportAi = undefined;
+    AppView._reportAiGenerating = false;
   },
 
   // Page the full merged history into `_reportMerged` — the one fetch the
@@ -5357,13 +5361,16 @@ const AppView = {
     const model = AppView._buildReportModel(AppView._reportInputs());
     el.innerHTML = `<style id="dev-report-style">${AppView.REPORT_CSS}</style>`
       + AppView._renderReportToolbar()
-      + `<div class="${AppView._reportRootCls()}">${AppView._renderReportHtml(model, { standalone: false })}</div>`;
+      + `<div class="${AppView._reportRootCls()}">${AppView._renderReportHtml(model, { standalone: false, ai: AppView._reportAi === undefined ? null : AppView._reportAi })}</div>`;
     // Wired after each paint alongside the body, the same way
     // _repaintPmView wires #dev-pm-more-unassigned.
     const dl = el.querySelector('#dev-report-download');
     if (dl && dl.addEventListener) dl.addEventListener('click', () => AppView.downloadReport());
     const rf = el.querySelector('#dev-report-refresh');
     if (rf && rf.addEventListener) rf.addEventListener('click', () => AppView.refreshReport());
+    const ab = el.querySelector('#dev-report-ai');
+    if (ab && ab.addEventListener) ab.addEventListener('click', () => AppView.generateReportAi());
+    AppView._ensureReportAi();
   },
 
   // `.ur-rpt--dark` follows the shell's `dark` class (darkMode: 'class').
@@ -5381,10 +5388,16 @@ const AppView = {
 
   _renderReportToolbar() {
     const busy = AppView._reportLoading;
+    const gen = AppView._reportAiGenerating;
+    const ai = AppView._reportAi;
+    const aiLabel = gen ? 'Generating…' : (ai ? 'Regenerate AI summary' : 'Generate AI summary');
+    const stale = !!(ai && ai.stale && !gen);
     return `
-      <div class="flex items-center gap-2 mb-3">
+      <div class="flex items-center gap-2 mb-3 flex-wrap">
         <button id="dev-report-download" class="gc-vote-btn" title="Save this report as a self-contained HTML file">Download HTML</button>
         <button id="dev-report-refresh" class="gc-vote-btn"${busy ? ' disabled' : ''} title="Re-pull the data and regenerate the report">${busy ? 'Refreshing…' : 'Refresh'}</button>
+        <button id="dev-report-ai" class="gc-vote-btn"${gen ? ' disabled' : ''} title="Ask the AI for a plain-language summary, risks and per-person highlights (uses your budget or API key)">${aiLabel}</button>
+        ${stale ? '<span class="text-xs opacity-60">Data has changed since the AI summary was generated.</span>' : ''}
       </div>`;
   },
 
@@ -5646,6 +5659,100 @@ const AppView = {
     }
   },
 
+  // ── Work-by-owner stats: pure, DOM-free ─────────────────────────────
+  // Deterministic counts per contributor, aggregated from the report
+  // model. The LLM writes per-owner PROSE only (report-ai); every number
+  // shown next to it comes from here, so the counts can never hallucinate.
+  _buildOwnerStats(model) {
+    const m = model || {};
+    const map = new Map();
+    const get = (u) => {
+      if (!map.has(u)) map.set(u, { username: u, completed: 0, inReview: 0, inProgress: 0, backlog: 0 });
+      return map.get(u);
+    };
+    for (const g of ((m.done || {}).groups || [])) {
+      for (const e of (g.entries || [])) if (e.author) get(e.author).completed++;
+    }
+    const ip = m.inProgress || {};
+    for (const e of (ip.review || [])) if (e.author) get(e.author).inReview++;
+    for (const e of (ip.gov || [])) if (e.author) get(e.author).inReview++;
+    for (const e of (ip.sessions || [])) if (e.owner) get(e.owner).inProgress++;
+    for (const e of (ip.issues || [])) for (const p of (e.people || [])) get(p).inProgress++;
+    for (const g of ((m.backlog || {}).groups || [])) {
+      for (const e of (g.issues || [])) if (e.assignee) get(e.assignee).backlog++;
+    }
+    const total = (s) => s.completed + s.inReview + s.inProgress + s.backlog;
+    return Array.from(map.values()).sort((a, b) => total(b) - total(a) || (a.username < b.username ? -1 : 1));
+  },
+
+  // ── AI layer renderer: pure, DOM-free ───────────────────────────────
+  // ai (server report-ai summary or null) + ownerStats in → HTML out.
+  // Every LLM-authored string passes through escapeHtml and renders as
+  // plain text — no markdown, no links, no attributes. Same hard rule as
+  // the rest of the report: no live-card data-* hooks.
+  _renderReportAiHtml(ai, ownerStats) {
+    const eh = (s) => escapeHtml(s == null ? '' : String(s));
+    if (!ai) {
+      return `<p class="ur-rpt-empty">No AI summary yet &mdash; use &ldquo;Generate AI summary&rdquo; above to add a plain-language overview, risks and per-person highlights.</p>`;
+    }
+    let html = '';
+
+    // Narrative — the report's main body.
+    const paras = String(ai.narrative || '').split(/\n{2,}|\n/).map((p) => p.trim()).filter(Boolean);
+    html += `<section class="ur-rpt-section" data-section="ai-summary">`
+      + `<h2 class="ur-rpt-h2">Summary</h2>`
+      + paras.map((p) => `<p class="ur-rpt-ai-p">${eh(p)}</p>`).join('')
+      + `</section>`;
+
+    // Critical risks.
+    const risks = Array.isArray(ai.risks) ? ai.risks : [];
+    let riskBody = '';
+    if (!risks.length) {
+      riskBody = `<p class="ur-rpt-empty">No critical risks flagged.</p>`;
+    } else {
+      riskBody = `<ul class="ur-rpt-list">${risks.map((r) => {
+        const sev = ['high', 'medium', 'low'].indexOf(r && r.severity) !== -1 ? r.severity : 'medium';
+        return `<li class="ur-rpt-row">`
+          + `<div class="ur-rpt-title"><span class="ur-rpt-risk-sev ur-rpt-risk-sev--${sev}">${eh(sev)}</span>${eh(r && r.title)}</div>`
+          + `<div class="ur-rpt-meta"><span>${eh(r && r.detail)}</span></div>`
+          + `</li>`;
+      }).join('')}</ul>`;
+    }
+    html += `<section class="ur-rpt-section" data-section="ai-risks">`
+      + `<h2 class="ur-rpt-h2">Critical risks</h2>${riskBody}</section>`;
+
+    // Work by owner: deterministic counts + LLM blurb (only for owners
+    // the stats know; a blurb for anyone else was already dropped
+    // server-side by sanitizeReportSummary's known-usernames guard).
+    const blurbs = new Map((Array.isArray(ai.owners) ? ai.owners : [])
+      .map((o) => [o && o.username, o && o.blurb]));
+    const stats = Array.isArray(ownerStats) ? ownerStats : [];
+    let ownerBody = '';
+    if (!stats.length) {
+      ownerBody = `<p class="ur-rpt-empty">No attributable work yet.</p>`;
+    } else {
+      ownerBody = `<ul class="ur-rpt-list">${stats.map((s) => {
+        const parts = [];
+        if (s.completed) parts.push(`${s.completed} completed`);
+        if (s.inReview) parts.push(`${s.inReview} awaiting review`);
+        if (s.inProgress) parts.push(`${s.inProgress} in progress`);
+        if (s.backlog) parts.push(`${s.backlog} assigned in backlog`);
+        const blurb = blurbs.get(s.username);
+        return `<li class="ur-rpt-row">`
+          + `<div class="ur-rpt-title">${eh(s.username)}<span class="ur-rpt-tag ur-rpt-owner-counts">${eh(parts.join(' · ') || 'no items')}</span></div>`
+          + (blurb ? `<div class="ur-rpt-meta"><span>${eh(blurb)}</span></div>` : '')
+          + `</li>`;
+      }).join('')}</ul>`;
+    }
+    html += `<section class="ur-rpt-section" data-section="ai-owners">`
+      + `<h2 class="ur-rpt-h2">Work by owner</h2>${ownerBody}</section>`;
+
+    const genMs = Date.parse(ai.generatedAt || '');
+    const when = Number.isFinite(genMs) ? new Date(genMs).toLocaleDateString() : '';
+    html += `<p class="ur-rpt-ai-note">AI-written summary${ai.model ? ` (${eh(ai.model)})` : ''}${when ? `, generated ${eh(when)}` : ''}. Verify against the lists below.</p>`;
+    return html;
+  },
+
   // ── Report CSS ───────────────────────────────────────────────────────
   // Plain CSS, every rule scoped under `.ur-rpt`, deliberately using NO
   // Tailwind utilities. Injected once into #dev-report for the on-screen
@@ -5683,6 +5790,15 @@ const AppView = {
     '.ur-rpt-num{font-variant-numeric:tabular-nums;color:var(--rpt-muted);font-weight:400;}',
     '.ur-rpt-tag{display:inline-block;font-size:0.6875rem;font-weight:600;border:1px solid var(--rpt-line);border-radius:0.25rem;padding:0 0.3125rem;margin-left:0.25rem;color:var(--rpt-muted);}',
     '.ur-rpt-empty{font-size:0.8125rem;color:var(--rpt-faint);font-style:italic;margin:0.5rem 0;}',
+    '.ur-rpt-ai-p{margin:0.75rem 0 0;max-width:44rem;}',
+    '.ur-rpt-ai-note{font-size:0.75rem;color:var(--rpt-faint);font-style:italic;margin:-0.75rem 0 1.75rem;}',
+    '.ur-rpt-risk-sev{display:inline-block;font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;border-radius:0.25rem;padding:0 0.375rem;margin-right:0.5rem;vertical-align:1px;}',
+    '.ur-rpt-risk-sev--high{color:#b91c1c;border:1px solid #f87171;}',
+    '.ur-rpt-risk-sev--medium{color:#b45309;border:1px solid #fbbf24;}',
+    '.ur-rpt-risk-sev--low{color:#4d7c0f;border:1px solid #a3e635;}',
+    '.ur-rpt--dark .ur-rpt-risk-sev--high{color:#fca5a5;border-color:#7f1d1d;}',
+    '.ur-rpt--dark .ur-rpt-risk-sev--medium{color:#fcd34d;border-color:#78350f;}',
+    '.ur-rpt--dark .ur-rpt-risk-sev--low{color:#bef264;border-color:#365314;}',
     '.ur-rpt-foot{border-top:2px solid var(--rpt-line);margin-top:2rem;padding-top:0.875rem;font-size:0.75rem;color:var(--rpt-faint);}',
     '.ur-rpt-foot p{margin:0.25rem 0;}',
   ].join(''),
@@ -5768,6 +5884,15 @@ const AppView = {
       + stat(sum.backlog || 0, 'Backlog')
       + `</ul>`;
     html += `<p class="ur-rpt-recent">${eh(sum.completedLast30 || 0)} completed in the last 30 days.</p>`;
+
+    // ── AI layer (report-ai): narrative → risks → by-owner ────────────
+    // Injected only when the caller passes a summary (or an explicit null
+    // for the invite line); legacy callers that omit `ai` entirely get
+    // the deterministic document unchanged, which is also what the
+    // standalone export does when no summary exists yet.
+    if (o.ai !== undefined) {
+      html += AppView._renderReportAiHtml(o.ai, AppView._buildOwnerStats(m));
+    }
 
     // ── Done ──────────────────────────────────────────────────────────
     const done = m.done || {};
@@ -5921,7 +6046,15 @@ const AppView = {
   downloadReport() {
     if (!AppView._reportMerged) { AppView._ensureReportData(); return; }
     const model = AppView._buildReportModel(AppView._reportInputs());
-    const doc = AppView._renderReportHtml(model, { standalone: true });
+    // A summary is embedded when one exists; with none, the export omits
+    // the AI layer entirely (no "use the button above" invite in a
+    // standalone document).
+    const doc = AppView._renderReportHtml(
+      model,
+      AppView._reportAi
+        ? { standalone: true, ai: AppView._reportAi }
+        : { standalone: true }
+    );
     const slug = (model.app && model.app.slug) || 'app';
     const d = new Date(model.generatedAtMs);
     const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -5946,6 +6079,49 @@ const AppView = {
     if (AppView._reportLoading) return;
     AppView._resetReportCaches();
     AppView._repaintReportView();
+  },
+
+  // Fetch the shared AI summary once per report visit. GETs are cheap
+  // (server cache + staleness hash); errors degrade to the no-summary
+  // invite line rather than breaking the deterministic report.
+  async _ensureReportAi() {
+    if (AppView._reportAiFetching || AppView._reportAi !== undefined) return;
+    if (!AppView.appData) return;
+    AppView._reportAiFetching = true;
+    try {
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/report-ai`);
+      const data = res.ok ? await res.json() : null;
+      AppView._reportAi = data && data.summary
+        ? { ...data.summary, stale: !!data.stale }
+        : null;
+    } catch {
+      AppView._reportAi = null;
+    } finally {
+      AppView._reportAiFetching = false;
+    }
+    if (AppView._getViewMode() === 'report') AppView._repaintReportView();
+  },
+
+  // Generate/regenerate the AI summary. Debited to the clicking user;
+  // the server 409s a concurrent generation and 429s budget/rate limits.
+  async generateReportAi() {
+    if (AppView._reportAiGenerating || !AppView.appData) return;
+    AppView._reportAiGenerating = true;
+    AppView._repaintReportView();
+    try {
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/report-ai/generate`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.summary) {
+        AppView._reportAi = { ...data.summary, stale: false };
+      } else if (window.PlatformUI && PlatformUI.toast) {
+        PlatformUI.toast(data.error || 'Could not generate the AI summary');
+      }
+    } catch {
+      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Could not generate the AI summary');
+    } finally {
+      AppView._reportAiGenerating = false;
+      if (AppView._getViewMode() === 'report') AppView._repaintReportView();
+    }
   },
 
   // ── Session cards in the In progress area ──────────────────────────

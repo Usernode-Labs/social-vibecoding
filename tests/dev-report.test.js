@@ -540,3 +540,99 @@ test('REPORT_CSS is plain CSS scoped under .ur-rpt with a dark modifier', () => 
   assert.ok(!css.includes('@import'), 'must not import anything');
   assert.ok(!/url\(/.test(css), 'must not reference external assets');
 });
+
+// ── AI layer (report-ai): owner stats + AI section renderer ──────────
+//
+// The LLM writes PROSE only; every number beside it comes from
+// _buildOwnerStats, aggregated deterministically from the same model the
+// deterministic sections render. Both helpers are pure and carry the
+// report's hard markup rule: escaped text, no live-card data-* hooks.
+
+test('_buildOwnerStats aggregates across all four buckets', () => {
+  const AppView = makeAppView();
+  const model = AppView._buildReportModel({
+    issues: [
+      issue({ number: 1, asg: 'bob' }),
+      issue({ number: 2, asg: 'bob' }),
+      issue({ number: 3, in_progress: { users: ['carol'], claims: [] } }),
+    ],
+    proposals: [prop({ id: 1, username: 'alice', status: 'promoted' })],
+    gov: [], mySessions: [], sharedSessions: [],
+    merged: [mergedRow({ id: 9, username: 'alice' })],
+    mergedTotal: 1, majority: 2,
+  }, { now: NOW });
+  const stats = AppView._buildOwnerStats(model);
+  const byName = Object.fromEntries(stats.map((s) => [s.username, s]));
+  assert.equal(byName.alice.completed, 1);
+  assert.equal(byName.alice.inReview, 1);
+  assert.equal(byName.bob.backlog, 2);
+  assert.equal(byName.carol.inProgress, 1);
+  // sorted by total desc, alice (2) first
+  assert.equal(stats[0].username, 'alice');
+});
+
+test('_renderReportAiHtml escapes LLM text and orders sections', () => {
+  const AppView = makeAppView();
+  const html = AppView._renderReportAiHtml({
+    narrative: 'First para <script>alert(1)</script>.\n\nSecond para.',
+    risks: [{ title: 'Risk <b>one</b>', detail: 'Bad & scary', severity: 'high' }],
+    owners: [{ username: 'alice', blurb: 'Did <i>things</i>' }],
+    model: 'claude-haiku-4-5', generatedAt: '2026-08-10T00:00:00Z', stale: false,
+  }, [{ username: 'alice', completed: 2, inReview: 1, inProgress: 0, backlog: 0 }]);
+  assert.ok(!html.includes('<script>'));
+  assert.ok(html.includes('&lt;script&gt;'));
+  assert.ok(html.includes('Bad &amp; scary'));
+  assert.ok(html.includes('ur-rpt-risk-sev--high'));
+  // narrative before risks before owners
+  const iN = html.indexOf('data-section="ai-summary"');
+  const iR = html.indexOf('data-section="ai-risks"');
+  const iO = html.indexOf('data-section="ai-owners"');
+  assert.ok(iN > -1 && iR > iN && iO > iR, 'sections must appear in order');
+  // deterministic counts rendered alongside the blurb
+  assert.ok(html.includes('2 completed'));
+  assert.ok(html.includes('Did &lt;i&gt;things&lt;/i&gt;'));
+  // no live-card hooks
+  for (const attr of ['data-issue-row', 'data-proposal-row', 'data-gov-row', 'data-session-chip']) {
+    assert.ok(!html.includes(attr), `report AI markup must not carry ${attr}`);
+  }
+});
+
+test('_renderReportAiHtml with null ai renders a single invite line', () => {
+  const AppView = makeAppView();
+  const html = AppView._renderReportAiHtml(null, []);
+  assert.ok(html.includes('ur-rpt-empty'));
+  assert.ok(!html.includes('ur-rpt-risk'));
+});
+
+test('_renderReportHtml includes the AI layer only when opts.ai is present', () => {
+  const AppView = makeAppView();
+  const model = AppView._buildReportModel({
+    issues: [], proposals: [], gov: [], mySessions: [], sharedSessions: [],
+    merged: [mergedRow({ id: 1 })], mergedTotal: 1, majority: 1,
+  }, { now: NOW });
+  const withAi = AppView._renderReportHtml(model, {
+    standalone: false,
+    ai: { narrative: 'N.', risks: [], owners: [], model: 'm', generatedAt: '2026-08-10T00:00:00Z', stale: false },
+  });
+  const withoutAi = AppView._renderReportHtml(model, { standalone: false });
+  assert.ok(withAi.includes('data-section="ai-summary"'));
+  assert.ok(!withoutAi.includes('data-section="ai-summary"'));
+  // AI layer sits between the summary strip and the Done section
+  assert.ok(withAi.indexOf('ur-rpt-summary') < withAi.indexOf('data-section="ai-summary"'));
+  assert.ok(withAi.indexOf('data-section="ai-summary"') < withAi.indexOf('data-section="done"'));
+});
+
+test('report toolbar offers the AI generate button and staleness hint', () => {
+  const AppView = makeAppView();
+  AppView._reportAi = undefined;
+  AppView._reportAiGenerating = false;
+  AppView._reportLoading = false;
+  const bar = AppView._renderReportToolbar();
+  assert.ok(bar.includes('dev-report-ai'));
+  assert.ok(bar.includes('Generate AI summary'));
+  assert.ok(!bar.includes('Data has changed'));
+  AppView._reportAi = { narrative: 'x', risks: [], owners: [], stale: true };
+  const bar2 = AppView._renderReportToolbar();
+  assert.ok(bar2.includes('Regenerate AI summary'));
+  assert.ok(bar2.includes('Data has changed'));
+});

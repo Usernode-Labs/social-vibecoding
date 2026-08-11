@@ -41,6 +41,7 @@ const { llmGrantsRoutes } = require('./src/routes/llm-grants');
 const { userAgentFilesRoutes } = require('./src/routes/user-agent-files');
 const { topicAttributeRoutes } = require('./src/routes/topic-attributes');
 const { boardOrderRoutes } = require('./src/routes/board-order');
+const { reportAiRoutes } = require('./src/routes/report-ai');
 const { homePanelRoutes } = require('./src/routes/home-panels');
 const { homeLayoutRoutes } = require('./src/routes/home-layout');
 const { chatDraftsRoutes } = require('./src/routes/chat-drafts');
@@ -534,6 +535,7 @@ app.use(llmGrantsRoutes(config));
 app.use(userAgentFilesRoutes(config));
 app.use(topicAttributeRoutes(config));
 app.use(boardOrderRoutes(config));
+app.use(reportAiRoutes(config));
 // Home-screen panels (#911): the challenges card's data + its per-user
 // show/hide. Me-scoped reads, so it sits behind authMiddleware like the
 // ordering routes above.

@@ -394,4 +394,16 @@ const mailTestLimiter = makeLimiter({
   message: (s) => `Rate limit reached: up to 10 test emails per hour. You can try again ${retryPhrase(s)}.`,
 });
 
-module.exports = { dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, waitlistJoinLimiter, mailTestLimiter };
+// AI progress report generation (Reporting tab): each click is a paid LLM
+// call debited to the clicking user, and report-ai.js already serializes
+// real work per app — this only stops a stuck client from hammering the
+// button. Per-user keyed: the spend belongs to the account, not to an IP.
+const reportAiLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 4,
+  name: 'report-ai',
+  keyByUser: true,
+  message: 'Please wait a minute before regenerating the report.',
+});
+
+module.exports = { dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, waitlistJoinLimiter, mailTestLimiter };

@@ -4996,3 +4996,20 @@ CREATE TABLE IF NOT EXISTS agent_model_compatibility (
 INSERT INTO agent_model_compatibility (backend, model_id, status, note, checked_at)
 VALUES ('codex_openrouter', 'openai/gpt-5.3-codex', 'verified', 'Default verified Codex model', NOW())
 ON CONFLICT (backend, model_id) DO NOTHING;
+
+-- AI-generated progress report cache (Reporting tab). One row per app —
+-- the summary is shared by every viewer, which is why its input is built
+-- exclusively from data every app member can see (no private sessions).
+-- input_hash fingerprints the server-built input so an unchanged app
+-- returns the cache without an LLM call and the client can show a
+-- "data changed" staleness hint.
+CREATE TABLE IF NOT EXISTS app_report_ai (
+  app_id        INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+  input_hash    VARCHAR(64) NOT NULL,
+  narrative     TEXT NOT NULL,
+  risks_json    JSONB NOT NULL DEFAULT '[]'::jsonb,
+  owners_json   JSONB NOT NULL DEFAULT '[]'::jsonb,
+  model         VARCHAR(64),
+  generated_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  generated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
