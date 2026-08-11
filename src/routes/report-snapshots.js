@@ -2,7 +2,6 @@
 
 const crypto = require('crypto');
 const express = require('express');
-const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
@@ -25,13 +24,22 @@ const log = require('../services/logger');
 // malicious admin's markup cannot run code or reach the platform
 // origin. Never embed snapshot html in any other page.
 //
+// The sandbox token list adds exactly two allowances: `allow-popups` lets
+// the report's `<a target="_blank" rel="noopener">` links to GitHub/the
+// app actually open (without it every such link is dead), and
+// `allow-popups-to-escape-sandbox` lets those opened tabs run as normal,
+// unsandboxed pages instead of inheriting the opaque-origin restriction.
+// Deliberately absent: `allow-scripts` (script execution stays fully
+// blocked) and `allow-same-origin` (the document itself stays an opaque
+// origin, unable to read platform cookies/storage).
+//
 // ai_json is the SERVER's own draft cache at lock time (never the
 // client's): it feeds the next generation's `previousReport` input
 // (services/report-ai.js), so it must be data the server itself
 // produced.
 
 const MAX_HTML_BYTES = 2 * 1024 * 1024;
-const SANDBOX_CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'";
+const SANDBOX_CSP = "sandbox allow-popups allow-popups-to-escape-sandbox; default-src 'none'; style-src 'unsafe-inline'";
 
 function sendSnapshotHtml(res, html) {
   res.set('Content-Security-Policy', SANDBOX_CSP);
@@ -52,7 +60,7 @@ function rowShape(r) {
 }
 
 function reportSnapshotRoutes(config) {
-  const router = Router();
+  const router = express.Router();
   const pool = getPool(config);
   const APP_COLS = `${appAccess.ACCESS_COLUMNS}, name`;
 
@@ -137,7 +145,7 @@ function reportSnapshotRoutes(config) {
       const app = await getApp(req);
       if (!app) return res.status(404).end();
       const id = Number(req.params.id);
-      if (!Number.isInteger(id)) return res.status(404).end();
+      if (!Number.isSafeInteger(id) || id <= 0) return res.status(404).end();
       const { rows } = await pool.query(
         'SELECT html FROM app_report_snapshots WHERE id = $1 AND app_id = $2',
         [id, app.id]
@@ -160,7 +168,7 @@ function reportSnapshotRoutes(config) {
           return res.status(403).json({ error: 'Only app admins can share reports' });
         }
         const id = Number(req.params.id);
-        if (!Number.isInteger(id)) return res.status(404).json({ error: 'Report not found' });
+        if (!Number.isSafeInteger(id) || id <= 0) return res.status(404).json({ error: 'Report not found' });
         // COALESCE keeps an existing token: clicking Share twice must not
         // rotate a link someone already sent around.
         const token = crypto.randomBytes(16).toString('hex');
@@ -190,7 +198,7 @@ function reportSnapshotRoutes(config) {
           return res.status(403).json({ error: 'Only app admins can unshare reports' });
         }
         const id = Number(req.params.id);
-        if (!Number.isInteger(id)) return res.status(404).json({ error: 'Report not found' });
+        if (!Number.isSafeInteger(id) || id <= 0) return res.status(404).json({ error: 'Report not found' });
         const result = await pool.query(
           `UPDATE app_report_snapshots SET share_token = NULL, shared_at = NULL
             WHERE id = $1 AND app_id = $2`,
@@ -213,7 +221,7 @@ function reportSnapshotRoutes(config) {
 // unshare must bite immediately (an intermediary cache holding a revoked
 // report would defeat revocation).
 function reportShareRoutes(config) {
-  const router = Router();
+  const router = express.Router();
   const pool = getPool(config);
 
   router.get('/reports/:token', async (req, res) => {

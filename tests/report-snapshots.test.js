@@ -188,6 +188,7 @@ test('authed /html serves the doc with the sandbox CSP', async () => {
     const res = await fetch(`${base(s)}/api/apps/demo/report-snapshots/3/html`);
     assert.equal(res.status, 200);
     assert.match(res.headers.get('content-security-policy'), /sandbox/);
+    assert.match(res.headers.get('content-security-policy'), /allow-popups-to-escape-sandbox/);
     assert.match(res.headers.get('content-security-policy'), /default-src 'none'/);
     assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
     assert.equal(res.headers.get('cache-control'), 'no-store');
@@ -240,6 +241,7 @@ test('public /reports/:token serves shared html and 404s malformed/unknown token
     let res = await fetch(`${base(s)}/reports/${'c'.repeat(32)}`);
     assert.equal(res.status, 200);
     assert.match(res.headers.get('content-security-policy'), /sandbox/);
+    assert.match(res.headers.get('content-security-policy'), /allow-popups-to-escape-sandbox/);
     assert.equal(res.headers.get('cache-control'), 'no-store');
     assert.equal(await res.text(), DOC);
 
