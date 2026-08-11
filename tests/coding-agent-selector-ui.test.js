@@ -201,6 +201,32 @@ test('switching an idle session uses reset-agent-context and updates its pinned 
   assert.equal(h.DevChat.messages.at(-1).content, 'Coding agent switched.');
 });
 
+test('changing an OpenRouter model asks for an OpenRouter-only choice', async () => {
+  const h = makeHarness();
+  h.DevChat.currentSession = {
+    id: 52,
+    agent_backend: 'codex_openrouter',
+    agent_model: 'deepseek/deepseek-v4-flash',
+    agent_reasoning_effort: null,
+  };
+  let chooserArgs = null;
+  h.DevChat._chooseCodingAgent = async (args) => {
+    chooserArgs = args;
+    return null;
+  };
+
+  await h.DevChat._switchCurrentCodingAgent(null, {
+    fixedBackend: 'codex_openrouter',
+  });
+
+  assert.ok(chooserArgs, 'the model chooser did not open');
+  assert.equal(chooserArgs.mode, 'switch');
+  assert.equal(chooserArgs.fixedBackend, 'codex_openrouter');
+  assert.equal(chooserArgs.current.backend, 'codex_openrouter');
+  assert.equal(chooserArgs.current.model, 'deepseek/deepseek-v4-flash');
+  assert.equal(h.requests.length, 0, 'cancelling the chooser must not reset the session');
+});
+
 test('live progress keeps the exact runtime provider identity', () => {
   const h = makeHarness();
   h.DevChat.messages = [];

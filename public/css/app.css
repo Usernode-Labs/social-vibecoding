@@ -6506,16 +6506,56 @@ body.is-offline [data-offline-disabled] {
   line-height: 1.4;
 }
 
-/* Model + effort + their notes. Rendered only for the two venues that
-   HAVE a model to pick; the other four have nothing to say here, and an
-   empty disclosure was one of the things making the footer feel like a
-   settings panel. */
+/* Provider-specific model controls. Claude renders its chat-model select;
+   OpenRouter renders the one model pinned to both chat and coding. The
+   other four venues have nothing to choose here. */
 .dc-venue-detail {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.4rem;
   padding: 0 0.1rem 0.25rem;
+}
+
+.dc-openrouter-model {
+  min-width: 0;
+  max-width: min(100%, 30rem);
+  overflow: hidden;
+  color: var(--text-primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dc-openrouter-model-change {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #8b5cf6;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.dc-openrouter-model-change:hover {
+  color: #a78bfa;
+}
+
+.dc-openrouter-model-change:focus-visible {
+  outline: none;
+  border-radius: 3px;
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.35);
+}
+
+.dc-openrouter-model-change:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  text-decoration: none;
 }
 
 /* The session-card chip on the dev feed (#1087 card actions row). Names

@@ -311,9 +311,9 @@ const DevChat = {
   _agentBillingNote(session) {
     if (DevChat._agentBackend(session) === 'codex_openrouter') {
       const model = String(session?.agent_model || '').trim();
-      return `Building on Usernode · OpenRouter${model ? ` (${model})` : ''} — coding turns bill your OpenRouter key.`;
+      return `All chat and coding in this session use ${model || 'your selected model'} through OpenRouter and bill your OpenRouter key.`;
     }
-    return 'Building on Usernode · Claude — coding turns use your daily Usernode credits.';
+    return 'Chat and coding use Usernode · Claude and its normal credit rules.';
   },
 
   _busyComposerPlaceholder() {
@@ -420,17 +420,18 @@ const DevChat = {
     return data;
   },
 
-  async _chooseCodingAgent({ mode = 'create', current = null } = {}) {
+  async _chooseCodingAgent({ mode = 'create', current = null, fixedBackend = null } = {}) {
     const data = await DevChat._loadCodingAgentChoiceData();
     if (typeof document === 'undefined' || !document.body) return null;
 
     document.getElementById('dc-agent-choice-modal')?.remove();
 
     const savedCodex = data.backends?.codex_openrouter || {};
-    let selectedBackend = current?.backend || data.defaultBackend || 'claude_code';
+    let selectedBackend = fixedBackend || current?.backend || data.defaultBackend || 'claude_code';
     if (!['claude_code', 'codex_openrouter'].includes(selectedBackend)) {
       selectedBackend = 'claude_code';
     }
+    const openRouterModelOnly = fixedBackend === 'codex_openrouter';
     const availableIds = new Set(data.models.map((m) => m.id));
     const recommendedModel = availableIds.has(data.recommendedModelId)
       ? data.recommendedModelId
@@ -446,12 +447,12 @@ const DevChat = {
       <div class="w-full max-w-lg rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-5 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="dc-agent-choice-title">
         <div class="flex items-start gap-3">
           <div class="min-w-0 flex-1">
-            <h2 id="dc-agent-choice-title" class="text-lg font-bold text-zinc-900 dark:text-zinc-100">${mode === 'switch' ? 'Where should this session build?' : 'Where should this build?'}</h2>
-            <p class="mt-1 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">${mode === 'switch' ? 'Switching keeps this branch and conversation, but starts a fresh coding-agent context on the next turn.' : 'Both agents stay available. Your saved default is preselected; this choice is pinned to the new session.'}</p>
+            <h2 id="dc-agent-choice-title" class="text-lg font-bold text-zinc-900 dark:text-zinc-100">${openRouterModelOnly ? 'Choose an OpenRouter model' : (mode === 'switch' ? 'Where should this session build?' : 'Where should this build?')}</h2>
+            <p class="mt-1 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">${openRouterModelOnly ? 'Changing the model keeps this branch and conversation, but starts fresh OpenRouter context on the next turn.' : (mode === 'switch' ? 'Switching keeps this branch and conversation, but starts a fresh coding-agent context on the next turn.' : 'Both agents stay available. Your saved default is preselected; this choice is pinned to the new session.')}</p>
           </div>
           <button type="button" id="dc-agent-choice-close" class="shrink-0 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200" aria-label="Close">✕</button>
         </div>
-        <div class="mt-4 grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Session AI">
+        <div class="mt-4 grid gap-2 sm:grid-cols-2 ${openRouterModelOnly ? 'hidden' : ''}" role="radiogroup" aria-label="Session AI">
           <button type="button" id="dc-agent-choice-claude" role="radio" class="rounded-lg border p-3 text-left transition-colors">
             <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">Usernode · Claude</span>
             <span class="mt-1 block text-xs text-zinc-500 dark:text-zinc-400">In this chat, on your daily Usernode credits.</span>
@@ -519,9 +520,9 @@ const DevChat = {
 
       applyButton.disabled = false;
       const venueName = codex ? 'Usernode · OpenRouter' : 'Usernode · Claude';
-      applyButton.textContent = mode === 'switch'
-        ? `Switch to ${venueName}`
-        : `Build on ${venueName}`;
+      applyButton.textContent = openRouterModelOnly
+        ? 'Use this OpenRouter model'
+        : (mode === 'switch' ? `Switch to ${venueName}` : `Build on ${venueName}`);
 
       if (!codex) {
         status.textContent = data.loadError
@@ -604,7 +605,9 @@ const DevChat = {
         });
       });
       render();
-      (selectedBackend === 'codex_openrouter' ? codexButton : claudeButton).focus();
+      (openRouterModelOnly
+        ? modelSelect
+        : (selectedBackend === 'codex_openrouter' ? codexButton : claudeButton)).focus();
     });
   },
 
@@ -613,7 +616,7 @@ const DevChat = {
   // would be asking the same question twice. Omitted, this still opens the
   // detail chooser, which is what the OpenRouter row needs (a backend is
   // not a complete answer there: it wants a model and an effort too).
-  async _switchCurrentCodingAgent(explicit) {
+  async _switchCurrentCodingAgent(explicit, { fixedBackend = null } = {}) {
     const session = DevChat.currentSession;
     if (!session || DevChat.isStreaming) return;
     const current = {
@@ -621,7 +624,11 @@ const DevChat = {
       model: session.agent_model || null,
       reasoningEffort: session.agent_reasoning_effort || null,
     };
-    const choice = explicit || await DevChat._chooseCodingAgent({ mode: 'switch', current });
+    const choice = explicit || await DevChat._chooseCodingAgent({
+      mode: 'switch',
+      current,
+      fixedBackend,
+    });
     if (!choice || !DevChat.currentSession || DevChat.currentSession.id !== session.id) return;
 
     const same = choice.backend === current.backend
@@ -3698,6 +3705,8 @@ const DevChat = {
     // cannot move until it lands.
     const venueChange = document.querySelector('#dc-venue-slot [data-venue-change]');
     if (venueChange) venueChange.disabled = !!streaming;
+    const openRouterModelChange = document.getElementById('dc-openrouter-model-change');
+    if (openRouterModelChange) openRouterModelChange.disabled = !!streaming;
     DevChat._syncSaveDraftBtn();
     // Re-render the saved-drafts list so each row's Send button picks up
     // the new busy state (disabled while thinking, live once idle).
@@ -6690,8 +6699,9 @@ const DevChat = {
       })
       : '';
     DevChat._venueFallbackReason = null;
-    // Only the two Usernode-run venues have a chat model to pick.
-    const venueHasModel = venueId === 'usernode-claude' || venueId === 'usernode-openrouter';
+    const claudeVenue = venueId === 'usernode-claude';
+    const openRouterVenue = venueId === 'usernode-openrouter';
+    const openRouterModel = String(DevChat.currentSession.agent_model || '').trim();
 
     content.innerHTML = `
       <div class="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
@@ -6719,8 +6729,8 @@ const DevChat = {
             <!-- The venue statement (#1086). One line, always painted,
                  naming where this session builds and offering the only
                  control that changes it. It replaces the "Coding agent:"
-                 button that used to sit here beside a "Chat model:"
-                 dropdown — two controls, adjacent, answering two different
+                 button that used to sit beside a second provider dropdown —
+                 two controls, adjacent, answering two different
                  questions in the same visual weight, one of which was the
                  venue and one of which was not. Filled from the session
                  row, so it is right on first paint. -->
@@ -6747,19 +6757,12 @@ const DevChat = {
                 class="dc-budget-options">&#8943;</button>
             </div>
             <!-- The venue's own settings, one level down from the statement
-                 above. Present only for the two venues that HAVE a model to
-                 pick — Usernode · Claude and Usernode · OpenRouter — because
-                 for a session running on a laptop or handed to a web agent
-                 there is nothing here to choose: the chat model is a
-                 Usernode-side setting and saying otherwise was half the
-                 confusion this line replaces. Both the select and its note
-                 keep their ids, their storage key and their sanitizer.
-                 #800: the note is a one-line plain-language description of
-                 the SELECTED model — what kind of work it suits. Filled by
-                 _renderModelNote(); hidden when the payload carries no
-                 guidance copy. Clamped to two lines in CSS: Fable's
-                 sentence wraps on a phone and must not crowd the box. -->
-            ${venueHasModel ? `
+                 above. Claude and OpenRouter are deliberately separate:
+                 Claude gets the platform chat-model picker; OpenRouter gets
+                 the exact model pinned to the whole session and a direct way
+                 to reopen the OpenRouter catalog. Local and web venues have
+                 no model setting here. -->
+            ${claudeVenue ? `
             <div id="dc-venue-detail" class="dc-venue-detail">
               <div class="flex flex-wrap items-center gap-2">
                 <label class="text-xs text-zinc-500" for="dc-model-select">Chat model:</label>
@@ -6769,7 +6772,13 @@ const DevChat = {
               </div>
               <div id="dc-agent-note" class="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">${escapeHtml(agentBillingNote)}</div>
               <span id="dc-model-note" class="dc-model-note hidden"></span>
-            </div>` : ''}
+            </div>` : (openRouterVenue ? `
+            <div id="dc-venue-detail" class="dc-venue-detail">
+              <span class="text-xs text-zinc-500">OpenRouter model:</span>
+              <span id="dc-openrouter-model" class="dc-openrouter-model" title="${escapeHtml(openRouterModel || 'No model is pinned')}">${escapeHtml(openRouterModel || 'No model is pinned')}</span>
+              <button type="button" id="dc-openrouter-model-change" class="dc-openrouter-model-change" ${DevChat.isStreaming ? 'disabled' : ''}>Change model</button>
+              <div id="dc-agent-note" class="basis-full text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">${escapeHtml(agentBillingNote)}</div>
+            </div>` : '')}
             <div id="dc-drafts" class="dc-drafts"></div>
             <div id="dc-quick-replies" class="dc-quick-replies"></div>
             <div id="dc-attachments" class="dc-attach-strip"></div>
@@ -6847,8 +6856,9 @@ const DevChat = {
     // — isStreaming stays false, so nothing can be sent or stopped.
     else if (DevChat._wantsBusyShot()) DevChat._setStreamingUI(true, 'claude');
 
-    // #800: caption describing the selected model, kept in sync below.
-    DevChat._renderModelNote();
+    // #800: caption describing the selected Claude model, kept in sync
+    // below. OpenRouter has its own pinned-model readout instead.
+    if (claudeVenue) DevChat._renderModelNote();
     // #907: repaint from whatever the last status poll told us. The poll
     // itself runs a beat later; painting here means a re-render of an already
     // open session doesn't drop the chip for a second.
@@ -6879,8 +6889,16 @@ const DevChat = {
     }
     DevChat._maybeOpenShotVenueSheet();
 
-    // Null when this session's venue has no chat model to pick — see the
-    // dc-venue-detail block in renderChatView.
+    const openRouterModelChange = document.getElementById('dc-openrouter-model-change');
+    if (openRouterModelChange) {
+      openRouterModelChange.disabled = DevChat.isStreaming;
+      openRouterModelChange.addEventListener('click', () => {
+        DevChat._switchCurrentCodingAgent(null, { fixedBackend: 'codex_openrouter' });
+      });
+    }
+
+    // Null unless this session is using Usernode · Claude. OpenRouter has
+    // one model for both chat and coding, changed through the catalog above.
     const modelSelect = document.getElementById('dc-model-select');
     if (modelSelect) {
       modelSelect.addEventListener('change', (e) => {
