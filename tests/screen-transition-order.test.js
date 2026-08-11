@@ -199,6 +199,68 @@ test('every screen entry is guarded against a duplicate dispatch', () => {
   }
 });
 
+test('every in-screen router is idempotent for a duplicate dispatch', () => {
+  // The other half of the same defect (#1102). The guards above stop the
+  // duplicate replaying the screen ENTRY, but each of these three screens
+  // has a SECOND level of navigation inside an already-VISIBLE root, and
+  // app.js hands the duplicate straight to it. Its second call resolves the
+  // same level, so it asks for type 'none' — and 'none' runs SYNCHRONOUSLY
+  // (as does anything re-entrant, via vtActive), landing the level swap
+  // before the first call's View Transition has captured the outgoing page.
+  // The animation then plays the incoming page against a dimmed copy of
+  // itself: the settings section vanished instantly and two menus animated.
+  //
+  // So each router must resolve its target FIRST and return, without
+  // starting or pre-empting a transition, when that target is already the
+  // one on screen.
+  const routers = {
+    'frontend/src/features/settings/settings.js': {
+      open: '    route(section) {',
+      state: 'Settings',
+      transition: 'Settings._transition(',
+    },
+    'public/js/admin-console.js': {
+      open: '  route(section, opts) {',
+      state: 'AdminConsole',
+      transition: 'AdminConsole._transition(',
+    },
+    'public/js/browse.js': {
+      open: '  route(slug) {',
+      state: 'Browse',
+      transition: 'PlatformUI.transition(',
+    },
+  };
+  for (const [file, { open, state, transition }] of Object.entries(routers)) {
+    const src = fs.readFileSync(path.join(root, file), 'utf8');
+    const at = src.indexOf(open);
+    assert.ok(at > -1, `${file} still defines ${open.trim()}`);
+    // Close on the brace at the method's own indentation (settings.js sits
+    // one level deeper than the two window-scoped modules).
+    const close = `\n${' '.repeat(open.length - open.trimStart().length)}},`;
+    const body = src.slice(at, src.indexOf(close, at) + close.length);
+    // An early-out that compares the RESOLVED target to the current state
+    // and returns. Browse's target is a single slug; the two-level consoles
+    // resolve a (level, section) pair.
+    const early = state === 'Browse'
+      ? new RegExp(`if \\(next === ${state}\\._slug\\) \\{`)
+      : new RegExp(
+        `if \\(targetLevel === ${state}\\._level && targetSection === ${state}\\._section\\) \\{`);
+    assert.match(body, early,
+      `${file}: route() must early-out when the resolved target is already showing — `
+      + 'otherwise a duplicate dispatch repaints inside the first dispatch\'s '
+      + 'uncaptured snapshot window (#1102)');
+    const guardAt = body.search(early);
+    const transitionAt = body.indexOf(transition);
+    assert.ok(transitionAt > -1, `${file}: route() still runs a transition`);
+    assert.ok(guardAt > -1 && guardAt < transitionAt,
+      `${file}: the early-out must precede the transition call — below it, the `
+      + 'duplicate has already repainted');
+    // And it must return rather than fall through into the level swap.
+    assert.match(body.slice(guardAt, transitionAt), /return;/,
+      `${file}: the early-out returns`);
+  }
+});
+
 // ── The exits are state-only ───────────────────────────────────────────
 
 for (const name of EXITS) {

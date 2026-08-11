@@ -1418,6 +1418,11 @@
       "expectSelector": "#settings-footer #settings-logout"
     },
     {
+      "name": "A settings history traversal routes once, so nothing pre-empts the transition snapshot (#1102)",
+      "path": "/?shot=settings-back#settings",
+      "expectSelector": "#settings-screen:not(.hidden)[data-settings-route=\"skipped\"] #settings-section-content [data-settings-section=\"api-key\"]:not(.hidden)"
+    },
+    {
       "name": "Settings deep-links the Password section",
       "path": "/#settings/password",
       "expectSelector": "[data-settings-section=\"password\"]:not(.hidden) #cp-save"

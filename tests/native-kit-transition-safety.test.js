@@ -83,6 +83,73 @@ test('the abort path stays silent — no console output of its own', () => {
   );
 });
 
+test('an immediate mutation skips a transition that has not captured yet', () => {
+  // #1102. A View Transition captures its OLD snapshot at the next rendering
+  // opportunity, not when startViewTransition() returns. Everything in the
+  // bail-out branch above runs its mutation SYNCHRONOUSLY instead — 'none',
+  // a re-entrant call (vtActive), reduced motion — so when one of those
+  // lands inside another transition's uncaptured window, the mutation is
+  // baked into the outgoing snapshot and the animation plays the new page
+  // against a dimmed copy of itself. That is the two-copies artefact.
+  //
+  // The caller is responsible for not issuing the duplicate at all (see
+  // tests/screen-transition-order.test.js); what the kit guarantees is
+  // narrower — it will not ANIMATE a corrupted snapshot. Skipping first
+  // degrades the worst case to no animation.
+  const body = transitionBody();
+
+  assert.match(
+    body, /var vtPending = null;|vtPending/,
+    'transition() must track the transition whose update callback has not run yet.',
+  );
+  assert.match(
+    SRC, /var vtPending = null;/,
+    'the pending-transition handle must be a module-level var beside vtActive.',
+  );
+
+  const bail = body.slice(
+    body.indexOf("type === 'none' || vtActive"),
+    body.indexOf('vtActive = true;'),
+  );
+  assert.ok(bail.length, 'could not find the immediate-run branch of transition()');
+  assert.match(
+    bail, /skipTransition\(\)/,
+    'the immediate-run branch must skip a pending transition before mutating — otherwise the '
+    + 'mutation ends up in that transition\'s old snapshot (#1102).',
+  );
+  const skipAt = bail.indexOf('skipTransition()');
+  const runAt = bail.indexOf('run();');
+  assert.ok(runAt > -1, 'the immediate-run branch still calls run()');
+  assert.ok(skipAt > -1 && skipAt < runAt,
+    'the skip must happen BEFORE run() — after it, the snapshot is already corrupted.');
+  assert.match(
+    bail, /try \{[^}]*skipTransition\(\)[\s\S]{0,80}?catch/,
+    'skipTransition() must be guarded: it throws on a transition that has already finished.',
+  );
+  assert.doesNotMatch(
+    bail, /console\.(error|warn|log)\s*\(/,
+    'the skip path must stay silent for the same reason the abort path does.',
+  );
+
+  // The handle is cleared from inside the update callback, which the browser
+  // only invokes once the old state is captured. Clearing it any earlier
+  // (right after startViewTransition returns) would reopen the window.
+  assert.match(
+    body, /var capture = function \(\) \{ vtPending = null; run\(\); \};/,
+    'the pending handle must be cleared from INSIDE the update callback — that call is the '
+    + 'browser telling us the old state has been captured.',
+  );
+  assert.match(
+    body, /vt = document\.startViewTransition\(capture\)/,
+    'startViewTransition() must be handed the wrapper that clears the handle, not run directly.',
+  );
+  assert.match(
+    body, /if \(vtPending === vt\) vtPending = null;/,
+    'the finished handler must release the handle too, for a transition the browser aborted '
+    + 'before ever calling the update callback.',
+  );
+});
+
 test('a transition is not started before the document has painted a frame', () => {
   const body = transitionBody();
   assert.match(

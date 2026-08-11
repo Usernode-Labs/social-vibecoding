@@ -2492,6 +2492,15 @@
    * slides out a "previous page" that already carries the incoming
    * screen's chrome (or none of the outgoing screen's content at all).
    *
+   * A DUPLICATE DISPATCH THAT RE-APPLIES THE SAME NAVIGATION MUST BE
+   * SKIPPED BY THE CALLER, NOT ABSORBED BY THE KIT (#1102): the caller is
+   * the only party that can tell "already showing this" from "show this
+   * next". What the kit guarantees is narrower — it will not ANIMATE a
+   * corrupted snapshot. So while a transition is pending but not yet
+   * captured, an immediately-run mutation (type 'none', reduced motion, a
+   * re-entrant navigation) first skips that transition, degrading the
+   * worst case to no animation instead of a two-copies animation.
+   *
    * 'zoom-in'/'zoom-out' play the iOS-homescreen expand/collapse out of
    * a tile ({ el, fromEl | fromRect, after?, fallback?, outEl? }). No
    * View Transition is involved: the LIVE screen element (opts.el) is
@@ -2515,6 +2524,12 @@
    * ──────────────────────────────────────────────────────────────────── */
 
   var vtActive = false;
+  // The transition whose update callback has NOT run yet — i.e. whose old
+  // snapshot has not been captured. Any visible mutation that lands in this
+  // window is baked into that snapshot, which is why the immediate-run path
+  // below skips it first (#1102). Cleared from inside the wrapped callback,
+  // which the browser only calls once the old state is captured.
+  var vtPending = null;
   var zoomCleanup = null; // instant-finish handle for the active zoom
 
   var ZOOM_EASE = 'var(--un-ease-spring-stiff, cubic-bezier(0.3, 1, 0.4, 1))';
@@ -2725,20 +2740,41 @@
       type === 'none' || vtActive || prefersReducedMotion || !hasRenderedAFrame() ||
       typeof document.startViewTransition !== 'function'
     ) {
+      // This mutation runs NOW, synchronously — callers of 'none' read the
+      // DOM straight after, so that timing is part of the contract. If a
+      // transition is still waiting to capture its old state, running into
+      // it would put this mutation in the outgoing snapshot and animate the
+      // incoming page against a copy of itself (#1102). skipTransition()
+      // invokes the pending update callback synchronously if it has not run,
+      // so the other navigation's mutation is NOT lost — only its animation
+      // is. Silent by design: the promise rejections it causes are already
+      // absorbed below, and logging here would fail the platform's
+      // console-error baseline on every route.
+      if (vtPending) {
+        var skipping = vtPending;
+        vtPending = null;
+        try { skipping.skipTransition(); } catch (e) { /* already finished */ }
+      }
       run();
       return Promise.resolve();
     }
     vtActive = true;
     document.documentElement.setAttribute('data-un-vt', type);
     var vt;
+    // Clear the pending handle from INSIDE the callback: the browser calls
+    // it only after the old state is captured, which is exactly the end of
+    // the window the guard above protects.
+    var capture = function () { vtPending = null; run(); };
     try {
-      vt = document.startViewTransition(run);
+      vt = document.startViewTransition(capture);
     } catch (e) {
       vtActive = false;
+      vtPending = null;
       document.documentElement.removeAttribute('data-un-vt');
       run();
       return Promise.resolve();
     }
+    vtPending = vt;
     // A ViewTransition hands back THREE promises, and an aborted transition
     // rejects two of them. `finished` is handled below, but `ready` and
     // `updateCallbackDone` were observed by nobody — so when the browser
@@ -2760,6 +2796,11 @@
     }
     return vt.finished.catch(function () {}).then(function () {
       vtActive = false;
+      // Belt and braces: a transition the browser aborted BEFORE calling the
+      // update callback never clears the handle above, and a stale handle
+      // would make the next 'none' mutation skip a transition that is
+      // already over (harmless, but it should never get that far).
+      if (vtPending === vt) vtPending = null;
       document.documentElement.removeAttribute('data-un-vt');
     });
   }

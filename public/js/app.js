@@ -455,6 +455,7 @@ const App = {
     App.restoreFromHash();
     App._applyMenuShot();
     App._applyMenuNavShot();
+    App._applySettingsBackShot();
     App._applyLaunchShot();
     App._applyFeedbackShot();
 
@@ -569,6 +570,37 @@ const App = {
       setTimeout(() => {
         const row = document.getElementById('drawer-row-leaderboard');
         if (row) row.click();
+      }, 200);
+    }, 50);
+  },
+
+  // Screenshot-state deep link `?shot=settings-back` (#1102): drill into a
+  // settings section and then traverse history BACK out of it, which is the
+  // one dispatch shape that produced the two-copies transition — a traversal
+  // fires popstate AND hashchange, so restoreFromHash runs twice in one tick
+  // and Settings.route() is called twice with the same target. The defect
+  // lived entirely inside the ~250-420ms the animation lasts, which no still
+  // frame and no plain route can reach; the dapp.json check asserts the
+  // resulting state instead (#settings-screen carrying
+  // data-settings-route="skipped" — i.e. the duplicate did NOT repaint —
+  // with the destination section still correct).
+  //
+  // Ungated for the same reason as ?shot=menu above: pure UI state, no
+  // writes, and an env-gated link would starve the production "before" shot
+  // forever. Same timing budget as ?shot=menu-nav (well inside the checks
+  // runner's 500ms settle), and it drives the real hash → restoreFromHash →
+  // navigateToSettings path rather than calling the router directly.
+  _applySettingsBackShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'settings-back') return;
+    setTimeout(() => {
+      // A drill-in: one dispatch (a hash assignment fires hashchange only).
+      try { location.hash = '#settings/password'; } catch (err) { /* ignore */ }
+      // Then back out of it once that push has settled — the traversal, and
+      // with it the duplicate popstate + hashchange pair.
+      setTimeout(() => {
+        try { history.back(); } catch (err) { /* ignore */ }
       }, 200);
     }, 50);
   },
