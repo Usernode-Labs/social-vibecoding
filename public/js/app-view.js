@@ -248,6 +248,13 @@ const AppView = {
     // ?view= would keep winning over every later toggle click.
     AppView._viewModeUrlOverride = null;
     try { window.localStorage.setItem(AppView.VIEW_MODE_KEY, next); } catch {}
+    // #1084 chunk G: the segmented control is React-rendered now, so the
+    // active mode has to be published rather than painted on. This replaces
+    // the _updateViewToggleUI() call that used to follow every _setViewMode.
+    // Publishing here (not only from _selectViewMode) covers the other
+    // callers too — a ?view= override resolving on mount, and anything that
+    // sets the mode without going through the toggle.
+    AppView._reactDevBoard()?.publishViewMode(next);
   },
   // #482: kanban filter-bar state. The active object always reflects the
   // CURRENT app; it is (re)loaded per slug from sessionStorage whenever the
@@ -938,6 +945,10 @@ const AppView = {
     if (tab && tab !== 'app') return false;
     if (window.Offline && Offline.isOffline()) return false;
     const rec = AppView.launchRecordFor(slug);
+
+    // #1084 chunk G: this path replaces #app-content by hand, so retire any
+    // interim React root that owns it first — see _teardownDevRoots.
+    AppView._teardownDevRoots();
     if (!rec) return false;
     if (rec.demo) return false;
     if (rec.self_hosted) return false;
@@ -1164,6 +1175,10 @@ const AppView = {
   showLaunchCoverShot() {
     const content = document.getElementById('app-content');
     if (!content) return;
+    // #1084 chunk G: this path replaces #app-content by hand, so retire any
+    // interim React root that owns it first — see _teardownDevRoots.
+    AppView._teardownDevRoots();
+
     const home = AppView._home();
     const apps = (home && Array.isArray(home._apps)) ? home._apps : [];
     // Prefer an app a tap could really open (so the shot shows a real icon),
@@ -1202,6 +1217,11 @@ const AppView = {
     // identity across same-iframe navigations, so clearing here (not
     // just on close) is what invalidates it on re-render.
     AppView._issueStateSource = null;
+
+    // #1084 chunk G: every branch below replaces #app-content by hand, so
+    // retire any interim React root that owns it first — see
+    // _teardownDevRoots. Switching away from the Dev tab lands here.
+    AppView._teardownDevRoots();
 
     if (!appData || appData.status !== 'running' || !appData.url) {
       // #931: this branch replaces #app-content, so any launch surface under
@@ -1512,6 +1532,37 @@ const AppView = {
     return document.getElementById('dev-section') || document.getElementById('app-content');
   },
 
+  // ── The React seam for the Dev surfaces (#1084 chunk G) ────────────
+  //
+  // The Dev board's frame, the general-chat sub-view's frame and the session
+  // shell are React components now (frontend/src/features/dev-board/). They
+  // are not part of <Shell/>: #app-content ships EMPTY, so there is nothing
+  // in the prerendered document to hydrate, and which surface exists depends
+  // on the route. They therefore get an INTERIM React root — chunk A's
+  // mechanism 4 — created by this module at the point where it used to
+  // assign #app-content.innerHTML. Chunk H (#1085) folds them into the main
+  // tree and these two helpers go away with it.
+  //
+  // The bundle publishes the API at module scope, before hydration, and this
+  // module cannot reach renderDevView before DOMContentLoaded, so in the
+  // browser it is always there. The optional call is for the vm-context
+  // tests, which load this file with no bundle at all.
+  _reactDevBoard() {
+    return (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.devBoard
+      : null;
+  },
+  // Retire whatever interim root owns #app-content.
+  //
+  // Call this BEFORE replacing #app-content.innerHTML by hand. React keeps
+  // DOM references in its fiber tree, so rendering into a root whose children
+  // have been swapped out from under it reconciles against nodes that are no
+  // longer in the document. It also stops the frame's store subscription and
+  // effects outliving the surface they belong to.
+  _teardownDevRoots() {
+    AppView._reactDevBoard()?.unmountAll();
+  },
+
   // ── Dev mode (#194, forum revision): one page ──────────────────────
   // subTab ∈ 'forum' | 'sessions'. For 'sessions', `ref` is the dev
   // session id (no id → forum). For 'forum', `ref` is an optional
@@ -1540,13 +1591,20 @@ const AppView = {
     if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
     if (subTab !== 'topic') AppView._devTopic = null;
 
+    // #1084 chunk G: the topic sub-view is still an innerHTML template, so it
+    // has to retire whatever interim root the previous surface left on
+    // #app-content. The other three branches re-render that root instead of
+    // replacing it, which is why this is scoped rather than unconditional —
+    // unmount-then-remount on every Dev navigation would throw away the
+    // frame's state (the view mode) that the board is meant to keep.
+    if (subTab === 'topic' && ref && ref.kind && ref.id) AppView._teardownDevRoots();
+
     // Session view — a single DevChat session, full-screen, reached
     // from the Your-sessions strip, proposal cards, or the "+" flow.
     if (subTab === 'sessions' && ref) {
-      content.innerHTML = `
-        <div class="flex flex-col h-full min-h-0">
-          <div id="dev-section" class="flex-1 min-h-0 flex flex-col" style="overflow:hidden"></div>
-        </div>`;
+      // <DevSessionShell/> — #dev-section stays the host renderDevChatTab
+      // writes into, exactly as when this was a template.
+      AppView._reactDevBoard()?.mountSessionShell(content);
       await AppView.renderDevChatTab(ref);
       return;
     }
@@ -1571,96 +1629,26 @@ const AppView = {
     // the board mounts in _repaintDevBody. Resetting on every card-list mount
     // was the cause of filters vanishing on Back / tab switches.
 
-    content.innerHTML = `
-      <div class="flex flex-col h-full min-h-0">
-        <!-- Header bar: caption + view-mode toggle + the "+" menu (top
-             right). The "DEV" caption renders ONLY when the header's
-             #app-mode-switch is hidden — i.e. on the self-hosted platform
-             row. Everywhere else the header now says "Dev" a few pixels
-             above this row, and printing it twice reads as a bug. The
-             flex-1 spacer keeps the toggle and "+" right-aligned either
-             way. -->
-        <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
-          ${AppView.appData?.self_hosted
-            ? '<span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider flex-1">Dev</span>'
-            : '<span class="flex-1"></span>'}
-          ${AppView._renderViewToggle()}
-          <div class="relative ${AppView.readOnly && AppView.appData?.self_hosted ? 'hidden' : ''}">
-            <button id="dev-plus-btn" aria-haspopup="true" aria-expanded="false"
-              class="rounded-lg bg-violet-600 hover:bg-violet-500 w-7 h-7 flex items-center justify-center text-base font-bold leading-none text-white transition-colors"
-              title="${AppView.readOnly ? 'Fork this app' : 'Propose a change, file an issue, or manage this app'}">+</button>
-            <div id="dev-plus-menu" class="hidden absolute right-0 top-9 z-30 w-64 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden">
-              ${AppView.readOnly ? '' : `
-              ${AppView._plusMenuHeading('Build a change', 'build', false)}
-              <button data-plus="proposal" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
-                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Propose a change</span>
-                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Start a dev session — you pick where it is built, and can change that any time</span>
-              </button>
-              ${AppView.appData?.can_collaborate ? `
-              <button data-plus="import-pr" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
-                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Import Feature from a PR</span>
-                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Your computer &middot; your own tools — you have already built it, so there is no chat for this one</span>
-              </button>` : ''}
-              <button data-plus="issue" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
-                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">New issue</span>
-                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Report a problem or idea without building it yourself</span>
-              </button>
-              ${AppView._plusMenuHeading('Settings &amp; rules', 'settings', true)}
-              ${AppView._plusMenuShowsMembers() ? `
-              <button data-plus="members" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
-                ${AppView.appData?.self_hosted ? `
-                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Proposal approvals</span>
-                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Who approves proposals and how many approvals are needed</span>` : `
-                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Members &amp; visibility</span>
-                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Who can build and see this app</span>`}
-              </button>` : ''}
-              <button data-plus="rename" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors ${AppView._plusMenuShowsMembers() ? 'border-t border-zinc-200 dark:border-zinc-800' : ''}">
-                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">App display name</span>
-                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Renames are proposals — applied once voted in</span>
-              </button>
-              <button data-plus="secrets" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
-                <span class="flex items-center gap-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">${
-                  AppView.appData?.self_hosted ? 'Platform variables' : 'App secrets'}
-                  <span id="dc-secrets-state" class="text-xs font-normal text-zinc-400 dark:text-zinc-500"></span>
-                </span>
-                <span class="block text-xs text-zinc-500 dark:text-zinc-400">${AppView.appData?.self_hosted
-                  ? 'The platform\'s own env — applied on its next deploy'
-                  : 'Set or update secret values'}</span>
-              </button>`}
-              ${AppView.appData?.self_hosted ? '' : `
-              <button data-plus="fork" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors ${AppView.readOnly ? '' : 'border-t border-zinc-200 dark:border-zinc-800'}">
-                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Fork this app</span>
-                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Stand up your own independent copy</span>
-              </button>`}
-            </div>
-          </div>
-        </div>
-
-        <!-- The card list: locked notice, general-chat card, session
-             rows, the intermixed feed, and the Completed section. -->
-        <div id="dev-forum-scroll" class="flex-1 min-h-0 overflow-y-auto overscroll-contain platform-safe-scroll">
-          <div id="dev-locked-notice" class="px-3 pt-2 hidden"></div>
-          <div class="px-3 pt-2">
-            <button id="dev-chat-card" class="${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}"
-              title="Open the general chat">
-              ${AppView._devCardIcon('chat')}
-              <span class="flex-1 min-w-0">
-                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">General chat</span>
-                <span id="dev-chat-card-preview" class="block text-xs text-zinc-500 dark:text-zinc-400 truncate">Talk with everyone building this app</span>
-              </span>
-              <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-            </button>
-          </div>
-          <!-- Body region: list mode mounts #dev-feed + #gc-merged here;
-               kanban mode mounts #dev-kanban. _repaintDevBody() owns the
-               swap. The wrapper node is stable across mode switches so the
-               delegated card-open handler (bound below) survives both. -->
-          <div id="dev-body" class="px-3 py-2">
-            <div id="dev-feed"><div class="text-xs text-zinc-500 dark:text-zinc-400">Loading…</div></div>
-            <div id="gc-merged" class="mt-4"></div>
-          </div>
-        </div>
-      </div>`;
+    // <DevBoardFrame/> — the header bar (caption, view-mode toggle, the "+"
+    // menu), #dev-forum-scroll, the locked notice, the General-chat card and
+    // the #dev-body host, all React-rendered from this call. Every id, class
+    // string and data-* attribute is the one the template emitted; the wiring
+    // below is untouched, because listeners and `hidden` toggles are the two
+    // mutations the migration sanctions on React-rendered nodes.
+    //
+    // The gate predicates stay HERE: _plusMenuShowsMembers() is the full
+    // creator/admin/collaborator rule and reads AppView.appData, so the
+    // component takes its answer rather than re-deriving it.
+    AppView._reactDevBoard()?.mountBoard(content, {
+      selfHosted: !!AppView.appData?.self_hosted,
+      readOnly: !!AppView.readOnly,
+      canCollaborate: !!AppView.appData?.can_collaborate,
+      showsMembers: AppView._plusMenuShowsMembers(),
+      cardCls: AppView.DEV_CARD_CLS,
+      cardHoverCls: AppView.DEV_CARD_HOVER_CLS,
+      viewMode: AppView._getViewMode(),
+      onSelectViewMode: (mode) => AppView._selectViewMode(mode),
+    });
 
     AppView._wirePlusMenu(content);
     // Pull down on the dev feed to re-pull it (touch only; the scroller
@@ -1669,7 +1657,8 @@ const AppView = {
     if (devScroll) {
       PlatformUI.pullToRefresh(devScroll, () => AppView._loadDevFeed());
     }
-    AppView._wireViewToggle(content);
+    // _wireViewToggle is gone: <DevBoardFrame/> binds the toggle's onClick and
+    // routes it to _selectViewMode below (#1084 chunk G).
     AppView._attrInit();
     AppView._cardMenuInit();
     document.getElementById('dev-chat-card').addEventListener('click', () => {
@@ -3002,20 +2991,18 @@ const AppView = {
   // mount into the pinned pane — spec side-panel, autocomplete, drafts,
   // and scroll restore all unchanged.
   _renderChatSubView(content) {
-    content.innerHTML = `
-      <div class="flex flex-col h-full min-h-0">
-        <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
-          <a id="dev-chat-back" class="inline-flex items-center text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm" title="Back to the dev page" href="${AppView._devPageHref()}">&larr;</a>
-          <span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider">General chat</span>
-        </div>
-        <div id="dev-chat-body" class="flex-1 min-h-0"></div>
-      </div>`;
-
-    document.getElementById('dev-chat-back').addEventListener('click', (e) => {
-      // #1036: real anchor — leave a modified click to the browser.
-      if (window.NavLink && NavLink.isNativeClick(e)) return;
-      e.preventDefault();
-      App.switchTab('dev');
+    // <DevChatSubView/> — #dev-chat-body stays the host renderGroupChatTab
+    // writes into. The back link's click handler moved into the component's
+    // onClick prop (below) rather than being bound after the fact, because
+    // React owns the anchor now; the guard and the target are unchanged.
+    AppView._reactDevBoard()?.mountChatSubView(content, {
+      backHref: AppView._devPageHref(),
+      onBackClick: (e) => {
+        // #1036: real anchor — leave a modified click to the browser.
+        if (window.NavLink && NavLink.isNativeClick(e)) return;
+        e.preventDefault();
+        App.switchTab('dev');
+      },
     });
 
     AppView.renderGroupChatTab();
@@ -3029,57 +3016,29 @@ const AppView = {
   // menu entry) was dissolved in #645 — Rename and App secrets now sit
   // directly in the "+" menu, alongside Members & visibility.
 
-  // ── View-mode toggle (list ↔ kanban) ─────────────────────────────────
-  // A two-button segmented control sitting to the LEFT of the "+" button.
-  // Mirrors the existing inline-SVG icon convention used throughout this
-  // file. The active button is tinted violet; both reflect their state
-  // via aria-pressed for assistive tech.
-  _viewToggleBtnCls(active) {
-    return 'dev-view-btn w-7 h-7 flex items-center justify-center transition-colors '
-      + (active
-        ? 'bg-violet-600 text-white'
-        : 'text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800');
-  },
-  _renderViewToggle() {
-    const mode = AppView._getViewMode();
-    // List-lines icon (three rows) and a board/columns icon.
-    const listSvg = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>';
-    const boardSvg = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z"/></svg>';
-    // People icon (two-person silhouette) for the PM assignment overview.
-    const peopleSvg = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-1a4 4 0 00-3-3.87M9 20H4v-1a4 4 0 013-3.87m6 4.87v-1a4 4 0 00-3-3.87M12 7a3 3 0 11-6 0 3 3 0 016 0zm7 3a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"/></svg>';
-    // #1100: document-with-lines icon for the Reporting view — a generated,
-    // read-only progress report rather than another way to work the board.
-    const reportSvg = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 4h8l4 4v12H8zM8 4H6a2 2 0 00-2 2v12M11 12h6M11 16h6M11 8h2"/></svg>';
-    return `
-      <div class="inline-flex items-center rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-hidden mr-1" role="group" aria-label="Dev view mode">
-        <button id="dev-view-list" data-view="list" class="${AppView._viewToggleBtnCls(mode === 'list')}" aria-pressed="${mode === 'list'}" title="List view" aria-label="List view">${listSvg}</button>
-        <button id="dev-view-kanban" data-view="kanban" class="${AppView._viewToggleBtnCls(mode === 'kanban')}" aria-pressed="${mode === 'kanban'}" title="Kanban view" aria-label="Kanban view">${boardSvg}</button>
-        <button id="dev-view-pm" data-view="pm" class="${AppView._viewToggleBtnCls(mode === 'pm')}" aria-pressed="${mode === 'pm'}" title="PM view — tasks by assignee" aria-label="PM view">${peopleSvg}</button>
-        <button id="dev-view-report" data-view="report" class="${AppView._viewToggleBtnCls(mode === 'report')}" aria-pressed="${mode === 'report'}" title="Reporting — progress report" aria-label="Reporting — progress report">${reportSvg}</button>
-      </div>`;
-  },
-  _wireViewToggle(content) {
-    content.querySelectorAll('.dev-view-btn').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const v = btn.dataset.view;
-        const mode = AppView._isViewMode(v) ? v : 'list';
-        if (mode === AppView._getViewMode()) return;
-        AppView._setViewMode(mode);
-        AppView._updateViewToggleUI();
-        // Re-flow the already-cached data into the new layout. No refetch.
-        AppView._repaintDevBody();
-      });
-    });
-  },
-  // Swap the active/inactive styling + aria-pressed on the two toggle
-  // buttons in place, so switching modes doesn't re-render the header bar.
-  _updateViewToggleUI() {
-    const mode = AppView._getViewMode();
-    document.querySelectorAll('.dev-view-btn').forEach((btn) => {
-      const active = btn.dataset.view === mode;
-      btn.className = AppView._viewToggleBtnCls(active);
-      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
-    });
+  // ── View-mode toggle (list / kanban / pm / report) ───────────────────
+  //
+  // #1084 chunk G: the segmented control itself is React now — see
+  // frontend/src/features/dev-board/board-frame.tsx for the markup and
+  // ./view-mode-store.ts for how the active mode gets there. Four helpers
+  // retired with the template:
+  //
+  //   _viewToggleBtnCls / _renderViewToggle — the component renders both;
+  //   _wireViewToggle                       — the component binds onClick;
+  //   _updateViewToggleUI                   — it assigned btn.className
+  //                                           outright, which is exactly the
+  //                                           two-owners-of-one-attribute
+  //                                           conflict the migration forbids.
+  //
+  // What is left is the BEHAVIOUR the old click listener had, unchanged.
+  _selectViewMode(v) {
+    const mode = AppView._isViewMode(v) ? v : 'list';
+    if (mode === AppView._getViewMode()) return;
+    // _setViewMode publishes the new mode to the store, which is what
+    // repaints the four buttons.
+    AppView._setViewMode(mode);
+    // Re-flow the already-cached data into the new layout. No refetch.
+    AppView._repaintDevBody();
   },
 
   // ── "+" menu ────────────────────────────────────────────────────────

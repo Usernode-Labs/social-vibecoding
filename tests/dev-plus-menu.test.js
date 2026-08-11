@@ -93,26 +93,45 @@ function makeViewHarness(els = {}) {
   return sandbox.window.AppView;
 }
 
-// Render the dev card list for the given appData and capture the HTML
-// renderDevView writes into #app-content. Wiring code after the innerHTML
-// assignment may throw against the stub DOM — that's fine, the markup is
-// already captured.
-async function renderCardListHtml(appData) {
-  const captured = { html: '' };
-  const content = makeEl();
-  Object.defineProperty(content, 'innerHTML', {
-    get: () => captured.html,
-    set: (v) => { captured.html = v; },
-  });
-  const AppView = makeViewHarness({ 'app-content': content });
-  AppView.appData = appData;
-  try {
-    await AppView.renderDevView('forum', null);
-  } catch {
-    // Post-render wiring hit a stubbed-out element — markup already captured.
-  }
-  assert.ok(captured.html.includes('dev-plus-menu'), 'card list rendered its "+" menu');
-  return captured.html;
+// ── where the "+" menu's markup lives now (#1084 chunk G) ────────────────
+//
+// The card list's header bar — caption, view-mode toggle, "+" button and this
+// whole dropdown — is a React component since chunk G, so there is no longer an
+// innerHTML string on #app-content to capture. The gate the tests below care
+// about did NOT move: AppView._plusMenuShowsMembers() is still the predicate,
+// and renderDevView still evaluates it and passes the answer down as the
+// `showsMembers` prop. So the coverage splits in two, the same way
+// tests/standings-screen.test.js split when its tab strip converted:
+//
+//   * the PREDICATE keeps its vm-context test against the shipped module —
+//     that is where the creator/admin/collaborator rule actually lives;
+//   * the MARKUP is asserted against the component source, because these tests
+//     run with no frontend/node_modules (the root install never touches that
+//     workspace), so there is no React to render with.
+//
+// The seam between the two — that renderDevView computes the predicate and the
+// component consumes it — is asserted once, explicitly, below.
+const FRAME_SRC = fs.readFileSync(
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'board-frame.tsx'),
+  'utf8'
+);
+
+// The `showsMembers ? … : null` block, so a test can assert on the members row
+// without matching text that happens to appear elsewhere in the file.
+function membersBlock() {
+  const start = FRAME_SRC.indexOf('{showsMembers ? (');
+  assert.ok(start !== -1, 'the members row is still gated on the showsMembers prop');
+  const end = FRAME_SRC.indexOf('data-plus="rename"', start);
+  assert.ok(end !== -1, 'the rename row still follows the members row');
+  return FRAME_SRC.slice(start, end);
+}
+
+// Which of the two label pairs a `selfHosted` branch renders.
+function selfHostedBranch(block) {
+  const start = block.indexOf('{selfHosted ? (');
+  assert.ok(start !== -1, 'the members row still branches on selfHosted');
+  const split = block.indexOf(') : (', start);
+  return { whenSelfHosted: block.slice(start, split), otherwise: block.slice(split) };
 }
 
 const BASE_APP = {
@@ -128,34 +147,55 @@ const BASE_APP = {
 
 // ── the members item obeys the old drawer-row gate ───────────────────────
 
-test('creator/admin (can_manage) sees Members & visibility in the "+" menu', async () => {
-  const html = await renderCardListHtml({ ...BASE_APP, can_manage: true });
-  assert.ok(html.includes('data-plus="members"'), 'members item present');
-  assert.ok(html.includes('Members &amp; visibility'), 'members label present');
+test('the members item is gated on the predicate, and only on the predicate', () => {
+  const block = membersBlock();
+  assert.ok(block.includes('data-plus="members"'), 'members item lives inside the gate');
+  // The gate is the prop, not a re-derivation of the rule inside the component.
+  assert.ok(!FRAME_SRC.includes('can_manage'), 'component does not re-derive the manage rule');
+  assert.ok(!FRAME_SRC.includes('collab_visibility'), 'component does not re-derive visibility');
+  assert.ok(!FRAME_SRC.includes('approver_policy'), 'component does not re-derive the policy');
+  // …and renderDevView is what evaluates it and hands the answer over.
+  assert.match(
+    VIEW_SRC,
+    /showsMembers:\s*AppView\._plusMenuShowsMembers\(\)/,
+    'renderDevView passes the predicate result as the showsMembers prop'
+  );
 });
 
-test('collaborator of an invite-only app sees the members item', async () => {
-  const html = await renderCardListHtml({ ...BASE_APP, collab_visibility: 'private' });
-  assert.ok(html.includes('data-plus="members"'), 'members item present');
+test('the members item keeps both label pairs, branched on self_hosted', () => {
+  const { whenSelfHosted, otherwise } = selfHostedBranch(membersBlock());
+  assert.ok(whenSelfHosted.includes('Proposal approvals'), 'self-app label is Proposal approvals');
+  assert.ok(
+    whenSelfHosted.includes('Who approves proposals and how many approvals are needed'),
+    'self-app sublabel unchanged'
+  );
+  assert.ok(!whenSelfHosted.includes('Members &amp; visibility'),
+    'self-app does not use the Members label');
+  assert.ok(otherwise.includes('Members &amp; visibility'), 'other apps keep the Members label');
+  assert.ok(otherwise.includes('Who can build and see this app'), 'sublabel unchanged');
+  // The prop feeding that branch is appData.self_hosted, read in the module.
+  assert.match(
+    VIEW_SRC,
+    /selfHosted:\s*!!AppView\.appData\?\.self_hosted/,
+    'renderDevView passes appData.self_hosted as the selfHosted prop'
+  );
 });
 
-test('public non-managed app hides the members item (rename/secrets stay)', async () => {
-  const html = await renderCardListHtml({ ...BASE_APP });
-  assert.ok(!html.includes('data-plus="members"'), 'members item absent');
-  assert.ok(html.includes('data-plus="rename"'), 'rename item still present');
-  assert.ok(html.includes('data-plus="secrets"'), 'secrets item still present');
-});
-
-test('self-hosted app shows the item for managers, labelled Proposal approvals', async () => {
-  const html = await renderCardListHtml({ ...BASE_APP, self_hosted: true, can_manage: true });
-  assert.ok(html.includes('data-plus="members"'), 'members item present for self-app admin');
-  assert.ok(html.includes('Proposal approvals'), 'self-app label is Proposal approvals');
-  assert.ok(!html.includes('Members &amp; visibility'), 'self-app does not use the Members label');
-});
-
-test('self-hosted app hides the item without can_manage', async () => {
-  const html = await renderCardListHtml({ ...BASE_APP, self_hosted: true });
-  assert.ok(!html.includes('data-plus="members"'), 'members item absent for non-manager on self-app');
+test('rename and secrets are ungated — they render for every writeable viewer', () => {
+  // Both sit in the `readOnly ? null : (…)` block alongside members, and
+  // neither is wrapped in a further condition. The rename row's only
+  // conditional is its top border, which depends on whether members rendered
+  // above it.
+  const start = FRAME_SRC.indexOf('data-plus="rename"');
+  const end = FRAME_SRC.indexOf('data-plus="fork"');
+  assert.ok(start !== -1 && end !== -1 && start < end, 'rename precedes fork');
+  const tail = FRAME_SRC.slice(start, end);
+  assert.ok(tail.includes('data-plus="secrets"'), 'secrets renders between rename and fork');
+  assert.match(
+    tail.slice(0, 300),
+    /showsMembers \? PLUS_ROW_DIVIDER_CLS : ''/,
+    "rename's divider is the only thing the members gate changes about it"
+  );
 });
 
 test('_plusMenuShowsMembers mirrors the old drawer-row predicate', () => {
@@ -179,25 +219,52 @@ test('_plusMenuShowsMembers mirrors the old drawer-row predicate', () => {
 
 // ── the App settings nesting is gone; rename/secrets are direct items ────
 
-test('"+" menu has direct rename and secrets items, no App settings entry', async () => {
-  const html = await renderCardListHtml({ ...BASE_APP, can_manage: true });
-  assert.ok(!html.includes('data-plus="settings"'), 'nested App settings entry removed');
-  assert.ok(html.includes('data-plus="rename"'), 'rename item present');
-  assert.ok(html.includes('App display name'), 'rename label present');
-  assert.ok(html.includes('data-plus="secrets"'), 'secrets item present');
-  assert.ok(html.includes('dc-secrets-state'),
+test('"+" menu has direct rename and secrets items, no App settings entry', () => {
+  assert.ok(!FRAME_SRC.includes('data-plus="settings"'), 'nested App settings entry removed');
+  assert.ok(FRAME_SRC.includes('data-plus="rename"'), 'rename item present');
+  assert.ok(FRAME_SRC.includes('App display name'), 'rename label present');
+  assert.ok(FRAME_SRC.includes('data-plus="secrets"'), 'secrets item present');
+  assert.ok(FRAME_SRC.includes('id="dc-secrets-state"'),
     'secrets item carries the missing-required state slot for refreshDevChatSecretsState');
   // Fork stays last in the menu.
-  assert.ok(html.indexOf('data-plus="secrets"') < html.indexOf('data-plus="fork"'),
+  assert.ok(FRAME_SRC.indexOf('data-plus="secrets"') < FRAME_SRC.indexOf('data-plus="fork"'),
     'fork renders after secrets');
+  // The slot is an EMPTY leaf: refreshDevChatSecretsState writes its
+  // textContent, so React must not render a text child there or a re-render
+  // would clobber it.
+  assert.match(
+    FRAME_SRC,
+    /id="dc-secrets-state"[\s\S]{0,140}?><\/span>/,
+    'the secrets-state slot renders empty for the module to fill'
+  );
 });
 
-test('read-only viewers get only Fork in the "+" menu', async () => {
-  const html = await renderCardListHtml({ ...BASE_APP, can_collaborate: false });
+test('read-only viewers get only Fork in the "+" menu', () => {
+  // Everything except Fork sits inside `readOnly ? null : (…)`.
+  const start = FRAME_SRC.indexOf('{readOnly ? null : (');
+  const end = FRAME_SRC.indexOf('{selfHosted ? null : (', start);
+  assert.ok(start !== -1 && end !== -1 && start < end,
+    'the writeable block is gated on readOnly and closes before the fork row'
+  );
+  const gated = FRAME_SRC.slice(start, end);
   for (const item of ['proposal', 'issue', 'members', 'rename', 'secrets']) {
-    assert.ok(!html.includes(`data-plus="${item}"`), `${item} item absent for read-only viewer`);
+    assert.ok(gated.includes(`data-plus="${item}"`), `${item} item is inside the readOnly gate`);
   }
-  assert.ok(html.includes('data-plus="fork"'), 'fork item still present');
+  assert.ok(!gated.includes('data-plus="fork"'), 'fork is NOT inside the readOnly gate');
+  assert.ok(FRAME_SRC.slice(end).includes('data-plus="fork"'), 'fork item still present');
+  // Read-only also swaps the "+" button's tooltip and, on the self-app,
+  // hides the button outright.
+  assert.ok(FRAME_SRC.includes("? 'Fork this app'"), 'read-only tooltip preserved');
+  assert.match(
+    FRAME_SRC,
+    /relative \$\{readOnly && selfHosted \? 'hidden' : ''\}/,
+    'the "+" button is hidden for a read-only viewer of the self-app'
+  );
+  assert.match(
+    VIEW_SRC,
+    /readOnly:\s*!!AppView\.readOnly/,
+    'renderDevView passes AppView.readOnly as the readOnly prop'
+  );
 });
 
 // ── the settings sub-page and its routing are gone ───────────────────────

@@ -62,6 +62,13 @@ import { hydrateRoot } from 'react-dom/client';
 import { Shell } from './Shell';
 import { initOffline } from './lib/offline';
 import { registerServiceWorker } from './lib/service-worker';
+// Publishes window.UsernodeReact.devBoard at module scope. Imported for the
+// side effect, and imported HERE (rather than reached from a Shell island)
+// because the Dev surfaces are runtime-injected into an empty #app-content and
+// so have no island to hang off — see that file's header and
+// ./lib/interim-root.ts. app-view.js can reach the API from the moment
+// DOMContentLoaded fires, which is the earliest App.switchTab() can run.
+import './features/dev-board/mount';
 
 registerServiceWorker();
 initOffline();
