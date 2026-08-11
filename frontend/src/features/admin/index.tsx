@@ -14,7 +14,7 @@
  * into #admin-root with innerHTML on every open, every section switch and every
  * viewport crossing: the md:flex column pair, the desktop nav host, the
  * view-only banner, #admin-section-content, and the temporary-password dialog.
- * The nineteen sections' contents are still the modules' — that boundary is not
+ * The eighteen sections' contents are still the modules' — that boundary is not
  * a staging post, it is the shape the screen has to keep:
  *
  *  - #admin-nav-desktop is an innerHTML host, filled by
@@ -37,8 +37,36 @@
  *    writes the attribute once, at hydration, and never again.
  *  - #admin-temp-pw-modal is static for the same reason. It is NOT one of
  *    PlatformUI.STATIC_MODAL_IDS (the kit never adopts it), and
- *    AdminConsole._showTempPassword binds its buttons with .onclick at show
- *    time, so the nodes may live here permanently.
+ *    AdminConsole._showTempPasswordModal binds its two buttons with .onclick
+ *    (assignment, not addEventListener) at show time, so the nodes may live
+ *    here permanently — a repeated show rebinds rather than accumulating.
+ *
+ * ── The eight heavy sections, through this seam ─────────────────────────
+ *
+ * Health & status, Node & chain, Analytics, Estimator accuracy, Merge debug,
+ * Screenshot gallery, Maintenance campaigns and Email delivery are the sections
+ * with their own module (AdminConsole.SECTION_MODULES), and the reason
+ * #admin-section-content is a torn-down host rather than a permanently-mounted
+ * pane set. Three properties of theirs the chassis has to keep working, all
+ * pinned by tests/admin-heavy-sections-island.test.js:
+ *
+ *  - render(<host>) / destroy(). The host argument IS #admin-section-content;
+ *    none of the eight looks it up by id, so the chassis owns that id outright.
+ *    destroy() is where four of them clear a timer — status (5s /api/status,
+ *    which shells out to `docker stats`), node (2s /api/node-status), merges
+ *    (its Live checkbox, via setLive(false)) and campaigns.
+ *  - Analytics and Estimator append <div id="dc-tip"> to <body> so their chart
+ *    tooltips escape the section's overflow, and remove it in destroy(). That
+ *    node lands OUTSIDE this island, in React's hydration container — which is
+ *    document.body itself (see main.tsx). It survives because <Shell/> is
+ *    static at the root: nothing ever re-renders body's child list, so React
+ *    never reconciles the extra child away. Only destroy() reclaims it.
+ *  - Four of them (analytics, estimator, gallery, merges) read the page-level
+ *    ?demo=1 flag at module-EVALUATION time to select the server's staging
+ *    fixtures, which ~12 declared dapp.json checks depend on. Since this bundle
+ *    is also evaluated in Node by the prerender pass, each of those reads is
+ *    `typeof window !== 'undefined' && …` — the browser answer is unchanged,
+ *    because an absent flag already meant false.
  *
  * FULL WIDTH (no max-w / mx-auto, unlike every other screen — including
  * Settings, which is a form column at max-w-5xl): this is a dense operator
