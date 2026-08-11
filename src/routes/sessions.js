@@ -2065,12 +2065,33 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         } catch { /* pill falls back to the raw tallies */ }
       }
 
+      // A GET on this route is NOT by itself evidence that the user opened
+      // the session. The dev chat refetches it programmatically all the
+      // time, and most of those fetches happen at the exact moment a turn
+      // ends: the fallback-done reconcile (#465), the progress poll's
+      // !busy branch, the sync-terminal refresh, the vote/version pill
+      // refresh. Since #138 creates a session_done notification on EVERY
+      // turn completion, the completion was being marked read by the
+      // reconcile fetch ~200ms after it was written — so the cog's green
+      // badge painted and vanished within one frame, i.e. never appeared.
+      //
+      // The two attention-scoped side effects below therefore need the
+      // caller to SAY that a person opened the session: `?opened=1`, set
+      // only by DevChat.openSession's user-initiated call sites (session
+      // row / active-chip click, hash restore, post-flow reopen). Machine
+      // refetches omit it and are now side-effect free apart from the
+      // activity bump.
+      const userOpened = req.query.opened === '1';
+
       // Viewing a session counts as activity so the auto-pause sweeper
       // doesn't pause a session the user is actively reading. Fire-and-
       // forget — the view shouldn't block on this write, and a missed
-      // bump just means the next chat turn / open re-marks it. Opening
-      // also disarms notify_on_done (#161): the owner is looking at the
-      // session again, so a left-mid-turn completion needs no notification.
+      // bump just means the next chat turn / open re-marks it. This one
+      // stays on every fetch: a session being polled by its owner's open
+      // tab is in use, and gating it on ?opened=1 would let a long turn
+      // look idle to the sweeper. A user open ALSO disarms notify_on_done
+      // (#161): the owner is looking at the session again, so a
+      // left-mid-turn completion needs no notification.
       //
       // OWNER ONLY. Both of those are statements about the owner's
       // attention, and neither is true when the admin read above is what
@@ -2079,23 +2100,25 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // owner's "tell me when it's done" notification.
       if (rows[0].user_id === req.user.id) {
         pool.query(
-          `UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1`,
+          `UPDATE chat_sessions SET last_activity_at = NOW()${userOpened ? ', notify_on_done = FALSE' : ''} WHERE id = $1`,
           [req.params.id]
         ).catch((err) => log.warn('sessions', 'activity bump on view failed', { err: err.message }));
       }
 
-      // #161 auto-dismiss: opening the session is the canonical "user saw
-      // it" signal — resolve any unread session_done rows for it, even
-      // when the user navigated here on their own rather than via the
-      // notification. Fire-and-forget; cross-tab badge sync on change.
-      notifications.markReadForAction(pool, req.user.id, 'session_opened', rows[0].id)
-        .then((cleared) => {
-          if (cleared > 0) {
-            const { pushNotificationToUser } = require('../services/ws');
-            pushNotificationToUser(req.user.id, { type: 'notifications_changed' });
-          }
-        })
-        .catch((err) => log.warn('sessions', 'session_opened dismiss failed', { err: err.message }));
+      // #161 auto-dismiss: a user opening the session is the canonical
+      // "user saw it" signal — resolve any unread session_done rows for
+      // it, even when the user navigated here on their own rather than via
+      // the notification. Fire-and-forget; cross-tab badge sync on change.
+      if (userOpened) {
+        notifications.markReadForAction(pool, req.user.id, 'session_opened', rows[0].id)
+          .then((cleared) => {
+            if (cleared > 0) {
+              const { pushNotificationToUser } = require('../services/ws');
+              pushNotificationToUser(req.user.id, { type: 'notifications_changed' });
+            }
+          })
+          .catch((err) => log.warn('sessions', 'session_opened dismiss failed', { err: err.message }));
+      }
 
       const { rows: messages } = await pool.query(
         `SELECT id, role, content, model, token_count, cost_cents, metadata, created_at

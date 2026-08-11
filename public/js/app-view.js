@@ -12580,7 +12580,12 @@ const AppView = {
     }
 
     await DevChat.loadSessions(AppView.appData.slug);
-    await DevChat.openSession(restoreSessionId);
+    // Landing on #app/<slug>/dev/sessions/<id> IS the user opening the
+    // session — from the drawer's completion row, the session list, a
+    // bookmark or Back. Carries the "user saw it" signal (?opened=1) that
+    // dismisses the session's unread completion; the machine refetches in
+    // dev-chat.js deliberately do not.
+    await DevChat.openSession(restoreSessionId, { userOpened: true });
 
     // Archived / inaccessible session: fall back to the forum rather
     // than stranding an empty view.
