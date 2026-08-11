@@ -23,6 +23,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const PUBLIC_JS = path.join(__dirname, '..', 'public', 'js');
+// The shared helper is still a classic script; its three consumers moved into
+// the React bundle with the Leaderboard screen (#1083 chunk F), so the static
+// half below resolves each side from where it actually lives now.
+const LEADERBOARD_SRC = path.join(
+  __dirname, '..', 'frontend', 'src', 'features', 'leaderboard');
 const { TopochainEvents } = require(path.join(PUBLIC_JS, 'topochain-events.js'));
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -199,7 +204,10 @@ test('isCurrent: unparseable dates are not current (never throws)', () => {
 
 // ─── Static: the screens actually use the shared rule ───────────────────
 
-const read = (f) => fs.readFileSync(path.join(PUBLIC_JS, f), 'utf8');
+// The three Topochain panes are bundle sources now; topochain-events.js is
+// not. Resolve per file rather than from one directory.
+const read = (f) => fs.readFileSync(
+  path.join(f === 'topochain-events.js' ? PUBLIC_JS : LEADERBOARD_SRC, f), 'utf8');
 
 // Since the leaderboard merge there is exactly ONE consumer of the shared
 // rule: TopochainEventContext, which owns the event selection for both
@@ -283,15 +291,30 @@ test('the helper publishes itself onto window (classic-script scoping)', () => {
 test('the shared helper ships to the browser before its consumers', () => {
   const html = fs.readFileSync(
     path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
-  const idx = (f) => html.indexOf(`/js/${f}"`);
-  const helper = idx('topochain-events.js');
+  const helper = html.indexOf('/js/topochain-events.js"');
   assert.ok(helper > -1, 'topochain-events.js must be loaded by index.html');
+
+  // All four consumers — the profile screen and the three Topochain panes —
+  // are inside the React bundle since #1083 chunk F, so this is no longer a
+  // tag-order comparison, and deliberately not one: the bundle tag sits in
+  // the <head>, ABOVE every classic tag, and is still guaranteed to run after
+  // all of them because `type="module"` is deferred. That is what keeps a
+  // script-scoped `const TopochainEvents`, published onto window by a classic
+  // tag, in place before a bundle consumer's first line. So what has to hold
+  // is the module attribute, not a position — a classic bundle tag anywhere
+  // would race the helper.
+  assert.match(html, /<script type="module" src="\/shell\/assets\/shell\.js"><\/script>/,
+    'the React bundle must be loaded by index.html, as a module script');
   for (const f of ['profile.js', 'topochain-event-context.js',
     'topochain-leaderboard.js', 'topochain-challenges.js']) {
-    assert.ok(helper < idx(f), `topochain-events.js must load before ${f}`);
+    assert.equal(html.indexOf(`/js/${f}"`), -1,
+      `${f} moved into the bundle — a revived classic tag would race the helper`);
   }
+
   // Offline parity: an asset the SPA needs but the SW doesn't cache is a
-  // broken screen on a cold offline load.
-  assert.match(fs.readFileSync(path.join(__dirname, '..', 'public', 'sw.js'), 'utf8'),
-    /'\/js\/topochain-events\.js'/);
+  // broken screen on a cold offline load. The four consumers ride in
+  // /shell/assets/shell.js, which SHELL_ASSETS lists in their place.
+  const sw = fs.readFileSync(path.join(__dirname, '..', 'public', 'sw.js'), 'utf8');
+  assert.match(sw, /'\/js\/topochain-events\.js'/);
+  assert.match(sw, /'\/shell\/assets\/shell\.js'/);
 });

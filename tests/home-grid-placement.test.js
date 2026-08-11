@@ -37,8 +37,7 @@ const vm = require('node:vm');
 const { installAppCard } = require('./helpers/app-card');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
-const HOME_SRC = read('public/js/home.js');
-const LAYOUT_SRC = read('public/js/home-layout.js');
+const { HOME_SRC, LAYOUT_SRC } = require('./helpers/home-modules');
 
 // The registry the server serves, as the client sees it.
 const REGISTRY = [

@@ -1,5 +1,5 @@
 // Homepage restructure: compact app cards + the "…" actions menu in
-// public/js/home.js.
+// frontend/src/features/home/home.js.
 //
 // Contract pinned here:
 //   - renderAppCard emits exactly one `.card-menu-btn` trigger and none
@@ -14,24 +14,21 @@
 //     Remove/Add pair driven by the per-user your_apps_hidden flag
 //     (display-only opt-out; membership/access untouched).
 //
-// home.js is a plain browser script (`const Home = {…}`); we load it
-// into a vm context, stub the globals it reaches, and assert on the
-// returned HTML / item lists — same harness as
-// proposal-conflict-affordance.test.js.
+// home.js declares `const Home = {…}` at top level; we load it into a vm
+// context, stub the globals it reaches, and assert on the returned HTML /
+// item lists — same harness as proposal-conflict-affordance.test.js. Its
+// source comes from ./helpers/home-modules, which resolves the module's
+// post-#1083 location and strips the one `import` line a vm context cannot
+// parse.
 //
 // Run with: node --test tests/home-card-menu.test.js
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
 const vm = require('node:vm');
 const { installAppCard } = require('./helpers/app-card');
 
-const HOME_SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'home.js'),
-  'utf8'
-);
+const { HOME_SRC } = require('./helpers/home-modules');
 
 function makeHome(user) {
   return makeHomeEnv(user).Home;
@@ -109,8 +106,9 @@ function makeHomeEnv(user) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
-  // home.js delegates iconTileFor / renderAppPillsHtml to window.AppCard
-  // (frontend/src/features/apps/app-card.js) since #1083 chunk F.
+  // home.js's iconTileFor / renderAppPillsHtml delegate to the shared card
+  // builders (frontend/src/features/apps/app-card.js) since #1083 chunk F.
+  // It imports them; this declares what the stripped import would have bound.
   installAppCard(sandbox);
   vm.runInContext(`${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
   return { Home: sandbox.__Home, sandbox };

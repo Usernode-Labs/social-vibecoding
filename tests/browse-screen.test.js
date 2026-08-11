@@ -25,7 +25,7 @@ const vm = require('node:vm');
 const { installAppCard } = require('./helpers/app-card');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
-const HOME_SRC = read('public/js/home.js');
+const { HOME_SRC } = require('./helpers/home-modules');
 // browse.js is a bundle module since #1083 chunk F, so its source starts with
 // an `import` — a SyntaxError to a vm context, which runs classic script text.
 // Strip the import and supply what it imported through installAppCard below:
@@ -557,10 +557,7 @@ test('a browse row tap declares the list as its origin; the home menu declares h
   assert.match(tap, /noteDetailOrigin\('list'\)/);
   assert.ok(tap.indexOf("noteDetailOrigin('list')") < tap.indexOf('location.hash'));
 
-  const home = fs.readFileSync(
-    path.join(__dirname, '..', 'public', 'js', 'home.js'), 'utf8'
-  );
-  const item = home.slice(home.indexOf("key: 'app-details'"));
+  const item = HOME_SRC.slice(HOME_SRC.indexOf("key: 'app-details'"));
   const run = item.slice(0, 400);
   assert.match(run, /Browse\?\.noteDetailOrigin\?\.\('home'\)/);
   assert.ok(run.indexOf("noteDetailOrigin?.('home')") < run.indexOf('location.hash'));

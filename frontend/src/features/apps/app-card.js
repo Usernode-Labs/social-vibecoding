@@ -133,10 +133,11 @@ export function renderAppPillsHtml(app) {
 
 export const AppCard = { iconTileFor, renderAppPillsHtml };
 
-// Published for the legacy half of the split. public/js/home.js is still a
-// classic script until chunk F step 4 and delegates its two methods here, so
-// the global has to exist by the time anything CALLS them — which it does:
-// /shell/assets/shell.js is a module script, so it evaluates after every
-// classic <script> but long before the first render. Guarded because the SSG
-// prerender pass evaluates this graph in Node.
+// Published for the legacy half of the split. Both in-bundle consumers
+// (features/apps/browse.js and features/home/home.js, whose two card methods
+// delegate here) `import` these instead, so as of chunk F step 4 nothing reads
+// the global — it stays because the shell's classic scripts are a moving
+// target during the migration and a card builder is exactly the kind of thing
+// one of them would reach for next. Guarded because the SSG prerender pass
+// evaluates this graph in Node.
 if (typeof window !== 'undefined') window.AppCard = AppCard;

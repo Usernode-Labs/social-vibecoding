@@ -1,7 +1,7 @@
 // Home-screen panels (issue #911) — data + per-user placement for the
 // cards that sit on the platform home screen alongside the app grid.
 //
-// NAMING — "panel", not "widget". public/js/home.js already owns a
+// NAMING — "panel", not "widget". frontend/src/features/home/home.js already owns a
 // DIFFERENT concept called "widget": the iOS home-screen widget's pinned
 // app grid (Home.renderWidgetSection / #widget-strip / .widget-tile),
 // whose UI literally says "Usernode widget". These cards are a separate
@@ -56,7 +56,7 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 // 44px rows. `total` is reported separately, so when more are open the
 // client spends its LAST slot on "See all N challenges" instead of a
 // fourth challenge — overflow is fewer rows, never an inner scroller.
-// Keep in step with HomePanels.ROW_SLOTS in public/js/home-panels.js.
+// Keep in step with HomePanels.ROW_SLOTS in frontend/src/features/home/home-panels.js.
 const CHALLENGE_ROW_LIMIT = 4;
 
 // ─── Reward parsing ──────────────────────────────────────────────────
@@ -239,8 +239,9 @@ const CHALLENGE_EXPANDED_LIMIT = 40;
 // fixed 2x2 footprint whatever it has to say, so a short challenge list used
 // to buy nothing but a blank band. Whenever the collapsed list leaves room,
 // the client spends it on the platform's LEADERBOARD — the top few rows plus
-// the viewer's own, when they have one (public/js/home-panels.js decides how
-// many rows fit; this just supplies enough of them).
+// the viewer's own, when they have one (the client half,
+// frontend/src/features/home/home-panels.js, decides how many rows fit; this
+// just supplies enough of them).
 //
 // WHICH BOARD: the Topochain standings, i.e. the same board the Leaderboard
 // screen's primary tab shows — one thing called "Leaderboard" everywhere.

@@ -42,7 +42,7 @@ const AUTH_SCREENS_TSX = ['features/auth/landing.tsx', 'features/auth/login.tsx'
 const AUTH_WAITING_TSX = FRONTEND('features/auth/waiting.tsx');
 // Moved into the React bundle with #settings-screen (#1081 chunk D).
 const SETTINGS = FRONTEND('features/settings/settings.js');
-const HOME = read('js/home.js');
+const { HOME_SRC: HOME } = require('./helpers/home-modules');
 const CSS = read('css/app.css');
 const HTML = read('index.html');
 // Copy assertions below match against DECODED text. public/index.html is

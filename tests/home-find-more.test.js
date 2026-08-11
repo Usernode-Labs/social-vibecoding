@@ -23,9 +23,8 @@ const vm = require('node:vm');
 const { installAppCard } = require('./helpers/app-card');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
-const HOME_SRC = read('public/js/home.js');
+const { HOME_SRC, PANELS_SRC } = require('./helpers/home-modules');
 const INDEX = read('public/index.html');
-const PANELS_SRC = read('public/js/home-panels.js');
 const CSS = read('public/css/app.css');
 const ROUTE = read('src/routes/home-panels.js');
 

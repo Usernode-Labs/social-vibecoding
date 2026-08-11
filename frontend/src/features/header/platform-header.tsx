@@ -343,7 +343,7 @@ export function PlatformHeader() {
               The "Create new app" entry point used to live here in the header
               as a "+" pill; it's been moved into the home-screen feed itself,
               rendered below the app list (and as the empty-state CTA when no
-              apps exist). See public/js/home.js.
+              apps exist). See frontend/src/features/home/home.js.
           */}
         </div>
       </header>

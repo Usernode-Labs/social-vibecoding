@@ -208,6 +208,35 @@ const RETIRED_SCRIPTS = {
     'the standings pane moved into the leaderboard island (chunk F)',
   '/js/topochain-challenges.js':
     'the challenges pane moved into the leaderboard island (chunk F)',
+  // Same chunk, step 4 — the last region: #home-screen became an island
+  // (frontend/src/features/home/index.tsx) and its three modules moved into
+  // that directory. Each keeps its `window.X` publication behind a `typeof
+  // window` guard, because the classic half still reaches all three by name:
+  // app.js's navigateHome / _exitHome / resyncCurrentView and its WS app-event
+  // fan-out, app-view.js, build-log.js, settings.js and notifications.js call
+  // Home; home-panels.js and home-layout.js are read by home.js and by each
+  // other. Their DOMContentLoaded-era bootstrap is the island's init call.
+  //
+  // They moved TOGETHER because the three tags were one ordered chain —
+  // geometry, then the widget renderers the grid calls into, then the grid —
+  // and inside the bundle that chain is the island's import list.
+  //
+  // NO DOM changed hands. The island renders the screen's structure exactly as
+  // the hand-written shell had it and leaves all four innerHTML hosts
+  // (#app-list, #home-panels, #home-widget-strip-section, and the search bar's
+  // `data-revealed`) to the modules, which is what keeps the two things this
+  // screen is fragile about intact: #home-search-input's focus and caret
+  // survive the grid re-render on every WS app event because the input is
+  // emitted once and never re-rendered, and drag-to-rearrange still runs
+  // entirely in home.js against PlatformUI and the native kit, with React never
+  // reconciling inside #app-list.
+  //
+  // home.js was also the last declarer of the ambient `escapeHtml` /
+  // `formatRelativeTime` pair; both are module-scoped now. The note at the top
+  // of features/home/home.js traces every remaining consumer.
+  '/js/home.js': 'home launcher grid converted to a React island (chunk F)',
+  '/js/home-layout.js': 'home grid geometry moved into the home island (chunk F)',
+  '/js/home-panels.js': 'home widget renderers moved into the home island (chunk F)',
 };
 
 // public/js/topochain-events.js is deliberately NOT in that map, and now stays
@@ -234,7 +263,7 @@ test('every legacy script is loaded, in exactly the baseline order', () => {
 });
 
 test('the shell still loads the expected number of legacy scripts', () => {
-  // 33 /js/** tags, ALL at the end of <body> — the head has none left. The
+  // 25 /js/** tags, ALL at the end of <body> — the head has none left. The
   // count moves whenever main adds a module — it was 48 at the chassis swap
   // (plus theme.js in the head), main's mail console and credit-options
   // screens brought it to 50, #1036's nav-link.js made 51, #1049's
@@ -248,12 +277,13 @@ test('the shell still loads the expected number of legacy scripts', () => {
   // retires the admin console's ten modules in one go (35) — see the cluster
   // note in RETIRED_SCRIPTS for why they could not go one at a time. #1083
   // chunk F retires its ten modules one screen at a time: browse.js (34),
-  // profile.js (33), then the leaderboard screen's five together (28).
+  // profile.js (33), the leaderboard screen's five together (28), and finally
+  // the home screen's three (25).
   const bodyScripts = scriptsOf(after.slice(after.indexOf('</head>')))
     .filter((s) => s.src && s.src.startsWith('/js/'));
   assert.equal(
-    bodyScripts.length, 28,
-    `expected the 28 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
+    bodyScripts.length, 25,
+    `expected the 25 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
     + 'Adding or removing one is fine, but it also needs a matching SHELL_ASSETS entry in '
     + 'public/sw.js (tests/pwa-shell-wiring.test.js enforces that) — so update this count '
     + 'deliberately rather than loosening the check.',

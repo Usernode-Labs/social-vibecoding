@@ -1,11 +1,13 @@
 // Install the shared app-card builders into a vm sandbox.
 //
 // frontend/src/features/apps/app-card.js is where the icon tile and the
-// activity/visibility chip strip live as of #1083 chunk F. public/js/home.js
-// delegates its `iconTileFor` / `renderAppPillsHtml` to it through
-// `window.AppCard`, and features/apps/browse.js imports it directly — so any
-// test that evals either of those sources in a vm has to supply it, the same
-// way it already supplies `document` and `location`.
+// activity/visibility chip strip live as of #1083 chunk F. Both of its
+// consumers — features/apps/browse.js and features/home/home.js, whose
+// `iconTileFor` / `renderAppPillsHtml` methods delegate to it — reach it by
+// `import`, so any test that evals either of those sources in a vm has to
+// supply it, the same way it already supplies `document` and `location`.
+// (The sources' single `import` line is stripped at each of those call sites;
+// this installs the names it would have bound.)
 //
 // It has to run INSIDE the sandbox rather than be required from here: the
 // module's escapeHtml goes through `document.createElement`, and the document

@@ -2,7 +2,7 @@
 
 // Browse-all-apps screen (#apps) — the directory half of the home-screen
 // split, laid out as an app store. The home feed is "Your apps" only (see
-// public/js/home.js render()), so every OTHER app this viewer may see
+// frontend/src/features/home/home.js render()), so every OTHER app this viewer may see
 // lives here.
 //
 // TWO LEVELS inside the one #browse-screen <main>, the same shape the

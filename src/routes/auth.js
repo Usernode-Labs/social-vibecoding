@@ -302,7 +302,7 @@ function authRoutes(config) {
         // Derived per-user app-creation affordance: isAdmin || (live app
         // count < app_quota). The home screen hides the "Create new app"
         // affordance for anyone who can't create — see the canCreate
-        // helper in public/js/home.js. The numeric quota itself is only
+        // helper in frontend/src/features/home/home.js. The numeric quota itself is only
         // surfaced through the admin API.
         canCreateApps,
         // Experimental: opt-in AI progress estimate for coding runs

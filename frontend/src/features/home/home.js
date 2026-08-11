@@ -1,3 +1,21 @@
+// The home screen's launcher grid: loads the viewer's apps, lays them out on
+// the (column, row) canvas HomeLayout models, renders the tiles and the widget
+// slots, and owns the drag-to-rearrange gesture.
+//
+// Moved verbatim from public/js/home.js into the bundle by #1083 chunk F step 4
+// (see features/home/index.tsx). Two things changed and nothing else:
+//
+//   * the app-card delegation is an import now instead of a `window.AppCard`
+//     read (see renderAppPillsHtml / iconTileFor below), and
+//   * escapeHtml and formatRelativeTime at the bottom of the file are
+//     module-local rather than ambient globals. That has a consequence outside
+//     this file, spelled out in the note above them.
+//
+// The `HomeLayout` and `window.HomePanels` reads throughout stay as they are:
+// both are published by sibling modules the island imports BEFORE this one, and
+// every read happens at call time, long after the bundle has evaluated.
+import { AppCard } from '../apps/app-card.js';
+
 const Home = {
   // Can this viewer create apps right now? Derived per request by
   // /api/auth/me as `isAdmin || live app count < app_quota`, so it flips
@@ -34,10 +52,10 @@ const Home = {
       return;
     }
     Home._probeShortcutSupport();
-    // Home-screen widgets (#911, public/js/home-panels.js) and the viewer's
-    // stored grid layout (public/js/home-layout.js). Both are TTL-guarded /
-    // de-duped inside, so the dozen WS/event paths that call load() don't
-    // turn into a dozen fetches.
+    // Home-screen widgets (#911, ./home-panels.js) and the viewer's stored
+    // grid layout (./home-layout.js). Both are TTL-guarded / de-duped
+    // inside, so the dozen WS/event paths that call load() don't turn into a
+    // dozen fetches.
     //
     // Deliberately NOT awaited — the grid must not wait on a second request
     // to paint. But the fetches race, and losing that race used to cost the
@@ -1195,17 +1213,15 @@ const Home = {
   // module and could no longer reach them through `window.Home`. These two
   // stay as delegating methods because their callers name them:
   // public/js/app-view.js's header tile (iconTileFor), renderAppCard /
-  // renderMenuHeaderHtml / updateAppCardIcon below, and the card tests. Read
-  // off `window` rather than imported because home.js is still a classic
-  // script until step 4 of the chunk — safely, since the bundle is a module
-  // script and evaluates before anything here can be called. Step 4 turns
-  // these into a plain import.
+  // renderMenuHeaderHtml / updateAppCardIcon below, and the card tests. As of
+  // step 4 of the chunk this module rides in the bundle too, so the delegation
+  // is a plain import rather than a `window.AppCard` read.
   renderAppPillsHtml(app) {
-    return window.AppCard.renderAppPillsHtml(app);
+    return AppCard.renderAppPillsHtml(app);
   },
 
   iconTileFor(app) {
-    return window.AppCard.iconTileFor(app);
+    return AppCard.iconTileFor(app);
   },
 
   // `opts.mode` picks the corner controls:
@@ -3326,8 +3342,42 @@ const Home = {
 // reloaded the grid. None of it threw — the guards are exactly what made it
 // silent. Publishing Home the way App and HomePanels publish themselves is
 // what makes those guards mean what they read as.
-window.Home = Home;
+//
+// Still published as a global now that this rides in the React bundle (#1083
+// chunk F step 4): app.js's navigateHome / _exitHome / resyncCurrentView and its
+// whole WS app-event fan-out, app-view.js, build-log.js, the settings screen's
+// widget rows, notifications.js, the work drawer and the app-card helpers all
+// reach it by name. The `const Home` note above is now redundant for the reason
+// it describes — a module's top-level const was never on `window` either — but
+// it records why the publication exists. The guard is for the SSG prerender pass:
+// frontend/scripts/build-shell.mjs evaluates the island's whole module graph in
+// Node, where there is no window.
+if (typeof window !== 'undefined') window.Home = Home;
 
+// escapeHtml and formatRelativeTime used to be AMBIENT here: as a classic
+// script's top-level function declarations they were `window.escapeHtml` /
+// `window.formatRelativeTime`, and home.js was the LAST tag to declare either,
+// so it won a last-writer-wins chain. Inside a module they are module-local,
+// which is the right scope and matches what browse.js, app-card.js, kudos.js and
+// leaderboard.js already did when they moved.
+//
+// formatRelativeTime has no ambient consumer left: browse.js carries its own
+// copy and build-log.js's comment says it deliberately kept one local so load
+// order wouldn't matter. Nothing else ever read it.
+//
+// escapeHtml has two, and they change which copy they resolve to. dev-chat.js
+// and app-secrets.js call `escapeHtml` (and, in app-secrets, `escapeAttr`, which
+// is app-view.js's and calls the ambient escapeHtml) without declaring one, so
+// they were reaching THIS function; with home.js out of the classic chain the
+// last declaration standing is app-view.js's. The two differ: this one is a
+// textContent→innerHTML pass, which escapes `& < >` but NOT quotes (hence the
+// `.replace(/"/g, '&quot;')` its own callers above add), while app-view.js's
+// replaces all five of `& < > " '`. In element content the rendered text is
+// identical — `&quot;` and `&#39;` render as `"` and `'`. In an ATTRIBUTE
+// app-view.js's is simply correct where this one could be broken out of, so the
+// two dev-screen surfaces get a strictly safer escaper and the same visible
+// output. Worth knowing about rather than papering over, which is why it is
+// written down here.
 function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;

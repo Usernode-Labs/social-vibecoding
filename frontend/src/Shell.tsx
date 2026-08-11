@@ -55,6 +55,7 @@ import { WaitingScreen } from './features/auth/waiting';
 import { WaitlistScreen } from './features/auth/waitlist';
 import { MoreScreen } from './features/auth/more';
 import { DevConsolePanel } from './features/dev-console';
+import { HomeScreen } from './features/home';
 import { LeaderboardScreen } from './features/leaderboard';
 import { HeaderMenu } from './features/header/header-menu';
 import { PlatformHeader } from './features/header/platform-header';
@@ -110,149 +111,17 @@ export function Shell() {
           tappable "<sha> · reload") or by pull-to-refresh.
       */}
       {/*
-          Home screen: app list. Rendered as a responsive grid of compact
-          tiles — see Home.renderAppCard. The "Create new app" container
-          that Home.render() appends after the tiles uses `col-span-full`
-          so it spans the full grid row at every breakpoint.
-          
-          The whole feed lives in a 1024px-max, viewport-centred column
-          (.home-column, in public/css/app.css) — applied to #home-body and,
-          separately, to the search bar's inner content so the bar's
-          background stays full-bleed. Horizontal gutters stay on the blocks
-          inside it, so narrow screens are unaffected.
+          Home screen: the launcher grid a signed-in viewer lands on — the
+          pull-to-reveal search bar, the iOS widget strip, #app-list itself and
+          the #home-panels fallback stack. A React island since #1083 chunk F
+          step 4; the markup and all three modules that fill it live in
+          frontend/src/features/home/. Still mounted and reloaded by app.js
+          (navigateHome / Home.load()), and shown through the visibility store —
+          it is the first converted root that ships VISIBLE, which is why
+          App._isScreenVisible now falls back to the DOM for an unpublished
+          converted screen.
       */}
-      <main id="home-screen" className="flex-1 overflow-y-auto" style={{ position: "relative" }}>
-        {/*
-            Hidden-until-pulled search bar (iOS idiom). Deliberately the FIRST
-            child of the scroller and NOT sticky: it occupies real scroll space
-            above the content, so Home._searchReveal can park the scroller at
-            scrollTop = <bar height> and a slight pull down (a scroll up on
-            desktop) slides it into view. Keep pulling once it is fully shown
-            and the kit's pull-to-refresh takes over — attachPullToRefresh only
-            engages from scrollTop 0, so the two stages compose with no extra
-            gesture code.
-            Still OUTSIDE #app-list: Home.render() wholesale-replaces the
-            grid's innerHTML on every WS app event and every keystroke, and the
-            input must keep its focus/caret through those re-renders. Wired
-            once by Home._wireSearch().
-        */}
-        <div id="home-search-bar" data-revealed="false" className="bg-white dark:bg-zinc-950">
-          {/*
-              The bar's BACKGROUND stays full-bleed; only its content sits in
-              the 1024px column, and the px-3 gutter lives here (not on the
-              bar) so this column's content edges match #home-body's exactly.
-          */}
-          <div className="home-column px-3 pt-3 pb-2">
-            <div className="relative max-w-xl">
-              <svg
-                className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                strokeWidth="2"
-                aria-hidden="true"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-              <input
-                id="home-search-input"
-                type="text"
-                autoComplete="off"
-                placeholder="Search your apps…"
-                aria-label="Search your apps"
-                className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"
-              />
-              <button
-                id="home-search-clear"
-                className="hidden absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-500/10 text-base leading-none"
-                title="Clear search"
-                aria-label="Clear search"
-              >
-                &times;
-              </button>
-            </div>
-          </div>
-        </div>
-        {/*
-            .home-body-fill (app.css) makes this a min-height:100% flex column:
-            the min-height guarantees the scroller can always be scrolled by at
-            least the search bar's height, even with an empty "Your apps" — a
-            short page would otherwise leave the bar permanently on screen.
-            (It used to do double duty as the flex context for
-            .home-bottom-anchor on the two trailing sections; those are widgets
-            in the grid now, so nothing below the grid is anchored any more.)
-        */}
-        <div id="home-body" className="home-column home-body-fill">
-          {/*
-              iOS in-app only: the "Usernode widget" editing strip, mirroring
-              the pinned grid the homescreen widget renders. It lives ABOVE the
-              launcher grid rather than inside it — a full-width flow item
-              cannot coexist with the explicit cell placement #app-list now
-              uses. Filled + wired by Home.renderWidgetSection /
-              _wireWidgetStrip; empty everywhere but the iOS app.
-          */}
-          <section id="home-widget-strip-section" className="hidden px-3 pt-2">
-          </section>
-          {/*
-              THE LAUNCHER GRID. Every child is placed at an explicit
-              (column, row) cell by Home.render() — app tiles and widgets
-              alike — so a viewer's arrangement can have holes in it, exactly
-              like a phone home screen. Nothing here flows.
-              
-              4 columns on a phone, 5 from `sm` (640px) up, and never more:
-              the canvas is capped at 5 x 8. That 640px boundary is mirrored
-              in HomeLayout.BREAKPOINT_PX (public/js/home-layout.js) — the JS
-              has to lay out against the same column count the CSS renders,
-              and tests/home-layout-model.test.js pins the pair.
-              
-              Tighter gutters and gaps below `sm` than the old 2-column grid
-              had: four 56px icons only read as a home screen at phone
-              density. `grid-auto-rows` and `position: relative` (needed by
-              the drag-time grid overlay) live in app.css.
-          */}
-          <div id="app-list" className="grid grid-cols-4 sm:grid-cols-5 gap-1.5 sm:gap-2 p-2 pt-1.5 sm:p-3 sm:pt-2">
-          </div>
-          {/*
-              Home-screen widgets (#911) — the FALLBACK host.
-              
-              Widgets normally live IN the launcher grid above, each at its own
-              (column, row) cell: home.js plants a `[data-panel-slot]` host per
-              widget for HomePanels.render() to paint into. This section is
-              where they go when there is no grid to ride in — an active search
-              (a transient view with no layout to place against), and the moment
-              before the first grid paint. Without it a widget would vanish
-              whenever the grid did.
-              
-              Deliberately OUTSIDE #app-list, like the search bar above: the
-              grid's innerHTML is replaced on every WS app event and every
-              search keystroke, which would otherwise destroy these blocks and
-              their listeners.
-              
-              HomePanels fills it with a STACK of sibling bordered
-              <article class="home-panel"> blocks — one per widget, each
-              carrying its own title bar and ⋮ menu. The blocks are plain
-              FULL-WIDTH children: .home-column on #home-body bounds and centres
-              the feed, so don't wrap them in a per-box width bound (see
-              app.css .home-column).
-              
-              NOTE "panel" ≠ the "Usernode widget" strip above the grid — that
-              is the iOS home-screen widget's pinned app list.
-          */}
-          <section id="home-panels" className="hidden px-3 pb-3">
-          </section>
-          {/*
-              NOTE: #home-find-more ("Featured apps" + its "Browse all apps"
-              footer) and #home-create-section ("Create an app") used to sit
-              here as fixed, unmovable trailing sections below the grid. Both
-              are WIDGETS in the grid above now — `discover` and `create` — so
-              they can be placed anywhere the viewer likes, alongside their app
-              tiles, instead of being pinned under everything. See
-              PANEL_REGISTRY in src/routes/home-panels.js and the renderers
-              (renderDiscoverPanel / renderCreatePanel) in
-              public/js/home-panels.js.
-          */}
-        </div>
-      </main>
+      <HomeScreen />
       {/*
           Browse-all-apps screen (#apps). Sibling of #home-screen: every app
           this viewer may see, featured first, with per-tile add/remove badges.
@@ -657,10 +526,10 @@ export function Shell() {
       {/*
           NavLink (#1036) — the "navigation controls behave like real links"
           seam (cmd/ctrl-click, middle-click and shift-click open a new tab).
-          No dependencies of its own and consumed by app.js, app-view.js,
-          dev-chat.js, home.js, leaderboard.js and (from inside the React
-          bundle) features/apps/browse.js, so it loads ahead of the whole
-          bundle.
+          No dependencies of its own and consumed by app.js, app-view.js and
+          dev-chat.js among the classic scripts, plus features/apps/browse.js,
+          features/home/home.js and features/leaderboard/leaderboard.js from
+          inside the React bundle, so it loads ahead of the whole bundle.
       */}
       <script src="/js/nav-link.js" />
       <script src="/js/platform-ui.js" />
@@ -752,8 +621,10 @@ export function Shell() {
       <script src="/js/streaming-markdown.js" />
       {/*
           #405: canonical merge-lifecycle helper (window.MergeStatus). Loaded
-          before dev-chat.js / app-view.js / home.js so all three derive and
-          label proposal merge states from one place.
+          before dev-chat.js / app-view.js so both derive and label proposal
+          merge states from one place. (This list used to name home.js as a
+          third consumer; it has never read MergeStatus, and it is in the React
+          bundle as of #1083 chunk F either way.)
       */}
       <script src="/js/merge-status.js" />
       <script src="/js/dev-chat.js" />
@@ -841,8 +712,11 @@ export function Shell() {
           classic script.
       */}
       {/*
-          Build-failure log panel (#416). Loaded before app-view.js/home.js
-          so both surfaces can reference window.BuildLog.
+          Build-failure log panel (#416). Loaded before app-view.js so that
+          surface can reference window.BuildLog. The home screen's card menu
+          reads it too — that module is in the React bundle as of #1083 chunk F
+          (features/home/home.js), and it reads `window.BuildLog` at click
+          time, long after this script has run.
       */}
       <script src="/js/build-log.js" />
       <script src="/js/app-view.js" />
@@ -854,27 +728,24 @@ export function Shell() {
       */}
       <script src="/js/screenshot-select.js" />
       {/*
-          Home-screen panels (#911): the Challenges card between the launcher
-          grid and "Featured apps". Loaded BEFORE home.js, whose load() /
-          render() call into HomePanels.
-      */}
-      {/*
-          Grid geometry (pure functions over the layout model) before the two
-          modules that lay out against it.
-      */}
-      <script src="/js/home-layout.js" />
-      <script src="/js/home-panels.js" />
-      <script src="/js/home.js" />
-      {/*
-          /js/browse.js used to load here, after home.js, because it reached
-          the shared card markup through `window.Home`. #1083 chunk F moved it
+          /js/home-layout.js, /js/home-panels.js and /js/home.js loaded here,
+          in that order — grid geometry first, then the widget renderers the
+          grid calls into, then the grid itself. #1083 chunk F step 4 moved all
+          three into the bundle (features/home/, imported by the #home-screen
+          island in the same order) and the three tags went with them.
+
+          Their ordering is now an import list rather than a tag sequence,
+          which is the whole point: home.js reads `HomeLayout` bare and
+          `window.HomePanels` guarded, home-panels.js reads `window.Home` and
+          `window.HomeLayout` back, and all three publications happen while the
+          bundle evaluates — before DOMContentLoaded, so before App.init().
+
+          /js/browse.js used to load after home.js too, because it reached the
+          shared card markup through `window.Home`. Step 1 of the chunk moved it
           into the bundle (features/apps/browse.js, imported by the
           #browse-screen island) and split that markup out as
-          features/apps/app-card.js, which home.js now delegates to. Load
-          order stopped mattering for the pair: the bundle is a module script,
-          so it evaluates after every classic script here, and the two
-          remaining `window.Home` reads are inside methods that only run once
-          a viewer opens #apps.
+          features/apps/app-card.js; step 4 turned home.js's delegation to it
+          into a plain import. Load order stopped mattering for any of them.
       */}
       {/*
           Anonymous shell screens (fold-auth-pages-into-SPA): landing /

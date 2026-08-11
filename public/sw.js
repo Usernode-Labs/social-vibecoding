@@ -129,9 +129,12 @@ const SHELL_ASSETS = [
   '/js/dev-flow-select.js',
   '/js/dev-host.js',
   '/js/group-chat.js',
-  '/js/home.js',
-  '/js/home-layout.js',
-  '/js/home-panels.js',
+  // The home screen's three modules (the grid, its widget renderers and the
+  // layout geometry they share) were listed here. #1083 chunk F moved all
+  // three into the React bundle with the screen they render, so
+  // /shell/assets/shell.js above is what precaches them now — which matters
+  // more here than for the other chunks: home is the offline landing screen,
+  // so a cache miss on it is the whole app.
   // The Kudos widget and the Leaderboard screen's own renderer were listed
   // here. #1083 chunk F moved both into the React bundle with the screen, so
   // /shell/assets/shell.js above is what precaches them now.

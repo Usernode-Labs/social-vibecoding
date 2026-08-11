@@ -5,9 +5,11 @@
 // custom icon from the letter placeholder, and updateAppCardIcon must
 // patch a mounted tile in place across all three states.
 //
-// home.js is a plain browser script (`const Home = {…}`); we load it
-// into a vm context, stub the globals it reaches, and assert on the
-// returned HTML strings — same harness as card-action-layout.test.js.
+// home.js declares `const Home = {…}` at top level; we load it into a vm
+// context, stub the globals it reaches, and assert on the returned HTML
+// strings — same harness as card-action-layout.test.js. Both sources come
+// from ./helpers/home-modules, which resolves their post-#1083 location and
+// strips the one `import` line a vm context cannot parse.
 //
 // Run with: node --test tests/home-card-icon.test.js
 
@@ -17,18 +19,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { installAppCard } = require('./helpers/app-card');
-
-const SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'home.js'),
-  'utf8'
-);
-// The "Create app" tile moved out of home.js: it is a home-screen WIDGET
-// now (HomePanels.renderCreatePanel), so it is loaded here to keep it under
-// the same shared-icon-treatment assertions the app tiles are.
-const PANELS_SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'home-panels.js'),
-  'utf8'
-);
+// The "Create app" tile moved out of home.js: it is a home-screen WIDGET now
+// (HomePanels.renderCreatePanel), so home-panels.js is loaded here too, to
+// keep it under the same shared-icon-treatment assertions the app tiles are.
+const { HOME_SRC: SRC, PANELS_SRC } = require('./helpers/home-modules');
 
 // Minimal functional stand-in for the DOM bits home.js's escapeHtml
 // leans on (createElement + textContent/innerHTML round-trip).
@@ -67,8 +61,9 @@ function makeHome() {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
-  // home.js delegates iconTileFor / renderAppPillsHtml to window.AppCard
-  // (frontend/src/features/apps/app-card.js) since #1083 chunk F.
+  // home.js's iconTileFor / renderAppPillsHtml delegate to the shared card
+  // builders (frontend/src/features/apps/app-card.js) since #1083 chunk F.
+  // It imports them; this declares what the stripped import would have bound.
   installAppCard(sandbox);
   vm.runInContext(`${SRC}\n${PANELS_SRC}\n;globalThis.__Home = Home;`, sandbox);
   const Home = sandbox.__Home;
@@ -213,10 +208,7 @@ test('the tile hairline steps down to --border in dark mode', () => {
 // the palette table, the render-time lookup, and the generation bump —
 // a rendering change without a bump never reaches a homescreen.
 test('the widget PNG carries a light AND a dark palette', () => {
-  const src = fs.readFileSync(
-    path.join(__dirname, '..', 'public', 'js', 'home.js'),
-    'utf8'
-  );
+  const src = SRC;
   // Light: unchanged from the original single-palette treatment.
   assert.match(
     src,
@@ -239,10 +231,7 @@ test('the widget PNG carries a light AND a dark palette', () => {
 // Keying the palette off `.dark` / Theme.get() would paint a light
 // widget onto a dark homescreen for anyone who forces SV to light.
 test('the widget palette keys off the system scheme, not the .dark class', () => {
-  const src = fs.readFileSync(
-    path.join(__dirname, '..', 'public', 'js', 'home.js'),
-    'utf8'
-  );
+  const src = SRC;
   const scheme = src.match(/_widgetScheme\(\) \{[\s\S]*?\n  \},/);
   assert.ok(scheme, '_widgetScheme is defined');
   assert.doesNotMatch(scheme[0], /classList/, 'does not read the .dark class');

@@ -841,7 +841,7 @@ const AdminConsole = {
   // ── Featured apps ─────────────────────────────────────────────────────
   //
   // The admin-curated row under "Featured apps" on every user's home
-  // screen (public/js/home.js renderFindMore). One global ordered list:
+  // screen (frontend/src/features/home/home.js renderFindMore). One global ordered list:
   // GET /api/admin/featured-apps returns it plus everything still
   // available to add, and PUT rewrites it wholesale from an ordered slug
   // array — so the ↑/↓/Remove controls only ever reorder a local array

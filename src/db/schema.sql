@@ -17,7 +17,8 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS anthropic_key_last4  VARCHAR(8);
 -- Default FALSE; existing admins are backfilled to TRUE on boot.
 -- Enforced server-side on POST /api/apps in src/routes/apps.js;
 -- the home-screen "Create new app" affordance is hidden client-side
--- for users who fail the check (see Home.canCreate in public/js/home.js).
+-- for users who fail the check (see Home.canCreate in
+-- frontend/src/features/home/home.js).
 ALTER TABLE users ADD COLUMN IF NOT EXISTS can_create_apps BOOLEAN NOT NULL DEFAULT FALSE;
 UPDATE users SET can_create_apps = TRUE WHERE is_admin = TRUE AND can_create_apps = FALSE;
 
@@ -88,8 +89,9 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_progress_estimate BOOLEAN NOT NULL
 -- everyone with no backfill. Written only through
 -- POST /api/home-panels/:key/visibility, which validates the key against
 -- the registry, so the array can never accumulate unknown values. Called
--- "panels" and not "widgets" deliberately: public/js/home.js already uses
--- "widget" for the iOS home-screen widget's pinned app grid.
+-- "panels" and not "widgets" deliberately: the client half,
+-- frontend/src/features/home/home.js, already uses "widget" for the iOS
+-- home-screen widget's pinned app grid.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panels_hidden TEXT[] NOT NULL DEFAULT '{}';
 
 -- RETIRED — superseded by the `user_home_layout` table (free-form home-grid
@@ -2166,7 +2168,7 @@ ALTER TABLE app_favorites ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAU
 CREATE TABLE IF NOT EXISTS user_home_layout (
   user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   -- 4 (phone) or 5 (>= 640px). Kept in step with HomeLayout.columnsForWidth
-  -- in public/js/home-layout.js and the grid classes on #app-list.
+  -- in frontend/src/features/home/home-layout.js and the grid classes on #app-list.
   cols        SMALLINT NOT NULL,
   item_type   TEXT NOT NULL,
   app_id      INTEGER REFERENCES apps(id) ON DELETE CASCADE,
