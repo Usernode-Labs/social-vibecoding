@@ -636,3 +636,28 @@ test('report toolbar offers the AI generate button and staleness hint', () => {
   assert.ok(bar2.includes('Regenerate AI summary'));
   assert.ok(bar2.includes('Data has changed'));
 });
+
+test('AI highlights render as an escaped bullet list above the narrative', () => {
+  const AppView = makeAppView();
+  const html = AppView._renderReportAiHtml({
+    narrative: 'All good.',
+    highlights: ['Shipped <payments>', 'Review queue cleared'],
+    risks: [], owners: [],
+  }, []);
+  assert.match(html, /data-section="ai-highlights"/);
+  assert.match(html, /Progress highlights/);
+  assert.match(html, /Shipped &lt;payments&gt;/);
+  assert.ok(!html.includes('<payments>'));
+  assert.ok(
+    html.indexOf('data-section="ai-highlights"') < html.indexOf('data-section="ai-summary"'),
+    'highlights come before the narrative'
+  );
+});
+
+test('AI highlights section is omitted when empty or absent', () => {
+  const AppView = makeAppView();
+  const none = AppView._renderReportAiHtml({ narrative: 'n', risks: [], owners: [] }, []);
+  assert.ok(!none.includes('ai-highlights'));
+  const empty = AppView._renderReportAiHtml({ narrative: 'n', highlights: [], risks: [], owners: [] }, []);
+  assert.ok(!empty.includes('ai-highlights'));
+});

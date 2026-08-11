@@ -5783,6 +5783,18 @@ const AppView = {
     }
     let html = '';
 
+    // Progress highlights — the skimmable layer, placed first. Rendered
+    // only when the summary carries bullets (older cached summaries
+    // predate the field).
+    const bullets = (Array.isArray(ai.highlights) ? ai.highlights : [])
+      .map((b) => (b == null ? '' : String(b).trim())).filter(Boolean);
+    if (bullets.length) {
+      html += `<section class="ur-rpt-section" data-section="ai-highlights">`
+        + `<h2 class="ur-rpt-h2">Progress highlights</h2>`
+        + `<ul class="ur-rpt-bullets">${bullets.map((b) => `<li>${eh(b)}</li>`).join('')}</ul>`
+        + `</section>`;
+    }
+
     // Narrative — the report's main body.
     const paras = String(ai.narrative || '').split(/\n{2,}|\n/).map((p) => p.trim()).filter(Boolean);
     html += `<section class="ur-rpt-section" data-section="ai-summary">`
@@ -5878,6 +5890,8 @@ const AppView = {
     '.ur-rpt-empty{font-size:0.8125rem;color:var(--rpt-faint);font-style:italic;margin:0.5rem 0;}',
     '.ur-rpt-ai-p{margin:0.75rem 0 0;max-width:44rem;}',
     '.ur-rpt-ai-note{font-size:0.75rem;color:var(--rpt-faint);font-style:italic;margin:-0.75rem 0 1.75rem;}',
+    '.ur-rpt-bullets{list-style:disc;margin:0.75rem 0 0;padding-left:1.25rem;}',
+    '.ur-rpt-bullets li{margin:0.25rem 0;}',
     '.ur-rpt-risk-sev{display:inline-block;font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;border-radius:0.25rem;padding:0 0.375rem;margin-right:0.5rem;vertical-align:1px;}',
     '.ur-rpt-risk-sev--high{color:#b91c1c;border:1px solid #f87171;}',
     '.ur-rpt-risk-sev--medium{color:#b45309;border:1px solid #fbbf24;}',
