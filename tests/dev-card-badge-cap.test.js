@@ -84,8 +84,9 @@ function menuLabels(AppView, html) {
 const ISSUE = (over) => ({ number: 5, title: 'Fix the thing', ...over });
 
 // Count the badge-row children: the tinted chips plus the composite pill.
+// The chips are their own full-width row (.dev-card-badges) below the head,
+// so everything after the meta line is in scope.
 function badgeCount(html) {
-  const row = html.match(/<div class="flex flex-wrap items-center gap-x-2 gap-y-1">([\s\S]*?)<div class="dev-card-headline">/);
   const scope = html.slice(html.indexOf('</div>', html.indexOf('dev-card-headline-meta')));
   const chips = (scope.match(/class="attr-chip |class="gc-vote-count |text-\[0\.65rem\]/g) || []).length;
   return chips;

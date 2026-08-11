@@ -2863,24 +2863,23 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
    <span>, so they get the pill's geometry with no pointer affordance. */
 span.gc-vote-btn-icon { cursor: default; }
 
-/* ── The card head: type icon + headline + badges, ⋯ pinned top-right ──
-   The ⋯ trigger lives in the card's TOP-RIGHT corner rather than in the
-   action row: the corner is where "more about this card" belongs, and it
-   keeps the action row to the one or two things you'd actually do. Its own
-   flex column means it can never collide with the 💬 badge (inside the
-   wrapping badge row to its left) or the drag grip (a gutter outside the
-   card entirely), and the chevron stays outside this box as the card's own
-   last child.
+/* ── The card head: type icon + title/meta, and nothing else ───────────
+   THE indent lives here, and only here. The type icon leads this row,
+   flex-start so it sits on the title rather than halfway down the card
+   (which is where being a sibling of the whole content column used to put
+   it on any card with rows under the title). The title and its meta line
+   are the only things that belong beside it — everything else
+   (.dev-card-badges, .dev-status-row, .gc-card-actions, the issue card's
+   claim list) is a sibling of the head, not of the icon, so it starts at
+   the card's padding edge and gets the card's full width. The gap is
+   12px — the same gap-3 the icon had as a card-level sibling — so the
+   title column sits exactly where it always did.
 
-   The type icon leads THIS row, flex-start so it sits on the title rather
-   than halfway down the card (which is where being a sibling of the whole
-   content column used to put it on any card with a status pill or actions
-   under the title). Everything below the head — .dev-status-row,
-   .gc-card-actions, the issue card's claim list — is a sibling of the head,
-   not of the icon, so it starts at the card's padding edge and gets the
-   card's full width. The gap is 12px — the same gap-3 the icon had as a
-   card-level sibling — so the title column does not move sideways at all;
-   only the rows beneath it do. */
+   The ⋯ trigger is not in here: it lives in the card's TOP-RIGHT rail
+   (.dev-card-rail), because the corner is where "more about this card"
+   belongs and it keeps the action row to the one or two things you'd
+   actually do. Its own flex column means it can never collide with the
+   💬 badge or the drag grip (a gutter outside the card entirely). */
 .dev-card-head {
   display: flex;
   align-items: flex-start;
@@ -3081,6 +3080,21 @@ span.gc-vote-btn-icon { cursor: default; }
   vertical-align: middle;
 }
 .gc-vote-inline:empty { display: none; }
+/* ── The metadata chip row, full width ────────────────────
+   Priority / assignee / category, plus the 💬 count. It used to ride on the
+   title's own line, which put it inside the icon's indent AND made it
+   compete with the title for width — in a kanban column two chips already
+   forced a wrap. On its own row below the head it starts at the card's
+   padding edge like every other band, and the same four chips fit on one
+   line. The gaps are the ones that row carried as Tailwind utilities
+   (gap-x-2 / gap-y-1), so chip spacing is unchanged. */
+.dev-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-top: 5px;
+}
 /* Live "yes / majority" tally shown ahead of the inline buttons, in a
    little boxed pill to match the buttons / "You voted X" box. */
 /* ── The composite status pill, full width ─────────────────
@@ -3228,20 +3242,20 @@ span.gc-vote-btn-icon { cursor: default; }
   white-space: nowrap;
   vertical-align: middle;
 }
-/* Dev-card headline cell (title + meta, left of the tally / 💬 pills).
-   flex-basis:auto makes the cell's preferred width the title's natural
-   single-line width, so on narrow screens the pills after it wrap to
-   the next flex line one by one (the 💬 discussion badge first, then
-   the vote tally) instead of the title being squeezed into an
-   ellipsis. Only when the title alone is wider than the card does the
-   cell shrink (min-width:0) and the title text wrap onto extra lines —
-   the title is never cut off. */
+/* Dev-card headline cell (title over meta) — the ONLY thing beside the
+   type icon now, so it takes the whole indented column. The flex rule is
+   kept because the headline is also used inside rows that DO put chips
+   beside it (the topic detail head, group-chat rows): flex-basis:auto
+   makes the cell's preferred width the title's natural single-line
+   width, so those chips wrap away one at a time instead of the title
+   being squeezed into an ellipsis. Only when the title alone is wider
+   than the card does the cell shrink (min-width:0) and the title wrap
+   onto extra lines — the title is never cut off. */
 .dev-card-headline { flex: 1 1 auto; min-width: 0; }
 /* The meta line under the title routinely overflows (PR# · user · time
-   · pills) and is fine to truncate. Inline-size containment zeroes its
-   intrinsic width contribution so only the *title's* width decides
-   when the pills wrap; without it a long meta line would push the
-   pills down even when the title fits comfortably. */
+   · provenance) and is fine to truncate. Inline-size containment zeroes
+   its intrinsic width contribution so a long meta line can never widen
+   the headline cell past the title it sits under. */
 .dev-card-headline-meta { contain: inline-size; }
 /* "Merging…" badge shown next to the vote controls while a PR is merging.
    #405: recoloured emerald → amber so every in-flight "working toward a

@@ -2282,14 +2282,15 @@ const AppView = {
   // Every card type assembles the same four bands inside the shell, so they
   // are built here once rather than copy-pasted into six renderers:
   //
-  //   head    — the headline (title + meta) and the badge row, with the ⋯
-  //             trigger pinned TOP-RIGHT beside them. It sits in the head
-  //             rather than the action row because a card is a pointer: the
-  //             corner is where "more about this card" belongs, and it keeps
-  //             the action row to the one or two things you'd actually do.
-  //             Its own flex column means it can never collide with the 💬
-  //             badge (which lives inside the wrapping badge row) or with the
-  //             drag grip (a gutter outside the card entirely).
+  //   head    — the type icon, the title and the meta line under it. NOTHING
+  //             else: the head is the only band that is indented (it is the
+  //             one the icon leads), so anything that doesn't have to sit
+  //             beside the icon is a band of its own below it.
+  //   badges  — the metadata chips (priority, assignee, category) plus the
+  //             💬 count, on their own FULL-WIDTH wrapping row. They used to
+  //             share the title's line, which cost them the icon's 36px of
+  //             indent and made them wrap after two chips in a kanban
+  //             column; four chips now fit on one line there.
   //   pill    — the composite status pill, FULL WIDTH on its own row. A
   //             proportional tally reads far better as a bar than as a
   //             thumbnail-sized capsule wedged between chips, and giving it
@@ -2304,18 +2305,25 @@ const AppView = {
   // sits on the HEAD row, top-aligned with the title. As a sibling of the
   // whole content column it was centred against the card's full height —
   // i.e. floating halfway down next to the status pill on a busy card — and
-  // it pushed every row below the title into an indented column. Now the
-  // pill row, the action row and `extraHtml` all start at the card's own
-  // padding edge and use its full width.
+  // it pushed EVERY row into an indented column.
+  //
+  // Only the head is indented now. The badge row, the pill row, the action
+  // row and `extraHtml` are siblings of the head, not of the icon, so they
+  // all start at the card's own padding edge and use its full width. That
+  // is the whole layout rule, and it is why `icon` is an opt rather than
+  // something a caller concatenates: a card cannot get the indent wrong by
+  // accident, because there is only one place that draws it.
   //
   // The ⋯ trigger is NOT here — it lives in the card's right rail
   // (_cardRailHtml) so it shares a column with the chevron instead of
   // eating a third of the badge row's width.
   //
   // `inlinePill` is the detail head's variant: that page already has the
-  // full page width, so a second full-width bar under the header would read
-  // as a rule rather than a status. There the pill leads the badge row as a
-  // capsule instead, which is also why it is exempt from the badge cap.
+  // full page width, so a bar of its own under the header would read as a
+  // rule rather than a status. There the pill rides at the FRONT of the badge
+  // row as a capsule instead — same full-width row as everywhere else, it
+  // just shares it with the chips — which is also why it is exempt from the
+  // badge cap.
   _cardContentHtml(opts) {
     const o = opts || {};
     const chips = o.inlinePill
@@ -2324,17 +2332,16 @@ const AppView = {
     const badges = AppView._cardBadgesHtml(chips, o.chatCount, {
       uncapped: o.uncapped || !!o.inlinePill,
     });
+    const badgeRow = badges ? `<div class="dev-card-badges">${badges}</div>` : '';
     const pillRow = o.pill ? `<div class="dev-status-row">${o.pill}</div>` : '';
     return `<div class="flex-1 min-w-0">
           <div class="dev-card-head">
             ${o.icon || ''}
             <div class="dev-card-head-main">
-              <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-                ${o.headlineHtml || ''}
-                ${badges}
-              </div>
+              ${o.headlineHtml || ''}
             </div>
           </div>
+          ${badgeRow}
           ${pillRow}
           ${o.actions || ''}
           ${o.extraHtml || ''}
