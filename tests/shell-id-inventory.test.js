@@ -46,6 +46,20 @@ const ADDED_IDS = {
   'settings-mobile-push-preferences': 'Account-level Social mobile-push category controls in Settings → Alerts.',
   'drawer-row-native-app-version': 'Native-only installed Usernode app version in the drawer footer (#1101).',
   'native-app-version-slot': 'Device-local app version/build value rendered through the native bridge (#1101).',
+  // #1082 chunk E — the admin console's CHASSIS. These ids are not new to the
+  // running page: admin-console.js._renderShell() has always created them, by
+  // writing #admin-root.innerHTML on every open. They are new to
+  // public/index.html because the chassis is React-owned markup now, so it is
+  // prerendered instead of assembled at mount. Nothing below them moved —
+  // #admin-section-content is still an innerHTML host owned by the module.
+  'admin-nav-desktop': 'Admin console desktop sidebar host, empty until AdminConsole._renderShell fills it (#1082).',
+  'admin-view-only-banner': 'Admin console view-only banner (#311), ships hidden and is toggled through classList (#1082).',
+  'admin-section-content': 'Admin console section host — the phone level-1 menu and every section render into it (#1082).',
+  'admin-temp-pw-modal': 'Admin console temporary-password dialog root (#282), now static React markup (#1082).',
+  'admin-temp-pw-username': 'Recipient name in the temporary-password dialog (#1082).',
+  'admin-temp-pw-value': 'The one-time plaintext temporary password (#1082).',
+  'admin-temp-pw-copy': 'Copy button in the temporary-password dialog (#1082).',
+  'admin-temp-pw-close': 'Done button in the temporary-password dialog (#1082).',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

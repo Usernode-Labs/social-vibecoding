@@ -2985,6 +2985,8 @@ const App = {
     'auth-waiting-screen',
     'auth-waitlist-screen',
     'auth-more-screen',
+    // #1082 chunk E — the Admin & moderation console.
+    'admin-screen',
   ],
 
   // The publish/read half of that seam. The state is a plain object on

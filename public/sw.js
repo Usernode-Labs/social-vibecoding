@@ -105,20 +105,11 @@ const SHELL_ASSETS = [
   '/usernode-native/v1/native.css',
   '/usernode-native/v1/native.js',
   '/usernode-bridge.js',
-  '/js/admin-console.js',
   '/js/auth-screens.js',
-  '/js/admin-topochain.js',
-  // Folded-in console sections (#860) — one module per section that used to
-  // be a standalone page. The retired page scripts (/js/dashboard.js,
-  // /js/debug.js, /js/gallery.js, /js/admin-features.js) are gone.
-  '/js/admin-status.js',
-  '/js/admin-node.js',
-  '/js/admin-analytics.js',
-  '/js/admin-estimator.js',
-  '/js/admin-merges.js',
-  '/js/admin-gallery.js',
-  '/js/admin-campaigns.js',
-  '/js/admin-mail.js',
+  // The admin console's ten modules (admin-console.js, admin-topochain.js and
+  // the eight folded-in #860 section modules) used to be listed here. #1082
+  // chunk E moved them into the React bundle, so /shell/assets/shell.js above
+  // is what precaches them now.
   '/js/app-secrets.js',
   '/js/browse.js',
   // #1036: the real-anchor / new-tab seam. Loads ahead of every other

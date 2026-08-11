@@ -9,16 +9,21 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const JS_DIR = path.join(__dirname, '..', 'public', 'js');
+// #1082 chunk E moved the ten admin modules into the React bundle. Same
+// files, same registry, same discipline — only the directory changed.
+const JS_DIR = path.join(__dirname, '..', 'frontend', 'src', 'features', 'admin');
 const ADMIN_FILES = fs.readdirSync(JS_DIR).filter((f) => /^admin(-|\.)/.test(f) && f.endsWith('.js'));
 
 function loadRegistry() {
   const src = fs.readFileSync(path.join(JS_DIR, 'admin-console.js'), 'utf8');
-  const m = src.match(/window\.AdminUI = Object\.freeze\(\{[\s\S]*?\n\}\);/);
-  assert.ok(m, 'admin-console.js defines window.AdminUI = Object.freeze({ ... });');
-  const sandbox = { window: {} };
-  vm.runInNewContext(m[0], sandbox);
-  return sandbox.window.AdminUI;
+  // An `export const` since the move — it is a real module dependency for the
+  // section modules now, not a global they happened to find. Rewritten to a
+  // `var` so it can be evaluated in a bare vm context.
+  const m = src.match(/export const AdminUI = Object\.freeze\(\{[\s\S]*?\n\}\);/);
+  assert.ok(m, 'admin-console.js defines export const AdminUI = Object.freeze({ ... });');
+  const sandbox = {};
+  vm.runInNewContext(m[0].replace(/^export const/, 'var'), sandbox);
+  return sandbox.AdminUI;
 }
 
 test('every AdminUI reference resolves to a defined registry key', () => {

@@ -1,5 +1,10 @@
 'use strict';
 
+// The shared admin class-string registry. This was a bare global read that
+// depended on <script> order (admin-console.js loaded first); inside the
+// React bundle the dependency is explicit (#1082 chunk E).
+import { AdminUI } from './admin-console.js';
+
 // Node & chain section of the admin console (#860) — the retired
 // standalone /node-status viewer, ported into #admin/node.
 //
@@ -393,4 +398,7 @@ const AdminNode = {
   },
 };
 
-window.AdminNode = AdminNode;
+// Published on the global because AdminConsole._renderSection dispatches
+// section modules through window[modName]. Guarded: the SSG prerender pass
+// evaluates this module in Node, where there is no window.
+if (typeof window !== 'undefined') window.AdminNode = AdminNode;

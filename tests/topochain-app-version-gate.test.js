@@ -204,7 +204,7 @@ test('check-activity windows to 7 days and groups by os + upgrade', () => {
 });
 
 test('the admin screen warns per-OS when no ACTIVE rule exists', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'public/js/admin-topochain.js'), 'utf8');
+  const src = fs.readFileSync(path.join(ROOT, 'frontend/src/features/admin/admin-topochain.js'), 'utf8');
   const fn = src.slice(src.indexOf('_renderAppVersionGate() {'),
     src.indexOf('async _loadAppVersionActivity('));
   // An inactive row is as good as no row for the gate, so the check must
@@ -215,7 +215,7 @@ test('the admin screen warns per-OS when no ACTIVE rule exists', () => {
 });
 
 test('the build-number fields say what each one triggers', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'public/js/admin-topochain.js'), 'utf8');
+  const src = fs.readFileSync(path.join(ROOT, 'frontend/src/features/admin/admin-topochain.js'), 'utf8');
   const form = src.slice(src.indexOf('admin-topo-av-f-min_build_number'),
     src.indexOf('admin-topo-av-f-is_active'));
   assert.match(form, /FORCED update/);
