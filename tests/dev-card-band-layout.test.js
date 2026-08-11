@@ -285,15 +285,23 @@ test('.dev-card-title-clamp clamps at two lines and reserves the second', () => 
     `min-height should reserve exactly two title lines, got ${min}px`);
 });
 
-test('the meta band reserves its single line', () => {
+test('the meta band reserves — and caps — its single line', () => {
   const r = rule('.dev-card-meta');
   assert.match(r, /white-space: nowrap/, 'one line, truncated — never two');
   assert.match(r, /text-overflow: ellipsis/);
+  assert.match(r, /overflow: hidden/);
   const min = parseFloat(r.match(/min-height:\s*([\d.]+)px/)[1]);
+  const max = parseFloat(r.match(/max-height:\s*([\d.]+)px/)[1]);
   const size = parseFloat(r.match(/font-size:\s*([\d.]+)px/)[1]);
   const lh = parseFloat(r.match(/line-height:\s*([\d.]+)/)[1]);
   assert.ok(Math.abs(min - size * lh) < 0.5,
     `min-height should be one ${size}px/${lh} line, got ${min}px`);
+  // Same min === max contract as the other two reserved bands, and here it is
+  // load-bearing for a reason the browser found: a subtitle carrying the
+  // `#123` mono link is a mixed-font line box, which measured 17.09px against
+  // 16.09px for a plain-text one. Reserving without capping let every linked
+  // card push its status and action bands 1px below its neighbours'.
+  assert.equal(min, max, 'reserved AND capped at one line');
 });
 
 test('the status band is a FIXED-height, clipping row', () => {
@@ -324,6 +332,20 @@ test('the action band is capped only where it follows a dense status band', () =
   const bare = rule('.gc-card-actions');
   assert.doesNotMatch(bare, /max-height/);
   assert.match(bare, /flex-wrap: wrap/);
+});
+
+test('the kudos pill hugs its wrapper inside the capped action band', () => {
+  // Kudos.renderButton hands back its 24px button inside an inline-block
+  // positioning span (it anchors the absolute popover). An inline-block is
+  // sized by a LINE box, so the span measured 25.5px and its font descender
+  // pushed the button 1.5px down — clipped through its own bottom border in a
+  // band with zero slack. inline-flex sizes the span by its child instead.
+  const r = rule('.dev-card-status + .gc-card-actions .kudos-wrap');
+  assert.match(r, /display: inline-flex/);
+  assert.match(r, /align-items: center/);
+  // Scoped to the dense band: the detail view's kudos button sits in an
+  // uncapped row, where the phantom line-box height changes nothing.
+  assert.doesNotMatch(CSS, /\n\.kudos-wrap \{[^}]*inline-flex/);
 });
 
 test('the state bar flexes into whatever the chips leave, over a floor', () => {

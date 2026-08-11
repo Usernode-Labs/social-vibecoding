@@ -2865,6 +2865,19 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   max-height: 24px;
   overflow: hidden;
 }
+/* The kudos pill arrives wrapped in Kudos.renderButton's positioning span
+   (it anchors the absolute .kudos-popover), and that span is an inline-block:
+   its height is a LINE box, so it measured 25.5px around a 24px button and
+   the extra 1.5px of font descender pushed the button down inside it. In a
+   24px band with zero slack that clipped the button's bottom border — the one
+   half-cut pill on the whole board. inline-flex makes the wrapper hug the
+   button instead of a line box; the popover is absolute, so it stays out of
+   the flex sizing. Scoped to the dense band: the detail view's kudos button
+   sits in an uncapped row where the phantom 1.5px is harmless. */
+.dev-card-status + .gc-card-actions .kudos-wrap {
+  display: inline-flex;
+  align-items: center;
+}
 
 /* Square icon variant of the action pill — the icon-only Preview
    affordance and the ⋯ overflow trigger. Same 11px pill family and the
@@ -2990,7 +3003,17 @@ span.gc-vote-btn-icon { cursor: default; }
    The min-height reserves the line even when a card has no subtitle at all:
    an empty div is 0px tall, and one card in a column silently skipping this
    band is exactly the misalignment the reserved bands exist to prevent.
-   1.4 x 11.5px = 16.1px. */
+   1.4 x 11.5px = 16.1px.
+
+   max-height pins the other end, the same min===max contract the status and
+   action bands use. A subtitle carrying the `#123` link is a mixed-font line
+   — the mono anchor's ascent/descent differ from the surrounding sans strut,
+   and a line box is the union of both, so those metas measured 17.09px while
+   plain-text ones measured 16.09. One pixel, but it moved the status and
+   action bands of every linked card down relative to its neighbours, which is
+   the entire thing this band exists to prevent. Measured in the browser: the
+   tallest glyph box in the mixed line spans y=2..15, so the clip only ever
+   removes empty descender leading. */
 .dev-card-meta {
   font-size: 11.5px;
   line-height: 1.4;
@@ -2999,6 +3022,7 @@ span.gc-vote-btn-icon { cursor: default; }
   text-overflow: ellipsis;
   white-space: nowrap;
   min-height: 16.1px;
+  max-height: 16.1px;
 }
 
 /* ── Card overflow (⋯) menu ──────────────────────────────
