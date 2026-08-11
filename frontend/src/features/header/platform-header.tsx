@@ -163,8 +163,8 @@ export function PlatformHeader() {
               NATIVE-BRIDGE.md) live as rows in the slide-out drawer below —
               never here in the header. See #drawer-row-node /
               #drawer-row-wallet, populated by ./node-pill.js /
-              ./wallet-sheet.js when the Usernode bridge reports the matching
-              capability.
+              ./wallet-sheet.js in the native top frame. Capability and state
+              availability change their contents, never whether the rows exist.
           */}
           {/*
               App/Dev mode switch — replaced the full-width bottom tab bar

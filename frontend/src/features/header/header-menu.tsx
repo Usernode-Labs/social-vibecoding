@@ -5,7 +5,7 @@
  * path, and nothing ever renders one without the other.
  *
  * Three legacy modules wrote into this subtree; all three moved into the bundle
- * with it, unchanged apart from where their init() is called from:
+ * with it and still initialise from the island's layout effect:
  *
  *   ./node-pill.js               #drawer-row-node    (native node status)
  *   ./wallet-sheet.js            #drawer-row-wallet  (native wallet balance)
@@ -362,11 +362,12 @@ export function HeaderMenu() {
             </div>
             {/*
                 Node status + Wallet: native app chrome absorbed into SV
-                (app-as-SV-chrome migration, NATIVE-BRIDGE.md). Hidden unless the
-                Usernode bridge reports the matching capability — populated and
-                wired by ./node-pill.js / ./wallet-sheet.js, which this island
-                initialises below. Tapping opens the same detail sheets the old
-                header pill/chip opened.
+                (app-as-SV-chrome migration, NATIVE-BRIDGE.md). Native top frames
+                always reveal both rows; capabilities and temporary state affect
+                their contents, never the navigation structure. They are wired by
+                ./node-pill.js / ./wallet-sheet.js, which this island initialises
+                below. Tapping opens the same detail sheets the old header pill /
+                chip opened.
             */}
             <button
               id="drawer-row-node"

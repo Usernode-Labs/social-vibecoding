@@ -1,7 +1,7 @@
-// MOVED, NOT REWRITTEN (#1079 chunk B). This file was public/js/wallet-sheet.js;
+// MOVED in #1079 chunk B. This file was public/js/wallet-sheet.js;
 // #header-menu-panel became a React island and this module owns nodes inside
-// it, so it moved into the bundle with the region it writes to. The body below
-// is unchanged apart from the init call at the bottom — see the note there.
+// it, so it moved into the bundle with the region it writes to. Its legacy
+// window publication and layout-effect init seam remain load-bearing.
 //
 // Wallet drawer row + wallet sheet — the app's native wallet surface
 // absorbed into SV chrome (app-as-SV-chrome migration, NATIVE-BRIDGE.md).
@@ -15,8 +15,9 @@
 // so the app's NATIVE confirm sheet still appears — the trust boundary
 // is unchanged (Apple Pay model).
 //
-// Hidden entirely when the bridge lacks the `getWalletState` capability
-// (desktop, child-app iframes, old app builds).
+// Present for every native top frame, even while wallet state is unavailable.
+// Desktop and child-app iframes keep the row hidden. Delegation itself is an
+// optional v4 capability and affects only the card inside this Wallet sheet.
 (function () {
   'use strict';
 
@@ -27,6 +28,12 @@
     _records: null,   // last getTransactionRecords items
     _sheet: null,
     _timer: null,
+    _walletSupported: false,
+    _recordsSupported: false,
+    _stakingSupported: false,
+    _stakingPending: false,
+    _refreshPending: false,
+    _stateError: null,
 
     // Drops any snapshot read before the current web participant was handed
     // to native. Reopening refreshes from the newly admitted identity.
@@ -51,8 +58,8 @@
     },
 
     async init() {
-      if (!window.NativeChrome) return;
-      if (!(await NativeChrome.has('getWalletState'))) return;
+      if (!window.NativeChrome || !window.usernode ||
+          window.usernode.isNative !== true) return;
 
       const row = document.getElementById('drawer-row-wallet');
       if (row) {
@@ -69,22 +76,53 @@
         });
       }
 
-      await WalletSheet._refreshState();
+      await WalletSheet._refreshCapabilities();
+      if (WalletSheet._walletSupported) await WalletSheet._refreshState();
       WalletSheet._renderChip();
       WalletSheet._timer = setInterval(async () => {
+        if (!WalletSheet._walletSupported) return;
         await WalletSheet._refreshState();
         WalletSheet._renderChip();
         if (WalletSheet._sheet) WalletSheet._renderSheetBody();
       }, REFRESH_MS);
     },
 
+    async _refreshCapabilities() {
+      const bridgeInfo = await NativeChrome.getInfo();
+      if (!bridgeInfo || bridgeInfo.degraded === true) return;
+      const capabilities = Array.isArray(bridgeInfo.capabilities)
+        ? bridgeInfo.capabilities : [];
+      WalletSheet._walletSupported =
+        capabilities.includes('getWalletState');
+      WalletSheet._recordsSupported =
+        capabilities.includes('getTransactionRecords');
+      WalletSheet._stakingSupported =
+        Number(bridgeInfo.version) >= 4 &&
+        capabilities.includes('manageStaking');
+    },
+
     async _refreshState() {
       try {
-        WalletSheet._state = await window.usernode.getWalletState();
-      } catch (_) { /* keep last snapshot */ }
+        const next = await window.usernode.getWalletState();
+        const readError = NativeChrome.lastReadError
+          ? NativeChrome.lastReadError('getWalletState') : null;
+        if (next) {
+          WalletSheet._state = next;
+          WalletSheet._stateError = null;
+        } else if (readError) {
+          WalletSheet._stateError = readError.message ||
+            'Could not refresh wallet state.';
+        }
+      } catch (err) {
+        // Keep the last valid snapshot; the error is intentionally inline and
+        // non-blocking so Send/Receive and navigation remain usable.
+        WalletSheet._stateError = (err && err.message) ||
+          'Could not refresh wallet state.';
+      }
     },
 
     async _refreshRecords() {
+      if (!WalletSheet._recordsSupported) return;
       try {
         const resp = await window.usernode.getTransactionRecords();
         WalletSheet._records = (resp && Array.isArray(resp.items))
@@ -110,6 +148,17 @@
     _shortAddr(addr) {
       if (!addr || addr.length <= 16) return addr || '—';
       return addr.slice(0, 8) + '…' + addr.slice(-6);
+    },
+
+    _isDelegated(staking) {
+      return !!staking && staking.delegate != null;
+    },
+
+    _formatDelegatedSince(value) {
+      if (!value) return null;
+      const date = new Date(value);
+      if (!Number.isFinite(date.getTime())) return null;
+      return date.toLocaleString();
     },
 
     // Kept the historical name from the header-chip era; now paints the
@@ -143,7 +192,11 @@
       WalletSheet._renderSheetBody();
 
       await Promise.all([
-        WalletSheet._refreshState(),
+        WalletSheet._refreshCapabilities(),
+      ]);
+      await Promise.all([
+        WalletSheet._walletSupported
+          ? WalletSheet._refreshState() : Promise.resolve(),
         WalletSheet._refreshRecords(),
       ]);
       WalletSheet._renderChip();
@@ -208,6 +261,26 @@
         () => WalletSheet._showReceive()));
       body.appendChild(actions);
 
+      if (!WalletSheet._walletSupported) {
+        const unavailable = document.createElement('div');
+        unavailable.className = 'mb-4 rounded-lg border border-zinc-200 ' +
+          'dark:border-zinc-800 p-3 text-sm text-zinc-500 dark:text-zinc-400';
+        unavailable.textContent = 'Wallet state is unavailable in this app version.';
+        body.appendChild(unavailable);
+      }
+
+      if (WalletSheet._stateError) {
+        const error = document.createElement('div');
+        error.className = 'mb-4 rounded-lg bg-red-500/10 px-3 py-2 text-sm ' +
+          'text-red-600 dark:text-red-400';
+        error.textContent = WalletSheet._stateError;
+        body.appendChild(error);
+      }
+
+      if (WalletSheet._stakingSupported) {
+        body.appendChild(WalletSheet._renderStakingCard(s.staking));
+      }
+
       // Expandable areas (send form / receive QR)
       const expand = document.createElement('div');
       expand.id = 'wallet-sheet-expand';
@@ -220,6 +293,124 @@
       recTitle.textContent = 'Recent';
       body.appendChild(recTitle);
       body.appendChild(WalletSheet._renderReceipts());
+    },
+
+    _renderStakingCard(staking) {
+      const card = document.createElement('section');
+      card.className = 'mb-4 rounded-lg border border-zinc-200 ' +
+        'dark:border-zinc-800 p-4';
+
+      const eyebrow = document.createElement('div');
+      eyebrow.className = 'text-xs font-semibold uppercase tracking-wide ' +
+        'text-zinc-500 dark:text-zinc-400';
+      eyebrow.textContent = 'Block production';
+      card.appendChild(eyebrow);
+
+      const disclosure = document.createElement('div');
+      disclosure.className = 'my-3 rounded-lg bg-amber-500/10 px-3 py-2 ' +
+        'text-sm font-medium text-amber-800 dark:text-amber-300';
+      disclosure.textContent = 'When delegated, you receive half the points ' +
+        'you would earn by producing blocks directly from your phone.';
+      card.appendChild(disclosure);
+
+      if (staking === null || staking === undefined) {
+        const progress = document.createElement('div');
+        progress.className = 'text-sm font-semibold';
+        progress.textContent = 'Wallet setup is still in progress';
+        card.appendChild(progress);
+
+        const retry = WalletSheet._button(
+          WalletSheet._refreshPending ? 'Retrying…' : 'Retry',
+          async () => {
+            if (WalletSheet._refreshPending) return;
+            WalletSheet._refreshPending = true;
+            WalletSheet._renderSheetBody();
+            await WalletSheet._refreshState();
+            WalletSheet._refreshPending = false;
+            WalletSheet._renderChip();
+            WalletSheet._renderSheetBody();
+          }
+        );
+        retry.disabled = WalletSheet._refreshPending;
+        card.appendChild(retry);
+        return card;
+      }
+
+      const delegated = WalletSheet._isDelegated(staking);
+      const status = document.createElement('div');
+      status.className = 'text-base font-semibold';
+      status.textContent = delegated
+        ? 'Delegated' : 'Producing blocks on this phone';
+      card.appendChild(status);
+
+      const detail = document.createElement('div');
+      detail.className = 'mt-1 text-sm text-zinc-500 dark:text-zinc-400';
+      detail.textContent = delegated
+        ? 'Block production on this phone is disabled.'
+        : 'Producing blocks directly on this phone earns full points.';
+      card.appendChild(detail);
+
+      if (delegated) {
+        const delegate = document.createElement('div');
+        delegate.className = 'mt-2 font-mono text-xs text-zinc-600 ' +
+          'dark:text-zinc-300';
+        delegate.textContent = WalletSheet._shortAddr(staking.delegate);
+        card.appendChild(delegate);
+
+        const since = WalletSheet._formatDelegatedSince(
+          staking.delegated_since
+        );
+        if (since) {
+          const sinceEl = document.createElement('div');
+          sinceEl.className = 'mt-1 text-xs text-zinc-500 dark:text-zinc-400';
+          sinceEl.textContent = 'Delegated since ' + since;
+          card.appendChild(sinceEl);
+        }
+      }
+
+      const manage = WalletSheet._button(
+        WalletSheet._stakingPending ? 'Opening…' : 'Manage delegation',
+        () => WalletSheet._manageStaking()
+      );
+      manage.disabled = WalletSheet._stakingPending;
+      card.appendChild(manage);
+      return card;
+    },
+
+    _button(label, onClick) {
+      const button = document.createElement('button');
+      button.className = 'mt-3 w-full rounded-lg bg-violet-600 px-3 py-2 ' +
+        'text-sm font-semibold text-white hover:bg-violet-500 ' +
+        'disabled:cursor-not-allowed disabled:opacity-50';
+      button.textContent = label;
+      button.addEventListener('click', onClick);
+      return button;
+    },
+
+    async _manageStaking() {
+      if (!WalletSheet._stakingSupported || WalletSheet._stakingPending) return;
+      WalletSheet._stakingPending = true;
+      WalletSheet._stateError = null;
+      WalletSheet._renderSheetBody();
+      try {
+        // No validator address or desired state crosses this boundary. Native
+        // owns the entire management flow and resolves after its screen closes.
+        const staking = await window.usernode.manageStaking();
+        if (staking && typeof staking === 'object') {
+          WalletSheet._state = Object.assign({}, WalletSheet._state || {}, {
+            staking,
+          });
+          WalletSheet._renderSheetBody();
+        }
+        await WalletSheet._refreshState();
+      } catch (err) {
+        WalletSheet._stateError = (err && err.message) ||
+          'Could not open delegation management.';
+      } finally {
+        WalletSheet._stakingPending = false;
+        WalletSheet._renderChip();
+        WalletSheet._renderSheetBody();
+      }
     },
 
     _renderReceipts() {
