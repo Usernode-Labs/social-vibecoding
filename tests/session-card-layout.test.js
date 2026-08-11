@@ -117,7 +117,7 @@ test('busy own card: single-row shell, wrapping title, ⋯ instead of five pills
   AppView._sharedById = {};
   const html = AppView._renderMySessionCard(mySess({ busy: true }));
   assert.match(html, /dev-card-title/, 'title uses the shared title cell');
-  assert.match(html, /dev-card-headline/, 'and its progressive-wrap rule');
+  assert.match(html, /dev-card-head-main/, 'and its wrapping cell in the head');
   assert.ok(html.includes(SHELL), 'uses the standard single-row card shell');
   assert.ok(!html.includes('block w-full rounded-xl'), 'the two-row session shell is gone');
   assert.ok(!html.includes('pl-12'), 'no indented second actions row');

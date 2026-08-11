@@ -559,6 +559,14 @@ const Notifications = {
     return Notifications.items.filter((n) => isSessionNotif(n) && !n.readAt).length;
   },
 
+  // Of those, the ones that are a finished dev session specifically. Only
+  // used to publish the count on the badge as `data-session-done`, so a
+  // route check can assert the green badge is showing BECAUSE a session
+  // finished rather than because some other cog-drawer kind is unread.
+  _sessionDoneUnread() {
+    return Notifications.items.filter((n) => n && n.kind === 'session_done' && !n.readAt).length;
+  },
+
   // The bell's own unread count: everything except the session-related
   // kinds that live in the cog drawer now.
   _bellUnread() {
@@ -586,6 +594,7 @@ const Notifications = {
 
     const aiBadge = document.getElementById('notifications-badge-ai');
     if (aiBadge) {
+      aiBadge.dataset.sessionDone = String(Notifications._sessionDoneUnread());
       if (aiUnread > 0) {
         aiBadge.textContent = aiUnread > 99 ? '99+' : String(aiUnread);
         aiBadge.classList.remove('hidden');
