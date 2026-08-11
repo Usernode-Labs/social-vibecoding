@@ -621,3 +621,18 @@ test('_renderReportHtml includes the AI layer only when opts.ai is present', () 
   assert.ok(withAi.indexOf('ur-rpt-summary') < withAi.indexOf('data-section="ai-summary"'));
   assert.ok(withAi.indexOf('data-section="ai-summary"') < withAi.indexOf('data-section="done"'));
 });
+
+test('report toolbar offers the AI generate button and staleness hint', () => {
+  const AppView = makeAppView();
+  AppView._reportAi = undefined;
+  AppView._reportAiGenerating = false;
+  AppView._reportLoading = false;
+  const bar = AppView._renderReportToolbar();
+  assert.ok(bar.includes('dev-report-ai'));
+  assert.ok(bar.includes('Generate AI summary'));
+  assert.ok(!bar.includes('Data has changed'));
+  AppView._reportAi = { narrative: 'x', risks: [], owners: [], stale: true };
+  const bar2 = AppView._renderReportToolbar();
+  assert.ok(bar2.includes('Regenerate AI summary'));
+  assert.ok(bar2.includes('Data has changed'));
+});

@@ -5254,6 +5254,10 @@ const AppView = {
     AppView._reportMerged = null;
     AppView._reportTruncated = false;
     AppView._reportPartial = false;
+    // AI layer (report-ai): undefined = never fetched for this app/data
+    // cycle; null = fetched, none generated yet; object = cached summary.
+    AppView._reportAi = undefined;
+    AppView._reportAiGenerating = false;
   },
 
   // Page the full merged history into `_reportMerged` — the one fetch the
@@ -5357,13 +5361,16 @@ const AppView = {
     const model = AppView._buildReportModel(AppView._reportInputs());
     el.innerHTML = `<style id="dev-report-style">${AppView.REPORT_CSS}</style>`
       + AppView._renderReportToolbar()
-      + `<div class="${AppView._reportRootCls()}">${AppView._renderReportHtml(model, { standalone: false })}</div>`;
+      + `<div class="${AppView._reportRootCls()}">${AppView._renderReportHtml(model, { standalone: false, ai: AppView._reportAi === undefined ? null : AppView._reportAi })}</div>`;
     // Wired after each paint alongside the body, the same way
     // _repaintPmView wires #dev-pm-more-unassigned.
     const dl = el.querySelector('#dev-report-download');
     if (dl && dl.addEventListener) dl.addEventListener('click', () => AppView.downloadReport());
     const rf = el.querySelector('#dev-report-refresh');
     if (rf && rf.addEventListener) rf.addEventListener('click', () => AppView.refreshReport());
+    const ab = el.querySelector('#dev-report-ai');
+    if (ab && ab.addEventListener) ab.addEventListener('click', () => AppView.generateReportAi());
+    AppView._ensureReportAi();
   },
 
   // `.ur-rpt--dark` follows the shell's `dark` class (darkMode: 'class').
@@ -5381,10 +5388,16 @@ const AppView = {
 
   _renderReportToolbar() {
     const busy = AppView._reportLoading;
+    const gen = AppView._reportAiGenerating;
+    const ai = AppView._reportAi;
+    const aiLabel = gen ? 'Generating…' : (ai ? 'Regenerate AI summary' : 'Generate AI summary');
+    const stale = !!(ai && ai.stale && !gen);
     return `
-      <div class="flex items-center gap-2 mb-3">
+      <div class="flex items-center gap-2 mb-3 flex-wrap">
         <button id="dev-report-download" class="gc-vote-btn" title="Save this report as a self-contained HTML file">Download HTML</button>
         <button id="dev-report-refresh" class="gc-vote-btn"${busy ? ' disabled' : ''} title="Re-pull the data and regenerate the report">${busy ? 'Refreshing…' : 'Refresh'}</button>
+        <button id="dev-report-ai" class="gc-vote-btn"${gen ? ' disabled' : ''} title="Ask the AI for a plain-language summary, risks and per-person highlights (uses your budget or API key)">${aiLabel}</button>
+        ${stale ? '<span class="text-xs opacity-60">Data has changed since the AI summary was generated.</span>' : ''}
       </div>`;
   },
 
@@ -6033,7 +6046,15 @@ const AppView = {
   downloadReport() {
     if (!AppView._reportMerged) { AppView._ensureReportData(); return; }
     const model = AppView._buildReportModel(AppView._reportInputs());
-    const doc = AppView._renderReportHtml(model, { standalone: true });
+    // A summary is embedded when one exists; with none, the export omits
+    // the AI layer entirely (no "use the button above" invite in a
+    // standalone document).
+    const doc = AppView._renderReportHtml(
+      model,
+      AppView._reportAi
+        ? { standalone: true, ai: AppView._reportAi }
+        : { standalone: true }
+    );
     const slug = (model.app && model.app.slug) || 'app';
     const d = new Date(model.generatedAtMs);
     const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -6058,6 +6079,49 @@ const AppView = {
     if (AppView._reportLoading) return;
     AppView._resetReportCaches();
     AppView._repaintReportView();
+  },
+
+  // Fetch the shared AI summary once per report visit. GETs are cheap
+  // (server cache + staleness hash); errors degrade to the no-summary
+  // invite line rather than breaking the deterministic report.
+  async _ensureReportAi() {
+    if (AppView._reportAiFetching || AppView._reportAi !== undefined) return;
+    if (!AppView.appData) return;
+    AppView._reportAiFetching = true;
+    try {
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/report-ai`);
+      const data = res.ok ? await res.json() : null;
+      AppView._reportAi = data && data.summary
+        ? { ...data.summary, stale: !!data.stale }
+        : null;
+    } catch {
+      AppView._reportAi = null;
+    } finally {
+      AppView._reportAiFetching = false;
+    }
+    if (AppView._getViewMode() === 'report') AppView._repaintReportView();
+  },
+
+  // Generate/regenerate the AI summary. Debited to the clicking user;
+  // the server 409s a concurrent generation and 429s budget/rate limits.
+  async generateReportAi() {
+    if (AppView._reportAiGenerating || !AppView.appData) return;
+    AppView._reportAiGenerating = true;
+    AppView._repaintReportView();
+    try {
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/report-ai/generate`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.summary) {
+        AppView._reportAi = { ...data.summary, stale: false };
+      } else if (window.PlatformUI && PlatformUI.toast) {
+        PlatformUI.toast(data.error || 'Could not generate the AI summary');
+      }
+    } catch {
+      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Could not generate the AI summary');
+    } finally {
+      AppView._reportAiGenerating = false;
+      if (AppView._getViewMode() === 'report') AppView._repaintReportView();
+    }
   },
 
   // ── Session cards in the In progress area ──────────────────────────
