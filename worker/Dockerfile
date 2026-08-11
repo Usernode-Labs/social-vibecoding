@@ -77,7 +77,13 @@ RUN npm install -g @openai/codex@${CODEX_VERSION}
 # custom OpenRouter model entries. The per-turn builder copies only that text
 # into its one-model catalog; it does not inherit OpenAI-only tool modes or
 # capabilities from the bundled models.
-RUN CODEX_HOME=/tmp/usernode-codex-bootstrap \
+# The dir must exist BEFORE codex runs: codex 0.146.0 hard-errors (exit 1)
+# when CODEX_HOME points at a missing path. This layer sits after the
+# day-bumped claude-code layer, so it re-runs on every cache-bust rollover —
+# the first rollover after this step landed broke every worker image build
+# (and with it conflict-resolution and coding turns) until the mkdir.
+RUN mkdir -p /tmp/usernode-codex-bootstrap \
+  && CODEX_HOME=/tmp/usernode-codex-bootstrap \
       codex debug models > /usr/local/share/usernode-codex-bundled-models.json \
   && chmod 444 /usr/local/share/usernode-codex-bundled-models.json \
   && rm -rf /tmp/usernode-codex-bootstrap
