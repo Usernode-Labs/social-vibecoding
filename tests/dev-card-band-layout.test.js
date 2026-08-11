@@ -348,47 +348,73 @@ test('the kudos pill hugs its wrapper inside the capped action band', () => {
   assert.doesNotMatch(CSS, /\n\.kudos-wrap \{[^}]*inline-flex/);
 });
 
-test('the preview eye is pushed to the right edge of the dense action band', () => {
-  // The eye is the one action that leaves the platform, so it is parked
-  // against the card's right edge: a column of cards then shows its previews
-  // in one vertical line instead of at whatever x the text pills before it
-  // happen to end. The text pills keep their left alignment.
-  const r = rule('.dev-card-status + .gc-card-actions > .gc-vote-btn-icon:last-child');
-  assert.match(r, /margin-left: auto/);
-  // An auto margin specifically, for two reasons. `justify-content:
-  // space-between` would spread the text pills apart from each other too;
-  // and auto margins resolve AFTER flex line breaking, so this cannot push
-  // the eye onto a second row for the band's `overflow: hidden` to clip.
-  assert.doesNotMatch(r, /justify-content|order:/);
+test('the preview eye is pinned to the BOTTOM of the card\'s right-hand rail', () => {
+  // The eye is the one action that leaves the platform, so it is parked in the
+  // card's bottom-right corner: a column of cards then shows its previews in
+  // one vertical line, instead of at whatever x the text pills before it
+  // happen to end. It shares the rail with the two other right-edge controls —
+  // ⋯ at the top, chevron centred between them — and being out of the action
+  // band means the band's `max-height: 24px` can no longer clip it.
+  const r = rule('.dev-card-rail');
+  assert.match(r, /flex-direction: column/);
+  assert.match(r, /align-self: stretch/,
+    'the rail spans the card\'s full height — that is what gives it a bottom');
+  // ONE pair of auto margins does all the positioning, and it is scoped to
+  // `> svg`: the chevron is the rail's only direct <svg> child (the ⋯ is a
+  // <button>, the preview a <button>/<span>). So the ⋯ keeps the top, the eye
+  // keeps the bottom, and the chevron centres in whatever is left between.
+  const c = rule('.dev-card-rail > svg');
+  assert.match(c, /margin-top: auto/);
+  assert.match(c, /margin-bottom: auto/);
+  assert.match(SRC, /gc-vote-btn gc-vote-btn-icon dev-card-menu-btn/,
+    'the ⋯ trigger is a <button>, so the centring rule does not match it');
+  assert.match(rule('.dev-card-rail > .gc-vote-btn-icon'), /flex: none/,
+    'and neither pill may be shrunk in height by a short card');
+  // The dead rule from the previous placement must be gone, not left to fight
+  // the rail: nothing in the action band pushes a trailing icon pill any more.
+  assert.doesNotMatch(CSS, /gc-card-actions > \.gc-vote-btn-icon/);
   const band = rule('.dev-card-status + .gc-card-actions');
   assert.doesNotMatch(band, /justify-content/,
     'the band itself stays a plain left-aligned flex row');
-  // Scoped to the dense band: the detail head's action list is uncapped, may
-  // wrap, and keeps its natural left-to-right order.
-  assert.doesNotMatch(CSS, /\n\.gc-card-actions > \.gc-vote-btn-icon/);
-  // And to :last-child, because the ⋯ trigger carries .gc-vote-btn-icon too —
-  // it just lives in the card's rail rather than in the action band.
-  assert.match(SRC, /gc-vote-btn gc-vote-btn-icon dev-card-menu-btn/,
-    'the ⋯ trigger shares the icon-pill class the selector matches');
 });
 
-test('the action band emits the preview LAST, which is what the CSS anchors on', () => {
+test('the rail emits ⋯, then the chevron, then the preview — in that order', () => {
   const AppView = makeAppView();
-  const html = AppView._cardActionsHtml({
-    primary: ['<button class="gc-vote-btn">A</button>',
-      '<button class="gc-vote-btn">B</button>'],
-    preview: '<button class="gc-vote-btn gc-vote-btn-preview gc-vote-btn-icon">eye</button>',
-  });
-  // :last-child is only the preview while this ordering holds — a primary
-  // emitted after it would be the pill that gets pushed to the right edge.
-  assert.match(html, /<\/button><button class="gc-vote-btn gc-vote-btn-preview gc-vote-btn-icon">eye<\/button><\/div>$/);
-  // And it is still the last child on a card with no text pills at all (the
-  // shared-session card), where it is alone on the right.
-  const alone = AppView._cardActionsHtml({
-    primary: [],
-    preview: '<button class="gc-vote-btn gc-vote-btn-preview gc-vote-btn-icon">eye</button>',
-  });
-  assert.match(alone, /^<div class="gc-card-actions"><button [^>]*gc-vote-btn-icon">eye<\/button><\/div>$/);
+  const menu = [{ label: 'Withdraw', act: () => {} }];
+  const eye = '<button class="gc-vote-btn gc-vote-btn-preview gc-vote-btn-icon">eye</button>';
+  const full = AppView._cardRailHtml('k:1', menu, { preview: eye });
+  // The order IS the layout: the auto margins on the chevron centre it in the
+  // gap between whatever precedes and follows it, so emitting the eye before
+  // the chevron would put the eye in the middle and the chevron at the bottom.
+  assert.match(full, /^<div class="dev-card-rail"><button [^>]*dev-card-menu-btn[\s\S]*?<svg [^>]*class="w-4 h-4[\s\S]*?<\/svg><button [^>]*gc-vote-btn-preview[^>]*>eye<\/button><\/div>$/);
+
+  // No preview → byte-for-byte the rail as it was before this moved: no
+  // reserved slot, so a card with nothing to preview looks untouched.
+  assert.equal(AppView._cardRailHtml('k:1', menu, { preview: '' }),
+    AppView._cardRailHtml('k:1', menu));
+
+  // A card with a preview but no ⋯ still needs the column (the shared-session
+  // card): a bare chevron is only returned when it is the rail's sole content.
+  const noMenu = AppView._cardRailHtml('', null, { preview: eye });
+  assert.match(noMenu, /^<div class="dev-card-rail"><svg [\s\S]*>eye<\/button><\/div>$/);
+  assert.doesNotMatch(AppView._cardRailHtml('', null, {}), /dev-card-rail/,
+    'a lone chevron needs no column to be centred in');
+  assert.equal(AppView._cardRailHtml('', null, { chevron: false }), '');
+});
+
+test('no dense renderer puts the preview back in the action band', () => {
+  // The four dense card types that have something to preview pass it to the
+  // rail; only the noNav (detail head) branch keeps it in the action list,
+  // because that head has no chevron for the eye to sit under and its band is
+  // uncapped and wrapping.
+  const calls = SRC.match(/_cardActionsHtml\(\{[^}]*preview[^}]*\}\)/g) || [];
+  for (const c of calls) {
+    assert.match(c, /preview: noNav \? preview : ''/,
+      `dense action band must not carry the preview: ${c}`);
+  }
+  const rails = SRC.match(/_cardRailHtml\([^;]*?preview[^;]*?\}\)/g) || [];
+  assert.ok(rails.length >= 4,
+    `expected the dense renderers to pass a preview to the rail, saw ${rails.length}`);
 });
 
 test('the state bar flexes into whatever the chips leave, over a floor', () => {

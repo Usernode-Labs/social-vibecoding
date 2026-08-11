@@ -122,7 +122,8 @@ test('the trigger is pinned in the top-right RAIL on every card type that has on
   for (const [kind, html] of Object.entries(cards)) {
     assert.match(html, /dev-card-head-main/, `${kind}: uses the shared head`);
     // The rail is the card's LAST child — a right-edge column with the ⋯ on
-    // top and the chevron centred below.
+    // top, the icon Preview (when there is one) pinned at the bottom, and the
+    // chevron centred in between.
     assert.match(html, /dev-card-rail/, `${kind}: rail present`);
     const rail = html.slice(html.indexOf('dev-card-rail'));
     assert.match(rail, /dev-card-menu-btn/, `${kind}: trigger inside the rail`);
@@ -142,14 +143,26 @@ test('the trigger is pinned in the top-right RAIL on every card type that has on
 
 test('a card with no ⋯ still gets its chevron, with no empty rail around it', () => {
   const AppView = makeAppView();
-  // A shared session demotes nothing, so _cardRailHtml returns the bare
-  // chevron rather than a one-child column.
+  // A shared session demotes nothing, so with nothing to preview either
+  // _cardRailHtml returns the bare chevron rather than a one-child column.
   const html = AppView._renderSharedSessionCard({
     id: 71, session_title: 'Theirs', username: 'them', user_id: 9,
   });
   assert.equal(menuKeyOf(html), null);
   assert.doesNotMatch(html, /dev-card-rail/);
   assert.match(html, /M9 5l7 7-7 7/, 'the chevron survives on its own');
+
+  // Give that same card a preview and the column DOES appear — the eye needs
+  // something to be pinned to the bottom of, even with no ⋯ above it.
+  const withPreview = AppView._renderSharedSessionCard({
+    id: 71, session_title: 'Theirs', username: 'them', user_id: 9, staging_url: 'https://s',
+  });
+  assert.equal(menuKeyOf(withPreview), null, 'still nothing demoted');
+  assert.match(withPreview, /dev-card-rail/);
+  const rail = withPreview.slice(withPreview.indexOf('dev-card-rail'));
+  assert.doesNotMatch(rail, /dev-card-menu-btn/, 'no trigger in it');
+  assert.match(rail, /M9 5l7 7-7 7[\s\S]*gc-vote-btn-preview/,
+    'chevron above, eye at the bottom');
 });
 
 test('an applied close-issue card has no ⋯ and no action row at all', () => {

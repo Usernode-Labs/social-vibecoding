@@ -2878,31 +2878,6 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   display: inline-flex;
   align-items: center;
 }
-/* The preview eye sits at the FAR RIGHT end of the dense action band rather
-   than tucked in behind the text pills. The band is the row a reader scans
-   for "what can I do with this card", and the preview is the only thing on it
-   that leaves the platform — pinning it to the card's right edge puts every
-   card's eye in one vertical line down a column, so it is found by position
-   instead of by reading past two or three variable-width vote/claim pills.
-
-   An auto margin, NOT a justify-content change: `space-between` would spread
-   the text pills apart from each other too, and a wrapper element would be
-   blockified into a flex item sized by a LINE box — the exact bug the
-   .kudos-wrap rule above exists to undo. Auto margins are also resolved
-   AFTER flex line breaking, so this can never push the eye onto a second row
-   that the band's `overflow: hidden` would then clip: a card whose pills
-   already fill the row clips the eye exactly as it did before this rule, and
-   one with room keeps it on the same single 24px line.
-
-   `:last-child`, and scoped to the dense band: _cardActionsHtml emits the
-   preview after the primaries, so the TRAILING icon pill is the preview (the
-   ⋯ trigger carries .gc-vote-btn-icon too, but it lives in the card's rail,
-   not in here). The detail head's action list is a different surface — it is
-   uncapped, may wrap, and keeps its natural left-to-right order. */
-.dev-card-status + .gc-card-actions > .gc-vote-btn-icon:last-child {
-  margin-left: auto;
-}
-
 /* Square icon variant of the action pill — the icon-only Preview
    affordance and the ⋯ overflow trigger. Same 11px pill family and the
    same hover behaviour as .gc-vote-btn (which it composes with), but a
@@ -2951,10 +2926,24 @@ span.gc-vote-btn-icon { cursor: default; }
   flex: 1 1 auto;
   min-width: 0;
 }
-/* The right-edge rail: ⋯ pinned to the card's top-right corner, chevron
-   centred in whatever height is left below it. One column for both, because
-   a kanban column only gives a card ~175px of text width and a separate
-   flex slot for the ⋯ cost 30px of it. */
+/* The right-edge rail: ⋯ pinned to the card's top-right corner, the icon
+   Preview pinned to its bottom-right one, and the chevron centred in whatever
+   height is left between them. One column for all three, because a kanban
+   column only gives a card ~175px of text width and a separate flex slot for
+   the ⋯ cost 30px of it.
+
+   Pinning the eye HERE rather than at the end of the action band is what puts
+   it in one vertical line down a whole column of cards: the band's trailing
+   pill moves left and right with the width of the vote/claim pills before it,
+   the rail's bottom does not. It also keeps the eye out of the band's
+   `max-height: 24px` clip, so a card whose pills already fill that row can no
+   longer hide its preview.
+
+   The centring rule matches `> svg` — i.e. the chevron and nothing else, since
+   the ⋯ trigger is a <button> and the preview a <button>/<span>. So the same
+   two auto margins do all three jobs: with a preview they centre the chevron
+   BETWEEN the two pills, and without one they centre it in the space below the
+   ⋯ exactly as before, reserving no empty slot for a preview that isn't there. */
 .dev-card-rail {
   display: flex;
   flex-direction: column;
@@ -2966,6 +2955,12 @@ span.gc-vote-btn-icon { cursor: default; }
 .dev-card-rail > svg {
   margin-top: auto;
   margin-bottom: auto;
+}
+/* Both pills keep their 24px box in a column that may be shorter than their
+   sum — flex-shrink applies to HEIGHT here, and a squashed eye would clip its
+   own border the way the kudos wrapper once did. */
+.dev-card-rail > .gc-vote-btn-icon {
+  flex: none;
 }
 .dev-card-menu-btn {
   flex: none;

@@ -2323,23 +2323,23 @@ const AppView = {
   //
   //   • at most ACTION_PRIMARY_MAX text pills (the actions you'd actually
   //     take from a list),
-  //   • one icon-only Preview affordance (kept as an icon precisely so a
-  //     read-only viewer — who gets no vote buttons — still has a visible
-  //     "go look at this" affordance),
+  //   • one icon-only Preview affordance on the detail head (kept as an icon
+  //     precisely so a read-only viewer — who gets no vote buttons — still has
+  //     a visible "go look at this" affordance; on a dense card it moved to
+  //     the rail),
   //   • one ⋯ trigger holding everything else.
   //
   // `spec` is an object, not an array:
   //   primary — ordered array of button-HTML strings (falsy dropped, sliced
   //             to the cap; anything past it is a bug, not a silent trim, so
   //             the overflow is where extra actions belong)
-  //   preview — the icon affordance HTML ('' when there's nothing to preview).
-  //             Emitted LAST, after every primary, and that position is
-  //             load-bearing: app.css pushes the dense band's trailing icon
-  //             pill to the card's right edge with an auto margin
-  //             (`.dev-card-status + .gc-card-actions > .gc-vote-btn-icon
-  //             :last-child`), so the eye lines up down a column of cards
-  //             while the text pills stay left-aligned. Put a primary after
-  //             it and the wrong pill gets pushed.
+  //   preview — the icon affordance HTML ('' when there's nothing to preview),
+  //             emitted LAST, after every primary. DENSE cards no longer pass
+  //             it here at all: the eye is pinned to the bottom of the card's
+  //             rail (see _cardRailHtml), under the ⋯ it shares a column with.
+  //             It stays a band affordance on the UNCAPPED detail-head variant
+  //             (noNav), which has no chevron to sit under and whose action
+  //             list is a wrapping left-to-right row.
   //   menu    — DESCRIPTORS (see _cardMenuTriggerHtml), not HTML, so the same
   //             list renders as an anchored dropdown on pointer devices and as
   //             a PlatformUI action sheet on touch
@@ -2787,23 +2787,39 @@ const AppView = {
   },
 
   // The card's right-edge rail: the ⋯ trigger pinned to the TOP-RIGHT
-  // corner with the tap-through chevron centred below it.
+  // corner, the icon Preview to the BOTTOM-RIGHT one, and the tap-through
+  // chevron centred in what is left between them.
   //
-  // Both are right-edge controls, so they share ONE column rather than each
-  // taking its own. That matters more than it sounds: a kanban column gives
+  // All three are right-edge controls, so they share ONE column rather than
+  // each taking its own. That matters more than it sounds: a kanban column gives
   // a card about 175px of text width, and giving the ⋯ its own flex slot
   // beside the head cost 30px of it — enough to push a single assignee chip
   // onto its own line. Sharing the rail costs 8px instead.
   //
   // `chevron` is false on the topic head's static variants (you are already
   // on the page it would navigate to).
+  //
+  // `preview` is the icon Preview affordance (see cardPreviewHtml), and the
+  // rail is where it lives on a dense card: the two ends of this column are
+  // both meaningful — ⋯ at the top is "more about this card", the eye at the
+  // bottom is "go look at the thing itself" — and both then sit in one
+  // vertical line down a whole column of cards, found by position rather than
+  // by reading past two or three variable-width vote pills in the action
+  // band. It is emitted LAST so `.dev-card-rail > svg`'s auto margins (which
+  // match the chevron and nothing else — the trigger and the preview are a
+  // <button>/<span>) centre the chevron in the gap BETWEEN them. With no
+  // preview the rail is byte-for-byte what it was before, so a card with
+  // nothing to preview keeps today's appearance and reserves no empty slot.
   _cardRailHtml(menuKey, menu, opts) {
     const o = opts || {};
     const trigger = AppView._cardMenuTriggerHtml(menuKey, menu);
     const chevron = o.chevron === false ? '' : AppView.DEV_CARD_CHEVRON;
-    if (!trigger && !chevron) return '';
-    if (!trigger) return chevron;
-    return `<div class="dev-card-rail">${trigger}${chevron}</div>`;
+    const preview = o.preview || '';
+    if (!trigger && !chevron && !preview) return '';
+    // A lone chevron needs no column to be centred in — it is already the
+    // card's only right-edge child. Anything stacked on top of it does.
+    if (!trigger && !preview) return chevron;
+    return `<div class="dev-card-rail">${trigger}${chevron}${preview}</div>`;
   },
 
   // A lightweight section divider for a column that groups its cards
@@ -6631,7 +6647,8 @@ const AppView = {
         })();
       },
     });
-    const actions = AppView._cardActionsHtml({ primary: [visibilityBtn], preview });
+    // `preview` goes to the rail, not in here — see _cardRailHtml below.
+    const actions = AppView._cardActionsHtml({ primary: [visibilityBtn] });
 
     // A private session gets the muted/draft shell — that IS the signal
     // nobody else can see it, replacing the caption that used to sit above
@@ -6651,7 +6668,7 @@ const AppView = {
         chatCount: null,
         actions,
       })}
-      ${AppView._cardRailHtml(`session:${s.id}`, menu)}
+      ${AppView._cardRailHtml(`session:${s.id}`, menu, { preview })}
     </div>`;
   },
 
@@ -6670,8 +6687,12 @@ const AppView = {
     const statusTag = AppView._sessionStatusTagHtml(s);
     const preview = AppView.cardPreviewHtml(s, { kind: 'shared-session', sessionId: s.id });
     const nav = noNav ? '' : ` data-shared-session-row="${s.id}" role="button" tabindex="0"`;
-    const chevron = noNav ? '' : AppView.DEV_CARD_CHEVRON;
-    const actions = noNav ? '' : AppView._cardActionsHtml({ preview });
+    // This card has no ⋯ menu of its own, so the rail is the chevron alone
+    // until there is a preview to pin under it — at which point it becomes a
+    // real column (chevron centred above the eye).
+    const rail = AppView._cardRailHtml('', null, {
+      chevron: !noNav, preview: noNav ? '' : preview,
+    });
     return `<div${nav} class="${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" title="${label}">
       ${AppView._cardContentHtml({
         icon: AppView._devCardIcon('session'),
@@ -6680,10 +6701,12 @@ const AppView = {
         metaHtml: `${owner} is working on this`,
         badges: [statusTag, AppView.issueChipsHtml(s.linked_issues)],
         chatCount: s.chat_count,
-        actions,
+        // No pills of its own: reading the chat IS the whole-card tap, so the
+        // dense band renders reserved-and-empty (see _cardContentHtml).
+        actions: '',
         dense: !noNav,
       })}
-      ${chevron}
+      ${rail}
     </div>`;
   },
 
@@ -7416,7 +7439,9 @@ const AppView = {
     const menu = AppView._proposalMenuItems(pr, {
       mine, imported, isMerged, isMerging, noNav, exploreOnFace: !!exploreBtn,
     });
-    const actions = AppView._cardActionsHtml({ primary, preview });
+    // The eye is a rail affordance on the dense card and a band affordance on
+    // the uncapped detail head, which has no chevron for it to sit under.
+    const actions = AppView._cardActionsHtml({ primary, preview: noNav ? preview : '' });
 
     // #195/#211: the before/after capture tiles no longer live on the card —
     // they are a detail-view concern (see _renderTopicHead's actions block),
@@ -7441,7 +7466,9 @@ const AppView = {
           actions,
           dense: !noNav,
         })}
-        ${AppView._cardRailHtml(`proposal:${pr.id}`, menu, { chevron: !noNav })}
+        ${AppView._cardRailHtml(`proposal:${pr.id}`, menu, {
+          chevron: !noNav, preview: noNav ? '' : preview,
+        })}
       </div>`;
   },
 
@@ -10025,7 +10052,11 @@ const AppView = {
         { kind: 'issue-run', sessionId: h.sessionId })
       : '';
     const menu = AppView._issueMenuItems(issue, { noNav, progressOnFace: !!progressBtn });
-    const actions = AppView._cardActionsHtml({ primary: [primaryBtn, progressBtn], preview });
+    // Dense: the eye is pinned to the bottom of the rail. Detail head: it stays
+    // in the (uncapped, chevron-less) action list.
+    const actions = AppView._cardActionsHtml({
+      primary: [primaryBtn, progressBtn], preview: noNav ? preview : '',
+    });
 
     // Topic-view-only admin escape hatch: the live claimer list with a
     // per-claim clear control, so a stuck claim can be removed without
@@ -10069,7 +10100,9 @@ const AppView = {
           extraHtml: adminClaimList,
           dense: !noNav,
         })}
-        ${AppView._cardRailHtml(`issue:${n}`, menu, { chevron: !noNav })}
+        ${AppView._cardRailHtml(`issue:${n}`, menu, {
+          chevron: !noNav, preview: noNav ? '' : preview,
+        })}
       </div>`;
   },
 

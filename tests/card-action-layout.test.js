@@ -125,16 +125,23 @@ function assertCardActionContract(AppView, html, expect) {
     const hasIcon = /gc-vote-btn-preview[^>]*gc-vote-btn-icon|gc-vote-btn-icon[^>]*gc-vote-btn-preview/.test(html);
     assert.equal(hasIcon, e.previewIcon,
       e.previewIcon ? 'icon-only Preview affordance present' : 'no Preview affordance');
-    // When it is there it is the band's LAST child, which is the anchor
-    // app.css uses to push it to the card's right edge (`.dev-card-status +
-    // .gc-card-actions > .gc-vote-btn-icon:last-child { margin-left: auto }`).
-    // Text pills stay left-aligned; the eye lines up down a column of cards.
-    // A primary emitted after the preview would silently move instead.
-    if (hasIcon) {
-      const row = html.match(/<div class="gc-card-actions">([\s\S]*?)<\/div>/);
-      const pills = (row[1].match(/<(?:button|span)\b[^>]*class="[^"]*"/g) || []);
-      assert.match(pills[pills.length - 1], /gc-vote-btn-icon/,
-        'the preview eye trails every text pill in the band');
+    // On a dense card the eye is NOT in the action band at all: it is the
+    // LAST child of the right-edge rail, i.e. the card's bottom-right corner,
+    // under the ⋯ and the chevron. That is what lines every card's preview up
+    // down a column — the band's trailing pill would slide left and right with
+    // the width of the vote pills before it, and could be clipped by the
+    // band's `max-height: 24px`. (`e.previewInBand` opts into the detail
+    // head's variant, which keeps it in its uncapped action list.)
+    if (hasIcon && !e.previewInBand) {
+      const band = html.match(/<div class="gc-card-actions">([\s\S]*?)<\/div>/);
+      assert.ok(!band || !/gc-vote-btn-preview|gc-checks-running-badge|gc-conflict-badge/.test(band[1]),
+        'the preview eye is not in the dense action band');
+      assert.match(html, /dev-card-rail/, 'the card has a rail to pin it in');
+      const rail = html.slice(html.indexOf('dev-card-rail'));
+      const pills = (rail.match(/<(?:button|span)\b[^>]*class="[^"]*"/g) || []);
+      assert.match(pills[pills.length - 1],
+        /gc-vote-btn-preview|gc-checks-running-badge|gc-conflict-badge/,
+        'the preview eye is the rail\'s last child — the card\'s bottom-right corner');
     }
   }
   // The demoted actions must NOT also sit on the card face.
@@ -197,7 +204,7 @@ test('the ⋯ lives in the card\'s top-right RAIL, not in the action row', () =>
   // Never in the action row.
   const actions = html.match(/<div class="gc-card-actions">[\s\S]*?<\/div>/);
   assert.ok(actions && !/data-card-menu/.test(actions[0]),
-    'the action row carries only the primaries and the preview icon');
+    'the action row carries only the primary pills');
   assert.match(html, /aria-haspopup="true"/);
   assert.match(html, /aria-label="More actions"/);
 });

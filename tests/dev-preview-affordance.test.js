@@ -216,13 +216,14 @@ test('an issue run with no preview (or a spec-only outcome) shows no affordance'
   }), /gc-vote-btn-preview/);
 });
 
-test('on a board card the eye is the action band\'s LAST child — the right edge', () => {
-  // The dense action band pushes its trailing icon pill to the card's right
-  // edge with an auto margin (app.css, `.dev-card-status + .gc-card-actions >
-  // .gc-vote-btn-icon:last-child`), so a column of cards shows every preview
-  // in one vertical line rather than at wherever the text pills before it end.
-  // That selector is only ever the preview while it is emitted last, which is
-  // what this pins: a primary added after it would be the pill that moves.
+test('on a board card the eye is the RAIL\'s last child — the bottom-right corner', () => {
+  // Every dense card's preview hangs off the bottom of the right-hand rail,
+  // under the ⋯ and the chevron (app.css, `.dev-card-rail`). A column of cards
+  // then shows every preview in one vertical line, rather than at wherever the
+  // text pills before it happened to end. The ORDER inside the rail is the
+  // layout — the chevron's auto margins centre it in the gap between the two
+  // pills — so this pins the eye as the rail's final child, and pins that the
+  // dense action band no longer carries it at all.
   const AppView = makeAppView();
   const cards = {
     proposal: AppView._renderProposalCard(PR({ staging_url: 'https://s' })),
@@ -237,14 +238,38 @@ test('on a board card the eye is the action band\'s LAST child — the right edg
   };
   for (const [kind, html] of Object.entries(cards)) {
     const band = html.match(/<div class="gc-card-actions">([\s\S]*?)<\/div>\s*(?:<div|<\/div)/);
-    assert.ok(band, `${kind}: an action band`);
-    const children = band[1].match(/<(?:button|span)\b[^>]*class="[^"]*"/g) || [];
-    assert.ok(children.length, `${kind}: the band has pills`);
-    assert.match(children[children.length - 1], /gc-vote-btn-icon/,
-      `${kind}: the eye trails every text pill, so :last-child is the preview`);
-    // And it is the ONLY icon pill in the band — the ⋯ trigger, which shares
-    // the class, lives in the card's rail instead.
-    assert.equal(children.filter((c) => /gc-vote-btn-icon/.test(c)).length, 1,
-      `${kind}: exactly one icon pill in the action band`);
+    assert.ok(band, `${kind}: an action band is still reserved`);
+    assert.doesNotMatch(band[1], /gc-vote-btn-preview/,
+      `${kind}: the eye has left the action band`);
+
+    const railAt = html.indexOf('dev-card-rail');
+    assert.ok(railAt > 0, `${kind}: a rail to hang it off`);
+    const rail = html.slice(railAt);
+    const children = rail.match(/<(?:button|span|svg)\b[^>]*class="[^"]*"/g) || [];
+    assert.match(children[children.length - 1], /gc-vote-btn-preview/,
+      `${kind}: the eye is the rail's last child`);
+    // The chevron must sit BEFORE it (its auto margins centre it in the gap
+    // between the ⋯ above and the eye below); the ⋯, when the card has one,
+    // stays first.
+    const chevronAt = rail.indexOf('M9 5l7 7-7 7');
+    const eyeAt = rail.indexOf('gc-vote-btn-preview');
+    assert.ok(chevronAt > 0 && chevronAt < eyeAt,
+      `${kind}: the chevron is between the ⋯ and the eye`);
+    const dotsAt = rail.indexOf('dev-card-menu-btn');
+    if (dotsAt > 0) {
+      assert.ok(dotsAt < chevronAt, `${kind}: the ⋯ keeps the top of the rail`);
+    }
   }
+});
+
+test('a card with nothing to preview keeps exactly the rail it had before', () => {
+  // The move must not cost a reserved empty slot at the bottom of every other
+  // card's rail — that would read as a broken gap under the chevron.
+  const AppView = makeAppView();
+  const html = AppView._renderProposalCard(PR({ staging_url: null }));
+  const rail = html.slice(html.indexOf('dev-card-rail'));
+  assert.doesNotMatch(rail, /gc-vote-btn-preview|gc-checks-running-badge|gc-conflict-badge/);
+  const children = rail.match(/<(?:button|span|svg)\b[^>]*class="[^"]*"/g) || [];
+  assert.match(children[children.length - 1], /w-4 h-4/,
+    'the chevron is still the rail\'s last child, centred below the ⋯');
 });
