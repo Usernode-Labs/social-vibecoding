@@ -348,6 +348,49 @@ test('the kudos pill hugs its wrapper inside the capped action band', () => {
   assert.doesNotMatch(CSS, /\n\.kudos-wrap \{[^}]*inline-flex/);
 });
 
+test('the preview eye is pushed to the right edge of the dense action band', () => {
+  // The eye is the one action that leaves the platform, so it is parked
+  // against the card's right edge: a column of cards then shows its previews
+  // in one vertical line instead of at whatever x the text pills before it
+  // happen to end. The text pills keep their left alignment.
+  const r = rule('.dev-card-status + .gc-card-actions > .gc-vote-btn-icon:last-child');
+  assert.match(r, /margin-left: auto/);
+  // An auto margin specifically, for two reasons. `justify-content:
+  // space-between` would spread the text pills apart from each other too;
+  // and auto margins resolve AFTER flex line breaking, so this cannot push
+  // the eye onto a second row for the band's `overflow: hidden` to clip.
+  assert.doesNotMatch(r, /justify-content|order:/);
+  const band = rule('.dev-card-status + .gc-card-actions');
+  assert.doesNotMatch(band, /justify-content/,
+    'the band itself stays a plain left-aligned flex row');
+  // Scoped to the dense band: the detail head's action list is uncapped, may
+  // wrap, and keeps its natural left-to-right order.
+  assert.doesNotMatch(CSS, /\n\.gc-card-actions > \.gc-vote-btn-icon/);
+  // And to :last-child, because the ⋯ trigger carries .gc-vote-btn-icon too —
+  // it just lives in the card's rail rather than in the action band.
+  assert.match(SRC, /gc-vote-btn gc-vote-btn-icon dev-card-menu-btn/,
+    'the ⋯ trigger shares the icon-pill class the selector matches');
+});
+
+test('the action band emits the preview LAST, which is what the CSS anchors on', () => {
+  const AppView = makeAppView();
+  const html = AppView._cardActionsHtml({
+    primary: ['<button class="gc-vote-btn">A</button>',
+      '<button class="gc-vote-btn">B</button>'],
+    preview: '<button class="gc-vote-btn gc-vote-btn-preview gc-vote-btn-icon">eye</button>',
+  });
+  // :last-child is only the preview while this ordering holds — a primary
+  // emitted after it would be the pill that gets pushed to the right edge.
+  assert.match(html, /<\/button><button class="gc-vote-btn gc-vote-btn-preview gc-vote-btn-icon">eye<\/button><\/div>$/);
+  // And it is still the last child on a card with no text pills at all (the
+  // shared-session card), where it is alone on the right.
+  const alone = AppView._cardActionsHtml({
+    primary: [],
+    preview: '<button class="gc-vote-btn gc-vote-btn-preview gc-vote-btn-icon">eye</button>',
+  });
+  assert.match(alone, /^<div class="gc-card-actions"><button [^>]*gc-vote-btn-icon">eye<\/button><\/div>$/);
+});
+
 test('the state bar flexes into whatever the chips leave, over a floor', () => {
   const r = rule('.dev-status-pill-block');
   assert.match(r, /flex: 1 1 auto/, 'it grows and shrinks — it is no longer a row');

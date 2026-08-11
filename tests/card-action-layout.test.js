@@ -125,6 +125,17 @@ function assertCardActionContract(AppView, html, expect) {
     const hasIcon = /gc-vote-btn-preview[^>]*gc-vote-btn-icon|gc-vote-btn-icon[^>]*gc-vote-btn-preview/.test(html);
     assert.equal(hasIcon, e.previewIcon,
       e.previewIcon ? 'icon-only Preview affordance present' : 'no Preview affordance');
+    // When it is there it is the band's LAST child, which is the anchor
+    // app.css uses to push it to the card's right edge (`.dev-card-status +
+    // .gc-card-actions > .gc-vote-btn-icon:last-child { margin-left: auto }`).
+    // Text pills stay left-aligned; the eye lines up down a column of cards.
+    // A primary emitted after the preview would silently move instead.
+    if (hasIcon) {
+      const row = html.match(/<div class="gc-card-actions">([\s\S]*?)<\/div>/);
+      const pills = (row[1].match(/<(?:button|span)\b[^>]*class="[^"]*"/g) || []);
+      assert.match(pills[pills.length - 1], /gc-vote-btn-icon/,
+        'the preview eye trails every text pill in the band');
+    }
   }
   // The demoted actions must NOT also sit on the card face.
   assert.doesNotMatch(html, /gc-card-actions[\s\S]*?>Withdraw</, 'Withdraw is not a card pill');

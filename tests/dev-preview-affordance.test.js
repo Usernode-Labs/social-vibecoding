@@ -215,3 +215,36 @@ test('an issue run with no preview (or a spec-only outcome) shows no affordance'
     headless: { status: 'ready', outcome: 'code', sessionId: 90, stagingUrl: null },
   }), /gc-vote-btn-preview/);
 });
+
+test('on a board card the eye is the action band\'s LAST child — the right edge', () => {
+  // The dense action band pushes its trailing icon pill to the card's right
+  // edge with an auto margin (app.css, `.dev-card-status + .gc-card-actions >
+  // .gc-vote-btn-icon:last-child`), so a column of cards shows every preview
+  // in one vertical line rather than at wherever the text pills before it end.
+  // That selector is only ever the preview while it is emitted last, which is
+  // what this pins: a primary added after it would be the pill that moves.
+  const AppView = makeAppView();
+  const cards = {
+    proposal: AppView._renderProposalCard(PR({ staging_url: 'https://s' })),
+    issue: AppView._renderIssueRow({
+      number: 5, title: 'x',
+      headless: { status: 'ready', outcome: 'code', sessionId: 90, stagingUrl: 'https://s' },
+    }),
+    ownSession: AppView._renderMySessionCard({ id: 51, session_title: 'M', pr_number: 9 }),
+    sharedSession: AppView._renderSharedSessionCard({
+      id: 71, session_title: 'T', username: 'them', staging_url: 'https://s',
+    }),
+  };
+  for (const [kind, html] of Object.entries(cards)) {
+    const band = html.match(/<div class="gc-card-actions">([\s\S]*?)<\/div>\s*(?:<div|<\/div)/);
+    assert.ok(band, `${kind}: an action band`);
+    const children = band[1].match(/<(?:button|span)\b[^>]*class="[^"]*"/g) || [];
+    assert.ok(children.length, `${kind}: the band has pills`);
+    assert.match(children[children.length - 1], /gc-vote-btn-icon/,
+      `${kind}: the eye trails every text pill, so :last-child is the preview`);
+    // And it is the ONLY icon pill in the band — the ⋯ trigger, which shares
+    // the class, lives in the card's rail instead.
+    assert.equal(children.filter((c) => /gc-vote-btn-icon/.test(c)).length, 1,
+      `${kind}: exactly one icon pill in the action band`);
+  }
+});

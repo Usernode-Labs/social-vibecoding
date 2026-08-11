@@ -2332,7 +2332,14 @@ const AppView = {
   //   primary — ordered array of button-HTML strings (falsy dropped, sliced
   //             to the cap; anything past it is a bug, not a silent trim, so
   //             the overflow is where extra actions belong)
-  //   preview — the icon affordance HTML ('' when there's nothing to preview)
+  //   preview — the icon affordance HTML ('' when there's nothing to preview).
+  //             Emitted LAST, after every primary, and that position is
+  //             load-bearing: app.css pushes the dense band's trailing icon
+  //             pill to the card's right edge with an auto margin
+  //             (`.dev-card-status + .gc-card-actions > .gc-vote-btn-icon
+  //             :last-child`), so the eye lines up down a column of cards
+  //             while the text pills stay left-aligned. Put a primary after
+  //             it and the wrong pill gets pushed.
   //   menu    — DESCRIPTORS (see _cardMenuTriggerHtml), not HTML, so the same
   //             list renders as an anchored dropdown on pointer devices and as
   //             a PlatformUI action sheet on touch

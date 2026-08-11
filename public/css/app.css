@@ -2878,6 +2878,30 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   display: inline-flex;
   align-items: center;
 }
+/* The preview eye sits at the FAR RIGHT end of the dense action band rather
+   than tucked in behind the text pills. The band is the row a reader scans
+   for "what can I do with this card", and the preview is the only thing on it
+   that leaves the platform — pinning it to the card's right edge puts every
+   card's eye in one vertical line down a column, so it is found by position
+   instead of by reading past two or three variable-width vote/claim pills.
+
+   An auto margin, NOT a justify-content change: `space-between` would spread
+   the text pills apart from each other too, and a wrapper element would be
+   blockified into a flex item sized by a LINE box — the exact bug the
+   .kudos-wrap rule above exists to undo. Auto margins are also resolved
+   AFTER flex line breaking, so this can never push the eye onto a second row
+   that the band's `overflow: hidden` would then clip: a card whose pills
+   already fill the row clips the eye exactly as it did before this rule, and
+   one with room keeps it on the same single 24px line.
+
+   `:last-child`, and scoped to the dense band: _cardActionsHtml emits the
+   preview after the primaries, so the TRAILING icon pill is the preview (the
+   ⋯ trigger carries .gc-vote-btn-icon too, but it lives in the card's rail,
+   not in here). The detail head's action list is a different surface — it is
+   uncapped, may wrap, and keeps its natural left-to-right order. */
+.dev-card-status + .gc-card-actions > .gc-vote-btn-icon:last-child {
+  margin-left: auto;
+}
 
 /* Square icon variant of the action pill — the icon-only Preview
    affordance and the ⋯ overflow trigger. Same 11px pill family and the
