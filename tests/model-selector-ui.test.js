@@ -250,7 +250,7 @@ test('each option reads "<label> — <what it is for>"', () => {
   }
 });
 
-test('OpenRouter sessions show one provider/model control and no Claude chat-model picker', () => {
+test('OpenRouter sessions still get the chat-model picker, with a note that coding turns bill OpenRouter', () => {
   const { html } = render({
     session: {
       id: 7,
@@ -261,14 +261,15 @@ test('OpenRouter sessions show one provider/model control and no Claude chat-mod
     },
   });
 
-  assert.match(html, /Session AI:/);
-  assert.match(html, /OpenRouter · anthropic\/claude-sonnet-4\.5/);
-  assert.match(html, /All chat and coding in this session uses/);
-  assert.doesNotMatch(html, /Chat model:/);
-  assert.doesNotMatch(html, /id="dc-model-select"/);
-  assert.doesNotMatch(html, /Sonnet 5 — simple, small changes/);
-  assert.doesNotMatch(html, /Opus 5 — general coding work/);
-  assert.doesNotMatch(html, /Fable 5 — design, taste, and difficult coding/);
+  // The chat model (Sonnet/Opus/Fable) is a Usernode-side setting, orthogonal
+  // to which venue runs the coding turns — so OpenRouter sessions keep the
+  // same picker as any other Usernode-run session.
+  assert.match(html, /Chat model:/);
+  assert.match(html, /id="dc-model-select"/);
+  assert.match(html, /Sonnet 5 — simple, small changes/);
+  assert.match(html, /Opus 5 — general coding work/);
+  assert.match(html, /Fable 5 — design, taste, and difficult coding/);
+  assert.match(html, /Usernode · OpenRouter \(anthropic\/claude-sonnet-4\.5\) — coding turns bill your OpenRouter key\./);
 });
 
 test('no option implies a size ladder between Opus and Fable', () => {

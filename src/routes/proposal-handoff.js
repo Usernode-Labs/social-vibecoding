@@ -672,11 +672,20 @@ function proposalHandoffRoutes(config) {
         try {
           await client.query('BEGIN');
           const { rows } = await client.query(
+            // external_agent = 'external': this session's turns run on the
+            // caller's own machine, in whatever tool they chose — Usernode
+            // never dispatched an agent for it. Without the stamp the
+            // resulting proposal card was indistinguishable from one built
+            // by the platform's own backend, which is the provenance
+            // question the card exists to answer. 'external' is the
+            // deliberately unspecific member of the closed AGENTS
+            // vocabulary (external-agent-tasks.js): the handoff protocol
+            // does not know, and must not guess, which tool it was.
             `INSERT INTO chat_sessions
                (app_id, user_id, branch_name, status, source, handoff_request_id,
                 handoff_base_sha, handoff_request_fingerprint,
-                session_title, spec_md, linked_issues)
-             VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9, $10)
+                session_title, spec_md, linked_issues, external_agent)
+             VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9, $10, 'external')
              RETURNING *`,
             [app.id, req.user.id, branchName, SOURCE, input.requestId,
               input.baseSha, startRequestFingerprint(app, input),
