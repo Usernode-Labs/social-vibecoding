@@ -46,6 +46,7 @@
 
 import { Button } from '@/components/ui/button';
 import { AdminScreen } from './features/admin';
+import { BrowseScreen } from './features/apps/browse-screen';
 import { LandingScreen } from './features/auth/landing';
 import { LoginScreen } from './features/auth/login';
 import { RegisterScreen } from './features/auth/register';
@@ -253,68 +254,11 @@ export function Shell() {
       {/*
           Browse-all-apps screen (#apps). Sibling of #home-screen: every app
           this viewer may see, featured first, with per-tile add/remove badges.
-          Owned by public/js/browse.js; mounted by App.navigateToBrowse.
+          A React island since #1083 chunk F — the markup and the module that
+          fills it both live in frontend/src/features/apps/. Still mounted by
+          App.navigateToBrowse, which now shows it through the visibility store.
       */}
-      <main
-        id="browse-screen"
-        className="hidden flex-1 overflow-y-auto platform-safe-scroll"
-        style={{ position: "relative" }}
-      >
-        <div id="browse-search-bar" className="sticky top-0 z-20 px-3 pt-3 pb-2 bg-white dark:bg-zinc-950">
-          <div className="relative max-w-xl">
-            <svg
-              className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              strokeWidth="2"
-              aria-hidden="true"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-            <input
-              id="browse-search-input"
-              type="text"
-              autoComplete="off"
-              placeholder="Search all apps…"
-              aria-label="Search all apps"
-              className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"
-            />
-            <button
-              id="browse-search-clear"
-              className="hidden absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-500/10 text-base leading-none"
-              title="Clear search"
-              aria-label="Clear search"
-            >
-              &times;
-            </button>
-          </div>
-        </div>
-        {/*
-            Level 1: the app-store list. ONE row markup, two layouts, and the
-            switch is pure CSS — no matchMedia, no re-render on resize.
-            Narrow: a hairline-divided vertical list of full-width rows (the
-            App Store idiom). md and up: a 2/3-column grid whose rows pick up
-            a bordered-box treatment from .browse-row in app.css.
-        */}
-        <div id="browse-list-level">
-          {/*
-              Grid only. Every border — the phone hairline AND the desktop box —
-              is .browse-row in app.css; a divide-* utility here would win the
-              cascade against it and strip the boxes' top/bottom edges.
-          */}
-          <div id="browse-list" className="md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-3 md:p-3">
-          </div>
-          <div id="browse-empty" className="hidden px-3 pb-8 text-sm text-zinc-500 dark:text-zinc-400">
-          </div>
-        </div>
-        {/*
-            Level 2: the per-app detail page (#apps/<slug>). Absorbs what the
-            browse rows' "…" menu used to offer — see Browse._renderDetail.
-        */}
-        <div id="browse-detail" className="hidden max-w-2xl mx-auto p-4">
-        </div>
-      </main>
+      <BrowseScreen />
       {/*
           Leaderboard screen (hidden by default): the one place the group's
           shared progress lives — the Topochain standings, the Kudos
@@ -732,8 +676,9 @@ export function Shell() {
           NavLink (#1036) — the "navigation controls behave like real links"
           seam (cmd/ctrl-click, middle-click and shift-click open a new tab).
           No dependencies of its own and consumed by app.js, app-view.js,
-          browse.js, dev-chat.js, home.js and leaderboard.js, so it loads
-          ahead of the whole bundle.
+          dev-chat.js, home.js, leaderboard.js and (from inside the React
+          bundle) features/apps/browse.js, so it loads ahead of the whole
+          bundle.
       */}
       <script src="/js/nav-link.js" />
       <script src="/js/platform-ui.js" />
@@ -916,11 +861,16 @@ export function Shell() {
       <script src="/js/home-panels.js" />
       <script src="/js/home.js" />
       {/*
-          Browse-all-apps screen (#apps). After home.js: it reuses
-          Home.renderAppCard / Home.isYours / Home.matchesQuery so the two
-          launcher grids can't drift apart.
+          /js/browse.js used to load here, after home.js, because it reached
+          the shared card markup through `window.Home`. #1083 chunk F moved it
+          into the bundle (features/apps/browse.js, imported by the
+          #browse-screen island) and split that markup out as
+          features/apps/app-card.js, which home.js now delegates to. Load
+          order stopped mattering for the pair: the bundle is a module script,
+          so it evaluates after every classic script here, and the two
+          remaining `window.Home` reads are inside methods that only run once
+          a viewer opens #apps.
       */}
-      <script src="/js/browse.js" />
       {/*
           Anonymous shell screens (fold-auth-pages-into-SPA): landing /
           login / register / waiting logic. Must load before app.js so

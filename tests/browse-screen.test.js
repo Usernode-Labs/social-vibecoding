@@ -1,12 +1,13 @@
-// The #apps browse-all-apps screen (public/js/browse.js) — the directory
-// half of the home-screen split.
+// The #apps browse-all-apps screen (frontend/src/features/apps/browse.js) —
+// the directory half of the home-screen split.
 //
 // Home is "Your apps" only now, so this screen is the ONLY place the rest
-// of the platform's apps are reachable from. It deliberately borrows Home's
-// tile renderer ('browse' mode), added-state predicate (isYours), search
-// matcher and add/remove write, so the two launcher grids can't drift; what
-// it owns is the screen — its fetch, its always-visible search field, its
-// ordering (featured first) and its empty states.
+// of the platform's apps are reachable from. It deliberately borrows the
+// shared app-card markup builders (features/apps/app-card.js), Home's
+// added-state predicate (isYours), search matcher and add/remove write, so
+// the two launcher grids can't drift; what it owns is the screen — its
+// fetch, its always-visible search field, its ordering (featured first) and
+// its empty states.
 //
 // Also pins the routing this screen needs from app.js: the #apps hash
 // branch, the sibling hide-lists in every navigateTo*, and the zoom
@@ -21,9 +22,18 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const { installAppCard } = require('./helpers/app-card');
+
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const HOME_SRC = read('public/js/home.js');
-const BROWSE_SRC = read('public/js/browse.js');
+// browse.js is a bundle module since #1083 chunk F, so its source starts with
+// an `import` — a SyntaxError to a vm context, which runs classic script text.
+// Strip the import and supply what it imported through installAppCard below:
+// running app-card.js's classic form declares iconTileFor /
+// renderAppPillsHtml in the same global lexical scope the bare calls in
+// browse.js resolve against. Nothing else about the source is rewritten.
+const BROWSE_SRC = read('frontend/src/features/apps/browse.js')
+  .replace(/^import .*;$/gm, '');
 const APP_SRC = read('public/js/app.js');
 const INDEX = read('public/index.html');
 
@@ -141,6 +151,9 @@ function makeBrowse(opts = {}) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
+  // The shared card builders first: home.js delegates to window.AppCard and
+  // browse.js calls them as bare identifiers (its import is stripped above).
+  installAppCard(sandbox);
   // home.js declares `const Home = {…}` at script top level, which lands
   // in the context's global LEXICAL scope (visible to browse.js, which is
   // the point) but never as a sandbox property — hence the explicit hoist.
@@ -752,11 +765,24 @@ test('index.html hosts #browse-screen with its own search field and grid', () =>
   assert.match(main, /id="browse-detail" class="hidden/);
 });
 
-test('browse.js is loaded after home.js and precached by the service worker', () => {
-  const homeAt = INDEX.indexOf('/js/home.js');
-  const browseAt = INDEX.indexOf('/js/browse.js');
-  assert.ok(homeAt > 0 && browseAt > homeAt, 'Browse depends on Home');
-  assert.match(read('public/sw.js'), /'\/js\/browse\.js'/);
+// browse.js used to be a classic <script> loaded after home.js, and this test
+// pinned that order plus its own precache entry. #1083 chunk F moved it into
+// the React bundle, so both registers change at once: the island imports it,
+// and /shell/assets/shell.js — already in SHELL_ASSETS — is what precaches it.
+test('browse.js is a bundle module the #browse-screen island imports', () => {
+  assert.match(
+    read('frontend/src/features/apps/browse-screen.tsx'),
+    /import '\.\/browse\.js';/,
+    'the island must import the module — nothing else pulls it into the bundle'
+  );
+  assert.ok(!INDEX.includes('/js/browse.js'), 'the retired script tag must be gone from the shell');
+  assert.ok(!read('public/sw.js').includes('/js/browse.js'), 'and its precache entry with it');
+  assert.ok(!fs.existsSync(path.join(__dirname, '..', 'public', 'js', 'browse.js')),
+    'and the file itself must be gone from public/js/');
+  // The load-order dependency it had on home.js is gone too: the shared card
+  // markup is an explicit import now, not a `window.Home` read.
+  assert.match(BROWSE_SRC, /iconTileFor\(app\)/);
+  assert.doesNotMatch(BROWSE_SRC, /Home\.iconTileFor|Home\.renderAppPillsHtml/);
 });
 
 // ── app.js routing ───────────────────────────────────────────────

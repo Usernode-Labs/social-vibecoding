@@ -1185,99 +1185,27 @@ const Home = {
   // frontend/src/features/work-drawer/work-drawer.js, which owns their
   // fetches, rendering and busy-state polling now.
 
-  // Pill builder for an app's status/activity flags, rendered ONLY in
-  // the hamburger menu's build-info header now — the card face
-  // carries no chips. Order: missing secrets (most urgent), PRs
-  // awaiting votes, dev sessions in flight, open issues, privacy chip
-  // last. All display-only spans. Returns joined HTML, '' when
-  // there's nothing to flag.
+  // Pill builder for an app's status/activity flags, and the icon-tile
+  // inner markup + kind. Both are shared with the browse screen's rows and
+  // detail hero and with the app view's header tile, so all four surfaces
+  // draw an app the same way.
   //
-  // Development-activity counts (#57) come straight from /api/apps
-  // (DB-derived, no GitHub calls); zero-count chips are dropped. The
-  // missing-secrets chip deliberately omits the key NAMES — those
-  // live in the app view's Secrets panel.
+  // The implementations live in frontend/src/features/apps/app-card.js as of
+  // #1083 chunk F, which is where browse.js went when it became a bundle
+  // module and could no longer reach them through `window.Home`. These two
+  // stay as delegating methods because their callers name them:
+  // public/js/app-view.js's header tile (iconTileFor), renderAppCard /
+  // renderMenuHeaderHtml / updateAppCardIcon below, and the card tests. Read
+  // off `window` rather than imported because home.js is still a classic
+  // script until step 4 of the chunk — safely, since the bundle is a module
+  // script and evaluates before anything here can be called. Step 4 turns
+  // these into a plain import.
   renderAppPillsHtml(app) {
-    const openPrs = parseInt(app.open_prs || 0);
-    const activeSessions = parseInt(app.active_sessions || 0);
-    const openIssues = parseInt(app.open_issues || 0);
-    const hasMissing = Array.isArray(app.missingSecrets) && app.missingSecrets.length;
-    const chipDefs = [];
-    if (hasMissing) {
-      const n = app.missingSecrets.length;
-      chipDefs.push({
-        cls: 'bg-red-500/10 text-red-500',
-        label: 'Missing secrets',
-        tip: `${n} required secret${n === 1 ? '' : 's'} unset — set values in the app's Secrets panel`,
-      });
-    }
-    if (openPrs > 0) {
-      chipDefs.push({
-        cls: 'bg-amber-500/10 text-amber-500',
-        label: `${openPrs} to vote`,
-        tip: `${openPrs} change${openPrs === 1 ? '' : 's'} awaiting community votes`,
-      });
-    }
-    if (activeSessions > 0) {
-      chipDefs.push({
-        cls: 'bg-sky-500/10 text-sky-500',
-        label: `${activeSessions} in dev`,
-        tip: `${activeSessions} build session${activeSessions === 1 ? '' : 's'} in progress`,
-      });
-    }
-    if (openIssues > 0) {
-      chipDefs.push({
-        cls: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400',
-        label: `${openIssues} issue${openIssues === 1 ? '' : 's'}`,
-        tip: `${openIssues} open issue${openIssues === 1 ? '' : 's'}`,
-      });
-    }
-    const chipBaseCls = 'activity-chip inline-flex items-center px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium';
-    const chipsHtml = chipDefs.map((c) =>
-      `<span class="${chipBaseCls} ${c.cls}" title="${c.tip}">${c.label}</span>`
-    ).join('');
-
-    // Visibility chip for non-default settings. View-private dominates
-    // (it implies collab-private); collab-private alone reads as
-    // "invite-only build" since anyone can still see/use the app.
-    // Inline currentColor SVGs (Heroicons v1 outline) instead of emoji
-    // so the glyphs tint violet with the chip in both themes.
-    const visChipCls = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium bg-violet-500/10 text-violet-500 dark:text-violet-400';
-    const visChipIcon = (d) => `<svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="${d}"/></svg>`;
-    const lockIcon = visChipIcon('M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z');
-    const mailIcon = visChipIcon('M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z');
-    const visChipHtml = app.view_visibility === 'private'
-      ? `<span class="${visChipCls}" title="Only collaborators can see and use this app">${lockIcon} Private</span>`
-      : (app.collab_visibility === 'private'
-        ? `<span class="${visChipCls}" title="Anyone can use this app; only invited collaborators can build it">${mailIcon} Invite-only build</span>`
-        : '');
-
-    return `${chipsHtml}${visChipHtml}`;
+    return window.AppCard.renderAppPillsHtml(app);
   },
 
-  // Icon-tile inner markup + kind, shared by renderAppCard and the
-  // targeted icon_changed refresh (updateAppCardIcon below). Priority:
-  // custom image (dapp.json icon.image, served via /app-icons/:id or a
-  // staging demo data-URI) > emoji (dapp.json icon.emoji) > the
-  // first-letter fallback every app always had. The kind lands on the
-  // tile as data-icon so tests and the rename handler (app.js) can tell
-  // a custom icon from the letter placeholder.
   iconTileFor(app) {
-    if (app.icon_url) {
-      return {
-        kind: 'image',
-        // w-full/h-full (not w-14/h-14): the tile now draws a 1px
-        // hairline border, so the image fills the border box's *content*
-        // area and stays flush inside the ring instead of being cropped.
-        html: `<img src="${escapeHtml(app.icon_url)}" alt="" loading="lazy" draggable="false" class="w-full h-full rounded-xl object-cover">`,
-      };
-    }
-    if (app.icon_emoji) {
-      return {
-        kind: 'emoji',
-        html: `<span class="text-3xl leading-none" aria-hidden="true">${escapeHtml(app.icon_emoji)}</span>`,
-      };
-    }
-    return { kind: 'letter', html: escapeHtml((app.name || '?').charAt(0).toUpperCase()) };
+    return window.AppCard.iconTileFor(app);
   },
 
   // `opts.mode` picks the corner controls:

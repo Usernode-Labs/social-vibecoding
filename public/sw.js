@@ -111,7 +111,9 @@ const SHELL_ASSETS = [
   // chunk E moved them into the React bundle, so /shell/assets/shell.js above
   // is what precaches them now.
   '/js/app-secrets.js',
-  '/js/browse.js',
+  // The browse-all-apps screen's module used to be listed here. #1083 chunk F
+  // moved it into the React bundle, so /shell/assets/shell.js above is what
+  // precaches it now.
   // #1036: the real-anchor / new-tab seam. Loads ahead of every other
   // module in index.html, so a cache miss here breaks the whole shell.
   '/js/nav-link.js',

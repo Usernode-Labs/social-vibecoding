@@ -1,0 +1,142 @@
+// The shared app-card primitives — one source of truth for the parts every
+// app-tile surface on the platform draws the same way (#1083 chunk F).
+//
+// Four surfaces render an app: the home launcher grid (Home.renderAppCard),
+// the browse screen's list rows and detail hero (Browse.renderAppRow /
+// _renderDetail), and the app view's header tile (app-view.js). They render at
+// four different SIZES, so the tile BOX is each caller's own — what they must
+// agree on is the tile's CONTENT (which of image / emoji / letter to draw, and
+// the `data-icon` kind that goes with it) and the activity/visibility chip
+// strip. Both used to live in home.js and be reached through `window.Home`
+// from browse.js, which made the launcher grid's owner the de-facto owner of
+// the browse screen's markup too.
+//
+// This module is deliberately the SMALL half of that split. It holds the two
+// pure functions — app record in, HTML string out, no DOM reads, no module
+// state — and nothing else. `isYours`, `matchesQuery`, `menuItemsFor` and
+// `toggleAdded` stay on Home: each one reads or writes Home's loaded-app list
+// and the viewer's permissions, so they are state, not markup.
+//
+// Home keeps `Home.iconTileFor` / `Home.renderAppPillsHtml` as delegating
+// methods rather than dropping them: public/js/app-view.js calls the first for
+// its header tile, and two declared checks plus tests/home-card-menu.test.js
+// call them by those names. Same functions, one implementation.
+//
+// escapeHtml is duplicated here rather than imported, for the same reason each
+// legacy module has its own copy: it is three lines, and a shared import would
+// be a load-order dependency between classic scripts that don't have one.
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// Icon-tile inner markup + kind. Priority: custom image (dapp.json
+// icon.image, served via /app-icons/:id or a staging demo data-URI) > emoji
+// (dapp.json icon.emoji) > the first-letter fallback every app always had.
+// The kind lands on the tile as data-icon so tests, app.css's letter-glyph
+// treatment and the rename handler (app.js) can tell a custom icon from the
+// letter placeholder.
+//
+// The returned `html` carries NO sizing of its own — w-full/h-full on the
+// image, a text-size class on the emoji — because the tile box differs per
+// surface (w-14 on a launcher tile, w-11 on a browse row, w-16 on the detail
+// hero) and the border box is what draws the hairline. The one exception is
+// the emoji's `text-3xl`, which is the launcher tile's size; the two browse
+// surfaces override it on the wrapper.
+export function iconTileFor(app) {
+  if (app.icon_url) {
+    return {
+      kind: 'image',
+      // w-full/h-full (not w-14/h-14): the tile draws a 1px hairline border,
+      // so the image fills the border box's *content* area and stays flush
+      // inside the ring instead of being cropped.
+      html: `<img src="${escapeHtml(app.icon_url)}" alt="" loading="lazy" draggable="false" class="w-full h-full rounded-xl object-cover">`,
+    };
+  }
+  if (app.icon_emoji) {
+    return {
+      kind: 'emoji',
+      html: `<span class="text-3xl leading-none" aria-hidden="true">${escapeHtml(app.icon_emoji)}</span>`,
+    };
+  }
+  return { kind: 'letter', html: escapeHtml((app.name || '?').charAt(0).toUpperCase()) };
+}
+
+// The activity + visibility chip strip. A quiet, fully-public app carries no
+// chips. Order: missing secrets (most urgent), PRs awaiting votes, dev
+// sessions in flight, open issues, privacy chip last. All display-only spans.
+// Returns joined HTML, '' when there's nothing to flag.
+//
+// Development-activity counts (#57) come straight from /api/apps (DB-derived,
+// no GitHub calls); zero-count chips are dropped. The missing-secrets chip
+// deliberately omits the key NAMES — those live in the app view's Secrets
+// panel.
+export function renderAppPillsHtml(app) {
+  const openPrs = parseInt(app.open_prs || 0);
+  const activeSessions = parseInt(app.active_sessions || 0);
+  const openIssues = parseInt(app.open_issues || 0);
+  const hasMissing = Array.isArray(app.missingSecrets) && app.missingSecrets.length;
+  const chipDefs = [];
+  if (hasMissing) {
+    const n = app.missingSecrets.length;
+    chipDefs.push({
+      cls: 'bg-red-500/10 text-red-500',
+      label: 'Missing secrets',
+      tip: `${n} required secret${n === 1 ? '' : 's'} unset — set values in the app's Secrets panel`,
+    });
+  }
+  if (openPrs > 0) {
+    chipDefs.push({
+      cls: 'bg-amber-500/10 text-amber-500',
+      label: `${openPrs} to vote`,
+      tip: `${openPrs} change${openPrs === 1 ? '' : 's'} awaiting community votes`,
+    });
+  }
+  if (activeSessions > 0) {
+    chipDefs.push({
+      cls: 'bg-sky-500/10 text-sky-500',
+      label: `${activeSessions} in dev`,
+      tip: `${activeSessions} build session${activeSessions === 1 ? '' : 's'} in progress`,
+    });
+  }
+  if (openIssues > 0) {
+    chipDefs.push({
+      cls: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400',
+      label: `${openIssues} issue${openIssues === 1 ? '' : 's'}`,
+      tip: `${openIssues} open issue${openIssues === 1 ? '' : 's'}`,
+    });
+  }
+  const chipBaseCls = 'activity-chip inline-flex items-center px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium';
+  const chipsHtml = chipDefs.map((c) =>
+    `<span class="${chipBaseCls} ${c.cls}" title="${c.tip}">${c.label}</span>`
+  ).join('');
+
+  // Visibility chip for non-default settings. View-private dominates (it
+  // implies collab-private); collab-private alone reads as "invite-only
+  // build" since anyone can still see/use the app. Inline currentColor SVGs
+  // (Heroicons v1 outline) instead of emoji so the glyphs tint violet with
+  // the chip in both themes.
+  const visChipCls = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium bg-violet-500/10 text-violet-500 dark:text-violet-400';
+  const visChipIcon = (d) => `<svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="${d}"/></svg>`;
+  const lockIcon = visChipIcon('M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z');
+  const mailIcon = visChipIcon('M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z');
+  const visChipHtml = app.view_visibility === 'private'
+    ? `<span class="${visChipCls}" title="Only collaborators can see and use this app">${lockIcon} Private</span>`
+    : (app.collab_visibility === 'private'
+      ? `<span class="${visChipCls}" title="Anyone can use this app; only invited collaborators can build it">${mailIcon} Invite-only build</span>`
+      : '');
+
+  return `${chipsHtml}${visChipHtml}`;
+}
+
+export const AppCard = { iconTileFor, renderAppPillsHtml };
+
+// Published for the legacy half of the split. public/js/home.js is still a
+// classic script until chunk F step 4 and delegates its two methods here, so
+// the global has to exist by the time anything CALLS them — which it does:
+// /shell/assets/shell.js is a module script, so it evaluates after every
+// classic <script> but long before the first render. Guarded because the SSG
+// prerender pass evaluates this graph in Node.
+if (typeof window !== 'undefined') window.AppCard = AppCard;

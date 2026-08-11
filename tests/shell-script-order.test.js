@@ -140,12 +140,30 @@ const RETIRED_SCRIPTS = {
   '/js/admin-campaigns.js': 'admin Maintenance campaigns section moved into the console island (chunk E)',
   '/js/admin-mail.js': 'admin Email delivery section moved into the console island (chunk E)',
   '/js/admin-topochain.js': 'admin Seasons/Events/Challenges section moved into the console island (chunk E)',
+  // #1083 chunk F — #browse-screen became an island
+  // (frontend/src/features/apps/browse-screen.tsx) and the module moved
+  // verbatim into the same directory, keeping its `window.Browse` publication
+  // (app.js's #apps hash branch, navigateToBrowse and nav-link.js all reach it
+  // that way) behind a `typeof window` guard for the prerender pass. It had no
+  // DOMContentLoaded bootstrap — the screen mounts on demand from
+  // App.navigateToBrowse.
+  //
+  // Its load-order dependency on home.js went with it. browse.js used to load
+  // AFTER home.js to read Home.iconTileFor / Home.renderAppPillsHtml as
+  // globals; those two are features/apps/app-card.js now, an explicit import
+  // here and a delegating method on Home (which is still classic until step 4
+  // of the chunk). The remaining Home reads — isYours, matchesQuery,
+  // toggleAdded, menuItemsFor — are state rather than markup, stay on the
+  // global, and only run once a viewer opens #apps, long after every classic
+  // script has evaluated.
+  '/js/browse.js': 'browse-all-apps screen converted to a React island (chunk F)',
 };
 
 // public/js/topochain-events.js is deliberately NOT in that map. It is the
-// public Leaderboard screen's event feed as well as the console's, so it is
-// not chunk E's to move — chunk F owns it, and it keeps loading as a classic
-// script until then.
+// public Leaderboard screen's event feed as well as the console's, so chunk E
+// could not move it. Chunk F owns it, and it keeps loading as a classic script
+// until the leaderboard step: topochain-event-context.js reads
+// window.TopochainEvents, and until BOTH move it has to stay a global.
 
 test('every legacy script is loaded, in exactly the baseline order', () => {
   const expected = baseline.scripts.filter((s) => !(s in RETIRED_SCRIPTS));
@@ -163,7 +181,7 @@ test('every legacy script is loaded, in exactly the baseline order', () => {
 });
 
 test('the shell still loads the expected number of legacy scripts', () => {
-  // 35 /js/** tags, ALL at the end of <body> — the head has none left. The
+  // 34 /js/** tags, ALL at the end of <body> — the head has none left. The
   // count moves whenever main adds a module — it was 48 at the chassis swap
   // (plus theme.js in the head), main's mail console and credit-options
   // screens brought it to 50, #1036's nav-link.js made 51, #1049's
@@ -175,12 +193,13 @@ test('the shell still loads the expected number of legacy scripts', () => {
   // theme.js (46 — theme.js was the head's only one, so the body count drops
   // by four). #1081 chunk D retires settings.js (45), and #1082 chunk E
   // retires the admin console's ten modules in one go (35) — see the cluster
-  // note in RETIRED_SCRIPTS for why they could not go one at a time.
+  // note in RETIRED_SCRIPTS for why they could not go one at a time. #1083
+  // chunk F retires browse.js (34).
   const bodyScripts = scriptsOf(after.slice(after.indexOf('</head>')))
     .filter((s) => s.src && s.src.startsWith('/js/'));
   assert.equal(
-    bodyScripts.length, 35,
-    `expected the 35 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
+    bodyScripts.length, 34,
+    `expected the 34 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
     + 'Adding or removing one is fine, but it also needs a matching SHELL_ASSETS entry in '
     + 'public/sw.js (tests/pwa-shell-wiring.test.js enforces that) — so update this count '
     + 'deliberately rather than loosening the check.',
@@ -225,8 +244,11 @@ test('a retired script is really gone, everywhere', () => {
 test('nav-link.js loads ahead of every module that consumes it', () => {
   // Excluded from the fixture comparison above (the frozen pre-migration
   // document predates it), so its position is pinned here instead. #1036:
-  // app.js, app-view.js, browse.js, dev-chat.js, home.js and leaderboard.js
-  // all reference window.NavLink, and it has no dependencies of its own.
+  // app.js, app-view.js, dev-chat.js, home.js and leaderboard.js all
+  // reference window.NavLink, and it has no dependencies of its own.
+  // browse.js is a consumer too and is kept in the list below even though
+  // #1083 chunk F retired its tag — the `idx === -1` arm covers it, and the
+  // entry documents that a re-added tag would still have to come after.
   const srcs = scriptsOf(after).filter((s) => s.src && s.src.startsWith('/js/')).map((s) => s.src);
   const at = srcs.indexOf('/js/nav-link.js');
   assert.notEqual(at, -1, 'the shell must load /js/nav-link.js');
@@ -236,6 +258,16 @@ test('nav-link.js loads ahead of every module that consumes it', () => {
     assert.ok(idx === -1 || at < idx,
       `nav-link.js must load before ${consumer}, which reads window.NavLink`);
   }
+  // The converted consumers live in the bundle now, and the bundle's tag is
+  // in the HEAD — ahead of nav-link.js in document order. What makes that
+  // safe is `type="module"`, which defers it past every classic script, so
+  // that attribute is the actual guarantee and is asserted rather than
+  // assumed. (frontend/src/head.html owns the tag.)
+  const entry = scriptsOf(after).find((s) => s.src === ENTRY_SRC);
+  assert.ok(entry, `the shell must load ${ENTRY_SRC}`);
+  assert.equal(entry.type, 'module',
+    `${ENTRY_SRC} must stay type="module": that is what defers it past the classic `
+    + 'scripts its own modules read globals from (window.NavLink, window.Home, window.PlatformUI).');
 });
 
 test('dev-flow-select.js loads ahead of the modules that consume it', () => {

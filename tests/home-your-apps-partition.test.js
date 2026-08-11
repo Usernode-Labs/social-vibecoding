@@ -194,7 +194,7 @@ test('filterApps: returns only the matches, in input order', () => {
 //
 // Source pins for the home-screen split: the grid renders the `yours`
 // half of the partition and nothing else — the "All Apps" section and
-// its cards moved to the #apps browse screen (public/js/browse.js).
+// its cards moved to the #apps browse screen (features/apps/browse.js).
 // partitionApps still returns `rest` (browse and the featured row both
 // need the full list), so only the RENDERER changed.
 

@@ -16,6 +16,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { installAppCard } = require('./helpers/app-card');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'home.js'),
@@ -66,6 +67,9 @@ function makeHome() {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
+  // home.js delegates iconTileFor / renderAppPillsHtml to window.AppCard
+  // (frontend/src/features/apps/app-card.js) since #1083 chunk F.
+  installAppCard(sandbox);
   vm.runInContext(`${SRC}\n${PANELS_SRC}\n;globalThis.__Home = Home;`, sandbox);
   const Home = sandbox.__Home;
   Home.__sandbox = sandbox;
