@@ -1869,13 +1869,13 @@ async function seedStagingPushDeliveries(pool, config) {
        (notification_id, registration_id, environment, installation_id,
         status, attempts, available_at, expires_at, sent_at, last_error_code,
         created_at, updated_at)
-     SELECT $1, r.id, $2, $3::uuid,
+     SELECT $1, r.id, $2::varchar, $3::uuid,
             'sent', 1,
             NOW() - INTERVAL '19 minutes', NOW() + INTERVAL '5 hours',
             NOW() - INTERVAL '19 minutes', NULL,
             NOW() - INTERVAL '20 minutes', NOW() - INTERVAL '19 minutes'
        FROM mobile_push_registrations r
-      WHERE r.environment = $2 AND r.installation_id = $3::uuid
+      WHERE r.environment = $2::varchar AND r.installation_id = $3::uuid
      ON CONFLICT (notification_id, environment, installation_id) DO NOTHING`,
     [notificationId, ENVIRONMENT, LIVE_INSTALLATION]
   );
