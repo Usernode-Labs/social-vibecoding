@@ -2863,17 +2863,22 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
    <span>, so they get the pill's geometry with no pointer affordance. */
 span.gc-vote-btn-icon { cursor: default; }
 
-/* ── The card head: type icon + title/meta, and nothing else ───────────
-   THE indent lives here, and only here. The type icon leads this row,
-   flex-start so it sits on the title rather than halfway down the card
-   (which is where being a sibling of the whole content column used to put
-   it on any card with rows under the title). The title and its meta line
-   are the only things that belong beside it — everything else
-   (.dev-card-badges, .dev-status-row, .gc-card-actions, the issue card's
+/* ── The card head: type icon + title, and nothing else ────────────────
+   THE indent lives here, and only here. The title is the one thing that
+   belongs beside the icon; everything else (.dev-card-meta,
+   .dev-card-badges, .dev-status-row, .gc-card-actions, the issue card's
    claim list) is a sibling of the head, not of the icon, so it starts at
    the card's padding edge and gets the card's full width. The gap is
    12px — the same gap-3 the icon had as a card-level sibling — so the
-   title column sits exactly where it always did.
+   title sits exactly where it always did.
+
+   `center`, not `flex-start`: the head is the title's row now, so the
+   36px icon centres against the title's one or two lines. It only ever
+   floated halfway down the card back when it was a sibling of the whole
+   content column and centred against the pill and action rows too — the
+   fix for that was moving it in here, not top-aligning it, and now that
+   the meta line has moved out there is nothing left below the title for
+   `center` to drift toward.
 
    The ⋯ trigger is not in here: it lives in the card's TOP-RIGHT rail
    (.dev-card-rail), because the corner is where "more about this card"
@@ -2882,16 +2887,16 @@ span.gc-vote-btn-icon { cursor: default; }
    💬 badge or the drag grip (a gutter outside the card entirely). */
 .dev-card-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
 }
+/* The title's cell. flex-basis:auto + min-width:0 is what lets a long
+   title wrap onto extra lines instead of being cut off — it is never
+   truncated, unlike the meta line below it. */
 .dev-card-head-main {
   flex: 1 1 auto;
   min-width: 0;
 }
-/* Optically aligned with the FIRST line of the title rather than with the
-   top of the head box — the title's 20px line-box is taller than the 24px
-   button by too little to centre, so a 2px lift lands it on the cap line. */
 /* The right-edge rail: ⋯ pinned to the card's top-right corner, chevron
    centred in whatever height is left below it. One column for both, because
    a kanban column only gives a card ~175px of text width and a separate
@@ -2925,7 +2930,15 @@ span.gc-vote-btn-icon { cursor: default; }
   color: var(--text-primary);
   overflow-wrap: break-word;
 }
-.dev-card-headline-meta {
+/* ── The meta line, full width ─────────────────────────────
+   "PR#123 · author · 2h ago" — the title's subtitle, and a band of its own
+   below the head rather than a second line inside the icon's indent. It
+   truncates rather than wrapping (single-line ellipsis, unlike the title),
+   so the indent was costing it words it could otherwise show: in a kanban
+   column the 36px chip plus its 12px gap is a fifth of the row. No
+   margin-top — it reads as the title's second line, which is what it was
+   when the two shared a cell. */
+.dev-card-meta {
   font-size: 11.5px;
   line-height: 1.4;
   color: var(--text-muted);
@@ -3242,21 +3255,6 @@ span.gc-vote-btn-icon { cursor: default; }
   white-space: nowrap;
   vertical-align: middle;
 }
-/* Dev-card headline cell (title over meta) — the ONLY thing beside the
-   type icon now, so it takes the whole indented column. The flex rule is
-   kept because the headline is also used inside rows that DO put chips
-   beside it (the topic detail head, group-chat rows): flex-basis:auto
-   makes the cell's preferred width the title's natural single-line
-   width, so those chips wrap away one at a time instead of the title
-   being squeezed into an ellipsis. Only when the title alone is wider
-   than the card does the cell shrink (min-width:0) and the title wrap
-   onto extra lines — the title is never cut off. */
-.dev-card-headline { flex: 1 1 auto; min-width: 0; }
-/* The meta line under the title routinely overflows (PR# · user · time
-   · provenance) and is fine to truncate. Inline-size containment zeroes
-   its intrinsic width contribution so a long meta line can never widen
-   the headline cell past the title it sits under. */
-.dev-card-headline-meta { contain: inline-size; }
 /* "Merging…" badge shown next to the vote controls while a PR is merging.
    #405: recoloured emerald → amber so every in-flight "working toward a
    merge" stage (Merging…, Resolving conflicts…) reads amber-with-spinner,

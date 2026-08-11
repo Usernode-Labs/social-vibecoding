@@ -118,7 +118,7 @@ test('an unrecognised value falls back — it never prints itself', () => {
 test('the card names the agent that built it, on the meta line', () => {
   const AppView = makeAppView(ME);
   const claude = AppView._renderProposalCard(connectorProposal());
-  assert.match(claude, /dev-card-headline-meta[^<]*[\s\S]{0,400}?built with Claude Code/);
+  assert.match(claude, /dev-card-meta[^<]*[\s\S]{0,400}?built with Claude Code/);
   const codex = AppView._renderProposalCard(connectorProposal({ external_agent: 'codex' }));
   assert.match(codex, /built with Codex/);
   assert.doesNotMatch(codex, /Claude Code/);
@@ -136,7 +136,7 @@ test('the agent provenance reads alongside "imported", not instead of it', () =>
   );
   // Both sit in the meta line, ahead of the author and the timestamp, so the
   // sentence reads 'PR#N · imported from GitHub (x) · built with Y · alice · 2d'.
-  assert.match(html, /dev-card-headline-meta/);
+  assert.match(html, /dev-card-meta/);
   assert.doesNotMatch(html, /text-[0.65rem][^"]*">Built with/, 'no longer a badge chip');
 });
 

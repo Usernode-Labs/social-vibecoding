@@ -87,7 +87,7 @@ const ISSUE = (over) => ({ number: 5, title: 'Fix the thing', ...over });
 // The chips are their own full-width row (.dev-card-badges) below the head,
 // so everything after the meta line is in scope.
 function badgeCount(html) {
-  const scope = html.slice(html.indexOf('</div>', html.indexOf('dev-card-headline-meta')));
+  const scope = html.slice(html.indexOf('</div>', html.indexOf('dev-card-meta')));
   const chips = (scope.match(/class="attr-chip |class="gc-vote-count |text-\[0\.65rem\]/g) || []).length;
   return chips;
 }
@@ -263,7 +263,7 @@ test('proposal provenance reads on the meta line, not as badges', () => {
     source: 'imported', imported_pr_author: 'octo', external_agent: 'codex',
     pr_title_fallback: true,
   }));
-  const meta = html.slice(html.indexOf('dev-card-headline-meta'), html.indexOf('</div>', html.indexOf('dev-card-headline-meta')) + 6);
+  const meta = html.slice(html.indexOf('dev-card-meta'), html.indexOf('</div>', html.indexOf('dev-card-meta')) + 6);
   assert.match(meta, /imported from GitHub \(octo\)/);
   assert.match(meta, /built with Codex/);
   assert.match(meta, /auto-title pending/);
@@ -282,6 +282,6 @@ test('_proposalProvenanceWords is empty for an ordinary in-platform proposal', (
 test('the issue bounty count reads on the meta line, not as a ★ chip', () => {
   const AppView = makeAppView();
   const html = AppView._renderIssueRow(ISSUE({ bounty_count: 3, title_fallback: true }));
-  assert.match(html, /dev-card-headline-meta[\s\S]*?&#9733; 3/);
+  assert.match(html, /dev-card-meta[\s\S]*?&#9733; 3/);
   assert.match(html, /auto-title pending/);
 });

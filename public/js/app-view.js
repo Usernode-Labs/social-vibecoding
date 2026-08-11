@@ -123,8 +123,8 @@ const AppView = {
   // indented actions row) because their five inline pills would otherwise
   // crush the flex-1 title. With the action budget capped at "icon Preview
   // + ⋯" that pressure is gone, so they now use the standard single-row
-  // DEV_CARD_CLS shell like every other card; .dev-card-headline's
-  // progressive-wrap rule is what actually protects the title.
+  // DEV_CARD_CLS shell like every other card; the title having the head row
+  // to itself is what actually protects it.
   DEV_CARD_MUTED_CLS: 'dev-card-muted',
 
   // Per-type tinted icon chips — the Dev list's identity system, a mini
@@ -2282,10 +2282,18 @@ const AppView = {
   // Every card type assembles the same four bands inside the shell, so they
   // are built here once rather than copy-pasted into six renderers:
   //
-  //   head    — the type icon, the title and the meta line under it. NOTHING
-  //             else: the head is the only band that is indented (it is the
-  //             one the icon leads), so anything that doesn't have to sit
-  //             beside the icon is a band of its own below it.
+  //   head    — the type icon and the TITLE. Nothing else: the head is the
+  //             only band that is indented (it is the one the icon leads),
+  //             so anything that doesn't have to sit beside the icon is a
+  //             band of its own below it. The icon is centred against the
+  //             title rather than pinned to its first line, so a chip
+  //             taller than one line of text reads as belonging to the
+  //             whole title instead of hanging off its top.
+  //   meta    — the "PR#123 · author · 2h ago" line, FULL WIDTH under the
+  //             head. It is the title's subtitle, not something that has to
+  //             sit beside the icon, so it gets the card's own width — which
+  //             is also what stops it ellipsising after three words in a
+  //             kanban column, where the indent cost it a fifth of the row.
   //   badges  — the metadata chips (priority, assignee, category) plus the
   //             💬 count, on their own FULL-WIDTH wrapping row. They used to
   //             share the title's line, which cost them the icon's 36px of
@@ -2297,22 +2305,28 @@ const AppView = {
   //             the whole width is what makes the fill legible at a glance.
   //   actions — the ≤2 text pills plus the icon Preview.
   //
-  // opts: { icon, headlineHtml, badges, chatCount, uncapped, pill, inlinePill,
-  //         actions, extraHtml }
+  // opts: { icon, titleHtml, titleAttrs, metaHtml, badges, chatCount,
+  //         uncapped, pill, inlinePill, actions, extraHtml }
   //
   // `icon` — the type chip. It is passed IN here (rather than emitted as the
   // card's own first flex child, which is where it used to live) so that it
-  // sits on the HEAD row, top-aligned with the title. As a sibling of the
-  // whole content column it was centred against the card's full height —
-  // i.e. floating halfway down next to the status pill on a busy card — and
-  // it pushed EVERY row into an indented column.
+  // sits on the HEAD row, beside the title. As a sibling of the whole
+  // content column it was centred against the card's full height — i.e.
+  // floating halfway down next to the status pill on a busy card — and it
+  // pushed EVERY row into an indented column.
   //
-  // Only the head is indented now. The badge row, the pill row, the action
-  // row and `extraHtml` are siblings of the head, not of the icon, so they
-  // all start at the card's own padding edge and use its full width. That
-  // is the whole layout rule, and it is why `icon` is an opt rather than
-  // something a caller concatenates: a card cannot get the indent wrong by
-  // accident, because there is only one place that draws it.
+  // Only the title is indented now. The meta line, the badge row, the pill
+  // row, the action row and `extraHtml` are siblings of the head, not of the
+  // icon, so they all start at the card's own padding edge and use its full
+  // width. That is the whole layout rule, and it is why `icon` is an opt
+  // rather than something a caller concatenates: a card cannot get the
+  // indent wrong by accident, because there is only one place that draws it.
+  //
+  // The title and the meta line arrive as separate opts for the same reason.
+  // They used to be one `headlineHtml` cell built by a helper, which is
+  // exactly what made them move together — a caller cannot put the subtitle
+  // back inside the indent because it no longer passes a subtree that could
+  // hold it.
   //
   // The ⋯ trigger is NOT here — it lives in the card's right rail
   // (_cardRailHtml) so it shares a column with the chevron instead of
@@ -2334,27 +2348,20 @@ const AppView = {
     });
     const badgeRow = badges ? `<div class="dev-card-badges">${badges}</div>` : '';
     const pillRow = o.pill ? `<div class="dev-status-row">${o.pill}</div>` : '';
+    const metaRow = o.metaHtml ? `<div class="dev-card-meta">${o.metaHtml}</div>` : '';
     return `<div class="flex-1 min-w-0">
           <div class="dev-card-head">
             ${o.icon || ''}
             <div class="dev-card-head-main">
-              ${o.headlineHtml || ''}
+              <div class="dev-card-title"${o.titleAttrs || ''}>${o.titleHtml || ''}</div>
             </div>
           </div>
+          ${metaRow}
           ${badgeRow}
           ${pillRow}
           ${o.actions || ''}
           ${o.extraHtml || ''}
         </div>`;
-  },
-
-  // The headline cell — title over meta. Shared so the wrap rule
-  // (.dev-card-headline) is applied identically everywhere.
-  _cardHeadlineHtml(titleHtml, metaHtml, titleAttrs) {
-    return `<div class="dev-card-headline">
-                  <div class="dev-card-title"${titleAttrs || ''}>${titleHtml}</div>
-                  <div class="dev-card-headline-meta">${metaHtml || ''}</div>
-                </div>`;
   },
 
   // ── Card overflow (⋯) menu ───────────────────────────────────────────
@@ -6296,7 +6303,8 @@ const AppView = {
       title="${s.busy ? 'AI is working — ' : ''}${label}">
       ${AppView._cardContentHtml({
         icon: AppView._devCardIcon('session'),
-        headlineHtml: AppView._cardHeadlineHtml(label, subtitle),
+        titleHtml: label,
+        metaHtml: subtitle,
         badges: [statusTag, AppView._sessionVenueChipHtml(s), AppView.issueChipsHtml(s.linked_issues)],
         chatCount: null,
         actions,
@@ -6325,7 +6333,8 @@ const AppView = {
     return `<div${nav} class="${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" title="${label}">
       ${AppView._cardContentHtml({
         icon: AppView._devCardIcon('session'),
-        headlineHtml: AppView._cardHeadlineHtml(label, `${owner} is working on this`),
+        titleHtml: label,
+        metaHtml: `${owner} is working on this`,
         badges: [statusTag, AppView.issueChipsHtml(s.linked_issues)],
         chatCount: s.chat_count,
         actions,
@@ -6978,15 +6987,14 @@ const AppView = {
   // The title-heal sweeper (src/services/title-heal.js) still removes it
   // automatically once the API is back.
 
-  // One PR-proposal card: line 1 is identity + info (icon chip, title,
-  // PR meta, tally pill, badges), line 2 is the action pills (vote /
-  // preview / kudos / Discussion / Open session). With { noNav: true }
-  // (the topic sub-view's header card) the tap-to-open affordance and
-  // Discussion button are dropped — you're already in the discussion.
-  // On narrow screens line 1 wraps progressively instead of truncating
-  // the title: the 💬 badge drops to the next line first, then the
-  // tally pill, and only then does the title itself wrap (see
-  // .dev-card-headline in app.css).
+  // One PR-proposal card, built from the shared bands (_cardContentHtml):
+  // the icon chip and the title lead, then the PR meta line, the badges,
+  // the tally pill and the action pills (vote / preview / kudos /
+  // Discussion / Open session) each on their own full-width row. With
+  // { noNav: true } (the topic sub-view's header card) the tap-to-open
+  // affordance and Discussion button are dropped — you're already in the
+  // discussion — and the tally rides at the front of the badge row instead
+  // of taking a row of its own.
   _renderProposalCard(pr, opts) {
     const noNav = !!(opts && opts.noNav);
     const ctx = AppView._proposalsCtx || {};
@@ -7062,8 +7070,8 @@ const AppView = {
       <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''} data-ref-pr="${pr.pr_number || pr.id}"${noNav ? '' : ` data-proposal-row="${pr.id}" title="Open this proposal's discussion"`}>
         ${AppView._cardContentHtml({
           icon: AppView._devCardIcon(isMerged ? 'done' : (mine ? 'proposalMine' : 'proposal'), mine && !isMerged ? { title: 'This is your PR — open its session.' } : undefined),
-          headlineHtml: AppView._cardHeadlineHtml(
-            titleHtml, metaParts.join(' · ') + (closesPills ? ` ${closesPills}` : '')),
+          titleHtml,
+          metaHtml: metaParts.join(' · ') + (closesPills ? ` ${closesPills}` : ''),
           badges,
           chatCount: chatN,
           uncapped: noNav,
@@ -8404,7 +8412,8 @@ const AppView = {
       <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}${busy ? ' opacity-70' : ''}" data-gov-row="${issue.id}"${refIssueN ? ` data-ref-issue="${refIssueN}"` : ''}${noNav ? '' : ' title="Open this proposal\'s discussion"'}>
         ${AppView._cardContentHtml({
           icon: AppView._devCardIcon('gov'),
-          headlineHtml: AppView._cardHeadlineHtml(escapeHtml(titleText), metaParts.join(' · ')),
+          titleHtml: escapeHtml(titleText),
+          metaHtml: metaParts.join(' · '),
           badges: [applyBadge],
           chatCount: govChatN,
           uncapped: noNav,
@@ -9624,9 +9633,9 @@ const AppView = {
       <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" data-ref-issue="${n}"${noNav ? '' : ` data-issue-row="${n}" title="Open this issue's discussion"`}>
         ${AppView._cardContentHtml({
           icon,
-          headlineHtml: AppView._cardHeadlineHtml(
-            `${escapeHtml(issue.title)}${editTitleBtn}`, metaParts.join(' · '),
-            `${canEditTitle ? ` data-issue-title="${n}"` : ''} title="${escapeHtml(rowTitle)}"`),
+          titleHtml: `${escapeHtml(issue.title)}${editTitleBtn}`,
+          titleAttrs: `${canEditTitle ? ` data-issue-title="${n}"` : ''} title="${escapeHtml(rowTitle)}"`,
+          metaHtml: metaParts.join(' · '),
           badges,
           chatCount: issue.chatCount,
           uncapped: noNav,
@@ -10054,9 +10063,9 @@ const AppView = {
         <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-ref-pr="${pr.pr_number || pr.id}" data-proposal-row="${pr.id}" title="Open this proposal's discussion">
           ${AppView._cardContentHtml({
             icon: AppView._devCardIcon('done'),
-            headlineHtml: AppView._cardHeadlineHtml(
-              mergedLabel, metaParts.join(' · ') + (closes ? ` ${closes}` : ''),
-              ` title="${escapeHtml(mergedQuoteTitle)}"`),
+            titleHtml: mergedLabel,
+            titleAttrs: ` title="${escapeHtml(mergedQuoteTitle)}"`,
+            metaHtml: metaParts.join(' · ') + (closes ? ` ${closes}` : ''),
             badges,
             chatCount: parseInt(pr.chat_count) || 0,
             pill,
@@ -10111,10 +10120,9 @@ const AppView = {
         <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-gov-row="${row.id}"${issueN ? ` data-ref-issue="${issueN}"` : ''} title="Open this proposal's discussion">
           ${AppView._cardContentHtml({
             icon: AppView._devCardIcon('done'),
-            headlineHtml: AppView._cardHeadlineHtml(
-              `${escapeHtml(titleText)}${who}`,
-              `Issue close · ${issueRef}${how}${date ? ` · ${date}` : ''}`,
-              ` title="${escapeHtml(titleText)}"`),
+            titleHtml: `${escapeHtml(titleText)}${who}`,
+            titleAttrs: ` title="${escapeHtml(titleText)}"`,
+            metaHtml: `Issue close · ${issueRef}${how}${date ? ` · ${date}` : ''}`,
             badges: [],
             chatCount: parseInt(row.chat_count) || 0,
             pill: tallyPill,
