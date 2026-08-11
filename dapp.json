@@ -484,6 +484,23 @@
       "expectSelector": "#dev-kanban-col-inprogress [data-session-chip] [data-card-menu][aria-expanded=\"true\"]"
     },
     {
+      "name": "Dev board: the ⋯ menu’s assignee row OPENS the assignee picker (it used to do nothing on desktop)",
+      "path": "/?demo=1&view=kanban&shot=card-menu&card=issue:900009&row=assignee#app/usernode-2d5619/dev",
+      "expectSelector": "#attr-popover #attr-assignee-input",
+      "expectText": "Assigned person"
+    },
+    {
+      "name": "Dev board: the same ⋯ row mechanism opens the priority picker in the list view",
+      "path": "/?demo=1&shot=card-menu&card=issue:900009&row=priority#app/usernode-2d5619/dev",
+      "expectSelector": "#attr-popover .attr-opt[data-attr-opt-value=\"high\"]",
+      "expectText": "Priority"
+    },
+    {
+      "name": "Dev board: every ⋯ menu row declares its meaning, so a picker row is addressable",
+      "path": "/?demo=1&view=kanban&shot=card-menu&card=issue:900009#app/usernode-2d5619/dev",
+      "expectSelector": ".dev-card-menu [data-menu-idx][data-menu-row=\"assignee\"]"
+    },
+    {
       "name": "Dev board: attribute chips keep the small label inside the 20px box",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban button.attr-chip.dev-badge[data-attr-field=\"priority\"]"
