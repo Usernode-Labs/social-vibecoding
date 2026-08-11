@@ -74,6 +74,28 @@ SELECT ls.season_event_id, ls.user_id, ls.rank, ls.total_points, ls.snapshot_at
  GROUP BY season_id, tier
  ORDER BY season_id, tier`,
   },
+  {
+    // #1130's worked example. The console used to refuse this query
+    // outright ("table(s) that are not available in this console:
+    // mobile_push_deliveries, mobile_push_registrations"), which is the
+    // report that prompted the per-column scope. It ships as a template
+    // so the shape an admin needs for push debugging is one click away —
+    // and so the module-load assertion below is a permanent regression
+    // lock on both tables staying queryable.
+    //
+    // The registration's encrypted destination and its lookup hash are
+    // NOT selected and could not be: the console role holds a
+    // column-level grant on that table which omits both.
+    name: 'Push delivery outcomes by environment',
+    description: 'mobile_push_deliveries joined to its registration: status, attempts and last_error_code per environment, platform and permission state (never selects the encrypted push destination).',
+    query: `SELECT d.environment, r.platform, r.permission_status, d.status,
+       COUNT(*) AS deliveries, MAX(d.attempts) AS max_attempts,
+       MAX(d.last_error_code) AS sample_error_code
+  FROM mobile_push_deliveries d
+  LEFT JOIN mobile_push_registrations r ON r.id = d.registration_id
+ GROUP BY d.environment, r.platform, r.permission_status, d.status
+ ORDER BY d.environment, deliveries DESC`,
+  },
 ];
 
 for (const t of TEMPLATES) {

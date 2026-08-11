@@ -1802,6 +1802,12 @@
       "expectText": "tables"
     },
     {
+      "name": "Admin SQL console schema browser lists mobile_push_deliveries (#1130 regression lock)",
+      "path": "/#admin/seasons/sql-console",
+      "expectSelector": "#admin-topo-sql-schema button[data-table]",
+      "expectText": "mobile_push_deliveries"
+    },
+    {
       "name": "Native kit: pull-to-refresh builds its clipped puck layer (the puck hangs below the header, never over it)",
       "path": "/usernode-native/v1/demo.html?un-platform=ios",
       "expectSelector": ".un-ptr-layer > .un-ptr-puck"
