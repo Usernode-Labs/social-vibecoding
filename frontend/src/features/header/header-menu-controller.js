@@ -28,15 +28,16 @@
 
 // Drawer status/version rows (header slim-down): the kudos + AI-credit
 // meters render into #drawer-status-pane, and the platform/app build
-// lines + fork lineage label into #drawer-footer — none of them in the
-// header any more. Their RENDERERS are untouched — every slot kept its
-// id through both moves — so all this owns is the two app-scoped rows'
-// visibility plus the hamburger's amber deploy dot.
+// lines + native app build + fork lineage label into #drawer-footer — none of
+// them in the header any more. Their RENDERERS are untouched — every existing
+// slot kept its id through both moves — so all this owns is the app-scoped
+// rows' visibility plus the hamburger's amber deploy dot.
 const DrawerStatus = {
-  // The "App" build row follows the same lifecycle as
+  // The "dApp" build row follows the same lifecycle as
   // #drawer-row-github / #drawer-row-share: visible only while an app
-  // is open. Called from openApp and from every navigate* that leaves
-  // an app behind.
+  // is open, except for the self-hosted platform where it would duplicate
+  // the platform SHA immediately above it. Called from openApp and from every
+  // navigate* that leaves an app behind.
   //
   // The header's App/Dev switch rides the SAME lifecycle, which is why
   // it's owned here rather than in a seventh place: this one call
@@ -47,7 +48,8 @@ const DrawerStatus = {
   // header-resident control has to be hidden explicitly.
   setAppOpen(open) {
     const row = document.getElementById('drawer-row-app-version');
-    if (row) row.classList.toggle('hidden', !open);
+    const showDappVersion = !!open && !window.AppView?.appData?.self_hosted;
+    if (row) row.classList.toggle('hidden', !showDappVersion);
     // Fork lineage is app-scoped too — closing an app can never leave
     // the previous app's "Forked from" line behind.
     if (!open) DrawerStatus.setForkVisible(false);
@@ -104,9 +106,9 @@ const DrawerStatus = {
 // (#122). Top to bottom: the kudos/AI-credit status pane, the theme
 // selector directly below it, the native Node/Wallet rows, the four
 // main nav rows (Profile, Leaderboard, Settings, Admin & moderation),
-// and a bottom-anchored footer carrying the platform/app build lines
-// plus GitHub + Share. (Members & visibility moved to the Dev "+"
-// menu — #645.)
+// and a bottom-anchored footer carrying the platform/native-app/dApp build
+// lines plus GitHub + Share. (Members & visibility moved to the Dev "+" menu
+// — #645.)
 const HeaderMenu = {
   _panel: null,
 

@@ -31,7 +31,7 @@ function element({ hidden = false } = {}) {
   };
 }
 
-function loadNodePill({ hasNodeStatus, snapshot = null }) {
+function loadNodePill({ hasNodeStatus, snapshot = null, isNative = true }) {
   const row = element({ hidden: true });
   const dot = element();
   const status = element();
@@ -43,6 +43,7 @@ function loadNodePill({ hasNodeStatus, snapshot = null }) {
       has() { return hasNodeStatus; },
     },
     usernode: {
+      isNative,
       async getNodeStatus() {
         statusReads += 1;
         return snapshot;
@@ -117,7 +118,7 @@ test('native status event reveals the row while the first probe is inconclusive'
       'a degraded probe must not undo native event evidence');
   });
 
-test('unsupported builds and desktop stay hidden without a native event',
+test('unsupported native builds keep the Node row present',
   async () => {
     const loaded = loadNodePill({
       hasNodeStatus: Promise.resolve(false),
@@ -125,11 +126,24 @@ test('unsupported builds and desktop stay hidden without a native event',
 
     await settle();
 
-    assert.equal(loaded.row.classList.contains('hidden'), true);
+    assert.equal(loaded.row.classList.contains('hidden'), false);
     assert.equal(loaded.statusReads, 0);
+    assert.equal(loaded.status.textContent, 'Unavailable');
 
     loaded.dispatchNodeStatus(null);
     loaded.dispatchNodeStatus({});
-    assert.equal(loaded.row.classList.contains('hidden'), true,
-      'malformed page events are not evidence of native node support');
+    assert.equal(loaded.row.classList.contains('hidden'), false,
+      'temporary or malformed state must not rewrite native navigation');
+  });
+
+test('desktop keeps the native-only Node row hidden', async () => {
+  const loaded = loadNodePill({
+    hasNodeStatus: Promise.resolve(false),
+    isNative: false,
+  });
+
+  await settle();
+
+  assert.equal(loaded.row.classList.contains('hidden'), true);
+  assert.equal(loaded.statusReads, 0);
   });

@@ -210,6 +210,11 @@ function render(overrides) {
   h.DevChat.MODELS = (overrides && overrides.models) || guidanceMap();
   h.DevChat.selectedModel = (overrides && overrides.selected) || 'claude-opus-5';
   if (overrides && overrides.session) h.DevChat.currentSession = overrides.session;
+  // build-venues.js is outside this focused harness. Mirror its ordinary
+  // in-chat result so provider-specific composer controls are exercised.
+  h.DevChat._currentVenueId = () => h.DevChat._isOpenRouterSession()
+    ? 'usernode-openrouter'
+    : 'usernode-claude';
   h.DevChat.renderChatView();
   return { ...h, html: h.getEl('dc-view').innerHTML };
 }
@@ -250,7 +255,7 @@ test('each option reads "<label> — <what it is for>"', () => {
   }
 });
 
-test('OpenRouter sessions still get the chat-model picker, with a note that coding turns bill OpenRouter', () => {
+test('OpenRouter sessions show their pinned model and never show the Claude model picker', () => {
   const { html } = render({
     session: {
       id: 7,
@@ -261,15 +266,38 @@ test('OpenRouter sessions still get the chat-model picker, with a note that codi
     },
   });
 
-  // The chat model (Sonnet/Opus/Fable) is a Usernode-side setting, orthogonal
-  // to which venue runs the coding turns — so OpenRouter sessions keep the
-  // same picker as any other Usernode-run session.
-  assert.match(html, /Chat model:/);
-  assert.match(html, /id="dc-model-select"/);
-  assert.match(html, /Sonnet 5 — simple, small changes/);
-  assert.match(html, /Opus 5 — general coding work/);
-  assert.match(html, /Fable 5 — design, taste, and difficult coding/);
-  assert.match(html, /Usernode · OpenRouter \(anthropic\/claude-sonnet-4\.5\) — coding turns bill your OpenRouter key\./);
+  assert.match(html, /OpenRouter model:/);
+  assert.match(html, /id="dc-openrouter-model"/);
+  assert.match(html, /anthropic\/claude-sonnet-4\.5/);
+  assert.match(html, /id="dc-openrouter-model-change"/);
+  assert.match(html, /Change model/);
+  assert.match(html, /All chat and coding in this session use anthropic\/claude-sonnet-4\.5 through OpenRouter and bill your OpenRouter key\./);
+
+  assert.doesNotMatch(html, /Chat model:/);
+  assert.doesNotMatch(html, /id="dc-model-select"/);
+  assert.doesNotMatch(html, /Sonnet 5 — simple, small changes/);
+  assert.doesNotMatch(html, /Opus 5 — general coding work/);
+  assert.doesNotMatch(html, /Fable 5 — design, taste, and difficult coding/);
+});
+
+test('the OpenRouter model button opens the provider-locked catalog', () => {
+  const h = makeHarness();
+  h.DevChat.currentSession = {
+    id: 7,
+    branch_name: 'dev/openrouter',
+    agent_backend: 'codex_openrouter',
+    agent_model: 'deepseek/deepseek-v4-flash',
+  };
+  h.DevChat._currentVenueId = () => 'usernode-openrouter';
+  let calledWith = null;
+  h.DevChat._switchCurrentCodingAgent = (...args) => { calledWith = args; };
+
+  h.DevChat.renderChatView();
+  h.getEl('dc-openrouter-model-change')._fire('click');
+
+  assert.ok(calledWith, 'the Change model button was not wired');
+  assert.equal(calledWith[0], null);
+  assert.equal(calledWith[1].fixedBackend, 'codex_openrouter');
 });
 
 test('no option implies a size ladder between Opus and Fable', () => {

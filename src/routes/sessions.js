@@ -997,8 +997,22 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             last_activity_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
             app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
           },
-          // Busy own session — exercises the "working…" two-row card
-          // layout (spinner + tag in the actions row, title uncrushed).
+          // Card-as-pointer revision: a PRIVATE session that already has a
+          // PR, so the muted/draft shell renders WITH the icon Preview
+          // affordance beside its ⋯. Both other private rows have
+          // pr_number: null, so without this one the muted-plus-preview
+          // combination is unreviewable in a preview.
+          {
+            id: 990107, branch_name: 'mock/my-session-private-pr', pr_number: 990107,
+            pr_url: null, pr_title: null,
+            session_title: '[Mock] Your private session with a preview',
+            status: 'active', linked_issues: [900011], shared_at: null,
+            created_at: new Date(Date.now() - 50 * 60 * 1000).toISOString(),
+            last_activity_at: new Date(Date.now() - 8 * 60 * 1000).toISOString(),
+            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+          },
+          // Busy own session — exercises the "working…" state (spinner tag
+          // beside the title, which the single-row shell keeps uncrushed).
           {
             id: 990102, branch_name: 'mock/my-session-busy', pr_number: null,
             pr_url: null, pr_title: null,
@@ -1979,6 +1993,20 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   });
 
   // Get session with message history
+  //
+  // Owner OR admin, the same rule `/api/sessions/:id/events` states a few
+  // hundred lines down ("Admins should see everything … but regular users
+  // only their own"): this route was the one place in the file still
+  // matching on `cs.user_id` alone, and the app-level `sessionCollabGuard`
+  // above already ran, so widening it grants an admin nothing they cannot
+  // already read from that session's event stream. Read-only, so plain
+  // `isAdmin` is the gate — a view-only admin qualifies.
+  //
+  // Concretely this is what made a fifth of the declared proposal checks
+  // fail: the check suite signs as `usernode-capture-admin` (a view-only
+  // admin), every staging chat_sessions fixture is owned by the FIRST
+  // admin instead, and each deep link into one 404'd — a console error on
+  // the route, which fails the check whatever it was asserting.
   router.get('/api/sessions/:id', async (req, res) => {
     try {
       const { rows } = await pool.query(
@@ -1991,8 +2019,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                     AND ${currentVotePredicateSql('pv', 'cs')}) AS no_count
          FROM chat_sessions cs
          JOIN apps a ON cs.app_id = a.id
-         WHERE cs.id = $1 AND cs.user_id = $2`,
-        [req.params.id, req.user.id]
+         WHERE cs.id = $1 AND (cs.user_id = $2 OR $3::boolean)`,
+        [req.params.id, req.user.id, !!req.user?.isAdmin]
       );
       if (!rows.length) return res.status(404).json({ error: 'Session not found' });
 
@@ -2043,10 +2071,18 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // bump just means the next chat turn / open re-marks it. Opening
       // also disarms notify_on_done (#161): the owner is looking at the
       // session again, so a left-mid-turn completion needs no notification.
-      pool.query(
-        `UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1`,
-        [req.params.id]
-      ).catch((err) => log.warn('sessions', 'activity bump on view failed', { err: err.message }));
+      //
+      // OWNER ONLY. Both of those are statements about the owner's
+      // attention, and neither is true when the admin read above is what
+      // resolved this row: an admin (or the check suite) glancing at a
+      // session must not keep it awake, and must certainly not cancel the
+      // owner's "tell me when it's done" notification.
+      if (rows[0].user_id === req.user.id) {
+        pool.query(
+          `UPDATE chat_sessions SET last_activity_at = NOW(), notify_on_done = FALSE WHERE id = $1`,
+          [req.params.id]
+        ).catch((err) => log.warn('sessions', 'activity bump on view failed', { err: err.message }));
+      }
 
       // #161 auto-dismiss: opening the session is the canonical "user saw
       // it" signal — resolve any unread session_done rows for it, even
@@ -3062,6 +3098,21 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   router.post('/api/sessions/:id/resume', async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
+
+      // Ownership FIRST. The resuming UPDATE below is already owner-scoped
+      // (`AND user_id = $2`), but everything between here and there is
+      // platform-wide bookkeeping: the global-cap probe can pause a THIRD
+      // party's idle session to free a slot, and the per-user LRU can pause
+      // the requester's own. Both used to run for a request that was going
+      // to 404 on the UPDATE anyway — so a non-owner merely opening a paused
+      // session (an admin, or the capture suite) could evict a stranger's
+      // session and then get a 429 off the cap it just made room against.
+      // Cheap, boring, and answers before any of that.
+      const { rows: ownRows } = await pool.query(
+        'SELECT id FROM chat_sessions WHERE id = $1 AND user_id = $2',
+        [sessionId, req.user.id]
+      );
+      if (!ownRows.length) return res.status(404).json({ error: 'Session not found or not paused' });
 
       const { rows: globalRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`

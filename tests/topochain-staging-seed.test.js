@@ -31,6 +31,9 @@ const path = require('node:path');
 const { seedStagingTopochain } = require('../src/db/migrate');
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'src/db/migrate.js'), 'utf8');
+const DAPP_TESTS = JSON.parse(
+  fs.readFileSync(path.join(__dirname, '..', 'dapp.json'), 'utf8')
+).tests || [];
 
 // ─── 1. Behavioural: mock pool records every query(sql, params) call ────
 
@@ -303,11 +306,11 @@ test('5 challenge_templates', () => {
   assert.equal(ids.length, 5);
 });
 
-test('13 challenges split across four of the five season_events', () => {
+test('14 challenges split across four of the five season_events', () => {
   const start = body.indexOf('INSERT INTO challenges');
   const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
   const ids = block.match(/^\s*\(9\d{5}, \$/gm) || [];
-  assert.equal(ids.length, 13);
+  assert.equal(ids.length, 14);
   const regularEventRows = block.match(/\(9\d{5}, \$1,/g) || [];
   const seasonEventRows = block.match(/\(9\d{5}, \$2,/g) || [];
   // The ended event needs its own challenges, or selecting it renders an
@@ -317,7 +320,7 @@ test('13 challenges split across four of the five season_events', () => {
   assert.equal(regularEventRows.length, 5, '5 challenges on the regular event');
   assert.equal(seasonEventRows.length, 3, '3 challenges on the season-type event');
   assert.equal(endedEventRows.length, 2, '2 challenges on the fully-past event');
-  assert.equal(archiveEventRows.length, 3, '3 challenges on the archive-season event');
+  assert.equal(archiveEventRows.length, 4, '4 challenges on the archive-season event');
 
   // EVENT_EMPTY_ID is deliberately absent: it is the ONLY event with no
   // challenges, which is the only way the admin challenge list's empty
@@ -425,9 +428,15 @@ test('user_activities span multiple challenges with the challenge_completion rep
   // only ever return everything.
   assert.equal((block.match(/\(9007\d\d, \$[89], \$7,/g) || []).length, 4,
     '4 activities on the archive event, for the two block-producer-queue users');
-  // The one row with no challenge_id, so the "—" cell that stands in for
-  // "not tied to a challenge" is on screen rather than being a dead branch.
-  assert.equal((block.match(/INTERVAL '\d+ days', NULL\)/g) || []).length, 1);
+  // NO row may carry a NULL challenge_id. This used to assert exactly one,
+  // to put the activities table's "—" cell (its stand-in for "not tied to a
+  // challenge") on screen — but user_activities.challenge_id is BIGINT NOT
+  // NULL REFERENCES challenges(id), so that row failed the insert on every
+  // boot and, because the seed's try/catch only warns, took the entire
+  // Topochain fixture block down with it. The "—" fallback is unreachable
+  // defensive code in admin-topochain.js, not a state a fixture can reach.
+  assert.equal((block.match(/INTERVAL '\d+ days', NULL\)/g) || []).length, 0,
+    'challenge_id is NOT NULL — a NULL here kills the whole Topochain seed');
 });
 
 // The home-screen Challenges card (#911) can draw four states, and a seed
@@ -522,6 +531,27 @@ test('1 app_version_config per OS (ios, android)', () => {
   assert.equal(ids.length, 2);
   assert.match(body, /UPDATE app_version_configs[\s\S]*?SET is_active = FALSE[\s\S]*?WHERE os = 'android'/,
     'the cloned staging DB always carries one deterministic inactive-rule warning');
+});
+
+test('the Android rule is DEACTIVATED, not merely offered as an inactive insert', () => {
+  // The insert above skips an OS the clone already configured, and
+  // production keeps BOTH ios and android active — so on a prod-cloned
+  // staging DB neither fixture row lands and the admin screen's "No
+  // active version rule for Android" warning cannot render (dapp.json
+  // asserts exactly that text on /#admin/seasons/app-version). The
+  // declared state has to be forced, whatever the clone brought.
+  const start = body.indexOf('INSERT INTO app_version_configs');
+  const after = body.slice(start);
+  const upd = after.slice(after.indexOf('UPDATE app_version_configs'));
+  const stmt = upd.slice(0, upd.indexOf('`'));
+  assert.match(stmt, /SET is_active = FALSE/);
+  assert.match(stmt, /WHERE os = 'android'/);
+  // iOS is left exactly as the clone had it — one OS gated, one OS open is
+  // the contrast the warning exists to draw.
+  assert.ok(!/'ios'/.test(stmt), 'the iOS rule must not be touched');
+  const check = DAPP_TESTS.find((t) => t.path === '/#admin/seasons/app-version'
+    && /No active version rule/i.test(t.expectText || ''));
+  assert.ok(check, 'the declared check this fixture exists for is still there');
 });
 
 test('1 account_delegation_period', () => {

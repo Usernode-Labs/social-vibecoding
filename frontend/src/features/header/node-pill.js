@@ -1,7 +1,7 @@
-// MOVED, NOT REWRITTEN (#1079 chunk B). This file was public/js/node-pill.js;
+// MOVED in #1079 chunk B. This file was public/js/node-pill.js;
 // #header-menu-panel became a React island and this module owns nodes inside
-// it, so it moved into the bundle with the region it writes to. The body below
-// is unchanged apart from the init call at the bottom — see the note there.
+// it, so it moved into the bundle with the region it writes to. Its legacy
+// window publication and layout-effect init seam remain load-bearing.
 //
 // Node status row (top of the hamburger drawer) — surfaces the embedded
 // Usernode node's sync state when the platform runs inside the Usernode
@@ -14,9 +14,9 @@
 // event stream; `usernode.getNodeStatus()` is only called for the initial
 // value and when the detail sheet opens. No polling.
 //
-// Hidden entirely (row stays display:none) until either the bridge reports
-// the `getNodeStatus` capability or the native app pushes a node-status event.
-// Desktop browsers, child-app iframes and old app builds provide neither.
+// The row is present for every native top frame, even while capabilities or
+// node state are unavailable. Desktop browsers and child-app iframes keep it
+// hidden. A temporary bridge/provisioning problem must not rewrite navigation.
 (function () {
   'use strict';
 
@@ -43,6 +43,11 @@
       label: 'Offline',
       tone: 'border-red-500/40 text-red-600 dark:text-red-400',
     },
+    unavailable: {
+      dot: 'bg-zinc-400',
+      label: 'Unavailable',
+      tone: 'border-zinc-400/40 text-zinc-500 dark:text-zinc-400',
+    },
   };
 
   const NodePill = {
@@ -50,10 +55,12 @@
     _sheet: null,
 
     async init() {
-      if (!window.NativeChrome) return;
+      if (!window.NativeChrome || !window.usernode ||
+          window.usernode.isNative !== true) return;
 
       const row = document.getElementById('drawer-row-node');
       if (row) {
+        row.classList.remove('hidden');
         row.addEventListener('click', () => {
           // #977: the sheet is a second surface, so it waits for the
           // drawer to be fully gone — one motion at a time, instead of
@@ -80,8 +87,10 @@
         NodePill._renderSheetBody();
       });
 
-      if (!(await NativeChrome.has('getNodeStatus'))) return;
-      if (row) row.classList.remove('hidden');
+      if (!(await NativeChrome.has('getNodeStatus'))) {
+        NodePill._render();
+        return;
+      }
 
       try {
         const snap = await window.usernode.getNodeStatus();
@@ -92,7 +101,7 @@
     },
 
     _styleFor(status) {
-      return STATUS_STYLES[status] || STATUS_STYLES.offline;
+      return STATUS_STYLES[status] || STATUS_STYLES.unavailable;
     },
 
     _render() {

@@ -763,6 +763,16 @@ const Home = {
   // (routes/apps.js demoIconApps, which unshifts them to the front).
   // Fires once per page load — a later re-render (a WS app_update, a
   // search keystroke) must not pop the menu back open under the user.
+  // "Once" means once SUCCESSFULLY: the flag is burned where the menu
+  // actually opens, at the bottom of the rAF, and every early return
+  // above it leaves the link armed for the next render. That ordering is
+  // the whole fix for #847's flake — Home.load() paints the grid twice,
+  // once from the layout/panels repaint before /api/apps has answered
+  // (empty grid: no "…" trigger, no Home._apps to resolve a slug against,
+  // so openCardMenu bails) and again with the apps. Burning the flag on
+  // that first empty pass meant the real grid's render found the link
+  // already spent and no menu ever opened — which is exactly what a check
+  // sees when the fetch is a few ms slower than the paint.
   //
   // Called by BOTH launcher grids that carry the menu: home's #app-list
   // and the #apps browse screen's #browse-list. Whichever one is actually
@@ -784,6 +794,7 @@ const Home = {
     // and the kit's flip/clamp placement needs the button's settled rect.
     requestAnimationFrame(() => {
       Home._shotMenuPending = false;
+      if (Home._shotMenuDone) return; // a render that raced us already won
       // Prefer the grid's own "…" trigger: a real anchor element is what
       // lets the desktop popover toggle closed on a re-click.
       const btn = listEl.querySelector('.card-menu-btn');
@@ -811,6 +822,11 @@ const Home = {
       // exists, so the data-bearing repaint gets another chance.
       Home._shotMenuDone = true;
       Home.openCardMenu(slug, anchor);
+      // openCardMenu is a no-op when the app isn't in Home._apps yet or
+      // carries no actions for this viewer; Home._menu is how it reports
+      // that it actually put a menu up. Only then is the link spent.
+      if (!Home._menu) return;
+      Home._shotMenuDone = true;
       requestAnimationFrame(() => Home._assertMenuOpaque());
     });
   },

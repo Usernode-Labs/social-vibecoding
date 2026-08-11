@@ -342,6 +342,10 @@ function stagingMockProposals(viewer) {
       checks_checked_at: hoursAgo(0.02),
     },
     {
+      // 9000026, not 9000023: the "at least N approvals" fixture further
+      // down already owns 9000023, and a duplicate id meant this row won the
+      // render — an approvals proposal that permanently showed
+      // "Checks running…" instead of its approvals pill.
       ...mk(9000026, 900126,
         '[Mock] Checks-phase test: running the automated tests against the preview',
         0.06, 1, 0, 0, { required: 2, windowEndsAt: hoursAhead(70) }),
@@ -555,6 +559,47 @@ function stagingMockProposals(viewer) {
         },
       ],
     },
+    // ── Card-as-pointer revision fixtures ──
+    // The composite status pill names ONE reason and its tooltip counts the
+    // rest; the detail view enumerates every one. That behaviour needs a row
+    // with several reasons at once, which no existing mock has.
+    {
+      ...mk(9000050, 900150,
+        '[Mock] Multi-reason test: behind main AND checks failing AND console errors',
+        7, 2, 0, 4, { required: 3 }),
+      behind_main: 3,
+      console_check_state: 'errors',
+      console_errors: [
+        { kind: 'pageerror', message: "TypeError: Cannot read properties of null (reading 'id')", source: 'board.js:88' },
+        { kind: 'console', message: 'Failed to load resource: 502 (Bad Gateway)', source: '/api/board:0' },
+      ],
+      check_state: 'failing',
+      recheckable: true,
+      test_results: [
+        { name: 'Home loads', path: '/', status: 'pass', consoleErrors: [], failureReason: '' },
+        { name: 'Board renders', path: '/#/board', status: 'fail', consoleErrors: [], failureReason: 'expected selector .board not found' },
+        { name: 'Settings opens', path: '/#/settings', status: 'fail', consoleErrors: [], failureReason: 'navigation timed out' },
+      ],
+    },
+    // Unset metadata: EVERY other mock carries priority + assignee +
+    // category (the mk factory stamps all three), so without this row the
+    // "no grey Set-priority / Set-category / Unassigned placeholders" rule
+    // is invisible in a preview. The nulls are applied after mk() below.
+    mk(9000051, 900151,
+      '[Mock] Bare-card test: no priority, no category, nobody assigned',
+      9, 1, 0, 0, { required: 2 }),
+    // Provenance overload: four facts that used to be four badges competing
+    // for the four badge slots, now all on the meta line. Proves the badge
+    // cap holds and the provenance still reads.
+    {
+      ...mk(9000052, 900152, "[Mock] staging-tester's changes",
+        6, 2, 0, 2, { required: 3, windowEndsAt: hoursAhead(30) }),
+      source: 'imported',
+      imported_pr_author: 'octo-contributor',
+      external_agent: 'codex',
+      pr_title_fallback: true,
+      staging_url: 'https://mock-preview.invalid',
+    },
   ];
   // Spread the community-voted priority/assignee across a few rows (the mk
   // factory otherwise stamps every proposal high / staging-tester) so the
@@ -573,6 +618,17 @@ function stagingMockProposals(viewer) {
   for (const row of rows) {
     const o = attrOverrides.get(row.id);
     if (o) { row.priority = o.priority; row.assignee = o.assignee; row.category = o.category; }
+  }
+  // The deliberately BARE card: mk() stamps all three attributes, so the
+  // "unset chips don't render" rule needs one row to opt back out. Kept as
+  // an explicit clear rather than a separate factory so a future field added
+  // to mk() is visibly missing here too.
+  for (const row of rows) {
+    if (row.id === 9000051) {
+      row.priority = null;
+      row.category = null;
+      row.assignee = null;
+    }
   }
   return rows.map((p) => {
     // #600: seed the FIRST mock proposal's assignee as the viewer's own so
@@ -693,7 +749,20 @@ function stagingMockMerged() {
     priority: { top: 'medium', count: 2, myValue: null },
     assignee: { top: 'maya-builder', count: 3, myValue: null },
   };
-  return [autoMerged, inheritedAttrs].concat(titles.map((t, i) => mk(
+  // Card-as-pointer revision: a merged proposal that ALREADY has a revert
+  // in flight. Its "Undone by PR#…" relationship is a FACT about the change,
+  // so it reads on the meta line rather than displacing the Undo action —
+  // and Undo itself is correctly absent from the ⋯ menu (undoing an undo
+  // would be an infinite loop).
+  const undone = {
+    ...mk(9100028, 910128,
+      '[Mock] Completed: this one was undone — revert already merged', 0, 1),
+    revert_session_id: 9100029,
+    revert_pr_number: 910129,
+    revert_pr_url: null,
+    revert_status: 'merged',
+  };
+  return [autoMerged, inheritedAttrs, undone].concat(titles.map((t, i) => mk(
     9100001 + i,
     910101 + i,
     `[Mock] Completed: ${t}`,
@@ -2774,7 +2843,8 @@ function voteRoutes(config) {
       // proposals for layout verification. The id check keeps the
       // append idempotent should a mock id ever materialize in the
       // result. See stagingMockProposals above.
-      if (IS_STAGING && req.query.demo === '1') {
+      const demoMode = IS_STAGING && req.query.demo === '1';
+      if (demoMode) {
         const have = new Set(rows.map((r) => r.id));
         rows.push(...stagingMockProposals(req.user?.username).filter((m) => !have.has(m.id)));
       }
@@ -2847,7 +2917,21 @@ function voteRoutes(config) {
         // needs an admin yes)" hint on the Open PRs / Rename proposals
         // sections without a second round-trip. See loadVotePanel in
         // public/js/app-view.js.
-        locked: !!appRows[0].locked,
+        //
+        // FORCED OPEN IN DEMO MODE, staging only. A locked app legitimately
+        // suppresses every DERIVED vote state on the client — a
+        // threshold-met proposal there is waiting on an admin's Yes, not
+        // being applied, so _derivedGovApplying / _govMergeDue in
+        // app-view.js return nothing rather than promise a merge that isn't
+        // happening. The mock rows exist precisely to show those states,
+        // and they carry precomputed gate fields for the same reason (see
+        // stagingMockProposals / stagingMockGovernance): a prod-cloned
+        // staging DB brings the real app row with it, and the platform's own
+        // app row is locked, so ?demo=1 rendered every mock as a plain
+        // waiting card and the states were unreviewable. Only this
+        // fixture-preview mode lies; the ordinary staging board still
+        // reports the clone's real lock state, hint and notice included.
+        locked: !!appRows[0].locked && !demoMode,
         // #646: the app's configured approval settings, for the vote
         // panel context (_proposalsCtx in public/js/app-view.js).
         approverPolicy: gov.approverPolicy,

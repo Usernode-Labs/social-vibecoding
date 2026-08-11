@@ -58,9 +58,15 @@ declare global {
       init(): void;
       [key: string]: unknown;
     };
+    /** features/header/native-app-version.js */
+    NativeAppVersion?: {
+      init(): void;
+      refresh(): Promise<string | null>;
+      [key: string]: unknown;
+    };
     /**
      * features/header/header-menu-controller.js — the hamburger drawer's
-     * open/close, and the two app-scoped drawer rows' visibility. Both were
+     * open/close, and the app-scoped drawer rows' visibility. Both were
      * App.HeaderMenu / App.DrawerStatus in app.js, which now forwards onto
      * these so its own call sites (plus app-view.js, native-chrome.js,
      * node-pill.js, wallet-sheet.js) are untouched.

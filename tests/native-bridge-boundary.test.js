@@ -36,6 +36,10 @@ function loadBridge({
     beginSessionHandoff: { blocked: true },
     enterAnonymousSession: { admitted: true },
     getWalletState: { address: 'ut1-wallet' },
+    manageStaking: {
+      delegate: 'B62qdelegate',
+      delegated_since: '2026-08-11T10:30:00Z',
+    },
     getSettingsState: SETTINGS_SNAPSHOT,
     getSocialPushState: {
       enabled: true,
@@ -198,6 +202,33 @@ test('old native builds retain the legacy privileged request shape', async () =>
   );
   assert.equal('privilegedCapability' in loaded.nativePosts[1], false);
   assert.equal('privilegedCapability' in loaded.nativePosts[2], false);
+});
+
+test('manageStaking is a no-argument top-frame privileged action', async () => {
+  const loaded = loadBridge({
+    capabilities: [
+      'privilegedBridgeCapability',
+      'manageStaking',
+    ],
+  });
+
+  const staking = await loaded.sandbox.usernode.manageStaking();
+
+  assert.equal(staking.delegate, 'B62qdelegate');
+  assert.deepEqual(
+    loaded.nativePosts.map((post) => post.method),
+    [
+      'getBridgeInfo',
+      'getPrivilegedBridgeCapability',
+      'manageStaking',
+    ]
+  );
+  assert.equal(
+    loaded.nativePosts[2].privilegedCapability,
+    'navigation-capability'
+  );
+  assert.deepEqual(loaded.nativePosts[2].args, {},
+    'Social Vibecoding must not send a target or desired state');
 });
 
 test('Social push state and tap methods stay behind the top-frame capability',
@@ -417,21 +448,24 @@ test('parent relay denies bootstrap and privileged methods but keeps reads', () 
   dispatch('logout', 'logout');
   dispatch('enterAnonymousSession', 'anonymous');
   dispatch('setIosKeepAlive', 'legacy-ios-setting');
+  dispatch('manageStaking', 'manage-staking');
   dispatch('getWalletState', 'wallet');
 
   assert.deepEqual(
     loaded.nativePosts.map((post) => post.method),
     ['getWalletState']
   );
-  assert.equal(childReplies.length, 5);
+  assert.equal(childReplies.length, 6);
   assert.match(childReplies[0].value.error, /top-level page/);
   assert.match(childReplies[1].value.error, /top-level page/);
   assert.match(childReplies[2].value.error, /top-level page/,
     'only the trusted shell can admit an anonymous native session');
   assert.match(childReplies[3].value.error, /top-level page/,
     'removed v3 actions stay fenced for installed old app builds');
-  assert.equal(childReplies[4].value.error, null);
-  assert.deepEqual(childReplies[4].value.value, { address: 'ut1-wallet' });
+  assert.match(childReplies[4].value.error, /top-level page/,
+    'embedded apps cannot open native delegation management');
+  assert.equal(childReplies[5].value.error, null);
+  assert.deepEqual(childReplies[5].value.value, { address: 'ut1-wallet' });
 });
 
 test('session handoff gate rejects top-frame and iframe wallet calls', async () => {

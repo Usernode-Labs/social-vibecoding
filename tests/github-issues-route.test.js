@@ -194,10 +194,13 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005 only', 
     const body = await res.json();
     const byNumber = new Map(body.issues.map((i) => [i.number, i]));
 
-    // 5 live issues + 12 appended mocks (900008 joined in #556, 900009 in
-    // #617, 900010 in #683, and 900011/900012 in #1010 as the targets of the
-    // applying / retry-pending mock close proposals).
-    assert.strictEqual(body.issues.length, 17);
+    // 5 live issues + 13 appended mocks (900008 joined in #556, 900009 in
+    // #617, 900010 in #683, 900011/900012 in #1010 as the targets of the
+    // applying / retry-pending mock close proposals, and 900013 with the
+    // card-as-pointer revision — the deliberately BARE row, which the
+    // staging attribute-enrichment block leaves alone so the 'no grey
+    // placeholder chips' rule is reviewable).
+    assert.strictEqual(body.issues.length, 18);
 
     const generating = byNumber.get(900003).headless;
     assert.ok(generating, '900003 carries synthetic headless state');

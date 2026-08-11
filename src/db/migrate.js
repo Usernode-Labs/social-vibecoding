@@ -32,6 +32,9 @@ async function migrate(config) {
   await seedAdmin(pool, config);
   await seedCaptureUser(pool);
   await seedCaptureAdminUser(pool);
+  // Must run BEFORE every staging fixture — a dozen of them own rows via a
+  // hard-coded created_by = 900001. See seedStagingDemoUser.
+  await seedStagingDemoUser(pool);
   await seedSelfApp(pool, config);
   await seedStagingNotifications(pool, config);
   await seedStagingAdminConsoleData(pool);
@@ -881,6 +884,63 @@ async function seedCaptureAdminUser(pool) {
     // Best-effort: a missing capture-admin user only degrades the admin
     // check routes back to today's non-admin behaviour — never abort boot.
     log.warn('db', 'Capture admin user seed failed', { err: err.message });
+  }
+}
+
+// The one canonical `staging-demo-user` row, at its hard-coded id 900001.
+//
+// Roughly a dozen staging fixtures below own their demo apps with a
+// literal `created_by = 900001` and re-assert the user with
+// `INSERT INTO users (id, username, password) VALUES (900001,
+// 'staging-demo-user', …) ON CONFLICT DO NOTHING`. That is only
+// self-healing if 900001 is where the username actually lands.
+//
+// It wasn't. `seedStagingSharedSession` ran first and created the same
+// username with a SERIAL id, so on a fresh clone every later fixed-id
+// insert hit the username's unique index, did nothing, and each app row
+// pointing at 900001 then died on `apps_created_by_fkey`. Each seed
+// catches its own error and only warns, so a first boot silently lost
+// six whole fixture blocks — the home "Your apps" tiles, the errored-app
+// tile, fork lineage, the members and approver panels — and the checks
+// asserting them failed on screens nobody had touched. (A staging clone
+// starts from prod, where no `staging-demo%` user exists, so "first
+// boot" is every boot.)
+//
+// Claiming the id here, before any fixture runs, makes the existing
+// lookups correct instead of rewriting a dozen call sites: the shared
+// session's `SELECT id FROM users WHERE username = 'staging-demo-user'`
+// now finds 900001, and every fixed-id insert is a genuine no-op.
+//
+// Password is the same plain marker string the fixtures use — bcrypt
+// compares against a non-hash always fail, so the account cannot be
+// logged into. Idempotent, and strictly a no-op outside staging.
+async function seedStagingDemoUser(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password, is_admin, can_create_apps)
+       VALUES (900001, 'staging-demo-user', 'staging-demo-not-a-login', FALSE, FALSE)
+       ON CONFLICT DO NOTHING`
+    );
+    const { rows } = await pool.query(
+      'SELECT id FROM users WHERE username = $1', ['staging-demo-user']
+    );
+    const id = rows[0]?.id;
+    if (String(id) !== '900001') {
+      // Only reachable on a DB that booted the broken ordering earlier and
+      // is being re-used rather than re-cloned. Re-pointing the id would
+      // have to cascade through every FK, so say so loudly instead of
+      // letting six fixture blocks fail one by one further down.
+      log.warn('db', 'Staging demo user is not at its hard-coded id 900001', {
+        id: id ?? null,
+        hint: 're-clone the staging database; fixed-id fixtures will FK-fail',
+      });
+      return;
+    }
+    log.info('db', 'Staging demo user seeded', { id: 900001 });
+  } catch (err) {
+    log.warn('db', 'Staging demo user seeding failed', { message: err.message });
   }
 }
 
@@ -3136,6 +3196,15 @@ async function seedStagingCcCohortRuns(pool, config) {
   // the dev-chat route embeds the session id, so a stable id is what lets the
   // dapp.json tests and the TESTING block point at these screens across
   // staging rebuilds.
+  //
+  // `minutesAgo` is the run's age AT SEED TIME, and a still-running fixture
+  // only gets older: runCohortHint reads the live clock, so each of these
+  // rows drifts UP through the hint's buckets ('' → past 10 min → past 30
+  // min) for as long as the deployment lives. The long-run fixture is
+  // therefore seeded well INSIDE the terminal bucket rather than just over
+  // the 10-minute line — 12 minutes read correctly for eighteen minutes
+  // after a deploy and then silently became a different screen than the one
+  // its dapp.json check names.
   const runs = [
     {
       id: 900810,
@@ -3147,8 +3216,8 @@ async function seedStagingCcCohortRuns(pool, config) {
     {
       id: 900811,
       branch: 'staging-fixture/cc-cohort-long',
-      title: '[staging fixture] Estimator off, 12 minutes in — long-run note',
-      minutesAgo: 12,
+      title: '[staging fixture] Estimator off, 40 minutes in — long-run note',
+      minutesAgo: 40,
       progressLog: baseLog.concat([
         '$ npm test',
         '  ⎿ 3168 tests, 2858 passing',
@@ -4119,13 +4188,12 @@ async function seedStagingApproverPanel(pool) {
 //     proposal (requires_explicit_approval stamped) so the
 //     "already up for vote" state and the Explicit-approval chip are
 //     reviewable without opening a real PR.
-// Owned by the seed's own staging-demo-admin (900090) — deliberately
-// NOT the shared staging-demo-user/900001, whose fixed-id row is
-// skipped on a fresh clone when an earlier seed already took the
-// username with a serial id (seedStagingSharedSession), which then
-// FK-fails every app insert pointing at 900001 on a first boot. The
-// logged-in admin tester's canAdminWrite grants the manager view
-// regardless of creator. Idempotent (fixed 9000xx ids + ON CONFLICT DO
+// Owned by the seed's own staging-demo-admin (900090) rather than the
+// shared staging-demo-user/900001 — originally to dodge the fresh-clone
+// FK failure that seedStagingDemoUser now fixes at the source, and kept
+// because these two apps are about an admin roster, not the demo user's
+// portfolio. The logged-in admin tester's canAdminWrite grants the
+// manager view regardless of creator. Idempotent (fixed 9000xx ids + ON CONFLICT DO
 // NOTHING), obviously fake, strictly a no-op outside staging.
 async function seedStagingAppAdminsPanel(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
@@ -4306,6 +4374,23 @@ async function seedStagingYourApps(pool, config) {
          SELECT id, $1, 0 FROM apps WHERE slug = 'staging-demo-chess-arena'
          ON CONFLICT (app_id, user_id) DO UPDATE
            SET hidden = FALSE, sort_order = EXCLUDED.sort_order`,
+        [viewerId]
+      );
+      // The fork-lineage fixture (900031, from seedStagingForkLineage
+      // above) too, for the same reason and by the same path: home only
+      // paints tiles it considers "yours" — membership or favorite —
+      // plus the featured row, and 900031 is owned by staging-demo-user
+      // and isn't featured, so the "forked from …" lineage tag had
+      // nothing to render on and its dapp.json check asserted against a
+      // tile that was never on the page. Favoriting is the lightest way
+      // in: it needs no collaborator row on an app the tester doesn't
+      // own, and it leaves 900032 (the orphan-source variant) off the
+      // home screen, which is right — its state belongs to the app page.
+      await pool.query(
+        `INSERT INTO app_favorites (app_id, user_id, sort_order)
+         SELECT 900031, $1, 1
+         WHERE EXISTS (SELECT 1 FROM apps WHERE id = 900031)
+         ON CONFLICT (app_id, user_id) DO NOTHING`,
         [viewerId]
       );
     }
@@ -9378,7 +9463,7 @@ async function seedStagingTopochain(pool, config) {
          -- provides, both of them admin-console states rather than viewer
          -- ones: a DISABLED challenge (900711 — the list draws a muted row
          -- and offers "Enable" instead of "Disable", which was dead code in
-         -- every preview), and NON-CONTIGUOUS display orders (2, 6, 11).
+         -- every preview), and NON-CONTIGUOUS display orders (2, 6, 8, 11).
          -- Contiguous 1..n orders make the reorder controls untestable by
          -- inspection: any renumbering looks right. With gaps, a move that
          -- silently rewrites its neighbours' orders is visible.
@@ -9398,7 +9483,14 @@ async function seedStagingTopochain(pool, config) {
          (900712, $4, 900503, 'Invite a new participant',
           'Invite a new participant who successfully enrolls in the season.',
           '150 points', 'Enabled-but-unfinished challenge (archive event).',
-          'INVITE_PARTICIPANT_CHALLENGE', TRUE, 11, FALSE, FALSE, NULL, NOW(), NOW())
+          'INVITE_PARTICIPANT_CHALLENGE', TRUE, 11, FALSE, FALSE, NULL, NOW(), NOW()),
+         -- The archive event's block-production challenge. It exists so the
+         -- one block_produced activity on this event (900701 below) has a
+         -- challenge to point at: user_activities.challenge_id is NOT NULL.
+         (900713, $4, 900504, 'Produce your first block',
+          'Produce at least one block during the event window.',
+          '250 points', 'Block-production challenge (archive event).',
+          'SEND_TRANSACTION_CHALLENGE', TRUE, 8, TRUE, FALSE, NULL, NOW(), NOW())
        ON CONFLICT (id) DO NOTHING`,
       [EVENT_REGULAR_ID, EVENT_SEASON_ID, EVENT_ENDED_ID, EVENT_ARCHIVE_ID]
     );
@@ -9544,13 +9636,21 @@ async function seedStagingTopochain(pool, config) {
          -- per-viewer blocks). Two reasons, both admin-screen ones: the
          -- activities list filters by event, and until now every row in it
          -- belonged to the running season, so the filter could only ever
-         -- return everything; and 900701 is the one row with a NULL
-         -- challenge_id, so the "—" cell that stands in for "not tied to a
-         -- challenge" is on screen instead of being a branch nobody sees.
+         -- return everything; and 900701 is a block_produced row, so the
+         -- activity-type filter has something to separate on this event too.
+         --
+         -- 900701 used to carry a NULL challenge_id to put the activities
+         -- table's "—" cell on screen. It can't: user_activities.challenge_id
+         -- is BIGINT NOT NULL REFERENCES challenges(id), so that INSERT
+         -- failed on every boot and took the whole Topochain block down with
+         -- it (the seed's try/catch only warns) — which is why #profile had
+         -- no completed challenges to link out to. The "—" fallback in
+         -- admin-topochain.js is unreachable defensive code, not a state a
+         -- fixture can demonstrate.
          (900700, $8, $7, 'challenge_completion', 250, 'Reported a reproducible bug.',
           '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '210 days', 900710),
          (900701, $8, $7, 'block_produced', 250, 'Produced a testnet block.',
-          '{"kind": "block_production"}'::jsonb, NOW() - INTERVAL '208 days', NULL),
+          '{"kind": "block_production"}'::jsonb, NOW() - INTERVAL '208 days', 900713),
          (900702, $9, $7, 'challenge_completion', 50, 'Shared the season announcement.',
           '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '206 days', 900711),
          (900703, $9, $7, 'challenge_completion', 150, 'Invited a new participant.',
@@ -9750,6 +9850,22 @@ async function seedStagingTopochain(pool, config) {
               )
        ON CONFLICT (id) DO NOTHING`
     );
+
+    // …and because the insert above SKIPS a configured OS, the clone also
+    // took the inactive-Android state with it: production configures both
+    // OSes and keeps both active, so on a prod-cloned staging DB neither
+    // row above is inserted and the "No active version rule for Android"
+    // warning — the whole point of the second fixture row — can never
+    // render. The fixture's declared state has to be asserted, not merely
+    // offered: switch Android off whatever the clone brought. iOS is left
+    // exactly as it arrived, so the screen still shows one OS gated and one
+    // OS open, which is the contrast the warning exists to draw.
+    await pool.query(
+      `UPDATE app_version_configs
+          SET is_active = FALSE, updated_at = NOW()
+        WHERE os = 'android' AND is_active = TRUE`
+    );
+
     // ─── Waitlist signups (3) ──────────────────────────────────────────
     // The admin console's Waitlist screen reads `waitlist_signups`
     // directly, and in a staging clone that table is emptied along with
@@ -10323,11 +10439,17 @@ async function seedStagingPlatformMail(pool) {
     // scoped to the obviously-synthetic addresses.
     for (const row of ROWS) {
       await pool.query(
+        // The ::text casts are load-bearing. In `INSERT … SELECT $1`
+        // Postgres cannot take a parameter's type from the target column,
+        // so $1/$2/$4 stay `unknown` in the SELECT list while the same
+        // placeholders resolve to varchar against the columns in the
+        // NOT EXISTS — "inconsistent types deduced for parameter $1", which
+        // skipped this whole fixture on every staging boot.
         `INSERT INTO mail_deliveries (kind, recipient, provider, status, error)
-         SELECT $1, $2, $3, $4, $5
+         SELECT $1::text, $2::text, $3::text, $4::text, $5::text
           WHERE NOT EXISTS (
             SELECT 1 FROM mail_deliveries
-             WHERE recipient = $2 AND kind = $1 AND status = $4
+             WHERE recipient = $2::text AND kind = $1::text AND status = $4::text
           )`,
         [row.kind, row.to, row.provider, row.status, row.error]
       );
