@@ -2137,6 +2137,22 @@ const DevChat = {
   // Returns true when the session is now active/promoted (resumable),
   // false otherwise. `silent` suppresses the user-facing alert so a
   // transient failure on every refocus doesn't nag.
+  // True only when the signed-in viewer OWNS this session row. Auto-resume
+  // is gated on it: `GET /api/sessions/:id` answers for an admin looking at
+  // someone else's session (and for any collaborator on a shared app), but
+  // resume is owner-scoped on the server — its UPDATE carries
+  // `AND user_id = $2`. Firing it as a non-owner can only fail, and it fails
+  // loudly: a 429 off the platform-wide capacity check (which runs BEFORE
+  // the ownership match, and whose slot reclamation would pause a third
+  // party's session) or a 404 after it. Both put a console error on the
+  // route and pop a toast at someone who did nothing but open a session to
+  // read it. Same rule as the server-side activity bump on that GET:
+  // viewing someone's session must not keep it — or make it — awake.
+  _ownsSession(session) {
+    return !!(session && typeof App !== 'undefined' && App.user
+      && session.user_id === App.user.id);
+  },
+
   async _resumeCurrentSessionIfPaused({ silent = false } = {}) {
     const s = DevChat.currentSession;
     if (!s || !s.id) return false;
@@ -2154,6 +2170,7 @@ const DevChat = {
         }
         return ['active', 'promoted'].includes(session.status);
       }
+      if (!DevChat._ownsSession(session)) return false;
 
       const rr = await fetch(`/api/sessions/${sessionId}/resume`, { method: 'POST' });
       if (rr.ok) {
@@ -2280,14 +2297,15 @@ const DevChat = {
       // needed). We flip the local status optimistically so the rest of
       // renderChatView treats it as active; other tabs sync via the
       // server's 'resumed' WS event. If resume is refused (e.g. the
-      // global cap is hit), leave it paused and tell the user.
-      // …unless this is a screenshot deep link (#1071): `?shot=` names a state
+      // global cap is hit), leave it paused and tell the user. Owner only —
+      // see _ownsSession; a non-owner reading the session leaves it paused.
+      // …and never on a screenshot deep link (#1071): `?shot=` names a state
       // to RENDER, and a shot of a paused session that silently un-pauses it
       // is a shot of something else. It also made the capture's outcome depend
       // on the platform's session cap — the refusal toasts a 429, which reads
       // as a console error on the route and fails the check for a reason that
       // has nothing to do with what it asserts.
-      if (session.status === 'paused' && !DevChat._isShotDeepLink()) {
+      if (session.status === 'paused' && DevChat._ownsSession(session) && !DevChat._isShotDeepLink()) {
         try {
           const rr = await fetch(`/api/sessions/${sessionId}/resume`, { method: 'POST' });
           if (rr.ok) {

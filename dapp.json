@@ -447,6 +447,50 @@
       "expectText": "No challenges are running right now"
     },
     {
+      "name": "Dev board: one composite status pill and a ⋯ menu per card (card-as-pointer)",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban .gc-vote-item .dev-status-pill ~ .dev-chat-badge, #dev-kanban .gc-vote-item [data-card-menu]",
+      "expectText": "Create proposal"
+    },
+    {
+      "name": "Dev board (mobile): the In-progress column shows section dividers, not grey captions",
+      "path": "/?demo=1&view=kanban&col=inprogress#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban-col-inprogress.dev-kanban-col-active .dev-col-divider .dev-col-divider-label",
+      "expectText": "Yours · private"
+    },
+    {
+      "name": "Dev board: every ⋯ menu row leads with an aligned icon",
+      "path": "/?demo=1&view=kanban&shot=card-menu#app/usernode-2d5619/dev",
+      "expectSelector": ".dev-card-menu .dev-card-menu-item .dev-card-menu-icon[aria-hidden=\"true\"] + .dev-card-menu-label"
+    },
+    {
+      "name": "Dev board: a session card’s ⋯ opens (and survives the board’s own repaints)",
+      "path": "/?demo=1&view=kanban&col=inprogress&shot=card-menu#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban-col-inprogress [data-session-chip] [data-card-menu][aria-expanded=\"true\"]"
+    },
+    {
+      "name": "Dev board: attribute chips keep the small label inside the 20px box",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban button.attr-chip.dev-badge[data-attr-field=\"priority\"]"
+    },
+    {
+      "name": "Issue detail renders the Set priority / Set category / Unassigned metadata chips",
+      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
+      "expectSelector": "button.attr-chip[data-attr-field=\"priority\"]",
+      "expectText": "Set priority"
+    },
+    {
+      "name": "Issue detail metadata chips keep their compiled utility styling (no console error from the cascade self-check)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
+      "expectSelector": "button.attr-chip[data-attr-field=\"assignee\"] .attr-avatar-empty"
+    },
+    {
+      "name": "Dev board cards offer Explore in dev chat from the card ⋯ menu (#827)",
+      "path": "/?demo=1&shot=card-menu&card=proposal:9000043#app/usernode-2d5619/dev",
+      "expectSelector": ".dev-card-menu [data-menu-idx][title^=\"Open a dev chat with a message about this PR\"]",
+      "expectText": "Explore in dev chat"
+    },
+    {
       "name": "GitHub linking asks for no repository access, and holds no token",
       "path": "/?demo=1#settings/connectors",
       "expectSelector": "[data-settings-section=\"connectors\"]:not(.hidden) #github-link-section #github-link-no-token",
@@ -590,9 +634,10 @@
       "expectText": "Create a new app"
     },
     {
-      "name": "Issue cards render the Mark-in-progress claim button",
+      "name": "Issue cards keep ONE primary action; the claim moves into the ⋯ menu",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectText": "Mark in progress"
+      "expectText": "Create proposal",
+      "expectSelector": "#dev-kanban-col-issues .gc-vote-item [data-card-menu], #dev-feed .gc-vote-item [data-card-menu]"
     },
     {
       "name": "Session/proposal cards render reverse #N issue chips",
@@ -620,17 +665,6 @@
       "name": "Custom category chip renders on a Dev card (#780)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectText": "Staging demo perf"
-    },
-    {
-      "name": "Dev board renders the Set priority / Set category / Unassigned metadata chips",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "button.attr-chip[data-attr-field=\"priority\"]",
-      "expectText": "Set priority"
-    },
-    {
-      "name": "Dev board metadata chips keep their compiled utility styling (no console error from the cascade self-check)",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "button.attr-chip[data-attr-field=\"assignee\"] .attr-avatar-empty"
     },
     {
       "name": "Restart-recovery pill fixtures are seeded (#786)",
@@ -714,32 +748,34 @@
       "expectText": "Claude is working"
     },
     {
-      "name": "Estimator-off run past 10 min still shows the long-run note (#906)",
+      "name": "Estimator-off long run shows the cohort note in place of an estimate (#906)",
       "path": "/#app/usernode-2d5619/dev/sessions/900811",
       "expectSelector": ".dc-cc-attached-summary .dc-cc-cohort",
-      "expectText": "running longer than most"
+      "expectText": "this is a long one — some runs go 30 min+"
     },
     {
-      "name": "Visible own session card offers the \"Share chat\" opt-in",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "[data-transcript-chip]"
+      "name": "Visible own session offers the \"Share chat\" opt-in in its ⋯ menu",
+      "path": "/?demo=1&shot=card-menu&card=session:990103#app/usernode-2d5619/dev",
+      "expectSelector": ".dev-card-menu [data-menu-idx][title^=\"Let everyone read this chat\"]",
+      "expectText": "Share chat"
     },
     {
-      "name": "A chat-shared own session card flips to the \"Chat shared\" toggle",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "[data-untranscript-chip]",
-      "expectText": "chat readable"
+      "name": "A chat-shared own session flips its ⋯ row to \"Chat shared — stop sharing\"",
+      "path": "/?demo=1&shot=card-menu&card=session:990104#app/usernode-2d5619/dev",
+      "expectSelector": ".dev-card-menu [data-menu-idx][title^=\"Stop others reading this chat\"]",
+      "expectText": "Chat shared — stop sharing"
     },
     {
-      "name": "Another user's shared session card offers \"Read chat\" when the chat is published",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "[data-read-chat]"
+      "name": "A published chat arrives expanded on the shared session’s own page",
+      "path": "/?demo=1#app/usernode-2d5619/dev/shared/990002",
+      "expectSelector": "[data-transcript-section] [data-transcript-toggle][aria-expanded=\"true\"] ~ [data-transcript-body]",
+      "expectText": "read-only"
     },
     {
-      "name": "Shared session page renders the read-only dev-chat section",
+      "name": "Shared session page renders the read-only dev-chat section, open",
       "path": "/?demo=1#app/usernode-2d5619/dev/shared/990002",
       "expectSelector": "[data-transcript-section] [data-transcript-toggle]",
-      "expectText": "Read the dev chat"
+      "expectText": "Dev chat by staging-demo-user"
     },
     {
       "name": "Native-feel UI kit demo renders",
@@ -930,26 +966,21 @@
       "expectText": "Explore in dev chat"
     },
     {
-      "name": "Dev board cards carry the Explore-in-dev-chat pill (#827)",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": ".gc-explore-chat-btn[data-proposal-id]"
-    },
-    {
       "name": "At-least-approvals proposal renders the approvals pill (#646)",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000023",
       "expectText": "of 1 approval"
     },
     {
-      "name": "Invited-approver proposal splits advisory votes out of the tally (#695)",
+      "name": "Invited-approver proposal splits advisory votes into the status pill suffix (#695)",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000025",
-      "expectSelector": ".gc-vote-advisory",
-      "expectText": "+2 advisory"
+      "expectSelector": ".gc-vote-count-suffix[title*=\"advisory votes from non-approvers\"]",
+      "expectText": "of 1 approval"
     },
     {
-      "name": "Explicit-approval proposal renders the chip and no merge countdown (#788)",
+      "name": "Explicit-approval proposal locks the status pill and shows no merge countdown (#788)",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000030",
-      "expectSelector": ".gc-vote-explicit",
-      "expectText": "Explicit approval"
+      "expectSelector": ".gc-vote-count-lock",
+      "expectText": "Vote · 1/3"
     },
     {
       "name": "Explicit-approval proposal still shows the rejection countdown (#788)",
@@ -1136,9 +1167,10 @@
       "expectText": "Fix something that's broken"
     },
     {
-      "name": "Own sessions pin with the visibility caption",
+      "name": "Own sessions pin under the private-sessions divider",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectText": "Only you can see your active sessions"
+      "expectText": "Yours · private",
+      "expectSelector": ".dev-col-divider-label[title=\"Only you can see your active sessions.\"]"
     },
     {
       "name": "Shared session cards show the owner subtitle",
@@ -1151,14 +1183,16 @@
       "expectText": "[Mock] Busy own session"
     },
     {
-      "name": "Visible own session renders under the Visible-to-everyone caption",
+      "name": "Visible own session renders under the Yours-visible divider",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectText": "Visible to everyone — including a live preview"
+      "expectText": "Yours · visible",
+      "expectSelector": ".dev-col-divider-label[title^=\"Visible to everyone — including a live preview\"]"
     },
     {
-      "name": "Visible own session offers the Open chat action",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectText": "Open chat"
+      "name": "Visible own session offers its public discussion from the ⋯ menu",
+      "path": "/?demo=1&shot=card-menu&card=session:990103#app/usernode-2d5619/dev",
+      "expectText": "Open public discussion",
+      "expectSelector": ".dev-card-menu [data-menu-idx][title=\"Open the public discussion on this session\"]"
     },
     {
       "name": "Sleeping shared preview still renders its card with a Preview pill (#689)",
@@ -1399,9 +1433,10 @@
       "expectSelector": "[data-settings-section=\"agent-files\"]:not(.hidden) #agent-files-instructions-list [data-agent-file]"
     },
     {
-      "name": "Settings deep-links CLI & coding-agent access with the seeded demo credentials",
+      "name": "Settings deep-links CLI & coding-agent access (the credential list itself stays server-gated on staging)",
       "path": "/?demo=1#settings/cli",
-      "expectText": "svc_staging-demo"
+      "expectText": "CLI & coding-agent access",
+      "expectSelector": "[data-settings-nav=\"cli\"][aria-selected=\"true\"]"
     },
     {
       "name": "Settings deep-links the Language section",
@@ -1471,6 +1506,12 @@
       "expectSelector": "#dev-plus-menu [data-plus='members']"
     },
     {
+      "name": "Dev '+' menu shows the approver roster on an invited-approvers app (#646)",
+      "path": "/?demo=1&shot=plus-menu#app/staging-demo-invited-approvers/dev",
+      "expectSelector": "#dev-plus-menu [data-plus='members']",
+      "expectText": "Members & visibility"
+    },
+    {
       "name": "Approvals-mode control ships the count input + Propose button (at-least fix)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#members-governance-section #members-approvals-propose"
@@ -1516,6 +1557,11 @@
       "expectSelector": "#dev-forum-scroll"
     },
     {
+      "name": "Your-apps tiles carry the drag-to-reorder grab cursor (#746)",
+      "path": "/",
+      "expectSelector": ".app-card[data-yours].cursor-grab"
+    },
+    {
       "name": "Staging demo tiles are tagged drag-inert (#746)",
       "path": "/?demo=1",
       "expectSelector": ".app-card[data-demo='true']"
@@ -1557,18 +1603,19 @@
     },
     {
       "name": "Imported proposal mid-build shows the Preview building pill (#866)",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000042",
       "expectText": "Preview building"
     },
     {
       "name": "Imported proposal whose preview failed shows the unavailable chip (#866)",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000043",
       "expectText": "Preview unavailable"
     },
     {
       "name": "A failed imported preview offers Retry preview (#866)",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectText": "Retry preview"
+      "path": "/?demo=1&shot=card-menu&card=proposal:9000043#app/usernode-2d5619/dev",
+      "expectText": "Retry preview",
+      "expectSelector": ".dev-card-menu [data-menu-idx][title=\"Try building this proposal's staging preview again\"]"
     },
     {
       "name": "Profile screen is reachable on the web (no bridge gate) and renders",

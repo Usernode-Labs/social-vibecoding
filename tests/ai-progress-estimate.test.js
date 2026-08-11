@@ -350,9 +350,15 @@ test('#906: staging seeds estimator-OFF runs at both side-slot states', () => {
     'fixture must be idempotent on its branch names');
   assert.ok(!/estimate:\s*\{/.test(fnBody),
     'the cohort fixture must NOT seed estimate metadata — that is the point');
-  // The two elapsed ages that straddle the ten-minute threshold.
+  // One run with an empty slot, one with the note. The second is 40 rather
+  // than the 12 it used to be because `minutesAgo` is the age AT SEED TIME
+  // and a still-running fixture only ages: runCohortHint reads the live
+  // clock, so a 12-minute row read correctly for the eighteen minutes it
+  // took to cross into the 30-minute bucket and then quietly became a
+  // different screen than the one its dapp.json check names. Seeded inside
+  // the terminal bucket, it stays put for the life of the deployment.
   assert.match(fnBody, /minutesAgo: 5\b/, 'one run must sit below ten minutes');
-  assert.match(fnBody, /minutesAgo: 12\b/, 'one run must sit above ten minutes');
+  assert.match(fnBody, /minutesAgo: 40\b/, 'one run must sit inside the terminal bucket');
   // The dev-chat route embeds the session id, so the ids must be FIXED or the
   // dapp.json tests below would break on every staging rebuild.
   assert.match(fnBody, /id: 900810\b/);
@@ -374,8 +380,8 @@ test('#906: staging seeds estimator-OFF runs at both side-slot states', () => {
   }
   assert.match(
     tests.find((x) => x.path.includes('/sessions/900811')).expectText,
-    /running longer than most/,
-    'the past-ten-minutes route must assert the long-run note is still there'
+    /some runs go 30 min\+/,
+    'the long-run route must assert the cohort note is still there'
   );
 });
 

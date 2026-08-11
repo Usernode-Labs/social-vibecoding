@@ -170,15 +170,24 @@ test('openInProgressTarget dispatches to the existing navigation handlers', () =
 
 // ── 3. the issue row: chip + claim button + admin list ──────────────────
 
-test('issue row renders the chip and a "Mark in progress" button when the viewer holds no claim', () => {
+// The claim toggle is a ⋯ descriptor now, not an inline pill — the card's
+// action budget is one state-driven primary. The CHIP stays on the card
+// face: it's an at-a-glance state, and one of the four badge slots.
+function claimLabels(AppView, html) {
+  const m = html.match(/data-card-menu="([^"]+)"/);
+  if (!m) return [];
+  return (AppView._cardMenus[m[1]] || [])
+    .map((it) => it.label)
+    .filter((l) => /in progress/i.test(l));
+}
+
+test('issue row renders the chip and offers "Mark in progress" when the viewer holds no claim', () => {
   const AppView = makeAppView();
   const html = AppView._renderIssueRow(baseIssue({
     in_progress: { count: 1, users: ['maya'], mine: false, claims: [], target: null },
   }));
   assert.match(html, /In progress · maya/);
-  assert.match(html, /Mark in progress/);
-  assert.match(html, /AppView\.markIssueInProgress\(3\)/);
-  assert.ok(!html.includes('Clear in progress'));
+  assert.equal(claimLabels(AppView, html).join('|'), 'Mark in progress');
 });
 
 test('issue row swaps to "Clear in progress" when the viewer holds a claim', () => {
@@ -189,9 +198,8 @@ test('issue row swaps to "Clear in progress" when the viewer holds a claim', () 
       claims: [{ username: 'me', userId: 42, mine: true }], target: null,
     },
   }));
-  assert.match(html, /Clear in progress/);
-  assert.match(html, /AppView\.clearIssueClaim\(3\)/);
-  assert.ok(!html.includes('Mark in progress'));
+  assert.equal(claimLabels(AppView, html).join('|'), 'Clear in progress',
+    'the viewer can only clear their OWN claim from here');
 });
 
 test('other users\' claims never block the viewer\'s own Mark button', () => {
@@ -202,7 +210,8 @@ test('other users\' claims never block the viewer\'s own Mark button', () => {
       claims: [{ username: 'maya', userId: 8, mine: false }], target: null,
     },
   }));
-  assert.match(html, /Mark in progress/);
+  // Claims are per-user and never exclusive.
+  assert.equal(claimLabels(AppView, html).join('|'), 'Mark in progress');
 });
 
 test('read-only viewers see the chip but no action buttons', () => {

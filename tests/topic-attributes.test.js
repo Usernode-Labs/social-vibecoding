@@ -751,8 +751,15 @@ test('card renderer emits the three chips (priority, category, assignee)', () =>
   const fe = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf-8');
   assert.match(fe, /_attrChipsHtml\('issue'/, 'issue rows render chips');
   assert.match(fe, /_attrChipsHtml\('proposal'/, 'proposal cards render chips');
+  // …and the BOARD passes omitUnset, so a card with no metadata carries no
+  // grey "Set priority / Set category / Unassigned" placeholders. The detail
+  // view (noNav) opts out — that page is where metadata gets set.
+  assert.match(fe, /omitUnset: !noNav/, 'the board omits unset chips, the detail view keeps them');
   assert.match(fe, /data-attr-chip/, 'chip carries the delegated-click hook');
-  assert.match(fe, /_attrChipHtml\('category'/, 'the category chip is rendered');
+  // The three fields are a table inside _attrChipsHtml now (priority,
+  // assignee, category — the badge-priority order) rather than three
+  // hand-written calls, so the omitUnset filter applies uniformly.
+  assert.match(fe, /\['category', it\.category\]/, 'the category chip is in the field table');
   assert.match(fe, /ATTR_CATEGORY_VALUES: \['feature', 'bug', 'improvement', 'design', 'docs', 'chore'\]/,
     'FE category vocabulary mirrors the service CATEGORY_VALUES');
 });
@@ -895,9 +902,14 @@ test('staging seeds cover both assignee-dropdown states', () => {
 // must NOT drift into a bespoke look (e.g. the old brightness-filter hover).
 test('chips reuse the sibling-badge pill recipe + tint-deepening hover', () => {
   const fe = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf-8');
-  // Same recipe as _devChatBadge / bounty pill / #N chip.
-  assert.match(fe, /attr-chip inline-flex items-center text-\[0\.65rem\] font-medium px-1\.5 py-0\.5 rounded/,
-    'chip base uses the shared pill utility recipe');
+  // Every chip in a card's badge row shares ONE geometry class now — the row
+  // used to mix three sizes, each computing its own height from its own
+  // padding + line-height. The utility classes supply only the tint.
+  assert.match(fe, /const base = 'attr-chip dev-badge'/,
+    'chip base uses the shared badge geometry class');
+  for (const other of [/dev-chat-badge dev-badge /, /'dev-badge bg-sky-500\/10/, /'dev-badge font-mono bg-violet/]) {
+    assert.match(fe, other, 'the sibling badges share it too');
+  }
   assert.match(fe, /bg-zinc-500\/10 text-zinc-500/, 'muted placeholder uses the badge muted tint');
   // Hover deepens the same tint (like the linked-issue pills), not a filter.
   assert.match(fe, /hover:bg-(red|amber|sky|violet|zinc)-500\/20/, 'interactive chip uses tint-deepening hover');
@@ -905,7 +917,17 @@ test('chips reuse the sibling-badge pill recipe + tint-deepening hover', () => {
 
   const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf-8');
   const block = css.slice(css.indexOf('.attr-chip {'), css.indexOf('button.attr-chip'));
-  assert.match(block, /font:\s*inherit/, '.attr-chip inherits the surrounding font');
+  // font-FAMILY, never the `font` shorthand: this rule follows .dev-badge at
+  // equal specificity, and the shorthand resets font-size/weight/line-height
+  // to their initial values — which is how the chips ended up rendering at
+  // the card's 14px body text inside a 20px box. See dev-chip-geometry.test.js.
+  assert.match(block, /font-family:\s*inherit/, '.attr-chip inherits the surrounding font family');
+  assert.doesNotMatch(block, /(^|[\s;{])font:\s/, 'and never the size-clobbering shorthand');
   assert.match(block, /appearance:\s*none/, '.attr-chip strips native button appearance');
-  assert.doesNotMatch(block, /line-height/, 'no line-height override (heights drift otherwise)');
+  // The shared box: one height for every chip in the row, so they sit on a
+  // single baseline instead of each being sized by its own content.
+  const badge = css.slice(css.indexOf('.dev-badge {'), css.indexOf('button.dev-badge'));
+  assert.match(badge, /height:\s*20px/, 'one fixed chip height');
+  assert.match(badge, /box-sizing:\s*border-box/);
+  assert.match(badge, /font-size:\s*10\.5px/);
 });

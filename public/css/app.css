@@ -35,6 +35,47 @@
      phone. */
   --platform-safe-bottom: var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px));
   --platform-safe-top: var(--un-safe-inset-top, env(safe-area-inset-top, 0px));
+
+  /* ── Semantic state tokens (dev board) ───────────────────
+     ONE meaning per hue, so the same lifecycle stage never reads two
+     ways depending on which helper drew it. Every dev-card status
+     badge / pill / composite-pill tone routes through these; nothing
+     in the board's status vocabulary should hard-code a hex again.
+
+       neutral    — not started, skipped, draft, paused, archived
+       progress   — actively happening: merging, resolving, checks
+                    running, in vote. Violet, NOT amber: amber used to
+                    do this job as well as three others.
+       attention  — non-blocking heads-up: behind main, console
+                    errors, advisory votes, explicit approval. Amber
+                    now means ONLY this.
+       blocked    — blocks the merge: checks failing, checks couldn't
+                    run, preview won't boot, conflict. Red. ("Checks
+                    failing" used to be amber, reading like a warning
+                    when it actually blocks.)
+       ok         — done and good: merged, checks passing, passed —
+                    merging shortly, a Yes tally. Green. ("✓ Checks
+                    passing" used to inherit the violet Merged colour.)
+       admin      — an admin bypass. Same amber family as attention
+                    but distinguished by an OUTLINE (see
+                    .gc-vote-btn-admin) so hue alone isn't the signal.
+
+     `-bg` companions are the faint fills; `-fill` the stronger
+     proportional-fill wash used inside the tally pill. */
+  --state-neutral: #6b7280;
+  --state-neutral-bg: rgba(107, 114, 128, 0.12);
+  --state-progress: #7c3aed;
+  --state-progress-bg: rgba(124, 58, 237, 0.12);
+  --state-attention: #b45309;
+  --state-attention-bg: rgba(245, 158, 11, 0.14);
+  --state-blocked: #dc2626;
+  --state-blocked-bg: rgba(239, 68, 68, 0.12);
+  --state-blocked-fill: rgba(239, 68, 68, 0.32);
+  --state-ok: #15803d;
+  --state-ok-bg: rgba(34, 197, 94, 0.12);
+  --state-ok-fill: rgba(34, 197, 94, 0.32);
+  --state-admin: #b45309;
+  --state-admin-bg: rgba(245, 158, 11, 0.10);
 }
 
 /* ── Safe-area utilities ─────────────────────────────────
@@ -102,6 +143,25 @@ html.un-kb .platform-safe-bar {
   --accent: #a78bfa;
   --accent-light: #c4b5fd;
   --accent-tint: rgba(167, 139, 250, 0.12);
+
+  /* Dark counterparts of the semantic state tokens. Every --state-*
+     declared on :root has one here — tests/dev-color-tokens.test.js
+     asserts the two lists match, so a token added above without a dark
+     value fails the suite rather than rendering an unreadable badge. */
+  --state-neutral: #9ca3af;
+  --state-neutral-bg: rgba(156, 163, 175, 0.16);
+  --state-progress: #a78bfa;
+  --state-progress-bg: rgba(167, 139, 250, 0.18);
+  --state-attention: #fbbf24;
+  --state-attention-bg: rgba(245, 158, 11, 0.18);
+  --state-blocked: #f87171;
+  --state-blocked-bg: rgba(239, 68, 68, 0.18);
+  --state-blocked-fill: rgba(239, 68, 68, 0.38);
+  --state-ok: #34d399;
+  --state-ok-bg: rgba(34, 197, 94, 0.18);
+  --state-ok-fill: rgba(34, 197, 94, 0.38);
+  --state-admin: #fbbf24;
+  --state-admin-bg: rgba(245, 158, 11, 0.14);
 }
 
 /* ── usernode-native kit theming ─────────────────────────
@@ -2685,10 +2745,20 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
  * carry a faint resting tint of their own hue — the same tinted-chip
  * language as the Closes-#N chips, bounty pill, and icon chips. */
 .gc-vote-btn {
-  padding: 3px 10px;
+  /* One fixed height for the whole family so a text pill, the icon Preview
+     and the ⋯ trigger line up exactly rather than each being sized by its
+     own content. box-sizing keeps the 1px border inside that height. */
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  padding: 0 10px;
   border-radius: 9999px;
   font-size: 11px;
   font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
   cursor: pointer;
   border: 1px solid var(--border);
   background: transparent;
@@ -2733,11 +2803,15 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
  * ConfirmModal in castAdminMerge/castAdminUndo is the actual
  * misclick guard; the colour is just the affordance hint. */
 .gc-vote-btn-admin {
-  color: #f59e0b;
-  background: rgba(245, 158, 11, 0.10);
-  border-color: rgba(245, 158, 11, 0.4);
+  color: var(--state-admin);
+  background: var(--state-admin-bg);
+  border-color: var(--state-admin);
+  /* Distinguished by SHAPE as well as hue: a dashed outline, so an
+     admin bypass never reads as just-another-amber-warning. */
+  border-style: dashed;
+  border-width: 1.5px;
 }
-.gc-vote-btn-admin:hover { background: rgba(245, 158, 11, 0.18); border-color: rgba(245, 158, 11, 0.55); color: #f59e0b; }
+.gc-vote-btn-admin:hover { background: rgba(245, 158, 11, 0.2); border-color: var(--state-admin); color: var(--state-admin); }
 /* The viewer's cast vote: stronger tint + bolder text (color comes from
  * the -yes/-no variant it sits on). */
 .gc-vote-active { background: rgba(127, 127, 127, 0.18); font-weight: 600; }
@@ -2752,11 +2826,14 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
-  background: #fff;
+  /* Theme-following. This rule used to hard-code an opaque white with
+     no `.dark` counterpart anywhere in the file, so on a dark card it
+     painted a white slab. */
+  background: var(--bg-primary);
   border: 1.5px solid currentColor;
 }
-.gc-vote-voted-box-yes { color: #22c55e; }
-.gc-vote-voted-box-no { color: #ef4444; }
+.gc-vote-voted-box-yes { color: var(--state-ok); }
+.gc-vote-voted-box-no { color: var(--state-blocked); }
 
 /* #404: a card's action row. Every issue / proposal / governance / merged
  * card routes its buttons through this one container so they all line up the
@@ -2771,6 +2848,215 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   gap: 6px;
   margin-top: 6px;
 }
+
+/* Square icon variant of the action pill — the icon-only Preview
+   affordance and the ⋯ overflow trigger. Same 11px pill family and the
+   same hover behaviour as .gc-vote-btn (which it composes with), but a
+   fixed 24px box so the glyph is centred and the two never drift in
+   height from the text pills beside them. */
+.gc-vote-btn-icon {
+  width: 24px;
+  padding: 0;
+}
+.gc-vote-btn-icon svg { width: 14px; height: 14px; }
+/* Non-interactive preview states (building / unavailable) render as a
+   <span>, so they get the pill's geometry with no pointer affordance. */
+span.gc-vote-btn-icon { cursor: default; }
+
+/* ── The card head: headline + badges, with ⋯ pinned top-right ──────
+   The ⋯ trigger lives in the card's TOP-RIGHT corner rather than in the
+   action row: the corner is where "more about this card" belongs, and it
+   keeps the action row to the one or two things you'd actually do. Its own
+   flex column means it can never collide with the 💬 badge (inside the
+   wrapping badge row to its left) or the drag grip (a gutter outside the
+   card entirely), and the chevron stays outside this box as the card's own
+   last child. */
+.dev-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.dev-card-head-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* Optically aligned with the FIRST line of the title rather than with the
+   top of the head box — the title's 20px line-box is taller than the 24px
+   button by too little to centre, so a 2px lift lands it on the cap line. */
+/* The right-edge rail: ⋯ pinned to the card's top-right corner, chevron
+   centred in whatever height is left below it. One column for both, because
+   a kanban column only gives a card ~175px of text width and a separate
+   flex slot for the ⋯ cost 30px of it. */
+.dev-card-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  align-self: stretch;
+  flex: none;
+  gap: 4px;
+}
+.dev-card-rail > svg {
+  margin-top: auto;
+  margin-bottom: auto;
+}
+.dev-card-menu-btn {
+  flex: none;
+  color: var(--text-faint);
+  /* No border: it is a corner affordance, not one of the action pills. */
+  border-color: transparent;
+}
+.dev-card-menu-btn:hover { border-color: var(--accent-light); }
+.dev-card-menu-btn svg { width: 16px; height: 16px; }
+
+/* The card's title and meta lines. Extracted from six copies of the same
+   Tailwind class list so the type scale is edited in one place. */
+.dev-card-title {
+  font-size: 13.5px;
+  line-height: 1.35;
+  color: var(--text-primary);
+  overflow-wrap: break-word;
+}
+.dev-card-headline-meta {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Card overflow (⋯) menu ──────────────────────────────
+   Body-mounted + position:fixed, copying .attr-popover: the kanban
+   columns scroll horizontally (#dev-kanban has overflow-x:auto), so a
+   menu nested inside a card would be clipped by its own column. */
+.dev-card-menu {
+  position: fixed;
+  z-index: 2000;
+  min-width: 208px;
+  max-width: 280px;
+  max-height: 340px;
+  overflow-y: auto;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  padding: 4px;
+}
+.dev-card-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+/* The leading icon column. FIXED width rather than intrinsic: the
+   vocabulary mixes one-em emoji with narrower text glyphs (✕, ↗, @), and
+   an intrinsic column would step every label a pixel or two left or right
+   of its neighbours — the exact scanning cost the icons were added to
+   remove. Decorative, so it carries aria-hidden in the markup. */
+.dev-card-menu-icon {
+  flex: none;
+  width: 16px;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1;
+  /* Emoji ignore `color`, but the text glyphs don't — holding them a shade
+     back from the label keeps the icon a signpost rather than a shout,
+     while a danger row's red still reads straight through. */
+  opacity: 0.75;
+}
+.dev-card-menu-label {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.dev-card-menu-item:hover:not(:disabled) { background: var(--accent-tint); color: var(--accent); }
+.dev-card-menu-item:disabled { opacity: 0.45; cursor: default; }
+.dev-card-menu-item-danger { color: var(--state-blocked); }
+.dev-card-menu-item-danger:hover:not(:disabled) { background: var(--state-blocked-bg); color: var(--state-blocked); }
+
+/* ── In-progress column section dividers ─────────────────
+   Replaces the two full grey sentences that used to introduce the
+   session groups. A hairline rule with a small uppercase label; the
+   longer explanation moved to the label's tooltip. */
+.dev-col-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0;
+}
+.dev-col-divider-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  white-space: nowrap;
+  cursor: help;
+}
+.dev-col-divider::after {
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--border-light);
+}
+
+/* A private (not-yet-visible) dev session — the muted/draft treatment
+   that replaces the "Only you can see your active sessions." caption as
+   the signal that nobody else can see this card. */
+.dev-card-muted {
+  border-style: dashed;
+  opacity: 0.82;
+}
+
+/* ── The detail view's actions & state block ──────────────
+   Cards are pointers now, so every action a card demoted needs somewhere
+   to live: this block, between the topic head's card and its body. It is
+   also where a blocked proposal's reasons are enumerated in full rather
+   than inferred from a row of badges. */
+.dev-detail-actions {
+  margin-top: 8px;
+  padding: 0 4px;
+}
+
+.dev-detail-reasons {
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: var(--bg-card);
+}
+.dev-detail-reasons-head {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin-bottom: 5px;
+}
+.dev-detail-reasons-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+/* The label leads each row in the same tone the pill used, so the reason
+   the pill named is findable at a glance in the list. */
+.dev-detail-reason-label { font-weight: 600; }
+.dev-detail-reason-hard .dev-detail-reason-label { color: var(--state-blocked); }
+.dev-detail-reason-soft .dev-detail-reason-label { color: var(--state-attention); }
 
 /* Inline vote buttons rendered on a "promoted / voted" group-chat
  * activity row. Sits right after the row text; wraps onto its own line
@@ -2787,6 +3073,45 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .gc-vote-inline:empty { display: none; }
 /* Live "yes / majority" tally shown ahead of the inline buttons, in a
    little boxed pill to match the buttons / "You voted X" box. */
+/* ── The composite status pill, full width ─────────────────
+   On a card the pill spans the whole content width on its own row: a
+   proportional tally reads as a progress bar there, where wedged between
+   chips at thumbnail width it read as noise. The capsule form
+   (.gc-vote-count without -block) is kept for the detail head and for the
+   group-chat / home surfaces that still call voteCountPill. */
+.dev-status-row {
+  margin-top: 7px;
+}
+.dev-status-pill-block {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 7px;
+}
+/* A tier with no proportional fill (settled, in-flight, blocked) would read
+   as an empty outlined bar at full width, so it takes a faint wash of its
+   own tone instead. The tally tiers keep the plain surface — their fill IS
+   the background, and washing it too would flatten the contrast that makes
+   the bar readable. */
+.dev-status-pill-block.gc-vote-count-neutral   { background: var(--state-neutral-bg); }
+.dev-status-pill-block.gc-vote-count-progress  { background: var(--state-progress-bg); }
+.dev-status-pill-block.gc-vote-count-attention { background: var(--state-attention-bg); }
+.dev-status-pill-block.gc-vote-count-blocked   { background: var(--state-blocked-bg); }
+.dev-status-pill-block.gc-vote-count-ok        { background: var(--state-ok-bg); }
+/* Left-aligned in the block form so the label starts at a fixed point and
+   the fill sweeps out from under it, rather than the text shifting as the
+   tally changes. */
+.dev-status-pill-block .gc-vote-count-label {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .gc-vote-count {
   position: relative;
   display: inline-block;
@@ -2795,15 +3120,25 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
-  background: #fff;
+  /* Theme-following. This rule used to hard-code an opaque white with
+     no `.dark` override, so the tally pill sat as a white box on an
+     otherwise dark card. */
+  background: var(--bg-primary);
   border: 1.5px solid currentColor;
   white-space: nowrap;
 }
-/* Outline color by tally state: purple = not enough votes yet,
-   green = Yes reached majority, red = No reached majority. */
-.gc-vote-count-pending { color: #7c3aed; }
-.gc-vote-count-yes { color: #22c55e; }
-.gc-vote-count-no { color: #ef4444; }
+/* Outline color by tally state, via the semantic tokens: progress =
+   not enough votes yet, ok = Yes reached majority, blocked = No did. */
+.gc-vote-count-pending { color: var(--state-progress); }
+.gc-vote-count-yes { color: var(--state-ok); }
+.gc-vote-count-no { color: var(--state-blocked); }
+/* The composite status pill's non-tally tiers (settled / in flight /
+   blocked / contested) reuse this same pill shell, tinted by token. */
+.gc-vote-count-neutral { color: var(--state-neutral); }
+.gc-vote-count-progress { color: var(--state-progress); }
+.gc-vote-count-attention { color: var(--state-attention); }
+.gc-vote-count-blocked { color: var(--state-blocked); }
+.gc-vote-count-ok { color: var(--state-ok); }
 /* Proportional fill stripes: top = Yes share, bottom = No share, each a
    fraction of majority, filling left→right behind the label. */
 .gc-vote-fill {
@@ -2812,13 +3147,44 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   height: 50%;
   pointer-events: none;
 }
-.gc-vote-fill-yes { top: 0; background: rgba(34, 197, 94, 0.40); }
-.gc-vote-fill-no { bottom: 0; background: rgba(239, 68, 68, 0.40); }
+.gc-vote-fill-yes { top: 0; background: var(--state-ok-fill); }
+.gc-vote-fill-no { bottom: 0; background: var(--state-blocked-fill); }
 /* Finalized: one side hit majority, so the whole pill fills with its color. */
 .gc-vote-fill-full { top: 0; width: 100%; height: 100%; }
-.gc-vote-fill-full-yes { background: rgba(34, 197, 94, 0.40); }
-.gc-vote-fill-full-no { background: rgba(239, 68, 68, 0.40); }
-.gc-vote-count-label { position: relative; z-index: 1; color: #1f2937; }
+.gc-vote-fill-full-yes { background: var(--state-ok-fill); }
+.gc-vote-fill-full-no { background: var(--state-blocked-fill); }
+.gc-vote-count-label { position: relative; z-index: 1; color: var(--text-primary); }
+/* The pill absorbed the standalone pulsing "Vote" badge, the advisory
+   chip and the explicit-approval chip. Their glyphs ride inside the
+   label rather than beside the pill. */
+.gc-vote-count-dot {
+  position: relative;
+  display: inline-flex;
+  width: 6px;
+  height: 6px;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+.gc-vote-count-dot-ping {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: var(--state-progress);
+  opacity: 0.75;
+  animation: ping 1s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+.gc-vote-count-dot-core {
+  position: relative;
+  border-radius: 9999px;
+  width: 6px;
+  height: 6px;
+  background: var(--state-progress);
+}
+.gc-vote-count-suffix { opacity: 0.65; font-weight: 500; }
+.gc-vote-count-lock { margin-left: 3px; opacity: 0.8; }
+@keyframes ping {
+  75%, 100% { transform: scale(2); opacity: 0; }
+}
 /* #695: advisory (non-approver) vote chip on invited-approver apps — a
    muted companion rendered AFTER the tally pill, so the headline count
    stays approver-only and the surplus is visibly second-class. */
@@ -2829,8 +3195,8 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   border-radius: 999px;
   font-size: 10px;
   font-weight: 500;
-  color: #6b7280;
-  background: rgba(107, 114, 128, 0.12);
+  color: var(--state-neutral);
+  background: var(--state-neutral-bg);
   white-space: nowrap;
   vertical-align: middle;
 }
@@ -2847,12 +3213,11 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   border-radius: 999px;
   font-size: 10px;
   font-weight: 600;
-  color: #b45309;
-  background: rgba(245, 158, 11, 0.14);
+  color: var(--state-attention);
+  background: var(--state-attention-bg);
   white-space: nowrap;
   vertical-align: middle;
 }
-.dark .gc-vote-explicit { color: #fbbf24; background: rgba(245, 158, 11, 0.18); }
 /* Dev-card headline cell (title + meta, left of the tally / 💬 pills).
    flex-basis:auto makes the cell's preferred width the title's natural
    single-line width, so on narrow screens the pills after it wrap to
@@ -2878,13 +3243,12 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   gap: 4px;
   font-size: 11px;
   font-weight: 600;
-  color: #f59e0b;
+  /* #405 recoloured this emerald -> amber; the semantic-token pass moves
+     it to `progress` (violet): "working toward a merge" is something
+     happening, not a warning. Amber now means non-blocking attention
+     only. */
+  color: var(--state-progress);
   white-space: nowrap;
-}
-/* #239: "Resolving conflicts…" badge — extends .gc-merging-badge (now also
-   amber, so this override is a no-op kept for clarity). */
-.gc-resolving-badge {
-  color: #f59e0b;
 }
 /* #405: "Checks running…" — not-yet-started check reads grey/neutral, not
    amber, so it's visibly distinct from the amber in-flight merge stages. */
@@ -2894,7 +3258,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   gap: 4px;
   font-size: 11px;
   font-weight: 600;
-  color: #9ca3af;
+  color: var(--state-neutral);
   white-space: nowrap;
 }
 /* #405: canonical merge-lifecycle badge/pill (see public/js/merge-status.js).
@@ -2909,11 +3273,11 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   font-weight: 600;
   white-space: nowrap;
 }
-.ms-badge-neutral { color: #9ca3af; }
-.ms-badge-violet  { color: #8b5cf6; }
-.ms-badge-amber   { color: #f59e0b; }
-.ms-badge-green   { color: #22c55e; }
-.ms-badge-red     { color: #ef4444; }
+.ms-badge-neutral { color: var(--state-neutral); }
+.ms-badge-violet  { color: var(--state-progress); }
+.ms-badge-amber   { color: var(--state-attention); }
+.ms-badge-green   { color: var(--state-ok); }
+.ms-badge-red     { color: var(--state-blocked); }
 .ms-pill {
   display: inline-flex;
   align-items: center;
@@ -2925,14 +3289,14 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   border-radius: 9999px;
   border: 1px solid transparent;
 }
-.ms-pill-neutral { color: #9ca3af; background: rgba(156, 163, 175, 0.12); }
+.ms-pill-neutral { color: var(--state-neutral); background: var(--state-neutral-bg); }
 /* #695: muted "+N" advisory suffix inside the in-vote pill (dev session
    header) — non-approver votes recorded beside the approver-only tally. */
 .ms-advisory { opacity: 0.65; font-weight: 500; }
-.ms-pill-violet  { color: #8b5cf6; background: rgba(139, 92, 246, 0.12); }
-.ms-pill-amber   { color: #f59e0b; background: rgba(245, 158, 11, 0.12); }
-.ms-pill-green   { color: #22c55e; background: rgba(34, 197, 94, 0.12); }
-.ms-pill-red     { color: #ef4444; background: rgba(239, 68, 68, 0.12); }
+.ms-pill-violet  { color: var(--state-progress); background: var(--state-progress-bg); }
+.ms-pill-amber   { color: var(--state-attention); background: var(--state-attention-bg); }
+.ms-pill-green   { color: var(--state-ok); background: var(--state-ok-bg); }
+.ms-pill-red     { color: var(--state-blocked); background: var(--state-blocked-bg); }
 /* #361: persistent merge-status badges. Mirror .gc-merging-badge's slot
    treatment. Conflict (and conflict-resolution-failed) reads red; behind
    reads amber-neutral so a merely-stale proposal doesn't alarm. */
@@ -2942,16 +3306,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   gap: 4px;
   font-size: 11px;
   font-weight: 600;
-  color: #ef4444;
-  white-space: nowrap;
-}
-.gc-behind-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  font-weight: 600;
-  color: #f59e0b;
+  color: var(--state-blocked);
   white-space: nowrap;
 }
 /* #381: advisory "may break the app" / console-error warning. Same slot
@@ -2963,7 +3318,19 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   gap: 4px;
   font-size: 11px;
   font-weight: 600;
-  color: #f59e0b;
+  color: var(--state-attention);
+  white-space: nowrap;
+}
+/* Checks FAILING blocks the merge, so it is `blocked`, not `attention`.
+   It used to share .gc-warning-badge's amber, reading like an advisory
+   heads-up when it is in fact a hard gate. */
+.gc-blocked-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--state-blocked);
   white-space: nowrap;
 }
 /* Settled "✓ Merged" badge — same slot as the merging badge, shown after a
@@ -2974,7 +3341,21 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   gap: 4px;
   font-size: 11px;
   font-weight: 600;
-  color: #8b5cf6;
+  color: var(--state-ok);
+  white-space: nowrap;
+}
+/* "✓ Checks passing" — its own class rather than borrowing
+   .gc-merged-badge, which is what made the passing badge inherit the
+   violet Merged colour. Both are `ok` now, but the classes stay
+   separate so a future tone change to one can't silently move the
+   other. */
+.gc-checks-passing-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--state-ok);
   white-space: nowrap;
 }
 /* Row text tint by the viewer's vote status: faded once they've voted,
@@ -5281,13 +5662,53 @@ a.drawer-ver--fork:hover {
 /* ── Priority / assigned-person chips + dropdown (community-voted) ───── */
 /* Strip the <button> UA chrome so an interactive chip is pixel-identical
    to the sibling <span> badge pills (💬 / ★ / #N): inherit the surrounding
-   font (a <button> otherwise brings its own family + baseline), drop the
-   native appearance/border, and let `items-center` flexbox handle vertical
-   centring (no line-height override — that drifted the chip's height). The
-   utility `bg-…` class supplies the tint, so background stays none here. */
+   font FAMILY (a <button> otherwise brings its own), drop the native
+   appearance/border, and let the shared `.dev-badge` box own the height,
+   padding and type size. The utility `bg-…` class supplies the tint, so
+   background stays none here. */
+/* ── One geometry for every chip in a card's badge row ──────────────
+   The row used to mix three sizes: Tailwind-sized attribute chips, the 💬
+   badge, and the linked-issue pills, each computing its own height from
+   its own padding + line-height. They now share ONE box so a row of them
+   sits on a single baseline. The tint (bg + text colour) still comes from
+   the per-value utility classes; only the geometry lives here. */
+.dev-badge {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+button.dev-badge { cursor: pointer; }
+.dev-badge:disabled { cursor: default; }
+/* A long username must not take the whole badge row on its own — a kanban
+   column gives the row about 165px, and "@some-long-username" alone can
+   exceed that, pushing every sibling chip onto its own line. */
+.dev-badge-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 11ch;
+}
+
+/* NOTE the property here is `font-family`, NOT the `font` shorthand. The
+   shorthand resets font-size / font-weight / line-height to their initial
+   values, and this rule sits AFTER `.dev-badge` at equal specificity — so
+   `font: inherit` silently threw away the badge geometry's 10.5px/500/1 and
+   let every attribute chip inherit the card's 14px body text. It went
+   unnoticed for exactly one release because the chips used to carry a
+   Tailwind `text-[0.65rem]` utility, and tailwind.css loads last. Only the
+   <button>'s UA font FAMILY needs overriding; the size, weight and
+   line-height belong to `.dev-badge`. */
 .attr-chip {
   cursor: default;
-  font: inherit;
+  font-family: inherit;
   appearance: none;
   -webkit-appearance: none;
   border: 0;
