@@ -148,39 +148,61 @@ const BASE_APP = {
   can_manage: false, can_collaborate: true,
 };
 
-async function renderCardListHtml(appData) {
-  const { AppView, captured } = makeRenderHarness();
-  AppView.appData = appData;
-  try { await AppView.renderDevView('forum', null); } catch { /* wiring hit stub DOM */ }
-  return captured.html;
-}
+// #1084 chunk G: the "+" menu is a React component now
+// (frontend/src/features/dev-board/board-frame.tsx), so there is no innerHTML
+// string on #app-content to capture. These tests run with no
+// frontend/node_modules — the root install never touches that workspace — so
+// the markup is asserted against the component source and the GATE is asserted
+// against the module that still evaluates it, the same split
+// tests/dev-plus-menu.test.js and tests/standings-screen.test.js use.
+const FRAME_SRC = fs.readFileSync(
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'board-frame.tsx'),
+  'utf8'
+);
 
-test('import-pr item renders for a collaborator', async () => {
-  const html = await renderCardListHtml({ ...BASE_APP });
-  assert.ok(html.includes('data-plus="import-pr"'), 'import-pr item present');
-  assert.ok(html.includes('Import Feature from a PR'), 'label present');
+test('import-pr item renders for a collaborator', () => {
+  const start = FRAME_SRC.indexOf('{canCollaborate ? (');
+  assert.ok(start !== -1, 'the import-pr row is gated on the canCollaborate prop');
+  const end = FRAME_SRC.indexOf(') : null}', start);
+  const gated = FRAME_SRC.slice(start, end);
+  assert.ok(gated.includes('data-plus="import-pr"'), 'import-pr item present');
+  assert.ok(gated.includes('Import Feature from a PR'), 'label present');
   // Sits directly under "Propose a change".
-  assert.ok(html.indexOf('data-plus="proposal"') < html.indexOf('data-plus="import-pr"'),
+  assert.ok(FRAME_SRC.indexOf('data-plus="proposal"') < FRAME_SRC.indexOf('data-plus="import-pr"'),
     'import-pr renders after the proposal item');
-  assert.ok(html.indexOf('data-plus="import-pr"') < html.indexOf('data-plus="issue"'),
+  assert.ok(FRAME_SRC.indexOf('data-plus="import-pr"') < FRAME_SRC.indexOf('data-plus="issue"'),
     'import-pr renders before the issue item');
+  // …and the prop is fed from appData.can_collaborate, read in the module.
+  assert.match(
+    VIEW_SRC,
+    /canCollaborate:\s*!!AppView\.appData\?\.can_collaborate/,
+    'renderDevView passes appData.can_collaborate as the canCollaborate prop'
+  );
 });
 
-test('import-pr item hidden for a non-collaborator', async () => {
-  const html = await renderCardListHtml({ ...BASE_APP, can_collaborate: false });
-  assert.ok(!html.includes('data-plus="import-pr"'), 'no import-pr item without collab');
+test('import-pr item hidden for a non-collaborator', () => {
+  // The row exists ONLY inside the canCollaborate branch — nowhere else in the
+  // component — so a falsey prop is the whole gate.
+  const hits = FRAME_SRC.split('data-plus="import-pr"').length - 1;
+  assert.equal(hits, 1, 'exactly one import-pr row, inside the gate');
 });
 
 test('import-pr item hidden in read-only mode (can_collaborate === false)', async () => {
   // AppView.readOnly is derived: !!appData && can_collaborate === false. The
   // import-pr item sits inside the !readOnly block AND is gated on
-  // can_collaborate, so a read-only viewer never sees it — only Fork.
-  const { AppView, captured } = makeRenderHarness();
+  // can_collaborate, so a read-only viewer never sees it — only Fork. The
+  // derivation is still the module's, so it is still checked there.
+  const { AppView } = makeRenderHarness();
   AppView.appData = { ...BASE_APP, can_collaborate: false };
   assert.equal(AppView.readOnly, true, 'viewer is read-only');
-  try { await AppView.renderDevView('forum', null); } catch { /* wiring */ }
-  assert.ok(!captured.html.includes('data-plus="import-pr"'), 'read-only hides import-pr');
-  assert.ok(captured.html.includes('data-plus="fork"'), 'read-only viewer still gets Fork');
+
+  const roStart = FRAME_SRC.indexOf('{readOnly ? null : (');
+  const roEnd = FRAME_SRC.indexOf('{selfHosted ? null : (', roStart);
+  assert.ok(roStart !== -1 && roEnd !== -1, 'the writeable block is gated on readOnly');
+  const gated = FRAME_SRC.slice(roStart, roEnd);
+  assert.ok(gated.includes('data-plus="import-pr"'), 'read-only hides import-pr');
+  assert.ok(FRAME_SRC.slice(roEnd).includes('data-plus="fork"'),
+    'read-only viewer still gets Fork');
 });
 
 // ── openImportPrModal ────────────────────────────────────────────────────

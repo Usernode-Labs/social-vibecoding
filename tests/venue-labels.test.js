@@ -177,7 +177,7 @@ run('no retired label survives in any copy-owning module', () => {
     'public/js/dev-flow-select.js',
     'public/js/credit-options.js',
     'public/js/session-options.js',
-    'public/js/dev-chat.js',
+    'frontend/src/features/dev-chat/dev-chat.js',
   ];
   for (const rel of files) {
     const src = stripComments(fs.readFileSync(path.join(__dirname, '..', rel), 'utf8'));

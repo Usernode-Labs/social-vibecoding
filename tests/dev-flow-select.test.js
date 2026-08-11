@@ -32,7 +32,7 @@ const AUTH_SRC = fs.readFileSync(
   path.join(__dirname, '../src/routes/auth.js'), 'utf8'
 );
 const DEV_CHAT_SRC = fs.readFileSync(
-  path.join(__dirname, '../public/js/dev-chat.js'), 'utf8'
+  path.join(__dirname, '../frontend/src/features/dev-chat/dev-chat.js'), 'utf8'
 );
 
 // A status payload with every stage satisfied; individual tests knock pieces
@@ -118,7 +118,7 @@ test('picking a venue persists it, with no second question about it', () => {
   // answered the same question in every new session. Opening the venue
   // sheet is already the deliberate act, so the save rides along with it.
   const devChat = fs.readFileSync(
-    path.join(__dirname, '../public/js/dev-chat.js'), 'utf8'
+    path.join(__dirname, '../frontend/src/features/dev-chat/dev-chat.js'), 'utf8'
   );
   assert.match(devChat, /_saveDevFlowPreference\(pick\.flow\)/,
     'a flow picked in the sheet becomes the saved default');
@@ -144,7 +144,7 @@ test('every reason code the status route can send becomes real copy', () => {
   // the read fails outright. A code with no copy would render an empty
   // explanation under a card offering one option.
   const codes = new Set();
-  for (const rel of ['../src/routes/dev-flow.js', '../public/js/dev-chat.js']) {
+  for (const rel of ['../src/routes/dev-flow.js', '../frontend/src/features/dev-chat/dev-chat.js']) {
     const src = fs.readFileSync(path.join(__dirname, rel), 'utf8');
     // Per LINE, because the route's reason is a ternary over three codes on
     // one line rather than three separate literals.

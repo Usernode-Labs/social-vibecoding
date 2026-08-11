@@ -323,18 +323,23 @@ const indexHtml = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'index.html'), 'utf8'
 );
 const devChatSrc = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'dev-chat.js'), 'utf8'
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'), 'utf8'
 );
 const sessionsSrc = fs.readFileSync(
   path.join(__dirname, '..', 'src', 'routes', 'sessions.js'), 'utf8'
 );
 
-test('index.html loads cc-progress-summary.js before dev-chat.js', () => {
+test('index.html loads cc-progress-summary.js before the dev chat reads it', () => {
+  // #1084 chunk G moved dev-chat.js into the React bundle, so there is no
+  // second tag to compare positions with; the bundle's `type="module"` is what
+  // defers it past every classic /js/** script. Assert the helper tag and that
+  // deferral instead (tests/shell-script-order.test.js pins it shell-wide).
   const helperIdx = indexHtml.indexOf('/js/cc-progress-summary.js');
-  const devChatIdx = indexHtml.indexOf('/js/dev-chat.js');
   assert.ok(helperIdx !== -1, 'cc-progress-summary.js script tag missing');
-  assert.ok(devChatIdx !== -1, 'dev-chat.js script tag missing');
-  assert.ok(helperIdx < devChatIdx, 'cc-progress-summary.js must load before dev-chat.js');
+  assert.ok(!indexHtml.includes('src="/js/dev-chat.js"'),
+    'dev-chat.js is bundled now (chunk G) — it must not come back as a tag');
+  assert.ok(indexHtml.includes('<script type="module" src="/shell/assets/shell.js">'),
+    'the React entry must stay a deferred module so DevChat sees the progress helpers');
 });
 
 test('dev-chat.js actually calls the helpers (not dead code)', () => {
@@ -382,7 +387,7 @@ test("sessions.js persists durationMs on the completion status", () => {
 // the cohort hint must only compete with it once past ten minutes.
 
 const devChat = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'dev-chat.js'), 'utf8'
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'), 'utf8'
 );
 
 test('#892: the countdown span always renders a numeric form', () => {

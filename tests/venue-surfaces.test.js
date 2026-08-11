@@ -30,7 +30,7 @@ const vm = require('node:vm');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
-const DEV_CHAT_SRC = read('public/js/dev-chat.js');
+const DEV_CHAT_SRC = read('frontend/src/features/dev-chat/dev-chat.js');
 const APP_VIEW_SRC = read('public/js/app-view.js');
 const SESSIONS_SRC = read('src/routes/sessions.js');
 const APP_CSS = read('public/css/app.css');

@@ -25,7 +25,7 @@ const AUTH_SRC = fs.readFileSync(
   path.join(__dirname, '../src/routes/auth.js'), 'utf8'
 );
 const DEV_CHAT_SRC = fs.readFileSync(
-  path.join(__dirname, '../public/js/dev-chat.js'), 'utf8'
+  path.join(__dirname, '../frontend/src/features/dev-chat/dev-chat.js'), 'utf8'
 );
 
 // The demo branch, isolated from the rest of the handler.
