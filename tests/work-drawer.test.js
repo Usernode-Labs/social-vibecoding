@@ -488,6 +488,7 @@ function badgeEl() {
   const classes = new Set(['hidden']);
   return {
     textContent: '',
+    dataset: {},
     classList: {
       add: (c) => classes.add(c),
       remove: (c) => classes.delete(c),
@@ -534,6 +535,50 @@ test('_renderBadge splits unread between the cog (green) and the bell (red)', ()
   assert.ok(red.classList.contains('hidden'), 'red hides when the bell itself has nothing');
   assert.equal(green.textContent, '1');
   assert.equal(markAll.disabled, true, 'bell mark-all disabled when only cog items remain');
+});
+
+// The cog badge publishes the unread FINISHED-SESSION count separately from
+// the count it paints, which covers all four drawer kinds. That is what lets
+// a route check assert the green badge is showing because a dev session
+// finished (dapp.json: `#notifications-badge-ai:not(.hidden)
+// :not([data-session-done="0"])`) rather than because a PR went stale — the
+// regression it guards is completion-specific.
+test('the cog badge publishes the unread finished-session count as data-session-done', () => {
+  const sb = loadAll();
+  const N = sb.window.Notifications;
+  const green = badgeEl();
+  sb.__elements.set('notifications-badge-ai', green);
+  N.invites = [];
+
+  N.unread = 3;
+  N.items = [
+    { id: 1, kind: 'session_done', readAt: null },
+    { id: 2, kind: 'session_done', readAt: null },
+    { id: 3, kind: 'stale_pr', readAt: null },
+    { id: 4, kind: 'session_done', readAt: '2026-01-01' }, // read → not pending
+  ];
+  N._renderBadge();
+  assert.equal(green.textContent, '3', 'the painted count is every unread drawer kind');
+  assert.equal(green.dataset.sessionDone, '2', 'the attribute is the unread completions only');
+  assert.ok(!green.classList.contains('hidden'));
+
+  // Completions read, another drawer kind still unread: the badge stays up
+  // but no longer claims a session just finished.
+  N.unread = 1;
+  N.items = [
+    { id: 1, kind: 'session_done', readAt: '2026-01-01' },
+    { id: 3, kind: 'stale_pr', readAt: null },
+  ];
+  N._renderBadge();
+  assert.ok(!green.classList.contains('hidden'));
+  assert.equal(green.dataset.sessionDone, '0');
+
+  // Nothing unread at all: hidden, and the attribute agrees.
+  N.unread = 0;
+  N.items = [];
+  N._renderBadge();
+  assert.ok(green.classList.contains('hidden'));
+  assert.equal(green.dataset.sessionDone, '0');
 });
 
 // ── 4. de-dup: promoted sessions render under "Your proposals" only (#747) ──

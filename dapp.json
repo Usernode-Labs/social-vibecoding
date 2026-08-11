@@ -453,6 +453,21 @@
       "expectText": "Create proposal"
     },
     {
+      "name": "Dev board: a card's type icon sits on its title row, not halfway down the card",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-body .gc-vote-item > .flex-1 > .dev-card-head > span[class*=\"rounded-lg\"] + .dev-card-head-main"
+    },
+    {
+      "name": "Dev board: a card's subtitle is the first full-width row under the title, not inside the indent",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-body .gc-vote-item > .flex-1:first-child > .dev-card-head + .dev-card-meta"
+    },
+    {
+      "name": "Dev board: the rows under a card's title span its full width (no icon indent)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-body .gc-vote-item > .flex-1:first-child > .dev-card-head ~ .dev-card-badges, #dev-body .gc-vote-item > .flex-1:first-child > .dev-card-head ~ .dev-status-row, #dev-body .gc-vote-item > .flex-1:first-child > .dev-card-head ~ .gc-card-actions"
+    },
+    {
       "name": "Dev board (mobile): the In-progress column shows section dividers, not grey captions",
       "path": "/?demo=1&view=kanban&col=inprogress#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban-col-inprogress.dev-kanban-col-active .dev-col-divider .dev-col-divider-label",
@@ -1303,6 +1318,11 @@
       "name": "Cog badge span moved off the bell onto the cog button",
       "path": "/",
       "expectSelector": "#work-drawer-btn #notifications-badge-ai"
+    },
+    {
+      "name": "Cog badge is VISIBLE when a finished dev session is unread",
+      "path": "/?demo=1",
+      "expectSelector": "#work-drawer-btn #notifications-badge-ai:not(.hidden)[data-session-done]:not([data-session-done=\"0\"])"
     },
     {
       "name": "Admin/moderation row renders in the drawer for admins (#588)",

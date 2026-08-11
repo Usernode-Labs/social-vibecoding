@@ -132,7 +132,7 @@ test('the trigger is pinned in the top-right RAIL on every card type that has on
       assert.ok(!/data-card-menu/.test(actions[0]),
         `${kind}: the trigger is in the rail, not the action row`);
     }
-    const badgeRow = html.match(/<div class="flex flex-wrap items-center gap-x-2 gap-y-1">[\s\S]*?<\/div>\s*<\/div>/);
+    const badgeRow = html.match(/<div class="dev-card-badges">[\s\S]*?<\/div>/);
     if (badgeRow) {
       assert.ok(!/data-card-menu/.test(badgeRow[0]),
         `${kind}: the trigger cannot collide with the 💬 badge`);
