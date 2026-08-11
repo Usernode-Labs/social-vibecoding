@@ -116,7 +116,36 @@ const RETIRED_SCRIPTS = {
   // scripts at all (they are IIFEs for the server-rendered /cli/authorize and
   // connector-consent pages, in neither Shell.tsx nor SHELL_ASSETS).
   '/js/settings.js': 'settings screen converted to a React island (chunk D)',
+  // #1082 chunk E — #admin-screen became an island
+  // (frontend/src/features/admin/), and all ten admin modules moved verbatim
+  // into the same directory: same objects, same `window.AdminConsole` /
+  // `window.AdminUI` / `window.Admin<Section>` publications (app.js calls the
+  // first, and AdminConsole._renderSection dispatches sections through
+  // window[modName]), now behind a `typeof window` guard for the prerender
+  // pass. None of them had a DOMContentLoaded bootstrap to replace — the
+  // console mounts on demand from App.navigateToAdminConsole.
+  //
+  // All ten in ONE chunk because they were one load-order cluster: the nine
+  // section modules read the AdminUI registry admin-console.js defines, and
+  // admin-topochain.js reads it at module-evaluation time. Inside the bundle
+  // that is an `import`, so retiring admin-console.js's tag on its own would
+  // have left the other nine reading an undefined global.
+  '/js/admin-console.js': 'admin console chassis converted to a React island (chunk E)',
+  '/js/admin-status.js': 'admin Health & status section moved into the console island (chunk E)',
+  '/js/admin-node.js': 'admin Node & chain section moved into the console island (chunk E)',
+  '/js/admin-analytics.js': 'admin Analytics section moved into the console island (chunk E)',
+  '/js/admin-estimator.js': 'admin Estimator accuracy section moved into the console island (chunk E)',
+  '/js/admin-merges.js': 'admin Merge debug section moved into the console island (chunk E)',
+  '/js/admin-gallery.js': 'admin Screenshot gallery section moved into the console island (chunk E)',
+  '/js/admin-campaigns.js': 'admin Maintenance campaigns section moved into the console island (chunk E)',
+  '/js/admin-mail.js': 'admin Email delivery section moved into the console island (chunk E)',
+  '/js/admin-topochain.js': 'admin Seasons/Events/Challenges section moved into the console island (chunk E)',
 };
+
+// public/js/topochain-events.js is deliberately NOT in that map. It is the
+// public Leaderboard screen's event feed as well as the console's, so it is
+// not chunk E's to move — chunk F owns it, and it keeps loading as a classic
+// script until then.
 
 test('every legacy script is loaded, in exactly the baseline order', () => {
   const expected = baseline.scripts.filter((s) => !(s in RETIRED_SCRIPTS));
@@ -134,7 +163,7 @@ test('every legacy script is loaded, in exactly the baseline order', () => {
 });
 
 test('the shell still loads the expected number of legacy scripts', () => {
-  // 46 /js/** tags, ALL at the end of <body> — the head has none left. The
+  // 35 /js/** tags, ALL at the end of <body> — the head has none left. The
   // count moves whenever main adds a module — it was 48 at the chassis swap
   // (plus theme.js in the head), main's mail console and credit-options
   // screens brought it to 50, #1036's nav-link.js made 51, #1049's
@@ -144,12 +173,14 @@ test('the shell still loads the expected number of legacy scripts', () => {
   // retires dev-console.js (52), notifications.js and work-drawer.js (50),
   // then header-layout.js, node-pill.js, wallet-sheet.js, ai-credit.js and
   // theme.js (46 — theme.js was the head's only one, so the body count drops
-  // by four). #1081 chunk D retires settings.js (45).
+  // by four). #1081 chunk D retires settings.js (45), and #1082 chunk E
+  // retires the admin console's ten modules in one go (35) — see the cluster
+  // note in RETIRED_SCRIPTS for why they could not go one at a time.
   const bodyScripts = scriptsOf(after.slice(after.indexOf('</head>')))
     .filter((s) => s.src && s.src.startsWith('/js/'));
   assert.equal(
-    bodyScripts.length, 45,
-    `expected the 45 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
+    bodyScripts.length, 35,
+    `expected the 35 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
     + 'Adding or removing one is fine, but it also needs a matching SHELL_ASSETS entry in '
     + 'public/sw.js (tests/pwa-shell-wiring.test.js enforces that) — so update this count '
     + 'deliberately rather than loosening the check.',

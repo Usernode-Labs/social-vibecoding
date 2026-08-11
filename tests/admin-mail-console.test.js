@@ -29,8 +29,8 @@ const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
 const adminJs = fs.readFileSync(path.join(ROOT, 'src/routes/admin.js'), 'utf8');
-const moduleJs = fs.readFileSync(path.join(ROOT, 'public/js/admin-mail.js'), 'utf8');
-const consoleJs = fs.readFileSync(path.join(ROOT, 'public/js/admin-console.js'), 'utf8');
+const moduleJs = fs.readFileSync(path.join(ROOT, 'frontend/src/features/admin/admin-mail.js'), 'utf8');
+const consoleJs = fs.readFileSync(path.join(ROOT, 'frontend/src/features/admin/admin-console.js'), 'utf8');
 const limitsJs = fs.readFileSync(path.join(ROOT, 'src/middleware/rate-limits.js'), 'utf8');
 const eventsJs = fs.readFileSync(path.join(ROOT, 'src/services/events.js'), 'utf8');
 
@@ -185,7 +185,7 @@ test('the older v4 mail routes are still there and unchanged in shape', () => {
     path.join(ROOT, 'src/routes/topochain/admin/settings.js'), 'utf8');
   assert.match(settings, /\/mail-status/, 'the Topochain settings card keeps its own status route');
   assert.match(settings, /\/mail-activity/, 'and its own activity route');
-  const topochainJs = fs.readFileSync(path.join(ROOT, 'public/js/admin-topochain.js'), 'utf8');
+  const topochainJs = fs.readFileSync(path.join(ROOT, 'frontend/src/features/admin/admin-topochain.js'), 'utf8');
   assert.match(topochainJs, /\/api\/v4\/admin\/settings\/mail-status/,
     'the Topochain card was not quietly repointed at the new routes');
 });

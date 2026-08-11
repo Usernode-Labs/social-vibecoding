@@ -36,12 +36,21 @@ module.exports = {
     // Scan the source, not just the artifact.
     './frontend/src/**/*.{ts,tsx}',
     './frontend/@/**/*.{ts,tsx}',
+    // The legacy modules step 2 has MOVED into that tree (features/settings/
+    // settings.js, features/admin/admin-*.js, …). They are the same
+    // template-string DOM builders they were under public/js/**, so they hold
+    // the same class literals, and this glob is the only thing that keeps them
+    // in the scan after the move — the admin console alone is ~12k lines of
+    // them, and losing it would strip the whole console's styling with no
+    // error anywhere.
+    './frontend/src/**/*.js',
   ],
 
   // Every class name in the shell is a COMPLETE literal in source — the
   // conditional ones are whole strings picked out of maps/ternaries (see
-  // the CHIP/BADGES tables in admin-gallery.js, admin-merges.js,
-  // app-secrets.js, …), never assembled from fragments like `bg-${tone}-500`.
+  // the CHIP/BADGES tables in features/admin/admin-gallery.js,
+  // features/admin/admin-merges.js, app-secrets.js, …), never assembled from
+  // fragments like `bg-${tone}-500`.
   // That's what makes a compiled stylesheet safe here: Tailwind's extractor
   // is a regex over source text and finds all of them.
   //

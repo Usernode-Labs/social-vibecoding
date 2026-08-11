@@ -6042,7 +6042,7 @@ const AppView = {
 
   // Save the report as a single self-contained file. Blob + temporary
   // <a download> + revokeObjectURL, the pattern the admin CSV export
-  // already established (public/js/admin-console.js).
+  // already established (frontend/src/features/admin/admin-console.js).
   downloadReport() {
     if (!AppView._reportMerged) { AppView._ensureReportData(); return; }
     const model = AppView._buildReportModel(AppView._reportInputs());

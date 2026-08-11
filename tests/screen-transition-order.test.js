@@ -220,7 +220,7 @@ for (const name of EXITS) {
 test('the three chrome-writing screen modules accept chrome: false', () => {
   const files = {
     'frontend/src/features/settings/settings.js': 'Settings',
-    'public/js/admin-console.js': 'AdminConsole',
+    'frontend/src/features/admin/admin-console.js': 'AdminConsole',
     'public/js/browse.js': 'Browse',
   };
   for (const [file, name] of Object.entries(files)) {
